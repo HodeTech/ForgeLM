@@ -280,9 +280,14 @@ jobs:
           # pip-audit returns non-zero on any finding; capture the JSON
           # and apply our own severity policy via tools/check_pip_audit.py.
           #
-          # Vulnerability ignores (each ignore must carry a written
-          # justification + remove-after condition; review at every
-          # release cycle).  Issue #37 tracks the active set.
+          # Vulnerability ignores: each entry below carries a written
+          # justification + remove-after condition and is re-validated
+          # at every release cycle (per
+          # docs/reference/supply_chain_security.md).  When an ignore
+          # is added, link the triaging issue in the commit message so
+          # `git log -S CVE-…` is enough to recover the rationale.
+          #
+          # ----- transformers -----
           #
           # CVE-2026-1839 — transformers, fix: 5.0.0rc3 (release candidate).
           # ForgeLM's pyproject pins ``transformers>=4.38.0,<5.0.0`` and
@@ -293,10 +298,74 @@ jobs:
           # transformers ships a 4.x point release with the fix or
           # (b) ForgeLM cuts a tracked major-version-bump cycle that
           # raises the upper bound.  Re-evaluate at each release.
+          #
+          # ----- torch (added 2026-05-21, triage in issue #58) -----
+          #
+          # All nine torch CVEs below share the same threat-model carve-
+          # out: each requires a LOCAL attacker passing malformed inputs
+          # to a specific torch API.  ForgeLM is a local-CLI training
+          # tool — an attacker with that level of access is already
+          # inside the trust boundary.  None are reachable through
+          # ForgeLM's external surfaces (CLI flags, config YAML,
+          # dataset files); the affected APIs are not called with
+          # attacker-controlled arguments anywhere in forgelm/.
+          # Verified against advisory text in pypa/advisory-database
+          # on 2026-05-21.  Re-evaluate at every release; if any CVE
+          # is re-scored to a remote attack vector, drop the ignore
+          # and bump the pinned torch version.
+          #
+          # PYSEC-2025-191 (CVE-2025-2953) — torch.mkldnn_max_pool2d
+          #     local DoS; advisory note records vendor doubt about
+          #     the finding's real existence.
+          # PYSEC-2025-192 (CVE-2025-2998) — torch.nn.utils.rnn.pad_packed_sequence
+          #     local memory corruption.
+          # PYSEC-2025-193 (CVE-2025-2999) — torch.nn.utils.rnn.unpack_sequence
+          #     local memory corruption.
+          # PYSEC-2025-194 (CVE-2025-3000) — torch.jit.script
+          #     local memory corruption; ForgeLM does not expose
+          #     jit.script to user inputs.
+          # PYSEC-2025-195 (CVE-2025-3001) — torch.lstm_cell
+          #     local memory corruption; cell-level API not on
+          #     ForgeLM's training path.
+          # PYSEC-2025-196 (CVE-2025-3121) — torch.jit.jit_module_from_flatbuffer
+          #     local memory corruption; flatbuffer JIT loader not
+          #     used by ForgeLM.
+          # PYSEC-2025-197 (CVE-2025-3136) — torch.cuda.memory.caching_allocator_delete
+          #     local memory corruption; user does not control the call.
+          # PYSEC-2025-210 (CVE-2025-63396) — torch.profiler.profile
+          #     local DoS via missing profiler.stop() finalisation;
+          #     the profiler is not in ForgeLM's production paths.
+          # PYSEC-2026-139 (CVE-2026-4538) — pt2 Loading Handler
+          #     local deserialization, same trust model as
+          #     torch.load(pickle): operators are documented as
+          #     required to only load trusted checkpoints.  Fix PR
+          #     pytorch/pytorch#176791 not merged at time of ignore.
+          #
+          # ----- markdown (added 2026-05-21, triage in issue #58) -----
+          #
+          # PYSEC-2026-89 (CVE-2025-69534) — markdown (transitive via
+          #     tensorboard).  OSV affected-range misclassification:
+          #     the advisory description states "fixed in version
+          #     3.8.1" but the OSV range record has no `fixed` event,
+          #     so every released version is flagged as vulnerable.
+          #     Installed 3.10.2 is post-fix.  Verified against
+          #     pypa/advisory-database/vulns/markdown/PYSEC-2026-89.yaml
+          #     on 2026-05-21.  Drop this ignore when the OSV record
+          #     gains a `fixed: 3.8.1` event.
           pip-audit \
               --format json \
               --output /tmp/pip-audit.json \
               --ignore-vuln CVE-2026-1839 \
+              --ignore-vuln PYSEC-2025-191 \
+              --ignore-vuln PYSEC-2025-192 \
+              --ignore-vuln PYSEC-2025-193 \
+              --ignore-vuln PYSEC-2025-194 \
+              --ignore-vuln PYSEC-2025-195 \
+              --ignore-vuln PYSEC-2025-196 \
+              --ignore-vuln PYSEC-2025-197 \
+              --ignore-vuln PYSEC-2025-210 \
+              --ignore-vuln PYSEC-2026-139 \
+              --ignore-vuln PYSEC-2026-89 \
               || true
           python3 tools/check_pip_audit.py /tmp/pip-audit.json
 
