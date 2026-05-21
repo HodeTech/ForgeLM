@@ -109,12 +109,31 @@ python3 tools/check_pip_audit.py /tmp/pip-audit.json
 
 ### Suppression (intentional CVE acceptance)
 
-If a CVE is acknowledged but not yet fixable (upstream release
-pending, etc.), document it in the deployer's risk acceptance log
-and use `pip-audit --ignore-vuln <CVE-ID>` to suppress it for the
-nightly run. ForgeLM does NOT ship a project-level
-ignore list — every suppression should be deployer-side and
-quarterly-reviewed.
+ForgeLM does NOT ship a default project-level ignore list — a
+deployer running `python3 tools/check_pip_audit.py /tmp/pip-audit.json`
+standalone inherits no suppressions and sees the full unfiltered
+gate. Document any deployer-side acceptance in your own risk
+acceptance log and pass it via the opt-in flag:
+
+```bash
+python3 tools/check_pip_audit.py /tmp/pip-audit.json \
+    --ignores path/to/your_ignores.yaml
+```
+
+Each entry in the YAML file must carry `id`, `package`, `reason`,
+`threat_model`, `verified_at`, and `reevaluate_after` (optional:
+`aliases`, `references`); missing any required field fails the gate
+closed, so an undocumented suppression cannot land silently. Every
+match is logged as a `::notice::` annotation in the run summary so
+the audit trail stays visible.
+
+ForgeLM's own nightly does carry a checked-in
+[`tools/pip_audit_ignores.yaml`](../../tools/pip_audit_ignores.yaml) for
+project-internal triage (currently transformers `CVE-2026-1839` plus
+nine no-fix torch advisories and one OSV-misclassified markdown
+record from the 2026-05-21 cycle). That file is consumed only by the
+project's own workflow via `--ignores`; deployers do not inherit it.
+Review at every release cycle.
 
 ## bandit (static security analysis)
 

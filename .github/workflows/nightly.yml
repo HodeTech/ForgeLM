@@ -277,28 +277,23 @@ jobs:
 
       - name: pip-audit (transitive CVE scan)
         run: |
-          # pip-audit returns non-zero on any finding; capture the JSON
-          # and apply our own severity policy via tools/check_pip_audit.py.
+          # pip-audit captures every finding; tools/check_pip_audit.py
+          # applies ForgeLM's severity policy (HIGH → fail,
+          # MEDIUM → ::warning::, UNKNOWN → fail closed) on the JSON.
           #
-          # Vulnerability ignores (each ignore must carry a written
-          # justification + remove-after condition; review at every
-          # release cycle).  Issue #37 tracks the active set.
-          #
-          # CVE-2026-1839 — transformers, fix: 5.0.0rc3 (release candidate).
-          # ForgeLM's pyproject pins ``transformers>=4.38.0,<5.0.0`` and
-          # the 5.x branch is a major version bump that breaks downstream
-          # callers (TRL adapter signature changes + tokenizer-config
-          # API drift).  The CVE has no 4.x backport at the time of
-          # ignore (verified 2026-05-10).  Stop-gap until either (a)
-          # transformers ships a 4.x point release with the fix or
-          # (b) ForgeLM cuts a tracked major-version-bump cycle that
-          # raises the upper bound.  Re-evaluate at each release.
+          # Project-internal CVE suppressions live in
+          # tools/pip_audit_ignores.yaml; --ignores is opt-in so
+          # standalone deployer invocations of check_pip_audit.py
+          # inherit nothing (per docs/reference/supply_chain_security.md).
+          # Adding an entry to that file is a security-policy change;
+          # see the file header for the required schema (id, package,
+          # reason, threat_model, verified_at, reevaluate_after).
           pip-audit \
               --format json \
               --output /tmp/pip-audit.json \
-              --ignore-vuln CVE-2026-1839 \
               || true
-          python3 tools/check_pip_audit.py /tmp/pip-audit.json
+          python3 tools/check_pip_audit.py /tmp/pip-audit.json \
+              --ignores tools/pip_audit_ignores.yaml
 
       - name: bandit (static security analysis)
         run: |

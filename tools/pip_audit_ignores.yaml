@@ -1,0 +1,175 @@
+# pip-audit ignore list for ForgeLM's own nightly compatibility workflow.
+#
+# THIS FILE IS NOT A PROJECT RECOMMENDATION FOR DEPLOYERS.  It captures
+# ForgeLM's internal risk acceptance for *its own* CI nightly only.
+# Deployers running `python3 tools/check_pip_audit.py /tmp/pip-audit.json`
+# without `--ignores PATH` inherit nothing from this file.  See
+# `docs/reference/supply_chain_security.md` "Suppression" for the policy:
+# every deployer-side suppression is documented in the deployer's own
+# risk acceptance log, not here.
+#
+# Schema:
+#   id                — primary OSV/PYSEC/CVE id used by pip-audit.
+#   aliases           — (optional) list of alternative ids for cross-DB
+#                       lookup; pip-audit matches against {id} | aliases.
+#   package           — pypi package name (for human review).
+#   reason            — one-line summary of why we accept this CVE.
+#   threat_model      — multi-line explanation of why ForgeLM's external
+#                       surface (CLI flags, config YAML, dataset files,
+#                       etc.) does not expose the affected API to
+#                       attacker control.
+#   verified_at       — ISO date (YYYY-MM-DD) the advisory was last
+#                       read against this entry.
+#   reevaluate_after  — concrete trigger that drops the ignore.
+#   references        — (optional) list of advisory URLs.
+#
+# `tools/check_pip_audit.py --ignores tools/pip_audit_ignores.yaml`
+# validates that every required field is present and exits 1 if not.
+# Adding an entry here is a security-policy change; review per
+# `docs/reference/supply_chain_security.md`.
+
+ignores:
+  # ----- transformers -----
+
+  - id: CVE-2026-1839
+    package: transformers
+    reason: >-
+      Fix only in transformers 5.0.0rc3 (release candidate); pyproject
+      pins <5.0.0 due to TRL adapter + tokenizer-config breaking
+      changes.
+    threat_model: >-
+      ForgeLM's pyproject pins ``transformers>=4.38.0,<5.0.0``.  The
+      5.x branch is a major version bump that breaks downstream
+      callers (TRL adapter signature changes + tokenizer-config API
+      drift).  No 4.x backport at time of ignore.
+    verified_at: '2026-05-10'
+    reevaluate_after: >-
+      Each release cycle, or when transformers ships a 4.x point
+      release with the fix, or when ForgeLM cuts a tracked
+      major-version-bump cycle that raises the upper bound.
+
+  # ----- torch (added 2026-05-21, triage in issue #58) -----
+  #
+  # All nine torch CVEs below share the same threat-model carve-out:
+  # each requires a LOCAL attacker passing malformed inputs to a
+  # specific torch API.  ForgeLM is a local-CLI training tool — an
+  # attacker with that level of access is already inside the trust
+  # boundary.  None of the affected APIs are called with attacker-
+  # controlled arguments anywhere in `forgelm/`.
+
+  - id: PYSEC-2025-191
+    aliases: [CVE-2025-2953]
+    package: torch
+    reason: Local DoS in `torch.mkldnn_max_pool2d`; advisory records vendor doubt about the finding's real existence.
+    threat_model: >-
+      Requires local attacker passing malformed inputs.  ForgeLM
+      does not call `torch.mkldnn_max_pool2d` with attacker-
+      controlled arguments.
+    verified_at: '2026-05-21'
+    reevaluate_after: Each release cycle, or when CVSS re-scores to a remote attack vector.
+
+  - id: PYSEC-2025-192
+    aliases: [CVE-2025-2998]
+    package: torch
+    reason: Local memory corruption in `torch.nn.utils.rnn.pad_packed_sequence`.
+    threat_model: >-
+      Requires local attacker passing malformed inputs.  ForgeLM's
+      sequence handling does not pass attacker-controlled tensors
+      to this API.
+    verified_at: '2026-05-21'
+    reevaluate_after: Each release cycle, or when CVSS re-scores to a remote attack vector.
+
+  - id: PYSEC-2025-193
+    aliases: [CVE-2025-2999]
+    package: torch
+    reason: Local memory corruption in `torch.nn.utils.rnn.unpack_sequence`.
+    threat_model: >-
+      Requires local attacker passing malformed inputs.  ForgeLM's
+      sequence handling does not pass attacker-controlled tensors
+      to this API.
+    verified_at: '2026-05-21'
+    reevaluate_after: Each release cycle, or when CVSS re-scores to a remote attack vector.
+
+  - id: PYSEC-2025-194
+    aliases: [CVE-2025-3000]
+    package: torch
+    reason: Local memory corruption in `torch.jit.script`.
+    threat_model: >-
+      Requires local attacker passing malformed inputs.  ForgeLM
+      does not expose `torch.jit.script` to user inputs.
+    verified_at: '2026-05-21'
+    reevaluate_after: Each release cycle, or when CVSS re-scores to a remote attack vector.
+
+  - id: PYSEC-2025-195
+    aliases: [CVE-2025-3001]
+    package: torch
+    reason: Local memory corruption in `torch.lstm_cell`.
+    threat_model: >-
+      Requires local attacker passing malformed inputs.  The
+      cell-level API is not on ForgeLM's training path.
+    verified_at: '2026-05-21'
+    reevaluate_after: Each release cycle, or when CVSS re-scores to a remote attack vector.
+
+  - id: PYSEC-2025-196
+    aliases: [CVE-2025-3121]
+    package: torch
+    reason: Local memory corruption in `torch.jit.jit_module_from_flatbuffer`.
+    threat_model: >-
+      Requires local attacker passing malformed inputs.  The
+      flatbuffer JIT loader is not used by ForgeLM.
+    verified_at: '2026-05-21'
+    reevaluate_after: Each release cycle, or when CVSS re-scores to a remote attack vector.
+
+  - id: PYSEC-2025-197
+    aliases: [CVE-2025-3136]
+    package: torch
+    reason: Local memory corruption in `torch.cuda.memory.caching_allocator_delete` (`c10/cuda/CUDACachingAllocator.cpp`).
+    threat_model: >-
+      Requires local attacker passing malformed inputs.  User does
+      not control the allocator deletion call from any ForgeLM
+      surface.
+    verified_at: '2026-05-21'
+    reevaluate_after: Each release cycle, or when CVSS re-scores to a remote attack vector.
+
+  - id: PYSEC-2025-210
+    aliases: [CVE-2025-63396]
+    package: torch
+    reason: Local DoS in `torch.profiler.profile` via missing `profiler.stop()` finalisation hang.
+    threat_model: >-
+      Requires local control of the profiler lifecycle.  The
+      profiler is not in ForgeLM's production paths.
+    verified_at: '2026-05-21'
+    reevaluate_after: Each release cycle, or when CVSS re-scores to a remote attack vector.
+
+  - id: PYSEC-2026-139
+    aliases: [CVE-2026-4538]
+    package: torch
+    reason: Local deserialization in pt2 Loading Handler; fix PR pytorch/pytorch#176791 not merged at time of ignore.
+    threat_model: >-
+      Same trust model as `torch.load(pickle)`: operators are
+      documented as required to only load trusted checkpoints.
+      Remote exploitation is out of scope for ForgeLM's local-CLI
+      surface.
+    verified_at: '2026-05-21'
+    reevaluate_after: When pytorch/pytorch#176791 (or equivalent fix) ships in a torch release within our pinned range.
+    references:
+      - https://github.com/pytorch/pytorch/pull/176791
+
+  # ----- markdown (added 2026-05-21, triage in issue #58) -----
+
+  - id: PYSEC-2026-89
+    aliases: [CVE-2025-69534]
+    package: markdown
+    reason: OSV affected-range misclassification — advisory description states "fixed in version 3.8.1" but the OSV range record has no `fixed` event.
+    threat_model: >-
+      Installed markdown 3.10.2 is post-fix.  The vulnerability
+      (DoS via `html.parser.HTMLParser` `AssertionError` on
+      malformed Markdown) is genuinely remote, but our installed
+      version contains the upstream fix.  Verified against
+      `pypa/advisory-database/vulns/markdown/PYSEC-2026-89.yaml`.
+    verified_at: '2026-05-21'
+    reevaluate_after: >-
+      When the OSV record gains a `fixed: 3.8.1` event and pip-audit
+      stops flagging post-fix versions.
+    references:
+      - https://github.com/pypa/advisory-database/blob/main/vulns/markdown/PYSEC-2026-89.yaml

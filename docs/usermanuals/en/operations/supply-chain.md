@@ -60,13 +60,27 @@ python3 tools/check_bandit.py /tmp/bandit.json
 
 ## When a CVE is acknowledged but not yet fixable
 
-If upstream has not yet released the fix and you've documented the CVE in your deployer-side risk acceptance log:
+If upstream has not yet released the fix and you've documented the CVE in your deployer-side risk acceptance log, write a YAML ignore file and pass it to `check_pip_audit.py` via the opt-in `--ignores` flag:
 
-```bash
-pip-audit --ignore-vuln <CVE-ID> --strict --format json --output /tmp/pip-audit.json
+```yaml
+# your_ignores.yaml
+ignores:
+  - id: CVE-2026-XXXX
+    package: some-pkg
+    reason: brief one-line summary
+    threat_model: why your deployment's surface does not expose the affected API
+    verified_at: '2026-05-21'
+    reevaluate_after: each quarter, or when upstream ships the fix
 ```
 
-ForgeLM does **not** ship a project-level ignore list — every suppression is deployer-side and should be quarterly-reviewed.
+```bash
+pip-audit --strict --format json --output /tmp/pip-audit.json
+python3 tools/check_pip_audit.py /tmp/pip-audit.json --ignores your_ignores.yaml
+```
+
+Missing any required field (`id`, `package`, `reason`, `threat_model`, `verified_at`, `reevaluate_after`) fails the gate closed, so undocumented suppressions cannot land silently. Every match is logged as a `::notice::` annotation in the run summary.
+
+ForgeLM does **not** ship a default project-level ignore list. The project's own nightly carries a checked-in `tools/pip_audit_ignores.yaml` (for project-internal triage), but `check_pip_audit.py` reads no ignores at all without `--ignores`, so deployers running the tool standalone inherit nothing. Every deployer-side suppression is documented in your own risk acceptance log and quarterly-reviewed.
 
 ## Where to read more
 
