@@ -60,13 +60,27 @@ python3 tools/check_bandit.py /tmp/bandit.json
 
 ## Bir CVE kabul edildiğinde ama henüz düzeltilemediğinde
 
-Upstream henüz düzeltmeyi yayınlamadıysa ve CVE'yi operatör-tarafı risk acceptance log'unuzda belgelediyseniz:
+Upstream henüz düzeltmeyi yayınlamadıysa ve CVE'yi operatör-tarafı risk acceptance log'unuzda belgelediyseniz, bir YAML ignore dosyası yazıp `check_pip_audit.py`'ye opt-in `--ignores` flag'i üzerinden geçirin:
 
-```bash
-pip-audit --ignore-vuln <CVE-ID> --strict --format json --output /tmp/pip-audit.json
+```yaml
+# your_ignores.yaml
+ignores:
+  - id: CVE-2026-XXXX
+    package: some-pkg
+    reason: tek satırlık kısa özet
+    threat_model: deployment yüzeyinizin etkilenen API'yi neden açığa çıkarmadığı
+    verified_at: '2026-05-21'
+    reevaluate_after: her quarter, ya da upstream fix gönderdiğinde
 ```
 
-ForgeLM proje-seviyesi bir ignore listesi yayınlamaz **— her suppression operatör-tarafı olmalı ve quarterly-review yapılmalıdır**.
+```bash
+pip-audit --strict --format json --output /tmp/pip-audit.json
+python3 tools/check_pip_audit.py /tmp/pip-audit.json --ignores your_ignores.yaml
+```
+
+Zorunlu alanlardan birinin (`id`, `package`, `reason`, `threat_model`, `verified_at`, `reevaluate_after`) eksikliği — ya da bir alanın hatalı değer taşıması (boş string, `YYYY-MM-DD` olmayan `verified_at`, ya da string listesi olmayan `aliases`) — gate'in kapalı fail etmesine yol açar; böylece dokümante edilmemiş bir suppression sessizce inemez. Her eşleşme run summary'de `::notice::` annotation olarak loglanır.
+
+ForgeLM **varsayılan proje-seviyesi bir ignore listesi yayınlamaz**. Projenin kendi nightly'si check-in edilmiş bir `tools/pip_audit_ignores.yaml` taşır (proje-içi triage için), ama `check_pip_audit.py` `--ignores` olmadan hiçbir ignore okumaz; bu yüzden tool'u standalone çalıştıran deployer'lar hiçbir şey miras almaz. Her operatör-tarafı suppression kendi risk acceptance log'unuzda dokümante edilir ve quarterly-review yapılır.
 
 ## Daha fazla okumak için nereye
 

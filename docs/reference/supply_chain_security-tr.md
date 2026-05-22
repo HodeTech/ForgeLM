@@ -109,11 +109,33 @@ python3 tools/check_pip_audit.py /tmp/pip-audit.json
 
 ### Suppression (kasıtlı CVE kabulü)
 
-Bir CVE kabul edildiyse ama henüz düzeltilemiyorsa (upstream release
-beklemede, vb.), operatörün risk acceptance log'unda dokümante edip
-nightly run için bastırmak amacıyla `pip-audit --ignore-vuln <CVE-ID>`
-kullanın. ForgeLM proje-seviyesinde bir ignore listesi göndermez —
-her suppression operatör-tarafında ve quarterly-reviewed olmalıdır.
+ForgeLM varsayılan bir proje-seviyesi ignore listesi göndermez —
+`python3 tools/check_pip_audit.py /tmp/pip-audit.json`'u standalone
+çalıştıran bir deployer hiçbir suppression miras almaz ve tam
+filtresiz gate'i görür. Deployer-tarafı kabulleri kendi risk
+acceptance log'unuzda dokümante edin ve opt-in flag ile geçin:
+
+```bash
+python3 tools/check_pip_audit.py /tmp/pip-audit.json \
+    --ignores path/to/your_ignores.yaml
+```
+
+YAML dosyasındaki her giriş `id`, `package`, `reason`, `threat_model`,
+`verified_at`, ve `reevaluate_after` taşımalıdır (opsiyonel: `aliases`,
+`references`); herhangi bir zorunlu alanın eksikliği — ya da bir alanın
+hatalı değer taşıması (boş string, `YYYY-MM-DD` olmayan bir
+`verified_at`, ya da string listesi olmayan `aliases`) — gate'in
+kapalı fail etmesine yol açar; böylece dokümante edilmemiş bir
+suppression sessizce inemez. Her eşleşme run summary'de `::notice::`
+annotation olarak loglanır; audit trail görünür kalır.
+
+ForgeLM'in kendi nightly'si proje-içi triage için check-in edilmiş
+bir [`tools/pip_audit_ignores.yaml`](../../tools/pip_audit_ignores.yaml)
+taşır (şu an transformers `CVE-2026-1839` artı 2026-05-21 döngüsünden
+gelen dokuz no-fix torch advisory'si ve bir OSV-yanlış-sınıflandırılmış
+markdown kaydı). Bu dosya yalnız projenin kendi workflow'u tarafından
+`--ignores` ile tüketilir; deployer'lar miras almaz. Her release
+cycle'da gözden geçirilir.
 
 ## bandit (static security analysis)
 
