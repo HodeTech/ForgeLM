@@ -363,6 +363,174 @@ def test_default_no_ignores_is_unfiltered_for_deployers(tool, tmp_path, capsys):
     assert "CVE-2026-9999" in captured.out
 
 
+def test_ignores_aliases_as_bare_string_fails(tool, tmp_path, capsys):
+    """`aliases: CVE-…` (a string, not a list) must fail closed.
+
+    Without the list-of-strings check, `{primary, *"CVE-2025-2953"}`
+    would unpack the string character-by-character into the id index,
+    polluting it with single-char "ids" and silently breaking matching.
+    """
+    audit = _write_audit(tmp_path, {"dependencies": []})
+    body = (
+        "ignores:\n"
+        "  - id: PYSEC-2025-191\n"
+        "    aliases: CVE-2025-2953\n"  # <-- bare string, should be a list
+        "    package: torch\n"
+        "    reason: synthetic\n"
+        "    threat_model: synthetic\n"
+        "    verified_at: '2026-05-21'\n"
+        "    reevaluate_after: never (test fixture)\n"
+    )
+    ignores = _write_ignores(tmp_path, body)
+    assert tool.main([str(_TOOL_PATH), str(audit), "--ignores", str(ignores)]) == 1
+    captured = capsys.readouterr()
+    assert "'aliases' must be a list of strings" in captured.err
+
+
+def test_ignores_aliases_with_non_string_element_fails(tool, tmp_path, capsys):
+    audit = _write_audit(tmp_path, {"dependencies": []})
+    body = (
+        "ignores:\n"
+        "  - id: PYSEC-2025-191\n"
+        "    aliases: [CVE-2025-2953, 12345]\n"  # <-- 12345 is an int
+        "    package: torch\n"
+        "    reason: synthetic\n"
+        "    threat_model: synthetic\n"
+        "    verified_at: '2026-05-21'\n"
+        "    reevaluate_after: never (test fixture)\n"
+    )
+    ignores = _write_ignores(tmp_path, body)
+    assert tool.main([str(_TOOL_PATH), str(audit), "--ignores", str(ignores)]) == 1
+    captured = capsys.readouterr()
+    assert "'aliases' must be a list of strings" in captured.err
+
+
+def test_ignores_null_aliases_is_accepted(tool, tmp_path, capsys):
+    """An explicit empty `aliases:` (YAML null) is treated as absent.
+
+    The primary id alone must still index and match.
+    """
+    audit = _write_audit(
+        tmp_path,
+        {
+            "dependencies": [
+                {
+                    "name": "synthetic-pkg",
+                    "version": "1.0.0",
+                    "vulns": [{"id": "CVE-2026-9999", "severity": "HIGH"}],
+                }
+            ]
+        },
+    )
+    body = (
+        "ignores:\n"
+        "  - id: CVE-2026-9999\n"
+        "    aliases:\n"  # <-- null
+        "    package: synthetic-pkg\n"
+        "    reason: synthetic\n"
+        "    threat_model: synthetic\n"
+        "    verified_at: '2026-05-21'\n"
+        "    reevaluate_after: never (test fixture)\n"
+    )
+    ignores = _write_ignores(tmp_path, body)
+    assert tool.main([str(_TOOL_PATH), str(audit), "--ignores", str(ignores)]) == 0
+    captured = capsys.readouterr()
+    assert "::notice::pip-audit suppressed" in captured.out
+
+
+def test_ignores_empty_required_string_fails(tool, tmp_path, capsys):
+    """An empty `reason:` is an undocumented suppression — must fail.
+
+    Presence alone is not enough; the policy requires a real
+    justification, so a blank value is a policy violation.
+    """
+    audit = _write_audit(tmp_path, {"dependencies": []})
+    body = (
+        "ignores:\n"
+        "  - id: CVE-2026-0001\n"
+        "    package: synthetic-pkg\n"
+        "    reason: ''\n"  # <-- empty
+        "    threat_model: synthetic\n"
+        "    verified_at: '2026-05-21'\n"
+        "    reevaluate_after: never (test fixture)\n"
+    )
+    ignores = _write_ignores(tmp_path, body)
+    assert tool.main([str(_TOOL_PATH), str(audit), "--ignores", str(ignores)]) == 1
+    captured = capsys.readouterr()
+    assert "field 'reason' must be a non-empty string" in captured.err
+
+
+def test_ignores_malformed_verified_at_fails(tool, tmp_path, capsys):
+    """`verified_at` must be a YYYY-MM-DD string.
+
+    Catches both a free-text date ("last week") and an unquoted YAML
+    date that parses to a `datetime.date` (not a string).
+    """
+    audit = _write_audit(tmp_path, {"dependencies": []})
+    body = (
+        "ignores:\n"
+        "  - id: CVE-2026-0001\n"
+        "    package: synthetic-pkg\n"
+        "    reason: synthetic\n"
+        "    threat_model: synthetic\n"
+        "    verified_at: last week\n"  # <-- not a date
+        "    reevaluate_after: never (test fixture)\n"
+    )
+    ignores = _write_ignores(tmp_path, body)
+    assert tool.main([str(_TOOL_PATH), str(audit), "--ignores", str(ignores)]) == 1
+    captured = capsys.readouterr()
+    assert "'verified_at' must be a 'YYYY-MM-DD' string" in captured.err
+
+
+def test_ignores_unquoted_yaml_date_fails(tool, tmp_path, capsys):
+    """An unquoted `verified_at: 2026-05-21` parses to a datetime.date,
+    not a string, and must be rejected so the schema stays uniform."""
+    audit = _write_audit(tmp_path, {"dependencies": []})
+    body = (
+        "ignores:\n"
+        "  - id: CVE-2026-0001\n"
+        "    package: synthetic-pkg\n"
+        "    reason: synthetic\n"
+        "    threat_model: synthetic\n"
+        "    verified_at: 2026-05-21\n"  # <-- unquoted -> datetime.date
+        "    reevaluate_after: never (test fixture)\n"
+    )
+    ignores = _write_ignores(tmp_path, body)
+    assert tool.main([str(_TOOL_PATH), str(audit), "--ignores", str(ignores)]) == 1
+    captured = capsys.readouterr()
+    assert "'verified_at' must be a 'YYYY-MM-DD' string" in captured.err
+
+
+def test_ignores_freetext_reevaluate_after_is_accepted(tool, tmp_path, capsys):
+    """`reevaluate_after` is free text (a condition), NOT a date — a
+    sentence value must be accepted, unlike `verified_at`."""
+    audit = _write_audit(
+        tmp_path,
+        {
+            "dependencies": [
+                {
+                    "name": "synthetic-pkg",
+                    "version": "1.0.0",
+                    "vulns": [{"id": "CVE-2026-9999", "severity": "HIGH"}],
+                }
+            ]
+        },
+    )
+    body = (
+        "ignores:\n"
+        "  - id: CVE-2026-9999\n"
+        "    package: synthetic-pkg\n"
+        "    reason: synthetic\n"
+        "    threat_model: synthetic\n"
+        "    verified_at: '2026-05-21'\n"
+        "    reevaluate_after: Each release cycle, or when upstream ships the fix.\n"
+    )
+    ignores = _write_ignores(tmp_path, body)
+    assert tool.main([str(_TOOL_PATH), str(audit), "--ignores", str(ignores)]) == 0
+    captured = capsys.readouterr()
+    assert "::notice::pip-audit suppressed" in captured.out
+
+
 def test_project_ignore_file_passes_schema_validation(tool):
     """The checked-in tools/pip_audit_ignores.yaml itself must satisfy
     the schema so the workflow never breaks on its own ignore file.

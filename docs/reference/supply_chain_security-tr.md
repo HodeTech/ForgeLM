@@ -122,10 +122,12 @@ python3 tools/check_pip_audit.py /tmp/pip-audit.json \
 
 YAML dosyasındaki her giriş `id`, `package`, `reason`, `threat_model`,
 `verified_at`, ve `reevaluate_after` taşımalıdır (opsiyonel: `aliases`,
-`references`); herhangi bir zorunlu alanın eksikliği gate'i kapalı
-fail ettirir, böylece dokümante edilmemiş bir suppression sessizce
-inemez. Her eşleşme run summary'de `::notice::` annotation olarak
-loglanır; audit trail görünür kalır.
+`references`); herhangi bir zorunlu alanın eksikliği — ya da bir alanın
+hatalı değer taşıması (boş string, `YYYY-MM-DD` olmayan bir
+`verified_at`, ya da string listesi olmayan `aliases`) — gate'in
+kapalı fail etmesine yol açar; böylece dokümante edilmemiş bir
+suppression sessizce inemez. Her eşleşme run summary'de `::notice::`
+annotation olarak loglanır; audit trail görünür kalır.
 
 ForgeLM'in kendi nightly'si proje-içi triage için check-in edilmiş
 bir [`tools/pip_audit_ignores.yaml`](../../tools/pip_audit_ignores.yaml)

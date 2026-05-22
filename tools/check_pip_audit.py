@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -151,9 +152,53 @@ def _load_report(report_path: Path) -> Optional[dict[str, Any]]:
 # Required keys per entry in the ignore file.  Missing any of them is a
 # policy violation (an undocumented suppression), so the gate fails closed
 # rather than silently accepting CVEs with no recorded justification.
-_IGNORE_REQUIRED_KEYS: frozenset[str] = frozenset(
-    {"id", "package", "reason", "threat_model", "verified_at", "reevaluate_after"}
+#
+# All required fields must be non-empty strings EXCEPT ``verified_at``,
+# which must additionally be an ISO ``YYYY-MM-DD`` date.  ``reevaluate_after``
+# is deliberately free text (e.g. "Each release cycle, or when …"), NOT a
+# date — it captures the condition that retires the ignore, which is
+# rarely a fixed calendar day.
+_IGNORE_REQUIRED_STR_KEYS: tuple[str, ...] = (
+    "id",
+    "package",
+    "reason",
+    "threat_model",
+    "reevaluate_after",
 )
+_IGNORE_REQUIRED_KEYS: frozenset[str] = frozenset({*_IGNORE_REQUIRED_STR_KEYS, "verified_at"})
+_VERIFIED_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _validate_ignore_entry(entry: dict[str, Any], index: int, ignores_path: Path) -> Optional[str]:
+    """Return an ``::error::`` body if ``entry`` is malformed, else ``None``.
+
+    Caller guarantees every required key is present (so the missing-key
+    error can name all gaps at once); this validates value *shape* so a
+    well-meaning typo cannot weaken the gate:
+
+    - required string fields must be non-empty (an empty ``reason`` or
+      ``threat_model`` is an undocumented suppression);
+    - ``verified_at`` must be a ``YYYY-MM-DD`` string (quote it in YAML
+      so it is not parsed as a ``datetime.date``);
+    - ``aliases``, when present, must be a list of strings — a bare
+      string would be unpacked character-by-character into the id index
+      and pollute matching.
+    """
+    prefix = f"pip-audit ignore entry #{index} (id={entry.get('id')!r}) in {ignores_path}"
+    for field in _IGNORE_REQUIRED_STR_KEYS:
+        value = entry[field]
+        if not isinstance(value, str) or not value.strip():
+            return f"{prefix} field '{field}' must be a non-empty string."
+    verified_at = entry["verified_at"]
+    if not isinstance(verified_at, str) or not _VERIFIED_AT_RE.match(verified_at.strip()):
+        return (
+            f"{prefix} field 'verified_at' must be a 'YYYY-MM-DD' string "
+            f"(quote it in YAML so it is not parsed as a date)."
+        )
+    aliases = entry.get("aliases")
+    if aliases is not None and (not isinstance(aliases, list) or not all(isinstance(a, str) for a in aliases)):
+        return f"{prefix} field 'aliases' must be a list of strings."
+    return None
 
 
 def _load_ignores(ignores_path: Path) -> Optional[dict[str, dict[str, Any]]]:
@@ -223,17 +268,17 @@ def _load_ignores(ignores_path: Path) -> Optional[dict[str, dict[str, Any]]]:
                 file=sys.stderr,
             )
             return None
-        primary_id = entry["id"]
-        if not isinstance(primary_id, str):
-            print(
-                f"::error::pip-audit ignore entry #{index} in {ignores_path} 'id' must be a string.",
-                file=sys.stderr,
-            )
+        shape_error = _validate_ignore_entry(entry, index, ignores_path)
+        if shape_error:
+            print(f"::error::{shape_error}", file=sys.stderr)
             return None
+        primary_id = entry["id"]
         # Index by every alias so cross-DB lookups (PYSEC ↔ CVE ↔ GHSA)
         # match without the workflow having to know which form pip-audit
-        # emits this week.  Last write wins on duplicates, but we surface
-        # the dup so the file stays clean.
+        # emits this week.  ``aliases`` is validated as a list of strings
+        # above; ``or []`` also tolerates an explicit ``aliases:`` null.
+        # Last write wins on duplicates, but we surface the dup so the
+        # file stays clean.
         ids = {primary_id, *(entry.get("aliases") or [])}
         for ident in ids:
             if ident in by_id and by_id[ident] is not entry:
@@ -274,9 +319,12 @@ def _bucket_findings(
     medium: list[str] = []
     unknown: list[str] = []
     suppressed: list[str] = []
+    # Materialise the ignore id set once rather than rebuilding the keys
+    # view on every finding.
+    ignore_ids: set[str] = set(ignores) if ignores else set()
     for name, vuln in _iter_findings(report):
-        if ignores:
-            matched = _vuln_identifiers(vuln) & ignores.keys()
+        if ignore_ids:
+            matched = _vuln_identifiers(vuln) & ignore_ids
             if matched:
                 # Pick the entry by any matching id — they all point at
                 # the same dict thanks to alias indexing.

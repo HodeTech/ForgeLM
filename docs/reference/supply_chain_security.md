@@ -122,10 +122,12 @@ python3 tools/check_pip_audit.py /tmp/pip-audit.json \
 
 Each entry in the YAML file must carry `id`, `package`, `reason`,
 `threat_model`, `verified_at`, and `reevaluate_after` (optional:
-`aliases`, `references`); missing any required field fails the gate
-closed, so an undocumented suppression cannot land silently. Every
-match is logged as a `::notice::` annotation in the run summary so
-the audit trail stays visible.
+`aliases`, `references`); missing any required field — or giving one
+a malformed value (an empty string, a `verified_at` that is not a
+`YYYY-MM-DD` date, or `aliases` that is not a list of strings) —
+causes the gate to fail closed, so an undocumented suppression cannot
+land silently. Every match is logged as a `::notice::` annotation in
+the run summary so the audit trail stays visible.
 
 ForgeLM's own nightly does carry a checked-in
 [`tools/pip_audit_ignores.yaml`](../../tools/pip_audit_ignores.yaml) for

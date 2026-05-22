@@ -78,7 +78,7 @@ pip-audit --strict --format json --output /tmp/pip-audit.json
 python3 tools/check_pip_audit.py /tmp/pip-audit.json --ignores your_ignores.yaml
 ```
 
-Missing any required field (`id`, `package`, `reason`, `threat_model`, `verified_at`, `reevaluate_after`) fails the gate closed, so undocumented suppressions cannot land silently. Every match is logged as a `::notice::` annotation in the run summary.
+Missing any required field (`id`, `package`, `reason`, `threat_model`, `verified_at`, `reevaluate_after`) — or giving one a malformed value (empty string, a non-`YYYY-MM-DD` `verified_at`, or an `aliases` that is not a list of strings) — causes the gate to fail closed, so undocumented suppressions cannot land silently. Every match is logged as a `::notice::` annotation in the run summary.
 
 ForgeLM does **not** ship a default project-level ignore list. The project's own nightly carries a checked-in `tools/pip_audit_ignores.yaml` (for project-internal triage), but `check_pip_audit.py` reads no ignores at all without `--ignores`, so deployers running the tool standalone inherit nothing. Every deployer-side suppression is documented in your own risk acceptance log and quarterly-reviewed.
 
