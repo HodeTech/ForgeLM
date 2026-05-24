@@ -169,7 +169,7 @@ merge_adapters(
 :::
 
 :::tip
-For exploratory merging, generate a small grid of `(algorithm, parameters)` combinations and evaluate each. A `forgelm merge-sweep` helper that automates this remains **planned post-Phase 14** — Phase 14 itself shipped multi-stage SFT/DPO/GRPO pipeline chaining in `v0.7.0` (see the [Phase 14 completed-phases entry on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap/completed-phases.md#phase-14-multi-stage-pipeline-chains-v070)) but did not include a merge-sweep CLI; that helper waits for explicit operator demand. Until then, write a small shell loop that calls `forgelm` once per `(algorithm, parameters)` pair.
+For exploratory merging, generate a small grid of `(algorithm, parameters)` combinations and evaluate each. A `forgelm merge-sweep` helper that automates this remains **planned post-Phase 14** — Phase 14 itself shipped multi-stage SFT/DPO/GRPO pipeline chaining in `v0.7.0` (see the [Phase 14 completed-phases entry on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap/completed-phases.md#phase-14-multi-stage-pipeline-chains-v070)) but did not include a merge-sweep CLI; that helper waits for explicit operator demand. Until then, write a small shell loop that calls `forgelm` once per `(algorithm, parameters)` pair.
 :::
 
 ## See also

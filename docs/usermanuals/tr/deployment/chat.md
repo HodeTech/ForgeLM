@@ -63,7 +63,7 @@ $ forgelm chat "Qwen/Qwen2.5-7B" --adapter ./checkpoints/run/
 
 ## Güvenlik routing'i
 
-> Not: `forgelm chat` üzerinde yerleşik `--safety` bayrağı v0.6.0+ Pro CLI için planlanmıştır ([GitHub'daki Phase 13 yol haritası](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap.md)). Bugün her-tur tarama davranışı yalnızca **YAML pipeline** (`safety:` bloğu) üzerinden yayınlanmıştır — chat REPL'i bu config'i okur ve her prompt + yanıtı Llama Guard'a yönlendirir. Aşağıdaki bayraklı çağrı planlanan UX'in önizlemesi olup BUGÜN runnable DEĞİLDİR.
+> Not: `forgelm chat` üzerinde yerleşik `--safety` bayrağı v0.6.0+ Pro CLI için planlanmıştır ([GitHub'daki Phase 13 yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)). Bugün her-tur tarama davranışı yalnızca **YAML pipeline** (`safety:` bloğu) üzerinden yayınlanmıştır — chat REPL'i bu config'i okur ve her prompt + yanıtı Llama Guard'a yönlendirir. Aşağıdaki bayraklı çağrı planlanan UX'in önizlemesi olup BUGÜN runnable DEĞİLDİR.
 
 `safety: enabled: true` config'iyle her prompt ve yanıt Llama Guard tarafından taranır:
 
@@ -108,7 +108,7 @@ Oturumlar şu durumlar için faydalı:
 
 ## İki modeli karşılaştırma
 
-> Not: `chat-compare` subcommand'ı v0.6.0+ Pro CLI için planlanmıştır ([GitHub'daki Phase 13 yol haritası](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap.md)). Bugün aynı karşılaştırma her checkpoint'e karşı `forgelm --benchmark-only` ve aşağı akış judge config'i ile koşturulur; aşağıdaki snippet planlanan özel UX'i önizler.
+> Not: `chat-compare` subcommand'ı v0.6.0+ Pro CLI için planlanmıştır ([GitHub'daki Phase 13 yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)). Bugün aynı karşılaştırma her checkpoint'e karşı `forgelm --benchmark-only` ve aşağı akış judge config'i ile koşturulur; aşağıdaki snippet planlanan özel UX'i önizler.
 
 ```shell
 $ forgelm chat-compare ./checkpoints/v1 ./checkpoints/v2 --prompts data/probes.jsonl

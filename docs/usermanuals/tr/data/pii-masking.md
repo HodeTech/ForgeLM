@@ -62,7 +62,7 @@ PII regex'leri bilinçli olarak **düşük false-positive oran** için ayarlanı
 
 1. False positive sessizce verinizi bozar — gerçek kelimeleri `[EMAIL_REDACTED]` ile değiştirmek örnekleri mahveder.
 2. Audit aşaması maskelemenin kaçırdığını yakalar; satır başına düzeltme veya düşürme kararı sizde.
-3. Agresif regex'ler gerçek-dünya ML pipeline kesintilerine yol açtı (Phase 11.5 olayı [GitHub'daki katkıda bulunan regex standardında](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/regex.md) belgelenmiştir).
+3. Agresif regex'ler gerçek-dünya ML pipeline kesintilerine yol açtı (Phase 11.5 olayı [GitHub'daki katkıda bulunan regex standardında](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/regex.md) belgelenmiştir).
 
 Daha katı tespit gerekirse — örneğin yüksek-stake bir hukuk corpus'u — maskeleyiciyi manuel inceleme adımıyla birleştirin. Regex'leri zorlamayın.
 

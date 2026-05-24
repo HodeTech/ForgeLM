@@ -5,7 +5,7 @@ description: Her forgelm subcommand için kilitli --output-format json envelope 
 
 # JSON çıktı şemaları
 
-`--output-format json` destekleyen her `forgelm` subcommand'ı stdout'a stabil bir JSON envelope üretir. Alan adları ve nesting [GitHub'daki release standardı](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/release.md) gereği public CLI kontratının parçası: bir anahtarı yeniden adlandırmak MAJOR-version break sayılır.
+`--output-format json` destekleyen her `forgelm` subcommand'ı stdout'a stabil bir JSON envelope üretir. Alan adları ve nesting [GitHub'daki release standardı](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/release.md) gereği public CLI kontratının parçası: bir anahtarı yeniden adlandırmak MAJOR-version break sayılır.
 
 Bu sayfa kanonik referanstır. `forgelm` çıktısını parse eden CI/CD pipeline'ları burada belgelenen yapılara karşı pin'lemelidir.
 
@@ -13,7 +13,7 @@ Bu sayfa kanonik referanstır. `forgelm` çıktısını parse eden CI/CD pipelin
 
 - **stdout vs stderr.** JSON envelope **stdout**'a gider. İnsana okunabilir loglar (info / warning / error) **stderr**'e gider. `forgelm ... --output-format json | jq .` ile pipe edip operatör mesajlarını `2>` ile ayrı okuyun.
 - **Üst seviye sarmalayıcı.** Her envelope `"success": true | false` ile başlar. Tüketiciler önce bu tek anahtarda branch açabilir.
-- **Hata envelope'u.** `success: false` olduğunda envelope `"error": "<mesaj>"` (string) taşır. Opsiyonel zenginleştirilmiş alanlar (`exit_code`, `error_type`, `details`) [GitHub'daki error-handling standardı](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/error-handling.md) gereği var olabilir. Bu alanlardan kesinlik isteyen tüketiciler `$?` ile süreç exit kodunu da kontrol etmelidir.
+- **Hata envelope'u.** `success: false` olduğunda envelope `"error": "<mesaj>"` (string) taşır. Opsiyonel zenginleştirilmiş alanlar (`exit_code`, `error_type`, `details`) [GitHub'daki error-handling standardı](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/error-handling.md) gereği var olabilir. Bu alanlardan kesinlik isteyen tüketiciler `$?` ile süreç exit kodunu da kontrol etmelidir.
 - **Exit kodları.** Bkz. [Exit Kodları](#/reference/exit-codes). Envelope, exit code ile tutarlıdır: `success: true` ⟺ exit `0`; `success: false` ⟺ non-zero exit.
 
 ## `forgelm doctor`
@@ -528,10 +528,10 @@ Wave 2b Phase 36 — GGUF model dosyası bütünlük kontrolü.
 2. Üst seviye anahtarların tam setini pin'leyen `tests/test_json_envelope_contract.py` (veya per-subcommand test dosyası) testi.
 3. Per-collection anahtar "sonuçlar subcommand'in birincil ismine göre adlandırılmış bir anahtar altında yaşar" konvansiyonunu izler (yani `doctor` → `checks`, `approvals --pending` → `pending` vb.).
 
-Merge sonrası bir anahtarı yeniden adlandırmak [GitHub'daki release standardı](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/release.md) gereği MAJOR-version bump'tır.
+Merge sonrası bir anahtarı yeniden adlandırmak [GitHub'daki release standardı](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/release.md) gereği MAJOR-version bump'tır.
 
 ## Ayrıca bakın
 
 - [Exit Kodları](#/reference/exit-codes) — `success: bool`'ın aligned olduğu kontrat.
-- [`error-handling.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/error-handling.md) — hata envelope kontratı (GitHub kaynağı).
-- [`release.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/release.md) — JSON yeniden adlandırmaları ne zaman breaking sayılır (GitHub kaynağı).
+- [`error-handling.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/error-handling.md) — hata envelope kontratı (GitHub kaynağı).
+- [`release.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/release.md) — JSON yeniden adlandırmaları ne zaman breaking sayılır (GitHub kaynağı).

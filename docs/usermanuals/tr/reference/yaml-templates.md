@@ -173,7 +173,7 @@ opt-in olarak kullanın.
 
 ## Field referansı
 
-Kanonik şema [`forgelm/config.py`](https://github.com/cemililik/ForgeLM/blob/main/forgelm/config.py)
+Kanonik şema [`forgelm/config.py`](https://github.com/HodeTech/ForgeLM/blob/main/forgelm/config.py)
 altında, Pydantic modelleri `ForgeConfig`, `ModelConfig`, `LoraConfig`,
 `TrainingConfig`, `DataConfig`, `EvaluationConfig`, `BenchmarkConfig`,
 `SafetyConfig`, `JudgeConfig`, `ComplianceMetadataConfig`,

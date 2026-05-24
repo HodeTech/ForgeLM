@@ -15,7 +15,7 @@ the whole chain — including auto-chained inputs, per-stage gates,
 crash-safe resume, and 7 new pipeline-scoped audit events that join on a
 single top-level `run_id`.  The release also lands a critical SSRF
 hardening for outbound webhook / judge / synthetic destinations
-(issue [#14](https://github.com/cemililik/ForgeLM/issues/14)).
+(issue [#14](https://github.com/HodeTech/ForgeLM/issues/14)).
 Single-stage configs reach `forgelm/trainer.py` byte-identical to
 v0.6.0; the orchestrator module is never imported when no `pipeline:`
 block is present.
@@ -486,7 +486,7 @@ pytest-randomly adoption) is under **Internal**.
 workflow ([`.github/workflows/publish.yml`](.github/workflows/publish.yml))
 which gates PyPI publish on 12 wheel-install matrix combos
 (3 OS × 4 Python). GitHub Release:
-[v0.5.6](https://github.com/cemililik/ForgeLM/releases/tag/v0.5.6).
+[v0.5.6](https://github.com/HodeTech/ForgeLM/releases/tag/v0.5.6).
 
 Patch release. Reverts the v0.5.5 `torch>=2.3.0` minimum back to
 `torch>=2.2.0` to restore Intel Mac (x86_64) installability. The
@@ -1091,7 +1091,7 @@ collectors / BYOD / IO concerns.
 ### Fixed
 
 - **Nightly pip-audit gate — `transformers` CVE-2026-1839**
-  (issue [#37](https://github.com/cemililik/ForgeLM/issues/37)). The
+  (issue [#37](https://github.com/HodeTech/ForgeLM/issues/37)). The
   Supply-chain security workflow flagged the CVE whose published fix
   lives in `transformers 5.0.0rc3` (release candidate). ForgeLM's
   `pyproject.toml` pins `transformers>=4.38.0,<5.0.0`; the 5.x branch
@@ -1405,7 +1405,7 @@ Same review surface as rounds 4-7; further hardening on top of the
   URL cannot be redirected to a private destination) and the
   `mask_secrets` `ImportError` fallback emits `[REDACTED — secrets
   masker unavailable]` instead of the raw 512-char reason prefix.
-  See [#14](https://github.com/cemililik/ForgeLM/issues/14) for the
+  See [#14](https://github.com/HodeTech/ForgeLM/issues/14) for the
   remaining DNS-rebinding TOCTOU follow-up tracked for `v0.5.3`.
 - **Trainer governance failure visibility** (`forgelm/trainer.py`) — the
   `data_governance_report.json` export try/except now catches the full
@@ -2073,9 +2073,9 @@ Major release: ForgeLM goes from a basic SFT fine-tuning tool to a full-stack LL
 - Basic evaluation checks (max loss, baseline comparison)
 - Auto-revert on quality degradation
 
-[Unreleased]: https://github.com/cemililik/ForgeLM/compare/v0.7.0...HEAD
-[0.7.0]: https://github.com/cemililik/ForgeLM/compare/v0.6.0...v0.7.0
-[0.6.0]: https://github.com/cemililik/ForgeLM/compare/v0.5.7...v0.6.0
-[0.5.7]: https://github.com/cemililik/ForgeLM/compare/v0.5.6...v0.5.7
-[0.5.6]: https://github.com/cemililik/ForgeLM/compare/v0.5.5...v0.5.6
-[0.5.5]: https://github.com/cemililik/ForgeLM/compare/v0.5.0...v0.5.5
+[Unreleased]: https://github.com/HodeTech/ForgeLM/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/HodeTech/ForgeLM/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/HodeTech/ForgeLM/compare/v0.5.7...v0.6.0
+[0.5.7]: https://github.com/HodeTech/ForgeLM/compare/v0.5.6...v0.5.7
+[0.5.6]: https://github.com/HodeTech/ForgeLM/compare/v0.5.5...v0.5.6
+[0.5.5]: https://github.com/HodeTech/ForgeLM/compare/v0.5.0...v0.5.5

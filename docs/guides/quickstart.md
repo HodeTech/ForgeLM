@@ -12,7 +12,7 @@ Get your first fine-tuned model in 5 minutes.
 ## 1. Install
 
 ```bash
-git clone https://github.com/cemililik/ForgeLM.git
+git clone https://github.com/HodeTech/ForgeLM.git
 cd ForgeLM
 pip install -e .
 
@@ -59,7 +59,7 @@ ForgeLM auto-downsizes the model on small GPUs. Each template has its own fallba
 
 Override with `--model your-org/your-model` or `--dataset path/to/your.jsonl`.
 
-See [LICENSES.md](https://github.com/cemililik/ForgeLM/blob/main/forgelm/templates/LICENSES.md) for the licenses of bundled seed datasets (CC-BY-SA 4.0, author-original).
+See [LICENSES.md](https://github.com/HodeTech/ForgeLM/blob/main/forgelm/templates/LICENSES.md) for the licenses of bundled seed datasets (CC-BY-SA 4.0, author-original).
 
 ### Option A: Interactive Wizard
 
@@ -290,7 +290,7 @@ synthetic:
   output_format: "messages"
 ```
 
-The number of synthetic rows is controlled by the seed-file size (one teacher call per seed); see the `SyntheticConfig` Pydantic model in `forgelm/config.py` for the full field set ([repo search](https://github.com/cemililik/ForgeLM/search?q=class+SyntheticConfig)).
+The number of synthetic rows is controlled by the seed-file size (one teacher call per seed); see the `SyntheticConfig` Pydantic model in `forgelm/config.py` for the full field set ([repo search](https://github.com/HodeTech/ForgeLM/search?q=class+SyntheticConfig)).
 
 ---
 

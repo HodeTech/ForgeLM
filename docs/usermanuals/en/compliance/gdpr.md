@@ -108,7 +108,7 @@ For high-risk processing, GDPR Art. 35 requires a DPIA. ForgeLM doesn't write yo
 - Mitigations applied → from `compliance.risk_assessment.mitigations`.
 - Residual risks → from `compliance.risk_assessment.residual_risks`.
 
-For DPIA work, pair the inputs above with the QMS [risk-treatment plan](https://github.com/cemililik/ForgeLM/blob/main/docs/qms/risk_treatment_plan.md) and the [Statement of Applicability](https://github.com/cemililik/ForgeLM/blob/main/docs/qms/statement_of_applicability.md) (GitHub QMS templates shipped with the toolkit). A dedicated DPIA template is on the roadmap; the risk-treatment plan covers the same ground for now.
+For DPIA work, pair the inputs above with the QMS [risk-treatment plan](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/risk_treatment_plan.md) and the [Statement of Applicability](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/statement_of_applicability.md) (GitHub QMS templates shipped with the toolkit). A dedicated DPIA template is on the roadmap; the risk-treatment plan covers the same ground for now.
 
 ## Configuration reference
 

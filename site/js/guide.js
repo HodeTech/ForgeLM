@@ -21,7 +21,7 @@
   'use strict';
 
   var GUIDE_BASE = 'guide.html';
-  var GH_EDIT_BASE = 'https://github.com/cemililik/ForgeLM/edit/main/docs/usermanuals';
+  var GH_EDIT_BASE = 'https://github.com/HodeTech/ForgeLM/edit/main/docs/usermanuals';
   var DEFAULT_ROUTE = 'getting-started/introduction';
 
   var state = {

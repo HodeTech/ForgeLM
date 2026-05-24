@@ -43,11 +43,11 @@ assert "torch" not in sys.modules     # pinned by tests/test_library_api.py
 ## Where to read more
 
 - The complete reference, with every signature and worked examples, ships with the toolkit on GitHub:
-  [`library_api_reference.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/library_api_reference.md).
+  [`library_api_reference.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/library_api_reference.md).
 - The deep guide, with three end-to-end pipeline patterns and common pitfalls:
-  [`library_api.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/guides/library_api.md) on GitHub.
+  [`library_api.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/library_api.md) on GitHub.
 - The Phase 18 design rationale (stability tiers, type contract, deprecation cadence):
-  [`library_api.md` design note](https://github.com/cemililik/ForgeLM/blob/main/docs/design/library_api.md) on GitHub.
+  [`library_api.md` design note](https://github.com/HodeTech/ForgeLM/blob/main/docs/design/library_api.md) on GitHub.
 
 ## See also
 

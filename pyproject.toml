@@ -170,11 +170,11 @@ security = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/cemililik/ForgeLM"
-Documentation = "https://github.com/cemililik/ForgeLM/tree/main/docs/guides"
-Repository = "https://github.com/cemililik/ForgeLM"
-Issues = "https://github.com/cemililik/ForgeLM/issues"
-Changelog = "https://github.com/cemililik/ForgeLM/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/HodeTech/ForgeLM"
+Documentation = "https://github.com/HodeTech/ForgeLM/tree/main/docs/guides"
+Repository = "https://github.com/HodeTech/ForgeLM"
+Issues = "https://github.com/HodeTech/ForgeLM/issues"
+Changelog = "https://github.com/HodeTech/ForgeLM/blob/main/CHANGELOG.md"
 
 [project.scripts]
 forgelm = "forgelm.cli:main"

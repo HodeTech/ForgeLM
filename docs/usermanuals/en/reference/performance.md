@@ -36,10 +36,10 @@ Three orthogonal tools to fit a model that otherwise wouldn't. They're for **fit
 ## Where to read more
 
 - The deep guide with VRAM-vs-throughput tables, when to use each strategy, and common pitfalls:
-  [`performance.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/guides/performance.md) on GitHub.
+  [`performance.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/performance.md) on GitHub.
 - The full configuration reference (every knob, every default) — also available in this manual under [Configuration](#/reference/configuration).
 - The lazy-import contributor standard the project enforces:
-  [`coding.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/coding.md) on GitHub.
+  [`coding.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/coding.md) on GitHub.
 
 ## See also
 

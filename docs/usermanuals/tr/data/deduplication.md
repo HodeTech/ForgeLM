@@ -78,7 +78,7 @@ MinHash büyük hız için küçük doğruluk ödünleşir — milyon-satır dat
 | `--dedup-method minhash` | Varsayılan simhash detector'dan MinHash LSH'e geçin. `forgelm[ingestion-scale]` ekstrasını gerektirir (datasketch). |
 | `--jaccard-threshold` | Jaccard benzerlik eşiği (varsayılan 0.85). Simhash altında yok sayılır. |
 
-Permutasyon sayısı ve LSH banding bugün kullanıcı tarafından ayarlanabilir değil — 50K-1M satır aralığında temiz benchmark veren kütüphane varsayılanlarına sabit. Bunları açan planlanan `forgelm[ingestion-scale]` knob'ları için [GitHub'daki Phase 13 yol haritası](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap.md)'na bakın.
+Permutasyon sayısı ve LSH banding bugün kullanıcı tarafından ayarlanabilir değil — 50K-1M satır aralığında temiz benchmark veren kütüphane varsayılanlarına sabit. Bunları açan planlanan `forgelm[ingestion-scale]` knob'ları için [GitHub'daki Phase 13 yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)'na bakın.
 
 ## Streaming davranış
 
@@ -109,7 +109,7 @@ Tekrarlar tek split içindeyken ForgeLM ilk tekrarı tutar. Split arasında vars
 :::
 
 :::warn
-**MinHash recall'ı permutasyon sayısına bağlıdır.** ForgeLM, recall'ı %95'in üstünde tutan datasketch varsayılanlarını yayınlar (≥128 permutasyon). Manuel override [GitHub'daki Phase 13 yol haritasında](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap.md) — o zamana kadar `--num-perm` bayrağına güvenmeyin (mevcut değil).
+**MinHash recall'ı permutasyon sayısına bağlıdır.** ForgeLM, recall'ı %95'in üstünde tutan datasketch varsayılanlarını yayınlar (≥128 permutasyon). Manuel override [GitHub'daki Phase 13 yol haritasında](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md) — o zamana kadar `--num-perm` bayrağına güvenmeyin (mevcut değil).
 :::
 
 :::tip

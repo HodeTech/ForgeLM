@@ -7,7 +7,7 @@ description: Deployer-facing companion to Human Oversight — the `forgelm appro
 
 This page is the deployer-facing companion to [Human Oversight](#/compliance/human-oversight). The shorter Human Oversight page is the operator quick-reference; this page collects the wiring details — CI integration, segregation of duties, audit-evidence verification — that a deployer needs when standing up the gate end-to-end.
 
-For the full walkthrough, see the [human approval gate deployer guide on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/guides/human_approval_gate.md). For per-flag references, see [`approve_subcommand.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/approve_subcommand.md) and [`approvals_subcommand.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/approvals_subcommand.md) on GitHub.
+For the full walkthrough, see the [human approval gate deployer guide on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/human_approval_gate.md). For per-flag references, see [`approve_subcommand.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/approve_subcommand.md) and [`approvals_subcommand.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/approvals_subcommand.md) on GitHub.
 
 ## When the gate fires
 
@@ -68,7 +68,7 @@ forgelm reject   <run_id> --output-dir <dir> --comment "..."  # discard the stag
 
 ## Segregation of duties (Article 14 + ISO A.5.3 + SOC 2 CC1.5)
 
-The approver's `FORGELM_OPERATOR` MUST differ from the trainer's. ForgeLM does not enforce this — it is a deployer-side IdP control — but the audit chain records both, so a violation is detectable post-hoc with the canonical `jq -rs` cookbook in the [`access_control.md` QMS template on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/qms/access_control.md) §6:
+The approver's `FORGELM_OPERATOR` MUST differ from the trainer's. ForgeLM does not enforce this — it is a deployer-side IdP control — but the audit chain records both, so a violation is detectable post-hoc with the canonical `jq -rs` cookbook in the [`access_control.md` QMS template on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/access_control.md) §6:
 
 ```bash
 jq -rs '
@@ -87,7 +87,7 @@ Pattern: CI runners use a machine-readable identity (`gha:Acme/pipelines:trainin
 
 ## Audit events emitted
 
-Three events describe the gate's full lifecycle (see the [Audit Event Catalog on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/audit_event_catalog.md)):
+Three events describe the gate's full lifecycle (see the [Audit Event Catalog on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md)):
 
 | Event | Emitted by | When |
 |---|---|---|
@@ -149,7 +149,7 @@ jq -rs '
 
 - [Human Oversight](#/compliance/human-oversight) — operator quick-reference companion.
 - [Audit Log](#/compliance/audit-log) — where the `human_approval.*` events are recorded.
-- [Human approval gate deployer guide](https://github.com/cemililik/ForgeLM/blob/main/docs/guides/human_approval_gate.md) — full deployer-flow walkthrough (GitHub source).
-- [`approve_subcommand.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/approve_subcommand.md) — `approve` / `reject` per-flag reference (GitHub source).
-- [`approvals_subcommand.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/approvals_subcommand.md) — `approvals` per-flag reference (GitHub source).
-- [`access_control.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/qms/access_control.md) §6 — canonical segregation-of-duties cookbook (GitHub QMS template).
+- [Human approval gate deployer guide](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/human_approval_gate.md) — full deployer-flow walkthrough (GitHub source).
+- [`approve_subcommand.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/approve_subcommand.md) — `approve` / `reject` per-flag reference (GitHub source).
+- [`approvals_subcommand.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/approvals_subcommand.md) — `approvals` per-flag reference (GitHub source).
+- [`access_control.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/access_control.md) §6 — canonical segregation-of-duties cookbook (GitHub QMS template).

@@ -5,7 +5,7 @@ description: The locked --output-format json envelope shape for every forgelm su
 
 # JSON output schemas
 
-Every `forgelm` subcommand that supports `--output-format json` produces a stable JSON envelope on stdout. Field names + nesting are part of the public CLI contract per the [release standard on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/release.md): renaming a key is a MAJOR-version break.
+Every `forgelm` subcommand that supports `--output-format json` produces a stable JSON envelope on stdout. Field names + nesting are part of the public CLI contract per the [release standard on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/release.md): renaming a key is a MAJOR-version break.
 
 This page is the canonical reference. CI/CD pipelines that parse `forgelm` output should pin against the shapes documented here.
 
@@ -13,7 +13,7 @@ This page is the canonical reference. CI/CD pipelines that parse `forgelm` outpu
 
 - **stdout vs stderr.** The JSON envelope goes to **stdout**. Human-friendly logs (info / warning / error) go to **stderr**. Pipe `forgelm ... --output-format json | jq .` and read your operator-facing messages from `2>` separately.
 - **Top-level wrapper.** Every envelope starts with `"success": true | false`. Consumers can branch on this single key before parsing the rest.
-- **Error envelope.** When `success: false`, the envelope carries `"error": "<message>"` (string). Optional richer fields (`exit_code`, `error_type`, `details`) MAY be present per the [error-handling standard on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/error-handling.md). Consumers that need certainty on these fields should also check the process exit code via `$?`.
+- **Error envelope.** When `success: false`, the envelope carries `"error": "<message>"` (string). Optional richer fields (`exit_code`, `error_type`, `details`) MAY be present per the [error-handling standard on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/error-handling.md). Consumers that need certainty on these fields should also check the process exit code via `$?`.
 - **Exit codes.** See [Exit Codes](#/reference/exit-codes). The envelope is consistent with the exit code: `success: true` ⟺ exit `0`; `success: false` ⟺ non-zero exit.
 
 ## `forgelm doctor`
@@ -525,10 +525,10 @@ A new subcommand that supports `--output-format json` MUST land with:
 2. A test in `tests/test_json_envelope_contract.py` (or a per-subcommand test file) that pins the exact set of top-level keys.
 3. The per-collection key follows the convention "results live under a key named after the subcommand's primary noun" (so `doctor` → `checks`, `approvals --pending` → `pending`, etc.).
 
-Renaming a key after merge is a MAJOR-version bump per the [release standard on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/release.md).
+Renaming a key after merge is a MAJOR-version bump per the [release standard on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/release.md).
 
 ## See also
 
 - [Exit Codes](#/reference/exit-codes) — the contract `success: bool` aligns with.
-- [`error-handling.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/error-handling.md) — the error envelope contract (GitHub source).
-- [`release.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/release.md) — when JSON renames count as breaking (GitHub source).
+- [`error-handling.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/error-handling.md) — the error envelope contract (GitHub source).
+- [`release.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/release.md) — when JSON renames count as breaking (GitHub source).

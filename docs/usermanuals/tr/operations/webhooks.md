@@ -32,7 +32,7 @@ $ forgelm --config configs/run.yaml
 ## Wire-format event'ler
 
 ForgeLM tam **beş** webhook event'i yayar. Aşağıdaki tablo
-[GitHub'daki Audit Event Kataloğu](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/audit_event_catalog.md)
+[GitHub'daki Audit Event Kataloğu](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md)
 ile aynalanan kanonik yüzeydir:
 
 | Event | Ne zaman fırlar | Gate |
@@ -59,7 +59,7 @@ sarmalama **yapmaz**:
 ```
 
 Payload anahtarları event'e göre değişir; tam per-event alan listesi
-[GitHub'daki Audit Event Kataloğu](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/audit_event_catalog.md)
+[GitHub'daki Audit Event Kataloğu](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md)
 *Webhook lifecycle events* tablosundadır.
 
 ## Slack / Teams / Discord ingest

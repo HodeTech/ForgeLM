@@ -36,7 +36,7 @@ This Code of Conduct applies within all community spaces — GitHub issues, pull
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the project maintainers at:
 
-**Email:** [ai-team@cemililik.com](mailto:ai-team@cemililik.com)
+**Email:** [forgelm@hodetech.io](mailto:forgelm@hodetech.io)
 
 All complaints will be reviewed and investigated promptly and fairly. All maintainers are obligated to respect the privacy and security of the reporter.
 

@@ -108,7 +108,7 @@ Yüksek-riskli işleme için GDPR Md. 35 DPIA gerektirir. ForgeLM DPIA'nızı ya
 - Uygulanan azaltıcılar → `compliance.risk_assessment.mitigations`'dan.
 - Kalıntı riskler → `compliance.risk_assessment.residual_risks`'tan.
 
-DPIA çalışması için yukarıdaki girdileri [GitHub'daki QMS risk tedavi planı](https://github.com/cemililik/ForgeLM/blob/main/docs/qms/risk_treatment_plan-tr.md) ve [Uygulanabilirlik Beyanı](https://github.com/cemililik/ForgeLM/blob/main/docs/qms/statement_of_applicability-tr.md) ile eşleştirin (toolkit ile gelen GitHub QMS şablonları). Adanmış bir DPIA şablonu yol haritasındadır; şimdilik risk tedavi planı aynı zemini kapsıyor.
+DPIA çalışması için yukarıdaki girdileri [GitHub'daki QMS risk tedavi planı](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/risk_treatment_plan-tr.md) ve [Uygulanabilirlik Beyanı](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/statement_of_applicability-tr.md) ile eşleştirin (toolkit ile gelen GitHub QMS şablonları). Adanmış bir DPIA şablonu yol haritasındadır; şimdilik risk tedavi planı aynı zemini kapsıyor.
 
 ## Konfigürasyon referansı
 

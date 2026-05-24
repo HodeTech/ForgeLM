@@ -7,7 +7,7 @@ description: `forgelm purge` ve `forgelm reverse-pii` subcommand'ları ile Madde
 
 ForgeLM, en yaygın iki GDPR veri-sahibi hakkı için kardeş subcommand'lar ship eder: `forgelm purge` (Madde 17 — silinme hakkı) ve `forgelm reverse-pii` (Madde 15 — erişim hakkı). Per-output-dir salt'ı paylaşırlar; böylece compliance reviewer aynı veri sahibi için silme ve erişim taleplerini tek bir tamper-evident audit zincirinde — cleartext identifier operatör terminalinden hiç çıkmadan — korele edebilir.
 
-Bu sayfa operatör hızlı-referansıdır. Daha derin deployer akışı [GitHub'daki GDPR silme deployer kılavuzunda](https://github.com/cemililik/ForgeLM/blob/main/docs/guides/gdpr_erasure-tr.md) bulunur; flag-başına referanslar manuel içindeki [CLI Referansı](#/reference/cli) ve GitHub'daki özel subcommand sayfaları [`purge_subcommand-tr.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/purge_subcommand-tr.md) + [`reverse_pii_subcommand-tr.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/reverse_pii_subcommand-tr.md) sayfalarındadır.
+Bu sayfa operatör hızlı-referansıdır. Daha derin deployer akışı [GitHub'daki GDPR silme deployer kılavuzunda](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/gdpr_erasure-tr.md) bulunur; flag-başına referanslar manuel içindeki [CLI Referansı](#/reference/cli) ve GitHub'daki özel subcommand sayfaları [`purge_subcommand-tr.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/purge_subcommand-tr.md) + [`reverse_pii_subcommand-tr.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/reverse_pii_subcommand-tr.md) sayfalarındadır.
 
 ## İki hak, tek zincir
 
@@ -37,7 +37,7 @@ forgelm purge --check-policy --config configs/run.yaml --output-dir ./outputs
 
 ### Neyi kaydeder
 
-Audit zincirine altı event yazılır (bkz. [GitHub'daki Audit Event Kataloğu](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/audit_event_catalog-tr.md)):
+Audit zincirine altı event yazılır (bkz. [GitHub'daki Audit Event Kataloğu](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog-tr.md)):
 
 - `data.erasure_requested` — herhangi bir silmeden ÖNCE, ilk yayılır.
 - `data.erasure_completed` — disk operasyonu başarılı sonra son yayılır.
@@ -125,6 +125,6 @@ Kod 3 (`EXIT_EVAL_FAILURE`) ve 4 (`EXIT_AWAITING_APPROVAL`) iki subcommand'ın d
 
 - [Audit Log](#/compliance/audit-log) — `data.*` event'lerinin kaydedildiği yer.
 - [İnsan Gözetimi](#/compliance/human-oversight) — yüksek-riskli deployment'lar için GDPR haklarıyla eşleşen Madde 14 kardeş kapısı.
-- [GDPR silme deployer kılavuzu](https://github.com/cemililik/ForgeLM/blob/main/docs/guides/gdpr_erasure-tr.md) — tam deployer akışı (GitHub kaynağı).
-- [`purge_subcommand-tr.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/purge_subcommand-tr.md) — `forgelm purge` flag-başına referans (GitHub kaynağı).
-- [`reverse_pii_subcommand-tr.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/reverse_pii_subcommand-tr.md) — `forgelm reverse-pii` flag-başına referans (GitHub kaynağı).
+- [GDPR silme deployer kılavuzu](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/gdpr_erasure-tr.md) — tam deployer akışı (GitHub kaynağı).
+- [`purge_subcommand-tr.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/purge_subcommand-tr.md) — `forgelm purge` flag-başına referans (GitHub kaynağı).
+- [`reverse_pii_subcommand-tr.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/reverse_pii_subcommand-tr.md) — `forgelm reverse-pii` flag-başına referans (GitHub kaynağı).

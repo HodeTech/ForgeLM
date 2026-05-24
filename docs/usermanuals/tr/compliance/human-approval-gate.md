@@ -7,7 +7,7 @@ description: İnsan Gözetimi'nin deployer-yüzlü tamamlayıcısı — Madde 14
 
 Bu sayfa [İnsan Gözetimi](#/compliance/human-oversight)'nin deployer-yüzlü tamamlayıcısıdır. Daha kısa olan İnsan Gözetimi sayfası operatör hızlı-referansıdır; bu sayfa kapıyı uçtan uca ayağa kaldırırken bir deployer'ın ihtiyaç duyduğu wiring detaylarını — CI entegrasyonu, görev ayrılığı, audit-kanıt doğrulama — toplar.
 
-Tam walkthrough için bkz. [GitHub'daki insan onay kapısı deployer kılavuzu](https://github.com/cemililik/ForgeLM/blob/main/docs/guides/human_approval_gate-tr.md). Flag-başına referanslar için bkz. GitHub'daki [`approve_subcommand-tr.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/approve_subcommand-tr.md) ve [`approvals_subcommand-tr.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/approvals_subcommand-tr.md).
+Tam walkthrough için bkz. [GitHub'daki insan onay kapısı deployer kılavuzu](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/human_approval_gate-tr.md). Flag-başına referanslar için bkz. GitHub'daki [`approve_subcommand-tr.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/approve_subcommand-tr.md) ve [`approvals_subcommand-tr.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/approvals_subcommand-tr.md).
 
 ## Kapı ne zaman ateşlenir
 
@@ -68,7 +68,7 @@ forgelm reject   <run_id> --output-dir <dir> --comment "..."  # staged modeli at
 
 ## Görev ayrılığı (Madde 14 + ISO A.5.3 + SOC 2 CC1.5)
 
-Onaylayanın `FORGELM_OPERATOR`'ı trainer'ınkinden FARKLI OLMALIDIR. ForgeLM bunu zorunlu kılmaz — bu deployer-tarafı IdP kontrolüdür — ancak audit zinciri her ikisini kaydeder; ihlal [GitHub'daki `access_control.md` QMS şablonunun](https://github.com/cemililik/ForgeLM/blob/main/docs/qms/access_control.md) §6'sındaki kanonik `jq -rs` cookbook'uyla post-hoc tespit edilebilir:
+Onaylayanın `FORGELM_OPERATOR`'ı trainer'ınkinden FARKLI OLMALIDIR. ForgeLM bunu zorunlu kılmaz — bu deployer-tarafı IdP kontrolüdür — ancak audit zinciri her ikisini kaydeder; ihlal [GitHub'daki `access_control.md` QMS şablonunun](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/access_control.md) §6'sındaki kanonik `jq -rs` cookbook'uyla post-hoc tespit edilebilir:
 
 ```bash
 jq -rs '
@@ -87,7 +87,7 @@ Desen: CI runner'ları makine-okunabilir kimlik kullanır (`gha:Acme/pipelines:t
 
 ## Yayılan audit event'leri
 
-Üç event kapının tam yaşam döngüsünü tarif eder (bkz. [GitHub'daki Audit Event Kataloğu](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/audit_event_catalog.md)):
+Üç event kapının tam yaşam döngüsünü tarif eder (bkz. [GitHub'daki Audit Event Kataloğu](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md)):
 
 | Event | Kim yayar | Ne zaman |
 |---|---|---|
@@ -149,7 +149,7 @@ jq -rs '
 
 - [İnsan Gözetimi](#/compliance/human-oversight) — operatör hızlı-referans tamamlayıcısı.
 - [Audit Log](#/compliance/audit-log) — `human_approval.*` event'lerinin kaydedildiği yer.
-- [İnsan onay kapısı deployer kılavuzu](https://github.com/cemililik/ForgeLM/blob/main/docs/guides/human_approval_gate-tr.md) — tam deployer akışı (GitHub kaynağı).
-- [`approve_subcommand-tr.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/approve_subcommand-tr.md) — `approve` / `reject` flag-başına referans (GitHub kaynağı).
-- [`approvals_subcommand-tr.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/approvals_subcommand-tr.md) — `approvals` flag-başına referans (GitHub kaynağı).
-- [`access_control.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/qms/access_control.md) §6 — kanonik segregation-of-duties cookbook (GitHub QMS şablonu).
+- [İnsan onay kapısı deployer kılavuzu](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/human_approval_gate-tr.md) — tam deployer akışı (GitHub kaynağı).
+- [`approve_subcommand-tr.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/approve_subcommand-tr.md) — `approve` / `reject` flag-başına referans (GitHub kaynağı).
+- [`approvals_subcommand-tr.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/approvals_subcommand-tr.md) — `approvals` flag-başına referans (GitHub kaynağı).
+- [`access_control.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/access_control.md) §6 — kanonik segregation-of-duties cookbook (GitHub QMS şablonu).

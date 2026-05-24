@@ -8,7 +8,7 @@ ForgeLM is designed to be executed via the command line, making it perfect for b
 - NVIDIA GPU with CUDA (recommended; CPU mode is very slow)
 
 ```bash
-git clone https://github.com/cemililik/ForgeLM.git
+git clone https://github.com/HodeTech/ForgeLM.git
 cd ForgeLM
 pip install -e .
 ```

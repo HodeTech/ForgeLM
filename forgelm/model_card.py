@@ -24,7 +24,7 @@ base_model: {base_model}
 
 # {model_name}
 
-Fine-tuned with [ForgeLM](https://github.com/cemililik/ForgeLM) — config-driven LLM fine-tuning toolkit.
+Fine-tuned with [ForgeLM](https://github.com/HodeTech/ForgeLM) — config-driven LLM fine-tuning toolkit.
 
 ## Training Details
 

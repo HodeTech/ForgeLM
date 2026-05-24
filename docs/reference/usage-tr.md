@@ -8,7 +8,7 @@ ForgeLM, komut satırı arayüzü üzerinden çalıştırılmak üzere tasarlanm
 - CUDA destekli NVIDIA GPU (önerilir; CPU modu çok yavaş)
 
 ```bash
-git clone https://github.com/cemililik/ForgeLM.git
+git clone https://github.com/HodeTech/ForgeLM.git
 cd ForgeLM
 pip install -e .
 ```

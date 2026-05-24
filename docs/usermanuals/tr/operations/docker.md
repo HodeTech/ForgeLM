@@ -12,12 +12,12 @@ ForgeLM, yerel geliştirme, on-prem cluster ve cloud GPU'lar arası yeniden üre
 Resmi imajı çekin:
 
 ```shell
-$ docker pull ghcr.io/cemililik/forgelm:latest
+$ docker pull ghcr.io/hodetech/forgelm:latest
 $ docker run --gpus all \
     -v $PWD:/workspace \
     -v $HOME/.cache/huggingface:/root/.cache/huggingface \
     -e HF_TOKEN \
-    ghcr.io/cemililik/forgelm:latest \
+    ghcr.io/hodetech/forgelm:latest \
     forgelm --config /workspace/configs/run.yaml
 ```
 
@@ -43,7 +43,7 @@ version: "3.9"
 
 services:
   trainer:
-    image: ghcr.io/cemililik/forgelm:latest
+    image: ghcr.io/hodetech/forgelm:latest
     deploy:
       resources:
         reservations:
@@ -81,7 +81,7 @@ $ docker compose up trainer
 Özel modifikasyonlar gerekirse:
 
 ```shell
-$ git clone https://github.com/cemililik/ForgeLM
+$ git clone https://github.com/HodeTech/ForgeLM
 $ cd ForgeLM
 $ docker build -t forgelm:custom -f Dockerfile .
 $ docker run --gpus all forgelm:custom forgelm --version
@@ -95,7 +95,7 @@ Air-gap ortamlar için her şey önceden cache'lenmiş imaj kurun:
 
 ```dockerfile
 # airgap.Dockerfile
-FROM ghcr.io/cemililik/forgelm:latest
+FROM ghcr.io/hodetech/forgelm:latest
 
 # Base modeli önceden cache'le
 RUN forgelm cache-models --model "Qwen/Qwen2.5-7B-Instruct"

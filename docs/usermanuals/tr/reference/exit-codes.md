@@ -18,7 +18,7 @@ ForgeLM'in exit kodları kamuya açık bir kontrattır. CI/CD hatları, schedule
 | **4** | `EXIT_AWAITING_APPROVAL` | `evaluation.require_human_approval: true` engelliyor. | Hattı tut; reviewer'ı tetikle |
 | **5** | `EXIT_WIZARD_CANCELLED` | `forgelm --wizard` YAML üretmeden çıktı — Ctrl-C, non-tty stdin reddi veya operatör kaydetmeyi reddetti. `EXIT_SUCCESS`'tan ayrı ki CI "wizard tamamlandı" ile "wizard hiçbir şey yazmadı" arasını ayırt edebilsin. | No-op olarak kabul et; mesajı yüzeyle; eski config ile DEVAM ETME |
 
-Bu altı tam sayı tüm kamuya açık kontratı oluşturur — kanonik tanım için bkz. [`forgelm/cli/_exit_codes.py`](https://github.com/cemililik/ForgeLM/blob/main/forgelm/cli/_exit_codes.py). Diğer her sıfır olmayan değer (sinyal kaynaklı 128+N kodları dahil) süreç çıkmadan önce `EXIT_TRAINING_ERROR` (2) değerine sıkıştırılır.
+Bu altı tam sayı tüm kamuya açık kontratı oluşturur — kanonik tanım için bkz. [`forgelm/cli/_exit_codes.py`](https://github.com/HodeTech/ForgeLM/blob/main/forgelm/cli/_exit_codes.py). Diğer her sıfır olmayan değer (sinyal kaynaklı 128+N kodları dahil) süreç çıkmadan önce `EXIT_TRAINING_ERROR` (2) değerine sıkıştırılır.
 
 ## CI pattern'lerine eşleme
 

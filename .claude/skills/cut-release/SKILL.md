@@ -186,7 +186,7 @@ Highlights:
 - GGUF export
 - VRAM fit advisor
 
-Full changelog: https://github.com/cemililik/ForgeLM/blob/main/CHANGELOG.md
+Full changelog: https://github.com/HodeTech/ForgeLM/blob/main/CHANGELOG.md
 Upgrade: pip install --upgrade forgelm
 ```
 

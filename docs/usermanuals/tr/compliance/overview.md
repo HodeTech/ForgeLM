@@ -62,7 +62,7 @@ checkpoints/run/
 | **15** | Doğruluk ve sağlamlık | Benchmark kapıları + güvenlik eval + cybersec (ingest'te PII / sırlar). |
 | **16-17** | Uygunluk ve QMS | Beyan iskeleti + toolkit ile birlikte gelen QMS SOP'ları. |
 
-Tam kod referansları için [GitHub'daki Compliance özeti](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/compliance_summary.md).
+Tam kod referansları için [GitHub'daki Compliance özeti](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/compliance_summary.md).
 
 ## ForgeLM'in iddia *etmediği*
 

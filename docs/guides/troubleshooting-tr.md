@@ -413,6 +413,6 @@ docker run --gpus all --shm-size=16g ...
 
 ## Yardım alma
 
-- **GitHub Issues**: [github.com/cemililik/ForgeLM/issues](https://github.com/cemililik/ForgeLM/issues)
+- **GitHub Issues**: [github.com/HodeTech/ForgeLM/issues](https://github.com/HodeTech/ForgeLM/issues)
 - **Dry-run debug**: `forgelm --config job.yaml --dry-run --log-level DEBUG`
 - **JSON tanılama**: `forgelm --config job.yaml --output-format json 2>error.log`

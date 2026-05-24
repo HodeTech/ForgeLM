@@ -127,4 +127,4 @@ OK: …/annex_iv_metadata.json
 - [Audit Log](#/compliance/audit-log) — append-only event log; `compliance.artifacts_exported` (Article 11 + Annex IV) is the production-side counterpart to this verifier.
 - [Verify Audit](#/compliance/verify-audit) — companion verifier for the audit log.
 - [Verify GGUF](#/deployment/verify-gguf) — companion verifier on the deployment-integrity surface.
-- [`verify_annex_iv_subcommand.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/verify_annex_iv_subcommand.md) — the reference doc with full flag table and library-symbol citations (GitHub source).
+- [`verify_annex_iv_subcommand.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/verify_annex_iv_subcommand.md) — the reference doc with full flag table and library-symbol citations (GitHub source).

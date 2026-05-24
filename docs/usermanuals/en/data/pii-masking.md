@@ -62,7 +62,7 @@ The PII regexes are deliberately tuned for **low false-positive rate**. They pre
 
 1. False positives silently corrupt your data — replacing legitimate words with `[EMAIL_REDACTED]` ruins examples.
 2. The audit step catches what masking missed; you can decide per-row whether to fix or drop.
-3. Aggressive regexes have caused real-world ML pipeline outages (the Phase 11.5 incident is documented in the contributor [regex standard on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/regex.md)).
+3. Aggressive regexes have caused real-world ML pipeline outages (the Phase 11.5 incident is documented in the contributor [regex standard on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/regex.md)).
 
 If you need stricter detection — for instance, a high-stakes legal corpus — pair the masker with a manual review step. Don't push the regexes harder.
 

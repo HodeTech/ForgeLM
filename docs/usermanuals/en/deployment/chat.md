@@ -63,7 +63,7 @@ $ forgelm chat "Qwen/Qwen2.5-7B" --adapter ./checkpoints/run/
 
 ## Safety routing
 
-> Note: A built-in `--safety` flag on `forgelm chat` is planned for v0.6.0+ Pro CLI (see [Phase 13 roadmap on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap.md)). Today the screen-every-turn behaviour ships via the YAML `safety:` block (set `safety: enabled: true` and bind it to the same chat session through your runner); the snippet below illustrates the planned `--safety` UX as preview output, NOT as a runnable v0.5.5 command.
+> Note: A built-in `--safety` flag on `forgelm chat` is planned for v0.6.0+ Pro CLI (see [Phase 13 roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)). Today the screen-every-turn behaviour ships via the YAML `safety:` block (set `safety: enabled: true` and bind it to the same chat session through your runner); the snippet below illustrates the planned `--safety` UX as preview output, NOT as a runnable v0.5.5 command.
 
 With `safety: enabled: true` in your YAML config (or under the planned v0.6.0+ `--safety on` flag, illustrated for preview only below), every prompt and response is screened by Llama Guard:
 
@@ -107,7 +107,7 @@ Sessions are useful for:
 
 ## Comparing two models
 
-> Note: The `chat-compare` subcommand is planned for v0.6.0+ Pro CLI tier (see [Phase 13 roadmap on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap.md)). Today the same comparison runs through `forgelm --benchmark-only` against each checkpoint and a downstream judge config; the snippet below previews the dedicated UX.
+> Note: The `chat-compare` subcommand is planned for v0.6.0+ Pro CLI tier (see [Phase 13 roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)). Today the same comparison runs through `forgelm --benchmark-only` against each checkpoint and a downstream judge config; the snippet below previews the dedicated UX.
 
 ```shell
 $ forgelm chat-compare ./checkpoints/v1 ./checkpoints/v2 --prompts data/probes.jsonl
