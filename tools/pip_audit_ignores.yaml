@@ -48,6 +48,26 @@ ignores:
       release with the fix, or when ForgeLM cuts a tracked
       major-version-bump cycle that raises the upper bound.
 
+  - id: PYSEC-2025-217
+    aliases: [CVE-2025-14929]
+    package: transformers
+    reason: >-
+      X-CLIP checkpoint-conversion deserialization RCE; affected
+      through 5.0.0rc0, no fix in the 4.x line that pyproject pins.
+    threat_model: >-
+      CVSS is local + user-interaction (AV:L/UI:R): the target must
+      open a malicious checkpoint/file.  Same trust model as
+      ``torch.load(pickle)`` and the pt2 loader CVE — operators are
+      documented as required to only load trusted checkpoints.
+      ForgeLM does not invoke X-CLIP checkpoint conversion, and
+      pyproject pins ``transformers<5.0.0`` where no fix is yet
+      available.
+    verified_at: '2026-05-24'
+    reevaluate_after: >-
+      Each release cycle, or when transformers ships a 4.x point
+      release with the fix, or when ForgeLM raises the upper bound
+      past the fixed 5.x release.
+
   # ----- torch (added 2026-05-21, triage in issue #58) -----
   #
   # All nine torch CVEs below share the same threat-model carve-out:
