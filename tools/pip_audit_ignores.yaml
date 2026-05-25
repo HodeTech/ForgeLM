@@ -52,21 +52,26 @@ ignores:
     aliases: [CVE-2025-14929]
     package: transformers
     reason: >-
-      X-CLIP checkpoint-conversion deserialization RCE; affected
-      through 5.0.0rc0, no fix in the 4.x line that pyproject pins.
+      CVE-2025-14929 — X-CLIP checkpoint-conversion deserialization
+      RCE (CVSS:3.0 AV:L/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H).  The
+      advisory records no fixed version for the 4.x line that
+      pyproject pins.
     threat_model: >-
       CVSS is local + user-interaction (AV:L/UI:R): the target must
       open a malicious checkpoint/file.  Same trust model as
-      ``torch.load(pickle)`` and the pt2 loader CVE — operators are
-      documented as required to only load trusted checkpoints.
-      ForgeLM does not invoke X-CLIP checkpoint conversion, and
-      pyproject pins ``transformers<5.0.0`` where no fix is yet
-      available.
+      ``torch.load(pickle)`` — operators are documented as required
+      to only load trusted checkpoints.  Codebase check on
+      2026-05-24 (``git grep`` over ``forgelm/``): no X-CLIP usage,
+      no checkpoint-conversion path other than the HF->GGUF export
+      wrapper, and zero direct ``torch.load`` call sites — all model
+      loading goes through HuggingFace ``from_pretrained``.  The
+      vulnerable X-CLIP conversion path is therefore not reachable
+      from ForgeLM code.
     verified_at: '2026-05-24'
     reevaluate_after: >-
-      Each release cycle, or when transformers ships a 4.x point
-      release with the fix, or when ForgeLM raises the upper bound
-      past the fixed 5.x release.
+      Each release cycle, or when the advisory gains a fixed version
+      within the pinned ``transformers<5.0.0`` range, or when ForgeLM
+      bumps to a transformers release that carries the fix.
 
   # ----- torch (added 2026-05-21, triage in issue #58) -----
   #
