@@ -397,6 +397,80 @@ class TestRfc7230HostHeader:
         assert headers["host"] == "operator-supplied.example.com"
 
 
+class TestAssertHostnameStripsPort:
+    """F-P5-OPUS-05: the pinned HTTPS adapter must hand urllib3 a
+    *port-stripped* hostname for certificate ``assert_hostname``.
+
+    The RFC 7230 fix keeps ``host:port`` in the on-the-wire ``Host``
+    header (see :class:`TestRfc7230HostHeader`), but urllib3's
+    ``_dnsname_match`` does NOT strip the port — it compares the full
+    ``host:port`` string against the cert SAN and fails.  These tests
+    drive the *real* ``_PortStrippingAdapter.send`` path (not a mocked
+    ``Session.post``) and assert the value pushed into
+    ``connection_pool_kw['assert_hostname']`` is the bare host.
+    """
+
+    @pytest.mark.parametrize(
+        ("host_header", "expected"),
+        [
+            ("hooks.example.com:8443", "hooks.example.com"),
+            ("hooks.example.com", "hooks.example.com"),
+            ("[2001:db8::1]:8443", "2001:db8::1"),
+            ("[2001:db8::1]", "2001:db8::1"),
+            ("8.8.8.8:443", "8.8.8.8"),
+        ],
+    )
+    def test_assert_hostname_helper_strips_port(self, host_header, expected):
+        from forgelm import _http
+
+        assert _http._assert_hostname_from_host_header(host_header) == expected
+
+    def test_dnsname_match_rejects_port_bearing_assert_hostname(self):
+        """Locks the root cause: urllib3's matcher fails on ``host:port``
+        but passes on the bare host — so stripping the port is what makes
+        TLS succeed for a non-standard-port endpoint.
+        """
+        from urllib3.util.ssl_match_hostname import _dnsname_match
+
+        assert _dnsname_match("hooks.example.com", "hooks.example.com") is True
+        assert _dnsname_match("hooks.example.com", "hooks.example.com:8443") is False
+
+    def test_pinned_adapter_sets_port_stripped_assert_hostname(self):
+        """End-to-end through the real adapter: a request to a
+        non-standard-port HTTPS URL must leave urllib3's
+        ``assert_hostname`` set to the bare host, never ``host:port``.
+        """
+        from requests import PreparedRequest
+        from requests.adapters import HTTPAdapter
+
+        from forgelm import _http
+
+        session = _http._pinned_session("https")
+        adapter = session.get_adapter("https://x")
+
+        req = PreparedRequest()
+        # Mimic the pinned URL (IP literal) + RFC 7230 Host header (port kept).
+        req.prepare(
+            method="POST",
+            url="https://8.8.8.8:8443/abc",
+            headers={"Host": "hooks.example.com:8443"},
+        )
+
+        captured = {}
+
+        def _fake_http_send(self, request, **kwargs):
+            captured["assert_hostname"] = self.poolmanager.connection_pool_kw.get("assert_hostname")
+            return MagicMock(status_code=200)
+
+        with patch.object(HTTPAdapter, "send", _fake_http_send):
+            adapter.send(req)
+
+        assert captured["assert_hostname"] == "hooks.example.com", (
+            "assert_hostname must be the port-stripped host so urllib3 matches the cert SAN; "
+            f"got {captured['assert_hostname']!r}"
+        )
+
+
 class TestNoPublicIpResolvedBranch:
     """Issue #14 review feedback (sourcery): cover the
     ``"no public IP resolved"`` branch where ``getaddrinfo`` returns

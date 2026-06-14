@@ -219,19 +219,70 @@ def _build_pinned_url(parsed_url, ip: str) -> str:
     )
 
 
+def _assert_hostname_from_host_header(host_header: str) -> str:
+    """Strip the port (and IPv6 brackets) from a ``Host`` header value.
+
+    The request-line ``Host`` header carries ``host:port`` for a
+    non-standard port per RFC 7230 § 5.4, but urllib3's certificate
+    ``assert_hostname`` matcher (``_dnsname_match``) does **not** strip
+    the port — it compares the full ``host:port`` string against the
+    cert SAN and fails (``_dnsname_match('h.example.com',
+    'h.example.com:8443') is False``).  So the value handed to the TLS
+    layer must be the bare hostname, with the port removed and any IPv6
+    brackets unwrapped (urllib3 matches against the bracket-less form).
+
+    F-P5-OPUS-05: introduced when the issue-#14 IP-pinning routed HTTPS
+    through ``HostHeaderSSLAdapter``, which reuses the ``Host`` header
+    verbatim as ``assert_hostname`` — breaking TLS for any correctly
+    configured HTTPS endpoint on a non-standard port.
+    """
+    # ``urlparse`` needs a scheme + ``//`` to populate ``hostname``/``port``;
+    # synthesise an authority-only URL so it splits ``host:port`` and IPv6
+    # brackets for us rather than re-implementing the bracket/port grammar.
+    parsed = urlparse(f"//{host_header}")
+    # ``hostname`` is already lower-cased and bracket-stripped by urlparse;
+    # fall back to the raw value if parsing yields nothing (malformed input
+    # should still produce a deterministic, non-empty assert value).
+    return parsed.hostname or host_header
+
+
 def _pinned_session(scheme: str) -> requests.Session:
     """Return a ``requests.Session`` configured for IP-literal connections.
 
-    For HTTPS, mounts ``requests_toolbelt.adapters.host_header_ssl.
-    HostHeaderSSLAdapter`` so the SNI handshake and certificate
-    validation are performed against the original hostname (passed in
-    the ``Host`` header) rather than the IP literal in the URL.
+    For HTTPS, mounts a port-stripping subclass of
+    ``requests_toolbelt.adapters.host_header_ssl.HostHeaderSSLAdapter``
+    so the SNI handshake and certificate validation are performed
+    against the original hostname (passed in the ``Host`` header) rather
+    than the IP literal in the URL — and against the *bare* hostname,
+    with any non-standard port stripped, so TLS verification succeeds on
+    endpoints like ``https://host:8443`` (F-P5-OPUS-05).
     """
     session = requests.Session()
     if scheme == "https":
+        from requests.adapters import HTTPAdapter
         from requests_toolbelt.adapters.host_header_ssl import HostHeaderSSLAdapter
 
-        session.mount("https://", HostHeaderSSLAdapter())
+        class _PortStrippingAdapter(HostHeaderSSLAdapter):
+            def send(self, request, **kwargs):  # type: ignore[override]
+                host_header = None
+                for header in request.headers:
+                    if header.lower() == "host":
+                        host_header = request.headers[header]
+                        break
+                if host_header:
+                    # Set assert_hostname to the port-stripped host so
+                    # urllib3 matches the cert SAN; the wire Host header
+                    # (with the port) is left intact for the server.
+                    self.poolmanager.connection_pool_kw["assert_hostname"] = _assert_hostname_from_host_header(
+                        host_header
+                    )
+                elif "assert_hostname" in self.poolmanager.connection_pool_kw:
+                    self.poolmanager.connection_pool_kw.pop("assert_hostname", None)
+                # Bypass the parent's own (port-bearing) assert_hostname
+                # derivation by delegating straight to HTTPAdapter.send.
+                return HTTPAdapter.send(self, request, **kwargs)
+
+        session.mount("https://", _PortStrippingAdapter())
     return session
 
 
