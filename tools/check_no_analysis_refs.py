@@ -136,6 +136,10 @@ _EXEMPT: dict[str, frozenset[str]] = {
         {f'"{_ANALYSIS_DIR}"', f'"{_MARKETING_DIR}"', _ANALYSIS_DIR, _MARKETING_DIR}
     ),
     "tests/test_check_bilingual_parity.py": _BOTH_DIRS,
+    # The phantom-tool-citation test names docs/analysis/ + docs/marketing/ as
+    # the gitignored dirs it EXCLUDES from its scan (a functional path filter,
+    # the opposite of a content citation).  Wired into CI in W1/H11.
+    "tests/test_phantom_tool_citations.py": _BOTH_DIRS,
     # This guard itself contains the prohibited substrings as patterns.
     "tools/check_no_analysis_refs.py": frozenset(
         {

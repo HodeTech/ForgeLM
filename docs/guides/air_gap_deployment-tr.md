@@ -2,7 +2,7 @@
 
 > **Hedef kitle:** ForgeLM'i kısıtlı-egress host'a deploy eden operatörler — savunma, sağlık, bazı finans sektörleri, sınıflandırılmış-ağ müşteri ortamları. Eğitim sırasında outbound HTTPS'i reddeden güvenlik politikası olan herkes.
 >
-> Bu derinlemesine bir deployer pişirme kitabıdır. [GDPR erasure rehberi](gdpr_erasure.md) ve [ISO/SOC 2 deployer rehberi](iso_soc2_deployer_guide.md) derinliğini yansıtır — gösterilen her komut [`forgelm/cli/subcommands/_cache.py`](../../forgelm/cli/subcommands/_cache.py) ve [`forgelm/cli/subcommands/_doctor.py`](../../forgelm/cli/subcommands/_doctor.py) implementasyonuna karşı doğrulanmıştır.
+> Bu derinlemesine bir deployer pişirme kitabıdır. [GDPR erasure rehberi](gdpr_erasure-tr.md) ve [ISO/SOC 2 deployer rehberi](iso_soc2_deployer_guide-tr.md) derinliğini yansıtır — gösterilen her komut [`forgelm/cli/subcommands/_cache.py`](../../forgelm/cli/subcommands/_cache.py) ve [`forgelm/cli/subcommands/_doctor.py`](../../forgelm/cli/subcommands/_doctor.py) implementasyonuna karşı doğrulanmıştır.
 
 ## Bu rehber neyi çözer
 

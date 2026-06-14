@@ -72,7 +72,14 @@ TR mirrors must have the **same sections, in the same order, with the same numbe
 - H2 count and order.
 - Tables of contents, lists of files, and rule lists.
 - Code blocks (content is language-neutral).
-- Links (same targets, wrapped in TR link text).
+- Links: **same set of targets, wrapped in TR link text — but a TR page must
+  point at the TR mirror of a target when one exists.** A `*-tr.md` page that
+  links the un-suffixed English sibling (`audit_event_catalog.md`) when
+  `audit_event_catalog-tr.md` exists routes a Turkish reader out of Turkish;
+  rewrite it to the `-tr.md` mirror, preserving the translated link text. The
+  one exempt case is the `**Ayna:**` (Mirror) backlink line, which
+  intentionally points back at the EN original. Enforced by
+  `tools/check_tr_links_prefer_mirror.py` (wired into `ci.yml`).
 
 ## What to do when the EN doc changes
 

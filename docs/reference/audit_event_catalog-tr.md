@@ -112,7 +112,7 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 
 1. Mevcut isim alanlarını (`training.*`, `compliance.*`, `audit.*`, `human_approval.*`, `model.*`, `cli.*`) takip eden noktalı bir ad seçin.
 2. Yukarıdaki tabloya, payload anahtarları ve desteklediği Madde dahil olmak üzere bir satır ekleyin.
-3. Satırı [audit_event_catalog.md](audit_event_catalog.md)'ye yansıtın.
+3. Satırı [audit_event_catalog.md](audit_event_catalog-tr.md)'ye yansıtın.
 4. `AuditLogger.log_event(event, **payload)` üzerinden emit edin. `audit_log.jsonl`'a doğrudan `json.dump` çağırmayın; hash zinciri kanonik yazıcıya bağımlıdır.
 
 ## Tampering-evidence özeti

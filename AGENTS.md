@@ -158,11 +158,12 @@ Default workflow for a non-trivial change:
      python3 tools/check_no_analysis_refs.py && \
      python3 tools/check_no_unguarded_sys_modules_pop.py && \
      python3 tools/check_audit_event_catalog.py --strict && \
+     python3 tools/check_tr_links_prefer_mirror.py --strict && \
      python3 tools/check_usermanual_self_contained.py --strict && \
      python3 tools/update_site_version.py --check
    ```
 
-   All thirteen must pass. The first four are the historical gauntlet;
+   All fourteen must pass. The first four are the historical gauntlet;
    the three doc guards (Wave 3 / Wave 4 / Wave 5 additions) catch
    bilingual structural drift, broken markdown anchors, and CLI ↔ docs
    help-text drift before the PR opens. The wizard-defaults guard
@@ -180,7 +181,14 @@ Default workflow for a non-trivial change:
    table in `docs/reference/audit_event_catalog.md` in both directions —
    the append-only audit log is an EU AI Act Art. 12 contract, and this
    guard was previously unwired while six `pipeline.*` stage events
-   drifted into the code uncatalogued.  The
+   drifted into the code uncatalogued.  The TR-links-prefer-mirror
+   guard (full-project-review W1/H11, F-P8-C-04) fails when a
+   `docs/**/*-tr.md` page links the un-suffixed English sibling even
+   though a `<stem>-tr.md` mirror exists — a Turkish reader following
+   an in-prose link must stay in Turkish; the `**Ayna:**` backlink
+   line is the one exempt case.  62 leaks across 19 files were swept
+   to zero when this guard landed — see `docs/standards/localization.md`
+   "Structural mirror rule".  The
    usermanual self-contained guard (post-v0.7.0 cycle) blocks any
    link inside `docs/usermanuals/` that would 404 in the static SPA
    viewer: every link must be either a `#/<section>/<page>` SPA

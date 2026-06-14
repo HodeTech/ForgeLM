@@ -5,7 +5,7 @@
 
 `forgelm purge`, ForgeLM eğitim corpus'ları ve koşum artefact'ları için **GDPR Madde 17 silinme hakkı**'nın operatör-yüzlü uygulamasıdır (Phase 21). Bir satırı, bir koşumun staging dizinini veya bir koşumun compliance bundle'ını atomik olarak siler ve her adımı tamper-evident `audit_log.jsonl` zincirine kaydeder.
 
-Deployer akışı (DSAR ticket → CLI çağrısı → doğrulama) için bkz. [`../guides/gdpr_erasure.md`](../guides/gdpr_erasure.md). Bu sayfa flag-başına, event-başına referanstır.
+Deployer akışı (DSAR ticket → CLI çağrısı → doğrulama) için bkz. [`../guides/gdpr_erasure.md`](../guides/gdpr_erasure-tr.md). Bu sayfa flag-başına, event-başına referanstır.
 
 ## Synopsis
 
@@ -73,7 +73,7 @@ Per-output-dir salt `<output_dir>/.forgelm_audit_salt`'ta ilk kullanımda oluşt
 
 ## Yayılan audit event'leri
 
-Altı event de [`audit_event_catalog.md`](audit_event_catalog.md)'deki ortak zarfı taşır. Katalog satırları kolaylık için burada da listelenir.
+Altı event de [`audit_event_catalog.md`](audit_event_catalog-tr.md)'deki ortak zarfı taşır. Katalog satırları kolaylık için burada da listelenir.
 
 | Event | Ne zaman yayılır | Anahtar payload |
 |---|---|---|
@@ -165,7 +165,7 @@ Asimetri notu: row/run başarı zarfları açık `success` field'ı **taşımaz*
 
 ## Bkz.
 
-- [`../guides/gdpr_erasure.md`](../guides/gdpr_erasure.md) — deployer akışı (DSAR ticket → CLI → zincir doğrulama).
-- [`reverse_pii_subcommand.md`](reverse_pii_subcommand.md) — kardeş Madde 15 erişim hakkı aracı.
-- [`audit_event_catalog.md`](audit_event_catalog.md) — zarf spec'iyle birlikte tam event sözlüğü.
-- [`../qms/access_control.md`](../qms/access_control.md) §3.4 — operatör kimliği sözleşmesi (her erasure event'ında kayıtlı `FORGELM_OPERATOR`).
+- [`../guides/gdpr_erasure.md`](../guides/gdpr_erasure-tr.md) — deployer akışı (DSAR ticket → CLI → zincir doğrulama).
+- [`reverse_pii_subcommand.md`](reverse_pii_subcommand-tr.md) — kardeş Madde 15 erişim hakkı aracı.
+- [`audit_event_catalog.md`](audit_event_catalog-tr.md) — zarf spec'iyle birlikte tam event sözlüğü.
+- [`../qms/access_control.md`](../qms/access_control-tr.md) §3.4 — operatör kimliği sözleşmesi (her erasure event'ında kayıtlı `FORGELM_OPERATOR`).

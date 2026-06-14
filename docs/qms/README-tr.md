@@ -26,7 +26,7 @@
 
 ## Bkz.
 
-- [Uyumluluk özeti](../reference/compliance_summary.md) — özlü EU AI Act + ISO + SOC 2 kanıt haritası.
+- [Uyumluluk özeti](../reference/compliance_summary-tr.md) — özlü EU AI Act + ISO + SOC 2 kanıt haritası.
 - [ISO / SOC 2 operatör (deployer) rehberi](../guides/iso_soc2_deployer_guide-tr.md) — Wave 4 denetim cookbook'u.
 - [Audit event kataloğu](../reference/audit_event_catalog-tr.md) — tam event vocabulary.
 

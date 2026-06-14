@@ -142,6 +142,11 @@ From [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml):
    - `python3 tools/check_anchor_resolution.py --strict` — every relative markdown link with a `#anchor` fragment resolves to a real heading.
    - `python3 tools/check_cli_help_consistency.py --strict` — CLI `--help` output ↔ `docs/usermanuals/{en,tr}/reference/cli.md` parity.
 
+   This list is a representative subset. The full doc-guard surface expanded
+   during the full-project-review W1/H11 sweep — `ci.yml`'s `validate` job is
+   the authoritative inventory, and `tests/test_guard_wiring.py` fails CI if any
+   `tools/check_*.py` guard is left unwired without an allowlisted rationale.
+
 From [`.github/workflows/nightly.yml`](../../.github/workflows/nightly.yml):
 
 - Unbounded upstream versions (latest TRL/PEFT/Unsloth) to catch breaking changes early.
