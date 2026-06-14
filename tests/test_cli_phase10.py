@@ -315,13 +315,35 @@ class TestLifecycleEnvelopeDocs:
 
 class TestChatCLI:
     def test_chat_does_not_require_config(self):
-        """Running forgelm chat without --config must not exit with CONFIG_ERROR."""
+        """Running forgelm chat without --config must not exit with CONFIG_ERROR.
+
+        Smoke check only — the SIGINT exit-code contract is pinned by the
+        two dedicated tests below."""
+        with patch("forgelm.cli._run_chat_cmd", return_value=None):
+            with patch("sys.argv", ["forgelm", "chat", "./model"]):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code != EXIT_CONFIG_ERROR
+
+    def test_chat_clean_exit_returns_success(self):
+        """F-P7-OPUS-28: a clean REPL exit (run_chat returns normally) must
+        exit EXIT_SUCCESS — the dispatcher's two-path SIGINT contract."""
+        with patch("forgelm.chat.run_chat", return_value=None):
+            with patch("sys.argv", ["forgelm", "chat", "./model"]):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code == EXIT_SUCCESS
+
+    def test_chat_inflight_sigint_exits_training_error(self):
+        """F-P7-OPUS-28: a KeyboardInterrupt during generation (not caught by
+        _run_chat_cmd's ``except Exception``) bubbles to the dispatcher and
+        exits EXIT_TRAINING_ERROR (2), NOT success. Pins the exact code so a
+        regression that swaps it cannot pass."""
         with patch("forgelm.cli._run_chat_cmd", side_effect=KeyboardInterrupt):
             with patch("sys.argv", ["forgelm", "chat", "./model"]):
                 with pytest.raises(SystemExit) as exc_info:
                     main()
-        # Should be SUCCESS (KeyboardInterrupt handled gracefully in _run_chat_cmd)
-        assert exc_info.value.code != EXIT_CONFIG_ERROR
+        assert exc_info.value.code == EXIT_TRAINING_ERROR
 
     def test_chat_subcommand_registered(self, capsys):
         """forgelm chat --help must succeed and document model_path."""
@@ -405,6 +427,24 @@ class TestSubcommandRouting:
             with pytest.raises(SystemExit) as exc_info:
                 main()
         assert exc_info.value.code == EXIT_SUCCESS
+
+    def test_dispatcher_clamps_nonpublic_verify_audit_return(self):
+        """F-P7-OPUS-29: a dispatcher returning a non-public code (e.g. a
+        signal-derived 130) must be clamped to EXIT_TRAINING_ERROR at the
+        dispatch seam, making the _exit_codes docstring invariant real."""
+        with patch("forgelm.cli._run_verify_audit_cmd", MagicMock(return_value=130)):
+            with patch("sys.argv", ["forgelm", "verify-audit", "/tmp/out"]):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code == EXIT_TRAINING_ERROR
+
+    def test_dispatcher_passes_through_public_verify_audit_return(self):
+        """The clamp must not alter a legitimate public code."""
+        with patch("forgelm.cli._run_verify_audit_cmd", MagicMock(return_value=EXIT_CONFIG_ERROR)):
+            with patch("sys.argv", ["forgelm", "verify-audit", "/tmp/out"]):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code == EXIT_CONFIG_ERROR
 
     def test_wizard_still_works(self):
         """--wizard flow must remain reachable via the dispatcher.

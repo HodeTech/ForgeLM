@@ -12,7 +12,7 @@ import sys
 import warnings
 
 from ._config_load import _apply_offline_flag, _load_config_or_exit
-from ._exit_codes import EXIT_CONFIG_ERROR, EXIT_SUCCESS, EXIT_TRAINING_ERROR
+from ._exit_codes import EXIT_CONFIG_ERROR, EXIT_SUCCESS, EXIT_TRAINING_ERROR, _clamp_exit_code
 from ._logging import _setup_logging, logger
 from ._no_train_modes import _maybe_run_no_train_mode
 from ._parser import parse_args
@@ -58,6 +58,12 @@ def _dispatch_subcommand(command: str, args) -> None:
       table dispatch (Round-5 fix), so ``SIGINT`` during a long
       verify-of-100K-events lands on 2 just like the others.  Returns
       its own exit code on success (the only dispatcher that does so).
+
+    Returned exit codes (verify-audit and the pipeline path) pass through
+    :func:`_clamp_exit_code`, so a computed or signal-derived code is
+    coerced to ``EXIT_TRAINING_ERROR`` rather than leaking verbatim —
+    making the ``_exit_codes`` module-docstring invariant real at this
+    seam (F-P7-OPUS-29).
     """
     # Late import via the package facade so monkeypatched
     # ``forgelm.cli._run_*_cmd`` references resolve correctly.
@@ -109,7 +115,7 @@ def _dispatch_subcommand(command: str, args) -> None:
         if command == "chat":
             dispatcher(args)
         elif command == "verify-audit":
-            sys.exit(dispatcher(args))
+            sys.exit(_clamp_exit_code(dispatcher(args)))
         else:
             dispatcher(args, output_format)
     except KeyboardInterrupt:
@@ -261,7 +267,7 @@ def _dispatch_pipeline_mode(config, args) -> None:
         logger.error("Failed to re-read pipeline YAML for hashing: %s", e)
         sys.exit(EXIT_CONFIG_ERROR)
 
-    sys.exit(run_pipeline_from_args(config, pipeline_yaml_bytes, args))
+    sys.exit(_clamp_exit_code(run_pipeline_from_args(config, pipeline_yaml_bytes, args)))
 
 
 def _main_inner() -> None:
