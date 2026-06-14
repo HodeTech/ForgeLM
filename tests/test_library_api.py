@@ -124,6 +124,18 @@ class TestPublicSurface:
         leaked = {n for n in dir(forgelm) if not n.startswith("_")} - set(forgelm.__all__)
         assert not leaked, f"Names exposed without being in __all__: {sorted(leaked)}"
 
+    def test_dir_is_exactly_sorted_unique_all_when_simplified(self) -> None:
+        """``__dir__`` derives its listing solely from ``__all__`` (the
+        former second statement that re-added dunders was dead code — the
+        ``and n in __all__`` filter guaranteed every candidate was already
+        present).  Pin the exact equality so a future reviewer who tries to
+        re-introduce a globals()-sourced surface, or who drops a dunder from
+        ``__all__``, trips this assertion instead of silently widening the
+        advertised API."""
+        import forgelm
+
+        assert dir(forgelm) == sorted(set(forgelm.__all__))
+
     def test_design_doc_experimental_symbols_are_exported(self) -> None:
         """F-PR29-A3-05: symbols listed Experimental in
         ``docs/design/library_api.md``

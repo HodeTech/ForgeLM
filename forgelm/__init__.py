@@ -20,7 +20,7 @@ Lazy-import discipline (Phase 19):
   attribute has been accessed (so IDE autocomplete + ``help(forgelm)``
   see every name immediately).
 
-Stability tiers (per design §4):
+Stability tiers (per design §2):
 
 - **Stable** symbols — semver-protected; signature changes require a
   major version bump of ``__api_version__`` (see
@@ -61,7 +61,7 @@ from .config import ConfigError, ForgeConfig, load_config
 del _annotations  # parser pragma — runtime binding is unused after rename.
 
 # Public surface (stable + experimental tiers — see ``_STABILITY_TIERS``
-# below for the per-symbol tier).  Order matches design §2.1 §4 tier
+# below for the per-symbol tier).  Order matches design §2.1 tier
 # listing (Stable first, then Experimental).  Anything absent from this
 # list is internal — operators may import it but the package gives no
 # stability guarantee.
@@ -126,7 +126,7 @@ __all__ = [
 # test fixtures.  ``tests/test_library_api.py`` asserts this map equals the
 # reference doc's Tier column and covers exactly ``__all__``.
 #
-# Tier semantics (design §4): ``stable`` symbols are semver-protected and a
+# Tier semantics (design §2): ``stable`` symbols are semver-protected and a
 # signature change requires an ``__api_version__`` MAJOR bump; ``experimental``
 # symbols may change without a MAJOR bump (the surface is still public).
 _STABILITY_TIERS: dict[str, str] = {
@@ -299,8 +299,7 @@ def __dir__() -> list[str]:
     symbols listed in ``_LAZY_SYMBOLS`` but not yet resolved still
     appear because they're members of ``__all__``.
     """
-    listed = set(__all__)
-    # Keep dunders that surfaced via globals() (``__version__``,
-    # ``__api_version__``) so existing IDE behaviour is preserved.
-    listed.update(n for n in globals() if n.startswith("__") and n.endswith("__") and n in __all__)
-    return sorted(listed)
+    # ``__all__`` is the single source of truth for the advertised surface
+    # (dunders such as ``__version__`` / ``__api_version__`` are already
+    # members), so the listing is exactly its sorted, de-duplicated contents.
+    return sorted(set(__all__))
