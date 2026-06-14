@@ -63,6 +63,29 @@ class TestSetupAuthentication:
                 utils.setup_authentication("hf_token")  # must not raise
         assert any("authentication failed" in r.message for r in caplog.records)
 
+    def test_unreadable_token_file_does_not_crash(self, monkeypatch, tmp_path):
+        # F-P2-FAB-29: a PermissionError on the token store must be skipped (auth
+        # is best-effort), not propagated as an exit-2 crash before any network
+        # call. Simulate the unreadable file via an open() that raises
+        # PermissionError, and provide a readable fallback path afterward.
+        monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+        good_file = tmp_path / "token"
+        good_file.write_text("hf_recovered\n", encoding="utf-8")
+        monkeypatch.setattr(utils, "_HF_TOKEN_PATHS", ["/locked/token", str(good_file)])
+
+        real_open = open
+
+        def fake_open(path, *args, **kwargs):
+            if path == "/locked/token":
+                raise PermissionError(13, "Permission denied")
+            return real_open(path, *args, **kwargs)
+
+        with patch("builtins.open", side_effect=fake_open):
+            with patch("forgelm.utils.login") as mock_login:
+                utils.setup_authentication()  # must not raise
+        # The locked path is skipped; the next readable path supplies the token.
+        mock_login.assert_called_once_with(token="hf_recovered")
+
 
 # ---------------------------------------------------------------------------
 # manage_checkpoints
@@ -97,16 +120,82 @@ class TestManageCheckpoints:
         # …but the promoted model and other content survive (no data loss).
         assert (tmp_path / "final_model" / "config.json").is_file()
 
-    def test_compress_writes_archive_and_keeps_originals(self, tmp_path, monkeypatch):
-        self._make_tree(tmp_path)
-        # The compress branch writes the tar.gz to CWD; isolate it under tmp.
-        monkeypatch.chdir(tmp_path)
-        utils.manage_checkpoints(str(tmp_path), action="compress")
-        archives = list(tmp_path.glob("checkpoints_*.tar.gz"))
+    def test_compress_writes_archive_next_to_checkpoint_dir(self, tmp_path, monkeypatch):
+        # F-P2-FAB-27: the archive is anchored next to the checkpoint dir, NOT
+        # the process CWD. Run from an unrelated CWD and assert the tarball
+        # lands in the checkpoint dir's parent regardless.
+        ckpt = tmp_path / "run" / "output"
+        self._make_tree(ckpt)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        utils.manage_checkpoints(str(ckpt), action="compress")
+        # Archive is in the checkpoint dir's parent (tmp_path/run), not CWD.
+        assert not list(elsewhere.glob("checkpoints_*.tar.gz"))
+        archives = list((tmp_path / "run").glob("checkpoints_*.tar.gz"))
         assert len(archives) == 1
         assert tarfile.is_tarfile(archives[0])
         # Originals remain after compression.
+        assert (ckpt / "checkpoint-100").is_dir()
+
+    def test_compress_failure_removes_partial_archive(self, tmp_path, monkeypatch):
+        # F-P2-FAB-27: a failure mid-archive must not leave a torn .tar.gz.
+        ckpt = tmp_path / "run" / "output"
+        self._make_tree(ckpt)
+
+        def boom(*args, **kwargs):
+            raise OSError("disk full")
+
+        # Let the archive file get created, then fail inside the with-block so
+        # the cleanup path (os.unlink of the partial) is exercised.
+        import tarfile as _tarfile
+
+        real_open = _tarfile.open
+
+        class FailingTar:
+            def __init__(self, path):
+                self._fh = real_open(path, "w:gz")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self._fh.close()
+                return False
+
+            def add(self, *args, **kwargs):
+                raise OSError("disk full")
+
+        monkeypatch.setattr(utils.tarfile, "open", lambda path, mode: FailingTar(path))
+        import pytest
+
+        with pytest.raises(OSError, match="disk full"):
+            utils.manage_checkpoints(str(ckpt), action="compress")
+        # No partial archive left behind.
+        assert not list((tmp_path / "run").glob("checkpoints_*.tar.gz"))
+
+    def test_delete_failure_is_counted_not_swallowed(self, tmp_path, monkeypatch, caplog):
+        # F-P2-FAB-26: a deletion failure must be logged at WARNING and excluded
+        # from the "Deleted N" count, not silently counted as a success.
+        self._make_tree(tmp_path)
+
+        real_rmtree = utils.shutil.rmtree
+
+        def selective_rmtree(path, *args, **kwargs):
+            if path.endswith("checkpoint-100"):
+                raise OSError("permission denied")
+            return real_rmtree(path, *args, **kwargs)
+
+        monkeypatch.setattr(utils.shutil, "rmtree", selective_rmtree)
+        with caplog.at_level("INFO"):
+            utils.manage_checkpoints(str(tmp_path), action="delete")
+        # The failing dir survives; the other is gone.
         assert (tmp_path / "checkpoint-100").is_dir()
+        assert not (tmp_path / "checkpoint-200").exists()
+        # Failure surfaced at WARNING, not silently swallowed; the success count
+        # excludes the failed dir (was 2 with ignore_errors=True).
+        assert any("could not be deleted" in r.message for r in caplog.records)
+        assert any("Deleted 1 checkpoint" in r.message for r in caplog.records)
 
     def test_unknown_action_warns_and_preserves(self, tmp_path, caplog):
         self._make_tree(tmp_path)
