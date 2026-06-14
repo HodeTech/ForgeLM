@@ -25,11 +25,14 @@ Stability tiers (per design §4):
 - **Stable** symbols — semver-protected; signature changes require a
   major version bump of ``__api_version__`` (see
   :mod:`forgelm._version`).
-- **Experimental** symbols — ``forgelm.WebhookNotifier`` etc.; surface
-  may change without a major bump but operator copy in the design
-  document calls out the lifecycle.
+- **Experimental** symbols — surface may change without a major bump
+  but the symbol is still public.
 - **Internal** — anything not in ``__all__`` is internal and may
   change at any time.
+
+The per-symbol tier is recorded once in :data:`_STABILITY_TIERS` below;
+that map is the single source of truth the user-facing reference doc and
+the ``__api_version__`` MAJOR-bump rule both key off.
 
 PEP 561 type-hint distribution: the ``forgelm/py.typed`` marker file
 ships in the wheel so ``mypy --strict`` / ``pyright`` consumers see
@@ -57,9 +60,10 @@ from .config import ConfigError, ForgeConfig, load_config
 # downstream ``forgelm.config`` references.
 del _annotations  # parser pragma — runtime binding is unused after rename.
 
-# Public stable surface.  Order matches design §2.1 §4 tier listing
-# (Stable first, then Experimental).  Anything absent from this list is
-# internal — operators may import it but the package gives no
+# Public surface (stable + experimental tiers — see ``_STABILITY_TIERS``
+# below for the per-symbol tier).  Order matches design §2.1 §4 tier
+# listing (Stable first, then Experimental).  Anything absent from this
+# list is internal — operators may import it but the package gives no
 # stability guarantee.
 #
 # Pylint cannot statically follow the PEP 562 ``__getattr__`` resolver
@@ -112,6 +116,53 @@ __all__ = [
     "BenchmarkResult",
     "SyntheticDataGenerator",
 ]
+
+
+# Machine-readable stability tier for every public symbol (F-P1-FAB-27).
+# This is the single source of truth that the user-facing reference doc
+# (``docs/reference/library_api_reference.md``) and the ``__api_version__``
+# MAJOR-bump rule both key off — previously the roster was contradicted
+# across ``_version.py``, the module docstring, the reference doc and the
+# test fixtures.  ``tests/test_library_api.py`` asserts this map equals the
+# reference doc's Tier column and covers exactly ``__all__``.
+#
+# Tier semantics (design §4): ``stable`` symbols are semver-protected and a
+# signature change requires an ``__api_version__`` MAJOR bump; ``experimental``
+# symbols may change without a MAJOR bump (the surface is still public).
+_STABILITY_TIERS: dict[str, str] = {
+    "__version__": "stable",
+    "__api_version__": "stable",
+    "load_config": "stable",
+    "ForgeConfig": "stable",
+    "ConfigError": "stable",
+    "ForgeTrainer": "stable",
+    "TrainResult": "stable",
+    "prepare_dataset": "experimental",
+    "get_model_and_tokenizer": "experimental",
+    "audit_dataset": "stable",
+    "AuditReport": "stable",
+    "detect_pii": "stable",
+    "mask_pii": "stable",
+    "detect_secrets": "stable",
+    "mask_secrets": "stable",
+    "compute_simhash": "experimental",
+    "compute_minhash": "experimental",
+    "AuditLogger": "stable",
+    "verify_audit_log": "stable",
+    "VerifyResult": "stable",
+    "verify_annex_iv_artifact": "stable",
+    "VerifyAnnexIVResult": "stable",
+    "verify_gguf": "stable",
+    "VerifyGgufResult": "stable",
+    "verify_integrity": "stable",
+    "VerifyIntegrityResult": "stable",
+    "WebhookNotifier": "experimental",
+    "setup_authentication": "experimental",
+    "manage_checkpoints": "experimental",
+    "run_benchmark": "experimental",
+    "BenchmarkResult": "experimental",
+    "SyntheticDataGenerator": "experimental",
+}
 
 
 # Submodule path constants — kept here so a future rename (e.g.

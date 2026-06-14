@@ -34,8 +34,13 @@ except PackageNotFoundError:  # pragma: no cover — uninstalled-source path
 #   PATCH  — implementation change with no API surface impact.
 #
 # Anchored at 1.0.0 with the v0.5.5 release (first PyPI publish of
-# the formal Phase 19 library-API surface — 30 stable symbols in
-# ``forgelm.__all__``).  v0.5.6 reverted the v0.5.5 torch min bump;
+# the formal Phase 19 library-API surface).  The public surface in
+# ``forgelm.__all__`` is split into stable and experimental tiers — the
+# authoritative per-symbol roster lives in ``forgelm._STABILITY_TIERS``
+# (mirrored by the Tier column of
+# ``docs/reference/library_api_reference.md``); only *stable* symbols are
+# covered by the MAJOR-bump rule above.  v0.5.6 reverted the v0.5.5 torch
+# min bump;
 # v0.5.7 fixes a runtime ``SFTConfig.max_seq_length`` TypeError on
 # modern trl (rename to ``max_length`` in trl 0.13+) plus the Intel
 # Mac NumPy 2 ABI mismatch (numpy<2 marker + ``numpy.torch_abi``
