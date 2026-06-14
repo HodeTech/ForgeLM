@@ -36,6 +36,19 @@ if torch_available:
     except (ImportError, AttributeError, RuntimeError):
         grpo_patchable = False
 
+# `_get_training_args_for_type` only constructs ``GRPOConfig`` (the trainer
+# itself is built later), so the config-kwarg tests need only ``GRPOConfig`` to
+# be importable — a weaker precondition than ``GRPOTrainer`` (which can fail to
+# import on some torch/trl/vllm pairings even when GRPOConfig is fine).
+grpoconfig_available = False
+if torch_available:
+    try:
+        from trl import GRPOConfig as _GRPOConfigProbe  # noqa: F401
+
+        grpoconfig_available = True
+    except (ImportError, AttributeError, RuntimeError):
+        grpoconfig_available = False
+
 
 def _make_grpo_config(tmp_path):
     from forgelm.config import ForgeConfig
@@ -93,6 +106,60 @@ def test_grpo_config_uses_max_completion_length(tmp_path):
     assert "max_new_tokens" not in captured_kwargs, (
         "Legacy `max_new_tokens` kwarg must NOT be passed to GRPOConfig — TRL >=0.12 raises TypeError on it."
     )
+
+
+@pytest.mark.skipif(not torch_available, reason="torch not installed")
+@pytest.mark.skipif(
+    not grpoconfig_available,
+    reason="trl.GRPOConfig not importable in this environment",
+)
+def test_grpo_config_disables_eval_when_validation_split_present(tmp_path):
+    """Regression for the GRPO construction crash on the default pipeline path.
+
+    ``_get_common_training_kwargs`` sets ``eval_strategy="steps"`` whenever a
+    validation split exists (auto-created by ``_ensure_validation_split``), but
+    ``_build_grpo_trainer`` pops the ``eval_dataset``. If the GRPO branch leaves
+    ``eval_strategy`` at ``"steps"`` while no eval_dataset reaches the trainer,
+    HF/TRL raise ``ValueError`` at ``GRPOTrainer`` construction.
+
+    This asserts ForgeLM's arg-reconciliation invariant (not TRL's raise): the
+    GRPOConfig kwargs must turn the eval-coupled args off in lockstep.
+    """
+    from forgelm.trainer import ForgeTrainer
+
+    config = _make_grpo_config(tmp_path)
+
+    trainer = ForgeTrainer.__new__(ForgeTrainer)
+    trainer.model = MagicMock()
+    trainer.tokenizer = MagicMock()
+    trainer.config = config
+    # Validation split present — the default pipeline path that triggers the bug.
+    trainer.dataset = {"train": list(range(10)), "validation": list(range(4))}
+    trainer.checkpoint_dir = str(tmp_path)
+    trainer.run_name = "grpo_eval_reconcile_test"
+    trainer.notifier = MagicMock()
+    trainer.audit = MagicMock()
+
+    captured_kwargs: dict = {}
+
+    def fake_grpo_config(**kwargs):
+        captured_kwargs.update(kwargs)
+        return MagicMock()
+
+    with patch("trl.GRPOConfig", side_effect=fake_grpo_config):
+        trainer._get_training_args_for_type()
+
+    assert captured_kwargs.get("eval_strategy") == "no", (
+        "GRPO drops the eval_dataset, so its GRPOConfig must force "
+        f'eval_strategy="no"; got {captured_kwargs.get("eval_strategy")!r}'
+    )
+    assert "eval_steps" not in captured_kwargs, (
+        f"GRPO must clear eval_steps when eval is disabled; got kwargs: {sorted(captured_kwargs)}"
+    )
+    # The eval-coupled best-model args must not survive into the GRPO config.
+    assert "load_best_model_at_end" not in captured_kwargs
+    assert "metric_for_best_model" not in captured_kwargs
+    assert "greater_is_better" not in captured_kwargs
 
 
 def test_legacy_field_name_still_accepted(tmp_path):

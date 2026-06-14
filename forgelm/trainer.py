@@ -508,6 +508,16 @@ class ForgeTrainer:
             # TRL >=0.12 expects `max_completion_length`; the older `max_new_tokens`
             # raises TypeError at GRPOConfig construction.
             kwargs["max_completion_length"] = self.config.training.grpo_max_completion_length
+            # GRPO trains on generation-based rewards, not validation loss, so
+            # `_build_grpo_trainer` drops the eval_dataset. The eval-coupled
+            # TrainingArguments must be turned off in lockstep: when a validation
+            # split exists (the default pipeline path), `_get_common_training_kwargs`
+            # sets `eval_strategy="steps"`. Leaving it set while no eval_dataset
+            # reaches the trainer makes HF/TRL raise
+            # `ValueError: ... you didn't pass an eval_dataset` at GRPOTrainer
+            # construction — the crash this reconciliation prevents.
+            kwargs["eval_strategy"] = "no"
+            kwargs.pop("eval_steps", None)
             # GRPO doesn't use load_best_model_at_end the same way
             kwargs.pop("load_best_model_at_end", None)
             kwargs.pop("metric_for_best_model", None)
