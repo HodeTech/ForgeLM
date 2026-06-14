@@ -10,6 +10,37 @@ from typing import Any, Optional, Tuple
 
 logger = logging.getLogger("forgelm.model")
 
+# MoE expert-count attribute names across architectures: Mixtral / Phi-MoE
+# expose ``num_local_experts``; Qwen2/Qwen3-MoE expose ``num_experts``;
+# DeepSeek-V3 exposes ``n_routed_experts``. Gating only on ``num_local_experts``
+# silently no-ops the entire moe block for Qwen3/DeepSeek (F-P3-FABLE-07).
+_MOE_EXPERT_COUNT_ATTRS = ("num_local_experts", "num_experts", "n_routed_experts")
+
+
+def _resolve_expert_count(model_config: Any) -> Optional[int]:
+    """Return the MoE expert count from whichever attribute the architecture
+    exposes, or ``None`` when the model is not a recognised MoE checkpoint."""
+    for attr in _MOE_EXPERT_COUNT_ATTRS:
+        val = getattr(model_config, attr, None)
+        if isinstance(val, int) and val > 0:
+            return val
+    return None
+
+
+def _resolve_peft_flags(config: Any) -> "Tuple[bool, bool, str]":
+    """Derive ``(use_dora, use_rslora, method)`` from the canonical ``lora.method``
+    plus the deprecated boolean shortcuts.
+
+    Single source of truth shared by the transformers and unsloth backends so
+    identical YAML trains the same algorithm regardless of ``model.backend`` —
+    previously the unsloth path read only the boolean shortcuts and silently
+    downgraded ``method: dora``/``rslora`` to plain LoRA (F-P3-FABLE-09).
+    """
+    peft_method = getattr(config.lora, "method", "lora")
+    use_dora = config.lora.use_dora or peft_method == "dora"
+    use_rslora = getattr(config.lora, "use_rslora", False) or peft_method == "rslora"
+    return use_dora, use_rslora, peft_method
+
 
 def _resolve_bnb_compute_dtype(dtype_str: str):
     import torch
@@ -40,7 +71,22 @@ def _load_unsloth(config: Any) -> Tuple[Any, Any]:
         load_in_4bit=config.model.load_in_4bit,
     )
 
-    logger.info("Setting up Unsloth LoRA configuration (DoRA=%s)...", config.lora.use_dora)
+    use_dora, use_rslora, peft_method = _resolve_peft_flags(config)
+    if peft_method == "pissa":
+        # Unsloth's get_peft_model has no init_lora_weights="pissa" path; dropping
+        # it silently would train plain LoRA under a config that asked for PiSSA.
+        from .config import ConfigError
+
+        raise ConfigError(
+            "lora.method='pissa' is not supported by the unsloth backend. Use "
+            "model.backend='transformers' for PiSSA, or choose another lora.method."
+        )
+    logger.info(
+        "Setting up Unsloth LoRA configuration (method=%s, DoRA=%s, rsLoRA=%s)...",
+        peft_method,
+        use_dora,
+        use_rslora,
+    )
     model = FastLanguageModel.get_peft_model(
         model,
         r=config.lora.r,
@@ -49,8 +95,8 @@ def _load_unsloth(config: Any) -> Tuple[Any, Any]:
         lora_dropout=config.lora.dropout,
         bias=config.lora.bias,
         use_gradient_checkpointing="unsloth",
-        use_rslora=getattr(config.lora, "use_rslora", False),
-        use_dora=config.lora.use_dora,
+        use_rslora=use_rslora,
+        use_dora=use_dora,
     )
     return model, tokenizer
 
@@ -68,9 +114,13 @@ def _load_tokenizer(config: Any, trust_remote_code: bool) -> Any:
 
         tokenizer = AutoTokenizer.from_pretrained(config.model.name_or_path, trust_remote_code=trust_remote_code)
 
-    if hasattr(tokenizer, "pad_token") and tokenizer.pad_token is None:
+    # AutoProcessor (VLM) wraps the text tokenizer under ``.tokenizer`` and does
+    # not itself expose pad_token/pad_token_id; operate on the inner tokenizer so
+    # the multimodal path doesn't AttributeError (F-P3-FABLE-11).
+    pad_target = getattr(tokenizer, "tokenizer", tokenizer)
+    if hasattr(pad_target, "pad_token") and pad_target.pad_token is None:
         logger.info("Tokenizer has no pad_token, using eos_token as pad_token.")
-        tokenizer.pad_token = tokenizer.eos_token
+        pad_target.pad_token = pad_target.eos_token
     return tokenizer
 
 
@@ -114,6 +164,17 @@ def _build_model_kwargs(config: Any, trust_remote_code: bool) -> dict:
             bnb_4bit_quant_type=config.model.bnb_4bit_quant_type,
             bnb_4bit_compute_dtype=compute_dtype,
         )
+    elif config.model.load_in_4bit:
+        # CUDA unavailable: bitsandbytes 4-bit needs a CUDA device, so the model
+        # loads in full precision. Make the silent skip loud — otherwise the run
+        # is full-precision while compliance artefacts (which read
+        # config.load_in_4bit) still claim "4-bit NF4" (F-P3-FABLE-10).
+        logger.warning(
+            "model.load_in_4bit=true but CUDA is unavailable — loading in full "
+            "precision (bitsandbytes 4-bit requires a CUDA device). This run is NOT "
+            "quantized; compliance artefacts and the model card that read "
+            "load_in_4bit will overstate the quantization."
+        )
 
     rope_scaling = config.training.rope_scaling
     if rope_scaling:
@@ -131,9 +192,17 @@ def _build_model_kwargs(config: Any, trust_remote_code: bool) -> dict:
 def _apply_moe_config(model: Any, config: Any) -> None:
     """Apply MoE-specific freezing / quantization, no-op for non-MoE models."""
     moe_cfg = getattr(config.model, "moe", None)
-    if not moe_cfg or not hasattr(model.config, "num_local_experts"):
+    if not moe_cfg:
         return
-    num_experts = model.config.num_local_experts
+    num_experts = _resolve_expert_count(model.config)
+    if num_experts is None:
+        logger.warning(
+            "model.moe is configured but the loaded model exposes no recognised MoE "
+            "expert-count attribute (%s) — the moe block (quantize_experts / "
+            "experts_to_train) is ignored. Is this actually a MoE checkpoint?",
+            ", ".join(_MOE_EXPERT_COUNT_ATTRS),
+        )
+        return
     logger.info("MoE model detected: %d experts", num_experts)
     if moe_cfg.quantize_experts:
         _apply_moe_expert_quantization(model)
@@ -145,9 +214,7 @@ def _build_lora_config(config: Any) -> "LoraConfig":  # noqa: F821 — peft impo
     """Resolve PEFT method (lora / dora / rslora / pissa) and build LoraConfig."""
     from peft import LoraConfig
 
-    peft_method = getattr(config.lora, "method", "lora")
-    use_dora = config.lora.use_dora or peft_method == "dora"
-    use_rslora = getattr(config.lora, "use_rslora", False) or peft_method == "rslora"
+    use_dora, use_rslora, peft_method = _resolve_peft_flags(config)
 
     logger.info(
         "Setting up PEFT configuration (method=%s, DoRA=%s, rsLoRA=%s)...",
@@ -192,11 +259,24 @@ def get_model_and_tokenizer(config: Any) -> Tuple[Any, Any]:
 
     tokenizer = _load_tokenizer(config, trust_remote_code)
     model_kwargs = _build_model_kwargs(config, trust_remote_code)
-    model = AutoModelForCausalLM.from_pretrained(config.model.name_or_path, **model_kwargs)
 
-    # Sync pad_token_id to model config to suppress generation warnings
-    if tokenizer.pad_token_id is not None and model.config.pad_token_id is None:
-        model.config.pad_token_id = tokenizer.pad_token_id
+    # Most VLM architectures are registered under AutoModelForImageTextToText,
+    # not AutoModelForCausalLM — loading them via the causal-LM class fails with
+    # "Unrecognized configuration class" (F-P3-FABLE-11).
+    mm_cfg = getattr(config.model, "multimodal", None)
+    if mm_cfg and mm_cfg.enabled:
+        from transformers import AutoModelForImageTextToText
+
+        model = AutoModelForImageTextToText.from_pretrained(config.model.name_or_path, **model_kwargs)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(config.model.name_or_path, **model_kwargs)
+
+    # Sync pad_token_id to model config to suppress generation warnings. A VLM
+    # AutoProcessor exposes pad_token_id only on its inner ``.tokenizer``.
+    pad_source = getattr(tokenizer, "tokenizer", tokenizer)
+    pad_token_id = getattr(pad_source, "pad_token_id", None)
+    if pad_token_id is not None and model.config.pad_token_id is None:
+        model.config.pad_token_id = pad_token_id
 
     # enable_input_require_grads is needed for gradient checkpointing with LoRA
     if hasattr(model, "enable_input_require_grads"):
