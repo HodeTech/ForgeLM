@@ -122,6 +122,22 @@ class TestAuditSubcommand:
         assert "pii_severity" in envelope
         assert envelope["report_path"].endswith("data_audit_report.json")
 
+    def test_audit_dispatch_quality_filter_defaults_on_when_attr_absent(self):
+        """F-P7-OPUS-26: the dispatcher's getattr fallback must mirror the
+        parser's documented default-ON (v0.6.0+).  A Namespace without a
+        ``quality_filter`` attribute (the shape a future ``argparse.SUPPRESS``
+        switch would produce) must still pass ``enable_quality_filter=True``."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from forgelm.cli.subcommands._audit import _run_audit_cmd
+
+        args = SimpleNamespace(input_path="data.jsonl")  # no quality_filter attr
+        fake = MagicMock()
+        with patch("forgelm.cli._run_data_audit", fake):
+            _run_audit_cmd(args, "text")
+        assert fake.call_args.kwargs["enable_quality_filter"] is True
+
     def test_legacy_data_audit_flag_still_works(self, tmp_path):
         data_path = tmp_path / "data.jsonl"
         self._make_jsonl(data_path, [{"text": "legacy alias still routes here"}])
@@ -243,3 +259,40 @@ class TestAuditSubcommand:
                 main()
             # argparse error → exit code 2 (its standard convention).
             assert exc_info.value.code == 2
+
+
+class TestNumericFlagValidators:
+    """F-P7-OPUS-27: deploy/chat/safety-eval bounded numeric flags must fail
+    fast at the CLI boundary (parity with the audit/ingest validators)."""
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["forgelm", "deploy", "m", "--target", "vllm", "--gpu-memory-utilization", "9.5"],
+            ["forgelm", "deploy", "m", "--target", "tgi", "--port", "-1"],
+            ["forgelm", "deploy", "m", "--target", "vllm", "--max-length", "-5"],
+            ["forgelm", "chat", "m", "--temperature", "-3"],
+            ["forgelm", "chat", "m", "--max-new-tokens", "-10"],
+            ["forgelm", "safety-eval", "--model", "m", "--default-probes", "--max-new-tokens", "-1"],
+        ],
+    )
+    def test_out_of_range_numeric_flag_rejected_at_parse_time(self, argv):
+        with patch("sys.argv", argv):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        # argparse usage error → exit 2 (conventional across the CLI).
+        assert exc_info.value.code == 2
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["forgelm", "deploy", "m", "--target", "vllm", "--gpu-memory-utilization", "0.9"],
+            ["forgelm", "chat", "m", "--temperature", "1.5"],
+        ],
+    )
+    def test_in_range_numeric_flag_parses(self, argv):
+        from forgelm.cli._parser import parse_args
+
+        with patch("sys.argv", argv):
+            # Must not raise SystemExit at parse time for in-range values.
+            parse_args()

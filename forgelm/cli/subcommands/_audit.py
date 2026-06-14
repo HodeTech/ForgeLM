@@ -146,7 +146,7 @@ def _run_audit_cmd(args, output_format: str) -> None:
         near_dup_threshold=getattr(args, "near_dup_threshold", None),
         dedup_method=getattr(args, "dedup_method", "simhash"),
         minhash_jaccard=getattr(args, "jaccard_threshold", None),
-        enable_quality_filter=getattr(args, "quality_filter", False),
+        enable_quality_filter=getattr(args, "quality_filter", True),
         enable_pii_ml=getattr(args, "pii_ml", False),
         pii_ml_language=getattr(args, "pii_ml_language", "en"),
         emit_croissant=getattr(args, "croissant", False),

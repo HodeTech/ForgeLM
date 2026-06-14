@@ -56,6 +56,23 @@ def _non_negative_float(value: str) -> float:
     return fvalue
 
 
+def _sampling_temperature(value: str) -> float:
+    """argparse type for ``--temperature`` (sampling temperature in [0.0, 2.0]).
+
+    Mirrors :func:`_non_negative_float` but allows the conventional upper
+    bound of 2.0 used by HF/OpenAI-style samplers, so a typo like
+    ``--temperature -3`` or ``--temperature 50`` fails at the CLI boundary
+    instead of producing a malformed generation config downstream.
+    """
+    try:
+        fvalue = float(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(f"invalid float: {value!r}") from exc
+    if fvalue < 0.0 or fvalue > 2.0:
+        raise argparse.ArgumentTypeError(f"value must be in [0.0, 2.0], got {fvalue}")
+    return fvalue
+
+
 def _add_common_subparser_flags(p: argparse.ArgumentParser, *, include_output_format: bool) -> None:
     """Register the shared --quiet / --log-level / --output-format flags.
 

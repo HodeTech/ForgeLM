@@ -11,7 +11,13 @@ from __future__ import annotations
 
 import argparse
 
-from ._argparse_types import _add_common_subparser_flags, _non_negative_float, _non_negative_int, _positive_int
+from ._argparse_types import (
+    _add_common_subparser_flags,
+    _non_negative_float,
+    _non_negative_int,
+    _positive_int,
+    _sampling_temperature,
+)
 from ._logging import _get_version
 
 # Shared `--output-dir` help text across approve / reject / approvals
@@ -34,8 +40,10 @@ def _add_chat_subcommand(subparsers) -> None:
     p.add_argument("model_path", help="Path to a saved HuggingFace model directory or HF Hub ID.")
     p.add_argument("--adapter", type=str, default=None, help="PEFT adapter directory to merge before chat.")
     p.add_argument("--system", type=str, default=None, metavar="PROMPT", help="Initial system prompt.")
-    p.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature (default: 0.7).")
-    p.add_argument("--max-new-tokens", type=int, default=512, help="Max tokens per response (default: 512).")
+    p.add_argument(
+        "--temperature", type=_sampling_temperature, default=0.7, help="Sampling temperature (default: 0.7)."
+    )
+    p.add_argument("--max-new-tokens", type=_positive_int, default=512, help="Max tokens per response (default: 512).")
     p.add_argument("--no-stream", action="store_true", help="Disable streaming output.")
     p.add_argument("--load-in-4bit", action="store_true", help="Load model in 4-bit NF4 quantisation.")
     p.add_argument("--load-in-8bit", action="store_true", help="Load model in 8-bit quantisation.")
@@ -104,14 +112,14 @@ def _add_deploy_subcommand(subparsers) -> None:
     )
     p.add_argument("--output", type=str, default=None, metavar="FILE", help="Output file path (default: auto).")
     p.add_argument("--system", type=str, default=None, metavar="PROMPT", help="System prompt (Ollama only).")
-    p.add_argument("--max-length", type=int, default=4096, help="Context window length (default: 4096).")
+    p.add_argument("--max-length", type=_positive_int, default=4096, help="Context window length (default: 4096).")
     p.add_argument(
         "--gpu-memory-utilization",
-        type=float,
+        type=_non_negative_float,
         default=0.90,
-        help="vLLM GPU memory utilisation fraction (default: 0.90).",
+        help="vLLM GPU memory utilisation fraction in [0.0, 1.0] (default: 0.90).",
     )
-    p.add_argument("--port", type=int, default=8080, help="Host port for TGI container (default: 8080).")
+    p.add_argument("--port", type=_positive_int, default=8080, help="Host port for TGI container (default: 8080).")
     p.add_argument("--trust-remote-code", action="store_true", help="Set trust_remote_code in vLLM config.")
     p.add_argument(
         "--vendor",
@@ -828,7 +836,7 @@ def _add_safety_eval_subcommand(subparsers) -> None:
     )
     p.add_argument(
         "--max-new-tokens",
-        type=int,
+        type=_positive_int,
         default=512,
         help="Max tokens per generated response (default: 512).",
     )
