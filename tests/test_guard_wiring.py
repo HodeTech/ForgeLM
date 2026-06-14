@@ -29,14 +29,13 @@ _WORKFLOWS = _REPO_ROOT / ".github" / "workflows"
 # rationale pointing at the finding/work-package that owns the deferral. A guard
 # is removed from this set the moment it is wired (then rule 1 enforces it).
 _UNWIRED_ALLOWLIST: dict[str, str] = {
-    "check_doc_numerical_claims.py": (
-        "Owned by W1/H5 (F-P8-C-06): wiring lands with the webhook 5->8 doc-drift "
-        "fix so the newly-wired gate goes green in the same PR."
-    ),
-    "check_notebook_pins.py": (
-        "Owned by W2/M7 (F-P8-C-09): fails at HEAD on stale notebook pins "
-        "(forgelm==0.5.7 vs released 0.7.x); wiring lands with the pin bump."
-    ),
+    # All previously-deferred guards are now wired:
+    #   * check_doc_numerical_claims.py — wired into ci.yml once H5's webhook
+    #     5->8 doc-drift fix made it green (F-P8-C-06).
+    #   * check_notebook_pins.py — wired by M7 alongside the 0.7.0 pin bump
+    #     (F-P8-C-09).
+    # Add an entry here ONLY with a rationale if a new guard is intentionally
+    # deferred; test_allowlisted_guards_are_actually_unwired keeps it honest.
 }
 
 

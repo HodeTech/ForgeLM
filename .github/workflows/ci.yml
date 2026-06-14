@@ -187,6 +187,15 @@ jobs:
         # tools/check_site_claims.py for what's checked and why.
         run: python3 tools/check_site_claims.py --strict
 
+      - name: Doc numerical-claims drift check (strict)
+        # F-P8-C-06 (W1/H5): re-derives the canonical counts (secret
+        # families, trainer types, quickstart templates, webhook events)
+        # from the Python sources of truth and fails the build when a doc
+        # asserts a stale number — e.g. the "five webhook events" prose that
+        # drifted after the vocabulary grew to eight. Wired once H5's 5->8
+        # doc-drift fix made the guard green at HEAD.
+        run: python3 tools/check_doc_numerical_claims.py --strict
+
       - name: Bilingual doc H2/H3/H4 parity check (strict)
         # Phase 24: extended structural parity guard.  Where the prior
         # inline check counted H2 only and missed reordered / demoted
