@@ -151,8 +151,16 @@ class SyntheticDataGenerator:
                     # Support JSONL ({"prompt": "..."}) or plain text
                     try:
                         data = json.loads(line)
-                        prompts.append(data.get("prompt", data.get("text", line)))
                     except json.JSONDecodeError:
+                        prompts.append(line)
+                        continue
+                    # A line that is valid JSON but not an object (a bare
+                    # array/number/string/bool/null) has no ``.get`` — treat
+                    # the raw line as a plain-text prompt instead of crashing
+                    # the whole load with AttributeError (F-P6-OPUS-08).
+                    if isinstance(data, dict):
+                        prompts.append(data.get("prompt", data.get("text", line)))
+                    else:
                         prompts.append(line)
             logger.info("Loaded %d seed prompts from %s", len(prompts), self.synth_cfg.seed_file)
             return prompts
@@ -301,6 +309,19 @@ class SyntheticDataGenerator:
                         seed_file,
                         lineno,
                         e,
+                        line[:120].rstrip(),
+                    )
+                    continue
+                # Valid JSON but not an object (bare array/number/string/etc.)
+                # has no ``.get`` — count it as malformed and skip rather than
+                # crashing the whole load with AttributeError (F-P6-OPUS-08).
+                if not isinstance(data, dict):
+                    malformed += 1
+                    logger.debug(
+                        "Skipping non-object JSON in %s line %d (%s) — %s",
+                        seed_file,
+                        lineno,
+                        type(data).__name__,
                         line[:120].rstrip(),
                     )
                     continue

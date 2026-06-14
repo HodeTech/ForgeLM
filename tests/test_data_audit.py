@@ -361,6 +361,50 @@ class TestNonDictRowTolerance:
         assert info["sample_count"] == 4
 
 
+class TestSyntheticFormatsVisibleToAudit:
+    """F-P6-OPUS-07: the synthetic generator emits four output shapes
+    (``messages`` / ``instruction`` / ``chatml`` / ``prompt_response``); the
+    audit text extractor used to read only ``messages`` and a bare ``prompt``,
+    so ``instruction``/``chatml`` rows extracted to ``""`` (counted as
+    ``null_or_empty``, never scanned) and ``prompt_response`` silently dropped
+    its ``response`` half — the text most likely to carry memorised PII."""
+
+    def test_extract_payload_covers_synthetic_formats(self):
+        from forgelm.data_audit._streaming import _extract_text_payload
+
+        # Build via the real generator's formatter so the test pins the
+        # actual emitted shapes, not a hand-rolled approximation.
+        rows = [
+            {"instruction": "q", "output": "alice@example.com"},
+            {"User": "q", "Assistant": "alice@example.com"},
+            {"prompt": "q", "response": "alice@example.com"},
+            {"messages": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "alice@example.com"}]},
+        ]
+        for row in rows:
+            payload = _extract_text_payload(row)
+            assert payload, f"empty payload for {sorted(row)}"
+            # The assistant/response/output half (with the secret) is included.
+            assert "alice@example.com" in payload, f"response half dropped for {sorted(row)}"
+
+    @pytest.mark.parametrize(
+        "row",
+        [
+            {"instruction": "ask", "output": "leak alice@example.com here"},
+            {"User": "ask", "Assistant": "leak alice@example.com here"},
+            {"prompt": "ask", "response": "leak alice@example.com here"},
+        ],
+    )
+    def test_synthetic_response_half_pii_detected_by_audit(self, tmp_path, row):
+        path = tmp_path / "synthetic.jsonl"
+        _write_jsonl(path, [row])
+        report = audit_dataset(str(path))
+        info = report.splits["train"]
+        # Row is no longer silently classified as empty/unreadable...
+        assert info["null_or_empty_count"] == 0
+        # ...and the PII baked into the teacher response half is detected.
+        assert info["pii_counts"].get("email") == 1
+
+
 class TestParseAndDecodeIntegrity:
     def test_malformed_jsonl_lines_surface_in_report(self, tmp_path):
         # Bug 4: parse errors used to be log-only — now they're a

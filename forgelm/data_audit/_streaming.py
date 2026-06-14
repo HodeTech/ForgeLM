@@ -17,7 +17,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Tuple
 
-from ._types import _TEXT_COLUMNS
+from ._types import _INSTRUCTION_PAIRS, _TEXT_COLUMNS
 
 logger = logging.getLogger("forgelm.data_audit")
 
@@ -121,7 +121,24 @@ class _LengthDigest:
 
 
 def _extract_text_payload(row: Dict[str, Any]) -> str:
-    """Pick the most plausible text column from a row for stats / dedup."""
+    """Pick the most plausible text column from a row for stats / dedup.
+
+    Recognises the instruction-tuning / chat shapes the rest of the codebase
+    emits so synthetic ``instruction`` / ``chatml`` / ``prompt_response``
+    output is scanned for PII/secrets/quality instead of silently extracting
+    to ``""`` (F-P6-OPUS-07). A recognised ``(user_half, assistant_half)``
+    pair takes priority over a bare single column so the assistant/response
+    half — the text most likely to carry memorised PII — is never dropped.
+    """
+    # Instruction-tuning pairs first: join both halves so the response/output
+    # is scanned. Only fires when BOTH keys carry non-empty string content.
+    for user_key, asst_key in _INSTRUCTION_PAIRS:
+        user_val = row.get(user_key)
+        asst_val = row.get(asst_key)
+        if isinstance(user_val, str) and isinstance(asst_val, str):
+            halves = [v for v in (user_val, asst_val) if v.strip()]
+            if halves:
+                return "\n".join(halves)
     for col in _TEXT_COLUMNS:
         val = row.get(col)
         if isinstance(val, str) and val.strip():

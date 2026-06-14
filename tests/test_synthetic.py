@@ -262,6 +262,56 @@ class TestSyntheticGenerator:
         assert result.total_prompts == 0
         assert result.successful == 0
 
+    def test_seed_loader_skips_non_dict_json_line(self, tmp_path):
+        """F-P6-OPUS-08: a valid-JSON-but-non-object seed line (array, bare
+        number, …) must not crash the loader with AttributeError; it falls
+        back to treating the raw line as a plain-text prompt."""
+        seed_file = tmp_path / "seeds.jsonl"
+        seed_file.write_text(
+            "\n".join(
+                [
+                    json.dumps({"prompt": "What is AI?"}),
+                    "[1, 2, 3]",  # valid JSON array — has no .get
+                    "42",  # valid JSON number
+                    json.dumps({"prompt": "Explain ML."}),
+                ]
+            )
+        )
+        config = _config(synthetic={"enabled": True, "teacher_model": "test", "seed_file": str(seed_file)})
+        gen = SyntheticDataGenerator(config)
+        prompts = gen._load_seed_prompts()  # must not raise
+        assert "What is AI?" in prompts
+        assert "Explain ML." in prompts
+        # The non-object lines survive as raw-text prompts rather than aborting.
+        assert "[1, 2, 3]" in prompts
+        assert "42" in prompts
+
+    def test_file_responses_skips_non_dict_json_line(self, tmp_path):
+        """F-P6-OPUS-08: ``_load_file_responses`` must count a non-object JSON
+        line as malformed and skip it, honouring its 'loud about failures'
+        docstring instead of crashing with AttributeError."""
+        seed_file = tmp_path / "responses.jsonl"
+        seed_file.write_text(
+            "\n".join(
+                [
+                    json.dumps({"prompt": "Q1", "response": "A1"}),
+                    "[1, 2, 3]",  # valid JSON, non-object
+                    json.dumps({"prompt": "Q2", "response": "A2"}),
+                ]
+            )
+        )
+        config = _config(
+            synthetic={
+                "enabled": True,
+                "teacher_model": "n/a",
+                "teacher_backend": "file",
+                "seed_file": str(seed_file),
+            }
+        )
+        gen = SyntheticDataGenerator(config)
+        responses = gen._load_file_responses()  # must not raise
+        assert responses == {"Q1": "A1", "Q2": "A2"}
+
 
 class TestSyntheticYaml:
     def test_yaml_round_trip(self, tmp_path):
