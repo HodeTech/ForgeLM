@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import types
 from unittest.mock import MagicMock, patch
@@ -774,6 +775,141 @@ class TestResumeFrom:
         assert refused[0]["requested_stage"] == "dpo_stage"
         assert refused[0]["blocking_stage"] == "sft_stage"
         assert refused[0]["blocking_status"] == "gated_pending_approval"
+
+    def test_resume_after_approval_skips_gated_stage_and_chains_from_promoted_model(self, tmp_path, monkeypatch):
+        """H4/P2-FAB-03: after ``forgelm approve`` renames the staging dir to
+        ``final_model/``, a ``--resume-from`` of a later stage must SKIP the
+        gated stage (not re-train it) and chain the downstream stage from the
+        *promoted* ``final_model/`` path — and emit exactly one
+        ``pipeline.stage_started`` per stage_index across both runs.
+
+        Pre-fix the skiplist refused unconditionally on
+        ``status=gated_pending_approval`` (it could not tell an approved stage
+        from an unapproved one), so the documented approve→resume flow either
+        re-trained the gated stage or was blocked outright."""
+        cfg = _three_stage_config(tmp_path)
+        # First run: SFT gates with a realistic ``.staging.<run_id>`` path.
+        gated_staging = str(tmp_path / "stage1" / f"final_model.staging.fg-{_generate_run_id()[-6:]}")
+        os.makedirs(gated_staging, exist_ok=True)
+        _install_trainer_mocks(
+            monkeypatch,
+            [TrainResult(success=True, awaiting_approval=True, staging_path=gated_staging)],
+        )
+        orch1 = PipelineOrchestrator(cfg, b"yaml")
+        assert orch1.run() == EXIT_AWAITING_APPROVAL
+
+        # Simulate ``forgelm approve``: promote staging → final_model/ (rename).
+        # (The trainer mock auto-creates a stub ``final_model/`` on instantiation;
+        # clear it first so the rename mirrors the real approve flow, which
+        # requires the final path to be free before promotion.)
+        promoted = str(tmp_path / "stage1" / "final_model")
+        shutil.rmtree(promoted, ignore_errors=True)
+        os.rename(gated_staging, promoted)
+        assert not os.path.isdir(gated_staging)
+        assert os.path.isdir(promoted)
+
+        # Resume from DPO: SFT must be skipped, DPO must chain from the promoted
+        # model, and only DPO + GRPO may train.
+        configs_seen2 = _install_trainer_mocks(monkeypatch, [TrainResult(success=True), TrainResult(success=True)])
+        orch2 = PipelineOrchestrator(cfg, b"yaml")
+        code2 = orch2.run(resume_from="dpo_stage")
+        assert code2 == EXIT_SUCCESS
+        assert len(configs_seen2) == 2, "only DPO + GRPO may train; SFT must be skipped post-approval"
+
+        # State file: SFT recorded as completed pointing at the promoted model;
+        # pipeline finalised as completed.
+        with open(orch2.paths["state_file"]) as f:
+            payload = json.load(f)
+        assert payload["final_status"] == "completed"
+        assert payload["stages"][0]["status"] == "completed"
+        assert payload["stages"][0]["output_model"] == promoted
+        assert payload["stages"][1]["input_model"] == promoted
+
+        # Audit invariant: exactly one pipeline.stage_started per stage_index
+        # across BOTH runs (the gated stage must not be re-started on resume).
+        audit_path = os.path.join(orch2.paths["root_output_dir"], "audit_log.jsonl")
+        with open(audit_path) as f:
+            events = [json.loads(line) for line in f if line.strip()]
+        started_indices = [e["stage_index"] for e in events if e.get("event") == "pipeline.stage_started"]
+        assert sorted(started_indices) == [0, 1, 2], (
+            f"expected one stage_started per stage_index, got {sorted(started_indices)!r}"
+        )
+
+    def test_resume_to_success_after_failure_resets_terminal_fields_and_emits_one_completed(
+        self, tmp_path, monkeypatch
+    ):
+        """H4/P2-FAB-04: a previously-failed run (final_status=stopped_at_stage)
+        resumed to success must reset the terminal fields and emit exactly one
+        ``pipeline.completed`` carrying ``final_status="completed"`` — not the
+        stale ``stopped_at_stage`` + ``stopped_at`` name."""
+        cfg = _three_stage_config(tmp_path)
+        # First run: stage 2 fails → stopped_at_stage.
+        _install_trainer_mocks(monkeypatch, [TrainResult(success=True), TrainResult(success=False, error="oom")])
+        orch1 = PipelineOrchestrator(cfg, b"yaml bytes")
+        orch1.run()
+        with open(orch1.paths["state_file"]) as f:
+            payload1 = json.load(f)
+        assert payload1["final_status"] == "stopped_at_stage"
+        assert payload1["stopped_at"] == "dpo_stage"
+
+        # Resume from stage 2 with passing mocks → exit 0.
+        _install_trainer_mocks(monkeypatch, [TrainResult(success=True), TrainResult(success=True)])
+        orch2 = PipelineOrchestrator(cfg, b"yaml bytes")
+        assert orch2.run(resume_from="dpo_stage") == EXIT_SUCCESS
+
+        with open(orch2.paths["state_file"]) as f:
+            payload2 = json.load(f)
+        assert payload2["final_status"] == "completed"
+        assert payload2["stopped_at"] is None
+
+        # Exactly one pipeline.completed across the resume run, with the
+        # corrected terminal status (not the stale stopped_at_stage).
+        audit_path = os.path.join(orch2.paths["root_output_dir"], "audit_log.jsonl")
+        with open(audit_path) as f:
+            events = [json.loads(line) for line in f if line.strip()]
+        completed = [e for e in events if e.get("event") == "pipeline.completed"]
+        # Two runs wrote to the same append-only log; the LAST completed event
+        # is the resume's and must carry the corrected status.
+        assert completed[-1]["final_status"] == "completed"
+        assert completed[-1]["stopped_at"] is None
+
+    def test_resume_to_success_after_gate_resets_terminal_fields_and_emits_completed(self, tmp_path, monkeypatch):
+        """H4/P2-FAB-04 (gated variant): a previously-gated run
+        (final_status=gated_pending_approval) that is approved and resumed to
+        success must finalise as ``completed`` and emit a ``pipeline.completed``
+        event — pre-fix the gated status was not in the finalise allowlist so
+        NO completion event fired and the state file permanently described a
+        finished pipeline as gated."""
+        cfg = _three_stage_config(tmp_path)
+        gated_staging = str(tmp_path / "stage1" / "final_model.staging.fg-gatedfin")
+        os.makedirs(gated_staging, exist_ok=True)
+        _install_trainer_mocks(
+            monkeypatch,
+            [TrainResult(success=True, awaiting_approval=True, staging_path=gated_staging)],
+        )
+        orch1 = PipelineOrchestrator(cfg, b"yaml")
+        assert orch1.run() == EXIT_AWAITING_APPROVAL
+        with open(orch1.paths["state_file"]) as f:
+            assert json.load(f)["final_status"] == "gated_pending_approval"
+
+        # Approve (rename staging → final_model/) then resume to success.
+        shutil.rmtree(str(tmp_path / "stage1" / "final_model"), ignore_errors=True)
+        os.rename(gated_staging, str(tmp_path / "stage1" / "final_model"))
+        _install_trainer_mocks(monkeypatch, [TrainResult(success=True), TrainResult(success=True)])
+        orch2 = PipelineOrchestrator(cfg, b"yaml")
+        assert orch2.run(resume_from="dpo_stage") == EXIT_SUCCESS
+
+        with open(orch2.paths["state_file"]) as f:
+            payload2 = json.load(f)
+        assert payload2["final_status"] == "completed"
+        assert payload2["stopped_at"] is None
+
+        audit_path = os.path.join(orch2.paths["root_output_dir"], "audit_log.jsonl")
+        with open(audit_path) as f:
+            events = [json.loads(line) for line in f if line.strip()]
+        completed = [e for e in events if e.get("event") == "pipeline.completed"]
+        assert len(completed) == 1, f"expected one pipeline.completed, got {[e.get('event') for e in events]!r}"
+        assert completed[0]["final_status"] == "completed"
 
     def test_stage_config_error_exits_config_error(self, tmp_path, monkeypatch):
         """C7-review: a ConfigError from a stage (e.g. unset judge_api_key_env)

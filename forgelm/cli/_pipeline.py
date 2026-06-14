@@ -185,6 +185,28 @@ def _compute_pipeline_config_hash(pipeline_yaml_bytes: bytes) -> str:
     return "sha256:" + hashlib.sha256(pipeline_yaml_bytes).hexdigest()
 
 
+# The on-disk staging-suffix contract shared with ``forgelm approve``.  A gated
+# stage's ``output_model`` points at ``<final_path>.staging.<run_id>``; after the
+# operator runs ``forgelm approve`` that directory is renamed to ``<final_path>``.
+# Kept in sync with ``forgelm/cli/subcommands/_approve.py`` (``_STAGING_SUFFIX``);
+# not imported across the layer to avoid a CLI-subcommand → orchestrator cycle.
+_STAGING_SUFFIX = ".staging"
+
+
+def _derive_promoted_path(staging_path: str) -> str:
+    """Return the promoted ``final_model/`` path for a gated stage's staging dir.
+
+    Strips the staging suffix (and any runtime ``.<run_id>`` segment appended
+    after it) from ``staging_path`` so ``final_model.staging.abc123`` yields
+    ``final_model``.  Mirrors the derivation in
+    ``forgelm/cli/subcommands/_approve.py`` (the rename target ``forgelm
+    approve`` promotes to) — ``rfind`` locates the last occurrence of the
+    suffix so a trailing run-id segment is handled correctly.
+    """
+    idx = staging_path.rfind(_STAGING_SUFFIX)
+    return staging_path[:idx] if idx != -1 else staging_path
+
+
 def _pipeline_paths(root_cfg: ForgeConfig) -> Dict[str, str]:
     """Resolve the canonical filesystem paths for the pipeline run.
 
@@ -346,6 +368,18 @@ class PipelineOrchestrator:
             refusal = self._validate_resume_state(existing, force=force_resume)
             if refusal is not None:
                 return None, EXIT_CONFIG_ERROR
+            # Reset the prior run's terminal fields so a resumed run is treated
+            # as in-flight again.  Without this, a previously-failed run keeps
+            # ``final_status="stopped_at_stage"`` (or a previously-gated run
+            # keeps ``"gated_pending_approval"``) and ``_finalise_pipeline``'s
+            # ``in_progress``-guarded rewrite never fires — so even a fully
+            # successful resume emits a ``pipeline.completed`` carrying the
+            # stale terminal status (or, for the gated case, emits nothing at
+            # all).  History stays in the append-only audit log; the state file
+            # is current-state, not history (P2-FAB-04).
+            existing.final_status = "in_progress"
+            existing.stopped_at = None
+            existing.finished_at = None
             return existing, None
         return self._init_state(), None
 
@@ -381,13 +415,49 @@ class PipelineOrchestrator:
         # That directory existing on disk is exactly NOT proof the artefact
         # may be consumed — skipping such a stage would chain downstream
         # training from a model no human has signed off, defeating the gate
-        # (P2-FAB-01).  Refuse the resume with a clear, actionable error
-        # instead.  (The approval workflow that flips the stage to a
-        # skippable status is handled separately — until then, resuming past
-        # an un-approved gate is correctly blocked, never silently bypassed.)
+        # (P2-FAB-01).
+        #
+        # ``forgelm approve`` promotes by **renaming** the staging dir to the
+        # canonical ``final_model/`` path and does not (cannot — it runs against
+        # a single stage's output dir, not the pipeline state file) rewrite
+        # ``pipeline_state.json``.  So a post-approval resume still sees
+        # ``status=gated_pending_approval`` on disk.  We distinguish the two
+        # cases by the exact filesystem transition ``approve`` performs: the
+        # UNAPPROVED staging dir is **renamed away** and the **derived promoted
+        # path** (staging suffix stripped) now exists in its place.  Approval is
+        # therefore proven only when the staging dir is GONE *and* the promoted
+        # path is present — that stage is skip-eligible and downstream must chain
+        # from the *promoted* path (P2-FAB-03).  While the staging dir is still
+        # on disk (or the promoted path is absent), no human has signed off:
+        # refuse with an actionable error (P2-FAB-01).  Requiring the staging dir
+        # to be gone — not merely the promoted path to exist — keeps an unrelated
+        # ``final_model/`` sitting next to a still-staged gate from being
+        # mistaken for an approval.
         stages_to_skip_completed: List[str] = []
         for prior_state in state.stages[:resume_idx]:
             if prior_state.status == "gated_pending_approval":
+                staging_path = prior_state.output_model
+                promoted_path = _derive_promoted_path(staging_path) if staging_path else None
+                approved = bool(
+                    staging_path and promoted_path and not os.path.isdir(staging_path) and os.path.isdir(promoted_path)
+                )
+                if approved:
+                    # Operator approved (staging renamed → final_model/).  Skip
+                    # the stage and rewrite ``output_model`` to the promoted
+                    # path so the auto-chain seeds downstream from the approved
+                    # weights, not the vanished staging dir.  Flip the status to
+                    # ``completed`` so the persisted state stops claiming the
+                    # stage is still pending approval after a successful resume.
+                    prior_state.output_model = promoted_path
+                    prior_state.status = "completed"
+                    stages_to_skip_completed.append(prior_state.name)
+                    logger.info(
+                        "Resuming: gated stage %r was approved (promoted model at %s); "
+                        "skipping and chaining from the approved model.",
+                        prior_state.name,
+                        promoted_path,
+                    )
+                    continue
                 logger.error(
                     "Cannot --resume-from %r: prior stage %r is awaiting human approval "
                     "(status=gated_pending_approval) and has NOT been approved.  Resuming "
@@ -600,6 +670,18 @@ class PipelineOrchestrator:
 
         Mirrors the run-loop tail.  Extracted from :meth:`run` for
         Sonar python:S3776 cognitive-complexity hygiene.
+
+        On entry ``final_status`` is ``in_progress`` for any run that ran
+        the stage loop to its natural end (fresh runs start there; a
+        ``--resume-from`` run is reset to ``in_progress`` in
+        :meth:`_prepare_resume_or_init_state` so a resumed-successful run
+        no longer carries the prior run's stale ``stopped_at_stage`` /
+        ``gated_pending_approval`` terminal status — P2-FAB-04).  The only
+        way it is *not* ``in_progress`` here is when a stage re-gated this
+        run (``gated_pending_approval``); that is a coherent terminal state
+        — the gate already set ``stopped_at`` / ``finished_at`` and emitted
+        ``pipeline.stage_gated``, so we persist it but emit no
+        ``pipeline.completed``.
         """
         if state.final_status == "in_progress":
             state.final_status = "completed" if worst_exit == EXIT_SUCCESS else "stopped_at_stage"
