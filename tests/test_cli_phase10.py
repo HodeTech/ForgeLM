@@ -408,6 +408,19 @@ class TestChatCLI:
         captured = capsys.readouterr()
         assert "safety" not in captured.out.lower()
 
+    def test_chat_manual_frontmatter_does_not_advertise_safety_routing(self):
+        # F-P7-OPUS-39: the chat manual frontmatter description (rendered as the
+        # SPA page summary) must not advertise 'safety routing' while --safety
+        # is unshipped — it contradicts the same page's own disclaimer.
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent
+        for lang in ("en", "tr"):
+            page = repo_root / "docs" / "usermanuals" / lang / "deployment" / "chat.md"
+            frontmatter = page.read_text(encoding="utf-8").split("---", 2)[1].lower()
+            assert "safety routing" not in frontmatter
+            assert "güvenlik routing" not in frontmatter
+
 
 # ---------------------------------------------------------------------------
 # _run_fit_check helper

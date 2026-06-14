@@ -1,6 +1,6 @@
 ---
 title: Etkileşimli Chat
-description: Akışlı REPL'de güvenlik routing'i ile fine-tuned modelinizi sınayın.
+description: Akışlı REPL'de fine-tuned modelinizi sınayın.
 ---
 
 # Etkileşimli Chat

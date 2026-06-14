@@ -18,10 +18,14 @@ Use cases:
 Exit codes:
 
 - 0 — evaluation completed; safety thresholds passed.
-- 1 — config error (missing --model, missing/conflicting probes flags,
-  GGUF model path, etc.).
-- 2 — runtime error (model load failure, classifier load failure,
-  probes file unreadable, missing optional dep).
+- 1 — config error reached by the dispatcher (GGUF model path, probes
+  file missing/unreadable).
+- 2 — argparse usage error (missing ``--model`` or conflicting
+  ``--probes``/``--default-probes`` — both are argparse-required, so
+  they are rejected with exit 2 *before* the dispatcher runs) OR a
+  runtime error (model load failure, classifier load failure, missing
+  optional dep).  The in-dispatcher missing-model / conflicting-probes
+  guards remain as defence-in-depth for direct library callers.
 - 3 — evaluation completed but safety thresholds exceeded
   (operator-actionable; the model failed the gate).  Maps to
   ``EXIT_EVAL_FAILURE`` so a regulated CI pipeline can branch on
