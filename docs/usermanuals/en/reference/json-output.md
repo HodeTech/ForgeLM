@@ -49,6 +49,58 @@ Environment check. See [Doctor command](#/getting-started/first-run).
 
 **Exit code mapping:** `0` = all probes `pass` or `warn`; `1` = at least one `fail`; `2` = at least one `crashed` (probe raised; subsequent probes still ran).
 
+## `forgelm --dry-run` (config validation)
+
+`forgelm --config <yaml> --dry-run --output-format json` validates the config and summarizes what training *would* do **without** loading the heavy stack or touching the GPU. It is the most common CI pre-flight invocation. On a valid config it emits the following envelope on **stdout** and exit code `0`:
+
+```json
+{
+  "success": true,
+  "status": "valid",
+  "model": "org/model",
+  "backend": "auto",
+  "load_in_4bit": false,
+  "trust_remote_code": false,
+  "dora": false,
+  "lora_rank": 16,
+  "lora_alpha": 32,
+  "dataset": "org/dataset",
+  "epochs": 3,
+  "batch_size": 1,
+  "output_dir": "/work/output/final_model",
+  "offline": false,
+  "distributed": null,
+  "rope_scaling": null,
+  "neftune_noise_alpha": null,
+  "webhook_configured": false,
+  "galore_enabled": false,
+  "galore_optim": null,
+  "galore_rank": null,
+  "auto_revert": false,
+  "safety_enabled": false,
+  "safety_scoring": null,
+  "compliance_configured": false,
+  "risk_classification": null
+}
+```
+
+| Key | Type | Notes |
+|---|---|---|
+| `success` | bool | Always `true` on this path — a dry run only reaches stdout once the config validated. An invalid config exits `1` with the 2-key error envelope (`success: false`) instead. |
+| `status` | str | Stable token `"valid"`, retained for backward compatibility with pre-0.7.1 consumers. New consumers should branch on `success`. |
+| `model` / `backend` / `dataset` | str | Resolved model id, model backend, and dataset id from the config. |
+| `output_dir` | str | The effective final-model path (`training.output_dir` joined with `training.final_model_dir`). |
+| `load_in_4bit`, `trust_remote_code`, `dora`, `offline` | bool | Effective values of the corresponding config flags. |
+| `lora_rank`, `lora_alpha`, `epochs`, `batch_size` | int | Effective training/LoRA hyper-parameters. |
+| `distributed` | str \| null | `distributed.strategy`, or `null` when distributed training is not configured. |
+| `rope_scaling`, `neftune_noise_alpha` | object \| float \| null | Effective long-context / NEFTune settings, `null` when unset. |
+| `webhook_configured` | bool | `true` when a webhook URL (literal or `url_env`) is configured. |
+| `galore_enabled`, `galore_optim`, `galore_rank` | bool / str / int | GaLore optimizer summary; the latter two are `null` when GaLore is off. |
+| `auto_revert`, `safety_enabled`, `safety_scoring` | bool / bool / str | Evaluation-gate summary (`safety_scoring` is `null` when safety eval is off). |
+| `compliance_configured`, `risk_classification` | bool / str | EU AI Act compliance summary; `risk_classification` is `null` when compliance is not configured. |
+
+**Exit code mapping:** a valid config exits `0` (`EXIT_SUCCESS`); an invalid config exits `1` (`EXIT_CONFIG_ERROR`) with the standard error envelope.
+
 ## `forgelm` (training) — preflight abort envelope
 
 The training pipeline (`forgelm --config <yaml> --output-format json`) runs a torch/NumPy ABI sanity check before importing the heavy stack. On a healthy environment the preflight is silent and training proceeds normally; on the known Intel Mac NumPy 2 / torch 2.2 mismatch the preflight aborts with the following envelope on **stdout** and exit code `2`:

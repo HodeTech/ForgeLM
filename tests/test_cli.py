@@ -61,6 +61,19 @@ class TestDryRun:
         assert result["model"] == "org/model"
         assert result["offline"] is False
 
+    def test_dry_run_json_envelope_has_success_true(self, capsys, minimal_config):
+        """F-P7-OPUS-16: the dry-run JSON envelope must carry the universal
+        ``success`` key (json-output.md "Common conventions") so a CI
+        consumer can branch on ``result["success"]`` without a KeyError on
+        the happy path. ``status: "valid"`` is retained for back-compat."""
+        config = ForgeConfig(**minimal_config())
+        _run_dry_run(config, "json")
+        result = json.loads(capsys.readouterr().out)
+        assert result["success"] is True
+        assert result["status"] == "valid"
+        # ``success`` is the first key (the documented top-level wrapper).
+        assert next(iter(result)) == "success"
+
     def test_dry_run_with_evaluation(self, minimal_config):
         data = minimal_config()
         data["evaluation"] = {"auto_revert": True, "max_acceptable_loss": 2.0}

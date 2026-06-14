@@ -49,6 +49,58 @@ Ortam kontrolü. Bkz. [Doctor komutu](#/getting-started/first-run).
 
 **Exit code mapping:** `0` = tüm probe'lar `pass` veya `warn`; `1` = en az bir `fail`; `2` = en az bir `crashed` (probe raise etti; sonraki probe'lar yine de çalıştı).
 
+## `forgelm --dry-run` (config doğrulama)
+
+`forgelm --config <yaml> --dry-run --output-format json`, ağır stack'i yüklemeden veya GPU'ya dokunmadan config'i doğrular ve eğitimin *ne yapacağını* özetler. En sık kullanılan CI ön-uçuş çağrısıdır. Geçerli bir config'te şu envelope'u **stdout**'a basıp exit code `0` ile çıkar:
+
+```json
+{
+  "success": true,
+  "status": "valid",
+  "model": "org/model",
+  "backend": "auto",
+  "load_in_4bit": false,
+  "trust_remote_code": false,
+  "dora": false,
+  "lora_rank": 16,
+  "lora_alpha": 32,
+  "dataset": "org/dataset",
+  "epochs": 3,
+  "batch_size": 1,
+  "output_dir": "/work/output/final_model",
+  "offline": false,
+  "distributed": null,
+  "rope_scaling": null,
+  "neftune_noise_alpha": null,
+  "webhook_configured": false,
+  "galore_enabled": false,
+  "galore_optim": null,
+  "galore_rank": null,
+  "auto_revert": false,
+  "safety_enabled": false,
+  "safety_scoring": null,
+  "compliance_configured": false,
+  "risk_classification": null
+}
+```
+
+| Anahtar | Tip | Notlar |
+|---|---|---|
+| `success` | bool | Bu kod yolunda her zaman `true` — bir dry run stdout'a yalnızca config doğrulandıktan sonra ulaşır. Geçersiz config bunun yerine 2 anahtarlı hata envelope'u (`success: false`) ile `1` çıkar. |
+| `status` | str | Pre-0.7.1 tüketicilerle geriye dönük uyumluluk için korunan sabit token `"valid"`. Yeni tüketiciler `success` üzerinde branch yapmalı. |
+| `model` / `backend` / `dataset` | str | Config'ten çözülen model id'si, model backend'i ve dataset id'si. |
+| `output_dir` | str | Etkin nihai-model yolu (`training.output_dir`, `training.final_model_dir` ile birleştirilmiş). |
+| `load_in_4bit`, `trust_remote_code`, `dora`, `offline` | bool | İlgili config bayraklarının etkin değerleri. |
+| `lora_rank`, `lora_alpha`, `epochs`, `batch_size` | int | Etkin eğitim/LoRA hiper-parametreleri. |
+| `distributed` | str \| null | `distributed.strategy` veya dağıtık eğitim yapılandırılmadığında `null`. |
+| `rope_scaling`, `neftune_noise_alpha` | object \| float \| null | Etkin long-context / NEFTune ayarları, ayarlanmadığında `null`. |
+| `webhook_configured` | bool | Bir webhook URL'si (literal veya `url_env`) yapılandırıldığında `true`. |
+| `galore_enabled`, `galore_optim`, `galore_rank` | bool / str / int | GaLore optimizer özeti; GaLore kapalıyken son ikisi `null`. |
+| `auto_revert`, `safety_enabled`, `safety_scoring` | bool / bool / str | Değerlendirme-kapısı özeti (safety eval kapalıyken `safety_scoring` `null`). |
+| `compliance_configured`, `risk_classification` | bool / str | EU AI Act uyumluluk özeti; compliance yapılandırılmadığında `risk_classification` `null`. |
+
+**Exit code mapping:** geçerli config `0` (`EXIT_SUCCESS`) ile çıkar; geçersiz config standart hata envelope'u ile `1` (`EXIT_CONFIG_ERROR`) çıkar.
+
 ## `forgelm` (eğitim) — preflight abort envelope
 
 Eğitim pipeline'ı (`forgelm --config <yaml> --output-format json`) ağır stack'i import etmeden önce bir torch/NumPy ABI sanity check çalıştırır. Sağlıklı bir ortamda preflight sessizdir ve eğitim normal şekilde devam eder; bilinen Intel Mac NumPy 2 / torch 2.2 mismatch'inde preflight şu envelope ile **stdout**'a basıp exit code `2` ile abort eder:

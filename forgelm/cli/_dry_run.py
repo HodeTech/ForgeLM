@@ -40,6 +40,11 @@ def _compliance_dry_run_fields(config: ForgeConfig) -> dict:
 def _build_dry_run_result(config: ForgeConfig) -> dict:
     """Assemble the dry-run summary dict from the validated config."""
     result = {
+        # Universal CI gate key (json-output.md "Common conventions"): every
+        # envelope must start with ``success`` so a consumer can branch on one
+        # key before parsing the rest. ``status: "valid"`` is kept for backward
+        # compatibility with pre-0.7.1 consumers.
+        "success": True,
         "status": "valid",
         "model": config.model.name_or_path,
         "backend": config.model.backend,
@@ -75,7 +80,7 @@ def _run_dry_run(config: ForgeConfig, output_format: str) -> None:
     logger.info("=== DRY RUN MODE ===")
     logger.info("Configuration validated successfully.")
     for key, value in result.items():
-        if key != "status":
+        if key not in ("status", "success"):
             logger.info("  %s: %s", key, value)
 
     if config.model.trust_remote_code:
