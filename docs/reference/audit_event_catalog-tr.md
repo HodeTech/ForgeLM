@@ -38,7 +38,8 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 | `pipeline.started`         | Çok-aşamalı pipeline orchestrator yeni bir koşu başlattı (`--resume-from` değil). | `pipeline_run_id`, `config_hash`, `stage_count`, `stage_names`                   | 12    |
 | `pipeline.force_resume`    | `--resume-from`, saklanan config-hash uyuşmazlığını `--force-resume` ayarlı olduğu için geçti. | `pipeline_run_id`, `old_config_hash`, `new_config_hash`            | 12    |
 | `pipeline.stage_started`   | Bir pipeline aşaması çalışmaya başladı (aşama-config birleştirme + doğrulama sonrası). | `pipeline_run_id`, `stage_name`, `stage_index`, `input_model`, `input_source` | 12    |
-| `pipeline.stage_completed` | Bir pipeline aşaması bitti — başarıda `gate_decision=passed`, revert-dışı başarısızlıkta `failed`. | `pipeline_run_id`, `stage_name`, `gate_decision`, `metrics`, `auto_revert_triggered` | 12 |
+| `pipeline.stage_completed` | Bir pipeline aşaması bitti — başarıda `gate_decision=passed`, revert-dışı başarısızlıkta `failed`. | `pipeline_run_id`, `stage_name`, `gate_decision`, `metrics` (yalnız başarıda), `auto_revert_triggered` (yalnız başarısızlık yolunda) | 12 |
+| `pipeline.resume_refused`  | `--resume-from`, önceki bir aşama hâlâ insan onayı beklediği için reddedildi (Article 14 gate henüz geçilmemiş). | `pipeline_run_id`, `requested_stage`, `blocking_stage`, `blocking_status` | 12, 14 |
 | `pipeline.stage_gated`     | Bir aşama Article 14 insan-onay gate'inde durdu (exit 4); pipeline operatör eylemi bekleyerek durur. | `pipeline_run_id`, `stage_name`, `gate_decision` (`approval_pending`), `staging_path` | 12, 14 |
 | `pipeline.stage_reverted`  | Bir aşamanın post-train gate'i modeli auto-revert etti (`auto_revert_triggered=true`); zincir durur. | `pipeline_run_id`, `stage_name`, `gate_decision` (`failed`), `auto_revert_triggered` | 12, 15 |
 

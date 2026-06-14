@@ -75,6 +75,13 @@ def test_grpo_passes_max_length_as_prompt_cap(tmp_path):
     default."""
     import trl
 
+    # Same importability guard as the preference test: skip where trl can't
+    # import GRPOConfig in this env (torch/trl/vllm pairing) rather than hard-fail.
+    try:
+        trl.GRPOConfig  # noqa: B018 — attribute access triggers trl's lazy import
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        pytest.skip(f"trl.GRPOConfig not importable here: {exc}")
+
     captured: dict = {}
 
     class FakeGRPOConfig:

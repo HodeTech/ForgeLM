@@ -521,7 +521,13 @@ def _freeze_unselected_experts(model, experts_to_train: str, num_experts: int) -
             frozen_count += 1
 
     if expert_adapter_params == 0:
-        target_modules = getattr(getattr(model, "peft_config", None), "target_modules", "?")
+        # PEFT keys ``peft_config`` by adapter name (a dict, multi-adapter
+        # design), so a plain ``getattr(..., "target_modules")`` returns "?".
+        # Resolve the first adapter's config before reading the field.
+        peft_config = getattr(model, "peft_config", None)
+        if isinstance(peft_config, dict):
+            peft_config = next(iter(peft_config.values()), None)
+        target_modules = getattr(peft_config, "target_modules", "?")
         logger.warning(
             "experts_to_train=%r selected experts %s, but NO LoRA adapters were injected "
             "into any expert — lora.target_modules (%s) does not cover expert projections "

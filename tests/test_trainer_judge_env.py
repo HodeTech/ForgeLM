@@ -67,3 +67,39 @@ def test_set_judge_api_key_env_runs_judge(tmp_path, monkeypatch):
         trainer._run_judge_if_configured()
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["judge_api_key"] == "sk-test-key"
+
+
+def test_training_cli_maps_configerror_to_exit_1(tmp_path, monkeypatch):
+    """C7-review: a ConfigError from the trainer (e.g. unset judge_api_key_env)
+    must exit with EXIT_CONFIG_ERROR (1), not the generic EXIT_TRAINING_ERROR (2)."""
+    from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+    from forgelm.cli._training import _run_training_pipeline
+    from forgelm.config import ConfigError, ForgeConfig
+
+    config = ForgeConfig(
+        **{
+            "model": {"name_or_path": "org/model"},
+            "lora": {},
+            "training": {"output_dir": str(tmp_path)},
+            "data": {"dataset_name_or_path": "org/dataset"},
+        }
+    )
+
+    class _RaisingTrainer:
+        def __init__(self, **kwargs):
+            pass
+
+        def train(self, resume_from_checkpoint=None):
+            raise ConfigError("judge_api_key_env names an unset variable")
+
+    monkeypatch.setattr("forgelm.model.get_model_and_tokenizer", lambda c: (MagicMock(), MagicMock()))
+    monkeypatch.setattr("forgelm.data.prepare_dataset", lambda c, t: {"train": [{"text": "x"}]})
+    monkeypatch.setattr("forgelm.utils.setup_authentication", lambda token: None)
+    monkeypatch.setattr("forgelm.trainer.ForgeTrainer", _RaisingTrainer)
+
+    args = MagicMock()
+    args.resume = None
+    args.output_format = "text"
+    with pytest.raises(SystemExit) as exc:
+        _run_training_pipeline(config, args, json_output=False)
+    assert exc.value.code == EXIT_CONFIG_ERROR

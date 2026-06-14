@@ -210,10 +210,14 @@ class TestHumanApprovalGateTrainer:
         trainer.config.evaluation.auto_revert = True
         trainer._revert_model = MagicMock()  # don't actually rmtree
 
-        # The pipeline eagerly sets staging_path before the post-train gates run
-        # (so they can evaluate on-disk artefacts); a reverting gate must undo it.
+        # The pipeline eagerly sets staging_path + final_model_path before the
+        # post-train gates run (so they can evaluate on-disk artefacts); a
+        # reverting gate must undo all of them. Seed awaiting_approval=True so the
+        # test verifies the flag is actively cleared, not merely still False.
         staging_path = str(output_dir / "final_model.staging.fg-x")
-        result = TrainResult(success=True, staging_path=staging_path)
+        result = TrainResult(
+            success=True, staging_path=staging_path, final_model_path=staging_path, awaiting_approval=True
+        )
 
         failing_safety = SimpleNamespace(
             passed=False,
@@ -230,7 +234,8 @@ class TestHumanApprovalGateTrainer:
         assert result.success is False
         assert result.reverted is True
         assert result.staging_path is None
-        assert result.awaiting_approval is False
+        assert result.final_model_path is None, "revert deletes the model — final_model_path must be cleared"
+        assert result.awaiting_approval is False, "a reverted run is never awaiting approval"
         trainer._revert_model.assert_called_once()
 
 

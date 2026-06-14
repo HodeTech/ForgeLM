@@ -120,8 +120,11 @@ def test_pyproject_package_data_globs_cover_every_extension() -> None:
 def _load_optional_dependencies() -> dict:
     try:
         import tomllib  # type: ignore[import-not-found]
-    except ModuleNotFoundError:  # pragma: no cover — Python <3.11 fallback
-        pytest.skip("tomllib unavailable; pyproject extras assertion skipped.")
+    except ModuleNotFoundError:  # pragma: no cover — Python 3.10 fallback
+        try:
+            import tomli as tomllib  # type: ignore[import-not-found, no-redef]
+        except ModuleNotFoundError:
+            pytest.skip("Neither tomllib (3.11+) nor tomli is available; pyproject extras assertion skipped.")
     pyproject_path = Path(__file__).resolve().parent.parent / "pyproject.toml"
     with pyproject_path.open("rb") as fh:
         pyproject = tomllib.load(fh)

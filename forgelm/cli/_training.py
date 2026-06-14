@@ -5,7 +5,14 @@ from __future__ import annotations
 import json
 import sys
 
-from ._exit_codes import EXIT_AWAITING_APPROVAL, EXIT_EVAL_FAILURE, EXIT_SUCCESS, EXIT_TRAINING_ERROR
+from ..config import ConfigError
+from ._exit_codes import (
+    EXIT_AWAITING_APPROVAL,
+    EXIT_CONFIG_ERROR,
+    EXIT_EVAL_FAILURE,
+    EXIT_SUCCESS,
+    EXIT_TRAINING_ERROR,
+)
 from ._logging import logger
 from ._result import _output_result
 from ._resume import _resolve_resume_checkpoint
@@ -153,6 +160,16 @@ def _run_training_pipeline(config, args, json_output: bool) -> None:
             sys.exit(EXIT_AWAITING_APPROVAL)
         sys.exit(EXIT_SUCCESS if result.success else EXIT_EVAL_FAILURE)
 
+    except ConfigError as e:
+        # A configuration / environment problem (e.g. a judge_api_key_env that
+        # names an unset variable) is exit 1, not the runtime-error class — route
+        # it before the broad catch below so the public exit-code contract holds.
+        _report_training_error(
+            json_output,
+            payload={"success": False, "error": str(e)},
+            log_msg="Configuration error.",
+            exit_code=EXIT_CONFIG_ERROR,
+        )
     except Exception as e:  # noqa: BLE001 — best-effort: top-of-CLI training catch.  ForgeTrainer.train() crosses every concern (HF model load, dataset load, TRL trainer, safety eval, judge eval, audit emission, compliance export, webhook notify); any leak from the inner narrow-class catches must surface as a structured CLI failure (with traceback in the log) rather than a Python traceback dumped to stdout that breaks JSON parsers.  # NOSONAR
         _report_training_error(
             json_output,

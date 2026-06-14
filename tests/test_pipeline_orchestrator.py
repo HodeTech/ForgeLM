@@ -763,6 +763,41 @@ class TestResumeFrom:
         assert code2 == EXIT_CONFIG_ERROR
         assert len(configs_seen2) == 0, "no stage may train when resume is refused"
 
+        # Article 14: the refusal must be recorded in the append-only audit log.
+        audit_path = os.path.join(orch2.paths["root_output_dir"], "audit_log.jsonl")
+        with open(audit_path) as f:
+            events = [json.loads(line) for line in f if line.strip()]
+        refused = [e for e in events if e.get("event") == "pipeline.resume_refused"]
+        assert len(refused) == 1, (
+            f"expected one pipeline.resume_refused event, got {[e.get('event') for e in events]!r}"
+        )
+        assert refused[0]["requested_stage"] == "dpo_stage"
+        assert refused[0]["blocking_stage"] == "sft_stage"
+        assert refused[0]["blocking_status"] == "gated_pending_approval"
+
+    def test_stage_config_error_exits_config_error(self, tmp_path, monkeypatch):
+        """C7-review: a ConfigError from a stage (e.g. unset judge_api_key_env)
+        must route to EXIT_CONFIG_ERROR (1), not the generic EXIT_TRAINING_ERROR (2)."""
+        from forgelm.config import ConfigError
+
+        cfg = _three_stage_config(tmp_path)
+        _install_trainer_mocks(monkeypatch, [])  # stub model/data/utils
+
+        # Override the trainer module with one whose train() raises ConfigError.
+        class _RaisingTrainer:
+            def __init__(self, **kwargs):
+                pass
+
+            def train(self, resume_from_checkpoint=None):
+                raise ConfigError("judge_api_key_env names an unset variable")
+
+        raising_mod = types.ModuleType("forgelm.trainer")
+        raising_mod.ForgeTrainer = _RaisingTrainer
+        monkeypatch.setitem(sys.modules, "forgelm.trainer", raising_mod)
+
+        orch = PipelineOrchestrator(cfg, b"yaml bytes")
+        assert orch.run() == EXIT_CONFIG_ERROR
+
     def test_resume_skips_completed_stages(self, tmp_path, monkeypatch):
         cfg = _three_stage_config(tmp_path)
         # First run: stage 1 completes, stage 2 fails (training crash).

@@ -871,6 +871,22 @@ class ForgeTrainer:
         metrics["baseline_eval_loss"] = float(baseline_loss)
         logger.info("Baseline eval_loss computed: %.4f", baseline_loss)
 
+    @staticmethod
+    def _mark_reverted(train_result: TrainResult) -> None:
+        """Mark a result as auto-reverted and clear every stale artifact path.
+
+        ``_revert_model`` has just deleted the on-disk model, so neither
+        ``final_model_path`` nor ``staging_path`` point at a real directory — the
+        CLI/JSON envelope must not advertise a path that no longer exists. A
+        reverted run is also never "awaiting approval" (exit 3, not 4), so clear
+        the discriminator defensively even though the gate hasn't fired here.
+        """
+        train_result.success = False
+        train_result.reverted = True
+        train_result.staging_path = None
+        train_result.final_model_path = None
+        train_result.awaiting_approval = False
+
     def _apply_benchmark_result(
         self,
         benchmark_result: Any,
@@ -905,12 +921,7 @@ class ForgeTrainer:
             # Failure recorded on train_result; pipeline continues to safety/judge stages.
             return True
         self._revert_model(final_path, reason, source="benchmark")
-        train_result.success = False
-        train_result.reverted = True
-        # Revert deletes the staging dir — clear the path so the run is never
-        # misreported as "awaiting approval" (exit 4) instead of "reverted"
-        # (exit 3). ``awaiting_approval`` is already False on this path.
-        train_result.staging_path = None
+        self._mark_reverted(train_result)
         return False
 
     def _apply_resource_usage(self, train_result: TrainResult, metrics: Dict[str, float]) -> None:
@@ -951,9 +962,7 @@ class ForgeTrainer:
         if safety_result.passed or not (self.config.evaluation and self.config.evaluation.auto_revert):
             return True
         self._revert_model(final_path, safety_result.failure_reason or "Safety check failed.", source="safety")
-        train_result.success = False
-        train_result.reverted = True
-        train_result.staging_path = None  # see _apply_benchmark_result revert branch
+        self._mark_reverted(train_result)
         return False
 
     def _apply_judge_result(
@@ -977,9 +986,7 @@ class ForgeTrainer:
         if judge_result.passed or not (self.config.evaluation and self.config.evaluation.auto_revert):
             return True
         self._revert_model(final_path, judge_result.failure_reason or "Judge score below threshold.", source="judge")
-        train_result.success = False
-        train_result.reverted = True
-        train_result.staging_path = None  # see _apply_benchmark_result revert branch
+        self._mark_reverted(train_result)
         return False
 
     def _finalize_artifacts(

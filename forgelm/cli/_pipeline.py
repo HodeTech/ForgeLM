@@ -60,7 +60,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
-from ..config import ForgeConfig, PipelineConfig, PipelineStage, merge_pipeline_stage_config
+from ..config import ConfigError, ForgeConfig, PipelineConfig, PipelineStage, merge_pipeline_stage_config
 from ._exit_codes import (
     EXIT_AWAITING_APPROVAL,
     EXIT_CONFIG_ERROR,
@@ -396,6 +396,15 @@ class PipelineOrchestrator:
                     "<stage_output_dir>` (or `forgelm reject ...`) before resuming.",
                     resume_from,
                     prior_state.name,
+                )
+                # Article 14: record the blocked-resume decision in the
+                # append-only audit log so the refusal is reviewable.
+                self._audit_event(
+                    "pipeline.resume_refused",
+                    pipeline_run_id=state.pipeline_run_id,
+                    requested_stage=resume_from,
+                    blocking_stage=prior_state.name,
+                    blocking_status=prior_state.status,
                 )
                 return None, EXIT_CONFIG_ERROR
             if (
@@ -1292,6 +1301,11 @@ class PipelineOrchestrator:
             dataset = prepare_dataset(stage_cfg, tokenizer)
             trainer = ForgeTrainer(model=model, tokenizer=tokenizer, config=stage_cfg, dataset=dataset)
             return trainer.train()
+        except ConfigError:
+            # A config/environment error is exit 1, not the runtime-error class —
+            # propagate so the caller routes it to EXIT_CONFIG_ERROR rather than
+            # the generic EXIT_TRAINING_ERROR the None-return below maps to.
+            raise
         except Exception as exc:  # noqa: BLE001
             stage_state.error = f"Trainer crashed: {exc}"
             logger.exception("Stage %r trainer crashed.", stage_name)
@@ -1335,11 +1349,16 @@ class PipelineOrchestrator:
             input_source=stage_state.input_source,
         )
 
-        result = self._invoke_trainer(
-            stage_cfg=stage_cfg,
-            stage_name=stage.name,
-            stage_state=stage_state,
-        )
+        try:
+            result = self._invoke_trainer(
+                stage_cfg=stage_cfg,
+                stage_name=stage.name,
+                stage_state=stage_state,
+            )
+        except ConfigError as exc:
+            stage_state.error = str(exc)
+            logger.error("Stage %r failed with a configuration error: %s", stage.name, exc)
+            return EXIT_CONFIG_ERROR
         if result is None:
             return EXIT_TRAINING_ERROR
 

@@ -831,9 +831,7 @@ class ForgeConfig(BaseModel):
     distributed: Optional[DistributedConfig] = Field(
         default=None, description="DeepSpeed / FSDP multi-GPU configuration block."
     )
-    merge: Optional[MergeConfig] = Field(
-        default=None, description="Post-training model-merging configuration block."
-    )
+    merge: Optional[MergeConfig] = Field(default=None, description="Post-training model-merging configuration block.")
     compliance: Optional[ComplianceMetadataConfig] = Field(
         default=None,
         description="Annex IV technical-documentation metadata block (provider name, system version, etc.).",

@@ -1,5 +1,6 @@
 """Unit tests for MoE expert quantization and freezing functions."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -137,7 +138,10 @@ class TestFreezeUnselectedExperts:
         model.named_parameters.return_value = [
             ("base_model.model.layers.0.self_attn.q_proj.lora_A.default.weight", torch.randn(4, 4, requires_grad=True))
         ]
-        model.peft_config = MagicMock(target_modules=["q_proj", "v_proj"])
+        # PEFT keys peft_config by adapter name (a dict) — the warning must still
+        # surface the actual target_modules, not "?" (review fix).
+        model.peft_config = {"default": SimpleNamespace(target_modules=["q_proj", "v_proj"])}
         with caplog.at_level(logging.WARNING, logger="forgelm.model"):
             _freeze_unselected_experts(model, "0,1", 4)
         assert "no effect" in caplog.text.lower()
+        assert "q_proj" in caplog.text, "warning must show the real target_modules from the dict peft_config"

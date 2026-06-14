@@ -127,7 +127,7 @@ This is why the `--dry-run` smoke path works without GPUs: all behaviour is dete
 
 ### 3. Optional dependencies are extras, never silent imports
 
-Heavy deps (`bitsandbytes`, `unsloth`, `deepspeed`, `lm-eval`, `wandb`) are declared in `pyproject.toml` under `[project.optional-dependencies]` with specific version bounds. At call sites:
+Heavy deps (`bitsandbytes`, `unsloth`, `deepspeed`, `lm-eval`, `wandb`) are declared in `pyproject.toml` under `[project.optional-dependencies]` with version constraints (a lower bound each; some also carry an upper bound). At call sites:
 
 ```python
 try:

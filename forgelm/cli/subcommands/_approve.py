@@ -495,7 +495,9 @@ def _run_approve_cmd(args, output_format: str) -> None:
     try:
         notifier.notify_success(run_name=run_name, metrics=metrics)
     except Exception as exc:  # noqa: BLE001 — webhook is best-effort; see comment above
-        logger.warning("Approve webhook notification failed (non-fatal): %s", exc)
+        # Log the exception TYPE, not the object: a webhook transport error can
+        # embed the secret-bearing URL/token in its message.
+        logger.warning("Approve webhook notification failed (non-fatal): %s", type(exc).__name__)
 
     if output_format == "json":
         print(
@@ -574,7 +576,9 @@ def _run_reject_cmd(args, output_format: str) -> None:
     try:
         notifier.notify_failure(run_name=run_name, reason=reason)
     except Exception as exc:  # noqa: BLE001 — webhook is best-effort; see comment above
-        logger.warning("Reject webhook notification failed (non-fatal): %s", exc)
+        # Log the exception TYPE, not the object (see approve handler — avoids
+        # leaking a secret-bearing webhook URL/token in the message).
+        logger.warning("Reject webhook notification failed (non-fatal): %s", type(exc).__name__)
 
     if output_format == "json":
         print(
