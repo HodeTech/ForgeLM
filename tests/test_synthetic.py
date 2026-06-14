@@ -75,7 +75,7 @@ class TestSyntheticConfig:
         assert len(config.synthetic.seed_prompts) == 2
 
     def test_defaults(self):
-        config = _config(synthetic={"enabled": True, "teacher_model": "gpt-4"})
+        config = _config(synthetic={"enabled": True, "teacher_model": "gpt-4", "seed_prompts": ["q"]})
         assert config.synthetic.temperature == pytest.approx(0.7)
         assert config.synthetic.max_new_tokens == 1024
         assert config.synthetic.output_format == "messages"
@@ -89,6 +89,7 @@ class TestSyntheticConfig:
                 "enabled": True,
                 "teacher_model": "meta-llama/Llama-3-8B",
                 "teacher_backend": "local",
+                "seed_prompts": ["q"],
             }
         )
         assert config.synthetic.teacher_backend == "local"
@@ -180,6 +181,7 @@ class TestSyntheticGenerator:
                 "teacher_model": "test",
                 "output_format": "messages",
                 "system_prompt": "Be helpful.",
+                "seed_prompts": ["q"],
             }
         )
         gen = SyntheticDataGenerator(config)
@@ -196,6 +198,7 @@ class TestSyntheticGenerator:
                 "enabled": True,
                 "teacher_model": "test",
                 "output_format": "instruction",
+                "seed_prompts": ["q"],
             }
         )
         gen = SyntheticDataGenerator(config)
@@ -208,6 +211,7 @@ class TestSyntheticGenerator:
                 "enabled": True,
                 "teacher_model": "test",
                 "output_format": "chatml",
+                "seed_prompts": ["q"],
             }
         )
         gen = SyntheticDataGenerator(config)
@@ -249,12 +253,16 @@ class TestSyntheticGenerator:
         assert entries[0]["instruction"] == "What is AI?"
         assert entries[0]["output"] == "AI is artificial intelligence."
 
-    def test_empty_prompts_no_crash(self):
+    def test_empty_prompts_no_crash(self, tmp_path):
+        # The config validator now rejects enabled+no-seeds, so reach the
+        # zero-prompt runtime path via an empty seed file (still a valid config).
+        seed_file = tmp_path / "empty_seeds.txt"
+        seed_file.write_text("")
         config = _config(
             synthetic={
                 "enabled": True,
                 "teacher_model": "test",
-                "seed_prompts": [],
+                "seed_file": str(seed_file),
             }
         )
         gen = SyntheticDataGenerator(config)
@@ -333,6 +341,8 @@ synthetic:
   api_key_env: "OPENAI_API_KEY"
   temperature: 0.5
   output_format: "messages"
+  seed_prompts:
+    - "What is AI?"
 """
         config_file = tmp_path / "synth.yaml"
         config_file.write_text(yaml_content)

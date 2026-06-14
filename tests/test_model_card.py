@@ -167,7 +167,14 @@ class TestGenerateModelCard:
         from forgelm.model_card import generate_model_card
 
         config = ForgeConfig(
-            **_card_config(synthetic={"enabled": True, "teacher_model": "gpt-4", "api_key": "sk-SUPERSECRET-LEAK"})
+            **_card_config(
+                synthetic={
+                    "enabled": True,
+                    "teacher_model": "gpt-4",
+                    "api_key": "sk-SUPERSECRET-LEAK",
+                    "seed_prompts": ["q"],
+                }
+            )
         )
         final_path = str(tmp_path / "model")
         card_path = generate_model_card(config=config, metrics={"eval_loss": 0.5}, final_path=final_path)

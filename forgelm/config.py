@@ -48,6 +48,28 @@ class MergeConfig(BaseModel):
     )
     output_dir: str = Field(default="./merged_model", description="Directory to write the merged model into.")
 
+    @model_validator(mode="after")
+    def _validate_merge_inputs(self):
+        """Reject an enabled merge with an unusable source list at config time.
+
+        Every merge algorithm needs at least two source models, each naming a
+        ``path``.  Without this check the failure surfaces only when the
+        no-train merge mode runs (`forgelm --merge`), where it lands on
+        EXIT_TRAINING_ERROR instead of the EXIT_CONFIG_ERROR a config defect
+        warrants — and ``--dry-run`` never catches it at all.
+        """
+        if not self.enabled:
+            return self
+        if len(self.models) < 2:
+            raise ValueError(
+                "merge.enabled is true but fewer than two source models are listed; "
+                "every merge algorithm needs at least two `{path, weight}` entries in merge.models."
+            )
+        for entry in self.models:
+            if "path" not in entry:
+                raise ValueError("Each merge.models entry must carry a `path` key naming the source model.")
+        return self
+
 
 class ModelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -792,7 +814,7 @@ class MonitoringConfig(BaseModel):
     alert_on_drift: bool = Field(
         default=True, description="Emit a webhook alert when drift detector flags a regression."
     )
-    check_interval_hours: int = Field(default=24, description="Monitoring check cadence in hours.")
+    check_interval_hours: int = Field(default=24, ge=1, description="Monitoring check cadence in hours.")
 
 
 class ComplianceMetadataConfig(BaseModel):
@@ -838,20 +860,48 @@ class SyntheticConfig(BaseModel):
     api_key_env: Optional[str] = Field(
         default=None, description="Env var name carrying the API key (e.g. `OPENAI_API_KEY`)."
     )
-    api_delay: float = Field(default=0.5, description="Seconds between API calls (rate limiting).")
-    api_timeout: int = Field(default=60, description="Per-call API timeout in seconds.")
+    api_delay: float = Field(default=0.5, ge=0.0, description="Seconds between API calls (rate limiting).")
+    api_timeout: int = Field(
+        default=60,
+        ge=10,
+        description="Per-call API timeout in seconds (floored at 10s by the SSRF-guarded HTTP chokepoint).",
+    )
     seed_file: str = Field(
         default="", description="Path to seed prompts file (JSONL or plain text, one prompt per line)."
     )
     seed_prompts: List[str] = Field(default=[], description="Inline seed prompts (alternative to `seed_file`).")
     system_prompt: str = Field(default="", description="System prompt prepended on every teacher call.")
-    max_new_tokens: int = Field(default=1024, description="Max tokens per teacher response.")
-    temperature: float = Field(default=0.7, description="Sampling temperature passed to the teacher.")
+    max_new_tokens: int = Field(default=1024, ge=1, description="Max tokens per teacher response.")
+    temperature: float = Field(default=0.7, ge=0.0, description="Sampling temperature passed to the teacher.")
     output_file: str = Field(default="synthetic_data.jsonl", description="Output JSONL file path.")
     output_format: Literal["messages", "instruction", "chatml", "prompt_response"] = Field(
         default="messages",
         description="Output format: `messages` (chat-style array), `instruction` (Alpaca-style), `chatml`, or `prompt_response`.",
     )
+
+    @model_validator(mode="after")
+    def _validate_synthetic_payload(self):
+        """Reject an enabled synthetic block with an unusable payload at config time.
+
+        An enabled generation needs a teacher to call and seeds to expand; the
+        ``file`` backend reads pre-generated JSONL so it only needs a seed
+        source.  Without this check the run no-ops or fails at the first
+        teacher call (EXIT_TRAINING_ERROR) instead of being rejected at config
+        load / ``--dry-run`` with EXIT_CONFIG_ERROR.
+        """
+        if not self.enabled:
+            return self
+        if self.teacher_backend != "file" and not self.teacher_model:
+            raise ValueError(
+                "synthetic.enabled is true but teacher_model is empty; "
+                "set synthetic.teacher_model (or use teacher_backend: file with a seed source)."
+            )
+        if not self.seed_file and not self.seed_prompts:
+            raise ValueError(
+                "synthetic.enabled is true but no seeds are provided; "
+                "set synthetic.seed_file or synthetic.seed_prompts."
+            )
+        return self
 
     @model_validator(mode="after")
     def _warn_direct_api_key(self):
@@ -889,6 +939,7 @@ class WebhookConfig(BaseModel):
     )
     timeout: int = Field(
         default=10,
+        ge=1,
         description=(
             "HTTP request timeout in seconds.  Clamped to ≥ 1s by the notifier.  "
             "Default raised to 10s in v0.5.5 (was 5s) — Slack/Teams gateway latency "
@@ -1219,6 +1270,38 @@ class ForgeConfig(BaseModel):
             self._warn_unacceptable_practice()
         self._enforce_safety_gate_for_strict_tier(label)
 
+    def _warn_tier_disagreement(self) -> None:
+        """Warn when the two risk-tier siblings are explicitly set and disagree.
+
+        ``risk_assessment.risk_category`` and
+        ``compliance.risk_classification`` are independent fields that both
+        default to ``minimal-risk`` on their sub-models.  The strict gate ORs
+        across them (see ``_is_strict_tier``), so a disagreement never silently
+        bypasses a safety gate — but compliance.py emits BOTH values into the
+        governance / Annex IV bundle, so an explicit disagreement ships a
+        technical-documentation set whose declared tiers contradict each other
+        with no record that ForgeLM noticed.  Nudge the operator to reconcile
+        before the bundle becomes regulatory evidence.  Checks each
+        sub-model's ``model_fields_set`` (the keys default to the same value,
+        so root-level presence is not enough to prove an explicit choice).
+        """
+        if not (self.risk_assessment and self.compliance):
+            return
+        ra_set = "risk_category" in self.risk_assessment.model_fields_set
+        cm_set = "risk_classification" in self.compliance.model_fields_set
+        if not (ra_set and cm_set):
+            return
+        ra, cm = self._risk_tiers()
+        if ra != cm:
+            logger.warning(
+                "Risk tiers disagree: risk_assessment.risk_category=%r vs "
+                "compliance.risk_classification=%r. Both values are emitted into "
+                "the EU AI Act governance / Annex IV bundle; reconcile them before "
+                "the compliance documentation becomes regulatory evidence.",
+                ra,
+                cm,
+            )
+
     def _validate_galore(self) -> None:
         if not self.training.galore_enabled:
             return
@@ -1258,6 +1341,7 @@ class ForgeConfig(BaseModel):
     @model_validator(mode="after")
     def _validate_consistency(self):
         self._warn_general_consistency()
+        self._warn_tier_disagreement()
         self._warn_high_risk_compliance()
         # `trainer_type` validation now lives in TrainingConfig.trainer_type's
         # `Literal[...]` annotation — Pydantic raises ValidationError on

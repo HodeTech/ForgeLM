@@ -221,6 +221,37 @@ class TestForgeConfigCompliance:
         assert "Article 5" in caplog.text
         assert "prohibited" in caplog.text
 
+    def test_explicit_tier_disagreement_warns(self, caplog, minimal_config):
+        """F-P1-FAB-31: when BOTH risk-tier siblings are explicitly set and
+        disagree, ForgeLM must warn (compliance.py emits both into the Annex
+        IV bundle, so a silent disagreement ships contradictory regulatory
+        evidence).  Uses two non-strict tiers so the strict-gate ConfigError
+        does not pre-empt the warning."""
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            ForgeConfig(
+                **minimal_config(
+                    risk_assessment={"risk_category": "limited-risk"},
+                    compliance={
+                        "provider_name": "Acme",
+                        "system_name": "Bot",
+                        "risk_classification": "minimal-risk",
+                    },
+                )
+            )
+        assert any("Risk tiers disagree" in r.message for r in caplog.records)
+
+    def test_single_tier_set_does_not_warn_disagreement(self, caplog, minimal_config):
+        """F-P1-FAB-31: setting only one side must NOT warn — both fields
+        default to ``minimal-risk`` on their sub-models, so root-level
+        presence alone is not an explicit disagreement."""
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            ForgeConfig(**minimal_config(risk_assessment={"risk_category": "limited-risk"}))
+        assert not any("Risk tiers disagree" in r.message for r in caplog.records)
+
     def test_unacceptable_risk_warnings(self, caplog, minimal_config):
         """``unacceptable`` (Article 5) must trip the strict gate AND emit
         the dedicated prohibited-practices warning on top of the auto_revert

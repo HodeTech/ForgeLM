@@ -15,8 +15,11 @@ from forgelm.config import (
     ForgeConfig,
     JudgeConfig,
     LoraConfigModel,
+    MergeConfig,
     ModelConfig,
+    MonitoringConfig,
     SafetyConfig,
+    SyntheticConfig,
     TrainingConfig,
     WebhookConfig,
     load_config,
@@ -557,3 +560,82 @@ class TestStagingTtlDeprecationVisibility:
         with caplog.at_level(logging.WARNING, logger="forgelm.config"):
             ForgeConfig(**minimal_config(evaluation={"staging_ttl_days": 7}, retention={"staging_ttl_days": 7}))
         assert any("canonical block wins" in r.message for r in caplog.records)
+
+
+# --- L3: merge / synthetic empty-payload validators (F-P1-FAB-32) ---
+
+
+class TestMergeEnabledValidation:
+    def test_merge_enabled_requires_two_models(self):
+        with pytest.raises(ValidationError, match="two source models"):
+            MergeConfig(enabled=True)
+
+    def test_merge_enabled_requires_path_key(self):
+        with pytest.raises(ValidationError, match="`path` key"):
+            MergeConfig(enabled=True, models=[{"weight": 0.5}, {"weight": 0.5}])
+
+    def test_merge_disabled_empty_models_accepted(self):
+        assert MergeConfig(enabled=False).models == []
+
+    def test_merge_enabled_with_two_paths_accepted(self):
+        cfg = MergeConfig(enabled=True, models=[{"path": "a"}, {"path": "b"}])
+        assert len(cfg.models) == 2
+
+
+class TestSyntheticEnabledValidation:
+    def test_synthetic_enabled_requires_teacher_model(self):
+        with pytest.raises(ValidationError, match="teacher_model is empty"):
+            SyntheticConfig(enabled=True, seed_prompts=["x"])
+
+    def test_synthetic_enabled_requires_seeds(self):
+        with pytest.raises(ValidationError, match="no seeds"):
+            SyntheticConfig(enabled=True, teacher_model="gpt-4")
+
+    def test_synthetic_file_backend_skips_teacher_requirement(self):
+        cfg = SyntheticConfig(enabled=True, teacher_backend="file", seed_file="seeds.jsonl")
+        assert cfg.teacher_model == ""
+
+    def test_synthetic_disabled_empty_payload_accepted(self):
+        assert SyntheticConfig(enabled=False).teacher_model == ""
+
+
+# --- L3: operational-knob numeric bounds (F-P1-FAB-33) ---
+
+
+class TestOperationalKnobBounds:
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("api_delay", -1.0),
+            ("temperature", -2.0),
+            ("max_new_tokens", 0),
+            ("api_timeout", 5),  # below the 10s safe_post floor
+        ],
+    )
+    def test_synthetic_knob_out_of_range_rejected(self, field, value):
+        with pytest.raises(ValidationError):
+            SyntheticConfig(teacher_model="gpt-4", **{field: value})
+
+    def test_monitoring_check_interval_zero_rejected(self):
+        with pytest.raises(ValidationError):
+            MonitoringConfig(check_interval_hours=0)
+
+    def test_webhook_timeout_zero_rejected(self):
+        with pytest.raises(ValidationError):
+            WebhookConfig(url="https://example.com/hook", timeout=0)
+
+
+# --- L3: config_template output_format comment lists all Literal values (F-P1-FAB-35) ---
+
+
+class TestTemplateOutputFormatComment:
+    def test_template_comment_lists_every_output_format_value(self):
+        import typing
+        from pathlib import Path
+
+        template = Path(__file__).resolve().parents[1] / "config_template.yaml"
+        comment_line = next(
+            line for line in template.read_text(encoding="utf-8").splitlines() if "output_format:" in line
+        )
+        for value in typing.get_args(SyntheticConfig.model_fields["output_format"].annotation):
+            assert value in comment_line, f"{value!r} missing from config_template output_format comment"
