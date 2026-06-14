@@ -65,6 +65,17 @@ class TestPiiDetection:
         # Random 11 digits should fail the checksum
         assert detect_pii("id is 12345678901").get("tr_id", 0) == 0
 
+    def test_tr_id_unicode_digits_detected_intentional_posture(self):
+        """F-P6-OPUS-21: the national-ID ``\\d`` is intentionally Unicode-aware,
+        so a checksum-valid TR Kimlik written in Arabic-Indic digits is still
+        detected (higher recall on internationalised digit forms, matching the
+        audit's over-report posture). Pins the documented Unicode intent so a
+        future ``re.ASCII`` tightening is a deliberate, visible change."""
+        ascii_id = "10000000146"  # passes the canonical TR checksum
+        arabic_id = "".join(chr(0x0660 + int(c)) for c in ascii_id)  # U+0660-0669
+        assert arabic_id != ascii_id
+        assert detect_pii(f"id is {arabic_id}").get("tr_id") == 1
+
     def test_us_ssn_excludes_invalid_prefixes(self):
         assert detect_pii("ssn 123-45-6789").get("us_ssn") == 1
         # 666 is reserved — not a valid SSN prefix
@@ -161,6 +172,16 @@ class TestSimhash:
         b = "Quantum chromodynamics describes the strong nuclear force."
         # Should be large; exact value depends on hash mixing
         assert hamming_distance(compute_simhash(a), compute_simhash(b)) > 10
+
+    def test_token_digest_default_and_explicit_bits_agree(self):
+        """F-P6-OPUS-20: ``_token_digest('x')`` and ``_token_digest('x', 64)``
+        compute the identical value (the default IS 64). They occupy two
+        ``lru_cache`` slots, but production callers always pass ``bits``
+        positionally so the cache never splits in practice — this pins the
+        value-equivalence the comment documents."""
+        from forgelm.data_audit._simhash import _token_digest
+
+        assert _token_digest("hello") == _token_digest("hello", 64)
 
 
 class TestFindNearDuplicates:

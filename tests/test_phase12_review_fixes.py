@@ -530,6 +530,32 @@ class TestRegexLinearity:
                 f"(allowed {allowed:.1f}×); possible ReDoS regression. timings_ms={timings}"
             )
 
+    def test_heading_pattern_linear_on_nonmatching_whitespace(self):
+        # F-P6-OPUS-17: the sibling above feeds a MATCHING line (terminates in
+        # 'x'). The hotter worst case for the anchored body
+        # ``(\S(?:[^\n]*\S)?)[ \t]*$`` is the NON-matching all-trailing-
+        # whitespace line ``'# ' + ' \t'*n`` (no terminal \S): the optional
+        # inner group must backtrack across the whole whitespace run before the
+        # overall match fails. Both shapes are linear today; this keeps the
+        # regression net symmetric across the match / no-match paths.
+        from forgelm.ingestion import _MARKDOWN_HEADING_PATTERN
+
+        sizes = (1_000, 5_000, 10_000)
+        timings = {n: self._measure_median_ms(_MARKDOWN_HEADING_PATTERN.match, "# " + " \t" * n) for n in sizes}
+        smallest = sizes[0]
+        # Sanity: this payload genuinely does NOT match (it is the no-trailing-\S
+        # worst case), so the benchmark exercises the failing-match backtrack.
+        assert _MARKDOWN_HEADING_PATTERN.match("# " + " \t" * smallest) is None
+        baseline = max(timings[smallest], 0.001)
+        for n in sizes[1:]:
+            ratio = timings[n] / baseline
+            allowed = (n / smallest) * self._LINEAR_SCALE_TOLERANCE
+            assert ratio <= allowed, (
+                f"heading regex grew {ratio:.1f}× from n={smallest} to n={n} on the "
+                f"non-matching shape (allowed {allowed:.1f}×); possible ReDoS regression. "
+                f"timings_ms={timings}"
+            )
+
     def test_strip_code_fences_linear_on_unclosed_blocks(self):
         # Old regex: ``.*?`` + back-reference + DOTALL. Replaced with
         # a per-line state machine. Pathological shape: many opening

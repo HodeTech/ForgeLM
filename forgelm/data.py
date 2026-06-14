@@ -20,7 +20,16 @@ _CONTROL_CHAR_DELETIONS = {
 
 
 def _detect_dataset_format(columns: list) -> dict:
-    """Detect the most likely dataset format from column names."""
+    """Detect the most likely dataset format from column names.
+
+    Advisory heuristic ONLY: returns the most likely format plus a suggested
+    trainer for use in user-facing error messages. It performs NO validation —
+    the authoritative schema gate is :func:`_validate_trainer_columns` (which
+    raises ``KeyError`` on a missing column) plus TRL's own column checks at
+    train time. Branch order encodes precedence (preference > binary-feedback >
+    messages > prompt-only > instruction > text); the first matching branch
+    wins, so do not rely on this to reject a malformed dataset.
+    """
     if "chosen" in columns and "rejected" in columns:
         return {"description": "preference format (chosen/rejected)", "suggested_trainer": "dpo"}
     if "completion" in columns and "label" in columns:

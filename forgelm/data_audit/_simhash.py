@@ -45,6 +45,13 @@ def _tokenize(text: str) -> List[str]:
 # at this granularity collapses millions of hashes into ten thousand on a
 # typical run. lru_cache is process-wide and bounded; ``maxsize=10_000``
 # trades ~1-2 MB of cache for the throughput win.
+#
+# ``lru_cache`` keys on the literal call signature, so ``_token_digest('x')``
+# and ``_token_digest('x', 64)`` would occupy two distinct entries for the same
+# value. Both production callers (``compute_simhash``, ``_compute_simhash_numpy``)
+# always pass ``bits`` positionally, so the bits-defaulted shape is never on the
+# hot path and the cache does not split in practice — the default is kept only
+# for ergonomics of ad-hoc / test callers.
 @lru_cache(maxsize=10_000)
 def _token_digest(token: str, bits: int = 64) -> int:
     """Hash one tokenised word into a ``bits``-wide integer.

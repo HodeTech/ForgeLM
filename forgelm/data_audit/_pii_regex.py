@@ -25,6 +25,15 @@ from typing import Any, Dict
 # masking, the FIRST pattern in this dict wins and the span is replaced
 # before the next pattern sees it — that's the documented "first match wins"
 # semantics referenced in :func:`mask_pii`.
+#
+# Intentional Unicode (regex.md rule 1): the national-ID / phone / credit-card
+# patterns use bare ``\d``, which is Unicode-aware by default and so also
+# matches Arabic-Indic, fullwidth, Devanagari, etc. digit forms. This is
+# deliberate — it raises recall on internationalised digit forms and matches
+# the audit's documented over-report posture; the validators ``int()`` /
+# ``str.isdigit()`` in this module are Unicode-safe too. Do NOT copy these
+# patterns into an ASCII-only credential context (the ``_secrets.py`` patterns
+# carry ``re.ASCII`` for exactly that reason).
 _PII_PATTERNS: Dict[str, re.Pattern] = {
     "email": re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     "iban": re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"),
