@@ -30,7 +30,9 @@ Usage::
     python3 tools/check_bilingual_code_blocks.py --strict   # alias of default
     python3 tools/check_bilingual_code_blocks.py --quiet    # silent on success
 
-Plan reference: 2026-05-07 docs audit §10 (CI gate proposals) gate #7.
+Rationale: bilingual docs must carry identical code blocks (commands /
+config are English-only and must not diverge between the EN and TR
+mirrors) — see ``docs/standards/localization.md``.
 """
 
 from __future__ import annotations

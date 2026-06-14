@@ -289,18 +289,26 @@ class TestCanonicalRepoPasses:
     def test_every_tr_mirror_appears_in_pair_registry(self) -> None:
         """F-W3T-07 regression: a ``*-tr.md`` file added under the
         parity tool's curated domain (``docs/guides/`` +
-        ``docs/reference/``) without a ``_PAIRS`` registry entry would
-        silently bypass the strict gate.  This meta-test asserts the
-        registry is the source of truth for those two directories.
+        ``docs/reference/`` + ``docs/qms/``) without a ``_PAIRS``
+        registry entry would silently bypass the strict gate.  This
+        meta-test asserts the registry is the source of truth for those
+        three directories.
+
+        F-P8-C-22: ``docs/qms/`` was previously NOT scanned here even
+        though all 10 qms ``*-tr.md`` pairs ARE registered — so a future
+        unregistered ``qms-*-tr.md`` (a regulated EU AI Act Art.17 area)
+        would have slipped past the gate.  ``docs/qms`` is now in scope.
 
         Out-of-scope for THIS registry test: ``docs/usermanuals/`` is
         now spine-gated via auto-discovery (``_usermanual_pairs``, see
         ``TestUsermanualSpineParity``), not the hand-written ``_PAIRS``
-        registry — so it is checked elsewhere, not here.  Top-level docs
-        like ``docs/roadmap-tr.md`` and ``docs/product_strategy-tr.md``
-        diverge intentionally; gitignored working-memory directories
-        (``docs/marketing/``, ``docs/analysis/``) are excluded by
-        construction.
+        registry — so it is checked elsewhere, not here.  Top-level
+        ``docs/product_strategy-tr.md`` diverges intentionally;
+        gitignored working-memory directories (``docs/marketing/``,
+        ``docs/analysis/``) are excluded by construction.  Note
+        ``docs/roadmap-tr.md`` is NO LONGER an intentional divergence —
+        it is a mandatory mirror and is now registered (F-P8-C-21); see
+        ``test_roadmap_mirror_is_registered`` below.
 
         Allowlist: ``safety_compliance-tr.md`` carries a known
         in-progress structural drift (34 H2/H3/H4 deltas as of Wave
@@ -309,7 +317,11 @@ class TestCanonicalRepoPasses:
         Remove from the allowlist once parity is achieved.
         """
         repo_root = Path(__file__).parent.parent
-        scoped_dirs = [repo_root / "docs" / "guides", repo_root / "docs" / "reference"]
+        scoped_dirs = [
+            repo_root / "docs" / "guides",
+            repo_root / "docs" / "reference",
+            repo_root / "docs" / "qms",
+        ]
         # Files whose TR mirror is acknowledged as structurally
         # incomplete; do NOT add new entries here without an explicit
         # tracking ticket.
@@ -327,6 +339,16 @@ class TestCanonicalRepoPasses:
             f"{orphans} carry a TR mirror but are not registered in "
             "_PAIRS — register them in tools/check_bilingual_parity.py "
             "or the strict gate will silently skip drift detection."
+        )
+
+    def test_roadmap_mirror_is_registered(self) -> None:
+        """F-P8-C-21: localization.md declares ``docs/roadmap.md`` ↔
+        ``docs/roadmap-tr.md`` a MANDATORY mirror, so it must carry a
+        structural-parity gate — i.e. be present in ``_PAIRS``."""
+        registered = {tr for _, tr in check_bilingual_parity._PAIRS}
+        assert "docs/roadmap-tr.md" in registered, (
+            "the mandatory roadmap mirror must be registered in _PAIRS so "
+            "future EN-side edits can't silently desync the TR mirror."
         )
 
 

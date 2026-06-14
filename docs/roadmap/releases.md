@@ -181,7 +181,7 @@ Fixes a `TypeError` in the SFT trainer that prevented every SFT training run fro
 
 ### Full changelog
 
-See [CHANGELOG.md `[0.5.7]`](../../CHANGELOG.md#057--2026-05-10).
+See [CHANGELOG.md `[0.5.7]`](../../CHANGELOG.md#057--2026-05-11).
 
 ---
 

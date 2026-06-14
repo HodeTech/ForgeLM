@@ -62,6 +62,11 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 # here; CI will then pick it up automatically.  Order is alphabetical
 # for predictable reporting.
 _PAIRS: Tuple[Tuple[str, str], ...] = (
+    # docs/ (top-level)
+    # ``docs/roadmap.md`` ↔ ``docs/roadmap-tr.md`` is a MANDATORY mirror per
+    # localization.md §"What is bilingual"; registering it here gives the
+    # standard's promise a real structural-parity gate (F-P8-C-21).
+    ("docs/roadmap.md", "docs/roadmap-tr.md"),
     # docs/guides/
     ("docs/guides/air_gap_deployment.md", "docs/guides/air_gap_deployment-tr.md"),
     ("docs/guides/alignment.md", "docs/guides/alignment-tr.md"),
