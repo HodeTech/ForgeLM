@@ -21,7 +21,24 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from ._version import __version__ as _forgelm_version
-from .config import ConfigError
+from .config import ConfigError, WebhookConfig
+
+# Webhook fields persisted into the compliance manifest so the post-training
+# ``forgelm approve`` / ``forgelm reject`` dispatchers (which run with only
+# ``--output-dir``, no ``--config``) can re-resolve a WebhookNotifier from the
+# co-located JSON.  Derived from the live ``WebhookConfig`` schema so the
+# persisted shape can NEVER drift from the model — the drift that previously
+# persisted six non-existent fields, dropped the real ones, and made the
+# rebuilt SimpleNamespace miss attributes the notifier reads (crashing
+# ``approve`` with AttributeError *after* the model was already promoted).
+#
+# ``url`` is deliberately excluded: it can carry a Slack/Teams secret embedded
+# in the URL path, and this manifest is a plain-JSON artefact typically
+# committed to the auditor's evidence bundle.  Operators use the env-backed
+# ``url_env`` indirection for the secret, so the persisted shape still
+# re-resolves the webhook at approve/reject time without leaking the credential.
+_WEBHOOK_SECRET_FIELDS = frozenset({"url"})
+_WEBHOOK_PERSIST_FIELDS = tuple(name for name in WebhookConfig.model_fields if name not in _WEBHOOK_SECRET_FIELDS)
 
 # flock is Unix-only; Windows falls back to advisory-only (no hard lock).
 try:
@@ -730,28 +747,10 @@ def generate_training_manifest(
     # configured in the original training YAML produces a silent no-op on
     # ``forgelm approve`` / ``forgelm reject`` because
     # ``_build_approval_notifier`` reads ``webhook_config`` from this exact
-    # report and would otherwise see ``None``.
-    #
-    # Wave 2b Round-5 review F-W2B-WEBHOOK: the literal ``url`` field can
-    # carry a Slack/Teams webhook secret embedded in the URL path; even
-    # though ``url_env`` is the recommended channel, an operator who pasted
-    # the URL inline historically had it written verbatim into a
-    # plain-JSON compliance artefact that is typically committed to the
-    # auditor's evidence bundle.  Strip ``url`` from the persisted shape
-    # and rely on the env-backed ``url_env`` / ``secret_env`` indirection
-    # so the artefact carries enough to *re-resolve* the webhook at
-    # approve/reject time without leaking the credential into the bundle.
-    _WEBHOOK_PERSIST_FIELDS = (
-        "url_env",
-        "notify_on_success",
-        "notify_on_failure",
-        "notify_on_revert",
-        "notify_on_awaiting_approval",
-        "secret_env",
-        "timeout_seconds",
-        "retry_count",
-        "retry_backoff_seconds",
-    )
+    # report and would otherwise see ``None``.  The persisted field set is the
+    # module-level ``_WEBHOOK_PERSIST_FIELDS`` (derived from the live
+    # ``WebhookConfig`` schema, ``url`` excluded — see its definition for the
+    # secret-leak and schema-drift rationale).
     webhook_cfg = getattr(config, "webhook", None)
     if webhook_cfg is not None:
         try:

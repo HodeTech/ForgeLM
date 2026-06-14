@@ -489,7 +489,13 @@ def _run_approve_cmd(args, output_format: str) -> None:
     metrics = _cli_facade._load_metrics_from_manifest(output_dir)
     notifier = _cli_facade._build_approval_notifier(output_dir)
     run_name = os.path.basename(os.path.normpath(output_dir)) or "approved"
-    notifier.notify_success(run_name=run_name, metrics=metrics)
+    # Best-effort: the model is already promoted and the granted event already
+    # committed.  A webhook is a notification, not a gate — a notifier failure
+    # must never abort the approve command (public exit-code contract).
+    try:
+        notifier.notify_success(run_name=run_name, metrics=metrics)
+    except Exception as exc:  # noqa: BLE001 — webhook is best-effort; see comment above
+        logger.warning("Approve webhook notification failed (non-fatal): %s", exc)
 
     if output_format == "json":
         print(
@@ -563,7 +569,12 @@ def _run_reject_cmd(args, output_format: str) -> None:
     notifier = _cli_facade._build_approval_notifier(output_dir)
     run_name = os.path.basename(os.path.normpath(output_dir)) or "rejected"
     reason = f"{_EVT_HUMAN_APPROVAL_REJECTED}: {args.comment}" if args.comment else _EVT_HUMAN_APPROVAL_REJECTED
-    notifier.notify_failure(run_name=run_name, reason=reason)
+    # Best-effort (see approve handler): the rejection is already recorded in the
+    # audit log; a webhook hiccup must not abort the reject command.
+    try:
+        notifier.notify_failure(run_name=run_name, reason=reason)
+    except Exception as exc:  # noqa: BLE001 — webhook is best-effort; see comment above
+        logger.warning("Reject webhook notification failed (non-fatal): %s", exc)
 
     if output_format == "json":
         print(

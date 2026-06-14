@@ -500,3 +500,75 @@ class TestLifecycleVocabulary:
         serialized = json.dumps(payload)
         for forbidden in ("state_dict", "model.safetensors", "pytorch_model.bin", "adapter_model"):
             assert forbidden not in serialized, f"Payload must not carry {forbidden!r}"
+
+
+class TestWebhookPersistRoundTrip:
+    """Regression coverage for the approve/reject AttributeError crash (XP-03).
+
+    The compliance manifest persisted a ``_WEBHOOK_PERSIST_FIELDS`` set that had
+    drifted from the real ``WebhookConfig`` schema (six fields that don't exist,
+    the real ``url``/``notify_on_start``/``timeout`` dropped).  When
+    ``forgelm approve``/``reject`` rebuilt a notifier from that JSON via a
+    ``SimpleNamespace``, ``_resolve_url`` read ``self.config.url`` and raised
+    ``AttributeError`` — *after* the model was already promoted and the granted
+    audit event committed, violating the public exit-code contract.
+    """
+
+    def test_persist_fields_match_schema_minus_url(self):
+        """Single source of truth: the persisted set is exactly the live
+        schema minus the secret-bearing ``url``.  Any drift re-arms the crash."""
+        from forgelm.compliance import _WEBHOOK_PERSIST_FIELDS
+        from forgelm.config import WebhookConfig
+
+        assert set(_WEBHOOK_PERSIST_FIELDS) == set(WebhookConfig.model_fields) - {"url"}
+        assert "url" not in _WEBHOOK_PERSIST_FIELDS, "secret-bearing url must never be persisted"
+
+    def test_resolve_url_tolerates_namespace_without_url(self):
+        """The crash root: a rebuilt config namespace need not carry ``url``.
+        ``_resolve_url`` must return None, not raise AttributeError."""
+        import types
+
+        from forgelm.compliance import _WEBHOOK_PERSIST_FIELDS
+
+        ns = types.SimpleNamespace(**{k: None for k in _WEBHOOK_PERSIST_FIELDS})
+        assert not hasattr(ns, "url")
+
+        class _Carrier:
+            webhook = ns
+
+        notifier = WebhookNotifier(_Carrier())
+        assert notifier._resolve_url() is None  # must not raise
+
+    def test_manifest_persists_url_env_not_url(self):
+        """A configured inline ``url`` secret must not reach the manifest;
+        ``url_env`` (the env-indirection channel) must survive the round-trip."""
+        from forgelm.compliance import _WEBHOOK_PERSIST_FIELDS, generate_training_manifest
+
+        config = _make_config({"url": "https://hooks.example.com/SECRET/TOKEN", "url_env": "FORGELM_TEST_HOOK"})
+        manifest = generate_training_manifest(config, metrics={"loss": 1.0})
+
+        webhook_config = manifest["webhook_config"]
+        assert set(webhook_config) == set(_WEBHOOK_PERSIST_FIELDS)
+        assert "url" not in webhook_config
+        assert "SECRET" not in json.dumps(webhook_config), "inline url secret leaked into manifest"
+        assert webhook_config["url_env"] == "FORGELM_TEST_HOOK"
+
+    def test_approval_notifier_rebuild_does_not_crash(self, tmp_path):
+        """End-to-end production path: persist a manifest for a webhook-configured
+        run, rebuild the notifier via the real ``_build_approval_notifier``, and
+        fire the success notification.  Pre-fix this raised AttributeError."""
+        import forgelm.cli as cli_facade
+        from forgelm.compliance import generate_training_manifest
+
+        # url_env points at an UNSET env var → resolves to None → clean no-op,
+        # so no real POST is attempted; the regression is the rebuild itself.
+        config = _make_config({"url_env": "FORGELM_TEST_HOOK_UNSET", "notify_on_success": True})
+        manifest = generate_training_manifest(config, metrics={"loss": 1.0})
+
+        compliance_dir = tmp_path / "compliance"
+        compliance_dir.mkdir()
+        (compliance_dir / "compliance_report.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+        notifier = cli_facade._build_approval_notifier(str(tmp_path))
+        # Must not raise AttributeError on the rebuilt SimpleNamespace.
+        notifier.notify_success(run_name="approved", metrics={"loss": 1.0})
