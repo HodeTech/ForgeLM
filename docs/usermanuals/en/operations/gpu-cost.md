@@ -5,13 +5,13 @@ description: Auto-detect across 16 GPU profiles and track per-run cost against y
 
 # GPU Cost Estimation
 
-> **Status (v0.5.5):** GPU detection + per-run duration + audit-log
-> stamping ship today; the config-driven `cost_tracking:` block (rate
-> tables, alert / halt thresholds) is **planned for v0.6.x** and not
-> currently honoured by `forgelm/config.py`. Examples below that show
-> `cost_tracking:` fields are forward-looking placeholders — set hourly
-> rates manually until the YAML surface lands. The deferral is tracked in
-> the [risks-and-decisions roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap/risks-and-decisions.md).
+> **Status:** GPU detection + per-run duration + audit-log stamping ship
+> today; the config-driven `cost_tracking:` block (rate tables, alert /
+> halt thresholds) is **tracked on the roadmap and not yet implemented** —
+> `forgelm/config.py` has no `output.cost_tracking` surface. Examples below
+> that show `cost_tracking:` fields are forward-looking placeholders — set
+> hourly rates manually until the YAML surface lands. The deferral is
+> tracked in the [risks-and-decisions roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap/risks-and-decisions.md).
 
 ForgeLM detects the GPU you're running on, looks up its profile (memory, compute, typical hourly rate), and tracks per-run cost. After every run, the audit log records exactly how much GPU time was used and what it cost.
 
@@ -48,7 +48,7 @@ output:
     currency: "USD"
 ```
 
-Set this once per project. ForgeLM uses the matched rate for cost reporting.
+Once the `cost_tracking:` surface lands, set this once per project and ForgeLM will use the matched rate for cost reporting. Until then, the block is a forward-looking placeholder (see the status banner above).
 
 ## Output
 
@@ -103,13 +103,13 @@ output:
 
 A 4×A100 run for 2 hours = 4 × 2 × $1.10 = $8.80, regardless of whether you use ZeRO or FSDP.
 
-## Cost alerts (planned for v0.6.x)
+## Cost alerts (roadmap — not yet implemented)
 
 For runs that may run away, the planned `cost_tracking` block will support
 threshold-based alerts and halts:
 
 ```yaml
-# planned — not honoured by forgelm/config.py at v0.5.5
+# roadmap placeholder — not yet honoured by forgelm/config.py
 output:
   cost_tracking:
     alert_threshold_usd: 50.0          # webhook fires when crossed

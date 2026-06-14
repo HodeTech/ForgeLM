@@ -260,8 +260,8 @@ output:
     url: null
     template: "slack"
     events: []
-  # cost_tracking:                             # v0.6.x'e planlandı — bkz. GPU Maliyet Tahmini sayfası + risks-and-decisions.md
-  #   enabled: false                           # v0.5.5'te forgelm/config.py tarafından honure edilmez
+  # cost_tracking:                             # yol haritası — henüz uygulanmadı; bkz. GPU Maliyet Tahmini sayfası + risks-and-decisions.md
+  #   enabled: false                           # forgelm/config.py tarafından honure edilmez (output.cost_tracking yüzeyi yok)
   #   rate_per_hour: {}
   #   currency: "USD"
   #   alert_threshold_usd: null
@@ -284,7 +284,7 @@ auth:
 
 ## `deployment:`
 
-v0.5.5'te `deployment:` üst-seviye YAML anahtarı yoktur — `ForgeConfig` bilinmeyen anahtarları reddeder (`extra="forbid"`), dolayısıyla eğitim config'inize eklerseniz yükleme anında `ConfigError` fırlar. Deployment knob'ları YAML yerine `forgelm deploy` CLI bayrakları olarak açılır. Canlı target seçenekleri `--target {ollama,vllm,tgi,hf-endpoints}`'dir; tam surface için [Deploy hedefleri sayfasına](#/deployment/deploy-targets) ve [CLI referansına](#/reference/cli) bakın.
+`deployment:` üst-seviye YAML anahtarı yoktur — `ForgeConfig` bilinmeyen anahtarları reddeder (`extra="forbid"`), dolayısıyla eğitim config'inize eklerseniz yükleme anında `ConfigError` fırlar. Deployment knob'ları YAML yerine `forgelm deploy` CLI bayrakları olarak açılır. Canlı target seçenekleri `--target {ollama,vllm,tgi,hf-endpoints}`'dir; tam surface için [Deploy hedefleri sayfasına](#/deployment/deploy-targets) ve [CLI referansına](#/reference/cli) bakın.
 
 > **v0.6.0+ için planlanan:** YAML-destekli `deployment:` bölümü [GitHub'daki Phase 14 pipeline-chains yol haritasında](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md) (eski v0.5.x placeholder'larından ertelendi). O zamana kadar, üçüncü taraf şablonlarda gördüğünüz herhangi bir "deployment:" YAML'ını bilgilendirici sayın; otoriter olan yalnızca `forgelm deploy` bayraklarıdır.
 

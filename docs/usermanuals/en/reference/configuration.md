@@ -276,8 +276,8 @@ output:
     url: null
     template: "slack"
     events: []
-  # cost_tracking:                             # planned for v0.6.x — see GPU Cost Estimation page + risks-and-decisions.md
-  #   enabled: false                           # NOT honoured by forgelm/config.py at v0.5.5
+  # cost_tracking:                             # roadmap — not yet implemented; see GPU Cost Estimation page + risks-and-decisions.md
+  #   enabled: false                           # NOT honoured by forgelm/config.py (no output.cost_tracking surface)
   #   rate_per_hour: {}
   #   currency: "USD"
   #   alert_threshold_usd: null
@@ -300,7 +300,7 @@ auth:
 
 ## `deployment:`
 
-There is no `deployment:` top-level YAML key in v0.5.5 — `ForgeConfig` rejects unknown keys (`extra="forbid"`), so adding one to your training config raises `ConfigError` at load time. Deployment knobs are exposed as `forgelm deploy` CLI flags instead. The live target choices are `--target {ollama,vllm,tgi,hf-endpoints}`; see the [Deploy targets page](#/deployment/deploy-targets) and the [CLI reference](#/reference/cli) for the full surface.
+There is no `deployment:` top-level YAML key — `ForgeConfig` rejects unknown keys (`extra="forbid"`), so adding one to your training config raises `ConfigError` at load time. Deployment knobs are exposed as `forgelm deploy` CLI flags instead. The live target choices are `--target {ollama,vllm,tgi,hf-endpoints}`; see the [Deploy targets page](#/deployment/deploy-targets) and the [CLI reference](#/reference/cli) for the full surface.
 
 > **Planned for v0.6.0+:** A YAML-backed `deployment:` section is on the [Phase 14 pipeline-chains roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md) (deferred from earlier v0.5.x placeholders). Until then, treat any "deployment:" YAML you find in third-party templates as informational; only the `forgelm deploy` flags are authoritative.
 
