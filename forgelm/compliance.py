@@ -1135,8 +1135,11 @@ def build_annex_iv_artifact(manifest: Dict[str, Any]) -> Optional[Dict[str, Any]
 
     # Stamp manifest_hash so the verifier's tampering-detection branch
     # fires.  Computed AFTER the §1-9 fields are populated so the hash
-    # covers the full payload.  ``metadata`` block is intentionally
-    # added LAST so its presence does not perturb prior key ordering.
+    # covers the full payload.  ``metadata`` carries the hash of everything
+    # else, so it is added after the hash is computed (chicken-and-egg).
+    # Insertion order is irrelevant: ``compute_annex_iv_manifest_hash``
+    # strips the metadata block and serialises with ``sort_keys=True``, so
+    # neither this block's presence nor its position can affect the digest.
     artifact["metadata"] = {"manifest_hash": compute_annex_iv_manifest_hash(artifact)}
     return artifact
 

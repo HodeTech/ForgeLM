@@ -85,6 +85,20 @@ class TestCacheModels:
         # Assert the underlying byte count instead.
         assert payload["models"][0]["size_bytes"] >= 4096
 
+    def test_cache_models_json_preserves_unicode_path(self, capsys) -> None:
+        """F-P7-OPUS-42: the success JSON now passes ``ensure_ascii=False``
+        (matching the doctor renderer), so a Unicode ``cache_dir`` renders as
+        the literal path rather than ``\\uXXXX`` escapes."""
+        from forgelm.cli.subcommands._cache import _emit_cache_success
+
+        payload = {"cache_dir": "/work/önbellek", "models": [], "total_size_mb": 0}
+        _emit_cache_success("json", payload, kind="models")
+
+        out = capsys.readouterr().out
+        assert "/work/önbellek" in out  # literal, un-escaped
+        assert "\\u" not in out
+        assert json.loads(out)["cache_dir"] == "/work/önbellek"
+
     def test_cache_models_with_safety_appends_classifier(self, tmp_path: Path, capsys) -> None:
         from forgelm.cli.subcommands import _cache
 

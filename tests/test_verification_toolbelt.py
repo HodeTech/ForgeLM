@@ -406,6 +406,22 @@ class TestVerifyGguf:
             _run_verify_gguf_cmd(args, output_format="json")
         assert ei.value.code == 1
 
+    def test_input_error_json_uses_same_indent_as_result(self, tmp_path: Path, capsys) -> None:
+        """F-P7-OPUS-43: the input-error envelope must use the same ``indent=2``
+        shape as the result envelope so a single subcommand does not emit two
+        different whitespace contracts on stdout."""
+        from forgelm.cli.subcommands._verify_gguf import _run_verify_gguf_cmd
+
+        args = _build_args(path=str(tmp_path / "missing.gguf"))
+        with pytest.raises(SystemExit):
+            _run_verify_gguf_cmd(args, output_format="json")
+        out = capsys.readouterr().out.strip()
+        payload = json.loads(out)
+        assert payload["success"] is False
+        # indent=2 -> pretty-printed multi-line, not a compact single line.
+        assert "\n" in out
+        assert out.startswith("{\n")
+
 
 # ---------------------------------------------------------------------------
 # safety-eval (dispatcher-layer only — generation path is covered elsewhere)

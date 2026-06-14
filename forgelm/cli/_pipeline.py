@@ -250,6 +250,13 @@ def _atomic_write_json(path: str, payload: Dict[str, Any]) -> None:
     accidental double-invocation surfaces as last-writer-wins rather
     than a Python traceback.  The temp lives in the same directory as
     ``path`` so ``os.replace`` stays a same-filesystem atomic rename.
+
+    No fsync: the temp is not flushed to stable storage before the rename, so
+    on power loss the *previous* version may survive instead of the new one.
+    That is acceptable for resumable state/manifest files — a re-run
+    re-derives the dropped update — but means this helper MUST NOT be reused
+    for append-only audit data, where durability of each committed entry is a
+    contract (use the audit logger's fsync-backed writer for that).
     """
     target_dir = os.path.dirname(path) or "."
     os.makedirs(target_dir, exist_ok=True)
