@@ -71,10 +71,17 @@ class TestSamplePacking:
     def test_sample_packing_disabled_by_default(self):
         config = _config()
         assert config.training.sample_packing is False
+        assert config.training.packing is False
 
-    def test_sample_packing_enabled(self):
+    def test_sample_packing_enabled_forwards_to_packing(self):
+        # Deprecated alias: setting sample_packing forwards to packing so the
+        # documented behaviour actually fires (it used to be a silent no-op).
         config = _config(training={"sample_packing": True})
-        assert config.training.sample_packing is True
+        assert config.training.packing is True
+
+    def test_sample_packing_emits_deprecation_warning(self):
+        with pytest.warns(DeprecationWarning, match="sample_packing"):
+            _config(training={"sample_packing": True})
 
 
 class TestLongContextYaml:

@@ -6,6 +6,40 @@ All notable changes to ForgeLM are documented here.
 
 _(v0.7.1 dev cycle — entries will land here as PRs merge.)_
 
+### Changed
+
+- **Config validation hardened.** `distributed.strategy` is now a
+  `Literal["deepspeed", "fsdp"]` (an unsupported value such as `horovod`
+  used to validate and then silently run single-GPU). `data.mix_ratio`
+  now rejects non-finite weights (NaN / inf) and must carry exactly one
+  weight per dataset (`1 primary + len(extra_datasets)`); a length
+  mismatch raised no config error and silently fell back to uniform
+  mixing at runtime. Both now fail fast at config time (exit 1).
+- **Deprecation removals deferred to v0.8.0.** `evaluation.staging_ttl_days`
+  and the `--data-audit` CLI flag were originally scheduled for removal in
+  v0.7.0, but v0.7.0 shipped with both still present to preserve the full
+  one-minor deprecation window. Every `DeprecationWarning`, `--help` text,
+  reference-doc note, and the release-standard worked example now name
+  **v0.8.0** consistently as the removal target. The `### Removed` section
+  lands in the v0.8.0 CHANGELOG.
+
+### Deprecated
+
+- **`training.sample_packing`** is now a deprecated alias for
+  `training.packing`. It was previously a documented-but-unconsumed field
+  (a silent no-op); it now forwards to `packing` with a
+  `DeprecationWarning` so the documented behaviour actually fires. Use
+  `packing` instead — `sample_packing` is removed in **v0.9.0**. See
+  [docs/standards/release.md](docs/standards/release.md#deprecation-cadence).
+
+### Fixed
+
+- **Pipeline configs with `pipeline:` + `retention.staging_ttl_days` +
+  any `evaluation:` block** no longer raise a false
+  `ConfigError ("Conflicting staging_ttl_days values")`. The stage-merge
+  round-trip re-materialised the deprecated `staging_ttl_days=7` default as
+  if the operator had written it; the dump now excludes unset defaults.
+
 ## [0.7.0] — 2026-05-14
 
 Phase 14 (Multi-Stage Pipeline Chains) closes the "operators have to write
@@ -96,6 +130,14 @@ block is present.
   `forgelm verify-annex-iv --pipeline <dir>` CLI mode).  The shared
   validator lives in private helper `_verify_manifest_payload` so the
   in-memory and disk-bound entry points cannot drift.
+- **Eval artefacts are privacy-redacted by default** (documented
+  retroactively). `safety_results.json` and `judge_results.json` no longer
+  persist raw `prompt` / `response` / judge `reason` strings unless the new
+  opt-in flags `evaluation.safety.include_eval_samples` and
+  `evaluation.llm_judge.include_eval_samples` (both default `false`) are
+  set. This honours GDPR / EU AI Act Article 10 privacy-by-default —
+  adversarial prompts and judge reasoning can quote sensitive content. Set
+  the flag to `true` only for debugging.
 
 ### Fixed (Phase 14 review-response — PR #53)
 

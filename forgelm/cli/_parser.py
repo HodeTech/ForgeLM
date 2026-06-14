@@ -1329,7 +1329,7 @@ def parse_args():
         metavar="PATH",
         help=(
             "DEPRECATED — alias for `forgelm audit PATH` (kept so existing pipelines keep "
-            "working). Scheduled for removal in v0.7.0. Behaviour is identical; new scripts "
+            "working). Scheduled for removal in v0.8.0. Behaviour is identical; new scripts "
             "should use the subcommand. Writes `data_audit_report.json` under --output "
             "(default ./audit/). No training."
         ),

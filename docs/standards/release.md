@@ -124,11 +124,13 @@ Rules:
 superseded by the `forgelm audit` subcommand in Phase 12. Deprecated in
 v0.5.0 (`forgelm/cli/_dispatch.py:165-172` raises `DeprecationWarning`
 and the surrounding handler at `_dispatch.py:154-205` writes an
-append-only `cli.legacy_flag_invoked` audit-log event naming v0.7.0 as
+append-only `cli.legacy_flag_invoked` audit-log event naming v0.8.0 as
 the removal target; the Phase 15 CLI split moved this from the original
 single-file `cli.py:1424-1428` location). The flag remains present and
-functional through v0.6.x, then is removed in v0.7.0 with a matching
-`### Removed` CHANGELOG entry.
+functional through v0.6.x–v0.7.x — the original v0.7.0 removal was pushed
+one minor out at the v0.7.0 cut to preserve the full one-minor warning
+window — then is removed in v0.8.0 with a matching `### Removed` CHANGELOG
+entry.
 
 ## Release checklist
 

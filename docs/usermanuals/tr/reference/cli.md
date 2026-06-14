@@ -48,7 +48,7 @@ Bunlardan herhangi biri için `forgelm <subcommand> --help`.
 | `--merge` | Config'in `merge:` bloğundan model birleştirmeyi koştur. Eğitim yok. |
 | `--generate-data` | Teacher modelle sentetik eğitim verisi üret. Eğitim yok. |
 | `--compliance-export OUTPUT_DIR` | EU AI Act uyum artifact'larını (audit trail, data provenance, Annex IV) OUTPUT_DIR'a export et. Manifest'in tamamlanması için eğitimden sonra koşturun. |
-| `--data-audit PATH` | **Deprecated alias**, `forgelm audit PATH` için. v0.7.0'da kaldırılacak. Yeni script'ler subcommand'ı kullanmalı. |
+| `--data-audit PATH` | **Deprecated alias**, `forgelm audit PATH` için. v0.8.0'da kaldırılacak. Yeni script'ler subcommand'ı kullanmalı. |
 | `--output DIR` | `--data-audit` / `--compliance-export` için çıktı dizini (varsayılan: `./audit/` veya `./compliance/`). |
 | `--output-format {text,json}` | Sonuçlar için çıktı formatı (varsayılan: `text`). CI için JSON. |
 | `--quiet, -q` | INFO loglarını bastır. Sadece warning ve error göster. |

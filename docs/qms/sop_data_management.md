@@ -72,7 +72,7 @@ ForgeLM automated checks:
 - Format validation per trainer type (SFT, DPO, KTO, GRPO)
 - Text cleaning (`clean_text: true`)
 - **ForgeLM audit pipeline (v0.5.0+, `forgelm audit <jsonl>`; legacy
-  `forgelm --data-audit` deprecated, removal scheduled v0.7.0)** —
+  `forgelm --data-audit` deprecated, removal scheduled v0.8.0)** —
   produces `data_audit_report.json` with per-split sample counts,
   length distribution, top-3 language detection, near-duplicate rate
   (default 64-bit simhash, or **MinHash LSH** via

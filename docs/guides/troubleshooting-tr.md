@@ -166,10 +166,10 @@ Long-context eğitimi (büyük `sliding_window_attention` ya da RoPE
      gradient_checkpointing: true
    ```
 
-3. **Sample packing kullan** (padding israfını azalt):
+3. **Sekans paketleme kullan** (padding israfını azalt):
    ```yaml
    training:
-     sample_packing: true
+     packing: true
    ```
 
 4. **Ek bellek tasarrufu için GaLore ile birleştir**:

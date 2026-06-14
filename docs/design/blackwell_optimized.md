@@ -8,7 +8,7 @@
 > auto-enable flow are all pending. Operators on Blackwell hardware
 > currently configure `expandable_segments` via the upstream
 > `PYTORCH_ALLOC_CONF` env var directly and set `training.bf16: true` /
-> `training.sample_packing: true` by hand.
+> `training.packing: true` by hand.
 
 ## Overview
 Specific optimizations for the latest Nvidia Blackwell architecture (notably GB10 with 128GB unified RAM) to maximize throughput and stability.

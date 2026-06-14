@@ -724,6 +724,25 @@ evaluation:
         assert cfg.retention is not None
         assert cfg.retention.staging_ttl_days == 14
 
+    def test_alias_forward_warning_names_v080_removal_not_v070(self) -> None:
+        """Deprecation cadence (F-P1-FAB-16): v0.7.0 shipped without the
+        removal, so every message must name the deferred v0.8.0 target — a
+        warning still naming v0.7.0 is a past-release version stamp."""
+        from forgelm.config import ForgeConfig
+
+        with pytest.warns(DeprecationWarning) as record:
+            ForgeConfig(
+                model={"name_or_path": "gpt2"},
+                lora={},
+                training={"trainer_type": "sft"},
+                data={"dataset_name_or_path": "train.jsonl"},
+                evaluation={"staging_ttl_days": 14},
+            )
+        messages = [str(w.message) for w in record if issubclass(w.category, DeprecationWarning)]
+        assert messages, "expected an alias-forward DeprecationWarning"
+        assert any("v0.8.0" in m for m in messages)
+        assert not any("v0.7.0" in m for m in messages)
+
     def test_both_set_with_different_values_raises_config_error(self, tmp_path: Path) -> None:
         from forgelm.config import ConfigError, load_config
 

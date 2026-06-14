@@ -117,7 +117,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `rope_scaling` | `Optional[Dict[str, Any]]` | `null` | RoPE scaling method dict (`{"type": "linear", "factor": 2.0}` etc.). Supported types: `"linear"`, `"dynamic"`, `"yarn"`, `"longrope"`. |
 | `neftune_noise_alpha` | float | `null` | NEFTune noise injection alpha (e.g., `5.0`) |
 | `sliding_window_attention` | int | `null` | Sliding window attention size in tokens |
-| `sample_packing` | bool | `false` | Pack multiple short samples into full-length sequences |
+| `sample_packing` | bool | `false` | **Deprecated** alias for `packing` (TRL exposes a single packing knob). Setting `true` forwards to `packing: true` with a `DeprecationWarning`; removed in v0.9.0. Use `packing` instead. |
 
 #### GPU Cost Estimation
 
@@ -197,6 +197,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `track_categories` | bool | `false` | Parse Llama Guard S1-S14 harm categories |
 | `severity_thresholds` | dict | `null` | Per-severity limits: `{"critical": 0, "high": 0.01, "medium": 0.05}` |
 | `batch_size` | int | `8` | Batched generation size for safety evaluation. `1` disables batching; raise for throughput on large VRAM, lower to reduce OOM risk on small VRAM. |
+| `include_eval_samples` | bool | `false` | Persist raw `prompt` / `response` strings to `safety_results.json`. **Off by default** for GDPR / EU AI Act Art. 10 privacy — adversarial prompts and responses may surface sensitive content. Opt in only for debugging. |
 
 #### `evaluation.llm_judge` (Optional)
 
@@ -209,12 +210,12 @@ across retries. Each retry attempt is logged to the audit trail.
 | `eval_dataset` | string | `"eval_prompts.jsonl"` | Evaluation prompts file |
 | `min_score` | float | `5.0` | Minimum average score (1-10) |
 | `batch_size` | int | `8` | Number of (prompt, completion) pairs scored per LLM-judge round. `1` disables batching. |
+| `include_eval_samples` | bool | `false` | Persist raw eval `prompt`, `response`, and judge `reason` strings to `judge_results.json`. **Off by default** for GDPR / EU AI Act Art. 10 privacy — judge reasoning can quote PII from the eval set. Opt in only for debugging. |
 
 > **Deprecated:** `evaluation.staging_ttl_days` is superseded by
 > [`retention.staging_ttl_days`](#retention-optional-gdpr-article-17-erasure-horizons).
-> The legacy key is alias-forwarded with a `DeprecationWarning` during the
-> v0.5.5 → v0.6.x window and removed in v0.7.0. See
-> [release.md](../standards/release.md#deprecation-cadence).
+> The legacy key is alias-forwarded with a `DeprecationWarning` and removed in
+> v0.8.0. See [release.md](../standards/release.md#deprecation-cadence).
 
 ---
 
@@ -229,14 +230,14 @@ silently extend the retention horizon by re-using a stale workspace.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `audit_log_retention_days` | int | `1825` (~5 years) | Days to retain `audit_log.jsonl` before flagging it as overdue under Article 5(1)(e). Set to `0` to retain indefinitely (Article 17(3)(b) defence). |
-| `staging_ttl_days` | int | `7` | Days to retain `final_model.staging.<run_id>/` after a `forgelm reject` decision before scheduled cleanup. Set to `0` to retain indefinitely. Replaces the deprecated `evaluation.staging_ttl_days`; both keys accepted with identical values during the v0.5.5 → v0.6.x deprecation window. |
+| `staging_ttl_days` | int | `7` | Days to retain `final_model.staging.<run_id>/` after a `forgelm reject` decision before scheduled cleanup. Set to `0` to retain indefinitely. Replaces the deprecated `evaluation.staging_ttl_days`; both keys accepted with identical values during the deprecation window (legacy key removed in v0.8.0). |
 | `ephemeral_artefact_retention_days` | int | `90` | Days to retain compliance bundles, data audit reports, and other run-scoped derived artefacts. Set to `0` to retain indefinitely. |
 | `raw_documents_retention_days` | int | `90` | Days to retain ingested raw documents (PDF / DOCX / EPUB / TXT / Markdown) under the operator's ingestion-output directory. Set to `0` to retain indefinitely. |
 | `enforce` | string | `"log_only"` | Policy enforcement mode: `"log_only"` (audit-log only), `"warn_on_excess"` (structured stderr warning), `"block_on_excess"` (abort trainer pre-flight with `EXIT_EVAL_FAILURE` = 3). |
 
 > **Deprecation:** `evaluation.staging_ttl_days` is deprecated as of v0.5.5 in
 > favour of `retention.staging_ttl_days`. The legacy key is alias-forwarded
-> with a `DeprecationWarning` until v0.7.0. See
+> with a `DeprecationWarning` until its removal in v0.8.0. See
 > [release.md](../standards/release.md#deprecation-cadence) for the full
 > deprecation cadence policy.
 

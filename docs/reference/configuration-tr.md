@@ -97,7 +97,7 @@ training:
 | `rope_scaling` | `Optional[Dict[str, Any]]` | `null` | RoPE ölçekleme yöntemi sözlüğü (`{"type": "linear", "factor": 2.0}` vs.). Desteklenen tipler: `"linear"`, `"dynamic"`, `"yarn"`, `"longrope"`. |
 | `neftune_noise_alpha` | float | `null` | NEFTune gürültü enjeksiyonu alpha değeri (ör. `5.0`) |
 | `sliding_window_attention` | int | `null` | Kayan pencere dikkat boyutu (token) |
-| `sample_packing` | bool | `false` | Kısa örnekleri tam uzunluklu dizilere paketle |
+| `sample_packing` | bool | `false` | **Kullanımdan kaldırıldı** — `packing` için takma ad (TRL tek bir packing düğmesi sunar). `true` ayarlamak `DeprecationWarning` ile `packing: true`'ya yönlendirir; v0.9.0'da kaldırılır. Bunun yerine `packing` kullanın. |
 
 #### GPU Maliyet Tahmini
 
@@ -168,6 +168,7 @@ training:
 | `track_categories` | bool | `false` | Llama Guard S1-S14 zarar kategorilerini ayrıştır |
 | `severity_thresholds` | dict | `null` | Ciddiyet bazlı sınırlar: `{"critical": 0, "high": 0.01}` |
 | `batch_size` | int | `8` | Güvenlik değerlendirmesi için batched generation boyutu. `1` batching'i devre dışı bırakır; geniş VRAM'de throughput için artırın, küçük VRAM'de OOM riskini azaltmak için düşürün. |
+| `include_eval_samples` | bool | `false` | Ham `prompt` / `response` dizgelerini `safety_results.json`'a yazar. GDPR / EU AI Act Madde 10 gizliliği için **varsayılan olarak kapalı** — adversarial prompt'lar ve yanıtlar hassas içerik açığa çıkarabilir. Yalnızca hata ayıklama için açın. |
 
 #### `evaluation.llm_judge` (İsteğe bağlı)
 
@@ -180,11 +181,12 @@ training:
 | `eval_dataset` | string | `"eval_prompts.jsonl"` | Değerlendirme prompt dosyası |
 | `min_score` | float | `5.0` | Minimum ortalama puan (1-10) |
 | `batch_size` | int | `8` | LLM-hakim turunda puanlanan (prompt, completion) çift sayısı. `1` batching'i devre dışı bırakır. |
+| `include_eval_samples` | bool | `false` | Ham eval `prompt`, `response` ve hakim `reason` dizgelerini `judge_results.json`'a yazar. GDPR / EU AI Act Madde 10 gizliliği için **varsayılan olarak kapalı** — hakim gerekçesi eval setinden PII alıntılayabilir. Yalnızca hata ayıklama için açın. |
 
 > **Kullanımdan kaldırıldı:** `evaluation.staging_ttl_days`,
 > [`retention.staging_ttl_days`](#retention-isteğe-bağlı-gdpr-madde-17-silme-ufukları)
-> tarafından devralınmıştır. Eski anahtar v0.5.5 → v0.6.x penceresi boyunca
-> `DeprecationWarning` ile alias-forward edilir ve v0.7.0'da kaldırılır.
+> tarafından devralınmıştır. Eski anahtar `DeprecationWarning` ile alias-forward
+> edilir ve v0.8.0'da kaldırılır.
 > Bkz. [release.md](../standards/release.md#deprecation-cadence).
 
 ---
@@ -201,15 +203,15 @@ uzatmasını engeller.
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
 | `audit_log_retention_days` | int | `1825` (~5 yıl) | `audit_log.jsonl` dosyasının Madde 5(1)(e) kapsamında "geciken" olarak işaretlenmeden önce saklanacağı gün sayısı. `0` süresiz saklamayı belirtir (Madde 17(3)(b) savunması). |
-| `staging_ttl_days` | int | `7` | `forgelm reject` kararından sonra `final_model.staging.<run_id>/` dizininin planlı temizlenmeden önce saklanacağı gün sayısı. `0` süresiz saklama anlamına gelir. Kullanımdan kaldırılan `evaluation.staging_ttl_days` yerine geçer; v0.5.5 → v0.6.x deprecation penceresinde her iki anahtar da aynı değerlerle kabul edilir. |
+| `staging_ttl_days` | int | `7` | `forgelm reject` kararından sonra `final_model.staging.<run_id>/` dizininin planlı temizlenmeden önce saklanacağı gün sayısı. `0` süresiz saklama anlamına gelir. Kullanımdan kaldırılan `evaluation.staging_ttl_days` yerine geçer; deprecation penceresinde her iki anahtar da aynı değerlerle kabul edilir (eski anahtar v0.8.0'da kaldırılır). |
 | `ephemeral_artefact_retention_days` | int | `90` | Uyumluluk paketleri, veri denetim raporları ve diğer çalışma kapsamlı türetilmiş artefaktların saklanma süresi (gün). `0` süresiz saklama. |
 | `raw_documents_retention_days` | int | `90` | İngest edilmiş ham belgelerin (PDF / DOCX / EPUB / TXT / Markdown) operatörün ingestion-output dizininde saklanma süresi (gün). `0` süresiz saklama. |
 | `enforce` | string | `"log_only"` | Politika uygulama modu: `"log_only"` (yalnızca audit log), `"warn_on_excess"` (stderr'e yapılandırılmış uyarı), `"block_on_excess"` (`EXIT_EVAL_FAILURE` = 3 ile trainer ön-kontrolünü iptal eder). |
 
 > **Kullanımdan kaldırma:** `evaluation.staging_ttl_days`, v0.5.5 itibarıyla
 > `retention.staging_ttl_days` lehine kullanımdan kaldırılmıştır. Eski anahtar
-> v0.7.0'a kadar `DeprecationWarning` ile alias-forward edilir. Tam
-> deprecation politikası için
+> v0.8.0'daki kaldırılışına kadar `DeprecationWarning` ile alias-forward edilir.
+> Tam deprecation politikası için
 > [release.md](../standards/release.md#deprecation-cadence).
 
 ---

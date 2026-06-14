@@ -295,7 +295,11 @@ class TrainingConfig(BaseModel):
     )
     sample_packing: bool = Field(
         default=False,
-        description="Pack multiple short sequences into one micro-batch slot.  Requires `packing=true`; saves compute on length-skewed corpora.",
+        description=(
+            "Deprecated alias for `packing`; TRL exposes a single sequence-packing knob. "
+            "Setting `sample_packing: true` forwards to `packing: true` with a "
+            "`DeprecationWarning`. Removal scheduled for v0.9.0 — use `packing` instead."
+        ),
     )
     oom_recovery: bool = Field(
         default=False, description="Auto-halve `per_device_train_batch_size` on CUDA OOM and retry."
@@ -312,6 +316,34 @@ class TrainingConfig(BaseModel):
         default=None,
         description="USD per hour for the training GPU.  None = auto-detect from known GPUs (used by the cost-estimation report).",
     )
+
+    @model_validator(mode="after")
+    def _forward_deprecated_sample_packing(self):
+        """Forward the deprecated ``sample_packing`` flag onto ``packing``.
+
+        ``sample_packing`` was historically documented as a functional
+        sequence-packing knob but was never consumed by the trainer (TRL's
+        ``SFTConfig`` exposes a single ``packing`` parameter), so an operator
+        who set it got a silent no-op.  We now alias it to ``packing`` so the
+        documented behaviour actually fires during the deprecation window, and
+        emit both a ``DeprecationWarning`` (for ``-W error`` / CI deprecation
+        sweeps) and a ``logger.warning`` (visible on the CLI path), mirroring
+        the ``lora.use_dora`` alias pattern.  Removal target: v0.9.0.
+        """
+        if self.sample_packing and not self.packing:
+            logger.warning(
+                "training.sample_packing is deprecated and forwards to training.packing. "
+                "Use `packing: true` instead; sample_packing is removed in v0.9.0."
+            )
+            warnings.warn(
+                "`training.sample_packing` is deprecated and forwards to "
+                "`training.packing`. Use `packing: true` instead; the deprecated "
+                "field is removed in v0.9.0.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            object.__setattr__(self, "packing", True)
+        return self
 
 
 class DistributedConfig(BaseModel):
@@ -872,7 +904,7 @@ class RetentionConfig(BaseModel):
         description=(
             "Days to retain `final_model.staging.<run_id>/` after a `forgelm reject` decision before scheduled cleanup. "
             "Set to 0 to retain indefinitely.  Replaces (and supersedes) the deprecated "
-            "`evaluation.staging_ttl_days`; both fields are accepted with identical values during the v0.5.5 → v0.6.x deprecation window."
+            "`evaluation.staging_ttl_days`; both fields are accepted with identical values during the deprecation window (legacy field removed in v0.8.0)."
         ),
     )
     ephemeral_artefact_retention_days: int = Field(
@@ -1177,7 +1209,7 @@ class ForgeConfig(BaseModel):
         - When **only** ``evaluation.staging_ttl_days`` is set →
           alias-forward to ``retention.staging_ttl_days`` (creating
           ``retention`` block if missing) and emit a single
-          ``DeprecationWarning`` naming the new field + the v0.7.0
+          ``DeprecationWarning`` naming the new field + the v0.8.0
           removal target.
         - When **only** ``retention.staging_ttl_days`` is set → no
           warning; canonical path.
@@ -1241,7 +1273,7 @@ class ForgeConfig(BaseModel):
             f"`evaluation.staging_ttl_days={legacy}` (deprecated, forwards to "
             f"`retention.staging_ttl_days`) vs `retention.staging_ttl_days={canonical}` "
             "(canonical).  Remove the deprecated entry; the canonical block wins.  "
-            "(Tracking issue: removal scheduled for v0.7.0 per "
+            "(Tracking issue: removal scheduled for v0.8.0 per "
             "docs/standards/release.md#deprecation-cadence.)"
         )
 
@@ -1265,9 +1297,9 @@ class ForgeConfig(BaseModel):
             self.retention = RetentionConfig(staging_ttl_days=legacy)
         warnings.warn(
             "`evaluation.staging_ttl_days` is deprecated and forwards to "
-            "`retention.staging_ttl_days` for the v0.5.5 → v0.6.x window. "
+            "`retention.staging_ttl_days`. "
             "Move the value under the new top-level `retention:` block; the "
-            "deprecated field is removed in v0.7.0.",
+            "deprecated field is removed in v0.8.0.",
             DeprecationWarning,
             stacklevel=5,
         )
@@ -1283,7 +1315,7 @@ class ForgeConfig(BaseModel):
             "`evaluation.staging_ttl_days` is deprecated; the value matches "
             "`retention.staging_ttl_days` so the canonical block wins.  Remove "
             "`evaluation.staging_ttl_days` from your YAML — the deprecated field "
-            "is removed in v0.7.0.",
+            "is removed in v0.8.0.",
             DeprecationWarning,
             stacklevel=5,
         )

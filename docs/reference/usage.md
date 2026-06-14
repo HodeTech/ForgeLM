@@ -334,7 +334,7 @@ training:
   rope_scaling: {type: "linear", factor: 2.0}  # dict form: type ∈ {"linear","dynamic","yarn","longrope"}, factor ≥ 1.0
   neftune_noise_alpha: 5.0            # NEFTune noise for better generalization
   sliding_window_attention: 4096      # Sliding window size (tokens)
-  sample_packing: true                # Pack short samples into full-length sequences
+  packing: true                       # Pack short samples into full-length sequences
 ```
 
 ### GPU Cost Estimation

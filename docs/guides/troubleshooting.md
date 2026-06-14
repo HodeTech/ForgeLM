@@ -159,10 +159,10 @@ Long-context training (large `sliding_window_attention` or RoPE scaling) signifi
      gradient_checkpointing: true
    ```
 
-3. **Use sample packing** to reduce padding waste:
+3. **Use sequence packing** to reduce padding waste:
    ```yaml
    training:
-     sample_packing: true
+     packing: true
    ```
 
 4. **Combine with GaLore** for additional memory savings:
