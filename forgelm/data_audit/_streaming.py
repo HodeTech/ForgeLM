@@ -167,9 +167,10 @@ def _read_jsonl_split(path: Path) -> Iterator[Tuple[Any, bool, bool]]:
     Per-line semantics are unchanged:
 
     * UTF-8 decode is permissive (``errors="replace"``) — a single mojibake
-      line never aborts the whole audit. Any line containing the U+FFFD
-      replacement char is reported via ``decode_error=True`` so the
-      operator gets a structured signal alongside the row.
+      line never aborts the whole audit. ``decode_error=True`` is reported
+      only when a *strict* decode of the same raw bytes would have raised,
+      so a corpus that legitimately contains literal U+FFFD characters
+      (valid UTF-8) is **not** falsely flagged.
     * ``json.JSONDecodeError`` is caught per line; the offending line is
       surfaced as ``(None, parse_error=True, decode_error=...)`` so
       downstream aggregators can count it without the row poisoning the
@@ -181,12 +182,20 @@ def _read_jsonl_split(path: Path) -> Iterator[Tuple[Any, bool, bool]]:
     ``OSError`` from the initial ``open()`` is propagated to the caller —
     that is the expected signal for "this split is unreachable / unreadable".
     """
-    with open(path, "r", encoding="utf-8", errors="replace") as fh:
-        for line_number, raw_line in enumerate(fh, start=1):
-            line = raw_line.strip()
+    # Read bytes so we can distinguish a genuine non-UTF-8 byte (which a
+    # strict decode would reject) from a line that legitimately *contains*
+    # the U+FFFD code point (valid UTF-8, must not be flagged). The
+    # ``errors="replace"`` decode supplies the usable text either way.
+    with open(path, "rb") as fh:
+        for line_number, raw_bytes in enumerate(fh, start=1):
+            line = raw_bytes.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
-            decode_error = "�" in line
+            try:
+                raw_bytes.decode("utf-8")
+                decode_error = False
+            except UnicodeDecodeError:
+                decode_error = True
             try:
                 row = json.loads(line)
             except json.JSONDecodeError as exc:

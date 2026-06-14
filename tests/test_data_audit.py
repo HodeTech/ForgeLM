@@ -269,6 +269,26 @@ class TestAuditDirectoryLayout:
         # not only the in-report notes (operators rarely cat the report file).
         assert any("pseudo-split" in record.message for record in caplog.records)
 
+    def test_canonical_alias_collision_warns_and_keeps_canonical(self, tmp_path, caplog):
+        # F-P6-OPUS-12/16: a directory with both validation.jsonl and
+        # dev.jsonl (both map to the 'validation' split) must (a) keep the
+        # canonical file, drop the alias, and (b) WARN loudly — not only
+        # bury the collision in the report-JSON notes. Mirrors the
+        # pseudo-split branch which already logs at WARNING.
+        _write_jsonl(tmp_path / "train.jsonl", [{"text": "T"}])
+        _write_jsonl(tmp_path / "validation.jsonl", [{"text": "canonical"}])
+        _write_jsonl(tmp_path / "dev.jsonl", [{"text": "alias"}])
+        with caplog.at_level("WARNING", logger="forgelm.data_audit"):
+            report = audit_dataset(str(tmp_path))
+        # Canonical wins; the alias is folded out, not a separate split.
+        assert "validation" in report.splits
+        assert "dev" not in report.splits
+        # The collision note is in the report AND on the logger.
+        assert any("map to" in n for n in report.notes)
+        assert any("map to" in record.message and record.levelname == "WARNING" for record in caplog.records), (
+            "collision must be surfaced at WARNING, not only in report.notes"
+        )
+
     def test_cross_split_overlap_caught(self, tmp_path):
         # Identical row in train + test → leakage
         _write_jsonl(tmp_path / "train.jsonl", [{"text": "alpha bravo charlie delta echo"}])
@@ -306,6 +326,37 @@ class TestAuditDirectoryLayout:
         # Notes line should call out the worst rate, not the small one.
         notes_blob = " ".join(report.notes)
         assert "50.00%" in notes_blob or "0.5" in notes_blob
+
+
+class TestJsonlDecodeErrorDetection:
+    """F-P6-OPUS-13: decode_error must reflect a *strict* UTF-8 failure,
+    not merely the presence of a U+FFFD code point that legitimately
+    decodes (so a corpus with literal replacement chars is not falsely
+    flagged)."""
+
+    def test_literal_replacement_char_not_flagged_as_decode_error(self, tmp_path):
+        from forgelm.data_audit._streaming import _read_jsonl_split
+
+        # Valid UTF-8 bytes that *contain* the 3-byte encoding of U+FFFD.
+        path = tmp_path / "u.jsonl"
+        path.write_bytes(b'{"text": "caf\xef\xbf\xbd"}\n')
+        results = list(_read_jsonl_split(path))
+        assert len(results) == 1
+        row, parse_error, decode_error = results[0]
+        assert parse_error is False
+        assert decode_error is False, "literal U+FFFD in valid UTF-8 must not be a decode error"
+        assert row == {"text": "caf�"}
+
+    def test_genuine_invalid_utf8_flagged_as_decode_error(self, tmp_path):
+        from forgelm.data_audit._streaming import _read_jsonl_split
+
+        # A lone 0x80 continuation byte is not valid UTF-8 → must flag.
+        path = tmp_path / "bad.jsonl"
+        path.write_bytes(b'{"text": "ab\x80cd"}\n')
+        results = list(_read_jsonl_split(path))
+        assert len(results) == 1
+        _row, _parse_error, decode_error = results[0]
+        assert decode_error is True
 
 
 class TestMessagesFormat:

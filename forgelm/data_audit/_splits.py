@@ -47,10 +47,15 @@ def _scan_canonical_split_files(src: Path) -> Tuple[Dict[str, Path], List[str]]:
         if not candidate.is_file():
             continue
         if canonical in layouts:
-            notes.append(
+            msg = (
                 f"both '{layouts[canonical].name}' and '{candidate.name}' map to "
                 f"the '{canonical}' split; using the first one. Rename to disambiguate."
             )
+            notes.append(msg)
+            # F-P6-OPUS-12/16: surface the collision LOUDLY (not just in the
+            # report JSON), mirroring the pseudo-split branch below — one of
+            # the two files is silently dropped from the leakage analysis.
+            logger.warning(msg)
             continue
         if stem != canonical:
             notes.append(f"'{candidate.name}' treated as the '{canonical}' split.")
