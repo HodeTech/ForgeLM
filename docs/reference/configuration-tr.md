@@ -52,9 +52,11 @@ Tam açıklamalı örnek için `config_template.yaml` dosyasına bakın.
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
 | `trainer_type` | string | `"sft"` | `"sft"`, `"dpo"`, `"simpo"`, `"kto"`, `"orpo"`, `"grpo"` |
-| `num_train_epochs` | int | `3` | Eğitim epoch sayısı |
+| `max_steps` | int | `-1` | Sıkı adım üst sınırı. `-1` = `num_train_epochs` kullanılır; pozitif bir değer epoch'ları geçersiz kılar. |
+| `num_train_epochs` | int | `3` | Eğitim epoch sayısı (yalnızca `max_steps == -1` iken dikkate alınır). |
 | `per_device_train_batch_size` | int | `4` | GPU başına batch boyutu |
 | `learning_rate` | float | `2e-5` | Öğrenme oranı |
+| `early_stopping_patience` | int | `3` | Doğrulama kaybı iyileşmeden N değerlendirme sonra dur (yalnızca bir doğrulama bölünmesi varsa etkin). |
 | `report_to` | string | `"tensorboard"` | `"tensorboard"`, `"wandb"`, `"mlflow"`, `"none"` |
 
 #### OOM Recovery (Bellek Hatası Kurtarma)
@@ -152,7 +154,10 @@ training:
 |------|-----|-----------|----------|
 | `enabled` | bool | `false` | lm-eval-harness benchmark'ları |
 | `tasks` | list | `[]` | Görev isimleri (ör. `["arc_easy", "hellaswag"]`) |
+| `output_dir` | string | `null` | Benchmark sonuç JSON'unun yazılacağı yer. `null` = training `output_dir`. |
 | `min_score` | float | `null` | Minimum ortalama doğruluk |
+
+> `enabled: true`, `tasks` içinde en az bir görev gerektirir — görevi olmayan etkin bir benchmark kapısı config yüklemesinde reddedilir.
 
 #### `evaluation.safety` (İsteğe bağlı)
 

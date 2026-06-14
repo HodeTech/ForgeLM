@@ -61,7 +61,8 @@ See `config_template.yaml` for a complete annotated example.
 | `final_model_dir` | string | `"final_model"` | Subdirectory for final artifacts |
 | `merge_adapters` | bool | `false` | Merge adapters into base model before saving |
 | `trainer_type` | string | `"sft"` | `"sft"`, `"dpo"`, `"simpo"`, `"kto"`, `"orpo"`, `"grpo"` |
-| `num_train_epochs` | int | `3` | Number of training epochs |
+| `max_steps` | int | `-1` | Hard step cap. `-1` = use `num_train_epochs`; a positive value overrides epochs. |
+| `num_train_epochs` | int | `3` | Number of training epochs (only consulted when `max_steps == -1`). |
 | `per_device_train_batch_size` | int | `4` | Batch size per GPU |
 | `gradient_accumulation_steps` | int | `2` | Steps to accumulate before backward pass |
 | `learning_rate` | float | `2e-5` | Learning rate (lower for alignment: 5e-6) |
@@ -70,6 +71,7 @@ See `config_template.yaml` for a complete annotated example.
 | `eval_steps` | int | `200` | Evaluate every N steps |
 | `save_steps` | int | `200` | Save checkpoint every N steps |
 | `save_total_limit` | int | `3` | Max checkpoints to keep |
+| `early_stopping_patience` | int | `3` | Stop after N evals without validation-loss improvement (active only when a validation split exists). |
 | `packing` | bool | `false` | Sequence packing (SFT only) |
 | `report_to` | string | `"tensorboard"` | `"tensorboard"`, `"wandb"`, `"mlflow"`, `"none"` |
 | `run_name` | string | `null` | W&B/MLflow run name (auto-generated if null) |
@@ -181,7 +183,10 @@ across retries. Each retry attempt is logged to the audit trail.
 | `num_fewshot` | int | `null` | Few-shot examples (task default) |
 | `batch_size` | string | `"auto"` | Evaluation batch size |
 | `limit` | int | `null` | Samples per task (for quick checks) |
+| `output_dir` | string | `null` | Where to write the benchmark results JSON. `null` = the training `output_dir`. |
 | `min_score` | float | `null` | Minimum average accuracy |
+
+> `enabled: true` requires at least one entry in `tasks` — an enabled benchmark gate with no tasks is rejected at config-load time.
 
 #### `evaluation.safety` (Optional)
 
