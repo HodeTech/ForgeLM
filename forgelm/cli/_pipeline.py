@@ -373,26 +373,33 @@ class PipelineOrchestrator:
                 ", ".join(s.name for s in self.pipeline.stages),
             )
             return None, EXIT_CONFIG_ERROR
-        # Phase 14 post-release review: a stage that exited with
-        # ``EXIT_AWAITING_APPROVAL`` is recorded with
-        # ``status == "gated_pending_approval"`` rather than
-        # ``"completed"``.  After an operator runs ``forgelm approve``
-        # and the promoted-model directory exists on disk, a
-        # subsequent ``--resume-from <later_stage>`` MUST skip the
-        # gated stage too — otherwise the orchestrator would re-train
-        # it, the next stage would auto-chain from the freshly-trained
-        # output instead of the operator-approved one, and the audit
-        # log would carry two ``pipeline.stage_started`` events for the
-        # same stage_index.  Treat ``gated_pending_approval`` the same
-        # as ``completed`` for skip-eligibility: presence of an
-        # ``output_model`` directory on disk is what proves the stage
-        # produced a real artefact, regardless of which status label
-        # it carries.
-        _SKIPPABLE_STATUSES = {"completed", "gated_pending_approval"}
+        # Skip-eligibility is decided on the **state-file status**, NOT on
+        # disk presence of ``output_model``.  A stage that halted at the
+        # Article 14 human-approval gate is recorded as
+        # ``gated_pending_approval`` and its ``output_model`` points at the
+        # UNAPPROVED staging directory (``final_model.staging.<run_id>``).
+        # That directory existing on disk is exactly NOT proof the artefact
+        # may be consumed — skipping such a stage would chain downstream
+        # training from a model no human has signed off, defeating the gate
+        # (P2-FAB-01).  Refuse the resume with a clear, actionable error
+        # instead.  (The approval workflow that flips the stage to a
+        # skippable status is handled separately — until then, resuming past
+        # an un-approved gate is correctly blocked, never silently bypassed.)
         stages_to_skip_completed: List[str] = []
         for prior_state in state.stages[:resume_idx]:
+            if prior_state.status == "gated_pending_approval":
+                logger.error(
+                    "Cannot --resume-from %r: prior stage %r is awaiting human approval "
+                    "(status=gated_pending_approval) and has NOT been approved.  Resuming "
+                    "would chain downstream training from the unapproved staging model and "
+                    "bypass the Article 14 gate.  Run `forgelm approve <run_id> --output-dir "
+                    "<stage_output_dir>` (or `forgelm reject ...`) before resuming.",
+                    resume_from,
+                    prior_state.name,
+                )
+                return None, EXIT_CONFIG_ERROR
             if (
-                prior_state.status in _SKIPPABLE_STATUSES
+                prior_state.status == "completed"
                 and prior_state.output_model
                 and os.path.isdir(prior_state.output_model)
             ):

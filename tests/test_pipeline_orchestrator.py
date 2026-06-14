@@ -728,24 +728,18 @@ class TestResumeFrom:
         code = orch.run()
         assert code == EXIT_CONFIG_ERROR
 
-    def test_resume_skips_gated_pending_approval_with_on_disk_output(self, tmp_path, monkeypatch):
-        """Phase 14 post-release review BLOCKER 2: a stage that exited
-        with ``EXIT_AWAITING_APPROVAL`` is recorded as
-        ``status="gated_pending_approval"``.  After ``forgelm approve``
-        promotes the staging path and the operator runs
-        ``--resume-from <later_stage>``, the gated stage MUST be
-        treated like a completed stage (skip + reuse the on-disk
-        ``output_model``).  Pre-fix, only ``status=="completed"``
-        stages were skipped — so the gated SFT would re-train, the
-        DPO stage would chain from the freshly-trained output instead
-        of the operator-approved one, and the audit log would carry
-        two ``pipeline.stage_started`` events for the same stage_index."""
+    def test_resume_across_unapproved_gated_stage_is_refused(self, tmp_path, monkeypatch):
+        """C3/P2-FAB-01 (Article 14 gate-bypass): a stage recorded as
+        ``gated_pending_approval`` has only an UNAPPROVED staging artefact on
+        disk.  ``--resume-from`` a later stage must NOT silently skip it (which
+        would chain downstream training from the unapproved model) — it must be
+        refused with EXIT_CONFIG_ERROR until the operator approves/rejects.
+
+        Pre-fix the skiplist keyed off ``os.path.isdir(output_model)``: the
+        staging dir existing was treated as 'already produced', so the gated
+        stage was skipped and DPO chained from the unapproved model."""
         cfg = _three_stage_config(tmp_path)
-        # First run: SFT stage hits a human-approval gate and exits 4. A genuine
-        # gate is ``success=True`` + ``awaiting_approval=True`` + a real staging
-        # dir (``.staging.<run_id>``), NOT ``success=False`` with a bare
-        # ``final_model`` path — that masquerade (a reverted result reported as
-        # awaiting approval) is the exact XP-02 bug now fixed.
+        # First run: SFT stage hits a human-approval gate and exits 4.
         gated_staging = str(tmp_path / "stage1" / "final_model.staging.fg-gated")
         os.makedirs(gated_staging, exist_ok=True)
         _install_trainer_mocks(
@@ -755,24 +749,19 @@ class TestResumeFrom:
         orch1 = PipelineOrchestrator(cfg, b"yaml")
         code1 = orch1.run()
         assert code1 == EXIT_AWAITING_APPROVAL
-        # Sanity: state recorded SFT as gated, with staging_path as output_model.
+        # Sanity: state recorded SFT as gated, staging dir present on disk.
         with open(orch1.paths["state_file"]) as f:
             payload = json.load(f)
         assert payload["stages"][0]["status"] == "gated_pending_approval"
-        assert payload["stages"][0]["output_model"] is not None
+        assert os.path.isdir(gated_staging)
 
-        # Simulate operator approval — output_model directory already
-        # exists on disk from the mock setup.  Now resume from DPO.
-        results_run2 = [TrainResult(success=True), TrainResult(success=True)]
-        configs_seen2 = _install_trainer_mocks(monkeypatch, results_run2)
+        # Resume from DPO WITHOUT approving the gated SFT → must be refused, and
+        # NO downstream trainer may be instantiated (no chaining from unapproved).
+        configs_seen2 = _install_trainer_mocks(monkeypatch, [TrainResult(success=True)])
         orch2 = PipelineOrchestrator(cfg, b"yaml")
         code2 = orch2.run(resume_from="dpo_stage")
-        assert code2 == EXIT_SUCCESS
-        # Only DPO + GRPO ran; SFT was skipped because its gated output exists on disk.
-        assert len(configs_seen2) == 2
-        # DPO must have auto-chained from the gated SFT's output_model,
-        # not been re-trained.
-        assert configs_seen2[0].training.trainer_type == "dpo"
+        assert code2 == EXIT_CONFIG_ERROR
+        assert len(configs_seen2) == 0, "no stage may train when resume is refused"
 
     def test_resume_skips_completed_stages(self, tmp_path, monkeypatch):
         cfg = _three_stage_config(tmp_path)
