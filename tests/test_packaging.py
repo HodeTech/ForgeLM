@@ -115,3 +115,38 @@ def test_pyproject_package_data_globs_cover_every_extension() -> None:
     assert not missing, (
         f"package_data['forgelm.templates'] is missing required glob(s): {sorted(missing)}. Present: {sorted(globs)}."
     )
+
+
+def _load_optional_dependencies() -> dict:
+    try:
+        import tomllib  # type: ignore[import-not-found]
+    except ModuleNotFoundError:  # pragma: no cover — Python 3.10 fallback
+        try:
+            import tomli as tomllib  # type: ignore[import-not-found, no-redef]
+        except ModuleNotFoundError:
+            pytest.skip("Neither tomllib (3.11+) nor tomli is available; pyproject extras assertion skipped.")
+    pyproject_path = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    with pyproject_path.open("rb") as fh:
+        pyproject = tomllib.load(fh)
+    return pyproject.get("project", {}).get("optional-dependencies", {})
+
+
+def test_no_extra_declares_unimported_mergekit() -> None:
+    """F-P3-FABLE-20: mergekit was declared in the ``merging`` extra but never
+    imported anywhere — a heavy, env-conflicting dependency for zero benefit
+    (merging is native peft+torch). It must not reappear in any extra."""
+    extras = _load_optional_dependencies()
+    for extra, deps in extras.items():
+        for dep in deps:
+            assert "mergekit" not in dep.lower(), (
+                f"extra '{extra}' declares mergekit ({dep!r}); model merging is native — no mergekit dep."
+            )
+
+
+def test_merging_extra_is_a_noop() -> None:
+    """The ``merging`` extra is retained for `pip install forgelm[merging]`
+    backward-compat but installs nothing (merging needs no extra packages)."""
+    extras = _load_optional_dependencies()
+    assert extras.get("merging", None) == [], (
+        f"the 'merging' extra should be an empty no-op; got {extras.get('merging')!r}"
+    )

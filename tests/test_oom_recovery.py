@@ -210,3 +210,97 @@ class TestComplianceManifestUsesOriginalBatchSize:
         # After the call, config must reflect the OOM-mutated values again
         assert config.training.per_device_train_batch_size == 4
         assert config.training.gradient_accumulation_steps == 8
+
+    def test_manifest_records_oom_recovery_block(self, tmp_path):
+        """F-P3-FABLE-04: when OOM mutated the batch size, the manifest must carry
+        an explicit ``oom_recovery`` block recording BOTH configured and effective
+        values, so the model card (effective) and manifest (configured) no longer
+        silently contradict."""
+        from forgelm.results import TrainResult
+
+        config = _make_forge_config(batch_size=16, grad_accum=2, output_dir=str(tmp_path))
+        trainer = _make_trainer(config, tmp_path)
+        trainer._original_batch_size = 16
+        trainer._original_grad_accum = 2
+        config.training.per_device_train_batch_size = 4  # OOM-mutated (effective)
+        config.training.gradient_accumulation_steps = 8
+
+        exported = []
+        with (
+            patch(
+                "forgelm.compliance.generate_training_manifest",
+                side_effect=lambda **kw: {
+                    "training_parameters": {},
+                    "model_lineage": {},
+                    "data_provenance": {},
+                    "evaluation_results": {"metrics": {}},
+                },
+            ),
+            patch(
+                "forgelm.compliance.export_compliance_artifacts",
+                side_effect=lambda manifest, d: exported.append(manifest),
+            ),
+        ):
+            trainer._export_compliance_if_needed({}, TrainResult(success=True))
+
+        oom = exported[0]["training_parameters"]["oom_recovery"]
+        assert oom["applied"] is True
+        assert oom["configured_batch_size"] == 16
+        assert oom["effective_batch_size"] == 4
+        assert oom["configured_gradient_accumulation_steps"] == 2
+        assert oom["effective_gradient_accumulation_steps"] == 8
+
+    def test_no_oom_recovery_block_when_no_oom(self, tmp_path):
+        """No OOM (configured == effective) → no ``oom_recovery`` block."""
+        from forgelm.results import TrainResult
+
+        config = _make_forge_config(batch_size=8, grad_accum=2, output_dir=str(tmp_path))
+        trainer = _make_trainer(config, tmp_path)
+        trainer._original_batch_size = 8
+        trainer._original_grad_accum = 2
+
+        exported = []
+        with (
+            patch(
+                "forgelm.compliance.generate_training_manifest",
+                side_effect=lambda **kw: {
+                    "training_parameters": {},
+                    "model_lineage": {},
+                    "data_provenance": {},
+                    "evaluation_results": {"metrics": {}},
+                },
+            ),
+            patch(
+                "forgelm.compliance.export_compliance_artifacts",
+                side_effect=lambda manifest, d: exported.append(manifest),
+            ),
+        ):
+            trainer._export_compliance_if_needed({}, TrainResult(success=True))
+
+        assert "oom_recovery" not in exported[0]["training_parameters"]
+
+    def test_export_compliance_restore_is_exception_safe(self, tmp_path):
+        """F-P3-FABLE-04: if manifest generation raises, config must be restored to
+        the EFFECTIVE (post-OOM) values via finally, not left at the configured
+        values under the outer best-effort catch."""
+        from forgelm.results import TrainResult
+
+        config = _make_forge_config(batch_size=16, grad_accum=2, output_dir=str(tmp_path))
+        trainer = _make_trainer(config, tmp_path)
+        trainer._original_batch_size = 16
+        trainer._original_grad_accum = 2
+        config.training.per_device_train_batch_size = 4
+        config.training.gradient_accumulation_steps = 8
+
+        def boom(**kwargs):
+            raise RuntimeError("manifest build failed")
+
+        with (
+            patch("forgelm.compliance.generate_training_manifest", side_effect=boom),
+            patch("forgelm.compliance.export_compliance_artifacts"),
+        ):
+            trainer._export_compliance_if_needed({}, TrainResult(success=True))
+
+        # finally restored the effective values despite the exception.
+        assert config.training.per_device_train_batch_size == 4
+        assert config.training.gradient_accumulation_steps == 8

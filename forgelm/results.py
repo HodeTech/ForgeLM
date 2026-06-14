@@ -34,3 +34,11 @@ class TrainResult:
     # canonical ``final_model/`` directory only appears after
     # ``forgelm approve <run_id>`` promotes the staging artefacts.
     staging_path: Optional[str] = None
+    # Discriminator: ``True`` only when the human-approval gate genuinely fired
+    # and the model is staged pending sign-off (always alongside
+    # ``success=True``). This is the field the CLI/pipeline route on to choose
+    # exit 4 (awaiting approval) vs exit 3 (auto-reverted) — a reverted stage
+    # deletes its staging dir and must NEVER be reported as awaiting approval.
+    # ``staging_path`` alone is not a safe discriminator (it can survive a
+    # revert); ``awaiting_approval`` is the authoritative one.
+    awaiting_approval: bool = False

@@ -35,6 +35,13 @@ The hash chain advances after the line lands on disk (`flush` + `fsync`), so an 
 | `judge.evaluation_completed`     | LLM-as-judge scoring finished.                                          | `passed`, `average_score`                            | 15 |
 | `pipeline.completed`       | End-to-end CLI run (training + evaluation + export) returned exit code 0. | `success`, `metrics_summary`                                                              | 12      |
 | `pipeline.failed`          | Pipeline aborted with an error before completion.                         | `error`                                                                                  | 12      |
+| `pipeline.started`         | Multi-stage pipeline orchestrator began a fresh run (not a `--resume-from`). | `pipeline_run_id`, `config_hash`, `stage_count`, `stage_names`                          | 12      |
+| `pipeline.force_resume`    | `--resume-from` proceeded past a stored config-hash mismatch because `--force-resume` was set. | `pipeline_run_id`, `old_config_hash`, `new_config_hash`               | 12      |
+| `pipeline.stage_started`   | A pipeline stage began executing (after stage-config merge + validation).  | `pipeline_run_id`, `stage_name`, `stage_index`, `input_model`, `input_source`           | 12      |
+| `pipeline.stage_completed` | A pipeline stage finished — `gate_decision=passed` on success, `failed` on a non-revert failure. | `pipeline_run_id`, `stage_name`, `gate_decision`, `metrics` (success only), `auto_revert_triggered` (failure path only) | 12      |
+| `pipeline.resume_refused`  | `--resume-from` was refused because a prior stage is still awaiting human approval (Article 14 gate not yet cleared). | `pipeline_run_id`, `requested_stage`, `blocking_stage`, `blocking_status` | 12, 14 |
+| `pipeline.stage_gated`     | A stage halted at the Article 14 human-approval gate (exit 4); the pipeline stops pending operator action. | `pipeline_run_id`, `stage_name`, `gate_decision` (`approval_pending`), `staging_path` | 12, 14 |
+| `pipeline.stage_reverted`  | A stage's post-train gate auto-reverted the model (`auto_revert_triggered=true`); the chain stops. | `pipeline_run_id`, `stage_name`, `gate_decision` (`failed`), `auto_revert_triggered` | 12, 15 |
 
 ### Article 14 — Human Oversight
 

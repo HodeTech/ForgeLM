@@ -35,22 +35,22 @@ import sys
 from pathlib import Path
 from typing import Set, Tuple
 
-# Match dotted-namespace event literals anywhere in Python source. The
-# regex catches three patterns:
+# Match dotted-namespace event literals **only in an emission context** so
+# config-path / message literals that happen to share an event namespace
+# (e.g. the string ``'training.output_dir'`` inside an error message) are not
+# miscounted as emitted events. The four emission shapes are:
 #
-#   * Direct: ``log_event("foo.bar", ...)`` or ``event="foo.bar"``
-#   * Indirect via constant: ``_EVT_REVERT = "model.reverted"`` (we
-#     resolve the literal string; the dispatch site that calls
-#     ``log_event(_EVT_REVERT)`` is the actual emission, but the
-#     literal exists at the constant declaration line and we count it).
+#   * Direct call first-arg: ``log_event("foo.bar", ...)`` /
+#     ``self._audit_event("foo.bar", ...)`` (whitespace/newline tolerant).
+#   * Keyword form: ``event="foo.bar"`` (webhook ``_send`` payloads).
 #   * JSON-shaped: ``"event": "foo.bar"``.
+#   * Constant declaration: ``_EVT_REVERT_TRIGGERED = "model.reverted"`` — the
+#     canonical declaration site for events emitted via constant indirection
+#     (``log_event(_EVT_REVERT_TRIGGERED)``).
 #
-# We *don't* anchor on ``log_event(`` because constants like
-# ``_EVT_REVERT_TRIGGERED = "model.reverted"`` are the canonical
-# declaration site for events with constant indirection. Counting any
-# quoted dotted-namespace string in ``.py`` files is a slight
-# over-count (a docstring example would match) but the namespace
-# allowlist is restrictive enough that false positives are rare.
+# Anchoring on the emission context (rather than any quoted dotted string)
+# kills the config-path false positive (F-P8-C-12) without dropping a single
+# genuine event — verified empirically against the prior broad regex.
 _EVENT_NAMESPACES = (
     "training",
     "pipeline",
@@ -66,9 +66,18 @@ _EVENT_NAMESPACES = (
     "benchmark",
     "judge",
 )
-_EVENT_LITERAL_RE = re.compile(
-    r'["\'](?P<name>(?:' + "|".join(_EVENT_NAMESPACES) + r')\.[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*)["\']'
+_EVENT_NAME_RE = r"(?:" + "|".join(_EVENT_NAMESPACES) + r")\.[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*"
+# Emission-context prefix: a real event literal is the first arg of an emit
+# call, a ``event=`` kwarg, a ``"event":`` JSON value, or an ``_EVT*`` constant.
+_EMISSION_PREFIX_RE = (
+    r"(?:"
+    r"(?:log_event|_audit_event)\(\s*"  # direct emission call, first positional arg
+    r"|event\s*=\s*"  # keyword form: event="..."
+    r"|[\"']event[\"']\s*:\s*"  # JSON-shaped: "event": "..."
+    r"|_EVT[A-Z0-9_]*\s*=\s*"  # constant declaration: _EVT_X = "..."
+    r")"
 )
+_EVENT_LITERAL_RE = re.compile(_EMISSION_PREFIX_RE + r'["\'](?P<name>' + _EVENT_NAME_RE + r')["\']')
 
 
 # Match catalog table rows. Catalog uses pipe-table format; the event

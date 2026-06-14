@@ -18,7 +18,7 @@ One JSON object per line:
 {"ts":"2026-04-29T14:33:11Z","seq":4,"event":"pipeline.completed","exit_code":0,"prev_hash":"sha256:beef...","_hmac":"..."}
 ```
 
-(See the "Event types" table below and the [Audit Event Catalog on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/audit_event_catalog.md) for the full canonical list. Earlier drafts referenced `run_start` / `run_complete` / `data_audit_complete` / `training_epoch_complete` / `benchmark_complete` / `safety_eval_complete` / `auto_revert` — none of those names ship; no call site in `forgelm/` emits them.)
+(See the "Event types" table below and the [Audit Event Catalog on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md) for the full canonical list. Earlier drafts referenced `run_start` / `run_complete` / `data_audit_complete` / `training_epoch_complete` / `benchmark_complete` / `safety_eval_complete` / `auto_revert` — none of those names ship; no call site in `forgelm/` emits them.)
 
 Every entry has:
 - **`ts`** — ISO-8601 UTC timestamp.
@@ -46,7 +46,7 @@ Every entry has:
 | `cli.legacy_flag_invoked` | A deprecated CLI flag was used. |
 
 The full event catalog (with payload schema and emitting site) lives in the
-[Audit Event Catalog on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/audit_event_catalog.md).
+[Audit Event Catalog on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md).
 
 ## Append-only by design
 

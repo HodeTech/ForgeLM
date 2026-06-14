@@ -594,6 +594,61 @@ class TestVerifyAuditLog:
         assert result.first_invalid_index == 1
         assert result.reason is not None
 
+    def test_verify_audit_truncated_to_empty_fails(self, tmp_path):
+        """C6/F-P4-OPUS-01: truncating the log to ZERO entries while the genesis
+        manifest pins a real first entry must FAIL verification.  Pre-fix
+        ``verify_audit_log`` early-returned ``valid=True, entries_count=0`` for
+        an empty log before consulting the manifest — the exact truncation the
+        manifest exists to detect."""
+        from forgelm.compliance import verify_audit_log
+
+        log_path = self._build_log(tmp_path, events=3)
+        assert os.path.isfile(log_path + ".manifest.json")
+
+        with open(log_path, "w", encoding="utf-8"):  # truncate to empty
+            pass
+
+        result = verify_audit_log(log_path)
+        assert result.valid is False
+        assert result.entries_count == 0
+        assert result.first_invalid_index == 1
+        assert "empty" in (result.reason or "").lower()
+
+    def test_verify_audit_empty_log_without_manifest_is_valid(self, tmp_path):
+        """An empty log with NO genesis manifest is a legitimate first-run /
+        no-op state — verification passes with entries_count=0.  Guards the
+        truncate-to-empty fix from over-failing the benign empty case."""
+        from forgelm.compliance import verify_audit_log
+
+        log_path = str(tmp_path / "audit_log.jsonl")
+        with open(log_path, "w", encoding="utf-8"):  # empty, no manifest sidecar
+            pass
+        result = verify_audit_log(log_path)
+        assert result.valid is True
+        assert result.entries_count == 0
+
+    def test_verify_audit_genesis_manifest_mismatch_fails(self, tmp_path):
+        """P4-OPUS-22: an attacker who truncates the log and writes a fresh
+        valid chain (re-rooted at genesis) is caught by the write-once manifest
+        sidecar — the pinned ``first_entry_sha256`` no longer matches line 1."""
+        from forgelm.compliance import AuditLogger, verify_audit_log
+
+        log_path = self._build_log(tmp_path, events=3)
+        assert os.path.isfile(log_path + ".manifest.json")
+
+        # Wipe the body but keep the (write-once) manifest, then write a brand
+        # new valid chain — a re-root tamper.
+        with open(log_path, "w", encoding="utf-8"):
+            pass
+        logger2 = AuditLogger(str(tmp_path))
+        logger2.log_event("rewritten.genesis", forged=True)
+        logger2.log_event("rewritten.second")
+
+        result = verify_audit_log(log_path)
+        assert result.valid is False
+        assert result.first_invalid_index == 1
+        assert "manifest mismatch" in (result.reason or "")
+
     def test_verify_audit_missing_manifest_warning(self, tmp_path, caplog):
         """A log without the manifest sidecar still verifies if its chain
         is intact — the verifier logs at DEBUG that truncate-and-resume

@@ -8,7 +8,7 @@ ForgeLM, komut satırı arayüzü üzerinden çalıştırılmak üzere tasarlanm
 - CUDA destekli NVIDIA GPU (önerilir; CPU modu çok yavaş)
 
 ```bash
-git clone https://github.com/cemililik/ForgeLM.git
+git clone https://github.com/HodeTech/ForgeLM.git
 cd ForgeLM
 pip install -e .
 ```
@@ -21,7 +21,7 @@ pip install -e ".[unsloth]"      # Unsloth backend (Linux)
 pip install -e ".[eval]"         # lm-evaluation-harness
 pip install -e ".[tracking]"     # W&B deney takibi
 pip install -e ".[distributed]"  # DeepSpeed çoklu GPU
-pip install -e ".[merging]"      # mergekit model birleştirme
+pip install -e ".[merging]"      # native model birleştirme (TIES/DARE/SLERP — ekstra bağımlılık yok)
 ```
 
 ## Kimlik Doğrulama

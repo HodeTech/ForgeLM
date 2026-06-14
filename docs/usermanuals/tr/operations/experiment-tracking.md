@@ -107,7 +107,7 @@ ForgeLM `training.wandb:` veya `training.mlflow:` sub-bloğu **sunmaz**. Artifac
 
 Her backend'in UI'sı karşılaştırmayı doğal şekilde halleder — karşılaştırılabilir koşular `run_name` öneki, etiketler ve config hash paylaşır. Yerleşik CLI özeti yolda:
 
-> Not: `forgelm compare-runs` subcommand'ı v0.6.0+ Pro CLI seviyesi için planlanmıştır ([GitHub'daki Phase 13 yol haritası](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap.md)). Bugün aynı karşılaştırma tracking backend'inizin UI'sı (W&B / MLflow / Comet) veya her koşunun JSON envelope'una karşı küçük bir `jq` ile koşturulur.
+> Not: `forgelm compare-runs` subcommand'ı v0.6.0+ Pro CLI seviyesi için planlanmıştır ([GitHub'daki Phase 13 yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)). Bugün aynı karşılaştırma tracking backend'inizin UI'sı (W&B / MLflow / Comet) veya her koşunun JSON envelope'una karşı küçük bir `jq` ile koşturulur.
 
 Bugünkü çalışan akış (W&B / MLflow / Comet UI canonical yüzey; aşağıdaki ad-hoc CLI karşılaştırma için `jq` kısayolu):
 

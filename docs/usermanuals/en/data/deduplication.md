@@ -78,7 +78,7 @@ MinHash trades small accuracy for big speed — typical recall is >95% of true d
 | `--dedup-method minhash` | Switch from the default simhash detector to MinHash LSH. Requires the `forgelm[ingestion-scale]` extra (datasketch). |
 | `--jaccard-threshold` | Jaccard similarity threshold (default 0.85). Ignored under simhash. |
 
-Permutation count and LSH banding are not user-tunable today — they are fixed at the library defaults that benchmark cleanly across the 50K-to-1M-row range. Track [Phase 13 roadmap on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap.md) for the planned `forgelm[ingestion-scale]` knobs to expose them.
+Permutation count and LSH banding are not user-tunable today — they are fixed at the library defaults that benchmark cleanly across the 50K-to-1M-row range. Track [Phase 13 roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md) for the planned `forgelm[ingestion-scale]` knobs to expose them.
 
 ## Streaming behaviour
 
@@ -109,7 +109,7 @@ When duplicates are within a single split, ForgeLM keeps the first occurrence. A
 :::
 
 :::warn
-**MinHash recall depends on the permutation count.** ForgeLM ships datasketch defaults (≥128 permutations) that keep recall above 95%. Manual override is on the [Phase 13 roadmap on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap.md) — until then, do not rely on a `--num-perm` flag (it does not exist).
+**MinHash recall depends on the permutation count.** ForgeLM ships datasketch defaults (≥128 permutations) that keep recall above 95%. Manual override is on the [Phase 13 roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md) — until then, do not rely on a `--num-perm` flag (it does not exist).
 :::
 
 :::tip

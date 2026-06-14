@@ -18,7 +18,7 @@ ForgeLM's exit codes are a public contract. CI/CD pipelines, schedulers, and das
 | **4** | `EXIT_AWAITING_APPROVAL` | `evaluation.require_human_approval: true` blocking. | Hold pipeline; trigger reviewer |
 | **5** | `EXIT_WIZARD_CANCELLED` | `forgelm --wizard` exited without producing a YAML — Ctrl-C, non-tty stdin refusal, or operator declined to save. Distinct from `EXIT_SUCCESS` so CI can tell "wizard finished" from "wizard never wrote anything". | Treat as no-op; surface message; do NOT continue with stale config |
 
-These six integers are the entire public contract — see [`forgelm/cli/_exit_codes.py`](https://github.com/cemililik/ForgeLM/blob/main/forgelm/cli/_exit_codes.py) for the canonical definition. Any other non-zero value (including signal-derived 128+N codes) is clamped to `EXIT_TRAINING_ERROR` (2) before the process exits.
+These six integers are the entire public contract — see [`forgelm/cli/_exit_codes.py`](https://github.com/HodeTech/ForgeLM/blob/main/forgelm/cli/_exit_codes.py) for the canonical definition. Any other non-zero value (including signal-derived 128+N codes) is clamped to `EXIT_TRAINING_ERROR` (2) before the process exits.
 
 ## Mapping to CI patterns
 

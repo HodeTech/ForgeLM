@@ -40,7 +40,7 @@
 
 ## v0.4.0 — "Post-Training Completion" (2026-04-26)
 
-**Status:** Released — published to PyPI on 2026-04-26 ([release notes](https://github.com/cemililik/ForgeLM/releases/tag/v0.4.0)).
+**Status:** Released — published to PyPI on 2026-04-26 ([release notes](https://github.com/HodeTech/ForgeLM/releases/tag/v0.4.0)).
 
 Odak: [Phase 10](completed-phases.md). Full post-training handoff: inference, chat, GGUF export, VRAM fit-check, deployment config generation.
 
@@ -60,7 +60,7 @@ Odak: [Phase 10](completed-phases.md). Full post-training handoff: inference, ch
 
 ## v0.4.5 — "Quickstart Layer" (2026-04-26)
 
-**Status:** Released — published to PyPI on 2026-04-26 ([release notes](https://github.com/cemililik/ForgeLM/releases/tag/v0.4.5)). Focus: [Phase 10.5](completed-phases.md) (Quickstart). One-command bundled templates, sample datasets, opinionated defaults — primary community growth driver.
+**Status:** Released — published to PyPI on 2026-04-26 ([release notes](https://github.com/HodeTech/ForgeLM/releases/tag/v0.4.5)). Focus: [Phase 10.5](completed-phases.md) (Quickstart). One-command bundled templates, sample datasets, opinionated defaults — primary community growth driver.
 
 ### Features:
 1. [x] **`forgelm/quickstart.py`** — Template registry (`@dataclass(frozen=True) Template`), `auto_select_model()` GPU-aware downsizing (≥10 GB VRAM → primary model; otherwise fallback ≤2B), `run_quickstart()` end-to-end orchestrator that copies the bundled seed dataset, substitutes `model.name_or_path` and `data.dataset_name_or_path`, and writes a `configs/<template>-YYYYMMDDHHMMSS.yaml` the existing trainer accepts unchanged.
@@ -82,7 +82,7 @@ Odak: [Phase 10](completed-phases.md). Full post-training handoff: inference, ch
 
 ## v0.5.0 — "Document Ingestion + Data Curation Pipeline"
 
-**Status:** ✅ Done — released to [PyPI 2026-04-30](https://pypi.org/project/forgelm/0.5.0/) (Phases 11 + 11.5 + 12 + 12.5 consolidated; merged on `main` 2026-04-29). One hardening follow-up tracked outside the release: [#14 — webhook SSRF DNS-rebinding TOCTOU](https://github.com/cemililik/ForgeLM/issues/14) (defence-in-depth on top of the existing `allow_private_destinations: false` default).
+**Status:** ✅ Done — released to [PyPI 2026-04-30](https://pypi.org/project/forgelm/0.5.0/) (Phases 11 + 11.5 + 12 + 12.5 consolidated; merged on `main` 2026-04-29). One hardening follow-up tracked outside the release: [#14 — webhook SSRF DNS-rebinding TOCTOU](https://github.com/HodeTech/ForgeLM/issues/14) (defence-in-depth on top of the existing `allow_private_destinations: false` default).
 
 > **Note on consolidation.** Originally planned as four sequential PyPI tags (`v0.5.0` / `v0.5.1` / `v0.5.2` / `v0.5.3`), the four phases were consolidated into a single `v0.5.0` because they form one coherent surface (ingest → polish → mature → polish) hard to use in parts. Git history retains the four phases as separate commit batches; this entry collapses them into one user-facing release. CHANGELOG.md preserves the phase boundaries inside the `[0.5.0]` section so reviewers can map back to PR history (#11, #12, #13, #18).
 
@@ -124,13 +124,13 @@ Odak: [Phase 10](completed-phases.md). Full post-training handoff: inference, ch
 
 ### Hardening follow-up (tracked outside this release)
 
-- [#14 — webhook SSRF DNS-rebinding TOCTOU](https://github.com/cemililik/ForgeLM/issues/14): defence-in-depth on top of the existing `allow_private_destinations: false` default. Slated for `v0.5.1`.
+- [#14 — webhook SSRF DNS-rebinding TOCTOU](https://github.com/HodeTech/ForgeLM/issues/14): defence-in-depth on top of the existing `allow_private_destinations: false` default. Slated for `v0.5.1`.
 
 ---
 
 ## v0.6.0 — "Phase 15 Ingestion Pipeline Reliability" (2026-05-11)
 
-**Status:** Released to PyPI 2026-05-11. Minor release on top of v0.5.7. Five review-absorption rounds (Gemini + CodeRabbit + Sonar + Codacy + independent self-review) ship in the same release. GitHub Release: [v0.6.0](https://github.com/cemililik/ForgeLM/releases/tag/v0.6.0).
+**Status:** Released to PyPI 2026-05-11. Minor release on top of v0.5.7. Five review-absorption rounds (Gemini + CodeRabbit + Sonar + Codacy + independent self-review) ship in the same release. GitHub Release: [v0.6.0](https://github.com/HodeTech/ForgeLM/releases/tag/v0.6.0).
 
 ### Summary
 
@@ -167,7 +167,7 @@ See [CHANGELOG.md `[0.6.0]`](../../CHANGELOG.md#060--2026-05-11) for the complet
 
 ## v0.5.7 — "SFT trainer trl-modernisation fix" (2026-05-10)
 
-**Status:** Released to PyPI 2026-05-10. Patch on top of v0.5.6. GitHub Release: [v0.5.7](https://github.com/cemililik/ForgeLM/releases/tag/v0.5.7).
+**Status:** Released to PyPI 2026-05-10. Patch on top of v0.5.6. GitHub Release: [v0.5.7](https://github.com/HodeTech/ForgeLM/releases/tag/v0.5.7).
 
 ### Summary
 
@@ -187,7 +187,7 @@ See [CHANGELOG.md `[0.5.7]`](../../CHANGELOG.md#057--2026-05-10).
 
 ## v0.5.6 — "Intel Mac install fix" (2026-05-10)
 
-**Status:** Released to PyPI 2026-05-10. Patch on top of v0.5.5. GitHub Release: [v0.5.6](https://github.com/cemililik/ForgeLM/releases/tag/v0.5.6).
+**Status:** Released to PyPI 2026-05-10. Patch on top of v0.5.5. GitHub Release: [v0.5.6](https://github.com/HodeTech/ForgeLM/releases/tag/v0.5.6).
 
 ### Summary
 
@@ -207,7 +207,7 @@ See [CHANGELOG.md `[0.5.6]`](../../CHANGELOG.md#056--2026-05-10).
 
 ## v0.5.5 — "Closure Cycle Bundle + Phase 22 Wizard + Site Documentation Sweep" (2026-05-10)
 
-**Status:** Released to PyPI 2026-05-10 via the cross-OS publish workflow ([`.github/workflows/publish.yml`](../../.github/workflows/publish.yml)) which gates PyPI publish on 12 wheel-install matrix combos (3 OS × 4 Python). GitHub Release: [v0.5.5](https://github.com/cemililik/ForgeLM/releases/tag/v0.5.5).
+**Status:** Released to PyPI 2026-05-10 via the cross-OS publish workflow ([`.github/workflows/publish.yml`](../../.github/workflows/publish.yml)) which gates PyPI publish on 12 wheel-install matrix combos (3 OS × 4 Python). GitHub Release: [v0.5.5](https://github.com/HodeTech/ForgeLM/releases/tag/v0.5.5).
 
 ### Summary
 
@@ -241,7 +241,7 @@ See [CHANGELOG.md `[0.5.5]`](../../CHANGELOG.md#055--2026-05-10) for the complet
 
 ## v0.7.0 — "Pipeline Chains" (2026-05-15)
 
-**Status:** Released to PyPI 2026-05-15 via the cross-OS publish workflow ([`.github/workflows/publish.yml`](../../.github/workflows/publish.yml)) — all 12 wheel-install matrix combos (3 OS × 4 Python) green before OIDC trusted publish. GitHub Release: [v0.7.0](https://github.com/cemililik/ForgeLM/releases/tag/v0.7.0).
+**Status:** Released to PyPI 2026-05-15 via the cross-OS publish workflow ([`.github/workflows/publish.yml`](../../.github/workflows/publish.yml)) — all 12 wheel-install matrix combos (3 OS × 4 Python) green before OIDC trusted publish. GitHub Release: [v0.7.0](https://github.com/HodeTech/ForgeLM/releases/tag/v0.7.0).
 
 ### Summary
 

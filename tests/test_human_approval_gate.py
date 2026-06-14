@@ -180,6 +180,64 @@ class TestHumanApprovalGateTrainer:
         assert gate_fired is False
         trainer.notifier.notify_awaiting_approval.assert_not_called()
 
+    def test_gate_sets_awaiting_approval_discriminator(self, tmp_path: Path) -> None:
+        """XP-02: the gate sets the authoritative ``awaiting_approval`` flag so
+        the CLI / pipeline route to exit 4 on the result state — not the bare
+        config flag and not ``bool(staging_path)`` (which can survive a revert)."""
+        trainer, output_dir = self._make_trainer(tmp_path)
+        from forgelm.results import TrainResult
+
+        result = TrainResult(success=True)
+        assert result.awaiting_approval is False  # default
+        staging_path = str(output_dir / "final_model.staging")
+        trainer.save_final_model(staging_path)
+        trainer._handle_human_approval_gate(staging_path, result, already_saved=True)
+
+        assert result.awaiting_approval is True
+        assert result.staging_path == staging_path
+        assert result.success is True
+
+    def test_gate_revert_clears_staging_path(self, tmp_path: Path) -> None:
+        """XP-02 root cause: a post-train gate that auto-reverts must clear
+        ``staging_path`` (the revert deletes that dir) and leave
+        ``awaiting_approval`` False, so the run is reported as reverted
+        (exit 3), never awaiting approval (exit 4)."""
+        from types import SimpleNamespace
+
+        from forgelm.results import TrainResult
+
+        trainer, output_dir = self._make_trainer(tmp_path)
+        trainer.config.evaluation.auto_revert = True
+        trainer._revert_model = MagicMock()  # don't actually rmtree
+
+        # The pipeline eagerly sets staging_path + final_model_path before the
+        # post-train gates run (so they can evaluate on-disk artefacts); a
+        # reverting gate must undo all of them. Seed awaiting_approval=True so the
+        # test verifies the flag is actively cleared, not merely still False.
+        staging_path = str(output_dir / "final_model.staging.fg-x")
+        result = TrainResult(
+            success=True, staging_path=staging_path, final_model_path=staging_path, awaiting_approval=True
+        )
+
+        failing_safety = SimpleNamespace(
+            passed=False,
+            safety_score=0.2,
+            safe_ratio=0.2,
+            category_distribution={"violence": 3},
+            severity_distribution={"high": 3},
+            low_confidence_count=0,
+            failure_reason="safety gate failed",
+        )
+        cont = trainer._apply_safety_result(failing_safety, result, {}, staging_path)
+
+        assert cont is False
+        assert result.success is False
+        assert result.reverted is True
+        assert result.staging_path is None
+        assert result.final_model_path is None, "revert deletes the model — final_model_path must be cleared"
+        assert result.awaiting_approval is False, "a reverted run is never awaiting approval"
+        trainer._revert_model.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # CLI-level: forgelm approve happy path + failure modes

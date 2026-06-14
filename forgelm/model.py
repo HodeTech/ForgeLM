@@ -10,6 +10,37 @@ from typing import Any, Optional, Tuple
 
 logger = logging.getLogger("forgelm.model")
 
+# MoE expert-count attribute names across architectures: Mixtral / Phi-MoE
+# expose ``num_local_experts``; Qwen2/Qwen3-MoE expose ``num_experts``;
+# DeepSeek-V3 exposes ``n_routed_experts``. Gating only on ``num_local_experts``
+# silently no-ops the entire moe block for Qwen3/DeepSeek (F-P3-FABLE-07).
+_MOE_EXPERT_COUNT_ATTRS = ("num_local_experts", "num_experts", "n_routed_experts")
+
+
+def _resolve_expert_count(model_config: Any) -> Optional[int]:
+    """Return the MoE expert count from whichever attribute the architecture
+    exposes, or ``None`` when the model is not a recognised MoE checkpoint."""
+    for attr in _MOE_EXPERT_COUNT_ATTRS:
+        val = getattr(model_config, attr, None)
+        if isinstance(val, int) and val > 0:
+            return val
+    return None
+
+
+def _resolve_peft_flags(config: Any) -> "Tuple[bool, bool, str]":
+    """Derive ``(use_dora, use_rslora, method)`` from the canonical ``lora.method``
+    plus the deprecated boolean shortcuts.
+
+    Single source of truth shared by the transformers and unsloth backends so
+    identical YAML trains the same algorithm regardless of ``model.backend`` —
+    previously the unsloth path read only the boolean shortcuts and silently
+    downgraded ``method: dora``/``rslora`` to plain LoRA (F-P3-FABLE-09).
+    """
+    peft_method = getattr(config.lora, "method", "lora")
+    use_dora = config.lora.use_dora or peft_method == "dora"
+    use_rslora = getattr(config.lora, "use_rslora", False) or peft_method == "rslora"
+    return use_dora, use_rslora, peft_method
+
 
 def _resolve_bnb_compute_dtype(dtype_str: str):
     import torch
@@ -40,7 +71,22 @@ def _load_unsloth(config: Any) -> Tuple[Any, Any]:
         load_in_4bit=config.model.load_in_4bit,
     )
 
-    logger.info("Setting up Unsloth LoRA configuration (DoRA=%s)...", config.lora.use_dora)
+    use_dora, use_rslora, peft_method = _resolve_peft_flags(config)
+    if peft_method == "pissa":
+        # Unsloth's get_peft_model has no init_lora_weights="pissa" path; dropping
+        # it silently would train plain LoRA under a config that asked for PiSSA.
+        from .config import ConfigError
+
+        raise ConfigError(
+            "lora.method='pissa' is not supported by the unsloth backend. Use "
+            "model.backend='transformers' for PiSSA, or choose another lora.method."
+        )
+    logger.info(
+        "Setting up Unsloth LoRA configuration (method=%s, DoRA=%s, rsLoRA=%s)...",
+        peft_method,
+        use_dora,
+        use_rslora,
+    )
     model = FastLanguageModel.get_peft_model(
         model,
         r=config.lora.r,
@@ -49,8 +95,8 @@ def _load_unsloth(config: Any) -> Tuple[Any, Any]:
         lora_dropout=config.lora.dropout,
         bias=config.lora.bias,
         use_gradient_checkpointing="unsloth",
-        use_rslora=getattr(config.lora, "use_rslora", False),
-        use_dora=config.lora.use_dora,
+        use_rslora=use_rslora,
+        use_dora=use_dora,
     )
     return model, tokenizer
 
@@ -68,9 +114,13 @@ def _load_tokenizer(config: Any, trust_remote_code: bool) -> Any:
 
         tokenizer = AutoTokenizer.from_pretrained(config.model.name_or_path, trust_remote_code=trust_remote_code)
 
-    if hasattr(tokenizer, "pad_token") and tokenizer.pad_token is None:
+    # AutoProcessor (VLM) wraps the text tokenizer under ``.tokenizer`` and does
+    # not itself expose pad_token/pad_token_id; operate on the inner tokenizer so
+    # the multimodal path doesn't AttributeError (F-P3-FABLE-11).
+    pad_target = getattr(tokenizer, "tokenizer", tokenizer)
+    if hasattr(pad_target, "pad_token") and pad_target.pad_token is None:
         logger.info("Tokenizer has no pad_token, using eos_token as pad_token.")
-        tokenizer.pad_token = tokenizer.eos_token
+        pad_target.pad_token = pad_target.eos_token
     return tokenizer
 
 
@@ -114,6 +164,17 @@ def _build_model_kwargs(config: Any, trust_remote_code: bool) -> dict:
             bnb_4bit_quant_type=config.model.bnb_4bit_quant_type,
             bnb_4bit_compute_dtype=compute_dtype,
         )
+    elif config.model.load_in_4bit:
+        # CUDA unavailable: bitsandbytes 4-bit needs a CUDA device, so the model
+        # loads in full precision. Make the silent skip loud — otherwise the run
+        # is full-precision while compliance artefacts (which read
+        # config.load_in_4bit) still claim "4-bit NF4" (F-P3-FABLE-10).
+        logger.warning(
+            "model.load_in_4bit=true but CUDA is unavailable — loading in full "
+            "precision (bitsandbytes 4-bit requires a CUDA device). This run is NOT "
+            "quantized; compliance artefacts and the model card that read "
+            "load_in_4bit will overstate the quantization."
+        )
 
     rope_scaling = config.training.rope_scaling
     if rope_scaling:
@@ -128,26 +189,51 @@ def _build_model_kwargs(config: Any, trust_remote_code: bool) -> dict:
     return kwargs
 
 
-def _apply_moe_config(model: Any, config: Any) -> None:
-    """Apply MoE-specific freezing / quantization, no-op for non-MoE models."""
+def _detect_moe_experts(model: Any, config: Any) -> Optional[int]:
+    """Resolve the MoE expert count (pre-PEFT), or None for a non-MoE model.
+
+    Detection only — the actual expert selection + quantization run AFTER
+    ``get_peft_model`` (see :func:`_apply_moe_post_peft`), because PEFT freezes
+    every base parameter during adapter injection: freezing base expert weights
+    beforehand is a no-op (F-P3-FABLE-02) and the quantization sweep finds
+    nothing frozen yet (F-P3-FABLE-08).
+    """
     moe_cfg = getattr(config.model, "moe", None)
-    if not moe_cfg or not hasattr(model.config, "num_local_experts"):
-        return
-    num_experts = model.config.num_local_experts
+    if not moe_cfg:
+        return None
+    num_experts = _resolve_expert_count(model.config)
+    if num_experts is None:
+        logger.warning(
+            "model.moe is configured but the loaded model exposes no recognised MoE "
+            "expert-count attribute (%s) — the moe block (quantize_experts / "
+            "experts_to_train) is ignored. Is this actually a MoE checkpoint?",
+            ", ".join(_MOE_EXPERT_COUNT_ATTRS),
+        )
+        return None
     logger.info("MoE model detected: %d experts", num_experts)
-    if moe_cfg.quantize_experts:
-        _apply_moe_expert_quantization(model)
+    return num_experts
+
+
+def _apply_moe_post_peft(model: Any, config: Any, num_experts: int) -> None:
+    """Apply MoE expert selection + optional quantization AFTER ``get_peft_model``.
+
+    Order matters: PEFT has already frozen every base parameter and injected the
+    trainable LoRA adapters, so here we (1) constrain the trainable set that
+    actually matters — the adapters of unselected experts — and (2) recast the
+    now-frozen base expert weights for VRAM savings.
+    """
+    moe_cfg = config.model.moe
     if moe_cfg.experts_to_train != "all":
         _freeze_unselected_experts(model, moe_cfg.experts_to_train, num_experts)
+    if moe_cfg.quantize_experts:
+        _apply_moe_expert_quantization(model)
 
 
 def _build_lora_config(config: Any) -> "LoraConfig":  # noqa: F821 — peft import is lazy
     """Resolve PEFT method (lora / dora / rslora / pissa) and build LoraConfig."""
     from peft import LoraConfig
 
-    peft_method = getattr(config.lora, "method", "lora")
-    use_dora = config.lora.use_dora or peft_method == "dora"
-    use_rslora = getattr(config.lora, "use_rslora", False) or peft_method == "rslora"
+    use_dora, use_rslora, peft_method = _resolve_peft_flags(config)
 
     logger.info(
         "Setting up PEFT configuration (method=%s, DoRA=%s, rsLoRA=%s)...",
@@ -192,11 +278,24 @@ def get_model_and_tokenizer(config: Any) -> Tuple[Any, Any]:
 
     tokenizer = _load_tokenizer(config, trust_remote_code)
     model_kwargs = _build_model_kwargs(config, trust_remote_code)
-    model = AutoModelForCausalLM.from_pretrained(config.model.name_or_path, **model_kwargs)
 
-    # Sync pad_token_id to model config to suppress generation warnings
-    if tokenizer.pad_token_id is not None and model.config.pad_token_id is None:
-        model.config.pad_token_id = tokenizer.pad_token_id
+    # Most VLM architectures are registered under AutoModelForImageTextToText,
+    # not AutoModelForCausalLM — loading them via the causal-LM class fails with
+    # "Unrecognized configuration class" (F-P3-FABLE-11).
+    mm_cfg = getattr(config.model, "multimodal", None)
+    if mm_cfg and mm_cfg.enabled:
+        from transformers import AutoModelForImageTextToText
+
+        model = AutoModelForImageTextToText.from_pretrained(config.model.name_or_path, **model_kwargs)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(config.model.name_or_path, **model_kwargs)
+
+    # Sync pad_token_id to model config to suppress generation warnings. A VLM
+    # AutoProcessor exposes pad_token_id only on its inner ``.tokenizer``.
+    pad_source = getattr(tokenizer, "tokenizer", tokenizer)
+    pad_token_id = getattr(pad_source, "pad_token_id", None)
+    if pad_token_id is not None and model.config.pad_token_id is None:
+        model.config.pad_token_id = pad_token_id
 
     # enable_input_require_grads is needed for gradient checkpointing with LoRA
     if hasattr(model, "enable_input_require_grads"):
@@ -205,8 +304,13 @@ def get_model_and_tokenizer(config: Any) -> Tuple[Any, Any]:
     if torch.cuda.is_available() and config.model.load_in_4bit:
         model = prepare_model_for_kbit_training(model)
 
-    _apply_moe_config(model, config)
+    # MoE detection reads model.config (pre-PEFT); the actual expert selection +
+    # quantization must run AFTER get_peft_model so they constrain the injected
+    # adapters / operate on the now-frozen base (F-P3-FABLE-02/08).
+    moe_num_experts = _detect_moe_experts(model, config)
     model = get_peft_model(model, _build_lora_config(config))
+    if moe_num_experts is not None:
+        _apply_moe_post_peft(model, config, moe_num_experts)
     model.print_trainable_parameters()
 
     return model, tokenizer
@@ -221,7 +325,15 @@ def _is_frozen_expert_weight(name: str, module) -> bool:
 
 def _recast_expert_weight(name: str, module, target_dtype) -> bool:
     """Recast a single expert weight in-place; return True if a change was made."""
+    import torch
+
     if module.weight.dtype == target_dtype:
+        return False
+    # bitsandbytes Linear4bit stores packed quantised weights as uint8 (and
+    # 8-bit as int8). Casting that packed storage to a float dtype destroys the
+    # data↔quant_state invariant — the forward dequantise then reads garbage or
+    # crashes. Never recast packed quant storage (F-P3-FABLE-08).
+    if module.weight.dtype in (torch.uint8, torch.int8):
         return False
     try:
         module.weight.data = module.weight.data.to(target_dtype)
@@ -240,16 +352,43 @@ def _apply_moe_expert_quantization(model) -> None:
     """
     import torch
 
+    # A 4-bit-loaded model's expert weights are already bitsandbytes Params4bit
+    # (packed uint8); recasting them to a float dtype corrupts the quant state.
+    # The model is already quantised — there is nothing for this half-precision
+    # pass to save (F-P3-FABLE-08).
+    is_4bit = getattr(model, "is_loaded_in_4bit", False) or getattr(
+        getattr(model, "base_model", None), "is_loaded_in_4bit", False
+    )
+    if is_4bit:
+        logger.info(
+            "MoE expert quantization skipped: model is already loaded in 4-bit "
+            "(recasting packed Params4bit storage would corrupt the weights)."
+        )
+        return
+
     target_dtype = torch.float16
     if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
         target_dtype = torch.bfloat16
 
-    optimized_count = sum(
-        1
-        for name, module in model.named_modules()
-        if _is_frozen_expert_weight(name, module) and _recast_expert_weight(name, module, target_dtype)
-    )
+    optimized_count = 0
+    failed_count = 0
+    for name, module in model.named_modules():
+        if not _is_frozen_expert_weight(name, module):
+            continue
+        if module.weight.dtype == target_dtype or module.weight.dtype in (torch.uint8, torch.int8):
+            continue
+        if _recast_expert_weight(name, module, target_dtype):
+            optimized_count += 1
+        else:
+            failed_count += 1
 
+    if failed_count:
+        logger.warning(
+            "MoE expert optimization: %d expert weight tensor(s) failed to recast to %s "
+            "(see DEBUG logs); they remain at their original dtype.",
+            failed_count,
+            target_dtype,
+        )
     if optimized_count > 0:
         logger.info(
             "MoE expert optimization: %d expert weight tensors converted to %s for VRAM savings.",
@@ -257,10 +396,7 @@ def _apply_moe_expert_quantization(model) -> None:
             target_dtype,
         )
     else:
-        logger.info(
-            "MoE expert optimization: no frozen expert weights found. "
-            "Optimization applies after LoRA freezes non-target parameters."
-        )
+        logger.info("MoE expert optimization: no eligible frozen expert weights found.")
 
 
 def _parse_selected_experts(experts_to_train: str, num_experts: int) -> Optional[set]:
@@ -354,10 +490,16 @@ def _expert_index_in_name(name: str, num_experts: int) -> Optional[int]:
 
 
 def _freeze_unselected_experts(model, experts_to_train: str, num_experts: int) -> None:
-    """Freeze all expert parameters except the selected ones.
+    """Freeze the LoRA adapters of unselected experts. Run AFTER ``get_peft_model``.
+
+    PEFT freezes every base parameter during adapter injection, so the trainable
+    set is the injected ``lora_*`` adapters. Freezing those that resolve to an
+    unselected expert is what actually constrains training to
+    ``experts_to_train`` — the pre-PEFT base-weight freeze this replaces left the
+    trainable set identical whether the field was set or not (F-P3-FABLE-02).
 
     Args:
-        model: The model with MoE architecture.
+        model: The PEFT-wrapped model with MoE architecture.
         experts_to_train: Comma-separated expert indices (e.g., "0,1,2").
         num_experts: Total number of experts in the model.
     """
@@ -365,15 +507,42 @@ def _freeze_unselected_experts(model, experts_to_train: str, num_experts: int) -
     if selected is None:
         return
 
+    expert_adapter_params = 0
     frozen_count = 0
     for name, param in model.named_parameters():
+        if "lora_" not in name:
+            continue
         idx = _expert_index_in_name(name, num_experts)
-        if idx is not None and idx not in selected:
+        if idx is None:
+            continue
+        expert_adapter_params += 1
+        if idx not in selected:
             param.requires_grad = False
             frozen_count += 1
 
+    if expert_adapter_params == 0:
+        # PEFT keys ``peft_config`` by adapter name (a dict, multi-adapter
+        # design), so a plain ``getattr(..., "target_modules")`` returns "?".
+        # Resolve the first adapter's config before reading the field.
+        peft_config = getattr(model, "peft_config", None)
+        if isinstance(peft_config, dict):
+            peft_config = next(iter(peft_config.values()), None)
+        target_modules = getattr(peft_config, "target_modules", "?")
+        logger.warning(
+            "experts_to_train=%r selected experts %s, but NO LoRA adapters were injected "
+            "into any expert — lora.target_modules (%s) does not cover expert projections "
+            "(e.g. gate_proj/up_proj/down_proj), so expert selection has no effect. Widen "
+            "target_modules to train specific experts.",
+            experts_to_train,
+            sorted(selected),
+            target_modules,
+        )
+        return
+
     logger.info(
-        "MoE expert selection: training experts %s, froze %d parameters from unselected experts.",
+        "MoE expert selection: training experts %s, froze %d of %d expert adapter parameter(s) "
+        "from unselected experts.",
         sorted(selected),
         frozen_count,
+        expert_adapter_params,
     )

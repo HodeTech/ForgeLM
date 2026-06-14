@@ -63,9 +63,9 @@ $ forgelm chat "Qwen/Qwen2.5-7B" --adapter ./checkpoints/run/
 
 ## Safety routing
 
-> Note: A built-in `--safety` flag on `forgelm chat` is planned for v0.6.0+ Pro CLI (see [Phase 13 roadmap on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap.md)). Today the screen-every-turn behaviour ships via the YAML `safety:` block (set `safety: enabled: true` and bind it to the same chat session through your runner); the snippet below illustrates the planned `--safety` UX as preview output, NOT as a runnable v0.5.5 command.
+> Note: A built-in `--safety` flag on `forgelm chat` is planned for v0.6.0+ Pro CLI (see [Phase 13 roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)). The current release does **not** support per-turn safety screening in the chat REPL: `forgelm chat` has no `--safety` flag and loads no YAML config (verifiable in the chat subcommand parser, `forgelm/cli/_parser.py`). The `evaluation.safety.enabled: true` config block is read only by the training pipeline's auto-revert safety gate (`forgelm/trainer.py`) and the standalone `forgelm safety-eval` subcommand — never by the chat REPL. The snippet below previews the planned `--safety` UX; it is NOT a runnable command today.
 
-With `safety: enabled: true` in your YAML config (or under the planned v0.6.0+ `--safety on` flag, illustrated for preview only below), every prompt and response is screened by Llama Guard:
+Under the planned `--safety` flag (preview only — see the note above), every prompt and response would be screened by Llama Guard:
 
 ```text
 forgelm> [adversarial prompt]
@@ -107,7 +107,7 @@ Sessions are useful for:
 
 ## Comparing two models
 
-> Note: The `chat-compare` subcommand is planned for v0.6.0+ Pro CLI tier (see [Phase 13 roadmap on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap.md)). Today the same comparison runs through `forgelm --benchmark-only` against each checkpoint and a downstream judge config; the snippet below previews the dedicated UX.
+> Note: The `chat-compare` subcommand — an interactive, side-by-side chat-prompt comparison with judge adjudication — is planned for v0.6.0+ Pro CLI tier (see [Phase 13 roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)). There is no equivalent today: `forgelm --benchmark-only` (see `forgelm/cli/_no_train_modes.py`) runs lm-evaluation-harness benchmarks on a **single** checkpoint at a time — it does not do side-by-side comparison or judge adjudication. To compare two checkpoints now, run `--benchmark-only` once per checkpoint, run the judge separately, and aggregate the results yourself. The snippet below previews the planned UX.
 
 ```shell
 $ forgelm chat-compare ./checkpoints/v1 ./checkpoints/v2 --prompts data/probes.jsonl

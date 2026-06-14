@@ -128,4 +128,4 @@ Either way, exit code is `1`. Investigate before treating the log as evidence.
 - [Audit Log](#/compliance/audit-log) — operator-facing primer on the log this command verifies.
 - [Annex IV](#/compliance/annex-iv) — the technical-documentation artifact whose verifier (`forgelm verify-annex-iv`) shares this verifier's design pattern.
 - [Verify GGUF](#/deployment/verify-gguf) — companion verifier on the deployment-integrity surface.
-- [`audit_event_catalog.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/audit_event_catalog.md) — events that appear *inside* the verified log (GitHub source).
+- [`audit_event_catalog.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md) — events that appear *inside* the verified log (GitHub source).

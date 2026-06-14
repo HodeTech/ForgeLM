@@ -127,7 +127,7 @@ This is why the `--dry-run` smoke path works without GPUs: all behaviour is dete
 
 ### 3. Optional dependencies are extras, never silent imports
 
-Heavy deps (`bitsandbytes`, `unsloth`, `deepspeed`, `lm-eval`, `wandb`, `mergekit`) are declared in `pyproject.toml` under `[project.optional-dependencies]` with specific version bounds. At call sites:
+Heavy deps (`bitsandbytes`, `unsloth`, `deepspeed`, `lm-eval`, `wandb`) are declared in `pyproject.toml` under `[project.optional-dependencies]` with version constraints (a lower bound each; some also carry an upper bound). At call sites:
 
 ```python
 try:
@@ -200,7 +200,7 @@ From [`pyproject.toml`](../../pyproject.toml):
 | `eval` | lm-evaluation-harness | Any |
 | `tracking` | Weights & Biases | Any |
 | `distributed` | DeepSpeed | Linux only |
-| `merging` | mergekit | Any |
+| `merging` | _(none — native peft+torch; no-op extra)_ | Any |
 | `ingestion` | pypdf, python-docx, ebooklib, beautifulsoup4, langdetect, xxhash | Any |
 | `ingestion-scale` | datasketch (MinHash LSH dedup; Phase 12, opt-in) | Any |
 | `ingestion-pii-ml` | presidio-analyzer (ML-NER for person/organization/location PII; Phase 12.5, opt-in) | Any |

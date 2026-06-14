@@ -74,7 +74,7 @@ Commit this file. It's small (one row per run, JSON), and it's the only way to t
 
 ## Visualisation
 
-ForgeLM ships a CLI report. The dedicated `forgelm trend` subcommand is planned for v0.6.0+ Pro CLI tier (see the [Phase 13 roadmap on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap.md)) — today the same data is queryable directly from the JSONL with `jq`. Today's working flow:
+ForgeLM ships a CLI report. The dedicated `forgelm trend` subcommand is planned for v0.6.0+ Pro CLI tier (see the [Phase 13 roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)) — today the same data is queryable directly from the JSONL with `jq`. Today's working flow:
 
 ```shell
 # Last 20 S5 (defamation) scores from the trend log:

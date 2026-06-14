@@ -5,7 +5,7 @@ description: Her forgelm subcommand için kilitli --output-format json envelope 
 
 # JSON çıktı şemaları
 
-`--output-format json` destekleyen her `forgelm` subcommand'ı stdout'a stabil bir JSON envelope üretir. Alan adları ve nesting [GitHub'daki release standardı](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/release.md) gereği public CLI kontratının parçası: bir anahtarı yeniden adlandırmak MAJOR-version break sayılır.
+`--output-format json` destekleyen her `forgelm` subcommand'ı stdout'a stabil bir JSON envelope üretir. Alan adları ve nesting [GitHub'daki release standardı](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/release.md) gereği public CLI kontratının parçası: bir anahtarı yeniden adlandırmak MAJOR-version break sayılır.
 
 Bu sayfa kanonik referanstır. `forgelm` çıktısını parse eden CI/CD pipeline'ları burada belgelenen yapılara karşı pin'lemelidir.
 
@@ -13,8 +13,8 @@ Bu sayfa kanonik referanstır. `forgelm` çıktısını parse eden CI/CD pipelin
 
 - **stdout vs stderr.** JSON envelope **stdout**'a gider. İnsana okunabilir loglar (info / warning / error) **stderr**'e gider. `forgelm ... --output-format json | jq .` ile pipe edip operatör mesajlarını `2>` ile ayrı okuyun.
 - **Üst seviye sarmalayıcı.** Her envelope `"success": true | false` ile başlar. Tüketiciler önce bu tek anahtarda branch açabilir.
-- **Hata envelope'u.** `success: false` olduğunda envelope `"error": "<mesaj>"` (string) taşır. Opsiyonel zenginleştirilmiş alanlar (`exit_code`, `error_type`, `details`) [GitHub'daki error-handling standardı](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/error-handling.md) gereği var olabilir. Bu alanlardan kesinlik isteyen tüketiciler `$?` ile süreç exit kodunu da kontrol etmelidir.
-- **Exit kodları.** Bkz. [Exit Kodları](#/reference/exit-codes). Envelope, exit code ile tutarlıdır: `success: true` ⟺ exit `0`; `success: false` ⟺ non-zero exit.
+- **Hata envelope'u.** `success: false` olduğunda envelope `"error": "<mesaj>"` (string) taşır. Opsiyonel zenginleştirilmiş alanlar (`exit_code`, `error_type`, `details`) [GitHub'daki error-handling standardı](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/error-handling.md) gereği var olabilir. Bu alanlardan kesinlik isteyen tüketiciler `$?` ile süreç exit kodunu da kontrol etmelidir.
+- **Exit kodları.** Bkz. [Exit Kodları](#/reference/exit-codes). `success: false` her zaman non-zero bir exit ile eşleşir. `success: true` normal durumda exit `0` ile eşleşir, **tek istisna** dışında: Article 14 insan-onay gate'inde duraklayan bir eğitim çalışması `success: true` **ve** `awaiting_approval: true` emit ederken exit `4` ile çıkar (model stage'lenmiştir, henüz promote edilmemiştir). "Bitti" ile "insan onayı bekliyor"u ayırması gereken tüketiciler tek başına `success` yerine `awaiting_approval` discriminator'ını (veya `$?`'i) okumalıdır.
 
 ## `forgelm doctor`
 
@@ -72,6 +72,60 @@ Eğitim pipeline'ı (`forgelm --config <yaml> --output-format json`) ağır stac
 | `remediation` | str | İnsan-okunabilir fix talimatı, tam `pip install 'numpy<2'` komutuyla biten. `forgelm doctor` `numpy.torch_abi` probe'unun `detail` alanıyla bire bir aynı metin — tek kaynak. |
 
 **Exit code mapping:** preflight abort, `2` (`EXIT_TRAINING_ERROR`, runtime-error sınıfı) ile çıkar. Aynı `forgelm doctor` `numpy.torch_abi` probe'u önceden `status: "fail"` olarak yüzeye çıkarırdı; preflight, `doctor`'ı skip edip eğitimi doğrudan çalıştıran operatörler için ikinci savunma hattıdır.
+
+## `forgelm` (eğitim) — sonuç envelope'u
+
+Eğitim tamamlanana kadar çalıştığında pipeline **stdout**'a bir sonuç envelope'u emit eder. Aynı envelope şekli üç sonucu da kapsar; `success` + `awaiting_approval` + `reverted` anahtarları aralarında ayrım yapar.
+
+**Başarı envelope'u** (model promote edildi; exit `0`):
+
+```json
+{
+  "success": true,
+  "metrics": {"eval_loss": 0.42, "benchmark/average": 0.78},
+  "final_model_path": "/work/output/final_model",
+  "reverted": false,
+  "awaiting_approval": false
+}
+```
+
+**Onay-bekliyor envelope'u** (`evaluation.require_human_approval: true`; model **stage'lendi**, henüz promote edilmedi; exit `4`):
+
+```json
+{
+  "success": true,
+  "metrics": {"eval_loss": 0.42},
+  "final_model_path": "/work/output/final_model.staging.fg-abc123def456",
+  "reverted": false,
+  "awaiting_approval": true,
+  "staging_path": "/work/output/final_model.staging.fg-abc123def456"
+}
+```
+
+**Revert envelope'u** (bir post-train gate `auto_revert: true` altında başarısız oldu; artefactlar silindi; exit `3`):
+
+```json
+{
+  "success": false,
+  "metrics": {"eval_loss": 0.91},
+  "final_model_path": "/work/output/final_model",
+  "reverted": true,
+  "awaiting_approval": false
+}
+```
+
+| Anahtar | Tip | Not |
+|---|---|---|
+| `success` | bool | Çalışma tamamlandığında (stage'lenmiş, onay-bekleyen çalışma dahil) `true`. Bir gate modeli auto-revert ettiğinde `false`. |
+| `metrics` | object | Sayısal eğitim/eval/gate metrikleri (ör. `eval_loss`, `benchmark/average`, `safety/safe_ratio`). |
+| `final_model_path` | str | Model artefactlarının yaşadığı yer. Onay-bekleyen bir çalışma için bu, `forgelm approve` promote edene kadar **staging** dizinidir. |
+| `reverted` | bool | Bir gate (eval-loss / benchmark / safety / judge) modeli auto-revert ettiyse `true`. `awaiting_approval` ile karşılıklı dışlayıcıdır. |
+| `awaiting_approval` | bool | **Discriminator.** Çalışma Article 14 insan-onay gate'inde durakladıysa (exit `4`) `true`. Revert edilmiş bir çalışma burada her zaman `false`'tur. |
+| `staging_path` | str | Yalnızca `awaiting_approval` `true` iken vardır; `forgelm approve <run_id>` / `forgelm reject <run_id>`'e geçilecek on-disk staging dizini. |
+
+Opsiyonel alt-bloklar (`benchmark`, `resource_usage`, `estimated_cost_usd`, `safety`, `judge`) yalnızca o değerlendirmeler çalıştığında eklenir.
+
+**Exit code mapping:** `0` = başarı (promote edildi); `3` = `EXIT_EVAL_FAILURE` (bir gate modeli revert etti — `reverted: true`); `4` = `EXIT_AWAITING_APPROVAL` (`awaiting_approval: true`, insan onayı bekleyen stage). Revert edilmiş bir çalışma **asla** onay-bekliyor olarak raporlanmaz.
 
 ## `forgelm approvals --pending`
 
@@ -528,10 +582,10 @@ Wave 2b Phase 36 — GGUF model dosyası bütünlük kontrolü.
 2. Üst seviye anahtarların tam setini pin'leyen `tests/test_json_envelope_contract.py` (veya per-subcommand test dosyası) testi.
 3. Per-collection anahtar "sonuçlar subcommand'in birincil ismine göre adlandırılmış bir anahtar altında yaşar" konvansiyonunu izler (yani `doctor` → `checks`, `approvals --pending` → `pending` vb.).
 
-Merge sonrası bir anahtarı yeniden adlandırmak [GitHub'daki release standardı](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/release.md) gereği MAJOR-version bump'tır.
+Merge sonrası bir anahtarı yeniden adlandırmak [GitHub'daki release standardı](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/release.md) gereği MAJOR-version bump'tır.
 
 ## Ayrıca bakın
 
 - [Exit Kodları](#/reference/exit-codes) — `success: bool`'ın aligned olduğu kontrat.
-- [`error-handling.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/error-handling.md) — hata envelope kontratı (GitHub kaynağı).
-- [`release.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/standards/release.md) — JSON yeniden adlandırmaları ne zaman breaking sayılır (GitHub kaynağı).
+- [`error-handling.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/error-handling.md) — hata envelope kontratı (GitHub kaynağı).
+- [`release.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/release.md) — JSON yeniden adlandırmaları ne zaman breaking sayılır (GitHub kaynağı).

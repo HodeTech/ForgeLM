@@ -36,7 +36,7 @@ usermanual page, every link MUST be one of:
 
 1. A SPA route `#/<section>/<page>` where the target file exists under
    `docs/usermanuals/<lang>/<section>/<page>.md`.
-2. An absolute HTTPS URL (use `https://github.com/cemililik/ForgeLM/blob/main/<path>`
+2. An absolute HTTPS URL (use `https://github.com/HodeTech/ForgeLM/blob/main/<path>`
    for project files that live outside the manual — guides, references,
    QMS templates, source files, the roadmap).
 3. A pure same-file anchor (`#heading-slug`).

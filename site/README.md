@@ -59,10 +59,10 @@ To use your own Formspree form:
 
 ### 2. GitHub repo URL
 
-Search-and-replace `cemililik/ForgeLM` if you fork the project under a different organisation:
+Search-and-replace `HodeTech/ForgeLM` if you fork the project under a different organisation:
 
 ```bash
-grep -rl "cemililik/ForgeLM" site/ | xargs sed -i '' 's|cemililik/ForgeLM|YOUR_ORG/YourFork|g'
+grep -rl "HodeTech/ForgeLM" site/ | xargs sed -i '' 's|HodeTech/ForgeLM|YOUR_ORG/YourFork|g'
 ```
 
 ### 3. Domain / og-image / favicon

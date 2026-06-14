@@ -11,7 +11,7 @@ description: 16 GPU profilinde otomatik tespit ve saatlik tarifenize göre koşu
 > planlanmıştır** ve `forgelm/config.py` tarafından şu an honure
 > edilmiyor. Aşağıdaki `cost_tracking:` örnekleri ileriye dönük
 > yer tutuculardır — YAML yüzeyi inene kadar saatlik tarifeleri
-> manuel ayarlayın. Erteleme için bkz. [GitHub'daki risks-and-decisions yol haritası](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap/risks-and-decisions.md).
+> manuel ayarlayın. Erteleme için bkz. [GitHub'daki risks-and-decisions yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap/risks-and-decisions.md).
 
 ForgeLM, üzerinde koştuğunuz GPU'yu tespit eder, profilini (bellek, compute, tipik saatlik tarife) bulur ve koşu başı maliyeti izler. Her koşunun ardından audit log tam olarak ne kadar GPU zamanı kullanıldığını ve maliyetini kaydeder.
 

@@ -156,4 +156,4 @@ Install with `pip install gguf` to add the metadata layer back. This matches the
 - [GGUF Export](#/deployment/gguf-export) — the production side that writes the sidecar this verifier consumes.
 - [Verify Audit](#/compliance/verify-audit) — companion verifier on the compliance surface.
 - [Verify Annex IV](#/compliance/annex-iv) — companion verifier for the technical-documentation artifact.
-- [`verify_gguf_subcommand.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/verify_gguf_subcommand.md) — the reference doc with full flag table and library-symbol citations (GitHub source).
+- [`verify_gguf_subcommand.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/verify_gguf_subcommand.md) — the reference doc with full flag table and library-symbol citations (GitHub source).

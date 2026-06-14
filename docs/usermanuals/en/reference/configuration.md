@@ -302,7 +302,7 @@ auth:
 
 There is no `deployment:` top-level YAML key in v0.5.5 — `ForgeConfig` rejects unknown keys (`extra="forbid"`), so adding one to your training config raises `ConfigError` at load time. Deployment knobs are exposed as `forgelm deploy` CLI flags instead. The live target choices are `--target {ollama,vllm,tgi,hf-endpoints}`; see the [Deploy targets page](#/deployment/deploy-targets) and the [CLI reference](#/reference/cli) for the full surface.
 
-> **Planned for v0.6.0+:** A YAML-backed `deployment:` section is on the [Phase 14 pipeline-chains roadmap on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap.md) (deferred from earlier v0.5.x placeholders). Until then, treat any "deployment:" YAML you find in third-party templates as informational; only the `forgelm deploy` flags are authoritative.
+> **Planned for v0.6.0+:** A YAML-backed `deployment:` section is on the [Phase 14 pipeline-chains roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md) (deferred from earlier v0.5.x placeholders). Until then, treat any "deployment:" YAML you find in third-party templates as informational; only the `forgelm deploy` flags are authoritative.
 
 ## See also
 

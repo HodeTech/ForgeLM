@@ -12,12 +12,12 @@ ForgeLM ships an official Dockerfile and `docker-compose.yml` for reproducible t
 Pull the official image:
 
 ```shell
-$ docker pull ghcr.io/cemililik/forgelm:latest
+$ docker pull ghcr.io/hodetech/forgelm:latest
 $ docker run --gpus all \
     -v $PWD:/workspace \
     -v $HOME/.cache/huggingface:/root/.cache/huggingface \
     -e HF_TOKEN \
-    ghcr.io/cemililik/forgelm:latest \
+    ghcr.io/hodetech/forgelm:latest \
     forgelm --config /workspace/configs/run.yaml
 ```
 
@@ -43,7 +43,7 @@ version: "3.9"
 
 services:
   trainer:
-    image: ghcr.io/cemililik/forgelm:latest
+    image: ghcr.io/hodetech/forgelm:latest
     deploy:
       resources:
         reservations:
@@ -81,7 +81,7 @@ $ docker compose up trainer
 If you need custom modifications:
 
 ```shell
-$ git clone https://github.com/cemililik/ForgeLM
+$ git clone https://github.com/HodeTech/ForgeLM
 $ cd ForgeLM
 $ docker build -t forgelm:custom -f Dockerfile .
 $ docker run --gpus all forgelm:custom forgelm --version
@@ -95,7 +95,7 @@ For air-gapped environments, build an image with everything pre-cached:
 
 ```dockerfile
 # airgap.Dockerfile
-FROM ghcr.io/cemililik/forgelm:latest
+FROM ghcr.io/hodetech/forgelm:latest
 
 # Pre-cache the base model
 RUN forgelm cache-models --model "Qwen/Qwen2.5-7B-Instruct"

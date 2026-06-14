@@ -33,7 +33,10 @@ class MergeConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = Field(default=False, description="Enable post-training model merging via mergekit.")
+    enabled: bool = Field(
+        default=False,
+        description="Enable post-training model merging (native TIES / DARE / SLERP / linear on state dicts).",
+    )
     method: Literal["ties", "dare", "slerp", "linear"] = Field(
         default="ties",
         description="Merge algorithm: `ties` (TIES-merging), `dare` (DARE), `slerp` (spherical interpolation), `linear` (weighted average).",
@@ -828,7 +831,7 @@ class ForgeConfig(BaseModel):
     distributed: Optional[DistributedConfig] = Field(
         default=None, description="DeepSpeed / FSDP multi-GPU configuration block."
     )
-    merge: Optional[MergeConfig] = Field(default=None, description="Post-training mergekit configuration block.")
+    merge: Optional[MergeConfig] = Field(default=None, description="Post-training model-merging configuration block.")
     compliance: Optional[ComplianceMetadataConfig] = Field(
         default=None,
         description="Annex IV technical-documentation metadata block (provider name, system version, etc.).",

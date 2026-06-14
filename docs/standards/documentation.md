@@ -102,7 +102,7 @@ Rules:
 ✅ Relative sibling: error-handling.md
 ✅ Relative parent-tree: ../reference/configuration.md
 ❌ Absolute repo path: /docs/reference/configuration.md
-❌ Full GitHub URL: https://github.com/cemililik/ForgeLM/blob/main/docs/reference/configuration.md
+❌ Full GitHub URL: https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/configuration.md
 ```
 
 **External links:** full HTTPS URL. Prefer stable archives (arxiv.org, github.com) over transient news sites.
@@ -121,7 +121,7 @@ The viewer **only** knows how to render two kinds of in-content link:
 | Form | Example | Resolved by |
 |---|---|---|
 | SPA hash-router route | `[Audit Log](#/compliance/audit-log)` | `site/js/guide.js` → loads `docs/usermanuals/<lang>/compliance/audit-log.md` |
-| External HTTPS URL | `[Phase 13 roadmap](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap.md)` | The browser, in a new tab |
+| External HTTPS URL | `[Phase 13 roadmap](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)` | The browser, in a new tab |
 
 Any other form — a repo-relative path like `../../../guides/foo.md`, an
 intra-manual path like `../concepts/choosing-trainer.md`, or a SPA route

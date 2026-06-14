@@ -29,7 +29,14 @@ class WebhookNotifier:
         """Pick the webhook URL from the config, falling back to url_env."""
         if not self.config:
             return None
-        url = self.config.url
+        # ``getattr`` rather than ``self.config.url``: the approve/reject
+        # dispatchers rebuild this notifier from a co-located JSON manifest via a
+        # ``SimpleNamespace`` that need not carry every ``WebhookConfig``
+        # attribute.  A bare attribute access raised ``AttributeError`` there
+        # *after* the model was already promoted and the granted audit event
+        # committed — crashing a successful enterprise run and violating the
+        # public exit-code contract.
+        url = getattr(self.config, "url", None)
         if not url and getattr(self.config, "url_env", None):
             url = os.getenv(self.config.url_env)
         return url or None

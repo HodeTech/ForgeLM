@@ -128,4 +128,4 @@ Her iki durumda da çıkış kodu `1`'dir. Log'u kanıt saymadan önce inceleyin
 - [Audit Log](#/compliance/audit-log) — bu komutun doğruladığı log'a dair operatör-odaklı kılavuz.
 - [Annex IV](#/compliance/annex-iv) — doğrulayıcısı (`forgelm verify-annex-iv`) bu komutun tasarım desenini paylaşan teknik dokümantasyon artifact'ı.
 - [GGUF Doğrulama](#/deployment/verify-gguf) — deployment-bütünlük yüzeyindeki kardeş doğrulayıcı.
-- [`audit_event_catalog.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/audit_event_catalog.md) — doğrulanan log'un *içinde* görünen event'ler (GitHub kaynağı).
+- [`audit_event_catalog.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md) — doğrulanan log'un *içinde* görünen event'ler (GitHub kaynağı).

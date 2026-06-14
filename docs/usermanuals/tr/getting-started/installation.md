@@ -87,8 +87,8 @@ Bu kasıtlıdır — DeepSpeed / bitsandbytes / Presidio / sentence-transformers
 Python bağımlılıklarını ana makinenize kurmak istemiyorsanız resmi Docker imajı tüm extra'larla ForgeLM'i paketler:
 
 ```shell
-$ docker pull ghcr.io/cemililik/forgelm:latest
-$ docker run --gpus all -v $PWD:/workspace ghcr.io/cemililik/forgelm:latest \
+$ docker pull ghcr.io/hodetech/forgelm:latest
+$ docker run --gpus all -v $PWD:/workspace ghcr.io/hodetech/forgelm:latest \
     forgelm --config /workspace/configs/run.yaml
 ```
 

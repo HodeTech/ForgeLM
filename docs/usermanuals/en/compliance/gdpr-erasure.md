@@ -7,7 +7,7 @@ description: Honour Article 15 (right of access) and Article 17 (right to erasur
 
 ForgeLM ships sister subcommands for the two most-common GDPR data-subject rights: `forgelm purge` (Article 17 — right to erasure) and `forgelm reverse-pii` (Article 15 — right of access). They share a per-output-dir salt so a compliance reviewer can correlate erasures and access requests for the same data subject in a single tamper-evident audit chain — without the cleartext identifier ever leaving the operator's terminal.
 
-This page is the operator quick-reference. The deeper deployer-flow walkthrough lives in the [GDPR erasure deployer guide on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/guides/gdpr_erasure.md); per-flag references are in the in-manual [CLI Reference](#/reference/cli) and the dedicated subcommand pages [`purge_subcommand.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/purge_subcommand.md) + [`reverse_pii_subcommand.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/reverse_pii_subcommand.md) on GitHub.
+This page is the operator quick-reference. The deeper deployer-flow walkthrough lives in the [GDPR erasure deployer guide on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/gdpr_erasure.md); per-flag references are in the in-manual [CLI Reference](#/reference/cli) and the dedicated subcommand pages [`purge_subcommand.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/purge_subcommand.md) + [`reverse_pii_subcommand.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/reverse_pii_subcommand.md) on GitHub.
 
 ## Two rights, one chain
 
@@ -37,7 +37,7 @@ forgelm purge --check-policy --config configs/run.yaml --output-dir ./outputs
 
 ### What gets recorded
 
-Six events ride the audit chain (see the [Audit Event Catalog on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/audit_event_catalog.md)):
+Six events ride the audit chain (see the [Audit Event Catalog on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md)):
 
 - `data.erasure_requested` — emitted FIRST, before any deletion.
 - `data.erasure_completed` — emitted LAST after the disk operation succeeded.
@@ -125,6 +125,6 @@ Codes 3 (`EXIT_EVAL_FAILURE`) and 4 (`EXIT_AWAITING_APPROVAL`) are not part of e
 
 - [Audit Log](#/compliance/audit-log) — where the `data.*` events are recorded.
 - [Human Oversight](#/compliance/human-oversight) — Article 14 sister gate that pairs with the GDPR rights for high-risk deployments.
-- [GDPR erasure deployer guide](https://github.com/cemililik/ForgeLM/blob/main/docs/guides/gdpr_erasure.md) — full deployer-flow walkthrough (GitHub source).
-- [`purge_subcommand.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/purge_subcommand.md) — `forgelm purge` per-flag reference (GitHub source).
-- [`reverse_pii_subcommand.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/reverse_pii_subcommand.md) — `forgelm reverse-pii` per-flag reference (GitHub source).
+- [GDPR erasure deployer guide](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/gdpr_erasure.md) — full deployer-flow walkthrough (GitHub source).
+- [`purge_subcommand.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/purge_subcommand.md) — `forgelm purge` per-flag reference (GitHub source).
+- [`reverse_pii_subcommand.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/reverse_pii_subcommand.md) — `forgelm reverse-pii` per-flag reference (GitHub source).

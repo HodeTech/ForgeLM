@@ -4,8 +4,8 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
 
 ## Ways to Contribute
 
-- **Bug reports** — found something broken? [Open a bug report](https://github.com/cemililik/ForgeLM/issues/new?template=bug_report.yml)
-- **Feature requests** — have an idea? [Open a feature request](https://github.com/cemililik/ForgeLM/issues/new?template=feature_request.yml)
+- **Bug reports** — found something broken? [Open a bug report](https://github.com/HodeTech/ForgeLM/issues/new?template=bug_report.yml)
+- **Feature requests** — have an idea? [Open a feature request](https://github.com/HodeTech/ForgeLM/issues/new?template=feature_request.yml)
 - **Code** — fix a bug, add a feature, improve tests
 - **Documentation** — fix typos, improve guides, add examples
 - **Notebooks** — add Colab notebooks for new use cases
@@ -18,7 +18,7 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
 ```bash
 git clone https://github.com/YOUR_USERNAME/ForgeLM.git
 cd ForgeLM
-git remote add upstream https://github.com/cemililik/ForgeLM.git
+git remote add upstream https://github.com/HodeTech/ForgeLM.git
 ```
 
 ### 2. Install (dev mode)
@@ -196,12 +196,12 @@ style: apply ruff format
 
 ## First-Time Contributors
 
-Look for issues labeled [`good first issue`](https://github.com/cemililik/ForgeLM/labels/good%20first%20issue). These are designed to be approachable for newcomers.
+Look for issues labeled [`good first issue`](https://github.com/HodeTech/ForgeLM/labels/good%20first%20issue). These are designed to be approachable for newcomers.
 
 ## Questions?
 
-- **GitHub Discussions** — [Ask a question](https://github.com/cemililik/ForgeLM/discussions)
-- **Issues** — [Report a bug or request a feature](https://github.com/cemililik/ForgeLM/issues)
+- **GitHub Discussions** — [Ask a question](https://github.com/HodeTech/ForgeLM/discussions)
+- **Issues** — [Report a bug or request a feature](https://github.com/HodeTech/ForgeLM/issues)
 
 ## License
 

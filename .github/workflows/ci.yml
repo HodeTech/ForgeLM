@@ -239,6 +239,18 @@ jobs:
         # to ``monkeypatch.delitem`` (auto-restores on teardown).
         run: python3 tools/check_no_unguarded_sys_modules_pop.py
 
+      - name: Audit-event catalog drift check (strict)
+        # W0/C7 (full-project review): the append-only audit log is a
+        # public compliance contract (EU AI Act Art. 12).  This guard
+        # cross-checks every dotted audit event emitted in forgelm/
+        # (log_event / _audit_event / event= / _EVT_* constants) against
+        # the canonical table in docs/reference/audit_event_catalog.md, in
+        # both directions — an undocumented emit OR a ghost catalog row
+        # fails CI.  Previously unwired: six pipeline.* stage events drifted
+        # into the code with zero tripwire.  See
+        # tools/check_audit_event_catalog.py.
+        run: python3 tools/check_audit_event_catalog.py --strict
+
       - name: User-manual self-contained link guard (strict)
         # Post-v0.7.0 cycle: the docs/usermanuals/ tree is the source of
         # truth for the static-site SPA viewer (site/usermanual.html +

@@ -101,7 +101,7 @@ jobs:
           # Colab installs depend on a specific branch HEAD, breaking
           # reproducibility and confusing users when main moves ahead of
           # the latest released wheel.
-          if grep -rn 'git+https://github.com/cemililik/ForgeLM' notebooks/; then
+          if grep -rn 'git+https://github.com/HodeTech/ForgeLM' notebooks/; then
             echo "::error::Notebooks must install from PyPI, not git+https"
             exit 1
           fi

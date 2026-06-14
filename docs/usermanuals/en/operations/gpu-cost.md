@@ -11,7 +11,7 @@ description: Auto-detect across 16 GPU profiles and track per-run cost against y
 > currently honoured by `forgelm/config.py`. Examples below that show
 > `cost_tracking:` fields are forward-looking placeholders — set hourly
 > rates manually until the YAML surface lands. The deferral is tracked in
-> the [risks-and-decisions roadmap on GitHub](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap/risks-and-decisions.md).
+> the [risks-and-decisions roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap/risks-and-decisions.md).
 
 ForgeLM detects the GPU you're running on, looks up its profile (memory, compute, typical hourly rate), and tracks per-run cost. After every run, the audit log records exactly how much GPU time was used and what it cost.
 

@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/forgelm.svg)](https://pypi.org/project/forgelm/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![CI](https://github.com/cemililik/ForgeLM/actions/workflows/ci.yml/badge.svg)](https://github.com/cemililik/ForgeLM/actions/workflows/ci.yml)
+[![CI](https://github.com/HodeTech/ForgeLM/actions/workflows/ci.yml/badge.svg)](https://github.com/HodeTech/ForgeLM/actions/workflows/ci.yml)
 
 **A config-driven LLM fine-tuning toolkit for everyone — from solo researchers to enterprise platform teams.** SFT → DPO → SimPO → KTO → ORPO → GRPO, with safety evaluation, EU AI Act compliance, and CI/CD-native design baked in. YAML in — fine-tuned model + audit artefacts out.
 
@@ -118,9 +118,9 @@ Full details: [Safety & Compliance Guide](docs/guides/safety_compliance.md) · [
 
 Featured walkthroughs, runnable in Colab on a free T4 GPU:
 
-- [Quick Start — SFT Fine-Tuning](notebooks/quickstart_sft.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cemililik/ForgeLM/blob/main/notebooks/quickstart_sft.ipynb)
-- [GRPO Reasoning RL](notebooks/grpo_reasoning.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cemililik/ForgeLM/blob/main/notebooks/grpo_reasoning.ipynb)
-- [Safety Evaluation & Red-Teaming](notebooks/safety_evaluation.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/cemililik/ForgeLM/blob/main/notebooks/safety_evaluation.ipynb)
+- [Quick Start — SFT Fine-Tuning](notebooks/quickstart_sft.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/HodeTech/ForgeLM/blob/main/notebooks/quickstart_sft.ipynb)
+- [GRPO Reasoning RL](notebooks/grpo_reasoning.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/HodeTech/ForgeLM/blob/main/notebooks/grpo_reasoning.ipynb)
+- [Safety Evaluation & Red-Teaming](notebooks/safety_evaluation.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/HodeTech/ForgeLM/blob/main/notebooks/safety_evaluation.ipynb)
 
 See [notebooks/](notebooks/) for the full set (DPO, KTO, multi-dataset, GaLore, synthetic data, post-training workflow, data curation).
 
@@ -133,7 +133,7 @@ See [notebooks/](notebooks/) for the full set (DPO, KTO, multi-dataset, GaLore, 
 pip install forgelm
 
 # From source
-git clone https://github.com/cemililik/ForgeLM.git
+git clone https://github.com/HodeTech/ForgeLM.git
 cd ForgeLM
 pip install -e .
 ```
@@ -148,7 +148,7 @@ pip install "forgelm[unsloth]"          # Unsloth backend (Linux)
 pip install "forgelm[eval]"             # lm-evaluation-harness
 pip install "forgelm[tracking]"         # W&B / MLflow
 pip install "forgelm[distributed]"      # DeepSpeed
-pip install "forgelm[merging]"          # mergekit
+pip install "forgelm[merging]"          # model merging (TIES/DARE/SLERP — native, no extra deps)
 pip install "forgelm[ingestion]"        # PDF / DOCX / EPUB / Markdown
 pip install "forgelm[ingestion-scale]"  # MinHash LSH for large corpora
 pip install "forgelm[ingestion-pii-ml]" # Presidio NER (also needs spaCy model)

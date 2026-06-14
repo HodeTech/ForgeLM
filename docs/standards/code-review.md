@@ -1,6 +1,6 @@
 # Code Review Standard
 
-> **Scope:** Every pull request to `cemililik/ForgeLM`. Applies equally to external contributors and the maintainer.
+> **Scope:** Every pull request to `HodeTech/ForgeLM`. Applies equally to external contributors and the maintainer.
 > **Enforced by:** `.github/pull_request_template.md` checklist + CI gates + reviewer attention.
 
 ## The default state of a PR is "blocked"

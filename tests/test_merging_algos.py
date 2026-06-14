@@ -43,6 +43,17 @@ class TestTiesMergeTensor:
         result = _ties_merge_tensor([d1], [1.0], trim_fraction=0.0)
         assert torch.allclose(result, d1)
 
+    def test_trim_handles_tensors_above_quantile_limit(self):
+        """F-P3-FABLE-19: ``torch.quantile`` hard-fails above 2^24 elements, so
+        the DEFAULT TIES merge crashed on every real-size model. The kthvalue
+        threshold must handle a tensor just past the limit without raising."""
+        n = (1 << 24) + 1_000  # just above torch.quantile's 16,777,216 limit
+        d1 = torch.randn(n)
+        result = _ties_merge_tensor([d1], [1.0], trim_fraction=0.2)
+        assert result.shape == d1.shape
+        # ~20% of magnitudes trimmed to zero; the rest preserved.
+        assert (result == 0).sum().item() > 0
+
 
 class TestDareMergeTensor:
     def test_basic_merge(self):

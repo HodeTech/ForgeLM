@@ -74,7 +74,7 @@ Bu dosyayı commit edin. Küçüktür (koşu başına bir satır, JSON) ve CI ko
 
 ## Görselleştirme
 
-ForgeLM bir CLI raporu yayınlar. Özel `forgelm trend` subcommand'ı v0.6.0+ Pro CLI seviyesi için planlanmıştır ([GitHub'daki Phase 13 yol haritası](https://github.com/cemililik/ForgeLM/blob/main/docs/roadmap.md)) — bugün aynı veri JSONL'dan `jq` ile sorgulanabilir. Bugünkü çalışan akış:
+ForgeLM bir CLI raporu yayınlar. Özel `forgelm trend` subcommand'ı v0.6.0+ Pro CLI seviyesi için planlanmıştır ([GitHub'daki Phase 13 yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)) — bugün aynı veri JSONL'dan `jq` ile sorgulanabilir. Bugünkü çalışan akış:
 
 ```shell
 # Son 20 S5 (iftira) skoru:

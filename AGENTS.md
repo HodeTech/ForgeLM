@@ -157,11 +157,12 @@ Default workflow for a non-trivial change:
      python3 tools/check_wizard_defaults_sync.py && \
      python3 tools/check_no_analysis_refs.py && \
      python3 tools/check_no_unguarded_sys_modules_pop.py && \
+     python3 tools/check_audit_event_catalog.py --strict && \
      python3 tools/check_usermanual_self_contained.py --strict && \
      python3 tools/update_site_version.py --check
    ```
 
-   All twelve must pass. The first four are the historical gauntlet;
+   All thirteen must pass. The first four are the historical gauntlet;
    the three doc guards (Wave 3 / Wave 4 / Wave 5 additions) catch
    bilingual structural drift, broken markdown anchors, and CLI ↔ docs
    help-text drift before the PR opens. The wizard-defaults guard
@@ -174,6 +175,12 @@ Default workflow for a non-trivial change:
    `sys.modules.pop("torch"|"numpy"|"trl"|…)` without
    `monkeypatch.delitem` — the v0.5.7 round-3 review traced 35
    spurious full-suite failures to that exact pattern.  The
+   audit-event-catalog guard (full-project-review W0/C7) cross-checks
+   every dotted audit event emitted in `forgelm/` against the canonical
+   table in `docs/reference/audit_event_catalog.md` in both directions —
+   the append-only audit log is an EU AI Act Art. 12 contract, and this
+   guard was previously unwired while six `pipeline.*` stage events
+   drifted into the code uncatalogued.  The
    usermanual self-contained guard (post-v0.7.0 cycle) blocks any
    link inside `docs/usermanuals/` that would 404 in the static SPA
    viewer: every link must be either a `#/<section>/<page>` SPA

@@ -12,7 +12,7 @@
 ## 1. Kurulum
 
 ```bash
-git clone https://github.com/cemililik/ForgeLM.git
+git clone https://github.com/HodeTech/ForgeLM.git
 cd ForgeLM
 pip install -e .
 
@@ -63,7 +63,7 @@ seçilmiş kendi fallback'i vardır:
 `--model your-org/your-model` ya da `--dataset path/to/your.jsonl` ile
 override edin.
 
-Bundled seed dataset'lerin lisansları için bkz. [LICENSES.md](https://github.com/cemililik/ForgeLM/blob/main/forgelm/templates/LICENSES.md)
+Bundled seed dataset'lerin lisansları için bkz. [LICENSES.md](https://github.com/HodeTech/ForgeLM/blob/main/forgelm/templates/LICENSES.md)
 (CC-BY-SA 4.0, yazar-orijinal).
 
 ### Seçenek A: Etkileşimli Sihirbaz
@@ -309,7 +309,7 @@ synthetic:
 Sentetik satır sayısı seed-file boyutu ile kontrol edilir (seed başına
 bir teacher çağrısı); tam alan seti için `forgelm/config.py` içindeki
 `SyntheticConfig` Pydantic modeline bakın
-([repo-arama](https://github.com/cemililik/ForgeLM/search?q=class+SyntheticConfig)).
+([repo-arama](https://github.com/HodeTech/ForgeLM/search?q=class+SyntheticConfig)).
 
 ---
 

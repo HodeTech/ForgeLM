@@ -60,7 +60,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
-from ..config import ForgeConfig, PipelineConfig, PipelineStage, merge_pipeline_stage_config
+from ..config import ConfigError, ForgeConfig, PipelineConfig, PipelineStage, merge_pipeline_stage_config
 from ._exit_codes import (
     EXIT_AWAITING_APPROVAL,
     EXIT_CONFIG_ERROR,
@@ -373,26 +373,42 @@ class PipelineOrchestrator:
                 ", ".join(s.name for s in self.pipeline.stages),
             )
             return None, EXIT_CONFIG_ERROR
-        # Phase 14 post-release review: a stage that exited with
-        # ``EXIT_AWAITING_APPROVAL`` is recorded with
-        # ``status == "gated_pending_approval"`` rather than
-        # ``"completed"``.  After an operator runs ``forgelm approve``
-        # and the promoted-model directory exists on disk, a
-        # subsequent ``--resume-from <later_stage>`` MUST skip the
-        # gated stage too — otherwise the orchestrator would re-train
-        # it, the next stage would auto-chain from the freshly-trained
-        # output instead of the operator-approved one, and the audit
-        # log would carry two ``pipeline.stage_started`` events for the
-        # same stage_index.  Treat ``gated_pending_approval`` the same
-        # as ``completed`` for skip-eligibility: presence of an
-        # ``output_model`` directory on disk is what proves the stage
-        # produced a real artefact, regardless of which status label
-        # it carries.
-        _SKIPPABLE_STATUSES = {"completed", "gated_pending_approval"}
+        # Skip-eligibility is decided on the **state-file status**, NOT on
+        # disk presence of ``output_model``.  A stage that halted at the
+        # Article 14 human-approval gate is recorded as
+        # ``gated_pending_approval`` and its ``output_model`` points at the
+        # UNAPPROVED staging directory (``final_model.staging.<run_id>``).
+        # That directory existing on disk is exactly NOT proof the artefact
+        # may be consumed — skipping such a stage would chain downstream
+        # training from a model no human has signed off, defeating the gate
+        # (P2-FAB-01).  Refuse the resume with a clear, actionable error
+        # instead.  (The approval workflow that flips the stage to a
+        # skippable status is handled separately — until then, resuming past
+        # an un-approved gate is correctly blocked, never silently bypassed.)
         stages_to_skip_completed: List[str] = []
         for prior_state in state.stages[:resume_idx]:
+            if prior_state.status == "gated_pending_approval":
+                logger.error(
+                    "Cannot --resume-from %r: prior stage %r is awaiting human approval "
+                    "(status=gated_pending_approval) and has NOT been approved.  Resuming "
+                    "would chain downstream training from the unapproved staging model and "
+                    "bypass the Article 14 gate.  Run `forgelm approve <run_id> --output-dir "
+                    "<stage_output_dir>` (or `forgelm reject ...`) before resuming.",
+                    resume_from,
+                    prior_state.name,
+                )
+                # Article 14: record the blocked-resume decision in the
+                # append-only audit log so the refusal is reviewable.
+                self._audit_event(
+                    "pipeline.resume_refused",
+                    pipeline_run_id=state.pipeline_run_id,
+                    requested_stage=resume_from,
+                    blocking_stage=prior_state.name,
+                    blocking_status=prior_state.status,
+                )
+                return None, EXIT_CONFIG_ERROR
             if (
-                prior_state.status in _SKIPPABLE_STATUSES
+                prior_state.status == "completed"
                 and prior_state.output_model
                 and os.path.isdir(prior_state.output_model)
             ):
@@ -1285,6 +1301,11 @@ class PipelineOrchestrator:
             dataset = prepare_dataset(stage_cfg, tokenizer)
             trainer = ForgeTrainer(model=model, tokenizer=tokenizer, config=stage_cfg, dataset=dataset)
             return trainer.train()
+        except ConfigError:
+            # A config/environment error is exit 1, not the runtime-error class —
+            # propagate so the caller routes it to EXIT_CONFIG_ERROR rather than
+            # the generic EXIT_TRAINING_ERROR the None-return below maps to.
+            raise
         except Exception as exc:  # noqa: BLE001
             stage_state.error = f"Trainer crashed: {exc}"
             logger.exception("Stage %r trainer crashed.", stage_name)
@@ -1328,11 +1349,16 @@ class PipelineOrchestrator:
             input_source=stage_state.input_source,
         )
 
-        result = self._invoke_trainer(
-            stage_cfg=stage_cfg,
-            stage_name=stage.name,
-            stage_state=stage_state,
-        )
+        try:
+            result = self._invoke_trainer(
+                stage_cfg=stage_cfg,
+                stage_name=stage.name,
+                stage_state=stage_state,
+            )
+        except ConfigError as exc:
+            stage_state.error = str(exc)
+            logger.error("Stage %r failed with a configuration error: %s", stage.name, exc)
+            return EXIT_CONFIG_ERROR
         if result is None:
             return EXIT_TRAINING_ERROR
 
@@ -1343,15 +1369,22 @@ class PipelineOrchestrator:
             stage_cfg.training.output_dir, "compliance", "training_manifest.json"
         )
 
-        # Human-approval gate produces a non-zero exit + a staging_path.
-        if result.staging_path:
-            stage_state.output_model = result.staging_path
-            return EXIT_AWAITING_APPROVAL
-
-        # Auto-revert or gate failure: trainer returns success=False.
+        # Auto-revert or gate failure takes precedence: a reverted stage is an
+        # eval-failure (exit 3), never "awaiting approval" (exit 4). Revert
+        # deletes the staging dir and clears ``staging_path``, but route on
+        # ``success`` first so any result that still carries a stale staging_path
+        # cannot be misreported as awaiting approval.
         if not result.success:
             stage_state.error = result.error or "Stage gate failed."
             return EXIT_EVAL_FAILURE
+
+        # Human-approval gate: the stage genuinely awaits human sign-off
+        # (success=True, model staged). ``awaiting_approval`` is the
+        # authoritative discriminator — not ``bool(staging_path)``, which can
+        # survive a revert.
+        if result.awaiting_approval:
+            stage_state.output_model = result.staging_path
+            return EXIT_AWAITING_APPROVAL
 
         # Normal success path.
         stage_state.output_model = result.final_model_path or os.path.join(stage_cfg.training.output_dir, "final_model")

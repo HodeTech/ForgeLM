@@ -34,23 +34,23 @@ The deep guide answers each with the exact `jq` / CLI command + the artefact it 
 All of the following live alongside the toolkit on GitHub — they ship in the repository but are not part of this in-manual viewer.
 
 - The deep guide — full deployer cookbook, twelve-item setup checklist, common pitfalls:
-  [`iso_soc2_deployer_guide.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/guides/iso_soc2_deployer_guide.md)
+  [`iso_soc2_deployer_guide.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/iso_soc2_deployer_guide.md)
 - Full ISO 27001:2022 Annex A control mapping × ForgeLM evidence:
-  [`iso27001_control_mapping.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/iso27001_control_mapping.md)
+  [`iso27001_control_mapping.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/iso27001_control_mapping.md)
 - Full SOC 2 Trust Services Criteria mapping:
-  [`soc2_trust_criteria_mapping.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/soc2_trust_criteria_mapping.md)
+  [`soc2_trust_criteria_mapping.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/soc2_trust_criteria_mapping.md)
 - Pre-populated 93-control Statement of Applicability matrix:
-  [`statement_of_applicability.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/qms/statement_of_applicability.md)
+  [`statement_of_applicability.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/statement_of_applicability.md)
 - Pre-populated risk register:
-  [`risk_treatment_plan.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/qms/risk_treatment_plan.md)
+  [`risk_treatment_plan.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/risk_treatment_plan.md)
 - Substrate-side encryption guidance:
-  [`encryption_at_rest.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/qms/encryption_at_rest.md)
+  [`encryption_at_rest.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/encryption_at_rest.md)
 - Operator identity + secrets management:
-  [`access_control.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/qms/access_control.md)
+  [`access_control.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/access_control.md)
 - Incident response runbook:
-  [`sop_incident_response.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/qms/sop_incident_response.md)
+  [`sop_incident_response.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/sop_incident_response.md)
 - Change management runbook:
-  [`sop_change_management.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/qms/sop_change_management.md)
+  [`sop_change_management.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/sop_change_management.md)
 
 ## See also
 

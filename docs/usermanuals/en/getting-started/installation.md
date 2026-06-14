@@ -87,8 +87,8 @@ This is intentional — pulling DeepSpeed / bitsandbytes / Presidio / sentence-t
 If you'd rather not install Python dependencies on your host, the official Docker image bundles ForgeLM with all extras:
 
 ```shell
-$ docker pull ghcr.io/cemililik/forgelm:latest
-$ docker run --gpus all -v $PWD:/workspace ghcr.io/cemililik/forgelm:latest \
+$ docker pull ghcr.io/hodetech/forgelm:latest
+$ docker run --gpus all -v $PWD:/workspace ghcr.io/hodetech/forgelm:latest \
     forgelm --config /workspace/configs/run.yaml
 ```
 

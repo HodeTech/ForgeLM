@@ -171,7 +171,7 @@ training:
 
 ## Field reference
 
-The canonical schema lives in [`forgelm/config.py`](https://github.com/cemililik/ForgeLM/blob/main/forgelm/config.py)
+The canonical schema lives in [`forgelm/config.py`](https://github.com/HodeTech/ForgeLM/blob/main/forgelm/config.py)
 under the Pydantic models `ForgeConfig`, `ModelConfig`, `LoraConfig`,
 `TrainingConfig`, `DataConfig`, `EvaluationConfig`, `BenchmarkConfig`,
 `SafetyConfig`, `JudgeConfig`, `ComplianceMetadataConfig`,

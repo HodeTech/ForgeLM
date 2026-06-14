@@ -79,7 +79,7 @@ def merge_peft_adapters(
             num_models=len(adapters),
         )
 
-    except Exception as e:  # noqa: BLE001 — best-effort: model merging crosses HF model load (OSError/RuntimeError), PEFT adapter load (KeyError on missing config), torch tensor ops (RuntimeError on dtype/device mismatch), and mergekit-internal errors.  MergeResult(success=False) is the documented public contract.  # NOSONAR
+    except Exception as e:  # noqa: BLE001 — best-effort: model merging crosses HF model load (OSError/RuntimeError), PEFT adapter load (KeyError on missing config), and torch tensor ops (RuntimeError on dtype/device mismatch).  Merging is native (peft + torch); MergeResult(success=False) is the documented public contract.  # NOSONAR
         logger.exception("Model merging failed")
         return MergeResult(success=False, error=str(e))
 
@@ -263,9 +263,14 @@ def _ties_merge_tensor(deltas, weights, trim_fraction=0.2):
         flat = stacked[i].abs().flatten()
         if flat.numel() == 0:
             continue
-        # flat is already 1-D from .flatten(); dim=0 is explicit and
-        # equivalent to the default behavior over a 1-D tensor.
-        threshold = torch.quantile(flat.float(), trim_fraction, dim=0)
+        # ``torch.quantile`` hard-fails above 2^24 elements (PyTorch #64947) —
+        # which every real-model weight tensor exceeds (a 7B mlp.gate_proj is
+        # ~45M elements), so the DEFAULT TIES merge crashed on any non-toy model
+        # (F-P3-FABLE-19). ``kthvalue`` has no size limit and yields the same
+        # trim threshold: the k-th smallest magnitude, k = trim_fraction · n.
+        flat_f = flat.float()
+        k = max(1, int(trim_fraction * flat_f.numel()))
+        threshold = flat_f.kthvalue(k).values
         stacked[i][stacked[i].abs() < threshold] = 0.0
 
     # Step 2: Elect sign — majority vote (ties resolve to +1)

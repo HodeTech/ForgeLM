@@ -156,4 +156,4 @@ Meta veri katmanını geri eklemek için `pip install gguf` ile yükleyin. Bu, p
 - [GGUF Export](#/deployment/gguf-export) — bu doğrulayıcının tükettiği sidecar'ı yazan üretim tarafı.
 - [Audit Log Doğrulama](#/compliance/verify-audit) — uyumluluk yüzeyindeki kardeş doğrulayıcı.
 - [Annex IV Doğrulama](#/compliance/annex-iv) — teknik dokümantasyon artifact'ı için kardeş doğrulayıcı.
-- [`verify_gguf_subcommand-tr.md`](https://github.com/cemililik/ForgeLM/blob/main/docs/reference/verify_gguf_subcommand-tr.md) — tam bayrak tablosu ve kütüphane-sembol atıfları içeren referans doc (GitHub kaynağı).
+- [`verify_gguf_subcommand-tr.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/verify_gguf_subcommand-tr.md) — tam bayrak tablosu ve kütüphane-sembol atıfları içeren referans doc (GitHub kaynağı).

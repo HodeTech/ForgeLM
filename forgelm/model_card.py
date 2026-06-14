@@ -11,6 +11,38 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger("forgelm.model_card")
 
+# Substrings that mark a config field as secret-bearing. ``*_env`` fields hold
+# the NAME of an env var (e.g. ``OPENAI_API_KEY``), not the secret itself, so
+# they are excluded from redaction below.
+_SECRET_KEY_TOKENS = ("api_key", "token", "secret", "password", "passwd", "credential")
+
+
+def _is_secret_key(key: Any) -> bool:
+    k = str(key).lower()
+    if k.endswith("_env"):
+        return False  # env-var-name reference, not the secret value
+    return any(tok in k for tok in _SECRET_KEY_TOKENS)
+
+
+def _redact_secrets(value: Any) -> Any:
+    """Recursively redact any dict value whose key signals a secret.
+
+    Defence-in-depth over the model-card config dump: the nested
+    ``model_dump`` redaction overrides (``SyntheticConfig.api_key``,
+    ``AuthConfig.hf_token``) are BYPASSED when the parent ``ForgeConfig``
+    serializes — Pydantic v2's parent ``model_dump`` recurses via its own
+    serializer, not the child class's Python-level override — so a populated
+    ``synthetic.api_key`` would otherwise land in ``README.md`` in plaintext
+    (F-P1-FAB-01). This masks any residual secret regardless of which section
+    it lives in, complementing the section-level ``exclude`` below.
+    """
+    if isinstance(value, dict):
+        return {k: ("***REDACTED***" if _is_secret_key(k) and v else _redact_secrets(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_secrets(v) for v in value]
+    return value
+
+
 MODEL_CARD_TEMPLATE = """---
 language:
 - en
@@ -24,7 +56,7 @@ base_model: {base_model}
 
 # {model_name}
 
-Fine-tuned with [ForgeLM](https://github.com/cemililik/ForgeLM) — config-driven LLM fine-tuning toolkit.
+Fine-tuned with [ForgeLM](https://github.com/HodeTech/ForgeLM) — config-driven LLM fine-tuning toolkit.
 
 ## Training Details
 
@@ -184,8 +216,13 @@ def generate_model_card(
     method = _format_method(config, trainer_type)
     extra_tags_str = _build_extra_tags(config, trainer_type, safety_cfg)
 
-    # Serialize config to YAML (excluding sensitive fields)
-    config_dict = config.model_dump(exclude={"auth", "webhook", "monitoring"})
+    # Serialize config to YAML. Two-layer secret defence:
+    #   1. Drop whole secret-bearing / noisy sections (``synthetic`` added — its
+    #      ``api_key`` was leaking into the card because the parent-serialization
+    #      path bypasses SyntheticConfig.model_dump's redaction — F-P1-FAB-01).
+    #   2. Recursively mask any residual secret-keyed value in what remains.
+    config_dict = config.model_dump(exclude={"auth", "webhook", "monitoring", "synthetic"})
+    config_dict = _redact_secrets(config_dict)
     config_yaml = yaml.dump(config_dict, default_flow_style=False, sort_keys=False)
 
     card = MODEL_CARD_TEMPLATE.format(

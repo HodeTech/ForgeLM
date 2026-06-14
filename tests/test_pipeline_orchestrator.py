@@ -484,11 +484,48 @@ class TestHumanApprovalGate:
         cfg = _three_stage_config(tmp_path)
         staging = str(tmp_path / "stage1" / "final_model.staging")
         os.makedirs(staging, exist_ok=True)
-        results = [TrainResult(success=True, staging_path=staging)]
+        results = [TrainResult(success=True, awaiting_approval=True, staging_path=staging)]
         _install_trainer_mocks(monkeypatch, results)
         orch = PipelineOrchestrator(cfg, b"yaml bytes")
         code = orch.run()
         assert code == EXIT_AWAITING_APPROVAL
+
+    def test_reverted_gated_stage_exits_eval_failure_not_awaiting(self, tmp_path, monkeypatch):
+        """XP-02 core: an approval-gated stage whose post-train gate auto-reverted
+        (success=False, staging cleared) must exit EXIT_EVAL_FAILURE (3), NOT
+        EXIT_AWAITING_APPROVAL (4).  Pre-fix the staging check ran before the
+        success check, so a reverted stage was misreported as awaiting approval."""
+        cfg = _three_stage_config(tmp_path)
+        # The real trainer clears staging_path on revert; awaiting_approval False.
+        _install_trainer_mocks(monkeypatch, [TrainResult(success=False, reverted=True, staging_path=None)])
+        orch = PipelineOrchestrator(cfg, b"yaml bytes")
+        code = orch.run()
+        assert code == EXIT_EVAL_FAILURE
+
+    def test_failed_stage_with_stale_staging_path_still_exits_eval_failure(self, tmp_path, monkeypatch):
+        """Defence-in-depth: even if a future path left a stale ``staging_path``
+        on a ``success=False`` result, routing on success first sends it to
+        exit 3 — a stale staging dir must never read as 'awaiting approval'."""
+        cfg = _three_stage_config(tmp_path)
+        stale = str(tmp_path / "stage1" / "final_model.staging.fg-stale")
+        os.makedirs(stale, exist_ok=True)
+        _install_trainer_mocks(monkeypatch, [TrainResult(success=False, reverted=True, staging_path=stale)])
+        orch = PipelineOrchestrator(cfg, b"yaml bytes")
+        code = orch.run()
+        assert code == EXIT_EVAL_FAILURE
+
+    def test_success_with_staging_but_no_awaiting_flag_is_not_gated(self, tmp_path, monkeypatch):
+        """``awaiting_approval`` is authoritative: a successful result that
+        carries a ``staging_path`` but does NOT set the flag is a normal
+        success (exit 0), never a false gate (exit 4)."""
+        cfg = _three_stage_config(tmp_path)
+        staging = str(tmp_path / "stage1" / "final_model.staging")
+        os.makedirs(staging, exist_ok=True)
+        # awaiting_approval defaults False; three successful stages → full run.
+        _install_trainer_mocks(monkeypatch, [TrainResult(success=True, staging_path=staging)])
+        orch = PipelineOrchestrator(cfg, b"yaml bytes")
+        code = orch.run()
+        assert code == EXIT_SUCCESS
 
     def test_gated_pending_approval_preserves_downstream_pending(self, tmp_path, monkeypatch):
         """After a gated stage, downstream stages must stay ``pending``
@@ -497,7 +534,7 @@ class TestHumanApprovalGate:
         cfg = _three_stage_config(tmp_path)
         staging = str(tmp_path / "stage1" / "final_model.staging")
         os.makedirs(staging, exist_ok=True)
-        results = [TrainResult(success=True, staging_path=staging)]
+        results = [TrainResult(success=True, awaiting_approval=True, staging_path=staging)]
         _install_trainer_mocks(monkeypatch, results)
         orch = PipelineOrchestrator(cfg, b"yaml bytes")
         orch.run()
@@ -518,7 +555,7 @@ class TestHumanApprovalGate:
         cfg = _three_stage_config(tmp_path)
         staging = str(tmp_path / "stage1" / "final_model.staging")
         os.makedirs(staging, exist_ok=True)
-        _install_trainer_mocks(monkeypatch, [TrainResult(success=True, staging_path=staging)])
+        _install_trainer_mocks(monkeypatch, [TrainResult(success=True, awaiting_approval=True, staging_path=staging)])
         orch = PipelineOrchestrator(cfg, b"yaml bytes")
         orch.run()
         audit_path = os.path.join(orch.paths["root_output_dir"], "audit_log.jsonl")
@@ -691,44 +728,75 @@ class TestResumeFrom:
         code = orch.run()
         assert code == EXIT_CONFIG_ERROR
 
-    def test_resume_skips_gated_pending_approval_with_on_disk_output(self, tmp_path, monkeypatch):
-        """Phase 14 post-release review BLOCKER 2: a stage that exited
-        with ``EXIT_AWAITING_APPROVAL`` is recorded as
-        ``status="gated_pending_approval"``.  After ``forgelm approve``
-        promotes the staging path and the operator runs
-        ``--resume-from <later_stage>``, the gated stage MUST be
-        treated like a completed stage (skip + reuse the on-disk
-        ``output_model``).  Pre-fix, only ``status=="completed"``
-        stages were skipped — so the gated SFT would re-train, the
-        DPO stage would chain from the freshly-trained output instead
-        of the operator-approved one, and the audit log would carry
-        two ``pipeline.stage_started`` events for the same stage_index."""
+    def test_resume_across_unapproved_gated_stage_is_refused(self, tmp_path, monkeypatch):
+        """C3/P2-FAB-01 (Article 14 gate-bypass): a stage recorded as
+        ``gated_pending_approval`` has only an UNAPPROVED staging artefact on
+        disk.  ``--resume-from`` a later stage must NOT silently skip it (which
+        would chain downstream training from the unapproved model) — it must be
+        refused with EXIT_CONFIG_ERROR until the operator approves/rejects.
+
+        Pre-fix the skiplist keyed off ``os.path.isdir(output_model)``: the
+        staging dir existing was treated as 'already produced', so the gated
+        stage was skipped and DPO chained from the unapproved model."""
         cfg = _three_stage_config(tmp_path)
         # First run: SFT stage hits a human-approval gate and exits 4.
+        gated_staging = str(tmp_path / "stage1" / "final_model.staging.fg-gated")
+        os.makedirs(gated_staging, exist_ok=True)
         _install_trainer_mocks(
-            monkeypatch, [TrainResult(success=False, staging_path=str(tmp_path / "stage1" / "final_model"))]
+            monkeypatch,
+            [TrainResult(success=True, awaiting_approval=True, staging_path=gated_staging)],
         )
         orch1 = PipelineOrchestrator(cfg, b"yaml")
         code1 = orch1.run()
         assert code1 == EXIT_AWAITING_APPROVAL
-        # Sanity: state recorded SFT as gated, with staging_path as output_model.
+        # Sanity: state recorded SFT as gated, staging dir present on disk.
         with open(orch1.paths["state_file"]) as f:
             payload = json.load(f)
         assert payload["stages"][0]["status"] == "gated_pending_approval"
-        assert payload["stages"][0]["output_model"] is not None
+        assert os.path.isdir(gated_staging)
 
-        # Simulate operator approval — output_model directory already
-        # exists on disk from the mock setup.  Now resume from DPO.
-        results_run2 = [TrainResult(success=True), TrainResult(success=True)]
-        configs_seen2 = _install_trainer_mocks(monkeypatch, results_run2)
+        # Resume from DPO WITHOUT approving the gated SFT → must be refused, and
+        # NO downstream trainer may be instantiated (no chaining from unapproved).
+        configs_seen2 = _install_trainer_mocks(monkeypatch, [TrainResult(success=True)])
         orch2 = PipelineOrchestrator(cfg, b"yaml")
         code2 = orch2.run(resume_from="dpo_stage")
-        assert code2 == EXIT_SUCCESS
-        # Only DPO + GRPO ran; SFT was skipped because its gated output exists on disk.
-        assert len(configs_seen2) == 2
-        # DPO must have auto-chained from the gated SFT's output_model,
-        # not been re-trained.
-        assert configs_seen2[0].training.trainer_type == "dpo"
+        assert code2 == EXIT_CONFIG_ERROR
+        assert len(configs_seen2) == 0, "no stage may train when resume is refused"
+
+        # Article 14: the refusal must be recorded in the append-only audit log.
+        audit_path = os.path.join(orch2.paths["root_output_dir"], "audit_log.jsonl")
+        with open(audit_path) as f:
+            events = [json.loads(line) for line in f if line.strip()]
+        refused = [e for e in events if e.get("event") == "pipeline.resume_refused"]
+        assert len(refused) == 1, (
+            f"expected one pipeline.resume_refused event, got {[e.get('event') for e in events]!r}"
+        )
+        assert refused[0]["requested_stage"] == "dpo_stage"
+        assert refused[0]["blocking_stage"] == "sft_stage"
+        assert refused[0]["blocking_status"] == "gated_pending_approval"
+
+    def test_stage_config_error_exits_config_error(self, tmp_path, monkeypatch):
+        """C7-review: a ConfigError from a stage (e.g. unset judge_api_key_env)
+        must route to EXIT_CONFIG_ERROR (1), not the generic EXIT_TRAINING_ERROR (2)."""
+        from forgelm.config import ConfigError
+
+        cfg = _three_stage_config(tmp_path)
+        _install_trainer_mocks(monkeypatch, [])  # stub model/data/utils
+
+        # Override the trainer module with one whose train() raises ConfigError.
+        class _RaisingTrainer:
+            def __init__(self, **kwargs):
+                pass
+
+            def train(self, resume_from_checkpoint=None):
+                raise ConfigError("judge_api_key_env names an unset variable")
+
+        raising_mod = types.ModuleType("forgelm.trainer")
+        raising_mod.ForgeTrainer = _RaisingTrainer
+        monkeypatch.setitem(sys.modules, "forgelm.trainer", raising_mod)
+
+        orch = PipelineOrchestrator(cfg, b"yaml bytes")
+        assert orch.run() == EXIT_CONFIG_ERROR
 
     def test_resume_skips_completed_stages(self, tmp_path, monkeypatch):
         cfg = _three_stage_config(tmp_path)

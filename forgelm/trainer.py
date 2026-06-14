@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 # NOTE: Heavy ML imports (torch, transformers.EarlyStoppingCallback, trl.SFTConfig/SFTTrainer)
 # are deferred to method bodies so `import forgelm.trainer` is cheap. Eagerly importing
 # torch here costs ~3-5s of CLI startup per invocation. See closure-plan F-performance-101.
+from .config import ConfigError
 from .results import TrainResult
 from .webhook import WebhookNotifier
 
@@ -245,6 +246,32 @@ class ForgeTrainer:
 
         # Validate evaluation config early
         self._validate_evaluation_config()
+        # Fail fast (before the training loop) on a judge configured to use an
+        # API key env var that is not set — see _validate_judge_config.
+        self._validate_judge_config()
+
+    def _validate_judge_config(self) -> None:
+        """Refuse a misconfigured LLM-judge at preflight (fail fast).
+
+        A configured ``judge_api_key_env`` names an API judge. If the variable is
+        unset, ``judge.py`` would treat ``api_key=None`` as "local" and silently
+        run a different evaluator than configured — and with ``auto_revert=true`` a
+        failed local load deletes the trained adapters over a misdiagnosed env-var
+        problem (F-P3-FABLE-18). Checking here (called from ``__init__`` and again
+        from ``_run_judge_if_configured``) fails the run BEFORE the expensive
+        training loop instead of after it.
+        """
+        eval_cfg = self.config.evaluation
+        judge_cfg = eval_cfg.llm_judge if (eval_cfg and eval_cfg.llm_judge) else None
+        if not (judge_cfg and judge_cfg.enabled):
+            return
+        if judge_cfg.judge_api_key_env and not os.getenv(judge_cfg.judge_api_key_env):
+            raise ConfigError(
+                f"evaluation.llm_judge.judge_api_key_env='{judge_cfg.judge_api_key_env}' names an "
+                "environment variable that is not set. The configured API judge cannot run; refusing "
+                "to silently fall back to a local judge. Set the variable (or clear judge_api_key_env "
+                "to intentionally use a local judge) and re-run."
+            )
 
     def _validate_evaluation_config(self) -> None:
         """Warn about evaluation configuration issues before training starts."""
@@ -431,6 +458,19 @@ class ForgeTrainer:
 
         raise FileNotFoundError(f"DeepSpeed config not found: {config_ref}")
 
+    def _apply_max_length(self, kwargs: Dict[str, Any], param_name: str = "max_length") -> None:
+        """Set ``model.max_length`` on a TRL config under *param_name*.
+
+        Without this the preference trainers (DPO / ORPO / SimPO / KTO) silently
+        fall back to TRL's own 512/1024 ``max_length`` defaults while the config
+        field, configuration.md, and the Article 11 compliance manifest all
+        claim ``model.max_length`` applies — silent truncation plus a false
+        statement in an audit artefact (F-P3-FABLE-03). The preference configs'
+        ``max_length`` parameter is stable across the pinned TRL range; a future
+        rename surfaces loudly as a ``TypeError`` at construction, never silent.
+        """
+        kwargs[param_name] = self.config.model.max_length
+
     def _get_training_args_for_type(self):
         """Build the appropriate TRL config based on trainer_type."""
         tt = self._trainer_type
@@ -476,12 +516,14 @@ class ForgeTrainer:
             from trl import ORPOConfig
 
             kwargs["beta"] = self.config.training.orpo_beta
+            self._apply_max_length(kwargs)
             return ORPOConfig(**kwargs)
 
         elif tt == "dpo":
             from trl import DPOConfig
 
             kwargs["beta"] = self.config.training.dpo_beta
+            self._apply_max_length(kwargs)
             return DPOConfig(**kwargs)
 
         elif tt == "simpo":
@@ -492,12 +534,14 @@ class ForgeTrainer:
             kwargs["cpo_alpha"] = 0.0  # pure SimPO (no NLL term)
             kwargs["simpo_gamma"] = self.config.training.simpo_gamma
             kwargs["loss_type"] = "simpo"
+            self._apply_max_length(kwargs)
             return CPOConfig(**kwargs)
 
         elif tt == "kto":
             from trl import KTOConfig
 
             kwargs["beta"] = self.config.training.kto_beta
+            self._apply_max_length(kwargs)
             return KTOConfig(**kwargs)
 
         elif tt == "grpo":
@@ -508,6 +552,20 @@ class ForgeTrainer:
             # TRL >=0.12 expects `max_completion_length`; the older `max_new_tokens`
             # raises TypeError at GRPOConfig construction.
             kwargs["max_completion_length"] = self.config.training.grpo_max_completion_length
+            # Honour model.max_length as the GRPO prompt cap so prompts aren't
+            # silently truncated at TRL's 512 `max_prompt_length` default while
+            # the manifest claims model.max_length applies (F-P3-FABLE-03).
+            self._apply_max_length(kwargs, "max_prompt_length")
+            # GRPO trains on generation-based rewards, not validation loss, so
+            # `_build_grpo_trainer` drops the eval_dataset. The eval-coupled
+            # TrainingArguments must be turned off in lockstep: when a validation
+            # split exists (the default pipeline path), `_get_common_training_kwargs`
+            # sets `eval_strategy="steps"`. Leaving it set while no eval_dataset
+            # reaches the trainer makes HF/TRL raise
+            # `ValueError: ... you didn't pass an eval_dataset` at GRPOTrainer
+            # construction — the crash this reconciliation prevents.
+            kwargs["eval_strategy"] = "no"
+            kwargs.pop("eval_steps", None)
             # GRPO doesn't use load_best_model_at_end the same way
             kwargs.pop("load_best_model_at_end", None)
             kwargs.pop("metric_for_best_model", None)
@@ -839,6 +897,22 @@ class ForgeTrainer:
         metrics["baseline_eval_loss"] = float(baseline_loss)
         logger.info("Baseline eval_loss computed: %.4f", baseline_loss)
 
+    @staticmethod
+    def _mark_reverted(train_result: TrainResult) -> None:
+        """Mark a result as auto-reverted and clear every stale artifact path.
+
+        ``_revert_model`` has just deleted the on-disk model, so neither
+        ``final_model_path`` nor ``staging_path`` point at a real directory — the
+        CLI/JSON envelope must not advertise a path that no longer exists. A
+        reverted run is also never "awaiting approval" (exit 3, not 4), so clear
+        the discriminator defensively even though the gate hasn't fired here.
+        """
+        train_result.success = False
+        train_result.reverted = True
+        train_result.staging_path = None
+        train_result.final_model_path = None
+        train_result.awaiting_approval = False
+
     def _apply_benchmark_result(
         self,
         benchmark_result: Any,
@@ -873,8 +947,7 @@ class ForgeTrainer:
             # Failure recorded on train_result; pipeline continues to safety/judge stages.
             return True
         self._revert_model(final_path, reason, source="benchmark")
-        train_result.success = False
-        train_result.reverted = True
+        self._mark_reverted(train_result)
         return False
 
     def _apply_resource_usage(self, train_result: TrainResult, metrics: Dict[str, float]) -> None:
@@ -915,8 +988,7 @@ class ForgeTrainer:
         if safety_result.passed or not (self.config.evaluation and self.config.evaluation.auto_revert):
             return True
         self._revert_model(final_path, safety_result.failure_reason or "Safety check failed.", source="safety")
-        train_result.success = False
-        train_result.reverted = True
+        self._mark_reverted(train_result)
         return False
 
     def _apply_judge_result(
@@ -940,8 +1012,7 @@ class ForgeTrainer:
         if judge_result.passed or not (self.config.evaluation and self.config.evaluation.auto_revert):
             return True
         self._revert_model(final_path, judge_result.failure_reason or "Judge score below threshold.", source="judge")
-        train_result.success = False
-        train_result.reverted = True
+        self._mark_reverted(train_result)
         return False
 
     def _finalize_artifacts(
@@ -1014,6 +1085,7 @@ class ForgeTrainer:
 
         train_result.success = True
         train_result.staging_path = staging_path
+        train_result.awaiting_approval = True
         return True
 
     def _run_training_pipeline(self, resume_from_checkpoint: Optional[str]) -> TrainResult:
@@ -1353,6 +1425,9 @@ class ForgeTrainer:
             return None
 
         judge_cfg = eval_cfg.llm_judge
+        # Defence-in-depth: the preflight (__init__) already ran this, but guard
+        # the direct entry point too — never silently fall through to local mode.
+        self._validate_judge_config()
         api_key = os.getenv(judge_cfg.judge_api_key_env) if judge_cfg.judge_api_key_env else None
         logger.info("Running LLM-as-Judge evaluation (judge: %s)...", judge_cfg.judge_model)
         output_dir = os.path.join(self.checkpoint_dir, "judge")
@@ -1415,21 +1490,42 @@ class ForgeTrainer:
             if result.benchmark_scores is not None:
                 benchmark_dict = {"scores": result.benchmark_scores, "average": result.benchmark_average}
 
-            # Temporarily restore original batch size for compliance manifest accuracy
-            _saved_bs = self.config.training.per_device_train_batch_size
-            _saved_ga = self.config.training.gradient_accumulation_steps
-            self.config.training.per_device_train_batch_size = getattr(self, "_original_batch_size", _saved_bs)
-            self.config.training.gradient_accumulation_steps = getattr(self, "_original_grad_accum", _saved_ga)
-            manifest = generate_training_manifest(
-                config=self.config,
-                metrics=metrics,
-                resource_usage=result.resource_usage,
-                safety_result=safety_dict,
-                judge_result=judge_dict,
-                benchmark_result=benchmark_dict,
-            )
-            self.config.training.per_device_train_batch_size = _saved_bs
-            self.config.training.gradient_accumulation_steps = _saved_ga
+            # OOM recovery mutates config in place (per_device_train_batch_size /
+            # gradient_accumulation_steps). The manifest records the *configured*
+            # (pre-OOM) batch size — the documented contract — but the model card
+            # reads the *effective* (post-OOM) value, so without an explicit
+            # marker the two artefacts silently contradict (F-P3-FABLE-04).
+            # Record BOTH values + an ``oom_recovery`` flag so an auditor sees the
+            # discrepancy explained, and restore inside ``finally`` so a manifest
+            # build error can't leave config holding the configured values under
+            # the outer BLE001 catch.
+            _effective_bs = self.config.training.per_device_train_batch_size
+            _effective_ga = self.config.training.gradient_accumulation_steps
+            _configured_bs = getattr(self, "_original_batch_size", _effective_bs)
+            _configured_ga = getattr(self, "_original_grad_accum", _effective_ga)
+            _oom_applied = _effective_bs != _configured_bs or _effective_ga != _configured_ga
+            try:
+                self.config.training.per_device_train_batch_size = _configured_bs
+                self.config.training.gradient_accumulation_steps = _configured_ga
+                manifest = generate_training_manifest(
+                    config=self.config,
+                    metrics=metrics,
+                    resource_usage=result.resource_usage,
+                    safety_result=safety_dict,
+                    judge_result=judge_dict,
+                    benchmark_result=benchmark_dict,
+                )
+            finally:
+                self.config.training.per_device_train_batch_size = _effective_bs
+                self.config.training.gradient_accumulation_steps = _effective_ga
+            if _oom_applied:
+                manifest["training_parameters"]["oom_recovery"] = {
+                    "applied": True,
+                    "configured_batch_size": _configured_bs,
+                    "configured_gradient_accumulation_steps": _configured_ga,
+                    "effective_batch_size": _effective_bs,
+                    "effective_gradient_accumulation_steps": _effective_ga,
+                }
             compliance_dir = os.path.join(self.checkpoint_dir, "compliance")
             export_compliance_artifacts(manifest, compliance_dir)
 
