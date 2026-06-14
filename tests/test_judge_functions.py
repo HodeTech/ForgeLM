@@ -431,3 +431,106 @@ class TestJudgeResultRedaction:
         for rec in caplog.records:
             assert "John Doe" not in rec.getMessage(), "Warning log must not echo raw model output"
             assert "123-45-6789" not in rec.getMessage()
+
+
+class TestClipJudgeScore:
+    """F-P8-C-16: the score-clip helper drives the auto-revert gate but
+    was untested — a regression in clamping would silently corrupt the
+    eval-gate decision."""
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [(0.5, 1.0), (1.0, 1.0), (5.5, 5.5), (10.0, 10.0), (11.0, 10.0), (-3.0, 1.0)],
+    )
+    def test_clamps_to_1_10(self, raw, expected):
+        from forgelm.judge import _clip_judge_score
+
+        assert _clip_judge_score(raw) == expected
+
+    def test_none_passes_through(self):
+        from forgelm.judge import _clip_judge_score
+
+        # None preserves the failure signal so it can be excluded from the avg.
+        assert _clip_judge_score(None) is None
+
+
+class TestSummarizeJudgeScores:
+    """F-P8-C-16: aggregation must distinguish 'no valid verdicts' from
+    'low average', and respect the min_score pass/fail boundary."""
+
+    def test_no_valid_scores_is_distinct_failure(self):
+        from forgelm.judge import _summarize_judge_scores
+
+        avg, passed, reason = _summarize_judge_scores(
+            scores=[None, None],
+            failure_count=2,
+            eval_prompts=["a", "b"],
+            min_score=5.0,
+        )
+        assert avg == 0.0
+        assert passed is False
+        assert "No valid judge scores" in reason
+
+    def test_average_above_min_passes(self):
+        from forgelm.judge import _summarize_judge_scores
+
+        avg, passed, reason = _summarize_judge_scores(
+            scores=[8.0, 6.0, None],
+            failure_count=1,
+            eval_prompts=["a", "b", "c"],
+            min_score=5.0,
+        )
+        assert avg == 7.0
+        assert passed is True
+        assert reason is None
+
+    def test_average_below_min_fails(self):
+        from forgelm.judge import _summarize_judge_scores
+
+        avg, passed, reason = _summarize_judge_scores(
+            scores=[3.0, 4.0],
+            failure_count=0,
+            eval_prompts=["a", "b"],
+            min_score=5.0,
+        )
+        assert passed is False
+        assert "below minimum" in reason
+
+
+class TestLoadEvalPrompts:
+    def test_loads_prompt_and_text_keys_and_bare_lines(self, tmp_path):
+        from forgelm.judge import _load_eval_prompts
+
+        path = tmp_path / "eval.jsonl"
+        path.write_text(
+            '{"prompt": "P1"}\n'
+            '{"text": "P2"}\n'
+            "\n"  # blank line skipped
+            "bare line\n",
+            encoding="utf-8",
+        )
+        assert _load_eval_prompts(str(path)) == ["P1", "P2", "bare line"]
+
+    def test_missing_file_raises(self, tmp_path):
+        from forgelm.judge import _load_eval_prompts
+
+        with pytest.raises(OSError):
+            _load_eval_prompts(str(tmp_path / "nope.jsonl"))
+
+
+class TestJudgeBatchSize:
+    """F-P8-C-16: the library-API batch_size guard (judge.py:373) was
+    never triggered. A 0 or negative batch_size must raise at the
+    boundary, before the batching loop produces a silent no-op."""
+
+    @pytest.mark.parametrize("bad", [0, -1, 2.5, "8"])
+    def test_invalid_batch_size_raises(self, bad):
+        from forgelm.judge import run_judge_evaluation
+
+        with pytest.raises(ValueError, match="batch_size must be a positive"):
+            run_judge_evaluation(
+                model=MagicMock(),
+                tokenizer=MagicMock(),
+                eval_dataset_path="unused.jsonl",
+                batch_size=bad,
+            )

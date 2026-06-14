@@ -124,3 +124,49 @@ class TestTiesZeroVote:
         result = _ties_merge_tensor([d1, d2], weights=[0.5, 0.5], trim_fraction=0.0)
         # elected_sign=+1, so the value with sign matching +1 is d1[0]=3.0, weighted by 0.5
         assert result[0] >= 0, "Zero-vote should resolve to positive sign (+1)"
+
+
+class TestLinearMergeZeroWeight:
+    """F-P8-C-18: the orchestration layer's zero-weight guard
+    (merging.py:94) was never triggered — only the leaf tensor math was
+    covered. peft is stubbed so the test pins the raise regardless of
+    whether the optional extra is installed."""
+
+    def test_zero_weight_sum_raises(self, monkeypatch):
+        import sys
+        import types
+        from unittest.mock import MagicMock
+
+        # Stub peft so the `from peft import PeftModel` at the top of
+        # _linear_merge resolves; the raise happens before PeftModel is used.
+        fake_peft = types.ModuleType("peft")
+        fake_peft.PeftModel = MagicMock()
+        monkeypatch.setitem(sys.modules, "peft", fake_peft)
+
+        from forgelm.merging import _linear_merge
+
+        base_model = MagicMock()
+        adapters = [{"path": "a", "weight": 1.0}, {"path": "b", "weight": -1.0}]
+        with pytest.raises(ValueError, match="sum to 0"):
+            _linear_merge(base_model, adapters)
+
+
+class TestAdvancedMergeDispatch:
+    """F-P8-C-18: _advanced_merge must route ties/dare to the native
+    _ties_dare_merge with the method preserved."""
+
+    @pytest.mark.parametrize("method", ["ties", "dare"])
+    def test_method_dispatch(self, monkeypatch, method):
+        import forgelm.merging as merging
+
+        captured = {}
+
+        def _fake_ties_dare(base_model, adapters, m):
+            captured["method"] = m
+            return base_model
+
+        monkeypatch.setattr(merging, "_ties_dare_merge", _fake_ties_dare)
+        sentinel = object()
+        out = merging._advanced_merge(sentinel, [{"path": "a"}], method)
+        assert out is sentinel
+        assert captured["method"] == method

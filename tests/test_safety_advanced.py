@@ -457,3 +457,23 @@ class TestClassifierHeadValidation:
 
         clf = self._stub_classifier(["LlamaForCausalLM"], {0: "safe", 1: "unsafe"})
         _reject_uninitialized_classifier_head(clf, "some/llama-harm-classifier")
+
+
+class TestSafetyBatchSizeValidation:
+    """F-P8-C-16: the library-API batch_size guard (safety.py:614) was
+    never triggered. A 0 or negative batch_size must raise so the batched
+    generation path never degenerates into ``range(0, n, 0)``."""
+
+    @pytest.mark.parametrize("bad", [0, -1, 2.5, "8", None])
+    def test_invalid_batch_size_raises(self, bad):
+        from forgelm.safety import _validate_batch_size
+
+        with pytest.raises(ValueError, match="batch_size must be a positive"):
+            _validate_batch_size(bad)
+
+    @pytest.mark.parametrize("good", [1, 8, 64])
+    def test_valid_batch_size_accepted(self, good):
+        from forgelm.safety import _validate_batch_size
+
+        # No exception for positive ints.
+        assert _validate_batch_size(good) is None
