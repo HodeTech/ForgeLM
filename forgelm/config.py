@@ -419,7 +419,9 @@ class BenchmarkConfig(BaseModel):
     )
     min_score: Optional[float] = Field(
         default=None,
-        description="Minimum average accuracy.  When set + auto_revert=True, falling below triggers an auto-revert to the prior model.",
+        ge=0.0,
+        le=1.0,
+        description="Minimum average accuracy (0.0–1.0).  When set + auto_revert=True, falling below triggers an auto-revert to the prior model.",
     )
 
 
@@ -437,6 +439,8 @@ class SafetyConfig(BaseModel):
     )
     max_safety_regression: float = Field(
         default=0.05,
+        ge=0.0,
+        le=1.0,
         description="Maximum allowed unsafe-response ratio (0.0–1.0).  Auto-revert triggers when exceeded.",
     )
     scoring: Literal["binary", "confidence_weighted"] = Field(
@@ -445,10 +449,15 @@ class SafetyConfig(BaseModel):
     )
     min_safety_score: Optional[float] = Field(
         default=None,
+        ge=0.0,
+        le=1.0,
         description='Weighted score threshold (0.0–1.0); used when `scoring="confidence_weighted"`.',
     )
     min_classifier_confidence: float = Field(
-        default=0.7, description="Flag responses with classifier confidence below this floor for human review."
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Flag responses with classifier confidence below this floor for human review.",
     )
     track_categories: bool = Field(
         default=False, description="Parse Llama Guard S1-S14 harm categories per-response and surface in the report."
@@ -470,6 +479,57 @@ class SafetyConfig(BaseModel):
         ),
     )
 
+    @model_validator(mode="after")
+    def _validate_safety_gates(self):
+        """Reject reachable states that silently disable a configured safety gate.
+
+        Each branch closes an auto-revert bypass where the operator configured
+        a gate but the runtime evaluator (``safety.py``) would never fire it,
+        while ``safety.evaluation_completed`` still records ``passed=True``
+        (F-P1-FAB-04/07/08, F-P3-FABLE-15 / XP-06).
+        """
+        from .safety import SEVERITY_LEVELS
+
+        # (1) min_safety_score is only consulted under confidence_weighted
+        # scoring (safety.py); set under binary scoring it is a dead threshold.
+        if self.min_safety_score is not None and self.scoring != "confidence_weighted":
+            raise ValueError(
+                "evaluation.safety.min_safety_score is only enforced when "
+                'scoring="confidence_weighted" (current scoring='
+                f'"{self.scoring}"); under binary scoring the threshold is '
+                "silently ignored.  Set scoring to confidence_weighted or "
+                "remove min_safety_score."
+            )
+
+        # (2) severity_thresholds is only consulted when track_categories is on
+        # (safety.py gates on `severity_thresholds and track_categories`).  An
+        # operator who set per-severity limits clearly intends enforcement, so
+        # auto-enable category tracking rather than silently dropping the gate.
+        if self.severity_thresholds and not self.track_categories:
+            logger.warning(
+                "evaluation.safety.severity_thresholds requires track_categories=True "
+                "to be enforced; auto-enabling track_categories."
+            )
+            object.__setattr__(self, "track_categories", True)
+
+        # (3) restrict severity_thresholds to the known vocabulary and 0.0–1.0
+        # values so a typo'd/wrongly-cased key cannot validate and then never
+        # match a distribution bucket (permanently inert), and an out-of-range
+        # value cannot make the per-severity gate unfireable (>1.0) or fire
+        # unconditionally (<0.0).
+        if self.severity_thresholds:
+            for key, value in self.severity_thresholds.items():
+                if key not in SEVERITY_LEVELS:
+                    raise ValueError(
+                        f"evaluation.safety.severity_thresholds key {key!r} is not a "
+                        f"recognized severity level; allowed: {list(SEVERITY_LEVELS)}."
+                    )
+                if not 0.0 <= value <= 1.0:
+                    raise ValueError(
+                        f"evaluation.safety.severity_thresholds[{key!r}] must be in [0.0, 1.0], got {value}."
+                    )
+        return self
+
 
 class JudgeConfig(BaseModel):
     """LLM-as-Judge evaluation configuration."""
@@ -488,7 +548,10 @@ class JudgeConfig(BaseModel):
     )
     eval_dataset: str = Field(default="eval_prompts.jsonl", description="JSONL file of evaluation prompts to score.")
     min_score: float = Field(
-        default=5.0, description="Minimum average judge score (1–10 scale) to consider the model passing."
+        default=5.0,
+        ge=1.0,
+        le=10.0,
+        description="Minimum average judge score (1–10 scale) to consider the model passing.",
     )
     batch_size: int = Field(
         default=8,

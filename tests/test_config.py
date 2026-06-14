@@ -5,13 +5,17 @@ import os
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from forgelm.config import (
+    BenchmarkConfig,
     ConfigError,
     EvaluationConfig,
     ForgeConfig,
+    JudgeConfig,
     LoraConfigModel,
     ModelConfig,
+    SafetyConfig,
     TrainingConfig,
     WebhookConfig,
     load_config,
@@ -309,3 +313,60 @@ class TestModelConfigWarnings:
         with caplog.at_level(logging.WARNING, logger="forgelm.config"):
             ModelConfig(name_or_path="org/m", load_in_4bit=True, bnb_4bit_compute_dtype="bfloat16")
         assert not any("negates most VRAM savings" in r.message for r in caplog.records)
+
+
+# --- H2: safety/judge/benchmark gate threshold validation (XP-06) ---
+
+
+class TestSafetyGateValidation:
+    """Reachable SafetyConfig states that silently disabled a configured gate
+    must now be rejected (or auto-corrected) at config time.
+
+    Findings F-P1-FAB-04, F-P1-FAB-07, F-P1-FAB-08, F-P3-FABLE-15.
+    """
+
+    def test_min_safety_score_with_binary_scoring_raises(self):
+        with pytest.raises(ValidationError, match="confidence_weighted"):
+            SafetyConfig(enabled=True, scoring="binary", min_safety_score=0.99)
+
+    def test_min_safety_score_with_confidence_weighted_accepted(self):
+        s = SafetyConfig(enabled=True, scoring="confidence_weighted", min_safety_score=0.9)
+        assert s.min_safety_score == pytest.approx(0.9)
+
+    def test_max_safety_regression_above_one_raises(self):
+        with pytest.raises(ValidationError):
+            SafetyConfig(enabled=True, max_safety_regression=5.0)
+
+    def test_min_classifier_confidence_negative_raises(self):
+        with pytest.raises(ValidationError):
+            SafetyConfig(enabled=True, min_classifier_confidence=-2.0)
+
+    def test_severity_thresholds_unknown_key_raises(self):
+        with pytest.raises(ValidationError, match="not a recognized severity"):
+            SafetyConfig(enabled=True, track_categories=True, severity_thresholds={"Critical": 0.0})
+
+    def test_severity_thresholds_value_above_one_raises(self):
+        with pytest.raises(ValidationError, match=r"\[0.0, 1.0\]"):
+            SafetyConfig(enabled=True, track_categories=True, severity_thresholds={"high": 5.0})
+
+    def test_severity_thresholds_without_track_categories_auto_enables(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            s = SafetyConfig(enabled=True, severity_thresholds={"critical": 0.0})
+        assert s.track_categories is True
+        assert any("auto-enabling track_categories" in r.message for r in caplog.records)
+
+    def test_judge_min_score_above_scale_raises(self):
+        with pytest.raises(ValidationError):
+            JudgeConfig(enabled=True, min_score=99)
+
+    def test_judge_min_score_below_scale_raises(self):
+        with pytest.raises(ValidationError):
+            JudgeConfig(enabled=True, min_score=0)
+
+    def test_benchmark_min_score_above_one_raises(self):
+        with pytest.raises(ValidationError):
+            BenchmarkConfig(enabled=True, min_score=7.0)
+
+    def test_benchmark_min_score_in_range_accepted(self):
+        b = BenchmarkConfig(enabled=True, min_score=0.6, tasks=["arc_easy"])
+        assert b.min_score == pytest.approx(0.6)
