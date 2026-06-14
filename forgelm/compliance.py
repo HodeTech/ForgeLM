@@ -1453,6 +1453,20 @@ def _verify_genesis_manifest(
             first_invalid_index=1,
             reason=(f"manifest missing required pinned fields (first_entry_sha256={pinned!r}, run_id={pinned_run!r})"),
         )
+    # Truncate-to-empty: the manifest pins a real non-empty first entry, but the
+    # log has zero entries. This is the exact truncation attack the manifest
+    # exists to detect — the in-chain hash-continuity walk cannot catch it
+    # because there are no lines left to walk. Fail loudly.
+    if entries_count == 0:
+        return VerifyResult(
+            valid=False,
+            entries_count=0,
+            first_invalid_index=1,
+            reason=(
+                f"genesis manifest pins a first entry (first_entry_sha256={pinned!r}, "
+                f"run_id={pinned_run!r}) but the audit log is empty — log truncated to zero entries"
+            ),
+        )
     if first_line_hash and pinned != first_line_hash:
         return VerifyResult(
             valid=False,
@@ -1624,6 +1638,14 @@ def verify_audit_log(
     if failure is not None:
         return failure
     if not lines:
+        # An empty log is legitimate ONLY when no genesis manifest pins a
+        # non-empty first entry. A manifest present + empty log is the
+        # truncate-to-empty attack the manifest exists to detect, so consult it
+        # before reporting a clean empty chain (previously this early-returned
+        # valid=True unconditionally — F-P4-OPUS-01).
+        manifest_failure = _verify_genesis_manifest(path, None, None, 0)
+        if manifest_failure is not None:
+            return manifest_failure
         return VerifyResult(valid=True, entries_count=0)
 
     chain_result = _verify_chain_walk(lines, hmac_secret, require_hmac)
