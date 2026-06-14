@@ -264,3 +264,82 @@ class TestGenerateDeployConfig:
             parsed = json.load(f)
         assert parsed["compute"]["instanceType"] == "nvidia-a100"
         assert parsed["cloud"]["region"] == "eu-west-3"
+
+
+# ---------------------------------------------------------------------------
+# error_kind classification + CLI exit-code routing (F-P7-OPUS-22 / M5)
+# ---------------------------------------------------------------------------
+
+
+class _DeployArgs:
+    """Minimal stand-in for the argparse Namespace ``_run_deploy_cmd`` reads."""
+
+    def __init__(self, model_path, target, output):
+        self.model_path = model_path
+        self.target = target
+        self.output = output
+        self.system = None
+        self.max_length = 2048
+        self.trust_remote_code = False
+        self.gpu_memory_utilization = 0.9
+        self.port = 8080
+        self.vendor = "aws"
+
+
+class TestDeployErrorKind:
+    """A non-directory model_path / unsupported target is a caller-input error."""
+
+    def test_non_directory_model_path_tagged_input(self, tmp_path):
+        result = generate_deploy_config(str(tmp_path / "no_such_dir"), "ollama", str(tmp_path / "Modelfile"))
+        assert result.success is False
+        assert result.error_kind == "input"
+
+    def test_unsupported_target_tagged_input(self):
+        result = generate_deploy_config("/model", "nonexistent_runtime")
+        assert result.success is False
+        assert result.error_kind == "input"
+
+    def test_success_leaves_error_kind_none(self, tmp_path):
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        result = generate_deploy_config(str(model_dir), "ollama", str(tmp_path / "Modelfile"))
+        assert result.success is True
+        assert result.error_kind is None
+
+
+class TestDeployDispatcherExitCodes:
+    """``_run_deploy_cmd`` routes input errors to exit 1, runtime errors to exit 2."""
+
+    def test_deploy_non_directory_model_path_exits_config_error(self, tmp_path, capsys):
+        import pytest
+
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._deploy import _run_deploy_cmd
+
+        args = _DeployArgs(str(tmp_path / "missing"), "ollama", str(tmp_path / "Modelfile"))
+        with pytest.raises(SystemExit) as exc_info:
+            _run_deploy_cmd(args, "json")
+        assert exc_info.value.code == EXIT_CONFIG_ERROR
+        envelope = json.loads(capsys.readouterr().out)
+        assert envelope["success"] is False
+        assert "not a directory" in envelope["error"]
+
+    def test_deploy_runtime_failure_exits_training_error(self, tmp_path, monkeypatch):
+        import pytest
+
+        import forgelm.deploy as deploy_mod
+        from forgelm.cli._exit_codes import EXIT_TRAINING_ERROR
+        from forgelm.cli.subcommands._deploy import _run_deploy_cmd
+
+        # Force a runtime failure inside generate_deploy_config so the
+        # dispatcher sees error_kind="runtime" and maps it to exit 2 — the
+        # complement of the input-error path above. _run_deploy_cmd imports
+        # the symbol from forgelm.deploy at call time, so patch it there.
+        def _boom(**_kwargs):
+            return DeployResult(success=False, target="ollama", error="disk full", error_kind="runtime")
+
+        monkeypatch.setattr(deploy_mod, "generate_deploy_config", _boom)
+        args = _DeployArgs(str(tmp_path), "ollama", str(tmp_path / "Modelfile"))
+        with pytest.raises(SystemExit) as exc_info:
+            _run_deploy_cmd(args, "text")
+        assert exc_info.value.code == EXIT_TRAINING_ERROR

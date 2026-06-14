@@ -166,3 +166,80 @@ def test_chat_subprocess_uses_absolute_model_path(tmp_path: Path):
     model_path = chat_argv[-1]
     assert os.path.isabs(model_path), f"Expected absolute chat model path, got relative: {model_path!r}"
     assert model_path.endswith("final_model"), f"Expected path to end with 'final_model', got: {model_path!r}"
+
+
+# ---------------------------------------------------------------------------
+# 4. --list JSON output is wrapped in the universal success envelope
+#    (F-P7-OPUS-24 / M5)
+# ---------------------------------------------------------------------------
+
+
+def test_list_json_is_success_envelope(capsys):
+    """`quickstart --list --output-format json` must wrap the array in {success, templates, count}."""
+    import json
+
+    from forgelm.cli.subcommands._quickstart import _emit_quickstart_list
+
+    _emit_quickstart_list("json")
+    payload = json.loads(capsys.readouterr().out)
+    assert isinstance(payload, dict), f"Expected a dict envelope, got {type(payload).__name__}"
+    assert payload["success"] is True
+    assert isinstance(payload["templates"], list) and payload["templates"]
+    assert payload["count"] == len(payload["templates"])
+
+
+# ---------------------------------------------------------------------------
+# 5. JSON mode must NOT auto-launch the interactive chat REPL
+#    (F-P7-OPUS-25 / M5)
+# ---------------------------------------------------------------------------
+
+
+class _FakeTemplate:
+    name = "customer-support"
+
+
+class _FakeQuickstartResult:
+    template = _FakeTemplate()
+
+    def __init__(self, config_path):
+        self.config_path = config_path
+
+
+def test_json_mode_does_not_launch_chat(tmp_path: Path):
+    """In JSON mode, a successful train must not spawn the chat REPL (stdout-mixing)."""
+    from types import SimpleNamespace
+
+    from forgelm.cli.subcommands import _quickstart
+
+    result = _FakeQuickstartResult(tmp_path / "config.yaml")
+    args = SimpleNamespace(no_chat=False)
+
+    chat_calls: list = []
+
+    with (
+        patch.object(_quickstart, "_run_quickstart_train_subprocess", return_value=0),
+        patch.object(_quickstart, "_run_quickstart_chat_subprocess", side_effect=lambda *a, **k: chat_calls.append(a)),
+    ):
+        _quickstart._run_quickstart_train_then_chat(args, result, "json")
+
+    assert chat_calls == [], "chat REPL must not be launched in JSON mode"
+
+
+def test_text_mode_still_launches_chat(tmp_path: Path):
+    """Complement: text mode (no --no-chat) still auto-launches chat after a successful train."""
+    from types import SimpleNamespace
+
+    from forgelm.cli.subcommands import _quickstart
+
+    result = _FakeQuickstartResult(tmp_path / "config.yaml")
+    args = SimpleNamespace(no_chat=False)
+
+    chat_calls: list = []
+
+    with (
+        patch.object(_quickstart, "_run_quickstart_train_subprocess", return_value=0),
+        patch.object(_quickstart, "_run_quickstart_chat_subprocess", side_effect=lambda *a, **k: chat_calls.append(a)),
+    ):
+        _quickstart._run_quickstart_train_then_chat(args, result, "text")
+
+    assert len(chat_calls) == 1, "text mode should launch the chat REPL once"

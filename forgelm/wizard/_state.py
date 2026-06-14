@@ -62,6 +62,18 @@ def _load_defaults() -> Dict[str, Dict[str, Any]]:
         # wizard's startup quiet.
         logger.debug("forgelm/wizard/_defaults.json not found; using hardcoded fallbacks.")
         return {}
+    except json.JSONDecodeError as exc:
+        # Present-but-corrupt JSON — a truncated partial write during
+        # install, a botched ``tools/generate_wizard_defaults.py`` run, a
+        # merge-conflict marker, or filesystem bit-rot.  ``JSONDecodeError``
+        # is a ``ValueError`` subclass, NOT an ``OSError``, so it must be
+        # caught explicitly or it escapes ``_load_defaults`` and crashes the
+        # whole wizard subsystem at module-import time (``_DEFAULTS`` is a
+        # module-level call).  Degrade to the hardcoded fallbacks exactly as
+        # the absent-file case does — but at WARNING, because corrupt data
+        # (unlike a clean slim install) signals real damage worth surfacing.
+        logger.warning("forgelm/wizard/_defaults.json is corrupt (%s); using hardcoded fallbacks.", exc)
+        return {}
     if not isinstance(data, dict):
         logger.warning("forgelm/wizard/_defaults.json does not parse as a JSON object; ignored.")
         return {}

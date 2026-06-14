@@ -55,13 +55,23 @@ def _emit_quickstart_list(output_format: str) -> None:
             }
             for t in list_templates()
         ]
-        print(json.dumps(payload, indent=2))
+        # Wrap in the universal success envelope so consumers can branch on
+        # the single ``success`` key (json-output.md "Common conventions"),
+        # matching the sibling list command ``approvals --pending`` rather
+        # than emitting a bare top-level array.
+        print(json.dumps({"success": True, "templates": payload, "count": len(payload)}, indent=2))
     else:
         print(format_template_list())
 
 
-def _emit_quickstart_result(result, output_format: str) -> None:
-    """Print the quickstart-generation summary (JSON envelope or text)."""
+def _emit_quickstart_result(result, output_format: str, *, chat_launched: bool = False) -> None:
+    """Print the quickstart-generation summary (JSON envelope or text).
+
+    ``chat_launched`` records whether the interactive chat REPL was
+    auto-launched.  It is always ``False`` in JSON mode — interactive chat
+    has no place in a machine-readable run — so consumers can rely on the
+    field rather than inferring stream contents.
+    """
     from ...quickstart import summarize_result
 
     if output_format == "json":
@@ -75,6 +85,7 @@ def _emit_quickstart_result(result, output_format: str) -> None:
                     "dataset": result.dataset_path,
                     "selection_reason": result.selection_reason,
                     "dry_run": result.dry_run,
+                    "chat_launched": chat_launched,
                     "notes": result.extra_notes,
                 },
                 indent=2,
@@ -204,6 +215,16 @@ def _run_quickstart_train_then_chat(args, result, output_format: str) -> None:
         sys.exit(train_rc)
 
     if args.no_chat:
+        return
+
+    # In JSON mode the parent emits a machine-readable success envelope on
+    # stdout; the chat REPL writes its banner/prompts/replies to stdout too,
+    # which would interleave human prose with the JSON document and break
+    # any parser (logging-observability.md: "JSON goes to stdout only.
+    # Never mix."). Interactive chat is a human-UX affordance, so suppress
+    # it in JSON mode — the envelope's ``chat_launched: false`` tells the
+    # consumer it was skipped.
+    if output_format == "json":
         return
 
     _run_quickstart_chat_subprocess(args, result.config_path)

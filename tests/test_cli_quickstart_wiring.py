@@ -133,12 +133,15 @@ class TestOfflinePropagation:
 
 
 class TestOutputFormatNotForwardedToSubprocesses:
-    def test_json_not_forwarded_to_either_subprocess(self, tmp_path, fake_train_paths):
-        """--output-format json must not reach either subprocess.
+    def test_json_mode_runs_train_only_without_forwarding_format(self, tmp_path, fake_train_paths):
+        """In JSON mode only the training subprocess runs, and the format flag is not forwarded.
 
-        The quickstart parent owns the JSON envelope. Forwarding to the training
-        child would produce two top-level JSON objects on stdout, making the stream
-        unparseable. Forwarding to chat is equally wrong (REPL has no JSON consumer).
+        The quickstart parent owns the JSON envelope. Forwarding ``--output-format
+        json`` to the training child would produce two top-level JSON objects on
+        stdout, making the stream unparseable. The interactive chat REPL is
+        suppressed entirely in JSON mode (F-P7-OPUS-25) — its human prose would
+        otherwise interleave with the envelope on stdout — so only the train
+        subprocess is spawned.
         """
         config_out = tmp_path / "cfg.yaml"
         recorder = _RunRecorder()
@@ -153,13 +156,12 @@ class TestOutputFormatNotForwardedToSubprocesses:
         ]
 
         _invoke_main(argv, recorder)
-        assert len(recorder.calls) == 2
-        train_argv, chat_argv = recorder.calls
+        # Chat is suppressed in JSON mode → only the train subprocess runs.
+        assert len(recorder.calls) == 1
+        (train_argv,) = recorder.calls
 
         assert "--output-format" not in train_argv
         assert "json" not in train_argv
-        assert "--output-format" not in chat_argv
-        assert "json" not in chat_argv
 
 
 # ---------------------------------------------------------------------------

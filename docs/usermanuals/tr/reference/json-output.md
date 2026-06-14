@@ -15,6 +15,7 @@ Bu sayfa kanonik referanstır. `forgelm` çıktısını parse eden CI/CD pipelin
 - **Üst seviye sarmalayıcı.** Her envelope `"success": true | false` ile başlar. Tüketiciler önce bu tek anahtarda branch açabilir.
 - **Hata envelope'u.** `success: false` olduğunda envelope `"error": "<mesaj>"` (string) taşır. Opsiyonel zenginleştirilmiş alanlar (`exit_code`, `error_type`, `details`) [GitHub'daki error-handling standardı](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/error-handling.md) gereği var olabilir. Bu alanlardan kesinlik isteyen tüketiciler `$?` ile süreç exit kodunu da kontrol etmelidir.
 - **Exit kodları.** Bkz. [Exit Kodları](#/reference/exit-codes). `success: false` her zaman non-zero bir exit ile eşleşir. `success: true` normal durumda exit `0` ile eşleşir, **tek istisna** dışında: Article 14 insan-onay gate'inde duraklayan bir eğitim çalışması `success: true` **ve** `awaiting_approval: true` emit ederken exit `4` ile çıkar (model stage'lenmiştir, henüz promote edilmemiştir). "Bitti" ile "insan onayı bekliyor"u ayırması gereken tüketiciler tek başına `success` yerine `awaiting_approval` discriminator'ını (veya `$?`'i) okumalıdır.
+- **Argüman-ayrıştırma hataları istisnadır.** JSON-envelope garantisi argümanlar başarıyla ayrıştırıldıktan **sonra** başlar. Ayrıştırma anında saptanan bir kullanım hatası (bilinmeyen flag, hatalı `--choice`, `--workers 0` gibi aralık-dışı validator değeri) `argparse`'in kendisi tarafından raporlanır: **stderr**'e insana okunabilir bir `usage: ... error: ...` satırı ve exit kodu `2`, stdout'ta **hiçbir** JSON envelope olmadan. Her non-zero exit'te stdout-JSON okuyan bir tüketici, boş stdout'u (non-zero `$?` ile eşleşen) bir ayrıştırma/kullanım hatası olarak ele almalı ve mesaj için stderr'e dönmelidir. Envelope kontratı yalnızca dispatcher çalışmaya başladıktan sonra ortaya çıkan hatalar için geçerlidir.
 
 ## `forgelm doctor`
 
@@ -682,7 +683,77 @@ Ollama / vLLM / TGI / HF Endpoints için deployment-config üretimi.
 | `output_path` | str \| null | Üretilen config yolu; başarısızlıkta `null`. |
 | `error` | str \| null | Başarıda `null`; başarısızlıkta operatöre yönelik mesaj. `error` varlığına değil, `success`'e göre dallanın. |
 
-**Exit kodu:** `0` = config üretildi; `2` = runtime hatası (desteklenmeyen hedef, yazılamayan çıktı yolu, model yükleme hatası).
+**Exit kodu:** `0` = config üretildi; `1` = çağıran-girdisi hatası (desteklenmeyen hedef, `ollama`/`tgi` hedeflerinde `model_path`'in yerel bir dizin olmaması); `2` = runtime hatası (yazılamayan çıktı yolu, şablon render hatası).
+
+## `forgelm quickstart`
+
+Şablon → config → eğitim → chat tek-seferlik akış. Üç JSON şekli.
+
+**Şablon listesi** (`forgelm quickstart --list --output-format json`):
+
+```json
+{
+  "success": true,
+  "templates": [
+    {
+      "name": "customer-support",
+      "title": "Customer support assistant",
+      "description": "Fine-tune a helpful support agent.",
+      "primary_model": "Qwen/Qwen2.5-7B-Instruct",
+      "fallback_model": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+      "trainer_type": "sft",
+      "estimated_minutes": 20,
+      "min_vram_for_primary_gb": 16,
+      "bundled_dataset": "customer_support.jsonl",
+      "license_note": null
+    }
+  ],
+  "count": 1
+}
+```
+
+**Üretim başarısı** (`forgelm quickstart TEMPLATE [--dry-run] --output-format json`):
+
+```json
+{
+  "success": true,
+  "template": "customer-support",
+  "config_path": "/work/quickstart/config.yaml",
+  "model": "Qwen/Qwen2.5-7B-Instruct",
+  "dataset": "/work/quickstart/customer_support.jsonl",
+  "selection_reason": "primary model fits available VRAM",
+  "dry_run": false,
+  "chat_launched": false,
+  "notes": []
+}
+```
+
+**Eğitim başarısızlığı** (eğitim subprocess'i non-zero döndü):
+
+```json
+{
+  "success": false,
+  "error": "Training subprocess failed with exit code 3.",
+  "exit_code": 3,
+  "template": "customer-support",
+  "config_path": "/work/quickstart/config.yaml"
+}
+```
+
+| Anahtar | Tip | Not |
+|---|---|---|
+| `templates` | list[object] | Yalnızca `--list`. Kayıtlı her şablon için bir giriş; `count == len(templates)`. |
+| `template` | str | Seçilen şablon adı. |
+| `config_path` | str | Üretilen YAML config'in yolu. |
+| `model` | str | Çözümlenen model id'si (primary veya VRAM kaynaklı fallback). |
+| `dataset` | str | Paketlenmiş / override edilmiş veri kümesinin yolu. |
+| `selection_reason` | str | `model`'in neden seçildiği. |
+| `dry_run` | bool | `--dry-run` olduğunda `true` (config yazılır, eğitim yok). |
+| `chat_launched` | bool | JSON modunda her zaman `false` — etkileşimli chat REPL'i bastırılır ki insan metni stdout'taki JSON envelope ile araya girmesin. `forgelm chat <model_path>`'i manuel çalıştırın. |
+| `notes` | list[str] | Tavsiye notları (ör. lisans uyarıları). |
+| `exit_code` | int | Yalnızca eğitim-başarısızlığı envelope'u — eğitim subprocess'inin döndürdüğü, eşlenmiş public exit kodu. |
+
+**Exit kodu:** `0` = üretildi (ve, `--no-chat` olmadan text modunda, chat REPL'i çalıştı); `1` = çağıran-girdisi hatası (eksik/geçersiz şablon, yazılamayan çıktı dizini); auto-train subprocess'i başarısız olduğunda eğitim-başarısızlığı envelope'unun `exit_code`'u (`2`/`3`/`4`) aynen iletilir.
 
 ## Yeni subcommand eklerken
 

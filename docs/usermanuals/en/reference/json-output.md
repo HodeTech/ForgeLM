@@ -15,6 +15,7 @@ This page is the canonical reference. CI/CD pipelines that parse `forgelm` outpu
 - **Top-level wrapper.** Every envelope starts with `"success": true | false`. Consumers can branch on this single key before parsing the rest.
 - **Error envelope.** When `success: false`, the envelope carries `"error": "<message>"` (string). Optional richer fields (`exit_code`, `error_type`, `details`) MAY be present per the [error-handling standard on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/error-handling.md). Consumers that need certainty on these fields should also check the process exit code via `$?`.
 - **Exit codes.** See [Exit Codes](#/reference/exit-codes). `success: false` always pairs with a non-zero exit. `success: true` pairs with exit `0` in the normal case, with **one exception**: a training run halted at the Article 14 human-approval gate emits `success: true` **and** `awaiting_approval: true` while exiting `4` (the model is staged, not yet promoted). Consumers that must distinguish "done" from "awaiting human approval" should read the `awaiting_approval` discriminator (or check `$?`), not `success` alone.
+- **Argument-parsing errors are the exception.** The JSON-envelope guarantee begins **after** arguments parse successfully. A usage error detected at parse time (unknown flag, bad `--choice`, out-of-range validator value such as `--workers 0`) is reported by `argparse` itself: a human-readable `usage: ... error: ...` line on **stderr** and exit code `2`, with **no** JSON envelope on stdout. A consumer that reads stdout-JSON on every non-zero exit must treat empty stdout (paired with non-zero `$?`) as a parse/usage error and fall back to stderr for the message. The envelope contract applies only to errors raised once the dispatcher is running.
 
 ## `forgelm doctor`
 
@@ -679,7 +680,77 @@ Deployment-config generation for Ollama / vLLM / TGI / HF Endpoints.
 | `output_path` | str \| null | Path to the generated config; `null` on failure. |
 | `error` | str \| null | `null` on success; operator-facing message on failure. Branch on `success`, not on `error` presence. |
 
-**Exit code mapping:** `0` = config generated; `2` = runtime failure (unsupported target, unwritable output path, model load error).
+**Exit code mapping:** `0` = config generated; `1` = caller-input error (unsupported target, `model_path` is not a local directory for the `ollama`/`tgi` targets); `2` = runtime failure (unwritable output path, template render error).
+
+## `forgelm quickstart`
+
+Template → config → train → chat one-shot. Three JSON shapes.
+
+**Template list** (`forgelm quickstart --list --output-format json`):
+
+```json
+{
+  "success": true,
+  "templates": [
+    {
+      "name": "customer-support",
+      "title": "Customer support assistant",
+      "description": "Fine-tune a helpful support agent.",
+      "primary_model": "Qwen/Qwen2.5-7B-Instruct",
+      "fallback_model": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+      "trainer_type": "sft",
+      "estimated_minutes": 20,
+      "min_vram_for_primary_gb": 16,
+      "bundled_dataset": "customer_support.jsonl",
+      "license_note": null
+    }
+  ],
+  "count": 1
+}
+```
+
+**Generation success** (`forgelm quickstart TEMPLATE [--dry-run] --output-format json`):
+
+```json
+{
+  "success": true,
+  "template": "customer-support",
+  "config_path": "/work/quickstart/config.yaml",
+  "model": "Qwen/Qwen2.5-7B-Instruct",
+  "dataset": "/work/quickstart/customer_support.jsonl",
+  "selection_reason": "primary model fits available VRAM",
+  "dry_run": false,
+  "chat_launched": false,
+  "notes": []
+}
+```
+
+**Training failure** (training subprocess returned non-zero):
+
+```json
+{
+  "success": false,
+  "error": "Training subprocess failed with exit code 3.",
+  "exit_code": 3,
+  "template": "customer-support",
+  "config_path": "/work/quickstart/config.yaml"
+}
+```
+
+| Key | Type | Notes |
+|---|---|---|
+| `templates` | list[object] | `--list` only. One entry per registered template; `count == len(templates)`. |
+| `template` | str | The selected template name. |
+| `config_path` | str | Path to the generated YAML config. |
+| `model` | str | Resolved model id (primary or VRAM-driven fallback). |
+| `dataset` | str | Path to the bundled / overridden dataset. |
+| `selection_reason` | str | Why `model` was chosen. |
+| `dry_run` | bool | `true` when `--dry-run` (config written, no training). |
+| `chat_launched` | bool | Always `false` in JSON mode — the interactive chat REPL is suppressed so human prose never interleaves with the JSON envelope on stdout. Run `forgelm chat <model_path>` manually. |
+| `notes` | list[str] | Advisory notes (e.g. license caveats). |
+| `exit_code` | int | Training-failure envelope only — the mapped public exit code the training subprocess returned. |
+
+**Exit code mapping:** `0` = generated (and, in text mode without `--no-chat`, the chat REPL ran); `1` = caller-input error (missing/invalid template, unwritable output dir); the training-failure envelope's `exit_code` (`2`/`3`/`4`) is propagated verbatim when the auto-train subprocess fails.
 
 ## Adding a new subcommand
 

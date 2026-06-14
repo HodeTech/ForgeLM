@@ -124,6 +124,62 @@ class TestDefaultSafetyProbesPath:
 
 
 # ---------------------------------------------------------------------------
+# Wizard defaults loader degrade-cleanly contract — F-P7-OPUS-22 / M5
+# ---------------------------------------------------------------------------
+
+
+class TestLoadDefaultsDegradation:
+    """A present-but-corrupt _defaults.json must NOT crash the wizard at import."""
+
+    def _patch_defaults_to(self, tmp_path: Path, content: str):
+        """Return a patch context that makes ``_defaults.json`` yield *content*.
+
+        ``_load_defaults`` does ``from importlib.resources import files``
+        function-locally, so we patch the canonical ``importlib.resources.files``
+        symbol the local import resolves to.
+        """
+        corrupt = tmp_path / "_defaults.json"
+        corrupt.write_text(content, encoding="utf-8")
+
+        class _FakeTraversable:
+            def joinpath(self, _name):
+                return corrupt
+
+        return patch("importlib.resources.files", lambda _pkg: _FakeTraversable())
+
+    def test_corrupt_defaults_json_falls_back_to_empty_dict(self, tmp_path: Path):
+        # json.JSONDecodeError is a ValueError, NOT an OSError — the old
+        # except tuple (ModuleNotFoundError, OSError) let it escape and crash
+        # the whole wizard subsystem at module-import time. The loader must
+        # now degrade to the hardcoded fallbacks exactly like the absent-file
+        # case does.
+        from forgelm.wizard._state import _load_defaults
+
+        with self._patch_defaults_to(tmp_path, "{ corrupt json not valid "):
+            result = _load_defaults()
+        assert result == {}
+
+    def test_corrupt_defaults_logs_warning(self, tmp_path: Path, caplog):
+        import logging
+
+        from forgelm.wizard._state import _load_defaults
+
+        with caplog.at_level(logging.WARNING, logger="forgelm.wizard"):
+            with self._patch_defaults_to(tmp_path, "{ corrupt "):
+                _load_defaults()
+        assert any("corrupt" in rec.message.lower() for rec in caplog.records)
+
+    def test_wellformed_defaults_still_loads(self, tmp_path: Path):
+        # Regression guard: the broadened except must not swallow a valid
+        # file. A well-formed object still parses (sans ``//`` comment keys).
+        from forgelm.wizard._state import _load_defaults
+
+        with self._patch_defaults_to(tmp_path, '{"//comment": "x", "model": {"max_length": 4096}}'):
+            result = _load_defaults()
+        assert result == {"model": {"max_length": 4096}}
+
+
+# ---------------------------------------------------------------------------
 # Navigation tokens — Phase 22 / G3
 # ---------------------------------------------------------------------------
 
