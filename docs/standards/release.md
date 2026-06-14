@@ -7,7 +7,7 @@
 
 **Semantic versioning 2.0 (MAJOR.MINOR.PATCH).**
 
-Current version lives in [`pyproject.toml`](../../pyproject.toml) line 7 (single source of truth — no `__version__` in code).
+Current version lives in [`pyproject.toml`](../../pyproject.toml)'s `version =` line (single source of truth). `forgelm.__version__` is a thin `importlib.metadata` wrapper over it — see [§Version in code](#version-in-code).
 
 | Bump | Trigger |
 |---|---|
@@ -17,7 +17,7 @@ Current version lives in [`pyproject.toml`](../../pyproject.toml) line 7 (single
 
 ### Pre-releases
 
-Current version is `0.5.5` (per `pyproject.toml`) — pre-1.0; release-candidate suffixes (`0.5.5rc1`, `0.5.5rc2`, …) are used during the rc window.
+The project is pre-1.0 (see `pyproject.toml`'s `version =` line for the current value); release-candidate suffixes (`rc1`, `rc2`, …) are used during the rc window.
 
 - `0.4.0rc1`, `0.4.0rc2`, ... — for PyPI distribution while collecting feedback
 - `0.4.0` — final release after rcN is stable
@@ -275,6 +275,7 @@ Current target:
   - `v0.5.5` → Phase 12.6 closure cycle done (38 fazlar / 5 waves bundled)
   - `v0.6.0` → Phase 14 done (Pipeline Chains)
   - `v0.6.0-pro` → Phase 13 done (Pro CLI; gated release)
+  - `v0.7.0` → Phase 21 done (GDPR erasure / retention)
 - **Patch** (`0.N.M`) — as needed; typically within 1 week of a bug report for critical issues
 - **Pre-release** (`rcN`) — at least one rc before every minor, kept on PyPI for 1-2 weeks
 

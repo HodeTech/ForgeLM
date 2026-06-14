@@ -914,7 +914,7 @@ collectors / BYOD / IO concerns.
   bash/shell `forgelm` invocations; reports drift classes
   (subcommand not in parser; flag not in parser; flag value not in
   parser's `choices` list).
-- **`tools/check_field_descriptions.py --strict`** — AST-based
+- **`tools/check_field_descriptions.py --strict forgelm/config.py`** — AST-based
   scanner of Pydantic `BaseModel` subclasses; exits 1 on any field
   missing a `description=`.
 - **`tools/check_no_analysis_refs.py`** — prohibits citations to

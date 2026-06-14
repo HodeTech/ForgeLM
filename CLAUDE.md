@@ -57,7 +57,7 @@ ForgeLM/
 │   │                        # _aggregator, _streaming, _simhash, _minhash,
 │   │                        # _pii_regex, _pii_ml, _secrets, _quality,
 │   │                        # _croissant, _summary, _splits
-│   ├── config.py            # Pydantic schemas (19 models)
+│   ├── config.py            # Pydantic schemas (23 models)
 │   ├── trainer.py           # TRL wrapper (SFT/DPO/SimPO/KTO/ORPO/GRPO)
 │   ├── model.py             # HF + PEFT model loading
 │   ├── data.py              # Dataset loading + format detection

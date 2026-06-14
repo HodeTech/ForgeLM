@@ -62,13 +62,17 @@ class ConfigError(Exception):
 
 ## Validation errors from Pydantic
 
-Pydantic raises `ValidationError`. In `cli.py`:
+`load_config(path)` wraps Pydantic `ValidationError` and `yaml.YAMLError`
+into `ConfigError`; `FileNotFoundError` propagates unwrapped. Mirror the real
+CLI handler in `forgelm/cli/_config_load.py`:
 
 ```python
+from forgelm.config import ConfigError, load_config
+
 try:
-    config = ForgeConfig.load(args.config)
-except ValidationError as e:
-    logger.error("Configuration error:\n%s", e)
+    config = load_config(args.config)
+except ConfigError as e:
+    logger.error("Configuration error: %s", e)
     sys.exit(EXIT_CONFIG_ERROR)
 except FileNotFoundError:
     logger.error("Config file not found: %s", args.config)
@@ -200,13 +204,13 @@ except Exception:  # ❌ no narrow class, no BLE001, no rationale, no log
 
 ```python
 try:
-    config = ForgeConfig.load(path)
+    config = load_config(path)
 except Exception as e:  # noqa: BLE001 — "just in case"  ❌
     logger.warning("Config load failed: %s", e)
     config = ForgeConfig()
 ```
 
-The protected operation is config validation. Pydantic raises `ValidationError`, the loader raises `FileNotFoundError` and `yaml.YAMLError`. That is a precise tuple — write it.
+The protected operation is config validation. `load_config` raises `ConfigError` (wrapping Pydantic `ValidationError` and `yaml.YAMLError`) and lets `FileNotFoundError` propagate. That is a precise tuple — write it.
 
 ## User-facing error messages
 
