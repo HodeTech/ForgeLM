@@ -19,7 +19,10 @@
 #                       etc.) does not expose the affected API to
 #                       attacker control.
 #   verified_at       — ISO date (YYYY-MM-DD) the advisory was last
-#                       read against this entry.
+#                       read against this entry. Re-verify and refresh
+#                       within 90 days: `check_pip_audit.py` emits a
+#                       `::warning::` (not a hard fail) once an entry's
+#                       verified_at is older than that window.
 #   reevaluate_after  — concrete trigger that drops the ignore.
 #   references        — (optional) list of advisory URLs.
 #

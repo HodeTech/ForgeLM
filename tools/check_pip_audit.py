@@ -60,6 +60,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -168,6 +169,39 @@ _IGNORE_REQUIRED_STR_KEYS: tuple[str, ...] = (
 _IGNORE_REQUIRED_KEYS: frozenset[str] = frozenset({*_IGNORE_REQUIRED_STR_KEYS, "verified_at"})
 _VERIFIED_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+# A CVE suppression is a security-policy exception; it must not silently
+# outlive the advisory state it was justified against.  When a ``verified_at``
+# is older than this many days we emit a ``::warning::`` (not a hard fail, so an
+# unattended nightly does not break over a weekend) so stale suppressions
+# surface on the run summary for re-triage (F-P5-OPUS-14).
+_VERIFIED_AT_STALE_DAYS = 90
+
+
+def _verified_at_staleness_warning(entry: dict[str, Any], ignores_path: Path, today: date) -> Optional[str]:
+    """Return a ``::warning::`` body when ``entry``'s ``verified_at`` is stale.
+
+    ``verified_at`` is already shape-validated (``YYYY-MM-DD``) by the time
+    this runs, so the parse cannot fail; we still guard defensively and skip
+    silently on an unexpected value rather than crash the gate.
+    """
+    raw = entry.get("verified_at")
+    if not isinstance(raw, str):
+        return None
+    try:
+        verified = date.fromisoformat(raw.strip())
+    except ValueError:
+        return None
+    age_days = (today - verified).days
+    if age_days > _VERIFIED_AT_STALE_DAYS:
+        return (
+            f"pip-audit ignore id {entry.get('id')!r} in {ignores_path} was last "
+            f"verified {age_days} days ago ({raw}) — older than the "
+            f"{_VERIFIED_AT_STALE_DAYS}-day re-evaluation window. Re-verify the "
+            f"advisory (reevaluate_after: {entry.get('reevaluate_after')!r}) and "
+            f"refresh verified_at, or drop the suppression."
+        )
+    return None
+
 
 def _validate_ignore_entry(entry: dict[str, Any], index: int, ignores_path: Path) -> Optional[str]:
     """Return an ``::error::`` body if ``entry`` is malformed, else ``None``.
@@ -252,6 +286,7 @@ def _load_ignores(ignores_path: Path) -> Optional[dict[str, dict[str, Any]]]:
         return None
 
     by_id: dict[str, dict[str, Any]] = {}
+    today = date.today()
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             print(
@@ -272,6 +307,11 @@ def _load_ignores(ignores_path: Path) -> Optional[dict[str, dict[str, Any]]]:
         if shape_error:
             print(f"::error::{shape_error}", file=sys.stderr)
             return None
+        stale_warning = _verified_at_staleness_warning(entry, ignores_path, today)
+        if stale_warning:
+            # Advisory-only: a stale suppression surfaces for re-triage but does
+            # not fail the gate (F-P5-OPUS-14).
+            print(f"::warning::{stale_warning}")
         primary_id = entry["id"]
         # Index by every alias so cross-DB lookups (PYSEC ↔ CVE ↔ GHSA)
         # match without the workflow having to know which form pip-audit
