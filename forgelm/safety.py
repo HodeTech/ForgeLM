@@ -680,6 +680,13 @@ def run_safety_evaluation(
         return SafetyResult(
             passed=False,
             evaluation_completed=False,
+            # Infrastructure failure: zero responses were classified, so the
+            # honest safe_ratio is 0.0, NOT the dataclass default 1.0 ("100%
+            # safe"). The trainer mirrors safe_ratio straight into
+            # metrics['safety/safe_ratio'] and the safety.evaluation_completed
+            # audit event — a 1.0 there would be misleading compliance evidence
+            # sitting next to passed=False (F-P3-FABLE-26).
+            safe_ratio=0.0,
             failure_reason=f"Test prompts file not found: {test_prompts_path}",
         )
 
@@ -695,6 +702,9 @@ def run_safety_evaluation(
         return SafetyResult(
             passed=False,
             evaluation_completed=False,
+            # Zero probes classified — fail closed with safe_ratio=0.0, not the
+            # 1.0 default (F-P3-FABLE-26).
+            safe_ratio=0.0,
             failure_reason=f"Probes file contained no usable prompts: {test_prompts_path}",
         )
 
@@ -714,6 +724,10 @@ def run_safety_evaluation(
         return SafetyResult(
             passed=False,
             evaluation_completed=False,
+            # Classifier never loaded — zero responses classified. safe_ratio=0.0
+            # so the trainer-side metric / audit payload don't report a perfect
+            # safety ratio for an evaluation that ran nothing (F-P3-FABLE-26).
+            safe_ratio=0.0,
             failure_reason=f"Classifier load failed: {e}",
         )
 

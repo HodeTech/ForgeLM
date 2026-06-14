@@ -304,3 +304,154 @@ class TestComplianceManifestUsesOriginalBatchSize:
         # finally restored the effective values despite the exception.
         assert config.training.per_device_train_batch_size == 4
         assert config.training.gradient_accumulation_steps == 8
+
+
+class _FakeCallback:
+    """Stand-in for an HF default callback (distinct class per name)."""
+
+
+class _DefaultFlowCallback(_FakeCallback):
+    pass
+
+
+class _ProgressCallback(_FakeCallback):
+    pass
+
+
+@pytest.mark.skipif(not torch_available, reason="torch not installed")
+class TestOomRecoveryLoop:
+    """F-P2-FAB-15 / F-P3-FABLE-22 / F-P3-FABLE-23: drive the real
+    _run_with_oom_recovery loop body (no MagicMock substitution of the loop)."""
+
+    def _seed(self, tmp_path, *, oom_recovery=True, min_bs=1, batch_size=8, grad_accum=1):
+        config = _make_forge_config(batch_size=batch_size, grad_accum=grad_accum, output_dir=str(tmp_path))
+        config.training.oom_recovery = oom_recovery
+        config.training.oom_recovery_min_batch_size = min_bs
+        trainer = _make_trainer(config, tmp_path)
+        trainer.audit = MagicMock()
+        return trainer
+
+    def test_oom_rebuild_passes_only_user_callbacks_not_handler_defaults(self, tmp_path):
+        """F-P3-FABLE-22: the rebuild must pass the user-supplied callbacks, NOT the
+        live handler list (which already contains HF's instantiated defaults), so
+        defaults are not duplicated on every OOM retry."""
+        from forgelm.results import TrainResult  # noqa: F401  (keep import style consistent)
+
+        trainer = self._seed(tmp_path, batch_size=8, min_bs=1)
+
+        user_cb = _FakeCallback()
+        trainer._user_callbacks = [user_cb]
+
+        # A faithful trainer whose callback_handler ALSO carries HF defaults —
+        # the buggy code path read THIS list and re-fed the defaults back in.
+        fake_trainer = MagicMock()
+        fake_trainer.callback_handler.callbacks = [_DefaultFlowCallback(), _ProgressCallback(), user_cb]
+        # First train() raises OOM, second succeeds.
+        fake_trainer.train.side_effect = [RuntimeError("CUDA out of memory"), MagicMock(metrics={})]
+        trainer.trainer = fake_trainer
+
+        captured = []
+
+        def fake_build(callbacks):
+            captured.append(list(callbacks))
+
+        trainer._build_trainer = fake_build
+
+        with patch("torch.cuda.empty_cache"):
+            trainer._run_with_oom_recovery(None)
+
+        assert len(captured) == 1  # exactly one rebuild
+        rebuilt = captured[0]
+        # Only the user callback is re-passed — no DefaultFlow/Progress defaults.
+        assert rebuilt == [user_cb]
+        assert not any(isinstance(c, (_DefaultFlowCallback, _ProgressCallback)) for c in rebuilt)
+
+    def test_oom_recovery_at_floor_raises_clean_oom_not_zerodivision(self, tmp_path):
+        """F-P3-FABLE-23: with min_bs clamped to >=1 and batch already at the floor,
+        the handler re-raises the OOM with the 'cannot recover' diagnostic — never a
+        ZeroDivisionError from current_bs // new_bs."""
+        # min_bs=0 would historically slip past validation; the loop clamps it to 1.
+        trainer = self._seed(tmp_path, batch_size=1, min_bs=0)
+        fake_trainer = MagicMock()
+        fake_trainer.train.side_effect = RuntimeError("CUDA out of memory")
+        trainer.trainer = fake_trainer
+        trainer._user_callbacks = []
+
+        with patch("torch.cuda.empty_cache"), pytest.raises(RuntimeError, match="out of memory"):
+            trainer._run_with_oom_recovery(None)
+
+    def test_oom_recovery_halves_batch_and_emits_audit_event(self, tmp_path):
+        """F-P2-FAB-15: one OOM halves batch (8→4), doubles grad-accum, emits the
+        training.oom_recovery audit event, then retries to success."""
+        trainer = self._seed(tmp_path, batch_size=8, grad_accum=1, min_bs=1)
+        fake_trainer = MagicMock()
+        fake_trainer.callback_handler.callbacks = []
+        fake_trainer.train.side_effect = [RuntimeError("CUDA out of memory"), MagicMock(metrics={})]
+        trainer.trainer = fake_trainer
+        trainer._user_callbacks = []
+        trainer._build_trainer = MagicMock()
+
+        with patch("torch.cuda.empty_cache"):
+            trainer._run_with_oom_recovery(None)
+
+        assert trainer.config.training.per_device_train_batch_size == 4
+        assert trainer.config.training.gradient_accumulation_steps == 2
+        events = [c.args[0] for c in trainer.audit.log_event.call_args_list]
+        assert "training.oom_recovery" in events
+
+    def test_non_oom_runtime_error_propagates_unchanged(self, tmp_path):
+        """A non-OOM RuntimeError is re-raised immediately (no retry, no rebuild)."""
+        trainer = self._seed(tmp_path, batch_size=8, min_bs=1)
+        fake_trainer = MagicMock()
+        fake_trainer.train.side_effect = RuntimeError("some other crash")
+        trainer.trainer = fake_trainer
+        trainer._user_callbacks = []
+        trainer._build_trainer = MagicMock()
+
+        with pytest.raises(RuntimeError, match="some other crash"):
+            trainer._run_with_oom_recovery(None)
+        trainer._build_trainer.assert_not_called()
+
+
+@pytest.mark.skipif(not torch_available, reason="torch not installed")
+class TestTrainConstructionFailure:
+    """F-P2-FAB-09 / F-P2-FAB-20: a _build_trainer construction failure (and any
+    _run_training_pipeline failure) must still emit pipeline.failed + notify_failure
+    and re-raise, after notify_start already fired."""
+
+    def test_build_trainer_failure_emits_pipeline_failed_and_notifies(self, tmp_path):
+        config = _make_forge_config(batch_size=8, grad_accum=2, output_dir=str(tmp_path))
+        trainer = _make_trainer(config, tmp_path)
+        trainer.notifier = MagicMock()
+        trainer.audit = MagicMock()
+        trainer.dataset = {"train": list(range(10))}  # no validation → no EarlyStopping cb
+
+        def _boom(callbacks):
+            raise RuntimeError("DeepSpeed config not found")
+
+        trainer._build_trainer = _boom
+
+        with pytest.raises(RuntimeError, match="DeepSpeed config"):
+            trainer.train()
+
+        # notify_start fired, then the failure path closed the lifecycle.
+        trainer.notifier.notify_start.assert_called_once()
+        trainer.notifier.notify_failure.assert_called_once()
+        events = [c.args[0] for c in trainer.audit.log_event.call_args_list]
+        assert "pipeline.failed" in events
+
+    def test_run_pipeline_failure_emits_pipeline_failed_and_reraises(self, tmp_path):
+        config = _make_forge_config(batch_size=8, grad_accum=2, output_dir=str(tmp_path))
+        trainer = _make_trainer(config, tmp_path)
+        trainer.notifier = MagicMock()
+        trainer.audit = MagicMock()
+        trainer.dataset = {"train": list(range(10))}
+        trainer._build_trainer = MagicMock()
+        trainer._run_training_pipeline = MagicMock(side_effect=ValueError("optimizer exploded"))
+
+        with pytest.raises(ValueError, match="optimizer exploded"):
+            trainer.train()
+
+        trainer.notifier.notify_failure.assert_called_once()
+        events = [c.args[0] for c in trainer.audit.log_event.call_args_list]
+        assert "pipeline.failed" in events

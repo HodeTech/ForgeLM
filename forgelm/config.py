@@ -305,7 +305,7 @@ class TrainingConfig(BaseModel):
         default=False, description="Auto-halve `per_device_train_batch_size` on CUDA OOM and retry."
     )
     oom_recovery_min_batch_size: int = Field(
-        default=1, description="Stop OOM retry once batch size reaches this floor; raise instead."
+        default=1, ge=1, description="Stop OOM retry once batch size reaches this floor; raise instead."
     )
     report_to: Literal["tensorboard", "wandb", "mlflow", "none"] = Field(
         default="tensorboard",

@@ -281,6 +281,20 @@ class ForgeTrainer:
     def _validate_evaluation_config(self) -> None:
         """Warn about evaluation configuration issues before training starts."""
         eval_cfg = self.config.evaluation
+
+        # Fail fast on a benchmark gate whose heavy extra (lm-eval) is missing.
+        # ``from .benchmark import run_benchmark`` succeeds without lm-eval (the
+        # module top-level is stdlib-only); the real ImportError lives inside
+        # ``run_benchmark`` and would otherwise surface AFTER a full training
+        # run as exit 2, prompting CI retries of a deterministic, known-at-t=0
+        # misconfiguration. Probe here so the install hint fires pre-training
+        # (F-P3-FABLE-25). Runs regardless of auto_revert — the gate is
+        # configured either way.
+        if eval_cfg and eval_cfg.benchmark and eval_cfg.benchmark.enabled and eval_cfg.benchmark.tasks:
+            from .benchmark import _check_lm_eval_available
+
+            _check_lm_eval_available()
+
         if not eval_cfg or not eval_cfg.auto_revert:
             return
 
@@ -581,18 +595,35 @@ class ForgeTrainer:
             raise ValueError(f"Unknown trainer_type: {tt}")
 
     def execute_evaluation_checks(self, final_path: str, metrics: Dict[str, float]) -> bool:
-        """Evaluates final loss against constraints. Returns True if acceptable, False if reverted."""
-        if not self.config.evaluation or not self.config.evaluation.auto_revert:
+        """Evaluates final loss against constraints. Returns True if acceptable, False if reverted.
+
+        Detection is decoupled from reversion (F-P3-FABLE-24): when an eval-loss
+        threshold / baseline is configured, the NaN-Inf and threshold checks ALWAYS
+        run so a breach is recorded, matching the benchmark/safety/judge gates which
+        always evaluate. Only the *revert* is gated on ``auto_revert``. Without
+        ``auto_revert`` a breach logs a WARNING (and a NaN/Inf divergence an ERROR)
+        naming the threshold but keeps the model — previously the whole check was
+        skipped, so a diverged model could ship with exit 0 and no signal at all.
+        """
+        if not self.config.evaluation:
             return True
+
+        auto_revert = self.config.evaluation.auto_revert
 
         # No validation data means we can't evaluate
         if not self.dataset.get("validation"):
-            logger.warning("Skipping evaluation checks — no validation data available.")
+            if auto_revert:
+                logger.warning("Skipping evaluation checks — no validation data available.")
             return True
 
         final_loss = metrics.get("eval_loss")
         baseline_loss = self.config.evaluation.baseline_loss
         max_loss = self.config.evaluation.max_acceptable_loss
+
+        # When auto_revert is off and no threshold/baseline is configured there is
+        # nothing to detect — keep the original cheap early return.
+        if not auto_revert and max_loss is None and baseline_loss is None:
+            return True
 
         # Handle missing or invalid eval_loss
         if final_loss is None:
@@ -602,6 +633,9 @@ class ForgeTrainer:
         if math.isnan(final_loss) or math.isinf(final_loss):
             reason = f"eval_loss is {final_loss} (NaN or Inf) — training diverged."
             logger.error("EVALUATION FAILED: %s", reason)
+            if not auto_revert:
+                logger.warning("auto_revert=false — diverged model NOT reverted (detection-only). %s", reason)
+                return True
             self._revert_model(final_path, reason, source="nan_inf")
             return False
 
@@ -616,6 +650,9 @@ class ForgeTrainer:
 
         if failed_reasons:
             reason = " ".join(failed_reasons)
+            if not auto_revert:
+                logger.warning("Evaluation threshold breached but auto_revert=false — model kept. %s", reason)
+                return True
             logger.error("EVALUATION FAILED: %s", reason)
             self._revert_model(final_path, reason, source="threshold")
             return False
@@ -818,8 +855,19 @@ class ForgeTrainer:
 
         cfg = self.config.training
         oom_recovery = getattr(cfg, "oom_recovery", False)
-        min_bs = getattr(cfg, "oom_recovery_min_batch_size", 1)
-        callbacks: list = self.trainer.callback_handler.callbacks if hasattr(self.trainer, "callback_handler") else []
+        # Clamp defensively so a config that slipped past the ``ge=1`` Field
+        # bound (e.g. a TrainingConfig built by hand in a test) can never drive
+        # ``new_bs`` to 0 and raise ZeroDivisionError inside the handler instead
+        # of the clean "cannot recover" diagnostic (F-P3-FABLE-23).
+        min_bs = max(getattr(cfg, "oom_recovery_min_batch_size", 1), 1)
+        # Rebuild only from the *user-supplied* callbacks captured in train()
+        # — NOT self.trainer.callback_handler.callbacks, which already contains
+        # HF's instantiated defaults (DefaultFlowCallback / ProgressCallback /
+        # the report_to integration callback). Passing those back into
+        # _build_trainer makes HF prepend its defaults a second time, doubling
+        # progress output + metric writers and leaking stale EarlyStopping
+        # patience across the retry (F-P3-FABLE-22).
+        callbacks: list = list(getattr(self, "_user_callbacks", []))
 
         while True:
             try:
@@ -1180,10 +1228,19 @@ class ForgeTrainer:
         if self.dataset.get("validation"):
             patience = getattr(self.config.training, "early_stopping_patience", 3)
             callbacks.append(EarlyStoppingCallback(early_stopping_patience=patience))
-
-        self._build_trainer(callbacks)
+        # Stash the user-supplied callbacks so OOM-recovery rebuilds reuse THIS
+        # list (free of HF's instantiated defaults) rather than scraping the
+        # live callback_handler, which duplicates defaults on rebuild
+        # (F-P3-FABLE-22).
+        self._user_callbacks = callbacks
 
         try:
+            # _build_trainer crosses TRL/Transformers config validation
+            # (GRPOConfig TypeError, eval_strategy/eval_dataset mismatch,
+            # DeepSpeed FileNotFoundError, …) — a real failure class. Keep it
+            # INSIDE the try so a construction failure still emits pipeline.failed
+            # + notify_failure after notify_start already fired (F-P2-FAB-09).
+            self._build_trainer(callbacks)
             train_result = self._run_training_pipeline(resume_from_checkpoint)
             # Reproducibility anchors for the JSON run-output envelope
             # (XP-11 / F-P4-OPUS-15): the run's audit id + the config digest.
@@ -1247,13 +1304,18 @@ class ForgeTrainer:
             logger.warning("Benchmark enabled but no tasks specified. Skipping.")
             return None
 
+        # Note: this import is stdlib-only at module top, so it does NOT raise
+        # for a missing lm-eval — that ImportError is raised (with the install
+        # hint) by the _check_lm_eval_available preflight in
+        # _validate_evaluation_config before training starts (F-P3-FABLE-25).
+        # We re-raise rather than swallow-to-None here so a configured gate can
+        # never silently degrade to a skip-with-exit-0.
         try:
             from .benchmark import run_benchmark
-        except ImportError:
-            logger.exception(
+        except ImportError as e:
+            raise ImportError(
                 "Benchmark evaluation requested but lm-eval is not installed. Install with: pip install forgelm[eval]"
-            )
-            return None
+            ) from e
 
         logger.info("Running post-training benchmark evaluation...")
         output_dir = bench_cfg.output_dir or os.path.join(self.checkpoint_dir, "benchmark")
@@ -1398,11 +1460,17 @@ class ForgeTrainer:
         if not eval_cfg or not eval_cfg.safety or not eval_cfg.safety.enabled:
             return None
 
+        # safety.py is stdlib-only at module top; this never fires for a missing
+        # heavy dep. Re-raise rather than swallow-to-None so a configured safety
+        # gate can never silently degrade to a skip with exit 0 (F-P3-FABLE-25 /
+        # F-P3-FABLE-34).
         try:
             from .safety import run_safety_evaluation
-        except ImportError:
-            logger.exception("Safety evaluation import failed")
-            return None
+        except ImportError as e:
+            raise ImportError(
+                "Safety evaluation requested but its dependencies are not installed. "
+                "Install with: pip install forgelm[eval]"
+            ) from e
 
         safety_cfg = eval_cfg.safety
         logger.info("Running post-training safety evaluation (scoring=%s)...", getattr(safety_cfg, "scoring", "binary"))
@@ -1435,11 +1503,16 @@ class ForgeTrainer:
         if not eval_cfg or not eval_cfg.llm_judge or not eval_cfg.llm_judge.enabled:
             return None
 
+        # judge.py is stdlib-only at module top; this never fires for a missing
+        # heavy dep. Re-raise rather than swallow-to-None so a configured judge
+        # gate can never silently degrade to a skip with exit 0 (F-P3-FABLE-25).
         try:
             from .judge import run_judge_evaluation
-        except ImportError:
-            logger.exception("Judge evaluation import failed")
-            return None
+        except ImportError as e:
+            raise ImportError(
+                "LLM-judge evaluation requested but its dependencies are not installed. "
+                "Install with: pip install forgelm[eval]"
+            ) from e
 
         judge_cfg = eval_cfg.llm_judge
         # Defence-in-depth: the preflight (__init__) already ran this, but guard

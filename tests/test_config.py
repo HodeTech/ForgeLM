@@ -105,6 +105,18 @@ class TestTrainingConfig:
         assert t.learning_rate == pytest.approx(1e-4)
         assert t.num_train_epochs == 5
 
+    @pytest.mark.parametrize("bad", [0, -1])
+    def test_oom_recovery_min_batch_size_rejects_non_positive(self, bad):
+        """F-P3-FABLE-23: oom_recovery_min_batch_size must carry a ``ge=1`` bound
+        like every sibling batch field — a 0/negative floor would drive new_bs to 0
+        and raise ZeroDivisionError inside the OOM handler instead of the clean
+        'cannot recover' diagnostic."""
+        with pytest.raises(ValidationError):
+            TrainingConfig(oom_recovery_min_batch_size=bad)
+
+    def test_oom_recovery_min_batch_size_accepts_one(self):
+        assert TrainingConfig(oom_recovery_min_batch_size=1).oom_recovery_min_batch_size == 1
+
 
 # --- EvaluationConfig ---
 

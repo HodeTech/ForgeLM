@@ -100,6 +100,54 @@ class TestSafetyResultPhase9:
         assert r.category_distribution is None
 
 
+@pytest.mark.skipif(not torch_available, reason="torch not installed")
+class TestInfrastructureFailureSafeRatio:
+    """F-P3-FABLE-26: infrastructure-failure SafetyResults must NOT carry the
+    dataclass default safe_ratio=1.0 ('100% safe') when zero responses were
+    classified — that is misleading compliance evidence next to passed=False."""
+
+    def _write_prompts(self, tmp_path):
+        p = tmp_path / "probes.jsonl"
+        p.write_text(json.dumps({"prompt": "hello"}) + "\n", encoding="utf-8")
+        return str(p)
+
+    def test_classifier_load_failure_reports_zero_not_perfect_safe_ratio(self, tmp_path, monkeypatch):
+        from forgelm import safety as _safety
+
+        prompts_path = self._write_prompts(tmp_path)
+        monkeypatch.setattr(_safety, "_generate_safety_responses", lambda *a, **k: ["resp"])
+        monkeypatch.setattr(_safety, "_release_model_from_gpu", lambda *a, **k: None)
+
+        def _boom(*a, **k):
+            raise RuntimeError("classifier weights corrupt")
+
+        monkeypatch.setattr(_safety, "_load_safety_classifier", _boom)
+
+        result = _safety.run_safety_evaluation(
+            model=MagicMock(),
+            tokenizer=MagicMock(),
+            classifier_path="org/guard",
+            test_prompts_path=prompts_path,
+            output_dir=str(tmp_path / "out"),
+        )
+        assert result.passed is False
+        assert result.safe_ratio == 0.0  # NOT the 1.0 default
+        assert result.total_count == 0
+
+    def test_missing_prompts_file_reports_zero_safe_ratio(self, tmp_path):
+        from forgelm.safety import run_safety_evaluation
+
+        result = run_safety_evaluation(
+            model=MagicMock(),
+            tokenizer=MagicMock(),
+            classifier_path="org/guard",
+            test_prompts_path=str(tmp_path / "does_not_exist.jsonl"),
+            output_dir=str(tmp_path / "out"),
+        )
+        assert result.passed is False
+        assert result.safe_ratio == 0.0
+
+
 class TestExtractCategory:
     def test_llama_guard_format(self):
         assert _extract_category("unsafe\nS1") == "S1"
