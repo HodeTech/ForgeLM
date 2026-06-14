@@ -21,7 +21,7 @@ pip install -e ".[unsloth]"      # Unsloth backend (Linux)
 pip install -e ".[eval]"         # lm-evaluation-harness
 pip install -e ".[tracking]"     # W&B deney takibi
 pip install -e ".[distributed]"  # DeepSpeed çoklu GPU
-pip install -e ".[merging]"      # mergekit model birleştirme
+pip install -e ".[merging]"      # native model birleştirme (TIES/DARE/SLERP — ekstra bağımlılık yok)
 ```
 
 ## Kimlik Doğrulama

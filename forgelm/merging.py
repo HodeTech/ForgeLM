@@ -79,7 +79,7 @@ def merge_peft_adapters(
             num_models=len(adapters),
         )
 
-    except Exception as e:  # noqa: BLE001 — best-effort: model merging crosses HF model load (OSError/RuntimeError), PEFT adapter load (KeyError on missing config), torch tensor ops (RuntimeError on dtype/device mismatch), and mergekit-internal errors.  MergeResult(success=False) is the documented public contract.  # NOSONAR
+    except Exception as e:  # noqa: BLE001 — best-effort: model merging crosses HF model load (OSError/RuntimeError), PEFT adapter load (KeyError on missing config), and torch tensor ops (RuntimeError on dtype/device mismatch).  Merging is native (peft + torch); MergeResult(success=False) is the documented public contract.  # NOSONAR
         logger.exception("Model merging failed")
         return MergeResult(success=False, error=str(e))
 

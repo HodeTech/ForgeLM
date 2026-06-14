@@ -148,7 +148,7 @@ pip install "forgelm[unsloth]"          # Unsloth backend (Linux)
 pip install "forgelm[eval]"             # lm-evaluation-harness
 pip install "forgelm[tracking]"         # W&B / MLflow
 pip install "forgelm[distributed]"      # DeepSpeed
-pip install "forgelm[merging]"          # mergekit
+pip install "forgelm[merging]"          # model merging (TIES/DARE/SLERP — native, no extra deps)
 pip install "forgelm[ingestion]"        # PDF / DOCX / EPUB / Markdown
 pip install "forgelm[ingestion-scale]"  # MinHash LSH for large corpora
 pip install "forgelm[ingestion-pii-ml]" # Presidio NER (also needs spaCy model)

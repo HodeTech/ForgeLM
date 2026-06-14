@@ -21,7 +21,7 @@ pip install -e ".[unsloth]"      # Unsloth backend (Linux)
 pip install -e ".[eval]"         # lm-evaluation-harness
 pip install -e ".[tracking]"     # W&B experiment tracking
 pip install -e ".[distributed]"  # DeepSpeed multi-GPU
-pip install -e ".[merging]"      # mergekit model merging
+pip install -e ".[merging]"      # native model merging (TIES/DARE/SLERP — no extra deps)
 pip install -e ".[export]"       # GGUF export (llama-cpp-python, non-Windows)
 pip install -e ".[chat]"         # Rich rendering in forgelm chat
 ```

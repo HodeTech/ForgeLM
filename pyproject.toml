@@ -92,10 +92,12 @@ distributed = [
   "deepspeed>=0.14.0",
 ]
 
-# Model merging — mergekit (TIES / DARE / SLERP).
-merging = [
-  "mergekit>=0.0.5",
-]
+# Model merging (TIES / DARE / SLERP / linear) is implemented natively on
+# state dicts via the core peft + torch deps — no extra packages are required
+# (mergekit was declared here but never imported anywhere; it carried its own
+# tight transformers/torch pins that could downgrade a training env for zero
+# benefit). Kept as a no-op extra so `pip install forgelm[merging]` still resolves.
+merging = []
 
 # GGUF export via llama-cpp-python's bundled convert_hf_to_gguf.py.
 # Produces f16 and q8_0 GGUF directly. K-quants (q4_k_m etc.) require a
