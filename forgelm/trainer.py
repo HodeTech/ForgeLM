@@ -1257,11 +1257,12 @@ class ForgeTrainer:
         final model must NOT land in the canonical ``final_model/`` directory
         before a human signs off, otherwise downstream consumers that watch
         that path treat the run as already deployed. Instead, the adapters
-        live in a sibling ``final_model.staging/`` directory until
+        live in a sibling ``final_model.staging.<run_id>/`` directory until
         ``forgelm approve <run_id>`` atomically renames it.
 
-        ``staging_path`` is the on-disk staging directory (``final_path +
-        ".staging"``). When ``already_saved=False`` (default) the method
+        ``staging_path`` is the on-disk staging directory (the only caller
+        passes ``f"{final_path}.staging.{run_id}"``). When
+        ``already_saved=False`` (default) the method
         also saves the model to ``staging_path``; this preserves backwards
         compatibility for callers who reach the gate without having staged
         the model themselves. The pipeline orchestrator passes
@@ -1326,7 +1327,7 @@ class ForgeTrainer:
         )
 
         # Article 14 (honest path): when ``require_human_approval`` is on the
-        # adapters land in ``final_model.staging/`` rather than the canonical
+        # adapters land in ``final_model.staging.<run_id>/`` rather than the canonical
         # ``final_model/`` directory — and the canonical directory is created
         # only by ``forgelm approve <run_id>`` after a human signs off.
         # ``_handle_human_approval_gate`` performs both the staging save and

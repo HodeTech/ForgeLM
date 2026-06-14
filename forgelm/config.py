@@ -735,7 +735,7 @@ class EvaluationConfig(BaseModel):
         default=False,
         description="Article 14: pause the pipeline for human review (stages model under `final_model.staging.<run_id>/` and exits 4).",
     )
-    # ``final_model.staging/`` retention horizon for `forgelm reject` paths.
+    # ``final_model.staging.<run_id>/`` retention horizon for `forgelm reject` paths.
     # Documented now (v0.5.5) so operators can plan their evidence-preservation
     # policy; auto-deletion enforcement is deferred to Phase 21 (GDPR
     # right-to-erasure) where it lands alongside the broader retention
@@ -745,7 +745,7 @@ class EvaluationConfig(BaseModel):
         default=7,
         ge=0,
         description=(
-            "Article 14: number of days to retain `final_model.staging/` after a "
+            "Article 14: number of days to retain `final_model.staging.<run_id>/` after a "
             "`forgelm reject` decision before scheduled cleanup. Zero means retain "
             "indefinitely. Auto-deletion enforcement is deferred to Phase 21 "
             "(GDPR right-to-erasure)."

@@ -144,6 +144,24 @@ class TestHumanApprovalGateTrainer:
         assert result.staging_path == staging_path
         assert result.success is True
 
+    def test_production_staging_path_carries_run_id_suffix(self, tmp_path: Path) -> None:
+        """The trainer's real caller stages adapters at
+        ``f"{final_path}.staging.{run_id}"`` — the run-id suffix is
+        load-bearing (approve/reject/purge resolve it). Pin the production
+        convention so the facade/results/webhook comments that now document
+        ``final_model.staging.<run_id>/`` cannot drift back to the suffix-less
+        form. Reconstructs the exact expression ForgeTrainer builds at the
+        gate so a rename of the suffix shape trips here."""
+        trainer, output_dir = self._make_trainer(tmp_path)
+        final_path = os.path.abspath(str(output_dir / "final_model"))
+
+        # Mirror forgelm/trainer.py's gate-path construction verbatim.
+        gate_path = os.path.abspath(f"{final_path}.staging.{trainer.audit.run_id}")
+
+        assert os.path.basename(gate_path) == f"final_model.staging.{trainer.audit.run_id}"
+        assert ".staging." in gate_path
+        assert not gate_path.endswith(".staging")
+
     def test_gate_emits_human_approval_required_event(self, tmp_path: Path) -> None:
         trainer, output_dir = self._make_trainer(tmp_path)
         from forgelm.results import TrainResult

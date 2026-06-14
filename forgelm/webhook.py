@@ -269,7 +269,7 @@ class WebhookNotifier:
 
         Fired by :meth:`ForgeTrainer._handle_human_approval_gate` after the
         adapters have been saved to the staging directory. ``model_path`` is
-        the on-disk staging location (``final_model.staging/``) so an
+        the on-disk staging location (``final_model.staging.<run_id>/``) so an
         approver can inspect the artefacts before running
         ``forgelm approve <run_id>``.
 
