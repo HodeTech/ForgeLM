@@ -778,7 +778,7 @@ graph TD
 > [`tests/test_data_audit.py`](../../tests/test_data_audit.py); docs:
 > [`docs/guides/ingestion.md`](../guides/ingestion.md),
 > [`docs/guides/data_audit.md`](../guides/data_audit.md). Follow-up
-> work tracked in [Phase 11.5 backlog](#phase-115-ingestion-audit-polish).
+> work tracked in [Phase 11.5 backlog](#phase-115--ingestion--audit-polish).
 >
 **Goal:** Turn raw domain documents (PDF, DOCX, EPUB, TXT, plus structured sources) into training-ready JSONL, with automatic data quality reports that plug into EU AI Act Article 10 data governance.
 **Estimated Effort:** Medium (1-2 months) — **Actual: 1 day**
@@ -825,7 +825,7 @@ graph TD
 
 > **Note (post-consolidation):** Originally targeted `v0.5.1`, now ships
 > as part of the consolidated `v0.5.0` release alongside Phases 11, 12,
-> and 12.5 — see [releases.md](releases.md#v050-document-ingestion-data-curation-pipeline).
+> and 12.5 — see [releases.md](releases.md#v050--document-ingestion--data-curation-pipeline).
 > Version-label references below preserve the historical planning trail.
 >
 > **Status:** ✅ Landed for the (originally) `v0.5.1` cycle. All 12 follow-ups carved
@@ -912,7 +912,7 @@ suite because it is wall-clock-noisy.
 
 `v0.5.2` ([Phase 12 — Data Curation Maturity](#phase-12-data-curation-maturity)) is the direct continuation of this lineage: MinHash LSH dedup for >50K-row corpora, markdown-aware splitter, code/secrets leakage scan, heuristic quality filter, DOCX/Markdown table preservation. Driven by the post-`v0.5.1` competitive review that compared ForgeLM's ingestion + audit against LLaMA-Factory / Axolotl / Unsloth / NeMo Curator / Dolma / RedPajama / LlamaIndex / LangChain / Marker / Docling.
 
-`v0.5.3` ([Phase 14 — Multi-Stage Pipeline Chains](#phase-14-multi-stage-pipeline-chains-v070)) was reslotted from `v0.5.2` so the ingestion/audit lineage finishes uninterrupted before the trainer-orchestration surface gets reshaped — Phase 14 ultimately shipped in `v0.7.0` after Phase 15 displaced it post-2026-05-11 pilot.
+`v0.5.3` ([Phase 14 — Multi-Stage Pipeline Chains](#phase-14--multi-stage-pipeline-chains-v070)) was reslotted from `v0.5.2` so the ingestion/audit lineage finishes uninterrupted before the trainer-orchestration surface gets reshaped — Phase 14 ultimately shipped in `v0.7.0` after Phase 15 displaced it post-2026-05-11 pilot.
 
 ---
 
@@ -920,14 +920,14 @@ suite because it is wall-clock-noisy.
 
 > **Note (post-consolidation):** Originally targeted `v0.5.2`, now ships
 > as part of the consolidated `v0.5.0` release alongside Phases 11, 11.5,
-> and 12.5 — see [releases.md](releases.md#v050-document-ingestion-data-curation-pipeline).
+> and 12.5 — see [releases.md](releases.md#v050--document-ingestion--data-curation-pipeline).
 > Version-label references below preserve the historical planning trail.
 >
-> **Status:** ✅ **Tier 1 DONE** — landed on `development` for the (originally) `v0.5.2` cycle. All five must-have tasks shipped: MinHash LSH dedup option (`[ingestion-scale]` extra via `datasketch`), markdown-aware splitter (`--strategy markdown`), code/secrets leakage tagger (regex-based; `detect-secrets` integration was originally planned as a `[ingestion-secrets]` extra but deferred — only `[ingestion-pii-ml]` for Presidio NER ultimately shipped in `pyproject.toml`), heuristic quality filter (`--quality-filter`), DOCX/Markdown table preservation. Tier 2 (Presidio adapter, Croissant metadata) and Tier 3 (`--all-mask` composite, wizard "audit first" hook) are deferred to a follow-up **Phase 12.5** backlog file (analogous to [Phase 11.5 section above](#phase-115-ingestion-audit-polish)). Modules: [`forgelm/data_audit.py`](../../forgelm/data_audit/), [`forgelm/ingestion.py`](../../forgelm/ingestion.py), [`forgelm/cli.py`](../../forgelm/cli/); tests: [`tests/test_data_audit_phase12.py`](../../tests/test_data_audit_phase12.py), [`tests/test_ingestion_phase12.py`](../../tests/test_ingestion_phase12.py); CLI tests added in [`tests/test_cli_subcommands.py`](../../tests/test_cli_subcommands.py).
+> **Status:** ✅ **Tier 1 DONE** — landed on `development` for the (originally) `v0.5.2` cycle. All five must-have tasks shipped: MinHash LSH dedup option (`[ingestion-scale]` extra via `datasketch`), markdown-aware splitter (`--strategy markdown`), code/secrets leakage tagger (regex-based; `detect-secrets` integration was originally planned as a `[ingestion-secrets]` extra but deferred — only `[ingestion-pii-ml]` for Presidio NER ultimately shipped in `pyproject.toml`), heuristic quality filter (`--quality-filter`), DOCX/Markdown table preservation. Tier 2 (Presidio adapter, Croissant metadata) and Tier 3 (`--all-mask` composite, wizard "audit first" hook) are deferred to a follow-up **Phase 12.5** backlog file (analogous to [Phase 11.5 section above](#phase-115--ingestion--audit-polish)). Modules: [`forgelm/data_audit.py`](../../forgelm/data_audit/), [`forgelm/ingestion.py`](../../forgelm/ingestion.py), [`forgelm/cli.py`](../../forgelm/cli/); tests: [`tests/test_data_audit_phase12.py`](../../tests/test_data_audit_phase12.py), [`tests/test_ingestion_phase12.py`](../../tests/test_ingestion_phase12.py); CLI tests added in [`tests/test_cli_subcommands.py`](../../tests/test_cli_subcommands.py).
 
 > **Note:** Phase 11 + 11.5 built the ingestion / audit lineage (Phase 11 → `v0.5.0`, Phase 11.5 → `v0.5.1`); this phase moves the same lineage from **enterprise-acceptable** to **enterprise-competitive**.
 
-**Goal:** Mature ForgeLM's `forgelm ingest` + `forgelm audit` layer along three axes — **scale** (LSH-based near-duplicate detection beyond ~50K rows, large-corpus throughput), **security** (code/secret leakage scanning + optional ML-based PII), and **quality** (markdown-aware chunking + heuristic quality filters + table structure preservation). The competitive review that followed Phase 11.5 (see [Phase 11.5 section above](#phase-115-ingestion-audit-polish), "Measured speedups" subsection, plus the 2026-04-27 ingestion-comparison synthesis) lists the exact gaps this phase closes.
+**Goal:** Mature ForgeLM's `forgelm ingest` + `forgelm audit` layer along three axes — **scale** (LSH-based near-duplicate detection beyond ~50K rows, large-corpus throughput), **security** (code/secret leakage scanning + optional ML-based PII), and **quality** (markdown-aware chunking + heuristic quality filters + table structure preservation). The competitive review that followed Phase 11.5 (see [Phase 11.5 section above](#phase-115--ingestion--audit-polish), "Measured speedups" subsection, plus the 2026-04-27 ingestion-comparison synthesis) lists the exact gaps this phase closes.
 
 **Estimated Effort:** Medium (4-6 weeks) — **Actual: ~1 day** (single-author implementation, leveraging the streaming aggregator + tier-mapped pattern from Phase 11.5).
 **Priority:** High — answers the enterprise demand surfaced after the `v0.5.0` PyPI launch; sequences naturally with Phase 14 (Multi-Stage Pipeline Chains), which is reslotted to `v0.5.3`.
@@ -1083,7 +1083,7 @@ Tier 3 items (composite mask, wizard audit-first) either join Weeks 5-6 if scope
 
 > **Note (post-consolidation):** Originally targeted `v0.5.3`; all four
 > backlog items now ship together with Phases 11 / 11.5 / 12 in the
-> consolidated `v0.5.0` release (see [releases.md](releases.md#v050-document-ingestion-data-curation-pipeline)).
+> consolidated `v0.5.0` release (see [releases.md](releases.md#v050--document-ingestion--data-curation-pipeline)).
 > The version-label references below preserve the historical planning
 > trail.
 >
@@ -1131,7 +1131,7 @@ The "Won't-do" list at the bottom of [(see Phase 12 — Data Curation Maturity s
 ## Phase 12.6 — Closure Cycle (38 tasks across 5 waves)
 
 > **Status:** ✅ Done — Task 33 release publish remains as POST-WAVE.
-> **Bundled into:** [v0.5.5 release](releases.md#v055-closure-cycle-bundle-phase-22-wizard-site-documentation-sweep-2026-05-10).
+> **Bundled into:** [v0.5.5 release](releases.md#v055--closure-cycle-bundle--phase-22-wizard--site-documentation-sweep-2026-05-10).
 > **Source review:** v0.5.0 master code review (175 findings: 8 Critical + 67 Major + 60 Minor + 40 Nit) — distilled into the Tasks 1-38 task list below.
 > **Target:** ★★★★★ across all 8 quality dimensions before v0.5.5 PyPI publish.
 
@@ -1530,7 +1530,7 @@ module is never imported on the single-stage path.  `git diff` on
 
 - [`../guides/pipeline.md`](../guides/pipeline.md) ([Türkçe](../guides/pipeline-tr.md)) — operator walkthrough
 - [`../usermanuals/en/training/pipelines.md`](../usermanuals/en/training/pipelines.md) ([Türkçe](../usermanuals/tr/training/pipelines.md)) — sidebar user manual page
-- [`../reference/configuration.md`](../reference/configuration.md#pipeline-optional-multi-stage-training-chains-phase-14) ([Türkçe](../reference/configuration-tr.md#pipeline-isteğe-bağlı-çok-aşamalı-eğitim-zincirleri-faz-14)) — schema
+- [`../reference/configuration.md`](../reference/configuration.md#pipeline-optional--multi-stage-training-chains-phase-14) ([Türkçe](../reference/configuration-tr.md#pipeline-isteğe-bağlı--çok-aşamalı-eğitim-zincirleri-faz-14)) — schema
 - [`../reference/usage.md`](../reference/usage.md) ([Türkçe](../reference/usage-tr.md)) — CLI surface
 - [`phase-14-5-pipeline-hardening.md`](phase-14-5-pipeline-hardening.md) — Phase 14.5 follow-up (v0.7.x review-deferred items: manifest hash, per-stage deep parse, webhook vocab, `_send` allowlist)
 - [`../../CHANGELOG.md`](../../CHANGELOG.md) `[0.7.0]` — full shipped-task list

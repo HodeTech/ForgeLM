@@ -99,7 +99,7 @@ forgelm verify-annex-iv --pipeline ./pipeline_run
 
 **Tek-aşama flag reddi:** Config bir `pipeline:` bloğu taşıdığında `--fit-check`, `--merge`, `--generate-data`, `--compliance-export`, `--benchmark-only` desteklenmez — ya bloğu kaldırın ya da flag'i kaldırın.  Tersine, `--stage`, `--resume-from`, `--force-resume`, `--input-model` `pipeline:` bloğu gerektirir — tek-aşama config'e karşı çalıştırıldıklarında flag'i sessizce yok saymak yerine `EXIT_CONFIG_ERROR (1)` ile çıkar.
 
-Operatör adım adım: [Çok Aşamalı Pipeline kılavuzu](../guides/pipeline-tr.md).  Şema detayları: [`pipeline` config bloğu](configuration-tr.md#pipeline-isteğe-bağlı-çok-aşamalı-eğitim-zincirleri-faz-14).
+Operatör adım adım: [Çok Aşamalı Pipeline kılavuzu](../guides/pipeline-tr.md).  Şema detayları: [`pipeline` config bloğu](configuration-tr.md#pipeline-isteğe-bağlı--çok-aşamalı-eğitim-zincirleri-faz-14).
 
 ### VRAM Fit Check
 

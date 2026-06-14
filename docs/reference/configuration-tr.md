@@ -189,7 +189,7 @@ training:
 | `include_eval_samples` | bool | `false` | Ham eval `prompt`, `response` ve hakim `reason` dizgelerini `judge_results.json`'a yazar. GDPR / EU AI Act Madde 10 gizliliği için **varsayılan olarak kapalı** — hakim gerekçesi eval setinden PII alıntılayabilir. Yalnızca hata ayıklama için açın. |
 
 > **Kullanımdan kaldırıldı:** `evaluation.staging_ttl_days`,
-> [`retention.staging_ttl_days`](#retention-isteğe-bağlı-gdpr-madde-17-silme-ufukları)
+> [`retention.staging_ttl_days`](#retention-isteğe-bağlı--gdpr-madde-17-silme-ufukları)
 > tarafından devralınmıştır. Eski anahtar `DeprecationWarning` ile alias-forward
 > edilir ve v0.8.0'da kaldırılır.
 > Bkz. [release.md](../standards/release.md#deprecation-cadence).

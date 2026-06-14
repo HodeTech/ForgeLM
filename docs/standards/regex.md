@@ -196,7 +196,7 @@ Before opening a PR that touches regex:
 
 - [ ] No unintentional `[A-Za-z0-9_]` (use `\w`); explicit ASCII-only classes
       are permitted for deliberate ASCII-only grammars when paired with
-      `re.ASCII` or a documented justification (see [Rule 1](#1-w-is-unicode-by-default-pick-the-right-form-for-your-input) — `\w` + `re.ASCII` and an explicit ASCII class are both listed as RIGHT).
+      `re.ASCII` or a documented justification (see [Rule 1](#1-w-is-unicode-by-default--pick-the-right-form-for-your-input) — `\w` + `re.ASCII` and an explicit ASCII class are both listed as RIGHT).
 - [ ] No single-char character classes (use the character).
 - [ ] Quantifiers bounded where the spec allows (`{1,6}` not `+`).
 - [ ] No two competing unbounded quantifiers over the same character class.

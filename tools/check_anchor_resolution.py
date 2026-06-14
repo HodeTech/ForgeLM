@@ -143,19 +143,25 @@ def _normalise_heading_body(body: str) -> str:
 def _slugify_heading(text: str) -> str:
     """GitHub-flavoured Markdown heading-anchor algorithm.
 
-    GFM lowercases, strips most punctuation, replaces spaces with
-    dashes, and preserves alphanumerics + dashes + underscores.
-    Approximation good enough for the link-resolution check; matches
-    the slug GitHub renders for ``[text](#anchor)`` links.
+    GFM lowercases, strips most punctuation, replaces each whitespace
+    character with a single dash, and preserves alphanumerics + dashes
+    + underscores.  Crucially, GFM does **not** collapse runs of
+    consecutive dashes: ``## Foo - Bar`` renders the anchor
+    ``foo---bar`` (the surviving literal dash plus the two
+    space-derived dashes), and ``## A  B`` (two spaces) renders
+    ``a--b``.  An earlier version collapsed ``\\s+`` → one dash and ran
+    a ``re.sub(r"-+", "-", …)`` pass, which diverged from GitHub and
+    both green-lit links that 404 on github.com and rejected correct
+    GFM-slug links (F-P8-C-14).  We now mirror GFM faithfully: one dash
+    per whitespace char, no dash-run collapse.
     """
     slug = text.lower().strip()
     # Strip everything except alphanumeric, space, dash, underscore.
     slug = re.sub(r"[^\w\s-]", "", slug, flags=re.UNICODE)
-    # Collapse whitespace to dashes.
-    slug = re.sub(r"\s+", "-", slug)
-    # Collapse multiple dashes.
-    slug = re.sub(r"-+", "-", slug)
-    # Trim leading/trailing dashes.
+    # Replace each whitespace character with a single dash (GFM does not
+    # collapse a run of whitespace into one dash).
+    slug = re.sub(r"\s", "-", slug)
+    # Trim leading/trailing dashes (GFM keeps interior dash runs intact).
     return slug.strip("-")
 
 

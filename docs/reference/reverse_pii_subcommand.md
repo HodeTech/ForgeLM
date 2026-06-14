@@ -65,7 +65,7 @@ The salt at `<output_dir>/.forgelm_audit_salt` is the **identifier-hash salt onl
 
 ## Audit events emitted
 
-Every invocation emits exactly one event ([catalog row](audit_event_catalog.md#article-15-gdpr-right-of-access-phase-38-forgelm-reverse-pii)):
+Every invocation emits exactly one event ([catalog row](audit_event_catalog.md#article-15--gdpr-right-of-access-phase-38--forgelm-reverse-pii)):
 
 | Event | When emitted | Key payload |
 |---|---|---|

@@ -218,7 +218,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `include_eval_samples` | bool | `false` | Persist raw eval `prompt`, `response`, and judge `reason` strings to `judge_results.json`. **Off by default** for GDPR / EU AI Act Art. 10 privacy — judge reasoning can quote PII from the eval set. Opt in only for debugging. |
 
 > **Deprecated:** `evaluation.staging_ttl_days` is superseded by
-> [`retention.staging_ttl_days`](#retention-optional-gdpr-article-17-erasure-horizons).
+> [`retention.staging_ttl_days`](#retention-optional--gdpr-article-17-erasure-horizons).
 > The legacy key is alias-forwarded with a `DeprecationWarning` and removed in
 > v0.8.0. See [release.md](../standards/release.md#deprecation-cadence).
 

@@ -118,7 +118,7 @@ forgelm verify-annex-iv --pipeline ./pipeline_run
 
 **Single-stage flag rejection:** `--fit-check`, `--merge`, `--generate-data`, `--compliance-export`, `--benchmark-only` are not supported when the config carries a `pipeline:` block — drop the block or remove the flag.  Conversely, `--stage`, `--resume-from`, `--force-resume`, `--input-model` require a `pipeline:` block — running them against a single-stage config exits with `EXIT_CONFIG_ERROR (1)` rather than silently ignoring the flag.
 
-Full operator walkthrough: [Multi-Stage Pipelines guide](../guides/pipeline.md).  Schema details: [`pipeline` config block](configuration.md#pipeline-optional-multi-stage-training-chains-phase-14).
+Full operator walkthrough: [Multi-Stage Pipelines guide](../guides/pipeline.md).  Schema details: [`pipeline` config block](configuration.md#pipeline-optional--multi-stage-training-chains-phase-14).
 
 ### VRAM Fit Check
 

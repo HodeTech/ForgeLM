@@ -65,7 +65,7 @@ $ forgelm reverse-pii --query "alice@example.com" --type email \
 
 ## Yayılan audit event'leri
 
-Her çağrı tam olarak bir event yayar ([katalog satırı](audit_event_catalog-tr.md#madde-15-gdpr-erişim-hakkı-phase-38-forgelm-reverse-pii)):
+Her çağrı tam olarak bir event yayar ([katalog satırı](audit_event_catalog-tr.md#madde-15--gdpr-erişim-hakkı-phase-38--forgelm-reverse-pii)):
 
 | Event | Ne zaman yayılır | Anahtar payload |
 |---|---|---|

@@ -245,7 +245,7 @@ See [CHANGELOG.md `[0.5.5]`](../../CHANGELOG.md#055--2026-05-10) for the complet
 
 ### Summary
 
-v0.7.0 ships [Phase 14 — Multi-Stage Pipeline Chains](completed-phases.md#phase-14-multi-stage-pipeline-chains-v070): one YAML, one CLI invocation, one Annex IV manifest covering SFT → DPO → GRPO (or any sequence of supported trainers).  Re-scheduled from v0.6.0 → v0.7.0 because v0.6.0 shipped Phase 15 (Ingestion Pipeline Reliability) after the 2026-05-11 pilot exposed the silent-failure gap that gated v0.6.0's credibility.  v0.7.0 also folds in the critical DNS-rebinding TOCTOU SSRF hardening (issue #14) on the webhook / judge / synthetic outbound paths.
+v0.7.0 ships [Phase 14 — Multi-Stage Pipeline Chains](completed-phases.md#phase-14--multi-stage-pipeline-chains-v070): one YAML, one CLI invocation, one Annex IV manifest covering SFT → DPO → GRPO (or any sequence of supported trainers).  Re-scheduled from v0.6.0 → v0.7.0 because v0.6.0 shipped Phase 15 (Ingestion Pipeline Reliability) after the 2026-05-11 pilot exposed the silent-failure gap that gated v0.6.0's credibility.  v0.7.0 also folds in the critical DNS-rebinding TOCTOU SSRF hardening (issue #14) on the webhook / judge / synthetic outbound paths.
 
 ### Highlights
 
