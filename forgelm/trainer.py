@@ -246,6 +246,32 @@ class ForgeTrainer:
 
         # Validate evaluation config early
         self._validate_evaluation_config()
+        # Fail fast (before the training loop) on a judge configured to use an
+        # API key env var that is not set — see _validate_judge_config.
+        self._validate_judge_config()
+
+    def _validate_judge_config(self) -> None:
+        """Refuse a misconfigured LLM-judge at preflight (fail fast).
+
+        A configured ``judge_api_key_env`` names an API judge. If the variable is
+        unset, ``judge.py`` would treat ``api_key=None`` as "local" and silently
+        run a different evaluator than configured — and with ``auto_revert=true`` a
+        failed local load deletes the trained adapters over a misdiagnosed env-var
+        problem (F-P3-FABLE-18). Checking here (called from ``__init__`` and again
+        from ``_run_judge_if_configured``) fails the run BEFORE the expensive
+        training loop instead of after it.
+        """
+        eval_cfg = self.config.evaluation
+        judge_cfg = eval_cfg.llm_judge if (eval_cfg and eval_cfg.llm_judge) else None
+        if not (judge_cfg and judge_cfg.enabled):
+            return
+        if judge_cfg.judge_api_key_env and not os.getenv(judge_cfg.judge_api_key_env):
+            raise ConfigError(
+                f"evaluation.llm_judge.judge_api_key_env='{judge_cfg.judge_api_key_env}' names an "
+                "environment variable that is not set. The configured API judge cannot run; refusing "
+                "to silently fall back to a local judge. Set the variable (or clear judge_api_key_env "
+                "to intentionally use a local judge) and re-run."
+            )
 
     def _validate_evaluation_config(self) -> None:
         """Warn about evaluation configuration issues before training starts."""
@@ -1399,20 +1425,9 @@ class ForgeTrainer:
             return None
 
         judge_cfg = eval_cfg.llm_judge
-        # A configured ``judge_api_key_env`` names an API judge. If the variable
-        # is unset, do NOT silently fall through to local mode (judge.py treats
-        # ``api_key=None`` as "local"): that runs a different evaluator than the
-        # validated YAML configured, and with ``auto_revert=true`` a failed
-        # local-model load would delete the trained adapters over a misdiagnosed
-        # env-var problem (F-P3-FABLE-18). Fail loud and preserve the model
-        # (this raises before the gate, so auto-revert never fires).
-        if judge_cfg.judge_api_key_env and not os.getenv(judge_cfg.judge_api_key_env):
-            raise ConfigError(
-                f"evaluation.llm_judge.judge_api_key_env='{judge_cfg.judge_api_key_env}' names an "
-                "environment variable that is not set. The configured API judge cannot run; refusing "
-                "to silently fall back to a local judge. Set the variable (or clear judge_api_key_env "
-                "to intentionally use a local judge) and re-run."
-            )
+        # Defence-in-depth: the preflight (__init__) already ran this, but guard
+        # the direct entry point too — never silently fall through to local mode.
+        self._validate_judge_config()
         api_key = os.getenv(judge_cfg.judge_api_key_env) if judge_cfg.judge_api_key_env else None
         logger.info("Running LLM-as-Judge evaluation (judge: %s)...", judge_cfg.judge_model)
         output_dir = os.path.join(self.checkpoint_dir, "judge")

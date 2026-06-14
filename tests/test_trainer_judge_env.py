@@ -58,6 +58,28 @@ def test_unset_judge_api_key_env_raises_not_local_flip(tmp_path, monkeypatch):
         mock_run.assert_not_called()  # never falls through to (local) judge eval
 
 
+def test_trainer_init_fails_fast_on_unset_judge_env(tmp_path, monkeypatch):
+    """Review fix: the judge_api_key_env check runs at construction (preflight),
+    failing BEFORE the training loop rather than at the post-train judge stage."""
+    from forgelm.config import ConfigError, ForgeConfig
+    from forgelm.trainer import ForgeTrainer
+
+    monkeypatch.delenv("FORGELM_TEST_JUDGE_KEY", raising=False)
+    config = ForgeConfig(
+        **{
+            "model": {"name_or_path": "org/model"},
+            "lora": {},
+            "training": {"output_dir": str(tmp_path)},
+            "data": {"dataset_name_or_path": "org/dataset"},
+            "evaluation": {
+                "llm_judge": {"enabled": True, "judge_model": "gpt-4o", "judge_api_key_env": "FORGELM_TEST_JUDGE_KEY"}
+            },
+        }
+    )
+    with pytest.raises(ConfigError, match="FORGELM_TEST_JUDGE_KEY"):
+        ForgeTrainer(model=MagicMock(), tokenizer=MagicMock(), config=config, dataset={"train": [{"text": "x"}]})
+
+
 def test_set_judge_api_key_env_runs_judge(tmp_path, monkeypatch):
     """Sanity: when the env var IS set, the judge runs in API mode as configured."""
     monkeypatch.setenv("FORGELM_TEST_JUDGE_KEY", "sk-test-key")
