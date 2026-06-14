@@ -635,6 +635,34 @@ class TestVerifyAnnexIvPipelineModeExitCodes:
         captured = capsys.readouterr().out
         assert "chain_integrity_violation" in captured
 
+    def test_io_error_prefix_maps_to_exit_2_and_strips_token(self, tmp_path, monkeypatch, capsys):
+        """F-P4-OPUS-25: only the stable ``IO_ERROR::`` machine prefix routes a
+        violation to EXIT_TRAINING_ERROR (2). The internal token must not leak
+        into operator-facing output."""
+        from forgelm.compliance import PIPELINE_MANIFEST_IO_ERROR_PREFIX
+
+        monkeypatch.setattr(
+            "forgelm.compliance.verify_pipeline_manifest_at_path",
+            lambda _p: [f"{PIPELINE_MANIFEST_IO_ERROR_PREFIX}pipeline_manifest.json unreadable: disk error"],
+        )
+        code = self._run(tmp_path, {})
+        assert code == 2  # EXIT_TRAINING_ERROR
+        captured = capsys.readouterr().out
+        assert "unreadable" in captured
+        assert PIPELINE_MANIFEST_IO_ERROR_PREFIX not in captured  # token stripped for display
+
+    def test_violation_containing_word_unreadable_does_not_map_to_exit_2(self, tmp_path, monkeypatch, capsys):
+        """F-P4-OPUS-25 guard: a structural violation whose free text merely
+        CONTAINS the substring ``unreadable`` (without the routing prefix) must
+        stay EXIT_CONFIG_ERROR (1) — the exit-code contract no longer couples to
+        a stray word."""
+        monkeypatch.setattr(
+            "forgelm.compliance.verify_pipeline_manifest_at_path",
+            lambda _p: ["Stage 'unreadable-by-design': input_model does not chain from prior output"],
+        )
+        code = self._run(tmp_path, {})
+        assert code == 1  # EXIT_CONFIG_ERROR, NOT 2
+
 
 class TestVerifyOnPartialFilterRun:
     """A ``--stage X`` run produces a manifest where other stages have

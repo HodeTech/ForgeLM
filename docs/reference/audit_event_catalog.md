@@ -33,6 +33,7 @@ The hash chain advances after the line lands on disk (`flush` + `fsync`), so an 
 | `benchmark.evaluation_completed` | `lm-eval-harness` finished evaluating the configured benchmark suite. | `passed`, `average`, `scores`                       | 15 |
 | `safety.evaluation_completed`    | Safety evaluation finished (Llama Guard / ShieldGemma run).            | `passed`, `safe_ratio`, `total_count`, `safety_score`, `categories` | 15 |
 | `judge.evaluation_completed`     | LLM-as-judge scoring finished.                                          | `passed`, `average_score`                            | 15 |
+| `evaluation.loss_gate_completed` | Loss/eval-loss auto-revert gate decided (pass or fail) against the configured thresholds. | `passed`, `eval_loss`, `max_acceptable_loss`, `baseline_loss` | 15 |
 | `pipeline.completed`       | End-to-end CLI run (training + evaluation + export) returned exit code 0. | `success`, `metrics_summary`                                                              | 12      |
 | `pipeline.failed`          | Pipeline aborted with an error before completion.                         | `error`                                                                                  | 12      |
 | `pipeline.started`         | Multi-stage pipeline orchestrator began a fresh run (not a `--resume-from`). | `pipeline_run_id`, `config_hash`, `stage_count`, `stage_names`                          | 12      |
@@ -64,6 +65,7 @@ The hash chain advances after the line lands on disk (`flush` + `fsync`), so an 
 | Event                            | When emitted                                                                | Payload                                          | Article    |
 |----------------------------------|-----------------------------------------------------------------------------|--------------------------------------------------|------------|
 | `compliance.governance_exported` | Article 10 data governance report written to disk.                          | `output_path`, `dataset_count`                   | 10         |
+| `compliance.governance_section_missing` | Governance report exported but the Article 10 data-quality section was absent (no `data_audit_report.json`). | `section`, `expected_path`              | 10         |
 | `compliance.governance_failed`   | Governance report generation aborted (e.g., schema mismatch).               | `reason`                                         | 10         |
 | `compliance.artifacts_exported`  | Annex IV technical documentation bundle (manifest, model card, audit zip). | `output_dir`, `files`, `governance_ok`           | 11, Annex IV |
 | `compliance.artifacts_export_failed` | Annex IV / Article 11 manifest export failed or was torn (disk full, SIGKILL, serialization error). | `reason`                                         | 11, Annex IV |

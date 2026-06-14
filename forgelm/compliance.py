@@ -40,6 +40,18 @@ from .config import ConfigError, WebhookConfig
 _WEBHOOK_SECRET_FIELDS = frozenset({"url"})
 _WEBHOOK_PERSIST_FIELDS = tuple(name for name in WebhookConfig.model_fields if name not in _WEBHOOK_SECRET_FIELDS)
 
+# Stable machine token prefixed onto the OSError-shaped pipeline-manifest
+# violation so the CLI's exit-code routing keys off an unambiguous marker
+# rather than the free-text substring ``unreadable`` (which a future reworded
+# violation could accidentally contain, silently flipping exit 1 → exit 2).
+# The CLI matches this exact prefix; keep the two in lockstep (F-P4-OPUS-25).
+PIPELINE_MANIFEST_IO_ERROR_PREFIX = "IO_ERROR::"
+
+# Recommended minimum length for ``FORGELM_AUDIT_SECRET``.  Shorter secrets are
+# accepted (no hard-fail) but trigger a one-time weak-secret WARNING because the
+# audit HMAC key's entropy is bounded by the secret's (F-P5-OPUS-13).
+_MIN_AUDIT_SECRET_LEN = 16
+
 # flock is Unix-only; on Windows there is NO cross-process lock — the helpers
 # below are no-ops (no lock acquired). Do not share an output_dir across
 # concurrent processes on Windows; use a distinct output_dir per run.
@@ -131,6 +143,23 @@ class AuditLogger:
         # tamper-evidence we cannot deliver.
         raw_secret = os.getenv("FORGELM_AUDIT_SECRET", "")
         if raw_secret:
+            # The HMAC key's entropy is bounded by the secret's, so a short,
+            # low-entropy secret makes the per-line ``_hmac`` tag we sell as
+            # "tamper-evident" brute-forceable.  We don't hard-fail (that would
+            # break deployments already running with a short secret on the
+            # mainline audit path), but we surface a one-time WARNING so the
+            # weak-secret risk is visible (F-P5-OPUS-13).  ForgeLM is "not a
+            # key-management system" — 32+ random bytes from a KMS is the
+            # documented recommendation (docs/design/iso27001_soc2_alignment.md).
+            if len(raw_secret) < _MIN_AUDIT_SECRET_LEN:
+                logger.warning(
+                    "FORGELM_AUDIT_SECRET is %d characters — shorter than the "
+                    "recommended minimum of %d. A low-entropy secret makes the "
+                    "per-line audit HMAC forgeable; use 32+ random bytes from a "
+                    "secret manager.",
+                    len(raw_secret),
+                    _MIN_AUDIT_SECRET_LEN,
+                )
             self._hmac_key: Optional[bytes] = hashlib.sha256(raw_secret.encode() + self.run_id.encode()).digest()
         else:
             self._hmac_key = None
@@ -230,11 +259,21 @@ class AuditLogger:
             ) from e
 
     def _check_genesis_manifest(self) -> None:
-        """Warn if the manifest exists but the log was truncated back to genesis.
+        """Refuse to re-root the chain if the manifest pins a truncated-away log.
 
         An attacker who can write to the audit directory can delete the JSONL
         and start a new chain; they cannot also forge the manifest (written
         once on first entry, never overwritten) without detection.
+
+        This is the **sole write-time** truncation guard (``verify_audit_log``
+        is the strong verify-time gate). When the manifest pins a real first
+        entry but the log is absent/empty, the next write would silently
+        re-root the chain on disk — exactly the truncation the manifest exists
+        to detect. We log an ``AUDIT INTEGRITY`` ERROR and then raise
+        ``ConfigError`` so the re-root is refused at the moment it occurs,
+        mirroring the loud-fail operator-identity policy in ``__init__``.
+        An operator who deliberately rotated/cleared the log can opt in to the
+        re-root via ``FORGELM_ALLOW_AUDIT_REROOT=1`` (the ERROR still fires).
         """
         if not os.path.isfile(self._manifest_path):
             return
@@ -245,12 +284,22 @@ class AuditLogger:
             logger.warning("Audit genesis manifest unreadable (%s): %s", self._manifest_path, exc)
             return
         if not os.path.isfile(self.log_path) or os.path.getsize(self.log_path) == 0:
+            expected = manifest.get("first_entry_sha256", "unknown")
             logger.error(
                 "AUDIT INTEGRITY: genesis manifest exists at %s but audit log is absent or empty. "
                 "The log may have been truncated. First-entry hash expected: %s",
                 self._manifest_path,
-                manifest.get("first_entry_sha256", "unknown"),
+                expected,
             )
+            if os.getenv("FORGELM_ALLOW_AUDIT_REROOT") != "1":
+                raise ConfigError(
+                    f"Audit log re-root refused: genesis manifest at {self._manifest_path!r} "
+                    f"pins first-entry hash {expected} but the log is absent or empty — "
+                    "the chain would be silently re-rooted (a truncation the manifest exists "
+                    "to detect). Investigate or repair the log, or set "
+                    "FORGELM_ALLOW_AUDIT_REROOT=1 to deliberately start a fresh chain "
+                    "(not recommended for EU AI Act Article 12 record-keeping)."
+                )
 
     def _write_genesis_manifest(self, first_entry_sha256: str) -> None:
         """Pin the first-ever entry hash so log truncation is detectable.
@@ -460,6 +509,11 @@ def generate_data_governance_report(config: Any, dataset: Dict[str, Any]) -> Dic
     ``forgelm --data-audit`` and lives in the trainer's checkpoint dir,
     its findings are inlined under the ``data_audit`` key so the governance
     artifact is a single self-contained document rather than a pointer.
+
+    ``report["data_audit_inlined"]`` is always set to a bool so the caller can
+    record in the append-only audit log whether the Article 10 data-quality
+    section made it into the bundle (F-P4-OPUS-23) rather than relying on the
+    transient WARNING that ``_maybe_inline_audit_report`` emits.
     """
     report: Dict[str, Any] = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -472,6 +526,7 @@ def generate_data_governance_report(config: Any, dataset: Dict[str, Any]) -> Dic
         report["governance"] = governance
 
     audit = _maybe_inline_audit_report(config)
+    report["data_audit_inlined"] = audit is not None
     if audit is not None:
         report["data_audit"] = audit
 
@@ -2017,7 +2072,7 @@ def verify_pipeline_manifest_at_path(pipeline_dir: str) -> List[str]:
     except json.JSONDecodeError as e:
         return [f"pipeline_manifest.json invalid JSON: {e}"]
     except OSError as e:
-        return [f"pipeline_manifest.json unreadable: {e}"]
+        return [f"{PIPELINE_MANIFEST_IO_ERROR_PREFIX}pipeline_manifest.json unreadable: {e}"]
 
     violations: List[str] = list(_verify_manifest_payload(manifest))
 

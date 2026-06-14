@@ -33,6 +33,7 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 | `benchmark.evaluation_completed` | `lm-eval-harness` yapılandırılmış benchmark suite'inin değerlendirmesini bitirdi. | `passed`, `average`, `scores`                  | 15 |
 | `safety.evaluation_completed`    | Güvenlik değerlendirmesi bitti (Llama Guard / ShieldGemma koşusu).             | `passed`, `safe_ratio`, `total_count`, `safety_score`, `categories` | 15 |
 | `judge.evaluation_completed`     | LLM-as-judge skorlaması bitti.                                                  | `passed`, `average_score`                       | 15 |
+| `evaluation.loss_gate_completed` | Kayıp/eval-loss otomatik geri-alma kapısı yapılandırılmış eşiklere göre karar verdi (geçti veya kaldı). | `passed`, `eval_loss`, `max_acceptable_loss`, `baseline_loss` | 15 |
 | `pipeline.completed`       | Uçtan uca CLI koşusu (eğitim + değerlendirme + dışa aktarma) 0 koduyla biter.   | `success`, `metrics_summary`                                                       | 12    |
 | `pipeline.failed`          | Pipeline tamamlanmadan bir hata ile iptal olur.                                 | `error`                                                                            | 12    |
 | `pipeline.started`         | Çok-aşamalı pipeline orchestrator yeni bir koşu başlattı (`--resume-from` değil). | `pipeline_run_id`, `config_hash`, `stage_count`, `stage_names`                   | 12    |
@@ -64,6 +65,7 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 | Event                            | Ne zaman emit edilir                                                          | Payload                                          | Madde         |
 |----------------------------------|-------------------------------------------------------------------------------|--------------------------------------------------|---------------|
 | `compliance.governance_exported` | Madde 10 veri yönetişim raporu diske yazıldı.                                 | `output_path`, `dataset_count`                   | 10            |
+| `compliance.governance_section_missing` | Yönetişim raporu yazıldı ancak Madde 10 veri-kalitesi bölümü eksikti (`data_audit_report.json` yok). | `section`, `expected_path`              | 10            |
 | `compliance.governance_failed`   | Yönetişim raporu üretimi iptal edildi (örn. şema uyumsuzluğu).                | `reason`                                          | 10            |
 | `compliance.artifacts_exported`  | Ek IV teknik dokümantasyon paketi (manifest, model card, audit zip) yazıldı.  | `output_dir`, `files`, `governance_ok`           | 11, Ek IV     |
 | `compliance.artifacts_export_failed` | Ek IV / Madde 11 manifest export'u başarısız oldu veya yarım kaldı (disk dolu, SIGKILL, serileştirme hatası). | `reason`                                          | 11, Ek IV     |

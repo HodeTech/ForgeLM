@@ -235,7 +235,10 @@ def _run_pipeline_mode(path: str, output_format: str) -> None:
     The verifier now emits distinct prefixes so the CLI can
     differentiate the two on the sentinel alone.
     """
-    from forgelm.compliance import verify_pipeline_manifest_at_path
+    from forgelm.compliance import (
+        PIPELINE_MANIFEST_IO_ERROR_PREFIX,
+        verify_pipeline_manifest_at_path,
+    )
 
     # Defensive try/except: the verifier already maps OSError /
     # JSONDecodeError to violation strings, but a future change there
@@ -260,11 +263,22 @@ def _run_pipeline_mode(path: str, output_format: str) -> None:
             print(msg)
         sys.exit(EXIT_TRAINING_ERROR)
 
-    # Sentinel-based exit-code routing.  Only the OSError-shaped
-    # ``unreadable`` sentinel maps to EXIT_TRAINING_ERROR; everything
-    # else (``invalid JSON``, ``not found``, structural / chain
-    # violations) is operator-actionable → EXIT_CONFIG_ERROR.
-    runtime_io_error = any("unreadable" in v for v in violations)
+    # Sentinel-based exit-code routing.  Only the OSError-shaped manifest
+    # violation — tagged with the stable ``IO_ERROR::`` machine prefix —
+    # maps to EXIT_TRAINING_ERROR; everything else (``invalid JSON``,
+    # ``not found``, structural / chain violations) is operator-actionable
+    # → EXIT_CONFIG_ERROR.  Keying off the exact prefix (not the free-text
+    # substring ``unreadable``) keeps the exit-code contract from silently
+    # flipping if a future violation message happens to contain that word
+    # (F-P4-OPUS-25).
+    runtime_io_error = any(v.startswith(PIPELINE_MANIFEST_IO_ERROR_PREFIX) for v in violations)
+
+    # The IO_ERROR:: prefix is an internal routing token, not operator-facing
+    # text — strip it from the displayed/serialized violations.
+    display_violations = [
+        v[len(PIPELINE_MANIFEST_IO_ERROR_PREFIX) :] if v.startswith(PIPELINE_MANIFEST_IO_ERROR_PREFIX) else v
+        for v in violations
+    ]
 
     if output_format == "json":
         print(
@@ -273,7 +287,7 @@ def _run_pipeline_mode(path: str, output_format: str) -> None:
                     "success": not violations,
                     "mode": "pipeline",
                     "path": os.path.abspath(path),
-                    "violations": violations,
+                    "violations": display_violations,
                 },
                 indent=2,
             )
@@ -282,7 +296,7 @@ def _run_pipeline_mode(path: str, output_format: str) -> None:
         print(f"OK: pipeline manifest at {path}")
     else:
         print(f"FAIL: pipeline manifest at {path}")
-        for v in violations:
+        for v in display_violations:
             print(f"  - {v}")
 
     if not violations:

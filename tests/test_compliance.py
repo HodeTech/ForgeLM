@@ -340,17 +340,18 @@ class TestAuditLoggerHashChain:
 
 
 class TestAuditLoggerGenesisManifest:
-    def test_write_after_truncation_with_stale_manifest_logs_integrity_error(self, tmp_path, caplog):
-        """A truncate-to-empty-then-write must surface an AUDIT INTEGRITY error.
+    def test_write_after_truncation_with_stale_manifest_raises_and_logs(self, tmp_path, caplog, monkeypatch):
+        """A truncate-to-empty-then-write must REFUSE the re-root, not just warn.
 
         After one event the genesis manifest pins the first-entry hash.
         Truncating the log to empty and constructing a fresh logger that
-        writes again must emit the write-time ``AUDIT INTEGRITY`` ERROR
-        (the sole write-time truncation detector). Regression guard for
-        ``_check_genesis_manifest`` (F-P4-OPUS-12).
+        writes again must emit the write-time ``AUDIT INTEGRITY`` ERROR AND
+        raise ``ConfigError`` — the write-time guard now refuses the silent
+        re-root rather than logging-and-continuing (F-P4-OPUS-21).
         """
-        from forgelm.compliance import AuditLogger
+        from forgelm.compliance import AuditLogger, ConfigError
 
+        monkeypatch.delenv("FORGELM_ALLOW_AUDIT_REROOT", raising=False)
         log_path = tmp_path / "audit_log.jsonl"
 
         AuditLogger(str(tmp_path)).log_event("first.event")
@@ -360,11 +361,48 @@ class TestAuditLoggerGenesisManifest:
         log_path.write_text("", encoding="utf-8")
 
         with caplog.at_level("ERROR", logger="forgelm.compliance"):
-            AuditLogger(str(tmp_path)).log_event("second.event")
+            with pytest.raises(ConfigError, match="re-root refused"):
+                AuditLogger(str(tmp_path)).log_event("second.event")
 
         assert any("AUDIT INTEGRITY" in rec.message for rec in caplog.records), (
             "write-time stale-genesis-manifest path did not log an AUDIT INTEGRITY error"
         )
+
+    def test_write_after_truncation_reroot_optin_allows_fresh_chain(self, tmp_path, monkeypatch):
+        """FORGELM_ALLOW_AUDIT_REROOT=1 lets a deliberate operator start fresh.
+
+        With the opt-in env set, the write-time guard still logs the integrity
+        ERROR but permits the new genesis entry instead of raising
+        (F-P4-OPUS-21 opt-in path, mirroring FORGELM_ALLOW_ANONYMOUS_OPERATOR).
+        """
+        from forgelm.compliance import AuditLogger
+
+        log_path = tmp_path / "audit_log.jsonl"
+
+        AuditLogger(str(tmp_path)).log_event("first.event")
+        log_path.write_text("", encoding="utf-8")  # truncate, keep manifest
+
+        monkeypatch.setenv("FORGELM_ALLOW_AUDIT_REROOT", "1")
+        # Must NOT raise — the deliberate re-root is permitted.
+        AuditLogger(str(tmp_path)).log_event("second.event")
+        assert log_path.read_text(encoding="utf-8").strip(), "opt-in re-root should have appended a fresh genesis entry"
+
+    def test_audit_envelope_has_no_seq_field(self, tmp_path):
+        """F-P4-OPUS-28: the user manual documented a ``seq`` field and a ``ts``
+        field name that the writer never emits. Lock the real envelope so the
+        doc cannot drift back: the line carries ``timestamp`` (not ``ts``) and
+        no ``seq``."""
+        import json as _json
+
+        from forgelm.compliance import AuditLogger
+
+        log_path = tmp_path / "audit_log.jsonl"
+        AuditLogger(str(tmp_path)).log_event("training.started")
+        entry = _json.loads(log_path.read_text(encoding="utf-8").splitlines()[0])
+        assert "timestamp" in entry
+        assert "ts" not in entry
+        assert "seq" not in entry
+        assert {"run_id", "operator", "event", "prev_hash"} <= entry.keys()
 
 
 # --- _sanitize_md ---
@@ -416,6 +454,16 @@ class TestGovernanceAuditInlining:
 
         report = generate_data_governance_report(config, dataset={})
         assert report["data_audit"] == audit_payload
+        assert report["data_audit_inlined"] is True
+
+    def test_data_audit_inlined_flag_false_when_audit_missing(self, tmp_path, minimal_config):
+        # F-P4-OPUS-23: the report must carry an explicit boolean signalling
+        # the Article 10 data-quality section was dropped, so the caller can
+        # record the gap in the append-only audit log (not just a WARNING).
+        config = ForgeConfig(**minimal_config(training={"output_dir": str(tmp_path)}))
+        report = generate_data_governance_report(config, dataset={})
+        assert report["data_audit_inlined"] is False
+        assert "data_audit" not in report
 
     def test_warns_when_audit_corrupt(self, tmp_path, caplog, minimal_config):
         config = ForgeConfig(**minimal_config(training={"output_dir": str(tmp_path)}))
@@ -777,7 +825,7 @@ class TestVerifyAuditLog:
         assert result.valid is True
         assert result.entries_count == 0
 
-    def test_verify_audit_genesis_manifest_mismatch_fails(self, tmp_path):
+    def test_verify_audit_genesis_manifest_mismatch_fails(self, tmp_path, monkeypatch):
         """P4-OPUS-22: an attacker who truncates the log and writes a fresh
         valid chain (re-rooted at genesis) is caught by the write-once manifest
         sidecar — the pinned ``first_entry_sha256`` no longer matches line 1."""
@@ -787,7 +835,10 @@ class TestVerifyAuditLog:
         assert os.path.isfile(log_path + ".manifest.json")
 
         # Wipe the body but keep the (write-once) manifest, then write a brand
-        # new valid chain — a re-root tamper.
+        # new valid chain — a re-root tamper. The write-time guard
+        # (F-P4-OPUS-21) now refuses this by default; force the re-root via the
+        # opt-in env to reach the verify-time mismatch detector under test.
+        monkeypatch.setenv("FORGELM_ALLOW_AUDIT_REROOT", "1")
         with open(log_path, "w", encoding="utf-8"):
             pass
         logger2 = AuditLogger(str(tmp_path))
@@ -855,6 +906,34 @@ class TestVerifyAuditLog:
         result = verify_audit_log(log_path, hmac_secret=None, require_hmac=True)
         assert result.valid is False
         assert "hmac_secret" in (result.reason or "")
+
+    def test_short_audit_secret_warns_but_still_produces_working_hmac(self, tmp_path, monkeypatch, caplog):
+        """F-P5-OPUS-13: a too-short FORGELM_AUDIT_SECRET is accepted (no
+        hard-fail) but logs a one-time weak-secret WARNING; the resulting HMAC
+        still verifies."""
+        import logging
+
+        from forgelm.compliance import AuditLogger, verify_audit_log
+
+        monkeypatch.setenv("FORGELM_AUDIT_SECRET", "x")  # 1 char < 16
+        with caplog.at_level(logging.WARNING, logger="forgelm.compliance"):
+            logger = AuditLogger(str(tmp_path))
+            logger.log_event("e0")
+        assert any("FORGELM_AUDIT_SECRET" in r.message and "shorter" in r.message for r in caplog.records)
+        # The short secret still yields a working _hmac (verification passes).
+        result = verify_audit_log(logger.log_path, hmac_secret="x")
+        assert result.valid is True
+
+    def test_adequate_audit_secret_does_not_warn(self, tmp_path, monkeypatch, caplog):
+        """F-P5-OPUS-13: a >=16-char secret emits no weak-secret warning."""
+        import logging
+
+        from forgelm.compliance import AuditLogger
+
+        monkeypatch.setenv("FORGELM_AUDIT_SECRET", "x" * 32)
+        with caplog.at_level(logging.WARNING, logger="forgelm.compliance"):
+            AuditLogger(str(tmp_path)).log_event("e0")
+        assert not any("shorter" in r.message for r in caplog.records)
 
     def test_verify_audit_require_hmac_no_secret(self, tmp_path, monkeypatch, capsys):
         """CLI dispatcher: ``--require-hmac`` without a configured secret

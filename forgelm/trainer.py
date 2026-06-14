@@ -20,6 +20,11 @@ logger = logging.getLogger("forgelm.trainer")
 # Audit event names — kept as constants so the audit-log schema stays grep-able
 # and downstream consumers don't break on a typo.
 _EVT_REVERT_TRIGGERED = "model.reverted"
+# Loss/eval-loss auto-revert decision gate — emitted on PASS and FAIL so the
+# primary post-training quality gate leaves a discrete decision record with the
+# thresholds it was checked against, mirroring the benchmark/safety/judge
+# ``*.evaluation_completed`` events (F-P4-OPUS-26).
+_EVT_LOSS_GATE_COMPLETED = "evaluation.loss_gate_completed"
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +203,18 @@ def _math_reward_fn(completions, **kwargs):
     # (combined_format_length_reward still drives gradient via the format
     # signal). This branch should be unreachable in practice — the trainer
     # only wires _math_reward_fn after _dataset_has_gold_answers returns True.
+    # If a wiring regression DOES make it reachable, the correctness reward
+    # silently contributes a constant zero every batch — warn once (not per
+    # batch) so an inert-but-wired reward is visible in the run log
+    # (F-P3-FABLE-50).
     if golds is None:
+        if not getattr(_math_reward_fn, "_warned_no_golds", False):
+            logger.warning(
+                "_math_reward_fn is wired but no gold_answer column was received from "
+                "TRL — the correctness reward is contributing 0.0 every batch; check "
+                "the dataset columns / preprocessing."
+            )
+            _math_reward_fn._warned_no_golds = True  # type: ignore[attr-defined]
         return [0.0] * len(completions)
     # Use strict=True so a wiring regression (mismatched batch sizes) raises
     # immediately instead of silently truncating to the shorter list and
@@ -672,6 +688,16 @@ class ForgeTrainer:
         baseline_loss = self.config.evaluation.baseline_loss
         max_loss = self.config.evaluation.max_acceptable_loss
 
+        # A config-supplied NaN/Inf baseline would silently disable the
+        # regression check (``final_loss > nan`` is always False) and poison the
+        # improvement-percentage log below. Treat it as no baseline (F-P2-FAB-22).
+        if baseline_loss is not None and (math.isnan(baseline_loss) or math.isinf(baseline_loss)):
+            logger.warning(
+                "Configured baseline_loss is %s (NaN or Inf) — ignoring it; baseline regression check disabled.",
+                baseline_loss,
+            )
+            baseline_loss = None
+
         # When auto_revert is off and no threshold/baseline is configured there is
         # nothing to detect — keep the original cheap early return.
         if not auto_revert and max_loss is None and baseline_loss is None:
@@ -685,6 +711,7 @@ class ForgeTrainer:
         if math.isnan(final_loss) or math.isinf(final_loss):
             reason = f"eval_loss is {final_loss} (NaN or Inf) — training diverged."
             logger.error("EVALUATION FAILED: %s", reason)
+            self._emit_loss_gate_event(False, final_loss, max_loss, baseline_loss)
             if not auto_revert:
                 logger.warning("auto_revert=false — diverged model NOT reverted (detection-only). %s", reason)
                 return True
@@ -702,12 +729,19 @@ class ForgeTrainer:
 
         if failed_reasons:
             reason = " ".join(failed_reasons)
+            self._emit_loss_gate_event(False, final_loss, max_loss, baseline_loss)
             if not auto_revert:
                 logger.warning("Evaluation threshold breached but auto_revert=false — model kept. %s", reason)
                 return True
             logger.error("EVALUATION FAILED: %s", reason)
             self._revert_model(final_path, reason, source="threshold")
             return False
+
+        # PASS — record the discrete accept decision with the thresholds it was
+        # checked against, symmetric with the benchmark/safety/judge gates
+        # (F-P4-OPUS-26). Previously the passing loss surfaced only inside the
+        # opaque pipeline.completed metrics_summary blob.
+        self._emit_loss_gate_event(True, final_loss, max_loss, baseline_loss)
 
         # Log success with improvement details
         if baseline_loss is not None and baseline_loss > 0:
@@ -722,6 +756,30 @@ class ForgeTrainer:
             logger.info("Evaluation passed: eval_loss=%.4f", final_loss)
 
         return True
+
+    def _emit_loss_gate_event(
+        self,
+        passed: bool,
+        eval_loss: float,
+        max_loss: Optional[float],
+        baseline_loss: Optional[float],
+    ) -> None:
+        """Emit the loss/eval-loss decision-gate audit event (F-P4-OPUS-26).
+
+        Mirrors the benchmark/safety/judge ``*.evaluation_completed`` events so
+        an auditor can grep a discrete pass/fail record for the primary
+        post-training quality gate, carrying the thresholds it was checked
+        against. Non-finite ``eval_loss`` (NaN/Inf divergence) is recorded as a
+        string sentinel rather than a bare float so the JSONL stays valid JSON.
+        """
+        loss_field: Any = eval_loss if math.isfinite(eval_loss) else str(eval_loss)
+        self.audit.log_event(
+            _EVT_LOSS_GATE_COMPLETED,
+            passed=passed,
+            eval_loss=loss_field,
+            max_acceptable_loss=max_loss,
+            baseline_loss=baseline_loss,
+        )
 
     def _revert_model(self, final_path: str, reason: str, *, source: str = "evaluation") -> None:
         """Delete generated model artifacts, emit audit event, and notify webhook.
@@ -745,6 +803,12 @@ class ForgeTrainer:
                 "nan_inf", "threshold") for the audit-event ``reason`` field.
                 The webhook payload also includes this in the masked reason.
         """
+        # Stash the operator-actionable reason so the returned TrainResult can
+        # surface it on ``.error`` even for the eval-loss path, which returns a
+        # freshly-built result that never saw the gate's computed reason
+        # (F-P2-FAB-30).
+        self._last_revert_reason = reason
+
         # Article 12 audit trail — emit before destructive action so the
         # record exists even if the rmtree below explodes.
         self.audit.log_event(_EVT_REVERT_TRIGGERED, reason=source, detail=reason)
@@ -998,12 +1062,41 @@ class ForgeTrainer:
                 "Baseline regression check will be skipped."
             )
             return
-        eval_cfg.baseline_loss = float(baseline_loss)
-        metrics["baseline_eval_loss"] = float(baseline_loss)
+        baseline_loss = float(baseline_loss)
+        if math.isnan(baseline_loss) or math.isinf(baseline_loss):
+            # A NaN/Inf baseline silently disables the regression gate:
+            # ``final_loss > float('nan')`` is always False, so the operator
+            # believes the gate is armed while every model passes. Treat it like
+            # a missing baseline (leave eval_cfg.baseline_loss=None) and warn
+            # (F-P2-FAB-22).
+            logger.warning(
+                "Baseline eval_loss is %s (NaN or Inf) — the pre-training eval "
+                "diverged. Baseline regression check will be skipped (gate not armed).",
+                baseline_loss,
+            )
+            return
+        eval_cfg.baseline_loss = baseline_loss
+        metrics["baseline_eval_loss"] = baseline_loss
         logger.info("Baseline eval_loss computed: %.4f", baseline_loss)
 
+    def _log_gate_kept_no_revert(self, gate_name: str, reason: str, train_result: TrainResult) -> None:
+        """WARN that a failed gate is being kept because auto_revert is off.
+
+        Without this line the run log shows an ERROR ("BENCHMARK FAILED") then a
+        successful exit 0 with nothing connecting them — the operator must
+        reverse-engineer the auto_revert=false rationale from the config
+        (F-P3-FABLE-49). One helper keeps the wording identical across the three
+        gates; the failure reason is also recorded on the result.
+        """
+        logger.warning(
+            "%s gate failed (%s) but auto_revert=false — keeping model; failure recorded on TrainResult.",
+            gate_name,
+            reason,
+        )
+        train_result.error = reason
+
     @staticmethod
-    def _mark_reverted(train_result: TrainResult) -> None:
+    def _mark_reverted(train_result: TrainResult, reason: Optional[str] = None) -> None:
         """Mark a result as auto-reverted and clear every stale artifact path.
 
         ``_revert_model`` has just deleted the on-disk model, so neither
@@ -1011,12 +1104,18 @@ class ForgeTrainer:
         CLI/JSON envelope must not advertise a path that no longer exists. A
         reverted run is also never "awaiting approval" (exit 3, not 4), so clear
         the discriminator defensively even though the gate hasn't fired here.
+
+        ``reason`` populates ``TrainResult.error`` so the pipeline stage error
+        and JSON envelope carry the gate's precise failure reason instead of the
+        generic "Stage gate failed." fallback (F-P2-FAB-30).
         """
         train_result.success = False
         train_result.reverted = True
         train_result.staging_path = None
         train_result.final_model_path = None
         train_result.awaiting_approval = False
+        if reason:
+            train_result.error = reason
 
     def _apply_benchmark_result(
         self,
@@ -1050,9 +1149,10 @@ class ForgeTrainer:
         reason = benchmark_result.failure_reason or "Benchmark score below threshold."
         if not (self.config.evaluation and self.config.evaluation.auto_revert):
             # Failure recorded on train_result; pipeline continues to safety/judge stages.
+            self._log_gate_kept_no_revert("benchmark", reason, train_result)
             return True
         self._revert_model(final_path, reason, source="benchmark")
-        self._mark_reverted(train_result)
+        self._mark_reverted(train_result, reason)
         return False
 
     def _apply_resource_usage(self, train_result: TrainResult, metrics: Dict[str, float]) -> None:
@@ -1094,10 +1194,14 @@ class ForgeTrainer:
             safety_score=safety_result.safety_score,
             categories=safety_result.category_distribution,
         )
-        if safety_result.passed or not (self.config.evaluation and self.config.evaluation.auto_revert):
+        if safety_result.passed:
             return True
-        self._revert_model(final_path, safety_result.failure_reason or "Safety check failed.", source="safety")
-        self._mark_reverted(train_result)
+        safety_reason = safety_result.failure_reason or "Safety check failed."
+        if not (self.config.evaluation and self.config.evaluation.auto_revert):
+            self._log_gate_kept_no_revert("safety", safety_reason, train_result)
+            return True
+        self._revert_model(final_path, safety_reason, source="safety")
+        self._mark_reverted(train_result, safety_reason)
         return False
 
     def _apply_judge_result(
@@ -1118,10 +1222,14 @@ class ForgeTrainer:
             passed=judge_result.passed,
             average_score=judge_result.average_score,
         )
-        if judge_result.passed or not (self.config.evaluation and self.config.evaluation.auto_revert):
+        if judge_result.passed:
             return True
-        self._revert_model(final_path, judge_result.failure_reason or "Judge score below threshold.", source="judge")
-        self._mark_reverted(train_result)
+        judge_reason = judge_result.failure_reason or "Judge score below threshold."
+        if not (self.config.evaluation and self.config.evaluation.auto_revert):
+            self._log_gate_kept_no_revert("judge", judge_reason, train_result)
+            return True
+        self._revert_model(final_path, judge_reason, source="judge")
+        self._mark_reverted(train_result, judge_reason)
         return False
 
     def _finalize_artifacts(
@@ -1245,7 +1353,15 @@ class ForgeTrainer:
             self.save_final_model(gate_path)
 
         if not self.execute_evaluation_checks(gate_path, metrics):
-            return TrainResult(success=False, metrics=metrics, reverted=True)
+            # Surface the eval-loss gate's computed reason (NaN/Inf or threshold
+            # breach) on .error so the pipeline stage / JSON envelope don't fall
+            # back to the generic "Stage gate failed." string (F-P2-FAB-30).
+            return TrainResult(
+                success=False,
+                metrics=metrics,
+                reverted=True,
+                error=getattr(self, "_last_revert_reason", None),
+            )
 
         if not self._apply_benchmark_result(self._run_benchmark_if_configured(), train_result, metrics, gate_path):
             return train_result
@@ -1686,6 +1802,19 @@ class ForgeTrainer:
                     output_path=gov_path,
                     dataset_count=len(self.dataset),
                 )
+                # The governance report can be a clean success yet still drop
+                # the Article 10 data-quality section when data_audit_report.json
+                # is absent (audit CLI defaults to ./audit/, trainer to
+                # ./checkpoints/).  Without a discrete event the append-only log
+                # shows an unqualified success and an auditor over-trusts bundle
+                # completeness (F-P4-OPUS-23). Emit a distinct gap event so the
+                # omission is in the hash-chained record, not just stderr.
+                if not governance.get("data_audit_inlined", False):
+                    self.audit.log_event(
+                        "compliance.governance_section_missing",
+                        section="data_audit_report",
+                        expected_path=os.path.join(self.config.training.output_dir, "data_audit_report.json"),
+                    )
                 governance_ok = True
             except Exception as e:  # noqa: BLE001 — best-effort; broad catch keeps the audit trail honest  # NOSONAR
                 # OSError covers filesystem failures, but the governance

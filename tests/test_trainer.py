@@ -1,5 +1,6 @@
 """Unit tests for forgelm.trainer module (non-GPU tests only)."""
 
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -185,6 +186,68 @@ class TestEvaluationChecks:
         assert result is True
         revert.assert_not_called()
 
+    def _loss_gate_calls(self, trainer):
+        from forgelm.trainer import _EVT_LOSS_GATE_COMPLETED
+
+        return [c for c in trainer.audit.log_event.call_args_list if c.args and c.args[0] == _EVT_LOSS_GATE_COMPLETED]
+
+    def test_loss_gate_emits_evaluation_completed_on_pass(self):
+        """F-P4-OPUS-26: a passing loss gate emits a discrete decision event
+        carrying ``passed=True`` and the thresholds it was checked against —
+        symmetric with the benchmark/safety/judge gates."""
+        trainer = self._make_trainer(max_loss=2.0, baseline_loss=3.0)
+        assert trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.5}) is True
+        calls = self._loss_gate_calls(trainer)
+        assert len(calls) == 1
+        kwargs = calls[0].kwargs
+        assert kwargs["passed"] is True
+        assert kwargs["eval_loss"] == pytest.approx(1.5)
+        assert kwargs["max_acceptable_loss"] == pytest.approx(2.0)
+        assert kwargs["baseline_loss"] == pytest.approx(3.0)
+
+    def test_loss_gate_emits_evaluation_completed_on_fail(self):
+        """F-P4-OPUS-26: a threshold breach emits the same decision event with
+        ``passed=False`` before the revert, so the accept/reject record exists
+        independently of ``model.reverted``."""
+        trainer = self._make_trainer(max_loss=2.0)
+        assert trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 3.0}) is False
+        calls = self._loss_gate_calls(trainer)
+        assert len(calls) == 1
+        assert calls[0].kwargs["passed"] is False
+        assert calls[0].kwargs["eval_loss"] == pytest.approx(3.0)
+
+    def test_loss_gate_event_eval_loss_non_finite_is_stringified(self):
+        """A NaN/Inf divergence records eval_loss as a string sentinel so the
+        audit JSONL stays valid JSON (F-P4-OPUS-26)."""
+        trainer = self._make_trainer(max_loss=2.0)
+        trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": float("nan")})
+        calls = self._loss_gate_calls(trainer)
+        assert len(calls) == 1
+        assert calls[0].kwargs["passed"] is False
+        assert isinstance(calls[0].kwargs["eval_loss"], str)  # "nan", not a bare float
+
+    def test_revert_emits_audit_event_before_rmtree(self, tmp_path):
+        """F-P4-OPUS-27: ``_revert_model`` must emit ``model.reverted`` BEFORE the
+        destructive ``shutil.rmtree`` so the record survives even if the delete
+        explodes. Patch rmtree to raise and assert the emit still happened."""
+        from forgelm.trainer import _EVT_REVERT_TRIGGERED
+
+        trainer = self._make_trainer(max_loss=2.0)
+        final_path = tmp_path / "final"
+        final_path.mkdir()
+        (final_path / "adapter.bin").write_text("weights")
+
+        with patch("forgelm.trainer.shutil.rmtree", side_effect=OSError("disk gone")) as rmtree:
+            # The OSError is caught inside _revert_model (logged, non-fatal) —
+            # the emit must have already run.
+            trainer._revert_model(str(final_path), "boom", source="threshold")
+
+        rmtree.assert_called_once()
+        revert_calls = [
+            c for c in trainer.audit.log_event.call_args_list if c.args and c.args[0] == _EVT_REVERT_TRIGGERED
+        ]
+        assert len(revert_calls) == 1, "model.reverted must be emitted exactly once, even when rmtree fails"
+
     def test_failed_benchmark_gate_when_auto_revert_disabled_continues_recording_failure(self):
         """F-P1-FAB-14: with the shipped default ``auto_revert=False`` a failed
         benchmark gate is *recorded* (``benchmark_passed=False``, scores attached)
@@ -230,6 +293,81 @@ class TestEvaluationChecks:
         assert train_result.benchmark_passed is False
         assert train_result.reverted is True
         revert.assert_called_once()
+
+
+@pytest.mark.skipif(not torch_available, reason="torch not installed")
+class TestGovernanceSectionMissingEvent:
+    """F-P4-OPUS-23: when data_audit_report.json is absent the governance bundle
+    silently drops the Article 10 data-quality section. The append-only log must
+    record that gap with a discrete ``compliance.governance_section_missing``
+    event, not only an ephemeral WARNING."""
+
+    def _make_trainer(self, tmp_path):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model"},
+            lora={},
+            training={"output_dir": str(tmp_path)},
+            data={"dataset_name_or_path": "org/dataset"},
+            evaluation={"auto_revert": False},
+        )
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.dataset = {"train": ["x"], "validation": ["y"]}
+            trainer.checkpoint_dir = str(tmp_path)
+            trainer.run_name = "test"
+            trainer.notifier = MagicMock()
+            trainer.audit = MagicMock()
+            trainer.audit.run_id = "fg-test"
+        return trainer
+
+    def _event_names(self, trainer):
+        return [c.args[0] for c in trainer.audit.log_event.call_args_list if c.args]
+
+    def _export_stub(self, tmp_path):
+        """export_compliance_artifacts normally creates ``compliance/``; the
+        governance writer relies on it existing, so emulate that side effect."""
+
+        def _stub(manifest, compliance_dir):
+            os.makedirs(compliance_dir, exist_ok=True)
+
+        return _stub
+
+    def test_missing_data_audit_emits_section_missing_event(self, tmp_path):
+        trainer = self._make_trainer(tmp_path)  # no data_audit_report.json on disk
+        result = TrainResult(success=True, metrics={}, final_model_path=str(tmp_path / "final"))
+        # Keep the heavy manifest machinery out of the way; only the governance
+        # branch is under test.
+        with (
+            patch("forgelm.compliance.generate_training_manifest", return_value={"x": 1}),
+            patch("forgelm.compliance.export_compliance_artifacts", side_effect=self._export_stub(tmp_path)),
+        ):
+            trainer._export_compliance_if_needed({"eval_loss": 1.0}, result)
+
+        names = self._event_names(trainer)
+        assert "compliance.governance_exported" in names
+        assert "compliance.governance_section_missing" in names
+
+    def test_present_data_audit_does_not_emit_section_missing(self, tmp_path):
+        import json as _json
+
+        (tmp_path / "data_audit_report.json").write_text(
+            _json.dumps({"total_samples": 5, "pii_summary": {}}), encoding="utf-8"
+        )
+        trainer = self._make_trainer(tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(tmp_path / "final"))
+        with (
+            patch("forgelm.compliance.generate_training_manifest", return_value={"x": 1}),
+            patch("forgelm.compliance.export_compliance_artifacts", side_effect=self._export_stub(tmp_path)),
+        ):
+            trainer._export_compliance_if_needed({"eval_loss": 1.0}, result)
+
+        names = self._event_names(trainer)
+        assert "compliance.governance_exported" in names
+        assert "compliance.governance_section_missing" not in names
 
 
 class TestTrainingArgsValidationGuard:
