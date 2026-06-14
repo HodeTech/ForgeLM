@@ -885,6 +885,10 @@ class ForgeTrainer:
         self._revert_model(final_path, reason, source="benchmark")
         train_result.success = False
         train_result.reverted = True
+        # Revert deletes the staging dir — clear the path so the run is never
+        # misreported as "awaiting approval" (exit 4) instead of "reverted"
+        # (exit 3). ``awaiting_approval`` is already False on this path.
+        train_result.staging_path = None
         return False
 
     def _apply_resource_usage(self, train_result: TrainResult, metrics: Dict[str, float]) -> None:
@@ -927,6 +931,7 @@ class ForgeTrainer:
         self._revert_model(final_path, safety_result.failure_reason or "Safety check failed.", source="safety")
         train_result.success = False
         train_result.reverted = True
+        train_result.staging_path = None  # see _apply_benchmark_result revert branch
         return False
 
     def _apply_judge_result(
@@ -952,6 +957,7 @@ class ForgeTrainer:
         self._revert_model(final_path, judge_result.failure_reason or "Judge score below threshold.", source="judge")
         train_result.success = False
         train_result.reverted = True
+        train_result.staging_path = None  # see _apply_benchmark_result revert branch
         return False
 
     def _finalize_artifacts(
@@ -1024,6 +1030,7 @@ class ForgeTrainer:
 
         train_result.success = True
         train_result.staging_path = staging_path
+        train_result.awaiting_approval = True
         return True
 
     def _run_training_pipeline(self, resume_from_checkpoint: Optional[str]) -> TrainResult:

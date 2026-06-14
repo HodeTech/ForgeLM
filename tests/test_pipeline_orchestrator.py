@@ -484,11 +484,48 @@ class TestHumanApprovalGate:
         cfg = _three_stage_config(tmp_path)
         staging = str(tmp_path / "stage1" / "final_model.staging")
         os.makedirs(staging, exist_ok=True)
-        results = [TrainResult(success=True, staging_path=staging)]
+        results = [TrainResult(success=True, awaiting_approval=True, staging_path=staging)]
         _install_trainer_mocks(monkeypatch, results)
         orch = PipelineOrchestrator(cfg, b"yaml bytes")
         code = orch.run()
         assert code == EXIT_AWAITING_APPROVAL
+
+    def test_reverted_gated_stage_exits_eval_failure_not_awaiting(self, tmp_path, monkeypatch):
+        """XP-02 core: an approval-gated stage whose post-train gate auto-reverted
+        (success=False, staging cleared) must exit EXIT_EVAL_FAILURE (3), NOT
+        EXIT_AWAITING_APPROVAL (4).  Pre-fix the staging check ran before the
+        success check, so a reverted stage was misreported as awaiting approval."""
+        cfg = _three_stage_config(tmp_path)
+        # The real trainer clears staging_path on revert; awaiting_approval False.
+        _install_trainer_mocks(monkeypatch, [TrainResult(success=False, reverted=True, staging_path=None)])
+        orch = PipelineOrchestrator(cfg, b"yaml bytes")
+        code = orch.run()
+        assert code == EXIT_EVAL_FAILURE
+
+    def test_failed_stage_with_stale_staging_path_still_exits_eval_failure(self, tmp_path, monkeypatch):
+        """Defence-in-depth: even if a future path left a stale ``staging_path``
+        on a ``success=False`` result, routing on success first sends it to
+        exit 3 — a stale staging dir must never read as 'awaiting approval'."""
+        cfg = _three_stage_config(tmp_path)
+        stale = str(tmp_path / "stage1" / "final_model.staging.fg-stale")
+        os.makedirs(stale, exist_ok=True)
+        _install_trainer_mocks(monkeypatch, [TrainResult(success=False, reverted=True, staging_path=stale)])
+        orch = PipelineOrchestrator(cfg, b"yaml bytes")
+        code = orch.run()
+        assert code == EXIT_EVAL_FAILURE
+
+    def test_success_with_staging_but_no_awaiting_flag_is_not_gated(self, tmp_path, monkeypatch):
+        """``awaiting_approval`` is authoritative: a successful result that
+        carries a ``staging_path`` but does NOT set the flag is a normal
+        success (exit 0), never a false gate (exit 4)."""
+        cfg = _three_stage_config(tmp_path)
+        staging = str(tmp_path / "stage1" / "final_model.staging")
+        os.makedirs(staging, exist_ok=True)
+        # awaiting_approval defaults False; three successful stages → full run.
+        _install_trainer_mocks(monkeypatch, [TrainResult(success=True, staging_path=staging)])
+        orch = PipelineOrchestrator(cfg, b"yaml bytes")
+        code = orch.run()
+        assert code == EXIT_SUCCESS
 
     def test_gated_pending_approval_preserves_downstream_pending(self, tmp_path, monkeypatch):
         """After a gated stage, downstream stages must stay ``pending``
@@ -497,7 +534,7 @@ class TestHumanApprovalGate:
         cfg = _three_stage_config(tmp_path)
         staging = str(tmp_path / "stage1" / "final_model.staging")
         os.makedirs(staging, exist_ok=True)
-        results = [TrainResult(success=True, staging_path=staging)]
+        results = [TrainResult(success=True, awaiting_approval=True, staging_path=staging)]
         _install_trainer_mocks(monkeypatch, results)
         orch = PipelineOrchestrator(cfg, b"yaml bytes")
         orch.run()
@@ -518,7 +555,7 @@ class TestHumanApprovalGate:
         cfg = _three_stage_config(tmp_path)
         staging = str(tmp_path / "stage1" / "final_model.staging")
         os.makedirs(staging, exist_ok=True)
-        _install_trainer_mocks(monkeypatch, [TrainResult(success=True, staging_path=staging)])
+        _install_trainer_mocks(monkeypatch, [TrainResult(success=True, awaiting_approval=True, staging_path=staging)])
         orch = PipelineOrchestrator(cfg, b"yaml bytes")
         orch.run()
         audit_path = os.path.join(orch.paths["root_output_dir"], "audit_log.jsonl")
@@ -704,9 +741,16 @@ class TestResumeFrom:
         of the operator-approved one, and the audit log would carry
         two ``pipeline.stage_started`` events for the same stage_index."""
         cfg = _three_stage_config(tmp_path)
-        # First run: SFT stage hits a human-approval gate and exits 4.
+        # First run: SFT stage hits a human-approval gate and exits 4. A genuine
+        # gate is ``success=True`` + ``awaiting_approval=True`` + a real staging
+        # dir (``.staging.<run_id>``), NOT ``success=False`` with a bare
+        # ``final_model`` path — that masquerade (a reverted result reported as
+        # awaiting approval) is the exact XP-02 bug now fixed.
+        gated_staging = str(tmp_path / "stage1" / "final_model.staging.fg-gated")
+        os.makedirs(gated_staging, exist_ok=True)
         _install_trainer_mocks(
-            monkeypatch, [TrainResult(success=False, staging_path=str(tmp_path / "stage1" / "final_model"))]
+            monkeypatch,
+            [TrainResult(success=True, awaiting_approval=True, staging_path=gated_staging)],
         )
         orch1 = PipelineOrchestrator(cfg, b"yaml")
         code1 = orch1.run()

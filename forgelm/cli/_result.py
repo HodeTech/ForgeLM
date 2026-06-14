@@ -14,7 +14,15 @@ def _build_result_json_envelope(result) -> dict:
         "metrics": result.metrics,
         "final_model_path": result.final_model_path,
         "reverted": result.reverted,
+        # Article 14 discriminator: lets a JSON consumer tell "staged, awaiting
+        # human sign-off" (exit 4, model NOT yet at final_model_path) apart from
+        # an ordinary success (exit 0). See docs json-output.md.
+        "awaiting_approval": result.awaiting_approval,
     }
+    # Only present when the human-approval gate fired; carries the on-disk
+    # staging directory the operator passes to `forgelm approve/reject`.
+    if result.staging_path:
+        output["staging_path"] = result.staging_path
     if result.benchmark_scores is not None:
         output["benchmark"] = {
             "scores": result.benchmark_scores,

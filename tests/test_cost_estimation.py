@@ -114,3 +114,48 @@ class TestCostInJsonOutput:
 
         output = json.loads(captured.getvalue())
         assert "estimated_cost_usd" not in output
+
+
+class TestApprovalEnvelope:
+    """XP-02 / P2-FAB-14: the training JSON envelope must carry an
+    ``awaiting_approval`` discriminator so a consumer can tell 'staged, pending
+    human sign-off' (exit 4) apart from an ordinary success (exit 0)."""
+
+    @staticmethod
+    def _envelope(result):
+        import io
+        import json
+        import sys
+
+        from forgelm.cli import _output_result
+
+        captured = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = captured
+        try:
+            _output_result(result, "json")
+        finally:
+            sys.stdout = old_stdout
+        return json.loads(captured.getvalue())
+
+    def test_ordinary_success_envelope_not_awaiting(self):
+        out = self._envelope(TrainResult(success=True, final_model_path="/work/out/final_model"))
+        assert out["success"] is True
+        assert out["awaiting_approval"] is False
+        assert "staging_path" not in out
+
+    def test_awaiting_approval_envelope_carries_discriminator_and_staging(self):
+        staging = "/work/out/final_model.staging.fg-abc"
+        out = self._envelope(
+            TrainResult(success=True, awaiting_approval=True, staging_path=staging, final_model_path=staging)
+        )
+        assert out["success"] is True
+        assert out["awaiting_approval"] is True
+        assert out["staging_path"] == staging
+
+    def test_reverted_envelope_not_awaiting_and_no_staging(self):
+        out = self._envelope(TrainResult(success=False, reverted=True))
+        assert out["success"] is False
+        assert out["reverted"] is True
+        assert out["awaiting_approval"] is False
+        assert "staging_path" not in out

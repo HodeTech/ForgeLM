@@ -14,7 +14,7 @@ This page is the canonical reference. CI/CD pipelines that parse `forgelm` outpu
 - **stdout vs stderr.** The JSON envelope goes to **stdout**. Human-friendly logs (info / warning / error) go to **stderr**. Pipe `forgelm ... --output-format json | jq .` and read your operator-facing messages from `2>` separately.
 - **Top-level wrapper.** Every envelope starts with `"success": true | false`. Consumers can branch on this single key before parsing the rest.
 - **Error envelope.** When `success: false`, the envelope carries `"error": "<message>"` (string). Optional richer fields (`exit_code`, `error_type`, `details`) MAY be present per the [error-handling standard on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/error-handling.md). Consumers that need certainty on these fields should also check the process exit code via `$?`.
-- **Exit codes.** See [Exit Codes](#/reference/exit-codes). The envelope is consistent with the exit code: `success: true` ⟺ exit `0`; `success: false` ⟺ non-zero exit.
+- **Exit codes.** See [Exit Codes](#/reference/exit-codes). `success: false` always pairs with a non-zero exit. `success: true` pairs with exit `0` in the normal case, with **one exception**: a training run halted at the Article 14 human-approval gate emits `success: true` **and** `awaiting_approval: true` while exiting `4` (the model is staged, not yet promoted). Consumers that must distinguish "done" from "awaiting human approval" should read the `awaiting_approval` discriminator (or check `$?`), not `success` alone.
 
 ## `forgelm doctor`
 
@@ -72,6 +72,60 @@ The training pipeline (`forgelm --config <yaml> --output-format json`) runs a to
 | `remediation` | str | Human-readable fix instructions ending with the exact `pip install 'numpy<2'` command. Identical text to the `forgelm doctor` `numpy.torch_abi` probe's `detail` field — same single source of truth. |
 
 **Exit code mapping:** preflight abort exits `2` (`EXIT_TRAINING_ERROR`, the runtime-error class). The same `forgelm doctor` `numpy.torch_abi` probe would have surfaced this as `status: "fail"` ahead of time; the preflight is the second line of defense for operators who skipped `doctor` and ran training directly.
+
+## `forgelm` (training) — result envelope
+
+When training runs to completion the pipeline emits a result envelope on **stdout**. The same envelope shape covers all three outcomes; the `success` + `awaiting_approval` + `reverted` keys discriminate between them.
+
+**Success envelope** (model promoted; exit `0`):
+
+```json
+{
+  "success": true,
+  "metrics": {"eval_loss": 0.42, "benchmark/average": 0.78},
+  "final_model_path": "/work/output/final_model",
+  "reverted": false,
+  "awaiting_approval": false
+}
+```
+
+**Awaiting-approval envelope** (`evaluation.require_human_approval: true`; model **staged**, not yet promoted; exit `4`):
+
+```json
+{
+  "success": true,
+  "metrics": {"eval_loss": 0.42},
+  "final_model_path": "/work/output/final_model.staging.fg-abc123def456",
+  "reverted": false,
+  "awaiting_approval": true,
+  "staging_path": "/work/output/final_model.staging.fg-abc123def456"
+}
+```
+
+**Reverted envelope** (a post-train gate failed under `auto_revert: true`; artefacts deleted; exit `3`):
+
+```json
+{
+  "success": false,
+  "metrics": {"eval_loss": 0.91},
+  "final_model_path": "/work/output/final_model",
+  "reverted": true,
+  "awaiting_approval": false
+}
+```
+
+| Key | Type | Notes |
+|---|---|---|
+| `success` | bool | `true` when the run completed (including a staged, awaiting-approval run). `false` when a gate auto-reverted the model. |
+| `metrics` | object | Numeric training/eval/gate metrics (e.g. `eval_loss`, `benchmark/average`, `safety/safe_ratio`). |
+| `final_model_path` | str | Where the model artefacts live. For an awaiting-approval run this is the **staging** directory until `forgelm approve` promotes it. |
+| `reverted` | bool | `true` iff a gate (eval-loss / benchmark / safety / judge) auto-reverted the model. Mutually exclusive with `awaiting_approval`. |
+| `awaiting_approval` | bool | **Discriminator.** `true` iff the run halted at the Article 14 human-approval gate (exit `4`). A reverted run is always `false` here. |
+| `staging_path` | str | Present only when `awaiting_approval` is `true`; the on-disk staging dir to pass to `forgelm approve <run_id>` / `forgelm reject <run_id>`. |
+
+Optional sub-blocks (`benchmark`, `resource_usage`, `estimated_cost_usd`, `safety`, `judge`) are added only when those evaluations ran.
+
+**Exit code mapping:** `0` = success (promoted); `3` = `EXIT_EVAL_FAILURE` (a gate reverted the model — `reverted: true`); `4` = `EXIT_AWAITING_APPROVAL` (`awaiting_approval: true`, staged pending human sign-off). A reverted run is **never** reported as awaiting approval.
 
 ## `forgelm approvals --pending`
 

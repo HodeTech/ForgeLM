@@ -145,7 +145,11 @@ def _run_training_pipeline(config, args, json_output: bool) -> None:
         manage_checkpoints(config.training.output_dir, action="keep")
 
         _output_result(result, args.output_format)
-        if result.success and config.evaluation and getattr(config.evaluation, "require_human_approval", False):
+        # ``awaiting_approval`` is the authoritative discriminator (set only when
+        # the gate fired). Route on it rather than the bare config flag: a run
+        # whose post-train gate auto-reverted has success=False and falls through
+        # to EXIT_EVAL_FAILURE even when require_human_approval was configured.
+        if result.success and result.awaiting_approval:
             sys.exit(EXIT_AWAITING_APPROVAL)
         sys.exit(EXIT_SUCCESS if result.success else EXIT_EVAL_FAILURE)
 

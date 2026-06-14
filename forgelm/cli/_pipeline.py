@@ -1343,15 +1343,22 @@ class PipelineOrchestrator:
             stage_cfg.training.output_dir, "compliance", "training_manifest.json"
         )
 
-        # Human-approval gate produces a non-zero exit + a staging_path.
-        if result.staging_path:
-            stage_state.output_model = result.staging_path
-            return EXIT_AWAITING_APPROVAL
-
-        # Auto-revert or gate failure: trainer returns success=False.
+        # Auto-revert or gate failure takes precedence: a reverted stage is an
+        # eval-failure (exit 3), never "awaiting approval" (exit 4). Revert
+        # deletes the staging dir and clears ``staging_path``, but route on
+        # ``success`` first so any result that still carries a stale staging_path
+        # cannot be misreported as awaiting approval.
         if not result.success:
             stage_state.error = result.error or "Stage gate failed."
             return EXIT_EVAL_FAILURE
+
+        # Human-approval gate: the stage genuinely awaits human sign-off
+        # (success=True, model staged). ``awaiting_approval`` is the
+        # authoritative discriminator — not ``bool(staging_path)``, which can
+        # survive a revert.
+        if result.awaiting_approval:
+            stage_state.output_model = result.staging_path
+            return EXIT_AWAITING_APPROVAL
 
         # Normal success path.
         stage_state.output_model = result.final_model_path or os.path.join(stage_cfg.training.output_dir, "final_model")
