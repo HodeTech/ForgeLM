@@ -123,3 +123,34 @@ class TestGenerateModelCard:
         content = open(card_path).read()
         assert secret_url not in content, "Webhook URL must not appear in model card"
         assert "SECRET_TOKEN" not in content
+
+    def test_synthetic_api_key_not_in_model_card(self, tmp_path):
+        """C5/F-P1-FAB-01: a populated ``synthetic.api_key`` must NOT land in the
+        rendered README. The nested ``SyntheticConfig.model_dump`` redaction is
+        bypassed on the parent-serialization path, so the card relies on the
+        section ``exclude`` + recursive secret masking instead."""
+        from forgelm.model_card import generate_model_card
+
+        config = ForgeConfig(
+            **_card_config(synthetic={"enabled": True, "teacher_model": "gpt-4", "api_key": "sk-SUPERSECRET-LEAK"})
+        )
+        final_path = str(tmp_path / "model")
+        card_path = generate_model_card(config=config, metrics={"eval_loss": 0.5}, final_path=final_path)
+        content = open(card_path).read()
+        assert "sk-SUPERSECRET-LEAK" not in content, "synthetic.api_key leaked into the model card"
+
+    def test_residual_secret_keyed_value_is_masked(self, tmp_path):
+        """Defence-in-depth: the recursive masker redacts any secret-keyed value
+        in the serialized config while keeping ``*_env`` env-var-NAME references."""
+        from forgelm.model_card import _redact_secrets
+
+        out = _redact_secrets(
+            {
+                "evaluation": {"judge_api_key": "SECRET2", "judge_api_key_env": "OPENAI_API_KEY"},
+                "nested": [{"password": "p4ss"}, {"note": "keep"}],
+            }
+        )
+        assert out["evaluation"]["judge_api_key"] == "***REDACTED***"
+        assert out["evaluation"]["judge_api_key_env"] == "OPENAI_API_KEY"  # env-name, not a secret
+        assert out["nested"][0]["password"] == "***REDACTED***"
+        assert out["nested"][1]["note"] == "keep"
