@@ -29,6 +29,6 @@ def _run_chat_cmd(args) -> None:
             trust_remote_code=args.trust_remote_code,
             backend=args.backend,
         )
-    except Exception as e:  # noqa: BLE001 — best-effort: top-of-subcommand catch.  ``run_chat`` loads the model + tokenizer, optionally a PEFT adapter, and runs the REPL loop; failure surface includes OSError (model path), RuntimeError (CUDA), ValueError (tokenizer), KeyboardInterrupt swap, plus chat-internal generation errors.  EXIT_TRAINING_ERROR is the documented public contract for a failed dispatched subcommand.  # NOSONAR
+    except Exception as e:  # noqa: BLE001 — best-effort: top-of-subcommand catch.  ``run_chat`` loads the model + tokenizer, optionally a PEFT adapter, and runs the REPL loop; failure surface includes OSError (model path), RuntimeError (CUDA), ValueError (tokenizer), plus chat-internal generation errors.  KeyboardInterrupt is a BaseException and is NOT caught here — an in-flight Ctrl-C propagates to the dispatcher's ``except KeyboardInterrupt`` (exit 2).  EXIT_TRAINING_ERROR is the documented public contract for a failed dispatched subcommand.  # NOSONAR
         logger.exception("Chat session failed: %s", e)
         sys.exit(EXIT_TRAINING_ERROR)

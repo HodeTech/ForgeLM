@@ -235,3 +235,28 @@ def test_byod_relative_local_path_not_misclassified_as_hub_id(tmp_path, monkeypa
     _args, kwargs = mock_run.call_args
     # The override must point to the actual on-disk file, expanded to absolute.
     assert Path(kwargs["dataset_override"]) == real_file.resolve()
+
+
+def test_audit_failure_logs_warning(tmp_path, caplog):
+    """F-P7-OPUS-41: the BYOD audit-offer BLE001 handler previously surfaced a
+    failure only on stdout via ``_print``; a CI/log pipeline tailing logs saw
+    nothing. The wide-tail handler now logs at WARNING (per error-handling.md's
+    mandatory BLE001 hygiene) while keeping the offer advisory — the helper
+    still returns ``False`` so a failed audit does not abort BYOD selection."""
+    import logging
+
+    good = tmp_path / "good.jsonl"
+    good.write_text('{"messages": []}\n', encoding="utf-8")
+
+    with (
+        patch("builtins.input", side_effect=_make_input(["y"])),  # accept the audit offer
+        patch("forgelm.data_audit.audit_dataset", side_effect=RuntimeError("boom")),
+        caplog.at_level(logging.WARNING, logger="forgelm.wizard"),
+    ):
+        result = wizard._offer_audit_for_jsonl(good)
+
+    assert result is False
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(str(good) in r.getMessage() and "could not run" in r.getMessage() for r in warnings), (
+        f"expected a WARNING naming the dataset path; got {[r.getMessage() for r in warnings]}"
+    )

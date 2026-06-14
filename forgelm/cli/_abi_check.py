@@ -109,8 +109,9 @@ def format_abi_remediation(torch_version: str, numpy_version: str) -> str:
     Both version strings are required to be populated — callers are
     expected to invoke this only after observing :data:`ABI_BROKEN`,
     which guarantees both versions came back non-``None`` from
-    :func:`compute_numpy_torch_abi_status`.  An assertion guards
-    against future call sites that drift from this contract.
+    :func:`compute_numpy_torch_abi_status`.  A ``ValueError`` guards
+    against future call sites that drift from this contract (not an
+    ``assert`` — the check must survive ``python -O``).
 
     Kept identical to the doctor probe's ``detail`` line so the
     operator sees the same fix instructions whether they hit the

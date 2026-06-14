@@ -28,11 +28,11 @@ def _output_format_for(args) -> str:
 def _dispatch_subcommand(command: str, args) -> None:
     """Run a Phase 10 / 10.5 / 11 / 11.5 / Wave 2a subcommand and exit.
 
-    Subcommands handled here: ``chat``, ``export``, ``deploy``,
-    ``quickstart``, ``ingest``, ``audit``, ``doctor``, ``verify-audit``,
-    ``approve``, ``reject``, ``approvals``.  Each terminates the process
-    via ``sys.exit`` after its own dispatcher returns — the trainer code
-    path never runs when a subcommand is in play.
+    Handles every subcommand registered in the ``table`` literal below
+    (the authoritative, drift-proof list — adding a subcommand is a
+    single-row edit there).  Each terminates the process via ``sys.exit``
+    after its own dispatcher returns — the trainer code path never runs
+    when a subcommand is in play.
 
     Dispatchers are looked up via the package facade so tests that
     ``patch("forgelm.cli._run_*_cmd", ...)`` see their mock invoked.

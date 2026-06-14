@@ -408,6 +408,23 @@ class TestChatCLI:
         captured = capsys.readouterr()
         assert "safety" not in captured.out.lower()
 
+    def test_dispatch_docstring_does_not_hardcode_stale_subcommand_subset(self):
+        """F-P7-OPUS-40: the ``_dispatch_subcommand`` docstring used to
+        enumerate 11 of the 18 routed subcommands as prose, drifting silently as
+        new ones were added. It now points at the authoritative ``table``
+        literal. Guard against re-introducing a partial hard-coded list by
+        asserting subcommands present only in the newer cohort are NOT named in
+        the docstring prose (they would only appear there as a stale partial
+        enumeration)."""
+        from forgelm.cli._dispatch import _dispatch_subcommand
+
+        doc = _dispatch_subcommand.__doc__ or ""
+        for stale_only_name in ("purge", "reverse-pii", "safety-eval", "verify-gguf"):
+            assert stale_only_name not in doc, (
+                f"_dispatch_subcommand docstring hard-codes {stale_only_name!r}; "
+                "point at the table literal instead of enumerating subcommands"
+            )
+
     def test_chat_manual_frontmatter_does_not_advertise_safety_routing(self):
         # F-P7-OPUS-39: the chat manual frontmatter description (rendered as the
         # SPA page summary) must not advertise 'safety routing' while --safety

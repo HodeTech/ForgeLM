@@ -308,7 +308,7 @@ def generate_stream(
         try:
             with torch.inference_mode():
                 model.generate(**gen_kwargs)
-        except Exception as e:  # noqa: BLE001 — best-effort: streaming generate runs in a worker thread; the broad catch funnels every torch error (CUDA OOM RuntimeError, dtype mismatch, tokenizer ValueError, KeyboardInterrupt swap) into the shared list so the foreground thread can re-raise after joining.  # NOSONAR
+        except Exception as e:  # noqa: BLE001 — best-effort: streaming generate runs in a worker thread; the broad catch funnels every torch error (CUDA OOM RuntimeError, dtype mismatch, tokenizer ValueError) into the shared list so the foreground thread can re-raise after joining. KeyboardInterrupt is a BaseException and is intentionally NOT caught here — it is delivered to the main thread and propagates to the CLI seam.  # NOSONAR
             _exc.append(e)
 
     thread = Thread(target=_gen_thread, daemon=True)

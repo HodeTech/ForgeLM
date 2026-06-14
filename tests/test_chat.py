@@ -13,7 +13,16 @@ import json
 
 import pytest
 
+import forgelm.chat as chat_mod
 from forgelm.chat import ChatSession
+
+# ``rich`` is an optional extra; the True-path assertion needs the real escaper.
+try:
+    import rich.markup  # noqa: F401
+
+    _RICH_INSTALLED = True
+except ImportError:
+    _RICH_INSTALLED = False
 
 
 def _make_session(**kwargs):
@@ -133,3 +142,41 @@ class TestBuildMessages:
         # No system prompt → all entries are trimmed history + the new turn.
         assert len(messages) == 2 * _MAX_HISTORY_PAIRS + 1
         assert messages[-1] == {"role": "user", "content": "now"}
+
+
+class TestRichDualPath:
+    """F-P7-OPUS-44: architecture.md §3 carve-out condition 4 requires the
+    ``_HAS_RICH`` boolean be monkeypatched to exercise BOTH the extras-installed
+    and extras-missing paths. The plain ``_HAS_RICH=False`` fallback is the
+    install-minimal default (users who skip the ``[chat]`` extra) and was
+    previously untested, so a regression in the rich path could silently break
+    the fallback every such user depends on."""
+
+    def test_inline_raw_plain_path_passes_markup_through_unescaped(self, monkeypatch):
+        # _HAS_RICH=False (extras-missing): no rich engine to interpret markup,
+        # so the token is written verbatim with no escaping.
+        monkeypatch.setattr(chat_mod, "_HAS_RICH", False)
+        session, out = _make_session()
+        session._print_inline_raw("[red]ALERT[/red]")
+        assert out == ["[red]ALERT[/red]"]
+
+    @pytest.mark.skipif(not _RICH_INSTALLED, reason="rich extra not installed")
+    def test_inline_raw_rich_path_escapes_markup(self, monkeypatch):
+        # _HAS_RICH=True (extras-installed): markup-looking model tokens are
+        # rich-escaped so they render literally (prompt-injection hardening).
+        monkeypatch.setattr(chat_mod, "_HAS_RICH", True)
+        session, out = _make_session()
+        session._print_inline_raw("[red]ALERT[/red]")
+        assert len(out) == 1
+        assert out[0] != "[red]ALERT[/red]"
+        assert "\\[red]" in out[0]
+
+    def test_welcome_renders_in_both_rich_modes(self, monkeypatch):
+        # The welcome banner must produce output without raising under both
+        # modes, so a future edit to the rich path cannot silently break the
+        # plain fallback.
+        for has_rich in (False, _RICH_INSTALLED):
+            monkeypatch.setattr(chat_mod, "_HAS_RICH", has_rich)
+            session, out = _make_session()
+            session._print_welcome()
+            assert out, f"_print_welcome produced no output with _HAS_RICH={has_rich}"

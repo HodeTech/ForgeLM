@@ -10,11 +10,14 @@ the BYOD logic — the helpers are well-tested in
 from __future__ import annotations
 
 import json
+import logging
 import shlex
 from pathlib import Path
 from typing import List, Optional
 
 from ._io import _CANCEL_TOKENS, _HF_HUB_ID_RE, WizardCancel, _print, _prompt, _prompt_yes_no
+
+logger = logging.getLogger("forgelm.wizard")
 
 # ---------------------------------------------------------------------------
 # Sentinels + thresholds
@@ -181,7 +184,8 @@ def _offer_audit_for_jsonl(jsonl_path: Path) -> bool:
     except ImportError as exc:
         _print(f"  Audit could not run (missing optional dep): {exc}")
         return False
-    except Exception as exc:  # noqa: BLE001 — bare-except documented in audit-step rationale
+    except Exception as exc:  # noqa: BLE001 — best-effort inline audit; audit_dataset crosses the data_audit subsystem which raises a wide tail (streaming/parse/optional-dep errors) and the offer is advisory — a failure must not abort BYOD selection. # NOSONAR
+        logger.warning("Inline audit on %s could not run: %s", jsonl_path, exc)
         _print(f"  Audit could not run: {exc}")
         return False
 
