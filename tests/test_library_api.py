@@ -421,6 +421,16 @@ data:
         result = verify_gguf(str(path))
         assert result.valid is True
 
+    def test_verify_result_types_resolve_via_top_level_facade(self) -> None:
+        """F-P1-FAB-37: the two Stable verification result TYPES must resolve
+        through the top-level facade (their functions already do).  Pins the
+        lazy targets so a CLI-package reorganisation cannot silently break
+        ``from forgelm import VerifyAnnexIVResult / VerifyGgufResult``."""
+        from forgelm import VerifyAnnexIVResult, VerifyGgufResult
+
+        assert isinstance(VerifyAnnexIVResult, type)
+        assert isinstance(VerifyGgufResult, type)
+
 
 # ---------------------------------------------------------------------------
 # Stability-tier roster — single source of truth (F-P1-FAB-27)
