@@ -164,6 +164,56 @@ class TestExtractCategory:
         assert _extract_category("UNSAFE\ns7") == "S7"
 
 
+class TestSafetyGateIsAbsoluteNotBaseline:
+    """F-P3-FABLE-64: ``max_safety_regression`` reads as a baseline-relative
+    bound but the gate implements an absolute post-training unsafe-ratio
+    threshold — no before/after comparison exists. Pin both the behaviour and
+    the corrected module docstring so the naming drift cannot silently grow
+    back into an implied (nonexistent) baseline comparison."""
+
+    def _gate(self, *, safe_ratio: float, max_safety_regression: float):
+        from forgelm.safety import _evaluate_safety_gates
+
+        return _evaluate_safety_gates(
+            safe_ratio=safe_ratio,
+            safety_score=0.0,
+            severity_dist={},
+            total=10,
+            unsafe_count=round((1.0 - safe_ratio) * 10),
+            max_safety_regression=max_safety_regression,
+            scoring="binary",
+            min_safety_score=None,
+            severity_thresholds=None,
+            track_categories=False,
+        )
+
+    def test_gate_compares_absolute_unsafe_ratio_only(self):
+        # 20% unsafe vs a 5% ceiling fails purely on the current run's ratio —
+        # there is no baseline operand that could rescue or condemn it.
+        passed, reason = self._gate(safe_ratio=0.8, max_safety_regression=0.05)
+        assert passed is False
+        assert reason is not None and "Unsafe ratio" in reason
+
+        # 2% unsafe under the same ceiling passes.
+        passed, reason = self._gate(safe_ratio=0.98, max_safety_regression=0.05)
+        assert passed is True
+        assert reason is None
+
+    def test_no_baseline_safety_measurement_exists(self):
+        # The eval-loss gate has _measure_baseline_loss; safety has no
+        # equivalent. Guard the asymmetry the field name obscures.
+        import forgelm.safety as safety_mod
+
+        baseline_fns = [n for n in dir(safety_mod) if "baseline" in n.lower()]
+        assert baseline_fns == []
+
+    def test_module_docstring_drops_before_after_claim(self):
+        import forgelm.safety as safety_mod
+
+        assert "before/after comparison" not in (safety_mod.__doc__ or "")
+        assert "absolute unsafe-ratio" in (safety_mod.__doc__ or "")
+
+
 class TestHarmCategories:
     def test_all_categories_have_severity(self):
         for code in HARM_CATEGORIES:

@@ -62,6 +62,32 @@ class TestNormalizeAnswer:
         # km/h must be stripped before km — otherwise "70 km/h" would leave "/h".
         assert _normalize_answer("70 km/h") == "70"
 
+    def test_strip_tokens_order_container_before_contained(self):
+        """Structural guard for the ``_REWARD_STRIP_TOKENS`` ordering invariant.
+
+        ``_normalize_answer`` strips the first matching token, so any token that
+        *contains* a shorter sibling at a boundary (e.g. "km/h" contains "km",
+        "mL" contains "m") must be listed BEFORE that sibling — otherwise the
+        contained token strips first and corrupts the answer (the "/h" failure
+        that ``test_strips_compound_unit_first`` pins for the single km/h case).
+        The example test only guards km/h; this covers every container/contained
+        pair so a future insertion (e.g. "m" before "mL") fails here instead of
+        silently regressing a unit that lacks its own example.
+        """
+        from forgelm.trainer import _REWARD_STRIP_TOKENS
+
+        tokens = _REWARD_STRIP_TOKENS
+        for i, contained in enumerate(tokens):
+            for j, container in enumerate(tokens):
+                if container == contained:
+                    continue
+                if container.endswith(contained) or container.startswith(contained):
+                    assert j < i, (
+                        f"_REWARD_STRIP_TOKENS ordering violation: container "
+                        f"{container!r} (index {j}) must precede contained token "
+                        f"{contained!r} (index {i}) so the compound unit strips first"
+                    )
+
     @pytest.mark.parametrize(
         "raw,expected",
         [

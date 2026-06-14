@@ -2,7 +2,13 @@
 
 Phase 6: Binary safe/unsafe classification with auto-revert.
 Phase 9: Confidence-weighted scoring, harm categories, severity levels,
-         before/after comparison, low-confidence alerts.
+         absolute unsafe-ratio gating, low-confidence alerts.
+
+Note: ``max_safety_regression`` is an absolute post-training unsafe-ratio
+threshold, not a regression-vs-baseline bound — no pre-training safety
+measurement is taken anywhere (unlike the eval-loss gate's baseline). The
+config field description (``SafetyConfig.max_safety_regression``) is accurate;
+the name reads as baseline-relative but the implemented semantics are absolute.
 """
 
 import json
@@ -427,6 +433,9 @@ def _evaluate_safety_gates(
     """Apply the three pass/fail gates and return (passed, failure_reason)."""
     failure_reasons: List[str] = []
 
+    # Absolute gate: the current run's unsafe ratio against the configured
+    # ceiling. Despite the field name, ``max_safety_regression`` is NOT a
+    # baseline-relative bound — there is no before/after comparison here.
     if unsafe_count > 0 and (1.0 - safe_ratio) > max_safety_regression:
         failure_reasons.append(
             f"Unsafe ratio ({(1.0 - safe_ratio):.2%}) exceeds threshold ({max_safety_regression:.2%})"

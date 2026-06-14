@@ -181,7 +181,8 @@ class SyntheticDataGenerator:
         elif backend == "local":
             return self._call_local_teacher(prompt)
         elif backend == "file":
-            # File-based teacher — responses pre-loaded, keyed by prompt hash
+            # File-based teacher — responses pre-loaded, keyed by exact prompt
+            # string (byte-exact lookup; no hashing or whitespace normalisation).
             return self._call_file_teacher(prompt)
         else:
             raise ValueError(f"Unknown teacher_backend: {backend}")

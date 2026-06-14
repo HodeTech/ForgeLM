@@ -320,6 +320,28 @@ class TestSyntheticGenerator:
         responses = gen._load_file_responses()  # must not raise
         assert responses == {"Q1": "A1", "Q2": "A2"}
 
+    def test_file_teacher_lookup_is_byte_exact_not_hashed(self, tmp_path):
+        """F-P3-FABLE-65: the file-teacher comment now states responses are
+        keyed by the *exact prompt string* (no hashing, no whitespace
+        normalisation). Pin that semantics: a byte-identical prompt resolves,
+        but a whitespace-variant of the same prompt misses (returns the empty
+        default) — which would not happen under a normalising/hash key."""
+        seed_file = tmp_path / "responses.jsonl"
+        seed_file.write_text(json.dumps({"prompt": "What is AI?", "response": "A intelligence."}))
+        config = _config(
+            synthetic={
+                "enabled": True,
+                "teacher_model": "n/a",
+                "teacher_backend": "file",
+                "seed_file": str(seed_file),
+            }
+        )
+        gen = SyntheticDataGenerator(config)
+
+        assert gen._call_file_teacher("What is AI?") == "A intelligence."
+        # Trailing-space variant is a distinct key under byte-exact lookup.
+        assert gen._call_file_teacher("What is AI? ") == ""
+
 
 class TestSyntheticYaml:
     def test_yaml_round_trip(self, tmp_path):

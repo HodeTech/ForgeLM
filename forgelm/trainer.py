@@ -83,7 +83,15 @@ _BOUNDARY_REQUIRED_TOKENS: frozenset[str] = frozenset({"m"})
 
 
 def _is_unit_suffix_safe_to_strip(out: str, unit: str) -> bool:
-    """True when ``out`` ends with ``unit`` AND the char before is a digit/space."""
+    """Whether stripping ``unit`` from the end of ``out`` is boundary-safe.
+
+    The caller must already have checked ``out.endswith(unit)`` (the call site
+    at :func:`_normalize_answer` gates on it); this helper does *not* re-verify
+    the suffix. With that precondition plus the ``len(out) == len(unit)``
+    early-return, the ``out[-len(unit) - 1]`` index is always in range. Returns
+    ``True`` for non-boundary tokens and for boundary tokens (only ``"m"``
+    today) whose preceding char is a digit/space so "them"/"method" survive.
+    """
     if unit not in _BOUNDARY_REQUIRED_TOKENS:
         return True
     if len(out) == len(unit):
@@ -93,7 +101,15 @@ def _is_unit_suffix_safe_to_strip(out: str, unit: str) -> bool:
 
 
 def _is_unit_prefix_safe_to_strip(out: str, unit: str) -> bool:
-    """True when ``out`` starts with ``unit`` AND the next char is a digit/space."""
+    """Whether stripping ``unit`` from the start of ``out`` is boundary-safe.
+
+    The caller must already have checked ``out.startswith(unit)`` (the call
+    site at :func:`_normalize_answer` gates on it); this helper does *not*
+    re-verify the prefix. With that precondition plus the
+    ``len(out) == len(unit)`` early-return, the ``out[len(unit)]`` index is
+    always in range. Returns ``True`` for non-boundary tokens and for boundary
+    tokens (only ``"m"`` today) whose following char is a digit/space.
+    """
     if unit not in _BOUNDARY_REQUIRED_TOKENS:
         return True
     if len(out) == len(unit):
