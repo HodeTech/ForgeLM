@@ -339,6 +339,18 @@ class TestPersistence:
         loaded = wizard._load_wizard_state()
         assert loaded == snapshot
 
+    def test_persist_state_swallows_unrepresentable_config(self, isolated_state_dir, caplog):
+        """F-P7-OPUS-31: a non-representable value in state.config makes
+        yaml.safe_dump raise RepresenterError (a YAMLError, not OSError).
+        The best-effort persist must catch it and log a WARNING so the
+        persist-on-interrupt handler still reaches its clean exit-5."""
+        import logging
+
+        state = wizard._WizardState(config={"data": {"governance": {"probes": Path("/x")}}})
+        with caplog.at_level(logging.WARNING, logger="forgelm.wizard"):
+            wizard._persist_state(state)  # must NOT raise
+        assert any("Could not persist wizard state" in rec.message for rec in caplog.records)
+
     def test_clear_removes_snapshot(self, isolated_state_dir):
         wizard._save_wizard_state({"experience": "expert"})
         wizard._clear_wizard_state()
@@ -554,6 +566,25 @@ class TestSchemaDefaultParity:
         from forgelm.config import TrainingConfig
 
         assert wizard.DEFAULT_LR == TrainingConfig.model_fields["learning_rate"].default
+
+    def test_default_grad_accum_matches_schema(self):
+        """F-P7-OPUS-33: DEFAULT_GRAD_ACCUM must track the schema default."""
+        from forgelm.config import TrainingConfig
+        from forgelm.wizard._state import DEFAULT_GRAD_ACCUM
+
+        assert DEFAULT_GRAD_ACCUM == TrainingConfig.model_fields["gradient_accumulation_steps"].default
+
+    def test_orchestrator_uses_grad_accum_constant_not_literal(self):
+        """F-P7-OPUS-33: the orchestrator must emit gradient_accumulation_steps
+        via the schema-derived DEFAULT_GRAD_ACCUM, not a bare literal, so a
+        future schema bump flows through the sync guard for this field too."""
+        import inspect
+
+        from forgelm.wizard import _orchestrator
+
+        src = inspect.getsource(_orchestrator._step_training_params)
+        assert 'setdefault("gradient_accumulation_steps", DEFAULT_GRAD_ACCUM)' in src
+        assert 'setdefault("gradient_accumulation_steps", 2)' not in src
 
 
 # ---------------------------------------------------------------------------

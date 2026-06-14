@@ -62,6 +62,7 @@ from ._state import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_DROPOUT,
     DEFAULT_EPOCHS,
+    DEFAULT_GRAD_ACCUM,
     DEFAULT_LORA_R,
     DEFAULT_LR,
     DEFAULT_MAX_LENGTH,
@@ -581,7 +582,7 @@ def _step_training_params(state: _WizardState) -> None:
     training_block.setdefault("merge_adapters", False)
     training_block["num_train_epochs"] = epochs
     training_block["per_device_train_batch_size"] = batch_size
-    training_block.setdefault("gradient_accumulation_steps", 2)
+    training_block.setdefault("gradient_accumulation_steps", DEFAULT_GRAD_ACCUM)
     training_block.setdefault("learning_rate", DEFAULT_LR)
     training_block.setdefault("warmup_ratio", 0.1)
     training_block.setdefault("weight_decay", 0.01)

@@ -240,7 +240,13 @@ def _save_wizard_state(state: Mapping[str, Any]) -> None:
             os.chmod(target, 0o600)
         except OSError:  # pragma: no cover — best-effort permission tightening
             pass
-    except OSError as exc:
+    except (OSError, yaml.YAMLError, TypeError, ValueError) as exc:
+        # Best-effort persistence: besides filesystem OSErrors, a
+        # non-representable value in ``state`` (a Path / set / custom object)
+        # makes ``yaml.safe_dump`` raise ``RepresenterError`` (a YAMLError,
+        # not an OSError).  Catch it too (F-P7-OPUS-31) so the persist-on-
+        # interrupt handler always reaches its clean exit-5 instead of
+        # surfacing a raw traceback.
         logger.warning("Could not persist wizard state to %s: %s", target, exc)
     finally:
         # Defensive sweep: if any branch above left the temp file behind
