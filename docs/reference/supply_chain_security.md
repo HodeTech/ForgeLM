@@ -92,11 +92,13 @@ Wave 4 / Faz 23 adds `pip-audit` to the nightly workflow. Behaviour:
   - **MEDIUM / MODERATE** → `::warning::` annotation; nightly stays
     green.
   - **LOW** → silent.
-  - **UNKNOWN** → single summary `::warning::` annotation listing
-    the count + report path, so operator-triage SREs can grep the
-    artefact without walking the workflow YAML; nightly stays green
-    (pip-audit's JSON does not carry severity, so most findings land
-    here on real reports).
+  - **UNKNOWN** → exit 1 (fails the run, one `::error::` per finding).
+    pip-audit's JSON does not carry OSV severity, so almost every real
+    finding lands here — failing closed forces explicit operator triage
+    rather than letting a missing-severity field silently skip the gate.
+    To accept a specific CVE, document it via the opt-in ignore file
+    (see Suppression below); do not rely on the UNKNOWN bucket to stay
+    green.
 - Uses the OSV / GHSA databases (pip-audit's default).
 
 Operators install the same tooling locally:
