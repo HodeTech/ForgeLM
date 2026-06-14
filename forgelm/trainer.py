@@ -1436,8 +1436,20 @@ class ForgeTrainer:
             return train_result
         except Exception as e:  # noqa: BLE001 — best-effort: top-of-pipeline catch must record an audit event and notify before re-raising regardless of failure type (CUDA, dataloader, optimizer, etc.); the bare re-raise preserves the original traceback.  # NOSONAR
             logger.exception("Training pipeline failed.")
-            self.audit.log_event("pipeline.failed", error=str(e))
-            self.notifier.notify_failure(run_name=self.run_name, reason=str(e))
+            # The terminal-event emissions are themselves best-effort: an
+            # audit-write failure (e.g. disk full — plausible exactly when
+            # training just crashed on an I/O error) must NOT suppress the
+            # failure webhook or replace the original training exception. Each
+            # emission is isolated so the bare ``raise`` below always re-raises
+            # ``e`` with its original traceback (F-P2-FAB-46).
+            try:
+                self.audit.log_event("pipeline.failed", error=str(e))
+            except Exception:  # noqa: BLE001 — terminal audit emit is advisory at this point; never mask the training failure. # NOSONAR
+                logger.exception("Failed to write pipeline.failed audit event during failure handling.")
+            try:
+                self.notifier.notify_failure(run_name=self.run_name, reason=str(e))
+            except Exception:  # noqa: BLE001 — failure webhook is a notification, not a gate; never mask the training failure. # NOSONAR
+                logger.exception("Failed to emit failure notification during failure handling.")
             raise
 
     def save_final_model(self, final_path: str) -> None:

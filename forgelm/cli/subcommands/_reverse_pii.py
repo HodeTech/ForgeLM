@@ -156,9 +156,15 @@ def _build_search_pattern(query: str, identifier_type: str, output_format: str) 
         try:
             return re.compile(query)
         except re.error as exc:
+            # Do NOT echo the raw query — in --output json this lands in the
+            # error envelope (a redirectable durable record), and the whole
+            # privacy posture of this subcommand is "never reintroduce the
+            # subject's identifier into a durable record" (F-P5-OPUS-17). The
+            # engine error already names the offending position without
+            # reproducing the full pattern.
             _output_error_and_exit(
                 output_format,
-                f"--type custom --query {query!r} is not a valid regular expression: {exc}.",
+                f"--type custom query is not a valid regular expression: {exc}.",
                 EXIT_CONFIG_ERROR,
             )
     return re.compile(re.escape(query))

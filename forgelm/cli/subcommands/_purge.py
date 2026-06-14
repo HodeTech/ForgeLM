@@ -247,6 +247,12 @@ def _validate_row_id_args(args, output_format: str) -> None:
             "rejected per Article 17 (per-row decision + per-row audit event).",
             EXIT_CONFIG_ERROR,
         )
+    # ``--corpus`` is trusted operator self-service input (named directly on the
+    # CLI; design §4.5 scopes purge as a single-node operator tool), so it is NOT
+    # boundary-checked against output_dir — unlike the run-scoped staging path,
+    # which the design explicitly promises to constrain (F-P5-OPUS-16). Note that
+    # ``os.path.isfile`` follows symlinks, so a ``--corpus`` symlink would have
+    # its TARGET rewritten on match; that is operator-chosen input here.
     if not os.path.isfile(args.corpus):
         _output_error_and_exit(
             output_format,

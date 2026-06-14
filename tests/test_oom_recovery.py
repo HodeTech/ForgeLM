@@ -455,3 +455,25 @@ class TestTrainConstructionFailure:
         trainer.notifier.notify_failure.assert_called_once()
         events = [c.args[0] for c in trainer.audit.log_event.call_args_list]
         assert "pipeline.failed" in events
+
+    def test_audit_write_failure_does_not_suppress_webhook_or_replace_exception(self, tmp_path):
+        """F-P2-FAB-46: if the terminal ``pipeline.failed`` audit write itself
+        raises during failure handling (e.g. disk full when training just
+        crashed on I/O), it must NOT suppress the failure webhook nor replace
+        the original training exception. The notifier still fires and the
+        ValueError propagates — not the audit OSError."""
+        config = _make_forge_config(batch_size=8, grad_accum=2, output_dir=str(tmp_path))
+        trainer = _make_trainer(config, tmp_path)
+        trainer.notifier = MagicMock()
+        trainer.audit = MagicMock()
+        trainer.audit.log_event.side_effect = OSError("No space left on device")
+        trainer.dataset = {"train": list(range(10))}
+        trainer._build_trainer = MagicMock()
+        trainer._run_training_pipeline = MagicMock(side_effect=ValueError("optimizer exploded"))
+
+        # The ORIGINAL training error propagates, not the audit OSError.
+        with pytest.raises(ValueError, match="optimizer exploded"):
+            trainer.train()
+
+        # The failure webhook still fired despite the audit-write crash.
+        trainer.notifier.notify_failure.assert_called_once()
