@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 # NOTE: Heavy ML imports (torch, transformers.EarlyStoppingCallback, trl.SFTConfig/SFTTrainer)
 # are deferred to method bodies so `import forgelm.trainer` is cheap. Eagerly importing
 # torch here costs ~3-5s of CLI startup per invocation. See closure-plan F-performance-101.
+from .config import ConfigError
 from .results import TrainResult
 from .webhook import WebhookNotifier
 
@@ -431,6 +432,19 @@ class ForgeTrainer:
 
         raise FileNotFoundError(f"DeepSpeed config not found: {config_ref}")
 
+    def _apply_max_length(self, kwargs: Dict[str, Any], param_name: str = "max_length") -> None:
+        """Set ``model.max_length`` on a TRL config under *param_name*.
+
+        Without this the preference trainers (DPO / ORPO / SimPO / KTO) silently
+        fall back to TRL's own 512/1024 ``max_length`` defaults while the config
+        field, configuration.md, and the Article 11 compliance manifest all
+        claim ``model.max_length`` applies — silent truncation plus a false
+        statement in an audit artefact (F-P3-FABLE-03). The preference configs'
+        ``max_length`` parameter is stable across the pinned TRL range; a future
+        rename surfaces loudly as a ``TypeError`` at construction, never silent.
+        """
+        kwargs[param_name] = self.config.model.max_length
+
     def _get_training_args_for_type(self):
         """Build the appropriate TRL config based on trainer_type."""
         tt = self._trainer_type
@@ -476,12 +490,14 @@ class ForgeTrainer:
             from trl import ORPOConfig
 
             kwargs["beta"] = self.config.training.orpo_beta
+            self._apply_max_length(kwargs)
             return ORPOConfig(**kwargs)
 
         elif tt == "dpo":
             from trl import DPOConfig
 
             kwargs["beta"] = self.config.training.dpo_beta
+            self._apply_max_length(kwargs)
             return DPOConfig(**kwargs)
 
         elif tt == "simpo":
@@ -492,12 +508,14 @@ class ForgeTrainer:
             kwargs["cpo_alpha"] = 0.0  # pure SimPO (no NLL term)
             kwargs["simpo_gamma"] = self.config.training.simpo_gamma
             kwargs["loss_type"] = "simpo"
+            self._apply_max_length(kwargs)
             return CPOConfig(**kwargs)
 
         elif tt == "kto":
             from trl import KTOConfig
 
             kwargs["beta"] = self.config.training.kto_beta
+            self._apply_max_length(kwargs)
             return KTOConfig(**kwargs)
 
         elif tt == "grpo":
@@ -508,6 +526,10 @@ class ForgeTrainer:
             # TRL >=0.12 expects `max_completion_length`; the older `max_new_tokens`
             # raises TypeError at GRPOConfig construction.
             kwargs["max_completion_length"] = self.config.training.grpo_max_completion_length
+            # Honour model.max_length as the GRPO prompt cap so prompts aren't
+            # silently truncated at TRL's 512 `max_prompt_length` default while
+            # the manifest claims model.max_length applies (F-P3-FABLE-03).
+            self._apply_max_length(kwargs, "max_prompt_length")
             # GRPO trains on generation-based rewards, not validation loss, so
             # `_build_grpo_trainer` drops the eval_dataset. The eval-coupled
             # TrainingArguments must be turned off in lockstep: when a validation
@@ -1370,6 +1392,20 @@ class ForgeTrainer:
             return None
 
         judge_cfg = eval_cfg.llm_judge
+        # A configured ``judge_api_key_env`` names an API judge. If the variable
+        # is unset, do NOT silently fall through to local mode (judge.py treats
+        # ``api_key=None`` as "local"): that runs a different evaluator than the
+        # validated YAML configured, and with ``auto_revert=true`` a failed
+        # local-model load would delete the trained adapters over a misdiagnosed
+        # env-var problem (F-P3-FABLE-18). Fail loud and preserve the model
+        # (this raises before the gate, so auto-revert never fires).
+        if judge_cfg.judge_api_key_env and not os.getenv(judge_cfg.judge_api_key_env):
+            raise ConfigError(
+                f"evaluation.llm_judge.judge_api_key_env='{judge_cfg.judge_api_key_env}' names an "
+                "environment variable that is not set. The configured API judge cannot run; refusing "
+                "to silently fall back to a local judge. Set the variable (or clear judge_api_key_env "
+                "to intentionally use a local judge) and re-run."
+            )
         api_key = os.getenv(judge_cfg.judge_api_key_env) if judge_cfg.judge_api_key_env else None
         logger.info("Running LLM-as-Judge evaluation (judge: %s)...", judge_cfg.judge_model)
         output_dir = os.path.join(self.checkpoint_dir, "judge")
