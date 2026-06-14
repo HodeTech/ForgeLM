@@ -119,9 +119,11 @@ class WebhookNotifier:
                 timeout=timeout,
                 ca_bundle=ca_bundle,
                 allow_private=allow_private,
-                # Webhook keeps the documented 1s floor; the upstream warning
-                # at ``_send`` already flags ``http://`` URLs as plaintext.
-                allow_insecure_http=True,
+                # Webhook keeps the documented 1s floor.  ``http://`` is permitted
+                # by default (the upstream warning at ``_send`` flags it as
+                # plaintext); set ``webhook.require_https: true`` to make the SSRF
+                # chokepoint refuse cleartext delivery instead (F-P5-OPUS-12).
+                allow_insecure_http=not bool(getattr(self.config, "require_https", False)),
                 min_timeout=1.0,
             )
         except HttpSafetyError as exc:
@@ -138,7 +140,7 @@ class WebhookNotifier:
         except requests.exceptions.ConnectionError:
             logger.warning("Webhook connection failed for event '%s' (url=%s).", event, masked_url)
             return
-        except requests.RequestException:
+        except requests.RequestException as exc:
             # ``requests.RequestException`` is the base of the library's
             # transport-error hierarchy (Timeout / ConnectionError / SSLError
             # / TooManyRedirects / etc.) so this single catch covers every
@@ -147,7 +149,18 @@ class WebhookNotifier:
             # — programming bugs (TypeError, ValueError, attribute errors in
             # payload construction) should propagate so they surface in
             # tests rather than being silently absorbed by the webhook path.
-            logger.exception("Unexpected error sending webhook notification for event '%s'.", event)
+            # Because this clause only ever catches an EXPECTED transport
+            # error, log at WARNING (no traceback) per
+            # logging-observability.md "Webhook notifications" rule 1 — not
+            # logger.exception/ERROR, which would mislabel a routine DNS/TLS
+            # blip as an "Unexpected error" and inflate alert noise
+            # (F-P4-OPUS-31).
+            logger.warning(
+                "Webhook transport error for event '%s' (url=%s): %s",
+                event,
+                masked_url,
+                exc,
+            )
             return
 
         if not resp.ok:

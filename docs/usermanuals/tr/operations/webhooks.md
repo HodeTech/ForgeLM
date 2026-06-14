@@ -105,6 +105,7 @@ Gerçek `WebhookConfig` (bkz. `forgelm/config.py::WebhookConfig`):
 | `notify_on_failure` | `true` | `training.failure` VE `training.reverted`'ı gate'ler. |
 | `timeout` | `10` | HTTP timeout saniye; ≥ 1s'e clamp'lenir. |
 | `allow_private_destinations` | `false` | RFC 1918 / loopback / link-local hedefler için opt-in (in-cluster Slack proxy, on-prem Teams gateway). Varsayılan reddeder — SSRF guard. |
+| `require_https` | `false` | TLS-only zorlama. `true`, plaintext bir `http://` URL'ini reddeder (SSRF guard raise eder; POST atlanır), warn-then-send yerine. Varsayılan `false`, warn-then-send davranışını korur. |
 | `tls_ca_bundle` | `null` | Özel CA bundle yolu (kurumsal MITM CA). Set edilmediğinde `certifi`'nin bundled store'u kullanılır. |
 
 `template:`, `events: [...]`, `headers: {...}`, `retries:`,
@@ -114,7 +115,7 @@ payload zaten curated), ve routing hepsi ForgeLM'in dışında yaşar.
 
 ## Güvenlik
 
-- **TLS şiddetle önerilir.** ForgeLM hem HTTPS hem HTTP webhook URL'lerine izin verir — HTTP hedefleri `Webhook URL uses HTTP (not HTTPS). Data will be sent unencrypted.` uyarısı loglar ama reddedilmez (bkz. `forgelm/webhook.py` `_send`). Üretimde `https://` URL'leri pinleyin.
+- **TLS şiddetle önerilir.** ForgeLM hem HTTPS hem HTTP webhook URL'lerine izin verir — HTTP hedefleri `Webhook URL uses HTTP (not HTTPS). Data will be sent unencrypted.` uyarısı loglar ama varsayılan olarak reddedilmez (bkz. `forgelm/webhook.py` `_send`). Regüle bir ortamda `webhook.require_https: true` ile plaintext bir `http://` URL'ini hard failure yapın (teslimat reddedilir, gönderilmez). Üretimde `https://` URL'leri pinleyin.
 - **Curated payload.** ForgeLM webhook payload'larına asla raw eğitim verisi, tam config'ler veya unredacted PII koymaz. Notifier sabit-şekilli bir JSON sarar; `webhook.redact` toggle'ı yoktur çünkü kullanıcı-kontrollü redakte edilecek bir şey yok.
 - **SSRF guard.** ForgeLM iç IP'lere (RFC 1918, loopback, link-local, 169.254.x) işaret eden webhook URL'lerini engeller; `webhook.allow_private_destinations: true` ile açıkça opt-in olmadıkça. Yanlış konfigüre koşuların iç ağınızı sondalamasını önler.
 - **HMAC body imzalama yok.** ForgeLM webhook gövdelerini imzalamaz — hedef-tarafı authenticity TLS + `url_env` üzerinden URL gizliliği artı alıcı sistemin bearer-token / signed-request kontrollerine (Slack signing secret, Teams connector token) düşer.

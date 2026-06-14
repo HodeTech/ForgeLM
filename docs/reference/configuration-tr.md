@@ -291,6 +291,7 @@ uzatmasını engeller.
 | `notify_on_failure` | bool | `true` | Hata durumunda bildir |
 | `timeout` | int | `10` | HTTP istek zaman aşımı (saniye). Notifier ≥ 1s'ye clamp'ler. v0.5.5'te varsayılan 10s'ye çıkarıldı (önceden 5s'di) — Slack/Teams gateway gecikme atışları production'da düzenli olarak 5s'yi aşıyor ve bir webhook zaman aşımı audit chain'i sessizce zayıflatıyor (webhook arızası best-effort). |
 | `allow_private_destinations` | bool | `false` | RFC1918 / loopback / link-local hedeflere webhook gönderimine izin verir (cluster içi Slack proxy, on-prem Teams gateway gibi). Varsayılan yalnızca genel internet — SSRF koruması |
+| `require_https` | bool | `false` | TLS-only zorlama. `true`, plaintext bir `http://` URL'ini reddeder (SSRF chokepoint raise eder; POST atlanır), warn-and-send yerine. Varsayılan `false`, warn-then-send davranışını korur |
 | `tls_ca_bundle` | string | `null` | `requests`'e `verify=` olarak iletilen özel CA bundle yolu (örn. kurumsal MITM CA). Boşsa `certifi` paketinin gömülü deposu kullanılır |
 
 ## `merge` (İsteğe bağlı)

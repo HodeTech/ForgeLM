@@ -183,6 +183,7 @@ data:
 #   notify_on_start: true
 #   notify_on_success: true
 #   notify_on_failure: true
+#   # require_https: true   # refuse plaintext http:// delivery (regulated estates)
 
 # EU AI Act Compliance (Art. 11 + Annex IV)
 # compliance:

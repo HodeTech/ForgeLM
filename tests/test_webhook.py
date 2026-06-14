@@ -224,6 +224,60 @@ class TestWebhookNotifier:
 
         assert any("404" in r.message or "HTTP" in r.message for r in caplog.records)
 
+    @patch("forgelm._http.requests.Session.post")
+    def test_require_https_true_refuses_http_url(self, mock_post, caplog):
+        """F-P5-OPUS-12: with ``webhook.require_https=True`` a plaintext
+        ``http://`` URL is refused by the SSRF chokepoint (HttpSafetyError →
+        logged WARNING, no POST attempted) instead of warned-and-sent."""
+        import logging
+
+        config = _make_config({"url": "http://hooks.internal/abc", "require_https": True})  # NOSONAR python:S5332
+        notifier = WebhookNotifier(config)
+
+        with caplog.at_level(logging.WARNING, logger="forgelm.webhook"):
+            notifier.notify_start(run_name="test_run")  # must not raise
+
+        mock_post.assert_not_called()  # POST never attempted
+        assert any("Refusing to post webhook" in r.message for r in caplog.records)
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_require_https_false_permits_http_url(self, mock_post):
+        """F-P5-OPUS-12: the default (require_https=False) preserves the
+        documented warn-then-send behaviour — the POST is still attempted."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_post.return_value = mock_response
+
+        config = _make_config({"url": "http://hooks.internal/abc"})  # NOSONAR python:S5332
+        notifier = WebhookNotifier(config)
+        notifier.notify_start(run_name="test_run")
+
+        mock_post.assert_called_once()  # cleartext delivery permitted by default
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_generic_request_exception_logs_warning_not_error(self, mock_post, caplog):
+        """F-P4-OPUS-31: a bare ``requests.RequestException`` is an EXPECTED
+        transport failure — it must log at WARNING with no traceback and no
+        'Unexpected' wording, not at ERROR via logger.exception."""
+        import logging
+
+        import requests as req
+
+        mock_post.side_effect = req.RequestException("TLS reset")
+        config = _make_config({"url": "https://example.com/hook"})
+        notifier = WebhookNotifier(config)
+
+        with caplog.at_level(logging.DEBUG, logger="forgelm.webhook"):
+            notifier.notify_start(run_name="test_run")  # must not raise
+
+        transport_recs = [r for r in caplog.records if "transport error" in r.message]
+        assert transport_recs, "expected a 'transport error' WARNING record"
+        assert all(r.levelno == logging.WARNING for r in transport_recs)
+        # No ERROR-level record and no 'Unexpected' mislabelling / traceback.
+        assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+        assert not any("Unexpected" in r.message for r in caplog.records)
+        assert all(r.exc_info is None for r in transport_recs)  # no traceback attached
+
 
 class TestMaskUrl:
     """F-P5-OPUS-06 / F-P5-OPUS-11 regression: ``WebhookNotifier._mask`` must

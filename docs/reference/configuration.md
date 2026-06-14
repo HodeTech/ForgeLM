@@ -259,6 +259,7 @@ silently extend the retention horizon by re-using a stale workspace.
 | `notify_on_failure` | bool | `true` | Notify on failure |
 | `timeout` | int | `10` | HTTP request timeout (seconds). Clamped to ≥ 1s by the notifier. Default raised to 10s in v0.5.5 (was 5s) — Slack/Teams gateway latency spikes regularly cross 5s in production, and a webhook timeout silently degrades the audit chain (webhook failure is best-effort). |
 | `allow_private_destinations` | bool | `false` | Opt in to webhooks pointing at RFC1918 / loopback / link-local hosts (in-cluster Slack proxy, on-prem Teams gateway). Defaults to public-internet only — SSRF guard |
+| `require_https` | bool | `false` | TLS-only enforcement. `true` refuses a plaintext `http://` URL (the SSRF chokepoint raises; the POST is skipped) instead of warn-and-send. Default `false` preserves warn-then-send |
 | `tls_ca_bundle` | string | `null` | Path to a custom CA bundle forwarded to `requests` as `verify=` (e.g. corporate MITM CA). When unset, `certifi`'s bundled store is used |
 
 ---

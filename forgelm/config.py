@@ -900,6 +900,15 @@ class WebhookConfig(BaseModel):
         default=False,
         description="SSRF opt-in.  Webhooks default to public-internet destinations only; in-cluster Slack proxies / on-prem Teams gateways need this set.",
     )
+    require_https: bool = Field(
+        default=False,
+        description=(
+            "TLS-only enforcement.  When True, a plaintext `http://` webhook URL is "
+            "refused (the SSRF chokepoint raises) instead of warned-and-sent.  Default "
+            "False preserves the documented warn-then-send behaviour; set True on a "
+            "regulated estate to make cleartext delivery a hard failure."
+        ),
+    )
     tls_ca_bundle: Optional[str] = Field(
         default=None,
         description="Path to a custom CA bundle forwarded as `requests`'s `verify=` argument (corporate MITM CA on regulated estates).  None = bundled certifi CA store.",
