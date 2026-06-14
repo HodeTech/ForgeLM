@@ -129,6 +129,16 @@ def _walk_model(model: Type[BaseModel], section: str, sink: Dict[str, Dict[str, 
     for name, field_info in model.model_fields.items():
         nested = _unwrap_basemodel(field_info.annotation)
         if nested is not None:
+            # F-P1-FAB-41: a wizard flag belongs on a *scalar* field, not on
+            # a submodel-typed field — the latter is silently ignored because
+            # we recurse into the submodel instead.  Fail loudly so the
+            # misplacement is caught at generation time rather than producing
+            # a wizard that never receives the flagged default.
+            if _is_wizard_flagged(field_info):
+                raise ValueError(
+                    f"Wizard flag on submodel-typed field {model.__name__}.{name!r} is ignored; "
+                    "place json_schema_extra={'wizard': True} on a scalar field inside the submodel instead."
+                )
             # Surface the nested submodel under its own section name
             # rather than the parent's; this keeps the JSON shape
             # operator-readable (``evaluation.safety_eval``, not
@@ -155,6 +165,14 @@ def collect_defaults() -> Dict[str, Dict[str, Any]]:
         nested = _unwrap_basemodel(field_info.annotation)
         if nested is not None:
             _walk_model(nested, top_name, sink)
+            continue
+        # F-P1-FAB-41: a wizard-flagged *scalar* directly on ForgeConfig was
+        # silently dropped because the top-level loop only recursed into
+        # submodels.  Emit it under a reserved ``root`` section so the flag
+        # reaches the wizard (ForgeConfig has no such field today; this keeps
+        # the generator honest if one is ever added).
+        if _is_wizard_flagged(field_info) and field_info.default is not PydanticUndefined:
+            sink.setdefault("root", {})[top_name] = field_info.default
     # Reorder for deterministic output (sections that aren't in
     # ``_SECTION_ORDER`` come last, alphabetised for repeatability).
     ordered: Dict[str, Dict[str, Any]] = {}
