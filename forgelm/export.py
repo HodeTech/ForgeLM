@@ -63,6 +63,10 @@ class ExportResult:
     sha256: Optional[str] = None
     size_bytes: Optional[int] = None
     error: Optional[str] = None
+    # "config" for operator-input failures (bad format/quant, malformed
+    # FORGELM_GGUF_CONVERTER) → EXIT_CONFIG_ERROR; "runtime" for converter /
+    # merge / infra failures → EXIT_TRAINING_ERROR.  Ignored when success.
+    error_kind: str = "runtime"
 
 
 # ---------------------------------------------------------------------------
@@ -231,12 +235,14 @@ def _validate_export_request(fmt: str, quant: str) -> Optional[ExportResult]:
             success=False,
             format=fmt,
             error=f"Unsupported format '{fmt}'. Supported: {', '.join(sorted(SUPPORTED_FORMATS))}",
+            error_kind="config",
         )
     if quant not in SUPPORTED_QUANTS:
         return ExportResult(
             success=False,
             quant=quant,
             error=f"Unsupported quantisation '{quant}'. Supported: {', '.join(sorted(SUPPORTED_QUANTS))}",
+            error_kind="config",
         )
     return None
 
@@ -382,11 +388,12 @@ def export_model(
 
     try:
         converter = _find_converter_script()
-    except (ImportError, FileNotFoundError, ValueError) as e:
-        # ValueError is raised when FORGELM_GGUF_CONVERTER points at a non-.py
-        # path — surface it through the same ExportResult contract as the
-        # other "could not locate converter" failures so callers don't have
-        # to special-case env-var validation errors.
+    except ValueError as e:
+        # A malformed FORGELM_GGUF_CONVERTER (non-.py path) is operator input,
+        # so it is a config error (exit 1), not a runtime failure (F-P7-OPUS-36).
+        return ExportResult(success=False, format=fmt, quant=quant, error=str(e), error_kind="config")
+    except (ImportError, FileNotFoundError) as e:
+        # Missing llama-cpp / converter script is an environment/infra failure.
         return ExportResult(success=False, format=fmt, quant=quant, error=str(e))
 
     # Merge adapter if requested

@@ -142,12 +142,46 @@ class TestDeployCLI:
                 main()
         assert exc_info.value.code == EXIT_SUCCESS
 
-    def test_deploy_bad_target_exits_error(self, tmp_path):
+    def test_deploy_invalid_target_is_argparse_rejected(self, tmp_path, capsys):
+        """F-P7-OPUS-37: ``--target`` has argparse choices, so a bogus value is
+        rejected by argparse (exit 2) BEFORE generate_deploy_config runs — pin
+        that explicitly rather than relying on 2 == EXIT_TRAINING_ERROR."""
         out = str(tmp_path / "out.cfg")
         with patch("sys.argv", ["forgelm", "deploy", "./model", "--target", "bogus", "--output", out]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
-        assert exc_info.value.code == EXIT_TRAINING_ERROR
+        assert exc_info.value.code == 2
+        assert "invalid choice" in capsys.readouterr().err
+
+    def test_generate_deploy_config_unsupported_target_returns_failure(self):
+        """F-P7-OPUS-37: cover the library-level SUPPORTED_TARGETS branch that
+        the CLI seam can never reach (argparse blocks bad targets first)."""
+        from forgelm.deploy import generate_deploy_config
+
+        result = generate_deploy_config("m", "bogus")
+        assert result.success is False
+        assert "Unsupported target" in (result.error or "")
+
+    def test_export_success_json_envelope_keys(self, tmp_path, capsys):
+        """F-P7-OPUS-37: pin the export success-envelope top-level key set so a
+        future field rename/removal in the dispatcher is caught."""
+        from forgelm.export import ExportResult
+
+        ok = ExportResult(
+            success=True,
+            output_path="/tmp/m.gguf",
+            format="gguf",
+            quant="q4_k_m",
+            sha256="abc",
+            size_bytes=10,
+        )
+        with patch("forgelm.export.export_model", return_value=ok):
+            with patch("sys.argv", ["forgelm", "--output-format", "json", "export", "./m", "--output", "/tmp/m.gguf"]):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code == EXIT_SUCCESS
+        envelope = json.loads(capsys.readouterr().out)
+        assert set(envelope) == {"success", "output_path", "format", "quant", "sha256", "size_bytes", "error"}
 
     def test_deploy_json_output(self, tmp_path, capsys):
         model_dir = tmp_path / "model"
@@ -216,6 +250,16 @@ class TestExportCLI:
                 with pytest.raises(SystemExit) as exc_info:
                     main()
         assert exc_info.value.code == EXIT_TRAINING_ERROR
+
+    def test_export_malformed_converter_env_exits_config_error(self, tmp_path, monkeypatch):
+        """F-P7-OPUS-36: a malformed FORGELM_GGUF_CONVERTER (non-.py path) is
+        operator input → EXIT_CONFIG_ERROR (1), not EXIT_TRAINING_ERROR (2)."""
+        monkeypatch.setenv("FORGELM_GGUF_CONVERTER", str(tmp_path / "not_a_script.bin"))
+        out = str(tmp_path / "model.gguf")
+        with patch("sys.argv", ["forgelm", "export", "./model", "--output", out]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == EXIT_CONFIG_ERROR
 
     def test_export_json_on_failure(self, tmp_path, capsys):
         out = str(tmp_path / "model.gguf")
