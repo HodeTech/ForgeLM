@@ -309,6 +309,14 @@ jobs:
         # CHANGELOG's latest released header. Was gauntlet-only.
         run: python3 tools/update_site_version.py --check
 
+      - name: Notebook forgelm pin lockstep (strict)
+        # W2/M7 (F-P8-C-09): every notebooks/*.ipynb !pip install forgelm pin
+        # must target a shipping wheel — the exact pyproject version or the
+        # latest released CHANGELOG version (so onboarding notebooks never
+        # point users at a pre-release rc). Previously unwired; the pins had
+        # drifted two minors (0.5.7 vs released 0.7.0) undetected.
+        run: python3 tools/check_notebook_pins.py --strict
+
       - name: User-manual self-contained link guard (strict)
         # Post-v0.7.0 cycle: the docs/usermanuals/ tree is the source of
         # truth for the static-site SPA viewer (site/usermanual.html +
