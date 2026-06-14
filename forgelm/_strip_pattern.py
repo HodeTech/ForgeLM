@@ -173,6 +173,16 @@ def _close_group_or_raise(
     for ``+`` / ``*``, and propagates the "this atom was unbounded" flag
     to the parent group. Returns the post-quantifier index so the
     caller's main loop can advance.
+
+    F-P6-OPUS-06: a just-closed group that ended on an unbounded atom
+    is *itself* an unbounded sub-expression even when its own ``)`` is
+    NOT directly quantified. Wrapping the inner quantifier in an extra
+    group — ``((a+))+b`` — used to reset the parent's flag to ``False``,
+    so the outer ``+`` no longer saw an unbounded inner atom and the
+    catastrophic shape slipped past. The parent therefore inherits
+    ``outer_quantifier-unbounded OR inner_unbounded`` so that an
+    enclosing quantifier on a redundantly-wrapped unbounded group is
+    still rejected.
     """
     _open_idx, inner_unbounded = stack.pop() if len(stack) > 1 else (-1, False)
     outer_quantifier = pattern[i + 1] if i + 1 < n else ""
@@ -180,7 +190,8 @@ def _close_group_or_raise(
         raise StripPatternError(f"--strip-pattern {pattern!r} {_NESTED_UNBOUNDED_REJECTION_MSG}")
     if stack:
         top_open, _ = stack[-1]
-        stack[-1] = (top_open, outer_quantifier in ("+", "*"))
+        group_unbounded = outer_quantifier in ("+", "*") or inner_unbounded
+        stack[-1] = (top_open, group_unbounded)
     next_i = i + 1
     if outer_quantifier in ("+", "*", "?"):
         next_i += 1
@@ -215,6 +226,11 @@ def _check_unbounded_quantifier_sequence(pattern: str) -> None:
         documented in ``docs/standards/regex.md`` rule 4 — i.e. a
         group whose last atom carries ``+`` / ``*`` AND whose
         closing ``)`` is itself followed by another ``+`` / ``*``.
+        Redundantly-wrapped variants (``((a+))+b``, ``(((a+)))+b``)
+        are covered too: a closed group that ended on an unbounded
+        atom propagates its unbounded flag up to the parent
+        (F-P6-OPUS-06), so an enclosing quantifier still trips the
+        reject even through extra grouping parentheses.
         Adjacent / sequential unbounded shapes (``(.+?)(.+)``,
         ``(?:a|b)+(c|d)+``, ``(.+?)[ \\t]*$``) are also mentioned
         by regex.md rule 4 but are **not** caught here. They

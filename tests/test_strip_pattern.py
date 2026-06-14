@@ -49,12 +49,31 @@ class TestValidateStripPattern:
     @pytest.mark.parametrize(
         "pattern",
         [
+            r"((a+))+b",  # F-P6-OPUS-06: double-group wrapping defeated the walk.
+            r"((\w+))+x",
+            r"(((a+)))+b",  # triple-wrapped; flag must still propagate up.
+            r"((a+))*b",  # outer ``*`` is just as catastrophic as ``+``.
+        ],
+    )
+    def test_rejects_redundantly_wrapped_nested_unbounded(self, pattern):
+        # F-P6-OPUS-06: wrapping the inner quantifier in extra groups used to
+        # reset the parent's unbounded flag, so ``((a+))+b`` slipped past the
+        # validator and backtracked exponentially. The flag now propagates up
+        # through redundant grouping parens.
+        with pytest.raises(StripPatternError, match="ReDoS"):
+            validate_strip_pattern(pattern)
+
+    @pytest.mark.parametrize(
+        "pattern",
+        [
             r"^WATERMARK \d+$",
             r"a{1,100}b",
             r"\d{1,5}",
             r"(\d+)b",  # single unbounded inside group, no outer quantifier.
             r"[A-Z]+",  # standalone unbounded, no nesting.
             r"(a+b)+c",  # group ends with bounded literal, outer quantifier OK.
+            r"((a+)b)+c",  # F-P6-OPUS-06: inner bounded tail (``b``) resets flag.
+            r"(a*b)+c",  # required separator anchors each iteration; not ReDoS.
             r"\b(?:https?|ftp)://[A-Z0-9]+",
         ],
     )
