@@ -46,9 +46,14 @@ def _extract_task_score(task_name: str, task_result: Dict[str, Any]) -> Optional
             logger.info("  %s: %.4f", task_name, score)
             return float(score)
 
-    # Fallback: any key that looks like an accuracy
+    # Fallback: any key that looks like an accuracy metric — but never an
+    # ``*_stderr`` companion key. lm-eval emits a paired standard-error key
+    # (``acc_stderr,none``, ``acc_norm_stderr,<filter>``) alongside every
+    # accuracy metric; its substring still contains "acc", so without the
+    # stderr exclusion a value like 0.012 could be selected as the task's
+    # accuracy when it precedes the real metric in dict order (F-P3-FABLE-54).
     for key, value in task_result.items():
-        if isinstance(value, (int, float)) and "acc" in key:
+        if isinstance(value, (int, float)) and "acc" in key and "stderr" not in key:
             logger.info("  %s: %.4f (%s)", task_name, value, key)
             return float(value)
 

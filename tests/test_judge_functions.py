@@ -86,6 +86,104 @@ class TestParseJudgeJson:
         assert result["score"] == 4
 
 
+class TestRubricValidation:
+    """F-P3-FABLE-56: custom rubric is validated at the library boundary."""
+
+    def test_default_rubric_is_valid(self):
+        from forgelm.judge import DEFAULT_RUBRIC, _validate_rubric
+
+        assert _validate_rubric(DEFAULT_RUBRIC) is None
+
+    def test_rubric_with_both_placeholders_is_valid(self):
+        from forgelm.judge import _validate_rubric
+
+        assert _validate_rubric("Judge {prompt} -> {response}") is None
+
+    def test_rubric_without_placeholders_rejected(self):
+        from forgelm.judge import _validate_rubric
+
+        err = _validate_rubric("Score the response 1-10.")
+        assert err is not None
+        assert "{prompt}" in err and "{response}" in err
+
+    def test_rubric_with_stray_braces_rejected(self):
+        from forgelm.judge import _validate_rubric
+
+        # A literal JSON example without doubled braces would KeyError at
+        # .format() time — caught here as an unknown placeholder.
+        err = _validate_rubric('Return {"score": 7} for {prompt} {response}')
+        assert err is not None
+        assert "score" in err
+
+    def test_rubric_with_unbalanced_braces_rejected(self):
+        from forgelm.judge import _validate_rubric
+
+        err = _validate_rubric("bad {prompt and {response}")
+        assert err is not None
+        assert "brace" in err.lower()
+
+    @pytest.mark.skipif(not torch_available, reason="torch not installed")
+    @patch("forgelm._http.requests.Session.post")
+    def test_run_judge_rejects_bad_rubric_without_calling_api(self, mock_post, tmp_path):
+        """A bad rubric must short-circuit to passed=False before any HTTP call."""
+        eval_file = tmp_path / "eval.jsonl"
+        eval_file.write_text('{"prompt": "Hello?"}\n')
+
+        from forgelm.judge import run_judge_evaluation
+
+        result = run_judge_evaluation(
+            model=MagicMock(),
+            tokenizer=MagicMock(),
+            eval_dataset_path=str(eval_file),
+            judge_model="gpt-4o",
+            judge_api_key="key",
+            rubric="No placeholders here.",
+            min_score=5.0,
+        )
+        assert result.passed is False
+        assert "placeholder" in (result.failure_reason or "")
+        mock_post.assert_not_called()
+
+
+class TestJudgeInputTruncation:
+    """F-P3-FABLE-57: input truncation limits are named constants, documented,
+    and logged once when a row is actually trimmed."""
+
+    def test_truncation_limits_are_module_constants(self):
+        from forgelm import judge
+
+        assert judge._JUDGE_PROMPT_MAX_CHARS == 500
+        assert judge._JUDGE_RESPONSE_MAX_CHARS == 1000
+
+    @pytest.mark.skipif(not torch_available, reason="torch not installed")
+    def test_long_response_logs_truncation_warning_once(self, caplog, monkeypatch):
+        import logging
+
+        from forgelm import judge
+
+        long_responses = ["x" * 5000, "y" * 5000]
+        monkeypatch.setattr(judge, "_generate_responses_batched", lambda *a, **k: long_responses)
+        monkeypatch.setattr(judge, "_call_local_judge", lambda *a, **k: {"score": 7, "reason": "ok"})
+
+        with caplog.at_level(logging.WARNING, logger="forgelm.judge"):
+            judge._score_eval_prompts(
+                model=MagicMock(),
+                tokenizer=MagicMock(),
+                eval_prompts=["short?", "short2?"],
+                rubric=judge.DEFAULT_RUBRIC,
+                max_new_tokens=512,
+                is_api_judge=False,
+                judge_api_key=None,
+                judge_model="local",
+                api_base=None,
+                local_judge_model=MagicMock(),
+                local_judge_tokenizer=MagicMock(),
+                batch_size=2,
+            )
+        truncation_warnings = [r for r in caplog.records if "truncated" in r.getMessage()]
+        assert len(truncation_warnings) == 1, "truncation must warn exactly once across the eval set"
+
+
 class TestCallApiJudge:
     @patch("forgelm._http.requests.Session.post")
     def test_successful_api_call(self, mock_post):
@@ -110,6 +208,44 @@ class TestCallApiJudge:
 
         result = _call_api_judge("test prompt", "fake-key")
         # Transport failures use the same None sentinel as parse failures.
+        assert result["score"] is None
+        assert "API error" in result["reason"]
+
+    @pytest.mark.parametrize("status", [401, 403])
+    @patch("forgelm._http.requests.Session.post")
+    def test_api_auth_failure_raises_judge_auth_error(self, mock_post, status):
+        """F-P3-FABLE-55: a 401/403 is a deterministic credential failure and
+        must raise JudgeAuthError (fail-fast), not become a per-prompt None."""
+        import requests
+
+        resp = MagicMock()
+        resp.status_code = status
+        http_err = requests.exceptions.HTTPError(f"{status} Client Error")
+        http_err.response = resp
+        resp.raise_for_status.side_effect = http_err
+        mock_post.return_value = resp
+
+        from forgelm.judge import JudgeAuthError, _call_api_judge
+
+        with pytest.raises(JudgeAuthError, match=str(status)):
+            _call_api_judge("test prompt", "bad-key", "gpt-4o")
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_api_500_stays_per_prompt_transient(self, mock_post):
+        """A 5xx is transient — it must NOT fail-fast; it stays a None score so
+        the surrounding loop keeps going."""
+        import requests
+
+        resp = MagicMock()
+        resp.status_code = 500
+        http_err = requests.exceptions.HTTPError("500 Server Error")
+        http_err.response = resp
+        resp.raise_for_status.side_effect = http_err
+        mock_post.return_value = resp
+
+        from forgelm.judge import _call_api_judge
+
+        result = _call_api_judge("test prompt", "key", "gpt-4o")
         assert result["score"] is None
         assert "API error" in result["reason"]
 
@@ -254,6 +390,51 @@ class TestJudgeScoreClipping:
             min_score=1.0,
         )
         assert result.scores[0] == pytest.approx(1.0)
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_api_401_aborts_after_first_prompt(self, mock_post, tmp_path):
+        """F-P3-FABLE-55: a bad key must abort the whole eval after a single
+        HTTP attempt instead of burning a round-trip per prompt before the
+        no-valid-scores summary surfaces the obvious credential problem."""
+        import requests
+        import torch
+
+        resp = MagicMock()
+        resp.status_code = 401
+        http_err = requests.exceptions.HTTPError("401 Unauthorized")
+        http_err.response = resp
+        resp.raise_for_status.side_effect = http_err
+        mock_post.return_value = resp
+
+        eval_file = tmp_path / "eval.jsonl"
+        eval_file.write_text("".join(f'{{"prompt": "Q{i}?"}}\n' for i in range(5)))
+
+        mock_model = MagicMock()
+        mock_model.device = "cpu"
+        mock_model.generate.return_value = torch.zeros((1, 5), dtype=torch.long)
+
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.return_value = {
+            "input_ids": torch.zeros((1, 3), dtype=torch.long),
+            "attention_mask": torch.ones((1, 3), dtype=torch.long),
+        }
+        mock_tokenizer.decode.return_value = "An answer."
+
+        from forgelm.judge import run_judge_evaluation
+
+        result = run_judge_evaluation(
+            model=mock_model,
+            tokenizer=mock_tokenizer,
+            eval_dataset_path=str(eval_file),
+            judge_model="gpt-4o",
+            judge_api_key="bad-key",
+            min_score=5.0,
+        )
+
+        assert result.passed is False
+        assert "authentication" in (result.failure_reason or "")
+        # Only ONE HTTP attempt for a 5-prompt set — the rest are skipped.
+        assert mock_post.call_count == 1
 
 
 class TestJudgeApiBasePassthrough:

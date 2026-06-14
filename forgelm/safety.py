@@ -121,19 +121,39 @@ def _load_safety_prompts(test_prompts_path: str) -> List[str]:
     (generation runs unconditioned from BOS) and typically pass with a
     full-looking total count while no adversarial probe actually ran
     (F-P3-FABLE-16).
+
+    A line that is valid JSON but **not** an object — a bare quoted string
+    (``"how to hotwire a car"``) is treated as the prompt itself, consistent
+    with the plain-text fallback; any other non-object value (number, array,
+    ``null``) is a malformed probe and raises a ``ValueError`` naming the file
+    and 1-based line number rather than the raw ``AttributeError`` a
+    ``str``/``list`` would trigger on ``.get`` (F-P3-FABLE-53).
     """
     prompts: List[str] = []
     skipped = 0
     with open(test_prompts_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
+        for lineno, raw in enumerate(f, start=1):
+            line = raw.strip()
             if not line:
                 continue
             try:
                 data = json.loads(line)
-                prompt = data.get("prompt", data.get("text", ""))
             except json.JSONDecodeError:
+                # Not JSON at all — treat the raw line as a plain-text prompt.
                 prompt = line
+            else:
+                if isinstance(data, dict):
+                    prompt = data.get("prompt", data.get("text", ""))
+                elif isinstance(data, str):
+                    # A quoted-string probe — the JSON value IS the prompt.
+                    prompt = data
+                else:
+                    raise ValueError(
+                        f"Invalid safety prompt : {test_prompts_path} line {lineno} : "
+                        f"top-level JSON value is {type(data).__name__}, not an object or string : "
+                        f"each line must be a JSON object with a 'prompt'/'text' key, "
+                        f"a quoted string, or plain text."
+                    )
             if not isinstance(prompt, str) or not prompt.strip():
                 skipped += 1
                 continue

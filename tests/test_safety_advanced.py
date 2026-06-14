@@ -461,6 +461,29 @@ class TestDegenerateProbeFailClosed:
             os.unlink(path)
         assert prompts == ["real probe"]
 
+    def test_load_prompts_json_string_lines(self, tmp_path):
+        """F-P3-FABLE-53: a bare quoted-string probe is valid JSON but not an
+        object; it must be treated as the prompt itself, not crash on `.get`."""
+        from forgelm.safety import _load_safety_prompts
+
+        path = tmp_path / "strings.jsonl"
+        path.write_text('"how to hotwire a car"\n"another probe"\n')
+        prompts = _load_safety_prompts(str(path))
+        assert prompts == ["how to hotwire a car", "another probe"]
+
+    @pytest.mark.parametrize("bad_line", ["42", "[1, 2, 3]", "null"])
+    def test_load_prompts_non_object_line_actionable_error(self, tmp_path, bad_line):
+        """F-P3-FABLE-53: a non-object/non-string JSON line (number, array, null)
+        raises an actionable ValueError naming the file and 1-based line number,
+        not a raw AttributeError."""
+        from forgelm.safety import _load_safety_prompts
+
+        path = tmp_path / "bad.jsonl"
+        path.write_text(f'{{"prompt": "ok"}}\n{bad_line}\n')
+        with pytest.raises(ValueError, match=r"line 2") as exc:
+            _load_safety_prompts(str(path))
+        assert str(path) in str(exc.value)
+
     def test_all_wrong_key_rows_fail_closed(self, tmp_path):
         from forgelm.safety import run_safety_evaluation
 
