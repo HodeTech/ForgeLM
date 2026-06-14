@@ -658,3 +658,56 @@ class TestBaselineLossCapture:
         trainer._measure_baseline_loss({})
         # Fallback evaluate() (with adapters) supplied the baseline.
         assert trainer.config.evaluation.baseline_loss == pytest.approx(0.8)
+
+
+class TestSaveFinalModelFallback:
+    """F-P2-FAB-39: save_final_model's narrow-tuple fallbacks (direct-save →
+    trainer.save_model; merge → unmerged save) were exercised by no test."""
+
+    def _make_trainer(self, tmp_path, *, merge_adapters):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model"},
+            lora={},
+            training={"output_dir": str(tmp_path), "merge_adapters": merge_adapters},
+            data={"dataset_name_or_path": "org/dataset"},
+        )
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.tokenizer = MagicMock()
+            trainer.trainer = MagicMock()
+        return trainer
+
+    def test_direct_save_falls_back_to_trainer_save_model(self, tmp_path):
+        """A ``save_pretrained`` failure (contract drift / serialization error)
+        falls back to HF Trainer's hardened ``save_model`` path with a WARNING."""
+        trainer = self._make_trainer(tmp_path, merge_adapters=False)
+        trainer.trainer.model.save_pretrained = MagicMock(side_effect=AttributeError("no save_pretrained"))
+        final_path = str(tmp_path / "final")
+        with patch("logging.Logger.warning") as warn:
+            trainer.save_final_model(final_path)
+        trainer.trainer.save_model.assert_called_once_with(final_path)
+        trainer.tokenizer.save_pretrained.assert_called_once_with(final_path)
+        assert any("falling back" in str(c.args).lower() for c in warn.call_args_list)
+
+    def test_merge_save_falls_back_to_unmerged_save(self, tmp_path):
+        """A non-PEFT model lacking ``merge_and_unload`` falls back to an
+        unmerged ``trainer.save_model`` so the run still produces an artefact."""
+        trainer = self._make_trainer(tmp_path, merge_adapters=True)
+        trainer.trainer.model.merge_and_unload = MagicMock(side_effect=AttributeError("not a PeftModel"))
+        final_path = str(tmp_path / "final_merged")
+        with patch("logging.Logger.warning") as warn:
+            trainer.save_final_model(final_path)
+        trainer.trainer.save_model.assert_called_once_with(final_path)
+        trainer.tokenizer.save_pretrained.assert_called_once_with(final_path)
+        assert any("merge failed" in str(c.args).lower() for c in warn.call_args_list)
+
+    def test_direct_save_happy_path_no_fallback(self, tmp_path):
+        """When ``save_pretrained`` succeeds, ``save_model`` is NOT called."""
+        trainer = self._make_trainer(tmp_path, merge_adapters=False)
+        trainer.trainer.model.save_pretrained = MagicMock()
+        trainer.save_final_model(str(tmp_path / "final_ok"))
+        trainer.trainer.save_model.assert_not_called()

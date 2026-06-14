@@ -526,6 +526,14 @@ class ForgeTrainer:
           - A preset name: "zero2", "zero3", "zero3_offload"
           - An absolute or relative file path to a JSON file
           - None: returns the default zero2 preset
+
+        A missing preset or custom-path file is an operator-fixable YAML
+        mistake, so it raises ``ConfigError`` (mapped to ``EXIT_CONFIG_ERROR``
+        / exit 1 at the CLI seam) rather than ``FileNotFoundError`` — the
+        latter reached the generic top-of-CLI catch and exited 2
+        ("training crashed"), telling CI to retry on infra instead of
+        prompting the operator to fix ``distributed.deepspeed_config``
+        (F-P2-FAB-25).
         """
         presets = {
             "zero2": "configs/deepspeed/zero2.json",
@@ -549,9 +557,11 @@ class ForgeTrainer:
             # Fall back to CWD
             if os.path.isfile(preset_path):
                 return preset_path
-            raise FileNotFoundError(
+            raise ConfigError(
                 f"DeepSpeed preset '{config_ref}' not found at {full_path}. "
-                f"Ensure ForgeLM configs directory is accessible."
+                f"Ensure ForgeLM configs directory is accessible, or point "
+                f"distributed.deepspeed_config at a valid preset "
+                f"(zero2 / zero3 / zero3_offload) or JSON file."
             )
 
         # It's a file path
@@ -559,7 +569,11 @@ class ForgeTrainer:
             logger.info("Using custom DeepSpeed config: %s", config_ref)
             return config_ref
 
-        raise FileNotFoundError(f"DeepSpeed config not found: {config_ref}")
+        raise ConfigError(
+            f"DeepSpeed config not found: {config_ref}. Set "
+            f"distributed.deepspeed_config to an existing JSON file or one of "
+            f"the built-in presets (zero2 / zero3 / zero3_offload)."
+        )
 
     def _apply_max_length(self, kwargs: Dict[str, Any], param_name: str = "max_length") -> None:
         """Set ``model.max_length`` on a TRL config under *param_name*.
@@ -980,6 +994,19 @@ class ForgeTrainer:
         gradient_accumulation_steps (preserving effective batch size), clears
         the CUDA cache, rebuilds the trainer, and retries — until
         oom_recovery_min_batch_size is reached.
+
+        Residual semantics (F-P2-FAB-24): the retry re-enters ``train()`` with
+        the *original* ``resume_from_checkpoint`` argument and a freshly-built
+        trainer (new optimizer + LR scheduler from step 0), while ``self.model``
+        keeps whatever weights it held when the OOM fired. So an OOM with no
+        explicit resume checkpoint restarts optimization from scratch at the
+        smaller batch size (not "continue from where it crashed"), and one with
+        an explicit checkpoint rewinds to that checkpoint. This is documented,
+        not silent — the manifest records the batch-size change and the
+        ``training.oom_recovery`` audit event is emitted per retry; the trade-off
+        is described in docs/guides/troubleshooting.md. A future enhancement to
+        resume from the latest on-disk ``checkpoint-*`` is a roadmap item, not a
+        hotfix.
         """
         import gc
 

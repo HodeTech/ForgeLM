@@ -65,6 +65,8 @@ pip install forgelm[eval]
    Etkili batch size denemeler arasında korunur. Her deneme audit
    trail'e loglanır.
 
+   > **Yeniden deneme yörüngesi hakkında not.** Başarılı bir yeniden deneme, trainer'ı küçük batch size ile sıfırdan bir optimizer ve LR scheduler (adım 0) kurarak yeniden oluşturur; çalışmayı açıkça `--resume <checkpoint>` ile başlatmadıysanız OOM'un oluştuğu adımdan devam etmez (o durumda ilgili checkpoint'e geri sarılır). Bu nedenle optimizasyon yörüngesi kesintisiz bir çalışmadan biraz farklıdır. Bu beklenen bir durumdur — bit düzeyinde tekrar üretilebilirlik için otomatik kurtarmaya güvenmek yerine batch size'ı manuel olarak sabitleyin.
+
 3. **Batch size'ı manuel azalt**:
    ```yaml
    training:

@@ -63,6 +63,8 @@ pip install forgelm[eval]
    ```
    Effective batch size is preserved across retries. Each attempt is logged to the audit trail.
 
+   > **Note on the retry trajectory.** A successful retry rebuilds the trainer with a fresh optimizer and LR scheduler (step 0) at the smaller batch size; it does not continue from the exact step where the OOM fired unless you launched the run with an explicit `--resume <checkpoint>` (in which case it rewinds to that checkpoint). The optimization trajectory therefore differs slightly from an uninterrupted run. This is expected — for bit-for-bit reproducibility, fix the batch size manually instead of relying on auto-recovery.
+
 3. **Reduce batch size manually**:
    ```yaml
    training:

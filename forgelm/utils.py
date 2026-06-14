@@ -58,8 +58,19 @@ def manage_checkpoints(checkpoint_dir: str, action: str = "keep") -> None:
 
     Actions:
         keep: No-op (default safety behavior — checkpoints remain as-is)
-        delete: Remove entire checkpoint directory
-        compress: Create tar.gz archive and keep originals
+        delete: Remove every ``checkpoint-*`` subdirectory (not the output dir)
+        compress: Create a tar.gz archive next to the dir and keep originals
+
+    Reachability (F-P2-FAB-28): the production training path
+    (``forgelm/cli/_training.py``) always calls this with ``action="keep"`` —
+    there is intentionally no YAML field or CLI flag that selects ``delete`` /
+    ``compress``, so an unattended run never destroys or rewrites checkpoints
+    by config. ``delete`` / ``compress`` are exposed only through the
+    Experimental library API (``from forgelm import manage_checkpoints``) for
+    callers who manage retention explicitly in a notebook or script; see
+    ``docs/reference/library_api_reference.md``. They are behaviour-tested in
+    ``tests/test_utils.py`` so the latent bugs that survived behind the dead
+    config path stay fixed.
     """
     if not os.path.exists(checkpoint_dir):
         return

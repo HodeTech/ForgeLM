@@ -182,6 +182,39 @@ class TestDeepSpeedConfigResolution:
             assert data["train_micro_batch_size_per_gpu"] == "auto"
             assert data["gradient_accumulation_steps"] == "auto"
 
+    def test_missing_custom_path_raises_config_error_not_filenotfound(self, tmp_path):
+        """A missing custom ``deepspeed_config`` path is an operator-fixable YAML
+        mistake → ``ConfigError`` (exit 1 at the CLI), not ``FileNotFoundError``
+        which the generic top-of-CLI catch maps to exit 2 (F-P2-FAB-25)."""
+        from forgelm.config import ConfigError
+        from forgelm.trainer import ForgeTrainer
+
+        trainer = ForgeTrainer.__new__(ForgeTrainer)
+        missing = str(tmp_path / "does_not_exist.json")
+        with pytest.raises(ConfigError) as exc_info:
+            trainer._resolve_deepspeed_config(missing)
+        assert "deepspeed_config" in str(exc_info.value)
+        # FileNotFoundError is an OSError subclass; ConfigError must NOT be one.
+        assert not isinstance(exc_info.value, FileNotFoundError)
+
+    def test_unknown_preset_raises_config_error(self):
+        """An unknown preset name (typo) is also a config-class failure."""
+        from forgelm.config import ConfigError
+        from forgelm.trainer import ForgeTrainer
+
+        trainer = ForgeTrainer.__new__(ForgeTrainer)
+        with pytest.raises(ConfigError):
+            trainer._resolve_deepspeed_config("zero99")
+
+    def test_valid_preset_still_resolves(self):
+        """The happy path is unchanged: a real preset resolves to a file path."""
+        from forgelm.trainer import ForgeTrainer
+
+        trainer = ForgeTrainer.__new__(ForgeTrainer)
+        resolved = trainer._resolve_deepspeed_config("zero2")
+        assert resolved.endswith("zero2.json")
+        assert os.path.isfile(resolved)
+
 
 # --- Dry-run with distributed ---
 
