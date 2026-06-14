@@ -9,6 +9,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("forgelm.data")
 
+# Non-whitespace control characters (C0/C1 ranges, Unicode category ``Cc``)
+# that ``clean_text`` strips before tokenisation — NUL, BEL, ESC, and the
+# rest of the control set. The whitespace controls ``\t \n \x0b \x0c \r`` are
+# deliberately excluded here because ``str.split()`` already collapses them.
+_WHITESPACE_CONTROLS = frozenset("\t\n\x0b\x0c\r")
+_CONTROL_CHAR_DELETIONS = {
+    cp: None for cp in (*range(0x00, 0x20), *range(0x7F, 0xA0)) if chr(cp) not in _WHITESPACE_CONTROLS
+}
+
 
 def _detect_dataset_format(columns: list) -> dict:
     """Detect the most likely dataset format from column names."""
@@ -30,7 +39,16 @@ def _detect_dataset_format(columns: list) -> dict:
 
 
 def clean_string(text: str, do_clean: bool) -> str:
-    """Normalise a single string cell, optionally collapsing whitespace runs.
+    """Normalise a single string cell, optionally collapsing whitespace and
+    stripping control characters.
+
+    When ``do_clean`` is set (the ``DataConfig.clean_text`` field), this
+    removes non-whitespace control characters (NUL, BEL, ESC, and the rest of
+    the C0/C1 ``Cc`` set) and collapses runs of whitespace into single spaces
+    — matching the field's documented "strip excessive whitespace + control
+    characters" contract. ``str.split()`` alone only handles the *whitespace*
+    control chars (``\\t \\n \\x0b \\x0c \\r``); NUL/BEL/ESC would otherwise
+    pass into the tokeniser verbatim.
 
     Rejects non-string payloads loudly — symmetric with
     ``_process_messages_format`` (see its docstring). The previous behaviour
@@ -55,7 +73,7 @@ def clean_string(text: str, do_clean: bool) -> str:
             "was expected is a schema bug, not training data)."
         )
     if do_clean:
-        return " ".join(text.split())
+        return " ".join(text.translate(_CONTROL_CHAR_DELETIONS).split())
     return text
 
 
@@ -125,6 +143,15 @@ def _process_messages_format(examples: dict, add_eos: bool, eos_token: str) -> d
                         f"'content' must be a string, got {type(content).__name__}."
                     )
                 chunks.append(f"[{role.upper()}]\n{content}\n")
+            # An empty ``messages`` list (``[]``) produces no chunks, so the
+            # formatted text would be ``""`` (or a bare eos_token) — the exact
+            # "corpus of empty rows" failure the loud-raise rewrite exists to
+            # prevent. Reject it loudly instead of appending a blank sample.
+            if not chunks:
+                raise ValueError(
+                    f"Malformed messages-format row at index {idx}: "
+                    "'messages' list is empty (no role/content turns to format)."
+                )
             formatted_text = "".join(chunks)
             if add_eos and eos_token:
                 formatted_text += eos_token

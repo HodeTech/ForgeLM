@@ -197,6 +197,98 @@ class TestCleanStringRejectsNonString:
         out = _process_text_format({"text": ["a  b", "c"]}, clean_text=True, add_eos=False, eos_token="")
         assert out == {"text": ["a b", "c"]}
 
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("hello\x00world\x07test\x1bend", "helloworldtestend"),  # NUL/BEL/ESC stripped
+            ("a\x9bb", "ab"),  # C1 control (CSI) stripped
+            ("a\x0bb\x0cc", "a b c"),  # whitespace controls collapsed
+            ("plain text", "plain text"),  # untouched body
+        ],
+    )
+    def test_clean_string_strips_control_chars_when_cleaning(self, raw, expected):
+        """F-P6-OPUS-04: ``clean_text`` is documented as stripping control
+        characters, but the old ``" ".join(text.split())`` only collapsed the
+        *whitespace* controls — NUL/BEL/ESC and the rest of the C0/C1 ``Cc``
+        set passed verbatim into the tokeniser. They must now be removed."""
+        from forgelm.data import clean_string
+
+        assert clean_string(raw, True) == expected
+
+    def test_clean_string_preserves_control_chars_when_not_cleaning(self):
+        """With ``do_clean=False`` the cell is passed through verbatim (the
+        opt-out contract), so control characters are intentionally preserved."""
+        from forgelm.data import clean_string
+
+        assert clean_string("a\x00b", False) == "a\x00b"
+
+
+class TestProcessMessagesFormat:
+    """F-P6-OPUS-02 / -05: pin the deliberate loud-raise behaviour of
+    ``_process_messages_format`` (the previous swallow-and-substitute-``''``
+    behaviour trained the model on a corpus of empty rows). Covers the happy
+    path plus every malformed shape, including the empty ``messages`` list
+    that used to slip through and emit a blank training string."""
+
+    def test_messages_format_happy_path_formats_role_content(self):
+        from forgelm.data import _process_messages_format
+
+        out = _process_messages_format(
+            {"messages": [[{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]]},
+            add_eos=False,
+            eos_token="",
+        )
+        assert out == {"text": ["[USER]\nhi\n[ASSISTANT]\nyo\n"]}
+
+    def test_messages_format_empty_list_raises_with_index(self):
+        from forgelm.data import _process_messages_format
+
+        with pytest.raises(ValueError, match="index 0.*empty"):
+            _process_messages_format({"messages": [[]]}, add_eos=False, eos_token="</s>")
+
+    def test_messages_format_empty_list_raises_even_with_eos(self):
+        # add_eos must not paper over an empty row with a bare eos_token.
+        from forgelm.data import _process_messages_format
+
+        with pytest.raises(ValueError, match="empty"):
+            _process_messages_format({"messages": [[]]}, add_eos=True, eos_token="</s>")
+
+    def test_messages_format_mixed_batch_empty_row_raises(self):
+        from forgelm.data import _process_messages_format
+
+        with pytest.raises(ValueError, match="index 1"):
+            _process_messages_format(
+                {"messages": [[{"role": "user", "content": "hi"}], []]},
+                add_eos=False,
+                eos_token="",
+            )
+
+    def test_messages_format_non_str_role_raises(self):
+        from forgelm.data import _process_messages_format
+
+        with pytest.raises(ValueError, match="role"):
+            _process_messages_format({"messages": [[{"role": 1, "content": "hi"}]]}, add_eos=False, eos_token="")
+
+    def test_messages_format_non_str_content_raises(self):
+        from forgelm.data import _process_messages_format
+
+        with pytest.raises(ValueError, match="content"):
+            _process_messages_format(
+                {"messages": [[{"role": "user", "content": {"x": 1}}]]}, add_eos=False, eos_token=""
+            )
+
+    def test_messages_format_non_iterable_msg_list_raises_with_index(self):
+        from forgelm.data import _process_messages_format
+
+        with pytest.raises(ValueError, match="index 0"):
+            _process_messages_format({"messages": [42]}, add_eos=False, eos_token="")
+
+    def test_messages_format_non_dict_message_raises_with_index(self):
+        from forgelm.data import _process_messages_format
+
+        with pytest.raises(ValueError, match="index 0"):
+            _process_messages_format({"messages": [["not-a-dict"]]}, add_eos=False, eos_token="")
+
 
 class TestEnsureValidationSplit:
     """P1-2 regression: ``train_test_split`` on a <2-row dataset raises
