@@ -152,7 +152,7 @@ You can override any auto-detection with explicit YAML.
 ## Common pitfalls
 
 :::warn
-**Skipping safety eval on the deployed quant.** A q4_k_m GGUF can score worse on Llama Guard than the full-precision adapter. Re-run safety eval on the deployed artefact, not just the training output.
+**Skipping safety eval before quantising.** A q4_k_m GGUF can score worse on Llama Guard than the full-precision adapter. `safety-eval` does not yet load GGUF; re-run it against the pre-export HuggingFace checkpoint and treat post-quant drift as a known limitation.
 :::
 
 :::warn

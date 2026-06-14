@@ -785,8 +785,9 @@ def _add_safety_eval_subcommand(subparsers) -> None:
             "Standalone counterpart to the training-time safety gate.  "
             "Loads --model, runs each prompt in --probes (or --default-probes "
             "for the bundled set) through the harm classifier, and emits a "
-            "structured per-category breakdown.  GGUF models are supported "
-            "via llama-cpp-python (requires `[export]` extra)."
+            "structured per-category breakdown.  GGUF models are not yet "
+            "supported — run safety-eval against the pre-export HuggingFace "
+            "checkpoint."
         ),
     )
     p.add_argument(
@@ -794,7 +795,7 @@ def _add_safety_eval_subcommand(subparsers) -> None:
         type=str,
         required=True,
         metavar="PATH",
-        help="HuggingFace Hub ID, local checkpoint dir, or `.gguf` file.",
+        help="HuggingFace Hub ID or local checkpoint dir (GGUF not yet supported).",
     )
     p.add_argument(
         "--classifier",
@@ -1171,7 +1172,7 @@ def parse_args():
             "  forgelm cache-models --model M  Pre-populate HF Hub cache (air-gap workflow)\n"
             "  forgelm cache-tasks --tasks CSV Pre-populate lm-eval task datasets (requires [eval] extra)\n"
             "  forgelm verify-annex-iv PATH    Verify EU AI Act Annex IV artifact (field set + manifest hash)\n"
-            "  forgelm safety-eval --model M   Standalone safety evaluation (HF or GGUF model)\n"
+            "  forgelm safety-eval --model M   Standalone safety evaluation (HF checkpoint)\n"
             "  forgelm verify-gguf PATH        Verify GGUF model integrity (magic + metadata + SHA-256)\n"
             "\nRun 'forgelm <subcommand> --help' for subcommand details."
         ),
