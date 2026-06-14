@@ -244,6 +244,45 @@ class TestMathRewardFn:
         rewards = _math_reward_fn(completions, gold_answer=["1.5", "1.5", "3.14159"])
         assert rewards == [1.0, 1.0, 1.0]
 
+    def test_reward_grades_last_answer_occurrence_correct_final(self):
+        """A self-correcting completion is graded on its FINAL answer.
+
+        Regression (F-P2-FAB-06 / F-P3-FABLE-27): the old leftmost ``.search``
+        graded the FIRST ``Answer:`` marker while the format reward is
+        end-anchored. A completion that proposes then revises
+        ("Answer: 5 … Answer: 7") must be graded against its final answer (7),
+        not the discarded candidate (5).
+        """
+        completion = "Answer: 5.\nWait, I made an error. Answer: 7"
+        # Gold is the final answer → reward 1.0.
+        assert _math_reward_fn([completion], gold_answer=["7"]) == [1.0]
+        # Gold is the discarded earlier candidate → reward 0.0 (no longer a
+        # reward-hack: mentioning the gold in an early clause must not score).
+        assert _math_reward_fn([completion], gold_answer=["5"]) == [0.0]
+
+    def test_reward_last_occurrence_with_trailing_prose(self):
+        """The last marker is graded even when trailing prose follows it."""
+        completion = "Candidate Answer: 50, which is wrong. Answer: 42. Done."
+        assert _math_reward_fn([completion], gold_answer=["42"]) == [1.0]
+        assert _math_reward_fn([completion], gold_answer=["50"]) == [0.0]
+
+    def test_reward_and_format_gate_agree_on_final_answer(self):
+        """Cross-module consistency: correctness and format rewards grade the
+        same (final) answer for a self-correcting completion.
+
+        Both signals are summed by TRL; if they disagreed about which answer a
+        completion gives, a completion could earn full format reward on its
+        final answer while the correctness reward credited an earlier one. This
+        pins that they now agree on the end-anchored final answer.
+        """
+        from forgelm.grpo_rewards import format_match_reward
+
+        completion = "Answer: 5.\nWait. Answer: 7"
+        # Format gate: end-anchored → matches the final "Answer: 7" → 1.0.
+        assert format_match_reward([completion]) == [1.0]
+        # Correctness against the actual final answer → 1.0 (agrees with gate).
+        assert _math_reward_fn([completion], gold_answer=["7"]) == [1.0]
+
 
 # ---------------------------------------------------------------------------
 # _dataset_has_gold_answers

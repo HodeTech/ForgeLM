@@ -202,11 +202,13 @@ skalere toplar):
      döner; bu sayede erken eğitimde format uyumu başlamadan da
      non-flat gradient olur.
    - **`_math_reward_fn`** (`forgelm/trainer.py`) — yalnız dataset'in
-     `gold_answer` alanı varsa eklenir. `Answer:`'tan sonraki değeri
-     yakalar, yaygın birimleri (`$`, `%`, `km/h`, `m²`, `liters`, …)
-     soyar ve `gold_answer` ile önce exact-string, sonra numerik
-     tolerans (1e-6) ile karşılaştırır. Doğru yanıt için `1.0`,
-     aksi halde `0.0`.
+     `gold_answer` alanı varsa eklenir. **Son** `Answer:` işaretinden
+     sonraki değeri yakalar (böylece kendini düzelten bir üretim,
+     gerçekten sonuçlandırdığı yanıt üzerinden — sona sabitlenmiş
+     format ödülüyle tutarlı olarak — puanlanır), yaygın birimleri
+     (`$`, `%`, `km/h`, `m²`, `liters`, …) soyar ve `gold_answer` ile
+     önce exact-string, sonra numerik tolerans (1e-6) ile
+     karşılaştırır. Doğru yanıt için `1.0`, aksi halde `0.0`.
 
 Bundled `forgelm quickstart grpo-math` şablonu `gold_answer` doldurulmuş
 olarak ship olur, böylece model kutudan çıktığı gibi hem format

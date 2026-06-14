@@ -2,7 +2,6 @@ import inspect
 import logging
 import math
 import os
-import re
 import shutil
 import sys
 from typing import Any, Dict, Optional
@@ -11,6 +10,7 @@ from typing import Any, Dict, Optional
 # are deferred to method bodies so `import forgelm.trainer` is cheap. Eagerly importing
 # torch here costs ~3-5s of CLI startup per invocation. See closure-plan F-performance-101.
 from .config import ConfigError
+from .grpo_rewards import ANSWER_EXTRACT_PATTERN
 from .results import TrainResult
 from .webhook import WebhookNotifier
 
@@ -28,30 +28,13 @@ _EVT_REVERT_TRIGGERED = "model.reverted"
 # Kept at module level (not a class method or closure) so TRL's GRPOTrainer
 # can pickle it across worker processes without dragging the surrounding
 # trainer state into the spawn.
-# ---------------------------------------------------------------------------
-
-# Stop the captured value at the next sentence boundary so
-# "Answer: 18. Çünkü …" does NOT swallow the trailing prose into the
-# comparison string. The boundary is "[.!?] followed by whitespace OR EOL"
-# — bare "." between digits ("Answer: 1.5") is preserved because a
-# decimal "." is not followed by whitespace or end-of-string.
 #
-# Implementation notes:
-#   - First chunk: ``[^\s.!?\n][^.!?\n]*`` — must start with a non-space,
-#     then any non-newline that isn't sentence punctuation. This covers
-#     "18", "70 km/h", "$40", "12:15", "2/5".
-#   - Optional repeats: ``[.!?](?!\s|$)[^.!?\n]*`` — sentence punctuation
-#     is allowed inside the capture *only* when not followed by
-#     whitespace/EOL, which keeps "1.5" / "3.14159" intact while still
-#     stopping at "18. Çünkü ...".
-#   - Greedy throughout — no reluctant quantifier needed because the
-#     character classes self-bound at the next sentence break.
-_ANSWER_PATTERN = re.compile(
-    # First class drops `\n` because `\s` already covers it.
-    r"answer\s*:\s*([^\s.!?][^.!?\n]*(?:[.!?](?!\s|$)[^.!?\n]*)*)",
-    re.IGNORECASE,
-)
-
+# The answer-extraction regex lives in :mod:`forgelm.grpo_rewards` as the
+# single source of truth (``ANSWER_EXTRACT_PATTERN``, imported at the top of
+# this module) so it cannot drift from the format reward's end-anchored gate.
+# ``_math_reward_fn`` grades the LAST marker (see its body) to stay consistent
+# with that gate.
+# ---------------------------------------------------------------------------
 
 # Units / suffixes the prompts in the grpo-math template attach to numeric
 # answers — stripped before comparison so "Answer: $15" matches gold "15".
@@ -161,9 +144,18 @@ def _answers_match(extracted: str, gold: str) -> bool:
 def _math_reward_fn(completions, **kwargs):
     """Built-in regex-based reward for grpo-math style prompts.
 
-    Each completion is expected to end with ``Answer: <value>``; the captured
-    value is normalized (units stripped) and compared to the dataset's
-    ``gold_answer`` field. TRL passes per-sample dataset columns as kwargs.
+    Each completion is expected to end with ``Answer: <value>``; the **last**
+    ``Answer:`` marker's value is normalized (units stripped) and compared to
+    the dataset's ``gold_answer`` field. TRL passes per-sample dataset columns
+    as kwargs.
+
+    Grading the *final* marker — rather than the first — keeps this correctness
+    reward consistent with :func:`forgelm.grpo_rewards.format_match_reward`,
+    which is ``\\Z``-anchored to the completion's end. A self-correcting
+    completion ("Answer: 5 … Answer: 7") is therefore graded on the answer it
+    actually concludes with (7), not an earlier discarded candidate (5). See
+    ``ANSWER_EXTRACT_PATTERN`` in :mod:`forgelm.grpo_rewards` for the shared,
+    documented pattern both signals derive from (F-P2-FAB-06 / F-P3-FABLE-27).
 
     Returns 1.0 for an exact match, 0.0 otherwise. Generations that don't
     contain an ``Answer:`` marker score 0.0 — the regex implicitly enforces
@@ -182,11 +174,16 @@ def _math_reward_fn(completions, **kwargs):
     # masking the bug as low reward.
     rewards: list[float] = []
     for completion, gold in zip(completions, golds, strict=True):
-        match = _ANSWER_PATTERN.search(completion or "")
-        if not match:
+        # Grade the LAST "Answer:" marker, not the first: ``.search`` would
+        # return the leftmost occurrence, so a chain-of-thought completion
+        # that proposes-then-revises ("Answer: 5 … Answer: 7") would be graded
+        # on its discarded candidate while the end-anchored format reward
+        # scored its final one — a reward-hacking divergence.
+        matches = list(ANSWER_EXTRACT_PATTERN.finditer(completion or ""))
+        if not matches:
             rewards.append(0.0)
             continue
-        extracted = _normalize_answer(match.group(1))
+        extracted = _normalize_answer(matches[-1].group(1))
         gold_norm = _normalize_answer(gold)
         rewards.append(1.0 if _answers_match(extracted, gold_norm) else 0.0)
     return rewards

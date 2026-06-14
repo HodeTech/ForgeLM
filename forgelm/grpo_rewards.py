@@ -54,9 +54,57 @@ from __future__ import annotations
 
 import re
 
-# Compiled once at import time. Matches "Answer:" (any case) followed by at
-# least one non-whitespace character followed by any non-newline content,
-# anchored to end-of-string with ``\Z``.
+# ---------------------------------------------------------------------------
+# Shared "Answer: <value>" patterns — single source of truth for the two GRPO
+# reward signals so their answer-anchoring contracts can never drift again.
+#
+# There are deliberately TWO patterns with TWO distinct contracts. They are
+# kept in this one module (which ``forgelm.trainer`` imports from) precisely so
+# a future editor sees both side-by-side and cannot apply the wrong contract:
+#
+#   * :data:`ANSWER_EXTRACT_PATTERN` — *capturing*, *unanchored*. Used by
+#     ``forgelm.trainer._math_reward_fn`` via ``finditer`` to pull the value of
+#     the **last** ``Answer:`` marker (matching the end-anchored format gate
+#     below). Capture group 1 is the value, sentence-boundary trimmed.
+#   * :data:`_ANSWER_END_PATTERN` — *non-capturing*, ``\Z``-anchored. Used by
+#     :func:`format_match_reward` as a boolean gate: does the (rstripped)
+#     completion **end** with ``Answer: <value>``?
+#
+# Both must agree on *which* answer they grade — the final one. F-P2-FAB-06 /
+# F-P3-FABLE-27: when ``_math_reward_fn`` graded the FIRST marker while the
+# format gate scored the LAST, a self-correcting completion ("Answer: 5 …
+# Answer: 7") earned format reward on its final answer but correctness reward
+# on an earlier (often wrong) one — a reward-hacking surface. The extraction
+# pattern is now last-anchored to close that gap.
+# ---------------------------------------------------------------------------
+
+# Capturing extraction pattern. Stops the captured value at the next sentence
+# boundary so "Answer: 18. Çünkü …" does NOT swallow the trailing prose into
+# the comparison string. The boundary is "[.!?] followed by whitespace OR EOL"
+# — a bare "." between digits ("Answer: 1.5") is preserved because a decimal
+# "." is not followed by whitespace or end-of-string.
+#
+# Implementation notes:
+#   - First chunk: ``[^\s.!?\n][^.!?\n]*`` — must start with a non-space, then
+#     any non-newline that isn't sentence punctuation. Covers "18", "70 km/h",
+#     "$40", "12:15", "2/5".
+#   - Optional repeats: ``[.!?](?!\s|$)[^.!?\n]*`` — sentence punctuation is
+#     allowed inside the capture *only* when not followed by whitespace/EOL,
+#     keeping "1.5" / "3.14159" intact while still stopping at "18. Çünkü ...".
+#   - Greedy throughout — no reluctant quantifier needed because the character
+#     classes self-bound at the next sentence break (no ReDoS overlap).
+#
+# Callers take the LAST match (``finditer`` → ``[-1]``), not the first, so the
+# graded answer is the completion's final one.
+ANSWER_EXTRACT_PATTERN = re.compile(
+    # First class drops `\n` because `\s` already covers it.
+    r"answer\s*:\s*([^\s.!?][^.!?\n]*(?:[.!?](?!\s|$)[^.!?\n]*)*)",
+    re.IGNORECASE,
+)
+
+# End-anchored boolean gate. Matches "Answer:" (any case) followed by at least
+# one non-whitespace character followed by any non-newline content, anchored to
+# end-of-string with ``\Z``.
 #
 # ReDoS note: the previous form ``\S[^\n]*?\s*\Z`` mixed a reluctant
 # quantifier (``[^\n]*?``) with a tail (``\s*\Z``) whose character class
@@ -65,7 +113,12 @@ import re
 # strip trailing whitespace before matching (so the tail collapses to a
 # bare ``\Z``), and the body uses a greedy ``[^\n]*`` whose end is fixed
 # by ``\Z``. No quantifier overlap → linear-time matching.
-_ANSWER_PATTERN = re.compile(
+#
+# Contract: callers MUST ``rstrip()`` the completion before matching (so the
+# ``\Z`` tail collapses cleanly). Do NOT swap this pattern in for
+# :data:`ANSWER_EXTRACT_PATTERN` — this one is a boolean gate with no capture
+# group and end-anchoring; the other extracts a value anywhere in the text.
+_ANSWER_END_PATTERN = re.compile(
     r"answer\s*:\s*\S[^\n]*\Z",
     re.IGNORECASE,
 )
@@ -98,9 +151,9 @@ def format_match_reward(completions: list[str], **kwargs) -> list[float]:
             rewards.append(0.0)
             continue
         # rstrip() collapses the regex tail to a plain ``\Z`` so the
-        # engine has no quantifier ambiguity (see _ANSWER_PATTERN
+        # engine has no quantifier ambiguity (see _ANSWER_END_PATTERN
         # comment for the ReDoS background).
-        rewards.append(1.0 if _ANSWER_PATTERN.search(completion.rstrip()) else 0.0)
+        rewards.append(1.0 if _ANSWER_END_PATTERN.search(completion.rstrip()) else 0.0)
     return rewards
 
 
@@ -128,4 +181,7 @@ def combined_format_length_reward(completions: list[str], **kwargs) -> list[floa
     """
     fmt = format_match_reward(completions, **kwargs)
     length = length_shaping_reward(completions, **kwargs)
-    return [_FORMAT_WEIGHT * f + _LENGTH_WEIGHT * lensc for f, lensc in zip(fmt, length, strict=False)]
+    # strict=True: both lists derive from the same ``completions``, so a length
+    # mismatch is a wiring regression that must raise immediately rather than
+    # silently truncate (mirrors ``trainer._math_reward_fn``'s strict zip).
+    return [_FORMAT_WEIGHT * f + _LENGTH_WEIGHT * lensc for f, lensc in zip(fmt, length, strict=True)]

@@ -108,6 +108,22 @@ def test_combined_reward_weights():
     assert rewards[1] == pytest.approx(0.9)
 
 
+def test_combined_reward_strict_zip_raises_on_length_mismatch(monkeypatch):
+    """A wiring regression that desyncs the two sub-rewards must raise loudly.
+
+    The combine step zips ``format`` and ``length`` with ``strict=True`` so a
+    future edit that makes one sub-reward return a wrong-length list fails fast
+    instead of silently truncating to the shorter one (mirrors the strict zip
+    in ``trainer._math_reward_fn``). F-P2-FAB-42.
+    """
+    monkeypatch.setattr(
+        "forgelm.grpo_rewards.format_match_reward",
+        lambda completions, **kwargs: [1.0],  # one element regardless of input
+    )
+    with pytest.raises(ValueError, match="zip"):
+        combined_format_length_reward(["Answer: 1", "Answer: 2"])
+
+
 # ---------------------------------------------------------------------------
 # Trainer wiring — gated on torch + trl availability (mirrors test_grpo_reward).
 # ---------------------------------------------------------------------------
