@@ -23,7 +23,7 @@ ForgeLM, subcommand'larla tek bir `forgelm` binary'si yayınlar. Bu sayfa kanoni
 | `forgelm verify-annex-iv` | Export edilmiş Annex IV artefact'ını doğrula (§1-9 alanlar + manifest hash). |
 | `forgelm verify-gguf` | GGUF model dosyası bütünlüğünü doğrula (magic header + metadata + SHA-256 sidecar). |
 | `forgelm approve` | İnsan onay isteğini imzala ve `final_model.staging/`'i promote et. |
-| `forgelm reject` | İnsan onay isteğini reddet ve staging'i at. |
+| `forgelm reject` | İnsan onay isteğini reddet; staging dizini adli inceleme için korunur. |
 | `forgelm approvals` | Bekleyen onayları listele (`--pending`) veya tek birini incele (`--show RUN_ID`). |
 | `forgelm purge` | GDPR Madde 17 silme: row-id, run-id veya `--check-policy` retention raporu. |
 | `forgelm reverse-pii` | GDPR Madde 15 erişim hakkı: maskelenmiş corpora'da subject kimlik bilgisini ara (plaintext veya hash-mask scan). |
@@ -78,7 +78,7 @@ $ forgelm doctor --offline                           # air-gap varyantı: cache 
 $ forgelm doctor --output-format json | jq .         # CI dostu envelope
 ```
 
-Python sürümünü, torch / CUDA / GPU'yu, opsiyonel extra'ları, HF Hub erişilebilirliğini (veya `--offline` ile HF cache'i), disk alanını, operatör kimliğini ve audit-secret yapılandırmasını probe eder. Exit kodları: `0` = hepsi geçti (warning OK), `1` = en az bir fail, `2` = bir probe'un kendisi crash etti.
+Python sürümünü, torch / CUDA / GPU'yu, opsiyonel extra'ları, HF Hub erişilebilirliğini (veya `--offline` ile HF cache'i), disk alanını ve operatör kimliğini probe eder. Exit kodları: `0` = hepsi geçti (warning OK), `1` = en az bir fail, `2` = bir probe'un kendisi crash etti.
 
 ## Audit: `forgelm audit`
 
@@ -152,7 +152,7 @@ $ forgelm export CHECKPOINT_DIR \
     [--no-integrity-update]
 ```
 
-Tek komutta çoklu seviye için `--quant`'ı virgülle ayırın. Bkz. [GGUF Export](#/deployment/gguf-export).
+`--quant` her çağrıda tek seviye alır; birden fazla GGUF çıktısı için `forgelm export`'u her seviye için bir kez çalıştırın. Bkz. [GGUF Export](#/deployment/gguf-export).
 
 ## Deploy: `forgelm deploy`
 
@@ -176,7 +176,7 @@ Bkz. [Deploy Hedefleri](#/deployment/deploy-targets).
 $ forgelm approvals --pending                        # bekleyen onay gate'lerini listele
 $ forgelm approvals --show RUN_ID                    # belirli bir koşunun chain + staging'ini incele
 $ forgelm approve  RUN_ID --comment "N. inceledi."   # final_model.staging/ → final_model/ promote
-$ forgelm reject   RUN_ID --comment "Sebep ..."      # staging'i at
+$ forgelm reject   RUN_ID --comment "Sebep ..."      # reddi kaydet (staging adli inceleme için korunur)
 ```
 
 Bkz. [İnsan Gözetim Gate'i](#/compliance/human-oversight). Exit kodları: `0` = bekleyen liste / onay kaydedildi, `1` = bilinmeyen run_id / config hatası, `4` (sadece eğitim modu) = onay bekliyor.
@@ -220,12 +220,18 @@ Env var set değilse ForgeLM config yüklemede net bir hata ile çıkar — eği
 | Exit | Anlamı |
 |---|---|
 | 0 | Başarı |
-| 1 | Config / argüman hatası |
-| 2 | Audit warning (`--strict` ile) / probe crash (`forgelm doctor`) |
+| 1 | Config / semantik doğrulama hatası (hatalı YAML, eksik dosya, boş `--query`, vb.) |
+| 2 | Argparse kullanım hatası (bilinmeyen flag/subcommand, eksik zorunlu argüman, hatalı choice, aralık dışı tip doğrulayıcı), eğitim çökmesi, audit warning (`--strict` ile) / probe crash (`forgelm doctor`) veya kıstırılmış Ctrl+C |
 | 3 | Auto-revert / regression |
 | 4 | İnsan onayı bekleniyor (eğitim pipeline) |
 | 5 | Sihirbaz iptal (operatör kaydı reddetti / non-tty reddi) |
-| 130 | Kullanıcı kesintiye uğrattı (Ctrl+C) |
+
+`argparse` kullanım hataları (hatalı flag, eksik zorunlu argüman, hatalı `choices`
+veya tip-doğrulayıcı sınırı) **2** ile çıkar — argparse'in kendi `error()` kuralı —
+ayrıştırmadan *sonra* ulaşılan config / semantik doğrulama ise **1** ile çıkar. Bir
+Ctrl+C sinyal kaynaklı 130'dur ancak süreç çıkmadan önce **2**'ye
+(`EXIT_TRAINING_ERROR`) kıstırılır, böylece public `0–5` kümesi dışında bir exit
+kodu asla döndürülmez.
 
 Tam kontrat için bkz. [Exit Kodları](#/reference/exit-codes).
 

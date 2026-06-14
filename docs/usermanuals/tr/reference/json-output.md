@@ -42,7 +42,7 @@ Ortam kontrolü. Bkz. [Doctor komutu](#/getting-started/first-run).
 | `success` | bool | Hiçbir probe `fail` değilse VE hiçbir probe crash etmediyse `true`; aksi halde `false`. |
 | `checks` | list[object] | Çalıştırma sırasıyla probe başına bir entry. Probe adları stabildir (örn. `python.version`, `torch.cuda`, `numpy.torch_abi`, `gpu.inventory`, `extras.qlora`, `hf_hub.reachable`, `hf_hub.offline_cache`, `disk.workspace`, `operator.identity`). |
 | `checks[].name` | str | Probe adı. Sürümler arası stabil; yeni probe'lar yeniden adlandırma yerine eklenir. |
-| `checks[].status` | str | `pass`, `warn`, `fail`, `crashed`'tan biri. |
+| `checks[].status` | str | `pass`, `warn`, `fail`'tan biri. Raise eden bir probe `status: "fail"` ve `extras.crashed: true` ile görünür; crash ayrıca `summary.crashed` içinde sayılır. |
 | `checks[].detail` | str | Sonuç için operatör-yüzlü tek satırlık açıklama. |
 | `checks[].extras` | object | Probe-spesifik yapısal veri. Per-probe anahtarlar `_doctor.py` docstring'lerinde belgelidir; tüketiciler bilinmeyen anahtarları forward-compatible olarak ele almalıdır. |
 | `summary` | object | `checks` arasında her status'ın sayısı. Toplam `len(checks)`'a eşittir. |
@@ -631,6 +631,58 @@ Wave 2b Phase 36 — GGUF model dosyası bütünlük kontrolü.
 | `reason` | str | Tek-satır özet; `valid: false` durumunda failure detayını taşır. |
 
 **Exit kodu:** `0` = `valid: true`; `1` = `valid: false` (magic mismatch, metadata block *bozuk*, SHA-256 mismatch, malformed sidecar); `2` = runtime hatası (file not found, unreadable). Opsiyonel-`gguf`-paketi-eksik yolu `valid: true` + exit `0` olarak kalır (operatörün "metadata check skipped" durumu — magic header + SHA-256 sidecar checks load-bearing integrity yüzeyi olmaya devam eder).
+
+## `forgelm export`
+
+Eğitim sonrası devir için GGUF / birleştirilmiş-ağırlık export'u.
+
+**Envelope** (`forgelm export MODEL --output OUT.gguf`):
+
+```json
+{
+  "success": true,
+  "output_path": "/work/exports/model.q4_k_m.gguf",
+  "format": "gguf",
+  "quant": "q4_k_m",
+  "sha256": "abcd1234...",
+  "size_bytes": 4815162342,
+  "error": null
+}
+```
+
+| Anahtar | Tip | Not |
+|---|---|---|
+| `output_path` | str \| null | Yazılan artefakt yolu; başarısızlıkta `null`. |
+| `format` | str \| null | Export formatı (örn. `gguf`, `merged`). |
+| `quant` | str \| null | Kullanılan quantizasyon seviyesi (tek değer — `--quant` çağrı başına tek seviye alır). |
+| `sha256` | str \| null | Yazılan artefakt üzerinde SHA-256; başarısızlıkta `null`. |
+| `size_bytes` | int \| null | Artefakt boyutu (byte); başarısızlıkta `null`. |
+| `error` | str \| null | Başarıda `null`; başarısızlıkta operatöre yönelik mesaj. `error` varlığına değil, `success`'e göre dallanın. |
+
+**Exit kodu:** `0` = export başarılı; `2` = runtime hatası (dönüşüm hatası, eksik `[export]` extra'sı, erişilemeyen model yolu).
+
+## `forgelm deploy`
+
+Ollama / vLLM / TGI / HF Endpoints için deployment-config üretimi.
+
+**Envelope** (`forgelm deploy MODEL --target ollama --output Modelfile`):
+
+```json
+{
+  "success": true,
+  "target": "ollama",
+  "output_path": "/work/deploy/Modelfile",
+  "error": null
+}
+```
+
+| Anahtar | Tip | Not |
+|---|---|---|
+| `target` | str \| null | Deployment hedefi (`ollama`, `vllm`, `tgi`, `hf-endpoints`). |
+| `output_path` | str \| null | Üretilen config yolu; başarısızlıkta `null`. |
+| `error` | str \| null | Başarıda `null`; başarısızlıkta operatöre yönelik mesaj. `error` varlığına değil, `success`'e göre dallanın. |
+
+**Exit kodu:** `0` = config üretildi; `2` = runtime hatası (desteklenmeyen hedef, yazılamayan çıktı yolu, model yükleme hatası).
 
 ## Yeni subcommand eklerken
 

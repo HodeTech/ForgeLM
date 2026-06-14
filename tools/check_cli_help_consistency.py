@@ -656,6 +656,70 @@ def _scan_doc(source: Path) -> Iterable[Invocation]:
 
 
 # ---------------------------------------------------------------------------
+# Prose-claim scanning — single-value choice flags advertised as comma-lists
+# ---------------------------------------------------------------------------
+
+# Prose that claims an operator can pass a comma-separated *list* to a flag.
+# argparse ``choices`` flags accept exactly one value, so "comma-separate
+# ``--quant``" is documentation drift: the comma form is rejected with an
+# ``invalid choice`` usage error (F-P7-OPUS-13).  Bilingual: the TR mirror
+# says "``--quant``'ı virgülle ayır...".  Both forms reference a ``--flag``
+# token on the same line, so we anchor on the flag token's presence inside
+# a comma-list claim rather than NLP-parsing the sentence.
+_COMMA_LIST_CLAIM_RE = re.compile(
+    r"(?:comma[- ]separate(?:d)?|virgülle ayır)",
+    flags=re.IGNORECASE,
+)
+
+
+def _scan_prose_for_choice_list_claims(source: Path, surface: ParserSurface) -> Iterable[DriftFinding]:
+    """Flag prose that advertises a comma-list for a single-value choice flag.
+
+    Only fires when (a) a line carries a comma-list claim phrase AND (b)
+    names a ``--flag`` token that the live parser surface declares with a
+    fixed ``choices`` set (which argparse forbids combining).  Code fences
+    are skipped — this scans prose, where the marketing-style "do X in one
+    command" claims live.  Conservative by design: a single choice-flag
+    token on a comma-list line is the only trigger, keeping false positives
+    near zero.
+    """
+    lines = _read_lines(source)
+    if not lines:
+        return
+    choice_flags: set[str] = set()
+    for sub in surface.subcommands.values():
+        choice_flags.update(sub.choices.keys())
+    choice_flags.update(surface.top_level_choices.keys())
+    if not choice_flags:
+        return
+    in_fence = False
+    for idx, raw in enumerate(lines):
+        if _FENCE_RE.match(raw) or _FENCE_CLOSE_RE.match(raw):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if not _COMMA_LIST_CLAIM_RE.search(raw):
+            continue
+        for flag in _LONG_FLAG_RE.findall(raw):
+            if flag in choice_flags:
+                yield DriftFinding(
+                    invocation=Invocation(
+                        source=source,
+                        line=idx + 1,
+                        raw=raw.strip(),
+                        subcommand="(prose)",
+                        flags=(flag,),
+                    ),
+                    bad_token=flag,
+                    reason=(
+                        f"prose advertises a comma-separated list for {flag!r}, but it is a "
+                        "single-value choices flag (argparse rejects the comma form)"
+                    ),
+                )
+
+
+# ---------------------------------------------------------------------------
 # Drift evaluation
 # ---------------------------------------------------------------------------
 
@@ -826,6 +890,15 @@ def _collect_findings(invocations: Sequence[Invocation], surface: ParserSurface)
     return findings
 
 
+def _collect_prose_findings(scopes: Sequence[Path], surface: ParserSurface) -> list[DriftFinding]:
+    """Scan doc prose for comma-list claims on single-value choice flags."""
+    findings: list[DriftFinding] = []
+    for scope in scopes:
+        for doc in _walk_docs(scope):
+            findings.extend(_scan_prose_for_choice_list_claims(doc, surface))
+    return findings
+
+
 def _doc_count(findings: Sequence[DriftFinding]) -> int:
     return len({f.invocation.source for f in findings})
 
@@ -853,6 +926,7 @@ def main(argv: list[str] | None = None) -> int:
 
     invocations = _collect_invocations(scopes)
     findings = _collect_findings(invocations, surface)
+    findings.extend(_collect_prose_findings(scopes, surface))
 
     if findings:
         return _report_findings(findings, args.strict)

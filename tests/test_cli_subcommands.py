@@ -138,6 +138,33 @@ class TestAuditSubcommand:
         # Same on-disk product as the subcommand path.
         assert (out_dir / "data_audit_report.json").is_file()
 
+    def test_legacy_data_audit_flag_runs_quality_filter_like_subcommand(self, tmp_path):
+        # F-P7-OPUS-01 regression: the legacy `--data-audit` alias claims
+        # "same behaviour, same output" as `forgelm audit`.  The subcommand
+        # defaults --quality-filter ON (v0.6.0+), so the legacy flag must
+        # also populate quality_summary — otherwise the two invocations emit
+        # divergent EU AI Act Art. 10 governance artifacts.
+        data_path = tmp_path / "data.jsonl"
+        self._make_jsonl(
+            data_path,
+            [{"text": "1234567890 !@#$%^&*()"}, {"text": "fine prose passes the heuristics."}],
+        )
+        out_dir = tmp_path / "audit"
+
+        with patch(
+            "sys.argv",
+            ["forgelm", "--data-audit", str(data_path), "--output", str(out_dir)],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == EXIT_SUCCESS
+
+        with open(out_dir / "data_audit_report.json", encoding="utf-8") as fh:
+            report = json.load(fh)
+        # Quality filter is ON by default for the subcommand; the legacy
+        # alias must match (populated quality_summary, not absent/empty).
+        assert report.get("quality_summary"), "legacy alias must run the quality filter like the subcommand"
+
     def test_legacy_data_audit_flag_emits_deprecation_warning_and_audit_event(self, tmp_path):
         """Phase 13 (Faz 13) — `--data-audit` is a documented deprecation path.
 

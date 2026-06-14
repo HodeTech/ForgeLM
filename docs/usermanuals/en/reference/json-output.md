@@ -42,7 +42,7 @@ Environment check. See [Doctor command](#/getting-started/first-run).
 | `success` | bool | `true` when no probe `fail` AND no probe crash; `false` otherwise. |
 | `checks` | list[object] | One entry per probe in execution order. Probe names are stable (e.g. `python.version`, `torch.cuda`, `numpy.torch_abi`, `gpu.inventory`, `extras.qlora`, `hf_hub.reachable`, `hf_hub.offline_cache`, `disk.workspace`, `operator.identity`). |
 | `checks[].name` | str | Probe name. Stable across versions; new probes append rather than rename. |
-| `checks[].status` | str | One of `pass`, `warn`, `fail`, `crashed`. |
+| `checks[].status` | str | One of `pass`, `warn`, `fail`. A probe that raised surfaces as `status: "fail"` with `extras.crashed: true`; the crash is also counted in `summary.crashed`. |
 | `checks[].detail` | str | Operator-facing one-line description of the result. |
 | `checks[].extras` | object | Probe-specific structured data. Per-probe keys are documented in `_doctor.py` docstrings; consumers should treat unknown keys as forward-compatible. |
 | `summary` | object | Counts of each status across `checks`. Sum equals `len(checks)`. |
@@ -628,6 +628,58 @@ Wave 2b Phase 36 — GGUF model file integrity check.
 | `reason` | str | One-line summary; carries the failure detail on `valid: false`. |
 
 **Exit code mapping:** `0` = `valid: true`; `1` = `valid: false` (magic mismatch, metadata block *corrupted*, SHA-256 mismatch, malformed sidecar); `2` = runtime error (file not found, unreadable). The optional-`gguf`-package-missing path stays at `valid: true` + exit `0` (operator's "metadata check skipped" — the magic header + SHA-256 sidecar checks remain the load-bearing integrity surface).
+
+## `forgelm export`
+
+GGUF / merged-weights export for the post-training handoff.
+
+**Envelope** (`forgelm export MODEL --output OUT.gguf`):
+
+```json
+{
+  "success": true,
+  "output_path": "/work/exports/model.q4_k_m.gguf",
+  "format": "gguf",
+  "quant": "q4_k_m",
+  "sha256": "abcd1234...",
+  "size_bytes": 4815162342,
+  "error": null
+}
+```
+
+| Key | Type | Notes |
+|---|---|---|
+| `output_path` | str \| null | Path to the written artefact; `null` on failure. |
+| `format` | str \| null | Export format (e.g. `gguf`, `merged`). |
+| `quant` | str \| null | Quantisation level used (single value — `--quant` takes one level per invocation). |
+| `sha256` | str \| null | SHA-256 over the written artefact; `null` on failure. |
+| `size_bytes` | int \| null | Artefact size in bytes; `null` on failure. |
+| `error` | str \| null | `null` on success; operator-facing message on failure. Branch on `success`, not on `error` presence. |
+
+**Exit code mapping:** `0` = export succeeded; `2` = runtime failure (conversion error, missing `[export]` extra, unreachable model path).
+
+## `forgelm deploy`
+
+Deployment-config generation for Ollama / vLLM / TGI / HF Endpoints.
+
+**Envelope** (`forgelm deploy MODEL --target ollama --output Modelfile`):
+
+```json
+{
+  "success": true,
+  "target": "ollama",
+  "output_path": "/work/deploy/Modelfile",
+  "error": null
+}
+```
+
+| Key | Type | Notes |
+|---|---|---|
+| `target` | str \| null | Deployment target (`ollama`, `vllm`, `tgi`, `hf-endpoints`). |
+| `output_path` | str \| null | Path to the generated config; `null` on failure. |
+| `error` | str \| null | `null` on success; operator-facing message on failure. Branch on `success`, not on `error` presence. |
+
+**Exit code mapping:** `0` = config generated; `2` = runtime failure (unsupported target, unwritable output path, model load error).
 
 ## Adding a new subcommand
 

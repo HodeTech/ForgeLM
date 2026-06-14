@@ -303,6 +303,25 @@ class TestCacheTasks:
         payload = json.loads(capsys.readouterr().out)
         assert "bogus_task" in payload["error"]
 
+    def test_cache_tasks_output_help_matches_datasets_resolver(self) -> None:
+        # F-P7-OPUS-10: cache-tasks resolves + writes via the Datasets
+        # cache chain (HF_DATASETS_CACHE), not the Hub chain.  The --output
+        # help text must advertise the Datasets chain so an air-gap
+        # operator sets the right env var.
+        import subprocess
+        import sys as _sys
+
+        proc = subprocess.run(
+            [_sys.executable, "-m", "forgelm.cli", "cache-tasks", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        help_text = proc.stdout + proc.stderr
+        assert "HF_DATASETS_CACHE" in help_text
+        assert "datasets" in help_text
+        assert "HF_HUB_CACHE" not in help_text
+
 
 # ---------------------------------------------------------------------------
 # Cache-dir resolution helper

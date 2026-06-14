@@ -279,6 +279,34 @@ class TestExportCLI:
 
         assert exc_info.value.code == EXIT_SUCCESS
 
+    def test_export_rejects_comma_quant(self, capsys):
+        # F-P7-OPUS-13: --quant is a single-value choices flag; the comma
+        # form the docs once advertised is rejected by argparse (exit 2).
+        with patch("sys.argv", ["forgelm", "export", "./model", "--output", "o.gguf", "--quant", "q4_k_m,q8_0"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == 2
+        err = capsys.readouterr().err
+        assert "invalid choice" in err
+
+
+# ---------------------------------------------------------------------------
+# json-output.md envelope-contract parity (F-P7-OPUS-12)
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycleEnvelopeDocs:
+    def test_export_and_deploy_envelopes_documented(self):
+        """json-output.md (EN + TR) must carry export + deploy sections."""
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent
+        for lang in ("en", "tr"):
+            doc = repo_root / "docs" / "usermanuals" / lang / "reference" / "json-output.md"
+            text = doc.read_text(encoding="utf-8")
+            assert "## `forgelm export`" in text, f"{lang} json-output.md missing export section"
+            assert "## `forgelm deploy`" in text, f"{lang} json-output.md missing deploy section"
+
 
 # ---------------------------------------------------------------------------
 # forgelm chat subcommand (smoke tests; no actual model loaded)
@@ -303,6 +331,16 @@ class TestChatCLI:
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
         assert "model_path" in captured.out
+
+    def test_chat_help_does_not_advertise_unshipped_safety(self, capsys):
+        # F-P7-OPUS-14 regression: chat has no --safety flag and performs
+        # no per-response safety screening; the help text must not promise
+        # one (the user manual explicitly says the feature does not exist).
+        with patch("sys.argv", ["forgelm", "chat", "--help"]):
+            with pytest.raises(SystemExit):
+                main()
+        captured = capsys.readouterr()
+        assert "safety" not in captured.out.lower()
 
 
 # ---------------------------------------------------------------------------

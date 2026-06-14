@@ -710,6 +710,63 @@ class TestProbeCrashIsolation:
         assert "RuntimeError" in crash_result.detail
 
 
+class TestDoctorDocConsistency:
+    """F-P7-OPUS-09 / -11 — doctor's runtime surface matches the docs."""
+
+    def test_json_status_vocabulary_matches_docs(self, monkeypatch) -> None:
+        # F-P7-OPUS-09: a crashed probe must surface as status "fail" with
+        # extras.crashed (never a "crashed" status token), matching the
+        # corrected json-output.md status enum {pass, warn, fail}.
+        from forgelm.cli.subcommands import _doctor
+
+        def _boom() -> _doctor._CheckResult:
+            raise RuntimeError("synthetic crash")
+
+        def _fake_plan(*, offline: bool):
+            return [("middle.crash", _boom)]
+
+        monkeypatch.setattr(_doctor, "_build_check_plan", _fake_plan)
+        results = _doctor._run_all_checks(offline=False)
+        assert all(r.status in {"pass", "warn", "fail"} for r in results)
+        crash = next(r for r in results if r.name == "middle.crash")
+        assert crash.status == "fail"
+        assert crash.extras.get("crashed") is True
+
+        # The locked contract page must not list "crashed" as one of the
+        # checks[].status enum values.  Mentioning extras.crashed /
+        # summary.crashed in the same row is fine (those are real keys) —
+        # only the status-value enumeration must drop "crashed".
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent
+        for lang in ("en", "tr"):
+            doc = repo_root / "docs" / "usermanuals" / lang / "reference" / "json-output.md"
+            text = doc.read_text(encoding="utf-8")
+            status_line = next(line for line in text.splitlines() if "`checks[].status`" in line)
+            # The status enum is the list of backtick-quoted single tokens
+            # like `pass`, `warn`, `fail` — `crashed` must not appear as one.
+            assert "`crashed`" not in status_line, f"{lang} json-output.md still lists `crashed` as a status value"
+
+    def test_cli_doc_doctor_summary_names_only_real_probes(self) -> None:
+        # F-P7-OPUS-11: cli.md's doctor summary previously claimed an
+        # "audit-secret configuration" probe that does not exist.  Assert
+        # the (corrected) summary references no probe absent from the plan.
+        from pathlib import Path
+
+        from forgelm.cli.subcommands._doctor import _build_check_plan
+
+        plan_names = {name for name, _ in _build_check_plan(offline=False)}
+        # The summary is prose, so we check the specific phantom phrase the
+        # finding called out is gone (there is no `audit.secret` probe).
+        assert not any(name.startswith("audit") or "secret" in name for name in plan_names)
+        repo_root = Path(__file__).resolve().parent.parent
+        for lang in ("en", "tr"):
+            doc = repo_root / "docs" / "usermanuals" / lang / "reference" / "cli.md"
+            text = doc.read_text(encoding="utf-8").lower()
+            assert "audit-secret configuration" not in text
+            assert "audit-secret yapılandırma" not in text
+
+
 # ---------------------------------------------------------------------------
 # Plan composition
 # ---------------------------------------------------------------------------

@@ -1,9 +1,8 @@
 """
 Interactive terminal chat REPL for post-training model testing.
 
-Provides streaming output, slash commands, and optional per-response safety
-routing.  ``rich`` is used for pretty rendering when available; falls back to
-plain print otherwise.
+Provides streaming output and slash commands.  ``rich`` is used for pretty
+rendering when available; falls back to plain print otherwise.
 
 Usage (programmatic):
     from forgelm.chat import run_chat
@@ -44,9 +43,9 @@ _MAX_HISTORY_PAIRS = 50
 class ChatSession:
     """Stateful interactive chat session.
 
-    Manages conversation history, slash-command dispatch, streaming output,
-    and optional safety checking.  Designed to be re-entrant for testing: pass
-    ``input_fn`` and ``output_fn`` to override stdin/stdout.
+    Manages conversation history, slash-command dispatch, and streaming
+    output.  Designed to be re-entrant for testing: pass ``input_fn`` and
+    ``output_fn`` to override stdin/stdout.
     """
 
     def __init__(

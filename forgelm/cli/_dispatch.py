@@ -218,10 +218,17 @@ def _dispatch_legacy_data_audit(args) -> None:
     # ``forgelm.cli._run_data_audit`` references resolve correctly.
     from forgelm import cli as _cli_facade
 
+    # The deprecation warning, the parser help, and the helper docstring all
+    # promise "same behaviour, same output" as `forgelm audit PATH`.  The
+    # subcommand defaults --quality-filter ON (v0.6.0+), so the legacy alias
+    # must pass enable_quality_filter=True to keep that promise — otherwise it
+    # falls back to the helper's opt-in default (False) and emits a
+    # quality_summary-less data_audit_report.json (F-P7-OPUS-01).
     _cli_facade._run_data_audit(
         args.data_audit,
         args.output,
         args.output_format,
+        enable_quality_filter=True,
     )
     sys.exit(EXIT_SUCCESS)
 

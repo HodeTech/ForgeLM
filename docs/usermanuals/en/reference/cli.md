@@ -23,7 +23,7 @@ ForgeLM ships a single `forgelm` binary with subcommands. This page is the canon
 | `forgelm verify-annex-iv` | Verify an exported Annex IV artefact (§1-9 fields + manifest hash). |
 | `forgelm verify-gguf` | Verify GGUF model file integrity (magic header + metadata + SHA-256 sidecar). |
 | `forgelm approve` | Sign a human approval request and promote `final_model.staging/`. |
-| `forgelm reject` | Reject a human approval request and discard staging. |
+| `forgelm reject` | Reject a human approval request; the staging directory is preserved for forensics. |
 | `forgelm approvals` | List pending approvals (`--pending`) or inspect one (`--show RUN_ID`). |
 | `forgelm purge` | GDPR Article 17 erasure: row-id, run-id, or `--check-policy` retention report. |
 | `forgelm reverse-pii` | GDPR Article 15 right-of-access: search masked corpora for a subject's identifier (plaintext or hash-mask scan). |
@@ -78,7 +78,7 @@ $ forgelm doctor --offline                           # air-gap variant: cache + 
 $ forgelm doctor --output-format json | jq .         # CI-friendly envelope
 ```
 
-Probes Python version, torch / CUDA / GPU, optional extras, HF Hub reachability (or HF cache when `--offline`), disk space, operator identity, and audit-secret configuration. Exit codes: `0` = all pass (warnings OK), `1` = at least one fail, `2` = a probe itself crashed.
+Probes Python version, torch / CUDA / GPU, optional extras, HF Hub reachability (or HF cache when `--offline`), disk space, and operator identity. Exit codes: `0` = all pass (warnings OK), `1` = at least one fail, `2` = a probe itself crashed.
 
 ## Audit: `forgelm audit`
 
@@ -152,7 +152,7 @@ $ forgelm export CHECKPOINT_DIR \
     [--no-integrity-update]
 ```
 
-Comma-separate `--quant` for multiple levels in one command. See [GGUF Export](#/deployment/gguf-export).
+`--quant` takes a single level per invocation; run `forgelm export` once per level for multiple GGUF outputs. See [GGUF Export](#/deployment/gguf-export).
 
 ## Deploy: `forgelm deploy`
 
@@ -176,7 +176,7 @@ See [Deploy Targets](#/deployment/deploy-targets).
 $ forgelm approvals --pending                        # list pending approval gates
 $ forgelm approvals --show RUN_ID                    # inspect a specific run's chain + staging
 $ forgelm approve  RUN_ID --comment "Reviewed by N." # promote final_model.staging/ → final_model/
-$ forgelm reject   RUN_ID --comment "Reason ..."     # discard staging
+$ forgelm reject   RUN_ID --comment "Reason ..."     # record rejection (staging preserved for forensics)
 ```
 
 See [Human Oversight Gate](#/compliance/human-oversight). Exit codes: `0` = pending list / approval recorded, `1` = unknown run_id / config error, `4` (training mode only) = awaiting approval.
@@ -220,12 +220,17 @@ If the env var isn't set, ForgeLM fails at config load with a clear error — be
 | Exit | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | Config / argument error |
-| 2 | Audit warnings (with `--strict`) / probe crash (`forgelm doctor`) |
+| 1 | Config / semantic validation error (bad YAML, missing file, empty `--query`, etc.) |
+| 2 | Argparse usage error (unknown flag/subcommand, missing required arg, bad choice, out-of-range type validator), training crash, audit warnings (with `--strict`) / probe crash (`forgelm doctor`), or a clamped Ctrl+C |
 | 3 | Auto-revert / regression |
 | 4 | Awaiting human approval (training pipeline) |
 | 5 | Wizard cancelled (operator declined to save / non-tty refusal) |
-| 130 | User interrupted (Ctrl+C) |
+
+`argparse` usage errors (mistyped flag, missing required argument, bad `choices`,
+or a type-validator boundary) exit **2** — argparse's own `error()` convention —
+while config / semantic validation reached *after* parsing exits **1**. A Ctrl+C
+is signal-derived 130 but is clamped to **2** (`EXIT_TRAINING_ERROR`) before the
+process exits, so no exit code outside the public `0–5` set is ever returned.
 
 See [Exit Codes](#/reference/exit-codes) for the full contract.
 

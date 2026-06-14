@@ -27,8 +27,8 @@ def _add_chat_subcommand(subparsers) -> None:
         help="Interactive chat REPL with a fine-tuned model.",
         description=(
             "Load a fine-tuned model and start an interactive terminal session.  "
-            "Supports streaming output, slash commands (/reset, /save, /temperature, "
-            "/system, /exit), and optional per-response safety annotations."
+            "Supports streaming output and slash commands (/reset, /save, /temperature, "
+            "/system, /exit)."
         ),
     )
     p.add_argument("model_path", help="Path to a saved HuggingFace model directory or HF Hub ID.")
@@ -933,7 +933,10 @@ def _add_cache_tasks_subcommand(subparsers) -> None:
         type=str,
         default=None,
         metavar="DIR",
-        help="Cache directory override (default: HF_HUB_CACHE > HF_HOME/hub > ~/.cache/huggingface/hub).",
+        help=(
+            "Cache directory override (default: HF_DATASETS_CACHE > HF_HOME/datasets > "
+            "~/.cache/huggingface/datasets — the Datasets cache, separate from the Hub cache)."
+        ),
     )
     p.add_argument(
         "--audit-dir",
