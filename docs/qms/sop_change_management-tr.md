@@ -114,11 +114,14 @@ attribute, çift kontrollü ve forensic olarak kayıtlıdır.
 
 ### 4.2 Yapılandırma drift tespiti
 
-`tools/regenerate_config_doc.py` (Phase 16)
-`docs/reference/configuration.md`'yi (ve `-tr.md` mirror'ını)
-Pydantic schema'dan yeniden üretir. CI diff guard çalıştırır;
-karşılık gelen doc güncellemesi olmadan bir config-schema değişimi
-build'i fail eder.
+`tools/check_field_descriptions.py --strict` (Phase 16) her CI build'inde
+(`ci.yml`) çalışır ve `forgelm/config.py`'deki herhangi bir Pydantic
+alanı `description=` argümanından yoksunsa non-zero çıkar. Operatöre dönük
+`docs/reference/configuration.md` (ve `-tr.md` mirror'ı) elle bakımı
+yapılır ve schema'ya karşı incelenir; `tools/check_bilingual_parity.py --strict`
+EN↔TR yapısal pariteyi zorlar. Otomatik üretici yoktur — guard her schema
+alanının yetkili açıklama metni taşıdığını garanti eder ve değişiklik
+incelemesi referans doc'unun bunu yansıttığını kontrol eder.
 
 Bu, schema'nın evrildiği ama operatöre dönük doc'un geri kaldığı
 "doc drift" arıza modunu kapatır. ISO A.5.36 bunu zorunlu mekanizma
@@ -149,4 +152,5 @@ Herhangi bir modeli tam eğitim yapılandırması ve verisine geri izlemek için
 | Versiyon | Tarih | Yazar | Değişiklikler |
 |---------|------|--------|---------|
 | 1.0 | [DATE] | [AUTHOR] | İlk versiyon |
-| 1.1 | 2026-05-05 | Wave 4 / Faz 23 | §4 CI-gates-as-change-control tablosu eklendi (11 gate × ISO kontrolleri); §4.1 Madde 14 approval gate CAB substitute olarak; §4.2 `regenerate_config_doc.py` üzerinden config-drift tespiti; §4.3 `generate_sbom.py` + determinism testi üzerinden SBOM drift tespiti |
+| 1.1 | 2026-05-05 | Wave 4 / Faz 23 | §4 CI-gates-as-change-control tablosu eklendi (11 gate × ISO kontrolleri); §4.1 Madde 14 approval gate CAB substitute olarak; §4.2 `check_field_descriptions.py` + elle doc incelemesi üzerinden config-drift tespiti; §4.3 `generate_sbom.py` + determinism testi üzerinden SBOM drift tespiti |
+| 1.2 | 2026-06-14 | Wave 1 / H7 | §4.2 düzeltildi: config-drift kontrolü `check_field_descriptions.py --strict` + elle doc incelemesi + bilingual-parity guard'dır; önceden atıfta bulunulan `regenerate_config_doc.py` otomatik üreticisi hiç var olmadı |

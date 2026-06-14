@@ -8,9 +8,15 @@ with code 1 when any field is missing a description.
 
 The check is AST-based rather than runtime-based so it does not import
 ``forgelm.config`` (which would pull Pydantic + every transitive
-dependency).  An AST scan is deterministic, fast, and matches what the
-:mod:`tools.regenerate_config_doc` companion uses to build the
-configuration reference.
+dependency).  An AST scan is deterministic, fast, and runs on every CI
+build (see ``.github/workflows/ci.yml``).
+
+This guard is the enforcement half of the schema↔reference discipline:
+it makes a missing ``description=`` fail the build so that
+``docs/reference/configuration.md`` (and its ``-tr.md`` mirror), which
+are maintained by hand, always have authoritative field text to mirror.
+There is no autogenerator — the docs are written and reviewed manually;
+this guard guarantees the source text they depend on exists.
 
 Usage:
 
