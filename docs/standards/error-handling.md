@@ -18,7 +18,7 @@ EXIT_WIZARD_CANCELLED = 5
 
 | Code | When | Who reads it |
 |---|---|---|
-| **0** | Happy path — training completed, all gates passed | CI/CD success |
+| **0** | Training completed. With `auto_revert: true` (the compliance default for high-risk tiers) this also means every gate passed; with the **shipped default** `auto_revert: false` a failed benchmark/safety/judge gate is *recorded* (`benchmark`/`safety`/`judge` block in the JSON, `*_passed: false`) but does **not** change the exit code — parse those blocks, don't trust exit 0 alone | CI/CD success |
 | **1** | Config validation failed (YAML schema, Pydantic error) | CI/CD "fail fast"; user fixes YAML |
 | **2** | Training crashed or failed mid-run (OOM, CUDA error, unhandled exception) | CI/CD retry logic |
 | **3** | Training completed but eval/safety/benchmark threshold failed, and auto-revert happened | CI/CD decision: do not deploy |

@@ -140,7 +140,7 @@ damgasıyla kurabilir. Uygulama: `forgelm/webhook.py`.
 | Webhook `event` | Denetim günlüğü karşılığı | Tetikleyici | Kapı (gate) | Zorunlu payload alanları |
 |---|---|---|---|---|
 | `training.start` | `training.started` | `train()` çağrıldı, model yüklenmeden önce. | `webhook.notify_on_start` | `run_name`, `status="started"` |
-| `training.success` | `pipeline.completed` | Tüm kapılar geçildi, insan onayı gerekmiyor. | `webhook.notify_on_success` | `run_name`, `status="succeeded"`, `metrics` |
+| `training.success` | `pipeline.completed` | Koşu revert veya bekleyen onay olmadan tamamlandı. `evaluation.auto_revert: true` ile tüm kapılar geçildi; varsayılan `auto_revert: false` ile bir kapı geçemediği halde yalnızca kaydedildiğinde de tetiklenir (model yine terfi eder). | `webhook.notify_on_success` | `run_name`, `status="succeeded"`, `metrics` |
 | `training.failure` | `pipeline.failed` | Eğitim sürecinin kendisi hata fırlattı (OOM, veri seti hatası, yakalanmayan istisna). | `webhook.notify_on_failure` | `run_name`, `status="failed"`, `reason` (maskelenmiş, ≤2048 karakter) |
 | `training.reverted` | `model.reverted` | Eğitim sonrası bir kapı (değerlendirme, güvenlik, hakem, benchmark) çalışmayı reddetti ve `_revert_model` adaptörleri sildi. | `webhook.notify_on_failure` | `run_name`, `status="reverted"`, `reason` (maskelenmiş, ≤2048 karakter) |
 | `approval.required` | `human_approval.required` | Çalışma başarılı oldu, `evaluation.require_human_approval=true`, model insan incelemesi için staging'de (EU AI Act Madde 14). | `webhook.notify_on_success` | `run_name`, `status="awaiting_approval"`, `model_path` |

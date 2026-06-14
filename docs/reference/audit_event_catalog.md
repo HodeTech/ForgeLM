@@ -140,7 +140,7 @@ webhook ping → audit entry by `run_name` + timestamp. Implementation:
 | Webhook `event` | Audit-log mirror | Trigger | Gated by | Required payload fields |
 |---|---|---|---|---|
 | `training.start` | `training.started` | `train()` entered, before model load. | `webhook.notify_on_start` | `run_name`, `status="started"` |
-| `training.success` | `pipeline.completed` | All gates passed, no human-approval requirement. | `webhook.notify_on_success` | `run_name`, `status="succeeded"`, `metrics` |
+| `training.success` | `pipeline.completed` | Run completed without revert or pending approval. With `evaluation.auto_revert: true` all gates passed; with the default `auto_revert: false` it also fires when a gate failed but was only recorded (model still promoted). | `webhook.notify_on_success` | `run_name`, `status="succeeded"`, `metrics` |
 | `training.failure` | `pipeline.failed` | Training itself raised (OOM, dataset error, unhandled exception). | `webhook.notify_on_failure` | `run_name`, `status="failed"`, `reason` (masked, ≤2048 chars) |
 | `training.reverted` | `model.reverted` | A post-training gate (evaluation, safety, judge, benchmark) rejected the run and `_revert_model` deleted the adapters. | `webhook.notify_on_failure` | `run_name`, `status="reverted"`, `reason` (masked, ≤2048 chars) |
 | `approval.required` | `human_approval.required` | Run succeeded, `evaluation.require_human_approval=true`, model staged for review (EU AI Act Art. 14). | `webhook.notify_on_success` | `run_name`, `status="awaiting_approval"`, `model_path` |

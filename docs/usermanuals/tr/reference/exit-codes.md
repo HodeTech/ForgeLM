@@ -11,10 +11,10 @@ ForgeLM'in exit kodları kamuya açık bir kontrattır. CI/CD hatları, schedule
 
 | Exit | Sabit | Anlam | Tipik CI aksiyonu |
 |---|---|---|---|
-| **0** | `EXIT_SUCCESS` | Koşu tamamlandı; tüm kapılar geçti; checkpoint terfi etti. | Hattı sürdür |
+| **0** | `EXIT_SUCCESS` | Koşu tamamlandı ve checkpoint terfi etti. `evaluation.auto_revert: true` ile tüm kapılar da geçti; sevk edilen varsayılan `auto_revert: false` ile başarısız bir benchmark/güvenlik/judge kapısı **JSON çıktısına kaydedilir ama exit kodunu değiştirmez** — aşağıdaki ["exit 0 tam olarak ne garanti eder"](#exit-0-tam-olarak-ne-garanti-eder) bölümüne bakın. | Hattı sürdür (`auto_revert` kapalıysa kapı bloklarını parse et) |
 | **1** | `EXIT_CONFIG_ERROR` | YAML geçersiz, dosya yok, env var ayarsız veya argüman bozuk. | Hızlı başarısız |
 | **2** | `EXIT_TRAINING_ERROR` | Eğitim sırasında runtime hatası (config veya değerlendirme kapısı dışı her ele alınmamış istisna: data yükleme, OOM, NaN loss, I/O başarısızlığı, mid-stream audit-iteration OSError). | İncele; logları yüzeyle |
-| **3** | `EXIT_EVAL_FAILURE` | Benchmark veya güvenlik kapısı geçemedi; konfigüre edilmişse geri alındı. | İncele; terfi ETTİRME |
+| **3** | `EXIT_EVAL_FAILURE` | Bir benchmark/güvenlik/judge kapısı geçemedi **ve** model otomatik geri alındı (`evaluation.auto_revert: true` gerektirir). `auto_revert: false` ile başarısız bir kapı exit 3 üretmez — koşu, JSON kapı bloklarına kaydedilen başarısızlıkla 0 çıkar. | İncele; terfi ETTİRME |
 | **4** | `EXIT_AWAITING_APPROVAL` | `evaluation.require_human_approval: true` engelliyor. | Hattı tut; reviewer'ı tetikle |
 | **5** | `EXIT_WIZARD_CANCELLED` | `forgelm --wizard` YAML üretmeden çıktı — Ctrl-C, non-tty stdin reddi veya operatör kaydetmeyi reddetti. `EXIT_SUCCESS`'tan ayrı ki CI "wizard tamamlandı" ile "wizard hiçbir şey yazmadı" arasını ayırt edebilsin. | No-op olarak kabul et; mesajı yüzeyle; eski config ile DEVAM ETME |
 
@@ -98,15 +98,18 @@ Exit kodu kontrat tek başına yeterli — POSIX kabuklarda `$?`, cmd'de `%ERROR
 - Config'i hatasız doğrulamış.
 - Modeli ve dataset'i yüklemiş.
 - Tüm konfigüre eğitim adımlarını tamamlamış.
-- Her benchmark floor'unu geçmiş.
-- Her güvenlik eşiğini geçmiş.
 - Model card yazmış.
 - Annex IV paketi yazmış (konfigüre ise).
 - Manifest.json'u tüm artifact'lar üzerinde SHA-256 ile yazmış.
 - Opsiyonel: GGUF, deployment config yazmış.
 - Audit log'u `pipeline.completed` ile kapatmış (kanonik event adı).
 
-Bunlardan biri başarısız olursa exit kod sıfır değildir. Tasarım gereği "kısmi başarı" exit kodu yok.
+**Kapılar ve exit 0.** *Geçen* bir benchmark/güvenlik/judge kapısının exit-0 garantisinin parçası olup olmadığı `evaluation.auto_revert`'e bağlıdır:
+
+- `evaluation.auto_revert: true` ile (EU AI Act yüksek-riskli varsayılanı), başarısız bir kapı modeli otomatik geri alır ve **3** ile çıkar — yani exit 0 *gerçekten* tüm konfigüre kapıların geçtiği anlamına gelir.
+- Sevk edilen varsayılan `evaluation.auto_revert: false` ile, başarısız bir kapı **kaydedilir** (JSON çıktısındaki `benchmark` / `safety` / `judge` bloğu `*_passed: false` taşır) ama model yine terfi eder ve koşu **0** ile çıkar. Bu JSON bloklarını okuyun; kapı başarısını yalnızca exit 0'dan çıkarsamayın.
+
+Tasarım gereği "kısmi başarı" exit kodu yok — başarısız bir kapının exit kodunu değiştirmesini istiyorsanız `auto_revert`'i açın.
 
 ## Uyumluluk garantisi
 

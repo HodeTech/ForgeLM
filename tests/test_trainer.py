@@ -154,6 +154,52 @@ class TestEvaluationChecks:
         result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 5.0})
         assert result is True  # auto_revert=False means always pass
 
+    def test_failed_benchmark_gate_when_auto_revert_disabled_continues_recording_failure(self):
+        """F-P1-FAB-14: with the shipped default ``auto_revert=False`` a failed
+        benchmark gate is *recorded* (``benchmark_passed=False``, scores attached)
+        but the pipeline continues — ``_apply_benchmark_result`` returns True, no
+        revert, no model deletion. This is the behaviour the corrected
+        error-handling.md row 0 / exit-codes.md documents (exit 0 does NOT imply
+        every gate passed unless ``auto_revert`` is on)."""
+        trainer = self._make_trainer(auto_revert=False)
+        train_result = TrainResult(success=True, metrics={}, final_model_path="/tmp/nonexistent/final")
+        metrics: dict[str, float] = {}
+        failing_benchmark = MagicMock()
+        failing_benchmark.passed = False
+        failing_benchmark.scores = {"hellaswag": 0.30}
+        failing_benchmark.average_score = 0.30
+        failing_benchmark.failure_reason = "Benchmark score below threshold."
+
+        with patch.object(trainer, "_revert_model") as revert:
+            result = trainer._apply_benchmark_result(failing_benchmark, train_result, metrics, "/tmp/nonexistent/final")
+
+        assert result is True  # continue → run still exits 0
+        assert train_result.benchmark_passed is False  # failure recorded
+        assert train_result.success is True  # NOT reverted
+        assert train_result.reverted is False
+        revert.assert_not_called()  # model not destroyed
+
+    def test_failed_benchmark_gate_when_auto_revert_enabled_reverts_and_halts(self):
+        """F-P1-FAB-14 counterpart: with ``auto_revert=True`` the SAME failing
+        gate reverts the model and halts (returns False → exit 3), so exit 0
+        legitimately means every gate passed on the auto_revert path."""
+        trainer = self._make_trainer(auto_revert=True)
+        train_result = TrainResult(success=True, metrics={}, final_model_path="/tmp/nonexistent/final")
+        metrics: dict[str, float] = {}
+        failing_benchmark = MagicMock()
+        failing_benchmark.passed = False
+        failing_benchmark.scores = {"hellaswag": 0.30}
+        failing_benchmark.average_score = 0.30
+        failing_benchmark.failure_reason = "Benchmark score below threshold."
+
+        with patch.object(trainer, "_revert_model") as revert:
+            result = trainer._apply_benchmark_result(failing_benchmark, train_result, metrics, "/tmp/nonexistent/final")
+
+        assert result is False  # halt → exit 3
+        assert train_result.benchmark_passed is False
+        assert train_result.reverted is True
+        revert.assert_called_once()
+
 
 class TestTrainingArgsValidationGuard:
     """P1-2 regression: when no validation split exists, the training-args
