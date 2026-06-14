@@ -60,6 +60,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
+from pydantic import ValidationError
+
 from ..config import ConfigError, ForgeConfig, PipelineConfig, PipelineStage, merge_pipeline_stage_config
 from ._exit_codes import (
     EXIT_AWAITING_APPROVAL,
@@ -348,6 +350,7 @@ class PipelineOrchestrator:
         *,
         resume_from: Optional[str],
         force_resume: bool,
+        stage_filter: Optional[str] = None,
     ) -> "tuple[Optional[PipelineState], Optional[int]]":
         """Load + validate state for ``--resume-from`` or build a fresh state.
 
@@ -381,7 +384,47 @@ class PipelineOrchestrator:
             existing.stopped_at = None
             existing.finished_at = None
             return existing, None
+
+        # ``--stage X`` on a pipeline that already ran: build a fresh state but
+        # CARRY OVER the prior run's stage history (status / output_model /
+        # metrics) for every non-filtered stage when the topology is unchanged.
+        # Otherwise ``_init_state`` clobbers pipeline_state.json — the other
+        # stages become ``skipped_by_filter`` with ``output_model=None``, and a
+        # later ``--resume-from`` re-trains them even though their ``final_model/``
+        # sits on disk (F-P2-FAB-12).
+        if stage_filter is not None and existing is not None:
+            return self._init_state_preserving(existing, stage_filter=stage_filter), None
         return self._init_state(), None
+
+    def _init_state_preserving(self, existing: PipelineState, *, stage_filter: str) -> PipelineState:
+        """Fresh state for a ``--stage`` run that retains prior stage history.
+
+        Carries over the prior run's per-stage ``status`` / ``output_model`` /
+        ``metrics`` for every stage except the filtered one, but only when the
+        stage topology is unchanged (same ordered stage names). On a topology
+        mismatch we fall back to a clean ``_init_state`` — positional carry-over
+        would otherwise graft one stage's history onto another.
+        """
+        fresh = self._init_state()
+        prior_names = [s.name for s in existing.stages]
+        current_names = [s.name for s in fresh.stages]
+        if prior_names != current_names:
+            return fresh
+        prior_by_name = {s.name: s for s in existing.stages}
+        for stage_state in fresh.stages:
+            if stage_state.name == stage_filter:
+                continue
+            prior = prior_by_name.get(stage_state.name)
+            if prior is None:
+                continue
+            stage_state.status = prior.status
+            stage_state.output_model = prior.output_model
+            stage_state.input_model = prior.input_model
+            stage_state.input_source = prior.input_source
+            stage_state.metrics = dict(prior.metrics)
+            stage_state.gate_decision = prior.gate_decision
+            stage_state.training_manifest = prior.training_manifest
+        return fresh
 
     def _resolve_resume_skiplist(
         self,
@@ -521,8 +564,27 @@ class PipelineOrchestrator:
         if filter_idx == 0:
             return None, None
 
+        # A stage that declares its own ``model:`` block ignores the auto-chain
+        # seed entirely (merge priority: stage-explicit model wins; the chain
+        # applies only when ``stage.model is None``). Demanding the predecessor's
+        # output on disk is a spurious refusal for such a stage (F-P2-FAB-11).
+        if self.pipeline.stages[filter_idx].model is not None:
+            return None, None
+
         prev_stage = self.pipeline.stages[filter_idx - 1]
-        prev_merged = merge_pipeline_stage_config(self.root_cfg, prev_stage, prev_output_model=None)
+        # Guard the merge like the in-loop _merge_and_validate_stage does: a
+        # per-stage Pydantic/merge failure here must route to EXIT_CONFIG_ERROR
+        # via the logged error path, not escape as a raw traceback (F-P2-FAB-13).
+        try:
+            prev_merged = merge_pipeline_stage_config(self.root_cfg, prev_stage, prev_output_model=None)
+        except (ConfigError, ValidationError) as exc:
+            logger.error(
+                "Cannot --stage %r: the preceding stage %r failed config validation: %s",
+                stage_filter,
+                prev_stage.name,
+                exc,
+            )
+            return None, EXIT_CONFIG_ERROR
         candidate = os.path.join(prev_merged.training.output_dir, "final_model")
         if not os.path.isdir(candidate):
             logger.error(
@@ -641,6 +703,19 @@ class PipelineOrchestrator:
         )
         stage_state.started_at = _utc_iso_now()
         stage_state.status = "running"
+        # Clear every attempt-scoped field from a prior attempt loaded off the
+        # resumed state file. Otherwise a stage that failed then resumed-to-success
+        # persists status="completed" alongside a stale error="Trainer crashed: …"
+        # (and a stale skipped_reason / gate_decision), so the green state file
+        # reports per-stage errors that did not occur this run (F-P2-FAB-07).
+        stage_state.error = None
+        stage_state.skipped_reason = None
+        stage_state.gate_decision = None
+        stage_state.auto_revert_triggered = False
+        stage_state.exit_code = None
+        stage_state.finished_at = None
+        stage_state.duration_seconds = None
+        stage_state.output_model = None
         self._save_state(state)
 
         # ``--input-model`` attaches to a single filtered stage only.
@@ -724,8 +799,15 @@ class PipelineOrchestrator:
         complexity hygiene.
         """
         if stage_filter is not None and stage.name != stage_filter:
-            stage_state.status = "skipped_by_filter"
-            stage_state.skipped_reason = f"--stage {stage_filter!r} was specified; only that stage runs."
+            # Preserve a stage's prior ``completed`` history (carried over by
+            # ``_init_state_preserving``) instead of downgrading it to
+            # ``skipped_by_filter`` with no ``output_model`` — otherwise a later
+            # ``--resume-from`` would re-train a stage whose ``final_model/`` is
+            # already on disk (F-P2-FAB-12).  Only stamp ``skipped_by_filter`` on
+            # stages with no prior completed output to record.
+            if not (stage_state.status == "completed" and stage_state.output_model):
+                stage_state.status = "skipped_by_filter"
+                stage_state.skipped_reason = f"--stage {stage_filter!r} was specified; only that stage runs."
             self._save_state(state)
             return "filtered"
         if stage.name in stages_to_skip_completed:
@@ -894,7 +976,9 @@ class PipelineOrchestrator:
             return EXIT_CONFIG_ERROR
 
         # 1. Load (or initialise) state.
-        state, state_err = self._prepare_resume_or_init_state(resume_from=resume_from, force_resume=force_resume)
+        state, state_err = self._prepare_resume_or_init_state(
+            resume_from=resume_from, force_resume=force_resume, stage_filter=stage_filter
+        )
         if state is None:
             return state_err  # type: ignore[return-value]
 
@@ -1569,9 +1653,28 @@ def run_pipeline_from_args(
 
     if dry_run:
         return orchestrator.dry_run()
-    return orchestrator.run(
-        stage_filter=stage_filter,
-        resume_from=resume_from,
-        force_resume=force_resume,
-        input_model_override=input_model_override,
-    )
+
+    # Top-level exception boundary (F-P2-FAB-13). Single-run training has one in
+    # cli/_training.py; the pipeline path was called bare, so a mid-run
+    # _save_state OSError (disk full / permission flip) escaped as a raw
+    # traceback → interpreter exit 1, indistinguishable from EXIT_CONFIG_ERROR
+    # and breaking JSON-mode stdout parsers. Map config-class failures to exit 1
+    # and everything else to the runtime-error class (exit 2), always emitting
+    # the 2-key JSON error envelope in JSON mode.
+    try:
+        return orchestrator.run(
+            stage_filter=stage_filter,
+            resume_from=resume_from,
+            force_resume=force_resume,
+            input_model_override=input_model_override,
+        )
+    except (ConfigError, ValidationError) as e:
+        logger.error("Pipeline configuration error: %s", e)
+        if output_format == "json":
+            print(json.dumps({"success": False, "error": str(e)}))
+        return EXIT_CONFIG_ERROR
+    except Exception as e:  # noqa: BLE001 — best-effort: top-of-CLI pipeline catch mirrors cli/_training.py. The orchestrator crosses state-file I/O, manifest generation, per-stage merge/validation, and trainer invocation; any leak must surface as a structured CLI failure (traceback in the log) and the 2-key JSON envelope on stdout rather than a raw traceback that breaks JSON parsers.  # NOSONAR
+        logger.exception("Pipeline run failed.")
+        if output_format == "json":
+            print(json.dumps({"success": False, "error": str(e)}))
+        return EXIT_TRAINING_ERROR

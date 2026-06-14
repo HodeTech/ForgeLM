@@ -38,6 +38,7 @@ from forgelm.cli._exit_codes import (
     EXIT_CONFIG_ERROR,
     EXIT_EVAL_FAILURE,
     EXIT_SUCCESS,
+    EXIT_TRAINING_ERROR,
 )
 from forgelm.cli._pipeline import (
     PipelineOrchestrator,
@@ -47,6 +48,7 @@ from forgelm.cli._pipeline import (
     _deserialise_state,
     _generate_run_id,
     _serialise_state,
+    run_pipeline_from_args,
 )
 from forgelm.config import ForgeConfig
 from forgelm.results import TrainResult
@@ -681,6 +683,74 @@ class TestStageFilter:
             f"Chain integrity must hold for --stage <non-first> with disk seed; got: {violations!r}"
         )
 
+    def test_filter_stage_with_own_model_block_runs_without_prev_output(self, tmp_path, monkeypatch):
+        """F-P2-FAB-11: ``--stage dpo_stage`` where dpo_stage declares its own
+        ``model:`` block must run even with no predecessor output on disk — the
+        stage ignores the auto-chain seed, so demanding the predecessor's output
+        is a spurious refusal."""
+        cfg = ForgeConfig(
+            model={"name_or_path": "org/base"},
+            lora={"r": 8},
+            training={"trainer_type": "sft", "output_dir": str(tmp_path)},
+            data={"dataset_name_or_path": "org/sft"},
+            pipeline={
+                "output_dir": str(tmp_path / "pipeline_run"),
+                "stages": [
+                    {
+                        "name": "sft_stage",
+                        "training": {"trainer_type": "sft", "output_dir": str(tmp_path / "stage1")},
+                        "data": {"dataset_name_or_path": "org/sft_data"},
+                    },
+                    {
+                        "name": "dpo_stage",
+                        "model": {"name_or_path": "org/other-base"},
+                        "training": {"trainer_type": "dpo", "output_dir": str(tmp_path / "stage2")},
+                        "data": {"dataset_name_or_path": "org/dpo_data"},
+                    },
+                ],
+            },
+        )
+        configs_seen = _install_trainer_mocks(monkeypatch, [TrainResult(success=True)])
+        orch = PipelineOrchestrator(cfg, b"yaml bytes")
+        assert not os.path.exists(tmp_path / "stage1" / "final_model")
+        code = orch.run(stage_filter="dpo_stage")
+        assert code == EXIT_SUCCESS
+        assert len(configs_seen) == 1
+        # The stage used its explicit model, not the (absent) chain seed.
+        assert configs_seen[0].model.name_or_path == "org/other-base"
+
+    def test_stage_run_preserves_prior_completed_stage_for_later_resume(self, tmp_path, monkeypatch):
+        """F-P2-FAB-12: a full run then ``--stage stage2`` (re-run one stage) must
+        NOT clobber stage 1's completed history; a subsequent ``--resume-from
+        stage3`` must skip stage 1 (its ``final_model/`` is on disk) rather than
+        re-training it."""
+        # 1) Full successful run materialises every stage's final_model dir.
+        cfg = _three_stage_config(tmp_path)
+        _install_trainer_mocks(monkeypatch, [TrainResult(success=True)] * 3)
+        orch1 = PipelineOrchestrator(cfg, b"yaml bytes")
+        assert orch1.run() == EXIT_SUCCESS
+
+        # 2) Re-run ONLY stage 2 via --stage.
+        cfg2 = _three_stage_config(tmp_path)
+        _install_trainer_mocks(monkeypatch, [TrainResult(success=True)])
+        orch2 = PipelineOrchestrator(cfg2, b"yaml bytes")
+        assert orch2.run(stage_filter="dpo_stage") == EXIT_SUCCESS
+
+        # State file must still carry stage 1 as completed with its output_model.
+        with open(orch2.paths["state_file"]) as f:
+            payload = json.load(f)
+        sft = next(s for s in payload["stages"] if s["name"] == "sft_stage")
+        assert sft["status"] == "completed"
+        assert sft["output_model"] == str(tmp_path / "stage1" / "final_model")
+
+        # 3) Resume from stage 3 — stage 1 must be skipped (not re-trained).
+        cfg3 = _three_stage_config(tmp_path)
+        configs_seen3 = _install_trainer_mocks(monkeypatch, [TrainResult(success=True)])
+        orch3 = PipelineOrchestrator(cfg3, b"yaml bytes")
+        assert orch3.run(resume_from="grpo_stage") == EXIT_SUCCESS
+        trained_dirs = [c.training.output_dir for c in configs_seen3]
+        assert str(tmp_path / "stage1") not in trained_dirs, "stage 1 must not be re-trained on resume"
+
 
 # ---------------------------------------------------------------------------
 # Orchestrator behaviour — --resume-from
@@ -1245,3 +1315,82 @@ class TestAuditAndWebhook:
         assert payload["final_status"] == "completed"
         assert len(payload["stages"]) == 3
         assert all(s["status"] == "completed" for s in payload["stages"])
+
+
+class TestReExecuteClearsStaleFields:
+    def test_resumed_successful_stage_clears_prior_error(self, tmp_path, monkeypatch):
+        """F-P2-FAB-07: after a failed run is resumed and succeeds, the
+        re-executed stage's persisted state must NOT carry the prior attempt's
+        ``error`` / ``skipped_reason`` — a green pipeline reporting stage-level
+        errors that did not occur this run sends incident reviews chasing ghosts."""
+        cfg = _three_stage_config(tmp_path)
+        # First run: stage 2 fails with a specific error.
+        _install_trainer_mocks(
+            monkeypatch,
+            [TrainResult(success=True), TrainResult(success=False, error="Trainer crashed: CUDA OOM")],
+        )
+        orch1 = PipelineOrchestrator(cfg, b"yaml bytes")
+        orch1.run()
+        with open(orch1.paths["state_file"]) as f:
+            payload1 = json.load(f)
+        dpo1 = next(s for s in payload1["stages"] if s["name"] == "dpo_stage")
+        assert dpo1["error"] == "Trainer crashed: CUDA OOM"
+
+        # Resume from stage 2 with passing mocks → success.
+        _install_trainer_mocks(monkeypatch, [TrainResult(success=True), TrainResult(success=True)])
+        orch2 = PipelineOrchestrator(cfg, b"yaml bytes")
+        assert orch2.run(resume_from="dpo_stage") == EXIT_SUCCESS
+
+        with open(orch2.paths["state_file"]) as f:
+            payload2 = json.load(f)
+        dpo2 = next(s for s in payload2["stages"] if s["name"] == "dpo_stage")
+        assert dpo2["status"] == "completed"
+        assert dpo2["error"] is None, "stale error must be cleared on re-execution"
+        assert dpo2["skipped_reason"] is None
+
+
+def _pipeline_args(**overrides):
+    """Build an argparse-style namespace for run_pipeline_from_args."""
+    base = {
+        "stage": None,
+        "resume_from": None,
+        "force_resume": False,
+        "input_model": None,
+        "output_format": "text",
+        "dry_run": False,
+        "fit_check": False,
+        "merge": False,
+        "generate_data": False,
+        "compliance_export": False,
+        "benchmark_only": False,
+    }
+    base.update(overrides)
+    return types.SimpleNamespace(**base)
+
+
+class TestPipelineExceptionBoundary:
+    def test_save_state_oserror_maps_to_training_error_with_json_envelope(self, tmp_path, monkeypatch):
+        """F-P2-FAB-13: a mid-run _atomic_write_json OSError (disk full /
+        permission flip) must map to EXIT_TRAINING_ERROR (2) — the runtime-error
+        class — with the 2-key JSON envelope on stdout, NOT a raw traceback +
+        interpreter exit 1 that collides with EXIT_CONFIG_ERROR and breaks JSON
+        parsers."""
+        cfg = _three_stage_config(tmp_path)
+        _install_trainer_mocks(monkeypatch, [TrainResult(success=True)] * 3)
+
+        def _boom(path, payload):
+            raise OSError("No space left on device")
+
+        monkeypatch.setattr("forgelm.cli._pipeline._atomic_write_json", _boom)
+
+        import io
+        from contextlib import redirect_stdout
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = run_pipeline_from_args(cfg, b"yaml bytes", _pipeline_args(output_format="json"))
+
+        assert code == EXIT_TRAINING_ERROR
+        envelope = json.loads(buf.getvalue())
+        assert envelope["success"] is False
+        assert "error" in envelope
