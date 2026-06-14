@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import re
 import socket
 from typing import Any, Dict, MutableMapping, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
@@ -269,6 +270,64 @@ def _mask_secrets_in_text(text: str, headers: Optional[MutableMapping[str, str]]
     return masked
 
 
+# ``requests``/``urllib3`` transport-error strings embed the request URL as a
+# bare, scheme-less path token, e.g.
+#   "HTTPSConnectionPool(host='8.8.8.8', port=443): Max retries exceeded with
+#    url: /services/T0/B0/SECRETTOKEN (Caused by ...)"
+# Slack / Teams / Discord / custom webhook URLs carry their bearer token in
+# that path, so the path must be stripped before the exception string is
+# logged.  The IP-pinning already host-masks the ``host=`` field, but the
+# ``url:`` path leaks the secret.  Matched class is ``[^\s)]`` (stops at the
+# first whitespace or the closing paren ``requests`` appends) and the
+# quantifier is bounded to a generous-but-finite 4096 chars — no two
+# competing unbounded quantifiers, so this is ReDoS-safe per regex.md §3/§4.
+_URL_PATH_TOKEN_RE = re.compile(r"(url:\s*)(/[^\s)]{0,4096})")
+
+
+def _redact_url_paths_in_text(text: str, url: str) -> str:
+    """Strip secret-bearing URL paths/query/userinfo from a transport error.
+
+    Two redaction passes, both belt-and-suspenders so a leak survives only
+    if *both* miss:
+
+    1. **Exact known-URL pass** — replace the path/query/userinfo of the
+       *actual* request URL (the one ``safe_post`` / ``safe_get`` was called
+       with) wherever it appears verbatim in *text*, collapsing it to the
+       host-masked form from :func:`_mask_netloc`.  This is regex-free and
+       cannot over- or under-match.
+    2. **Generic ``url:`` token pass** — ``requests`` reports the URL as a
+       scheme-less path after ``url:``; strip any such path token to
+       ``url: [REDACTED-PATH]``.  Catches the dominant ``Max retries
+       exceeded with url: /services/.../TOKEN`` shape even when the IP-pinned
+       target URL (not the original) is what landed in the exception string.
+    """
+    if not text:
+        return text
+    masked = text
+    # Pass 1 — exact known-URL substring (path-bearing forms only; a bare
+    # ``scheme://host`` carries no secret and is left intact for signal).
+    try:
+        parts = urlparse(url)
+    except (ValueError, TypeError):
+        parts = None
+    if parts is not None and parts.scheme and parts.netloc:
+        host_only = f"{parts.scheme}://{parts.hostname or 'unknown-host'}"
+        # Replace the full URL (path + query + fragment + userinfo) first so
+        # the longest, most-specific form is collapsed before the shorter
+        # path-only token pass runs.
+        if parts.path or parts.query or parts.params or parts.fragment or "@" in parts.netloc:
+            masked = masked.replace(url, host_only)
+            # Also the scheme-less path tail on its own (urllib3 strips the
+            # authority and logs only the path component).
+            path_tail = urlunparse(("", "", parts.path, parts.params, parts.query, parts.fragment))
+            if path_tail and path_tail != "/":
+                masked = masked.replace(path_tail, "[REDACTED-PATH]")
+    # Pass 2 — generic ``url: <path>`` token (covers the IP-pinned target
+    # URL and any path the exact-match pass did not catch).
+    masked = _URL_PATH_TOKEN_RE.sub(r"\1[REDACTED-PATH]", masked)
+    return masked
+
+
 def safe_post(
     url: str,
     *,
@@ -402,8 +461,11 @@ def safe_post(
         # Mask the *outbound* header set (which includes the auto-set
         # ``Host`` and any caller secrets) — not the raw ``headers``
         # parameter, which may be ``None`` or stale relative to what
-        # actually went on the wire.
-        masked_reason = _mask_secrets_in_text(str(exc), request_headers)
+        # actually went on the wire.  Then strip the URL path/query —
+        # ``requests`` embeds the request path in its transport-error
+        # string and webhook URLs carry their bearer token there
+        # (F-P5-OPUS-01).
+        masked_reason = _redact_url_paths_in_text(_mask_secrets_in_text(str(exc), request_headers), url)
         logger.warning(
             "safe_post failed url=%s reason=%s",
             _mask_netloc(url),
@@ -530,7 +592,9 @@ def safe_get(
     except requests.RequestException as exc:
         # Mask the outbound header set, not the caller's possibly-None
         # ``headers`` parameter — see safe_post for the same rationale.
-        masked_reason = _mask_secrets_in_text(str(exc), request_headers)
+        # Strip the URL path/query too (F-P5-OPUS-01): ``requests`` embeds
+        # the request path in its transport-error string.
+        masked_reason = _redact_url_paths_in_text(_mask_secrets_in_text(str(exc), request_headers), url)
         logger.warning(
             "safe_get failed url=%s method=%s reason=%s",
             _mask_netloc(url),

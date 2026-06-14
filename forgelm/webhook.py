@@ -2,11 +2,10 @@ import json
 import logging
 import os
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
 
 import requests
 
-from ._http import HttpSafetyError, safe_post
+from ._http import HttpSafetyError, _mask_netloc, safe_post
 
 # Public re-export surface.  Wave 3 / Faz 28 (C-54) cleanup: dropped
 # the ``_is_private_destination`` re-export.  The Phase 7 split moved
@@ -45,24 +44,18 @@ class WebhookNotifier:
     def _mask(url: str) -> str:
         """Redact credentials and signed query params from a webhook URL.
 
-        Slack/Teams/Discord webhooks carry secrets in the path or query; basic
-        auth can also embed them in userinfo. We log only ``scheme://host`` plus
-        the first path segment so the destination is identifiable but the
-        secret material is not leaked into logs.
+        Thin wrapper over :func:`forgelm._http._mask_netloc` — the single
+        URL-masking chokepoint (F-P5-OPUS-11).  Webhook URLs are bearer
+        tokens (Slack/Teams/Discord carry the secret in the path or query,
+        basic auth embeds it in userinfo, and custom receivers may put the
+        token in the *first* path segment).  ``_mask_netloc`` strips the
+        entire path/query/userinfo and returns only ``scheme://host`` so no
+        secret material reaches operator logs.  The earlier local
+        implementation appended the first path segment, which leaked the
+        token for custom receivers shaped ``https://host/<TOKEN>``
+        (F-P5-OPUS-06).
         """
-        try:
-            parts = urlparse(url)
-        except (ValueError, TypeError):
-            return "<unparseable-url>"
-        if not parts.scheme or not parts.netloc:
-            return "<malformed-url>"
-        host = parts.hostname or "unknown-host"
-        first_segment = ""
-        if parts.path:
-            stripped = parts.path.lstrip("/").split("/", 1)[0]
-            if stripped:
-                first_segment = f"/{stripped}/..."
-        return f"{parts.scheme}://{host}{first_segment}"
+        return _mask_netloc(url)
 
     def _post_payload(self, url: str, payload: dict, event: str) -> None:
         """POST *payload* to *url* and log any transport / HTTP errors.

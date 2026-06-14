@@ -225,6 +225,46 @@ class TestWebhookNotifier:
         assert any("404" in r.message or "HTTP" in r.message for r in caplog.records)
 
 
+class TestMaskUrl:
+    """F-P5-OPUS-06 / F-P5-OPUS-11 regression: ``WebhookNotifier._mask`` must
+    strip the *entire* path (not just userinfo/query) so a custom receiver
+    whose secret is the first path segment (``https://host/<TOKEN>``) does not
+    leak into operator logs, and the masking policy is the single
+    ``forgelm._http._mask_netloc`` chokepoint.
+    """
+
+    # NOSONAR test fixture — fragment-built so secret scanners don't flag it.
+    _SECRET = "aZ9" + "SECRETTOKEN"  # noqa: S105
+
+    def test_mask_strips_first_path_segment_for_custom_receiver(self):
+        masked = WebhookNotifier._mask(f"https://hook.mycorp.internal/{self._SECRET}")
+        assert self._SECRET not in masked
+        assert masked == "https://hook.mycorp.internal"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://hooks.slack.com/services/T0/B0/SECRET",
+            "https://discord.com/api/webhooks/123/SECRET",
+            "https://outlook.office.com/webhook/abc/IncomingWebhook/SECRET",
+            "https://hook.mycorp.internal/SECRET",
+            "https://user:pass@hook.mycorp.internal/SECRET?sig=SECRET",
+        ],
+    )
+    def test_mask_never_leaks_secret_across_receiver_shapes(self, url):
+        masked = WebhookNotifier._mask(url)
+        assert "SECRET" not in masked
+        assert masked.startswith("https://")
+
+    def test_mask_delegates_to_http_chokepoint(self):
+        """The webhook masker must produce identical output to the single
+        ``_http._mask_netloc`` chokepoint (no divergent second policy)."""
+        from forgelm._http import _mask_netloc
+
+        url = "https://user:pass@hooks.example.com/services/T0/B0/TOKEN?sig=x"
+        assert WebhookNotifier._mask(url) == _mask_netloc(url)
+
+
 class TestSafePostHttpDiscipline:
     """Direct unit tests for forgelm._http.safe_post.
 

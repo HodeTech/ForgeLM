@@ -424,3 +424,103 @@ class TestNoPublicIpResolvedBranch:
 
         assert ip is None
         assert err == "no public IP resolved"
+
+
+class TestTransportErrorUrlRedaction:
+    """F-P5-OPUS-01 regression: the transport-failure WARNING log must not
+    leak the secret-bearing URL path that ``requests``/``urllib3`` embed in
+    their exception strings.  Slack/Teams/Discord/custom webhook URLs carry
+    the bearer token in the path, so ``reason=`` (which is built from
+    ``str(exc)``) must have any path/query stripped before logging.
+    """
+
+    # NOSONAR test fixture — fragment-built so secret scanners don't flag it.
+    _SECRET = "SUPER" + "SECRET" + "WEBHOOKTOKEN"  # noqa: S105
+
+    def _slack_connection_error(self):
+        import requests as req
+
+        # Mirrors the real urllib3 ConnectionError message shape: the host
+        # is reported (already masked elsewhere) but the ``url:`` path —
+        # which carries the token — is embedded verbatim.
+        return req.exceptions.ConnectionError(
+            f"HTTPSConnectionPool(host='8.8.8.8', port=443): Max retries "
+            f"exceeded with url: /services/T00000/B00000/{self._SECRET} "
+            f"(Caused by NewConnectionError(...))"
+        )
+
+    def test_safe_post_transport_error_does_not_leak_url_path(self, caplog):
+        import logging
+
+        import requests as req
+
+        from forgelm import _http
+
+        url = f"https://hooks.slack.com/services/T00000/B00000/{self._SECRET}"
+        with (
+            patch.object(_http.socket, "getaddrinfo", return_value=[(0, 0, 0, "", ("8.8.8.8", 0))]),
+            patch.object(_http.requests.Session, "post", side_effect=self._slack_connection_error()),
+        ):
+            with caplog.at_level(logging.WARNING, logger="forgelm._http"):
+                with pytest.raises(req.exceptions.ConnectionError):
+                    _http.safe_post(url, json={}, timeout=10.0)
+
+        log_text = " ".join(r.message for r in caplog.records)
+        assert self._SECRET not in log_text
+        assert "[REDACTED-PATH]" in log_text
+
+    def test_safe_get_transport_error_does_not_leak_url_path(self, caplog):
+        import logging
+
+        import requests as req
+
+        from forgelm import _http
+
+        url = f"https://hooks.slack.com/services/T00000/B00000/{self._SECRET}"
+        with (
+            patch.object(_http.socket, "getaddrinfo", return_value=[(0, 0, 0, "", ("8.8.8.8", 0))]),
+            patch.object(_http.requests.Session, "request", side_effect=self._slack_connection_error()),
+        ):
+            with caplog.at_level(logging.WARNING, logger="forgelm._http"):
+                with pytest.raises(req.exceptions.ConnectionError):
+                    _http.safe_get(url, timeout=10.0)
+
+        log_text = " ".join(r.message for r in caplog.records)
+        assert self._SECRET not in log_text
+
+    def test_safe_get_head_transport_error_does_not_leak_url_path(self, caplog):
+        import logging
+
+        import requests as req
+
+        from forgelm import _http
+
+        url = f"https://hooks.slack.com/services/T00000/B00000/{self._SECRET}"
+        with (
+            patch.object(_http.socket, "getaddrinfo", return_value=[(0, 0, 0, "", ("8.8.8.8", 0))]),
+            patch.object(_http.requests.Session, "request", side_effect=self._slack_connection_error()),
+        ):
+            with caplog.at_level(logging.WARNING, logger="forgelm._http"):
+                with pytest.raises(req.exceptions.ConnectionError):
+                    _http.safe_get(url, timeout=10.0, method="HEAD")
+
+        log_text = " ".join(r.message for r in caplog.records)
+        assert self._SECRET not in log_text
+
+    def test_redactor_strips_full_url_when_embedded_verbatim(self):
+        from forgelm import _http
+
+        url = f"https://example.com/{self._SECRET}?sig=abc"
+        text = f"connection refused to {url} retrying"
+        masked = _http._redact_url_paths_in_text(text, url)
+        assert self._SECRET not in masked
+        # The host signal is preserved so operators still see the destination.
+        assert "example.com" in masked
+
+    def test_redactor_leaves_scheme_host_only_url_intact(self):
+        from forgelm import _http
+
+        # No path/query → nothing secret to strip → unchanged.
+        text = "failed talking to https://hooks.slack.com (timeout)"
+        masked = _http._redact_url_paths_in_text(text, "https://hooks.slack.com")
+        assert "https://hooks.slack.com" in masked
