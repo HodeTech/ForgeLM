@@ -6,6 +6,12 @@ from forgelm.config import ForgeConfig, TrainingConfig
 from forgelm.results import TrainResult
 from tests.conftest import minimal_config
 
+# F-P8-C-20: this module depends on a snapshot pricing fixture that drifts
+# on a different cadence than the release matrix, so the publish workflow
+# excludes it via `-m 'not fixture_drift'`. The marker is the single
+# source of truth for that exclusion (previously a brittle --ignore path).
+pytestmark = pytest.mark.fixture_drift
+
 
 class TestCostConfig:
     def test_default_none(self):

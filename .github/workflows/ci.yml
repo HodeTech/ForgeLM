@@ -48,21 +48,12 @@ jobs:
       - name: Pydantic description= guard
         run: python tools/check_field_descriptions.py --strict forgelm/config.py
 
+      # F-P8-C-19: promoted from an inline grep (which missed
+      # requests.Session()/aliased-import/whitespace-before-paren forms
+      # and had no own test) to a tested tool with its own
+      # tests/test_check_http_discipline.py.
       - name: HTTP discipline guard
-        run: |
-          set +e
-          # Match ACTUAL CALLS only (the function name followed by an
-          # opening paren) so docstring prose mentioning the same names
-          # is not flagged.
-          violations=$(grep -rn -E '(requests\.(get|post|put|delete|patch|request|head)\(|urllib\.request\.urlopen\(|httpx\.[a-z]+\()' forgelm/ --include='*.py' | grep -v 'forgelm/_http.py')
-          if [ -n "$violations" ]; then
-            echo "::error::Found undisciplined HTTP call(s) outside forgelm/_http.py:"
-            echo "$violations"
-            echo ""
-            echo "Route through forgelm._http.safe_post / safe_get instead."
-            echo "See docs/standards/architecture.md 'HTTP discipline' section."
-            exit 1
-          fi
+        run: python tools/check_http_discipline.py
 
   # --- Job 2: Test (matrix across Python versions) ---
   test:

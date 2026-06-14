@@ -215,15 +215,15 @@ include = ["forgelm*"]
 "forgelm.wizard" = ["_defaults.json"]
 
 [tool.pytest.ini_options]
-addopts = "--cov=forgelm --cov-report=term-missing --cov-fail-under=40"
+# F-P8-C-20: --strict-markers turns any undefined/typo'd @pytest.mark into
+# an error instead of a silent no-op. The marker roster is kept to what is
+# actually applied (the four aspirational unit/integration/smoke/slow
+# markers had zero usages and documented a selection that never existed).
+addopts = "--cov=forgelm --cov-report=term-missing --cov-fail-under=40 --strict-markers"
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
 markers = [
-    "unit: fast unit tests (default — no marker required)",
-    "integration: tests that span multiple subsystems (still no GPU/network)",
-    "smoke: minimal contract-pinning tests (test_smoke.py et al.)",
-    "slow: tests > 5s (used by `pytest -m 'not slow'` selection)",
-    "fixture_drift: tests sensitive to upstream pricing/dataset drift (excluded from release matrix)",
+    "fixture_drift: tests sensitive to upstream pricing/dataset drift; excluded from the release matrix via `pytest -m 'not fixture_drift'` in publish.yml",
 ]
 
 [tool.ruff]

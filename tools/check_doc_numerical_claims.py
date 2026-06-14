@@ -2,9 +2,10 @@
 """Wave 6 / Faz 31 — numerical-drift detector for docs claims.
 
 Inventories canonical counts from code/configs and diffs against
-numerical claims in user-facing markdown. Catches the drift family
-flagged by the 2026-05-07 docs audit: secret-family count, trainer
-count, quickstart-template count, webhook event count.
+numerical claims in user-facing markdown. Catches a known drift family:
+secret-family count, trainer count, quickstart-template count, webhook
+event count — each scraped from its canonical source so a doc claim that
+disagrees fails the gate.
 
 Each check has the form: scrape a known integer from canonical source
 (`forgelm/...py` AST or `forgelm/templates/` directory listing), then
@@ -22,8 +23,6 @@ Usage::
     python3 tools/check_doc_numerical_claims.py
     python3 tools/check_doc_numerical_claims.py --strict   # alias of default
     python3 tools/check_doc_numerical_claims.py --quiet    # silent on success
-
-Plan reference: 2026-05-07 docs audit §10 (CI gate proposals) gate #5.
 """
 
 from __future__ import annotations
@@ -120,6 +119,7 @@ def canonical_webhook_events() -> int:
 
 
 _NUM_WORDS_TO_INT = {
+    # English
     "two": 2,
     "three": 3,
     "four": 4,
@@ -131,11 +131,38 @@ _NUM_WORDS_TO_INT = {
     "ten": 10,
     "eleven": 11,
     "twelve": 12,
+    # Turkish (F-P8-C-27): the TR mirrors phrase the same counts as
+    # `beş`/`sekiz`/... so the guard must read them too, otherwise an
+    # EN/TR fact divergence passes the gate.
+    "iki": 2,
+    "üç": 3,
+    "dört": 4,
+    "beş": 5,
+    "altı": 6,
+    "yedi": 7,
+    "sekiz": 8,
+    "dokuz": 9,
+    "on": 10,
 }
+
+# Count words as a regex alternation, reused across rules so a new word
+# (e.g. a Turkish addition above) only has to be added in one place.
+_NUM_WORD_ALT = "|".join(sorted(_NUM_WORDS_TO_INT, key=len, reverse=True))
+
+# Markdown emphasis markers wrapping a count — ``**five**`` / ``__beş__``.
+# Stripped before matching so an emphasised number is still read
+# (F-P8-C-27: the previous regexes required whitespace right after the
+# number, so a trailing ``**`` defeated them).
+_EMPHASIS_RE = re.compile(r"(\*{1,3}|_{1,3})")
+
+
+def _strip_emphasis(line: str) -> str:
+    """Remove Markdown bold/italic markers so ``**five**`` reads as ``five``."""
+    return _EMPHASIS_RE.sub("", line)
 
 
 def _to_int(s: str) -> Optional[int]:
-    """Convert ``"5"`` or ``"five"`` to ``5``. Return None if not a count."""
+    """Convert ``"5"`` or ``"five"``/``"beş"`` to ``5``. None if not a count."""
     s = s.strip().lower()
     if s.isdigit():
         return int(s)
@@ -156,9 +183,14 @@ def _scan_line_for_mismatches(
     line_idx: int,
     line: str,
 ) -> List[Mismatch]:
-    """Return every mismatch that ``pattern`` finds on a single line."""
+    """Return every mismatch that ``pattern`` finds on a single line.
+
+    The line is emphasis-stripped before matching so ``**five**`` /
+    ``__beş__`` are read; the reported snippet keeps the original text.
+    """
     found: List[Mismatch] = []
-    for match in pattern.finditer(line):
+    scan_line = _strip_emphasis(line)
+    for match in pattern.finditer(scan_line):
         claimed = _to_int(match.group("count"))
         if claimed is None or claimed == canonical_value:
             continue
@@ -192,6 +224,70 @@ def search_doc_claims(pattern: re.Pattern[str], canonical_value: int, label: str
     return out
 
 
+def build_rules() -> List[Tuple[re.Pattern[str], str]]:
+    """Build the ``(pattern, canonical_label)`` scan rules.
+
+    Module-level (not buried in ``main``) so the regexes are unit-testable
+    against synthetic claim strings without invoking the full doc scan
+    (F-P8-C-27 regression coverage).
+
+    Each rule binds a phrase shape to one of the canonical scrapes.
+    Phrases anchor on the *qualifier* (e.g. "webhook" before "events") so
+    generic numbers don't false-positive: "9 secret families" matches;
+    "9 prompts" doesn't; "Six events" without a webhook/wire-format
+    qualifier doesn't either. Lines are emphasis-stripped before matching
+    (see :func:`_scan_line_for_mismatches`), so ``**five**`` reads as
+    ``five``.
+    """
+    return [
+        # "9 secret families", "nine secret families", "9 secret patterns"
+        (
+            re.compile(
+                rf"\b(?P<count>\d+|{_NUM_WORD_ALT})\s+secret\s+(?:families|patterns)",
+                re.IGNORECASE,
+            ),
+            "secret_families",
+        ),
+        # "6 trainer types", "six trainers". Anchor on standalone
+        # numeric/word counts to avoid matching e.g. "Phase 6" or
+        # version numbers.
+        (
+            re.compile(
+                rf"(?<!\.)(?<!\d)\b(?P<count>\d+|{_NUM_WORD_ALT})\s+trainer(?:\s+type)?s\b",
+                re.IGNORECASE,
+            ),
+            "trainer_types",
+        ),
+        # "5 (first-class )?quickstart templates" — require either
+        # "quickstart" or "first-class" as qualifier so generic
+        # "0 templates" / "Wave 0 templates" doesn't match.
+        (
+            re.compile(
+                rf"\b(?P<count>\d+|{_NUM_WORD_ALT})\s+(?:first-class\s+|quickstart\s+|bundled\s+)templates",
+                re.IGNORECASE,
+            ),
+            "templates",
+        ),
+        # "5 webhook events", "**five** wire-format events",
+        # "**sekiz** webhook event'i" — qualifier MUST be one of
+        # webhook / wire-format / lifecycle so audit-event / erasure-event
+        # counts don't false-positive. The count alternation includes the
+        # Turkish number words and the line is emphasis-stripped upstream,
+        # so bold-wrapped EN and TR phrasings are both caught (F-P8-C-27).
+        # ``event'?i?`` tolerates the Turkish possessive suffix
+        # (``event'i``) and a missing plural ``s``; ``olay(ı|lar)`` covers
+        # the alternate Turkish phrasing "N webhook olayı".
+        (
+            re.compile(
+                rf"\b(?P<count>\d+|{_NUM_WORD_ALT})\s+(?:wire-format|webhook|lifecycle)\s+"
+                r"(?:event(?:'?[is]|s)?|olay(?:ı|lar)?)\b",
+                re.IGNORECASE,
+            ),
+            "webhook_events",
+        ),
+    ]
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -211,51 +307,7 @@ def main(argv=None) -> int:
         "webhook_events": canonical_webhook_events(),
     }
 
-    # Each rule binds a phrase shape to one of the canonical scrapes
-    # above. Phrases anchor on the *qualifier* (e.g. "webhook" before
-    # "events") so generic numbers don't false-positive: "9 secret
-    # families" matches; "9 prompts" doesn't; "Six events" without a
-    # webhook/wire-format qualifier doesn't either.
-    rules: List[Tuple[re.Pattern[str], str]] = [
-        # "9 secret families", "nine secret families", "9 secret patterns"
-        (
-            re.compile(
-                r"\b(?P<count>\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+secret\s+(?:families|patterns)",
-                re.IGNORECASE,
-            ),
-            "secret_families",
-        ),
-        # "6 trainer types", "six trainers". Anchor on standalone
-        # numeric/word counts to avoid matching e.g. "Phase 6" or
-        # version numbers.
-        (
-            re.compile(
-                r"(?<!\.)(?<!\d)\b(?P<count>\d+|two|three|four|five|six|seven|eight|nine|ten)\s+trainer(?:\s+type)?s\b",
-                re.IGNORECASE,
-            ),
-            "trainer_types",
-        ),
-        # "5 (first-class )?quickstart templates" — require either
-        # "quickstart" or "first-class" as qualifier so generic
-        # "0 templates" / "Wave 0 templates" doesn't match.
-        (
-            re.compile(
-                r"\b(?P<count>\d+|two|three|four|five|six|seven)\s+(?:first-class\s+|quickstart\s+|bundled\s+)templates",
-                re.IGNORECASE,
-            ),
-            "templates",
-        ),
-        # "5 webhook events", "five wire-format events" — qualifier
-        # MUST be one of webhook / wire-format so audit-event /
-        # erasure-event counts don't false-positive.
-        (
-            re.compile(
-                r"\b(?P<count>\d+|two|three|four|five|six)\s+(?:wire-format|webhook|lifecycle)\s+events?\b",
-                re.IGNORECASE,
-            ),
-            "webhook_events",
-        ),
-    ]
+    rules = build_rules()
 
     mismatches: List[Mismatch] = []
     for pattern, label in rules:

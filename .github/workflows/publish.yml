@@ -93,10 +93,12 @@ jobs:
 
       - name: Test (CPU-only, no-network)
         shell: bash
-        # test_cost_estimation is excluded per Faz 31 closure plan: it
-        # depends on a snapshot pricing fixture that drifts on a different
-        # cadence than the release matrix.
-        run: pytest tests/ -q --ignore=tests/test_cost_estimation.py
+        # Drift-sensitive tests (test_cost_estimation: snapshot pricing
+        # fixture on a different cadence than the release matrix) are
+        # excluded via the @pytest.mark.fixture_drift marker — F-P8-C-20
+        # made the marker the single source of truth instead of a brittle
+        # --ignore path.
+        run: pytest tests/ -q -m 'not fixture_drift'
 
       - name: Generate SBOM (CycloneDX 1.5)
         shell: bash
