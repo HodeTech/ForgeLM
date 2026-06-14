@@ -293,8 +293,10 @@ class TestCanonicalRepoPasses:
         silently bypass the strict gate.  This meta-test asserts the
         registry is the source of truth for those two directories.
 
-        Out-of-scope: ``docs/usermanuals/`` has its own structural
-        validator (``tools/build_usermanuals.py``); top-level docs
+        Out-of-scope for THIS registry test: ``docs/usermanuals/`` is
+        now spine-gated via auto-discovery (``_usermanual_pairs``, see
+        ``TestUsermanualSpineParity``), not the hand-written ``_PAIRS``
+        registry — so it is checked elsewhere, not here.  Top-level docs
         like ``docs/roadmap-tr.md`` and ``docs/product_strategy-tr.md``
         diverge intentionally; gitignored working-memory directories
         (``docs/marketing/``, ``docs/analysis/``) are excluded by
@@ -326,3 +328,64 @@ class TestCanonicalRepoPasses:
             "_PAIRS — register them in tools/check_bilingual_parity.py "
             "or the strict gate will silently skip drift detection."
         )
+
+
+# ---------------------------------------------------------------------------
+# F-P8-C-10 — usermanual page pairs are spine-gated via auto-discovery
+# ---------------------------------------------------------------------------
+
+
+class TestUsermanualSpineParity:
+    def test_all_en_usermanual_pages_are_discovered(self) -> None:
+        """Every ``docs/usermanuals/en/**/*.md`` page must be in the
+        auto-discovered pair set.  Previously only 1 of 66 was registered,
+        so 65 page pairs had no H2/H3/H4 spine gate (F-P8-C-10)."""
+        repo_root = Path(__file__).parent.parent
+        en_root = repo_root / "docs" / "usermanuals" / "en"
+        en_pages = {f"docs/usermanuals/en/{p.relative_to(en_root).as_posix()}" for p in en_root.rglob("*.md")}
+        discovered_en = {en for en, _ in check_bilingual_parity._usermanual_pairs(repo_root)}
+        missing = en_pages - discovered_en
+        assert missing == set(), f"usermanual pages without a spine-parity pair: {sorted(missing)}"
+        # And the discovered set joins the full scanned set.
+        all_en = {en for en, _ in check_bilingual_parity._all_pairs(repo_root)}
+        assert en_pages <= all_en
+
+    def test_missing_tr_usermanual_page_is_flagged(self, tmp_path: Path, monkeypatch) -> None:
+        """A deleted TR usermanual page must surface as a missing-mirror
+        drift — the silent EN-fallback gap the registry left open."""
+        # Isolate to the discovered usermanual pairs: clear the explicit
+        # registry so the absent guides/reference paths under tmp don't
+        # add noise.
+        monkeypatch.setattr(check_bilingual_parity, "_PAIRS", ())
+        en_root = tmp_path / "docs" / "usermanuals" / "en" / "data"
+        en_root.mkdir(parents=True)
+        (en_root / "audit.md").write_text("# Audit\n\n## Overview\n", encoding="utf-8")
+        # NOTE: no tr/ mirror is written → it is missing.
+        rc = main(["--strict", "--repo-root", str(tmp_path)])
+        assert rc == 1
+
+    def test_drifted_tr_usermanual_spine_is_flagged(self, tmp_path: Path, monkeypatch) -> None:
+        """A TR usermanual page missing an H2 section the EN page has must
+        fail the strict gate now that usermanuals are spine-gated."""
+        monkeypatch.setattr(check_bilingual_parity, "_PAIRS", ())
+        base = tmp_path / "docs" / "usermanuals"
+        en = base / "en" / "data" / "audit.md"
+        tr = base / "tr" / "data" / "audit.md"
+        en.parent.mkdir(parents=True)
+        tr.parent.mkdir(parents=True)
+        en.write_text("# Audit\n\n## Overview\n\n## Details\n", encoding="utf-8")
+        tr.write_text("# Denetim\n\n## Genel Bakış\n", encoding="utf-8")  # missing 2nd H2
+        rc = main(["--strict", "--repo-root", str(tmp_path)])
+        assert rc == 1
+
+    def test_clean_tr_usermanual_pair_passes(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setattr(check_bilingual_parity, "_PAIRS", ())
+        base = tmp_path / "docs" / "usermanuals"
+        en = base / "en" / "data" / "audit.md"
+        tr = base / "tr" / "data" / "audit.md"
+        en.parent.mkdir(parents=True)
+        tr.parent.mkdir(parents=True)
+        en.write_text("# Audit\n\n## Overview\n\n## Details\n", encoding="utf-8")
+        tr.write_text("# Denetim\n\n## Genel Bakış\n\n## Ayrıntılar\n", encoding="utf-8")
+        rc = main(["--strict", "--repo-root", str(tmp_path)])
+        assert rc == 0
