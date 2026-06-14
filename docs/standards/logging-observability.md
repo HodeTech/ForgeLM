@@ -140,8 +140,11 @@ class WebhookNotifier:
 
 ### Webhook event vocabulary
 
-The five lifecycle events below are the **only** events that webhook receivers
-should expect. Adding new ones requires a docs update here, a `Notifier`
+The eight events below are the **only** events that webhook receivers
+should expect: five single-stage lifecycle events (`training.*` +
+`approval.required`) plus the three-event `pipeline.*` family that the
+multi-stage orchestrator emits *alongside* (not replacing) the per-stage
+lifecycle events. Adding new ones requires a docs update here, a `Notifier`
 method, a paired audit event, and tests. Do not invent ad-hoc event strings.
 
 | Event | Emitted when | Required fields | Notes |
@@ -151,12 +154,15 @@ method, a paired audit event, and tests. Do not invent ad-hoc event strings.
 | `training.failure` | Training itself crashed (OOM, dataset error, exception in pipeline). | `run_name`, `status="failed"`, `reason` (masked, ≤2048 chars) | Mirrors audit event `pipeline.failed`. Gated by `webhook.notify_on_failure`. |
 | `training.reverted` | A post-training gate (eval / safety / judge / benchmark) rejected the run and `_revert_model` deleted the adapters. | `run_name`, `status="reverted"`, `reason` (masked, ≤2048 chars) | Distinct from `training.failure` so dashboards can separate "training crashed" from "training succeeded but quality regressed". Mirrors audit event `model.reverted`. Gated by `webhook.notify_on_failure`. |
 | `approval.required` | Run succeeded, `evaluation.require_human_approval=true`, model staged for review. | `run_name`, `status="awaiting_approval"`, `model_path` (filesystem path) | Mirrors audit event `human_approval.required`. Operator gets a real-time ping instead of having to poll the audit JSONL. Model weights themselves are **never** in the payload — only the staging path. Gated by `webhook.notify_on_success`. |
+| `pipeline.started` | A multi-stage pipeline run begins, before any stage executes. | `run_name` (the pipeline run id), `status="started"`, `stage_count` | Multi-stage only. Mirrors audit event `pipeline.started`. Gated by `webhook.notify_on_start`. |
+| `pipeline.completed` | A multi-stage pipeline run reaches its terminal state (success, failure, or stopped-at-stage). | `run_name`, `status` (the `final_status`), `final_status`, `stopped_at` | Multi-stage only. Shares the identifier of the audit event `pipeline.completed` (a known wire/audit name collision; correlate on the payload field-set, not the name alone). Gated by `webhook.notify_on_success` (clean finish) or `webhook.notify_on_failure` (early stop). |
+| `pipeline.stage_reverted` | A pipeline stage auto-reverts, before downstream stages are marked skipped. | `run_name`, `status="reverted"`, `stage_name`, `reason` (masked, ≤2048 chars) | Multi-stage only. Mirrors audit event `pipeline.stage_reverted`. Gated by `webhook.notify_on_failure`. |
 
 **Payload schema (every event):**
 
 ```json
 {
-  "event": "<one of the five above>",
+  "event": "<one of the eight above>",
   "run_name": "<string>",
   "status": "<started|succeeded|failed|reverted|awaiting_approval>",
   "metrics": {"<name>": <number>, ...},

@@ -501,6 +501,44 @@ class TestLifecycleVocabulary:
         for forbidden in ("state_dict", "model.safetensors", "pytorch_model.bin", "adapter_model"):
             assert forbidden not in serialized, f"Payload must not carry {forbidden!r}"
 
+    def test_emitted_events_match_documented_vocabulary(self):
+        """XP-05 / F-P4-OPUS-08,32: the set of wire events emitted by
+        WebhookNotifier must equal the documented vocabulary (8 events). The
+        docs previously claimed only 'five' while the code emits eight."""
+        import pathlib
+        import re
+
+        repo = pathlib.Path(__file__).resolve().parent.parent
+        src = (repo / "forgelm" / "webhook.py").read_text(encoding="utf-8")
+        emitted = set(re.findall(r'event\s*=\s*"([^"]+)"', src))
+        documented = {
+            "training.start",
+            "training.success",
+            "training.failure",
+            "training.reverted",
+            "approval.required",
+            "pipeline.started",
+            "pipeline.completed",
+            "pipeline.stage_reverted",
+        }
+        assert emitted == documented, f"webhook event vocabulary drifted: {emitted ^ documented}"
+        assert len(emitted) == 8
+
+    def test_doc_numerical_claims_guard_passes_for_webhook_events(self):
+        """The check_doc_numerical_claims helper must agree with the doc copy:
+        canonical webhook_events count == the number cited in the docs."""
+        import pathlib
+        import sys
+
+        tools_dir = str(pathlib.Path(__file__).resolve().parent.parent / "tools")
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+        import check_doc_numerical_claims as mod  # noqa: PLC0415
+
+        assert mod.canonical_webhook_events() == 8
+        # No 'webhook_events' mismatch should be reported by the guard.
+        assert mod.main(["--quiet"]) == 0
+
 
 class TestWebhookPersistRoundTrip:
     """Regression coverage for the approve/reject AttributeError crash (XP-03).

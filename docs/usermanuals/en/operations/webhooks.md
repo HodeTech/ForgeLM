@@ -31,8 +31,10 @@ $ forgelm --config configs/run.yaml
 
 ## Wire-format events
 
-ForgeLM emits exactly **five** webhook events. The table below is the
-canonical surface mirrored in the
+ForgeLM emits exactly **eight** webhook events: five single-stage
+lifecycle events plus the three `pipeline.*` events the multi-stage
+orchestrator emits alongside them. The table below is the canonical
+surface mirrored in the
 [Audit Event Catalog on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md):
 
 | Event | When fired | Gated by |
@@ -42,6 +44,9 @@ canonical surface mirrored in the
 | `training.failure` | Training raised (OOM, dataset error, unhandled exception). | `webhook.notify_on_failure` |
 | `training.reverted` | A post-training gate (eval / safety / judge / benchmark) rejected the run and `_revert_model` rolled adapters back. | `webhook.notify_on_failure` |
 | `approval.required` | Run succeeded, `evaluation.require_human_approval=true` is set, model staged for review (EU AI Act Article 14). | `webhook.notify_on_success` |
+| `pipeline.started` | A multi-stage pipeline run begins, before any stage executes. | `webhook.notify_on_start` |
+| `pipeline.completed` | A multi-stage pipeline run reaches its terminal state. | `webhook.notify_on_success` / `webhook.notify_on_failure` |
+| `pipeline.stage_reverted` | A pipeline stage auto-reverts, before downstream stages are skipped. | `webhook.notify_on_failure` |
 
 ## Payload shape
 
@@ -120,7 +125,7 @@ live outside ForgeLM.
 :::
 
 :::warn
-**Expecting per-epoch webhooks.** ForgeLM does not emit a per-epoch event — only the five lifecycle events listed above. If you need per-epoch progress, scrape it from the trainer's stdout / `audit_log.jsonl` rather than expecting a webhook fan-out.
+**Expecting per-epoch webhooks.** ForgeLM does not emit a per-epoch event — only the eight events listed above. If you need per-epoch progress, scrape it from the trainer's stdout / `audit_log.jsonl` rather than expecting a webhook fan-out.
 :::
 
 :::tip

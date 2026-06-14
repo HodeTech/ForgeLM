@@ -79,7 +79,7 @@ Best-effort. Şekil, major artış olmadan minor sürümde değişebilir. Çağr
 
 | Sembol | Katman | İmza | Açıklama |
 |---|---|---|---|
-| `forgelm.AuditLogger` | Stable | `AuditLogger(output_dir: str, run_id: str \| None = None)` | Append-only Article 12 audit logger. POSIX `fcntl.flock` kullanır; Windows `msvcrt.locking` kullanır. Her fork edilmiş alt süreç kendi instance'ını kurmalıdır. |
+| `forgelm.AuditLogger` | Stable | `AuditLogger(output_dir: str, run_id: str \| None = None)` | Append-only Article 12 audit logger. POSIX `fcntl.flock` kullanır; Windows'ta süreçler-arası kilit **yoktur** (advisory flock yardımcısı no-op'tur) — Windows'ta eşzamanlı süreçler arasında bir `output_dir`'i paylaşmayın. Her fork edilmiş alt süreç kendi instance'ını kurmalıdır. |
 | `forgelm.AuditLogger.log_event` | Stable | `log_event(event: str, **fields) -> None` | Yapılandırılmış bir olay ekle. Olay kelime dağarcığı [`audit_event_catalog-tr.md`](audit_event_catalog-tr.md)'da belgelenir. |
 | `forgelm.verify_audit_log` | Stable | `verify_audit_log(path: str, *, hmac_secret: str \| None = None, require_hmac: bool = False) -> VerifyResult` | SHA-256 hash zincirini yürür. Zincir hatalarında `VerifyResult(valid=False, reason=...)` döndürür (exception değil); yalnızca okunamaz dosyalar için `OSError` fırlatır. |
 | `forgelm.VerifyResult` | Stable | `dataclass` | Kanonik alanlar (`forgelm/compliance.py:VerifyResult`): `valid: bool`, `entries_count: int`, `first_invalid_index: Optional[int]`, `reason: Optional[str]`. |
@@ -246,7 +246,7 @@ Bu invariant, hafif CI runner'larının, `forgelm doctor`'un ve `python -m forge
 |---|---|---|
 | `ForgeTrainer.train()` | Hayır — TRL GPU state tutar | Hayır |
 | `audit_dataset()` | Evet — her çağrı self-contained | Evet |
-| `AuditLogger.log_event()` | Evet — POSIX'te `flock`, Windows'ta `msvcrt.locking` | Her child için yeni logger kurun; handle'ları fork'lar arasında paylaşmak desteklenmez |
+| `AuditLogger.log_event()` | POSIX'te evet — `flock(LOCK_EX)`; Windows'ta süreçler-arası kilit yoktur (no-op), bu yüzden bir `output_dir`'i süreçler arasında paylaşmayın | Her child için yeni logger kurun; handle'ları fork'lar arasında paylaşmak desteklenmez |
 | `verify_audit_log()` | Evet — read-only | Evet |
 | `WebhookNotifier.notify_*()` | Evet — her çağrı kendi `requests` session'ını açar | Evet |
 

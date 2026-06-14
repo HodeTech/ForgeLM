@@ -438,7 +438,7 @@ The rule: **library code does not call `sys.exit`**.  Every exit-code mapping li
 |---|---|---|
 | `ForgeTrainer.train()` | No — TRL trainer holds GPU state. | No. |
 | `audit_dataset()` | Yes (multiple corpora in parallel threads); each call is self-contained. | Yes. |
-| `AuditLogger.log_event()` | Yes — uses `fcntl.flock` on POSIX (Wave 1).  Windows uses `msvcrt.locking`. | Each forked child should construct its own `AuditLogger`; sharing the file handle across forks is unsupported. |
+| `AuditLogger.log_event()` | Yes — uses `fcntl.flock` on POSIX (Wave 1).  On Windows there is no cross-process lock (the advisory flock helper is a no-op); do not share an `output_dir` across concurrent processes on Windows. | Each forked child should construct its own `AuditLogger`; sharing the file handle across forks is unsupported. |
 | `verify_audit_log()` | Yes — read-only. | Yes. |
 | `WebhookNotifier.notify_*()` | Yes — each call opens its own `requests` session. | Yes. |
 
@@ -530,4 +530,4 @@ The design above shipped end-to-end in v0.5.5:
 - Two version strings (§5): `__version__` (runtime, `importlib.metadata`-derived) + `__api_version__` (semver `1.0.0`); both live in `forgelm/_version.py`.
 - Integration tests (§6): `tests/test_library_api.py` covers public-surface invariants — stable-symbol roster matches `forgelm.__all__`, lazy-import discipline (subprocess assertion that `import forgelm` does not pull `torch` / `transformers` / `trl`), `__getattr__` resolution + caching, `dir(forgelm)` shape, `py.typed` marker presence, and `__api_version__` contract — paired with `tests/test_lazy_imports.py` for the per-submodule lazy-load regression corpus. End-to-end train-and-chat user journeys are exercised by the per-trainer test modules (`tests/test_trainer*.py`, `tests/test_chat.py`), not by `test_library_api.py`.
 - Docs (§7): `docs/reference/library_api_reference{,-tr}.md`, `docs/guides/library_api{,-tr}.md`, `docs/usermanuals/{en,tr}/reference/library-api.md`, README "Library API" section.
-- Errors + concurrency (§8): `ConfigError`, `OptionalDependencyError`, `HttpSafetyError`; multiprocess-safe `AuditLogger.log_event` via `fcntl.flock` / `msvcrt.locking`.
+- Errors + concurrency (§8): `ConfigError`, `OptionalDependencyError`, `HttpSafetyError`; `AuditLogger.log_event` is multiprocess-safe on POSIX via `fcntl.flock` (no cross-process lock on Windows — no-op).

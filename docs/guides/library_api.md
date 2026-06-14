@@ -244,7 +244,7 @@ The library does **not** call `logging.basicConfig()`. Your application does. If
 
 ### Sharing `AuditLogger` across forks
 
-`AuditLogger` uses POSIX `fcntl.flock` (or `msvcrt.locking` on Windows). Sharing the file handle across `os.fork()` children is unsupported — each child must construct its own logger pointing at the same `output_dir`. The chain stays consistent because all writes acquire the lock.
+`AuditLogger` uses POSIX `fcntl.flock`; on Windows there is **no** cross-process lock (the advisory flock helper is a no-op). Sharing the file handle across `os.fork()` children is unsupported — each child must construct its own logger pointing at the same `output_dir`. On POSIX the chain stays consistent because all writes acquire the lock; on Windows, do not run concurrent processes against the same `output_dir` (use a distinct `output_dir` per run).
 
 ### Re-importing on a hot path
 

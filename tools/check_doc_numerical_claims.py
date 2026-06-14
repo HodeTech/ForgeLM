@@ -109,8 +109,10 @@ def canonical_templates() -> int:
 def canonical_webhook_events() -> int:
     """Count distinct ``event="..."`` strings in forgelm/webhook.py.
 
-    The five canonical events are:
-    training.{start, success, failure, reverted}, approval.required.
+    The eight canonical events are the five single-stage lifecycle events —
+    training.{start, success, failure, reverted}, approval.required — plus the
+    three-event ``pipeline.*`` family (pipeline.{started, completed,
+    stage_reverted}) the multi-stage orchestrator emits alongside them.
     """
     src = (FORGELM / "webhook.py").read_text(encoding="utf-8")
     events = set(re.findall(r'event\s*=\s*"([^"]+)"', src))

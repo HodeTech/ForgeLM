@@ -31,7 +31,9 @@ $ forgelm --config configs/run.yaml
 
 ## Wire-format event'ler
 
-ForgeLM tam **beş** webhook event'i yayar. Aşağıdaki tablo
+ForgeLM tam **sekiz** webhook event'i yayar: beş tek-aşamalı yaşam
+döngüsü event'i ve çok-aşamalı orkestratörün bunların yanı sıra emit
+ettiği üç `pipeline.*` event'i. Aşağıdaki tablo
 [GitHub'daki Audit Event Kataloğu](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md)
 ile aynalanan kanonik yüzeydir:
 
@@ -42,6 +44,9 @@ ile aynalanan kanonik yüzeydir:
 | `training.failure` | Eğitim raise ediyor (OOM, dataset hatası, yakalanmamış istisna). | `webhook.notify_on_failure` |
 | `training.reverted` | Eğitim-sonrası bir gate (eval / safety / judge / benchmark) koşumu reddetti ve `_revert_model` adapter'ları geri aldı. | `webhook.notify_on_failure` |
 | `approval.required` | Koşum başarılı, `evaluation.require_human_approval=true` set, model review için staged (EU AI Act Madde 14). | `webhook.notify_on_success` |
+| `pipeline.started` | Çok-aşamalı bir pipeline koşusu başlar, herhangi bir aşama çalışmadan önce. | `webhook.notify_on_start` |
+| `pipeline.completed` | Çok-aşamalı bir pipeline koşusu terminal durumuna ulaşır. | `webhook.notify_on_success` / `webhook.notify_on_failure` |
+| `pipeline.stage_reverted` | Bir pipeline aşaması auto-revert olur, aşağı akış aşamaları skip işaretlenmeden önce. | `webhook.notify_on_failure` |
 
 ## Payload yapısı
 
@@ -121,7 +126,7 @@ payload zaten curated), ve routing hepsi ForgeLM'in dışında yaşar.
 :::
 
 :::warn
-**Per-epoch webhook beklemek.** ForgeLM per-epoch event yayınlamaz — yukarıda listelenen yalnızca beş lifecycle event'i. Per-epoch progress gerekiyorsa, webhook fan-out beklemek yerine trainer'ın stdout'undan / `audit_log.jsonl`'den scrape edin.
+**Per-epoch webhook beklemek.** ForgeLM per-epoch event yayınlamaz — yukarıda listelenen yalnızca sekiz event. Per-epoch progress gerekiyorsa, webhook fan-out beklemek yerine trainer'ın stdout'undan / `audit_log.jsonl`'den scrape edin.
 :::
 
 :::tip

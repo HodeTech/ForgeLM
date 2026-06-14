@@ -245,7 +245,7 @@ Kütüphane `logging.basicConfig()` **çağırmaz**. Uygulamanız çağırır. B
 
 ### `AuditLogger`'ı fork'lar arasında paylaşmak
 
-`AuditLogger` POSIX `fcntl.flock` (veya Windows'ta `msvcrt.locking`) kullanır. File handle'ı `os.fork()` çocukları arasında paylaşmak desteklenmez — her child aynı `output_dir`'i işaret eden kendi logger'ını kurmalıdır. Tüm yazımlar lock'u edindiği için zincir tutarlı kalır.
+`AuditLogger` POSIX `fcntl.flock` kullanır; Windows'ta süreçler-arası kilit **yoktur** (advisory flock yardımcısı no-op'tur). File handle'ı `os.fork()` çocukları arasında paylaşmak desteklenmez — her child aynı `output_dir`'i işaret eden kendi logger'ını kurmalıdır. POSIX'te tüm yazımlar lock'u edindiği için zincir tutarlı kalır; Windows'ta aynı `output_dir`'e karşı eşzamanlı süreç çalıştırmayın (her koşu için ayrı bir `output_dir` kullanın).
 
 ### Hot path'te yeniden import
 
