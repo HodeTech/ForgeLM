@@ -112,6 +112,7 @@ _PAIRS: Tuple[Tuple[str, str], ...] = (
     ("docs/reference/verify_annex_iv_subcommand.md", "docs/reference/verify_annex_iv_subcommand-tr.md"),
     ("docs/reference/verify_audit.md", "docs/reference/verify_audit-tr.md"),
     ("docs/reference/verify_gguf_subcommand.md", "docs/reference/verify_gguf_subcommand-tr.md"),
+    ("docs/reference/verify_integrity_subcommand.md", "docs/reference/verify_integrity_subcommand-tr.md"),
     # docs/usermanuals/ — newly mirrored Phase 14 page.  The rest of
     # docs/usermanuals/{en,tr}/ is structural-parity-validated by the
     # ``_meta.yaml``-driven nav build in ``tools/build_usermanuals.py``

@@ -37,6 +37,17 @@ from .._logging import logger
 # The check fails when a required key is missing OR when its value is
 # the empty string / empty dict / empty list (operator likely forgot
 # to populate it from the auto-generation template).
+#
+# Identity-critical §1 sub-fields that must themselves be non-empty.
+# Without this the top-level container check is satisfied by a
+# ``system_identification`` dict whose every value is a blank
+# placeholder — an Annex IV file with no provider identity and no
+# system name would pass the completeness gate (F-P4-OPUS-17).
+_SYSTEM_IDENTIFICATION_REQUIRED_SUBKEYS: Tuple[str, ...] = (
+    "provider_name",
+    "system_name",
+    "intended_purpose",
+)
 _ANNEX_IV_REQUIRED_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("system_identification", "Annex IV §1 — system identification (name, version, provider, intended_purpose)"),
     ("intended_purpose", "Annex IV §1 — intended purpose statement"),
@@ -134,6 +145,15 @@ def verify_annex_iv_artifact(path: str) -> VerifyAnnexIVResult:
     for key, _description in _ANNEX_IV_REQUIRED_FIELDS:
         if not _is_field_populated(artifact.get(key)):
             missing.append(key)
+    # Deepen §1: the system_identification container is non-empty as long
+    # as it carries the 6 fixed keys, but a dict of all-blank placeholders
+    # is exactly "the operator forgot".  Require the identity-critical
+    # sub-fields to be populated too (F-P4-OPUS-17).
+    sys_ident = artifact.get("system_identification")
+    if isinstance(sys_ident, dict) and "system_identification" not in missing:
+        for subkey in _SYSTEM_IDENTIFICATION_REQUIRED_SUBKEYS:
+            if not _is_field_populated(sys_ident.get(subkey)):
+                missing.append(f"system_identification.{subkey}")
     if missing:
         return VerifyAnnexIVResult(
             valid=False,

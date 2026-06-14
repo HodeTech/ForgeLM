@@ -852,6 +852,23 @@ def _add_verify_gguf_subcommand(subparsers) -> None:
     _add_common_subparser_flags(p, include_output_format=True)
 
 
+def _add_verify_integrity_subcommand(subparsers) -> None:
+    """Art. 15 — verify a model directory against its integrity manifest."""
+    p = subparsers.add_parser(
+        "verify-integrity",
+        help="Verify a model directory against its model_integrity.json SHA-256 manifest.",
+        description=(
+            "Reads `<model_dir>/model_integrity.json` (written by the "
+            "compliance export), recomputes the SHA-256 of every recorded "
+            "artifact, and reports any file that was changed, removed, or "
+            "added since the manifest was generated.  Exits 0 when all "
+            "artifacts match; 1 on any mismatch or missing/malformed manifest."
+        ),
+    )
+    p.add_argument("path", help="Path to the model directory containing model_integrity.json.")
+    _add_common_subparser_flags(p, include_output_format=True)
+
+
 def _add_cache_models_subcommand(subparsers) -> None:
     """Phase 35 — Pre-populate the HuggingFace Hub cache for offline use.
 
@@ -1179,6 +1196,7 @@ def parse_args():
             "  forgelm verify-annex-iv PATH    Verify EU AI Act Annex IV artifact (field set + manifest hash)\n"
             "  forgelm safety-eval --model M   Standalone safety evaluation (HF checkpoint)\n"
             "  forgelm verify-gguf PATH        Verify GGUF model integrity (magic + metadata + SHA-256)\n"
+            "  forgelm verify-integrity DIR    Verify a model dir against its model_integrity.json (Art. 15)\n"
             "\nRun 'forgelm <subcommand> --help' for subcommand details."
         ),
     )
@@ -1203,6 +1221,7 @@ def parse_args():
     _add_verify_annex_iv_subcommand(subparsers)
     _add_safety_eval_subcommand(subparsers)
     _add_verify_gguf_subcommand(subparsers)
+    _add_verify_integrity_subcommand(subparsers)
 
     # --- Top-level flags (training / config-driven mode) ---
     parser.add_argument("--config", type=str, help="Path to the YAML configuration file.")

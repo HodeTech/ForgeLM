@@ -92,6 +92,8 @@ Best-effort. Şekil, major artış olmadan minor sürümde değişebilir. Çağr
 | `forgelm.VerifyAnnexIVResult` | Stable | `dataclass-benzeri` | Kanonik attribute'lar: `valid: bool`, `reason: Optional[str]`, `missing_fields: List[str]`, `manifest_hash_actual: Optional[str]`, `manifest_hash_expected: Optional[str]`. (Not: `verify_annex_iv_artifact(path)` JSON manifest path'i kabul eder, ZIP değil — fonksiyon `path` üzerinde `json.load` çağırır.) |
 | `forgelm.verify_gguf` | Stable | `verify_gguf(path: str) -> VerifyGgufResult` | Bir GGUF dışa aktarmasını (header + tensor catalogue + tokenizer block) doğrular. |
 | `forgelm.VerifyGgufResult` | Stable | `dataclass-benzeri` | Kanonik attribute'lar: `valid: bool`, `reason: Optional[str]`, `checks: Dict[str, Any]` (her şey diğer — header / tensor catalogue / tokenizer block — `checks` içinde yaşar). |
+| `forgelm.verify_integrity` | Stable | `verify_integrity(model_dir: str) -> VerifyIntegrityResult` | Bir model dizinini `model_integrity.json` SHA-256 manifestine karşı doğrular (Madde 15): değiştirilen / silinen / eklenen yapıtları raporlar. |
+| `forgelm.VerifyIntegrityResult` | Stable | `dataclass-benzeri` | Kanonik attribute'lar: `valid: bool`, `reason: Optional[str]`, `changed: List[str]`, `removed: List[str]`, `added: List[str]`, `verified_count: int`. |
 
 ### Benchmark + sentetik veri
 

@@ -329,6 +329,42 @@ class TestForgelmApprove:
         assert kwargs["run_name"] == "approval_run"
         assert kwargs["metrics"] == {}
 
+    def test_approve_audit_write_failure_after_rename_surfaces_error(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """F-P4-OPUS-18: an OSError on the post-rename ``human_approval.granted``
+        write must surface as a clean named exit (EXIT_TRAINING_ERROR) with an
+        operator-actionable AUDIT-GAP message — not a raw uncaught traceback —
+        even though the model is already promoted."""
+        run_id = "fg-auditgap00001"
+        output_dir = self._seed_run(tmp_path, run_id)
+        monkeypatch.setenv("FORGELM_OPERATOR", "alice")
+
+        from forgelm.cli import _run_approve_cmd
+        from forgelm.compliance import AuditLogger
+
+        def _raise_on_granted(self, event, **details):  # noqa: ANN001
+            if event == "human_approval.granted":
+                raise OSError("ENOSPC: no space left on device")
+
+        monkeypatch.setattr(AuditLogger, "log_event", _raise_on_granted)
+
+        args = MagicMock()
+        args.run_id = run_id
+        args.output_dir = str(output_dir)
+        args.comment = None
+
+        with pytest.raises(SystemExit) as ei:
+            _run_approve_cmd(args, output_format="json")
+
+        assert ei.value.code == 2  # EXIT_TRAINING_ERROR
+        # The model was already promoted by the rename (irreversible).
+        assert (output_dir / "final_model").is_dir()
+        assert not (output_dir / "final_model.staging").exists()
+        # The operator gets a clean JSON error naming the audit gap, not a traceback.
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert "AUDIT GAP" in payload["error"]
+        assert "final_model" in payload["error"]
+
     def test_approve_promote_strategy_doc_matches_code(self) -> None:
         """XP-08 / F-P4-OPUS-07 / F-P7-OPUS-17: the locked json-output.md
         approve envelope must document a ``promote_strategy`` value the code can

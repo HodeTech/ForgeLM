@@ -59,6 +59,8 @@ _EXPECTED_STABLE_SYMBOLS = {
     "VerifyAnnexIVResult",
     "verify_gguf",
     "VerifyGgufResult",
+    "verify_integrity",
+    "VerifyIntegrityResult",
     # Webhook notifier.
     "WebhookNotifier",
     # Auxiliary.
@@ -389,7 +391,14 @@ data:
         from forgelm import verify_annex_iv_artifact
 
         artifact = {
-            "system_identification": {"name": "x"},
+            "system_identification": {
+                "name": "x",
+                # Identity-critical §1 sub-fields the verifier requires
+                # to be non-empty (F-P4-OPUS-17).
+                "provider_name": "Acme",
+                "system_name": "x",
+                "intended_purpose": "y",
+            },
             "intended_purpose": "y",
             "system_components": ["a"],
             "computational_resources": {"gpu": "x"},

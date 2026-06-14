@@ -477,14 +477,32 @@ def _run_approve_cmd(args, output_format: str) -> None:
     # shared workstation they intentionally diverge so the audit answers
     # "which pipeline ran this" *and* "which human approved it".
     approver = _cli_facade._resolve_approver_identity()
-    audit.log_event(
-        _EVT_HUMAN_APPROVAL_GRANTED,
-        gate="final_model",
-        run_id=run_id,
-        approver=approver,
-        comment=args.comment or "",
-        promote_strategy=promote_strategy,
-    )
+    # The rename above already promoted the model to ``final_path`` and the
+    # staging dir is consumed, so this write cannot be retried (the
+    # ``os.path.lexists(final_path)`` guard would block a re-run).  An
+    # unwrapped OSError here (ENOSPC, read-only remount in the window)
+    # would leave the model promoted with NO ``human_approval.granted``
+    # event — a permanent Article 12 audit gap surfaced only as a raw
+    # traceback + non-contract exit code.  Surface it loudly through the
+    # named exit code with an operator-actionable message that names the
+    # gap (F-P4-OPUS-18).
+    try:
+        audit.log_event(
+            _EVT_HUMAN_APPROVAL_GRANTED,
+            gate="final_model",
+            run_id=run_id,
+            approver=approver,
+            comment=args.comment or "",
+            promote_strategy=promote_strategy,
+        )
+    except OSError as exc:
+        _output_error_and_exit(
+            output_format,
+            f"Model promoted to {final_path!r} but the human_approval.granted audit event "
+            f"could not be written ({exc}). AUDIT GAP — record a manual `correction` entry "
+            "per docs/standards/logging-observability.md before relying on this run.",
+            EXIT_TRAINING_ERROR,
+        )
 
     metrics = _cli_facade._load_metrics_from_manifest(output_dir)
     notifier = _cli_facade._build_approval_notifier(output_dir)

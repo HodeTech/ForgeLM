@@ -312,6 +312,60 @@ class TestAuditLoggerHashChain:
         assert h0 != h1
         assert h1 != h2
 
+    def test_second_writer_reread_under_lock_does_not_fork_chain(self, tmp_path):
+        """Two loggers sharing one log file must not fork the chain.
+
+        Writer B captures its in-memory ``_prev_hash`` at __init__ time
+        (before writer A appends).  If ``log_event`` appended against that
+        stale value instead of re-reading the chain head under the lock,
+        the chain would silently fork and ``verify_audit_log`` would fail.
+        Regression guard for the re-read-under-lock guarantee
+        (F-P4-OPUS-12).
+        """
+        from forgelm.compliance import AuditLogger, verify_audit_log
+
+        log_path = str(tmp_path / "audit_log.jsonl")
+
+        writer_a = AuditLogger(str(tmp_path))
+        writer_b = AuditLogger(str(tmp_path))  # captures _prev_hash == "genesis"
+
+        writer_a.log_event("a.first")
+        # B's cached _prev_hash is now stale ("genesis"); the under-lock
+        # re-read must override it so B chains onto A's entry.
+        writer_b.log_event("b.second")
+
+        result = verify_audit_log(log_path)
+        assert result.valid is True, f"Chain forked despite under-lock re-read: {result.reason}"
+        assert result.entries_count == 2
+
+
+class TestAuditLoggerGenesisManifest:
+    def test_write_after_truncation_with_stale_manifest_logs_integrity_error(self, tmp_path, caplog):
+        """A truncate-to-empty-then-write must surface an AUDIT INTEGRITY error.
+
+        After one event the genesis manifest pins the first-entry hash.
+        Truncating the log to empty and constructing a fresh logger that
+        writes again must emit the write-time ``AUDIT INTEGRITY`` ERROR
+        (the sole write-time truncation detector). Regression guard for
+        ``_check_genesis_manifest`` (F-P4-OPUS-12).
+        """
+        from forgelm.compliance import AuditLogger
+
+        log_path = tmp_path / "audit_log.jsonl"
+
+        AuditLogger(str(tmp_path)).log_event("first.event")
+        assert (tmp_path / "audit_log.jsonl.manifest.json").is_file()
+
+        # Truncate the log to empty, leaving the manifest in place.
+        log_path.write_text("", encoding="utf-8")
+
+        with caplog.at_level("ERROR", logger="forgelm.compliance"):
+            AuditLogger(str(tmp_path)).log_event("second.event")
+
+        assert any("AUDIT INTEGRITY" in rec.message for rec in caplog.records), (
+            "write-time stale-genesis-manifest path did not log an AUDIT INTEGRITY error"
+        )
+
 
 # --- _sanitize_md ---
 

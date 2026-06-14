@@ -101,6 +101,8 @@ __all__ = [
     "VerifyAnnexIVResult",
     "verify_gguf",
     "VerifyGgufResult",
+    "verify_integrity",
+    "VerifyIntegrityResult",
     # Webhook notifier (experimental — surface may change).
     "WebhookNotifier",
     # Auxiliary.
@@ -120,6 +122,7 @@ _M_DATA_AUDIT = "forgelm.data_audit"
 _M_COMPLIANCE = "forgelm.compliance"
 _M_VERIFY_ANNEX_IV = "forgelm.cli.subcommands._verify_annex_iv"
 _M_VERIFY_GGUF = "forgelm.cli.subcommands._verify_gguf"
+_M_VERIFY_INTEGRITY = "forgelm.cli.subcommands._verify_integrity"
 _M_UTILS = "forgelm.utils"
 _M_BENCHMARK = "forgelm.benchmark"
 
@@ -147,6 +150,8 @@ _LAZY_SYMBOLS: dict[str, tuple[str, str]] = {
     "VerifyAnnexIVResult": (_M_VERIFY_ANNEX_IV, "VerifyAnnexIVResult"),
     "verify_gguf": (_M_VERIFY_GGUF, "verify_gguf"),
     "VerifyGgufResult": (_M_VERIFY_GGUF, "VerifyGgufResult"),
+    "verify_integrity": (_M_VERIFY_INTEGRITY, "verify_integrity"),
+    "VerifyIntegrityResult": (_M_VERIFY_INTEGRITY, "VerifyIntegrityResult"),
     "WebhookNotifier": ("forgelm.webhook", "WebhookNotifier"),
     "setup_authentication": (_M_UTILS, "setup_authentication"),
     "manage_checkpoints": (_M_UTILS, "manage_checkpoints"),
@@ -170,6 +175,10 @@ if _TYPE_CHECKING:  # pragma: no cover — type-only imports
         verify_annex_iv_artifact,
     )
     from .cli.subcommands._verify_gguf import VerifyGgufResult, verify_gguf  # noqa: F401
+    from .cli.subcommands._verify_integrity import (  # noqa: F401
+        VerifyIntegrityResult,
+        verify_integrity,
+    )
     from .compliance import AuditLogger, VerifyResult, verify_audit_log  # noqa: F401
     from .data import prepare_dataset  # noqa: F401
     from .data_audit import (  # noqa: F401

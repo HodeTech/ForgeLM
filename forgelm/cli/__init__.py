@@ -236,6 +236,11 @@ from .subcommands._verify_gguf import (
     _run_verify_gguf_cmd,  # noqa: F401 — re-export for tests
     verify_gguf,  # noqa: F401 — public library function
 )
+from .subcommands._verify_integrity import (
+    VerifyIntegrityResult,  # noqa: F401 — public library type
+    _run_verify_integrity_cmd,  # noqa: F401 — re-export for tests
+    verify_integrity,  # noqa: F401 — public library function
+)
 
 __all__ = [
     # Public exit codes

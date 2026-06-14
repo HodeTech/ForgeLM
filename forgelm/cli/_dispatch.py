@@ -87,6 +87,7 @@ def _dispatch_subcommand(command: str, args) -> None:
         "verify-annex-iv": "_run_verify_annex_iv_cmd",
         "safety-eval": "_run_safety_eval_cmd",
         "verify-gguf": "_run_verify_gguf_cmd",
+        "verify-integrity": "_run_verify_integrity_cmd",
     }
     dispatcher_name = table.get(command)
     if dispatcher_name is None:

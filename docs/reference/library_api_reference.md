@@ -92,6 +92,8 @@ Tables grouped by concern. Every cell is a real attribute on the live `forgelm` 
 | `forgelm.VerifyAnnexIVResult` | Stable | `dataclass-like` | Canonical attributes: `valid: bool`, `reason: Optional[str]`, `missing_fields: List[str]`, `manifest_hash_actual: Optional[str]`, `manifest_hash_expected: Optional[str]`. (Note: `verify_annex_iv_artifact(path)` accepts a JSON manifest path, not a ZIP — the function calls `json.load` on `path`.) |
 | `forgelm.verify_gguf` | Stable | `verify_gguf(path: str) -> VerifyGgufResult` | Validate a GGUF export (header + tensor catalogue + tokenizer block). |
 | `forgelm.VerifyGgufResult` | Stable | `dataclass-like` | Canonical attributes: `valid: bool`, `reason: Optional[str]`, `checks: Dict[str, Any]` (everything else — header / tensor catalogue / tokenizer block — lives inside `checks`). |
+| `forgelm.verify_integrity` | Stable | `verify_integrity(model_dir: str) -> VerifyIntegrityResult` | Verify a model directory against its `model_integrity.json` SHA-256 manifest (Article 15): reports changed / removed / added artifacts. |
+| `forgelm.VerifyIntegrityResult` | Stable | `dataclass-like` | Canonical attributes: `valid: bool`, `reason: Optional[str]`, `changed: List[str]`, `removed: List[str]`, `added: List[str]`, `verified_count: int`. |
 
 ### Benchmark + synthetic data
 

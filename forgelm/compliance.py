@@ -992,6 +992,17 @@ def build_annex_iv_artifact(manifest: Dict[str, Any]) -> Optional[Dict[str, Any]
     if not isinstance(operator_block, dict):
         return None
 
+    # §1 identity-critical sub-fields: skip the file (as we do for an
+    # absent block) when provider_name / system_name / intended_purpose
+    # are all blank, rather than emit a §1 stub the verifier must then
+    # catch (F-P4-OPUS-17).  Mirrors the verifier's nested-completeness
+    # check so the writer never produces an artefact that fails its own
+    # verifier on the §1 gate.
+    if not any(
+        str(operator_block.get(subkey, "")).strip() for subkey in ("provider_name", "system_name", "intended_purpose")
+    ):
+        return None
+
     artifact: Dict[str, Any] = {
         # Annex IV §1: system identification + intended purpose.  Pulled
         # from the operator-supplied compliance block; the verifier
@@ -1061,11 +1072,27 @@ def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
     Serialises the rest with ``sort_keys=True, separators=(",", ":")``
     so non-significant whitespace + key ordering does not affect the
     digest.
+
+    The payload is normalised through ``json.loads(json.dumps(...,
+    default=str))`` *before* the canonical dump so the writer (which
+    hashes the in-memory dict) and the verifier (which hashes the dict
+    read back from disk) operate on byte-identical structures even when
+    the artefact carries non-JSON-native content.  Without this, an
+    integrator passing a manifest with integer dict keys or a ``set``
+    (e.g. de-duplicated ``target_modules``) would get a false-tampering
+    verdict: ``sort_keys=True`` orders integer keys numerically pre-disk
+    but lexicographically once they round-trip to strings, and
+    ``default=str`` stringifies a set in PYTHONHASHSEED-dependent order
+    (F-P4-OPUS-16).  The config-driven path only ever feeds JSON-native
+    types, so this is a no-op there; it closes the gap for the
+    documented public library entry ``build_annex_iv_artifact``.
     """
-    import copy
     import hashlib as _hashlib
 
-    payload = copy.deepcopy(artifact)
+    # Normalise to the post-``default=str`` shape the verifier will see
+    # on disk (this also deep-copies, so the metadata strip below does
+    # not mutate the caller's dict).
+    payload = json.loads(json.dumps(artifact, default=str))
     metadata = payload.get("metadata")
     if isinstance(metadata, dict):
         metadata.pop("manifest_hash", None)
@@ -1075,7 +1102,7 @@ def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
         # metadata block carried only the (now-stripped) hash.
         if not metadata:
             payload.pop("metadata", None)
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -1194,12 +1221,33 @@ def _verify_manifest_payload(manifest: Dict[str, Any]) -> List[str]:
        still in ``running`` status — that indicates a process crash
        mid-stage that the archive must surface (Phase 14 review F-N-2).
     4. **Index monotonicity** — stage indices form 0..N-1 in order.
+    5. **Content hash** — when ``metadata.manifest_hash`` is present, it
+       is recomputed over the canonicalised manifest (minus the metadata
+       block) and a mismatch is flagged.  Absence downgrades to
+       structural-only verification (mirrors the single-stage Annex IV
+       artefact's policy), so older manifests written before the hash
+       was stamped still verify on their structural rules.
     """
     violations: List[str] = []
 
     for key in _PIPELINE_MANIFEST_REQUIRED_KEYS:
         if key not in manifest:
             violations.append(f"missing required top-level key: {key!r}")
+
+    # Content-tamper detection (F-P4-OPUS-20).  When the manifest carries
+    # a manifest_hash, recompute it; a mismatch means a stage field
+    # (metrics, gate_decision, output_model, provider metadata) was
+    # edited after generation in a way the structural/chain checks below
+    # cannot see.
+    metadata = manifest.get("metadata") if isinstance(manifest.get("metadata"), dict) else None
+    expected_hash = metadata.get("manifest_hash") if metadata else None
+    if expected_hash:
+        actual_hash = compute_annex_iv_manifest_hash(manifest)
+        if actual_hash != expected_hash:
+            violations.append(
+                "manifest hash mismatch — pipeline manifest may have been modified after "
+                f"generation (expected {expected_hash[:16]}…, recomputed {actual_hash[:16]}…)."
+            )
 
     stages = manifest.get("stages", [])
     if not isinstance(stages, list):
@@ -1872,6 +1920,14 @@ def generate_pipeline_manifest(state: Any, root_cfg: Any) -> Dict[str, Any]:
         "stages": stages_payload,
     }
     manifest.update(_provider_metadata_from_config(root_cfg))
+    # Stamp a content hash over the whole manifest (minus the metadata
+    # block) so the verifier can detect post-generation edits to stage
+    # metrics / gate_decision / output_model that keep the chain links
+    # self-consistent.  Reuses the single-stage Annex IV canonicalisation
+    # so both manifests share one algorithm.  pipeline_config_hash only
+    # binds the config *inputs*, not the per-stage result payload, so it
+    # cannot stand in for this (F-P4-OPUS-20).
+    manifest["metadata"] = {"manifest_hash": compute_annex_iv_manifest_hash(manifest)}
     return manifest
 
 
