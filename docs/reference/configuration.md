@@ -217,6 +217,15 @@ across retries. Each retry attempt is logged to the audit trail.
 | `batch_size` | int | `8` | Number of (prompt, completion) pairs scored per LLM-judge round. `1` disables batching. |
 | `include_eval_samples` | bool | `false` | Persist raw eval `prompt`, `response`, and judge `reason` strings to `judge_results.json`. **Off by default** for GDPR / EU AI Act Art. 10 privacy — judge reasoning can quote PII from the eval set. Opt in only for debugging. |
 
+> **Judge input truncation:** when building each scoring prompt the judge
+> sees at most the first **500 characters of the eval prompt** and the first
+> **1000 characters of the model response**. This keeps the judge prompt
+> bounded (and the API path cheap); it is below a typical `max_new_tokens`
+> generation budget, so very long answers are judged on a leading fragment.
+> ForgeLM logs a one-time `WARNING` when a row is actually trimmed. The limits
+> are fixed (not yet config-driven) — keep this in mind when tuning `min_score`
+> for long-form fine-tunes.
+
 > **Deprecated:** `evaluation.staging_ttl_days` is superseded by
 > [`retention.staging_ttl_days`](#retention-optional--gdpr-article-17-erasure-horizons).
 > The legacy key is alias-forwarded with a `DeprecationWarning` and removed in
@@ -287,6 +296,16 @@ silently extend the retention horizon by re-using a stale workspace.
 | `models` | list | `[]` | List of `{path, weight}` dicts |
 | `output_dir` | string | `"./merged_model"` | Output directory |
 
+> **TIES/DARE hyperparameters are fixed (not yet config-driven).** ForgeLM's
+> native `ties` merge trims the bottom **20%** of weights by magnitude (keeps
+> the top 80%); the `dare` merge uses `drop_rate=0.3` with a fixed seed. These
+> defaults are intentionally more conservative than the published TIES (keep
+> top ~20%) and DARE (`drop_rate` 0.9+) defaults — they retain more signal so a
+> two-adapter merge is less destructive out of the box, but the result will
+> differ from a paper-faithful merge. Operators who need the published sparsity
+> regimes (or per-knob control) should merge with an external tool such as
+> mergekit until these knobs are exposed on `MergeConfig`.
+
 ---
 
 ## `compliance` (Optional — EU AI Act Art. 11 + Annex IV)
@@ -346,7 +365,8 @@ silently extend the retention horizon by re-using a stale workspace.
 | `max_new_tokens` | int | `1024` | Max tokens per teacher response. |
 | `temperature` | float | `0.7` | Sampling temperature passed to the teacher. |
 | `output_file` | string | `"synthetic_data.jsonl"` | Output JSONL file path. |
-| `output_format` | string | `"messages"` | One of `"messages"` (chat-style array), `"instruction"` (Alpaca-style), `"chatml"`, `"prompt_response"`. |
+| `output_format` | string | `"messages"` | One of `"messages"` (chat-style array), `"instruction"` (Alpaca-style), `"chatml"`, `"prompt_response"`. **`chatml` emits ForgeLM's legacy `{User, Assistant}` key layout — NOT OpenAI `<|im_start|>` ChatML markup.** Use `messages` for a portable chat format. |
+| `min_success_rate` | float | `0.0` | Minimum fraction (0.0–1.0) of seed prompts that must yield a usable example for `forgelm --generate-data` to exit 0. Default `0.0` keeps the legacy "any non-zero yield succeeds" behaviour; raise it so a CI pipeline does not proceed on a near-empty dataset. A failure rate above 20% always logs a `WARNING`. |
 
 ---
 

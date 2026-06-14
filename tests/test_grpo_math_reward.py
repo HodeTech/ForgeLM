@@ -228,6 +228,26 @@ class TestMathRewardFn:
         rewards = _math_reward_fn(["Answer: 7", "Answer: 8"])
         assert rewards == [0.0, 0.0]
 
+    def test_missing_gold_answer_kwarg_warns_once(self, caplog):
+        """The golds-None fallback must surface a single WARNING so an
+        inert-but-wired correctness reward is visible in the run log, instead of
+        silently contributing 0.0 every batch (F-P3-FABLE-50)."""
+        import logging
+
+        # The warn-once flag is a function attribute; reset it so this test is
+        # order-independent and the assertion sees the first-call WARNING.
+        if hasattr(_math_reward_fn, "_warned_no_golds"):
+            del _math_reward_fn._warned_no_golds
+        try:
+            with caplog.at_level(logging.WARNING, logger="forgelm.trainer"):
+                _math_reward_fn(["Answer: 7"])
+                _math_reward_fn(["Answer: 8"])
+            warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "gold_answer" in r.getMessage()]
+            assert len(warnings) == 1, "expected exactly one warn-once record across repeated calls"
+        finally:
+            if hasattr(_math_reward_fn, "_warned_no_golds"):
+                del _math_reward_fn._warned_no_golds
+
     def test_mismatched_lengths_raises(self):
         """Wiring regression: completions and gold_answer must have the same length."""
         with pytest.raises(ValueError, match="zip"):

@@ -188,6 +188,15 @@ training:
 | `batch_size` | int | `8` | LLM-hakim turunda puanlanan (prompt, completion) çift sayısı. `1` batching'i devre dışı bırakır. |
 | `include_eval_samples` | bool | `false` | Ham eval `prompt`, `response` ve hakim `reason` dizgelerini `judge_results.json`'a yazar. GDPR / EU AI Act Madde 10 gizliliği için **varsayılan olarak kapalı** — hakim gerekçesi eval setinden PII alıntılayabilir. Yalnızca hata ayıklama için açın. |
 
+> **Hakim girdisi kırpma:** her puanlama prompt'u oluşturulurken hakim,
+> eval prompt'unun en fazla ilk **500 karakterini** ve model yanıtının en fazla
+> ilk **1000 karakterini** görür. Bu, hakim prompt'unu sınırlı tutar (ve API
+> yolunu ucuz kılar); tipik bir `max_new_tokens` üretim bütçesinin altındadır,
+> bu yüzden çok uzun yanıtlar yalnızca baştaki bir parça üzerinden değerlendirilir.
+> Bir satır gerçekten kırpıldığında ForgeLM tek seferlik bir `WARNING` kaydeder.
+> Limitler sabittir (henüz config ile ayarlanamaz) — uzun biçimli ince ayarlar
+> için `min_score` ayarlarken bunu göz önünde bulundurun.
+
 > **Kullanımdan kaldırıldı:** `evaluation.staging_ttl_days`,
 > [`retention.staging_ttl_days`](#retention-isteğe-bağlı--gdpr-madde-17-silme-ufukları)
 > tarafından devralınmıştır. Eski anahtar `DeprecationWarning` ile alias-forward
@@ -276,7 +285,8 @@ uzatmasını engeller.
 | `max_new_tokens` | int | `1024` | Öğretmen yanıtı başına maksimum token. |
 | `temperature` | float | `0.7` | Öğretmene geçirilen örnekleme sıcaklığı. |
 | `output_file` | string | `"synthetic_data.jsonl"` | Çıktı JSONL dosya yolu. |
-| `output_format` | string | `"messages"` | Şunlardan biri: `"messages"` (chat-style array), `"instruction"` (Alpaca-style), `"chatml"`, `"prompt_response"`. |
+| `output_format` | string | `"messages"` | Şunlardan biri: `"messages"` (chat-style array), `"instruction"` (Alpaca-style), `"chatml"`, `"prompt_response"`. **`chatml`, ForgeLM'in eski `{User, Assistant}` anahtar düzenini üretir — OpenAI `<|im_start|>` ChatML işaretlemesini DEĞİL.** Taşınabilir bir sohbet formatı için `messages` kullanın. |
+| `min_success_rate` | float | `0.0` | `forgelm --generate-data`'nin 0 çıkış kodu vermesi için seed prompt'ların başarılı olması gereken minimum oran (0.0–1.0). Varsayılan `0.0`, eski "sıfırdan farklı herhangi bir verim başarılıdır" davranışını korur; bir CI hattının neredeyse boş bir veri kümesiyle devam etmemesi için yükseltin. %20'nin üzerindeki başarısızlık oranı her zaman bir `WARNING` kaydeder. |
 
 ---
 
@@ -302,6 +312,17 @@ uzatmasını engeller.
 | `method` | string | `"ties"` | `"ties"`, `"dare"`, `"slerp"`, `"linear"` |
 | `models` | list | `[]` | `{path, weight}` sözlük listesi |
 | `output_dir` | string | `"./merged_model"` | Çıktı dizini |
+
+> **TIES/DARE hiperparametreleri sabittir (henüz config ile ayarlanamaz).**
+> ForgeLM'in yerel `ties` birleştirmesi, ağırlıkların büyüklüğe göre alttaki
+> **%20**'sini kırpar (üstteki %80'i tutar); `dare` birleştirmesi sabit bir
+> seed ile `drop_rate=0.3` kullanır. Bu varsayılanlar, yayımlanmış TIES (üstteki
+> ~%20'yi tut) ve DARE (`drop_rate` 0.9+) varsayılanlarından kasıtlı olarak daha
+> korumacıdır — daha fazla sinyal tutarlar, böylece iki-adaptörlü bir birleştirme
+> kutudan çıktığı haliyle daha az yıkıcıdır, ancak sonuç makaleye sadık bir
+> birleştirmeden farklı olacaktır. Yayımlanmış seyreklik rejimlerine (veya
+> knob başına kontrole) ihtiyaç duyan operatörler, bu knob'lar `MergeConfig`
+> üzerinde sunulana dek mergekit gibi harici bir araçla birleştirmelidir.
 
 ## `auth` (İsteğe bağlı)
 

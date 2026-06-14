@@ -113,14 +113,18 @@ def _load_arch_params(model_name_or_path: str, trust_remote_code: bool = False) 
         "intermediate_size": hint[2] if hint else 11008,
         "vocab_size": 32000,
         "num_attention_heads": 32,
-        "num_key_value_heads": 32,
     }
     for key, default in defaults.items():
         if params.get(key) is None:
             params[key] = default
 
-    # Derived: GQA key-value groups
-    if params["num_key_value_heads"] is None:
+    # Derived: a non-GQA checkpoint reports num_attention_heads but omits
+    # num_key_value_heads — kv heads then equal attention heads. ``defaults``
+    # deliberately does NOT carry num_key_value_heads (F-P3-FABLE-58): if it
+    # did, this derivation would be dead code and such a model would be scored
+    # with 32 kv heads instead of its real num_attention_heads, undercounting
+    # the K/V projection parameters.
+    if params.get("num_key_value_heads") is None:
         params["num_key_value_heads"] = params["num_attention_heads"]
 
     return params
@@ -171,14 +175,6 @@ def _base_model_gb(num_params: int, quant: str) -> float:
     """Model weight memory in GB."""
     bpp = _BYTES_PER_PARAM.get(quant, 2.0)
     return num_params * bpp / (1024**3)
-
-
-def _lora_adapter_gb(arch: Dict[str, Any], lora_r: int, target_module_count: int) -> float:
-    """LoRA adapter parameter memory in GB (always fp32 trainable params)."""
-    h = arch["hidden_size"]
-    # Each target module: A (h×r) + B (r×h); two matrices per layer × num_layers
-    adapter_params = 2 * lora_r * h * target_module_count * arch["num_hidden_layers"]
-    return adapter_params * 4 / (1024**3)  # fp32
 
 
 def _optimizer_state_gb(trainable_params: int, optimizer: str) -> float:

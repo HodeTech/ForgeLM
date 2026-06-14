@@ -130,7 +130,7 @@ def _load_unsloth(
         from unsloth import FastLanguageModel
     except ImportError as e:
         raise ImportError(
-            "Unsloth backend requested but 'unsloth' is not installed.  Install with: pip install unsloth"
+            "unsloth backend requires the 'unsloth' extra. Install with: pip install 'forgelm[unsloth]'"
         ) from e
 
     # Default to 4-bit when neither flag is set (Unsloth's primary mode)

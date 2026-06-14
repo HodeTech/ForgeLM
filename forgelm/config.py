@@ -876,7 +876,24 @@ class SyntheticConfig(BaseModel):
     output_file: str = Field(default="synthetic_data.jsonl", description="Output JSONL file path.")
     output_format: Literal["messages", "instruction", "chatml", "prompt_response"] = Field(
         default="messages",
-        description="Output format: `messages` (chat-style array), `instruction` (Alpaca-style), `chatml`, or `prompt_response`.",
+        description=(
+            "Output format: `messages` (chat-style array), `instruction` (Alpaca-style), "
+            "`chatml`, or `prompt_response`. NOTE: `chatml` emits ForgeLM's legacy "
+            "`{User, Assistant}` key layout (which `data.py` trains on natively), NOT "
+            "OpenAI `<|im_start|>` ChatML markup — pick `messages` if you need a "
+            "portable chat format for external tools."
+        ),
+    )
+    min_success_rate: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum fraction of seed prompts that must yield a usable example for "
+            "`forgelm --generate-data` to report success (exit 0). Default `0.0` keeps "
+            "the legacy behaviour (any non-zero yield succeeds); raise it so a CI "
+            "pipeline does not train on a near-empty dataset from a mostly-failed run."
+        ),
     )
 
     @model_validator(mode="after")

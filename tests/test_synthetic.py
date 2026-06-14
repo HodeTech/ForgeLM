@@ -216,7 +216,20 @@ class TestSyntheticGenerator:
         )
         gen = SyntheticDataGenerator(config)
         entry = gen._format_entry("Q?", "A.")
+        # F-P3-FABLE-62: 'chatml' emits the legacy {User, Assistant} key layout,
+        # NOT OpenAI <|im_start|> ChatML markup — and there must be no im_start.
         assert entry == {"User": "Q?", "Assistant": "A."}
+        assert "<|im_start|>" not in json.dumps(entry)
+
+    def test_chatml_naming_discrepancy_documented(self):
+        """F-P3-FABLE-62: the schema description must warn that 'chatml' is the
+        User/Assistant layout, not <|im_start|> markup, so the naming drift is
+        not silent."""
+        from forgelm.config import SyntheticConfig
+
+        desc = SyntheticConfig.model_fields["output_format"].description
+        assert "User, Assistant" in desc
+        assert "im_start" in desc
 
     def test_file_backend_generate(self, tmp_path):
         """Test file-based teacher (pre-generated responses)."""

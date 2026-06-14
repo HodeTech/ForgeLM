@@ -533,7 +533,8 @@ class TestLoadModel:
 
         from forgelm.inference import _load_unsloth
 
-        with pytest.raises(ImportError, match="unsloth"):
+        # F-P3-FABLE-52: the message must carry the canonical extra-install hint.
+        with pytest.raises(ImportError, match=r"pip install 'forgelm\[unsloth\]'"):
             _load_unsloth(
                 "org/model",
                 adapter=None,

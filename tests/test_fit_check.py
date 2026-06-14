@@ -68,6 +68,58 @@ class TestEstimateParamCount:
         assert _estimate_param_count(arch_small) < _estimate_param_count(arch_large)
 
 
+class TestLoadArchParamsGqaDerivation:
+    """F-P3-FABLE-58: a checkpoint that reports num_attention_heads but omits
+    num_key_value_heads must derive kv heads == attention heads, not fall back
+    to the old hardcoded default of 32."""
+
+    def _stub_transformers(self, cfg_obj):
+        transformers_stub = MagicMock()
+        transformers_stub.AutoConfig.from_pretrained.return_value = cfg_obj
+        return transformers_stub
+
+    def test_missing_kv_heads_derives_from_attention_heads(self):
+        from types import SimpleNamespace
+
+        # SimpleNamespace WITHOUT num_key_value_heads → getattr(..., None) is None.
+        cfg = SimpleNamespace(
+            hidden_size=4096,
+            num_hidden_layers=32,
+            intermediate_size=11008,
+            vocab_size=32000,
+            num_attention_heads=64,
+        )
+        with patch.dict(sys.modules, {"transformers": self._stub_transformers(cfg)}):
+            from forgelm.fit_check import _load_arch_params
+
+            arch = _load_arch_params("org/exotic-model")
+        assert arch["num_key_value_heads"] == 64, "kv heads must derive from attention heads, not default 32"
+
+    def test_explicit_kv_heads_preserved(self):
+        from types import SimpleNamespace
+
+        cfg = SimpleNamespace(
+            hidden_size=4096,
+            num_hidden_layers=32,
+            intermediate_size=11008,
+            vocab_size=32000,
+            num_attention_heads=32,
+            num_key_value_heads=8,  # genuine GQA
+        )
+        with patch.dict(sys.modules, {"transformers": self._stub_transformers(cfg)}):
+            from forgelm.fit_check import _load_arch_params
+
+            arch = _load_arch_params("org/gqa-model")
+        assert arch["num_key_value_heads"] == 8
+
+
+def test_lora_adapter_gb_helper_removed():
+    """F-P3-FABLE-59: the dead, drift-prone _lora_adapter_gb helper is gone."""
+    import forgelm.fit_check as fc
+
+    assert not hasattr(fc, "_lora_adapter_gb")
+
+
 # ---------------------------------------------------------------------------
 # VRAM component helpers
 # ---------------------------------------------------------------------------

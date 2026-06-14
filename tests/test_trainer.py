@@ -294,6 +294,52 @@ class TestEvaluationChecks:
         assert train_result.reverted is True
         revert.assert_called_once()
 
+    @pytest.mark.parametrize("gate", ["benchmark", "safety", "judge"])
+    def test_gate_failure_without_auto_revert_logs_warning(self, caplog, gate):
+        """F-P3-FABLE-49: a gate that fails while ``auto_revert=false`` keeps the
+        model, so the operator must see a WARNING connecting the ERROR-level gate
+        failure to the subsequent exit 0 — otherwise the auto_revert=false
+        rationale has to be reverse-engineered from the config."""
+        import logging
+
+        trainer = self._make_trainer(auto_revert=False)
+        train_result = TrainResult(success=True, metrics={}, final_model_path="/tmp/nonexistent/final")
+        metrics: dict[str, float] = {}
+
+        failing = MagicMock()
+        failing.passed = False
+        if gate == "benchmark":
+            failing.scores = {"hellaswag": 0.30}
+            failing.average_score = 0.30
+            failing.failure_reason = "Benchmark score below threshold."
+            apply = trainer._apply_benchmark_result
+        elif gate == "safety":
+            failing.safety_score = 0.10
+            failing.safe_ratio = 0.10
+            failing.category_distribution = {}
+            failing.severity_distribution = {}
+            failing.low_confidence_count = 0
+            failing.total_count = 5
+            failing.failure_reason = "Safety check failed."
+            apply = trainer._apply_safety_result
+        else:
+            failing.average_score = 2.0
+            failing.details = []
+            failing.failure_reason = "Judge score below threshold."
+            apply = trainer._apply_judge_result
+
+        with caplog.at_level(logging.WARNING, logger="forgelm.trainer"):
+            result = apply(failing, train_result, metrics, "/tmp/nonexistent/final")
+
+        assert result is True  # model kept, run continues
+        warnings = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING and gate in r.getMessage() and "auto_revert=false" in r.getMessage()
+        ]
+        assert len(warnings) == 1, f"expected one '{gate}' kept-no-revert WARNING"
+        assert train_result.error == failing.failure_reason
+
 
 @pytest.mark.skipif(not torch_available, reason="torch not installed")
 class TestGovernanceSectionMissingEvent:

@@ -170,3 +170,33 @@ class TestAdvancedMergeDispatch:
         out = merging._advanced_merge(sentinel, [{"path": "a"}], method)
         assert out is sentinel
         assert captured["method"] == method
+
+
+class TestMergeHyperparameters:
+    """F-P3-FABLE-60: TIES/DARE hyperparameters live as named, documented
+    module constants (not bare magic numbers at the call sites), and the trim
+    semantics match the corrected docstring (keep top 80% at trim_fraction=0.2)."""
+
+    def test_named_constants_have_documented_defaults(self):
+        import forgelm.merging as merging
+
+        assert merging._TIES_TRIM_FRACTION == pytest.approx(0.2)
+        assert merging._DARE_DROP_RATE == pytest.approx(0.3)
+        assert merging._DARE_SEED == 42
+
+    def test_trim_fraction_keeps_top_majority(self):
+        # 10 strictly-increasing magnitudes; the call-site trim_fraction (0.2)
+        # zeroes only the smallest-magnitude tail and KEEPS the large majority —
+        # the corrected docstring's "keep top ~80%" behaviour (NOT the inverted
+        # "keep top 20%" the old docstring implied).
+        import forgelm.merging as merging
+
+        d = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
+        result = _ties_merge_tensor([d], [1.0], trim_fraction=merging._TIES_TRIM_FRACTION)
+        zeroed = (result == 0).sum().item()
+        survived = (result != 0).sum().item()
+        # The bottom tail is trimmed; the clear majority (incl. the largest
+        # magnitudes) survives — the opposite of a keep-top-20% merge.
+        assert 1 <= zeroed <= 2
+        assert survived >= 8
+        assert result[-1] == pytest.approx(10.0)  # largest magnitude always survives

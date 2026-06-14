@@ -180,15 +180,25 @@ def _run_generate_data(config: ForgeConfig, output_format: str) -> None:
     generator = SyntheticDataGenerator(config)
     result = generator.generate()
 
+    # A near-total generation failure must not slip through as success:true /
+    # exit 0 just because one prompt happened to yield (F-P3-FABLE-61). Gate on
+    # the configured ``synthetic.min_success_rate`` (default 0.0 = legacy "any
+    # yield succeeds"); independently warn when the failure rate crosses a fixed
+    # sanity bound so a degraded run is visible even without a configured floor.
+    min_success_rate = config.synthetic.min_success_rate
+    meets_threshold = result.successful > 0 and result.success_rate >= min_success_rate
+    _SANITY_FAILURE_RATE = 0.2  # >20% failures is suspicious regardless of the floor
+
     if output_format == "json":
         print(
             json.dumps(
                 {
-                    "success": result.successful > 0,
+                    "success": meets_threshold,
                     "total_prompts": result.total_prompts,
                     "successful": result.successful,
                     "failed": result.failed,
                     "success_rate": round(result.success_rate, 4),
+                    "min_success_rate": min_success_rate,
                     "output_file": result.output_file,
                     "duration_seconds": round(result.duration_seconds, 2),
                     "errors": result.errors[:10],
@@ -205,7 +215,25 @@ def _run_generate_data(config: ForgeConfig, output_format: str) -> None:
             result.output_file,
         )
 
-    if result.successful == 0:
+    if result.total_prompts > 0 and (1.0 - result.success_rate) > _SANITY_FAILURE_RATE:
+        logger.warning(
+            "Synthetic generation failure rate is %.1f%% (%d/%d prompts failed) — "
+            "the resulting dataset may be small or skewed; inspect the errors before training.",
+            (1.0 - result.success_rate) * 100,
+            result.failed,
+            result.total_prompts,
+        )
+
+    if not meets_threshold:
+        if result.successful == 0:
+            logger.error("Synthetic data generation produced no usable examples.")
+        else:
+            logger.error(
+                "Synthetic data generation success rate %.1f%% is below the configured "
+                "synthetic.min_success_rate of %.1f%%.",
+                result.success_rate * 100,
+                min_success_rate * 100,
+            )
         sys.exit(EXIT_TRAINING_ERROR)
 
 

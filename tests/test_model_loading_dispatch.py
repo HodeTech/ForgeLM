@@ -131,6 +131,21 @@ def test_unsloth_pissa_raises(monkeypatch):
         m._load_unsloth(config)
 
 
+def test_unsloth_missing_dep_error_has_canonical_install_hint(monkeypatch):
+    """F-P3-FABLE-52: the ImportError must carry the canonical extra-install
+    hint (``pip install 'forgelm[unsloth]'``), not a bare 'Please install it.'."""
+    # A stub module without FastLanguageModel makes `from unsloth import
+    # FastLanguageModel` raise ImportError without needing unsloth uninstalled.
+    monkeypatch.setitem(__import__("sys").modules, "unsloth", SimpleNamespace())
+
+    config = SimpleNamespace(
+        model=SimpleNamespace(name_or_path="org/m", max_length=2048, load_in_4bit=False),
+        lora=SimpleNamespace(method="lora", use_dora=False, use_rslora=False),
+    )
+    with pytest.raises(ImportError, match=r"pip install 'forgelm\[unsloth\]'"):
+        m._load_unsloth(config)
+
+
 # --- F-P3-FABLE-10: load_in_4bit on non-CUDA warns ---------------------------
 
 

@@ -366,6 +366,11 @@ class SyntheticDataGenerator:
         elif fmt == "instruction":
             return {"instruction": prompt, "output": response}
         elif fmt == "chatml":
+            # NOTE (F-P3-FABLE-62): this is ForgeLM's legacy {User, Assistant}
+            # key layout (data.py detects + trains on it natively), NOT OpenAI
+            # <|im_start|> ChatML wire markup. The config value name is kept for
+            # backward compatibility; the schema/doc description spells out the
+            # discrepancy so users feeding external ChatML tools pick `messages`.
             return {"User": prompt, "Assistant": response}
         else:
             # Default: simple prompt/response

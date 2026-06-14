@@ -11,6 +11,15 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("forgelm.merging")
 
+# TIES/DARE merge hyperparameters (F-P3-FABLE-60). Fixed for now — not yet
+# config-driven via MergeConfig (roadmap). Named here so the values are a
+# single documented source of truth rather than bare magic numbers at the call
+# sites, and so the deliberate departure from the published paper defaults is
+# visible. See _ties_dare_merge's docstring for the rationale.
+_TIES_TRIM_FRACTION = 0.2  # trim bottom 20% of weights → keep top 80%
+_DARE_DROP_RATE = 0.3  # drop 30% of deltas (paper recommends 0.9+ for FT deltas)
+_DARE_SEED = 42  # fixed so a merge is reproducible run-to-run
+
 
 @dataclass
 class MergeResult:
@@ -193,13 +202,29 @@ def _ties_dare_merge(base_model, adapters, method):
     """Merge using TIES or DARE algorithm directly on state dicts.
 
     TIES (TIES-Merging): Trim, Elect Sign, and Merge
-    - Trims small delta values (keeps top-k% by magnitude)
+    - Trims the smallest-magnitude delta values per task, keeping the rest
     - Resolves sign conflicts by majority vote
     - Merges remaining values
 
     DARE (Drop And REscale):
-    - Randomly drops delta values with probability p
-    - Rescales remaining values by 1/(1-p) to preserve expected magnitude
+    - Randomly drops delta values with probability ``drop_rate``
+    - Rescales remaining values by 1/(1-drop_rate) to preserve expected magnitude
+
+    Hyperparameters (``trim_fraction``, ``drop_rate``, DARE ``seed``) are
+    currently fixed at the call sites below — they are **not** yet exposed in
+    :class:`forgelm.config.MergeConfig`. The shipped defaults are deliberately
+    conservative and differ from the published papers (F-P3-FABLE-60):
+
+    * TIES ``trim_fraction=0.2`` trims the bottom 20% of weights and **keeps the
+      top 80%**. The TIES-Merging paper's headline default keeps the top ~20%
+      (a far sparser merge); ForgeLM keeps more signal so a two-adapter merge is
+      less destructive out of the box.
+    * DARE ``drop_rate=0.3`` is below the 0.9+ regime the DARE paper recommends
+      for fine-tuned deltas, again favouring signal retention.
+
+    Config-driven exposure of these knobs is tracked on the roadmap; until then
+    operators needing paper-faithful sparsity should merge with an external tool
+    (e.g. mergekit) — see docs/reference/configuration.md (merge section).
     """
     from peft import PeftModel
 
@@ -235,9 +260,9 @@ def _ties_dare_merge(base_model, adapters, method):
             continue
 
         if method == "ties":
-            merged_delta[key] = _ties_merge_tensor(deltas, weights, trim_fraction=0.2)
+            merged_delta[key] = _ties_merge_tensor(deltas, weights, trim_fraction=_TIES_TRIM_FRACTION)
         elif method == "dare":
-            merged_delta[key] = _dare_merge_tensor(deltas, weights, drop_rate=0.3)
+            merged_delta[key] = _dare_merge_tensor(deltas, weights, drop_rate=_DARE_DROP_RATE, seed=_DARE_SEED)
         else:
             merged_delta[key] = sum(d * w for d, w in zip(deltas, weights))
 
