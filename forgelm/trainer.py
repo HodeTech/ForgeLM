@@ -1468,21 +1468,42 @@ class ForgeTrainer:
             if result.benchmark_scores is not None:
                 benchmark_dict = {"scores": result.benchmark_scores, "average": result.benchmark_average}
 
-            # Temporarily restore original batch size for compliance manifest accuracy
-            _saved_bs = self.config.training.per_device_train_batch_size
-            _saved_ga = self.config.training.gradient_accumulation_steps
-            self.config.training.per_device_train_batch_size = getattr(self, "_original_batch_size", _saved_bs)
-            self.config.training.gradient_accumulation_steps = getattr(self, "_original_grad_accum", _saved_ga)
-            manifest = generate_training_manifest(
-                config=self.config,
-                metrics=metrics,
-                resource_usage=result.resource_usage,
-                safety_result=safety_dict,
-                judge_result=judge_dict,
-                benchmark_result=benchmark_dict,
-            )
-            self.config.training.per_device_train_batch_size = _saved_bs
-            self.config.training.gradient_accumulation_steps = _saved_ga
+            # OOM recovery mutates config in place (per_device_train_batch_size /
+            # gradient_accumulation_steps). The manifest records the *configured*
+            # (pre-OOM) batch size — the documented contract — but the model card
+            # reads the *effective* (post-OOM) value, so without an explicit
+            # marker the two artefacts silently contradict (F-P3-FABLE-04).
+            # Record BOTH values + an ``oom_recovery`` flag so an auditor sees the
+            # discrepancy explained, and restore inside ``finally`` so a manifest
+            # build error can't leave config holding the configured values under
+            # the outer BLE001 catch.
+            _effective_bs = self.config.training.per_device_train_batch_size
+            _effective_ga = self.config.training.gradient_accumulation_steps
+            _configured_bs = getattr(self, "_original_batch_size", _effective_bs)
+            _configured_ga = getattr(self, "_original_grad_accum", _effective_ga)
+            _oom_applied = _effective_bs != _configured_bs or _effective_ga != _configured_ga
+            try:
+                self.config.training.per_device_train_batch_size = _configured_bs
+                self.config.training.gradient_accumulation_steps = _configured_ga
+                manifest = generate_training_manifest(
+                    config=self.config,
+                    metrics=metrics,
+                    resource_usage=result.resource_usage,
+                    safety_result=safety_dict,
+                    judge_result=judge_dict,
+                    benchmark_result=benchmark_dict,
+                )
+            finally:
+                self.config.training.per_device_train_batch_size = _effective_bs
+                self.config.training.gradient_accumulation_steps = _effective_ga
+            if _oom_applied:
+                manifest["training_parameters"]["oom_recovery"] = {
+                    "applied": True,
+                    "configured_batch_size": _configured_bs,
+                    "configured_gradient_accumulation_steps": _configured_ga,
+                    "effective_batch_size": _effective_bs,
+                    "effective_gradient_accumulation_steps": _effective_ga,
+                }
             compliance_dir = os.path.join(self.checkpoint_dir, "compliance")
             export_compliance_artifacts(manifest, compliance_dir)
 
