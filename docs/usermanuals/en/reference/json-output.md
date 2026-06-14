@@ -41,7 +41,7 @@ Environment check. See [Doctor command](#/getting-started/first-run).
 | Key | Type | Notes |
 |---|---|---|
 | `success` | bool | `true` when no probe `fail` AND no probe crash; `false` otherwise. |
-| `checks` | list[object] | One entry per probe in execution order. Probe names are stable (e.g. `python.version`, `torch.cuda`, `numpy.torch_abi`, `gpu.inventory`, `extras.qlora`, `hf_hub.reachable`, `hf_hub.offline_cache`, `disk.workspace`, `operator.identity`). |
+| `checks` | list[object] | One entry per probe in execution order. Probe names are stable (e.g. `python.version`, `torch.cuda`, `numpy.torch_abi`, `gpu.inventory`, `extras.qlora`, `hf_hub.reachable`, `hf_hub.offline_cache`, `disk.workspace`, `operator.identity`, `pypdf_normalise.turkish`). In `--offline` mode `hf_hub.offline_cache` replaces `hf_hub.reachable`. |
 | `checks[].name` | str | Probe name. Stable across versions; new probes append rather than rename. |
 | `checks[].status` | str | One of `pass`, `warn`, `fail`. A probe that raised surfaces as `status: "fail"` with `extras.crashed: true`; the crash is also counted in `summary.crashed`. |
 | `checks[].detail` | str | Operator-facing one-line description of the result. |

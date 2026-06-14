@@ -306,6 +306,43 @@ class TestOptionalExtraCheck:
         assert "pip install 'forgelm[ghost]'" in result.detail
         assert result.extras["installed"] is False
 
+    def test_present_module_detail_does_not_over_promise_importability(self) -> None:
+        """F-P7-OPUS-35: find_spec only proves discoverability, not that
+        ``import`` succeeds — the pass detail must not claim "Installed"."""
+        from forgelm.cli.subcommands._doctor import _check_optional_extra
+
+        result = _check_optional_extra("fakextra", "json", "stdlib JSON")
+        assert result.status == "pass"
+        assert "not import-tested" in result.detail.lower()
+
+    def test_broken_extra_not_misreported_as_absent(self, monkeypatch) -> None:
+        """F-P7-OPUS-35: a find_spec that raises (e.g. a __spec__=None shim)
+        must propagate as a crash, NOT be silently downgraded to a
+        'not installed' warn."""
+        import importlib.util
+
+        from forgelm.cli.subcommands._doctor import _check_optional_extra
+
+        def _raise(_module):
+            raise ModuleNotFoundError("broken parent")
+
+        monkeypatch.setattr(importlib.util, "find_spec", _raise)
+        with pytest.raises(ModuleNotFoundError):
+            _check_optional_extra("broken", "broken_mod", "broken purpose")
+
+
+class TestDoctorDocProbeList:
+    def test_json_output_doc_lists_pypdf_normalise_probe(self) -> None:
+        """F-P7-OPUS-34: every stable probe name the live plan always emits
+        must appear in the json-output.md probe-name list (EN + TR)."""
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent
+        for lang in ("en", "tr"):
+            doc = repo_root / "docs" / "usermanuals" / lang / "reference" / "json-output.md"
+            text = doc.read_text(encoding="utf-8")
+            assert "pypdf_normalise.turkish" in text, f"{lang} json-output.md omits pypdf_normalise.turkish"
+
 
 class TestHfHubReachableCheck:
     """Probe verifies the HF Hub is reachable.

@@ -364,7 +364,12 @@ def _check_optional_extra(extra: str, module: str, purpose: str) -> _CheckResult
     return _CheckResult(
         name=f"extras.{extra}",
         status=_STATUS_PASS,
-        detail=f"Installed (module {module}, purpose: {purpose}).",
+        # ``find_spec`` confirms the module is discoverable but does NOT execute
+        # it — a present-but-import-broken extra (e.g. bitsandbytes whose CUDA
+        # .so fails to load) still resolves a spec.  Word the detail as
+        # "discoverable" so the pass does not over-promise importability
+        # (F-P7-OPUS-35).
+        detail=f"Discoverable, not import-tested (module {module}, purpose: {purpose}).",
         extras={"extra": extra, "module": module, "installed": True},
     )
 
