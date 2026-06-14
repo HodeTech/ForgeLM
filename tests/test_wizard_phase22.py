@@ -22,6 +22,7 @@ reads and uses a temp directory for persistence.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -29,6 +30,7 @@ from unittest.mock import patch
 import pytest
 
 from forgelm import wizard
+from forgelm.cli import _exit_codes as wizard_exit_codes
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -137,13 +139,15 @@ class TestNavigationTokens:
             with pytest.raises(wizard.WizardReset):
                 wizard._check_navigation_token(token)
 
-    def test_cancel_token_does_not_raise(self):
-        # Cancel is contextual — the BYOD path interprets it as "fall
-        # back to the full wizard" and the step orchestrator relies on
-        # Ctrl-C / Ctrl-D for clean exits.  Auto-raising on cancel
-        # would break the existing BYOD flow.
-        for token in ("cancel", "c", "q", "quit"):
-            wizard._check_navigation_token(token)
+    def test_cancel_token_raises_wizardcancel(self):
+        # F-P7-OPUS-05: the welcome banner promises ``cancel`` / ``q``
+        # exit cleanly "at any prompt", so the primitive prompt must
+        # auto-raise ``WizardCancel``.  The BYOD prelude catches it
+        # locally to preserve its "fall back to the full wizard"
+        # semantics (see test_byod fall-back tests).
+        for token in ("cancel", "c", "q", "quit", "CANCEL", "  Quit  "):
+            with pytest.raises(wizard.WizardCancel):
+                wizard._check_navigation_token(token)
 
     def test_empty_string_does_not_raise(self):
         wizard._check_navigation_token("")
@@ -1835,3 +1839,114 @@ class TestPRDB6ExpanduserCanonicalisation:
         # ``C:\Users\foo\configs\...`` (no leading slash).  Use
         # ``os.path.isabs`` for cross-platform absoluteness.
         assert os.path.isabs(result)
+
+
+class TestWizardCancelToken:
+    """F-P7-OPUS-05 — `cancel`/`q` honoured at every prompt, exits cleanly."""
+
+    def test_cancel_token_in_step_machine_returns_cancelled_outcome(self, monkeypatch, isolated_state_dir):
+        # Force a TTY so the full-wizard path is taken, decline the
+        # quickstart prelude, then type `cancel` at the very first
+        # step-machine prompt.  The welcome banner promises this exits
+        # cleanly; assert a cancelled outcome rather than a corrupted config.
+        import sys as _sys
+
+        monkeypatch.setattr(_sys.stdin, "isatty", lambda: True)
+        with patch(
+            "builtins.input",
+            side_effect=_input_returning(
+                "n",  # decline the quickstart-template prelude
+                "cancel",  # first step-machine prompt → WizardCancel
+            ),
+        ):
+            outcome = wizard.run_wizard_full()
+        assert outcome.cancelled is True
+        assert outcome.config_path is None
+
+    def test_cancel_token_in_byod_prelude_falls_back_to_full_wizard(self):
+        # The BYOD prelude still treats `cancel` as "fall back to the full
+        # wizard" (its long-standing contextual meaning), proving the new
+        # WizardCancel raise does not break that flow.
+        with patch(
+            "builtins.input",
+            side_effect=_input_returning("y", "domain-expert", "cancel"),
+        ):
+            result = wizard._maybe_run_quickstart_template()
+        assert result is None
+
+
+class TestWizardPreludeNavigation:
+    """F-P7-OPUS-08 — back/reset/cancel in the prelude never crash the CLI."""
+
+    def test_back_in_quickstart_prelude_does_not_crash(self, monkeypatch, isolated_state_dir):
+        import sys as _sys
+
+        monkeypatch.setattr(_sys.stdin, "isatty", lambda: True)
+        # Accept the prelude offer, then type `back` at the template-pick
+        # prompt.  Pre-fix this raised an UNCAUGHT WizardBack (exit 1
+        # traceback); now it falls through to the full wizard.  Feed a
+        # follow-up `cancel` so the full wizard terminates deterministically.
+        with patch(
+            "builtins.input",
+            side_effect=_input_returning("y", "back", "n", "cancel"),
+        ):
+            outcome = wizard.run_wizard_full()
+        # Must be a clean WizardOutcome, never a raised WizardBack/Reset.
+        assert isinstance(outcome, wizard.WizardOutcome)
+
+    def test_reset_in_quickstart_prelude_does_not_crash(self, monkeypatch, isolated_state_dir):
+        import sys as _sys
+
+        monkeypatch.setattr(_sys.stdin, "isatty", lambda: True)
+        with patch(
+            "builtins.input",
+            side_effect=_input_returning("y", "reset", "n", "cancel"),
+        ):
+            outcome = wizard.run_wizard_full()
+        assert isinstance(outcome, wizard.WizardOutcome)
+
+
+class TestWizardJsonModeSeam:
+    """F-P7-OPUS-06 / -07 — wizard CLI seam honours --output-format json."""
+
+    def _args(self, **overrides):
+        defaults = {
+            "wizard": False,
+            "wizard_start_from": None,
+            "config": None,
+            "output_format": "text",
+        }
+        defaults.update(overrides)
+        return type("Args", (), defaults)()
+
+    def test_wizard_json_mode_emits_envelope_and_exits_cancelled(self, capsys):
+        from forgelm.cli._wizard import _maybe_run_wizard
+
+        with pytest.raises(SystemExit) as exc:
+            _maybe_run_wizard(self._args(wizard=True, output_format="json"))
+        assert exc.value.code == wizard_exit_codes.EXIT_WIZARD_CANCELLED
+        out = capsys.readouterr()
+        # Every line of stdout must be valid JSON with success=False.
+        payload = json.loads(out.out)
+        assert payload["success"] is False
+        assert "json" in payload["error"].lower()
+        # The interactive prompts/banner must NOT have leaked to stdout.
+        assert "Welcome" not in out.out
+
+    def test_wizard_start_from_warning_goes_to_stderr_in_json_mode(self, capsys):
+        from forgelm.cli._wizard import _maybe_run_wizard
+
+        # --wizard-start-from without --wizard, in JSON mode: the guidance
+        # warning must land on stderr so it never precedes the dispatcher's
+        # JSON envelope on stdout (F-P7-OPUS-07).
+        _maybe_run_wizard(self._args(wizard=False, wizard_start_from="x.yaml", output_format="json"))
+        out = capsys.readouterr()
+        assert out.out == ""  # nothing on the data stream
+        assert "no effect without --wizard" in out.err
+
+    def test_wizard_start_from_warning_goes_to_stdout_in_text_mode(self, capsys):
+        from forgelm.cli._wizard import _maybe_run_wizard
+
+        _maybe_run_wizard(self._args(wizard=False, wizard_start_from="x.yaml", output_format="text"))
+        out = capsys.readouterr()
+        assert "no effect without --wizard" in out.out

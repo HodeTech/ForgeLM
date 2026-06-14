@@ -14,7 +14,7 @@ import shlex
 from pathlib import Path
 from typing import List, Optional
 
-from ._io import _CANCEL_TOKENS, _HF_HUB_ID_RE, _print, _prompt, _prompt_yes_no
+from ._io import _CANCEL_TOKENS, _HF_HUB_ID_RE, WizardCancel, _print, _prompt, _prompt_yes_no
 
 # ---------------------------------------------------------------------------
 # Sentinels + thresholds
@@ -260,12 +260,20 @@ def _validate_local_jsonl(raw_path: str):
 def _resolve_byod_dataset_path() -> Optional[str]:
     """Prompt the user for a BYOD dataset path and validate it."""
     while True:
-        dataset_path = _prompt(
-            "Path to your dataset JSONL (must exist as a JSONL file) or HF Hub ID, "
-            "or 'cancel' to fall back to the full wizard",
-            "",
-        )
-        if dataset_path.strip().lower() in _CANCEL_TOKENS:
+        # ``cancel`` (and its aliases) now raise ``WizardCancel`` from the
+        # primitive prompt (F-P7-OPUS-05); in the BYOD prelude we honour the
+        # long-standing "fall back to the full wizard" semantics by catching
+        # it here instead of letting it bubble to a clean exit.
+        try:
+            dataset_path = _prompt(
+                "Path to your dataset JSONL (must exist as a JSONL file) or HF Hub ID, "
+                "or 'cancel' to fall back to the full wizard",
+                "",
+            )
+        except WizardCancel:
+            _print("  Cancelled — falling back to the full wizard.")
+            return None
+        if dataset_path.strip().lower() in _CANCEL_TOKENS:  # pragma: no cover — defensive; cancel now raises
             _print("  Cancelled — falling back to the full wizard.")
             return None
         if not dataset_path:

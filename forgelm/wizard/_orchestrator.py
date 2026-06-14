@@ -48,6 +48,7 @@ from ._io import (
     _HF_HUB_ID_RE,
     _PLATFORM,
     WizardBack,
+    WizardCancel,
     WizardReset,
     _detect_hardware,
     _print,
@@ -917,16 +918,28 @@ def run_wizard_full(start_from: Optional[str] = None) -> WizardOutcome:
         # E3: skip the quickstart prelude — operator's intent is "iterate
         # on this YAML", not "pick a curated template".
         return _run_full_wizard_outcome(start_from=start_from)
-    quickstart_path = _maybe_run_quickstart_template()
-    if quickstart_path is not None:
-        # Quickstart template path: ``_finalize_quickstart_path`` returns
-        # the path when the operator wants to train now, else None.
-        # Either way the YAML was saved by the quickstart machinery.
-        finalized = _finalize_quickstart_path(quickstart_path)
-        return WizardOutcome(
-            config_path=quickstart_path,
-            start_training=finalized is not None,
-        )
+    # The quickstart-template prelude runs BEFORE the step machine, so its
+    # prompts' navigation tokens have no handler of their own.  Catch them
+    # here (F-P7-OPUS-08): ``cancel`` exits cleanly; ``back``/``reset``
+    # before any step have nothing to go back to, so fall through to the
+    # full wizard rather than crashing with an uncaught traceback.
+    try:
+        quickstart_path = _maybe_run_quickstart_template()
+        if quickstart_path is not None:
+            # Quickstart template path: ``_finalize_quickstart_path`` returns
+            # the path when the operator wants to train now, else None.
+            # Either way the YAML was saved by the quickstart machinery.
+            finalized = _finalize_quickstart_path(quickstart_path)
+            return WizardOutcome(
+                config_path=quickstart_path,
+                start_training=finalized is not None,
+            )
+    except WizardCancel:
+        _print("\n  Wizard cancelled.  No config written.")
+        return WizardOutcome(config_path=None, start_training=False)
+    except (WizardBack, WizardReset):
+        _print("\n  Falling back to the full configuration wizard.")
+        return _run_full_wizard_outcome()
     _print("\n  Falling back to the full configuration wizard.")
     return _run_full_wizard_outcome()
 
@@ -1040,6 +1053,13 @@ def _run_full_wizard_outcome(start_from: Optional[str] = None) -> WizardOutcome:
         state = _maybe_resume_state()
     try:
         state = _drive_wizard_steps(state)
+    except WizardCancel:
+        # Operator typed ``cancel`` / ``q`` at a step prompt — the
+        # welcome banner promises this exits cleanly (F-P7-OPUS-05).
+        # Preserve state so a rerun can resume, mirroring the Ctrl-C path.
+        _persist_state(state)
+        _print("\n  Wizard cancelled.  No config written.")
+        return WizardOutcome(config_path=None, start_training=False)
     except (KeyboardInterrupt, EOFError):
         _persist_state(state)
         _print(f"\n  Interrupted.  State preserved at {_wizard_state_path()} — rerun `forgelm --wizard` to resume.")
