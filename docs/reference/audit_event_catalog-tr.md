@@ -31,7 +31,7 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 | `training.started`         | Trainer fine-tuning koşusunu başlatır.                                          | _(payload yok — yalnız zarf)_                                                      | 12    |
 | `training.oom_recovery`    | OOM kurtarma yolu `per_device_train_batch_size`'i yarıya indirip yeniden denedi (eğitim-arası event). | `old_batch_size`, `new_batch_size`, `new_grad_accum` | 12 / 15 |
 | `benchmark.evaluation_completed` | `lm-eval-harness` yapılandırılmış benchmark suite'inin değerlendirmesini bitirdi. | `passed`, `average`, `scores`                  | 15 |
-| `safety.evaluation_completed`    | Güvenlik değerlendirmesi bitti (Llama Guard / ShieldGemma koşusu).             | `passed`, `safe_ratio`, `safety_score`, `categories` | 15 |
+| `safety.evaluation_completed`    | Güvenlik değerlendirmesi bitti (Llama Guard / ShieldGemma koşusu).             | `passed`, `safe_ratio`, `total_count`, `safety_score`, `categories` | 15 |
 | `judge.evaluation_completed`     | LLM-as-judge skorlaması bitti.                                                  | `passed`, `average_score`                       | 15 |
 | `pipeline.completed`       | Uçtan uca CLI koşusu (eğitim + değerlendirme + dışa aktarma) 0 koduyla biter.   | `success`, `metrics_summary`                                                       | 12    |
 | `pipeline.failed`          | Pipeline tamamlanmadan bir hata ile iptal olur.                                 | `error`                                                                            | 12    |

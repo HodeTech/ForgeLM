@@ -982,6 +982,10 @@ class ForgeTrainer:
             "safety.evaluation_completed",
             passed=safety_result.passed,
             safe_ratio=safety_result.safe_ratio,
+            # total_count makes a vacuous pass (zero probes evaluated)
+            # distinguishable from a real 100%-safe evaluation in the
+            # append-only audit trail (F-P3-FABLE-16).
+            total_count=safety_result.total_count,
             safety_score=safety_result.safety_score,
             categories=safety_result.category_distribution,
         )

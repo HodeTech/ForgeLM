@@ -491,6 +491,80 @@ class TestSafetyEvalDispatcher:
             f"safety-eval must exit EXIT_EVAL_FAILURE (3) on safety-gate non-pass, got {ei.value.code}"
         )
 
+    def test_classifier_load_failure_exits_training_error(self, tmp_path: Path, monkeypatch) -> None:
+        """F-P3-FABLE-12: a classifier that never loaded is a runtime problem
+        (exit 2), not a threshold failure (exit 3).  run_safety_evaluation
+        flags this with ``evaluation_completed=False``."""
+        from forgelm.cli.subcommands import _safety_eval
+
+        stub_result = SimpleNamespace(
+            passed=False,
+            evaluation_completed=False,
+            safety_score=None,
+            safe_ratio=1.0,
+            category_distribution={},
+            failure_reason="Classifier load failed: boom",
+        )
+        monkeypatch.setattr(_safety_eval, "_load_model_for_safety", lambda *a, **kw: (object(), object()))
+        monkeypatch.setattr("forgelm.safety.run_safety_evaluation", lambda **kw: stub_result)
+
+        probes = tmp_path / "probes.jsonl"
+        probes.write_text('{"prompt": "x"}\n')
+        args = _build_args(
+            model="gpt2",
+            classifier="./nonexistent",
+            probes=str(probes),
+            default_probes=False,
+            output_dir=str(tmp_path),
+            max_new_tokens=8,
+        )
+        with pytest.raises(SystemExit) as ei:
+            _safety_eval._run_safety_eval_cmd(args, output_format="json")
+        assert ei.value.code == 2, (
+            f"safety-eval must exit EXIT_TRAINING_ERROR (2) when the classifier never loaded, got {ei.value.code}"
+        )
+
+    def test_standalone_enables_track_categories_and_audit_logger(self, tmp_path: Path, monkeypatch) -> None:
+        """F-P3-FABLE-13/12: the standalone path must enable category tracking
+        (so the documented breakdown is reachable) and wire an AuditLogger (so
+        the documented classifier_load_failed event can fire)."""
+        from forgelm.cli.subcommands import _safety_eval
+
+        captured: dict = {}
+
+        def fake_run(**kw):
+            captured.update(kw)
+            return SimpleNamespace(
+                passed=True,
+                evaluation_completed=True,
+                safety_score=0.99,
+                safe_ratio=0.99,
+                category_distribution={"violent_crimes": 1},
+                failure_reason=None,
+            )
+
+        # Pin a deterministic operator so AuditLogger construction never trips
+        # the anonymous-operator refusal in a CI runner with no login user.
+        monkeypatch.setenv("FORGELM_OPERATOR", "ci@test")
+        monkeypatch.setattr(_safety_eval, "_load_model_for_safety", lambda *a, **kw: (object(), object()))
+        monkeypatch.setattr("forgelm.safety.run_safety_evaluation", fake_run)
+
+        probes = tmp_path / "probes.jsonl"
+        probes.write_text('{"prompt": "x"}\n')
+        args = _build_args(
+            model="gpt2",
+            classifier=None,
+            probes=str(probes),
+            default_probes=False,
+            output_dir=str(tmp_path),
+            max_new_tokens=8,
+        )
+        with pytest.raises(SystemExit) as ei:
+            _safety_eval._run_safety_eval_cmd(args, output_format="json")
+        assert ei.value.code == 0
+        assert captured["thresholds"].track_categories is True
+        assert captured["audit_logger"] is not None
+
 
 # ---------------------------------------------------------------------------
 # Wave 2b final-review absorption — F-36-03 parametrised tampering test

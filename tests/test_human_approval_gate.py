@@ -223,6 +223,7 @@ class TestHumanApprovalGateTrainer:
             passed=False,
             safety_score=0.2,
             safe_ratio=0.2,
+            total_count=10,
             category_distribution={"violence": 3},
             severity_distribution={"high": 3},
             low_confidence_count=0,
@@ -237,6 +238,34 @@ class TestHumanApprovalGateTrainer:
         assert result.final_model_path is None, "revert deletes the model — final_model_path must be cleared"
         assert result.awaiting_approval is False, "a reverted run is never awaiting approval"
         trainer._revert_model.assert_called_once()
+
+    def test_safety_audit_event_records_total_count(self, tmp_path: Path) -> None:
+        """F-P3-FABLE-16: the ``safety.evaluation_completed`` audit payload must
+        carry ``total_count`` so a vacuous pass (zero probes evaluated) is
+        distinguishable from a real 100%-safe evaluation in the audit trail."""
+        from types import SimpleNamespace
+
+        from forgelm.results import TrainResult
+
+        trainer, output_dir = self._make_trainer(tmp_path, require_approval=False)
+        result = TrainResult(success=True)
+        passing_safety = SimpleNamespace(
+            passed=True,
+            safety_score=1.0,
+            safe_ratio=1.0,
+            total_count=42,
+            category_distribution=None,
+            severity_distribution=None,
+            low_confidence_count=0,
+            failure_reason=None,
+        )
+        cont = trainer._apply_safety_result(passing_safety, result, {}, str(output_dir / "final_model"))
+
+        assert cont is True
+        events = _read_audit_events(output_dir / "audit_log.jsonl")
+        completed = [e for e in events if e["event"] == "safety.evaluation_completed"]
+        assert len(completed) == 1
+        assert completed[0]["total_count"] == 42
 
 
 # ---------------------------------------------------------------------------

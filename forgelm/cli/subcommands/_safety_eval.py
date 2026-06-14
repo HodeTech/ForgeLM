@@ -191,13 +191,26 @@ def _run_safety_eval_cmd(args, output_format: str) -> None:
     max_new_tokens = int(getattr(args, "max_new_tokens", 512) or 512)
 
     try:
-        from forgelm.safety import run_safety_evaluation
+        from forgelm.safety import SafetyEvalThresholds, run_safety_evaluation
     except ImportError as exc:
         _output_error_and_exit(
             output_format,
             f"forgelm.safety unavailable; this should never happen on a healthy install.  ImportError: {exc}",
             EXIT_TRAINING_ERROR,
         )
+
+    # Wire an AuditLogger so the documented Article-15
+    # ``audit.classifier_load_failed`` record actually fires on this surface
+    # (F-P3-FABLE-12): without it run_safety_evaluation's emission guard
+    # (`if audit_logger is not None`) always skipped and no audit log was ever
+    # written to --output-dir.
+    audit_logger = _build_audit_logger(output_dir, output_format)
+
+    # Enable category tracking on the standalone path so the documented
+    # per-category breakdown the parser/docs advertise is actually reachable
+    # (it was always {} because thresholds defaulted to track_categories=False
+    # — F-P3-FABLE-13).
+    thresholds = SafetyEvalThresholds(track_categories=True)
 
     model, tokenizer = _load_model_for_safety(model_path, output_format)
 
@@ -209,6 +222,8 @@ def _run_safety_eval_cmd(args, output_format: str) -> None:
             test_prompts_path=probes_path,
             max_new_tokens=max_new_tokens,
             output_dir=output_dir,
+            thresholds=thresholds,
+            audit_logger=audit_logger,
         )
     except Exception as exc:  # noqa: BLE001 — broad surface: classifier load failure, OOM, generation crash all funnel into one operator-facing failure path. # NOSONAR
         _output_error_and_exit(
@@ -225,6 +240,15 @@ def _run_safety_eval_cmd(args, output_format: str) -> None:
         output_dir=output_dir,
     )
     _emit_safety_result(payload, output_format)
+    # F-P3-FABLE-12: a classifier that never loaded (or a probes file with no
+    # usable prompts) is *not* a threshold failure — it's a runtime/config
+    # problem.  run_safety_evaluation flags those returns with
+    # ``evaluation_completed=False``; route them to EXIT_TRAINING_ERROR (2) so
+    # a regulated CI pipeline that retries on 2 (broken env) and blocks-deploy
+    # on 3 (gate said no) branches correctly rather than treating a transient
+    # HF-Hub outage as "the model failed the safety gate".
+    if not getattr(result, "evaluation_completed", True):
+        sys.exit(EXIT_TRAINING_ERROR)
     # Wave 2b Round-5 review F-W2B-SAFETY: a model that completes
     # evaluation but fails the safety gate is an *evaluation failure*
     # (operator-actionable: retrain or re-classify), not a config
@@ -232,6 +256,23 @@ def _run_safety_eval_cmd(args, output_format: str) -> None:
     # regulated CI pipelines can distinguish "the gate said no" from
     # "the run never started because the config was rejected".
     sys.exit(EXIT_SUCCESS if payload["passed"] else EXIT_EVAL_FAILURE)
+
+
+def _build_audit_logger(output_dir: str, output_format: str) -> Any:
+    """Construct an AuditLogger for the standalone safety-eval surface.
+
+    Returns ``None`` (degrading to no audit emission) only if AuditLogger
+    construction itself fails — e.g. the operator-identity policy refuses an
+    anonymous run.  A missing audit log must not abort the safety evaluation
+    itself, but the failure is surfaced loudly rather than swallowed silently.
+    """
+    try:
+        from forgelm.compliance import AuditLogger
+
+        return AuditLogger(output_dir)
+    except Exception as exc:  # noqa: BLE001 — best-effort: audit logging is a secondary record-keeping side effect; the safety evaluation is the primary operation and must still run. AuditLogger construction crosses the operator-identity policy (raises RuntimeError) and filesystem surface (OSError).
+        logger.warning("safety-eval: audit logging disabled (AuditLogger init failed): %s", exc)
+        return None
 
 
 def _build_safety_eval_payload(
@@ -297,5 +338,6 @@ __all__ = [
     "_resolve_probes_path",
     "_emit_safety_result",
     "_build_safety_eval_payload",
+    "_build_audit_logger",
     "_DEFAULT_PROBES_RELPATH",
 ]

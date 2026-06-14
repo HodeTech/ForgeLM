@@ -31,7 +31,7 @@ The hash chain advances after the line lands on disk (`flush` + `fsync`), so an 
 | `training.started`         | Trainer begins a fine-tuning run.                                         | _(no payload — envelope only)_                                                           | 12      |
 | `training.oom_recovery`    | OOM recovery path halved `per_device_train_batch_size` and retried (mid-training event). | `old_batch_size`, `new_batch_size`, `new_grad_accum` | 12 / 15 |
 | `benchmark.evaluation_completed` | `lm-eval-harness` finished evaluating the configured benchmark suite. | `passed`, `average`, `scores`                       | 15 |
-| `safety.evaluation_completed`    | Safety evaluation finished (Llama Guard / ShieldGemma run).            | `passed`, `safe_ratio`, `safety_score`, `categories` | 15 |
+| `safety.evaluation_completed`    | Safety evaluation finished (Llama Guard / ShieldGemma run).            | `passed`, `safe_ratio`, `total_count`, `safety_score`, `categories` | 15 |
 | `judge.evaluation_completed`     | LLM-as-judge scoring finished.                                          | `passed`, `average_score`                            | 15 |
 | `pipeline.completed`       | End-to-end CLI run (training + evaluation + export) returned exit code 0. | `success`, `metrics_summary`                                                              | 12      |
 | `pipeline.failed`          | Pipeline aborted with an error before completion.                         | `error`                                                                                  | 12      |
