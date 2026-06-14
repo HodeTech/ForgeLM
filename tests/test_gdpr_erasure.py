@@ -1342,3 +1342,55 @@ class TestFacadeReExports:
             "_scan_retention_violations",
         ):
             assert hasattr(_cli_facade, name), f"forgelm.cli must re-export {name!r}"
+
+
+# ---------------------------------------------------------------------------
+# F-P5-OPUS-07 — error_message masked + PII-redacted + length-bounded before
+# it enters the append-only audit chain (design gdpr_erasure.md §6).
+# ---------------------------------------------------------------------------
+
+
+class TestErasureFailedErrorMessageSanitised:
+    def test_sanitise_helper_redacts_email_and_bounds_length(self) -> None:
+        from forgelm.cli.subcommands._purge import (
+            _AUDIT_ERROR_MESSAGE_MAX,
+            _sanitise_audit_error_message,
+        )
+
+        raw = "rewrite failed near row {'email': 'ali@example.com'} " + ("x" * 500)
+        out = _sanitise_audit_error_message(raw)
+        assert "ali@example.com" not in out, "email must be masked by the PII regex pass"
+        assert len(out) <= _AUDIT_ERROR_MESSAGE_MAX + len("…[truncated]")
+
+    def test_row_erasure_failure_error_message_masked_and_bounded(self, tmp_path: Path, monkeypatch) -> None:
+        """Atomic-rewrite OSError whose message embeds an email + a long
+        body must NOT land that PII in the audit chain, and must be capped.
+        """
+        from forgelm.cli.subcommands import _purge
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "row-Z", "text": "subject data"}])
+
+        leaked = "ali@example.com"
+        long_tail = "Y" * 600
+
+        def _boom(*_a, **_k):
+            raise OSError(f"write failed at row containing {leaked} :: {long_tail}")
+
+        monkeypatch.setattr(_purge, "_atomic_rewrite_dropping_lines", _boom)
+
+        args = _build_args(row_id="row-Z", corpus=str(corpus), output_dir=str(tmp_path))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+        assert ei.value.code == _purge.EXIT_TRAINING_ERROR
+
+        events = _read_audit_events(tmp_path / "audit_log.jsonl")
+        failed = next(e for e in events if e["event"] == "data.erasure_failed")
+        assert failed["error_class"] == "OSError"
+        # PII masked.
+        assert leaked not in failed["error_message"]
+        # Bounded (not the full 600-char tail).
+        assert len(failed["error_message"]) <= _purge._AUDIT_ERROR_MESSAGE_MAX + len("…[truncated]")
+        # And the raw email never appears ANYWHERE in the persisted chain.
+        assert leaked not in (tmp_path / "audit_log.jsonl").read_text()

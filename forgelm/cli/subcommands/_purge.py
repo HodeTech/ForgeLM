@@ -88,6 +88,41 @@ _ROW_ID_KEYS: Tuple[str, ...] = ("id", "row_id")
 # operator handles the residual disposal manually).
 _VALID_RUN_KINDS: Tuple[str, ...] = ("staging", "artefacts")
 
+# Cap for the ``error_message`` field persisted into the append-only audit
+# chain.  Mirrors ``reverse_pii._AUDIT_ERROR_MESSAGE_MAX`` so the two GDPR
+# subcommands bound the field identically (F-P5-OPUS-07).
+_AUDIT_ERROR_MESSAGE_MAX = 200
+
+
+def _sanitise_audit_error_message(message: str) -> str:
+    """Mask + redact + bound ``error_message`` before it enters the chain.
+
+    ``data.erasure_failed`` carries ``error_message=str(exc)`` for an
+    ``OSError`` raised mid-erasure.  A Python exception string can embed
+    secret-bearing header values or, worse, corpus row content (emails /
+    phone numbers / names) when a downstream library quotes the offending
+    line — which would land that PII in the append-only audit log
+    permanently (CLAUDE.md principle 5).  ``docs/design/gdpr_erasure.md``
+    §6 mandates this field be routed through
+    :func:`forgelm._http._mask_secrets_in_text` and then the
+    :mod:`forgelm.data_audit._pii_regex` mask helpers; reverse-pii already
+    length-bounds its sibling field.  This helper applies all three passes
+    (secret mask → PII regex mask → length bound) so the load-bearing
+    privacy mandate and the length-bound precedent are met together
+    (F-P5-OPUS-07).
+    """
+    from forgelm._http import _mask_secrets_in_text
+    from forgelm.data_audit._pii_regex import mask_pii
+
+    # ``_mask_secrets_in_text`` needs a header map to know which values to
+    # strip; the purge path has no outbound headers, so pass ``None`` (it
+    # short-circuits to a no-op) per design §6's explicit note.
+    masked = _mask_secrets_in_text(message, None)
+    masked = mask_pii(masked)
+    if len(masked) <= _AUDIT_ERROR_MESSAGE_MAX:
+        return masked
+    return masked[:_AUDIT_ERROR_MESSAGE_MAX] + "…[truncated]"
+
 
 def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoReturn:
     """Emit *msg* as a structured JSON error or a log record, then exit.
@@ -583,7 +618,7 @@ def _perform_row_erasure_and_audit(
             _EVT_ERASURE_FAILED,
             **request_fields,
             error_class=exc.__class__.__name__,
-            error_message=str(exc),
+            error_message=_sanitise_audit_error_message(str(exc)),
         )
         _output_error_and_exit(
             output_format,
@@ -806,7 +841,7 @@ def _run_purge_run_id(args, output_format: str) -> None:
             _EVT_ERASURE_FAILED,
             **request_fields,
             error_class=exc.__class__.__name__,
-            error_message=str(exc),
+            error_message=_sanitise_audit_error_message(str(exc)),
             files_modified=files_modified,
         )
         _output_error_and_exit(
