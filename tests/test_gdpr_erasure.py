@@ -1226,6 +1226,102 @@ class TestAtomicityFsyncFdPinning:
 
 
 # ---------------------------------------------------------------------------
+# §7 Test matrix row 9 — Run-scoped erasure path-traversal boundary
+# (F-P5-OPUS-02): the design promises a realpath+commonpath check mirroring
+# _approve._staging_path_inside_output_dir, so a ``..``-bearing --run-id
+# cannot rmtree a directory outside output_dir.
+# ---------------------------------------------------------------------------
+
+
+class TestRunIdPathTraversal:
+    @staticmethod
+    def _stage_traversal(output_dir: Path, victim: Path) -> str:
+        """Build the on-disk shape that makes a ``..``-bearing --run-id
+        resolve to *victim* (outside *output_dir*) while still passing the
+        resolver's ``.exists()`` gate.
+
+        ``_staging_targets_for_run`` builds
+        ``output_dir / f"final_model.staging.{run_id}"`` and only appends the
+        target when ``Path.exists()`` is True.  For run_id='../../../victim'
+        the first path component is the literal ``final_model.staging...``
+        directory; creating it lets the OS walk
+        ``final_model.staging.../../../victim`` through to *victim*, whose
+        realpath escapes ``output_dir``.  Returns the malicious run_id.
+        """
+        run_id = "../../../victim"
+        # First component of f"final_model.staging.{run_id}" is the literal
+        # dir "final_model.staging..." — create it so the relative walk
+        # resolves to the sibling victim directory.
+        (output_dir / "final_model.staging...").mkdir(parents=True, exist_ok=True)
+        return run_id
+
+    def test_run_id_path_traversal_rejected_staging(self, tmp_path: Path, capsys) -> None:
+        from forgelm.cli.subcommands._purge import _run_purge_run_id
+
+        # output_dir is a child of tmp_path; the victim lives outside it.
+        output_dir = tmp_path / "run1"
+        output_dir.mkdir()
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        (victim / "data.bin").write_bytes(b"x" * 64)
+
+        run_id = self._stage_traversal(output_dir, victim)
+        args = _build_args(run_id=run_id, kind="staging", output_dir=str(output_dir))
+
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_run_id(args, output_format="json")
+
+        # EXIT_CONFIG_ERROR (1) — refused, not a runtime deletion failure.
+        assert ei.value.code == 1
+        # The victim directory and its contents are untouched.
+        assert victim.exists()
+        assert (victim / "data.bin").exists()
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert "traversal" in payload["error"].lower() or "outside" in payload["error"].lower()
+
+    def test_run_id_path_traversal_emits_failed_not_completed(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._purge import _run_purge_run_id
+
+        output_dir = tmp_path / "run1"
+        output_dir.mkdir()
+        victim = tmp_path / "victim"
+        victim.mkdir()
+
+        run_id = self._stage_traversal(output_dir, victim)
+        args = _build_args(run_id=run_id, kind="staging", output_dir=str(output_dir))
+        with pytest.raises(SystemExit):
+            _run_purge_run_id(args, output_format="json")
+
+        events = _read_audit_events(output_dir / "audit_log.jsonl")
+        names = [e["event"] for e in events]
+        assert "data.erasure_requested" in names
+        assert "data.erasure_failed" in names
+        assert "data.erasure_completed" not in names
+        failed = next(e for e in events if e["event"] == "data.erasure_failed")
+        assert failed["error_class"] == "PathTraversalRefused"
+
+    def test_path_inside_output_dir_accepts_legitimate_target(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._purge import _path_inside_output_dir
+
+        output_dir = tmp_path / "run1"
+        output_dir.mkdir()
+        inside = output_dir / "final_model.staging.fg-ok"
+        inside.mkdir()
+        assert _path_inside_output_dir(inside, str(output_dir)) is True
+
+    def test_path_inside_output_dir_rejects_escape(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._purge import _path_inside_output_dir
+
+        output_dir = tmp_path / "run1"
+        output_dir.mkdir()
+        outside = tmp_path / "victim"
+        outside.mkdir()
+        assert _path_inside_output_dir(outside, str(output_dir)) is False
+
+
+# ---------------------------------------------------------------------------
 # Facade re-exports (test that public surface resolves)
 # ---------------------------------------------------------------------------
 

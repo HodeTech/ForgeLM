@@ -753,6 +753,29 @@ def _run_purge_run_id(args, output_format: str) -> None:
             EXIT_CONFIG_ERROR,
         )
 
+    # Boundary check (F-P5-OPUS-02): refuse any resolved target that escapes
+    # ``output_dir``.  ``--run-id`` is free-form, so a ``..``-bearing value
+    # could point the deletion at an arbitrary sibling directory; reject the
+    # whole batch (fail-closed — never a partial delete) before either the
+    # dry-run report or the real deletion runs.
+    escaping = [p for p in target_paths if not _path_inside_output_dir(p, output_dir)]
+    if escaping:
+        audit.log_event(
+            _EVT_ERASURE_FAILED,
+            **request_fields,
+            error_class="PathTraversalRefused",
+            error_message=(f"Refusing to erase target(s) outside output_dir: {[str(p) for p in escaping]!r}."),
+        )
+        _output_error_and_exit(
+            output_format,
+            (
+                f"Refusing run-scoped erasure: run_id={args.run_id!r} resolves to "
+                f"{len(escaping)} target(s) outside output_dir {output_dir!r}. "
+                "Path traversal is not permitted."
+            ),
+            EXIT_CONFIG_ERROR,
+        )
+
     if args.dry_run:
         audit.log_event(
             _EVT_ERASURE_COMPLETED,
@@ -925,6 +948,31 @@ def _filename_contains_run_id(filename: str, run_id: str) -> bool:
         if before_ok and after_ok:
             return True
         idx = found + 1
+
+
+def _path_inside_output_dir(target: Path, output_dir: str) -> bool:
+    """Return ``True`` iff *target* resolves inside *output_dir*.
+
+    Defence-in-depth boundary check for run-scoped erasure (F-P5-OPUS-02):
+    ``--run-id`` is a free-form ``type=str`` argument with no charset
+    constraint, so a value containing ``..`` segments can make
+    :func:`_staging_targets_for_run` build a ``final_model.staging.<run_id>``
+    path that ``os.path.normpath`` resolves *outside* ``output_dir`` — an
+    arbitrary-directory ``shutil.rmtree``.  Mirrors
+    :func:`forgelm.cli.subcommands._approve._staging_path_inside_output_dir`
+    (realpath + commonpath) so both compliance paths share one boundary
+    policy.  ``realpath`` follows symlinks, so a legitimate symlink whose
+    target lives inside ``output_dir`` still validates — only paths that
+    *escape* the boundary are rejected.
+    """
+    real_output = os.path.realpath(output_dir)
+    real_target = os.path.realpath(str(target))
+    try:
+        return os.path.commonpath([real_output, real_target]) == real_output
+    except ValueError:
+        # commonpath raises ValueError when the paths live on different
+        # drives (Windows) — treat as out-of-bounds.
+        return False
 
 
 def _delete_path(path: Path) -> int:
