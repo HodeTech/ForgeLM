@@ -30,13 +30,33 @@ def _detect_dataset_format(columns: list) -> dict:
 
 
 def clean_string(text: str, do_clean: bool) -> str:
-    """Removes extra whitespace if configured."""
-    if text is None:
-        logger.warning("None value encountered in dataset column during text cleaning.")
-        return ""
-    if do_clean and isinstance(text, str):
+    """Normalise a single string cell, optionally collapsing whitespace runs.
+
+    Rejects non-string payloads loudly — symmetric with
+    ``_process_messages_format`` (see its docstring). The previous behaviour
+    coerced any non-string via ``str()`` (``{'a': 1}`` → ``"{'a': 1}"``,
+    ``42`` → ``"42"``) and silently mapped ``None``/falsy values to ``""``,
+    which baked schema bugs (a dict/int/None where a string was expected)
+    straight into the training corpus with only a WARNING for ``None``. The
+    text and User/Assistant formats route every cell through here, so a
+    malformed row now fails the run at this chokepoint instead of training
+    the model on Python ``repr`` strings or empty responses.
+
+    Raises:
+        ValueError: when ``text`` is not a ``str`` (including ``None``). The
+            caller is responsible for omitting genuinely-absent optional
+            cells (e.g. a missing system prompt) before reaching here.
+    """
+    if not isinstance(text, str):
+        raise ValueError(
+            f"Malformed dataset cell: expected a string, got {type(text).__name__}. "
+            "Each text/User/Assistant cell must be a string; fix the offending "
+            "row in your dataset (a null, number, or nested object where text "
+            "was expected is a schema bug, not training data)."
+        )
+    if do_clean:
         return " ".join(text.split())
-    return str(text) if text else ""
+    return text
 
 
 def _load_single_dataset(path: str):
@@ -60,8 +80,11 @@ def _load_single_dataset(path: str):
 def _process_text_format(examples: dict, clean_text: bool, add_eos: bool, eos_token: str) -> dict:
     """Pre-formatted text column (e.g., openassistant-guanaco)."""
     texts = []
-    for t in examples["text"]:
-        t = clean_string(t, clean_text)
+    for idx, t in enumerate(examples["text"]):
+        try:
+            t = clean_string(t, clean_text)
+        except ValueError as e:
+            raise ValueError(f"Malformed text-format row at index {idx}: {e}") from e
         if add_eos and t and eos_token and not t.endswith(eos_token):
             t += eos_token
         texts.append(t)
@@ -154,10 +177,12 @@ def _process_user_assistant_format(examples: dict, clean_text: bool, add_eos: bo
     user_texts = examples.get("User", examples.get("instruction", []))
     asst_texts = examples.get("Assistant", examples.get("output", examples.get("response", [])))
     sys_texts = examples["System"] if has_system else [""] * len(user_texts)
-    texts = [
-        _format_user_assistant_row(s, u, a, clean_text, add_eos, eos_token)
-        for s, u, a in zip(sys_texts, user_texts, asst_texts, strict=True)
-    ]
+    texts = []
+    for idx, (s, u, a) in enumerate(zip(sys_texts, user_texts, asst_texts, strict=True)):
+        try:
+            texts.append(_format_user_assistant_row(s, u, a, clean_text, add_eos, eos_token))
+        except ValueError as e:
+            raise ValueError(f"Malformed User/Assistant-format row at index {idx}: {e}") from e
     return {"text": texts}
 
 

@@ -116,6 +116,76 @@ class TestWebhookTimeoutConfig:
         assert cfg.webhook.timeout == 10
 
 
+class TestCleanStringRejectsNonString:
+    """XP-15 (F-P6-OPUS-01/15): ``clean_string`` must reject non-string
+    payloads loudly instead of coercing dict/list/int via ``str()`` or
+    mapping ``None``/falsy to ``""`` — symmetric with the messages path
+    (``_process_messages_format``), which raises on the same shapes. The
+    old behaviour silently baked Python ``repr`` strings and empty
+    responses into the training corpus."""
+
+    @pytest.mark.parametrize("payload", [{"nested": "obj"}, ["a", "b"], 42, None, 3.14, True])
+    @pytest.mark.parametrize("do_clean", [True, False])
+    def test_clean_string_non_string_payload_raises(self, payload, do_clean):
+        from forgelm.data import clean_string
+
+        with pytest.raises(ValueError, match="expected a string"):
+            clean_string(payload, do_clean)
+
+    @pytest.mark.parametrize("do_clean", [True, False])
+    def test_clean_string_valid_string_passes(self, do_clean):
+        from forgelm.data import clean_string
+
+        assert clean_string("hello   world", do_clean) == ("hello world" if do_clean else "hello   world")
+
+    def test_clean_string_empty_string_passes(self):
+        from forgelm.data import clean_string
+
+        # A genuinely-empty (but valid) string is preserved, not rejected.
+        assert clean_string("", True) == ""
+        assert clean_string("", False) == ""
+
+    @pytest.mark.parametrize("payload", [{"nested": "obj"}, ["a"], 42, None])
+    def test_format_user_assistant_row_non_string_assistant_raises(self, payload):
+        from forgelm.data import _format_user_assistant_row
+
+        with pytest.raises(ValueError, match="expected a string"):
+            _format_user_assistant_row("", "Q", payload, True, False, "")
+
+    @pytest.mark.parametrize("payload", [{"nested": "obj"}, 42, None])
+    def test_messages_and_user_assistant_paths_reject_same_payload(self, payload):
+        """Parity: the same non-string content shape that the messages
+        path rejects must also be rejected by the User/Assistant path."""
+        from forgelm.data import _format_user_assistant_row, _process_messages_format
+
+        with pytest.raises(ValueError):
+            _process_messages_format(
+                {"messages": [[{"role": "user", "content": payload}]]}, add_eos=False, eos_token=""
+            )
+        with pytest.raises(ValueError):
+            _format_user_assistant_row("", "Q", payload, True, False, "")
+
+    def test_process_text_format_non_string_row_raises_with_index(self):
+        from forgelm.data import _process_text_format
+
+        with pytest.raises(ValueError, match="index 1"):
+            _process_text_format({"text": ["ok", 42]}, clean_text=True, add_eos=False, eos_token="")
+
+    def test_process_user_assistant_format_non_string_row_raises_with_index(self):
+        from forgelm.data import _process_user_assistant_format
+
+        with pytest.raises(ValueError, match="index 0"):
+            _process_user_assistant_format(
+                {"User": ["Q"], "Assistant": [None]}, clean_text=True, add_eos=False, eos_token=""
+            )
+
+    def test_process_text_format_valid_rows_still_formatted(self):
+        from forgelm.data import _process_text_format
+
+        out = _process_text_format({"text": ["a  b", "c"]}, clean_text=True, add_eos=False, eos_token="")
+        assert out == {"text": ["a b", "c"]}
+
+
 class TestEnsureValidationSplit:
     """P1-2 regression: ``train_test_split`` on a <2-row dataset raises
     ``ValueError`` because 10% of 1 truncates to 0 test rows.  The guard
