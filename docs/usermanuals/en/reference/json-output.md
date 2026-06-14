@@ -244,6 +244,8 @@ Inspect the full approval-gate audit chain + staging contents for one run.
 | `status` | str | One of `pending`, `granted`, `rejected`, `unknown`. Latest-wins semantics: a re-staged run after a prior decision shows `pending`. |
 | `chain` | list[object] | Every approval-gate audit event for `run_id`, in append order. |
 | `staging_contents` | list[str] | Sorted file/directory names at `<output_dir>/final_model.staging.<run_id>` (or canonical fallback). Empty when staging missing or unreadable. |
+| `corrupted` | bool | Present and `true` only when a strict parse of the audit log would reject a line. The displayed `status` is then **not** authoritative — `approve`/`reject` (which read the log strictly) will refuse to act until the log is repaired. Absent on a clean log. |
+| `corruption_detail` | str | Present alongside `corrupted`; names the first offending line (`audit log corrupted at line N: <reason>`). |
 
 ## `forgelm audit`
 

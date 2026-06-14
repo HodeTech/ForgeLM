@@ -244,6 +244,8 @@ Bir koşu için tam onay-gate audit chain'i + staging içeriğini incele.
 | `status` | str | `pending`, `granted`, `rejected`, `unknown`'dan biri. Latest-wins semantik: önceki bir karardan sonra re-stage edilen koşu `pending` gösterir. |
 | `chain` | list[object] | `run_id` için her onay-gate audit event'i, append sırasıyla. |
 | `staging_contents` | list[str] | `<output_dir>/final_model.staging.<run_id>` (veya canonical fallback) altında sıralı dosya/dizin adları. Staging eksik veya okunamıyorsa boş. |
+| `corrupted` | bool | Yalnızca audit log'un strict parse'ı bir satırı reddedeceğinde bulunur ve `true` olur. O durumda gösterilen `status` **yetkili değildir** — `approve`/`reject` (log'u strict okur) log onarılana kadar işlem yapmayı reddeder. Temiz log'da yoktur. |
+| `corruption_detail` | str | `corrupted` ile birlikte bulunur; ilk hatalı satırı belirtir (`audit log corrupted at line N: <neden>`). |
 
 ## `forgelm audit`
 

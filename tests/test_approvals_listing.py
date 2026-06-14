@@ -576,6 +576,31 @@ class TestApprovalsShowRejectedAndMissingStaging:
         # Real human_approval.required event is still surfaced.
         assert any(e.get("event") == "human_approval.required" for e in payload["chain"])
 
+    def test_show_corrupted_decision_line_flags_corruption_not_silent_pending(self, tmp_path: Path, capsys) -> None:
+        """F-P4-OPUS-29: a corrupted ``human_approval.granted`` line must not be
+        silently dropped and rendered as a benign "pending". ``--show`` flags
+        the corruption (matching the strict approve/reject guard's verdict on
+        the same log) instead of an authoritative status."""
+        output_dir = tmp_path / "run"
+        _seed_run(output_dir, "fg-corrupt00000", decision="granted")
+        audit_path = output_dir / "audit_log.jsonl"
+        # Corrupt the granted line (last line) -> lenient parser skips it.
+        lines = audit_path.read_text(encoding="utf-8").splitlines()
+        assert "human_approval.granted" in lines[-1]
+        lines[-1] = "{this is no longer valid json"
+        audit_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        from forgelm.cli import _run_approvals_cmd
+
+        with pytest.raises(SystemExit) as ei:
+            _run_approvals_cmd(_build_args(output_dir, show="fg-corrupt00000"), output_format="json")
+        assert ei.value.code == 0
+        payload = json.loads(capsys.readouterr().out)
+        # Lenient parse would report "pending"; the corruption must be surfaced
+        # so that status is not silently authoritative.
+        assert payload.get("corrupted") is True
+        assert "corrupted at line" in payload.get("corruption_detail", "")
+
 
 # ---------------------------------------------------------------------------
 # Wave 2a Round-2 hardening: sort order, latest-wins, path-traversal,

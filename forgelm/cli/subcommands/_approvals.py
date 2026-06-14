@@ -391,10 +391,42 @@ def _classify_chain(chain: List[Dict[str, Any]]) -> str:
     return "rejected"
 
 
-def _emit_show_text(run_id: str, chain: List[Dict[str, Any]], status: str, staging_listing: List[str]) -> None:
+def _detect_audit_log_corruption(audit_log_path: str) -> Optional[str]:
+    """Return a corruption detail string if a strict parse would reject a line.
+
+    ``--show`` reads the log leniently (a malformed decision line is skipped,
+    so a corrupted ``human_approval.granted`` silently reads as "pending").
+    The ``approve`` / ``reject`` guards read the SAME log strictly and abort
+    with ``corrupted at line N``.  To stop ``--show`` from quietly disagreeing
+    with the decision path (F-P4-OPUS-29), do a strict pass here too: on the
+    first malformed line return its location so the caller can flag the status
+    as not-authoritative rather than rendering a benign "pending".
+    """
+    from ._audit_log_reader import AuditLogParseError
+
+    try:
+        for _ in _iter_audit_events(audit_log_path, strict=True):
+            pass
+    except AuditLogParseError as exc:
+        return f"audit log corrupted at line {exc.line_number}: {exc.reason}"
+    return None
+
+
+def _emit_show_text(
+    run_id: str,
+    chain: List[Dict[str, Any]],
+    status: str,
+    staging_listing: List[str],
+    corruption: Optional[str] = None,
+) -> None:
     """Render ``--show RUN_ID`` output as a human-readable timeline."""
     print(f"Run: {run_id}")
     print(f"Status: {status}")
+    if corruption:
+        print(
+            f"WARNING: {corruption} — status above may be unreliable; "
+            "approve/reject will refuse to act until the log is repaired."
+        )
     print()
     print("Audit chain (oldest first):")
     if not chain:
@@ -424,7 +456,13 @@ def _emit_show_text(run_id: str, chain: List[Dict[str, Any]], status: str, stagi
         print("Staging directory: missing or empty.")
 
 
-def _emit_show_json(run_id: str, chain: List[Dict[str, Any]], status: str, staging_listing: List[str]) -> None:
+def _emit_show_json(
+    run_id: str,
+    chain: List[Dict[str, Any]],
+    status: str,
+    staging_listing: List[str],
+    corruption: Optional[str] = None,
+) -> None:
     """Render ``--show RUN_ID`` output as a structured JSON object."""
     # PR #29 F-37-02: ``default=str`` so a hand-edited / tampered audit
     # log carrying a non-JSON-native value (datetime, Path) does not
@@ -434,15 +472,22 @@ def _emit_show_json(run_id: str, chain: List[Dict[str, Any]], status: str, stagi
     # log via ``iter_audit_events``; ``AuditLogger`` writes with
     # ``default=str`` so the common case is JSON-native, but the parser
     # gives no shape guarantee — coerce defensively.
+    payload: Dict[str, Any] = {
+        "success": True,
+        "run_id": run_id,
+        "status": status,
+        "chain": chain,
+        "staging_contents": staging_listing,
+    }
+    if corruption:
+        # The displayed status is not authoritative when the log is corrupt —
+        # surface the corruption so a consumer does not trust a benign
+        # "pending" that approve/reject would refuse to act on (F-P4-OPUS-29).
+        payload["corrupted"] = True
+        payload["corruption_detail"] = corruption
     print(
         json.dumps(
-            {
-                "success": True,
-                "run_id": run_id,
-                "status": status,
-                "chain": chain,
-                "staging_contents": staging_listing,
-            },
+            payload,
             indent=2,
             default=str,
             ensure_ascii=False,
@@ -488,10 +533,15 @@ def _run_approvals_show(args, output_format: str) -> None:
     staging_path = _staging_dir_for_event(output_dir, required_event) if required_event else None
     staging_listing = _staging_contents(staging_path)
 
+    # A lenient parse may have skipped a corrupted decision line, leaving the
+    # status reading "pending" while approve/reject (strict) would abort. Flag
+    # the corruption so the displayed status is not silently authoritative.
+    corruption = _detect_audit_log_corruption(audit_log_path)
+
     if output_format == "json":
-        _emit_show_json(run_id, chain, status, staging_listing)
+        _emit_show_json(run_id, chain, status, staging_listing, corruption)
     else:
-        _emit_show_text(run_id, chain, status, staging_listing)
+        _emit_show_text(run_id, chain, status, staging_listing, corruption)
     sys.exit(EXIT_SUCCESS)
 
 
