@@ -126,6 +126,20 @@ class TestGenerateSbomDeterministic:
             assert comp.get("version"), comp
             assert comp.get("purl", "").startswith("pkg:pypi/"), comp
 
+    def test_components_emitted_in_canonical_bom_ref_order(self) -> None:
+        """F-P5-OPUS-18: components are sorted by ``bom-ref`` (PEP 503-normalized
+        purl) so the emitted order is stable regardless of pip version / install
+        order — the documented "re-emit from the git tag and diff" auditor flow
+        then holds with a plain diff, not just after a ``jq sort_by``."""
+        sbom_mod = _load_tool_module(_SBOM_TOOL, "generate_sbom_canon")
+        components = sbom_mod.build_sbom()["components"]
+        bom_refs = [c["bom-ref"] for c in components]
+        assert bom_refs == sorted(bom_refs), (
+            "SBOM components are not in canonical bom-ref order; a future refactor "
+            "dropped the sort and will cause spurious ordering diffs against the "
+            "released artefact"
+        )
+
 
 # ---------------------------------------------------------------------------
 # §2 — check_pip_audit.py severity-tiering

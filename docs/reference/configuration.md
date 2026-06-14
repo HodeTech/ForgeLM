@@ -365,7 +365,7 @@ Chains 2+ training stages (typically SFT → DPO → GRPO) into one config-drive
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `output_dir` | string | `"./pipeline_run"` | Root directory for chain-level artefacts: `pipeline_state.json`, `compliance/pipeline_manifest.json`, and the pipeline-scoped `audit_log.jsonl`.  Per-stage trainer artefacts continue to live under each stage's own `training.output_dir`. |
-| `stages` | `List[PipelineStage]` | `[]` (required: ≥ 1) | Ordered list of stages.  Each stage's `model.name_or_path` is auto-set to the previous stage's `training.output_dir/final_model` unless the stage supplies an explicit `model:` block. |
+| `stages` | `List[PipelineStage]` | *required* (≥ 1 stage) | Ordered list of stages.  Each stage's `model.name_or_path` is auto-set to the previous stage's `training.output_dir/final_model` unless the stage supplies an explicit `model:` block. |
 
 ### `pipeline.stages[].*` — PipelineStage fields
 

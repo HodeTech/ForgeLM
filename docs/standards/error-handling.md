@@ -37,7 +37,7 @@ EXIT_WIZARD_CANCELLED = 5
 Custom exceptions are **deliberately few**. One class per coarse-grained failure domain:
 
 ```python
-# forgelm/config.py:387
+# forgelm/config.py
 class ConfigError(Exception):
     """Raised when configuration validation fails."""
 ```

@@ -318,7 +318,7 @@ uzatmasını engeller.
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
 | `output_dir` | string | `"./pipeline_run"` | Zincir seviyesi artefakların kök dizini: `pipeline_state.json`, `compliance/pipeline_manifest.json` ve pipeline-kapsamlı `audit_log.jsonl`.  Aşama bazında trainer artefaktları her aşamanın kendi `training.output_dir`'ı altında kalır. |
-| `stages` | `List[PipelineStage]` | `[]` (en az 1 zorunlu) | Sıralı aşama listesi.  Her aşamanın `model.name_or_path`'ı, aşama explicit `model:` bloğu vermediği sürece, önceki aşamanın `training.output_dir/final_model`'ına otomatik ayarlanır. |
+| `stages` | `List[PipelineStage]` | *zorunlu* (en az 1 aşama) | Sıralı aşama listesi.  Her aşamanın `model.name_or_path`'ı, aşama explicit `model:` bloğu vermediği sürece, önceki aşamanın `training.output_dir/final_model`'ına otomatik ayarlanır. |
 
 ### `pipeline.stages[].*` — PipelineStage alanları
 

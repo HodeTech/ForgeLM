@@ -54,17 +54,24 @@ tests/
 
 ## Fixtures
 
-From [`tests/conftest.py`](../../tests/conftest.py):
+The canonical factory lives in
+[`tests/_helpers/factories.py`](../../tests/_helpers/factories.py) and is
+re-exported via [`tests/conftest.py`](../../tests/conftest.py) (both as the
+callable and as a same-named pytest fixture):
 
 ```python
 def minimal_config(**overrides):
-    """Create a minimal valid ForgeConfig dict for testing."""
-    data = {
-        "model": {"name_or_path": "org/model"},
-        "lora": {},
-        "training": {},
-        "data": {"dataset_name_or_path": "org/dataset"},
-    }
+    """Build the smallest valid ForgeConfig dict for testing."""
+    # Fresh deepcopy on every call so a caller's mutation cannot leak
+    # between tests.
+    data = deepcopy(
+        {
+            "model": {"name_or_path": "org/model"},
+            "lora": {},
+            "training": {},
+            "data": {"dataset_name_or_path": "org/dataset"},
+        }
+    )
     data.update(overrides)
     return data
 ```

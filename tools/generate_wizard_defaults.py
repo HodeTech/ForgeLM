@@ -14,9 +14,10 @@ Run after any schema default change::
 
     python tools/generate_wizard_defaults.py
 
-The CI guard ``tools/check_wizard_defaults_sync.py`` re-runs this script
-into a temp dir and diffs against the committed files; PRs that change
-a wizard-flagged default without regenerating fail the doc-guard step.
+The CI guard ``tools/check_wizard_defaults_sync.py`` regenerates this
+script's expected output in memory and byte-compares it against the
+committed files; PRs that change a wizard-flagged default without
+regenerating fail the doc-guard step.
 
 Why a generator instead of importing live values at runtime?
 
