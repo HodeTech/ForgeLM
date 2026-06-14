@@ -237,6 +237,41 @@ class TestPydanticClassDetection:
         flagged_classes = {m.class_name for m in missing}
         assert flagged_classes == {"B", "C"}, f"expected only B and C to be flagged, got {flagged_classes}"
 
+    def test_indirect_inheritance_scanned(self, tmp_path: Path) -> None:
+        """F-P1-FAB-29: a class inheriting BaseModel through an
+        intermediate base must still be scanned.  Previously the
+        per-class check matched only a *direct* BaseModel base, so a
+        shared-base refactor would silently exempt every migrated model
+        from the description guard while CI stayed green."""
+        src = _write(
+            tmp_path / "m.py",
+            "from pydantic import BaseModel, Field\n"
+            "class ForgeBase(BaseModel):\n"
+            "    model_config = {'extra': 'forbid'}\n"
+            "class LeafConfig(ForgeBase):\n"
+            "    undocumented: int = Field(default=8)\n"  # missing — must be flagged
+            "    documented: int = Field(default=1, description='ok')\n",
+        )
+        missing = scan_file(str(src))
+        flagged = {(m.class_name, m.field_name) for m in missing}
+        assert flagged == {("LeafConfig", "undocumented")}, f"indirect-inheritance field not flagged; got {flagged}"
+
+    def test_two_level_indirect_inheritance_scanned(self, tmp_path: Path) -> None:
+        """Transitivity holds across more than one intermediate base."""
+        src = _write(
+            tmp_path / "m.py",
+            "from pydantic import BaseModel, Field\n"
+            "class L0(BaseModel):\n"
+            "    a: int = Field(default=1, description='ok')\n"
+            "class L1(L0):\n"
+            "    b: int = Field(default=2, description='ok')\n"
+            "class L2(L1):\n"
+            "    c: int = Field(default=3)\n",  # missing — must be flagged
+        )
+        missing = scan_file(str(src))
+        flagged = {(m.class_name, m.field_name) for m in missing}
+        assert flagged == {("L2", "c")}, f"two-level indirect field not flagged; got {flagged}"
+
 
 # ---------------------------------------------------------------------------
 # CLI surface (--strict mode)

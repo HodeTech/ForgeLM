@@ -52,23 +52,50 @@ class MissingDescription:
     line: int
 
 
-def _is_pydantic_model(class_node: ast.ClassDef) -> bool:
-    """Return ``True`` when ``class_node`` inherits from BaseModel.
+def _base_names(class_node: ast.ClassDef) -> List[str]:
+    """Return the rightmost identifier of each base of ``class_node``.
 
-    Conservative: matches ``class Foo(BaseModel)``, ``class Foo(pydantic.BaseModel)``,
-    and any class whose bases textually include ``BaseModel`` as the
-    rightmost identifier.  False positives here just mean we audit a
-    couple of extra classes that probably aren't Pydantic models — the
-    cost is negligible.
+    ``class Foo(BaseModel)`` → ``["BaseModel"]``;
+    ``class Foo(pydantic.BaseModel)`` → ``["BaseModel"]``;
+    ``class Leaf(ForgeBase)`` → ``["ForgeBase"]``.
     """
+    names: List[str] = []
     for base in class_node.bases:
-        # Bare name, e.g. ``BaseModel``.
-        if isinstance(base, ast.Name) and base.id == "BaseModel":
-            return True
-        # Attribute access, e.g. ``pydantic.BaseModel``.
-        if isinstance(base, ast.Attribute) and base.attr == "BaseModel":
-            return True
-    return False
+        if isinstance(base, ast.Name):
+            names.append(base.id)
+        elif isinstance(base, ast.Attribute):
+            names.append(base.attr)
+    return names
+
+
+def _directly_inherits_base_model(class_node: ast.ClassDef) -> bool:
+    """Return ``True`` when a *direct* base is spelled ``BaseModel``/``*.BaseModel``."""
+    return "BaseModel" in _base_names(class_node)
+
+
+def _pydantic_class_names(tree: ast.Module) -> "set[str]":
+    """Collect every class in ``tree`` that reaches ``BaseModel`` transitively.
+
+    F-P1-FAB-29: the original per-class check only matched a *direct*
+    ``BaseModel`` base, so a shared intermediate base
+    (``class ForgeBase(BaseModel): ...`` then ``class Leaf(ForgeBase): ...``)
+    silently exempted ``Leaf`` from the description audit.  We now run a
+    fixed-point pass over all ClassDefs in the file: a class is Pydantic
+    if a direct base is ``BaseModel`` *or* a base name is the name of a
+    class already known to be Pydantic in this file.  Pure-AST, no import.
+    """
+    class_defs = [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+    pydantic: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for node in class_defs:
+            if node.name in pydantic:
+                continue
+            if _directly_inherits_base_model(node) or any(name in pydantic for name in _base_names(node)):
+                pydantic.add(node.name)
+                changed = True
+    return pydantic
 
 
 def _is_field_call(node: ast.AST) -> bool:
@@ -171,9 +198,10 @@ def scan_file(path: str) -> List[MissingDescription]:
     with open(path, "r", encoding="utf-8") as fh:
         source = fh.read()
     tree = ast.parse(source, filename=path)
+    pydantic_classes = _pydantic_class_names(tree)
     missing: List[MissingDescription] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and _is_pydantic_model(node):
+        if isinstance(node, ast.ClassDef) and node.name in pydantic_classes:
             missing.extend(_scan_class(node))
     return missing
 
