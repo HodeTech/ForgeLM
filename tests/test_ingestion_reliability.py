@@ -646,7 +646,7 @@ class TestTask12PageRange:
 
 
 class TestTask13FrontmatterHeuristic:
-    """Phase 15 Wave 2 Task 13: heuristic drops alpha < 0.45 + underscore > 0.10 + ≥ 5 page numbers."""
+    """Phase 15 Wave 2 Task 13: heuristic drops alpha < 0.30 + underscore > 0.10 + ≥ 5 page numbers."""
 
     def test_is_frontmatter_page_fires_on_toc_shape(self):
         from forgelm.ingestion import _is_frontmatter_page
@@ -668,6 +668,21 @@ class TestTask13FrontmatterHeuristic:
             "numbers. It should not trip the heuristic." * 3
         )
         assert not _is_frontmatter_page(body)
+
+    def test_frontmatter_docstring_matches_active_alpha_threshold(self):
+        """F-P6-OPUS-03: the function docstring must not advertise the stale
+        0.45 alpha threshold — the active constant is 0.30, and the round-3
+        tightening's intent is undone on paper if the docstring drifts back."""
+        import inspect
+
+        from forgelm.ingestion import _FRONTMATTER_ALPHA_RATIO_MAX, _is_frontmatter_page
+
+        assert _FRONTMATTER_ALPHA_RATIO_MAX == 0.30
+        doc = inspect.getdoc(_is_frontmatter_page) or ""
+        # The docstring should reference the constant / its real value, never
+        # the pre-round-3 0.45 figure as the active gate.
+        assert "0.45" not in doc.split("Alphabetic-character ratio")[1].splitlines()[0]
+        assert "_FRONTMATTER_ALPHA_RATIO_MAX" in doc
 
 
 # ---------------------------------------------------------------------------

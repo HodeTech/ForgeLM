@@ -734,7 +734,9 @@ def _is_frontmatter_page(text: str) -> bool:
     A page is treated as "front-matter candidate" iff **all three**
     conditions hold:
 
-    * Alphabetic-character ratio < 0.45.
+    * Alphabetic-character ratio < ``_FRONTMATTER_ALPHA_RATIO_MAX`` (0.30 —
+      tightened from 0.45 in the round-3-follow-up review; see the
+      constant's own docstring).
     * Leader-character ratio > 0.10. Round-3 fix: the leader count
       now covers BOTH underscore runs (``_____``) AND dot runs
       (``.....``) of length ≥ 3, denominated over the non-whitespace
