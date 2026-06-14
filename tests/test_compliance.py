@@ -175,6 +175,102 @@ class TestComplianceExport:
         assert "model_lineage" in data
 
 
+class TestComplianceExportAuditTrail:
+    """F-P4-OPUS-11 / XP-12: a failed/torn compliance export must leave an
+    append-only audit trace, and the rollup 'exported' event must fire even
+    when the secondary Article-10 governance report fails."""
+
+    def _make_trainer(self, tmp_path, minimal_config):
+        from unittest.mock import MagicMock
+
+        from forgelm.compliance import AuditLogger, compute_config_hash
+        from forgelm.trainer import ForgeTrainer
+
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        config = ForgeConfig(**minimal_config())
+
+        with mock.patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+        trainer.config = config
+        trainer.dataset = {"train": ["dummy"]}
+        trainer.checkpoint_dir = str(output_dir)
+        trainer.notifier = MagicMock()
+        trainer.audit = AuditLogger(str(output_dir))
+        trainer._config_hash = compute_config_hash(config)
+        trainer._original_batch_size = config.training.per_device_train_batch_size
+        trainer._original_grad_accum = config.training.gradient_accumulation_steps
+        return trainer, output_dir
+
+    def _events(self, output_dir):
+        with open(output_dir / "audit_log.jsonl", encoding="utf-8") as fh:
+            return [json.loads(line) for line in fh if line.strip()]
+
+    def test_compliance_export_failure_emits_audit_event(self, tmp_path, minimal_config):
+        trainer, output_dir = self._make_trainer(tmp_path, minimal_config)
+        result = TrainResult(success=True, metrics={"eval_loss": 0.5})
+
+        with mock.patch(
+            "forgelm.compliance.export_compliance_artifacts",
+            side_effect=OSError("disk full"),
+        ):
+            # Best-effort: the outer catch must swallow the error but record it.
+            trainer._export_compliance_if_needed({"eval_loss": 0.5}, result)
+
+        events = {e["event"] for e in self._events(output_dir)}
+        assert "compliance.artifacts_export_failed" in events
+        assert "compliance.artifacts_exported" not in events
+
+    def test_artifacts_exported_event_fires_even_when_governance_fails(self, tmp_path, minimal_config):
+        trainer, output_dir = self._make_trainer(tmp_path, minimal_config)
+        result = TrainResult(success=True, metrics={"eval_loss": 0.5})
+
+        with mock.patch(
+            "forgelm.compliance.generate_data_governance_report",
+            side_effect=ValueError("schema drift"),
+        ):
+            trainer._export_compliance_if_needed({"eval_loss": 0.5}, result)
+
+        events = [e for e in self._events(output_dir)]
+        kinds = {e["event"] for e in events}
+        assert "compliance.governance_failed" in kinds
+        # The Article-11 manifest export succeeded → its rollup must be logged
+        # even though the secondary Article-10 governance report failed.
+        exported = [e for e in events if e["event"] == "compliance.artifacts_exported"]
+        assert len(exported) == 1
+        assert exported[0]["governance_ok"] is False
+
+
+class TestAuditLoggerWindowsLockDocClaim:
+    """XP-09 / F-P4-OPUS-02 / F-P5-OPUS-03: the docs must NOT claim the
+    Windows AuditLogger uses ``msvcrt.locking`` while no such implementation
+    exists. The Windows flock helper is a documented no-op."""
+
+    def test_code_has_no_msvcrt_lock_implementation(self):
+        import pathlib
+
+        forgelm_dir = pathlib.Path(__file__).resolve().parent.parent / "forgelm"
+        hits = [p for p in forgelm_dir.rglob("*.py") if "msvcrt" in p.read_text(encoding="utf-8")]
+        assert hits == [], f"msvcrt referenced in {hits} — implement the Windows lock or keep the no-op"
+
+    def test_docs_do_not_promise_msvcrt_locking(self):
+        import pathlib
+
+        repo = pathlib.Path(__file__).resolve().parent.parent
+        offenders = []
+        for md in (repo / "docs").rglob("*.md"):
+            # The gitignored analysis/ working memory quotes the old (buggy)
+            # text verbatim and is not a public doc surface.
+            if "analysis/" in md.as_posix():
+                continue
+            if "msvcrt.locking" in md.read_text(encoding="utf-8"):
+                offenders.append(md.relative_to(repo).as_posix())
+        assert offenders == [], (
+            "docs still claim AuditLogger uses msvcrt.locking on Windows, but the "
+            f"code has no such implementation: {offenders}"
+        )
+
+
 # --- AuditLogger hash chain ---
 
 
@@ -688,6 +784,24 @@ class TestVerifyAuditLog:
         assert result.first_invalid_index == 1
         assert "HMAC mismatch" in (result.reason or "")
 
+    def test_verify_audit_require_hmac_without_secret_is_not_valid(self, tmp_path):
+        """F-P4-OPUS-03: the public library API ``verify_audit_log`` must
+        refuse ``require_hmac=True`` with ``hmac_secret=None`` instead of
+        fail-open. Pre-fix, an HMAC-keyed log verified with no secret returned
+        ``valid=True`` after only a *presence* check on the ``_hmac`` tag —
+        strict mode silently degraded to authenticating nothing. The CLI seam
+        already guarded this, but the exported library function did not.
+        """
+        from forgelm.compliance import verify_audit_log
+
+        # NOSONAR test fixture, not a real secret (rule python:S2068 hard-coded credential false-positive)
+        hmac_key = "operator-key"  # noqa: S105
+        log_path = self._build_log(tmp_path, secret=hmac_key, events=3)
+
+        result = verify_audit_log(log_path, hmac_secret=None, require_hmac=True)
+        assert result.valid is False
+        assert "hmac_secret" in (result.reason or "")
+
     def test_verify_audit_require_hmac_no_secret(self, tmp_path, monkeypatch, capsys):
         """CLI dispatcher: ``--require-hmac`` without a configured secret
         env var must exit 1 (option / operator-actionable error) before
@@ -719,6 +833,27 @@ class TestVerifyAuditLog:
         captured = capsys.readouterr()
         assert "FORGELM_AUDIT_SECRET" in captured.err
         assert "--require-hmac" in captured.err
+
+    def test_verify_audit_missing_file_exit_code(self, tmp_path, monkeypatch, capsys):
+        """F-P4-OPUS-04 (XP-18): a missing log file is an operator-actionable
+        error → exit 1, matching the exit-codes reference and the (now
+        reconciled) parser help. The help previously claimed exit 2 for this
+        case."""
+        from forgelm.cli import _run_verify_audit_cmd
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+
+        class _Args:
+            pass
+
+        ns = _Args()
+        ns.log_path = str(tmp_path / "does-not-exist.jsonl")
+        ns.hmac_secret_env = "FORGELM_AUDIT_SECRET"
+        ns.require_hmac = False
+
+        exit_code = _run_verify_audit_cmd(ns)
+        assert exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_verify_audit_empty_log(self, tmp_path):
         """An empty file is trivially valid — entries_count == 0, no

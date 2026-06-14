@@ -42,3 +42,11 @@ class TrainResult:
     # ``staging_path`` alone is not a safe discriminator (it can survive a
     # revert); ``awaiting_approval`` is the authoritative one.
     awaiting_approval: bool = False
+    # Reproducibility anchors surfaced in the JSON run-output envelope so a
+    # CI/CD consumer can correlate the run with its audit_log.jsonl (``run_id``)
+    # and confirm the config that produced it (``config_hash``). Mandated by
+    # logging-observability.md "Structured JSON output" rule 2 (XP-11 /
+    # F-P4-OPUS-15). Optional so library callers constructing TrainResult by
+    # hand are unaffected.
+    run_id: Optional[str] = None
+    config_hash: Optional[str] = None

@@ -102,8 +102,7 @@ Either way, exit code is `1`. Investigate before treating the log as evidence.
 | Code | Meaning |
 |---|---|
 | `0` | Chain (and HMAC tags, when verified) intact end-to-end. |
-| `1` | Tamper / corruption detected. |
-| `2` | Option error (`--require-hmac` without secret) or file not found / unreadable. |
+| `1` | Operator-actionable failure: tamper / corruption detected, option error (`--require-hmac` without secret), or file not found / unreadable. |
 
 ## Common pitfalls
 
@@ -120,7 +119,7 @@ Either way, exit code is `1`. Investigate before treating the log as evidence.
 :::
 
 :::tip
-**Pin the verifier in CI before any submission step.** Wire `forgelm verify-audit --require-hmac` as a hard gate after every training run. Exit `1` should fail the release; exit `2` should fail the pre-flight (operator secret missing).
+**Pin the verifier in CI before any submission step.** Wire `forgelm verify-audit --require-hmac` as a hard gate after every training run. Exit `1` (tamper, or the pre-flight case where the operator secret is missing) should fail the release.
 :::
 
 ## See also

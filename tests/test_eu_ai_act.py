@@ -8,6 +8,7 @@ import yaml
 
 from forgelm.compliance import (
     AuditLogger,
+    export_compliance_artifacts,
     export_evidence_bundle,
     generate_deployer_instructions,
     generate_model_integrity,
@@ -386,6 +387,92 @@ class TestEvidenceBundle:
             names = zf.namelist()
         assert len(names) == 2
 
+    def test_failure_midway_does_not_publish_torn_zip(self, tmp_path, monkeypatch):
+        """F-P4-OPUS-33 / XP-12: an interrupted ZIP build must not leave a
+        torn archive at the auditor-facing path (tmp+rename discipline)."""
+        import zipfile
+
+        compliance_dir = tmp_path / "compliance"
+        compliance_dir.mkdir()
+        (compliance_dir / "a.json").write_text("{}")
+        (compliance_dir / "b.json").write_text("{}")
+
+        bundle_path = str(tmp_path / "bundle.zip")
+
+        real_write = zipfile.ZipFile.write
+        state = {"n": 0}
+
+        def flaky_write(self, *args, **kwargs):
+            state["n"] += 1
+            if state["n"] == 2:
+                raise OSError("disk full")
+            return real_write(self, *args, **kwargs)
+
+        monkeypatch.setattr(zipfile.ZipFile, "write", flaky_write)
+        with pytest.raises(OSError):
+            export_evidence_bundle(str(compliance_dir), bundle_path)
+        assert not os.path.exists(bundle_path), "no torn ZIP at the published path"
+        assert not os.path.exists(bundle_path + ".tmp"), "no leftover tmp"
+
+
+class TestComplianceExportAtomicity:
+    @staticmethod
+    def _manifest():
+        return {
+            "forgelm_version": "0",
+            "generated_at": "now",
+            "config_hash": "sha256:abc",
+            "model_lineage": {"base_model": "m", "adapter_method": "LoRA r=8"},
+            "training_parameters": {"trainer_type": "sft", "epochs": 1},
+            "data_provenance": {"primary_dataset": "ds"},
+            "evaluation_results": {"metrics": {"eval_loss": 0.5}},
+            "risk_assessment": {"intended_use": "x"},
+            # annex_iv block present → build_annex_iv_artifact emits the
+            # load-bearing annex_iv_metadata.json (5th artifact).
+            "annex_iv": {
+                "provider_name": "Acme",
+                "system_name": "Bot",
+                "intended_purpose": "QA",
+                "system_version": "1.0",
+                "risk_classification": "minimal-risk",
+            },
+        }
+
+    def test_partial_write_failure_leaves_no_torn_bundle(self, tmp_path, monkeypatch):
+        """F-P4-OPUS-10 / XP-12: a mid-export I/O failure must not leave a
+        partial Annex IV bundle at the published dir — staging + all-or-nothing
+        promotion means the published dir contains the complete set or none."""
+        out = str(tmp_path / "compliance")
+
+        real_open = open
+        state = {"n": 0}
+
+        def flaky_open(file, mode="r", *args, **kwargs):
+            if "w" in mode:
+                state["n"] += 1
+                if state["n"] == 3:
+                    raise OSError("disk full")
+            return real_open(file, mode, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", flaky_open)
+        with pytest.raises(OSError):
+            export_compliance_artifacts(self._manifest(), out)
+
+        # The published dir may exist (mkdir runs first) but must contain NO
+        # partially-written artefact — never a strict subset.
+        published = sorted(os.listdir(out)) if os.path.isdir(out) else []
+        assert published == [], f"torn bundle published: {published!r}"
+
+    def test_successful_export_promotes_all_artifacts(self, tmp_path):
+        out = str(tmp_path / "compliance")
+        files = export_compliance_artifacts(self._manifest(), out)
+        names = sorted(os.path.basename(p) for p in files)
+        assert "compliance_report.json" in names
+        assert "annex_iv_metadata.json" in names
+        # No staging dir survives.
+        leftovers = [n for n in os.listdir(out) if n.startswith(".export-tmp")]
+        assert leftovers == []
+
 
 # --- Training Manifest with Annex IV ---
 
@@ -421,3 +508,28 @@ class TestManifestAnnexIV:
         manifest = generate_training_manifest(config, {})
         assert "annex_iv" not in manifest
         assert "risk_assessment" not in manifest
+
+    def test_manifest_includes_config_hash(self, minimal_config):
+        """XP-11 / F-P4-OPUS-13: the single-stage manifest must carry a
+        ``config_hash`` binding it to the config that produced the run, like
+        the multi-stage pipeline's ``pipeline_config_hash``."""
+        config = ForgeConfig(**minimal_config())
+        manifest = generate_training_manifest(config, {})
+        assert manifest["config_hash"].startswith("sha256:")
+
+    def test_manifest_config_hash_changes_on_config_edit(self, minimal_config):
+        """A post-training config mutation produces a different digest, so an
+        Annex IV manifest reconstructed from an edited config is detectable."""
+        config = ForgeConfig(**minimal_config())
+        before = generate_training_manifest(config, {})["config_hash"]
+        config.training.learning_rate = config.training.learning_rate * 10 + 1.0
+        after = generate_training_manifest(config, {})["config_hash"]
+        assert before != after
+
+    def test_manifest_includes_run_id_when_supplied(self, minimal_config):
+        """XP-11: a supplied ``run_id`` is recorded; omitted by default so
+        library callers that don't have one are unaffected."""
+        config = ForgeConfig(**minimal_config())
+        assert "run_id" not in generate_training_manifest(config, {})
+        with_run = generate_training_manifest(config, {}, run_id="fg-test123")
+        assert with_run["run_id"] == "fg-test123"

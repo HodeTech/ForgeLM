@@ -12,9 +12,10 @@ this module is the dispatcher + JSON-envelope wrapper.
 Exit codes (per ``docs/standards/error-handling.md``):
 
 - 0 — every required field present + manifest hash matches.
-- 1 — required field missing OR manifest hash mismatch (operator-
-  actionable; the artifact is not Annex IV compliant as-is).
-- 2 — runtime error (file not found, unreadable, malformed JSON).
+- 1 — operator-actionable: required field missing/empty, manifest hash
+  mismatch, file not found / not a regular file, or malformed JSON
+  (the artifact is not Annex IV compliant or not loadable as-is).
+- 2 — genuine runtime I/O failure on an existing, reachable file.
 """
 
 from __future__ import annotations

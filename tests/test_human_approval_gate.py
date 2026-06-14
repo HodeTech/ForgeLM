@@ -108,6 +108,11 @@ class TestHumanApprovalGateTrainer:
             trainer.run_name = "test_finetune"
             trainer.notifier = MagicMock()
             trainer.audit = AuditLogger(str(output_dir))
+            # __init__ is bypassed via __new__, so set the config digest the
+            # gate event records (XP-11) the same way __init__ would.
+            from forgelm.compliance import compute_config_hash
+
+            trainer._config_hash = compute_config_hash(config)
             # Mock save_final_model so it just creates the directory + a
             # marker file, no torch/peft involvement.
             trainer.save_final_model = MagicMock(side_effect=self._fake_save)
@@ -156,6 +161,10 @@ class TestHumanApprovalGateTrainer:
         assert evt["run_id"] == trainer.audit.run_id
         assert evt["gate"] == "final_model"
         assert evt["reason"] == "require_human_approval=true"
+        # XP-11 / F-P4-OPUS-05: the event carries the config digest so the
+        # approvals reader can populate pending[].config_hash (previously
+        # always null because the event never recorded it).
+        assert evt["config_hash"].startswith("sha256:")
         assert evt["metrics"] == {"eval_loss": 0.42}
 
     def test_gate_calls_notify_awaiting_approval(self, tmp_path: Path) -> None:
@@ -319,6 +328,28 @@ class TestForgelmApprove:
         kwargs = notifier.notify_success.call_args.kwargs
         assert kwargs["run_name"] == "approval_run"
         assert kwargs["metrics"] == {}
+
+    def test_approve_promote_strategy_doc_matches_code(self) -> None:
+        """XP-08 / F-P4-OPUS-07 / F-P7-OPUS-17: the locked json-output.md
+        approve envelope must document a ``promote_strategy`` value the code can
+        actually emit. Pre-fix it showed ``"atomic_rename"`` — a value the code
+        never produces (only ``"rename"`` / ``"move"``)."""
+        import json as _json
+        import pathlib
+        import re
+
+        repo = pathlib.Path(__file__).resolve().parent.parent
+        allowed = {"rename", "move"}
+        for rel in (
+            "docs/usermanuals/en/reference/json-output.md",
+            "docs/usermanuals/tr/reference/json-output.md",
+        ):
+            text = (repo / rel).read_text(encoding="utf-8")
+            # Grab the first fenced JSON block under the approve/reject H2.
+            section = re.split(r"^## .*forgelm approve", text, maxsplit=1, flags=re.MULTILINE)[1]
+            block = re.search(r"```json\n(.*?)```", section, re.DOTALL).group(1)
+            promote = _json.loads(block).get("promote_strategy")
+            assert promote in allowed, f"{rel}: promote_strategy={promote!r} not in {allowed}"
 
     def test_approve_with_stale_run_id_errors_without_renaming(self, tmp_path: Path) -> None:
         run_id = "fg-real000aaa111"

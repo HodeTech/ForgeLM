@@ -65,7 +65,8 @@ The hash chain advances after the line lands on disk (`flush` + `fsync`), so an 
 |----------------------------------|-----------------------------------------------------------------------------|--------------------------------------------------|------------|
 | `compliance.governance_exported` | Article 10 data governance report written to disk.                          | `output_path`, `dataset_count`                   | 10         |
 | `compliance.governance_failed`   | Governance report generation aborted (e.g., schema mismatch).               | `reason`                                         | 10         |
-| `compliance.artifacts_exported`  | Annex IV technical documentation bundle (manifest, model card, audit zip). | `output_dir`, `files`                            | 11, Annex IV |
+| `compliance.artifacts_exported`  | Annex IV technical documentation bundle (manifest, model card, audit zip). | `output_dir`, `files`, `governance_ok`           | 11, Annex IV |
+| `compliance.artifacts_export_failed` | Annex IV / Article 11 manifest export failed or was torn (disk full, SIGKILL, serialization error). | `reason`                                         | 11, Annex IV |
 
 ### Article 17 — GDPR Right-to-Erasure (Phase 21 — `forgelm purge`)
 
@@ -128,8 +129,10 @@ The hash chain advances after the line lands on disk (`flush` + `fsync`), so an 
 
 Webhook payloads (Slack / Teams / generic HTTP) are a separate vocabulary scoped to operator notifications, not the regulatory record. Webhook events are **not** appended to `audit_log.jsonl`; they ride the side-channel notification bus. The canonical lifecycle vocabulary is also documented in [logging-observability.md](../standards/logging-observability.md).
 
-These five lifecycle events are the **only** events that webhook
-receivers should expect from `WebhookNotifier`. Each one mirrors a
+These eight events are the **only** events that webhook
+receivers should expect from `WebhookNotifier`: five single-stage
+lifecycle events plus the three-event `pipeline.*` family the
+multi-stage orchestrator emits alongside them. Each one mirrors a
 corresponding audit-log event so a downstream operator can correlate
 webhook ping → audit entry by `run_name` + timestamp. Implementation:
 `forgelm/webhook.py`.
@@ -141,6 +144,9 @@ webhook ping → audit entry by `run_name` + timestamp. Implementation:
 | `training.failure` | `pipeline.failed` | Training itself raised (OOM, dataset error, unhandled exception). | `webhook.notify_on_failure` | `run_name`, `status="failed"`, `reason` (masked, ≤2048 chars) |
 | `training.reverted` | `model.reverted` | A post-training gate (evaluation, safety, judge, benchmark) rejected the run and `_revert_model` deleted the adapters. | `webhook.notify_on_failure` | `run_name`, `status="reverted"`, `reason` (masked, ≤2048 chars) |
 | `approval.required` | `human_approval.required` | Run succeeded, `evaluation.require_human_approval=true`, model staged for review (EU AI Act Art. 14). | `webhook.notify_on_success` | `run_name`, `status="awaiting_approval"`, `model_path` |
+| `pipeline.started` | `pipeline.started` | A multi-stage pipeline run begins, before any stage executes. | `webhook.notify_on_start` | `run_name`, `status="started"`, `stage_count` |
+| `pipeline.completed` | `pipeline.completed` | A multi-stage pipeline run reaches its terminal state. Shares the audit event's name (a known wire/audit collision; correlate on the payload field-set). | `webhook.notify_on_success` / `webhook.notify_on_failure` | `run_name`, `status`, `final_status`, `stopped_at` |
+| `pipeline.stage_reverted` | `pipeline.stage_reverted` | A pipeline stage auto-reverts, before downstream stages are skipped. | `webhook.notify_on_failure` | `run_name`, `status="reverted"`, `stage_name`, `reason` (masked, ≤2048 chars) |
 
 ### Why two of these split lifecycle states
 
@@ -161,9 +167,9 @@ Every webhook event ships the same envelope:
 
 ```json
 {
-  "event": "training.start | training.success | training.failure | training.reverted | approval.required",
+  "event": "training.start | training.success | training.failure | training.reverted | approval.required | pipeline.started | pipeline.completed | pipeline.stage_reverted",
   "run_name": "<string>",
-  "status": "started | succeeded | failed | reverted | awaiting_approval",
+  "status": "started | succeeded | failed | reverted | awaiting_approval | completed | stopped_at_stage",
   "metrics": {"<name>": <number>, ...},
   "reason": "<masked string or null>",
   "model_path": "<filesystem path or null>",

@@ -620,9 +620,11 @@ def _add_verify_audit_subcommand(subparsers) -> None:
     :class:`forgelm.compliance.AuditLogger`. Exit codes:
 
     - ``0`` — chain (and HMAC, if checked) intact
-    - ``1`` — chain broken or HMAC mismatch
-    - ``2`` — file missing / unreadable, or option error (e.g.
-      ``--require-hmac`` without a configured secret env var)
+    - ``1`` — operator-actionable failure: chain broken / HMAC mismatch /
+      manifest mismatch, file missing / unreadable, or option error (e.g.
+      ``--require-hmac`` without a configured secret env var). A dedicated
+      ``EXIT_INTEGRITY_FAILURE`` constant is deferred to v0.6.x to avoid
+      expanding the public 0/1/2/3/4 surface.
     """
     p = subparsers.add_parser(
         "verify-audit",
@@ -656,7 +658,7 @@ def _add_verify_audit_subcommand(subparsers) -> None:
         "--require-hmac",
         action="store_true",
         help=(
-            "Strict mode: exit 2 if the configured env var is unset, and exit 1 "
+            "Strict mode: exit 1 if the configured env var is unset, and exit 1 "
             "if any line lacks an _hmac field. Use this in regulated CI pipelines "
             "where every entry must be HMAC-authenticated."
         ),

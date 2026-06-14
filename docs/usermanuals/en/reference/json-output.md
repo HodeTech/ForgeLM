@@ -85,7 +85,9 @@ When training runs to completion the pipeline emits a result envelope on **stdou
   "metrics": {"eval_loss": 0.42, "benchmark/average": 0.78},
   "final_model_path": "/work/output/final_model",
   "reverted": false,
-  "awaiting_approval": false
+  "awaiting_approval": false,
+  "run_id": "fg-abc123def456",
+  "config_hash": "sha256:..."
 }
 ```
 
@@ -122,6 +124,8 @@ When training runs to completion the pipeline emits a result envelope on **stdou
 | `reverted` | bool | `true` iff a gate (eval-loss / benchmark / safety / judge) auto-reverted the model. Mutually exclusive with `awaiting_approval`. |
 | `awaiting_approval` | bool | **Discriminator.** `true` iff the run halted at the Article 14 human-approval gate (exit `4`). A reverted run is always `false` here. |
 | `staging_path` | str | Present only when `awaiting_approval` is `true`; the on-disk staging dir to pass to `forgelm approve <run_id>` / `forgelm reject <run_id>`. |
+| `run_id` | str | Run identifier — correlates the run with its `audit_log.jsonl` and any approval gate. Present whenever the trainer produced the result. |
+| `config_hash` | str | `sha256:` digest of the validated config that produced the run (reproducibility anchor). Present whenever the trainer produced the result. |
 
 Optional sub-blocks (`benchmark`, `resource_usage`, `estimated_cost_usd`, `safety`, `judge`) are added only when those evaluations ran.
 
@@ -288,9 +292,11 @@ Audit-log chain integrity check.
   "run_id": "fg-abc123def456",
   "approver": "alice@example.com@workstation-7",
   "final_model_path": "/work/output/final_model",
-  "promote_strategy": "atomic_rename"
+  "promote_strategy": "rename"
 }
 ```
+
+`promote_strategy` is `"rename"` (same-device atomic `os.rename`) or `"move"` (cross-device `shutil.move` fallback).
 
 `approve` exits `0` on success; `reject` exits `0` after recording the rejection (the staging dir is preserved for forensics). `success: false` with `error` on unknown `run_id` / config error.
 

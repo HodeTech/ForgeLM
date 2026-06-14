@@ -241,6 +241,14 @@ class ForgeTrainer:
             "pipeline.initialized", model=config.model.name_or_path, trainer_type=config.training.trainer_type
         )
 
+        # Canonical digest of the config that produced this run.  Bound into the
+        # human_approval.required event, the training manifest, and the JSON
+        # output envelope so the approval row / manifest / envelope all share one
+        # reproducibility anchor (XP-11 / F-P4-OPUS-05,13,15).
+        from .compliance import compute_config_hash
+
+        self._config_hash = compute_config_hash(config)
+
         # Validate evaluation config early
         self._validate_evaluation_config()
         # Fail fast (before the training loop) on a judge configured to use an
@@ -1070,6 +1078,7 @@ class ForgeTrainer:
             metrics=train_result.metrics,
             staging_path=staging_path,
             run_id=self.audit.run_id,
+            config_hash=getattr(self, "_config_hash", None),
         )
         self.notifier.notify_awaiting_approval(run_name=self.run_name, model_path=staging_path)
 
@@ -1175,7 +1184,14 @@ class ForgeTrainer:
         self._build_trainer(callbacks)
 
         try:
-            return self._run_training_pipeline(resume_from_checkpoint)
+            train_result = self._run_training_pipeline(resume_from_checkpoint)
+            # Reproducibility anchors for the JSON run-output envelope
+            # (XP-11 / F-P4-OPUS-15): the run's audit id + the config digest.
+            # ``getattr`` keeps train() robust for tests that build a trainer
+            # via ``__new__`` without running __init__ (no _config_hash set).
+            train_result.run_id = getattr(self.audit, "run_id", None)
+            train_result.config_hash = getattr(self, "_config_hash", None)
+            return train_result
         except Exception as e:  # noqa: BLE001 — best-effort: top-of-pipeline catch must record an audit event and notify before re-raising regardless of failure type (CUDA, dataloader, optimizer, etc.); the bare re-raise preserves the original traceback.  # NOSONAR
             logger.exception("Training pipeline failed.")
             self.audit.log_event("pipeline.failed", error=str(e))
@@ -1515,6 +1531,7 @@ class ForgeTrainer:
                     safety_result=safety_dict,
                     judge_result=judge_dict,
                     benchmark_result=benchmark_dict,
+                    run_id=self.audit.run_id,
                 )
             finally:
                 self.config.training.per_device_train_batch_size = _effective_bs
@@ -1556,22 +1573,34 @@ class ForgeTrainer:
                 logger.warning("Could not write data_governance_report.json: %s", e)
                 self.audit.log_event("compliance.governance_failed", reason=str(e))
 
-            # Only emit the rollup "all artefacts exported" event when both
-            # the Article 11 manifest export and the Article 10 governance
-            # report succeeded, so the audit chain truthfully reflects which
-            # artefacts are actually on disk.
-            if governance_ok:
-                try:
-                    files = sorted(os.listdir(compliance_dir))
-                except OSError:
-                    files = []
-                self.audit.log_event(
-                    "compliance.artifacts_exported",
-                    output_dir=compliance_dir,
-                    files=files,
-                )
+            # The Article 11 manifest export above is the load-bearing
+            # regulatory artefact; its success is the gate that MUST be logged
+            # (logging-observability.md "Compliance export invoked").  Emit the
+            # rollup unconditionally once the manifest export returned —
+            # carrying ``governance_ok`` so the chain still records whether the
+            # secondary Article 10 report made it.  Pre-fix this event was
+            # gated behind ``if governance_ok:``, so a successful manifest
+            # export with a failed governance report left NO audit trace of the
+            # Article 11 export (F-P4-OPUS-11).
+            try:
+                files = sorted(os.listdir(compliance_dir))
+            except OSError:
+                files = []
+            self.audit.log_event(
+                "compliance.artifacts_exported",
+                output_dir=compliance_dir,
+                files=files,
+                governance_ok=governance_ok,
+            )
         except Exception as e:  # noqa: BLE001 — best-effort: outer compliance-export gate. Article 11/12 export plumbing crosses pydantic validation, json serialization, hashing, filesystem writes, and audit emission; any leak from the inner narrow-class catches must not abort the surrounding training pipeline that already succeeded.  # NOSONAR
+            # The export IS the primary surface for the Article 11 / Annex IV
+            # artefacts: per error-handling.md BLE001 rule 3 the primary
+            # failure must be recorded independently. Emit an audit event so a
+            # failed/torn compliance export leaves an append-only trace rather
+            # than a silent exit-0 run with an empty compliance dir
+            # (F-P4-OPUS-11).
             logger.warning("Failed to export compliance artifacts: %s", e)
+            self.audit.log_event("compliance.artifacts_export_failed", reason=str(e))
 
     def _generate_model_integrity(self, final_path: str) -> None:
         """Art. 15: Generate SHA-256 checksums for all output artifacts."""

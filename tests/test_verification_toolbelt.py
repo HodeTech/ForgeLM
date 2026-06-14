@@ -150,6 +150,22 @@ class TestVerifyAnnexIv:
             _run_verify_annex_iv_cmd(args, output_format="json")
         assert ei.value.code == 1
 
+    def test_module_docstring_exit_codes_match_implementation(self) -> None:
+        """F-P4-OPUS-06 (XP-18): the module docstring's exit-code table must
+        agree with the dispatcher. Pre-fix, the docstring claimed exit 2 for
+        'file not found / malformed JSON' while the code returns exit 1 for
+        both (only a genuine runtime I/O failure on an existing file maps to
+        2). Assert the '2 —' line no longer lists those caller-input cases."""
+        import forgelm.cli.subcommands._verify_annex_iv as mod
+
+        doc = mod.__doc__ or ""
+        two_line = next((ln for ln in doc.splitlines() if ln.lstrip().startswith("- 2 —")), "")
+        assert two_line, "exit-code 2 row missing from module docstring"
+        assert "file not found" not in two_line.lower()
+        assert "malformed json" not in two_line.lower()
+        # The exit-1 row owns the caller-input failures.
+        assert "- 1 —" in doc and "malformed JSON" in doc
+
     def test_writer_round_trip_passes_verifier(self, tmp_path: Path) -> None:
         """F-W2B-01 + F-W2B-05 regression: a freshly-generated Annex IV
         artefact must pass its own verifier (writer + verifier shape +

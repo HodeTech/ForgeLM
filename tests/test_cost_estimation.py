@@ -159,3 +159,18 @@ class TestApprovalEnvelope:
         assert out["reverted"] is True
         assert out["awaiting_approval"] is False
         assert "staging_path" not in out
+
+    def test_envelope_includes_run_id_and_config_hash_when_populated(self):
+        """XP-11 / F-P4-OPUS-15: logging-observability.md rule 2 requires the
+        JSON run output to carry run_id + config_hash. The trainer stamps both
+        onto TrainResult before _output_result emits the envelope."""
+        out = self._envelope(TrainResult(success=True, run_id="fg-abc123def456", config_hash="sha256:cafef00d"))
+        assert out["run_id"] == "fg-abc123def456"
+        assert out["config_hash"] == "sha256:cafef00d"
+
+    def test_envelope_omits_run_id_and_config_hash_when_absent(self):
+        """A hand-built TrainResult (library callers) has no run_id/config_hash;
+        the keys are omitted rather than emitted as nulls."""
+        out = self._envelope(TrainResult(success=True))
+        assert "run_id" not in out
+        assert "config_hash" not in out

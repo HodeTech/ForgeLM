@@ -85,7 +85,9 @@ Eğitim tamamlanana kadar çalıştığında pipeline **stdout**'a bir sonuç en
   "metrics": {"eval_loss": 0.42, "benchmark/average": 0.78},
   "final_model_path": "/work/output/final_model",
   "reverted": false,
-  "awaiting_approval": false
+  "awaiting_approval": false,
+  "run_id": "fg-abc123def456",
+  "config_hash": "sha256:..."
 }
 ```
 
@@ -122,6 +124,8 @@ Eğitim tamamlanana kadar çalıştığında pipeline **stdout**'a bir sonuç en
 | `reverted` | bool | Bir gate (eval-loss / benchmark / safety / judge) modeli auto-revert ettiyse `true`. `awaiting_approval` ile karşılıklı dışlayıcıdır. |
 | `awaiting_approval` | bool | **Discriminator.** Çalışma Article 14 insan-onay gate'inde durakladıysa (exit `4`) `true`. Revert edilmiş bir çalışma burada her zaman `false`'tur. |
 | `staging_path` | str | Yalnızca `awaiting_approval` `true` iken vardır; `forgelm approve <run_id>` / `forgelm reject <run_id>`'e geçilecek on-disk staging dizini. |
+| `run_id` | str | Çalışma tanımlayıcısı — çalışmayı `audit_log.jsonl`'i ve varsa onay gate'i ile ilişkilendirir. Trainer sonucu ürettiğinde her zaman vardır. |
+| `config_hash` | str | Çalışmayı üreten doğrulanmış config'in `sha256:` digest'i (yeniden-üretilebilirlik çıpası). Trainer sonucu ürettiğinde her zaman vardır. |
 
 Opsiyonel alt-bloklar (`benchmark`, `resource_usage`, `estimated_cost_usd`, `safety`, `judge`) yalnızca o değerlendirmeler çalıştığında eklenir.
 
@@ -291,9 +295,11 @@ Audit log chain bütünlüğü kontrolü.
   "run_id": "fg-abc123def456",
   "approver": "alice@example.com@workstation-7",
   "final_model_path": "/work/output/final_model",
-  "promote_strategy": "atomic_rename"
+  "promote_strategy": "rename"
 }
 ```
+
+`promote_strategy` değeri `"rename"` (aynı-cihaz atomik `os.rename`) ya da `"move"` (cihazlar-arası `shutil.move` fallback)'tır.
 
 `approve` başarıda `0` ile çıkar; `reject` rejection kaydı sonrası `0` ile çıkar (staging dizini forensics için korunur). Bilinmeyen `run_id` / config hatasında `error` ile `success: false`.
 

@@ -102,8 +102,7 @@ Her iki durumda da çıkış kodu `1`'dir. Log'u kanıt saymadan önce inceleyin
 | Kod | Anlam |
 |---|---|
 | `0` | Zincir (ve doğrulandığında HMAC etiketleri) uçtan uca bütün. |
-| `1` | Tahrifat / bozulma tespit edildi. |
-| `2` | Seçenek hatası (`--require-hmac` sırsız) ya da dosya bulunamadı / okunamadı. |
+| `1` | Operatörün düzeltebileceği başarısızlık: tahrifat / bozulma tespiti, seçenek hatası (`--require-hmac` sırsız) ya da dosya bulunamadı / okunamadı. |
 
 ## Sık hatalar
 
@@ -120,7 +119,7 @@ Her iki durumda da çıkış kodu `1`'dir. Log'u kanıt saymadan önce inceleyin
 :::
 
 :::tip
-**Doğrulayıcıyı CI'da herhangi bir sunum adımından önce sabitleyin.** Her eğitim koşusundan sonra `forgelm verify-audit --require-hmac`'i sert bir kapı olarak bağlayın. Çıkış `1` yayını başarısız etmeli; çıkış `2` ön-uçuş kontrolünü başarısız etmeli (operatör sırrı eksik).
+**Doğrulayıcıyı CI'da herhangi bir sunum adımından önce sabitleyin.** Her eğitim koşusundan sonra `forgelm verify-audit --require-hmac`'i sert bir kapı olarak bağlayın. Çıkış `1` (tahrifat veya operatör sırrının eksik olduğu ön-uçuş durumu) yayını başarısız etmeli.
 :::
 
 ## Bkz.
