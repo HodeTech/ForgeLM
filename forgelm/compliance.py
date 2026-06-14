@@ -494,8 +494,19 @@ def _hash_file(filepath: str, rel_path: str) -> dict:
 
 
 def generate_model_integrity(final_path: str) -> Dict[str, Any]:
-    """Compute SHA-256 checksums of all output model artifacts."""
-    integrity = {
+    """Compute SHA-256 checksums of all output model artifacts.
+
+    F-P5-OPUS-08: ``os.walk`` with the default ``followlinks=False``
+    correctly refuses to recurse *into* symlinked directories, but a
+    symlinked *file* inside the tree is still listed and ``open()``
+    transparently follows it to an out-of-tree target — so the Article 15
+    integrity bundle would attribute (and hash the contents of) an
+    external file as a model artifact.  Each file's realpath is bounded to
+    the model tree via ``commonpath``; any file whose real target escapes
+    is skipped and recorded under ``skipped_symlinks`` so the omission is
+    auditable rather than silent.
+    """
+    integrity: Dict[str, Any] = {
         "verified_at": datetime.now(timezone.utc).isoformat(),
         "model_path": final_path,
         "artifacts": [],
@@ -504,11 +515,25 @@ def generate_model_integrity(final_path: str) -> Dict[str, Any]:
     if not os.path.isdir(final_path):
         return integrity
 
+    base = os.path.realpath(final_path)
     file_pairs = []
-    for root, _dirs, files in os.walk(final_path):
+    skipped_symlinks: List[str] = []
+    # followlinks=False is the default; named explicitly so the symlinked-
+    # directory safety is not a silent assumption a refactor could drop.
+    for root, _dirs, files in os.walk(final_path, followlinks=False):
         for filename in sorted(files):
             filepath = os.path.join(root, filename)
             rel_path = os.path.relpath(filepath, final_path)
+            real = os.path.realpath(filepath)
+            try:
+                contained = os.path.commonpath([real, base]) == base
+            except ValueError:
+                # Different drives (Windows) → cannot share a common path;
+                # treat as escaping so an out-of-tree target is never hashed.
+                contained = False
+            if not contained:
+                skipped_symlinks.append(rel_path)
+                continue
             file_pairs.append((filepath, rel_path))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
@@ -518,6 +543,8 @@ def generate_model_integrity(final_path: str) -> Dict[str, Any]:
         integrity["artifacts"] = [f.result() for f in concurrent.futures.as_completed(futures)]
 
     integrity["artifacts"].sort(key=lambda x: x["file"])
+    if skipped_symlinks:
+        integrity["skipped_symlinks"] = sorted(skipped_symlinks)
 
     return integrity
 

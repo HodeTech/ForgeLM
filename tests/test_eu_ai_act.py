@@ -337,6 +337,42 @@ class TestModelIntegrity:
         integrity = generate_model_integrity(str(model_dir))
         assert integrity["artifacts"] == []
 
+    @pytest.mark.skipif(not hasattr(os, "symlink"), reason="platform without os.symlink support")
+    def test_symlinked_file_out_of_tree_is_skipped_not_hashed(self, tmp_path):
+        """F-P5-OPUS-08: a symlinked file pointing outside the model tree
+        must NOT be hashed/recorded as a model artifact — only the real
+        in-tree file appears, and the escape is logged under
+        ``skipped_symlinks``."""
+        secret_dir = tmp_path / "secret"
+        secret_dir.mkdir()
+        secret = secret_dir / "id_rsa"
+        secret.write_bytes(b"EXTERNAL SECRET")
+
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        (model_dir / "real.bin").write_bytes(b"weights")
+        # Symlinked file pointing OUT of the model tree.
+        try:
+            os.symlink(secret, model_dir / "leaked.bin")
+            # Symlinked DIR pointing out of the tree (os.walk must not recurse).
+            os.symlink(secret_dir, model_dir / "leakeddir")
+        except (OSError, NotImplementedError):
+            pytest.skip("symlink creation not permitted on this platform")
+
+        import hashlib
+
+        external_hash = hashlib.sha256(b"EXTERNAL SECRET").hexdigest()
+
+        integrity = generate_model_integrity(str(model_dir))
+        files = {a["file"] for a in integrity["artifacts"]}
+        hashes = {a["sha256"] for a in integrity["artifacts"]}
+
+        assert "real.bin" in files
+        assert "leaked.bin" not in files, "symlinked file escaped the containment check"
+        assert external_hash not in hashes, "external file's content was hashed into the bundle"
+        # The omission must be auditable, not silent.
+        assert "leaked.bin" in integrity.get("skipped_symlinks", [])
+
 
 # --- Deployer Instructions ---
 
