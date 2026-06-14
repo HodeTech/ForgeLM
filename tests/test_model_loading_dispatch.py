@@ -33,25 +33,33 @@ def test_resolve_expert_count(attrs, expected):
     assert m._resolve_expert_count(SimpleNamespace(**attrs)) == expected
 
 
-def test_apply_moe_config_reaches_freeze_for_qwen3_shape(monkeypatch):
-    """A Qwen3-MoE-shaped config (``num_experts``) must reach the freeze path —
-    previously gated on ``num_local_experts`` and silently no-op'd."""
-    called = {}
-    monkeypatch.setattr(m, "_freeze_unselected_experts", lambda *a, **k: called.setdefault("freeze", a))
+def test_detect_moe_experts_qwen3_shape():
+    """A Qwen3-MoE-shaped config (``num_experts``) must be detected — previously
+    gated on ``num_local_experts`` and silently no-op'd."""
     model = MagicMock()
     model.config = SimpleNamespace(num_experts=60)
     config = SimpleNamespace(model=SimpleNamespace(moe=SimpleNamespace(quantize_experts=False, experts_to_train="0,1")))
-    m._apply_moe_config(model, config)
-    assert "freeze" in called, "experts_to_train must reach _freeze_unselected_experts for Qwen3-MoE"
+    assert m._detect_moe_experts(model, config) == 60
 
 
-def test_apply_moe_config_warns_when_not_moe(caplog):
-    """moe configured but no recognised expert attribute → loud WARNING, no-op."""
+def test_apply_moe_post_peft_calls_freeze(monkeypatch):
+    """Expert selection runs POST-PEFT via _apply_moe_post_peft (F-P3-FABLE-02)."""
+    called = {}
+    monkeypatch.setattr(m, "_freeze_unselected_experts", lambda *a, **k: called.setdefault("freeze", a))
+    monkeypatch.setattr(m, "_apply_moe_expert_quantization", lambda *a, **k: None)
+    model = MagicMock()
+    config = SimpleNamespace(model=SimpleNamespace(moe=SimpleNamespace(quantize_experts=False, experts_to_train="0,1")))
+    m._apply_moe_post_peft(model, config, 60)
+    assert "freeze" in called, "experts_to_train must reach _freeze_unselected_experts post-PEFT"
+
+
+def test_detect_moe_experts_warns_when_not_moe(caplog):
+    """moe configured but no recognised expert attribute → loud WARNING, returns None."""
     model = MagicMock()
     model.config = SimpleNamespace(hidden_size=4096)  # dense
     config = SimpleNamespace(model=SimpleNamespace(moe=SimpleNamespace(quantize_experts=True, experts_to_train="0")))
     with caplog.at_level("WARNING", logger="forgelm.model"):
-        m._apply_moe_config(model, config)
+        assert m._detect_moe_experts(model, config) is None
     assert any("no recognised MoE" in r.message for r in caplog.records)
 
 

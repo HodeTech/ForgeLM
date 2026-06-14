@@ -189,11 +189,18 @@ def _build_model_kwargs(config: Any, trust_remote_code: bool) -> dict:
     return kwargs
 
 
-def _apply_moe_config(model: Any, config: Any) -> None:
-    """Apply MoE-specific freezing / quantization, no-op for non-MoE models."""
+def _detect_moe_experts(model: Any, config: Any) -> Optional[int]:
+    """Resolve the MoE expert count (pre-PEFT), or None for a non-MoE model.
+
+    Detection only — the actual expert selection + quantization run AFTER
+    ``get_peft_model`` (see :func:`_apply_moe_post_peft`), because PEFT freezes
+    every base parameter during adapter injection: freezing base expert weights
+    beforehand is a no-op (F-P3-FABLE-02) and the quantization sweep finds
+    nothing frozen yet (F-P3-FABLE-08).
+    """
     moe_cfg = getattr(config.model, "moe", None)
     if not moe_cfg:
-        return
+        return None
     num_experts = _resolve_expert_count(model.config)
     if num_experts is None:
         logger.warning(
@@ -202,12 +209,24 @@ def _apply_moe_config(model: Any, config: Any) -> None:
             "experts_to_train) is ignored. Is this actually a MoE checkpoint?",
             ", ".join(_MOE_EXPERT_COUNT_ATTRS),
         )
-        return
+        return None
     logger.info("MoE model detected: %d experts", num_experts)
-    if moe_cfg.quantize_experts:
-        _apply_moe_expert_quantization(model)
+    return num_experts
+
+
+def _apply_moe_post_peft(model: Any, config: Any, num_experts: int) -> None:
+    """Apply MoE expert selection + optional quantization AFTER ``get_peft_model``.
+
+    Order matters: PEFT has already frozen every base parameter and injected the
+    trainable LoRA adapters, so here we (1) constrain the trainable set that
+    actually matters — the adapters of unselected experts — and (2) recast the
+    now-frozen base expert weights for VRAM savings.
+    """
+    moe_cfg = config.model.moe
     if moe_cfg.experts_to_train != "all":
         _freeze_unselected_experts(model, moe_cfg.experts_to_train, num_experts)
+    if moe_cfg.quantize_experts:
+        _apply_moe_expert_quantization(model)
 
 
 def _build_lora_config(config: Any) -> "LoraConfig":  # noqa: F821 — peft import is lazy
@@ -285,8 +304,13 @@ def get_model_and_tokenizer(config: Any) -> Tuple[Any, Any]:
     if torch.cuda.is_available() and config.model.load_in_4bit:
         model = prepare_model_for_kbit_training(model)
 
-    _apply_moe_config(model, config)
+    # MoE detection reads model.config (pre-PEFT); the actual expert selection +
+    # quantization must run AFTER get_peft_model so they constrain the injected
+    # adapters / operate on the now-frozen base (F-P3-FABLE-02/08).
+    moe_num_experts = _detect_moe_experts(model, config)
     model = get_peft_model(model, _build_lora_config(config))
+    if moe_num_experts is not None:
+        _apply_moe_post_peft(model, config, moe_num_experts)
     model.print_trainable_parameters()
 
     return model, tokenizer
@@ -301,7 +325,15 @@ def _is_frozen_expert_weight(name: str, module) -> bool:
 
 def _recast_expert_weight(name: str, module, target_dtype) -> bool:
     """Recast a single expert weight in-place; return True if a change was made."""
+    import torch
+
     if module.weight.dtype == target_dtype:
+        return False
+    # bitsandbytes Linear4bit stores packed quantised weights as uint8 (and
+    # 8-bit as int8). Casting that packed storage to a float dtype destroys the
+    # data↔quant_state invariant — the forward dequantise then reads garbage or
+    # crashes. Never recast packed quant storage (F-P3-FABLE-08).
+    if module.weight.dtype in (torch.uint8, torch.int8):
         return False
     try:
         module.weight.data = module.weight.data.to(target_dtype)
@@ -320,16 +352,43 @@ def _apply_moe_expert_quantization(model) -> None:
     """
     import torch
 
+    # A 4-bit-loaded model's expert weights are already bitsandbytes Params4bit
+    # (packed uint8); recasting them to a float dtype corrupts the quant state.
+    # The model is already quantised — there is nothing for this half-precision
+    # pass to save (F-P3-FABLE-08).
+    is_4bit = getattr(model, "is_loaded_in_4bit", False) or getattr(
+        getattr(model, "base_model", None), "is_loaded_in_4bit", False
+    )
+    if is_4bit:
+        logger.info(
+            "MoE expert quantization skipped: model is already loaded in 4-bit "
+            "(recasting packed Params4bit storage would corrupt the weights)."
+        )
+        return
+
     target_dtype = torch.float16
     if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
         target_dtype = torch.bfloat16
 
-    optimized_count = sum(
-        1
-        for name, module in model.named_modules()
-        if _is_frozen_expert_weight(name, module) and _recast_expert_weight(name, module, target_dtype)
-    )
+    optimized_count = 0
+    failed_count = 0
+    for name, module in model.named_modules():
+        if not _is_frozen_expert_weight(name, module):
+            continue
+        if module.weight.dtype == target_dtype or module.weight.dtype in (torch.uint8, torch.int8):
+            continue
+        if _recast_expert_weight(name, module, target_dtype):
+            optimized_count += 1
+        else:
+            failed_count += 1
 
+    if failed_count:
+        logger.warning(
+            "MoE expert optimization: %d expert weight tensor(s) failed to recast to %s "
+            "(see DEBUG logs); they remain at their original dtype.",
+            failed_count,
+            target_dtype,
+        )
     if optimized_count > 0:
         logger.info(
             "MoE expert optimization: %d expert weight tensors converted to %s for VRAM savings.",
@@ -337,10 +396,7 @@ def _apply_moe_expert_quantization(model) -> None:
             target_dtype,
         )
     else:
-        logger.info(
-            "MoE expert optimization: no frozen expert weights found. "
-            "Optimization applies after LoRA freezes non-target parameters."
-        )
+        logger.info("MoE expert optimization: no eligible frozen expert weights found.")
 
 
 def _parse_selected_experts(experts_to_train: str, num_experts: int) -> Optional[set]:
@@ -434,10 +490,16 @@ def _expert_index_in_name(name: str, num_experts: int) -> Optional[int]:
 
 
 def _freeze_unselected_experts(model, experts_to_train: str, num_experts: int) -> None:
-    """Freeze all expert parameters except the selected ones.
+    """Freeze the LoRA adapters of unselected experts. Run AFTER ``get_peft_model``.
+
+    PEFT freezes every base parameter during adapter injection, so the trainable
+    set is the injected ``lora_*`` adapters. Freezing those that resolve to an
+    unselected expert is what actually constrains training to
+    ``experts_to_train`` — the pre-PEFT base-weight freeze this replaces left the
+    trainable set identical whether the field was set or not (F-P3-FABLE-02).
 
     Args:
-        model: The model with MoE architecture.
+        model: The PEFT-wrapped model with MoE architecture.
         experts_to_train: Comma-separated expert indices (e.g., "0,1,2").
         num_experts: Total number of experts in the model.
     """
@@ -445,15 +507,36 @@ def _freeze_unselected_experts(model, experts_to_train: str, num_experts: int) -
     if selected is None:
         return
 
+    expert_adapter_params = 0
     frozen_count = 0
     for name, param in model.named_parameters():
+        if "lora_" not in name:
+            continue
         idx = _expert_index_in_name(name, num_experts)
-        if idx is not None and idx not in selected:
+        if idx is None:
+            continue
+        expert_adapter_params += 1
+        if idx not in selected:
             param.requires_grad = False
             frozen_count += 1
 
+    if expert_adapter_params == 0:
+        target_modules = getattr(getattr(model, "peft_config", None), "target_modules", "?")
+        logger.warning(
+            "experts_to_train=%r selected experts %s, but NO LoRA adapters were injected "
+            "into any expert — lora.target_modules (%s) does not cover expert projections "
+            "(e.g. gate_proj/up_proj/down_proj), so expert selection has no effect. Widen "
+            "target_modules to train specific experts.",
+            experts_to_train,
+            sorted(selected),
+            target_modules,
+        )
+        return
+
     logger.info(
-        "MoE expert selection: training experts %s, froze %d parameters from unselected experts.",
+        "MoE expert selection: training experts %s, froze %d of %d expert adapter parameter(s) "
+        "from unselected experts.",
         sorted(selected),
         frozen_count,
+        expert_adapter_params,
     )
