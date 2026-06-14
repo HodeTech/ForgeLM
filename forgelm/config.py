@@ -55,6 +55,7 @@ class ModelConfig(BaseModel):
     name_or_path: str = Field(description="HuggingFace Hub repo ID or local path to the base model.")
     max_length: int = Field(
         default=2048,
+        gt=0,
         description="Tokenizer/context max sequence length used during training.",
         json_schema_extra={"wizard": True},
     )
@@ -85,9 +86,9 @@ class ModelConfig(BaseModel):
         default="nf4",
         description="bitsandbytes 4-bit quantisation scheme: `nf4` (recommended) or `fp4`.",
     )
-    bnb_4bit_compute_dtype: str = Field(
+    bnb_4bit_compute_dtype: Literal["auto", "bfloat16", "bf16", "float16", "fp16", "float32", "fp32"] = Field(
         default="auto",
-        description="bitsandbytes 4-bit compute dtype: `auto` | `bfloat16` | `float16` | `float32`.  `float32` negates most VRAM savings.",
+        description="bitsandbytes 4-bit compute dtype: `auto` | `bfloat16` | `float16` | `float32` (each accepts the short `bf16`/`fp16`/`fp32` alias).  `float32` negates most VRAM savings.",
     )
 
     @model_validator(mode="after")
@@ -109,16 +110,20 @@ class LoraConfigModel(BaseModel):
 
     r: int = Field(
         default=8,
+        ge=1,
         description="LoRA rank: dimension of the low-rank update matrices.",
         json_schema_extra={"wizard": True},
     )
     alpha: int = Field(
         default=16,
+        ge=1,
         description="LoRA scaling factor (typically `2 * r`).",
         json_schema_extra={"wizard": True},
     )
     dropout: float = Field(
         default=0.1,
+        ge=0.0,
+        le=1.0,
         description="Dropout rate applied to the LoRA update.",
         json_schema_extra={"wizard": True},
     )
@@ -148,16 +153,45 @@ class LoraConfigModel(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_peft_method(self):
-        if self.use_dora and self.method == "lora":
-            logger.warning(
-                "lora.use_dora=True is deprecated. Use method='dora' instead. Automatically setting method='dora'."
+        # Reject contradictory deprecated flags rather than silently picking a
+        # winner (F-P1-FAB-20).  Previously use_dora=True + use_rslora=True kept
+        # both booleans (model.py re-ORs them into the PEFT config), and a
+        # deprecated flag set against a non-matching explicit `method` was a
+        # silent no-op.  Both are config-time mistakes → fail fast with exit 1.
+        if self.use_dora and self.use_rslora:
+            raise ValueError(
+                "lora.use_dora and lora.use_rslora are mutually exclusive "
+                "(DoRA and rsLoRA select different PEFT methods). Set a single "
+                "`method:` ('dora' or 'rslora') instead; both deprecated flags "
+                "are removed in v0.9.0."
             )
+        if self.use_dora and self.method not in ("lora", "dora"):
+            raise ValueError(
+                f"lora.use_dora=True contradicts method='{self.method}'. "
+                "Drop the deprecated flag and keep the explicit `method:`; "
+                "use_dora is removed in v0.9.0."
+            )
+        if self.use_rslora and self.method not in ("lora", "rslora"):
+            raise ValueError(
+                f"lora.use_rslora=True contradicts method='{self.method}'. "
+                "Drop the deprecated flag and keep the explicit `method:`; "
+                "use_rslora is removed in v0.9.0."
+            )
+        if self.use_dora and self.method == "lora":
+            message = (
+                "lora.use_dora=True is deprecated and removed in v0.9.0. "
+                "Use method='dora' instead. Automatically setting method='dora'."
+            )
+            logger.warning(message)
+            warnings.warn(message, DeprecationWarning, stacklevel=2)
             object.__setattr__(self, "method", "dora")
         if self.use_rslora and self.method == "lora":
-            logger.warning(
-                "lora.use_rslora=True is deprecated. Use method='rslora' instead. "
-                "Automatically setting method='rslora'."
+            message = (
+                "lora.use_rslora=True is deprecated and removed in v0.9.0. "
+                "Use method='rslora' instead. Automatically setting method='rslora'."
             )
+            logger.warning(message)
+            warnings.warn(message, DeprecationWarning, stacklevel=2)
             object.__setattr__(self, "method", "rslora")
         return self
 
@@ -224,11 +258,11 @@ class TrainingConfig(BaseModel):
     early_stopping_patience: int = Field(
         default=3, ge=1, description="Stop training after N evals without validation-loss improvement."
     )
-    orpo_beta: float = Field(default=0.1, description="ORPO odds-ratio weight (alignment paradigm parameter).")
-    dpo_beta: float = Field(default=0.1, description="DPO temperature parameter.")
-    simpo_gamma: float = Field(default=0.5, description="SimPO margin term.")
-    simpo_beta: float = Field(default=2.0, description="SimPO scaling parameter.")
-    kto_beta: float = Field(default=0.1, description="KTO loss parameter.")
+    orpo_beta: float = Field(default=0.1, gt=0, description="ORPO odds-ratio weight (alignment paradigm parameter).")
+    dpo_beta: float = Field(default=0.1, gt=0, description="DPO temperature parameter.")
+    simpo_gamma: float = Field(default=0.5, ge=0, description="SimPO margin term.")
+    simpo_beta: float = Field(default=2.0, gt=0, description="SimPO scaling parameter.")
+    kto_beta: float = Field(default=0.1, gt=0, description="KTO loss parameter.")
     grpo_num_generations: int = Field(
         default=4, ge=2, description="GRPO: number of responses to generate per prompt during rollout."
     )
@@ -265,11 +299,17 @@ class TrainingConfig(BaseModel):
         default="galore_adamw",
         description="GaLore optimiser variant.  `_8bit` halves optimiser-state VRAM; `_layerwise` cuts peak by recomputing per-layer.",
     )
-    galore_rank: int = Field(default=128, description="GaLore: low-rank subspace dimension for gradient projection.")
-    galore_update_proj_gap: int = Field(
-        default=200, description="GaLore: number of steps between SVD re-computations of the projection."
+    galore_rank: int = Field(
+        default=128, ge=1, description="GaLore: low-rank subspace dimension for gradient projection."
     )
-    galore_scale: float = Field(default=0.25, description="GaLore: gradient scaling factor (analogous to LoRA alpha).")
+    galore_update_proj_gap: int = Field(
+        default=200,
+        ge=1,
+        description="GaLore: number of steps between SVD re-computations of the projection.",
+    )
+    galore_scale: float = Field(
+        default=0.25, gt=0, description="GaLore: gradient scaling factor (analogous to LoRA alpha)."
+    )
     galore_proj_type: Literal["std", "reverse_std", "right", "left", "full"] = Field(
         default="std",
         description="GaLore projection type.  `std` is the documented default; `full` disables projection (debug only).",
@@ -314,6 +354,7 @@ class TrainingConfig(BaseModel):
     run_name: Optional[str] = Field(default=None, description="W&B / MLflow run name.  Auto-generated when None.")
     gpu_cost_per_hour: Optional[float] = Field(
         default=None,
+        ge=0,
         description="USD per hour for the training GPU.  None = auto-detect from known GPUs (used by the cost-estimation report).",
     )
 
@@ -483,6 +524,25 @@ class BenchmarkConfig(BaseModel):
         le=1.0,
         description="Minimum average accuracy (0.0–1.0).  When set + auto_revert=True, falling below triggers an auto-revert to the prior model.",
     )
+
+    @model_validator(mode="after")
+    def _enabled_requires_tasks(self):
+        """Reject an enabled benchmark gate with no tasks (F-P1-FAB-19).
+
+        ``enabled=True`` + ``tasks=[]`` previously validated cleanly, then
+        ``trainer.py`` short-circuited to a skip-as-pass at runtime — the gate
+        the operator explicitly enabled (possibly with ``min_score`` +
+        ``auto_revert``) never executed and emitted no benchmark audit event.
+        That is a silently-disabled decision gate; fail fast at config time
+        (exit 1) so the operator lists a task or disables the block.
+        """
+        if self.enabled and not self.tasks:
+            raise ValueError(
+                "evaluation.benchmark.enabled is true but tasks is empty; "
+                "list at least one lm-eval task (e.g. ['arc_easy']) or set "
+                "enabled: false."
+            )
+        return self
 
 
 class SafetyConfig(BaseModel):
@@ -1295,14 +1355,20 @@ class ForgeConfig(BaseModel):
             self.retention = retention.model_copy(update={"staging_ttl_days": legacy})
         else:
             self.retention = RetentionConfig(staging_ttl_days=legacy)
-        warnings.warn(
+        # Pair the DeprecationWarning with a logger.warning: CPython's default
+        # filters suppress DeprecationWarning emitted outside __main__, so the
+        # warnings.warn call alone never reaches a CLI operator (F-P1-FAB-17).
+        # The logger line mirrors the lora.use_dora / sample_packing idiom and
+        # surfaces on the CLI path; the warnings.warn keeps `-W error` / CI
+        # deprecation sweeps working for library consumers.
+        message = (
             "`evaluation.staging_ttl_days` is deprecated and forwards to "
             "`retention.staging_ttl_days`. "
             "Move the value under the new top-level `retention:` block; the "
-            "deprecated field is removed in v0.8.0.",
-            DeprecationWarning,
-            stacklevel=5,
+            "deprecated field is removed in v0.8.0."
         )
+        logger.warning(message)
+        warnings.warn(message, DeprecationWarning, stacklevel=5)
 
     def _emit_legacy_match_warning(self) -> None:
         """Warn when both fields are set to identical values; canonical wins.
@@ -1311,14 +1377,16 @@ class ForgeConfig(BaseModel):
         deprecation paths attribute the warning to the same operator
         call frame.
         """
-        warnings.warn(
+        # See `_apply_legacy_alias_forward`: pair the logger.warning so the
+        # deprecation reaches CLI operators, not just `-W error` consumers.
+        message = (
             "`evaluation.staging_ttl_days` is deprecated; the value matches "
             "`retention.staging_ttl_days` so the canonical block wins.  Remove "
             "`evaluation.staging_ttl_days` from your YAML — the deprecated field "
-            "is removed in v0.8.0.",
-            DeprecationWarning,
-            stacklevel=5,
+            "is removed in v0.8.0."
         )
+        logger.warning(message)
+        warnings.warn(message, DeprecationWarning, stacklevel=5)
 
 
 class ConfigError(Exception):

@@ -2,6 +2,7 @@
 
 import logging
 import os
+import warnings
 
 import pytest
 import yaml
@@ -413,3 +414,146 @@ class TestSafetyGateValidation:
     def test_benchmark_min_score_in_range_accepted(self):
         b = BenchmarkConfig(enabled=True, min_score=0.6, tasks=["arc_easy"])
         assert b.min_score == pytest.approx(0.6)
+
+
+# --- M3: config numeric bounds (F-P1-FAB-18, F-P1-FAB-22) ---
+
+
+class TestNumericBounds:
+    """Statically-detectable YAML mistakes must fail at config time (exit 1),
+    not pass through to a runtime framework crash (exit 2).
+    """
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("galore_rank", 0),
+            ("galore_rank", -8),
+            ("galore_update_proj_gap", 0),
+            ("galore_update_proj_gap", -1),
+            ("galore_scale", 0.0),
+            ("galore_scale", -1.0),
+        ],
+    )
+    def test_galore_numeric_bounds_rejected(self, field, value):
+        with pytest.raises(ValidationError):
+            TrainingConfig(galore_enabled=True, **{field: value})
+
+    def test_galore_valid_bounds_accepted(self):
+        t = TrainingConfig(galore_enabled=True, galore_rank=1, galore_update_proj_gap=1, galore_scale=0.25)
+        assert t.galore_rank == 1
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("r", 0), ("r", -4), ("alpha", 0), ("alpha", -16), ("dropout", -0.5), ("dropout", 2.0)],
+    )
+    def test_lora_numeric_bounds_rejected(self, field, value):
+        with pytest.raises(ValidationError):
+            LoraConfigModel(**{field: value})
+
+    def test_lora_valid_bounds_accepted(self):
+        lora = LoraConfigModel(r=1, alpha=1, dropout=0.0)
+        assert lora.r == 1 and lora.dropout == pytest.approx(0.0)
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("dpo_beta", 0.0),
+            ("dpo_beta", -1.0),
+            ("orpo_beta", -0.5),
+            ("simpo_beta", 0.0),
+            ("kto_beta", -1.0),
+            ("simpo_gamma", -0.1),
+        ],
+    )
+    def test_preference_beta_bounds_rejected(self, field, value):
+        # A negative beta silently inverts the preference loss (optimises
+        # toward rejected responses) — the sharpest of these omissions.
+        with pytest.raises(ValidationError):
+            TrainingConfig(**{field: value})
+
+    def test_max_length_zero_rejected(self):
+        with pytest.raises(ValidationError):
+            ModelConfig(name_or_path="org/m", max_length=0)
+
+    def test_gpu_cost_per_hour_negative_rejected(self):
+        with pytest.raises(ValidationError):
+            TrainingConfig(gpu_cost_per_hour=-3)
+
+
+# --- M3: bnb_4bit_compute_dtype enum (F-P1-FAB-21) ---
+
+
+class TestComputeDtypeEnum:
+    def test_unknown_compute_dtype_rejected_at_config_time(self):
+        with pytest.raises(ValidationError):
+            ModelConfig(name_or_path="org/m", bnb_4bit_compute_dtype="bfloat1")
+
+    @pytest.mark.parametrize("value", ["auto", "bfloat16", "bf16", "float16", "fp16", "float32", "fp32"])
+    def test_known_compute_dtype_accepted(self, value):
+        m = ModelConfig(name_or_path="org/m", bnb_4bit_compute_dtype=value)
+        assert m.bnb_4bit_compute_dtype == value
+
+
+# --- M3: benchmark enabled+empty-tasks no-op (F-P1-FAB-19) ---
+
+
+class TestBenchmarkEnabledRequiresTasks:
+    def test_benchmark_enabled_requires_tasks(self):
+        with pytest.raises(ValidationError, match="tasks is empty"):
+            BenchmarkConfig(enabled=True)
+
+    def test_benchmark_disabled_empty_tasks_accepted(self):
+        b = BenchmarkConfig(enabled=False)
+        assert b.tasks == []
+
+    def test_benchmark_enabled_with_tasks_accepted(self):
+        b = BenchmarkConfig(enabled=True, tasks=["arc_easy"])
+        assert b.enabled is True
+
+
+# --- M3: lora deprecated-flag conflicts + visibility (F-P1-FAB-20) ---
+
+
+class TestLoraDeprecatedFlagConflicts:
+    def test_use_dora_and_use_rslora_rejected(self):
+        with pytest.raises(ValidationError, match="mutually exclusive"):
+            LoraConfigModel(use_dora=True, use_rslora=True)
+
+    def test_use_dora_contradicting_explicit_method_rejected(self):
+        with pytest.raises(ValidationError, match="contradicts"):
+            LoraConfigModel(use_dora=True, method="pissa")
+
+    def test_use_rslora_contradicting_explicit_method_rejected(self):
+        with pytest.raises(ValidationError, match="contradicts"):
+            LoraConfigModel(use_rslora=True, method="dora")
+
+    def test_use_dora_emits_deprecation_warning(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("always")
+            with pytest.warns(DeprecationWarning, match="use_dora"):
+                LoraConfigModel(use_dora=True)
+
+    def test_use_dora_warning_visible_on_logger_path(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            LoraConfigModel(use_dora=True)
+        assert any("use_dora=True is deprecated" in r.message for r in caplog.records)
+
+
+# --- M3: staging_ttl deprecation reaches the logger path (F-P1-FAB-17) ---
+
+
+class TestStagingTtlDeprecationVisibility:
+    """The deprecation must surface on the CLI logger path, not only via a
+    DeprecationWarning that CPython's default filters suppress.
+    """
+
+    def test_staging_ttl_forward_emits_logger_warning(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            ForgeConfig(**minimal_config(evaluation={"staging_ttl_days": 14}))
+        assert any("staging_ttl_days` is deprecated" in r.message for r in caplog.records)
+
+    def test_staging_ttl_match_emits_logger_warning(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            ForgeConfig(**minimal_config(evaluation={"staging_ttl_days": 7}, retention={"staging_ttl_days": 7}))
+        assert any("canonical block wins" in r.message for r in caplog.records)
