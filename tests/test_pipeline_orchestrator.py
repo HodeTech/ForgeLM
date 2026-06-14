@@ -1368,6 +1368,60 @@ def _pipeline_args(**overrides):
     return types.SimpleNamespace(**base)
 
 
+def _install_crashing_trainer(monkeypatch, *, crash_on_stage_index, exc):
+    """Install a trainer that raises *exc* on the train() call of the given stage
+    index (0-based) and succeeds otherwise. Materialises final_model dirs like
+    the happy-path mock so the chain guard is satisfied for prior stages."""
+    counter = {"i": 0}
+
+    class _CrashingForgeTrainer:
+        def __init__(self, *, model, tokenizer, config, dataset):
+            final_dir = os.path.join(config.training.output_dir, "final_model")
+            os.makedirs(final_dir, exist_ok=True)
+            self.config = config
+            self._idx = counter["i"]
+            counter["i"] += 1
+
+        def train(self, resume_from_checkpoint=None):
+            if self._idx == crash_on_stage_index:
+                raise exc
+            return TrainResult(success=True)
+
+    fake_trainer_mod = types.ModuleType("forgelm.trainer")
+    fake_trainer_mod.ForgeTrainer = _CrashingForgeTrainer
+    monkeypatch.setitem(sys.modules, "forgelm.trainer", fake_trainer_mod)
+
+    fake_model_mod = types.ModuleType("forgelm.model")
+    fake_model_mod.get_model_and_tokenizer = lambda config: (MagicMock(), MagicMock())
+    monkeypatch.setitem(sys.modules, "forgelm.model", fake_model_mod)
+
+    fake_data_mod = types.ModuleType("forgelm.data")
+    fake_data_mod.prepare_dataset = lambda config, tokenizer: {"train": [{"text": "x"}]}
+    monkeypatch.setitem(sys.modules, "forgelm.data", fake_data_mod)
+
+    fake_utils_mod = types.ModuleType("forgelm.utils")
+    fake_utils_mod.setup_authentication = lambda token: None
+    monkeypatch.setitem(sys.modules, "forgelm.utils", fake_utils_mod)
+
+
+class TestPerStageTrainingErrorRouting:
+    """F-P2-FAB-18: a stage whose trainer CRASHES (vs a gate failure) routes to
+    EXIT_TRAINING_ERROR (2), halts the chain, and skips downstream stages."""
+
+    def test_trainer_crash_routes_to_exit_2_and_skips_downstream(self, tmp_path, monkeypatch):
+        cfg = _three_stage_config(tmp_path)
+        _install_crashing_trainer(monkeypatch, crash_on_stage_index=1, exc=RuntimeError("CUDA error"))
+        orch = PipelineOrchestrator(cfg, b"yaml bytes")
+        code = orch.run()
+        assert code == EXIT_TRAINING_ERROR
+        with open(orch.paths["state_file"]) as f:
+            payload = json.load(f)
+        statuses = [s["status"] for s in payload["stages"]]
+        assert statuses == ["completed", "failed", "skipped_due_to_prior_revert"]
+        dpo = payload["stages"][1]
+        assert dpo["error"].startswith("Trainer crashed:")
+
+
 class TestPipelineExceptionBoundary:
     def test_save_state_oserror_maps_to_training_error_with_json_envelope(self, tmp_path, monkeypatch):
         """F-P2-FAB-13: a mid-run _atomic_write_json OSError (disk full /

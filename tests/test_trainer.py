@@ -352,3 +352,171 @@ class TestGateRunnerImportContract:
         monkeypatch.delattr(_bm, "run_benchmark")
         with pytest.raises(ImportError, match="forgelm\\[eval\\]"):
             trainer._run_benchmark_if_configured()
+
+
+@pytest.mark.skipif(not torch_available, reason="torch not installed")
+class TestGateApplication:
+    """F-P2-FAB-16: trainer-side gate application + revert/continue matrix."""
+
+    def _make_trainer(self, auto_revert):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model"},
+            lora={},
+            training={"output_dir": "/tmp/test_forge_gate"},
+            data={"dataset_name_or_path": "org/dataset"},
+            evaluation={"auto_revert": auto_revert},
+        )
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.dataset = {"train": ["x"], "validation": ["y"]}
+            trainer.checkpoint_dir = "/tmp/test_forge_gate"
+            trainer.run_name = "gate_apply"
+            trainer.notifier = MagicMock()
+            trainer.audit = MagicMock()
+        return trainer
+
+    def test_safety_fail_with_auto_revert_reverts_and_marks_result(self):
+        trainer = self._make_trainer(auto_revert=True)
+        result = TrainResult(success=True, metrics={}, final_model_path="/tmp/x/final")
+        safety = MagicMock(
+            passed=False,
+            safety_score=0.4,
+            safe_ratio=0.4,
+            total_count=10,
+            category_distribution={},
+            severity_distribution={},
+            low_confidence_count=0,
+            failure_reason="unsafe ratio too high",
+        )
+        with patch.object(trainer, "_revert_model") as revert:
+            cont = trainer._apply_safety_result(safety, result, {}, "/tmp/x/final")
+        assert cont is False  # halt → exit 3
+        assert result.reverted is True
+        assert result.staging_path is None  # cleared by _mark_reverted
+        revert.assert_called_once()
+
+    def test_safety_infra_failure_audit_payload_does_not_report_perfect_ratio(self):
+        """F-P3-FABLE-26 trainer-side: an infra-failure SafetyResult (safe_ratio=0.0,
+        total_count=0) must not surface a 1.0 metric / audit payload."""
+        trainer = self._make_trainer(auto_revert=False)
+        result = TrainResult(success=True, metrics={}, final_model_path="/tmp/x/final")
+        metrics: dict[str, float] = {}
+        from forgelm.safety import SafetyResult
+
+        infra_fail = SafetyResult(passed=False, evaluation_completed=False, safe_ratio=0.0)
+        cont = trainer._apply_safety_result(infra_fail, result, metrics, "/tmp/x/final")
+        assert cont is True  # recorded, not reverted (auto_revert off)
+        assert metrics["safety/safe_ratio"] == 0.0
+        audit_kwargs = trainer.audit.log_event.call_args.kwargs
+        assert audit_kwargs["safe_ratio"] == 0.0
+        assert audit_kwargs["total_count"] == 0
+
+    def test_judge_fail_with_auto_revert_reverts(self):
+        trainer = self._make_trainer(auto_revert=True)
+        result = TrainResult(success=True, metrics={}, final_model_path="/tmp/x/final")
+        judge = MagicMock(passed=False, average_score=2.0, details=[], failure_reason="below min_score")
+        with patch.object(trainer, "_revert_model") as revert:
+            cont = trainer._apply_judge_result(judge, result, {}, "/tmp/x/final")
+        assert cont is False
+        assert result.reverted is True
+        revert.assert_called_once()
+
+    def test_judge_fail_without_auto_revert_records_but_continues(self):
+        trainer = self._make_trainer(auto_revert=False)
+        result = TrainResult(success=True, metrics={}, final_model_path="/tmp/x/final")
+        metrics: dict[str, float] = {}
+        judge = MagicMock(passed=False, average_score=2.0, details=[], failure_reason="below min_score")
+        with patch.object(trainer, "_revert_model") as revert:
+            cont = trainer._apply_judge_result(judge, result, metrics, "/tmp/x/final")
+        assert cont is True
+        assert result.judge_score == 2.0
+        assert result.reverted is False
+        revert.assert_not_called()
+
+    def test_none_gate_results_are_noops(self):
+        trainer = self._make_trainer(auto_revert=True)
+        result = TrainResult(success=True, metrics={})
+        assert trainer._apply_safety_result(None, result, {}, "/tmp/x") is True
+        assert trainer._apply_judge_result(None, result, {}, "/tmp/x") is True
+        assert trainer._apply_benchmark_result(None, result, {}, "/tmp/x") is True
+        trainer.audit.log_event.assert_not_called()
+
+
+@pytest.mark.skipif(not torch_available, reason="torch not installed")
+class TestBaselineLossCapture:
+    """F-P2-FAB-17: _measure_baseline_loss gating + happy / fallback / missing paths."""
+
+    def _make_trainer(self, *, auto_revert=True, baseline_loss=None, validation=True):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model"},
+            lora={},
+            training={"output_dir": "/tmp/test_baseline"},
+            data={"dataset_name_or_path": "org/dataset"},
+            evaluation={"auto_revert": auto_revert, "baseline_loss": baseline_loss},
+        )
+        dataset = {"train": ["x"], "validation": ["y"]} if validation else {"train": ["x"]}
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.dataset = dataset
+            trainer.checkpoint_dir = "/tmp/test_baseline"
+            trainer.run_name = "baseline"
+            trainer.notifier = MagicMock()
+            trainer.audit = MagicMock()
+            trainer.trainer = MagicMock()
+        return trainer
+
+    def test_baseline_captured_and_armed(self):
+        trainer = self._make_trainer()
+        # model without disable_adapter → plain evaluate() path
+        model_obj = MagicMock(spec=[])  # no disable_adapter attr
+        trainer.trainer.model = model_obj
+        trainer.trainer.evaluate = MagicMock(return_value={"eval_loss": 1.25})
+        metrics: dict[str, float] = {}
+        trainer._measure_baseline_loss(metrics)
+        assert trainer.config.evaluation.baseline_loss == pytest.approx(1.25)
+        assert metrics["baseline_eval_loss"] == pytest.approx(1.25)
+
+    def test_baseline_skipped_when_no_auto_revert(self):
+        trainer = self._make_trainer(auto_revert=False)
+        trainer.trainer.evaluate = MagicMock(return_value={"eval_loss": 1.25})
+        metrics: dict[str, float] = {}
+        trainer._measure_baseline_loss(metrics)
+        # Gating condition not met → no evaluate, no mutation.
+        trainer.trainer.evaluate.assert_not_called()
+        assert "baseline_eval_loss" not in metrics
+
+    def test_baseline_skipped_when_already_configured(self):
+        trainer = self._make_trainer(baseline_loss=0.9)
+        trainer.trainer.evaluate = MagicMock(return_value={"eval_loss": 1.25})
+        trainer._measure_baseline_loss({})
+        trainer.trainer.evaluate.assert_not_called()
+        assert trainer.config.evaluation.baseline_loss == pytest.approx(0.9)
+
+    def test_baseline_missing_eval_loss_does_not_arm_gate(self):
+        trainer = self._make_trainer()
+        model_obj = MagicMock(spec=[])
+        trainer.trainer.model = model_obj
+        trainer.trainer.evaluate = MagicMock(return_value={"something_else": 1.0})
+        trainer._measure_baseline_loss({})
+        assert trainer.config.evaluation.baseline_loss is None
+
+    def test_baseline_disable_adapter_fallback_used_on_error(self):
+        trainer = self._make_trainer()
+
+        class _Model:
+            def disable_adapter(self):
+                raise RuntimeError("adapter graph locked")
+
+        trainer.trainer.model = _Model()
+        trainer.trainer.evaluate = MagicMock(return_value={"eval_loss": 0.8})
+        trainer._measure_baseline_loss({})
+        # Fallback evaluate() (with adapters) supplied the baseline.
+        assert trainer.config.evaluation.baseline_loss == pytest.approx(0.8)
