@@ -44,7 +44,7 @@ Kodlar `forgelm/cli/subcommands/_verify_integrity.py::_run_verify_integrity_cmd`
 
 ## Emit edilen audit event'leri
 
-`forgelm verify-integrity` **salt-okunur bir doğrulayıcıdır** ve `audit_log.jsonl`'a **hiçbir** girdi emit etmez. Bütünlük-manifestinin *üretimini* (doğrulamasını değil) işaret eden olaylar çalıştırma düzeyindeki eğitim olaylarına biner; bkz. [audit_event_catalog.md](audit_event_catalog.md).
+`forgelm verify-integrity` **salt-okunur bir doğrulayıcıdır** ve `audit_log.jsonl`'a **hiçbir** girdi emit etmez. Bütünlük-manifestinin *üretimini* (doğrulamasını değil) işaret eden olaylar çalıştırma düzeyindeki eğitim olaylarına biner; bkz. [audit_event_catalog.md](audit_event_catalog-tr.md).
 
 ## Örnekler
 
@@ -95,7 +95,7 @@ $ echo $?
 
 ## Bkz.
 
-- [`audit_event_catalog.md`](audit_event_catalog.md) — kanonik olay sözcük dağarcığı.
-- [`verify_gguf_subcommand.md`](verify_gguf_subcommand.md) — export edilen GGUF dosyaları için eşlik eden doğrulayıcı.
-- [`verify_annex_iv_subcommand.md`](verify_annex_iv_subcommand.md) — Annex IV teknik-dokümantasyon yapıtı için eşlik eden doğrulayıcı.
+- [`audit_event_catalog.md`](audit_event_catalog-tr.md) — kanonik olay sözcük dağarcığı.
+- [`verify_gguf_subcommand.md`](verify_gguf_subcommand-tr.md) — export edilen GGUF dosyaları için eşlik eden doğrulayıcı.
+- [`verify_annex_iv_subcommand.md`](verify_annex_iv_subcommand-tr.md) — Annex IV teknik-dokümantasyon yapıtı için eşlik eden doğrulayıcı.
 - `forgelm.cli.subcommands._verify_integrity.verify_integrity` — entegratörlerin CLI'den geçmeden doğrudan çağırdığı kütüphane giriş noktası.
