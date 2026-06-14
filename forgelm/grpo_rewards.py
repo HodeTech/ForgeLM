@@ -85,20 +85,26 @@ import re
 # "." is not followed by whitespace or end-of-string.
 #
 # Implementation notes:
-#   - First chunk: ``[^\s.!?\n][^.!?\n]*`` — must start with a non-space, then
-#     any non-newline that isn't sentence punctuation. Covers "18", "70 km/h",
-#     "$40", "12:15", "2/5".
+#   - First chunk: ``(?:[^\s.!?]|\.(?=\d))[^.!?\n]*`` — must start with a
+#     non-space that isn't sentence punctuation, OR a leading "." immediately
+#     followed by a digit (so a bare-dot decimal "Answer: .5" matches and the
+#     correctness reward agrees with the format gate's ``\S`` start — F-P2-FAB-31).
+#     Then any non-newline that isn't sentence punctuation. Covers "18",
+#     "70 km/h", "$40", "12:15", "2/5", ".5".
 #   - Optional repeats: ``[.!?](?!\s|$)[^.!?\n]*`` — sentence punctuation is
 #     allowed inside the capture *only* when not followed by whitespace/EOL,
 #     keeping "1.5" / "3.14159" intact while still stopping at "18. Çünkü ...".
 #   - Greedy throughout — no reluctant quantifier needed because the character
-#     classes self-bound at the next sentence break (no ReDoS overlap).
+#     classes self-bound at the next sentence break (no ReDoS overlap): the
+#     leading ``\.(?=\d)`` alternative is a fixed single-char lookahead, not a
+#     quantifier, so it adds no backtracking surface.
 #
 # Callers take the LAST match (``finditer`` → ``[-1]``), not the first, so the
 # graded answer is the completion's final one.
 ANSWER_EXTRACT_PATTERN = re.compile(
-    # First class drops `\n` because `\s` already covers it.
-    r"answer\s*:\s*([^\s.!?][^.!?\n]*(?:[.!?](?!\s|$)[^.!?\n]*)*)",
+    # First class drops `\n` because `\s` already covers it. The leading-dot
+    # alternative ``\.(?=\d)`` admits ".5"-style decimals (F-P2-FAB-31).
+    r"answer\s*:\s*((?:[^\s.!?]|\.(?=\d))[^.!?\n]*(?:[.!?](?!\s|$)[^.!?\n]*)*)",
     re.IGNORECASE,
 )
 

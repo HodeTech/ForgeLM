@@ -2,6 +2,7 @@ import inspect
 import logging
 import math
 import os
+import re
 import shutil
 import sys
 from typing import Any, Dict, Optional
@@ -126,6 +127,29 @@ def _normalize_answer(s: Any) -> str:
     return out.strip()
 
 
+# Comma-grouped thousands separators ("5,050", "1,234.5") — GSM8K's canonical
+# large-number rendering. Shape-anchored so only genuine grouped numerals are
+# rewritten: every comma must separate exactly three digits (F-P3-FABLE-51).
+# This deliberately does NOT match European decimals like "12,5" (one comma,
+# two trailing digits) — those stay untouched so they aren't silently coerced.
+# Bounded, no competing quantifiers (runs on short answer tokens, not corpora).
+_GROUPED_NUMBER_RE = re.compile(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?")
+
+
+def _parse_number(s: str) -> float:
+    """``float(s)`` but tolerant of comma-grouped thousands separators.
+
+    "5,050" → 5050.0 and "1,234.5" → 1234.5, matching GSM8K-style outputs
+    against comma-free golds (F-P3-FABLE-51). Only fully grouped numerals
+    (commas separating exactly three digits) are de-grouped; anything else is
+    handed to ``float`` unchanged, which raises ``ValueError`` for non-numeric
+    tokens exactly as before — including European decimals like "12,5".
+    """
+    if _GROUPED_NUMBER_RE.fullmatch(s):
+        s = s.replace(",", "")
+    return float(s)
+
+
 def _answers_match(extracted: str, gold: str) -> bool:
     """True when ``extracted`` is the same answer as ``gold``.
 
@@ -133,10 +157,17 @@ def _answers_match(extracted: str, gold: str) -> bool:
     tolerance — keeps non-numeric answers ("12:15", "2/5") correct without
     forcing the prompts into a single shape.
     """
+    # An empty side never counts as a match (F-P2-FAB-32): a degenerate
+    # unit-only completion ("Answer: $") normalizes to "" and would otherwise
+    # equal a unit-only gold ("%") that also normalizes to "" — falsely scoring
+    # 1.0. Per-row gold holes can also reach here despite the dataset-level
+    # _dataset_has_gold_answers probe, so guard both operands.
+    if not extracted or not gold:
+        return False
     if extracted == gold:
         return True
     try:
-        return abs(float(extracted) - float(gold)) < 1e-6
+        return abs(_parse_number(extracted) - _parse_number(gold)) < 1e-6
     except ValueError:
         return False
 
@@ -213,10 +244,31 @@ def _dataset_has_gold_answers(dataset: Dict[str, Any]) -> bool:
                 return False
             val = first["gold_answer"]
             return val is not None and val != ""
-    except (IndexError, KeyError, TypeError):
+    except (IndexError, TypeError):
+        # IndexError: row access unsupported (streaming/iterable wrappers).
+        # TypeError: non-subscriptable train object. KeyError is unreachable
+        # here — dict access is guarded by the membership check above and
+        # non-dict rows fall through to the column_names probe (F-P2-FAB-33).
         pass
     cols = getattr(train, "column_names", None)
-    return bool(cols and "gold_answer" in cols)
+    if not (cols and "gold_answer" in cols):
+        return False
+    # Column is present by name. Prefer a first-row value probe so a
+    # placeholder column (all None/"") isn't wired as real ground truth; if the
+    # wrapper isn't iterable, fall back to presence-only and say so (F-P2-FAB-33).
+    try:
+        probe = next(iter(train))
+        if isinstance(probe, dict) and "gold_answer" in probe:
+            val = probe["gold_answer"]
+            return val is not None and val != ""
+    except (TypeError, StopIteration):
+        pass
+    logger.debug(
+        "gold_answer column detected by name only (value probe unavailable); "
+        "trusting presence — a placeholder-only column would still wire the "
+        "correctness reward."
+    )
+    return True
 
 
 class ForgeTrainer:

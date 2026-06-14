@@ -107,6 +107,29 @@ class TestAnswersMatch:
     def test_extracted_number_matches_gold_string(self):
         assert _answers_match("40", "40") is True
 
+    def test_both_empty_does_not_match(self):
+        # F-P2-FAB-32: two values that both normalize to "" (e.g. "$" and "%")
+        # must NOT count as a match — empty-after-normalization is never an answer.
+        assert _answers_match("", "") is False
+
+    def test_one_side_empty_does_not_match(self):
+        # A per-row gold hole that slips past _dataset_has_gold_answers must not
+        # spuriously match a non-empty extraction.
+        assert _answers_match("", "5") is False
+        assert _answers_match("5", "") is False
+
+    @pytest.mark.parametrize(
+        "extracted,gold,expected",
+        [
+            ("5,050", "5050", True),  # F-P3-FABLE-51: GSM8K comma grouping
+            ("1,234.5", "1234.5", True),  # grouped with a decimal tail
+            ("12,5", "1234", False),  # European decimal — NOT de-grouped
+            ("12,34", "1234", False),  # malformed grouping stays unequal
+        ],
+    )
+    def test_comma_thousands_separator(self, extracted, gold, expected):
+        assert _answers_match(extracted, gold) is expected
+
 
 # ---------------------------------------------------------------------------
 # _math_reward_fn
@@ -266,6 +289,37 @@ class TestMathRewardFn:
         assert _math_reward_fn([completion], gold_answer=["42"]) == [1.0]
         assert _math_reward_fn([completion], gold_answer=["50"]) == [0.0]
 
+    def test_reward_leading_dot_decimal_extracted(self):
+        """A bare-dot decimal "Answer: .5" earns correctness reward.
+
+        Regression (F-P2-FAB-31): the extraction pattern's first-char class
+        excluded "." so ".5" didn't match at all → reward 0.0, while the format
+        gate's ``\\S`` start accepted it → 1.0 (asymmetric reward). The leading
+        ``\\.(?=\\d)`` alternative now admits the decimal so both signals agree.
+        """
+        assert _math_reward_fn(["Answer: .5"], gold_answer=["0.5"]) == [1.0]
+        assert _math_reward_fn(["Answer: .5"], gold_answer=[".5"]) == [1.0]
+        # A lone "." (not followed by a digit) must still not match.
+        assert _math_reward_fn(["Answer: ."], gold_answer=["0"]) == [0.0]
+
+    def test_reward_comma_thousands_separator_matches(self):
+        """GSM8K comma-grouped large numbers match comma-free golds.
+
+        Regression (F-P3-FABLE-51): "Answer: 5,050" against gold "5050" scored
+        0.0 because float("5,050") raised. The grouped-number de-grouping in
+        ``_parse_number`` now matches the canonical GSM8K rendering.
+        """
+        completions = ["The sum is 5050. Answer: 5,050"]
+        assert _math_reward_fn(completions, gold_answer=["5050"]) == [1.0]
+
+    def test_reward_unit_only_completion_does_not_match(self):
+        """A degenerate unit-only completion never scores against a unit-only gold.
+
+        Regression (F-P2-FAB-32): "Answer: $" normalizes to "" and would have
+        matched gold "%" (also "") → false 1.0.
+        """
+        assert _math_reward_fn(["Answer: $"], gold_answer=["%"]) == [0.0]
+
     def test_reward_and_format_gate_agree_on_final_answer(self):
         """Cross-module consistency: correctness and format rewards grade the
         same (final) answer for a self-correcting completion.
@@ -282,6 +336,32 @@ class TestMathRewardFn:
         assert format_match_reward([completion]) == [1.0]
         # Correctness against the actual final answer → 1.0 (agrees with gate).
         assert _math_reward_fn([completion], gold_answer=["7"]) == [1.0]
+
+    def test_extract_pattern_linear_on_pathological_input(self):
+        """The leading-dot alternative adds no ReDoS surface (regex.md budget).
+
+        ``\\.(?=\\d)`` is a fixed single-char lookahead, not a quantifier, so
+        scaling stays linear. Measure the median search time at growing input
+        sizes; doubling the input must not super-linearly blow up.
+        """
+        import re as _re
+        import time
+
+        from forgelm.grpo_rewards import ANSWER_EXTRACT_PATTERN
+
+        def _median_ms(n: int) -> float:
+            # No "Answer:" → worst case: engine scans the whole non-matching line.
+            payload = "Answer:" + ("." * n)
+            samples = []
+            for _ in range(5):
+                t0 = time.perf_counter()
+                ANSWER_EXTRACT_PATTERN.search(payload)
+                samples.append((time.perf_counter() - t0) * 1000)
+            return sorted(samples)[2]
+
+        # Safety floor: linear-time scanning stays well under 100 ms at 10K.
+        assert _median_ms(10_000) < 100.0
+        assert isinstance(ANSWER_EXTRACT_PATTERN, _re.Pattern)
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +414,8 @@ class TestDatasetHasGoldAnswers:
 
     def test_hf_dataset_via_column_names(self):
         # Simulate a HuggingFace Dataset that doesn't allow dict-style row
-        # access but exposes column_names.
+        # access but exposes column_names. Not iterable either → presence-only
+        # fallback returns True (F-P2-FAB-33 fallback path).
         class FakeHFDataset:
             def __init__(self, cols):
                 self.column_names = cols
@@ -348,3 +429,43 @@ class TestDatasetHasGoldAnswers:
 
         ds = {"train": FakeHFDataset(["prompt", "gold_answer"])}
         assert _dataset_has_gold_answers(ds) is True
+
+    def test_iterable_dataset_with_placeholder_gold_treated_as_missing(self):
+        # F-P2-FAB-33: a streaming/iterable wrapper whose row access raises but
+        # which is iterable must have its first-row VALUE probed — a
+        # placeholder-only column (all None) is not real ground truth.
+        class FakeIterable:
+            def __init__(self, cols, rows):
+                self.column_names = cols
+                self._rows = rows
+
+            def __len__(self):
+                return len(self._rows)
+
+            def __getitem__(self, _):
+                raise IndexError
+
+            def __iter__(self):
+                return iter(self._rows)
+
+        placeholder = {"train": FakeIterable(["prompt", "gold_answer"], [{"gold_answer": None}])}
+        assert _dataset_has_gold_answers(placeholder) is False
+
+    def test_iterable_dataset_with_real_gold_value(self):
+        # The same iterable wrapper with a genuine value probes True.
+        class FakeIterable:
+            def __init__(self, cols, rows):
+                self.column_names = cols
+                self._rows = rows
+
+            def __len__(self):
+                return len(self._rows)
+
+            def __getitem__(self, _):
+                raise IndexError
+
+            def __iter__(self):
+                return iter(self._rows)
+
+        real = {"train": FakeIterable(["prompt", "gold_answer"], [{"gold_answer": "42"}])}
+        assert _dataset_has_gold_answers(real) is True
