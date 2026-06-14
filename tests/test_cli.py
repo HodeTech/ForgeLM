@@ -123,6 +123,36 @@ class TestResumeCheckpoint:
         result = _resolve_resume_checkpoint("/nonexistent/dir", "auto")
         assert result is None
 
+    def test_auto_skips_unicode_digit_suffix_without_crashing(self, tmp_path, caplog):
+        """``"²".isdigit()`` is True but ``int("²")`` raises ValueError; the
+        resolver must ignore such a dir (and any non-decimal suffix) with a
+        WARNING instead of crashing ``--resume auto`` (F-P2-FAB-37)."""
+        import logging
+
+        (tmp_path / "checkpoint-7").mkdir()
+        (tmp_path / "checkpoint-abc").mkdir()
+        (tmp_path / "checkpoint-²").mkdir()  # superscript-2: isdigit True, int() raises
+        with caplog.at_level(logging.WARNING):
+            result = _resolve_resume_checkpoint(str(tmp_path), "auto")
+        assert result.endswith("checkpoint-7")
+        assert any("non-numeric suffix" in r.message for r in caplog.records)
+
+    def test_auto_malformed_suffix_does_not_tie_with_checkpoint_zero(self, tmp_path):
+        """A non-numeric suffix used to key to 0 and tie with ``checkpoint-0``;
+        after filtering it can no longer win over a real numbered checkpoint."""
+        (tmp_path / "checkpoint-0").mkdir()
+        (tmp_path / "checkpoint-bad").mkdir()
+        (tmp_path / "checkpoint-3").mkdir()
+        result = _resolve_resume_checkpoint(str(tmp_path), "auto")
+        assert result.endswith("checkpoint-3")
+
+    def test_auto_only_malformed_starts_fresh(self, tmp_path):
+        """If every candidate has a non-decimal suffix, none are eligible."""
+        (tmp_path / "checkpoint-abc").mkdir()
+        (tmp_path / "checkpoint-²").mkdir()
+        result = _resolve_resume_checkpoint(str(tmp_path), "auto")
+        assert result is None
+
 
 class TestMainEntrypoint:
     def test_missing_config_exits(self):

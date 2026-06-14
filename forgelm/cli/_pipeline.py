@@ -283,6 +283,16 @@ def _serialise_state(state: PipelineState) -> Dict[str, Any]:
     return asdict(state)
 
 
+# Stage fields the orchestrator dereferences as filesystem paths / strings
+# (e.g. ``os.path.isdir(output_model)``).  A tampered state file can carry a
+# wrong-typed value here (``output_model: 123``) that survives dataclass
+# construction (dataclasses don't type-check) and then crashes ``--resume-from``
+# with an opaque ``TypeError`` deep inside the skiplist resolution.  Validating
+# them at load time (F-P2-FAB-38) routes the bad file through the existing
+# "structurally invalid; treating as missing" guard instead.
+_STAGE_STR_FIELDS = ("output_model", "input_model", "training_manifest", "error", "skipped_reason")
+
+
 def _deserialise_state(payload: Dict[str, Any]) -> PipelineState:
     """Round-trip :class:`PipelineState` from its on-disk JSON shape.
 
@@ -290,12 +300,22 @@ def _deserialise_state(payload: Dict[str, Any]) -> PipelineState:
     (legacy state files).  Type-coerces ``stages[]`` back into
     :class:`PipelineStageState` instances so the rest of the orchestrator
     sees a strongly-typed object.
+
+    Shape-only validation is not enough: dataclasses accept any value type, so
+    a path/str field tampered to a non-string (``output_model: 123``) would load
+    here and only blow up later at the ``os.path.isdir`` call site.  Reject
+    wrong-typed path/str fields with a ``ValueError`` so the caller's
+    ``_load_state_file`` guard treats the file as missing (F-P2-FAB-38).
     """
     stages_raw = payload.get("stages", [])
-    stages = [
-        PipelineStageState(**{k: v for k, v in s.items() if k in PipelineStageState.__dataclass_fields__})
-        for s in stages_raw
-    ]
+    stages = []
+    for s in stages_raw:
+        kwargs = {k: v for k, v in s.items() if k in PipelineStageState.__dataclass_fields__}
+        for field_name in _STAGE_STR_FIELDS:
+            value = kwargs.get(field_name)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"stage field {field_name!r} must be a string or null, got {type(value).__name__}")
+        stages.append(PipelineStageState(**kwargs))
     return PipelineState(
         pipeline_run_id=payload["pipeline_run_id"],
         pipeline_config_hash=payload["pipeline_config_hash"],
@@ -821,12 +841,34 @@ class PipelineOrchestrator:
             return "already_completed"
         if chain_broken:
             stage_state.status = "skipped_due_to_prior_revert"
-            stage_state.skipped_reason = (
-                f"Stage {state.stopped_at!r} triggered auto_revert; downstream stages did not run."
-            )
+            stage_state.skipped_reason = self._chain_break_reason(state)
             self._save_state(state)
             return "chain_broken"
         return None
+
+    def _chain_break_reason(self, state: PipelineState) -> str:
+        """Describe why the chain broke, reflecting the *actual* cause.
+
+        The status label ``skipped_due_to_prior_revert`` is kept for backward
+        compatibility, but the free-text reason must not claim "triggered
+        auto_revert" for a stage that actually crashed (exit 2) or failed
+        config validation (exit 1) — that sends the operator to investigate
+        gates that never ran (F-P2-FAB-36). Derive the cause from the stopped
+        stage's recorded ``exit_code`` / ``auto_revert_triggered``.
+        """
+        stopped = state.stopped_at
+        prior = next((s for s in state.stages if s.name == stopped), None)
+        if prior is not None and prior.auto_revert_triggered:
+            cause = "triggered auto_revert (an evaluation gate failed)"
+        elif prior is not None and prior.exit_code == EXIT_TRAINING_ERROR:
+            cause = "failed with a training error"
+        elif prior is not None and prior.exit_code == EXIT_CONFIG_ERROR:
+            cause = "failed with a config error"
+        elif prior is not None and prior.exit_code == EXIT_EVAL_FAILURE:
+            cause = "failed an evaluation gate"
+        else:
+            cause = "did not complete successfully"
+        return f"Stage {stopped!r} {cause}; downstream stages did not run."
 
     def _run_stage_loop(
         self,
@@ -915,16 +957,17 @@ class PipelineOrchestrator:
                     stage,
                     prev_output_model=prev_output,
                 )
-            except Exception as exc:  # noqa: BLE001 — see DEBUG log below
+            except Exception as exc:  # noqa: BLE001 — best-effort: pre-flight is scoped to output_dir layout; merge crosses Pydantic validation+runtime surfaces and re-surfaces with full diagnostics on the per-stage run path, so skip-with-INFO here rather than abort the layout check.
                 # Merge failures are intentionally skipped here because
                 # they re-surface through the per-stage pipeline-error
                 # path with full diagnostics — the pre-flight's job is
                 # scoped to ``output_dir`` layout only.  Codacy / bandit
                 # B112 flagged the bare ``continue`` as a silent-skip
-                # anti-pattern; logging the exception at DEBUG keeps the
-                # skip *traceable* without aborting the pre-flight on
-                # what is by-design a per-stage local failure.
-                logger.debug(
+                # anti-pattern; log at INFO (was DEBUG, F-P2-FAB-35) so an
+                # ``--log-level info`` run isn't blind to a skipped
+                # pre-flight check without aborting on a by-design
+                # per-stage local failure.
+                logger.info(
                     "Pre-flight skipped collision check for stage %r: merge raised %s (%s); "
                     "the per-stage run path will surface the same error.",
                     stage.name,
@@ -932,7 +975,12 @@ class PipelineOrchestrator:
                     exc,
                 )
                 continue
-            abs_out = os.path.abspath(merged.training.output_dir)
+            # realpath (not abspath, F-P2-FAB-34): two stages whose output_dir
+            # strings alias the same directory through symlinks must collide
+            # like any other aliasing — abspath normalises lexically only and
+            # lets a symlinked second stage overwrite the first mid-run.
+            # Hardlink aliasing remains out of scope.
+            abs_out = os.path.realpath(merged.training.output_dir)
             if abs_out in seen_dirs:
                 collisions.append(
                     f"Stage {stage.name!r}: training.output_dir collides with stage "
@@ -1084,9 +1132,10 @@ class PipelineOrchestrator:
 
             # Collision check (Phase 14 review F-G-1): every stage must
             # write its checkpoints + per-stage manifest into a distinct
-            # directory.  Comparing absolute paths so ``./out`` and
-            # ``out/`` collide as one.
-            abs_out = os.path.abspath(merged.training.output_dir)
+            # directory.  Comparing realpaths (F-P2-FAB-34) so ``./out`` and
+            # ``out/`` collide as one AND a symlinked alias is caught;
+            # hardlink aliasing remains out of scope.
+            abs_out = os.path.realpath(merged.training.output_dir)
             if abs_out in seen_dirs:
                 errors.append(
                     f"Stage {stage.name!r}: training.output_dir collides with stage "
@@ -1416,7 +1465,7 @@ class PipelineOrchestrator:
                 prev_output_model=prev_output,
                 input_model_override=input_model_override,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — best-effort: Pydantic merge crosses validation+runtime error surfaces; the failure is captured on stage_state.error and routed to EXIT_CONFIG_ERROR by the caller (F-P2-FAB-35).
             stage_state.error = f"Config merge failed: {exc}"
             logger.exception("Stage %r config merge failed.", stage.name)
             return None
@@ -1479,7 +1528,7 @@ class PipelineOrchestrator:
             # propagate so the caller routes it to EXIT_CONFIG_ERROR rather than
             # the generic EXIT_TRAINING_ERROR the None-return below maps to.
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — best-effort: ForgeTrainer.train() crosses every concern (HF load, dataset, TRL, safety, judge, audit, compliance, webhook); a non-ConfigError leak is captured on stage_state.error and routed to EXIT_TRAINING_ERROR rather than stranding the pipeline state with a raw traceback (F-P2-FAB-35).
             stage_state.error = f"Trainer crashed: {exc}"
             logger.exception("Stage %r trainer crashed.", stage_name)
             return None

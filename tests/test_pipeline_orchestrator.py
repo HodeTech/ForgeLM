@@ -210,6 +210,49 @@ class TestStateRoundTrip:
         state = _deserialise_state(payload)
         assert state.stages[0].name == "s1"
 
+    def test_deserialise_rejects_non_string_output_model(self):
+        """Dataclasses don't type-check values, so a tampered ``output_model:
+        123`` would survive construction and crash ``os.path.isdir(123)`` later
+        with an opaque TypeError. ``_deserialise_state`` must reject it with a
+        ValueError so the load guard treats the file as missing (F-P2-FAB-38)."""
+        payload = {
+            "pipeline_run_id": "pl_test",
+            "pipeline_config_hash": "sha256:abc",
+            "started_at": "2026-06-15T12:00:00+00:00",
+            "stages": [{"name": "s1", "index": 0, "trainer_type": "sft", "output_model": 123}],
+        }
+        with pytest.raises(ValueError, match="output_model"):
+            _deserialise_state(payload)
+
+    def test_deserialise_rejects_non_string_input_model(self):
+        payload = {
+            "pipeline_run_id": "pl_test",
+            "pipeline_config_hash": "sha256:abc",
+            "started_at": "2026-06-15T12:00:00+00:00",
+            "stages": [{"name": "s1", "index": 0, "trainer_type": "sft", "input_model": ["a", "b"]}],
+        }
+        with pytest.raises(ValueError, match="input_model"):
+            _deserialise_state(payload)
+
+    def test_load_state_file_treats_wrong_typed_field_as_missing(self, tmp_path):
+        """End-to-end: a state file with an integer ``output_model`` must route
+        through the existing ValueError guard in ``_load_state_file`` and be
+        treated as missing rather than crashing resume (F-P2-FAB-38)."""
+        cfg = _three_stage_config(tmp_path)
+        orch = PipelineOrchestrator(cfg, b"yaml bytes")
+        os.makedirs(os.path.dirname(orch.paths["state_file"]), exist_ok=True)
+        with open(orch.paths["state_file"], "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "pipeline_run_id": "pl_x",
+                    "pipeline_config_hash": "sha256:abc",
+                    "started_at": "2026-06-15T12:00:00+00:00",
+                    "stages": [{"name": "s1", "index": 0, "trainer_type": "sft", "output_model": 42}],
+                },
+                f,
+            )
+        assert orch._load_state_file() is None
+
 
 # ---------------------------------------------------------------------------
 # Atomic write helper
@@ -368,6 +411,41 @@ class TestDryRun:
                 "stages": [
                     {"name": "s1", "data": {"dataset_name_or_path": "org/d1"}},
                     {"name": "s2", "data": {"dataset_name_or_path": "org/d2"}},
+                ],
+            },
+        )
+        _install_trainer_mocks(monkeypatch, [])
+        orch = PipelineOrchestrator(cfg, b"yaml")
+        code = orch.dry_run()
+        assert code == EXIT_CONFIG_ERROR
+
+    def test_dry_run_flags_symlinked_output_dir_collision(self, tmp_path, monkeypatch):
+        """F-P2-FAB-34: two stages whose ``training.output_dir`` strings alias
+        the same directory through a symlink evaded the abspath-only guard and
+        would overwrite each other's checkpoints mid-run. ``realpath`` catches
+        the alias."""
+        real_dir = tmp_path / "real_out"
+        real_dir.mkdir()
+        link_dir = tmp_path / "linked_out"
+        os.symlink(real_dir, link_dir)
+        cfg = ForgeConfig(
+            model={"name_or_path": "org/base"},
+            lora={"r": 8},
+            training={"trainer_type": "sft", "output_dir": str(tmp_path)},
+            data={"dataset_name_or_path": "org/sft"},
+            pipeline={
+                "output_dir": str(tmp_path / "pipeline_run"),
+                "stages": [
+                    {
+                        "name": "s1",
+                        "training": {"trainer_type": "sft", "output_dir": str(real_dir)},
+                        "data": {"dataset_name_or_path": "org/d1"},
+                    },
+                    {
+                        "name": "s2",
+                        "training": {"trainer_type": "dpo", "output_dir": str(link_dir)},
+                        "data": {"dataset_name_or_path": "org/d2"},
+                    },
                 ],
             },
         )
@@ -1420,6 +1498,55 @@ class TestPerStageTrainingErrorRouting:
         assert statuses == ["completed", "failed", "skipped_due_to_prior_revert"]
         dpo = payload["stages"][1]
         assert dpo["error"].startswith("Trainer crashed:")
+
+
+class TestDownstreamSkipReason:
+    """F-P2-FAB-36: the downstream ``skipped_reason`` must reflect the ACTUAL
+    cause of the chain break, not hardcode "triggered auto_revert" for a crash
+    or config error."""
+
+    def test_crash_skip_reason_says_training_error_not_auto_revert(self, tmp_path, monkeypatch):
+        cfg = _three_stage_config(tmp_path)
+        _install_crashing_trainer(monkeypatch, crash_on_stage_index=1, exc=RuntimeError("CUDA error"))
+        orch = PipelineOrchestrator(cfg, b"yaml bytes")
+        orch.run()
+        with open(orch.paths["state_file"]) as f:
+            payload = json.load(f)
+        downstream = payload["stages"][2]
+        assert downstream["status"] == "skipped_due_to_prior_revert"
+        assert "training error" in downstream["skipped_reason"]
+        assert "auto_revert" not in downstream["skipped_reason"]
+
+    def test_auto_revert_skip_reason_mentions_auto_revert(self, tmp_path, monkeypatch):
+        cfg = _three_stage_config(tmp_path)
+        results = [
+            TrainResult(success=True),
+            TrainResult(success=False, reverted=True, error="loss regression"),
+        ]
+        _install_trainer_mocks(monkeypatch, results)
+        orch = PipelineOrchestrator(cfg, b"yaml bytes")
+        orch.run()
+        with open(orch.paths["state_file"]) as f:
+            payload = json.load(f)
+        downstream = payload["stages"][2]
+        assert downstream["status"] == "skipped_due_to_prior_revert"
+        assert "auto_revert" in downstream["skipped_reason"]
+
+    def test_gate_failure_without_revert_skip_reason_says_eval_gate(self, tmp_path, monkeypatch):
+        cfg = _three_stage_config(tmp_path)
+        results = [
+            TrainResult(success=True),
+            TrainResult(success=False, reverted=False, error="benchmark below min"),
+        ]
+        _install_trainer_mocks(monkeypatch, results)
+        orch = PipelineOrchestrator(cfg, b"yaml bytes")
+        orch.run()
+        with open(orch.paths["state_file"]) as f:
+            payload = json.load(f)
+        downstream = payload["stages"][2]
+        assert downstream["status"] == "skipped_due_to_prior_revert"
+        assert "evaluation gate" in downstream["skipped_reason"]
+        assert "auto_revert" not in downstream["skipped_reason"]
 
 
 class TestPipelineExceptionBoundary:

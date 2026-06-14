@@ -29,10 +29,32 @@ def _resolve_resume_checkpoint(checkpoint_dir: str, resume_arg: str) -> Optional
         logger.error("Cannot list checkpoint directory %s: %s", checkpoint_dir, exc)
         sys.exit(EXIT_CONFIG_ERROR)
 
-    checkpoint_dirs = sorted(
-        [d for d in entries if d.startswith("checkpoint-") and os.path.isdir(os.path.join(checkpoint_dir, d))],
-        key=lambda x: int(x.split("-")[-1]) if x.split("-")[-1].isdigit() else 0,
-    )
+    # Keep only ``checkpoint-<int>`` dirs whose suffix is a plain ASCII
+    # decimal.  ``str.isdigit()`` is True for unicode digit-likes (``"²"``)
+    # that ``int()`` then rejects with ValueError, crashing ``--resume auto``;
+    # ``str.isdecimal()`` is the int-safe predicate.  Filtering first also
+    # removes the key-to-0 tie a malformed suffix used to share with a real
+    # ``checkpoint-0`` (F-P2-FAB-37).
+    numbered: list[str] = []
+    ignored: list[str] = []
+    for d in entries:
+        if not (d.startswith("checkpoint-") and os.path.isdir(os.path.join(checkpoint_dir, d))):
+            continue
+        suffix = d.split("-")[-1]
+        if suffix.isdecimal():
+            numbered.append(d)
+        else:
+            ignored.append(d)
+
+    if ignored:
+        logger.warning(
+            "Ignoring %d checkpoint dir(s) with non-numeric suffix in %s: %s",
+            len(ignored),
+            checkpoint_dir,
+            ", ".join(sorted(ignored)),
+        )
+
+    checkpoint_dirs = sorted(numbered, key=lambda x: int(x.split("-")[-1]))
 
     if not checkpoint_dirs:
         logger.warning("No checkpoint-* directories found in %s. Starting fresh.", checkpoint_dir)
