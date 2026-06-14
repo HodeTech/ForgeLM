@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import warnings
 from typing import Any, Dict, List, Literal, Optional, Tuple
@@ -318,7 +319,7 @@ class DistributedConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    strategy: Optional[str] = Field(
+    strategy: Optional[Literal["deepspeed", "fsdp"]] = Field(
         default=None,
         description="Distributed strategy: `deepspeed`, `fsdp`, or `None` for single-GPU (no distributed wrapping).",
     )
@@ -395,11 +396,38 @@ class DataConfig(BaseModel):
     @classmethod
     def _validate_mix_ratio(cls, v):
         if v is not None:
+            # Reject NaN / inf before the comparison checks: `nan < 0` and
+            # `nan == 0` are both False, so a non-finite weight would otherwise
+            # slip through and crash later in `data._apply_mix_ratio` at
+            # `int(max_dataset_size * nan)` (a runtime exit-2 instead of a
+            # config-time exit-1).
+            if any(not math.isfinite(r) for r in v):
+                raise ValueError("mix_ratio values must be finite (no NaN or inf).")
             if any(r < 0 for r in v):
                 raise ValueError("mix_ratio values must be non-negative.")
             if all(r == 0 for r in v):
                 raise ValueError("mix_ratio values cannot all be zero.")
         return v
+
+    @model_validator(mode="after")
+    def _validate_mix_ratio_length(self):
+        """Require one mix_ratio weight per dataset (primary + extras).
+
+        The field-level validator above cannot see ``extra_datasets``, so the
+        cross-field length check lives here.  A mismatch used to validate
+        cleanly and silently fall back to uniform mixing at runtime
+        (``data._merge_extra_datasets``) — i.e. the operator's declared
+        mixture was replaced by a different one with no error.
+        """
+        if self.mix_ratio is not None:
+            expected = 1 + len(self.extra_datasets or [])
+            if len(self.mix_ratio) != expected:
+                raise ValueError(
+                    f"mix_ratio length ({len(self.mix_ratio)}) must equal the dataset count "
+                    f"({expected} = 1 primary + {len(self.extra_datasets or [])} extra_datasets). "
+                    "List one weight per dataset, primary first."
+                )
+        return self
 
 
 class BenchmarkConfig(BaseModel):
@@ -1485,12 +1513,17 @@ def merge_pipeline_stage_config(
     sees an ordinary single-stage config and behaves byte-identically to
     a v0.6.0 single-stage run.
     """
-    # ``model_dump(exclude_none=True)`` so we don't materialise inherited
-    # ``Optional[T] = None`` fields the root never set — the
-    # ``extra="forbid"`` re-validation below would tolerate them, but
-    # round-tripping no-op None values inflates the per-stage manifest
-    # and confuses operators reading the merged config.
-    base = root_cfg.model_dump(exclude_none=True)
+    # ``exclude_unset=True`` so only keys the operator actually wrote
+    # round-trip — re-validation re-fills defaults identically.  Without it,
+    # ``model_dump`` materialises *unset* defaults (e.g. an ``evaluation``
+    # block dumps ``staging_ttl_days=7``); on re-validation every dumped key
+    # counts as ``model_fields_set``, so a root with a canonical
+    # ``retention.staging_ttl_days != 7`` plus any ``evaluation`` block would
+    # falsely raise ``ConfigError`` ("conflicting staging_ttl_days") for a
+    # field the operator never wrote (F-P1-FAB-03).  ``exclude_none=True``
+    # additionally drops inherited ``Optional[T] = None`` fields so the
+    # per-stage manifest is not inflated with no-op None values.
+    base = root_cfg.model_dump(exclude_none=True, exclude_unset=True)
     base.pop("pipeline", None)
 
     if stage.model is not None:

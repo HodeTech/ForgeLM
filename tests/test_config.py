@@ -273,7 +273,8 @@ class TestDataConfigValidators:
     def test_mix_ratio_valid_passes(self):
         from forgelm.config import DataConfig
 
-        d = DataConfig(dataset_name_or_path="org/d", mix_ratio=[0.7, 0.3])
+        # Two weights require exactly one extra dataset (primary + 1 extra).
+        d = DataConfig(dataset_name_or_path="org/d", extra_datasets=["org/e"], mix_ratio=[0.7, 0.3])
         assert d.mix_ratio == [0.7, 0.3]
 
     def test_mix_ratio_none_passes(self):
@@ -281,6 +282,36 @@ class TestDataConfigValidators:
 
         d = DataConfig(dataset_name_or_path="org/d")
         assert d.mix_ratio is None
+
+    def test_mix_ratio_length_too_short_raises(self):
+        from forgelm.config import DataConfig
+
+        with pytest.raises(Exception, match="must equal the dataset count"):
+            DataConfig(dataset_name_or_path="org/d", extra_datasets=["a", "b", "c"], mix_ratio=[0.5, 0.5])
+
+    def test_mix_ratio_length_too_long_raises(self):
+        from forgelm.config import DataConfig
+
+        with pytest.raises(Exception, match="must equal the dataset count"):
+            DataConfig(dataset_name_or_path="org/d", extra_datasets=["a"], mix_ratio=[0.4, 0.3, 0.3])
+
+    def test_mix_ratio_single_dataset_one_weight_passes(self):
+        from forgelm.config import DataConfig
+
+        d = DataConfig(dataset_name_or_path="org/d", mix_ratio=[1.0])
+        assert d.mix_ratio == [1.0]
+
+    def test_mix_ratio_rejects_nan(self):
+        from forgelm.config import DataConfig
+
+        with pytest.raises(Exception, match="finite"):
+            DataConfig(dataset_name_or_path="org/d", extra_datasets=["org/e"], mix_ratio=[float("nan"), 1.0])
+
+    def test_mix_ratio_rejects_inf(self):
+        from forgelm.config import DataConfig
+
+        with pytest.raises(Exception, match="finite"):
+            DataConfig(dataset_name_or_path="org/d", extra_datasets=["org/e"], mix_ratio=[float("inf"), 1.0])
 
 
 # --- LoraConfigModel deprecation normalisation ---

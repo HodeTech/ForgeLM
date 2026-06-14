@@ -232,14 +232,13 @@ def _merge_extra_datasets(primary_dataset, extra_paths: list, mix_ratio: Optiona
         all_train.append(extra_ds["train"])
 
     if mix_ratio:
-        if len(mix_ratio) == len(all_train):
-            all_train = _apply_mix_ratio(all_train, mix_ratio)
-        else:
-            logger.warning(
-                "mix_ratio length (%d) doesn't match dataset count (%d). Using uniform mixing.",
-                len(mix_ratio),
-                len(all_train),
-            )
+        if len(mix_ratio) != len(all_train):
+            # DataConfig._validate_mix_ratio_length guarantees this at config
+            # time; reaching here means a non-config caller passed a mismatch.
+            # Raise loudly rather than silently re-weighting to a mixture the
+            # caller never asked for.
+            raise ValueError(f"mix_ratio length ({len(mix_ratio)}) does not match dataset count ({len(all_train)}).")
+        all_train = _apply_mix_ratio(all_train, mix_ratio)
 
     merged_train = concatenate_datasets(all_train)
     logger.info("Merged %d datasets into %d training samples.", len(all_train), len(merged_train))

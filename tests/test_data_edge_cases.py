@@ -58,6 +58,18 @@ class TestMixRatioEdgeCases:
         assert cfg.data.extra_datasets is None
         assert cfg.data.mix_ratio is None
 
+    def test_merge_extra_datasets_length_mismatch_raises_not_silent(self, monkeypatch):
+        """A mix_ratio whose length disagrees with the dataset count used to
+        silently fall back to uniform mixing (re-weighting to a mixture the
+        caller never asked for).  It must now raise loudly."""
+        from forgelm import data as data_mod
+
+        monkeypatch.setattr(data_mod, "_load_single_dataset", lambda path: {"train": [path]})
+        primary = {"train": ["primary"]}
+        with pytest.raises(ValueError, match="does not match dataset count"):
+            # 1 primary + 1 extra = 2 datasets, but only 1 weight given.
+            data_mod._merge_extra_datasets(primary, ["org/extra"], mix_ratio=[1.0])
+
 
 class TestGrpoRewardModelConfig:
     def test_default_none(self, minimal_config):

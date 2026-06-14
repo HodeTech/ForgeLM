@@ -3,7 +3,9 @@
 import json
 import os
 
+import pytest
 import yaml
+from pydantic import ValidationError
 
 from forgelm.config import (
     DistributedConfig,
@@ -36,6 +38,18 @@ class TestDistributedConfig:
     def test_fsdp_with_offload(self):
         d = DistributedConfig(strategy="fsdp", fsdp_offload=True)
         assert d.fsdp_offload is True
+
+    @pytest.mark.parametrize("bad_strategy", ["DeepSpeed", "ddp", "fsdpp", "horovod", "FSDP"])
+    def test_strategy_unknown_value_raises(self, bad_strategy):
+        # The field is a Literal["deepspeed", "fsdp"]; an unsupported value used
+        # to validate and then silently run single-GPU at trainer.py (logger
+        # "Unknown distributed strategy ... Ignoring.").  It must now fail at
+        # config time.
+        with pytest.raises(ValidationError):
+            DistributedConfig(strategy=bad_strategy)
+
+    def test_strategy_none_still_allowed(self):
+        assert DistributedConfig(strategy=None).strategy is None
 
 
 # --- ForgeConfig with distributed ---

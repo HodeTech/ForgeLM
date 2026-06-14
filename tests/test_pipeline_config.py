@@ -367,3 +367,39 @@ class TestMergePreservesRootOnlyBlocks:
         merged = merge_pipeline_stage_config(root, stage, prev_output_model="./prev/model")
         assert merged.compliance is not None
         assert merged.compliance.provider_name == "Acme Corp"
+
+
+# ---------------------------------------------------------------------------
+# Round-trip: the merge must not re-materialise unset defaults (F-P1-FAB-03)
+# ---------------------------------------------------------------------------
+
+
+class TestMergeRoundTripDefaults:
+    """``merge_pipeline_stage_config`` re-validates a dumped root config.
+
+    The dump must exclude *unset* defaults: otherwise an ``evaluation`` block
+    dumps the deprecated ``staging_ttl_days=7`` (a field the operator never
+    wrote), which on re-validation counts as ``model_fields_set`` and falsely
+    raises ``ConfigError`` against a canonical ``retention.staging_ttl_days``.
+    """
+
+    def test_merge_preserves_canonical_retention_with_evaluation_block(self):
+        root = _root_cfg(
+            evaluation={"auto_revert": True},
+            retention={"staging_ttl_days": 30},
+            pipeline={"stages": [{"name": "dpo_stage", "training": {"trainer_type": "dpo"}}]},
+        )
+        # No ConfigError, and the canonical retention horizon survives.
+        merged = merge_pipeline_stage_config(root, root.pipeline.stages[0])
+        assert merged.retention is not None
+        assert merged.retention.staging_ttl_days == 30
+
+    def test_merge_does_not_synthesize_retention_or_deprecation_warning(self, recwarn):
+        root = _root_cfg(
+            evaluation={"auto_revert": True},
+            pipeline={"stages": [{"name": "s", "training": {"trainer_type": "dpo"}}]},
+        )
+        merged = merge_pipeline_stage_config(root, root.pipeline.stages[0])
+        # Operator declared no retention block; the round-trip must not invent one.
+        assert merged.retention is None
+        assert not [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
