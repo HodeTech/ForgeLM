@@ -274,6 +274,11 @@ class TestNumericFlagValidators:
             ["forgelm", "chat", "m", "--temperature", "-3"],
             ["forgelm", "chat", "m", "--max-new-tokens", "-10"],
             ["forgelm", "safety-eval", "--model", "m", "--default-probes", "--max-new-tokens", "-1"],
+            # NaN/inf bypass the < / > bounds comparisons; isfinite() must reject them.
+            ["forgelm", "chat", "m", "--temperature", "nan"],
+            ["forgelm", "chat", "m", "--temperature", "inf"],
+            ["forgelm", "deploy", "m", "--target", "vllm", "--gpu-memory-utilization", "nan"],
+            ["forgelm", "deploy", "m", "--target", "vllm", "--gpu-memory-utilization", "inf"],
         ],
     )
     def test_out_of_range_numeric_flag_rejected_at_parse_time(self, argv):

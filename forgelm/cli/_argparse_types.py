@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 
 
 def _non_negative_int(value: str) -> int:
@@ -51,7 +52,7 @@ def _non_negative_float(value: str) -> float:
         fvalue = float(value)
     except (TypeError, ValueError) as exc:
         raise argparse.ArgumentTypeError(f"invalid float: {value!r}") from exc
-    if fvalue < 0.0 or fvalue > 1.0:
+    if not math.isfinite(fvalue) or fvalue < 0.0 or fvalue > 1.0:
         raise argparse.ArgumentTypeError(f"value must be in [0.0, 1.0], got {fvalue}")
     return fvalue
 
@@ -68,7 +69,7 @@ def _sampling_temperature(value: str) -> float:
         fvalue = float(value)
     except (TypeError, ValueError) as exc:
         raise argparse.ArgumentTypeError(f"invalid float: {value!r}") from exc
-    if fvalue < 0.0 or fvalue > 2.0:
+    if not math.isfinite(fvalue) or fvalue < 0.0 or fvalue > 2.0:
         raise argparse.ArgumentTypeError(f"value must be in [0.0, 2.0], got {fvalue}")
     return fvalue
 
