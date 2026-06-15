@@ -164,7 +164,7 @@ method, a paired audit event, and tests. Do not invent ad-hoc event strings.
 {
   "event": "<one of the eight above>",
   "run_name": "<string>",
-  "status": "<started|succeeded|failed|reverted|awaiting_approval>",
+  "status": "<started|succeeded|failed|reverted|awaiting_approval|completed|stopped_at_stage>",
   "metrics": {"<name>": <number>, ...},
   "reason": "<masked string or null>",
   "model_path": "<staging path or null>",

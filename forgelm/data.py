@@ -191,7 +191,7 @@ def _format_user_assistant_row(
     sys_clean = clean_string(sys_text, clean_text) if has_system else ""
     user_clean = clean_string(user_text, clean_text)
     asst_clean = clean_string(asst_text, clean_text)
-    sys_part = f"[SYSTEM]\n{sys_clean}\n" if has_system else ""
+    sys_part = f"[SYSTEM]\n{sys_clean}\n" if sys_clean else ""
     formatted_text = sys_part + f"[USER]\n{user_clean}\n[ASSISTANT]\n{asst_clean}"
     if add_eos and eos_token:
         formatted_text += eos_token

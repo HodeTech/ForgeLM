@@ -184,6 +184,26 @@ class TestCleanStringRejectsNonString:
         out = _format_user_assistant_row("", "Q", "A", True, False, "")
         assert "[SYSTEM]" not in out
 
+    @pytest.mark.parametrize("ctrl_sys", ["\x00", "\x01\x02\x03", "\x7f\x80", "\x00\x00\x00"])
+    def test_format_user_assistant_row_control_char_system_clean_omits_block(self, ctrl_sys):
+        """When ``sys_text`` is entirely control characters and ``clean_text=True``,
+        ``clean_string`` reduces it to ``""``.  The render gate must use the
+        post-cleaning value (``sys_clean``) so no empty ``[SYSTEM]`` block is
+        injected — regression guard for F-M-16."""
+        from forgelm.data import _format_user_assistant_row
+
+        out = _format_user_assistant_row(ctrl_sys, "Q", "A", True, False, "")
+        assert "[SYSTEM]" not in out, f"Empty [SYSTEM] block injected for sys_text={ctrl_sys!r}: {out!r}"
+
+    @pytest.mark.parametrize("ctrl_sys", ["\x00", "\x01\x02\x03"])
+    def test_format_user_assistant_row_control_char_system_no_clean_emits_block(self, ctrl_sys):
+        """When ``clean_text=False`` the NUL/control chars are kept verbatim and
+        the ``[SYSTEM]`` block must still appear (the char is real content)."""
+        from forgelm.data import _format_user_assistant_row
+
+        out = _format_user_assistant_row(ctrl_sys, "Q", "A", False, False, "")
+        assert "[SYSTEM]" in out, f"[SYSTEM] block missing for unclean sys_text={ctrl_sys!r}: {out!r}"
+
     @pytest.mark.parametrize("payload", [{"nested": "obj"}, 42, None])
     def test_messages_and_user_assistant_paths_reject_same_payload(self, payload):
         """Parity: the same non-string content shape that the messages

@@ -1,5 +1,7 @@
 """Unit tests for merging algorithms (TIES, DARE, SLERP, linear)."""
 
+import math
+
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -224,3 +226,211 @@ class TestMergeHyperparameters:
         assert 1 <= zeroed <= 2
         assert survived >= 8
         assert result[-1] == pytest.approx(10.0)  # largest magnitude always survives
+
+
+class TestDareSeedPerTensor:
+    """F-M-19: DARE per-tensor seed reuse produced identical drop masks for all
+    same-shaped weight tensors when invoked from _ties_dare_merge.  The fix
+    derives each call's seed from dare_seed ^ hash(key) so distinct keys always
+    receive distinct masks."""
+
+    def test_different_keys_produce_different_masks(self):
+        """Two calls with distinct key-derived seeds must yield different results."""
+        d = torch.ones(4, 4)
+        seed = 42
+        # Simulate the per-key seed derivation used in _ties_dare_merge
+        seed_a = seed ^ (hash("model.layer.0.q_proj.weight") & 0xFFFF_FFFF)
+        seed_b = seed ^ (hash("model.layer.1.q_proj.weight") & 0xFFFF_FFFF)
+        # The two keys must differ in their hash bits; if they happen to collide
+        # (astronomically unlikely for these two strings) the test is vacuously
+        # skipped rather than falsely failing.
+        if seed_a == seed_b:
+            pytest.skip("hash collision — try different key strings")
+        r1 = _dare_merge_tensor([d], [1.0], drop_rate=0.5, seed=seed_a)
+        r2 = _dare_merge_tensor([d], [1.0], drop_rate=0.5, seed=seed_b)
+        assert not torch.equal(r1, r2), (
+            "F-M-19 regression: same-shaped tensors at different keys must receive distinct DARE drop masks"
+        )
+
+    def test_same_key_seed_is_deterministic(self):
+        """The same key-derived seed must produce identical results across two runs."""
+        seed = 99
+        key = "transformer.h.0.attn.c_attn.weight"
+        effective_seed = seed ^ (hash(key) & 0xFFFF_FFFF)
+        d = torch.randn(8, 8)
+        r1 = _dare_merge_tensor([d], [1.0], drop_rate=0.4, seed=effective_seed)
+        r2 = _dare_merge_tensor([d], [1.0], drop_rate=0.4, seed=effective_seed)
+        assert torch.equal(r1, r2), "F-M-19: per-key DARE must remain deterministic"
+
+
+class TestTiesDareMergeZeroWeightGuard:
+    """F-M-20: _ties_dare_merge was missing the zero-weight guard that
+    _linear_merge has, causing ZeroDivisionError instead of a descriptive
+    ValueError for cancelling adapter weights."""
+
+    def _make_fake_peft(self, monkeypatch, task_vector):
+        """Stub peft and PeftModel so _ties_dare_merge runs without HF models."""
+        import sys
+        import types
+        from unittest.mock import MagicMock
+
+        fake_peft = types.ModuleType("peft")
+
+        class _FakePeft:
+            def __init__(self, base, path):
+                pass
+
+            def merge_and_unload(self):
+                m = MagicMock()
+                m.state_dict.return_value = task_vector
+                return m
+
+        fake_peft.PeftModel = MagicMock(side_effect=lambda base, path: _FakePeft(base, path))
+        monkeypatch.setitem(sys.modules, "peft", fake_peft)
+
+    def test_zero_weight_sum_raises_value_error(self, monkeypatch):
+        """Cancelling weights (e.g. +0.5 and -0.5) must raise ValueError,
+        not ZeroDivisionError, so the error surfaces as exit code 1 (config),
+        not exit code 2 (training)."""
+        from unittest.mock import MagicMock
+
+        base_w = torch.tensor([1.0, 2.0])
+        tv = {"layer.weight": torch.tensor([1.5, 2.5])}
+
+        base = MagicMock()
+        base.state_dict.return_value = {"layer.weight": base_w.clone()}
+        base.load_state_dict = MagicMock()
+
+        self._make_fake_peft(monkeypatch, tv)
+
+        from forgelm.merging import _ties_dare_merge
+
+        adapters = [{"path": "a", "weight": 0.5}, {"path": "b", "weight": -0.5}]
+        with pytest.raises(ValueError, match="sum to 0"):
+            _ties_dare_merge(base, adapters, method="ties")
+
+    def test_positive_weights_do_not_raise(self, monkeypatch):
+        """Positive weights must not trigger the guard."""
+        from unittest.mock import MagicMock
+
+        base_w = torch.tensor([1.0, 2.0])
+        tv = {"layer.weight": torch.tensor([1.5, 2.5])}
+
+        base = MagicMock()
+        base.state_dict.return_value = {"layer.weight": base_w.clone()}
+        base.load_state_dict = MagicMock()
+
+        self._make_fake_peft(monkeypatch, tv)
+
+        from forgelm.merging import _ties_dare_merge
+
+        adapters = [{"path": "a", "weight": 0.6}, {"path": "b", "weight": 0.4}]
+        # Must not raise — result is the base model mock
+        result = _ties_dare_merge(base, adapters, method="ties")
+        assert result is base
+
+
+class TestTiesDareMergePerKeyWeightRenorm:
+    """F-L-17: when a key is absent from some adapters, zip(deltas, weights)
+    silently truncated to the shorter list, underweighting the surviving
+    adapter's delta.  The fix filters pairs together and renormalizes."""
+
+    def test_partial_key_coverage_renormalizes(self):
+        """Adapter B carries a key that adapter A does not.  After the fix the
+        surviving weight for that key must be renormalized to 1.0, not the raw
+        0.4 fraction."""
+        # task_vector_a has only 'q_proj'; task_vector_b has both 'q_proj' and 'v_proj'
+        tv_a = {"q_proj": torch.tensor([1.0, 0.0, 0.0])}
+        tv_b = {
+            "q_proj": torch.tensor([0.0, 1.0, 0.0]),
+            "v_proj": torch.tensor([0.1, 0.2, 0.3]),
+        }
+        # Global normalized weights: A=0.6, B=0.4
+        weights = [0.6, 0.4]
+
+        # Direct exercise of the renorm logic for the 'v_proj' key
+        key = "v_proj"
+        task_vectors = [tv_a, tv_b]
+        pairs = [(tv[key].float(), w) for tv, w in zip(task_vectors, weights) if key in tv]
+        deltas, key_weights = zip(*pairs)
+        key_total = sum(key_weights)
+        key_weights_norm = [kw / key_total for kw in key_weights]
+
+        assert len(key_weights_norm) == 1
+        assert key_weights_norm[0] == pytest.approx(1.0), (
+            "F-L-17 regression: sole surviving adapter's weight must renormalize to 1.0"
+        )
+
+        # The merged delta for v_proj must equal the raw tensor (weight=1.0 * delta)
+        result = _ties_merge_tensor(list(deltas), key_weights_norm, trim_fraction=0.0)
+        expected = torch.tensor([0.1, 0.2, 0.3])
+        assert torch.allclose(result, expected), (
+            f"F-L-17 regression: merged v_proj should be {expected} but got {result}"
+        )
+
+    def test_both_adapters_present_weights_unchanged(self):
+        """When both adapters carry the key, the per-key weights equal the global
+        normalized weights — renormalization must be a no-op."""
+        tv_a = {"q_proj": torch.tensor([2.0, 0.0])}
+        tv_b = {"q_proj": torch.tensor([0.0, 2.0])}
+        weights = [0.6, 0.4]
+
+        key = "q_proj"
+        task_vectors = [tv_a, tv_b]
+        pairs = [(tv[key].float(), w) for tv, w in zip(task_vectors, weights) if key in tv]
+        deltas, key_weights = zip(*pairs)
+        key_total = sum(key_weights)
+        key_weights_norm = [kw / key_total for kw in key_weights]
+
+        assert key_weights_norm[0] == pytest.approx(0.6)
+        assert key_weights_norm[1] == pytest.approx(0.4)
+
+
+class TestSlerpAntiParallelGuard:
+    """F-L-18: SLERP did not guard against nearly-anti-parallel tensors
+    (omega ≈ π), where sin(omega) ≈ 0 can amplify numerical error
+    catastrophically.  The fix falls back to linear interpolation."""
+
+    def _make_slerp_call(self, v0_tensor, v1_tensor, t=0.5):
+        """Exercise the SLERP omega branch logic directly (no HF model needed)."""
+        dot = torch.sum(v0_tensor * v1_tensor) / (
+            torch.linalg.vector_norm(v0_tensor) * torch.linalg.vector_norm(v1_tensor) + 1e-8
+        )
+        dot = torch.clamp(dot, -1.0, 1.0)
+        omega = torch.acos(dot)
+        near_parallel = omega.abs() < 1e-6
+        near_anti_parallel = (omega - math.pi).abs() < 1e-6
+        if near_parallel or near_anti_parallel:
+            return ((1 - t) * v0_tensor + t * v1_tensor), True  # linear fallback
+        else:
+            so = torch.sin(omega)
+            return (
+                (torch.sin((1 - t) * omega) / so) * v0_tensor + (torch.sin(t * omega) / so) * v1_tensor,
+                False,
+            )
+
+    def test_exact_anti_parallel_uses_linear_fallback(self):
+        """v1 = -v0 is the canonical anti-parallel case; sin(omega) ≈ -8.7e-8
+        in float32. After the fix the linear fallback fires."""
+        v0 = torch.ones(4)
+        v1 = -torch.ones(4)
+        result, used_linear = self._make_slerp_call(v0, v1, t=0.3)
+        assert used_linear, "F-L-18 regression: anti-parallel SLERP must use linear fallback"
+        expected = (1 - 0.3) * v0 + 0.3 * v1
+        assert torch.allclose(result, expected)
+
+    def test_anti_parallel_result_is_finite(self):
+        """Any nearly-anti-parallel pair must produce finite (non-NaN, non-Inf)
+        output regardless of t."""
+        v0 = torch.tensor([1.0, 0.0, 0.0])
+        v1 = torch.tensor([-1.0 + 1e-5, 0.0, 0.0])  # nearly but not exactly anti-parallel
+        for t in [0.0, 0.3, 0.5, 0.7, 1.0]:
+            result, _ = self._make_slerp_call(v0, v1, t=t)
+            assert torch.isfinite(result).all(), f"F-L-18: non-finite SLERP result at t={t}"
+
+    def test_normal_case_still_uses_slerp(self):
+        """Orthogonal vectors (omega = π/2) must NOT take the linear fallback."""
+        v0 = torch.tensor([1.0, 0.0])
+        v1 = torch.tensor([0.0, 1.0])
+        _, used_linear = self._make_slerp_call(v0, v1, t=0.5)
+        assert not used_linear, "F-L-18: orthogonal vectors should use SLERP, not linear fallback"

@@ -23,7 +23,7 @@ import os
 import subprocess  # noqa: S404  # nosec B404 — see _run_converter for the safe-usage rationale
 import sys
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 logger = logging.getLogger("forgelm.export")
 
@@ -66,7 +66,7 @@ class ExportResult:
     # "config" for operator-input failures (bad format/quant, malformed
     # FORGELM_GGUF_CONVERTER) → EXIT_CONFIG_ERROR; "runtime" for converter /
     # merge / infra failures → EXIT_TRAINING_ERROR.  Ignored when success.
-    error_kind: str = "runtime"
+    error_kind: Optional[Literal["config", "runtime"]] = "runtime"
 
 
 # ---------------------------------------------------------------------------
@@ -316,9 +316,10 @@ def _run_converter(cmd: List[str], fmt: str, actual_quant: str) -> Optional[Expo
             format=fmt,
             quant=actual_quant,
             error="GGUF conversion timed out after 3600 seconds.",
+            error_kind="runtime",
         )
-    except Exception as e:  # noqa: BLE001 — best-effort: subprocess.run for the GGUF converter (llama.cpp / convert-hf-to-gguf.py) crosses OSError (binary missing), CalledProcessError (non-zero exit before check=False catches it), and the converter's own deep-stack errors; ExportResult(success=False) is the documented public contract for the export pipeline.  # NOSONAR
-        return ExportResult(success=False, format=fmt, quant=actual_quant, error=str(e))
+    except Exception as e:  # noqa: BLE001 — best-effort: subprocess.run for the GGUF converter (llama.cpp / convert-hf-to-gguf.py) crosses OSError (binary missing) and the converter's own deep-stack errors; ExportResult(success=False) is the documented public contract for the export pipeline.  # NOSONAR
+        return ExportResult(success=False, format=fmt, quant=actual_quant, error=str(e), error_kind="runtime")
 
     if proc.returncode == 0:
         return None

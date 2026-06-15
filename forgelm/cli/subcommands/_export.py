@@ -52,6 +52,6 @@ def _run_export_cmd(args, output_format: str) -> None:
         # Operator-input failures (bad format/quant, malformed converter env)
         # are config errors (exit 1); converter/merge/infra failures are
         # runtime errors (exit 2) — see ExportResult.error_kind (F-P7-OPUS-36).
-        if getattr(result, "error_kind", "runtime") == "config":
+        if result.error_kind == "config":
             sys.exit(EXIT_CONFIG_ERROR)
         sys.exit(EXIT_TRAINING_ERROR)

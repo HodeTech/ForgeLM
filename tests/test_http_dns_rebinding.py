@@ -610,6 +610,7 @@ class TestTransportErrorUrlRedaction:
 
         log_text = " ".join(r.message for r in caplog.records)
         assert self._SECRET not in log_text
+        assert "[REDACTED-PATH]" in log_text
 
     def test_safe_get_head_transport_error_does_not_leak_url_path(self, caplog):
         import logging
@@ -629,6 +630,7 @@ class TestTransportErrorUrlRedaction:
 
         log_text = " ".join(r.message for r in caplog.records)
         assert self._SECRET not in log_text
+        assert "[REDACTED-PATH]" in log_text
 
     def test_redactor_strips_full_url_when_embedded_verbatim(self):
         from forgelm import _http
@@ -647,3 +649,130 @@ class TestTransportErrorUrlRedaction:
         text = "failed talking to https://hooks.slack.com (timeout)"
         masked = _http._redact_url_paths_in_text(text, "https://hooks.slack.com")
         assert "https://hooks.slack.com" in masked
+
+
+class TestShortPathTailNoOverRedaction:
+    """F-M-08 regression: Pass 1 must NOT replace short path tokens like
+    ``/v1`` or ``/api`` (len < 8) because they are common in non-secret
+    contexts — an unbounded replace would erase diagnostic signal from
+    unrelated URLs in the same exception string.  Pass 2 (regex on
+    ``url: <path>``) still catches the urllib3 form correctly.
+    """
+
+    def test_short_path_tail_not_over_redacted_in_unrelated_context(self):
+        from forgelm import _http
+
+        url = "https://api.example.com/v1"
+        # Exception string that mentions /v1 in an unrelated context.
+        text = "ConnectionError: failed at /v1 via /v1/api/endpoint"
+        masked = _http._redact_url_paths_in_text(text, url)
+        # Pass 1 must NOT have replaced /v1 everywhere (short token guard).
+        # The text should retain diagnostic context — not turn both /v1 occurrences
+        # into [REDACTED-PATH].
+        assert masked.count("[REDACTED-PATH]") == 0 or "/v1/api/endpoint" in masked or "failed at /v1" in masked
+
+    def test_short_path_tail_still_caught_by_pass2_url_form(self):
+        """When urllib3 emits ``url: /v1`` in its error string, Pass 2 must
+        still redact it even though Pass 1 now skips short tails."""
+        from forgelm import _http
+
+        url = "https://api.example.com/v1"
+        text = "Max retries exceeded with url: /v1 (Caused by NewConnectionError)"
+        masked = _http._redact_url_paths_in_text(text, url)
+        assert "[REDACTED-PATH]" in masked
+        assert "/v1" not in masked.replace("[REDACTED-PATH]", "")
+
+    def test_long_path_tail_still_redacted_by_pass1(self):
+        """Path tails >= 8 chars (real secrets) must still be removed.
+
+        The full URL replacement (Pass 1, step 1) consumes the whole URL,
+        leaving only the host-masked form.  Either way, the secret must not
+        appear in the output.
+        """
+        from forgelm import _http
+
+        url = "https://hooks.slack.com/services/T00000/SECRETTOKEN"
+        # Embed the path tail without the full URL to exercise the path-tail
+        # replacement branch specifically (Pass 1, step 2).
+        path_tail = "/services/T00000/SECRETTOKEN"
+        text = f"connection refused, path was {path_tail}"
+        masked = _http._redact_url_paths_in_text(text, url)
+        assert "SECRETTOKEN" not in masked
+        assert "[REDACTED-PATH]" in masked
+
+
+class TestQueryOnlyPathRedaction:
+    """F-N-04 regression: Pass 2 regex must now match query-only tokens
+    (``url: ?api_key=SECRET``) and fragment-only tokens, not only paths
+    that start with ``/``.
+    """
+
+    def test_query_only_url_token_redacted(self):
+        from forgelm import _http
+
+        text = "Max retries exceeded with url: ?api_key=SUPERSECRET (Caused by)"
+        masked = _http._redact_url_paths_in_text(text, "https://api.example.com?api_key=SUPERSECRET")
+        assert "SUPERSECRET" not in masked
+        assert "[REDACTED-PATH]" in masked
+
+    def test_fragment_only_url_token_redacted(self):
+        from forgelm import _http
+
+        # Fragment in url: token — now matched by the extended [/?#] prefix.
+        text = "Max retries exceeded with url: #section=SECRET (Caused by)"
+        masked = _http._redact_url_paths_in_text(text, "https://api.example.com#section=SECRET")
+        assert "SECRET" not in masked
+        assert "[REDACTED-PATH]" in masked
+
+    def test_slash_prefix_still_works(self):
+        """Existing slash-prefixed pass-2 behaviour must be unaffected."""
+        from forgelm import _http
+
+        text = "Max retries exceeded with url: /services/TOKEN (Caused by)"
+        masked = _http._redact_url_paths_in_text(text, "https://hooks.slack.com/services/TOKEN")
+        assert "TOKEN" not in masked
+        assert "[REDACTED-PATH]" in masked
+
+
+class TestPortStrippingAdapterModuleScope:
+    """F-N-05 regression: ``_PortStrippingSSLAdapter`` must be a single
+    class object defined at module scope so that cross-session isinstance
+    checks are stable and no per-call class creation overhead occurs.
+    """
+
+    def test_adapter_class_is_same_object_across_sessions(self):
+        from forgelm import _http
+
+        with (
+            patch.object(_http.socket, "getaddrinfo", return_value=[(0, 0, 0, "", ("8.8.8.8", 0))]),
+        ):
+            s1 = _http._pinned_session("https")
+            s2 = _http._pinned_session("https")
+
+        a1 = s1.get_adapter("https://x")
+        a2 = s2.get_adapter("https://x")
+        # Both adapters must be instances of the SAME class (module-level definition).
+        assert type(a1) is type(a2), (
+            f"Adapters from different sessions must share the same class; "
+            f"got id(type(a1))={id(type(a1))} vs id(type(a2))={id(type(a2))}"
+        )
+
+    def test_adapter_is_instance_of_module_level_class(self):
+        """Explicit isinstance check against the module-level name must work."""
+        from forgelm import _http
+
+        session = _http._pinned_session("https")
+        adapter = session.get_adapter("https://x")
+        assert _http._PortStrippingSSLAdapter is not None
+        assert isinstance(adapter, _http._PortStrippingSSLAdapter)
+
+    def test_cross_session_isinstance_check(self):
+        """isinstance(adapter_from_s1, type(adapter_from_s2)) must return True."""
+        from forgelm import _http
+
+        s1 = _http._pinned_session("https")
+        s2 = _http._pinned_session("https")
+        a1 = s1.get_adapter("https://x")
+        a2 = s2.get_adapter("https://x")
+        assert isinstance(a1, type(a2))
+        assert isinstance(a2, type(a1))

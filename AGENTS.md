@@ -160,10 +160,11 @@ Default workflow for a non-trivial change:
      python3 tools/check_audit_event_catalog.py --strict && \
      python3 tools/check_tr_links_prefer_mirror.py --strict && \
      python3 tools/check_usermanual_self_contained.py --strict && \
+     python3 tools/check_notebook_pins.py --strict && \
      python3 tools/update_site_version.py --check
    ```
 
-   All fourteen must pass. The first four are the historical gauntlet;
+   All fifteen must pass. The first four are the historical gauntlet;
    the three doc guards (Wave 3 / Wave 4 / Wave 5 additions) catch
    bilingual structural drift, broken markdown anchors, and CLI ↔ docs
    help-text drift before the PR opens. The wizard-defaults guard
@@ -200,7 +201,11 @@ Default workflow for a non-trivial change:
    latest released header and fails the PR if any of the 15+ literals
    across `site/*.html` and `site/js/translations.js` has drifted; the
    v0.5.5 → v0.6.0 release shipped with the hero badge still reading
-   `v0.5.5`, which this guard now prevents.
+   `v0.5.5`, which this guard now prevents.  The notebook-pin guard
+   (v0.7.0 / F-P8-C-09) verifies that every `*.ipynb` in the repo
+   pins its kernel and package versions so that example notebooks
+   remain reproducible; it was wired into CI at the v0.7.0 pin bump
+   but was absent from the local gauntlet until this update.
 
 ## Etiquette when communicating with the user
 

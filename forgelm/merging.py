@@ -5,6 +5,7 @@ Provides config-driven merging as a post-training step or standalone CLI command
 """
 
 import logging
+import math
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -213,7 +214,11 @@ def _slerp_merge(base_model, adapters):
             dot = torch.sum(v0 * v1) / (torch.linalg.vector_norm(v0) * torch.linalg.vector_norm(v1) + 1e-8)
             dot = torch.clamp(dot, -1.0, 1.0)
             omega = torch.acos(dot)
-            if omega.abs() < 1e-6:
+            # Fall back to linear interpolation for near-parallel (omega ≈ 0)
+            # and near-anti-parallel (omega ≈ π) cases.  In both regimes
+            # sin(omega) is near zero, which amplifies numerical error
+            # catastrophically (F-L-18).
+            if omega.abs() < 1e-6 or (omega - math.pi).abs() < 1e-6:
                 merged_state[key] = ((1 - t) * v0 + t * v1).to(state_a[key].dtype)
             else:
                 so = torch.sin(omega)
@@ -288,21 +293,31 @@ def _ties_dare_merge(
 
     # Normalize weights
     total_w = sum(weights)
+    if total_w == 0:
+        raise ValueError("Adapter weights sum to 0. Provide positive weights for merging.")
     weights = [w / total_w for w in weights]
 
     # Merge
     merged_delta = {}
     for key in task_vectors[0]:
-        deltas = [tv[key].float() for tv in task_vectors if key in tv]
-        if not deltas:
+        # Filter deltas and weights together so adapters that lack this key do
+        # not silently truncate the zip (F-L-17).  Re-normalize so the key's
+        # effective weights always sum to 1.0 regardless of which adapters carry it.
+        pairs = [(tv[key].float(), w) for tv, w in zip(task_vectors, weights) if key in tv]
+        if not pairs:
             continue
+        deltas, key_weights = zip(*pairs)
+        key_total = sum(key_weights)
+        key_weights = [kw / key_total for kw in key_weights]
 
         if method == "ties":
-            merged_delta[key] = _ties_merge_tensor(deltas, weights, trim_fraction=ties_trim_fraction)
+            merged_delta[key] = _ties_merge_tensor(list(deltas), list(key_weights), trim_fraction=ties_trim_fraction)
         elif method == "dare":
-            merged_delta[key] = _dare_merge_tensor(deltas, weights, drop_rate=dare_drop_rate, seed=dare_seed)
+            merged_delta[key] = _dare_merge_tensor(
+                list(deltas), list(key_weights), drop_rate=dare_drop_rate, seed=dare_seed ^ (hash(key) & 0xFFFF_FFFF)
+            )
         else:
-            merged_delta[key] = sum(d * w for d, w in zip(deltas, weights))
+            merged_delta[key] = sum(d * w for d, w in zip(deltas, key_weights))
 
     # Apply merged delta to base model
     final_state = {k: base_state[k] + merged_delta[k].to(base_state[k].dtype) for k in merged_delta}
