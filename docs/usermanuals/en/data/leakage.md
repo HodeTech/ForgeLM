@@ -41,7 +41,7 @@ For every train row, ForgeLM checks:
 - **Exact match** in val/test (any field that matters: `prompt`, `chosen`, `response`, etc.).
 - **Near-duplicate** (Hamming threshold 3 simhash) in val/test.
 
-Any match is reported. If the leakage rate is over the configured threshold, audit exits non-zero.
+Any match is reported. `forgelm audit` still exits `0` on successful completion — it does **not** gate on a leakage rate (it only exits non-zero on an input/config error or an I/O failure). To fail CI when cross-split leakage is found, branch on the JSON report with `jq` (see [Dataset Audit](#/data/audit)).
 
 ## Quick example
 

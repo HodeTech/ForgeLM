@@ -41,7 +41,7 @@ Her train satırı için ForgeLM kontrol eder:
 - Val/test'te **kesin eşleşme** (önemli her alan: `prompt`, `chosen`, `response` vb.).
 - Val/test'te **near-duplicate** (Hamming eşiği 3 simhash).
 
-Herhangi bir eşleşme raporlanır. Sızıntı oranı konfigüre eşiği geçerse audit sıfır olmayan exit verir.
+Herhangi bir eşleşme raporlanır. `forgelm audit` başarılı tamamlanmada yine `0` ile çıkar — sızıntı oranına göre gate **yapmaz** (yalnızca girdi/config hatasında veya I/O hatasında sıfır-dışı çıkar). Sızıntı bulununca CI'ı başarısız kılmak için JSON raporunu `jq` ile dallandırın (bkz. [Veri Seti Denetimi](#/data/audit)).
 
 ## Hızlı örnek
 
