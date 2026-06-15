@@ -531,6 +531,25 @@ class TestClassifierHeadValidation:
         clf = self._stub_classifier(["LlamaForCausalLM"], {0: "safe", 1: "unsafe"})
         _reject_uninitialized_classifier_head(clf, "some/llama-harm-classifier")
 
+    def test_causal_lm_with_multi_index_placeholder_head_rejected(self):
+        """A default LABEL_N vocabulary with more than two indices (LABEL_2+)
+        is still a randomly-initialized placeholder head and must be refused
+        on a causal-LM architecture, not just the 2-label LABEL_0/LABEL_1 case."""
+        from forgelm.safety import _reject_uninitialized_classifier_head
+
+        clf = self._stub_classifier(["LlamaForCausalLM"], {0: "LABEL_0", 1: "LABEL_1", 2: "LABEL_2"})
+        with pytest.raises(RuntimeError, match="causal language model"):
+            _reject_uninitialized_classifier_head(clf, "meta-llama/Llama-Guard-3-8B")
+
+    def test_causal_lm_with_three_real_labels_accepted(self):
+        """A 3-label *real* harm vocabulary on a causal-LM architecture must
+        still be accepted — only all-LABEL_N placeholder vocabularies are
+        treated as uninitialized heads."""
+        from forgelm.safety import _reject_uninitialized_classifier_head
+
+        clf = self._stub_classifier(["LlamaForCausalLM"], {0: "safe", 1: "unsafe", 2: "S1"})
+        _reject_uninitialized_classifier_head(clf, "some/llama-harm-classifier")
+
 
 class TestSafetyBatchSizeValidation:
     """F-P8-C-16: the library-API batch_size guard (safety.py:614) was

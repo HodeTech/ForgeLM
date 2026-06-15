@@ -575,10 +575,13 @@ def _reject_uninitialized_classifier_head(classifier: Any, classifier_path: str)
     # classifier.
     causal_lm = any(arch.endswith("ForCausalLM") or arch.endswith("LMHeadModel") for arch in architectures)
     # A genuine harm classifier names safe/unsafe (or S-code) labels; a
-    # placeholder head only exposes the LABEL_0/LABEL_1 default vocabulary.
+    # placeholder head only exposes the default LABEL_N vocabulary
+    # (LABEL_0/LABEL_1/LABEL_2/...).
     id2label = getattr(config, "id2label", {}) or {}
     labels = {str(v).lower() for v in id2label.values()}
-    placeholder_labels = labels and labels <= {"label_0", "label_1"}
+    placeholder_labels = bool(labels) and all(
+        lbl.startswith("label_") and lbl[len("label_") :].isdigit() for lbl in labels
+    )
     if causal_lm and placeholder_labels:
         raise RuntimeError(
             f"Safety classifier {classifier_path!r} is a causal language model "
