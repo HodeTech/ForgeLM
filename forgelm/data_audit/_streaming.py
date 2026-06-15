@@ -187,18 +187,22 @@ def _read_jsonl_split(path: Path) -> Iterator[Tuple[Any, bool, bool]]:
     """
     # Read bytes so we can distinguish a genuine non-UTF-8 byte (which a
     # strict decode would reject) from a line that legitimately *contains*
-    # the U+FFFD code point (valid UTF-8, must not be flagged). The
-    # ``errors="replace"`` decode supplies the usable text either way.
+    # the U+FFFD code point (valid UTF-8, must not be flagged). Decode
+    # strictly first — success means the text is exactly right and the line
+    # carries no decode error; only on ``UnicodeDecodeError`` do we fall back
+    # to ``errors="replace"`` for usable text and flag the line. One decode
+    # per line in the common (strict-success) hot path.
     with open(path, "rb") as fh:
         for line_number, raw_bytes in enumerate(fh, start=1):
-            line = raw_bytes.decode("utf-8", errors="replace").strip()
-            if not line:
-                continue
             try:
-                raw_bytes.decode("utf-8")
+                line = raw_bytes.decode("utf-8")
                 decode_error = False
             except UnicodeDecodeError:
+                line = raw_bytes.decode("utf-8", errors="replace")
                 decode_error = True
+            line = line.strip()
+            if not line:
+                continue
             try:
                 row = json.loads(line)
             except json.JSONDecodeError as exc:
