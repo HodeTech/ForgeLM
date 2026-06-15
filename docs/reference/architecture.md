@@ -8,15 +8,16 @@ ForgeLM is designed with modularity and extensibility in mind. The workflow is b
 forgelm --config job.yaml
     │
     ├── cli/                → CLI package (Phase 15 split)
-    │   ├── _parser.py          → 18 subcommands + global flags
+    │   ├── _parser.py          → 19 subcommands + global flags
     │   ├── _dispatch.py        → Mode dispatcher
-    │   ├── _exit_codes.py      → 0/1/2/3/4 contract
-    │   └── subcommands/        → Per-subcommand handlers
+    │   ├── _exit_codes.py      → 0/1/2/3/4/5 contract
+    │   └── subcommands/        → Per-subcommand handlers (19 subcommands)
     │       ├── ingest, audit, chat, export, deploy, doctor,
-    │       │   cache, purge, reverse_pii, approve, approvals,
-    │       │   safety_eval, verify_audit, verify_annex_iv,
-    │       │   verify_gguf, quickstart
-    ├── config.py           → Pydantic validation (21 config models)
+    │       │   cache-models, cache-tasks, purge, reverse-pii,
+    │       │   approve, reject, approvals, safety-eval,
+    │       │   verify-audit, verify-annex-iv, verify-gguf,
+    │       │   verify-integrity, quickstart
+    ├── config.py           → Pydantic validation (23 config models)
     ├── utils.py            → HF authentication
     ├── model.py            → Load model + tokenizer + LoRA/PEFT
     ├── data.py             → Load + format dataset
@@ -43,19 +44,19 @@ ForgeLM/
 ├── forgelm/                # Core Python package (~22 single-file modules + 2 sub-packages)
 │   ├── __init__.py         # Lazy imports for fast CLI startup
 │   ├── cli/                # CLI sub-package (Phase 15 split)
-│   │   ├── _parser.py          # 18 subcommands + global flags
+│   │   ├── _parser.py          # 19 subcommands + global flags
 │   │   ├── _dispatch.py        # Mode dispatcher
-│   │   ├── _exit_codes.py      # Public 0/1/2/3/4 contract
+│   │   ├── _exit_codes.py      # Public 0/1/2/3/4/5 contract
 │   │   └── subcommands/        # Per-subcommand handler modules
 │   │       └── _audit, _ingest, _chat, _export, _deploy, _doctor,
 │   │           _cache, _purge, _reverse_pii, _approve, _approvals,
 │   │           _safety_eval, _verify_audit, _verify_annex_iv,
-│   │           _verify_gguf, _quickstart
+│   │           _verify_gguf, _verify_integrity, _quickstart
 │   ├── data_audit/         # Data-audit sub-package (Phase 14 split)
 │   │   └── _orchestrator, _aggregator, _streaming, _simhash,
 │   │       _minhash, _pii_regex, _pii_ml, _secrets, _quality,
 │   │       _croissant, _summary, _splits, _types, _optional
-│   ├── config.py           # 21 Pydantic config models
+│   ├── config.py           # 23 Pydantic config models
 │   ├── data.py             # Dataset loading (SFT/DPO/KTO/GRPO/multimodal)
 │   ├── ingestion.py        # Raw docs → SFT JSONL (PDF/DOCX/EPUB/TXT/Markdown)
 │   ├── model.py            # Model + LoRA/DoRA/PiSSA + MoE detection
@@ -81,7 +82,9 @@ ForgeLM/
 │   ├── _version.py         # __version__ + __api_version__ (decoupled)
 │   └── utils.py            # Authentication + checkpoint management
 ├── forgelm/templates/      # 5 quickstart template bundles
-├── configs/deepspeed/      # ZeRO-2, ZeRO-3, ZeRO-3+Offload presets
+├── configs/
+│   ├── deepspeed/          # ZeRO-2, ZeRO-3, ZeRO-3+Offload presets
+│   └── safety_prompts/     # Built-in adversarial prompt library (140 prompts, 6 categories)
 ├── notebooks/              # 10 Colab-ready Jupyter notebooks
 ├── tests/                  # ~70 test modules
 ├── tools/                  # CI guards: bilingual_parity, anchor_resolution,
@@ -100,10 +103,10 @@ ForgeLM/
 ## Component Details
 
 ### `cli/`
-The orchestrator (Phase 15 split). `_parser.py` registers 18 subcommands (`audit`, `approve`, `approvals`, `reject`, `cache-models`, `cache-tasks`, `chat`, `deploy`, `doctor`, `export`, `ingest`, `purge`, `quickstart`, `reverse-pii`, `safety-eval`, `verify-annex-iv`, `verify-audit`, `verify-gguf`) plus the legacy training-mode flag set. `_dispatch.py` routes to the appropriate handler in `subcommands/`. `_exit_codes.py` defines the public 0/1/2/3/4 contract.
+The orchestrator (Phase 15 split). `_parser.py` registers 19 subcommands (`audit`, `approve`, `approvals`, `reject`, `cache-models`, `cache-tasks`, `chat`, `deploy`, `doctor`, `export`, `ingest`, `purge`, `quickstart`, `reverse-pii`, `safety-eval`, `verify-annex-iv`, `verify-audit`, `verify-gguf`, `verify-integrity`) plus the legacy training-mode flag set. `_dispatch.py` routes to the appropriate handler in `subcommands/`. `_exit_codes.py` defines the public 0/1/2/3/4/5 contract (5 = wizard cancelled).
 
 ### `config.py`
-21 Pydantic v2 models providing strict validation for all YAML configuration. Includes cross-field validation (e.g., high-risk classification enforces safety evaluation). Config models cover: model, LoRA, training, data, evaluation, safety, benchmark, judge, webhook, distributed, merge, compliance, retention, risk assessment, monitoring, MoE, multimodal, data governance, and synthetic-data generation.
+23 Pydantic v2 models providing strict validation for all YAML configuration. Includes cross-field validation (e.g., high-risk classification enforces safety evaluation). Config models cover: model, LoRA, training, data, evaluation, safety, benchmark, judge, webhook, distributed, merge, compliance, retention, risk assessment, monitoring, MoE, multimodal, data governance, and synthetic-data generation.
 
 ### `data.py`
 Interfaces with HuggingFace `datasets` library. Auto-detects dataset format (SFT, DPO, KTO, GRPO, multimodal) and validates against `trainer_type`. Handles multi-dataset mixing with configurable ratios. Applies chat templates via `tokenizer.apply_chat_template()` with fallback formatting.

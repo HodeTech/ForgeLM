@@ -129,8 +129,9 @@ report = audit_dataset(
 )
 
 print(f"samples: {report.total_samples}")
-print(f"duplicates: {report.duplicate_count}")
-print(f"pii findings: {len(report.pii_findings)}")
+pairs = report.near_duplicate_summary.get('pairs_per_split', {})
+print(f"near-duplicates: {pairs}")
+print(f"pii summary: {report.pii_summary}")
 # cross_split_overlap is dict[str, Any], access by key
 print(f"split overlap pairs: {report.cross_split_overlap.get('pairs', {})}")
 ```
@@ -149,7 +150,7 @@ result = verify_audit_log(
 if not result.valid:
     raise SystemExit(f"audit chain broken: {result.reason}")
 
-print(f"verified {result.entries_checked} entries; head={result.chain_head}")
+print(f"verified {result.entries_count} entries")
 ```
 
 ### 3. Train end-to-end (pure Python, no YAML)
@@ -172,9 +173,9 @@ config = ForgeConfig(
 trainer = ForgeTrainer(config)
 result = trainer.train()
 
-print(f"success={result.success}  output={result.output_dir}")
-if not result.success and result.revert_reason:
-    print(f"reverted: {result.revert_reason}")
+print(f"success={result.success}  output={result.final_model_path}")
+if not result.success and result.reverted:
+    print(f"reverted; reason: {result.error}")
 ```
 
 The keys above are the **only** required ones; everything else falls back to `forgelm/config.py` defaults. `model.name_or_path`, the `lora:` block, `data.dataset_name_or_path`, and `training.{trainer_type, output_dir}` are required by the Pydantic schema; `num_epochs` / `batch_size` are not the canonical names and would raise `ValidationError`.
@@ -214,8 +215,8 @@ text = "Contact alice@example.com or use AKIAIOSFODNN7EXAMPLE for the call."
 pii = detect_pii(text)
 secrets = detect_secrets(text)
 
-print(f"pii: {[(f.kind, f.span) for f in pii]}")
-print(f"secrets: {[(f.kind, f.span) for f in secrets]}")
+print(f"pii: {pii}")
+print(f"secrets: {secrets}")
 
 masked = mask_secrets(mask_pii(text))
 print(masked)

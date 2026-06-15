@@ -75,12 +75,12 @@ Tek yanıt + thumbs-up/down. Eşli tercihten daha kolay toplanır.
 ```json
 {
   "prompt": "Aboneliği nasıl iptal ederim?",
-  "response": "Sadece ödemeyi durdur.",
+  "completion": "Sadece ödemeyi durdur.",
   "label": false
 }
 {
   "prompt": "Aboneliği nasıl iptal ederim?",
-  "response": "Ayarlar → Faturalandırma → Aboneliği iptal et…",
+  "completion": "Ayarlar → Faturalandırma → Aboneliği iptal et…",
   "label": true
 }
 ```

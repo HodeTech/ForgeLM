@@ -13,7 +13,7 @@ ForgeLM is designed to slot cleanly into a CI/CD pipeline step. Every command ha
 |---|---|---|
 | `0` | Success | Promote artifacts |
 | `1` | Configuration error | Fail; fix YAML before retry |
-| `2` | Audit warnings | Block merge until reviewed |
+| `2` | Training error | Fail; investigate crash / OOM / unhandled exception |
 | `3` | Auto-revert triggered | Fail; investigate regression |
 | `4` | Awaiting human approval | Hold pipeline; trigger reviewer notification |
 

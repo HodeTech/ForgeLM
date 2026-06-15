@@ -32,7 +32,8 @@ ForgeLM ships out-of-the-box:
 - **EU AI Act Article 14** human-oversight gate via
   `forgelm approve` / `reject` Article 14 staging.
 - **EU AI Act Article 15** model-integrity via
-  `compute_artefact_sha256` + `model_integrity.json`.
+  `compute_artefact_sha256` + `model_integrity.json`; post-deployment
+  verification via `forgelm verify-integrity`.
 - **EU AI Act Article 17** QMS templates in `docs/qms/` (Wave 0
   baseline + Wave 4 ISO additions).
 - **GDPR Article 15** right-of-access via `forgelm reverse-pii`.

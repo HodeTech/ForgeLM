@@ -22,6 +22,8 @@ pip install -e ".[eval]"         # lm-evaluation-harness
 pip install -e ".[tracking]"     # W&B deney takibi
 pip install -e ".[distributed]"  # DeepSpeed çoklu GPU
 pip install -e ".[merging]"      # native model birleştirme (TIES/DARE/SLERP — ekstra bağımlılık yok)
+pip install -e ".[export]"       # GGUF export (llama-cpp-python, Windows-dışı)
+pip install -e ".[chat]"         # forgelm chat'te Rich render'lama
 ```
 
 ## Kimlik Doğrulama
@@ -256,6 +258,8 @@ checkpoints/
 ├── final_model/
 │   ├── adapter_config.json
 │   ├── adapter_model.safetensors
+│   ├── tokenizer.json
+│   ├── tokenizer_config.json
 │   ├── README.md                    # Otomatik model kartı
 │   ├── deployer_instructions.md     # Dağıtıcı rehberi (Madde 13)
 │   └── model_integrity.json         # SHA-256 checksum'lar (Madde 15)

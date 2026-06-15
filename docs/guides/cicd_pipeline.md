@@ -8,7 +8,7 @@ ForgeLM is built for automation. This guide shows how to integrate fine-tuning i
 
 ForgeLM's CI/CD-native design provides:
 - **YAML-driven**: Entire training runs defined in version-controlled config files
-- **Meaningful exit codes**: `0` success, `1` config error, `2` training error, `3` eval failure
+- **Meaningful exit codes**: `0` success, `1` config error, `2` training error, `3` eval failure, `4` awaiting approval
 - **JSON output**: `--output-format json` for machine-readable results
 - **Dry-run validation**: `--dry-run` validates without GPU
 - **Webhook notifications**: Real-time Slack/Teams alerts on start/success/failure

@@ -51,7 +51,7 @@ categories are scoped per-engagement.
 | CC6.7 | Restricts movement of information | `safe_post` egress discipline; webhook payload curation |
 | CC6.8 | Detects/prevents unauthorised software | SBOM; `pip-audit` nightly; `bandit` CI |
 | CC7.1 | Detects vulnerabilities | `pip-audit` nightly; CVE feed |
-| CC7.2 | Monitors system components | `forgelm verify-audit`; `forgelm verify-gguf`; `safety_trend.jsonl` |
+| CC7.2 | Monitors system components | `forgelm verify-audit`; `forgelm verify-gguf`; `forgelm verify-integrity`; `safety_trend.jsonl` |
 | CC7.3 | Evaluates security events | `data.erasure_failed`, `pipeline.failed` events with `error_class` + `error_message` |
 | CC7.4 | Responds to security events | `auto_revert`; `model.reverted` event |
 | CC7.5 | Identifies, develops corrective actions | `human_approval.rejected`; `sop_change_management.md` |
@@ -100,7 +100,7 @@ Strong ForgeLM contribution.
 | P4.1 Use, retention, and disposal | `retention.staging_ttl_days` (canonical; legacy alias `evaluation.staging_ttl_days` forwards transparently during the v0.5.5 → v0.6.x deprecation window); `forgelm purge --check-policy` |
 | P5.1 Access | `forgelm reverse-pii` Article 15 scan; salted query-hash |
 | P5.2 Inquiries and complaints | (Deployer-side workflow) |
-| P6.1 Disclosure to third parties | `safe_post` webhook discipline; HMAC payload signing |
+| P6.1 Disclosure to third parties | `safe_post` webhook discipline (TLS-only, SSRF guard, redirect refusal); note: webhook bodies are NOT HMAC-signed — see ISO 27001 A.8.21 |
 | P6.2 Third-party agreements | (Deployer DPAs) |
 | P7.1 Breach notification | `data.erasure_failed`, `audit.classifier_load_failed` events |
 | P7.2 Breach disclosure | (Deployer regulator-contact playbook) |

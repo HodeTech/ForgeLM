@@ -26,34 +26,30 @@ model:
   load_in_4bit: false                  # GaLore prefers full precision
   max_length: 4096
 
-galore:
-  enabled: true
-  rank: 256                            # higher than LoRA — projection rank
-  update_proj_gap: 200                 # re-project every N steps
-  scale: 0.25
-  proj_type: "std"                     # std (default), reverse_std, right, left
-
 training:
-  trainer: "sft"
+  trainer_type: "sft"
   learning_rate: 1.0e-5                # full-FT learning rate, not LoRA
   optimizer: "galore_adamw_8bit"
-
-output:
-  dir: "./checkpoints/galore"
+  galore_enabled: true
+  galore_rank: 256                     # higher than LoRA default (128) — projection rank
+  galore_update_proj_gap: 200          # re-project every N steps
+  galore_scale: 0.25
+  galore_proj_type: "std"              # std (default), reverse_std, right, left
+  output_dir: "./checkpoints/galore"
 ```
 
-Note: when `galore.enabled: true`, ForgeLM automatically uses the GaLore-aware optimiser; `lora` should not be configured at the same time.
+Note: when `training.galore_enabled: true`, ForgeLM automatically uses the GaLore-aware optimiser; `lora` should not be configured at the same time.
 
 ## Configuration parameters
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `false` | Master switch. |
-| `rank` | int | `256` | Gradient projection rank. Higher = closer to full-FT, more memory. |
-| `update_proj_gap` | int | `200` | Steps between re-projections. Lower = adapt to changing gradients faster. |
-| `scale` | float | `0.25` | Scaling on the projected gradients. |
-| `proj_type` | string | `"std"` | Projection direction. `std` is the default; experiment if convergence stalls. |
-| `target_modules` | list | `["attn", "mlp"]` | Which modules to project gradients for. |
+| `training.galore_enabled` | bool | `false` | Master switch. |
+| `training.galore_rank` | int | `128` | Gradient projection rank. Higher = closer to full-FT, more memory. |
+| `training.galore_update_proj_gap` | int | `200` | Steps between re-projections. Lower = adapt to changing gradients faster. |
+| `training.galore_scale` | float | `0.25` | Scaling on the projected gradients. |
+| `training.galore_proj_type` | string | `"std"` | Projection direction. `std` is the default; experiment if convergence stalls. |
+| `training.galore_target_modules` | list | `null` | Which modules to project gradients for. |
 
 ## Memory comparison
 
@@ -65,7 +61,7 @@ For a 7B model at `max_length: 4096`, batch size 1:
 | LoRA r=16 | 0.2% | 18 GB | 9 GB (QLoRA) |
 | **GaLore r=256** | **100%** | **22 GB** | n/a |
 
-So GaLore at r=256 lets you full-fine-tune a 7B model on a single 24 GB GPU — roughly the same VRAM as plain LoRA at full precision.
+So GaLore at r=256 (illustrative; the shipped default is r=128) lets you full-fine-tune a 7B model on a single 24 GB GPU — roughly the same VRAM as plain LoRA at full precision.
 
 ## Compute
 
@@ -74,7 +70,7 @@ GaLore is ~15-20% slower per step than LoRA because of the projection/re-project
 ## Common pitfalls
 
 :::warn
-**Trying to combine GaLore with LoRA.** They're alternatives, not complements. ForgeLM's config schema rejects setting both `lora.r` and `galore.enabled`.
+**Trying to combine GaLore with LoRA.** They're alternatives, not complements. ForgeLM's config schema rejects setting both `lora.r` and `training.galore_enabled`.
 :::
 
 :::warn

@@ -122,7 +122,8 @@ auditable evidence. Cited symbols are real (verified against
 | HTTP discipline                     | `safe_post` (Phase 7)                                      | SSRF guard, TLS-only, no-redirect, header masking       |
 | Data audit pipeline                 | `forgelm audit` (Phase 11)                                 | `data_audit_report.json` (PII / secrets / dedup)        |
 | Annex IV §8 governance              | `_data_governance_block` (compliance.py)                   | `data_governance_report.json` Article 10                |
-| Model integrity                     | `generate_model_integrity` (delegates to `_hash_file`)     | `model_integrity.json`                                  |
+| Model integrity generation          | `generate_model_integrity` (delegates to `_hash_file`)     | `model_integrity.json`                                  |
+| Model-integrity manifest verification | `forgelm verify-integrity` (Wave 2b / Art. 15)           | exit 0/1/2, JSON envelope                               |
 | SBOM                                | `tools/generate_sbom.py` (Wave 2 era)                      | CycloneDX 1.5 JSON per (OS, py-version), uploaded as release artefact |
 | Bilingual EN+TR docs                | `tools/check_bilingual_parity.py` (Phase 24)               | strict-mode diff exit code                              |
 
@@ -251,7 +252,7 @@ ForgeLM contributes nothing here.
 | A.8.21 Security of network services | FL-helps | TLS-only webhooks; `FORGELM_AUDIT_SECRET` HMAC | TLS 1.2+ enforcement; cert rotation |
 | A.8.22 Segregation of networks | OOS | — | VPC / subnet design |
 | A.8.23 Web filtering | OOS | — | Egress proxy |
-| A.8.24 Use of cryptography | FL | SHA-256 + HMAC-SHA-256 (audit chain key = `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)`, see `forgelm/compliance.py:104-114`); salted SHA-256 identifier hashing for purge / reverse-pii (`_purge._resolve_salt`, distinct concern) | KMS for `FORGELM_AUDIT_SECRET` |
+| A.8.24 Use of cryptography | FL | SHA-256 + HMAC-SHA-256 (audit chain key = `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)`, see `AuditLogger.__init__`, `forgelm/compliance.py:164`); salted SHA-256 identifier hashing for purge / reverse-pii (`_purge._resolve_salt`, distinct concern) | KMS for `FORGELM_AUDIT_SECRET` |
 | A.8.25 Secure development life cycle | FL-helps | `docs/standards/code-review.md` + `docs/standards/release.md` + CI gates (ruff, pytest, dry-run, parity, SBOM) | SDLC framework |
 | A.8.26 Application security requirements | FL-helps | F-compliance-110 strict gate; Pydantic config validation; ReDoS guard in `_reverse_pii` | App-level threat modelling |
 | A.8.27 Secure system architecture and engineering principles | FL-helps | Append-only audit log architecture (`flock`+`fsync` per line); audit chain HMAC; lazy import discipline; `safe_post` SSRF guard | Defence-in-depth design |

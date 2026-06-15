@@ -40,7 +40,7 @@ sequenceDiagram
 ## Quick start
 
 ```shell
-$ forgelm verify-audit checkpoints/run/compliance/audit_log.jsonl
+$ forgelm verify-audit checkpoints/run/audit_log.jsonl
 OK: 87 entries verified
 ```
 
@@ -48,7 +48,7 @@ For HMAC-authenticated logs, set the operator secret first:
 
 ```shell
 $ FORGELM_AUDIT_SECRET="$(cat /run/secrets/audit-secret)" \
-    forgelm verify-audit checkpoints/run/compliance/audit_log.jsonl
+    forgelm verify-audit checkpoints/run/audit_log.jsonl
 OK: 87 entries verified (HMAC validated)
 ```
 
@@ -61,7 +61,7 @@ When every entry must be HMAC-authenticated (an enterprise audit profile), pass 
 ```shell
 $ FORGELM_AUDIT_SECRET="$(cat /run/secrets/audit-secret)" \
     forgelm verify-audit --require-hmac \
-        checkpoints/run/compliance/audit_log.jsonl
+        checkpoints/run/audit_log.jsonl
 ```
 
 Strict mode flips two safety nets:
@@ -92,7 +92,7 @@ FAIL at line 53: prev_hash mismatch — chain break suggests entry was inserted,
 A bare reason without a line number means the failure happened before the chain walk (e.g. missing genesis manifest, JSON decode error on line 1):
 
 ```text
-FAIL: manifest present but unreadable at 'checkpoints/run/compliance/audit_log.jsonl.manifest.json': …
+FAIL: manifest present but unreadable at 'checkpoints/run/audit_log.jsonl.manifest.json': …
 ```
 
 Either way, exit code is `1`. Investigate before treating the log as evidence.
@@ -127,4 +127,5 @@ Either way, exit code is `1`. Investigate before treating the log as evidence.
 - [Audit Log](#/compliance/audit-log) — operator-facing primer on the log this command verifies.
 - [Annex IV](#/compliance/annex-iv) — the technical-documentation artifact whose verifier (`forgelm verify-annex-iv`) shares this verifier's design pattern.
 - [Verify GGUF](#/deployment/verify-gguf) — companion verifier on the deployment-integrity surface.
+- [Verify Model Integrity](#/compliance/verify-integrity) — companion verifier for the Article 15 model-integrity manifest.
 - [`audit_event_catalog.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md) — events that appear *inside* the verified log (GitHub source).

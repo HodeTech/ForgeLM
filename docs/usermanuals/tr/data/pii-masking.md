@@ -96,16 +96,13 @@ Presidio ML-NER pass için audit subcommand'ını kullanın:
 $ forgelm audit ./data/*.jsonl --output ./out/ --pii-ml --pii-ml-language de
 ```
 
-Veya YAML'da pin'leyin:
+Presidio ML-NER geçişi için locale ipucu vermek üzere CLI bayrağını kullanın:
 
-```yaml
-ingestion:
-  pii_mask:
-    enabled: true
-    locale: "de"
-    categories: ["email", "phone", "iban", "id_de"]
-    skip: ["ip"]                       # IP'leri redakte etme
+```shell
+$ forgelm ingest ./corpus/ --pii-mask --output out.jsonl
 ```
+
+> **Not:** YAML konfigürasyonunda `ingestion:` üst düzey bloğu yoktur (`ForgeConfig` bilinmeyen anahtarları reddeder). Regex PII katmanı için locale ve kategori seçimi yalnızca programatik API üzerinden — `mask_pii(text, locale="de")` — ya da Presidio ML-NER geçişi için `--pii-ml-language de` gibi CLI bayrakları aracılığıyla mevcuttur.
 
 ## Programatik API
 

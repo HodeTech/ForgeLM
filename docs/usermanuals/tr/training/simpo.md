@@ -70,6 +70,7 @@ ForgeLM `loss_type`, `length_normalize` veya `label_smoothing`'i yapılandırıl
 |---|---|---|---|
 | 7B | 16 | 4096 | 9 GB |
 | 13B | 16 | 4096 | 16 GB |
+| 8B | 32 | 8192 | 18 GB |
 
 ## `simpo_beta` ve `simpo_gamma`
 

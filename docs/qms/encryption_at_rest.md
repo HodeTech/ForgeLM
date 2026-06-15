@@ -22,7 +22,7 @@ The following ForgeLM-produced asset classes:
 | Asset class | Path pattern | Confidentiality concern |
 |---|---|---|
 | Model weights — final | `<output_dir>/final_model/` | Memorisation of training data; competitive moat |
-| Model weights — staging | `<output_dir>/staging_model.<run_id>/` | Same as final, plus pre-approval state |
+| Model weights — staging | `<output_dir>/final_model.staging.<run_id>/` | Same as final, plus pre-approval state |
 | Audit log | `<output_dir>/audit_log.jsonl` + `audit_log.jsonl.manifest.json` (genesis pin) | Operator identity history; configuration hashes; chain-of-custody for compliance — line-level integrity is in-band via per-line `_hmac` + `prev_hash`, no separate `.sha256` sidecar |
 | Per-output-dir salt | `<output_dir>/.forgelm_audit_salt` | Unsalted SHA-256 of low-entropy identifiers (emails, phones) is brute-forcible — the salt is the secret that gives the audit hash its wordlist resistance |
 | Training corpus | (operator-supplied; typically `data/*.jsonl`) | PII; trade secrets; client data |

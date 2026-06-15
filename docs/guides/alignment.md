@@ -227,7 +227,7 @@ forgelm --config configs/stage2_dpo.yaml
 forgelm --config configs/stage3_grpo.yaml
 ```
 
-> **Planned (Phase 14 — pipeline chains):** A `pipeline:` config key will define multi-stage training chains in a single YAML file, eliminating manual config juggling between stages. Tracking issue links the v0.6.0+ release window.
+> **Available since v0.7.0 (Phase 14):** The `pipeline:` config block chains multi-stage training (SFT → DPO → GRPO) in a single YAML. See [Multi-Stage Training Pipelines](pipeline.md) for the full guide.
 
 ---
 

@@ -31,7 +31,8 @@ ForgeLM kutudan çıktığı gibi şunları ship eder:
 - **EU AI Act Madde 14** insan-gözetim kapısı: `forgelm approve` /
   `reject` Madde 14 staging.
 - **EU AI Act Madde 15** model-bütünlüğü: `compute_artefact_sha256` +
-  `model_integrity.json`.
+  `model_integrity.json`; deployment-sonrası doğrulama:
+  `forgelm verify-integrity`.
 - **EU AI Act Madde 17** QMS şablonları: `docs/qms/` (Wave 0 baseline +
   Wave 4 ISO eklemeleri).
 - **GDPR Madde 15** erişim hakkı: `forgelm reverse-pii`.
@@ -103,9 +104,11 @@ Düzenleyicinin sorduğu vs ForgeLM'in cevapladığı:
   ve chain-key türetimine katılmaz. Genesis manifest sidecar
   (`audit_log.jsonl.manifest.json`) truncate-and-resume tahrifatını reddeder.
 - Doğrulama: `forgelm verify-audit [--require-hmac]` zinciri uçtan
-  uca doğrular; 0/1 ile çıkar (0/1 surface'ı v0.5.5 stabilization
-  döngüsünde geçerli; v0.6.x backlog'unda `EXIT_INTEGRITY_FAILURE`
-  ayrımı bekliyor).
+  uca doğrular; 0 (geçerli) veya 1 (herhangi bir hata — ayrıştırma
+  hatası, HMAC uyuşmazlığı, manifest sapması, dosya bulunamadı,
+  seçenek hatası) ile çıkar. Daha zengin 0/1/2/3 exit-code yüzeyi
+  **trainer** giriş noktasına (`forgelm --config ...`) uygulanır,
+  `verify-audit`'e değil.
 
 ### Madde 14 staging kapısı
 

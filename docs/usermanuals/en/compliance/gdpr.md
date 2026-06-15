@@ -53,12 +53,9 @@ These reports flow into the Annex IV bundle. When a regulator asks "what persona
 ForgeLM doesn't retain raw user data — it produces JSONL artifacts you control. For automated retention enforcement:
 
 ```yaml
-ingestion:
-  retention:
-    raw_documents:
-      ttl_days: 90                       # auto-delete originals after N days
-    audit_reports:
-      ttl_days: 365
+retention:
+  raw_documents_retention_days: 90      # auto-delete originals after N days
+  ephemeral_artefact_retention_days: 365
 ```
 
 (The actual deletion is your storage layer's responsibility; ForgeLM just records the intended TTL in the audit log.)
@@ -105,26 +102,14 @@ For high-risk processing, GDPR Art. 35 requires a DPIA. ForgeLM doesn't write yo
 
 - Risk classification → from `compliance.risk_classification`.
 - Personal data inventory → from `data_audit_report.json`.
-- Mitigations applied → from `compliance.risk_assessment.mitigations`.
-- Residual risks → from `compliance.risk_assessment.residual_risks`.
+- Mitigations applied → from `risk_assessment.mitigation_measures`.
+- Foreseeable misuse / residual risks → from `risk_assessment.foreseeable_misuse` (free-text list; a dedicated residual_risks field does not exist in the schema).
 
 For DPIA work, pair the inputs above with the QMS [risk-treatment plan](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/risk_treatment_plan.md) and the [Statement of Applicability](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/statement_of_applicability.md) (GitHub QMS templates shipped with the toolkit). A dedicated DPIA template is on the roadmap; the risk-treatment plan covers the same ground for now.
 
 ## Configuration reference
 
-```yaml
-compliance:
-  data_protection:
-    framework: "GDPR"                          # GDPR | KVKK | both
-    lawful_basis: "legitimate-interest"        # consent | contract | legal-obligation | ...
-    purpose: "Customer-support assistant for X"
-    data_controller: "Acme Corp"
-    data_subjects: "telecom customers"
-    retention_basis: "model lifecycle (~3 years) plus audit period"
-    international_transfers:
-      enabled: false                          # set true if training data crosses borders
-      safeguards: "Standard Contractual Clauses 2021/914"
-```
+ForgeLM has no YAML surface for GDPR legal metadata (lawful basis, data controller, etc.) — these attributes belong in your organisation's legal documentation and DPIA, not in `forgelm/config.py`. The `ComplianceMetadataConfig` schema (`compliance:` top-level block) accepts only: `provider_name`, `provider_contact`, `system_name`, `intended_purpose`, `known_limitations`, `system_version`, and `risk_classification`. A `compliance.data_protection` sub-block does not exist and will be rejected by Pydantic at startup (`extra="forbid"`).
 
 ## Common pitfalls
 

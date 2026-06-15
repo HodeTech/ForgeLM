@@ -189,7 +189,7 @@ synthetic:
   max_new_tokens: 512 # cap teacher response size if it's hanging
 ```
 
-`SyntheticConfig` does not surface dedicated retry / batch knobs in v0.5.5
+`SyntheticConfig` does not surface dedicated retry / batch knobs in v0.7.0
 — retries are handled at the HTTP-client layer, and batch size is fixed
 at one prompt per API call. Phase 28+ backlog tracks adding explicit
 retry-count and batched-call parameters.
@@ -392,6 +392,7 @@ docker run --gpus all --shm-size=16g ...
 | `2` | Training error | Check GPU, memory, dependencies |
 | `3` | Evaluation failure | Model quality below threshold — adjust thresholds or improve data |
 | `4` | Awaiting approval | Human review required — run `forgelm approvals --show <run_id> --output-dir <dir>` to inspect the staging directory, then `forgelm approve <run_id> --output-dir <dir>` to promote or `forgelm reject <run_id> --output-dir <dir>` to discard. The staging path is `<output_dir>/final_model.staging.<run_id>/`. |
+| `5` | Wizard cancelled | The wizard was cancelled (Ctrl-C or explicit cancel) — no config written; re-run `--wizard` or use `forgelm quickstart <template>` for non-interactive use. |
 
 ---
 

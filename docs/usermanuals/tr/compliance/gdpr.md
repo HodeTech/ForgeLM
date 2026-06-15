@@ -53,12 +53,9 @@ Bu raporlar Annex IV paketine akar. Regülatör "eğitim setinizde hangi kişise
 ForgeLM ham kullanıcı verisini saklamaz — sizin kontrol ettiğiniz JSONL artifact'lar üretir. Otomatik saklama uygulanması için:
 
 ```yaml
-ingestion:
-  retention:
-    raw_documents:
-      ttl_days: 90                       # N gün sonra orijinalleri otomatik sil
-    audit_reports:
-      ttl_days: 365
+retention:
+  raw_documents_retention_days: 90      # N gün sonra orijinalleri otomatik sil
+  ephemeral_artefact_retention_days: 365
 ```
 
 (Asıl silme depolama katmanınızın sorumluluğu; ForgeLM sadece amaçlanan TTL'yi audit log'a kaydeder.)
@@ -105,26 +102,14 @@ Yüksek-riskli işleme için GDPR Md. 35 DPIA gerektirir. ForgeLM DPIA'nızı ya
 
 - Risk sınıflandırması → `compliance.risk_classification`'dan.
 - Kişisel veri envanteri → `data_audit_report.json`'dan.
-- Uygulanan azaltıcılar → `compliance.risk_assessment.mitigations`'dan.
-- Kalıntı riskler → `compliance.risk_assessment.residual_risks`'tan.
+- Uygulanan azaltıcılar → `risk_assessment.mitigation_measures`'dan.
+- Öngörülebilir kötüye kullanım / kalıntı riskler → `risk_assessment.foreseeable_misuse`'dan (serbest-metin listesi; şemada ayrı bir residual_risks alanı mevcut değildir).
 
 DPIA çalışması için yukarıdaki girdileri [GitHub'daki QMS risk tedavi planı](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/risk_treatment_plan-tr.md) ve [Uygulanabilirlik Beyanı](https://github.com/HodeTech/ForgeLM/blob/main/docs/qms/statement_of_applicability-tr.md) ile eşleştirin (toolkit ile gelen GitHub QMS şablonları). Adanmış bir DPIA şablonu yol haritasındadır; şimdilik risk tedavi planı aynı zemini kapsıyor.
 
 ## Konfigürasyon referansı
 
-```yaml
-compliance:
-  data_protection:
-    framework: "GDPR"                          # GDPR | KVKK | both
-    lawful_basis: "legitimate-interest"        # consent | contract | legal-obligation | ...
-    purpose: "X için müşteri-destek asistanı"
-    data_controller: "Acme Corp"
-    data_subjects: "telekom müşterileri"
-    retention_basis: "model yaşam döngüsü (~3 yıl) artı audit dönemi"
-    international_transfers:
-      enabled: false                          # eğitim verisi sınır geçiyorsa true
-      safeguards: "Standart Sözleşme Hükümleri 2021/914"
-```
+ForgeLM'in GDPR hukuki meta verisi (hukuki dayanak, veri sorumlusu vb.) için YAML yüzeyi yoktur — bu öznitelikler `forgelm/config.py`'da değil, kuruluşunuzun hukuki belgelerinde ve DPIA'sında yer almalıdır. `ComplianceMetadataConfig` şeması (`compliance:` üst-düzey bloğu) yalnızca şunları kabul eder: `provider_name`, `provider_contact`, `system_name`, `intended_purpose`, `known_limitations`, `system_version` ve `risk_classification`. `compliance.data_protection` alt-bloğu mevcut değildir ve başlangıçta Pydantic tarafından reddedilir (`extra="forbid"`).
 
 ## Sık hatalar
 

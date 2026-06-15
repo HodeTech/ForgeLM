@@ -123,7 +123,7 @@ Fonksiyon non-string input, eksik extra'lar veya geçici analyzer hataları içi
 ## Bu katmanda OLMAYAN şeyler
 
 - **DATE / TIME / NUMBER tespiti.** Presidio ForgeLM'in haritaladığı üç entity tipinden fazlasını destekler; diğerleri (DATE, NRP, CRYPTO, IP_ADDRESS, …) şu anda haritalı değil çünkü gizlilik semantikleri farklı. Compliance akışınız bunlara ihtiyaç duyuyorsa bir issue açın.
-- **Presidio üzerinden PII *maskeleme*.** Mevcut adaptör tespit-only — maskeleme için regex `--pii-mask` flag'i hâlâ ingest tarafı yeniden yazımına sahiptir. Presidio'nun anonymizer modülü ayrı bir bağımlılıktır ve v0.5.5'da bağlı değildir.
+- **Presidio üzerinden PII *maskeleme*.** Mevcut adaptör tespit-only — maskeleme için regex `--pii-mask` flag'i hâlâ ingest tarafı yeniden yazımına sahiptir. Presidio'nun anonymizer modülü ayrı bir bağımlılıktır ve v0.7.0'da bağlı değildir.
 
 ## Yaygın tuzaklar
 

@@ -129,7 +129,7 @@ ForgeLM-specific control inventory.
 | A.8.21 Security of network services | YES | TLS-only webhooks (HTTPS-only with SSRF guard); audit-log chain HMAC via `FORGELM_AUDIT_SECRET` (note: webhook **bodies** are not HMAC-signed — destination-side authenticity is the receiving system's responsibility) | TLS 1.2+ enforcement |
 | A.8.22 Segregation of networks | YES | VPC / subnet design | Adopt |
 | A.8.23 Web filtering | YES | Egress proxy | Adopt |
-| A.8.24 Use of cryptography | YES | SHA-256 + HMAC-SHA-256 (audit chain key = `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)`, see `forgelm/compliance.py:104-114`); separately, salted SHA-256 identifier hashing for `forgelm purge` / `forgelm reverse-pii` (`_purge._resolve_salt`, distinct concern — does not participate in chain-key derivation) | KMS for `FORGELM_AUDIT_SECRET` |
+| A.8.24 Use of cryptography | YES | SHA-256 + HMAC-SHA-256 (audit chain key = `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)`, see `AuditLogger.__init__` at `forgelm/compliance.py:164`); separately, salted SHA-256 identifier hashing for `forgelm purge` / `forgelm reverse-pii` (`_purge._resolve_salt`, distinct concern — does not participate in chain-key derivation) | KMS for `FORGELM_AUDIT_SECRET` |
 | A.8.25 Secure development life cycle | YES | `docs/standards/code-review.md`, `release.md`, CI gates | SDLC framework |
 | A.8.26 Application security requirements | YES | F-compliance-110 strict gate; Pydantic validation; ReDoS guard in `_reverse_pii` | App-level threat modelling |
 | A.8.27 Secure system architecture and engineering principles | YES | Append-only audit log architecture; HMAC chain; lazy import; SSRF guard | Defence-in-depth |

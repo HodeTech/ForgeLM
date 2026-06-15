@@ -12,7 +12,7 @@ ForgeLM **eşit derecede first-class iki giriş noktası** yayınlar: shell pipe
 
 **CLI**'yı seçin:
 
-- Bir Bash / GitHub Actions / GitLab CI pipeline yayınlıyorsanız. Exit-code kontratı (0/1/2/3/4) entegrasyon yüzeyidir.
+- Bir Bash / GitHub Actions / GitLab CI pipeline yayınlıyorsanız. Exit-code kontratı (0/1/2/3/4/5) entegrasyon yüzeyidir.
 - ForgeLM'in stdout'a kutudan çıkar çıkmaz yaydığı yapılandırılmış logging + JSON envelope'larını istiyorsanız.
 - Aşama başına bir process'in operasyonel birim olduğu altyapıda (çoğu CI runner, çoğu Argo pipeline) çalışıyorsanız.
 
@@ -47,8 +47,8 @@ assert "torch" not in sys.modules
 
 # Ama public yüzey autocomplete için tam keşfedilebilir.
 print("ForgeTrainer" in dir(forgelm))   # True
-print(forgelm.__version__)              # ör. "0.5.5"
-print(forgelm.__api_version__)          # ör. "0.5"
+print(forgelm.__version__)              # ör. "0.7.0"
+print(forgelm.__api_version__)          # ör. "1.0.0"
 ```
 
 Wheel ile birlikte yayınlanan çalıştırılabilir bir notebook (`notebooks/library_api_example.ipynb`) bu sayfanın kapsadığı aynı üç deseni yürür — provenance için tasarım dokümanı Faz 19 görev #13'e bakın.

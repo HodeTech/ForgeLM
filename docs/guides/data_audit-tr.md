@@ -192,9 +192,10 @@ Faz 11.5 simhash backend'ini de değiştirilebilir hale getirdi:
 
 - **xxhash.xxh3_64** opsiyonel `xxhash` bağımlılığı (artık
   `forgelm[ingestion]`'ın parçası) yüklüyse per-token digest'i bu
-  sürüyor; kısa anahtarlarda BLAKE2b'ye göre Python katmanında ~%30
-  hızlandırma sağlıyor (lru_cache devreye girince end-to-end kazanç
-  daha az; backend swap'i öncelikle ileriye dönük güvence).
+  sürüyor; ~1.3x ham digest başına, ~1.05x end-to-end (Apple Silicon /
+  Python 3.11 ölçümü) hızlandırma sağlıyor (`compute_simhash` içinde
+  `lru_cache` tekrar eden token'ları absorbe ettiğinden end-to-end
+  kazanç daha az; backend swap'i öncelikle ileriye dönük güvence).
 - **BLAKE2b** bare install için fallback olarak kalıyor.
 - Modül seviyesinde `lru_cache(maxsize=10_000)` digest'i token
   seviyesinde memoize ediyor — Zipfian token frekansı sayesinde küçük

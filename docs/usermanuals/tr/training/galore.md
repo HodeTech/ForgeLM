@@ -26,34 +26,30 @@ model:
   load_in_4bit: false                  # GaLore full precision'ı tercih eder
   max_length: 4096
 
-galore:
-  enabled: true
-  rank: 256                            # LoRA'dan yüksek — projeksiyon rank'i
-  update_proj_gap: 200                 # her N adımda bir yeniden projekte et
-  scale: 0.25
-  proj_type: "std"                     # std (varsayılan), reverse_std, right, left
-
 training:
-  trainer: "sft"
+  trainer_type: "sft"
   learning_rate: 1.0e-5                # full-FT learning rate, LoRA'nınki değil
   optimizer: "galore_adamw_8bit"
-
-output:
-  dir: "./checkpoints/galore"
+  galore_enabled: true
+  galore_rank: 256                     # LoRA varsayılanından yüksek (128) — projeksiyon rank'i
+  galore_update_proj_gap: 200          # her N adımda bir yeniden projekte et
+  galore_scale: 0.25
+  galore_proj_type: "std"              # std (varsayılan), reverse_std, right, left
+  output_dir: "./checkpoints/galore"
 ```
 
-`galore.enabled: true` iken ForgeLM otomatik olarak GaLore-uyumlu optimizer'ı kullanır; aynı koşuda `lora` blok'unu konfigüre etmeyin.
+`training.galore_enabled: true` iken ForgeLM otomatik olarak GaLore-uyumlu optimizer'ı kullanır; aynı koşuda `lora` bloğunu konfigüre etmeyin.
 
 ## Parametreler
 
 | Parametre | Tip | Vars. | Açıklama |
 |---|---|---|---|
-| `enabled` | bool | `false` | Ana anahtar. |
-| `rank` | int | `256` | Gradient projeksiyon rank'i. Yüksek = full-FT'ye yakın, daha çok bellek. |
-| `update_proj_gap` | int | `200` | Yeniden projeksiyon adım aralığı. Düşük = değişen gradient'lere hızlı uyum. |
-| `scale` | float | `0.25` | Projekte edilmiş gradient'lerin ölçeği. |
-| `proj_type` | string | `"std"` | Projeksiyon yönü. Yakınsama tıkanırsa deneyin. |
-| `target_modules` | list | `["attn", "mlp"]` | Hangi modüllerin gradient'leri projekte edilecek. |
+| `training.galore_enabled` | bool | `false` | Ana anahtar. |
+| `training.galore_rank` | int | `128` | Gradient projeksiyon rank'i. Yüksek = full-FT'ye yakın, daha çok bellek. |
+| `training.galore_update_proj_gap` | int | `200` | Yeniden projeksiyon adım aralığı. Düşük = değişen gradient'lere hızlı uyum. |
+| `training.galore_scale` | float | `0.25` | Projekte edilmiş gradient'lerin ölçeği. |
+| `training.galore_proj_type` | string | `"std"` | Projeksiyon yönü. Yakınsama tıkanırsa deneyin. |
+| `training.galore_target_modules` | list | `null` | Hangi modüllerin gradient'leri projekte edilecek. |
 
 ## Bellek karşılaştırması
 
@@ -65,7 +61,7 @@ output:
 | LoRA r=16 | %0.2 | 18 GB | 9 GB (QLoRA) |
 | **GaLore r=256** | **%100** | **22 GB** | yok |
 
-Yani GaLore r=256 ile 7B modeli tek 24 GB GPU'da full fine-tune edebilirsiniz — kabaca full-precision LoRA ile aynı VRAM, ama her ağırlığa erişimle.
+Yani GaLore r=256 ile (göstermelik; gönderilen varsayılan r=128'dir) 7B modeli tek 24 GB GPU'da full fine-tune edebilirsiniz — kabaca full-precision LoRA ile aynı VRAM, ama her ağırlığa erişimle.
 
 ## Compute
 
@@ -74,7 +70,7 @@ GaLore adım başına LoRA'dan ~%15-20 daha yavaştır; projeksiyon ve yeniden p
 ## Sık hatalar
 
 :::warn
-**GaLore'u LoRA ile birleştirmeye çalışmak.** Bunlar alternatiftir, tamamlayıcı değil. ForgeLM şeması aynı anda `lora.r` ve `galore.enabled` ayarlamayı reddeder.
+**GaLore'u LoRA ile birleştirmeye çalışmak.** Bunlar alternatiftir, tamamlayıcı değil. ForgeLM şeması aynı anda `lora.r` ve `training.galore_enabled` ayarlamayı reddeder.
 :::
 
 :::warn

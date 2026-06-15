@@ -1,6 +1,6 @@
 # Çok Aşamalı Eğitim Pipeline'ları
 
-Faz 14 — `v0.7.0` ile geliyor (CHANGELOG kaydı 2026-05-14; PyPI tag bekleniyor).
+Faz 14 — `v0.7.0` ile gönderildi (2026-05-14).
 
 ForgeLM'in `pipeline:` config bloğu, 2 veya daha fazla eğitim aşamasını
 (genellikle SFT → DPO → GRPO) tek bir config-tabanlı, dry-run-doğrulanabilir,

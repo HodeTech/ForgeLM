@@ -64,7 +64,7 @@ lora:
   modules_to_save: []                   # full-precision modüller (ör. embedding)
 
 training:
-  trainer: "sft"
+  trainer_type: "sft"
   learning_rate: 2.0e-4                 # LoRA full FT'den yüksek LR tolere eder
 ```
 

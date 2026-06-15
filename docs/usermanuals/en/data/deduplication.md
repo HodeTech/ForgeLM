@@ -86,21 +86,22 @@ Both algorithms are streaming — they don't load the whole dataset into memory.
 
 ## Removing duplicates
 
-`forgelm audit` *detects* duplicates; it doesn't remove them. Removal is a separate, opt-in step driven by the `audit:` block of your YAML config (so the run is reproducible and audited end-to-end). See the `audit.deduplication` section in [Configuration Reference](#/reference/configuration) for the canonical knobs:
+`forgelm audit` *detects* duplicates; it does not remove them. There is no `audit:` top-level block in the YAML config (`ForgeConfig` rejects unknown keys), and the `write_clean_output` / `keep_split` fields shown in earlier drafts do not exist. Auto-removal is not implemented.
 
-```yaml
-audit:
-  deduplication:
-    method: simhash          # or 'minhash'
-    near_dup_threshold: 3    # simhash Hamming distance
-    jaccard_threshold: 0.85  # MinHash similarity
-    write_clean_output: data/train.dedup.jsonl
-    keep_split: train        # cross-split tiebreak
+To drop duplicates, use the pair-level report that audit writes to disk:
+
+```shell
+# Get the indices of duplicate rows and filter them out with jq.
+# -s/--slurp reads the whole .jsonl into one array so to_entries maps LINE
+# indices (not each object's keys); -c writes the kept lines back as JSONL.
+$ jq '[.near_duplicate_summary.pairs[].row_b] | unique' audit/data_audit_report.json > dup_indices.json
+$ jq -cs --slurpfile dups dup_indices.json \
+     'to_entries[] | select(.key as $i | ($dups[0] | index($i)) | not) | .value' \
+     data/train.jsonl > data/train.dedup.jsonl
+$ forgelm audit data/train.dedup.jsonl   # verify
 ```
 
-Re-run `forgelm audit data/train.jsonl` with that config to materialise the cleaned JSONL.
-
-When duplicates are within a single split, ForgeLM keeps the first occurrence. Across splits, it keeps the train-side row by default and removes from validation/test (configurable via `keep_split`).
+The CLI flags `--dedup-method`, `--near-dup-threshold`, and `--jaccard-threshold` control *detection* sensitivity; removal is always a downstream manual step.
 
 ## Common pitfalls
 

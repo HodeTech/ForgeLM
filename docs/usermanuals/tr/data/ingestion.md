@@ -69,7 +69,7 @@ CLI yüzeyinden gizlidir.
 
 ## Çıktı formatı
 
-`forgelm ingest` ham chunk'ları emit eder (`{"text": "..."}` JSONL). v0.5.5'te `--format` flag'i yoktur — tek seçenek **özet raporu** (chunk sayısı, format dağılımı, atılan-satır sebepleri) için `--output-format {text,json}`'dur, chunk kayıtlarının kendileri için değil — onlar her zaman ham `text` JSONL olarak yazılır. Sentetik-prompt veya Q&A datasetleri isteyen operatörler bu adımı bu komutun ürettiği ham JSONL üzerinden downstream bir adım olarak katmanlar (bkz. [Sentetik Veri](#/data/synthetic-data)):
+`forgelm ingest` ham chunk'ları emit eder (`{"text": "..."}` JSONL). v0.7.0'da `--format` flag'i yoktur — tek seçenek **özet raporu** (chunk sayısı, format dağılımı, atılan-satır sebepleri) için `--output-format {text,json}`'dur, chunk kayıtlarının kendileri için değil — onlar her zaman ham `text` JSONL olarak yazılır. Sentetik-prompt veya Q&A datasetleri isteyen operatörler bu adımı bu komutun ürettiği ham JSONL üzerinden downstream bir adım olarak katmanlar (bkz. [Sentetik Veri](#/data/synthetic-data)):
 
 ```json
 {"text": "Bölüm 4.2: Tüm ödeme işlemleri PCI-DSS standartlarına uymalıdır...", "metadata": {"source": "policy.pdf", "chunk": 17}}

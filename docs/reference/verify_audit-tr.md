@@ -20,7 +20,7 @@ forgelm verify-audit [--hmac-secret-env VAR] [--require-hmac]
 | Bayrak | Varsayılan | Açıklama |
 |---|---|---|
 | `--hmac-secret-env VAR` | `FORGELM_AUDIT_SECRET` | Log yazımı sırasında kullanılan HMAC sırrını taşıyan ortam değişkeninin adı. Değişken set edildiğinde satır başına `_hmac` etiketleri doğrulanır; aksi halde sadece SHA-256 zinciri kontrol edilir. |
-| `--require-hmac` | `False` | Sıkı mod. Yapılandırılmış env var set değilse `1`, herhangi bir satırda `_hmac` alanı eksikse yine `1` ile çıkar. Her kaydın HMAC ile imzalı olması gereken regüle CI pipeline'larında kullanın. (Aşağıdaki "Çıkış kodları" tablosuna bakın — `EXIT_CONFIG_ERROR=1` v0.5.5 stabilizasyon dönemi boyunca hem seçenek hatalarını hem de bütünlük arızalarını kapsıyor; ayrı bir `EXIT_INTEGRITY_FAILURE` sabiti v0.6.x'e ertelendi.) |
+| `--require-hmac` | `False` | Sıkı mod. Yapılandırılmış env var set değilse `1`, herhangi bir satırda `_hmac` alanı eksikse yine `1` ile çıkar. Her kaydın HMAC ile imzalı olması gereken regüle CI pipeline'larında kullanın. (Aşağıdaki "Çıkış kodları" tablosuna bakın — `EXIT_CONFIG_ERROR=1` şu an hem seçenek hatalarını hem de bütünlük arızalarını kapsıyor; ayrı bir `EXIT_INTEGRITY_FAILURE` sabiti v0.7.0 sonrası backlog'a ertelendi.) |
 | `-q`, `--quiet` | _kapalı_ | INFO loglarını bastırır. |
 | `--log-level {DEBUG,INFO,WARNING,ERROR}` | `INFO` | Log ayrıntı seviyesi. |
 | `-h`, `--help` | — | Argparse yardımını gösterir ve çıkar. |
@@ -30,15 +30,15 @@ forgelm verify-audit [--hmac-secret-env VAR] [--require-hmac]
 | Kod | Anlam |
 |---|---|
 | `0` | `EXIT_SUCCESS` — SHA-256 zinciri (ve doğrulandığında HMAC etiketleri) uçtan uca bütün. |
-| `1` | `EXIT_CONFIG_ERROR` — v0.5.5 stabilizasyon dönemi boyunca **hem** seçenek/kullanım hatalarını (eksik log dosyası, `--require-hmac` setken env var unset, hatalı satırda JSON decode hatası) **hem** de bütünlük arızalarını (zincir kopması, HMAC uyuşmazlığı, manifest uyuşmazlığı, `--require-hmac` altında eksik `_hmac` satırı) kapsar. |
+| `1` | `EXIT_CONFIG_ERROR` — **hem** seçenek/kullanım hatalarını (eksik log dosyası, `--require-hmac` setken env var unset, hatalı satırda JSON decode hatası) **hem** de bütünlük arızalarını (zincir kopması, HMAC uyuşmazlığı, manifest uyuşmazlığı, `--require-hmac` altında eksik `_hmac` satırı) kapsar. |
 
-> **Gelecek deprecation notu.** Ayrı bir `EXIT_VALIDATION_ERROR` / `EXIT_INTEGRITY_FAILURE` sabiti v0.6.x backlog'unda. O zamana kadar CI kapılarında `verify-audit`'ten gelen herhangi bir non-zero exit'i "bu yapımı promote etme" olarak kabul edin — dispatcher şu an seçenek hatalarını bütünlük arızalarından kod ile ayırt etmiyor. Yetkili sözleşme `_verify_audit.py` docstring'inde (`_run_verify_audit_cmd` docstring).
+> **Gelecek deprecation notu.** Ayrı bir `EXIT_VALIDATION_ERROR` / `EXIT_INTEGRITY_FAILURE` sabiti v0.7.0 sonrası backlog'unda. O zamana kadar CI kapılarında `verify-audit`'ten gelen herhangi bir non-zero exit'i "bu yapımı promote etme" olarak kabul edin — dispatcher şu an seçenek hatalarını bütünlük arızalarından kod ile ayırt etmiyor. Yetkili sözleşme `_verify_audit.py` docstring'inde (`_run_verify_audit_cmd` docstring).
 
 Kodlar dispatcher tarafından `_run_verify_audit_cmd` (`forgelm/cli/subcommands/_verify_audit.py`) satırlarından emit edilir.
 
 ## Emit edilen audit event'leri
 
-`forgelm verify-audit` **salt-okunur bir doğrulayıcıdır** ve `audit_log.jsonl`'a **hiçbir** kayıt eklemez. Yalnızca zinciri inceler. Doğrulanan log'un *içinde* görünen event'ler [audit_event_catalog.md](audit_event_catalog-tr.md)'de kataloglanmıştır (verify-audit'in yürüdüğü `_hmac`, `prev_hash` ve `run_id` alanları için Ortak zarf satırına bakın).
+`forgelm verify-audit` **salt-okunur bir doğrulayıcıdır** ve `audit_log.jsonl`'a **hiçbir** kayıt eklemez. Yalnızca zinciri inceler. Doğrulanan log'un *içinde* görünen event'ler [audit_event_catalog-tr.md](audit_event_catalog-tr.md)'de kataloglanmıştır (verify-audit'in yürüdüğü `_hmac`, `prev_hash` ve `run_id` alanları için Ortak zarf satırına bakın).
 
 ## Örnekler
 
@@ -99,7 +99,7 @@ $ echo $?
 
 ## Bkz.
 
-- [`audit_event_catalog.md`](audit_event_catalog-tr.md) — bu komutun doğruladığı log'un *içinde* görünen event'ler.
+- [`audit_event_catalog-tr.md`](audit_event_catalog-tr.md) — bu komutun doğruladığı log'un *içinde* görünen event'ler.
 - [`verify_annex_iv_subcommand.md`](verify_annex_iv_subcommand-tr.md) — Annex IV teknik dokümantasyon artifact'ı için kardeş doğrulayıcı.
 - [`verify_gguf_subcommand.md`](verify_gguf_subcommand-tr.md) — export edilmiş GGUF model dosyaları için kardeş doğrulayıcı.
 - [Audit Log kullanım kılavuzu sayfası](../usermanuals/tr/compliance/audit-log.md) — log'un kendisine dair operatör-odaklı kılavuz.

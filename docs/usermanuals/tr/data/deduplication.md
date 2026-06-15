@@ -86,21 +86,22 @@ Permutasyon sayısı ve LSH banding bugün kullanıcı tarafından ayarlanabilir
 
 ## Tekrarları kaldırma
 
-`forgelm audit` tekrarları *tespit eder*; kaldırmaz. Kaldırma, YAML konfigürasyonunuzun `audit:` bloğundan sürülen ayrı, opt-in bir adımdır (böylece koşu uçtan uca tekrarlanabilir ve audit edilebilir). Kanonik knob'lar için [Configuration Referansı](#/reference/configuration)'ndaki `audit.deduplication` bölümüne bakın:
+`forgelm audit` tekrarları *tespit eder*; kaldırmaz. YAML konfigürasyonunda `audit:` üst düzey bloğu yoktur (`ForgeConfig` bilinmeyen anahtarları reddeder) ve eski taslakta gösterilen `write_clean_output` / `keep_split` alanları mevcut değildir. Otomatik kaldırma uygulanmamıştır.
 
-```yaml
-audit:
-  deduplication:
-    method: simhash          # veya 'minhash'
-    near_dup_threshold: 3    # simhash Hamming mesafesi
-    jaccard_threshold: 0.85  # MinHash benzerliği
-    write_clean_output: data/train.dedup.jsonl
-    keep_split: train        # split-arası tiebreak
+Tekrarları düşürmek için audit'in diske yazdığı çift seviyesindeki raporu kullanın:
+
+```shell
+# Tekrar satır indislerini alın ve jq ile filtreleyin.
+# -s/--slurp tüm .jsonl'i tek bir diziye okur; böylece to_entries her nesnenin
+# anahtarlarına değil SATIR indislerine eşlenir; -c kalan satırları JSONL yazar.
+$ jq '[.near_duplicate_summary.pairs[].row_b] | unique' audit/data_audit_report.json > dup_indices.json
+$ jq -cs --slurpfile dups dup_indices.json \
+     'to_entries[] | select(.key as $i | ($dups[0] | index($i)) | not) | .value' \
+     data/train.jsonl > data/train.dedup.jsonl
+$ forgelm audit data/train.dedup.jsonl   # doğrula
 ```
 
-Bu config ile `forgelm audit data/train.jsonl`'i tekrar koşturarak temizlenmiş JSONL'i materialise edin.
-
-Tekrarlar tek split içindeyken ForgeLM ilk tekrarı tutar. Split arasında varsayılan train tarafını tutar ve validation/test'ten kaldırır (`keep_split` ile konfigüre edilebilir).
+`--dedup-method`, `--near-dup-threshold` ve `--jaccard-threshold` CLI bayrakları *tespit* hassasiyetini kontrol eder; kaldırma her zaman downstream manuel bir adımdır.
 
 ## Sık hatalar
 

@@ -41,7 +41,7 @@ For every train row, ForgeLM checks:
 - **Exact match** in val/test (any field that matters: `prompt`, `chosen`, `response`, etc.).
 - **Near-duplicate** (Hamming threshold 3 simhash) in val/test.
 
-Any match is reported. If the leakage rate is over the configured threshold, audit exits non-zero.
+Any match is reported. `forgelm audit` still exits `0` on successful completion — it does **not** gate on a leakage rate (it only exits non-zero on an input/config error or an I/O failure). To fail CI when cross-split leakage is found, branch on the JSON report with `jq` (see [Dataset Audit](#/data/audit)).
 
 ## Quick example
 
@@ -54,7 +54,7 @@ $ forgelm audit data/      # audits train.jsonl + val.jsonl + test.jsonl
 
 Audit refuses to certify these splits. The full pair-level report lives in the on-disk audit JSON.
 
-exit code: 3
+exit code: 0
 ```
 
 Inspect the per-row pairs that triggered the failure with `jq`:
@@ -69,21 +69,11 @@ $ jq '.cross_split_overlap.pairs[]' audit/data_audit_report.json | head
 
 1. **Re-split the data**, this time grouping at the source level (don't split paraphrases, group documents). Use the `--group-by` flag in your splitter.
 2. **Re-extract** if leakage came from duplicate ingestion (the same FAQ ingested twice).
-3. **Remove** the leaked rows from the smaller split manually — the audit JSON envelope's `cross_split_overlap.pairs` map names every offending row id under each split-pair entry (e.g. `cross_split_overlap.pairs["train↔val"]`). Pipe through `jq` to strip them out, then re-run `forgelm audit` to confirm the chain re-passes. There is no auto-remove CLI flag in v0.5.5 — adding one is on the roadmap, but until it ships the explicit `jq` step keeps the deletion auditable.
+3. **Remove** the leaked rows from the smaller split manually — the audit JSON envelope's `cross_split_overlap.pairs` map names every offending row id under each split-pair entry (e.g. `cross_split_overlap.pairs["train↔val"]`). Pipe through `jq` to strip them out, then re-run `forgelm audit` to confirm the chain re-passes. There is no auto-remove CLI flag in v0.7.0 — the explicit `jq` step keeps the deletion auditable.
 
 ## Configuration
 
-```yaml
-audit:
-  leakage_check:
-    enabled: true
-    threshold: 0                        # zero tolerance — fail audit at any leakage
-    near_dup_hamming: 3                 # match threshold
-    fields_to_check: ["prompt", "chosen", "response"]
-    fail_severity: "error"              # `error` blocks training, `warn` just logs
-```
-
-Most teams use the default — zero tolerance. If you have a very large dataset where some leakage is unavoidable, raise `threshold` to a small fraction (e.g. 0.001) but document why.
+> **Note:** There is no `audit:` top-level block in the YAML config (`ForgeConfig` rejects unknown keys). Leakage detection is always-on when `forgelm audit` is run on a multi-split dataset. The near-duplicate Hamming threshold is controlled via the `--near-dup-threshold` flag on `forgelm audit` (default 3).
 
 ## Why "near-dup" matters here
 

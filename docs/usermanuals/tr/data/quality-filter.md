@@ -31,54 +31,36 @@ $ forgelm audit data/ingested.jsonl
    bullet_only: 3
 ```
 
-Audit, düşük kaliteli satırları *flagler* ama silmez. Düşürmek için, YAML konfigürasyonunuzdaki `audit.quality_filter.drop_flagged` ve `audit.quality_filter.write_clean_output` knob'larıyla opt-in olun ([Configuration Referansı](#/reference/configuration)) ve audit'i tekrar koşturun:
+Audit, düşük kaliteli satırları *flagler* ama silmez. `forgelm audit` yalnızca raporlar; satır düşürmez veya temizlenmiş JSONL yazmaz. Flaglenen satırları kaldırmak için audit JSON'ını `jq` ile bir downstream manuel adım olarak süzün ve sonucu doğrulamak için `forgelm audit`'i yeniden koşturun.
 
-```yaml
-audit:
-  quality_filter:
-    enabled: true
-    drop_flagged: true
-    write_clean_output: data/clean.jsonl
-```
+> **Not:** YAML konfigürasyonunda `audit:` üst düzey bloğu yoktur (`ForgeConfig` bilinmeyen anahtarları reddeder). Eski taslakta gösterilen `drop_flagged` ve `write_clean_output` alanları mevcut değildir; otomatik-düşür-ve-temiz-yaz uygulanmamıştır. Kalite kontrollerini tamamen atlamak için `--no-quality-filter` kullanın.
 
 ```shell
-# v0.6.0+: quality-filter is DEFAULT-ON; the explicit flag is harmless.
-# Heuristics populate quality_summary in data_audit_report.json but do
-# NOT drop rows or write a cleaned JSONL — that only happens when the
-# `audit.quality_filter.drop_flagged: true` + `write_clean_output: PATH`
-# YAML keys above are set in a config-driven run.
+# v0.6.0+: quality-filter varsayılan AÇIK; explicit flag zararsız.
 $ forgelm audit data/ingested.jsonl
 ✓ wrote audit/data_audit_report.json (quality_summary: 45 / 12,400 flagged)
 
-# Pre-v0.6.0 (or to be explicit), pass the flag:
+# Pre-v0.6.0 (veya açık olmak için) flag geçin:
 $ forgelm audit data/ingested.jsonl --quality-filter
 
-# Opt out of the new default if your CI gates depend on opt-in semantics:
+# CI gate'leriniz opt-in semantiğine bağlıysa yeni varsayılandan çıkın:
 $ forgelm audit data/ingested.jsonl --no-quality-filter
 ```
 
 ## Eşik ayarlama
 
-```yaml
-audit:
-  quality_filter:
-    enabled: true
-    min_alpha_ratio: 0.55              # varsayılan 0.55
-    min_mean_word_length: 3            # varsayılan 3
-    max_mean_word_length: 10           # varsayılan 10
-    max_repeated_line_ratio: 0.30      # varsayılan 0.30
-    min_content_length: 50             # varsayılan 50 karakter
-    max_bullet_ratio: 0.90             # varsayılan 0.90
-```
+Kalite filtresi eşik konfigürasyonu mevcut sürümde YAML alanı olarak açık değildir — eşikler aşağıda listelenen heuristik varsayılanlarına sabit. `--quality-filter` / `--no-quality-filter` CLI bayrakları filtrenin çalışıp çalışmayacağını kontrol eder; eşik başına override bayrağı yoktur.
 
-Birini meşru ihlal eden corpus'lar (ör. kod-ağırlıklı dataset'ler alfa oranını ihlal eder) için filtre tamamı yerine spesifik kontrolü kapatın:
+| Heuristik | Varsayılan |
+|---|---|
+| `min_alpha_ratio` | 0.55 |
+| `min_mean_word_length` | 3 |
+| `max_mean_word_length` | 10 |
+| `max_repeated_line_ratio` | 0.30 |
+| `min_content_length` | 50 karakter |
+| `max_bullet_ratio` | 0.90 |
 
-```yaml
-audit:
-  quality_filter:
-    enabled: true
-    skip: ["min_alpha_ratio"]          # kod, matematik, log dataset'leri
-```
+Bunlardan birini meşru ihlal eden corpus'lar için (ör. kod-ağırlıklı dataset'ler alfa oranını ihlal eder) `--no-quality-filter` ile o koşu için filtreyi tamamen atlayın.
 
 ## Tasarım gereği muhafazakar
 
@@ -104,7 +86,7 @@ print(flags)
 ## Sık hatalar
 
 :::warn
-**İncelemeden otomatik düşürme.** `--drop-quality-flags`'i dikkatli ayarlayın — neyin kaldırıldığını size göstermeden satırları kaldırır. Önce neyin flaglendiğini incelemek için `forgelm audit` koşturun.
+**İncelemeden satır kaldırma.** Audit raporundaki flaglenen satırları `jq` ile süzerken dikkatli olun — kaldırmalar sessizdir. Temizlenmiş dataset'in geçtiğini doğrulamak için sonuç üzerinde her zaman `forgelm audit` koşturun.
 :::
 
 :::warn

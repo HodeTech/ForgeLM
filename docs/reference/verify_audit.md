@@ -20,7 +20,7 @@ forgelm verify-audit [--hmac-secret-env VAR] [--require-hmac]
 | Flag | Default | Description |
 |---|---|---|
 | `--hmac-secret-env VAR` | `FORGELM_AUDIT_SECRET` | Name of the environment variable that holds the HMAC secret used at log-write time. When the variable is set, per-line `_hmac` tags are validated; when unset, only the SHA-256 chain is checked. |
-| `--require-hmac` | `False` | Strict mode. Exit `1` if the configured env var is unset, and exit `1` if any line lacks an `_hmac` field. Use this in regulated CI pipelines where every entry must be HMAC-authenticated. (See "Exit codes" below — `EXIT_CONFIG_ERROR=1` covers both option errors and integrity failures during the v0.5.5 stabilisation cycle; a dedicated `EXIT_INTEGRITY_FAILURE` constant is deferred to v0.6.x.) |
+| `--require-hmac` | `False` | Strict mode. Exit `1` if the configured env var is unset, and exit `1` if any line lacks an `_hmac` field. Use this in regulated CI pipelines where every entry must be HMAC-authenticated. (See "Exit codes" below — `EXIT_CONFIG_ERROR=1` currently covers both option errors and integrity failures; a dedicated `EXIT_INTEGRITY_FAILURE` constant is deferred to the post-v0.7.0 backlog.) |
 | `-q`, `--quiet` | _off_ | Suppress INFO logs. |
 | `--log-level {DEBUG,INFO,WARNING,ERROR}` | `INFO` | Set logging verbosity. |
 | `-h`, `--help` | — | Show argparse help and exit. |
@@ -30,9 +30,9 @@ forgelm verify-audit [--hmac-secret-env VAR] [--require-hmac]
 | Code | Meaning |
 |---|---|
 | `0` | `EXIT_SUCCESS` — the SHA-256 chain (and HMAC tags, when verified) is intact end-to-end. |
-| `1` | `EXIT_CONFIG_ERROR` — covers **both** option/usage errors (missing log file, `--require-hmac` set with the env var unset, JSON decode error on a malformed line) **and** integrity failures (chain break, HMAC mismatch, manifest mismatch, missing `_hmac` line under `--require-hmac`) during the v0.5.5 stabilisation cycle. |
+| `1` | `EXIT_CONFIG_ERROR` — covers **both** option/usage errors (missing log file, `--require-hmac` set with the env var unset, JSON decode error on a malformed line) **and** integrity failures (chain break, HMAC mismatch, manifest mismatch, missing `_hmac` line under `--require-hmac`). |
 
-> **Future deprecation note.** A dedicated `EXIT_VALIDATION_ERROR` / `EXIT_INTEGRITY_FAILURE` constant is on the v0.6.x backlog. Until then, treat any non-zero exit from `verify-audit` as "do not promote this build" in CI gates — the dispatcher does not currently distinguish option errors from integrity failures by code. The `_verify_audit.py` docstring (`_run_verify_audit_cmd` docstring) holds the authoritative contract.
+> **Future deprecation note.** A dedicated `EXIT_VALIDATION_ERROR` / `EXIT_INTEGRITY_FAILURE` constant is on the post-v0.7.0 backlog. Until then, treat any non-zero exit from `verify-audit` as "do not promote this build" in CI gates — the dispatcher does not currently distinguish option errors from integrity failures by code. The `_verify_audit.py` docstring (`_run_verify_audit_cmd` docstring) holds the authoritative contract.
 
 The codes are emitted by the dispatcher at `_run_verify_audit_cmd` (`forgelm/cli/subcommands/_verify_audit.py`).
 

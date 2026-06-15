@@ -305,7 +305,7 @@ The library function `forgelm.compliance.verify_audit_log(path, *, hmac_secret=N
 
 ```json
 {
-  "forgelm_version": "0.5.5",
+  "forgelm_version": "0.7.0",
   "generated_at": "2026-03-23T14:30:00+00:00",
   "model_lineage": {
     "base_model": "meta-llama/Llama-3.1-8B-Instruct",
@@ -431,7 +431,7 @@ evaluation:
 
 **What happens:**
 1. Training completes, all automated evaluations pass
-2. Model is saved to the final directory
+2. Model is saved to the staging directory (`final_model.staging.<run_id>/`)
 3. ForgeLM exits with **code 4** ("awaiting approval")
 4. A human reviews the evaluation results, model card, and compliance artifacts
 5. The human approves or rejects the model

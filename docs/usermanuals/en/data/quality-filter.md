@@ -31,22 +31,12 @@ $ forgelm audit data/ingested.jsonl
    bullet_only: 3
 ```
 
-Audit *flags* low-quality rows but does not delete them. To drop them, opt in via the `audit.quality_filter.drop_flagged` and `audit.quality_filter.write_clean_output` knobs in your YAML config (see [Configuration Reference](#/reference/configuration)) and re-run audit:
+Audit *flags* low-quality rows but does not delete them. `forgelm audit` only reports; it never drops rows or writes a cleaned JSONL. To remove flagged rows, pipe the audit JSON through `jq` as a downstream manual step and re-run `forgelm audit` to verify the result.
 
-```yaml
-audit:
-  quality_filter:
-    enabled: true
-    drop_flagged: true
-    write_clean_output: data/clean.jsonl
-```
+> **Note:** There is no `audit:` top-level block in the YAML config (`ForgeConfig` rejects unknown keys). The `drop_flagged` and `write_clean_output` fields shown in earlier drafts do not exist; auto-drop-and-write-clean is not implemented. Use `--no-quality-filter` to skip the quality checks entirely.
 
 ```shell
 # v0.6.0+: quality-filter is DEFAULT-ON; the explicit flag is harmless.
-# Heuristics populate quality_summary in data_audit_report.json but do
-# NOT drop rows or write a cleaned JSONL — that only happens when the
-# `audit.quality_filter.drop_flagged: true` + `write_clean_output: PATH`
-# YAML keys above are set in a config-driven run.
 $ forgelm audit data/ingested.jsonl
 ✓ wrote audit/data_audit_report.json (quality_summary: 45 / 12,400 flagged)
 
@@ -59,26 +49,18 @@ $ forgelm audit data/ingested.jsonl --no-quality-filter
 
 ## Tuning thresholds
 
-```yaml
-audit:
-  quality_filter:
-    enabled: true
-    min_alpha_ratio: 0.55              # default 0.55
-    min_mean_word_length: 3            # default 3
-    max_mean_word_length: 10           # default 10
-    max_repeated_line_ratio: 0.30      # default 0.30
-    min_content_length: 50             # default 50 characters
-    max_bullet_ratio: 0.90             # default 0.90
-```
+Quality-filter threshold configuration is not exposed as YAML fields in the current release — thresholds are fixed at the heuristic defaults listed below. The CLI flags `--quality-filter` / `--no-quality-filter` control whether the filter runs; there is no per-threshold override flag.
 
-For corpora that legitimately violate one of these (e.g. code-heavy datasets violate alpha ratio), turn off the specific check rather than the whole filter:
+| Heuristic | Default |
+|---|---|
+| `min_alpha_ratio` | 0.55 |
+| `min_mean_word_length` | 3 |
+| `max_mean_word_length` | 10 |
+| `max_repeated_line_ratio` | 0.30 |
+| `min_content_length` | 50 characters |
+| `max_bullet_ratio` | 0.90 |
 
-```yaml
-audit:
-  quality_filter:
-    enabled: true
-    skip: ["min_alpha_ratio"]          # code, math, log datasets
-```
+For corpora that legitimately violate one of these (e.g. code-heavy datasets violate alpha ratio), use `--no-quality-filter` to skip the filter entirely for that run.
 
 ## Conservative-by-default
 
@@ -104,7 +86,7 @@ print(flags)
 ## Common pitfalls
 
 :::warn
-**Auto-dropping without review.** Set `--drop-quality-flags` carefully — it removes rows without showing you what got removed. Run `forgelm audit` first to inspect what's flagged.
+**Dropping rows without review.** When using `jq` to filter flagged rows from the audit report, pipe carefully — removals are silent. Always run `forgelm audit` on the result to confirm the cleaned dataset passes.
 :::
 
 :::warn

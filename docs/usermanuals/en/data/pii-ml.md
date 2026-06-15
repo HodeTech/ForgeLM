@@ -123,7 +123,7 @@ The function returns an empty dict for non-string input, missing extras, or tran
 ## What's NOT in this layer
 
 - **DATE / TIME / NUMBER detection.** Presidio supports more entity types than the three ForgeLM maps; the others (DATE, NRP, CRYPTO, IP_ADDRESS, …) are not currently mapped because their privacy semantics are different. Open an issue if your compliance flow needs them.
-- **PII *masking* via Presidio.** The current adapter is detection-only — for masking, the regex `--pii-mask` flag still owns ingest-side rewriting. Presidio's anonymizer module is a separate dependency and not wired up in v0.5.5.
+- **PII *masking* via Presidio.** The current adapter is detection-only — for masking, the regex `--pii-mask` flag still owns ingest-side rewriting. Presidio's anonymizer module is a separate dependency and not wired up in v0.7.0.
 
 ## Common pitfalls
 

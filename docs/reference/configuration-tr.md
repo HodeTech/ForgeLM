@@ -15,7 +15,10 @@ Tam açıklamalı örnek için `config_template.yaml` dosyasına bakın.
 | `load_in_4bit` | bool | `true` | QLoRA 4-bit NF4 kuantizasyon |
 | `backend` | string | `"transformers"` | `"transformers"` veya `"unsloth"` (2-5x hızlı, Linux) |
 | `trust_remote_code` | bool | `false` | Model depolarından özel kod çalıştırma. **Güvenlik riski** |
-| `offline` | bool | `false` | İzole mod: HF Hub çağrısı yok |
+| `offline` | bool | `false` | İzole mod: HF Hub çağrısı yok. Modeller/veri setleri yerel olmalı |
+| `bnb_4bit_use_double_quant` | bool | `true` | Ekstra VRAM tasarrufu için çift kuantizasyon |
+| `bnb_4bit_quant_type` | string | `"nf4"` | Kuantizasyon tipi (`"nf4"` veya `"fp4"`) |
+| `bnb_4bit_compute_dtype` | string | `"auto"` | Hesaplama dtype'ı: `"auto"`, `"bfloat16"`, `"float16"`, `"float32"` |
 
 #### `model.moe` (İsteğe bağlı — MoE modeller)
 
@@ -38,12 +41,15 @@ Tam açıklamalı örnek için `config_template.yaml` dosyasına bakın.
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
-| `r` | int | `8` | LoRA rank |
+| `r` | int | `8` | LoRA rank. Yüksek = daha fazla parametre |
 | `alpha` | int | `16` | LoRA ölçekleme faktörü |
+| `dropout` | float | `0.1` | Dropout olasılığı |
+| `bias` | string | `"none"` | `"none"`, `"all"` veya `"lora_only"` |
 | `method` | string | `"lora"` | PEFT yöntemi: `"lora"`, `"dora"`, `"pissa"`, `"rslora"` |
 | `use_dora` | bool | `false` | DoRA (Ağırlık-Ayrıştırılmış LoRA) |
 | `use_rslora` | bool | `false` | Rank-stabilize LoRA (r>64 için önerilir) |
 | `target_modules` | list | `["q_proj", "v_proj"]` | LoRA uygulanacak modüller |
+| `task_type` | string | `"CAUSAL_LM"` | PEFT için görev tipi |
 
 ---
 
@@ -51,13 +57,24 @@ Tam açıklamalı örnek için `config_template.yaml` dosyasına bakın.
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
+| `output_dir` | string | `"./checkpoints"` | Checkpoint kayıt dizini |
+| `final_model_dir` | string | `"final_model"` | Nihai artefaktlar için alt dizin |
+| `merge_adapters` | bool | `false` | Kaydedilmeden önce adapter'ları temel modele birleştir |
 | `trainer_type` | string | `"sft"` | `"sft"`, `"dpo"`, `"simpo"`, `"kto"`, `"orpo"`, `"grpo"` |
 | `max_steps` | int | `-1` | Sıkı adım üst sınırı. `-1` = `num_train_epochs` kullanılır; pozitif bir değer epoch'ları geçersiz kılar. |
 | `num_train_epochs` | int | `3` | Eğitim epoch sayısı (yalnızca `max_steps == -1` iken dikkate alınır). |
 | `per_device_train_batch_size` | int | `4` | GPU başına batch boyutu |
-| `learning_rate` | float | `2e-5` | Öğrenme oranı |
+| `gradient_accumulation_steps` | int | `2` | Geri yayılımdan önce biriktirilecek adım sayısı |
+| `learning_rate` | float | `2e-5` | Öğrenme oranı (hizalama için daha düşük: 5e-6) |
+| `warmup_ratio` | float | `0.1` | Isınma oranı |
+| `weight_decay` | float | `0.01` | AdamW ağırlık bozunumu |
+| `eval_steps` | int | `200` | Her N adımda bir değerlendir |
+| `save_steps` | int | `200` | Her N adımda bir checkpoint kaydet |
+| `save_total_limit` | int | `3` | Tutulacak maksimum checkpoint sayısı |
 | `early_stopping_patience` | int | `3` | Doğrulama kaybı iyileşmeden N değerlendirme sonra dur (yalnızca bir doğrulama bölünmesi varsa etkin). |
+| `packing` | bool | `false` | Dizi paketleme (yalnızca SFT) |
 | `report_to` | string | `"tensorboard"` | `"tensorboard"`, `"wandb"`, `"mlflow"`, `"none"` |
+| `run_name` | string | `null` | W&B/MLflow çalışma adı (null ise otomatik üretilir) |
 
 #### OOM Recovery (Bellek Hatası Kurtarma)
 
@@ -112,11 +129,13 @@ training:
 | Alan | Tip | Varsayılan | Kullanan |
 |------|-----|-----------|---------|
 | `dpo_beta` | float | `0.1` | DPO sıcaklık |
-| `simpo_gamma` | float | `0.5` | SimPO marj |
+| `simpo_gamma` | float | `0.5` | SimPO marj terimi |
+| `simpo_beta` | float | `2.0` | SimPO ölçekleme |
 | `kto_beta` | float | `0.1` | KTO kayıp parametresi |
 | `orpo_beta` | float | `0.1` | ORPO odds ratio ağırlığı |
 | `grpo_num_generations` | int | `4` | GRPO: prompt başına yanıt |
-| `grpo_reward_model` | string | `null` | GRPO: ödül modeli yolu |
+| `grpo_max_completion_length` | int | `512` | GRPO: completion başına maksimum token (eski takma ad `grpo_max_new_tokens` kabul edilir) |
+| `grpo_reward_model` | string | `null` | GRPO: ödül modeli yolu (HF veya yerel) |
 
 ---
 
@@ -235,7 +254,11 @@ uzatmasını engeller.
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
 | `provider_name` | string | `""` | Kuruluş adı |
+| `provider_contact` | string | `""` | İletişim e-postası |
+| `system_name` | string | `""` | Yapay zeka sistemi adı |
 | `intended_purpose` | string | `""` | Modelin amacı |
+| `known_limitations` | string | `""` | Kullanılmaması gereken durumlar |
+| `system_version` | string | `""` | Sürüm tanımlayıcısı |
 | `risk_classification` | string | `"minimal-risk"` | 5 EU AI Act `RiskTier` değerinden biri: `"unknown"` (sınıflandırma öncesi yer tutucu), `"minimal-risk"`, `"limited-risk"`, `"high-risk"` (Madde 6 — tam Annex IV dokümantasyonu), `"unacceptable"` (Madde 5 yasaklı uygulama — başlangıçta uyarı bandı yayınlar). |
 
 ## `risk_assessment` (İsteğe bağlı — EU AI Act Madde 9)
@@ -246,14 +269,18 @@ uzatmasını engeller.
 | `foreseeable_misuse` | list | `[]` | Öngörülen kötüye kullanım senaryoları |
 | `risk_category` | string | `"minimal-risk"` | `compliance.risk_classification` ile aynı 5 `RiskTier` değeri: `"unknown"`, `"minimal-risk"`, `"limited-risk"`, `"high-risk"`, `"unacceptable"`. Auto-revert eşiklerini ve Annex IV kapısını etkiler. |
 | `mitigation_measures` | list | `[]` | Risk azaltma önlemleri |
+| `vulnerable_groups_considered` | bool | `false` | Savunmasız gruplar üzerindeki etki değerlendirildi |
 
 ## `monitoring` (İsteğe bağlı — EU AI Act Madde 12+17)
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
 | `enabled` | bool | `false` | İzleme hook'larını etkinleştir |
-| `metrics_export` | string | `"none"` | `"none"`, `"prometheus"`, `"datadog"` |
+| `endpoint` | string | `""` | İzleme webhook URL'si |
+| `endpoint_env` | string | `null` | Endpoint için ortam değişkeni adı |
+| `metrics_export` | string | `"none"` | `"none"`, `"prometheus"`, `"datadog"`, `"custom_webhook"` |
 | `alert_on_drift` | bool | `true` | Model sapmasında uyar |
+| `check_interval_hours` | int | `24` | İzleme kontrol aralığı (saat) |
 
 ## `distributed` (İsteğe bağlı)
 
