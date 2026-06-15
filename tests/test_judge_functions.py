@@ -115,6 +115,24 @@ class TestRubricValidation:
         assert err is not None
         assert "score" in err
 
+    def test_rubric_with_positional_placeholder_rejected(self):
+        from forgelm.judge import _validate_rubric
+
+        # A positional {} placeholder has an empty field name; .format() would
+        # crash with IndexError (no positional args). Reject it up front.
+        rubric = "JSON example: {} for {prompt} {response}"
+        err = _validate_rubric(rubric)
+        assert err is not None
+        assert "positional" in err or "{}" in err
+
+        # Fail-fast contract: anything the validator accepts must format cleanly.
+        # The rejected positional rubric above would have raised IndexError here.
+        with pytest.raises(IndexError):
+            rubric.format(prompt="p", response="r")
+        accepted = "Judge {prompt} -> {response}"
+        assert _validate_rubric(accepted) is None
+        accepted.format(prompt="p", response="r")  # must not raise
+
     def test_rubric_with_unbalanced_braces_rejected(self):
         from forgelm.judge import _validate_rubric
 

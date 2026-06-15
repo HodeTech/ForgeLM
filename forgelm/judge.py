@@ -113,6 +113,14 @@ def _validate_rubric(rubric: str) -> Optional[str]:
             f"rubric template has invalid brace syntax ({e}) — escape literal "
             "braces as {{ }} and keep only {prompt} and {response} as fields"
         )
+    # A positional ``{}`` placeholder has an empty field name and would raise
+    # IndexError at ``.format`` time (no positional args are passed) — reject it
+    # here so the fail-fast boundary catches it instead of crashing mid-eval.
+    if "" in field_roots:
+        return (
+            "rubric template uses positional {} placeholders — only named "
+            "{prompt} and {response} are allowed; escape literal braces as {{ }}"
+        )
     # A field root outside {prompt, response} (e.g. a literal JSON example
     # ``{\"score\": 7}`` whose field name is ``\"score\"``) would raise KeyError
     # at ``.format`` time and crash the run — reject it here.
