@@ -18,7 +18,7 @@ Satır başına bir JSON nesnesi:
 {"timestamp":"2026-04-29T14:33:11Z","run_id":"abc123","operator":"ci-runner@ml","event":"pipeline.completed","prev_hash":"sha256:5e6f...","success":true,"_hmac":"..."}
 ```
 
-(Tam canonical olay listesi için aşağıdaki "Olay tipleri" tablosuna ve [GitHub'daki Audit Event Kataloğu](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md)'na bakın. Eski draft'larda görünen `run_start` / `run_complete` / `data_audit_complete` / `training_epoch_complete` / `benchmark_complete` / `safety_eval_complete` / `auto_revert` adları ship olmadı — `forgelm/` içinde emit eden hiçbir call site yok.)
+(Tam canonical olay listesi için aşağıdaki "Olay tipleri" tablosuna ve [GitHub'daki Audit Event Kataloğu](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog-tr.md)'na bakın. Eski draft'larda görünen `run_start` / `run_complete` / `data_audit_complete` / `training_epoch_complete` / `benchmark_complete` / `safety_eval_complete` / `auto_revert` adları ship olmadı — `forgelm/` içinde emit eden hiçbir call site yok.)
 
 Her kayıtta:
 - **`timestamp`** — ISO-8601 UTC zaman damgası.
@@ -51,7 +51,7 @@ zincirine (ve genesis-manifest sidecar'ına) dayanır, sıra numaralarına deği
 | `cli.legacy_flag_invoked` | Deprecated bir CLI flag'i kullanıldığında. |
 
 Tam event kataloğu (payload şeması ve emit yeri ile)
-[GitHub'daki Audit Event Kataloğu](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md) altındadır.
+[GitHub'daki Audit Event Kataloğu](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog-tr.md) altındadır.
 
 ## Tasarım gereği append-only
 

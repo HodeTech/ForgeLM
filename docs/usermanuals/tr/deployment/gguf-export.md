@@ -138,9 +138,11 @@ Sonuç full-precision GGUF, 7B model için ~13 GB.
 
 :::warn
 **Orijinale karşı kalite gerilemesi.** Agresif quant'lar (q3, q2) Llama Guard puanlarını kaydırabilir. `safety-eval` henüz GGUF dosyalarını yüklemez; bu yüzden quant'lamadan önce güvenlik eval'ini **export öncesi HuggingFace checkpoint'ine karşı** yeniden koşturun — ve GGUF safety-eval gelene kadar quant sonrası güvenlik sapmasını bilinen bir kısıtlama olarak değerlendirin:
+
 ```shell
 $ forgelm safety-eval --model ./output/final_model --probes data/safety-probes.jsonl
 ```
+
 :::
 
 :::tip

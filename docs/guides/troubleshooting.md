@@ -150,24 +150,28 @@ If you need both multi-GPU and GaLore, use `galore_adamw` or `galore_adamw_8bit`
 Long-context training (large `sliding_window_attention` or RoPE scaling) significantly increases VRAM usage. To mitigate:
 
 1. **Reduce sliding window size**:
+
    ```yaml
    training:
      sliding_window_attention: 2048  # down from 4096
    ```
 
 2. **Enable gradient checkpointing** (reduces VRAM at cost of speed):
+
    ```yaml
    training:
      gradient_checkpointing: true
    ```
 
 3. **Use sequence packing** to reduce padding waste:
+
    ```yaml
    training:
      packing: true
    ```
 
 4. **Combine with GaLore** for additional memory savings:
+
    ```yaml
    training:
      galore_enabled: true

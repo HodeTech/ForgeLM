@@ -100,9 +100,9 @@ Gerçek `WebhookConfig` (bkz. `forgelm/config.py::WebhookConfig`):
 |---|---|---|
 | `url` | `null` | Inline URL — secret hijyeni için `url_env`'i tercih edin. |
 | `url_env` | `null` | URL'i taşıyan env var adı. Set edildiğinde `url`'i override eder. |
-| `notify_on_start` | `true` | `training.start` olayını gate'ler. |
-| `notify_on_success` | `true` | `training.success` VE `approval.required`'ı gate'ler. |
-| `notify_on_failure` | `true` | `training.failure` VE `training.reverted`'ı gate'ler. |
+| `notify_on_start` | `true` | `training.start` VE `pipeline.started`'ı gate'ler. |
+| `notify_on_success` | `true` | `training.success`, `approval.required` VE başarılı bir `pipeline.completed`'ı gate'ler. |
+| `notify_on_failure` | `true` | `training.failure`, `training.reverted`, `pipeline.stage_reverted` VE başarısız bir `pipeline.completed`'ı gate'ler. |
 | `timeout` | `10` | HTTP timeout saniye; ≥ 1s'e clamp'lenir. |
 | `allow_private_destinations` | `false` | RFC 1918 / loopback / link-local hedefler için opt-in (in-cluster Slack proxy, on-prem Teams gateway). Varsayılan reddeder — SSRF guard. |
 | `require_https` | `false` | TLS-only zorlama. `true`, plaintext bir `http://` URL'ini reddeder (SSRF guard raise eder; POST atlanır), warn-then-send yerine. Varsayılan `false`, warn-then-send davranışını korur. |

@@ -98,9 +98,9 @@ Real `WebhookConfig` (see `forgelm/config.py::WebhookConfig`):
 |---|---|---|
 | `url` | `null` | Inline URL — prefer `url_env` for secret hygiene. |
 | `url_env` | `null` | Env-var name carrying the URL. Overrides `url` when set. |
-| `notify_on_start` | `true` | Gates the `training.start` event. |
-| `notify_on_success` | `true` | Gates `training.success` AND `approval.required`. |
-| `notify_on_failure` | `true` | Gates `training.failure` AND `training.reverted`. |
+| `notify_on_start` | `true` | Gates `training.start` AND `pipeline.started`. |
+| `notify_on_success` | `true` | Gates `training.success`, `approval.required`, AND a successful `pipeline.completed`. |
+| `notify_on_failure` | `true` | Gates `training.failure`, `training.reverted`, `pipeline.stage_reverted`, AND a failing `pipeline.completed`. |
 | `timeout` | `10` | HTTP timeout in seconds; clamped to ≥ 1s. |
 | `allow_private_destinations` | `false` | Opt-in for RFC 1918 / loopback / link-local destinations (in-cluster Slack proxy, on-prem Teams gateway). Defaults reject — SSRF guard. |
 | `require_https` | `false` | TLS-only enforcement. `true` refuses a plaintext `http://` URL (the SSRF guard raises; the POST is skipped) instead of warning-and-sending. Default `false` preserves warn-then-send. |

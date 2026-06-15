@@ -196,7 +196,7 @@ training:
 > Bir satır gerçekten kırpıldığında ForgeLM tek seferlik bir `WARNING` kaydeder.
 > Limitler sabittir (henüz config ile ayarlanamaz) — uzun biçimli ince ayarlar
 > için `min_score` ayarlarken bunu göz önünde bulundurun.
-
+>
 > **Kullanımdan kaldırıldı:** `evaluation.staging_ttl_days`,
 > [`retention.staging_ttl_days`](#retention-isteğe-bağlı--gdpr-madde-17-silme-ufukları)
 > tarafından devralınmıştır. Eski anahtar `DeprecationWarning` ile alias-forward
@@ -285,7 +285,7 @@ uzatmasını engeller.
 | `max_new_tokens` | int | `1024` | Öğretmen yanıtı başına maksimum token. |
 | `temperature` | float | `0.7` | Öğretmene geçirilen örnekleme sıcaklığı. |
 | `output_file` | string | `"synthetic_data.jsonl"` | Çıktı JSONL dosya yolu. |
-| `output_format` | string | `"messages"` | Şunlardan biri: `"messages"` (chat-style array), `"instruction"` (Alpaca-style), `"chatml"`, `"prompt_response"`. **`chatml`, ForgeLM'in eski `{User, Assistant}` anahtar düzenini üretir — OpenAI `<|im_start|>` ChatML işaretlemesini DEĞİL.** Taşınabilir bir sohbet formatı için `messages` kullanın. |
+| `output_format` | string | `"messages"` | Şunlardan biri: `"messages"` (chat-style array), `"instruction"` (Alpaca-style), `"chatml"`, `"prompt_response"`. **`chatml`, ForgeLM'in eski `{User, Assistant}` anahtar düzenini üretir — OpenAI `<\|im_start\|>` ChatML işaretlemesini DEĞİL.** Taşınabilir bir sohbet formatı için `messages` kullanın. |
 | `min_success_rate` | float | `0.0` | `forgelm --generate-data`'nin 0 çıkış kodu vermesi için seed prompt'ların başarılı olması gereken minimum oran (0.0–1.0). Varsayılan `0.0`, eski "sıfırdan farklı herhangi bir verim başarılıdır" davranışını korur; bir CI hattının neredeyse boş bir veri kümesiyle devam etmemesi için yükseltin. |
 | `sanity_failure_rate` | float | `0.2` | `forgelm --generate-data`'nin, veri kümesinin küçük veya çarpık olabileceğine dair bir `WARNING` kaydettiği başarısızlık oranı eşiği (0.0–1.0) — çıkış kodunu belirleyen `min_success_rate`'ten bağımsızdır. Varsayılan `0.2`, prompt'ların %20'sinden fazlası başarısız olduğunda uyarır. |
 

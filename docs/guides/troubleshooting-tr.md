@@ -157,24 +157,28 @@ Long-context eğitimi (büyük `sliding_window_attention` ya da RoPE
 ölçekleme) VRAM kullanımını ciddi şekilde artırır. Hafifletmek için:
 
 1. **Sliding window boyutunu azalt**:
+
    ```yaml
    training:
      sliding_window_attention: 2048  # 4096'dan indir
    ```
 
 2. **Gradient checkpointing'i aç** (hız pahasına VRAM azaltır):
+
    ```yaml
    training:
      gradient_checkpointing: true
    ```
 
 3. **Sekans paketleme kullan** (padding israfını azalt):
+
    ```yaml
    training:
      packing: true
    ```
 
 4. **Ek bellek tasarrufu için GaLore ile birleştir**:
+
    ```yaml
    training:
      galore_enabled: true

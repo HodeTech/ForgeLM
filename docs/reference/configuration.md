@@ -225,7 +225,7 @@ across retries. Each retry attempt is logged to the audit trail.
 > ForgeLM logs a one-time `WARNING` when a row is actually trimmed. The limits
 > are fixed (not yet config-driven) — keep this in mind when tuning `min_score`
 > for long-form fine-tunes.
-
+>
 > **Deprecated:** `evaluation.staging_ttl_days` is superseded by
 > [`retention.staging_ttl_days`](#retention-optional--gdpr-article-17-erasure-horizons).
 > The legacy key is alias-forwarded with a `DeprecationWarning` and removed in
@@ -368,7 +368,7 @@ silently extend the retention horizon by re-using a stale workspace.
 | `max_new_tokens` | int | `1024` | Max tokens per teacher response. |
 | `temperature` | float | `0.7` | Sampling temperature passed to the teacher. |
 | `output_file` | string | `"synthetic_data.jsonl"` | Output JSONL file path. |
-| `output_format` | string | `"messages"` | One of `"messages"` (chat-style array), `"instruction"` (Alpaca-style), `"chatml"`, `"prompt_response"`. **`chatml` emits ForgeLM's legacy `{User, Assistant}` key layout — NOT OpenAI `<|im_start|>` ChatML markup.** Use `messages` for a portable chat format. |
+| `output_format` | string | `"messages"` | One of `"messages"` (chat-style array), `"instruction"` (Alpaca-style), `"chatml"`, `"prompt_response"`. **`chatml` emits ForgeLM's legacy `{User, Assistant}` key layout — NOT OpenAI `<\|im_start\|>` ChatML markup.** Use `messages` for a portable chat format. |
 | `min_success_rate` | float | `0.0` | Minimum fraction (0.0–1.0) of seed prompts that must yield a usable example for `forgelm --generate-data` to exit 0. Default `0.0` keeps the legacy "any non-zero yield succeeds" behaviour; raise it so a CI pipeline does not proceed on a near-empty dataset. |
 | `sanity_failure_rate` | float | `0.2` | Failure-rate (0.0–1.0) above which `forgelm --generate-data` logs a `WARNING` that the dataset may be small or skewed — independent of `min_success_rate` (which gates the exit code). Default `0.2` warns when more than 20% of prompts fail. |
 

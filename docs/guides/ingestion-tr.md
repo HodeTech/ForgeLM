@@ -490,7 +490,7 @@ Wave 3 backlog'undadır.
 > (akademik posterler, geniş oluklu regülasyon yayınları) güvenilirdir
 > ama yayın-kalite iki-kolonlu makaleleri kaçırır. Histogram-tabanlı
 > bimodal-mode refactor Wave 3 takipi olarak izlenmektedir (bkz.
-> [Faz 15 arşivi](../roadmap/completed-phases.md#phase-15--ingestion-pipeline-reliability-v060)
+> [Faz 15 arşivi](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap/completed-phases.md#phase-15--ingestion-pipeline-reliability-v060)
 > Wave 3 — multi-column layout extraction).
 
 ### Markdown-bilen splitter — `--strategy markdown` (Faz 12)
