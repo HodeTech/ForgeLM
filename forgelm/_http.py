@@ -270,14 +270,21 @@ def _pinned_session(scheme: str) -> requests.Session:
                         host_header = request.headers[header]
                         break
                 if host_header:
-                    # Set assert_hostname to the port-stripped host so
-                    # urllib3 matches the cert SAN; the wire Host header
-                    # (with the port) is left intact for the server.
-                    self.poolmanager.connection_pool_kw["assert_hostname"] = _assert_hostname_from_host_header(
-                        host_header
-                    )
-                elif "assert_hostname" in self.poolmanager.connection_pool_kw:
+                    # Set assert_hostname AND server_hostname to the
+                    # port-stripped host: assert_hostname makes urllib3 match
+                    # the cert SAN, server_hostname makes the TLS handshake send
+                    # the bare host as SNI (delegating to HTTPAdapter.send below
+                    # skips the parent's own SNI derivation, so urllib3 would
+                    # otherwise SNI the port-bearing host / IP literal and fail
+                    # verification on endpoints like https://host:8443). The
+                    # wire Host header (with the port) is left intact for the
+                    # server.
+                    bare_host = _assert_hostname_from_host_header(host_header)
+                    self.poolmanager.connection_pool_kw["assert_hostname"] = bare_host
+                    self.poolmanager.connection_pool_kw["server_hostname"] = bare_host
+                else:
                     self.poolmanager.connection_pool_kw.pop("assert_hostname", None)
+                    self.poolmanager.connection_pool_kw.pop("server_hostname", None)
                 # Bypass the parent's own (port-bearing) assert_hostname
                 # derivation by delegating straight to HTTPAdapter.send.
                 return HTTPAdapter.send(self, request, **kwargs)

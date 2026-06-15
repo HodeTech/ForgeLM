@@ -438,7 +438,12 @@ class TestAssertHostnameStripsPort:
     def test_pinned_adapter_sets_port_stripped_assert_hostname(self):
         """End-to-end through the real adapter: a request to a
         non-standard-port HTTPS URL must leave urllib3's
-        ``assert_hostname`` set to the bare host, never ``host:port``.
+        ``assert_hostname`` *and* ``server_hostname`` set to the bare
+        host, never ``host:port``. ``assert_hostname`` makes urllib3
+        match the cert SAN; ``server_hostname`` makes the TLS handshake
+        send the bare host as SNI (delegating to ``HTTPAdapter.send``
+        skips the parent's SNI derivation, so urllib3 would otherwise SNI
+        the port-bearing host / IP literal and fail verification).
         """
         from requests import PreparedRequest
         from requests.adapters import HTTPAdapter
@@ -459,7 +464,9 @@ class TestAssertHostnameStripsPort:
         captured = {}
 
         def _fake_http_send(self, request, **kwargs):
-            captured["assert_hostname"] = self.poolmanager.connection_pool_kw.get("assert_hostname")
+            kw = self.poolmanager.connection_pool_kw
+            captured["assert_hostname"] = kw.get("assert_hostname")
+            captured["server_hostname"] = kw.get("server_hostname")
             return MagicMock(status_code=200)
 
         with patch.object(HTTPAdapter, "send", _fake_http_send):
@@ -469,6 +476,48 @@ class TestAssertHostnameStripsPort:
             "assert_hostname must be the port-stripped host so urllib3 matches the cert SAN; "
             f"got {captured['assert_hostname']!r}"
         )
+        assert captured["server_hostname"] == "hooks.example.com", (
+            "server_hostname must be the port-stripped host so the TLS handshake sends the "
+            f"bare host as SNI; got {captured['server_hostname']!r}"
+        )
+
+    def test_pinned_adapter_clears_hostnames_without_host_header(self):
+        """A request with no Host header must leave neither
+        ``assert_hostname`` nor ``server_hostname`` lingering in the pool
+        kwargs — a stale value from a prior request would otherwise SNI /
+        verify the wrong host on the reused session.
+        """
+        from requests import PreparedRequest
+        from requests.adapters import HTTPAdapter
+
+        from forgelm import _http
+
+        session = _http._pinned_session("https")
+        adapter = session.get_adapter("https://x")
+        # Seed stale values as if a previous request had set them.
+        adapter.poolmanager.connection_pool_kw["assert_hostname"] = "stale.example.com"
+        adapter.poolmanager.connection_pool_kw["server_hostname"] = "stale.example.com"
+
+        req = PreparedRequest()
+        req.prepare(method="GET", url="https://8.8.8.8/abc", headers={})
+        # Drop the auto-added Host header so the cleanup branch runs.
+        for header in list(req.headers):
+            if header.lower() == "host":
+                del req.headers[header]
+
+        captured = {}
+
+        def _fake_http_send(self, request, **kwargs):
+            kw = self.poolmanager.connection_pool_kw
+            captured["assert_hostname"] = kw.get("assert_hostname")
+            captured["server_hostname"] = kw.get("server_hostname")
+            return MagicMock(status_code=200)
+
+        with patch.object(HTTPAdapter, "send", _fake_http_send):
+            adapter.send(req)
+
+        assert captured["assert_hostname"] is None
+        assert captured["server_hostname"] is None
 
 
 class TestNoPublicIpResolvedBranch:
