@@ -164,6 +164,26 @@ class TestCleanStringRejectsNonString:
         with pytest.raises(ValueError, match="expected a string"):
             _format_user_assistant_row("", "Q", payload, True, False, "")
 
+    @pytest.mark.parametrize("payload", [0, False, 0.0, [], {}, 42, {"nested": "obj"}, None])
+    def test_format_user_assistant_row_non_string_system_raises(self, payload):
+        """The System cell must be validated symmetrically with User/Assistant:
+        a truthiness gate let falsy non-strings (``0``/``False``/``0.0``/``[]``/
+        ``{}``) silently bypass ``clean_string`` and be treated as "missing".
+        Only ``""`` means "no system prompt"; everything else must fail loudly."""
+        from forgelm.data import _format_user_assistant_row
+
+        with pytest.raises(ValueError, match="expected a string"):
+            _format_user_assistant_row(payload, "Q", "A", True, False, "")
+
+    def test_format_user_assistant_row_empty_system_omits_block(self):
+        """``sys_text == ""`` is the absent-system path synthesised by
+        ``_process_user_assistant_format`` (``[""] * len``); it must still
+        render no ``[SYSTEM]`` block rather than being rejected."""
+        from forgelm.data import _format_user_assistant_row
+
+        out = _format_user_assistant_row("", "Q", "A", True, False, "")
+        assert "[SYSTEM]" not in out
+
     @pytest.mark.parametrize("payload", [{"nested": "obj"}, 42, None])
     def test_messages_and_user_assistant_paths_reject_same_payload(self, payload):
         """Parity: the same non-string content shape that the messages

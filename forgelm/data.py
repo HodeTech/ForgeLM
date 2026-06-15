@@ -182,10 +182,16 @@ def _format_user_assistant_row(
     sys_text: str, user_text: str, asst_text: str, clean_text: bool, add_eos: bool, eos_token: str
 ) -> str:
     """Render a single (System?, User, Assistant) row into a flat training string."""
-    sys_clean = clean_string(sys_text, clean_text) if sys_text else ""
+    # Only ``""`` means "no system prompt" (synthesised by
+    # ``_process_user_assistant_format`` as ``[""] * len``). Every other value —
+    # including falsy non-strings (``0``/``False``/``[]``) and ``None`` — is a
+    # schema bug that must fail loudly through ``clean_string``, symmetric with
+    # the user/assistant cells. A truthiness gate would let those slip past.
+    has_system = sys_text != ""
+    sys_clean = clean_string(sys_text, clean_text) if has_system else ""
     user_clean = clean_string(user_text, clean_text)
     asst_clean = clean_string(asst_text, clean_text)
-    sys_part = f"[SYSTEM]\n{sys_clean}\n" if sys_text else ""
+    sys_part = f"[SYSTEM]\n{sys_clean}\n" if has_system else ""
     formatted_text = sys_part + f"[USER]\n{user_clean}\n[ASSISTANT]\n{asst_clean}"
     if add_eos and eos_token:
         formatted_text += eos_token
