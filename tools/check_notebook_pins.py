@@ -53,7 +53,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Sequence
 
-import tomllib
+try:
+    import tomllib  # Python 3.11+ stdlib.
+except ModuleNotFoundError as exc:  # Python 3.10 — project still supports it.
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        raise ImportError(
+            "tomllib (Python 3.11+) is unavailable and the tomli backport is "
+            "not installed. Install the dev extra: pip install 'forgelm[dev]' "
+            "(or 'pip install tomli') to run this guard on Python 3.10."
+        ) from exc
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 NOTEBOOKS_DIR = REPO_ROOT / "notebooks"

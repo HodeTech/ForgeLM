@@ -139,3 +139,17 @@ def test_repo_notebooks_pass_strict(tool):
 def test_guard_wired_into_ci():
     ci = (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "check_notebook_pins.py" in ci
+
+
+# ---------------------------------------------------------------------------
+# §4 — TOML backend resolves on every supported Python (3.10 CI runner break)
+# ---------------------------------------------------------------------------
+
+
+def test_toml_backend_loads_on_supported_pythons(tool):
+    # Python 3.10 (a declared-supported, CI-matrix interpreter) has no stdlib
+    # ``tomllib``; a bare ``import tomllib`` broke this whole module at fixture
+    # setup. The guard now falls back to the ``tomli`` backport, so the bound
+    # ``tomllib`` must expose a working ``loads`` on every supported runtime.
+    assert hasattr(tool.tomllib, "loads")
+    assert tool.tomllib.loads('a = "b"\n') == {"a": "b"}
