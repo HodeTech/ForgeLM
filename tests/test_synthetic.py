@@ -307,6 +307,27 @@ class TestSyntheticGenerator:
         assert "[1, 2, 3]" in prompts
         assert "42" in prompts
 
+    def test_seed_loader_bare_string_line_uses_parsed_value_not_quotes(self, tmp_path):
+        """PR#63 review: a bare-string JSON seed line (``"prompt text"``) must
+        append the parsed string itself, not the raw line with its JSON quotes —
+        matching ``safety._load_safety_prompts``."""
+        seed_file = tmp_path / "seeds.jsonl"
+        seed_file.write_text(
+            "\n".join(
+                [
+                    json.dumps("What is AI?"),  # bare quoted-string JSON line
+                    "Explain ML.",  # plain text (not JSON)
+                ]
+            )
+        )
+        config = _config(synthetic={"enabled": True, "teacher_model": "test", "seed_file": str(seed_file)})
+        gen = SyntheticDataGenerator(config)
+        prompts = gen._load_seed_prompts()
+        # The parsed value, without the JSON quotes that ``"..."`` would carry.
+        assert "What is AI?" in prompts
+        assert '"What is AI?"' not in prompts
+        assert "Explain ML." in prompts
+
     def test_file_responses_skips_non_dict_json_line(self, tmp_path):
         """F-P6-OPUS-08: ``_load_file_responses`` must count a non-object JSON
         line as malformed and skip it, honouring its 'loud about failures'

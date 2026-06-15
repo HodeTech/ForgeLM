@@ -157,9 +157,14 @@ class SyntheticDataGenerator:
                     # A line that is valid JSON but not an object (a bare
                     # array/number/string/bool/null) has no ``.get`` — treat
                     # the raw line as a plain-text prompt instead of crashing
-                    # the whole load with AttributeError (F-P6-OPUS-08).
+                    # the whole load with AttributeError (F-P6-OPUS-08). A bare
+                    # quoted string IS the prompt, so append the parsed value —
+                    # not the raw line, which would keep the JSON quotes —
+                    # matching ``safety._load_safety_prompts``.
                     if isinstance(data, dict):
                         prompts.append(data.get("prompt", data.get("text", line)))
+                    elif isinstance(data, str):
+                        prompts.append(data)
                     else:
                         prompts.append(line)
             logger.info("Loaded %d seed prompts from %s", len(prompts), self.synth_cfg.seed_file)
