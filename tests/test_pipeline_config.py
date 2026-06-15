@@ -403,3 +403,21 @@ class TestMergeRoundTripDefaults:
         # Operator declared no retention block; the round-trip must not invent one.
         assert merged.retention is None
         assert not [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
+
+    def test_merge_preserves_canonical_retention_with_stage_evaluation_override(self):
+        # Same hazard as above but the ``evaluation`` block lives on the *stage*,
+        # exercising the stage-override dump (not the root dump).  Without
+        # ``exclude_unset=True`` on the stage dump, the override materialises the
+        # default ``staging_ttl_days=7`` and falsely conflicts with the canonical
+        # ``retention.staging_ttl_days=30`` (F-P1-FAB-03).
+        root = _root_cfg(
+            retention={"staging_ttl_days": 30},
+            pipeline={"stages": [{"name": "dpo_stage", "evaluation": {"auto_revert": True}}]},
+        )
+        # No ConfigError, the canonical retention horizon survives, and the
+        # stage's explicit override is applied.
+        merged = merge_pipeline_stage_config(root, root.pipeline.stages[0])
+        assert merged.retention is not None
+        assert merged.retention.staging_ttl_days == 30
+        assert merged.evaluation is not None
+        assert merged.evaluation.auto_revert is True

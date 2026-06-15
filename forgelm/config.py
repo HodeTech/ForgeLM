@@ -1770,16 +1770,20 @@ def merge_pipeline_stage_config(
     base = root_cfg.model_dump(exclude_none=True, exclude_unset=True)
     base.pop("pipeline", None)
 
+    # Stage overrides use the same ``exclude_unset=True`` rationale as the root
+    # dump above: a stage ``evaluation`` block that omits ``staging_ttl_days``
+    # must not materialise the default ``7`` and falsely conflict with a
+    # canonical ``retention.staging_ttl_days`` on re-validation (F-P1-FAB-03).
     if stage.model is not None:
-        base["model"] = stage.model.model_dump(exclude_none=True)
+        base["model"] = stage.model.model_dump(exclude_none=True, exclude_unset=True)
     if stage.lora is not None:
-        base["lora"] = stage.lora.model_dump(exclude_none=True)
+        base["lora"] = stage.lora.model_dump(exclude_none=True, exclude_unset=True)
     if stage.training is not None:
-        base["training"] = stage.training.model_dump(exclude_none=True)
+        base["training"] = stage.training.model_dump(exclude_none=True, exclude_unset=True)
     if stage.data is not None:
-        base["data"] = stage.data.model_dump(exclude_none=True)
+        base["data"] = stage.data.model_dump(exclude_none=True, exclude_unset=True)
     if stage.evaluation is not None:
-        base["evaluation"] = stage.evaluation.model_dump(exclude_none=True)
+        base["evaluation"] = stage.evaluation.model_dump(exclude_none=True, exclude_unset=True)
 
     # Auto-chain resolution.  See docstring above for priority order.
     if input_model_override is not None:
