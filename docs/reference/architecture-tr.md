@@ -8,15 +8,15 @@ ForgeLM modülerlik ve genişletilebilirlik gözetilerek tasarlanmıştır. İş
 forgelm --config job.yaml
     │
     ├── cli/                → CLI paketi (Faz 15 split)
-    │   ├── _parser.py          → 18 subcommand + global flag
+    │   ├── _parser.py          → 19 subcommand + global flag
     │   ├── _dispatch.py        → Mod yönlendirici
-    │   ├── _exit_codes.py      → 0/1/2/3/4 sözleşmesi
+    │   ├── _exit_codes.py      → 0/1/2/3/4/5 sözleşmesi
     │   └── subcommands/        → Subcommand-başına handler'lar
     │       ├── ingest, audit, chat, export, deploy, doctor,
     │       │   cache, purge, reverse_pii, approve, approvals,
     │       │   safety_eval, verify_audit, verify_annex_iv,
-    │       │   verify_gguf, quickstart
-    ├── config.py           → Pydantic doğrulama (21 config modeli)
+    │       │   verify_gguf, verify_integrity, quickstart
+    ├── config.py           → Pydantic doğrulama (23 config modeli)
     ├── utils.py            → HF kimlik doğrulama
     ├── model.py            → Model + tokenizer + LoRA/PEFT yükleme
     ├── data.py             → Veri seti yükleme + formatlama
@@ -43,19 +43,19 @@ ForgeLM/
 ├── forgelm/                  # Çekirdek Python paketi (~22 tek-dosya modül + 2 alt-paket)
 │   ├── __init__.py           # Hızlı CLI başlatma için lazy import
 │   ├── cli/                  # CLI alt-paketi (Faz 15 split)
-│   │   ├── _parser.py            # 18 subcommand + global flag
+│   │   ├── _parser.py            # 19 subcommand + global flag
 │   │   ├── _dispatch.py          # Mod yönlendirici
-│   │   ├── _exit_codes.py        # Public 0/1/2/3/4 sözleşmesi
+│   │   ├── _exit_codes.py        # Public 0/1/2/3/4/5 sözleşmesi
 │   │   └── subcommands/          # Per-subcommand handler modülleri
 │   │       └── _audit, _ingest, _chat, _export, _deploy, _doctor,
 │   │           _cache, _purge, _reverse_pii, _approve, _approvals,
 │   │           _safety_eval, _verify_audit, _verify_annex_iv,
-│   │           _verify_gguf, _quickstart
+│   │           _verify_gguf, _verify_integrity, _quickstart
 │   ├── data_audit/           # Audit alt-paketi (Faz 14 split)
 │   │   └── _orchestrator, _aggregator, _streaming, _simhash,
 │   │       _minhash, _pii_regex, _pii_ml, _secrets, _quality,
 │   │       _croissant, _summary, _splits, _types, _optional
-│   ├── config.py             # 21 Pydantic config modeli
+│   ├── config.py             # 23 Pydantic config modeli
 │   ├── data.py               # Veri yükleme (SFT/DPO/KTO/GRPO/multimodal)
 │   ├── ingestion.py          # Ham doküman → SFT JSONL (PDF/DOCX/EPUB/TXT/Markdown)
 │   ├── model.py              # Model + LoRA/DoRA/PiSSA + MoE algılama
@@ -101,10 +101,10 @@ ForgeLM/
 ## Bileşen Detayları
 
 ### `cli/`
-Orkestratör (Faz 15 split). `_parser.py` 18 subcommand'ı (`audit`, `approve`, `approvals`, `reject`, `cache-models`, `cache-tasks`, `chat`, `deploy`, `doctor`, `export`, `ingest`, `purge`, `quickstart`, `reverse-pii`, `safety-eval`, `verify-annex-iv`, `verify-audit`, `verify-gguf`) artı eski training-mode flag setini kaydeder. `_dispatch.py` `subcommands/` altındaki uygun handler'a yönlendirir. `_exit_codes.py` public 0/1/2/3/4 sözleşmesini tanımlar.
+Orkestratör (Faz 15 split). `_parser.py` 19 subcommand'ı (`audit`, `approve`, `approvals`, `reject`, `cache-models`, `cache-tasks`, `chat`, `deploy`, `doctor`, `export`, `ingest`, `purge`, `quickstart`, `reverse-pii`, `safety-eval`, `verify-annex-iv`, `verify-audit`, `verify-gguf`, `verify-integrity`) artı eski training-mode flag setini kaydeder. `_dispatch.py` `subcommands/` altındaki uygun handler'a yönlendirir. `_exit_codes.py` public 0/1/2/3/4/5 sözleşmesini tanımlar (5 = sihirbaz iptal edildi).
 
 ### `config.py`
-21 Pydantic v2 modeli: ModelConfig, LoraConfigModel, TrainingConfig, DataConfig, DataGovernanceConfig, EvaluationConfig, SafetyConfig, BenchmarkConfig, JudgeConfig, WebhookConfig, DistributedConfig, MergeConfig, ComplianceMetadataConfig, RetentionConfig, RiskAssessmentConfig, MonitoringConfig, MoeConfig, MultimodalConfig, AuthConfig, SyntheticConfig + üst-düzey ForgeConfig. Çapraz alan doğrulaması içerir.
+23 Pydantic v2 modeli: ModelConfig, LoraConfigModel, TrainingConfig, DataConfig, DataGovernanceConfig, EvaluationConfig, SafetyConfig, BenchmarkConfig, JudgeConfig, WebhookConfig, DistributedConfig, MergeConfig, ComplianceMetadataConfig, RetentionConfig, RiskAssessmentConfig, MonitoringConfig, MoeConfig, MultimodalConfig, AuthConfig, SyntheticConfig, PipelineStage, PipelineConfig + üst-düzey ForgeConfig. Çapraz alan doğrulaması içerir.
 
 ### `data.py`
 HuggingFace `datasets` kütüphanesi ile arayüz. Veri formatını otomatik algılar (SFT, DPO, KTO, GRPO, multimodal) ve uyumsuzlukta önerili trainer_type ile hata verir. Mix ratio ile çoklu veri seti karıştırma. `tokenizer.apply_chat_template()` ile sohbet şablonları.

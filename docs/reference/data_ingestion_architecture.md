@@ -35,7 +35,7 @@ graph LR
 ```
 
 Single entry point: [`forgelm.ingestion.ingest_path`](../../forgelm/ingestion.py)
-at line `1200`. The CLI subcommand
+(currently at line 2193). The CLI subcommand
 [`forgelm/cli/subcommands/_ingest.py`](../../forgelm/cli/subcommands/_ingest.py)
 is a thin argparse adapter — it resolves `--all-mask` into the two
 underlying booleans and delegates everything else to `ingest_path`.
@@ -440,7 +440,7 @@ phone. Replacement token: `[REDACTED]`.
 
 `_emit_chunk` enforces the order: secrets pass, then PII pass. Two
 reasons (encoded as a docstring comment in
-[`ingestion.py:1098`](../../forgelm/ingestion.py)):
+[`ingestion.py:2078`](../../forgelm/ingestion.py)):
 
 1. Secrets are higher-severity than PII. A leaked AWS key in training
    data is unrecoverable; a phone number is recoverable via opt-out

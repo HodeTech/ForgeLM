@@ -51,7 +51,7 @@ kategoriler engagement-bazında scoplanır.
 | CC6.7 | Bilgi hareketini kısıtlar | `safe_post` egress discipline; webhook payload curation |
 | CC6.8 | Yetkisiz yazılımı tespit eder/önler | SBOM; `pip-audit` nightly; `bandit` CI |
 | CC7.1 | Zafiyetleri tespit eder | `pip-audit` nightly; CVE feed |
-| CC7.2 | Sistem bileşenlerini izler | `forgelm verify-audit`; `forgelm verify-gguf`; `safety_trend.jsonl` |
+| CC7.2 | Sistem bileşenlerini izler | `forgelm verify-audit`; `forgelm verify-gguf`; `forgelm verify-integrity`; `safety_trend.jsonl` |
 | CC7.3 | Güvenlik olaylarını değerlendirir | `data.erasure_failed`, `pipeline.failed` olayları `error_class` + `error_message` ile |
 | CC7.4 | Güvenlik olaylarına yanıt verir | `auto_revert`; `model.reverted` olayı |
 | CC7.5 | Düzeltici eylemleri tanımlar, geliştirir | `human_approval.rejected`; `sop_change_management.md` |
@@ -99,7 +99,7 @@ Güçlü ForgeLM katkısı.
 | P4.1 Kullanım, saklama ve imha | `retention.staging_ttl_days` (kanonik; eski takma ad `evaluation.staging_ttl_days` v0.5.5 → v0.6.x deprecation penceresi boyunca şeffaf yönlendirir); `forgelm purge --check-policy` |
 | P5.1 Erişim | `forgelm reverse-pii` Madde 15 scan; salted query-hash |
 | P5.2 Sorular ve şikayetler | (Operatör-tarafı workflow) |
-| P6.1 Üçüncü taraflara açıklama | `safe_post` webhook discipline; HMAC payload signing |
+| P6.1 Üçüncü taraflara açıklama | `safe_post` webhook discipline (yalnız TLS, SSRF koruması, yönlendirme reddi); not: webhook gövdeleri HMAC ile imzalanmaz — bkz. ISO 27001 A.8.21 |
 | P6.2 Üçüncü taraf anlaşmaları | (Operatör DPA'ları) |
 | P7.1 İhlal bildirimi | `data.erasure_failed`, `audit.classifier_load_failed` olayları |
 | P7.2 İhlal açıklaması | (Operatör regulator-contact playbook) |
