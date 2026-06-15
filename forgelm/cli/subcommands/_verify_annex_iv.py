@@ -150,10 +150,17 @@ def verify_annex_iv_artifact(path: str) -> VerifyAnnexIVResult:
     # is exactly "the operator forgot".  Require the identity-critical
     # sub-fields to be populated too (F-P4-OPUS-17).
     sys_ident = artifact.get("system_identification")
-    if isinstance(sys_ident, dict) and "system_identification" not in missing:
-        for subkey in _SYSTEM_IDENTIFICATION_REQUIRED_SUBKEYS:
-            if not _is_field_populated(sys_ident.get(subkey)):
-                missing.append(f"system_identification.{subkey}")
+    if "system_identification" not in missing:
+        if not isinstance(sys_ident, dict):
+            # A non-dict value (string, list, number) passes the bare
+            # populated-check above but cannot carry the §1 identity
+            # sub-fields — it bypasses the whole identity gate.  Reject it
+            # rather than silently skipping the sub-field checks.
+            missing.append("system_identification")
+        else:
+            for subkey in _SYSTEM_IDENTIFICATION_REQUIRED_SUBKEYS:
+                if not _is_field_populated(sys_ident.get(subkey)):
+                    missing.append(f"system_identification.{subkey}")
     if missing:
         return VerifyAnnexIVResult(
             valid=False,

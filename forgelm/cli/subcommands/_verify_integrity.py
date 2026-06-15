@@ -13,9 +13,11 @@ in ``docs/reference/verify_integrity_subcommand.md``):
 
 - 0 — ``EXIT_SUCCESS``: every recorded artifact present and unchanged, no
   unexpected extra files.
-- 1 — ``EXIT_CONFIG_ERROR``: caller / input error (missing path, manifest not
-  found / not a regular file, malformed JSON) OR an integrity mismatch
-  (changed / removed / added file).  The artifacts do not match the manifest.
+- 1 — ``EXIT_CONFIG_ERROR``: caller / input error (missing path, the path is a
+  file rather than a model directory, manifest not found / not a regular file,
+  malformed JSON, a manifest entry whose path is non-string or escapes the model
+  directory) OR an integrity mismatch (changed / removed / added file).  The
+  artifacts do not match the manifest.
 - 2 — ``EXIT_TRAINING_ERROR``: genuine runtime I/O failure on a reachable path
   (read error, permission denied mid-walk, etc.).
 """
@@ -103,16 +105,45 @@ def verify_integrity(model_dir: str) -> VerifyIntegrityResult:
         manifest = json.load(fh)
 
     recorded = manifest.get("artifacts", []) if isinstance(manifest, dict) else []
-    recorded_rel = {entry["file"] for entry in recorded if isinstance(entry, dict) and "file" in entry}
+    # Normalise recorded paths to forward slashes so a Windows-generated
+    # manifest ("subdir\\file") compares equal to the verifier's on-disk
+    # relpath ("subdir/file") and does not false-positive as added/missing.
+    recorded_rel = {
+        entry["file"].replace("\\", "/")
+        for entry in recorded
+        if isinstance(entry, dict) and isinstance(entry.get("file"), str)
+    }
+
+    base = os.path.realpath(model_dir)
 
     changed: List[str] = []
     removed: List[str] = []
     verified = 0
     for entry in recorded:
-        if not isinstance(entry, dict) or "file" not in entry:
+        if not isinstance(entry, dict):
             continue
-        rel_path = entry["file"]
-        abs_path = os.path.join(model_dir, rel_path)
+        rel_path = entry.get("file")
+        # A non-string ``file`` (or a recorded path whose realpath escapes
+        # model_dir, e.g. "../secret") is a malformed/hostile manifest, not
+        # a recoverable mismatch — refuse rather than hashing an arbitrary
+        # out-of-tree file or crashing in os.path.join with a TypeError.
+        if not isinstance(rel_path, str):
+            return VerifyIntegrityResult(
+                valid=False,
+                reason=f"Manifest entry has a non-string 'file' value: {rel_path!r}.",
+            )
+        abs_path = os.path.join(model_dir, rel_path.replace("\\", "/"))
+        real = os.path.realpath(abs_path)
+        try:
+            contained = os.path.commonpath([real, base]) == base
+        except ValueError:
+            # Different drives (Windows) → no shared prefix; treat as escaping.
+            contained = False
+        if not contained:
+            return VerifyIntegrityResult(
+                valid=False,
+                reason=f"Manifest entry path escapes the model directory: {rel_path!r}.",
+            )
         if not os.path.isfile(abs_path):
             removed.append(rel_path)
             continue
@@ -127,7 +158,7 @@ def verify_integrity(model_dir: str) -> VerifyIntegrityResult:
     for root, _dirs, files in os.walk(model_dir):
         for filename in files:
             abs_path = os.path.join(root, filename)
-            rel_path = os.path.relpath(abs_path, model_dir)
+            rel_path = os.path.relpath(abs_path, model_dir).replace(os.sep, "/")
             if rel_path == _MANIFEST_NAME:
                 continue
             if rel_path not in recorded_rel:
@@ -187,6 +218,16 @@ def _run_verify_integrity_cmd(args, output_format: str) -> None:
         _output_error_and_exit(
             output_format,
             f"Integrity manifest path is a directory, not a file: {os.path.join(path, _MANIFEST_NAME)!r} ({exc.__class__.__name__}).",
+            EXIT_CONFIG_ERROR,
+        )
+    except NotADirectoryError as exc:
+        # The supplied path is a regular file, not a model directory, so
+        # joining the manifest name and opening it raises NotADirectoryError.
+        # This is caller input (wrong argument) → exit 1, not a runtime I/O
+        # failure that the generic OSError branch would map to exit 2.
+        _output_error_and_exit(
+            output_format,
+            f"verify-integrity expects a model directory, not a file: {path!r} ({exc.__class__.__name__}).",
             EXIT_CONFIG_ERROR,
         )
     except OSError as exc:

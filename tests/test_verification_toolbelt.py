@@ -712,11 +712,33 @@ class TestAnnexIvHashStableForNonNativeTypes:
         assert compute_annex_iv_manifest_hash(artifact) == compute_annex_iv_manifest_hash(on_disk)
 
     def test_set_valued_field_round_trip_stable(self) -> None:
-        from forgelm.compliance import compute_annex_iv_manifest_hash
+        from forgelm.compliance import _manifest_json_default, compute_annex_iv_manifest_hash
 
         artifact = {"system_components": {"training_parameters": {"target_modules": {"q_proj", "v_proj", "k_proj"}}}}
-        on_disk = json.loads(json.dumps(artifact, default=str))
+        on_disk = json.loads(json.dumps(artifact, default=_manifest_json_default))
         assert compute_annex_iv_manifest_hash(artifact) == compute_annex_iv_manifest_hash(on_disk)
+
+    def test_set_serialises_deterministically_regardless_of_insertion_order(self) -> None:
+        """A ``set`` of LoRA target_modules must hash identically no matter
+        what iteration order PYTHONHASHSEED imposes — a bare ``default=str``
+        emits members in hash-randomised order, so two processes produced
+        different manifest hashes and a false-tampering verdict
+        (F-P4-OPUS-16)."""
+        from forgelm.compliance import compute_annex_iv_manifest_hash
+
+        modules = {"q_proj", "v_proj", "k_proj", "o_proj"}
+        artifact_a = {"system_components": {"target_modules": set(modules)}}
+        # A frozenset and a differently-constructed set with the same members
+        # stand in for the divergent iteration orders two PYTHONHASHSEED
+        # processes would see; the on-disk shape must be byte-identical.
+        artifact_b = {"system_components": {"target_modules": frozenset(reversed(list(modules)))}}
+        assert compute_annex_iv_manifest_hash(artifact_a) == compute_annex_iv_manifest_hash(artifact_b)
+
+    def test_manifest_default_emits_sorted_list_for_sets(self) -> None:
+        from forgelm.compliance import _manifest_json_default
+
+        assert _manifest_json_default({"b", "a", "c"}) == ["a", "b", "c"]
+        assert _manifest_json_default(frozenset({"z", "y"})) == ["y", "z"]
 
 
 # ---------------------------------------------------------------------------
@@ -762,6 +784,23 @@ class TestAnnexIvSystemIdentificationCompleteness:
         # Writer must skip (return None) rather than emit a §1 stub the
         # verifier would then have to catch.
         assert build_annex_iv_artifact(manifest) is None
+
+    @pytest.mark.parametrize("bad_value", ["ForgeLM-test", ["provider", "system"], 42])
+    def test_non_dict_system_identification_rejected(self, tmp_path: Path, bad_value) -> None:
+        """A non-dict ``system_identification`` passes the bare populated
+        check but cannot carry the §1 identity sub-fields, so the old
+        ``isinstance(dict)`` guard silently skipped the identity gate.  It
+        must be rejected as missing instead."""
+        from forgelm.cli.subcommands._verify_annex_iv import verify_annex_iv_artifact
+
+        artifact = _full_annex_iv_artifact()
+        artifact["system_identification"] = bad_value
+        path = tmp_path / "annex_iv.json"
+        path.write_text(json.dumps(artifact))
+
+        result = verify_annex_iv_artifact(str(path))
+        assert result.valid is False
+        assert "system_identification" in result.missing_fields
 
 
 # ---------------------------------------------------------------------------
@@ -846,6 +885,71 @@ class TestVerifyIntegrity:
         with pytest.raises(SystemExit) as ei:
             _run_verify_integrity_cmd(args, output_format="json")
         assert ei.value.code == 1
+
+    def test_path_is_file_not_dir_exits_config_error(self, tmp_path: Path, capsys) -> None:
+        """A regular-file argument makes open(<file>/model_integrity.json)
+        raise NotADirectoryError; that is caller input (wrong argument) and
+        must map to exit 1, not the generic-OSError exit 2."""
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+
+        not_a_dir = tmp_path / "model.bin"
+        not_a_dir.write_bytes(b"weights")
+        args = _build_args(path=str(not_a_dir))
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_integrity_cmd(args, output_format="json")
+        assert ei.value.code == 1
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+
+    def test_non_string_file_entry_rejected(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        (model_dir / "model_integrity.json").write_text(
+            json.dumps({"artifacts": [{"file": 123, "sha256": "deadbeef"}]})
+        )
+        result = verify_integrity(str(model_dir))
+        assert result.valid is False
+        assert "non-string" in result.reason
+
+    def test_path_traversal_entry_rejected(self, tmp_path: Path) -> None:
+        """A manifest entry whose path escapes the model dir (``../secret``)
+        must be refused rather than hashing an arbitrary out-of-tree file."""
+        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+
+        secret = tmp_path / "secret.txt"
+        secret.write_text("top-secret")
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        (model_dir / "model_integrity.json").write_text(
+            json.dumps({"artifacts": [{"file": "../secret.txt", "sha256": "deadbeef"}]})
+        )
+        result = verify_integrity(str(model_dir))
+        assert result.valid is False
+        assert "escapes" in result.reason
+
+    def test_windows_style_manifest_paths_verify_cross_platform(self, tmp_path: Path) -> None:
+        """A manifest generated on Windows records ``subdir\\file``; verifying
+        it on a POSIX host must not false-positive the file as removed/added
+        — both sides normalise separators to forward slashes."""
+        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+        from forgelm.compliance import _hash_file
+
+        model_dir = tmp_path / "final_model"
+        sub = model_dir / "weights"
+        sub.mkdir(parents=True)
+        payload = b"shard-0"
+        (sub / "shard0.bin").write_bytes(payload)
+        # Hand-craft a manifest with a Windows-style backslash separator.
+        hashed = _hash_file(str(sub / "shard0.bin"), "weights\\shard0.bin")
+        (model_dir / "model_integrity.json").write_text(json.dumps({"artifacts": [hashed]}))
+
+        result = verify_integrity(str(model_dir))
+        assert result.valid is True, result.reason
+        assert result.removed == []
+        assert result.added == []
+        assert result.verified_count == 1
 
 
 # ---------------------------------------------------------------------------

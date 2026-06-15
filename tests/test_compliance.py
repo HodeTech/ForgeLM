@@ -174,6 +174,49 @@ class TestComplianceExport:
             data = json.load(f)
         assert "model_lineage" in data
 
+    def test_mid_promotion_failure_leaves_old_bundle_intact(self, tmp_path, minimal_config):
+        """F-P4-OPUS-10: a failure partway through promotion must roll the
+        published bundle back to its previous (complete) state, never leave a
+        torn bundle that mixes new + old artefacts."""
+        import forgelm.compliance as compliance
+        from forgelm.compliance import export_compliance_artifacts
+
+        cfg = ForgeConfig(**minimal_config())
+        output_dir = str(tmp_path / "compliance")
+
+        # 1. Publish a first, complete bundle (the OLD bundle).
+        manifest_v1 = generate_training_manifest(cfg, metrics={"eval_loss": 0.5})
+        export_compliance_artifacts(manifest_v1, output_dir)
+        report_path = os.path.join(output_dir, "compliance_report.json")
+        with open(report_path) as fh:
+            old_report = json.load(fh)
+        old_listing = sorted(os.listdir(output_dir))
+
+        # 2. Attempt a re-export that fails on the 2nd promotion rename.
+        real_replace = os.replace
+        calls = {"n": 0}
+
+        def flaky_replace(src, dst):
+            # Only count promotions into output_dir (not the backup renames
+            # into the staging dir, which carry a .prev suffix).
+            if os.path.dirname(dst) == output_dir:
+                calls["n"] += 1
+                if calls["n"] == 2:
+                    raise OSError("disk full mid-promotion")
+            return real_replace(src, dst)
+
+        manifest_v2 = generate_training_manifest(cfg, metrics={"eval_loss": 0.123456})
+        with mock.patch.object(compliance.os, "replace", side_effect=flaky_replace):
+            with pytest.raises(OSError, match="disk full"):
+                export_compliance_artifacts(manifest_v2, output_dir)
+
+        # 3. The OLD bundle must survive byte-for-byte and stay complete.
+        assert sorted(os.listdir(output_dir)) == old_listing
+        with open(report_path) as fh:
+            assert json.load(fh) == old_report
+        # No staging clutter left behind.
+        assert not any(name.startswith(".export-tmp-") for name in os.listdir(output_dir))
+
 
 class TestComplianceExportAuditTrail:
     """F-P4-OPUS-11 / XP-12: a failed/torn compliance export must leave an

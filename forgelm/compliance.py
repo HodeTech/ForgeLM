@@ -578,7 +578,11 @@ def generate_model_integrity(final_path: str) -> Dict[str, Any]:
     for root, _dirs, files in os.walk(final_path, followlinks=False):
         for filename in sorted(files):
             filepath = os.path.join(root, filename)
-            rel_path = os.path.relpath(filepath, final_path)
+            # Normalise separators so a Windows-generated manifest records
+            # POSIX-style "subdir/file" rather than "subdir\\file"; the
+            # verifier compares this against an os.relpath on disk that it
+            # normalises the same way, keeping the manifest cross-platform.
+            rel_path = os.path.relpath(filepath, final_path).replace(os.sep, "/")
             real = os.path.realpath(filepath)
             try:
                 contained = os.path.commonpath([real, base]) == base
@@ -1144,6 +1148,21 @@ def build_annex_iv_artifact(manifest: Dict[str, Any]) -> Optional[Dict[str, Any]
     return artifact
 
 
+def _manifest_json_default(o: Any) -> Any:
+    """``json.dumps`` fallback that serialises sets deterministically.
+
+    A bare ``default=str`` stringifies a ``set``/``frozenset`` (e.g. a
+    de-duplicated LoRA ``target_modules``) in PYTHONHASHSEED-dependent
+    iteration order, so the same artefact hashes differently across two
+    processes — a false-tampering verdict.  Emitting ``sorted(list(o))``
+    pins the on-disk shape so the verifier re-hashes a deterministic
+    structure (F-P4-OPUS-16).
+    """
+    if isinstance(o, (set, frozenset)):
+        return sorted(o, key=str)
+    return str(o)
+
+
 def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
     """Canonical SHA-256 over the artifact MINUS its metadata block.
 
@@ -1159,25 +1178,30 @@ def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
     digest.
 
     The payload is normalised through ``json.loads(json.dumps(...,
-    default=str))`` *before* the canonical dump so the writer (which
-    hashes the in-memory dict) and the verifier (which hashes the dict
-    read back from disk) operate on byte-identical structures even when
-    the artefact carries non-JSON-native content.  Without this, an
-    integrator passing a manifest with integer dict keys or a ``set``
-    (e.g. de-duplicated ``target_modules``) would get a false-tampering
-    verdict: ``sort_keys=True`` orders integer keys numerically pre-disk
-    but lexicographically once they round-trip to strings, and
-    ``default=str`` stringifies a set in PYTHONHASHSEED-dependent order
+    default=_manifest_json_default))`` *before* the canonical dump so the
+    writer (which hashes the in-memory dict) and the verifier (which
+    hashes the dict read back from disk) operate on byte-identical
+    structures even when the artefact carries non-JSON-native content.
+    Without this, an integrator passing a manifest with integer dict keys
+    or a ``set`` (e.g. de-duplicated ``target_modules``) would get a
+    false-tampering verdict: ``sort_keys=True`` orders integer keys
+    numerically pre-disk but lexicographically once they round-trip to
+    strings, and a bare ``default=str`` would stringify a set in
+    PYTHONHASHSEED-dependent order.  ``_manifest_json_default`` emits a
+    sorted list for sets so the digest is deterministic across processes
     (F-P4-OPUS-16).  The config-driven path only ever feeds JSON-native
     types, so this is a no-op there; it closes the gap for the
     documented public library entry ``build_annex_iv_artifact``.
     """
     import hashlib as _hashlib
 
-    # Normalise to the post-``default=str`` shape the verifier will see
-    # on disk (this also deep-copies, so the metadata strip below does
-    # not mutate the caller's dict).
-    payload = json.loads(json.dumps(artifact, default=str))
+    # Normalise to the post-default shape the verifier will see on disk
+    # (this also deep-copies, so the metadata strip below does not mutate
+    # the caller's dict).  Sets/frozensets serialise to a sorted list so
+    # the digest is deterministic across PYTHONHASHSEED — ``str(set)``
+    # emits members in hash-randomised order, producing a different hash
+    # in a second process and a false-tampering verdict (F-P4-OPUS-16).
+    payload = json.loads(json.dumps(artifact, default=_manifest_json_default))
     metadata = payload.get("metadata")
     if isinstance(metadata, dict):
         metadata.pop("manifest_hash", None)
@@ -1392,11 +1416,13 @@ def export_compliance_artifacts(
     The five Annex IV artefacts are written all-or-nothing (F-P4-OPUS-10 /
     XP-12): each file is first written into a sibling ``.export-tmp`` staging
     directory, and only after every write succeeds are they promoted into
-    *output_dir* with :func:`os.replace`.  A mid-export failure (disk full,
-    SIGKILL between writes) raises and leaves the staging dir behind for
-    cleanup rather than a torn, partial bundle at the published path that a
-    reader cannot distinguish from a complete one.  Mirrors the tmp+rename
-    discipline of :func:`export_pipeline_manifest`.
+    *output_dir* with :func:`os.replace`.  Promotion itself is also
+    all-or-nothing: each pre-existing target is backed up into the staging
+    dir before it is overwritten, and a mid-promotion failure (disk full,
+    SIGKILL between renames) rolls the published bundle back to its previous
+    state before re-raising — a reader never observes a torn bundle that
+    mixes new and old artefacts.  Mirrors the tmp+rename discipline of
+    :func:`export_pipeline_manifest`.
     """
     import shutil
     import tempfile
@@ -1463,15 +1489,45 @@ def export_compliance_artifacts(
                 json.dump(annex_artifact, f, indent=2, default=str)
             pending.append(("annex_iv_metadata.json", "annex_iv_metadata.json"))
 
-        # All writes succeeded — promote into place. os.replace is atomic per
-        # file on the same filesystem; the brief window where some files are
-        # promoted is bounded by in-memory renames (no I/O can fail partway
-        # through a single rename), so a reader never sees a half-written file.
+        # All writes succeeded — promote into place.  os.replace is atomic
+        # per file, but a multi-file bundle is not atomic across files: a
+        # mid-loop failure (disk full on file 3) would leave files 1-2
+        # published while the rest are dropped on staging cleanup — a torn
+        # bundle a reader cannot distinguish from a complete one
+        # (F-P4-OPUS-10).  Make promotion all-or-nothing by backing up any
+        # pre-existing target into the staging dir before overwriting it; on
+        # any failure, restore every backup and remove the files promoted so
+        # far, leaving the OLD bundle (or an empty dir) intact.  The caller
+        # records the failure via the ``compliance.artifacts_export_failed``
+        # audit event when this function re-raises.
         generated_files: List[str] = []
-        for staging_name, final_name in pending:
-            final_path = os.path.join(output_dir, final_name)
-            os.replace(os.path.join(staging_dir, staging_name), final_path)
-            generated_files.append(final_path)
+        promoted: List[str] = []  # final paths newly written this run
+        backups: List[Tuple[str, str]] = []  # (final_path, backup_path) pairs
+        try:
+            for staging_name, final_name in pending:
+                final_path = os.path.join(output_dir, final_name)
+                if os.path.exists(final_path):
+                    backup_path = os.path.join(staging_dir, final_name + ".prev")
+                    os.replace(final_path, backup_path)
+                    backups.append((final_path, backup_path))
+                os.replace(os.path.join(staging_dir, staging_name), final_path)
+                promoted.append(final_path)
+                generated_files.append(final_path)
+        except OSError:
+            # Roll back: drop the files we just promoted, then restore the
+            # backed-up originals so the published bundle is exactly what it
+            # was before this run.
+            for final_path in promoted:
+                try:
+                    os.remove(final_path)
+                except OSError:
+                    pass
+            for final_path, backup_path in backups:
+                try:
+                    os.replace(backup_path, final_path)
+                except OSError:
+                    pass
+            raise
     finally:
         # Remove the staging dir whether we succeeded (now empty) or raised
         # (still holding un-promoted partial files) — no torn bundle is ever
