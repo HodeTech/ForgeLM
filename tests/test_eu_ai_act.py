@@ -530,6 +530,52 @@ class TestComplianceExportAtomicity:
         published = sorted(os.listdir(out)) if os.path.isdir(out) else []
         assert published == [], f"torn bundle published: {published!r}"
 
+    def test_rollback_failures_are_logged_not_swallowed(self, tmp_path, monkeypatch, caplog):
+        """The promotion rollback path must surface its own remove/replace
+        failures instead of silently ``pass``-ing them, while still
+        propagating the original promotion OSError unchanged. A swallowed
+        rollback error can hide a partially restored bundle from auditors."""
+        import logging as _logging
+
+        from forgelm import compliance as _compliance
+
+        out = str(tmp_path / "compliance")
+        os.makedirs(out)
+        # Pre-existing targets so promotion backs each up before overwriting,
+        # which exercises the backup-restore rollback loop.
+        for name in ("compliance_report.json", "training_manifest.yaml"):
+            with open(os.path.join(out, name), "w") as f:
+                f.write("{}")
+
+        real_replace = os.replace
+
+        def flaky_replace(src, dst, *args, **kwargs):
+            # A promote call moves a file OUT of the staging dir into place;
+            # fail the SECOND such promote so the first file is already in
+            # ``promoted`` and the rollback loops have work to do.
+            if os.path.basename(os.path.dirname(src)).startswith(".export-tmp"):
+                flaky_replace.promotes += 1
+                if flaky_replace.promotes == 2:
+                    raise OSError("disk full during promotion")
+            return real_replace(src, dst, *args, **kwargs)
+
+        flaky_replace.promotes = 0
+
+        def boom_remove(path, *args, **kwargs):
+            raise OSError("remove blocked during rollback")
+
+        monkeypatch.setattr(_compliance.os, "replace", flaky_replace)
+        monkeypatch.setattr(_compliance.os, "remove", boom_remove)
+
+        with caplog.at_level(_logging.ERROR, logger=_compliance.logger.name):
+            with pytest.raises(OSError):
+                export_compliance_artifacts(self._manifest(), out)
+
+        assert any(
+            "Compliance rollback encountered errors" in r.getMessage() and r.levelno == _logging.ERROR
+            for r in caplog.records
+        ), "rollback failure was swallowed instead of logged at ERROR"
+
     def test_successful_export_promotes_all_artifacts(self, tmp_path):
         out = str(tmp_path / "compliance")
         files = export_compliance_artifacts(self._manifest(), out)

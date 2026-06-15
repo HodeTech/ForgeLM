@@ -1517,16 +1517,22 @@ def export_compliance_artifacts(
             # Roll back: drop the files we just promoted, then restore the
             # backed-up originals so the published bundle is exactly what it
             # was before this run.
+            rollback_errors: List[str] = []
             for final_path in promoted:
                 try:
                     os.remove(final_path)
-                except OSError:
-                    pass
+                except OSError as exc:
+                    rollback_errors.append(f"remove failed for {final_path!r}: {exc}")
             for final_path, backup_path in backups:
                 try:
                     os.replace(backup_path, final_path)
-                except OSError:
-                    pass
+                except OSError as exc:
+                    rollback_errors.append(f"restore failed for {final_path!r} from {backup_path!r}: {exc}")
+            if rollback_errors:
+                logger.error(
+                    "Compliance rollback encountered errors after failed promotion: %s",
+                    "; ".join(rollback_errors),
+                )
             raise
     finally:
         # Remove the staging dir whether we succeeded (now empty) or raised
@@ -1917,7 +1923,7 @@ def verify_audit_log(
     # already refuses this combination (``_verify_audit.py``); enforce the
     # same contract at the library boundary so notebook/SDK callers cannot
     # get a fail-open pass (F-P4-OPUS-03).
-    if require_hmac and hmac_secret is None:
+    if require_hmac and not hmac_secret:
         return VerifyResult(
             valid=False,
             entries_count=0,

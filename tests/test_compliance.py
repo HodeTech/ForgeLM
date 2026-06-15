@@ -950,6 +950,24 @@ class TestVerifyAuditLog:
         assert result.valid is False
         assert "hmac_secret" in (result.reason or "")
 
+    def test_verify_audit_require_hmac_with_empty_secret_is_not_valid(self, tmp_path):
+        """F-P4-OPUS-03 (boundary): ``require_hmac=True`` must reject an empty
+        ``hmac_secret=""`` exactly as it rejects ``None``. Pre-fix the guard
+        only checked ``hmac_secret is None``, so an empty string slipped past
+        the strict-mode gate and degraded to a presence-only check — the same
+        fail-open the ``None`` guard exists to prevent. The CLI seam already
+        treats an empty secret as absent; the library boundary must match.
+        """
+        from forgelm.compliance import verify_audit_log
+
+        # NOSONAR test fixture, not a real secret (rule python:S2068 hard-coded credential false-positive)
+        hmac_key = "operator-key"  # noqa: S105
+        log_path = self._build_log(tmp_path, secret=hmac_key, events=3)
+
+        result = verify_audit_log(log_path, hmac_secret="", require_hmac=True)
+        assert result.valid is False
+        assert "hmac_secret" in (result.reason or "")
+
     def test_short_audit_secret_warns_but_still_produces_working_hmac(self, tmp_path, monkeypatch, caplog):
         """F-P5-OPUS-13: a too-short FORGELM_AUDIT_SECRET is accepted (no
         hard-fail) but logs a one-time weak-secret WARNING; the resulting HMAC
