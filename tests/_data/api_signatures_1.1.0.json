@@ -1,0 +1,188 @@
+{
+  "__api_version__": "1.1.0",
+  "symbols": {
+    "AuditLogger": {
+      "kind": "callable",
+      "signature": "(output_dir: str, run_id: Optional[str] = None)"
+    },
+    "AuditReport": {
+      "fields": [
+        "generated_at",
+        "source_path",
+        "source_input",
+        "total_samples",
+        "splits",
+        "cross_split_overlap",
+        "pii_summary",
+        "pii_severity",
+        "near_duplicate_summary",
+        "secrets_summary",
+        "quality_summary",
+        "croissant",
+        "notes"
+      ],
+      "kind": "dataclass"
+    },
+    "BenchmarkResult": {
+      "fields": [
+        "scores",
+        "average_score",
+        "passed",
+        "failure_reason",
+        "raw_results"
+      ],
+      "kind": "dataclass"
+    },
+    "ConfigError": {
+      "kind": "callable",
+      "signature": null
+    },
+    "ForgeConfig": {
+      "fields": [
+        "auth",
+        "compliance",
+        "data",
+        "distributed",
+        "evaluation",
+        "lora",
+        "merge",
+        "model",
+        "monitoring",
+        "pipeline",
+        "retention",
+        "risk_assessment",
+        "synthetic",
+        "training",
+        "webhook"
+      ],
+      "kind": "pydantic_model"
+    },
+    "ForgeTrainer": {
+      "kind": "callable",
+      "signature": "(model: Any, tokenizer: Any, config: Any, dataset: Dict[str, Any])"
+    },
+    "SyntheticDataGenerator": {
+      "kind": "callable",
+      "signature": "(config)"
+    },
+    "TrainResult": {
+      "fields": [
+        "success",
+        "metrics",
+        "final_model_path",
+        "reverted",
+        "error",
+        "benchmark_scores",
+        "benchmark_average",
+        "benchmark_passed",
+        "resource_usage",
+        "safety_passed",
+        "safety_score",
+        "safety_categories",
+        "safety_severity",
+        "safety_low_confidence",
+        "judge_score",
+        "judge_details",
+        "estimated_cost_usd",
+        "staging_path",
+        "awaiting_approval",
+        "run_id",
+        "config_hash"
+      ],
+      "kind": "dataclass"
+    },
+    "VerifyAnnexIVResult": {
+      "kind": "callable",
+      "signature": "(*, valid: 'bool', reason: 'str' = '', missing_fields: 'List[str] | None' = None, manifest_hash_actual: 'str' = '', manifest_hash_expected: 'str' = '') -> 'None'"
+    },
+    "VerifyGgufResult": {
+      "kind": "callable",
+      "signature": "(*, valid: 'bool', reason: 'str' = '', checks: 'Dict[str, Any] | None' = None) -> 'None'"
+    },
+    "VerifyIntegrityResult": {
+      "kind": "callable",
+      "signature": "(*, valid: 'bool', reason: 'str' = '', changed: 'List[str] | None' = None, removed: 'List[str] | None' = None, added: 'List[str] | None' = None, verified_count: 'int' = 0) -> 'None'"
+    },
+    "VerifyResult": {
+      "fields": [
+        "valid",
+        "entries_count",
+        "first_invalid_index",
+        "reason"
+      ],
+      "kind": "dataclass"
+    },
+    "WebhookNotifier": {
+      "kind": "callable",
+      "signature": "(config)"
+    },
+    "audit_dataset": {
+      "kind": "callable",
+      "signature": "(source: 'str', *, output_dir: 'Optional[str]' = None, near_dup_threshold: 'int' = 3, dedup_method: 'str' = 'simhash', minhash_jaccard: 'float' = 0.85, minhash_num_perm: 'int' = 128, enable_quality_filter: 'bool' = False, enable_pii_ml: 'bool' = False, pii_ml_language: 'str' = 'en', emit_croissant: 'bool' = False, workers: 'int' = 1) -> 'AuditReport'"
+    },
+    "compute_minhash": {
+      "kind": "callable",
+      "signature": "(text: 'str', *, num_perm: 'int' = 128) -> 'Optional[Any]'"
+    },
+    "compute_simhash": {
+      "kind": "callable",
+      "signature": "(text: 'str', *, bits: 'int' = 64) -> 'int'"
+    },
+    "detect_pii": {
+      "kind": "callable",
+      "signature": "(text: 'Any') -> 'Dict[str, int]'"
+    },
+    "detect_secrets": {
+      "kind": "callable",
+      "signature": "(text: 'Any') -> 'Dict[str, int]'"
+    },
+    "get_model_and_tokenizer": {
+      "kind": "callable",
+      "signature": "(config: Any) -> Tuple[Any, Any]"
+    },
+    "load_config": {
+      "kind": "callable",
+      "signature": "(config_path: str) -> forgelm.config.ForgeConfig"
+    },
+    "manage_checkpoints": {
+      "kind": "callable",
+      "signature": "(checkpoint_dir: str, action: str = 'keep') -> None"
+    },
+    "mask_pii": {
+      "kind": "callable",
+      "signature": "(text: 'Any', replacement: 'str' = '[REDACTED]', *, return_counts: 'bool' = False) -> 'Any'"
+    },
+    "mask_secrets": {
+      "kind": "callable",
+      "signature": "(text: 'Any', replacement: 'str' = '[REDACTED-SECRET]', *, return_counts: 'bool' = False) -> 'Any'"
+    },
+    "prepare_dataset": {
+      "kind": "callable",
+      "signature": "(config: 'Any', tokenizer: 'PreTrainedTokenizer') -> 'Dict[str, Any]'"
+    },
+    "run_benchmark": {
+      "kind": "callable",
+      "signature": "(model: Any, tokenizer: Any, tasks: List[str], num_fewshot: Optional[int] = None, batch_size: str = 'auto', limit: Optional[int] = None, output_dir: Optional[str] = None, min_score: Optional[float] = None) -> forgelm.benchmark.BenchmarkResult"
+    },
+    "setup_authentication": {
+      "kind": "callable",
+      "signature": "(token: Optional[str] = None) -> None"
+    },
+    "verify_annex_iv_artifact": {
+      "kind": "callable",
+      "signature": "(path: 'str') -> 'VerifyAnnexIVResult'"
+    },
+    "verify_audit_log": {
+      "kind": "callable",
+      "signature": "(path: str, *, hmac_secret: Optional[str] = None, require_hmac: bool = False) -> forgelm.compliance.VerifyResult"
+    },
+    "verify_gguf": {
+      "kind": "callable",
+      "signature": "(path: 'str') -> 'VerifyGgufResult'"
+    },
+    "verify_integrity": {
+      "kind": "callable",
+      "signature": "(model_dir: 'str') -> 'VerifyIntegrityResult'"
+    }
+  }
+}

@@ -223,9 +223,6 @@ forgelm audit data/ --output ./audit/ --pii-ml
 
 # stdout'a makine-okunabilir özet
 forgelm audit data/sft.jsonl --output ./audit/ --output-format json
-
-# Eski alias (çalışmaya devam ediyor; bir uyarı log'lanır)
-forgelm --data-audit data/sft.jsonl --output ./audit/
 ```
 
 Denetim şunları yakalar: split başına örnek sayısı + uzunluk dağılımı, top-3 dil tespiti, **LSH-banded** simhash near-duplicate oranı (uç eşiklerde brute-force fallback; opsiyonel **MinHash LSH** yolu `--dedup-method minhash` ile), cross-split sızıntı (sessiz train-test örtüşmesi), PII flag sayıları + **şiddet katmanları** (`pii_severity` bloğu her PII tipini critical / high / medium / low olarak puanlar ve bir `worst_tier` verdict yüzdürür), her zaman açık **credentials/secrets taraması** (`secrets_summary` — `forgelm.data_audit.SECRET_TYPES`'ta tanımlı dokuz aile: `aws_access_key`, `github_token`, `slack_token`, `openai_api_key`, `google_api_key`, `jwt`, `openssh_private_key` (tam BEGIN…END bloğu), `pgp_private_key` (tam BEGIN…END bloğu), `azure_storage_key`), ve opt-in **heuristik kalite filtresi** (`--quality-filter`, `quality_summary` bloğu üretir).

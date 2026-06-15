@@ -102,7 +102,6 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 
 | Event                       | Ne zaman emit edilir                                                                                  | Payload                          | Madde |
 |-----------------------------|--------------------------------------------------------------------------------------------------------|----------------------------------|-------|
-| `cli.legacy_flag_invoked`   | Deprecated bir CLI flag'i kullanıldı (örn. `--data-audit`).                                            | `flag`, `replacement`, `version` | 12    |
 
 ### Audit-sistem event'leri (meta)
 

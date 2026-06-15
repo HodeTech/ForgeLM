@@ -44,8 +44,11 @@ except PackageNotFoundError:  # pragma: no cover — uninstalled-source path
 # v0.5.7 fixes a runtime ``SFTConfig.max_seq_length`` TypeError on
 # modern trl (rename to ``max_length`` in trl 0.13+) plus the Intel
 # Mac NumPy 2 ABI mismatch (numpy<2 marker + ``numpy.torch_abi``
-# doctor probe).  None of these patches change the Python API
-# surface, so ``__api_version__`` stays at 1.0.0.
-__api_version__ = "1.0.0"
+# doctor probe).  None of those patches changed the Python API surface,
+# so ``__api_version__`` stayed at 1.0.0 through v0.7.0.
+# Bumped to 1.1.0 in v0.8.0: the stable ``verify_integrity`` callable and
+# ``VerifyIntegrityResult`` dataclass were added to ``forgelm.__all__``
+# (additive → MINOR ``__api_version__`` bump per the rule above).
+__api_version__ = "1.1.0"
 
 __all__ = ["__version__", "__api_version__"]

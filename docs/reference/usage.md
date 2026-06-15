@@ -238,9 +238,6 @@ forgelm audit data/ --output ./audit/ --pii-ml
 
 # Machine-readable summary on stdout
 forgelm audit data/sft.jsonl --output ./audit/ --output-format json
-
-# Legacy alias (kept working; logs a one-line deprecation notice)
-forgelm --data-audit data/sft.jsonl --output ./audit/
 ```
 
 The audit captures: per-split sample count + length distribution, top-3 language detection, **LSH-banded** simhash near-duplicate rate (brute-force fallback at edge thresholds; optional **MinHash LSH** path via `--dedup-method minhash`), cross-split leakage (silent train-test overlap), PII flag counts with **severity tiers**, **always-on credentials/secrets scan** (`secrets_summary` — nine families per `forgelm.data_audit.SECRET_TYPES`: `aws_access_key`, `github_token`, `slack_token`, `openai_api_key`, `google_api_key`, `jwt`, `openssh_private_key` (full BEGIN…END block), `pgp_private_key` (full BEGIN…END block), `azure_storage_key`), and an opt-in **heuristic quality filter** (Gopher/C4 style) that adds a `quality_summary` block.

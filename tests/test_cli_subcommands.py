@@ -139,91 +139,16 @@ class TestAuditSubcommand:
         assert fake.called, "_run_data_audit was never invoked; patch target may have drifted"
         assert fake.call_args.kwargs["enable_quality_filter"] is True
 
-    def test_legacy_data_audit_flag_still_works(self, tmp_path):
+    def test_legacy_data_audit_flag_removed(self, tmp_path):
+        """The legacy ``forgelm --data-audit PATH`` flag was removed in v0.8.0;
+        operators use the ``forgelm audit PATH`` subcommand instead. argparse
+        now rejects the flag at the CLI boundary (exit 2)."""
         data_path = tmp_path / "data.jsonl"
-        self._make_jsonl(data_path, [{"text": "legacy alias still routes here"}])
-        out_dir = tmp_path / "audit"
-
-        with patch(
-            "sys.argv",
-            ["forgelm", "--data-audit", str(data_path), "--output", str(out_dir)],
-        ):
+        self._make_jsonl(data_path, [{"text": "x"}])
+        with patch("sys.argv", ["forgelm", "--data-audit", str(data_path)]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
-            assert exc_info.value.code == EXIT_SUCCESS
-
-        # Same on-disk product as the subcommand path.
-        assert (out_dir / "data_audit_report.json").is_file()
-
-    def test_legacy_data_audit_flag_runs_quality_filter_like_subcommand(self, tmp_path):
-        # F-P7-OPUS-01 regression: the legacy `--data-audit` alias claims
-        # "same behaviour, same output" as `forgelm audit`.  The subcommand
-        # defaults --quality-filter ON (v0.6.0+), so the legacy flag must
-        # also populate quality_summary — otherwise the two invocations emit
-        # divergent EU AI Act Art. 10 governance artifacts.
-        data_path = tmp_path / "data.jsonl"
-        self._make_jsonl(
-            data_path,
-            [{"text": "1234567890 !@#$%^&*()"}, {"text": "fine prose passes the heuristics."}],
-        )
-        out_dir = tmp_path / "audit"
-
-        with patch(
-            "sys.argv",
-            ["forgelm", "--data-audit", str(data_path), "--output", str(out_dir)],
-        ):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-            assert exc_info.value.code == EXIT_SUCCESS
-
-        with open(out_dir / "data_audit_report.json", encoding="utf-8") as fh:
-            report = json.load(fh)
-        # Quality filter is ON by default for the subcommand; the legacy
-        # alias must match (populated quality_summary, not absent/empty).
-        assert report.get("quality_summary"), "legacy alias must run the quality filter like the subcommand"
-
-    def test_legacy_data_audit_flag_emits_deprecation_warning_and_audit_event(self, tmp_path):
-        """Phase 13 (Faz 13) — `--data-audit` is a documented deprecation path.
-
-        Verifies three contract points the deprecation must satisfy:
-          1. A real ``DeprecationWarning`` fires (so `python -Wd` / CI
-             warning gates surface it).
-          2. The append-only audit log records `cli.legacy_flag_invoked`
-             with the documented payload (flag / replacement / version).
-          3. The deprecated invocation still completes successfully — the
-             warning is informational, never aborts the run.
-        """
-        data_path = tmp_path / "data.jsonl"
-        self._make_jsonl(data_path, [{"text": "deprecation contract probe"}])
-        out_dir = tmp_path / "audit"
-
-        with patch(
-            "sys.argv",
-            ["forgelm", "--data-audit", str(data_path), "--output", str(out_dir)],
-        ):
-            with pytest.warns(DeprecationWarning, match=r"--data-audit"):
-                with pytest.raises(SystemExit) as exc_info:
-                    main()
-            # Contract point #3: deprecated path must still exit 0.
-            assert exc_info.value.code == EXIT_SUCCESS
-
-        # Contract point #2: audit log carries the legacy-flag breadcrumb.
-        audit_log_path = out_dir / "audit_log.jsonl"
-        assert audit_log_path.is_file(), "legacy flag should produce an audit_log.jsonl entry"
-        events = [json.loads(line) for line in audit_log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-        legacy_events = [e for e in events if e.get("event") == "cli.legacy_flag_invoked"]
-        assert len(legacy_events) == 1, f"expected exactly one legacy-flag event, got {legacy_events}"
-        evt = legacy_events[0]
-        assert evt["flag"] == "--data-audit"
-        assert evt["replacement"] == "forgelm audit"
-        # v0.7.0 cut-release moved the removal target out one minor to
-        # v0.8.0 (preserves the one-minor warning window per
-        # docs/standards/release.md#deprecation-cadence).
-        assert evt["version"] == "v0.8.0 removal"
-
-        # Sanity: the deprecated path still produced the report — the
-        # warning is purely informational.
-        assert (out_dir / "data_audit_report.json").is_file()
+        assert exc_info.value.code == 2
 
     def test_audit_quality_filter_flag(self, tmp_path):
         # Phase 12: --quality-filter populates quality_summary.

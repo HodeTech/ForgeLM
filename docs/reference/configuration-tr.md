@@ -216,11 +216,11 @@ training:
 > Limitler sabittir (henüz config ile ayarlanamaz) — uzun biçimli ince ayarlar
 > için `min_score` ayarlarken bunu göz önünde bulundurun.
 >
-> **Kullanımdan kaldırıldı:** `evaluation.staging_ttl_days`,
+> **Kaldırıldı:** `evaluation.staging_ttl_days`,
 > [`retention.staging_ttl_days`](#retention-isteğe-bağlı--gdpr-madde-17-silme-ufukları)
-> tarafından devralınmıştır. Eski anahtar `DeprecationWarning` ile alias-forward
-> edilir ve v0.8.0'da kaldırılır.
-> Bkz. [release.md](../standards/release.md#deprecation-cadence).
+> tarafından devralınmış ve v0.8.0'da kaldırılmıştır. `retention.staging_ttl_days`
+> kullanın; eski anahtarı hâlâ set eden YAML dosyaları `EXIT_CONFIG_ERROR` ile
+> config-load başarısızlığına yol açar.
 
 ---
 
@@ -236,16 +236,15 @@ uzatmasını engeller.
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
 | `audit_log_retention_days` | int | `1825` (~5 yıl) | `audit_log.jsonl` dosyasının Madde 5(1)(e) kapsamında "geciken" olarak işaretlenmeden önce saklanacağı gün sayısı. `0` süresiz saklamayı belirtir (Madde 17(3)(b) savunması). |
-| `staging_ttl_days` | int | `7` | `forgelm reject` kararından sonra `final_model.staging.<run_id>/` dizininin planlı temizlenmeden önce saklanacağı gün sayısı. `0` süresiz saklama anlamına gelir. Kullanımdan kaldırılan `evaluation.staging_ttl_days` yerine geçer; deprecation penceresinde her iki anahtar da aynı değerlerle kabul edilir (eski anahtar v0.8.0'da kaldırılır). |
+| `staging_ttl_days` | int | `7` | `forgelm reject` kararından sonra `final_model.staging.<run_id>/` dizininin planlı temizlenmeden önce saklanacağı gün sayısı. `0` süresiz saklama anlamına gelir. v0.8.0'da kaldırılan `evaluation.staging_ttl_days` yerine geçer. |
 | `ephemeral_artefact_retention_days` | int | `90` | Uyumluluk paketleri, veri denetim raporları ve diğer çalışma kapsamlı türetilmiş artefaktların saklanma süresi (gün). `0` süresiz saklama. |
 | `raw_documents_retention_days` | int | `90` | İngest edilmiş ham belgelerin (PDF / DOCX / EPUB / TXT / Markdown) operatörün ingestion-output dizininde saklanma süresi (gün). `0` süresiz saklama. |
 | `enforce` | string | `"log_only"` | Politika uygulama modu: `"log_only"` (yalnızca audit log), `"warn_on_excess"` (stderr'e yapılandırılmış uyarı), `"block_on_excess"` (`EXIT_EVAL_FAILURE` = 3 ile trainer ön-kontrolünü iptal eder). |
 
-> **Kullanımdan kaldırma:** `evaluation.staging_ttl_days`, v0.5.5 itibarıyla
-> `retention.staging_ttl_days` lehine kullanımdan kaldırılmıştır. Eski anahtar
-> v0.8.0'daki kaldırılışına kadar `DeprecationWarning` ile alias-forward edilir.
-> Tam deprecation politikası için
-> [release.md](../standards/release.md#deprecation-cadence).
+> **Kaldırıldı:** `evaluation.staging_ttl_days` (v0.5.5 itibarıyla kullanımdan
+> kaldırılmıştı) v0.8.0'da kaldırılmıştır. Artık geçerli tek form
+> `retention.staging_ttl_days`'dir. Eski anahtarı hâlâ set eden YAML dosyaları
+> `EXIT_CONFIG_ERROR` ile config-load başarısızlığına yol açar.
 
 ---
 

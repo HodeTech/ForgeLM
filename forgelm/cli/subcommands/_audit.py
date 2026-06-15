@@ -1,8 +1,8 @@
-"""``forgelm audit`` dispatcher + the legacy ``--data-audit`` worker.
+"""``forgelm audit`` dispatcher + the shared dataset-audit worker.
 
-The legacy ``forgelm --data-audit PATH`` flag is still routed here from
-``main()`` (with a deprecation warning); both entry points share the same
-underlying audit code so behaviour stays identical.
+``_run_data_audit`` is the underlying worker behind the ``forgelm audit``
+subcommand. (The legacy ``forgelm --data-audit PATH`` flag that previously
+shared this code path was removed in v0.8.0.)
 """
 
 from __future__ import annotations
@@ -33,11 +33,9 @@ def _run_data_audit(
 ) -> None:
     """Phase 11 / 11.5 / 12 dispatch: dataset quality + governance audit.
 
-    The behaviour is identical whether the operator reaches us via the
-    Phase 11.5 ``forgelm audit`` subcommand or the legacy ``--data-audit``
-    flag, so existing CI pipelines keep working unchanged. Phase 13 moved
-    the legacy-flag deprecation notice + audit-log event up to the
-    dispatch site in :func:`main` so this helper stays single-purpose.
+    Reached via the ``forgelm audit`` subcommand. (The legacy
+    ``--data-audit`` flag that previously shared this worker was removed in
+    v0.8.0; this helper stays single-purpose.)
     """
     from ...data_audit import (
         DEFAULT_MINHASH_JACCARD,

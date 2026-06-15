@@ -102,7 +102,6 @@ The hash chain advances after the line lands on disk (`flush` + `fsync`), so an 
 
 | Event                       | When emitted                                                                                       | Payload                          | Article |
 |-----------------------------|----------------------------------------------------------------------------------------------------|----------------------------------|---------|
-| `cli.legacy_flag_invoked`   | A deprecated CLI flag was used (e.g., `--data-audit`).                                             | `flag`, `replacement`, `version` | 12      |
 
 ### Audit-system events (meta)
 

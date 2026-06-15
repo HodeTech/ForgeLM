@@ -826,22 +826,9 @@ class EvaluationConfig(BaseModel):
         default=False,
         description="Article 14: pause the pipeline for human review (stages model under `final_model.staging.<run_id>/` and exits 4).",
     )
-    # ``final_model.staging.<run_id>/`` retention horizon for `forgelm reject` paths.
-    # Documented now (v0.5.5) so operators can plan their evidence-preservation
-    # policy; auto-deletion enforcement is deferred to Phase 21 (GDPR
-    # right-to-erasure) where it lands alongside the broader retention
-    # framework. Setting the value today has no runtime effect — it is
-    # surfaced in the compliance manifest so reviewers can audit the policy.
-    staging_ttl_days: int = Field(
-        default=7,
-        ge=0,
-        description=(
-            "Article 14: number of days to retain `final_model.staging.<run_id>/` after a "
-            "`forgelm reject` decision before scheduled cleanup. Zero means retain "
-            "indefinitely. Auto-deletion enforcement is deferred to Phase 21 "
-            "(GDPR right-to-erasure)."
-        ),
-    )
+    # NOTE: the legacy ``evaluation.staging_ttl_days`` field was removed in
+    # v0.8.0 (deprecated in v0.7.0). The staging-retention horizon now lives
+    # solely on the canonical ``retention.staging_ttl_days`` block.
 
 
 # EU AI Act risk taxonomy — single source of truth shared by
@@ -1149,8 +1136,8 @@ class RetentionConfig(BaseModel):
         ge=0,
         description=(
             "Days to retain `final_model.staging.<run_id>/` after a `forgelm reject` decision before scheduled cleanup. "
-            "Set to 0 to retain indefinitely.  Replaces (and supersedes) the deprecated "
-            "`evaluation.staging_ttl_days`; both fields are accepted with identical values during the deprecation window (legacy field removed in v0.8.0)."
+            "Set to 0 to retain indefinitely. This is the canonical staging-retention field; "
+            "the legacy `evaluation.staging_ttl_days` alias was removed in v0.8.0."
         ),
     )
     ephemeral_artefact_retention_days: int = Field(
@@ -1494,137 +1481,7 @@ class ForgeConfig(BaseModel):
         # bespoke `_validate_trainer_type` runtime check became redundant.
         self._validate_galore()
         self._validate_distributed()
-        self._reconcile_staging_ttl_days()
         return self
-
-    def _reconcile_staging_ttl_days(self) -> None:
-        """Phase 21 deprecation cadence:  reconcile the legacy
-        ``evaluation.staging_ttl_days`` against the canonical
-        ``retention.staging_ttl_days``.
-
-        Per Phase 20 design §3.1 v2 (and gdpr-erasure-design L75-81):
-
-        - When **only** ``evaluation.staging_ttl_days`` is set →
-          alias-forward to ``retention.staging_ttl_days`` (creating
-          ``retention`` block if missing) and emit a single
-          ``DeprecationWarning`` naming the new field + the v0.8.0
-          removal target.
-        - When **only** ``retention.staging_ttl_days`` is set → no
-          warning; canonical path.
-        - When **both** are set with **identical** values → emit
-          ``DeprecationWarning`` for the deprecated field; the canonical
-          ``retention.staging_ttl_days`` value wins; operator's intent
-          is unambiguous.
-        - When **both** are set with **different** values → raise
-          ``ConfigError`` at validation time naming both keys, both
-          values, and instructing the operator to remove the deprecated
-          entry.  Silent winner = wrong winner.
-
-        Wave 2b Round-4 review F-W2B-02 fix: Pydantic v2 exposes
-        ``model_fields_set`` exactly to distinguish "operator wrote
-        the field in YAML" from "Pydantic filled the default".  We
-        consult that set so an operator who follows the documented
-        deprecation cadence (delete the deprecated key, add the
-        canonical block) is not refused with ``ConfigError`` because
-        the deprecated default-7 was re-filled.  The previous
-        "value differs from default" heuristic mis-handled the
-        explicit-default + canonical-different scenario.
-        """
-        # Bind the optional sub-models locally so the type narrowing is
-        # visible to static analysers (SonarCloud S2259) and the field-
-        # explicitness checks below cannot race against another mutator.
-        evaluation = self.evaluation
-        retention = self.retention
-
-        legacy_was_explicitly_set = bool(evaluation is not None and "staging_ttl_days" in evaluation.model_fields_set)
-        legacy = evaluation.staging_ttl_days if (legacy_was_explicitly_set and evaluation is not None) else None
-        # Wave 2b Round-5 review F-W2B-RETENTION: applying the same
-        # ``model_fields_set`` test to the canonical block.  An operator
-        # who writes ``retention: {audit_log_retention_days: 1825}``
-        # (no staging key) leaves ``staging_ttl_days`` at its default
-        # of 7; treating that 7 as an explicit canonical value would
-        # spuriously raise ``ConfigError`` when paired with
-        # ``evaluation.staging_ttl_days: 14``.  We only treat
-        # ``retention.staging_ttl_days`` as canonical when the operator
-        # actually wrote it.
-        canonical_was_explicitly_set = bool(retention is not None and "staging_ttl_days" in retention.model_fields_set)
-        canonical = retention.staging_ttl_days if (canonical_was_explicitly_set and retention is not None) else None
-
-        # Both unset → nothing to do.
-        if legacy is None and canonical is None:
-            return
-        # Only canonical set (or operator deleted the deprecated key) →
-        # canonical path; no warning.
-        if legacy is None and canonical is not None:
-            return
-        # Only legacy set explicitly → alias-forward.
-        if legacy is not None and canonical is None:
-            self._apply_legacy_alias_forward(legacy, retention)
-            return
-        # Both set.  Compare.
-        if legacy == canonical:
-            self._emit_legacy_match_warning()
-            return
-        # Both set with different values → refuse.
-        raise ConfigError(
-            "Conflicting staging_ttl_days values: "
-            f"`evaluation.staging_ttl_days={legacy}` (deprecated, forwards to "
-            f"`retention.staging_ttl_days`) vs `retention.staging_ttl_days={canonical}` "
-            "(canonical).  Remove the deprecated entry; the canonical block wins.  "
-            "(Tracking issue: removal scheduled for v0.8.0 per "
-            "docs/standards/release.md#deprecation-cadence.)"
-        )
-
-    def _apply_legacy_alias_forward(self, legacy: int, retention: Optional["RetentionConfig"]) -> None:
-        """Mirror ``evaluation.staging_ttl_days`` onto ``retention.staging_ttl_days``.
-
-        ``model_copy(update=...)`` preserves any other ``retention.*`` keys
-        the operator already wrote (e.g. ``audit_log_retention_days: 1825``
-        paired with ``evaluation.staging_ttl_days: 14``).  The previous
-        ``RetentionConfig(staging_ttl_days=legacy)`` constructor call would
-        have silently discarded those.
-
-        ``stacklevel=5`` is tuned so the DeprecationWarning surfaces at the
-        operator's ``ForgeConfig(...)`` call site rather than inside the
-        Pydantic ``@model_validator`` machinery (caller →
-        ``_reconcile_staging_ttl_days`` → here).
-        """
-        if retention is not None:
-            self.retention = retention.model_copy(update={"staging_ttl_days": legacy})
-        else:
-            self.retention = RetentionConfig(staging_ttl_days=legacy)
-        # Pair the DeprecationWarning with a logger.warning: CPython's default
-        # filters suppress DeprecationWarning emitted outside __main__, so the
-        # warnings.warn call alone never reaches a CLI operator (F-P1-FAB-17).
-        # The logger line mirrors the lora.use_dora / sample_packing idiom and
-        # surfaces on the CLI path; the warnings.warn keeps `-W error` / CI
-        # deprecation sweeps working for library consumers.
-        message = (
-            "`evaluation.staging_ttl_days` is deprecated and forwards to "
-            "`retention.staging_ttl_days`. "
-            "Move the value under the new top-level `retention:` block; the "
-            "deprecated field is removed in v0.8.0."
-        )
-        logger.warning(message)
-        warnings.warn(message, DeprecationWarning, stacklevel=5)
-
-    def _emit_legacy_match_warning(self) -> None:
-        """Warn when both fields are set to identical values; canonical wins.
-
-        ``stacklevel=5`` matches :meth:`_apply_legacy_alias_forward` so both
-        deprecation paths attribute the warning to the same operator
-        call frame.
-        """
-        # See `_apply_legacy_alias_forward`: pair the logger.warning so the
-        # deprecation reaches CLI operators, not just `-W error` consumers.
-        message = (
-            "`evaluation.staging_ttl_days` is deprecated; the value matches "
-            "`retention.staging_ttl_days` so the canonical block wins.  Remove "
-            "`evaluation.staging_ttl_days` from your YAML — the deprecated field "
-            "is removed in v0.8.0."
-        )
-        logger.warning(message)
-        warnings.warn(message, DeprecationWarning, stacklevel=5)
 
 
 class ConfigError(Exception):
@@ -1853,21 +1710,18 @@ def merge_pipeline_stage_config(
     """
     # ``exclude_unset=True`` so only keys the operator actually wrote
     # round-trip — re-validation re-fills defaults identically.  Without it,
-    # ``model_dump`` materialises *unset* defaults (e.g. an ``evaluation``
-    # block dumps ``staging_ttl_days=7``); on re-validation every dumped key
-    # counts as ``model_fields_set``, so a root with a canonical
-    # ``retention.staging_ttl_days != 7`` plus any ``evaluation`` block would
-    # falsely raise ``ConfigError`` ("conflicting staging_ttl_days") for a
-    # field the operator never wrote (F-P1-FAB-03).  ``exclude_none=True``
-    # additionally drops inherited ``Optional[T] = None`` fields so the
-    # per-stage manifest is not inflated with no-op None values.
+    # ``model_dump`` materialises *unset* defaults; on re-validation every
+    # dumped key counts as ``model_fields_set``, which can spuriously trip
+    # cross-field validators that fire only on operator-written values
+    # (F-P1-FAB-03).  ``exclude_none=True`` additionally drops inherited
+    # ``Optional[T] = None`` fields so the per-stage manifest is not inflated
+    # with no-op None values.
     base = root_cfg.model_dump(exclude_none=True, exclude_unset=True)
     base.pop("pipeline", None)
 
     # Stage overrides use the same ``exclude_unset=True`` rationale as the root
-    # dump above: a stage ``evaluation`` block that omits ``staging_ttl_days``
-    # must not materialise the default ``7`` and falsely conflict with a
-    # canonical ``retention.staging_ttl_days`` on re-validation (F-P1-FAB-03).
+    # dump above: a stage block that omits a field must not materialise that
+    # field's default as though the operator had written it (F-P1-FAB-03).
     if stage.model is not None:
         base["model"] = stage.model.model_dump(exclude_none=True, exclude_unset=True)
     if stage.lora is not None:

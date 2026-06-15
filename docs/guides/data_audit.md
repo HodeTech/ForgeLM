@@ -47,10 +47,6 @@ forgelm audit data/ --quality-filter
 forgelm audit data/ --workers 4
 ```
 
-> **Legacy alias:** `forgelm --data-audit PATH` keeps working unchanged
-> as a deprecation alias and logs a one-line notice. New scripts should
-> use the `audit` subcommand. Removal targeted no earlier than `v0.7.0`.
-
 `--output` defaults to `./audit/`. The directory is created if missing;
 the **full** `data_audit_report.json` is always written there. Stdout shows
 a human-readable summary by default; pass `--output-format json` to get
@@ -526,10 +522,6 @@ field that varies is `generated_at`, the wall-clock timestamp).  This
 invariant is pinned by `tests/test_data_audit_workers.py` so a CI gate
 that compares the audit-report hash across runs continues to work
 when an operator switches from `--workers 1` to `--workers 4`.
-
-The legacy `forgelm --data-audit PATH` flag is preserved as a
-deprecation alias and logs a one-line notice. Behaviour is identical;
-new scripts should use the subcommand.
 
 ---
 

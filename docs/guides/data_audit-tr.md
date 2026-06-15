@@ -47,10 +47,6 @@ forgelm audit data/ --quality-filter
 forgelm audit data/ --workers 4
 ```
 
-> **Eski alias:** `forgelm --data-audit PATH` deprecation alias'ı
-> olarak korunuyor; çalışmaya devam ediyor ama bir uyarı log'lanıyor.
-> Yeni script'lerde `audit` subcommand'ını kullanın.
-
 `--output` varsayılan olarak `./audit/`'tir. Dizin yoksa oluşturulur;
 **tam** `data_audit_report.json` her zaman oraya yazılır. Stdout
 varsayılan olarak insan-okunabilir özet gösterir; `--output-format json`
@@ -528,11 +524,6 @@ default-AÇIK**) heuristic kalite skorlamasını çalıştırır;
 `--no-quality-filter` v0.6.0 öncesi opt-in semantiklerini isteyen
 operatörler için opt-out sağlar. Credential/secrets taraması **her
 zaman açık** — kapatma flag'i yoktur.
-
-Eski `forgelm --data-audit PATH` flag'i deprecation alias olarak
-korunuyor; davranış aynı, sadece ek bir uyarı log'lanıyor.
-
-Üst düzey flag'tir (subcommand değil) — trainer'a dokunmadan çıkar.
 
 > **Not:** Bu davranış kılavuzun başındaki özetle eşleşir:
 > `--output-format json` stdout'a küçük bir zarf (success flag, üst
