@@ -91,10 +91,12 @@ Both algorithms are streaming — they don't load the whole dataset into memory.
 To drop duplicates, use the pair-level report that audit writes to disk:
 
 ```shell
-# Get the indices of duplicate rows and filter them out with jq
+# Get the indices of duplicate rows and filter them out with jq.
+# -s/--slurp reads the whole .jsonl into one array so to_entries maps LINE
+# indices (not each object's keys); -c writes the kept lines back as JSONL.
 $ jq '[.near_duplicate_summary.pairs[].row_b] | unique' audit/data_audit_report.json > dup_indices.json
-$ jq --slurpfile dups dup_indices.json \
-     '[to_entries[] | select(.key as $i | $dups[0] | index($i) | not) | .value]' \
+$ jq -cs --slurpfile dups dup_indices.json \
+     'to_entries[] | select(.key as $i | ($dups[0] | index($i)) | not) | .value' \
      data/train.jsonl > data/train.dedup.jsonl
 $ forgelm audit data/train.dedup.jsonl   # verify
 ```

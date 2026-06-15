@@ -91,10 +91,12 @@ Permutasyon sayısı ve LSH banding bugün kullanıcı tarafından ayarlanabilir
 Tekrarları düşürmek için audit'in diske yazdığı çift seviyesindeki raporu kullanın:
 
 ```shell
-# Tekrar satır indislerini alın ve jq ile filtreleyin
+# Tekrar satır indislerini alın ve jq ile filtreleyin.
+# -s/--slurp tüm .jsonl'i tek bir diziye okur; böylece to_entries her nesnenin
+# anahtarlarına değil SATIR indislerine eşlenir; -c kalan satırları JSONL yazar.
 $ jq '[.near_duplicate_summary.pairs[].row_b] | unique' audit/data_audit_report.json > dup_indices.json
-$ jq --slurpfile dups dup_indices.json \
-     '[to_entries[] | select(.key as $i | $dups[0] | index($i) | not) | .value]' \
+$ jq -cs --slurpfile dups dup_indices.json \
+     'to_entries[] | select(.key as $i | ($dups[0] | index($i)) | not) | .value' \
      data/train.jsonl > data/train.dedup.jsonl
 $ forgelm audit data/train.dedup.jsonl   # doğrula
 ```

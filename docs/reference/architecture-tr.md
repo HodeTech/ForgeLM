@@ -11,11 +11,12 @@ forgelm --config job.yaml
     │   ├── _parser.py          → 19 subcommand + global flag
     │   ├── _dispatch.py        → Mod yönlendirici
     │   ├── _exit_codes.py      → 0/1/2/3/4/5 sözleşmesi
-    │   └── subcommands/        → Subcommand-başına handler'lar
+    │   └── subcommands/        → Subcommand-başına handler'lar (19 subcommand)
     │       ├── ingest, audit, chat, export, deploy, doctor,
-    │       │   cache, purge, reverse_pii, approve, approvals,
-    │       │   safety_eval, verify_audit, verify_annex_iv,
-    │       │   verify_gguf, verify_integrity, quickstart
+    │       │   cache-models, cache-tasks, purge, reverse-pii,
+    │       │   approve, reject, approvals, safety-eval,
+    │       │   verify-audit, verify-annex-iv, verify-gguf,
+    │       │   verify-integrity, quickstart
     ├── config.py           → Pydantic doğrulama (23 config modeli)
     ├── utils.py            → HF kimlik doğrulama
     ├── model.py            → Model + tokenizer + LoRA/PEFT yükleme

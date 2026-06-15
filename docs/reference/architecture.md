@@ -11,11 +11,12 @@ forgelm --config job.yaml
     │   ├── _parser.py          → 19 subcommands + global flags
     │   ├── _dispatch.py        → Mode dispatcher
     │   ├── _exit_codes.py      → 0/1/2/3/4/5 contract
-    │   └── subcommands/        → Per-subcommand handlers
+    │   └── subcommands/        → Per-subcommand handlers (19 subcommands)
     │       ├── ingest, audit, chat, export, deploy, doctor,
-    │       │   cache, purge, reverse_pii, approve, approvals,
-    │       │   safety_eval, verify_audit, verify_annex_iv,
-    │       │   verify_gguf, verify_integrity, quickstart
+    │       │   cache-models, cache-tasks, purge, reverse-pii,
+    │       │   approve, reject, approvals, safety-eval,
+    │       │   verify-audit, verify-annex-iv, verify-gguf,
+    │       │   verify-integrity, quickstart
     ├── config.py           → Pydantic validation (23 config models)
     ├── utils.py            → HF authentication
     ├── model.py            → Load model + tokenizer + LoRA/PEFT
