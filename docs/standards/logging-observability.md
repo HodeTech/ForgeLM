@@ -28,7 +28,7 @@ def _setup_logging(log_level: str, json_format: bool = False) -> None:
    logger = logging.getLogger("forgelm.compliance")  # match module path
    ```
 
-2. **Never use `print()` in library code.** Only modules under [`forgelm/cli/`](../../forgelm/cli/) (JSON envelopes + human-facing CLI text on stdout) and [`forgelm/chat.py`](../../forgelm/chat.py) (interactive REPL output, including token-by-token streaming) may use raw `print()`. Every other library module must use the project logger so callers can configure verbosity. The `chat.py` carve-out exists because an interactive REPL's output **is** the user interface — routing it through `logger` would force users to reconfigure log handlers to see chat replies.
+2. **Never use `print()` in library code.** Only modules under [`forgelm/cli/`](../../forgelm/cli/) (JSON envelopes + human-facing CLI text on stdout), [`forgelm/chat.py`](../../forgelm/chat.py) (interactive REPL output, including token-by-token streaming), and [`forgelm/wizard/`](../../forgelm/wizard/) (the interactive config wizard, whose `_io._print` indirection routes operator-facing prompts to stdout so they are `capsys`-capturable) may use raw `print()`. Every other library module must use the project logger so callers can configure verbosity. The `chat.py` and `wizard/` carve-outs exist because an interactive UI's output **is** the user interface — routing it through `logger` would force users to reconfigure log handlers to see prompts and replies.
 
 3. **`--output-format json` downgrades to WARNING.** When a pipeline is reading JSON on stdout, human-friendly INFO spam on stderr drowns the signal. Keep stderr quiet in JSON mode.
 
@@ -140,25 +140,31 @@ class WebhookNotifier:
 
 ### Webhook event vocabulary
 
-The five lifecycle events below are the **only** events that webhook receivers
-should expect. Adding new ones requires a docs update here, a `Notifier`
+The eight events below are the **only** events that webhook receivers
+should expect: five single-stage lifecycle events (`training.*` +
+`approval.required`) plus the three-event `pipeline.*` family that the
+multi-stage orchestrator emits *alongside* (not replacing) the per-stage
+lifecycle events. Adding new ones requires a docs update here, a `Notifier`
 method, a paired audit event, and tests. Do not invent ad-hoc event strings.
 
 | Event | Emitted when | Required fields | Notes |
 |---|---|---|---|
 | `training.start` | `train()` is entered, before model load. | `run_name`, `status="started"` | Mirrors audit event `training.started`. Gated by `webhook.notify_on_start`. |
-| `training.success` | All gates passed, no human approval required. | `run_name`, `status="succeeded"`, `metrics` | Mirrors audit event `pipeline.completed`. Gated by `webhook.notify_on_success`. |
+| `training.success` | The run completed and was not reverted or held for approval. With `evaluation.auto_revert: true` this implies all gates passed; with the shipped default `auto_revert: false` it also fires when a gate failed but was only *recorded* (the failure rides in `metrics`, the model is still promoted). | `run_name`, `status="succeeded"`, `metrics` | Mirrors audit event `pipeline.completed`. Gated by `webhook.notify_on_success`. |
 | `training.failure` | Training itself crashed (OOM, dataset error, exception in pipeline). | `run_name`, `status="failed"`, `reason` (masked, ≤2048 chars) | Mirrors audit event `pipeline.failed`. Gated by `webhook.notify_on_failure`. |
 | `training.reverted` | A post-training gate (eval / safety / judge / benchmark) rejected the run and `_revert_model` deleted the adapters. | `run_name`, `status="reverted"`, `reason` (masked, ≤2048 chars) | Distinct from `training.failure` so dashboards can separate "training crashed" from "training succeeded but quality regressed". Mirrors audit event `model.reverted`. Gated by `webhook.notify_on_failure`. |
 | `approval.required` | Run succeeded, `evaluation.require_human_approval=true`, model staged for review. | `run_name`, `status="awaiting_approval"`, `model_path` (filesystem path) | Mirrors audit event `human_approval.required`. Operator gets a real-time ping instead of having to poll the audit JSONL. Model weights themselves are **never** in the payload — only the staging path. Gated by `webhook.notify_on_success`. |
+| `pipeline.started` | A multi-stage pipeline run begins, before any stage executes. | `run_name` (the pipeline run id), `status="started"`, `stage_count` | Multi-stage only. Mirrors audit event `pipeline.started`. Gated by `webhook.notify_on_start`. |
+| `pipeline.completed` | A multi-stage pipeline run reaches its terminal state (success, failure, or stopped-at-stage). | `run_name`, `status` (the `final_status`), `final_status`, `stopped_at` | Multi-stage only. Shares the identifier of the audit event `pipeline.completed` (a known wire/audit name collision; correlate on the payload field-set, not the name alone). Gated by `webhook.notify_on_success` (clean finish) or `webhook.notify_on_failure` (early stop). |
+| `pipeline.stage_reverted` | A pipeline stage auto-reverts, before downstream stages are marked skipped. | `run_name`, `status="reverted"`, `stage_name`, `reason` (masked, ≤2048 chars) | Multi-stage only. Mirrors audit event `pipeline.stage_reverted`. Gated by `webhook.notify_on_failure`. |
 
 **Payload schema (every event):**
 
 ```json
 {
-  "event": "<one of the five above>",
+  "event": "<one of the eight above>",
   "run_name": "<string>",
-  "status": "<started|succeeded|failed|reverted|awaiting_approval>",
+  "status": "<started|succeeded|failed|reverted|awaiting_approval|completed|stopped_at_stage>",
   "metrics": {"<name>": <number>, ...},
   "reason": "<masked string or null>",
   "model_path": "<staging path or null>",
@@ -218,7 +224,7 @@ These come from `forgelm/utils.py` helpers + `torch.cuda.max_memory_allocated()`
 Before your PR:
 
 - [ ] Every module has a logger named `forgelm.<module>`.
-- [ ] No `print()` outside `forgelm/cli/` (JSON + CLI text) and `forgelm/chat.py` (REPL output).
+- [ ] No `print()` outside `forgelm/cli/` (JSON + CLI text), `forgelm/chat.py` (REPL output), and `forgelm/wizard/` (interactive wizard prompts).
 - [ ] Every `sys.exit(!=0)` is preceded by `logger.error(...)`.
 - [ ] JSON output fields match the schema above, validated by a test.
 - [ ] Audit events fire for every decision gate you added.

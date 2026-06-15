@@ -152,7 +152,7 @@ Herhangi bir otomatik tespiti açık YAML ile override edebilirsiniz.
 ## Sık hatalar
 
 :::warn
-**Deploy edilen quant'ta güvenlik eval'ini atlamak.** Bir q4_k_m GGUF Llama Guard'da full-precision adapter'dan kötü puan alabilir. Deploy edilen artifact üzerinde güvenlik eval'ini tekrar koşturun, sadece eğitim çıktısında değil.
+**Quant'lamadan önce güvenlik eval'ini atlamak.** Bir q4_k_m GGUF Llama Guard'da full-precision adapter'dan kötü puan alabilir. `safety-eval` henüz GGUF yüklemez; export öncesi HuggingFace checkpoint'ine karşı tekrar koşturun ve quant sonrası sapmayı bilinen bir kısıtlama olarak değerlendirin.
 :::
 
 :::warn

@@ -11,7 +11,13 @@ from __future__ import annotations
 
 import argparse
 
-from ._argparse_types import _add_common_subparser_flags, _non_negative_float, _non_negative_int, _positive_int
+from ._argparse_types import (
+    _add_common_subparser_flags,
+    _non_negative_float,
+    _non_negative_int,
+    _positive_int,
+    _sampling_temperature,
+)
 from ._logging import _get_version
 
 # Shared `--output-dir` help text across approve / reject / approvals
@@ -27,15 +33,20 @@ def _add_chat_subcommand(subparsers) -> None:
         help="Interactive chat REPL with a fine-tuned model.",
         description=(
             "Load a fine-tuned model and start an interactive terminal session.  "
-            "Supports streaming output, slash commands (/reset, /save, /temperature, "
-            "/system, /exit), and optional per-response safety annotations."
+            "Supports streaming output and slash commands (/reset, /save, /temperature, "
+            "/system, /exit)."
         ),
     )
     p.add_argument("model_path", help="Path to a saved HuggingFace model directory or HF Hub ID.")
     p.add_argument("--adapter", type=str, default=None, help="PEFT adapter directory to merge before chat.")
     p.add_argument("--system", type=str, default=None, metavar="PROMPT", help="Initial system prompt.")
-    p.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature (default: 0.7).")
-    p.add_argument("--max-new-tokens", type=int, default=512, help="Max tokens per response (default: 512).")
+    p.add_argument(
+        "--temperature",
+        type=_sampling_temperature,
+        default=0.7,
+        help="Sampling temperature in [0.0, 2.0] (default: 0.7).",
+    )
+    p.add_argument("--max-new-tokens", type=_positive_int, default=512, help="Max tokens per response (default: 512).")
     p.add_argument("--no-stream", action="store_true", help="Disable streaming output.")
     p.add_argument("--load-in-4bit", action="store_true", help="Load model in 4-bit NF4 quantisation.")
     p.add_argument("--load-in-8bit", action="store_true", help="Load model in 8-bit quantisation.")
@@ -104,14 +115,14 @@ def _add_deploy_subcommand(subparsers) -> None:
     )
     p.add_argument("--output", type=str, default=None, metavar="FILE", help="Output file path (default: auto).")
     p.add_argument("--system", type=str, default=None, metavar="PROMPT", help="System prompt (Ollama only).")
-    p.add_argument("--max-length", type=int, default=4096, help="Context window length (default: 4096).")
+    p.add_argument("--max-length", type=_positive_int, default=4096, help="Context window length (default: 4096).")
     p.add_argument(
         "--gpu-memory-utilization",
-        type=float,
+        type=_non_negative_float,
         default=0.90,
-        help="vLLM GPU memory utilisation fraction (default: 0.90).",
+        help="vLLM GPU memory utilisation fraction in [0.0, 1.0] (default: 0.90).",
     )
-    p.add_argument("--port", type=int, default=8080, help="Host port for TGI container (default: 8080).")
+    p.add_argument("--port", type=_positive_int, default=8080, help="Host port for TGI container (default: 8080).")
     p.add_argument("--trust-remote-code", action="store_true", help="Set trust_remote_code in vLLM config.")
     p.add_argument(
         "--vendor",
@@ -620,9 +631,11 @@ def _add_verify_audit_subcommand(subparsers) -> None:
     :class:`forgelm.compliance.AuditLogger`. Exit codes:
 
     - ``0`` — chain (and HMAC, if checked) intact
-    - ``1`` — chain broken or HMAC mismatch
-    - ``2`` — file missing / unreadable, or option error (e.g.
-      ``--require-hmac`` without a configured secret env var)
+    - ``1`` — operator-actionable failure: chain broken / HMAC mismatch /
+      manifest mismatch, file missing / unreadable, or option error (e.g.
+      ``--require-hmac`` without a configured secret env var). A dedicated
+      ``EXIT_INTEGRITY_FAILURE`` constant is deferred to v0.6.x to avoid
+      expanding the public 0/1/2/3/4 surface.
     """
     p = subparsers.add_parser(
         "verify-audit",
@@ -656,7 +669,7 @@ def _add_verify_audit_subcommand(subparsers) -> None:
         "--require-hmac",
         action="store_true",
         help=(
-            "Strict mode: exit 2 if the configured env var is unset, and exit 1 "
+            "Strict mode: exit 1 if the configured env var is unset, and exit 1 "
             "if any line lacks an _hmac field. Use this in regulated CI pipelines "
             "where every entry must be HMAC-authenticated."
         ),
@@ -785,8 +798,9 @@ def _add_safety_eval_subcommand(subparsers) -> None:
             "Standalone counterpart to the training-time safety gate.  "
             "Loads --model, runs each prompt in --probes (or --default-probes "
             "for the bundled set) through the harm classifier, and emits a "
-            "structured per-category breakdown.  GGUF models are supported "
-            "via llama-cpp-python (requires `[export]` extra)."
+            "structured per-category breakdown.  GGUF models are not yet "
+            "supported — run safety-eval against the pre-export HuggingFace "
+            "checkpoint."
         ),
     )
     p.add_argument(
@@ -794,7 +808,7 @@ def _add_safety_eval_subcommand(subparsers) -> None:
         type=str,
         required=True,
         metavar="PATH",
-        help="HuggingFace Hub ID, local checkpoint dir, or `.gguf` file.",
+        help="HuggingFace Hub ID or local checkpoint dir (GGUF not yet supported).",
     )
     p.add_argument(
         "--classifier",
@@ -825,7 +839,7 @@ def _add_safety_eval_subcommand(subparsers) -> None:
     )
     p.add_argument(
         "--max-new-tokens",
-        type=int,
+        type=_positive_int,
         default=512,
         help="Max tokens per generated response (default: 512).",
     )
@@ -846,6 +860,23 @@ def _add_verify_gguf_subcommand(subparsers) -> None:
         ),
     )
     p.add_argument("path", help="Path to the GGUF model file.")
+    _add_common_subparser_flags(p, include_output_format=True)
+
+
+def _add_verify_integrity_subcommand(subparsers) -> None:
+    """Art. 15 — verify a model directory against its integrity manifest."""
+    p = subparsers.add_parser(
+        "verify-integrity",
+        help="Verify a model directory against its model_integrity.json SHA-256 manifest.",
+        description=(
+            "Reads `<model_dir>/model_integrity.json` (written by the "
+            "compliance export), recomputes the SHA-256 of every recorded "
+            "artifact, and reports any file that was changed, removed, or "
+            "added since the manifest was generated.  Exits 0 when all "
+            "artifacts match; 1 on any mismatch or missing/malformed manifest."
+        ),
+    )
+    p.add_argument("path", help="Path to the model directory containing model_integrity.json.")
     _add_common_subparser_flags(p, include_output_format=True)
 
 
@@ -930,7 +961,10 @@ def _add_cache_tasks_subcommand(subparsers) -> None:
         type=str,
         default=None,
         metavar="DIR",
-        help="Cache directory override (default: HF_HUB_CACHE > HF_HOME/hub > ~/.cache/huggingface/hub).",
+        help=(
+            "Cache directory override (default: HF_DATASETS_CACHE > HF_HOME/datasets > "
+            "~/.cache/huggingface/datasets — the Datasets cache, separate from the Hub cache)."
+        ),
     )
     p.add_argument(
         "--audit-dir",
@@ -1171,8 +1205,9 @@ def parse_args():
             "  forgelm cache-models --model M  Pre-populate HF Hub cache (air-gap workflow)\n"
             "  forgelm cache-tasks --tasks CSV Pre-populate lm-eval task datasets (requires [eval] extra)\n"
             "  forgelm verify-annex-iv PATH    Verify EU AI Act Annex IV artifact (field set + manifest hash)\n"
-            "  forgelm safety-eval --model M   Standalone safety evaluation (HF or GGUF model)\n"
+            "  forgelm safety-eval --model M   Standalone safety evaluation (HF checkpoint)\n"
             "  forgelm verify-gguf PATH        Verify GGUF model integrity (magic + metadata + SHA-256)\n"
+            "  forgelm verify-integrity DIR    Verify a model dir against its model_integrity.json (Art. 15)\n"
             "\nRun 'forgelm <subcommand> --help' for subcommand details."
         ),
     )
@@ -1197,6 +1232,7 @@ def parse_args():
     _add_verify_annex_iv_subcommand(subparsers)
     _add_safety_eval_subcommand(subparsers)
     _add_verify_gguf_subcommand(subparsers)
+    _add_verify_integrity_subcommand(subparsers)
 
     # --- Top-level flags (training / config-driven mode) ---
     parser.add_argument("--config", type=str, help="Path to the YAML configuration file.")
@@ -1326,7 +1362,7 @@ def parse_args():
         metavar="PATH",
         help=(
             "DEPRECATED — alias for `forgelm audit PATH` (kept so existing pipelines keep "
-            "working). Scheduled for removal in v0.7.0. Behaviour is identical; new scripts "
+            "working). Scheduled for removal in v0.8.0. Behaviour is identical; new scripts "
             "should use the subcommand. Writes `data_audit_report.json` under --output "
             "(default ./audit/). No training."
         ),

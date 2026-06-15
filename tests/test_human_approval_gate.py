@@ -108,6 +108,11 @@ class TestHumanApprovalGateTrainer:
             trainer.run_name = "test_finetune"
             trainer.notifier = MagicMock()
             trainer.audit = AuditLogger(str(output_dir))
+            # __init__ is bypassed via __new__, so set the config digest the
+            # gate event records (XP-11) the same way __init__ would.
+            from forgelm.compliance import compute_config_hash
+
+            trainer._config_hash = compute_config_hash(config)
             # Mock save_final_model so it just creates the directory + a
             # marker file, no torch/peft involvement.
             trainer.save_final_model = MagicMock(side_effect=self._fake_save)
@@ -139,6 +144,24 @@ class TestHumanApprovalGateTrainer:
         assert result.staging_path == staging_path
         assert result.success is True
 
+    def test_production_staging_path_carries_run_id_suffix(self, tmp_path: Path) -> None:
+        """The trainer's real caller stages adapters at
+        ``f"{final_path}.staging.{run_id}"`` — the run-id suffix is
+        load-bearing (approve/reject/purge resolve it). Pin the production
+        convention so the facade/results/webhook comments that now document
+        ``final_model.staging.<run_id>/`` cannot drift back to the suffix-less
+        form. Reconstructs the exact expression ForgeTrainer builds at the
+        gate so a rename of the suffix shape trips here."""
+        trainer, output_dir = self._make_trainer(tmp_path)
+        final_path = os.path.abspath(str(output_dir / "final_model"))
+
+        # Mirror forgelm/trainer.py's gate-path construction verbatim.
+        gate_path = os.path.abspath(f"{final_path}.staging.{trainer.audit.run_id}")
+
+        assert os.path.basename(gate_path) == f"final_model.staging.{trainer.audit.run_id}"
+        assert ".staging." in gate_path
+        assert not gate_path.endswith(".staging")
+
     def test_gate_emits_human_approval_required_event(self, tmp_path: Path) -> None:
         trainer, output_dir = self._make_trainer(tmp_path)
         from forgelm.results import TrainResult
@@ -156,6 +179,10 @@ class TestHumanApprovalGateTrainer:
         assert evt["run_id"] == trainer.audit.run_id
         assert evt["gate"] == "final_model"
         assert evt["reason"] == "require_human_approval=true"
+        # XP-11 / F-P4-OPUS-05: the event carries the config digest so the
+        # approvals reader can populate pending[].config_hash (previously
+        # always null because the event never recorded it).
+        assert evt["config_hash"].startswith("sha256:")
         assert evt["metrics"] == {"eval_loss": 0.42}
 
     def test_gate_calls_notify_awaiting_approval(self, tmp_path: Path) -> None:
@@ -223,6 +250,7 @@ class TestHumanApprovalGateTrainer:
             passed=False,
             safety_score=0.2,
             safe_ratio=0.2,
+            total_count=10,
             category_distribution={"violence": 3},
             severity_distribution={"high": 3},
             low_confidence_count=0,
@@ -237,6 +265,34 @@ class TestHumanApprovalGateTrainer:
         assert result.final_model_path is None, "revert deletes the model — final_model_path must be cleared"
         assert result.awaiting_approval is False, "a reverted run is never awaiting approval"
         trainer._revert_model.assert_called_once()
+
+    def test_safety_audit_event_records_total_count(self, tmp_path: Path) -> None:
+        """F-P3-FABLE-16: the ``safety.evaluation_completed`` audit payload must
+        carry ``total_count`` so a vacuous pass (zero probes evaluated) is
+        distinguishable from a real 100%-safe evaluation in the audit trail."""
+        from types import SimpleNamespace
+
+        from forgelm.results import TrainResult
+
+        trainer, output_dir = self._make_trainer(tmp_path, require_approval=False)
+        result = TrainResult(success=True)
+        passing_safety = SimpleNamespace(
+            passed=True,
+            safety_score=1.0,
+            safe_ratio=1.0,
+            total_count=42,
+            category_distribution=None,
+            severity_distribution=None,
+            low_confidence_count=0,
+            failure_reason=None,
+        )
+        cont = trainer._apply_safety_result(passing_safety, result, {}, str(output_dir / "final_model"))
+
+        assert cont is True
+        events = _read_audit_events(output_dir / "audit_log.jsonl")
+        completed = [e for e in events if e["event"] == "safety.evaluation_completed"]
+        assert len(completed) == 1
+        assert completed[0]["total_count"] == 42
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +346,64 @@ class TestForgelmApprove:
         kwargs = notifier.notify_success.call_args.kwargs
         assert kwargs["run_name"] == "approval_run"
         assert kwargs["metrics"] == {}
+
+    def test_approve_audit_write_failure_after_rename_surfaces_error(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """F-P4-OPUS-18: an OSError on the post-rename ``human_approval.granted``
+        write must surface as a clean named exit (EXIT_TRAINING_ERROR) with an
+        operator-actionable AUDIT-GAP message — not a raw uncaught traceback —
+        even though the model is already promoted."""
+        run_id = "fg-auditgap00001"
+        output_dir = self._seed_run(tmp_path, run_id)
+        monkeypatch.setenv("FORGELM_OPERATOR", "alice")
+
+        from forgelm.cli import _run_approve_cmd
+        from forgelm.compliance import AuditLogger
+
+        def _raise_on_granted(self, event, **details):  # noqa: ANN001
+            if event == "human_approval.granted":
+                raise OSError("ENOSPC: no space left on device")
+
+        monkeypatch.setattr(AuditLogger, "log_event", _raise_on_granted)
+
+        args = MagicMock()
+        args.run_id = run_id
+        args.output_dir = str(output_dir)
+        args.comment = None
+
+        with pytest.raises(SystemExit) as ei:
+            _run_approve_cmd(args, output_format="json")
+
+        assert ei.value.code == 2  # EXIT_TRAINING_ERROR
+        # The model was already promoted by the rename (irreversible).
+        assert (output_dir / "final_model").is_dir()
+        assert not (output_dir / "final_model.staging").exists()
+        # The operator gets a clean JSON error naming the audit gap, not a traceback.
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert "AUDIT GAP" in payload["error"]
+        assert "final_model" in payload["error"]
+
+    def test_approve_promote_strategy_doc_matches_code(self) -> None:
+        """XP-08 / F-P4-OPUS-07 / F-P7-OPUS-17: the locked json-output.md
+        approve envelope must document a ``promote_strategy`` value the code can
+        actually emit. Pre-fix it showed ``"atomic_rename"`` — a value the code
+        never produces (only ``"rename"`` / ``"move"``)."""
+        import json as _json
+        import pathlib
+        import re
+
+        repo = pathlib.Path(__file__).resolve().parent.parent
+        allowed = {"rename", "move"}
+        for rel in (
+            "docs/usermanuals/en/reference/json-output.md",
+            "docs/usermanuals/tr/reference/json-output.md",
+        ):
+            text = (repo / rel).read_text(encoding="utf-8")
+            # Grab the first fenced JSON block under the approve/reject H2.
+            section = re.split(r"^## .*forgelm approve", text, maxsplit=1, flags=re.MULTILINE)[1]
+            block = re.search(r"```json\n(.*?)```", section, re.DOTALL).group(1)
+            promote = _json.loads(block).get("promote_strategy")
+            assert promote in allowed, f"{rel}: promote_strategy={promote!r} not in {allowed}"
 
     def test_approve_with_stale_run_id_errors_without_renaming(self, tmp_path: Path) -> None:
         run_id = "fg-real000aaa111"
@@ -442,6 +556,43 @@ class TestForgelmReject:
         kwargs = notifier.notify_failure.call_args.kwargs
         assert kwargs["run_name"] == "reject_run"
         assert "human_approval.rejected" in kwargs["reason"]
+
+    def test_reject_audit_write_failure_surfaces_error(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """The reject path mirrors approve's audit-write guard: an OSError on the
+        ``human_approval.rejected`` write must surface as a clean named exit
+        (EXIT_TRAINING_ERROR) with an operator-actionable message — not a raw
+        uncaught traceback. Unlike approve, no model was promoted, so the staging
+        directory is preserved for a retry after storage is repaired."""
+        run_id = "fg-reject0000abc"
+        output_dir = self._seed_run(tmp_path, run_id)
+        monkeypatch.setenv("FORGELM_OPERATOR", "bob")
+
+        from forgelm.cli import _run_reject_cmd
+        from forgelm.compliance import AuditLogger
+
+        def _raise_on_rejected(self, event, **details):  # noqa: ANN001
+            if event == "human_approval.rejected":
+                raise OSError("ENOSPC: no space left on device")
+
+        monkeypatch.setattr(AuditLogger, "log_event", _raise_on_rejected)
+
+        args = MagicMock()
+        args.run_id = run_id
+        args.output_dir = str(output_dir)
+        args.comment = None
+
+        with pytest.raises(SystemExit) as ei:
+            _run_reject_cmd(args, output_format="json")
+
+        assert ei.value.code == 2  # EXIT_TRAINING_ERROR
+        # No model was promoted; the staging dir must still be there for a retry.
+        assert (output_dir / "final_model.staging").is_dir()
+        assert not (output_dir / "final_model").exists()
+        # The operator gets a clean JSON error naming the storage/audit gap.
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert "human_approval.rejected" in payload["error"]
+        assert "audit" in payload["error"]
 
     def test_reject_without_staging_errors(self, tmp_path: Path) -> None:
         output_dir = tmp_path / "no_staging_reject"

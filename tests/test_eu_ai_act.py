@@ -8,6 +8,7 @@ import yaml
 
 from forgelm.compliance import (
     AuditLogger,
+    export_compliance_artifacts,
     export_evidence_bundle,
     generate_deployer_instructions,
     generate_model_integrity,
@@ -220,6 +221,45 @@ class TestForgeConfigCompliance:
         assert "Article 5" in caplog.text
         assert "prohibited" in caplog.text
 
+    def test_explicit_tier_disagreement_warns(self, caplog, minimal_config):
+        """F-P1-FAB-31: when BOTH risk-tier siblings are explicitly set and
+        disagree, ForgeLM must warn (compliance.py emits both into the Annex
+        IV bundle, so a silent disagreement ships contradictory regulatory
+        evidence).  Uses two non-strict tiers so the strict-gate ConfigError
+        does not pre-empt the warning."""
+        import logging
+
+        # ``_warn_tier_disagreement`` dedupes by tier-pair across the process
+        # (F-L-11) so an N-stage pipeline does not spam the warning. That makes
+        # this assertion order-dependent: an earlier test that triggered the
+        # same (limited-risk, minimal-risk) pair would suppress it here. Clear
+        # the dedup set so the warning fires fresh (mirrors test_pipeline_config).
+        import forgelm.config as _cfg_module
+
+        _cfg_module._tier_disagreement_warned.clear()
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            ForgeConfig(
+                **minimal_config(
+                    risk_assessment={"risk_category": "limited-risk"},
+                    compliance={
+                        "provider_name": "Acme",
+                        "system_name": "Bot",
+                        "risk_classification": "minimal-risk",
+                    },
+                )
+            )
+        assert any("Risk tiers disagree" in r.message for r in caplog.records)
+
+    def test_single_tier_set_does_not_warn_disagreement(self, caplog, minimal_config):
+        """F-P1-FAB-31: setting only one side must NOT warn — both fields
+        default to ``minimal-risk`` on their sub-models, so root-level
+        presence alone is not an explicit disagreement."""
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            ForgeConfig(**minimal_config(risk_assessment={"risk_category": "limited-risk"}))
+        assert not any("Risk tiers disagree" in r.message for r in caplog.records)
+
     def test_unacceptable_risk_warnings(self, caplog, minimal_config):
         """``unacceptable`` (Article 5) must trip the strict gate AND emit
         the dedicated prohibited-practices warning on top of the auto_revert
@@ -336,6 +376,42 @@ class TestModelIntegrity:
         integrity = generate_model_integrity(str(model_dir))
         assert integrity["artifacts"] == []
 
+    @pytest.mark.skipif(not hasattr(os, "symlink"), reason="platform without os.symlink support")
+    def test_symlinked_file_out_of_tree_is_skipped_not_hashed(self, tmp_path):
+        """F-P5-OPUS-08: a symlinked file pointing outside the model tree
+        must NOT be hashed/recorded as a model artifact — only the real
+        in-tree file appears, and the escape is logged under
+        ``skipped_symlinks``."""
+        secret_dir = tmp_path / "secret"
+        secret_dir.mkdir()
+        secret = secret_dir / "id_rsa"
+        secret.write_bytes(b"EXTERNAL SECRET")
+
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        (model_dir / "real.bin").write_bytes(b"weights")
+        # Symlinked file pointing OUT of the model tree.
+        try:
+            os.symlink(secret, model_dir / "leaked.bin")
+            # Symlinked DIR pointing out of the tree (os.walk must not recurse).
+            os.symlink(secret_dir, model_dir / "leakeddir")
+        except (OSError, NotImplementedError):
+            pytest.skip("symlink creation not permitted on this platform")
+
+        import hashlib
+
+        external_hash = hashlib.sha256(b"EXTERNAL SECRET").hexdigest()
+
+        integrity = generate_model_integrity(str(model_dir))
+        files = {a["file"] for a in integrity["artifacts"]}
+        hashes = {a["sha256"] for a in integrity["artifacts"]}
+
+        assert "real.bin" in files
+        assert "leaked.bin" not in files, "symlinked file escaped the containment check"
+        assert external_hash not in hashes, "external file's content was hashed into the bundle"
+        # The omission must be auditable, not silent.
+        assert "leaked.bin" in integrity.get("skipped_symlinks", [])
+
 
 # --- Deployer Instructions ---
 
@@ -386,6 +462,138 @@ class TestEvidenceBundle:
             names = zf.namelist()
         assert len(names) == 2
 
+    def test_failure_midway_does_not_publish_torn_zip(self, tmp_path, monkeypatch):
+        """F-P4-OPUS-33 / XP-12: an interrupted ZIP build must not leave a
+        torn archive at the auditor-facing path (tmp+rename discipline)."""
+        import zipfile
+
+        compliance_dir = tmp_path / "compliance"
+        compliance_dir.mkdir()
+        (compliance_dir / "a.json").write_text("{}")
+        (compliance_dir / "b.json").write_text("{}")
+
+        bundle_path = str(tmp_path / "bundle.zip")
+
+        real_write = zipfile.ZipFile.write
+        state = {"n": 0}
+
+        def flaky_write(self, *args, **kwargs):
+            state["n"] += 1
+            if state["n"] == 2:
+                raise OSError("disk full")
+            return real_write(self, *args, **kwargs)
+
+        monkeypatch.setattr(zipfile.ZipFile, "write", flaky_write)
+        with pytest.raises(OSError):
+            export_evidence_bundle(str(compliance_dir), bundle_path)
+        assert not os.path.exists(bundle_path), "no torn ZIP at the published path"
+        assert not os.path.exists(bundle_path + ".tmp"), "no leftover tmp"
+
+
+class TestComplianceExportAtomicity:
+    @staticmethod
+    def _manifest():
+        return {
+            "forgelm_version": "0",
+            "generated_at": "now",
+            "config_hash": "sha256:abc",
+            "model_lineage": {"base_model": "m", "adapter_method": "LoRA r=8"},
+            "training_parameters": {"trainer_type": "sft", "epochs": 1},
+            "data_provenance": {"primary_dataset": "ds"},
+            "evaluation_results": {"metrics": {"eval_loss": 0.5}},
+            "risk_assessment": {"intended_use": "x"},
+            # annex_iv block present → build_annex_iv_artifact emits the
+            # load-bearing annex_iv_metadata.json (5th artifact).
+            "annex_iv": {
+                "provider_name": "Acme",
+                "system_name": "Bot",
+                "intended_purpose": "QA",
+                "system_version": "1.0",
+                "risk_classification": "minimal-risk",
+            },
+        }
+
+    def test_partial_write_failure_leaves_no_torn_bundle(self, tmp_path, monkeypatch):
+        """F-P4-OPUS-10 / XP-12: a mid-export I/O failure must not leave a
+        partial Annex IV bundle at the published dir — staging + all-or-nothing
+        promotion means the published dir contains the complete set or none."""
+        out = str(tmp_path / "compliance")
+
+        real_open = open
+        state = {"n": 0}
+
+        def flaky_open(file, mode="r", *args, **kwargs):
+            if "w" in mode:
+                state["n"] += 1
+                if state["n"] == 3:
+                    raise OSError("disk full")
+            return real_open(file, mode, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", flaky_open)
+        with pytest.raises(OSError):
+            export_compliance_artifacts(self._manifest(), out)
+
+        # The published dir may exist (mkdir runs first) but must contain NO
+        # partially-written artefact — never a strict subset.
+        published = sorted(os.listdir(out)) if os.path.isdir(out) else []
+        assert published == [], f"torn bundle published: {published!r}"
+
+    def test_rollback_failures_are_logged_not_swallowed(self, tmp_path, monkeypatch, caplog):
+        """The promotion rollback path must surface its own remove/replace
+        failures instead of silently ``pass``-ing them, while still
+        propagating the original promotion OSError unchanged. A swallowed
+        rollback error can hide a partially restored bundle from auditors."""
+        import logging as _logging
+
+        from forgelm import compliance as _compliance
+
+        out = str(tmp_path / "compliance")
+        os.makedirs(out)
+        # Pre-existing targets so promotion backs each up before overwriting,
+        # which exercises the backup-restore rollback loop.
+        for name in ("compliance_report.json", "training_manifest.yaml"):
+            with open(os.path.join(out, name), "w") as f:
+                f.write("{}")
+
+        real_replace = os.replace
+
+        def flaky_replace(src, dst, *args, **kwargs):
+            # A promote call moves a file OUT of the staging dir into place;
+            # fail the SECOND such promote so the first file is already in
+            # ``promoted`` and the rollback loops have work to do.
+            if os.path.basename(os.path.dirname(src)).startswith(".export-tmp"):
+                flaky_replace.promotes += 1
+                if flaky_replace.promotes == 2:
+                    raise OSError("disk full during promotion")
+            return real_replace(src, dst, *args, **kwargs)
+
+        flaky_replace.promotes = 0
+
+        def boom_remove(path, *args, **kwargs):
+            raise OSError("remove blocked during rollback")
+
+        monkeypatch.setattr(_compliance.os, "replace", flaky_replace)
+        monkeypatch.setattr(_compliance.os, "remove", boom_remove)
+
+        with caplog.at_level(_logging.ERROR, logger=_compliance.logger.name):
+            with pytest.raises(OSError):
+                export_compliance_artifacts(self._manifest(), out)
+
+        assert any(
+            "Compliance rollback encountered errors" in r.message and r.levelno == _logging.ERROR
+            for r in caplog.records
+        ), "rollback failure was swallowed instead of logged at ERROR"
+
+    def test_successful_export_promotes_all_artifacts(self, tmp_path):
+        out = str(tmp_path / "compliance")
+        files = export_compliance_artifacts(self._manifest(), out)
+        names = sorted(os.path.basename(p) for p in files)
+        assert "compliance_report.json" in names
+        assert "annex_iv_metadata.json" in names
+        # No staging dir survives.
+        leftovers = [n for n in os.listdir(out) if n.startswith(".export-tmp")]
+        assert leftovers == []
+
 
 # --- Training Manifest with Annex IV ---
 
@@ -421,3 +629,106 @@ class TestManifestAnnexIV:
         manifest = generate_training_manifest(config, {})
         assert "annex_iv" not in manifest
         assert "risk_assessment" not in manifest
+
+    def test_manifest_includes_config_hash(self, minimal_config):
+        """XP-11 / F-P4-OPUS-13: the single-stage manifest must carry a
+        ``config_hash`` binding it to the config that produced the run, like
+        the multi-stage pipeline's ``pipeline_config_hash``."""
+        config = ForgeConfig(**minimal_config())
+        manifest = generate_training_manifest(config, {})
+        assert manifest["config_hash"].startswith("sha256:")
+
+    def test_manifest_config_hash_changes_on_config_edit(self, minimal_config):
+        """A post-training config mutation produces a different digest, so an
+        Annex IV manifest reconstructed from an edited config is detectable."""
+        config = ForgeConfig(**minimal_config())
+        before = generate_training_manifest(config, {})["config_hash"]
+        config.training.learning_rate = config.training.learning_rate * 10 + 1.0
+        after = generate_training_manifest(config, {})["config_hash"]
+        assert before != after
+
+    def test_manifest_includes_run_id_when_supplied(self, minimal_config):
+        """XP-11: a supplied ``run_id`` is recorded; omitted by default so
+        library callers that don't have one are unaffected."""
+        config = ForgeConfig(**minimal_config())
+        assert "run_id" not in generate_training_manifest(config, {})
+        with_run = generate_training_manifest(config, {}, run_id="fg-test123")
+        assert with_run["run_id"] == "fg-test123"
+
+
+# ---------------------------------------------------------------------------
+# G05 regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestAnnexIVSetSerialisation:
+    """F-H-05 regression: annex_iv_metadata.json must be written with
+    _manifest_json_default so sets/frozensets serialise as sorted lists,
+    matching the hash computed at build time."""
+
+    @staticmethod
+    def _manifest_with_set_field():
+        """Return a training manifest whose training_parameters carries a Python
+        set, simulating a library caller that passes de-duplicated target_modules
+        as a set (the documented public-library entry point example)."""
+        return {
+            "forgelm_version": "0",
+            "generated_at": "now",
+            "config_hash": "sha256:abc",
+            "model_lineage": {"base_model": "m", "adapter_method": "LoRA r=8"},
+            "training_parameters": {
+                "trainer_type": "sft",
+                "epochs": 1,
+                # Python set: PYTHONHASHSEED-dependent str() order before fix.
+                "target_modules": {"q_proj", "v_proj", "k_proj"},
+            },
+            "data_provenance": {"primary_dataset": "ds"},
+            "evaluation_results": {"metrics": {"eval_loss": 0.5}},
+            "annex_iv": {
+                "provider_name": "Acme",
+                "system_name": "Bot",
+                "intended_purpose": "QA",
+                "system_version": "1.0",
+                "risk_classification": "minimal-risk",
+            },
+        }
+
+    def test_set_valued_export_verifies_valid(self, tmp_path):
+        """export_compliance_artifacts with a set-typed field must produce an
+        annex_iv_metadata.json whose manifest_hash passes verify_annex_iv_artifact.
+
+        Before F-H-05, json.dump(..., default=str) serialised the set as the
+        opaque string "{'q_proj', 'k_proj', 'v_proj'}" (PYTHONHASHSEED order)
+        while compute_annex_iv_manifest_hash normalised it to ["k_proj",
+        "q_proj", "v_proj"] — a false-tampering verdict on every verify run."""
+        from forgelm.cli.subcommands._verify_annex_iv import verify_annex_iv_artifact
+
+        out = str(tmp_path / "compliance")
+        export_compliance_artifacts(self._manifest_with_set_field(), out)
+
+        annex_path = os.path.join(out, "annex_iv_metadata.json")
+        assert os.path.isfile(annex_path), "annex_iv_metadata.json was not written"
+
+        result = verify_annex_iv_artifact(annex_path)
+        assert result.valid, (
+            f"verify_annex_iv_artifact returned invalid after export with set-typed field "
+            f"(F-H-05 regression): {result.reason!r}"
+        )
+
+    def test_set_on_disk_is_sorted_list_not_str(self, tmp_path):
+        """The on-disk target_modules value must be a JSON array (sorted list),
+        not the str(set) opaque string.  A string would pass JSON parsing but
+        make the hash non-reproducible across PYTHONHASHSEED values."""
+        out = str(tmp_path / "compliance")
+        export_compliance_artifacts(self._manifest_with_set_field(), out)
+
+        annex_path = os.path.join(out, "annex_iv_metadata.json")
+        with open(annex_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+
+        target_modules = data.get("system_components", {}).get("training_parameters", {}).get("target_modules")
+        assert isinstance(target_modules, list), (
+            f"target_modules must be a JSON array on disk, got {type(target_modules).__name__!r}: {target_modules!r}"
+        )
+        # Sorted deterministically — same order regardless of PYTHONHASHSEED.
+        assert target_modules == sorted(target_modules)

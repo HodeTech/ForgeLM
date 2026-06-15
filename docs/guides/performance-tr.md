@@ -192,4 +192,4 @@ GaLore belleği compute ile takas eder. Projeksiyon matris çarpımı gerçek ov
 - [`library_api-tr.md`](library_api-tr.md) — bu düğmeleri Python'dan çağırma.
 - [`../standards/coding.md`](../standards/coding.md) — ForgeLM'in dayattığı lazy-import standardı.
 - [`ingestion-tr.md`](ingestion-tr.md) — chunker kullanıcı-bakışlı derinlik.
-- [`alignment.md`](alignment.md) — GaLore + 4-bit + packing'in ne zaman uygun olduğu.
+- [`alignment.md`](alignment-tr.md) — GaLore + 4-bit + packing'in ne zaman uygun olduğu.

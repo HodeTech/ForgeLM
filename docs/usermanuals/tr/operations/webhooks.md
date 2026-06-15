@@ -31,7 +31,9 @@ $ forgelm --config configs/run.yaml
 
 ## Wire-format event'ler
 
-ForgeLM tam **beş** webhook event'i yayar. Aşağıdaki tablo
+ForgeLM tam **sekiz** webhook event'i yayar: beş tek-aşamalı yaşam
+döngüsü event'i ve çok-aşamalı orkestratörün bunların yanı sıra emit
+ettiği üç `pipeline.*` event'i. Aşağıdaki tablo
 [GitHub'daki Audit Event Kataloğu](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md)
 ile aynalanan kanonik yüzeydir:
 
@@ -42,6 +44,9 @@ ile aynalanan kanonik yüzeydir:
 | `training.failure` | Eğitim raise ediyor (OOM, dataset hatası, yakalanmamış istisna). | `webhook.notify_on_failure` |
 | `training.reverted` | Eğitim-sonrası bir gate (eval / safety / judge / benchmark) koşumu reddetti ve `_revert_model` adapter'ları geri aldı. | `webhook.notify_on_failure` |
 | `approval.required` | Koşum başarılı, `evaluation.require_human_approval=true` set, model review için staged (EU AI Act Madde 14). | `webhook.notify_on_success` |
+| `pipeline.started` | Çok-aşamalı bir pipeline koşusu başlar, herhangi bir aşama çalışmadan önce. | `webhook.notify_on_start` |
+| `pipeline.completed` | Çok-aşamalı bir pipeline koşusu terminal durumuna ulaşır. | `webhook.notify_on_success` / `webhook.notify_on_failure` |
+| `pipeline.stage_reverted` | Bir pipeline aşaması auto-revert olur, aşağı akış aşamaları skip işaretlenmeden önce. | `webhook.notify_on_failure` |
 
 ## Payload yapısı
 
@@ -95,11 +100,12 @@ Gerçek `WebhookConfig` (bkz. `forgelm/config.py::WebhookConfig`):
 |---|---|---|
 | `url` | `null` | Inline URL — secret hijyeni için `url_env`'i tercih edin. |
 | `url_env` | `null` | URL'i taşıyan env var adı. Set edildiğinde `url`'i override eder. |
-| `notify_on_start` | `true` | `training.start` olayını gate'ler. |
-| `notify_on_success` | `true` | `training.success` VE `approval.required`'ı gate'ler. |
-| `notify_on_failure` | `true` | `training.failure` VE `training.reverted`'ı gate'ler. |
+| `notify_on_start` | `true` | `training.start` VE `pipeline.started`'ı gate'ler. |
+| `notify_on_success` | `true` | `training.success`, `approval.required` VE başarılı bir `pipeline.completed`'ı gate'ler. |
+| `notify_on_failure` | `true` | `training.failure`, `training.reverted`, `pipeline.stage_reverted` VE başarısız bir `pipeline.completed`'ı gate'ler. |
 | `timeout` | `10` | HTTP timeout saniye; ≥ 1s'e clamp'lenir. |
 | `allow_private_destinations` | `false` | RFC 1918 / loopback / link-local hedefler için opt-in (in-cluster Slack proxy, on-prem Teams gateway). Varsayılan reddeder — SSRF guard. |
+| `require_https` | `false` | TLS-only zorlama. `true`, plaintext bir `http://` URL'ini reddeder (SSRF guard raise eder; POST atlanır), warn-then-send yerine. Varsayılan `false`, warn-then-send davranışını korur. |
 | `tls_ca_bundle` | `null` | Özel CA bundle yolu (kurumsal MITM CA). Set edilmediğinde `certifi`'nin bundled store'u kullanılır. |
 
 `template:`, `events: [...]`, `headers: {...}`, `retries:`,
@@ -109,7 +115,7 @@ payload zaten curated), ve routing hepsi ForgeLM'in dışında yaşar.
 
 ## Güvenlik
 
-- **TLS şiddetle önerilir.** ForgeLM hem HTTPS hem HTTP webhook URL'lerine izin verir — HTTP hedefleri `Webhook URL uses HTTP (not HTTPS). Data will be sent unencrypted.` uyarısı loglar ama reddedilmez (bkz. `forgelm/webhook.py` `_send`). Üretimde `https://` URL'leri pinleyin.
+- **TLS şiddetle önerilir.** ForgeLM hem HTTPS hem HTTP webhook URL'lerine izin verir — HTTP hedefleri `Webhook URL uses HTTP (not HTTPS). Data will be sent unencrypted.` uyarısı loglar ama varsayılan olarak reddedilmez (bkz. `forgelm/webhook.py` `_send`). Regüle bir ortamda `webhook.require_https: true` ile plaintext bir `http://` URL'ini hard failure yapın (teslimat reddedilir, gönderilmez). Üretimde `https://` URL'leri pinleyin.
 - **Curated payload.** ForgeLM webhook payload'larına asla raw eğitim verisi, tam config'ler veya unredacted PII koymaz. Notifier sabit-şekilli bir JSON sarar; `webhook.redact` toggle'ı yoktur çünkü kullanıcı-kontrollü redakte edilecek bir şey yok.
 - **SSRF guard.** ForgeLM iç IP'lere (RFC 1918, loopback, link-local, 169.254.x) işaret eden webhook URL'lerini engeller; `webhook.allow_private_destinations: true` ile açıkça opt-in olmadıkça. Yanlış konfigüre koşuların iç ağınızı sondalamasını önler.
 - **HMAC body imzalama yok.** ForgeLM webhook gövdelerini imzalamaz — hedef-tarafı authenticity TLS + `url_env` üzerinden URL gizliliği artı alıcı sistemin bearer-token / signed-request kontrollerine (Slack signing secret, Teams connector token) düşer.
@@ -121,7 +127,7 @@ payload zaten curated), ve routing hepsi ForgeLM'in dışında yaşar.
 :::
 
 :::warn
-**Per-epoch webhook beklemek.** ForgeLM per-epoch event yayınlamaz — yukarıda listelenen yalnızca beş lifecycle event'i. Per-epoch progress gerekiyorsa, webhook fan-out beklemek yerine trainer'ın stdout'undan / `audit_log.jsonl`'den scrape edin.
+**Per-epoch webhook beklemek.** ForgeLM per-epoch event yayınlamaz — yukarıda listelenen yalnızca sekiz event. Per-epoch progress gerekiyorsa, webhook fan-out beklemek yerine trainer'ın stdout'undan / `audit_log.jsonl`'den scrape edin.
 :::
 
 :::tip

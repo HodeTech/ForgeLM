@@ -22,8 +22,9 @@ ForgeLM ships a single `forgelm` binary with subcommands. This page is the canon
 | `forgelm verify-audit` | Validate audit log chain (timestamps, prev_hash, HMAC). |
 | `forgelm verify-annex-iv` | Verify an exported Annex IV artefact (§1-9 fields + manifest hash). |
 | `forgelm verify-gguf` | Verify GGUF model file integrity (magic header + metadata + SHA-256 sidecar). |
+| `forgelm verify-integrity` | Verify a model directory against its Article 15 SHA-256 integrity manifest. |
 | `forgelm approve` | Sign a human approval request and promote `final_model.staging/`. |
-| `forgelm reject` | Reject a human approval request and discard staging. |
+| `forgelm reject` | Reject a human approval request; the staging directory is preserved for forensics. |
 | `forgelm approvals` | List pending approvals (`--pending`) or inspect one (`--show RUN_ID`). |
 | `forgelm purge` | GDPR Article 17 erasure: row-id, run-id, or `--check-policy` retention report. |
 | `forgelm reverse-pii` | GDPR Article 15 right-of-access: search masked corpora for a subject's identifier (plaintext or hash-mask scan). |
@@ -48,7 +49,7 @@ Run `forgelm <subcommand> --help` for any of these.
 | `--merge` | Run model merging from the `merge:` config block. No training. |
 | `--generate-data` | Generate synthetic training data using the teacher model. No training. |
 | `--compliance-export OUTPUT_DIR` | Export EU AI Act compliance artifacts (audit trail, data provenance, Annex IV) to OUTPUT_DIR. Run after training so the manifest is complete. |
-| `--data-audit PATH` | **Deprecated alias** for `forgelm audit PATH`. Scheduled for removal in v0.7.0. New scripts should use the subcommand. |
+| `--data-audit PATH` | **Deprecated alias** for `forgelm audit PATH`. Scheduled for removal in v0.8.0. New scripts should use the subcommand. |
 | `--output DIR` | Output directory for `--data-audit` / `--compliance-export` (default: `./audit/` or `./compliance/`). |
 | `--output-format {text,json}` | Output format for results (default: `text`). JSON for CI. |
 | `--quiet, -q` | Suppress INFO logs. Only show warnings and errors. |
@@ -78,7 +79,7 @@ $ forgelm doctor --offline                           # air-gap variant: cache + 
 $ forgelm doctor --output-format json | jq .         # CI-friendly envelope
 ```
 
-Probes Python version, torch / CUDA / GPU, optional extras, HF Hub reachability (or HF cache when `--offline`), disk space, operator identity, and audit-secret configuration. Exit codes: `0` = all pass (warnings OK), `1` = at least one fail, `2` = a probe itself crashed.
+Probes Python version, torch / CUDA / GPU, optional extras, HF Hub reachability (or HF cache when `--offline`), disk space, and operator identity. Exit codes: `0` = all pass (warnings OK), `1` = at least one fail, `2` = a probe itself crashed.
 
 ## Audit: `forgelm audit`
 
@@ -152,7 +153,7 @@ $ forgelm export CHECKPOINT_DIR \
     [--no-integrity-update]
 ```
 
-Comma-separate `--quant` for multiple levels in one command. See [GGUF Export](#/deployment/gguf-export).
+`--quant` takes a single level per invocation; run `forgelm export` once per level for multiple GGUF outputs. See [GGUF Export](#/deployment/gguf-export).
 
 ## Deploy: `forgelm deploy`
 
@@ -176,7 +177,7 @@ See [Deploy Targets](#/deployment/deploy-targets).
 $ forgelm approvals --pending                        # list pending approval gates
 $ forgelm approvals --show RUN_ID                    # inspect a specific run's chain + staging
 $ forgelm approve  RUN_ID --comment "Reviewed by N." # promote final_model.staging/ → final_model/
-$ forgelm reject   RUN_ID --comment "Reason ..."     # discard staging
+$ forgelm reject   RUN_ID --comment "Reason ..."     # record rejection (staging preserved for forensics)
 ```
 
 See [Human Oversight Gate](#/compliance/human-oversight). Exit codes: `0` = pending list / approval recorded, `1` = unknown run_id / config error, `4` (training mode only) = awaiting approval.
@@ -190,6 +191,15 @@ $ forgelm verify-audit PATH/TO/audit_log.jsonl --require-hmac
 ```
 
 Validates monotonic timestamps, `prev_hash` chain integrity, `seq` gap detection, and (when configured) HMAC signatures. Exit `0` on a valid chain; non-zero with a structured error envelope on tamper detection.
+
+## Verify model integrity: `forgelm verify-integrity`
+
+```shell
+$ forgelm verify-integrity MODEL_DIR
+$ forgelm verify-integrity MODEL_DIR --output-format json
+```
+
+Reads `<MODEL_DIR>/model_integrity.json` (written by the compliance export at training time) and re-computes the SHA-256 of every recorded artifact. Reports files that were **changed**, **removed**, or **added** since the manifest was generated. The manifest file itself is excluded from the walk. Exit `0` when every recorded artifact is present and unchanged and no extra files exist; exit `1` on any mismatch or input error; exit `2` on a genuine runtime I/O failure.
 
 ## Authentication
 
@@ -220,12 +230,17 @@ If the env var isn't set, ForgeLM fails at config load with a clear error — be
 | Exit | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | Config / argument error |
-| 2 | Audit warnings (with `--strict`) / probe crash (`forgelm doctor`) |
+| 1 | Config / semantic validation error (bad YAML, missing file, empty `--query`, etc.) |
+| 2 | Argparse usage error (unknown flag/subcommand, missing required arg, bad choice, out-of-range type validator), training crash, probe crash (`forgelm doctor`), or a clamped Ctrl+C |
 | 3 | Auto-revert / regression |
 | 4 | Awaiting human approval (training pipeline) |
 | 5 | Wizard cancelled (operator declined to save / non-tty refusal) |
-| 130 | User interrupted (Ctrl+C) |
+
+`argparse` usage errors (mistyped flag, missing required argument, bad `choices`,
+or a type-validator boundary) exit **2** — argparse's own `error()` convention —
+while config / semantic validation reached *after* parsing exits **1**. A Ctrl+C
+is signal-derived 130 but is clamped to **2** (`EXIT_TRAINING_ERROR`) before the
+process exits, so no exit code outside the public `0–5` set is ever returned.
 
 See [Exit Codes](#/reference/exit-codes) for the full contract.
 

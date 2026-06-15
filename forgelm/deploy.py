@@ -24,7 +24,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Literal, Optional
 
 import yaml
 
@@ -50,6 +50,12 @@ class DeployResult:
     output_path: Optional[str] = None
     content: Optional[str] = None  # The generated config text
     error: Optional[str] = None
+    # Distinguishes a caller-input error (unsupported target, model_path is
+    # not a directory) from a runtime failure (filesystem write error,
+    # template render crash).  The CLI dispatcher routes ``"input"`` to
+    # EXIT_CONFIG_ERROR (1) and ``"runtime"`` to EXIT_TRAINING_ERROR (2),
+    # matching the public exit-code contract.  ``None`` on success.
+    error_kind: Optional[Literal["input", "runtime"]] = None
 
 
 @dataclass
@@ -257,6 +263,7 @@ def generate_deploy_config(
             success=False,
             target=target,
             error=f"Unsupported target '{target}'. Choose from: {', '.join(sorted(SUPPORTED_TARGETS))}",
+            error_kind="input",
         )
 
     # tgi mounts model_path as a docker volume; ollama Modelfile FROM expects
@@ -271,6 +278,7 @@ def generate_deploy_config(
                 f"target='{target}' requires a local model directory but '{model_path}' is not a directory. "
                 "Pass the path to a fine-tuned/merged model on disk (HF Hub IDs are not supported for this target)."
             ),
+            error_kind="input",
         )
 
     if output_path is None:
@@ -306,4 +314,4 @@ def generate_deploy_config(
 
     except Exception as e:  # noqa: BLE001 — best-effort: deploy-config generators cross filesystem writes (OSError), template rendering (KeyError/ValueError), and target-specific YAML/JSON serialisation; surfacing every variant as a structured DeployResult is the documented public contract.  # NOSONAR
         logger.exception("Failed to generate deploy config for target '%s'", target)
-        return DeployResult(success=False, target=target, error=str(e))
+        return DeployResult(success=False, target=target, error=str(e), error_kind="runtime")

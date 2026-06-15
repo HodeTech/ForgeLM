@@ -99,7 +99,7 @@ Summary: 6 pass, 2 warn, 0 fail.
 $ HF_HUB_OFFLINE=1 forgelm doctor --offline
 ```
 
-`hf_hub.reachable` yerine `hf_hub.offline_cache` görünür. Dolu cache; boyut, dosya sayısı ve `HF_HUB_OFFLINE` değerini raporlar; boş cache, [`cache_subcommands.md`](cache_subcommands.md)'a yönlendiren `warn` üretir.
+`hf_hub.reachable` yerine `hf_hub.offline_cache` görünür. Dolu cache; boyut, dosya sayısı ve `HF_HUB_OFFLINE` değerini raporlar; boş cache, [`cache_subcommands.md`](cache_subcommands-tr.md)'a yönlendiren `warn` üretir.
 
 ### CI gate (JSON)
 

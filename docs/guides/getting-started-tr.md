@@ -79,7 +79,7 @@ $ export FORGELM_OPERATOR="gha:Acme/repo:training:run-${GITHUB_RUN_ID}"
 $ forgelm doctor   # şimdi [+ pass] operator.identity
 ```
 
-Bu kimlik trainer'ın ürettiği her audit-log girişine stamp'lenir — bir EU AI Act Madde 12 incelemecisinin model provenance'ı atfetmek için okuduğu şeydir. Önerilen namespace şeması için [`docs/qms/access_control.md`](../qms/access_control.md)'a bakın.
+Bu kimlik trainer'ın ürettiği her audit-log girişine stamp'lenir — bir EU AI Act Madde 12 incelemecisinin model provenance'ı atfetmek için okuduğu şeydir. Önerilen namespace şeması için [`docs/qms/access_control.md`](../qms/access_control-tr.md)'a bakın.
 
 ### Adım 4 — Gated-model kimlik doğrulamayı devredin
 

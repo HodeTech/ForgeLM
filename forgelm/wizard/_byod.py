@@ -10,11 +10,14 @@ the BYOD logic — the helpers are well-tested in
 from __future__ import annotations
 
 import json
+import logging
 import shlex
 from pathlib import Path
 from typing import List, Optional
 
-from ._io import _CANCEL_TOKENS, _HF_HUB_ID_RE, _print, _prompt, _prompt_yes_no
+from ._io import _CANCEL_TOKENS, _HF_HUB_ID_RE, WizardCancel, _print, _prompt, _prompt_yes_no
+
+logger = logging.getLogger("forgelm.wizard")
 
 # ---------------------------------------------------------------------------
 # Sentinels + thresholds
@@ -181,7 +184,8 @@ def _offer_audit_for_jsonl(jsonl_path: Path) -> bool:
     except ImportError as exc:
         _print(f"  Audit could not run (missing optional dep): {exc}")
         return False
-    except Exception as exc:  # noqa: BLE001 — bare-except documented in audit-step rationale
+    except Exception as exc:  # noqa: BLE001 — best-effort inline audit; audit_dataset crosses the data_audit subsystem which raises a wide tail (streaming/parse/optional-dep errors) and the offer is advisory — a failure must not abort BYOD selection. # NOSONAR python:S5754
+        logger.warning("Inline audit on %s could not run: %s", jsonl_path, exc)
         _print(f"  Audit could not run: {exc}")
         return False
 
@@ -260,19 +264,31 @@ def _validate_local_jsonl(raw_path: str):
 def _resolve_byod_dataset_path() -> Optional[str]:
     """Prompt the user for a BYOD dataset path and validate it."""
     while True:
-        dataset_path = _prompt(
-            "Path to your dataset JSONL (must exist as a JSONL file) or HF Hub ID, "
-            "or 'cancel' to fall back to the full wizard",
-            "",
-        )
-        if dataset_path.strip().lower() in _CANCEL_TOKENS:
+        # ``cancel`` (and its aliases) now raise ``WizardCancel`` from the
+        # primitive prompt; in the BYOD prelude we honour the long-standing
+        # "fall back to the full wizard" semantics by catching it here instead
+        # of letting it bubble to a clean exit.
+        try:
+            dataset_path = _prompt(
+                "Path to your dataset JSONL (must exist as a JSONL file) or HF Hub ID, "
+                "or 'cancel' to fall back to the full wizard",
+                "",
+            )
+        except WizardCancel:
+            _print("  Cancelled — falling back to the full wizard.")
+            return None
+        if dataset_path.strip().lower() in _CANCEL_TOKENS:  # pragma: no cover — defensive; cancel now raises
             _print("  Cancelled — falling back to the full wizard.")
             return None
         if not dataset_path:
             _print("  A dataset path is required for this template. Type 'cancel' to use the full wizard instead.")
             continue
 
-        result = _validate_local_jsonl(dataset_path)
+        try:
+            result = _validate_local_jsonl(dataset_path)
+        except WizardCancel:
+            _print("  Cancelled — falling back to the full wizard.")
+            return None
         if isinstance(result, str):
             return result
         if result is None:

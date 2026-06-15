@@ -15,6 +15,7 @@ This page is the canonical reference. CI/CD pipelines that parse `forgelm` outpu
 - **Top-level wrapper.** Every envelope starts with `"success": true | false`. Consumers can branch on this single key before parsing the rest.
 - **Error envelope.** When `success: false`, the envelope carries `"error": "<message>"` (string). Optional richer fields (`exit_code`, `error_type`, `details`) MAY be present per the [error-handling standard on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/error-handling.md). Consumers that need certainty on these fields should also check the process exit code via `$?`.
 - **Exit codes.** See [Exit Codes](#/reference/exit-codes). `success: false` always pairs with a non-zero exit. `success: true` pairs with exit `0` in the normal case, with **one exception**: a training run halted at the Article 14 human-approval gate emits `success: true` **and** `awaiting_approval: true` while exiting `4` (the model is staged, not yet promoted). Consumers that must distinguish "done" from "awaiting human approval" should read the `awaiting_approval` discriminator (or check `$?`), not `success` alone.
+- **Argument-parsing errors are the exception.** The JSON-envelope guarantee begins **after** arguments parse successfully. A usage error detected at parse time (unknown flag, bad `--choice`, out-of-range validator value such as `--workers 0`) is reported by `argparse` itself: a human-readable `usage: ... error: ...` line on **stderr** and exit code `2`, with **no** JSON envelope on stdout. A consumer that reads stdout-JSON on every non-zero exit must treat empty stdout (paired with non-zero `$?`) as a parse/usage error and fall back to stderr for the message. The envelope contract applies only to errors raised once the dispatcher is running.
 
 ## `forgelm doctor`
 
@@ -40,14 +41,66 @@ Environment check. See [Doctor command](#/getting-started/first-run).
 | Key | Type | Notes |
 |---|---|---|
 | `success` | bool | `true` when no probe `fail` AND no probe crash; `false` otherwise. |
-| `checks` | list[object] | One entry per probe in execution order. Probe names are stable (e.g. `python.version`, `torch.cuda`, `numpy.torch_abi`, `gpu.inventory`, `extras.qlora`, `hf_hub.reachable`, `hf_hub.offline_cache`, `disk.workspace`, `operator.identity`). |
+| `checks` | list[object] | One entry per probe in execution order. Probe names are stable (e.g. `python.version`, `torch.cuda`, `numpy.torch_abi`, `gpu.inventory`, `extras.qlora`, `hf_hub.reachable`, `hf_hub.offline_cache`, `disk.workspace`, `operator.identity`, `pypdf_normalise.turkish`). In `--offline` mode `hf_hub.offline_cache` replaces `hf_hub.reachable`. |
 | `checks[].name` | str | Probe name. Stable across versions; new probes append rather than rename. |
-| `checks[].status` | str | One of `pass`, `warn`, `fail`, `crashed`. |
+| `checks[].status` | str | One of `pass`, `warn`, `fail`. A probe that raised surfaces as `status: "fail"` with `extras.crashed: true`; the crash is also counted in `summary.crashed`. |
 | `checks[].detail` | str | Operator-facing one-line description of the result. |
 | `checks[].extras` | object | Probe-specific structured data. Per-probe keys are documented in `_doctor.py` docstrings; consumers should treat unknown keys as forward-compatible. |
 | `summary` | object | Counts of each status across `checks`. Sum equals `len(checks)`. |
 
 **Exit code mapping:** `0` = all probes `pass` or `warn`; `1` = at least one `fail`; `2` = at least one `crashed` (probe raised; subsequent probes still ran).
+
+## `forgelm --dry-run` (config validation)
+
+`forgelm --config <yaml> --dry-run --output-format json` validates the config and summarizes what training *would* do **without** loading the heavy stack or touching the GPU. It is the most common CI pre-flight invocation. On a valid config it emits the following envelope on **stdout** and exit code `0`:
+
+```json
+{
+  "success": true,
+  "status": "valid",
+  "model": "org/model",
+  "backend": "auto",
+  "load_in_4bit": false,
+  "trust_remote_code": false,
+  "dora": false,
+  "lora_rank": 16,
+  "lora_alpha": 32,
+  "dataset": "org/dataset",
+  "epochs": 3,
+  "batch_size": 1,
+  "output_dir": "/work/output/final_model",
+  "offline": false,
+  "distributed": null,
+  "rope_scaling": null,
+  "neftune_noise_alpha": null,
+  "webhook_configured": false,
+  "galore_enabled": false,
+  "galore_optim": null,
+  "galore_rank": null,
+  "auto_revert": false,
+  "safety_enabled": false,
+  "safety_scoring": null,
+  "compliance_configured": false,
+  "risk_classification": null
+}
+```
+
+| Key | Type | Notes |
+|---|---|---|
+| `success` | bool | Always `true` on this path — a dry run only reaches stdout once the config validated. An invalid config exits `1` with the 2-key error envelope (`success: false`) instead. |
+| `status` | str | Stable token `"valid"`, retained for backward compatibility with pre-0.7.1 consumers. New consumers should branch on `success`. |
+| `model` / `backend` / `dataset` | str | Resolved model id, model backend, and dataset id from the config. |
+| `output_dir` | str | The effective final-model path (`training.output_dir` joined with `training.final_model_dir`). |
+| `load_in_4bit`, `trust_remote_code`, `dora`, `offline` | bool | Effective values of the corresponding config flags. |
+| `lora_rank`, `lora_alpha`, `epochs`, `batch_size` | int | Effective training/LoRA hyper-parameters. |
+| `distributed` | str \| null | `distributed.strategy`, or `null` when distributed training is not configured. |
+| `rope_scaling`, `neftune_noise_alpha` | object \| float \| null | Effective long-context / NEFTune settings, `null` when unset. |
+| `webhook_configured` | bool | `true` when a webhook URL (literal or `url_env`) is configured. |
+| `galore_enabled`, `galore_optim`, `galore_rank` | bool / str / int | GaLore optimizer summary; the latter two are `null` when GaLore is off. |
+| `auto_revert`, `safety_enabled`, `safety_scoring` | bool / bool / str | Evaluation-gate summary (`safety_scoring` is `null` when safety eval is off). |
+| `compliance_configured`, `risk_classification` | bool / str | EU AI Act compliance summary; `risk_classification` is `null` when compliance is not configured. |
+
+**Exit code mapping:** a valid config exits `0` (`EXIT_SUCCESS`); an invalid config exits `1` (`EXIT_CONFIG_ERROR`) with the standard error envelope.
 
 ## `forgelm` (training) — preflight abort envelope
 
@@ -85,7 +138,9 @@ When training runs to completion the pipeline emits a result envelope on **stdou
   "metrics": {"eval_loss": 0.42, "benchmark/average": 0.78},
   "final_model_path": "/work/output/final_model",
   "reverted": false,
-  "awaiting_approval": false
+  "awaiting_approval": false,
+  "run_id": "fg-abc123def456",
+  "config_hash": "sha256:..."
 }
 ```
 
@@ -122,6 +177,8 @@ When training runs to completion the pipeline emits a result envelope on **stdou
 | `reverted` | bool | `true` iff a gate (eval-loss / benchmark / safety / judge) auto-reverted the model. Mutually exclusive with `awaiting_approval`. |
 | `awaiting_approval` | bool | **Discriminator.** `true` iff the run halted at the Article 14 human-approval gate (exit `4`). A reverted run is always `false` here. |
 | `staging_path` | str | Present only when `awaiting_approval` is `true`; the on-disk staging dir to pass to `forgelm approve <run_id>` / `forgelm reject <run_id>`. |
+| `run_id` | str | Run identifier — correlates the run with its `audit_log.jsonl` and any approval gate. Present whenever the trainer produced the result. |
+| `config_hash` | str | `sha256:` digest of the validated config that produced the run (reproducibility anchor). Present whenever the trainer produced the result. |
 
 Optional sub-blocks (`benchmark`, `resource_usage`, `estimated_cost_usd`, `safety`, `judge`) are added only when those evaluations ran.
 
@@ -187,6 +244,8 @@ Inspect the full approval-gate audit chain + staging contents for one run.
 | `status` | str | One of `pending`, `granted`, `rejected`, `unknown`. Latest-wins semantics: a re-staged run after a prior decision shows `pending`. |
 | `chain` | list[object] | Every approval-gate audit event for `run_id`, in append order. |
 | `staging_contents` | list[str] | Sorted file/directory names at `<output_dir>/final_model.staging.<run_id>` (or canonical fallback). Empty when staging missing or unreadable. |
+| `corrupted` | bool | Present and `true` only when a strict parse of the audit log would reject a line. The displayed `status` is then **not** authoritative — `approve`/`reject` (which read the log strictly) will refuse to act until the log is repaired. Absent on a clean log. |
+| `corruption_detail` | str | Present alongside `corrupted`; names the first offending line (`audit log corrupted at line N: <reason>`). |
 
 ## `forgelm audit`
 
@@ -288,9 +347,11 @@ Audit-log chain integrity check.
   "run_id": "fg-abc123def456",
   "approver": "alice@example.com@workstation-7",
   "final_model_path": "/work/output/final_model",
-  "promote_strategy": "atomic_rename"
+  "promote_strategy": "rename"
 }
 ```
+
+`promote_strategy` is `"rename"` (same-device atomic `os.rename`) or `"move"` (cross-device `shutil.move` fallback).
 
 `approve` exits `0` on success; `reject` exits `0` after recording the rejection (the staging dir is preserved for forensics). `success: false` with `error` on unknown `run_id` / config error.
 
@@ -505,7 +566,7 @@ Wave 2b Phase 36 — standalone safety evaluation against a model checkpoint.
 | `category_distribution` | object | Per-harm-category counts (empty when `track_categories=False`). |
 | `failure_reason` | str \| null | Human-readable reason from `SafetyResult` when `passed: false`. |
 
-**Exit code mapping:** `0` = thresholds passed; `1` = config error (missing `--model`, conflicting probes flags, GGUF model path); `2` = runtime error (model load failure, classifier load failure, broken environment); `3` = `EXIT_EVAL_FAILURE` — evaluation completed but the safety gate said no (operator-actionable: re-train or re-classify).
+**Exit code mapping:** `0` = thresholds passed; `1` = config error reached by the dispatcher (GGUF model path, probes file missing/unreadable); `2` = argparse usage error (missing `--model`, missing both `--probes`/`--default-probes`, or providing both together — exactly one of the two is required, so argparse rejects the request with exit 2 before the dispatcher runs) **or** a runtime error (model load failure, classifier load failure, broken environment); `3` = `EXIT_EVAL_FAILURE` — evaluation completed but the safety gate said no (operator-actionable: re-train or re-classify).
 
 ## `forgelm verify-annex-iv`
 
@@ -570,6 +631,186 @@ Wave 2b Phase 36 — GGUF model file integrity check.
 | `reason` | str | One-line summary; carries the failure detail on `valid: false`. |
 
 **Exit code mapping:** `0` = `valid: true`; `1` = `valid: false` (magic mismatch, metadata block *corrupted*, SHA-256 mismatch, malformed sidecar); `2` = runtime error (file not found, unreadable). The optional-`gguf`-package-missing path stays at `valid: true` + exit `0` (operator's "metadata check skipped" — the magic header + SHA-256 sidecar checks remain the load-bearing integrity surface).
+
+## `forgelm verify-integrity`
+
+Wave 2b Phase 36 / Art. 15 — model-directory artifact integrity check.
+
+**Success envelope** (`forgelm verify-integrity MODEL_DIR`):
+
+```json
+{
+  "success": true,
+  "valid": true,
+  "reason": "All 12 recorded artifact(s) present and unchanged.",
+  "changed": [],
+  "removed": [],
+  "added": [],
+  "verified_count": 12,
+  "path": "/work/output/my-model"
+}
+```
+
+**Mismatch / operator-error envelope** (`valid: false`, exit 1):
+
+```json
+{
+  "success": false,
+  "valid": false,
+  "reason": "Model artifacts do not match model_integrity.json: 1 changed, 1 removed.",
+  "changed": ["adapter_model.safetensors"],
+  "removed": ["tokenizer.model"],
+  "added": [],
+  "verified_count": 10,
+  "path": "/work/output/my-model"
+}
+```
+
+**Runtime-error envelope** (exit 2):
+
+```json
+{
+  "success": false,
+  "error": "Could not verify model integrity for '/work/output/my-model': [Errno 13] Permission denied: '...'"
+}
+```
+
+| Key | Type | Notes |
+|---|---|---|
+| `success` | bool | `true` when `valid: true`; `false` on any mismatch or error. |
+| `valid` | bool | `true` when every recorded artifact is present and its SHA-256 matches; `false` otherwise. |
+| `reason` | str | Human-readable summary — number of clean artifacts on success, mismatch counts on failure. |
+| `changed` | list[str] | Relative paths of artifacts whose SHA-256 no longer matches the manifest. |
+| `removed` | list[str] | Relative paths of artifacts recorded in the manifest that are absent on disk. |
+| `added` | list[str] | Relative paths of on-disk files not recorded in the manifest. |
+| `verified_count` | int | Number of artifacts that matched the manifest successfully. |
+| `path` | str | Absolute path to the model directory that was verified. |
+
+**Exit code mapping:** `0` = all recorded artifacts present and unchanged (`valid: true`); `1` = integrity mismatch (changed / removed / added file) **or** operator / input error (missing path, path is a file not a directory, manifest not found, malformed JSON, non-list `artifacts`, manifest entry path escapes the model directory); `2` = genuine runtime I/O failure on a reachable path (read error, permission denied mid-walk).
+
+The runtime-error envelope (`exit 2`) emits only `{"success": false, "error": "…"}` — no `valid`, `changed`, `removed`, `added`, or `path` keys. Branch on `success` first, then inspect `valid` and the diff lists.
+
+## `forgelm export`
+
+GGUF / merged-weights export for the post-training handoff.
+
+**Envelope** (`forgelm export MODEL --output OUT.gguf`):
+
+```json
+{
+  "success": true,
+  "output_path": "/work/exports/model.q4_k_m.gguf",
+  "format": "gguf",
+  "quant": "q4_k_m",
+  "sha256": "abcd1234...",
+  "size_bytes": 4815162342,
+  "error": null
+}
+```
+
+| Key | Type | Notes |
+|---|---|---|
+| `output_path` | str \| null | Path to the written artefact; `null` on failure. |
+| `format` | str \| null | Export format (e.g. `gguf`, `merged`). |
+| `quant` | str \| null | Quantisation level used (single value — `--quant` takes one level per invocation). |
+| `sha256` | str \| null | SHA-256 over the written artefact; `null` on failure. |
+| `size_bytes` | int \| null | Artefact size in bytes; `null` on failure. |
+| `error` | str \| null | `null` on success; operator-facing message on failure. Branch on `success`, not on `error` presence. |
+
+**Exit code mapping:** `0` = export succeeded; `2` = runtime failure (conversion error, missing `[export]` extra, unreachable model path).
+
+## `forgelm deploy`
+
+Deployment-config generation for Ollama / vLLM / TGI / HF Endpoints.
+
+**Envelope** (`forgelm deploy MODEL --target ollama --output Modelfile`):
+
+```json
+{
+  "success": true,
+  "target": "ollama",
+  "output_path": "/work/deploy/Modelfile",
+  "error": null
+}
+```
+
+| Key | Type | Notes |
+|---|---|---|
+| `target` | str \| null | Deployment target (`ollama`, `vllm`, `tgi`, `hf-endpoints`). |
+| `output_path` | str \| null | Path to the generated config; `null` on failure. |
+| `error` | str \| null | `null` on success; operator-facing message on failure. Branch on `success`, not on `error` presence. |
+
+**Exit code mapping:** `0` = config generated; `1` = caller-input error (unsupported target, `model_path` is not a local directory for the `ollama`/`tgi` targets); `2` = runtime failure (unwritable output path, template render error).
+
+## `forgelm quickstart`
+
+Template → config → train → chat one-shot. Three JSON shapes.
+
+**Template list** (`forgelm quickstart --list --output-format json`):
+
+```json
+{
+  "success": true,
+  "templates": [
+    {
+      "name": "customer-support",
+      "title": "Customer support assistant",
+      "description": "Fine-tune a helpful support agent.",
+      "primary_model": "Qwen/Qwen2.5-7B-Instruct",
+      "fallback_model": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+      "trainer_type": "sft",
+      "estimated_minutes": 20,
+      "min_vram_for_primary_gb": 16,
+      "bundled_dataset": "customer_support.jsonl",
+      "license_note": null
+    }
+  ],
+  "count": 1
+}
+```
+
+**Generation success** (`forgelm quickstart TEMPLATE [--dry-run] --output-format json`):
+
+```json
+{
+  "success": true,
+  "template": "customer-support",
+  "config_path": "/work/quickstart/config.yaml",
+  "model": "Qwen/Qwen2.5-7B-Instruct",
+  "dataset": "/work/quickstart/customer_support.jsonl",
+  "selection_reason": "primary model fits available VRAM",
+  "dry_run": false,
+  "chat_launched": false,
+  "notes": []
+}
+```
+
+**Training failure** (training subprocess returned non-zero):
+
+```json
+{
+  "success": false,
+  "error": "Training subprocess failed with exit code 3.",
+  "exit_code": 3,
+  "template": "customer-support",
+  "config_path": "/work/quickstart/config.yaml"
+}
+```
+
+| Key | Type | Notes |
+|---|---|---|
+| `templates` | list[object] | `--list` only. One entry per registered template; `count == len(templates)`. |
+| `template` | str | The selected template name. |
+| `config_path` | str | Path to the generated YAML config. |
+| `model` | str | Resolved model id (primary or VRAM-driven fallback). |
+| `dataset` | str | Path to the bundled / overridden dataset. |
+| `selection_reason` | str | Why `model` was chosen. |
+| `dry_run` | bool | `true` when `--dry-run` (config written, no training). |
+| `chat_launched` | bool | Always `false` in JSON mode — the interactive chat REPL is suppressed so human prose never interleaves with the JSON envelope on stdout. Run `forgelm chat <model_path>` manually. |
+| `notes` | list[str] | Advisory notes (e.g. license caveats). |
+| `exit_code` | int | Training-failure envelope only — the mapped public exit code the training subprocess returned. |
+
+**Exit code mapping:** `0` = generated (and, in text mode without `--no-chat`, the chat REPL ran); `1` = caller-input error (missing/invalid template, unwritable output dir); the training-failure envelope's `exit_code` (`2`/`3`/`4`) is propagated verbatim when the auto-train subprocess fails.
 
 ## Adding a new subcommand
 

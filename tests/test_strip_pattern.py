@@ -49,12 +49,31 @@ class TestValidateStripPattern:
     @pytest.mark.parametrize(
         "pattern",
         [
+            r"((a+))+b",  # F-P6-OPUS-06: double-group wrapping defeated the walk.
+            r"((\w+))+x",
+            r"(((a+)))+b",  # triple-wrapped; flag must still propagate up.
+            r"((a+))*b",  # outer ``*`` is just as catastrophic as ``+``.
+        ],
+    )
+    def test_rejects_redundantly_wrapped_nested_unbounded(self, pattern):
+        # F-P6-OPUS-06: wrapping the inner quantifier in extra groups used to
+        # reset the parent's unbounded flag, so ``((a+))+b`` slipped past the
+        # validator and backtracked exponentially. The flag now propagates up
+        # through redundant grouping parens.
+        with pytest.raises(StripPatternError, match="ReDoS"):
+            validate_strip_pattern(pattern)
+
+    @pytest.mark.parametrize(
+        "pattern",
+        [
             r"^WATERMARK \d+$",
             r"a{1,100}b",
             r"\d{1,5}",
             r"(\d+)b",  # single unbounded inside group, no outer quantifier.
             r"[A-Z]+",  # standalone unbounded, no nesting.
             r"(a+b)+c",  # group ends with bounded literal, outer quantifier OK.
+            r"((a+)b)+c",  # F-P6-OPUS-06: inner bounded tail (``b``) resets flag.
+            r"(a*b)+c",  # required separator anchors each iteration; not ReDoS.
             r"\b(?:https?|ftp)://[A-Z0-9]+",
         ],
     )
@@ -77,6 +96,28 @@ class TestValidateStripPattern:
     def test_accepts_anchored_negated_class(self):
         # The canonical "strip header line" pattern shape.
         assert validate_strip_pattern(r"^[A-Z ]+CONFIDENTIAL[A-Z ]*$")
+
+    def test_alternation_branch_redos_accepted_and_docstring_documents_gap(self):
+        # F-L-04: ``(a+|b)+c`` is a catastrophically exponential ReDoS shape
+        # (confirmed O(2^n) in review) but the validator accepts it because it
+        # tracks only the *last atom per group*.  The last atom inside the group
+        # is the literal ``b`` (bounded), so the outer ``+`` bypasses the reject.
+        # This test locks two things at once:
+        #   1. validate_strip_pattern must NOT raise — changing the validator to
+        #      accidentally reject this shape would break the test.
+        #   2. The _check_unbounded_quantifier_sequence docstring MUST explicitly
+        #      call out the alternation-branch gap so operators are not misled
+        #      into thinking the shape is caught.
+        assert validate_strip_pattern(r"(a+|b)+c") == r"(a+|b)+c"
+
+        from forgelm._strip_pattern import _check_unbounded_quantifier_sequence
+
+        doc = _check_unbounded_quantifier_sequence.__doc__ or ""
+        assert "alternation" in doc.lower(), (
+            "_check_unbounded_quantifier_sequence docstring must document the "
+            "alternation-branch ReDoS gap (F-L-04). Add text mentioning "
+            "'Alternation-branch variants … are not caught here' to the Scope section."
+        )
 
 
 class TestCompileStripPatterns:

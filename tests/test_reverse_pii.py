@@ -530,6 +530,54 @@ class TestFailurePaths:
         assert ei.value.code == 1
         assert not (tmp_path / ".forgelm_audit_salt").exists(), "config error must not create a salt file on disk"
 
+    def test_invalid_custom_regex_error_does_not_echo_raw_query(self, capsys) -> None:
+        """F-P5-OPUS-17: a malformed --type custom regex must NOT echo the raw
+        query into the error envelope (in --output json it lands in a
+        redirectable durable record). The engine error is still surfaced so the
+        operator can fix the pattern, but the subject's identifier is not."""
+        import json as _json
+
+        from forgelm.cli.subcommands._reverse_pii import _build_search_pattern
+
+        raw_query = "alice(@secret-domain.example"  # unbalanced paren → re.error
+        with pytest.raises(SystemExit) as ei:
+            _build_search_pattern(raw_query, "custom", "json")
+        assert ei.value.code == 1
+
+        payload = _json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        # The raw identifier must not appear anywhere in the error string.
+        assert raw_query not in payload["error"]
+        assert "secret-domain" not in payload["error"]
+        # The regex-engine diagnostic is still present so the operator can fix it.
+        assert "not a valid regular expression" in payload["error"]
+
+    def test_invalid_custom_regex_error_does_not_echo_re_error_text(self, capsys) -> None:
+        """F-P5-OPUS-17 (PR#63 review): re.error.msg / str(exc) reproduce
+        pattern-derived fragments — an invalid group name embeds the subject's
+        identifier in the engine diagnostic itself. The error envelope must not
+        carry that text, only a generic message + numeric position."""
+        import json as _json
+
+        from forgelm.cli.subcommands._reverse_pii import _build_search_pattern
+
+        # An invalid group name surfaces the identifier inside re.error.msg:
+        #   "bad character in group name 'alice@example.com' at position 4"
+        secret = "alice@example.com"
+        raw_query = f"(?P<{secret}>x)"
+        with pytest.raises(SystemExit) as ei:
+            _build_search_pattern(raw_query, "custom", "json")
+        assert ei.value.code == 1
+
+        payload = _json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        # Neither the raw query nor the leaked group-name fragment may appear.
+        assert raw_query not in payload["error"]
+        assert secret not in payload["error"]
+        assert "group name" not in payload["error"]
+        # Operator still gets an actionable, identifier-free message.
+        assert "not a valid regular expression" in payload["error"]
+
     def test_unknown_identifier_type_rejected(self, tmp_path: Path) -> None:
         # The argparse layer also catches this, but the dispatcher
         # validates as belt-and-suspenders for direct library callers.

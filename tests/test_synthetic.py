@@ -75,7 +75,7 @@ class TestSyntheticConfig:
         assert len(config.synthetic.seed_prompts) == 2
 
     def test_defaults(self):
-        config = _config(synthetic={"enabled": True, "teacher_model": "gpt-4"})
+        config = _config(synthetic={"enabled": True, "teacher_model": "gpt-4", "seed_prompts": ["q"]})
         assert config.synthetic.temperature == pytest.approx(0.7)
         assert config.synthetic.max_new_tokens == 1024
         assert config.synthetic.output_format == "messages"
@@ -89,6 +89,7 @@ class TestSyntheticConfig:
                 "enabled": True,
                 "teacher_model": "meta-llama/Llama-3-8B",
                 "teacher_backend": "local",
+                "seed_prompts": ["q"],
             }
         )
         assert config.synthetic.teacher_backend == "local"
@@ -180,6 +181,7 @@ class TestSyntheticGenerator:
                 "teacher_model": "test",
                 "output_format": "messages",
                 "system_prompt": "Be helpful.",
+                "seed_prompts": ["q"],
             }
         )
         gen = SyntheticDataGenerator(config)
@@ -196,6 +198,7 @@ class TestSyntheticGenerator:
                 "enabled": True,
                 "teacher_model": "test",
                 "output_format": "instruction",
+                "seed_prompts": ["q"],
             }
         )
         gen = SyntheticDataGenerator(config)
@@ -208,11 +211,24 @@ class TestSyntheticGenerator:
                 "enabled": True,
                 "teacher_model": "test",
                 "output_format": "chatml",
+                "seed_prompts": ["q"],
             }
         )
         gen = SyntheticDataGenerator(config)
         entry = gen._format_entry("Q?", "A.")
+        # 'chatml' emits the legacy {User, Assistant} key layout,
+        # NOT OpenAI <|im_start|> ChatML markup — and there must be no im_start.
         assert entry == {"User": "Q?", "Assistant": "A."}
+        assert "<|im_start|>" not in json.dumps(entry)
+
+    def test_chatml_naming_discrepancy_documented(self):
+        """The schema description must warn that 'chatml' is the User/Assistant
+        layout, not <|im_start|> markup, so the naming drift is not silent."""
+        from forgelm.config import SyntheticConfig
+
+        desc = SyntheticConfig.model_fields["output_format"].description
+        assert "User, Assistant" in desc
+        assert "im_start" in desc
 
     def test_file_backend_generate(self, tmp_path):
         """Test file-based teacher (pre-generated responses)."""
@@ -249,18 +265,115 @@ class TestSyntheticGenerator:
         assert entries[0]["instruction"] == "What is AI?"
         assert entries[0]["output"] == "AI is artificial intelligence."
 
-    def test_empty_prompts_no_crash(self):
+    def test_empty_prompts_no_crash(self, tmp_path):
+        # The config validator now rejects enabled+no-seeds, so reach the
+        # zero-prompt runtime path via an empty seed file (still a valid config).
+        seed_file = tmp_path / "empty_seeds.txt"
+        seed_file.write_text("")
         config = _config(
             synthetic={
                 "enabled": True,
                 "teacher_model": "test",
-                "seed_prompts": [],
+                "seed_file": str(seed_file),
             }
         )
         gen = SyntheticDataGenerator(config)
         result = gen.generate()
         assert result.total_prompts == 0
         assert result.successful == 0
+
+    def test_seed_loader_skips_non_dict_json_line(self, tmp_path):
+        """A valid-JSON-but-non-object seed line (array, bare number, …) must
+        not crash the loader with AttributeError; it falls back to treating
+        the raw line as a plain-text prompt."""
+        seed_file = tmp_path / "seeds.jsonl"
+        seed_file.write_text(
+            "\n".join(
+                [
+                    json.dumps({"prompt": "What is AI?"}),
+                    "[1, 2, 3]",  # valid JSON array — has no .get
+                    "42",  # valid JSON number
+                    json.dumps({"prompt": "Explain ML."}),
+                ]
+            )
+        )
+        config = _config(synthetic={"enabled": True, "teacher_model": "test", "seed_file": str(seed_file)})
+        gen = SyntheticDataGenerator(config)
+        prompts = gen._load_seed_prompts()  # must not raise
+        assert "What is AI?" in prompts
+        assert "Explain ML." in prompts
+        # The non-object lines survive as raw-text prompts rather than aborting.
+        assert "[1, 2, 3]" in prompts
+        assert "42" in prompts
+
+    def test_seed_loader_bare_string_line_uses_parsed_value_not_quotes(self, tmp_path):
+        """PR#63 review: a bare-string JSON seed line (``"prompt text"``) must
+        append the parsed string itself, not the raw line with its JSON quotes —
+        matching ``safety._load_safety_prompts``."""
+        seed_file = tmp_path / "seeds.jsonl"
+        seed_file.write_text(
+            "\n".join(
+                [
+                    json.dumps("What is AI?"),  # bare quoted-string JSON line
+                    "Explain ML.",  # plain text (not JSON)
+                ]
+            )
+        )
+        config = _config(synthetic={"enabled": True, "teacher_model": "test", "seed_file": str(seed_file)})
+        gen = SyntheticDataGenerator(config)
+        prompts = gen._load_seed_prompts()
+        # The parsed value, without the JSON quotes that ``"..."`` would carry.
+        assert "What is AI?" in prompts
+        assert '"What is AI?"' not in prompts
+        assert "Explain ML." in prompts
+
+    def test_file_responses_skips_non_dict_json_line(self, tmp_path):
+        """``_load_file_responses`` must count a non-object JSON line as
+        malformed and skip it, honouring its 'loud about failures' docstring
+        instead of crashing with AttributeError."""
+        seed_file = tmp_path / "responses.jsonl"
+        seed_file.write_text(
+            "\n".join(
+                [
+                    json.dumps({"prompt": "Q1", "response": "A1"}),
+                    "[1, 2, 3]",  # valid JSON, non-object
+                    json.dumps({"prompt": "Q2", "response": "A2"}),
+                ]
+            )
+        )
+        config = _config(
+            synthetic={
+                "enabled": True,
+                "teacher_model": "n/a",
+                "teacher_backend": "file",
+                "seed_file": str(seed_file),
+            }
+        )
+        gen = SyntheticDataGenerator(config)
+        responses = gen._load_file_responses()  # must not raise
+        assert responses == {"Q1": "A1", "Q2": "A2"}
+
+    def test_file_teacher_lookup_is_byte_exact_not_hashed(self, tmp_path):
+        """The file-teacher stores responses keyed by the *exact prompt string*
+        (no hashing, no whitespace normalisation). Pin that semantics: a
+        byte-identical prompt resolves, but a whitespace-variant of the same
+        prompt misses (returns the empty default) — which would not happen
+        under a normalising/hash key."""
+        seed_file = tmp_path / "responses.jsonl"
+        seed_file.write_text(json.dumps({"prompt": "What is AI?", "response": "A intelligence."}))
+        config = _config(
+            synthetic={
+                "enabled": True,
+                "teacher_model": "n/a",
+                "teacher_backend": "file",
+                "seed_file": str(seed_file),
+            }
+        )
+        gen = SyntheticDataGenerator(config)
+
+        assert gen._call_file_teacher("What is AI?") == "A intelligence."
+        # Trailing-space variant is a distinct key under byte-exact lookup.
+        assert gen._call_file_teacher("What is AI? ") == ""
 
 
 class TestSyntheticYaml:
@@ -283,6 +396,8 @@ synthetic:
   api_key_env: "OPENAI_API_KEY"
   temperature: 0.5
   output_format: "messages"
+  seed_prompts:
+    - "What is AI?"
 """
         config_file = tmp_path / "synth.yaml"
         config_file.write_text(yaml_content)
@@ -364,3 +479,27 @@ class TestSyntheticUsesSafePost:
             gen._call_api_teacher("x")
 
         mock_post.assert_not_called()
+
+
+class TestNoTrackingIDsInSource:
+    """Coding-standard guard: inline comments must not embed internal review
+    tracking labels (e.g. F-P6-OPUS-08, F-P3-FABLE-62).  This test fails if
+    any such ID is re-introduced into synthetic.py, ensuring compliance with
+    docs/standards/coding.md §Comments which prohibits PR/issue/fix references
+    in source code."""
+
+    def test_synthetic_py_has_no_review_tracking_ids(self):
+        import inspect
+        import re
+
+        from forgelm import synthetic
+
+        source = inspect.getsource(synthetic)
+        # Pattern: F-P<digit(s)>-<LETTERS>-<digit(s)>  (e.g. F-P6-OPUS-08)
+        tracking_id_re = re.compile(r"\bF-P\d+-[A-Z]+-\d+\b")
+        matches = tracking_id_re.findall(source)
+        assert not matches, (
+            f"synthetic.py contains internal review tracking ID(s) in inline "
+            f"comments, violating coding.md §Comments: {matches!r}.  "
+            f"Strip the ID prefix and keep only the explanatory rationale."
+        )

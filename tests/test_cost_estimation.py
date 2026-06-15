@@ -6,6 +6,12 @@ from forgelm.config import ForgeConfig, TrainingConfig
 from forgelm.results import TrainResult
 from tests.conftest import minimal_config
 
+# F-P8-C-20: this module depends on a snapshot pricing fixture that drifts
+# on a different cadence than the release matrix, so the publish workflow
+# excludes it via `-m 'not fixture_drift'`. The marker is the single
+# source of truth for that exclusion (previously a brittle --ignore path).
+pytestmark = pytest.mark.fixture_drift
+
 
 class TestCostConfig:
     def test_default_none(self):
@@ -159,3 +165,18 @@ class TestApprovalEnvelope:
         assert out["reverted"] is True
         assert out["awaiting_approval"] is False
         assert "staging_path" not in out
+
+    def test_envelope_includes_run_id_and_config_hash_when_populated(self):
+        """XP-11 / F-P4-OPUS-15: logging-observability.md rule 2 requires the
+        JSON run output to carry run_id + config_hash. The trainer stamps both
+        onto TrainResult before _output_result emits the envelope."""
+        out = self._envelope(TrainResult(success=True, run_id="fg-abc123def456", config_hash="sha256:cafef00d"))
+        assert out["run_id"] == "fg-abc123def456"
+        assert out["config_hash"] == "sha256:cafef00d"
+
+    def test_envelope_omits_run_id_and_config_hash_when_absent(self):
+        """A hand-built TrainResult (library callers) has no run_id/config_hash;
+        the keys are omitted rather than emitted as nulls."""
+        out = self._envelope(TrainResult(success=True))
+        assert "run_id" not in out
+        assert "config_hash" not in out

@@ -28,7 +28,8 @@ training:
   final_model_dir: "final_model"
   merge_adapters: false
   trainer_type: "sft"  # "sft", "dpo", "simpo", "kto", "orpo", "grpo"
-  num_train_epochs: 3
+  max_steps: -1          # -1 = use num_train_epochs; a positive value overrides epochs
+  num_train_epochs: 3    # Only consulted when max_steps == -1
   per_device_train_batch_size: 4
   gradient_accumulation_steps: 2
   learning_rate: 2.0e-5
@@ -37,6 +38,7 @@ training:
   eval_steps: 200
   save_steps: 200
   save_total_limit: 3
+  early_stopping_patience: 3  # Stop after N evals without validation-loss improvement
   packing: false
   # --- Alignment trainer parameters (used by respective trainer_type) ---
   # dpo_beta: 0.1           # DPO temperature
@@ -73,7 +75,7 @@ data:
 #     factor: 4.0                        # Context length multiplier (4.0 = 4x original)
 #   neftune_noise_alpha: 5.0             # NEFTune: add noise to embeddings (improves quality)
 #   sliding_window_attention: 4096       # Override model's sliding window (e.g. Mistral)
-#   sample_packing: true                 # Pack multiple short sequences into one
+#   packing: true                        # Pack multiple short sequences into one (sample_packing is a deprecated alias)
 
 # Synthetic data generation (teacher→student distillation)
 # Generate training data from a larger teacher model.
@@ -89,7 +91,9 @@ data:
 #   max_new_tokens: 1024
 #   temperature: 0.7
 #   output_file: "synthetic_data.jsonl"
-#   output_format: "messages"              # "messages", "instruction", "chatml"
+#   output_format: "messages"              # "messages", "instruction", "chatml", "prompt_response"
+#   min_success_rate: 0.0                  # min fraction of seeds that must yield (0.0 = any yield succeeds)
+#   sanity_failure_rate: 0.2               # failure rate above which a WARNING is logged (warn-only)
 
 # GaLore — optimizer-level memory optimization (alternative to LoRA)
 # Enables full-parameter training with low-rank gradient projection.
@@ -124,6 +128,9 @@ data:
 #     - path: "./checkpoints/run2/final_model"
 #       weight: 0.3
 #   output_dir: "./merged_model"
+#   ties_trim_fraction: 0.2     # TIES: fraction of smallest deltas trimmed (0.0-1.0)
+#   dare_drop_rate: 0.3         # DARE: probability each delta is dropped (0.0-1.0)
+#   dare_seed: 42               # DARE: RNG seed for the random drop mask
 
 # Distributed training (multi-GPU). Requires: pip install forgelm[distributed]
 # Launch with: torchrun --nproc_per_node=N forgelm --config my_config.yaml
@@ -181,6 +188,7 @@ data:
 #   notify_on_start: true
 #   notify_on_success: true
 #   notify_on_failure: true
+#   # require_https: true   # refuse plaintext http:// delivery (regulated estates)
 
 # EU AI Act Compliance (Art. 11 + Annex IV)
 # compliance:

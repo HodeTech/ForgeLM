@@ -5,13 +5,13 @@ description: 16 GPU profilinde otomatik tespit ve saatlik tarifenize göre koşu
 
 # GPU Maliyet Tahmini
 
-> **Durum (v0.5.5):** GPU tespiti + koşu süresi + audit-log damgalama
-> bugün gönderiliyor; konfigürasyon-tabanlı `cost_tracking:` bloğu
-> (tarife tabloları, uyarı / durdurma eşikleri) **v0.6.x'e
-> planlanmıştır** ve `forgelm/config.py` tarafından şu an honure
-> edilmiyor. Aşağıdaki `cost_tracking:` örnekleri ileriye dönük
-> yer tutuculardır — YAML yüzeyi inene kadar saatlik tarifeleri
-> manuel ayarlayın. Erteleme için bkz. [GitHub'daki risks-and-decisions yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap/risks-and-decisions.md).
+> **Durum:** GPU tespiti + koşu süresi + audit-log damgalama bugün
+> gönderiliyor; konfigürasyon-tabanlı `cost_tracking:` bloğu (tarife
+> tabloları, uyarı / durdurma eşikleri) **yol haritasında ve henüz
+> uygulanmadı** — `forgelm/config.py`'de `output.cost_tracking` yüzeyi
+> yok. Aşağıdaki `cost_tracking:` örnekleri ileriye dönük yer
+> tutuculardır — YAML yüzeyi inene kadar saatlik tarifeleri manuel
+> ayarlayın. Erteleme için bkz. [GitHub'daki risks-and-decisions yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap/risks-and-decisions.md).
 
 ForgeLM, üzerinde koştuğunuz GPU'yu tespit eder, profilini (bellek, compute, tipik saatlik tarife) bulur ve koşu başı maliyeti izler. Her koşunun ardından audit log tam olarak ne kadar GPU zamanı kullanıldığını ve maliyetini kaydeder.
 
@@ -48,7 +48,7 @@ output:
     currency: "USD"
 ```
 
-Bunu proje başına bir kez ayarlayın. ForgeLM maliyet raporlama için eşleşen tarifeyi kullanır.
+`cost_tracking:` yüzeyi indiğinde, bunu proje başına bir kez ayarlayın ve ForgeLM maliyet raporlama için eşleşen tarifeyi kullanacak. O zamana kadar blok ileriye dönük bir yer tutucudur (yukarıdaki durum bandına bakın).
 
 ## Çıktı
 
@@ -103,13 +103,13 @@ output:
 
 4×A100 koşusu 2 saat = 4 × 2 × $1.10 = $8.80; ZeRO veya FSDP kullanmak fark etmez.
 
-## Maliyet uyarıları (v0.6.x'e planlanmıştır)
+## Maliyet uyarıları (yol haritası — henüz uygulanmadı)
 
 Kontrolden çıkabilecek koşular için planlanan `cost_tracking` bloğu eşik
 tabanlı uyarı + durdurma destekleyecek:
 
 ```yaml
-# planlanmış — v0.5.5'te forgelm/config.py tarafından honure edilmez
+# yol haritası yer tutucusu — forgelm/config.py tarafından henüz honure edilmez
 output:
   cost_tracking:
     alert_threshold_usd: 50.0          # geçildiğinde webhook fırlat

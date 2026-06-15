@@ -306,8 +306,14 @@ class TestCLIQuickstart:
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
         payload = json.loads(captured.out)
-        assert isinstance(payload, list) and payload
-        names = {entry["name"] for entry in payload}
+        # F-P7-OPUS-24: --list JSON is wrapped in the universal success
+        # envelope (success/templates/count), not a bare top-level array, so
+        # a consumer can branch on the single ``success`` key like every
+        # other subcommand.
+        assert isinstance(payload, dict)
+        assert payload["success"] is True
+        assert payload["count"] == len(payload["templates"])
+        names = {entry["name"] for entry in payload["templates"]}
         assert names == set(TEMPLATES)
 
     def test_quickstart_dry_run_writes_yaml_and_exits_clean(self, tmp_path, capsys):

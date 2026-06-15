@@ -12,9 +12,10 @@ this module is the dispatcher + JSON-envelope wrapper.
 Exit codes (per ``docs/standards/error-handling.md``):
 
 - 0 — every required field present + manifest hash matches.
-- 1 — required field missing OR manifest hash mismatch (operator-
-  actionable; the artifact is not Annex IV compliant as-is).
-- 2 — runtime error (file not found, unreadable, malformed JSON).
+- 1 — operator-actionable: required field missing/empty, manifest hash
+  mismatch, file not found / not a regular file, or malformed JSON
+  (the artifact is not Annex IV compliant or not loadable as-is).
+- 2 — genuine runtime I/O failure on an existing, reachable file.
 """
 
 from __future__ import annotations
@@ -36,6 +37,17 @@ from .._logging import logger
 # The check fails when a required key is missing OR when its value is
 # the empty string / empty dict / empty list (operator likely forgot
 # to populate it from the auto-generation template).
+#
+# Identity-critical §1 sub-fields that must themselves be non-empty.
+# Without this the top-level container check is satisfied by a
+# ``system_identification`` dict whose every value is a blank
+# placeholder — an Annex IV file with no provider identity and no
+# system name would pass the completeness gate (F-P4-OPUS-17).
+_SYSTEM_IDENTIFICATION_REQUIRED_SUBKEYS: Tuple[str, ...] = (
+    "provider_name",
+    "system_name",
+    "intended_purpose",
+)
 _ANNEX_IV_REQUIRED_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("system_identification", "Annex IV §1 — system identification (name, version, provider, intended_purpose)"),
     ("intended_purpose", "Annex IV §1 — intended purpose statement"),
@@ -133,6 +145,22 @@ def verify_annex_iv_artifact(path: str) -> VerifyAnnexIVResult:
     for key, _description in _ANNEX_IV_REQUIRED_FIELDS:
         if not _is_field_populated(artifact.get(key)):
             missing.append(key)
+    # Deepen §1: the system_identification container is non-empty as long
+    # as it carries the 6 fixed keys, but a dict of all-blank placeholders
+    # is exactly "the operator forgot".  Require the identity-critical
+    # sub-fields to be populated too (F-P4-OPUS-17).
+    sys_ident = artifact.get("system_identification")
+    if "system_identification" not in missing:
+        if not isinstance(sys_ident, dict):
+            # A non-dict value (string, list, number) passes the bare
+            # populated-check above but cannot carry the §1 identity
+            # sub-fields — it bypasses the whole identity gate.  Reject it
+            # rather than silently skipping the sub-field checks.
+            missing.append("system_identification")
+        else:
+            for subkey in _SYSTEM_IDENTIFICATION_REQUIRED_SUBKEYS:
+                if not _is_field_populated(sys_ident.get(subkey)):
+                    missing.append(f"system_identification.{subkey}")
     if missing:
         return VerifyAnnexIVResult(
             valid=False,
@@ -214,7 +242,10 @@ def _run_pipeline_mode(path: str, output_format: str) -> None:
     The verifier now emits distinct prefixes so the CLI can
     differentiate the two on the sentinel alone.
     """
-    from forgelm.compliance import verify_pipeline_manifest_at_path
+    from forgelm.compliance import (
+        PIPELINE_MANIFEST_IO_ERROR_PREFIX,
+        verify_pipeline_manifest_at_path,
+    )
 
     # Defensive try/except: the verifier already maps OSError /
     # JSONDecodeError to violation strings, but a future change there
@@ -239,11 +270,22 @@ def _run_pipeline_mode(path: str, output_format: str) -> None:
             print(msg)
         sys.exit(EXIT_TRAINING_ERROR)
 
-    # Sentinel-based exit-code routing.  Only the OSError-shaped
-    # ``unreadable`` sentinel maps to EXIT_TRAINING_ERROR; everything
-    # else (``invalid JSON``, ``not found``, structural / chain
-    # violations) is operator-actionable → EXIT_CONFIG_ERROR.
-    runtime_io_error = any("unreadable" in v for v in violations)
+    # Sentinel-based exit-code routing.  Only the OSError-shaped manifest
+    # violation — tagged with the stable ``IO_ERROR::`` machine prefix —
+    # maps to EXIT_TRAINING_ERROR; everything else (``invalid JSON``,
+    # ``not found``, structural / chain violations) is operator-actionable
+    # → EXIT_CONFIG_ERROR.  Keying off the exact prefix (not the free-text
+    # substring ``unreadable``) keeps the exit-code contract from silently
+    # flipping if a future violation message happens to contain that word
+    # (F-P4-OPUS-25).
+    runtime_io_error = any(v.startswith(PIPELINE_MANIFEST_IO_ERROR_PREFIX) for v in violations)
+
+    # The IO_ERROR:: prefix is an internal routing token, not operator-facing
+    # text — strip it from the displayed/serialized violations.
+    display_violations = [
+        v[len(PIPELINE_MANIFEST_IO_ERROR_PREFIX) :] if v.startswith(PIPELINE_MANIFEST_IO_ERROR_PREFIX) else v
+        for v in violations
+    ]
 
     if output_format == "json":
         print(
@@ -252,7 +294,7 @@ def _run_pipeline_mode(path: str, output_format: str) -> None:
                     "success": not violations,
                     "mode": "pipeline",
                     "path": os.path.abspath(path),
-                    "violations": violations,
+                    "violations": display_violations,
                 },
                 indent=2,
             )
@@ -261,7 +303,7 @@ def _run_pipeline_mode(path: str, output_format: str) -> None:
         print(f"OK: pipeline manifest at {path}")
     else:
         print(f"FAIL: pipeline manifest at {path}")
-        for v in violations:
+        for v in display_violations:
             print(f"  - {v}")
 
     if not violations:

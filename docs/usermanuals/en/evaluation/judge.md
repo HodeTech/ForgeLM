@@ -60,7 +60,7 @@ ForgeLM generates the trained model's completion for each prompt and asks the ju
 }
 ```
 
-When `mean_score < min_score`, the trainer treats it as an evaluation regression: if `auto_revert: true`, the model is reverted; otherwise the trainer exits non-zero with the failure recorded in the audit log.
+When `mean_score < min_score`, the trainer treats it as an evaluation regression: if `auto_revert: true`, the model is reverted and the run exits `3` (`EXIT_EVAL_FAILURE`); with the shipped default `auto_revert: false` the failure is recorded in the audit log and the JSON `judge` block but the model is still promoted and the run exits `0`. Set `auto_revert: true` if a failed judge gate should change the exit code.
 
 ## Judge-model choice
 

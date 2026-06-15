@@ -12,7 +12,7 @@ import sys
 import warnings
 
 from ._config_load import _apply_offline_flag, _load_config_or_exit
-from ._exit_codes import EXIT_CONFIG_ERROR, EXIT_SUCCESS, EXIT_TRAINING_ERROR
+from ._exit_codes import EXIT_CONFIG_ERROR, EXIT_SUCCESS, EXIT_TRAINING_ERROR, _clamp_exit_code
 from ._logging import _setup_logging, logger
 from ._no_train_modes import _maybe_run_no_train_mode
 from ._parser import parse_args
@@ -28,11 +28,11 @@ def _output_format_for(args) -> str:
 def _dispatch_subcommand(command: str, args) -> None:
     """Run a Phase 10 / 10.5 / 11 / 11.5 / Wave 2a subcommand and exit.
 
-    Subcommands handled here: ``chat``, ``export``, ``deploy``,
-    ``quickstart``, ``ingest``, ``audit``, ``doctor``, ``verify-audit``,
-    ``approve``, ``reject``, ``approvals``.  Each terminates the process
-    via ``sys.exit`` after its own dispatcher returns — the trainer code
-    path never runs when a subcommand is in play.
+    Handles every subcommand registered in the ``table`` literal below
+    (the authoritative, drift-proof list — adding a subcommand is a
+    single-row edit there).  Each terminates the process via ``sys.exit``
+    after its own dispatcher returns — the trainer code path never runs
+    when a subcommand is in play.
 
     Dispatchers are looked up via the package facade so tests that
     ``patch("forgelm.cli._run_*_cmd", ...)`` see their mock invoked.
@@ -58,6 +58,12 @@ def _dispatch_subcommand(command: str, args) -> None:
       table dispatch (Round-5 fix), so ``SIGINT`` during a long
       verify-of-100K-events lands on 2 just like the others.  Returns
       its own exit code on success (the only dispatcher that does so).
+
+    Returned exit codes (verify-audit and the pipeline path) pass through
+    :func:`_clamp_exit_code`, so a computed or signal-derived code is
+    coerced to ``EXIT_TRAINING_ERROR`` rather than leaking verbatim —
+    making the ``_exit_codes`` module-docstring invariant real at this
+    seam (F-P7-OPUS-29).
     """
     # Late import via the package facade so monkeypatched
     # ``forgelm.cli._run_*_cmd`` references resolve correctly.
@@ -87,6 +93,7 @@ def _dispatch_subcommand(command: str, args) -> None:
         "verify-annex-iv": "_run_verify_annex_iv_cmd",
         "safety-eval": "_run_safety_eval_cmd",
         "verify-gguf": "_run_verify_gguf_cmd",
+        "verify-integrity": "_run_verify_integrity_cmd",
     }
     dispatcher_name = table.get(command)
     if dispatcher_name is None:
@@ -108,7 +115,7 @@ def _dispatch_subcommand(command: str, args) -> None:
         if command == "chat":
             dispatcher(args)
         elif command == "verify-audit":
-            sys.exit(dispatcher(args))
+            sys.exit(_clamp_exit_code(dispatcher(args)))
         else:
             dispatcher(args, output_format)
     except KeyboardInterrupt:
@@ -218,10 +225,17 @@ def _dispatch_legacy_data_audit(args) -> None:
     # ``forgelm.cli._run_data_audit`` references resolve correctly.
     from forgelm import cli as _cli_facade
 
+    # The deprecation warning, the parser help, and the helper docstring all
+    # promise "same behaviour, same output" as `forgelm audit PATH`.  The
+    # subcommand defaults --quality-filter ON (v0.6.0+), so the legacy alias
+    # must pass enable_quality_filter=True to keep that promise — otherwise it
+    # falls back to the helper's opt-in default (False) and emits a
+    # quality_summary-less data_audit_report.json (F-P7-OPUS-01).
     _cli_facade._run_data_audit(
         args.data_audit,
         args.output,
         args.output_format,
+        enable_quality_filter=True,
     )
     sys.exit(EXIT_SUCCESS)
 
@@ -253,7 +267,7 @@ def _dispatch_pipeline_mode(config, args) -> None:
         logger.error("Failed to re-read pipeline YAML for hashing: %s", e)
         sys.exit(EXIT_CONFIG_ERROR)
 
-    sys.exit(run_pipeline_from_args(config, pipeline_yaml_bytes, args))
+    sys.exit(_clamp_exit_code(run_pipeline_from_args(config, pipeline_yaml_bytes, args)))
 
 
 def _main_inner() -> None:

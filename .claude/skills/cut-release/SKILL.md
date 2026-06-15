@@ -40,7 +40,7 @@ From [release.md](../../../docs/standards/release.md):
 | Stable library symbol added to `forgelm.__all__` (e.g. new `verify_*` function) | MINOR | MINOR |
 | Stable library symbol removed or signature changed | MAJOR | MAJOR |
 
-`__version__` (single source of truth: [`pyproject.toml`](../../../pyproject.toml) line 7) tracks the *CLI / YAML / behavioural* contract. `__api_version__` (single source of truth: [`forgelm/_version.py`](../../../forgelm/_version.py)) tracks the *Python library* contract — operators who pin against it for feature detection rely on this signal. The two version numbers are decoupled by design: a release that adds a new training paradigm bumps `__version__` MINOR while leaving `__api_version__` untouched (no new public symbol), and a release that adds a new lazy-import target bumps both.
+`__version__` (single source of truth: the `version =` line in [`pyproject.toml`](../../../pyproject.toml)) tracks the *CLI / YAML / behavioural* contract. `__api_version__` (single source of truth: [`forgelm/_version.py`](../../../forgelm/_version.py)) tracks the *Python library* contract — operators who pin against it for feature detection rely on this signal. The two version numbers are decoupled by design: a release that adds a new training paradigm bumps `__version__` MINOR while leaving `__api_version__` untouched (no new public symbol), and a release that adds a new lazy-import target bumps both.
 
 Library consumers should compare `__api_version__` via `packaging.version.Version` rather than string `>=`, because lexicographic comparison breaks for two-digit minor / patch components (e.g. `"1.10.0" < "1.2.0"` as strings):
 
@@ -92,7 +92,7 @@ Rules:
 
 ### 3. Bump version
 
-Edit [`pyproject.toml`](../../../pyproject.toml) line 7:
+Edit the `version =` line in [`pyproject.toml`](../../../pyproject.toml):
 
 ```toml
 version = "0.4.0"    # was "0.3.1rc1" or "0.4.0rc1"

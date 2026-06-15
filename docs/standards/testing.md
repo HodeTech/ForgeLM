@@ -54,17 +54,24 @@ tests/
 
 ## Fixtures
 
-From [`tests/conftest.py`](../../tests/conftest.py):
+The canonical factory lives in
+[`tests/_helpers/factories.py`](../../tests/_helpers/factories.py) and is
+re-exported via [`tests/conftest.py`](../../tests/conftest.py) (both as the
+callable and as a same-named pytest fixture):
 
 ```python
 def minimal_config(**overrides):
-    """Create a minimal valid ForgeConfig dict for testing."""
-    data = {
-        "model": {"name_or_path": "org/model"},
-        "lora": {},
-        "training": {},
-        "data": {"dataset_name_or_path": "org/dataset"},
-    }
+    """Build the smallest valid ForgeConfig dict for testing."""
+    # Fresh deepcopy on every call so a caller's mutation cannot leak
+    # between tests.
+    data = deepcopy(
+        {
+            "model": {"name_or_path": "org/model"},
+            "lora": {},
+            "training": {},
+            "data": {"dataset_name_or_path": "org/dataset"},
+        }
+    )
     data.update(overrides)
     return data
 ```
@@ -141,6 +148,11 @@ From [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml):
    - `python3 tools/check_bilingual_parity.py --strict` — H2/H3/H4 spine sync between EN and TR mirrors (39/39 pairs today).
    - `python3 tools/check_anchor_resolution.py --strict` — every relative markdown link with a `#anchor` fragment resolves to a real heading.
    - `python3 tools/check_cli_help_consistency.py --strict` — CLI `--help` output ↔ `docs/usermanuals/{en,tr}/reference/cli.md` parity.
+
+   This list is a representative subset. The full doc-guard surface expanded
+   during the full-project-review W1/H11 sweep — `ci.yml`'s `validate` job is
+   the authoritative inventory, and `tests/test_guard_wiring.py` fails CI if any
+   `tools/check_*.py` guard is left unwired without an allowlisted rationale.
 
 From [`.github/workflows/nightly.yml`](../../.github/workflows/nightly.yml):
 

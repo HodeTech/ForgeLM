@@ -224,6 +224,100 @@ class TestWebhookNotifier:
 
         assert any("404" in r.message or "HTTP" in r.message for r in caplog.records)
 
+    @patch("forgelm._http.requests.Session.post")
+    def test_require_https_true_refuses_http_url(self, mock_post, caplog):
+        """F-P5-OPUS-12: with ``webhook.require_https=True`` a plaintext
+        ``http://`` URL is refused by the SSRF chokepoint (HttpSafetyError →
+        logged WARNING, no POST attempted) instead of warned-and-sent."""
+        import logging
+
+        config = _make_config({"url": "http://hooks.internal/abc", "require_https": True})  # NOSONAR python:S5332
+        notifier = WebhookNotifier(config)
+
+        with caplog.at_level(logging.WARNING, logger="forgelm.webhook"):
+            notifier.notify_start(run_name="test_run")  # must not raise
+
+        mock_post.assert_not_called()  # POST never attempted
+        assert any("Refusing to post webhook" in r.message for r in caplog.records)
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_require_https_false_permits_http_url(self, mock_post):
+        """F-P5-OPUS-12: the default (require_https=False) preserves the
+        documented warn-then-send behaviour — the POST is still attempted."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_post.return_value = mock_response
+
+        config = _make_config({"url": "http://hooks.internal/abc"})  # NOSONAR python:S5332
+        notifier = WebhookNotifier(config)
+        notifier.notify_start(run_name="test_run")
+
+        mock_post.assert_called_once()  # cleartext delivery permitted by default
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_generic_request_exception_logs_warning_not_error(self, mock_post, caplog):
+        """F-P4-OPUS-31: a bare ``requests.RequestException`` is an EXPECTED
+        transport failure — it must log at WARNING with no traceback and no
+        'Unexpected' wording, not at ERROR via logger.exception."""
+        import logging
+
+        import requests as req
+
+        mock_post.side_effect = req.RequestException("TLS reset")
+        config = _make_config({"url": "https://example.com/hook"})
+        notifier = WebhookNotifier(config)
+
+        with caplog.at_level(logging.DEBUG, logger="forgelm.webhook"):
+            notifier.notify_start(run_name="test_run")  # must not raise
+
+        transport_recs = [r for r in caplog.records if "transport error" in r.message]
+        assert transport_recs, "expected a 'transport error' WARNING record"
+        assert all(r.levelno == logging.WARNING for r in transport_recs)
+        # No ERROR-level record and no 'Unexpected' mislabelling / traceback.
+        assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+        assert not any("Unexpected" in r.message for r in caplog.records)
+        assert all(r.exc_info is None for r in transport_recs)  # no traceback attached
+
+
+class TestMaskUrl:
+    """F-P5-OPUS-06 / F-P5-OPUS-11 regression: ``WebhookNotifier._mask`` must
+    strip the *entire* path (not just userinfo/query) so a custom receiver
+    whose secret is the first path segment (``https://host/<TOKEN>``) does not
+    leak into operator logs, and the masking policy is the single
+    ``forgelm._http._mask_netloc`` chokepoint.
+    """
+
+    # NOSONAR test fixture — fragment-built so secret scanners don't flag it.
+    _SECRET = "aZ9" + "SECRETTOKEN"  # noqa: S105
+
+    def test_mask_strips_first_path_segment_for_custom_receiver(self):
+        masked = WebhookNotifier._mask(f"https://hook.mycorp.internal/{self._SECRET}")
+        assert self._SECRET not in masked
+        assert masked == "https://hook.mycorp.internal"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://hooks.slack.com/services/T0/B0/SECRET",
+            "https://discord.com/api/webhooks/123/SECRET",
+            "https://outlook.office.com/webhook/abc/IncomingWebhook/SECRET",
+            "https://hook.mycorp.internal/SECRET",
+            "https://user:pass@hook.mycorp.internal/SECRET?sig=SECRET",
+        ],
+    )
+    def test_mask_never_leaks_secret_across_receiver_shapes(self, url):
+        masked = WebhookNotifier._mask(url)
+        assert "SECRET" not in masked
+        assert masked.startswith("https://")
+
+    def test_mask_delegates_to_http_chokepoint(self):
+        """The webhook masker must produce identical output to the single
+        ``_http._mask_netloc`` chokepoint (no divergent second policy)."""
+        from forgelm._http import _mask_netloc
+
+        url = "https://user:pass@hooks.example.com/services/T0/B0/TOKEN?sig=x"
+        assert WebhookNotifier._mask(url) == _mask_netloc(url)
+
 
 class TestSafePostHttpDiscipline:
     """Direct unit tests for forgelm._http.safe_post.
@@ -500,6 +594,44 @@ class TestLifecycleVocabulary:
         serialized = json.dumps(payload)
         for forbidden in ("state_dict", "model.safetensors", "pytorch_model.bin", "adapter_model"):
             assert forbidden not in serialized, f"Payload must not carry {forbidden!r}"
+
+    def test_emitted_events_match_documented_vocabulary(self):
+        """XP-05 / F-P4-OPUS-08,32: the set of wire events emitted by
+        WebhookNotifier must equal the documented vocabulary (8 events). The
+        docs previously claimed only 'five' while the code emits eight."""
+        import pathlib
+        import re
+
+        repo = pathlib.Path(__file__).resolve().parent.parent
+        src = (repo / "forgelm" / "webhook.py").read_text(encoding="utf-8")
+        emitted = set(re.findall(r'event\s*=\s*"([^"]+)"', src))
+        documented = {
+            "training.start",
+            "training.success",
+            "training.failure",
+            "training.reverted",
+            "approval.required",
+            "pipeline.started",
+            "pipeline.completed",
+            "pipeline.stage_reverted",
+        }
+        assert emitted == documented, f"webhook event vocabulary drifted: {emitted ^ documented}"
+        assert len(emitted) == 8
+
+    def test_doc_numerical_claims_guard_passes_for_webhook_events(self):
+        """The check_doc_numerical_claims helper must agree with the doc copy:
+        canonical webhook_events count == the number cited in the docs."""
+        import pathlib
+        import sys
+
+        tools_dir = str(pathlib.Path(__file__).resolve().parent.parent / "tools")
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+        import check_doc_numerical_claims as mod  # noqa: PLC0415
+
+        assert mod.canonical_webhook_events() == 8
+        # No 'webhook_events' mismatch should be reported by the guard.
+        assert mod.main(["--quiet"]) == 0
 
 
 class TestWebhookPersistRoundTrip:

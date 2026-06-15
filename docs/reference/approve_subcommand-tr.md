@@ -5,7 +5,7 @@
 
 `forgelm approve` ve `forgelm reject`, **EU AI Act Madde 14** insan-gözetim terminal-karar subcommand'larıdır (Phase 9). Eğitim koşusu kod 4 (`EXIT_AWAITING_APPROVAL`) ile çıktığında, diskte `final_model.staging/` ve zincirde `human_approval.required` event'iyle duraklar; yetkili reviewer ardından `approve` (terfi için) veya `reject` (atmak için) çalıştırır.
 
-Listeleme tamamlayıcısı için bkz. [`approvals_subcommand.md`](approvals_subcommand.md). Deployer akışı (CI koşusu 4 ile çıkar → reviewer'a haber gider → CLI çağrısı → audit) için bkz. [`../guides/human_approval_gate.md`](../guides/human_approval_gate.md).
+Listeleme tamamlayıcısı için bkz. [`approvals_subcommand.md`](approvals_subcommand-tr.md). Deployer akışı (CI koşusu 4 ile çıkar → reviewer'a haber gider → CLI çağrısı → audit) için bkz. [`../guides/human_approval_gate.md`](../guides/human_approval_gate-tr.md).
 
 ## Synopsis
 
@@ -17,7 +17,7 @@ forgelm reject   run_id --output-dir DIR [--comment TEXT]
                         [--output-format {text,json}]
 ```
 
-İki subcommand da **positional `run_id`** alır (`--run-id` flag'i YOK). Bu, `forgelm/cli/subcommands/_approve.py` içindeki CLI yüzeyiyle ve [`../qms/access_control.md`](../qms/access_control.md) §6'daki `forgelm approve <run-id>` cookbook'uyla eşleşir.
+İki subcommand da **positional `run_id`** alır (`--run-id` flag'i YOK). Bu, `forgelm/cli/subcommands/_approve.py` içindeki CLI yüzeyiyle ve [`../qms/access_control.md`](../qms/access_control-tr.md) §6'daki `forgelm approve <run-id>` cookbook'uyla eşleşir.
 
 | Argüman / flag | Zorunlu | Açıklama |
 |---|---|---|
@@ -58,7 +58,7 @@ Staging dizini **silinmez** — operatörler red kaydı zincire girdikten sonra 
 2. `getpass.getuser()` (OS-raporlu kullanıcı adı).
 3. İkisi de başarısızsa `"anonymous"`.
 
-**Madde 14 segregation of duties.** Onaylayanın `FORGELM_OPERATOR`'ı eğiticininkinden farklı OLMALIDIR (ISO 27001:2022 A.5.3, SOC 2 CC1.5). ForgeLM farkı zorunlu kılmaz — bu deployer-tarafı IdP kontrolüdür — ancak audit zinciri her ikisini de kaydeder; auditor [`../qms/access_control.md`](../qms/access_control.md) §6'daki `jq -rs` cookbook'uyla ihlalleri tespit edebilir:
+**Madde 14 segregation of duties.** Onaylayanın `FORGELM_OPERATOR`'ı eğiticininkinden farklı OLMALIDIR (ISO 27001:2022 A.5.3, SOC 2 CC1.5). ForgeLM farkı zorunlu kılmaz — bu deployer-tarafı IdP kontrolüdür — ancak audit zinciri her ikisini de kaydeder; auditor [`../qms/access_control.md`](../qms/access_control-tr.md) §6'daki `jq -rs` cookbook'uyla ihlalleri tespit edebilir:
 
 ```bash
 jq -rs '
@@ -75,7 +75,7 @@ Yazdırılan herhangi bir satır segregation-of-duties ihlalidir.
 
 ## Yayılan audit event'leri
 
-İki event de [`audit_event_catalog.md`](audit_event_catalog.md)'deki ortak zarfı taşır. Katalog satırları kolaylık için burada da listelenir.
+İki event de [`audit_event_catalog.md`](audit_event_catalog-tr.md)'deki ortak zarfı taşır. Katalog satırları kolaylık için burada da listelenir.
 
 | Event | Ne zaman yayılır | Anahtar payload |
 |---|---|---|
@@ -133,8 +133,8 @@ Hata (her ikisi, `_output_error_and_exit` tarafından):
 
 ## Bkz.
 
-- [`approvals_subcommand.md`](approvals_subcommand.md) — keşif tamamlayıcısı (`--pending` / `--show RUN_ID`).
-- [`../guides/human_approval_gate.md`](../guides/human_approval_gate.md) — deployer akışı.
-- [`audit_event_catalog.md`](audit_event_catalog.md) — zarf spec'i ile birlikte tam event sözlüğü.
-- [`../qms/access_control.md`](../qms/access_control.md) §6 — segregation-of-duties cookbook.
+- [`approvals_subcommand.md`](approvals_subcommand-tr.md) — keşif tamamlayıcısı (`--pending` / `--show RUN_ID`).
+- [`../guides/human_approval_gate.md`](../guides/human_approval_gate-tr.md) — deployer akışı.
+- [`audit_event_catalog.md`](audit_event_catalog-tr.md) — zarf spec'i ile birlikte tam event sözlüğü.
+- [`../qms/access_control.md`](../qms/access_control-tr.md) §6 — segregation-of-duties cookbook.
 - [`../usermanuals/tr/compliance/human-oversight.md`](../usermanuals/tr/compliance/human-oversight.md) — operatör-yüzlü kullanıcı kılavuzu sayfası.

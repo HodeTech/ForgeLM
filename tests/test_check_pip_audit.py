@@ -501,6 +501,47 @@ def test_ignores_unquoted_yaml_date_fails(tool, tmp_path, capsys):
     assert "'verified_at' must be a 'YYYY-MM-DD' string" in captured.err
 
 
+def _ignores_body_with_verified_at(verified_at: str) -> str:
+    return (
+        "ignores:\n"
+        "  - id: CVE-2026-0001\n"
+        "    package: synthetic-pkg\n"
+        "    reason: synthetic\n"
+        "    threat_model: synthetic\n"
+        f"    verified_at: '{verified_at}'\n"
+        "    reevaluate_after: each release cycle\n"
+    )
+
+
+def test_stale_verified_at_emits_warning_but_does_not_fail(tool, tmp_path, capsys):
+    """F-P5-OPUS-14: a `verified_at` older than the re-evaluation window emits
+    a `::warning::` naming the id + age, but the gate still passes (advisory)."""
+    from datetime import date, timedelta
+
+    audit = _write_audit(tmp_path, {"dependencies": []})
+    backdated = (date.today() - timedelta(days=200)).isoformat()
+    ignores = _write_ignores(tmp_path, _ignores_body_with_verified_at(backdated))
+    rc = tool.main([str(_TOOL_PATH), str(audit), "--ignores", str(ignores)])
+    captured = capsys.readouterr()
+    assert rc == 0  # advisory only — gate still passes
+    assert "::warning::" in captured.out
+    assert "CVE-2026-0001" in captured.out
+    assert "days ago" in captured.out
+
+
+def test_fresh_verified_at_emits_no_staleness_warning(tool, tmp_path, capsys):
+    """F-P5-OPUS-14: a recent `verified_at` produces no staleness warning."""
+    from datetime import date, timedelta
+
+    audit = _write_audit(tmp_path, {"dependencies": []})
+    recent = (date.today() - timedelta(days=10)).isoformat()
+    ignores = _write_ignores(tmp_path, _ignores_body_with_verified_at(recent))
+    rc = tool.main([str(_TOOL_PATH), str(audit), "--ignores", str(ignores)])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "days ago" not in captured.out
+
+
 def test_ignores_freetext_reevaluate_after_is_accepted(tool, tmp_path, capsys):
     """`reevaluate_after` is free text (a condition), NOT a date — a
     sentence value must be accepted, unlike `verified_at`."""

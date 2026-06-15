@@ -34,7 +34,7 @@ sequenceDiagram
         end
     end
     Verify->>Manifest: yükle + ilk girdi hash'iyle çapraz kontrol
-    Verify-->>CI: çıkış 0 (temiz) / 1 (tahrifat) / 2 (seçenek/runtime)
+    Verify-->>CI: çıkış 0 (temiz) / 1 (operatörün düzeltebileceği başarısızlık)
 ```
 
 ## Hızlı başlangıç
@@ -66,7 +66,7 @@ $ FORGELM_AUDIT_SECRET="$(cat /run/secrets/audit-secret)" \
 
 Sıkı mod iki güvenlik ağını birden devreye sokar:
 
-- Yapılandırılmış env var set değilse, çıkış `2` (seçenek hatası). Pipeline'ı çalıştırmadan önce sırrı yüklemeyi unutan operatörü yakalar.
+- Yapılandırılmış env var set değilse, çıkış `1` (operatörün düzeltebileceği ön-uçuş hatası). Pipeline'ı çalıştırmadan önce sırrı yüklemeyi unutan operatörü yakalar.
 - Herhangi bir satırda `_hmac` alanı eksikse, çıkış `1` (zincir hatası). HMAC'in koşu ortasında kapatıldığı karışık-mod log'larını yakalar.
 
 ### Varsayılan olmayan bir sır değişkenini adlandırma
@@ -102,8 +102,7 @@ Her iki durumda da çıkış kodu `1`'dir. Log'u kanıt saymadan önce inceleyin
 | Kod | Anlam |
 |---|---|
 | `0` | Zincir (ve doğrulandığında HMAC etiketleri) uçtan uca bütün. |
-| `1` | Tahrifat / bozulma tespit edildi. |
-| `2` | Seçenek hatası (`--require-hmac` sırsız) ya da dosya bulunamadı / okunamadı. |
+| `1` | Operatörün düzeltebileceği başarısızlık: tahrifat / bozulma tespiti, seçenek hatası (`--require-hmac` sırsız) ya da dosya bulunamadı / okunamadı. |
 
 ## Sık hatalar
 
@@ -120,7 +119,7 @@ Her iki durumda da çıkış kodu `1`'dir. Log'u kanıt saymadan önce inceleyin
 :::
 
 :::tip
-**Doğrulayıcıyı CI'da herhangi bir sunum adımından önce sabitleyin.** Her eğitim koşusundan sonra `forgelm verify-audit --require-hmac`'i sert bir kapı olarak bağlayın. Çıkış `1` yayını başarısız etmeli; çıkış `2` ön-uçuş kontrolünü başarısız etmeli (operatör sırrı eksik).
+**Doğrulayıcıyı CI'da herhangi bir sunum adımından önce sabitleyin.** Her eğitim koşusundan sonra `forgelm verify-audit --require-hmac`'i sert bir kapı olarak bağlayın. Çıkış `1` (tahrifat veya operatör sırrının eksik olduğu ön-uçuş durumu) yayını başarısız etmeli.
 :::
 
 ## Bkz.
@@ -128,4 +127,4 @@ Her iki durumda da çıkış kodu `1`'dir. Log'u kanıt saymadan önce inceleyin
 - [Audit Log](#/compliance/audit-log) — bu komutun doğruladığı log'a dair operatör-odaklı kılavuz.
 - [Annex IV](#/compliance/annex-iv) — doğrulayıcısı (`forgelm verify-annex-iv`) bu komutun tasarım desenini paylaşan teknik dokümantasyon artifact'ı.
 - [GGUF Doğrulama](#/deployment/verify-gguf) — deployment-bütünlük yüzeyindeki kardeş doğrulayıcı.
-- [`audit_event_catalog.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md) — doğrulanan log'un *içinde* görünen event'ler (GitHub kaynağı).
+- [`audit_event_catalog-tr.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog-tr.md) — doğrulanan log'un *içinde* görünen event'ler (GitHub kaynağı).

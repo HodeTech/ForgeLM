@@ -109,10 +109,14 @@ attributed, dual-controlled, and forensically recorded.
 
 ### 4.2 Configuration drift detection
 
-`tools/regenerate_config_doc.py` (Phase 16) regenerates
-`docs/reference/configuration.md` (and `-tr.md` mirror) from the
-Pydantic schema. CI runs the diff guard; a config-schema change
-without a corresponding doc update fails the build.
+`tools/check_field_descriptions.py --strict` (Phase 16) runs on every
+CI build (`ci.yml`) and exits non-zero if any Pydantic field in
+`forgelm/config.py` lacks a `description=` argument. The operator-facing
+`docs/reference/configuration.md` (and its `-tr.md` mirror) are
+maintained by hand and reviewed against the schema; `tools/check_bilingual_parity.py --strict`
+enforces EN↔TR structural parity. There is no autogenerator — the guard
+guarantees that every schema field carries authoritative description text,
+and change review checks that the reference doc mirrors it.
 
 This closes the "doc drift" failure mode where the schema evolves
 but the operator-facing doc lags. ISO A.5.36 cites this as a
@@ -143,4 +147,5 @@ Use these to trace any model back to its exact training configuration and data.
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | [DATE] | [AUTHOR] | Initial version |
-| 1.1 | 2026-05-05 | Wave 4 / Faz 23 | Added §4 CI-gates-as-change-control table (11 gates × ISO controls); §4.1 Article 14 approval gate as CAB substitute; §4.2 config-drift detection via `regenerate_config_doc.py`; §4.3 SBOM drift detection via `generate_sbom.py` + determinism test |
+| 1.1 | 2026-05-05 | Wave 4 / Faz 23 | Added §4 CI-gates-as-change-control table (11 gates × ISO controls); §4.1 Article 14 approval gate as CAB substitute; §4.2 config-drift detection via `check_field_descriptions.py` + manual doc review; §4.3 SBOM drift detection via `generate_sbom.py` + determinism test |
+| 1.2 | 2026-06-14 | Wave 1 / H7 | Corrected §4.2: the config-drift control is `check_field_descriptions.py --strict` + manual doc review + bilingual-parity guard; the previously cited `regenerate_config_doc.py` autogenerator never existed |

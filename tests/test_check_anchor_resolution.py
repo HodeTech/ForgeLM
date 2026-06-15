@@ -58,9 +58,31 @@ class TestSlugifyHeading:
         tool = _load_tool()
         assert tool._slugify_heading("Section 1.2: Why?") == "section-12-why"
 
-    def test_collapses_multiple_dashes(self):
+    def test_preserves_consecutive_dashes(self):
+        # F-P8-C-14: GFM does NOT collapse runs of dashes.  ``a -- b   c``
+        # renders the anchor ``a----b---c`` on github.com (each surviving
+        # literal dash plus one dash per whitespace char).  The earlier
+        # ``re.sub(r"-+", "-", …)`` collapse diverged from GitHub and both
+        # masked links that 404 and rejected correct GFM-slug links.
         tool = _load_tool()
-        assert tool._slugify_heading("a -- b   c") == "a-b-c"
+        assert tool._slugify_heading("a -- b   c") == "a----b---c"
+        assert tool._slugify_heading("Foo - Bar") == "foo---bar"
+        assert tool._slugify_heading("A  B") == "a--b"
+        # Real in-repo heading that the dash-collapse bug masked.
+        assert tool._slugify_heading("Phase 11.5 — Ingestion / Audit Polish") == "phase-115--ingestion--audit-polish"
+
+    def test_collapsed_slug_link_is_flagged_broken(self, tmp_path: Path):
+        # F-P8-C-14 resolution lens: a link written with the OLD collapsed
+        # slug must now be reported broken, while the GFM slug resolves.
+        tool = _load_tool()
+        target = _write(
+            tmp_path / "docs" / "target.md",
+            "# Title\n\n## Phase 14 — Multi-Stage Chains (v0.7.0)\n\nbody\n",
+        )
+        anchors = tool._extract_anchors(target)
+        assert "phase-14--multi-stage-chains-v070" in anchors
+        # The collapsed form GitHub would 404 on is absent.
+        assert "phase-14-multi-stage-chains-v070" not in anchors
 
     def test_unicode_word_chars_preserved(self):
         # Turkish letters, etc. — \w with re.UNICODE matches them.

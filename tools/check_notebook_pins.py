@@ -3,10 +3,21 @@
 
 Walks every ``notebooks/*.ipynb`` file, scans each code cell for
 ``!pip install`` invocations that target the ``forgelm`` distribution,
-and asserts the version specifier is ``==<pyproject.version>``. This
-catches the failure mode where a release bumps ``pyproject.toml`` but
-the colab/jupyter quickstart cells still install the previous patch
+and asserts the version specifier pins a *shipping* wheel. This catches
+the failure mode where a release bumps ``pyproject.toml`` but the
+colab/jupyter quickstart cells still install the previous patch
 version — first-time users would otherwise pull stale wheels.
+
+Accepted pin (either, mirroring ``tools/check_site_claims.py``):
+
+* the exact ``pyproject.toml`` version (when the repo sits on a tag), or
+* the latest *released* version from ``CHANGELOG.md`` (the wheel a
+  first-time user can actually ``pip install`` while ``pyproject.toml``
+  is on a pre-release dev marker such as ``0.7.1rc1``).
+
+Pinning a pre-release rc into the onboarding notebooks would point new
+users at a wheel that is not on PyPI, so the released version is the
+right lockstep target during a dev cycle.
 
 Recognised forms (extras + flags preserved)::
 
@@ -42,11 +53,31 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Sequence
 
-import tomllib
+try:
+    import tomllib  # Python 3.11+ stdlib.
+except ModuleNotFoundError as exc:  # Python 3.10 — project still supports it.
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        raise ImportError(
+            "tomllib (Python 3.11+) is unavailable and the tomli backport is "
+            "not installed. Install the dev extra: pip install 'forgelm[dev]' "
+            "(or 'pip install tomli') to run this guard on Python 3.10."
+        ) from exc
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 NOTEBOOKS_DIR = REPO_ROOT / "notebooks"
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
+CHANGELOG_PATH = REPO_ROOT / "CHANGELOG.md"
+
+# Keep-a-Changelog released-section header: ``## [X.Y.Z] — YYYY-MM-DD``.
+# ``## [Unreleased]`` is skipped by requiring a numeric version.  We trust
+# the first match because the cut-release skill prepends new headers (most
+# recent first), matching ``tools/update_site_version.py``.
+_RELEASED_HEADER_RE = re.compile(
+    r"^##\s+\[(\d+\.\d+\.\d+)\]\s+—\s+\d{4}-\d{2}-\d{2}\s*$",
+    re.MULTILINE,
+)
 
 # Capture group covers the *whole* requirement spec including extras and
 # version pin (no internal whitespace) so we can validate it as one
@@ -83,6 +114,39 @@ def _load_pyproject_version(path: Path = PYPROJECT_PATH) -> str:
         raise SystemExit(f"check_notebook_pins: missing project.version in {path}") from exc
 
 
+def _latest_released_version(path: Path = CHANGELOG_PATH) -> str | None:
+    """Return the most recent released version from ``CHANGELOG.md``.
+
+    Notebooks install from PyPI, so they must pin a *released* wheel — not
+    the dev-cycle pre-release marker that ``pyproject.toml`` carries between
+    tags (e.g. ``0.7.1rc1``).  Mirrors ``tools/update_site_version.py``'s
+    canonical CHANGELOG parse.  Returns ``None`` when no released header is
+    found (then only the exact pyproject pin is accepted).
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:  # pragma: no cover — missing CHANGELOG is a repo-layout error
+        return None
+    match = _RELEASED_HEADER_RE.search(text)
+    return match.group(1) if match else None
+
+
+def _accepted_pins(pyproject_version: str, released_version: str | None) -> list[str]:
+    """The version strings a notebook may pin to.
+
+    A notebook is in lockstep when it pins **either** the exact pyproject
+    version (useful when the repo sits on a released tag) **or** the latest
+    released version (the wheel a first-time user can actually ``pip
+    install`` while pyproject is on a pre-release dev marker).  Mirrors the
+    dual-acceptance policy ``tools/check_site_claims.py`` applies to the
+    marketing site's version badges.
+    """
+    accepted = [pyproject_version]
+    if released_version and released_version not in accepted:
+        accepted.append(released_version)
+    return accepted
+
+
 def _iter_code_cells(notebook: Path) -> Iterable[tuple[int, str]]:
     """Yield ``(cell_index, joined_source_text)`` for each code cell."""
     with notebook.open("r", encoding="utf-8") as fh:
@@ -98,10 +162,16 @@ def _iter_code_cells(notebook: Path) -> Iterable[tuple[int, str]]:
         yield idx, text
 
 
-def _check_notebook(notebook: Path, expected_version: str) -> List[PinIssue]:
-    """Return any drift issues found in ``notebook`` against ``expected_version``."""
+def _check_notebook(notebook: Path, accepted_versions: Sequence[str]) -> List[PinIssue]:
+    """Return any drift issues found in ``notebook`` against ``accepted_versions``.
+
+    A pin is in lockstep when it exactly matches any of ``accepted_versions``
+    (the pyproject version and/or the latest released version — see
+    :func:`_accepted_pins`).
+    """
     issues: List[PinIssue] = []
-    expected_pin = f"=={expected_version}"
+    expected_pin = f"=={accepted_versions[0]}"
+    accepted_display = " or ".join(f"=={v}" for v in accepted_versions)
     for cell_idx, text in _iter_code_cells(notebook):
         for match in _PIP_INSTALL_RE.finditer(text):
             spec = match.group("spec")
@@ -115,8 +185,8 @@ def _check_notebook(notebook: Path, expected_version: str) -> List[PinIssue]:
                     reason = f"missing version pin (expected '{expected_pin}')"
                 issues.append(PinIssue(notebook, cell_idx, spec, reason))
                 continue
-            if version_part != expected_version:
-                reason = f"pin '=={version_part}' does not match pyproject version '{expected_version}'"
+            if version_part not in accepted_versions:
+                reason = f"pin '=={version_part}' does not match expected '{accepted_display}'"
                 issues.append(PinIssue(notebook, cell_idx, spec, reason))
     return issues
 
@@ -149,7 +219,10 @@ def _build_argparser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_argparser().parse_args(argv)
-    expected = _load_pyproject_version()
+    pyproject_version = _load_pyproject_version()
+    released_version = _latest_released_version()
+    accepted = _accepted_pins(pyproject_version, released_version)
+    accepted_display = " or ".join(f"=={v}" for v in accepted)
     notebooks = _collect_notebooks(args.notebooks_dir)
     if not notebooks:
         print(f"check_notebook_pins: no notebooks under {args.notebooks_dir}")
@@ -157,13 +230,13 @@ def main(argv: list[str] | None = None) -> int:
 
     all_issues: List[PinIssue] = []
     for nb in notebooks:
-        all_issues.extend(_check_notebook(nb, expected))
+        all_issues.extend(_check_notebook(nb, accepted))
 
     if not all_issues:
-        print(f"check_notebook_pins: OK — {len(notebooks)} notebook(s) all pin forgelm=={expected}")
+        print(f"check_notebook_pins: OK — {len(notebooks)} notebook(s) all pin forgelm{accepted_display}")
         return 0
 
-    print(f"check_notebook_pins: {len(all_issues)} drift issue(s) against forgelm=={expected}:")
+    print(f"check_notebook_pins: {len(all_issues)} drift issue(s) against forgelm{accepted_display}:")
     for issue in all_issues:
         rel = issue.notebook.relative_to(REPO_ROOT)
         print(f"  - {rel} (cell {issue.cell_index}): {issue.spec!r} — {issue.reason}")

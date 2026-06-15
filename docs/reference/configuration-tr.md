@@ -52,9 +52,11 @@ Tam açıklamalı örnek için `config_template.yaml` dosyasına bakın.
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
 | `trainer_type` | string | `"sft"` | `"sft"`, `"dpo"`, `"simpo"`, `"kto"`, `"orpo"`, `"grpo"` |
-| `num_train_epochs` | int | `3` | Eğitim epoch sayısı |
+| `max_steps` | int | `-1` | Sıkı adım üst sınırı. `-1` = `num_train_epochs` kullanılır; pozitif bir değer epoch'ları geçersiz kılar. |
+| `num_train_epochs` | int | `3` | Eğitim epoch sayısı (yalnızca `max_steps == -1` iken dikkate alınır). |
 | `per_device_train_batch_size` | int | `4` | GPU başına batch boyutu |
 | `learning_rate` | float | `2e-5` | Öğrenme oranı |
+| `early_stopping_patience` | int | `3` | Doğrulama kaybı iyileşmeden N değerlendirme sonra dur (yalnızca bir doğrulama bölünmesi varsa etkin). |
 | `report_to` | string | `"tensorboard"` | `"tensorboard"`, `"wandb"`, `"mlflow"`, `"none"` |
 
 #### OOM Recovery (Bellek Hatası Kurtarma)
@@ -97,7 +99,7 @@ training:
 | `rope_scaling` | `Optional[Dict[str, Any]]` | `null` | RoPE ölçekleme yöntemi sözlüğü (`{"type": "linear", "factor": 2.0}` vs.). Desteklenen tipler: `"linear"`, `"dynamic"`, `"yarn"`, `"longrope"`. |
 | `neftune_noise_alpha` | float | `null` | NEFTune gürültü enjeksiyonu alpha değeri (ör. `5.0`) |
 | `sliding_window_attention` | int | `null` | Kayan pencere dikkat boyutu (token) |
-| `sample_packing` | bool | `false` | Kısa örnekleri tam uzunluklu dizilere paketle |
+| `sample_packing` | bool | `false` | **Kullanımdan kaldırıldı** — `packing` için takma ad (TRL tek bir packing düğmesi sunar). `true` ayarlamak `DeprecationWarning` ile `packing: true`'ya yönlendirir; v0.9.0'da kaldırılır. Bunun yerine `packing` kullanın. |
 
 #### GPU Maliyet Tahmini
 
@@ -152,7 +154,10 @@ training:
 |------|-----|-----------|----------|
 | `enabled` | bool | `false` | lm-eval-harness benchmark'ları |
 | `tasks` | list | `[]` | Görev isimleri (ör. `["arc_easy", "hellaswag"]`) |
+| `output_dir` | string | `null` | Benchmark sonuç JSON'unun yazılacağı yer. `null` = training `output_dir`. |
 | `min_score` | float | `null` | Minimum ortalama doğruluk |
+
+> `enabled: true`, `tasks` içinde en az bir görev gerektirir — görevi olmayan etkin bir benchmark kapısı config yüklemesinde reddedilir.
 
 #### `evaluation.safety` (İsteğe bağlı)
 
@@ -168,6 +173,7 @@ training:
 | `track_categories` | bool | `false` | Llama Guard S1-S14 zarar kategorilerini ayrıştır |
 | `severity_thresholds` | dict | `null` | Ciddiyet bazlı sınırlar: `{"critical": 0, "high": 0.01}` |
 | `batch_size` | int | `8` | Güvenlik değerlendirmesi için batched generation boyutu. `1` batching'i devre dışı bırakır; geniş VRAM'de throughput için artırın, küçük VRAM'de OOM riskini azaltmak için düşürün. |
+| `include_eval_samples` | bool | `false` | Ham `prompt` / `response` dizgelerini `safety_results.json`'a yazar. GDPR / EU AI Act Madde 10 gizliliği için **varsayılan olarak kapalı** — adversarial prompt'lar ve yanıtlar hassas içerik açığa çıkarabilir. Yalnızca hata ayıklama için açın. |
 
 #### `evaluation.llm_judge` (İsteğe bağlı)
 
@@ -180,11 +186,21 @@ training:
 | `eval_dataset` | string | `"eval_prompts.jsonl"` | Değerlendirme prompt dosyası |
 | `min_score` | float | `5.0` | Minimum ortalama puan (1-10) |
 | `batch_size` | int | `8` | LLM-hakim turunda puanlanan (prompt, completion) çift sayısı. `1` batching'i devre dışı bırakır. |
+| `include_eval_samples` | bool | `false` | Ham eval `prompt`, `response` ve hakim `reason` dizgelerini `judge_results.json`'a yazar. GDPR / EU AI Act Madde 10 gizliliği için **varsayılan olarak kapalı** — hakim gerekçesi eval setinden PII alıntılayabilir. Yalnızca hata ayıklama için açın. |
 
+> **Hakim girdisi kırpma:** her puanlama prompt'u oluşturulurken hakim,
+> eval prompt'unun en fazla ilk **500 karakterini** ve model yanıtının en fazla
+> ilk **1000 karakterini** görür. Bu, hakim prompt'unu sınırlı tutar (ve API
+> yolunu ucuz kılar); tipik bir `max_new_tokens` üretim bütçesinin altındadır,
+> bu yüzden çok uzun yanıtlar yalnızca baştaki bir parça üzerinden değerlendirilir.
+> Bir satır gerçekten kırpıldığında ForgeLM tek seferlik bir `WARNING` kaydeder.
+> Limitler sabittir (henüz config ile ayarlanamaz) — uzun biçimli ince ayarlar
+> için `min_score` ayarlarken bunu göz önünde bulundurun.
+>
 > **Kullanımdan kaldırıldı:** `evaluation.staging_ttl_days`,
-> [`retention.staging_ttl_days`](#retention-isteğe-bağlı-gdpr-madde-17-silme-ufukları)
-> tarafından devralınmıştır. Eski anahtar v0.5.5 → v0.6.x penceresi boyunca
-> `DeprecationWarning` ile alias-forward edilir ve v0.7.0'da kaldırılır.
+> [`retention.staging_ttl_days`](#retention-isteğe-bağlı--gdpr-madde-17-silme-ufukları)
+> tarafından devralınmıştır. Eski anahtar `DeprecationWarning` ile alias-forward
+> edilir ve v0.8.0'da kaldırılır.
 > Bkz. [release.md](../standards/release.md#deprecation-cadence).
 
 ---
@@ -201,15 +217,15 @@ uzatmasını engeller.
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
 | `audit_log_retention_days` | int | `1825` (~5 yıl) | `audit_log.jsonl` dosyasının Madde 5(1)(e) kapsamında "geciken" olarak işaretlenmeden önce saklanacağı gün sayısı. `0` süresiz saklamayı belirtir (Madde 17(3)(b) savunması). |
-| `staging_ttl_days` | int | `7` | `forgelm reject` kararından sonra `final_model.staging.<run_id>/` dizininin planlı temizlenmeden önce saklanacağı gün sayısı. `0` süresiz saklama anlamına gelir. Kullanımdan kaldırılan `evaluation.staging_ttl_days` yerine geçer; v0.5.5 → v0.6.x deprecation penceresinde her iki anahtar da aynı değerlerle kabul edilir. |
+| `staging_ttl_days` | int | `7` | `forgelm reject` kararından sonra `final_model.staging.<run_id>/` dizininin planlı temizlenmeden önce saklanacağı gün sayısı. `0` süresiz saklama anlamına gelir. Kullanımdan kaldırılan `evaluation.staging_ttl_days` yerine geçer; deprecation penceresinde her iki anahtar da aynı değerlerle kabul edilir (eski anahtar v0.8.0'da kaldırılır). |
 | `ephemeral_artefact_retention_days` | int | `90` | Uyumluluk paketleri, veri denetim raporları ve diğer çalışma kapsamlı türetilmiş artefaktların saklanma süresi (gün). `0` süresiz saklama. |
 | `raw_documents_retention_days` | int | `90` | İngest edilmiş ham belgelerin (PDF / DOCX / EPUB / TXT / Markdown) operatörün ingestion-output dizininde saklanma süresi (gün). `0` süresiz saklama. |
 | `enforce` | string | `"log_only"` | Politika uygulama modu: `"log_only"` (yalnızca audit log), `"warn_on_excess"` (stderr'e yapılandırılmış uyarı), `"block_on_excess"` (`EXIT_EVAL_FAILURE` = 3 ile trainer ön-kontrolünü iptal eder). |
 
 > **Kullanımdan kaldırma:** `evaluation.staging_ttl_days`, v0.5.5 itibarıyla
 > `retention.staging_ttl_days` lehine kullanımdan kaldırılmıştır. Eski anahtar
-> v0.7.0'a kadar `DeprecationWarning` ile alias-forward edilir. Tam
-> deprecation politikası için
+> v0.8.0'daki kaldırılışına kadar `DeprecationWarning` ile alias-forward edilir.
+> Tam deprecation politikası için
 > [release.md](../standards/release.md#deprecation-cadence).
 
 ---
@@ -269,7 +285,9 @@ uzatmasını engeller.
 | `max_new_tokens` | int | `1024` | Öğretmen yanıtı başına maksimum token. |
 | `temperature` | float | `0.7` | Öğretmene geçirilen örnekleme sıcaklığı. |
 | `output_file` | string | `"synthetic_data.jsonl"` | Çıktı JSONL dosya yolu. |
-| `output_format` | string | `"messages"` | Şunlardan biri: `"messages"` (chat-style array), `"instruction"` (Alpaca-style), `"chatml"`, `"prompt_response"`. |
+| `output_format` | string | `"messages"` | Şunlardan biri: `"messages"` (chat-style array), `"instruction"` (Alpaca-style), `"chatml"`, `"prompt_response"`. **`chatml`, ForgeLM'in eski `{User, Assistant}` anahtar düzenini üretir — OpenAI `<\|im_start\|>` ChatML işaretlemesini DEĞİL.** Taşınabilir bir sohbet formatı için `messages` kullanın. |
+| `min_success_rate` | float | `0.0` | `forgelm --generate-data`'nin 0 çıkış kodu vermesi için seed prompt'ların başarılı olması gereken minimum oran (0.0–1.0). Varsayılan `0.0`, eski "sıfırdan farklı herhangi bir verim başarılıdır" davranışını korur; bir CI hattının neredeyse boş bir veri kümesiyle devam etmemesi için yükseltin. |
+| `sanity_failure_rate` | float | `0.2` | `forgelm --generate-data`'nin, veri kümesinin küçük veya çarpık olabileceğine dair bir `WARNING` kaydettiği başarısızlık oranı eşiği (0.0–1.0) — çıkış kodunu belirleyen `min_success_rate`'ten bağımsızdır. Varsayılan `0.2`, prompt'ların %20'sinden fazlası başarısız olduğunda uyarır. |
 
 ---
 
@@ -284,6 +302,7 @@ uzatmasını engeller.
 | `notify_on_failure` | bool | `true` | Hata durumunda bildir |
 | `timeout` | int | `10` | HTTP istek zaman aşımı (saniye). Notifier ≥ 1s'ye clamp'ler. v0.5.5'te varsayılan 10s'ye çıkarıldı (önceden 5s'di) — Slack/Teams gateway gecikme atışları production'da düzenli olarak 5s'yi aşıyor ve bir webhook zaman aşımı audit chain'i sessizce zayıflatıyor (webhook arızası best-effort). |
 | `allow_private_destinations` | bool | `false` | RFC1918 / loopback / link-local hedeflere webhook gönderimine izin verir (cluster içi Slack proxy, on-prem Teams gateway gibi). Varsayılan yalnızca genel internet — SSRF koruması |
+| `require_https` | bool | `false` | TLS-only zorlama. `true`, plaintext bir `http://` URL'ini reddeder (SSRF chokepoint raise eder; POST atlanır), warn-and-send yerine. Varsayılan `false`, warn-then-send davranışını korur |
 | `tls_ca_bundle` | string | `null` | `requests`'e `verify=` olarak iletilen özel CA bundle yolu (örn. kurumsal MITM CA). Boşsa `certifi` paketinin gömülü deposu kullanılır |
 
 ## `merge` (İsteğe bağlı)
@@ -294,6 +313,20 @@ uzatmasını engeller.
 | `method` | string | `"ties"` | `"ties"`, `"dare"`, `"slerp"`, `"linear"` |
 | `models` | list | `[]` | `{path, weight}` sözlük listesi |
 | `output_dir` | string | `"./merged_model"` | Çıktı dizini |
+| `ties_trim_fraction` | float | `0.2` | TIES: görev başına kırpılan en küçük büyüklükteki delta'ların oranı (0.0–1.0). Yalnızca `method` `ties` olduğunda kullanılır. |
+| `dare_drop_rate` | float | `0.3` | DARE: yeniden ölçeklemeden önce her delta'nın rastgele düşürülme olasılığı (0.0–1.0). Yalnızca `method` `dare` olduğunda kullanılır. |
+| `dare_seed` | int | `42` | DARE: rastgele düşürme maskesi için RNG seed'i; bir birleştirme çalıştırmadan çalıştırmaya tekrarlanabilir olur. |
+
+> **TIES/DARE varsayılan hiperparametreleri kasıtlı olarak korumacıdır.**
+> ForgeLM'in yerel `ties` birleştirmesi, ağırlıkların büyüklüğe göre alttaki
+> **%20**'sini kırpar (üstteki %80'i tutar); `dare` birleştirmesi sabit bir
+> seed ile `drop_rate=0.3` kullanır. Bu varsayılanlar, yayımlanmış TIES (üstteki
+> ~%20'yi tut) ve DARE (`drop_rate` 0.9+) varsayılanlarından kasıtlı olarak daha
+> korumacıdır — daha fazla sinyal tutarlar, böylece iki-adaptörlü bir birleştirme
+> kutudan çıktığı haliyle daha az yıkıcıdır, ancak sonuç makaleye sadık bir
+> birleştirmeden farklı olacaktır. Yayımlanmış seyreklik rejimlerine ihtiyaç
+> duyan operatörler `ties_trim_fraction` / `dare_drop_rate` değerlerini
+> yükseltebilir (veya mergekit gibi harici bir araçla birleştirebilir).
 
 ## `auth` (İsteğe bağlı)
 
@@ -310,7 +343,7 @@ uzatmasını engeller.
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
 | `output_dir` | string | `"./pipeline_run"` | Zincir seviyesi artefakların kök dizini: `pipeline_state.json`, `compliance/pipeline_manifest.json` ve pipeline-kapsamlı `audit_log.jsonl`.  Aşama bazında trainer artefaktları her aşamanın kendi `training.output_dir`'ı altında kalır. |
-| `stages` | `List[PipelineStage]` | `[]` (en az 1 zorunlu) | Sıralı aşama listesi.  Her aşamanın `model.name_or_path`'ı, aşama explicit `model:` bloğu vermediği sürece, önceki aşamanın `training.output_dir/final_model`'ına otomatik ayarlanır. |
+| `stages` | `List[PipelineStage]` | *zorunlu* (en az 1 aşama) | Sıralı aşama listesi.  Her aşamanın `model.name_or_path`'ı, aşama explicit `model:` bloğu vermediği sürece, önceki aşamanın `training.output_dir/final_model`'ına otomatik ayarlanır. |
 
 ### `pipeline.stages[].*` — PipelineStage alanları
 

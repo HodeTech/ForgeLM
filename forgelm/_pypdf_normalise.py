@@ -115,11 +115,18 @@ def apply_profile(text: str, profile: str = DEFAULT_PROFILE) -> str:
     profile validation should check :data:`PROFILES` membership at the
     CLI boundary first.
 
-    The 1:1 substitutions preserve every other code point byte-for-byte —
-    the function does not strip whitespace, normalise line endings, or
-    apply any other transformation. This matters for the determinism
-    contract documented in
-    ``docs/reference/data_ingestion_architecture.md``: re-running
+    The single-char substitutions preserve every other code point
+    byte-for-byte. The ``turkish`` profile additionally carries one
+    **multi-character** rule (:data:`_TURKISH_MULTI`: ``"ö " → "Ğ"``)
+    that is a 2→1, space-consuming transform — it is therefore **not**
+    1:1 and is lossy on a legitimate ``"ö "`` sequence (a token ending
+    in ``ö`` before a space is merged with the next token). That is an
+    accepted trade-off for the glyph-fallback recovery the profile
+    exists to perform; it only fires on the ``--language-hint tr`` opt-in
+    path (:data:`DEFAULT_PROFILE` is ``"none"``). The transform is **not**
+    1:1 reversible, but it **is** deterministic per profile: this is the
+    determinism contract documented in
+    ``docs/reference/data_ingestion_architecture.md`` — re-running
     ingestion against the same source with the same profile must
     produce a byte-identical JSONL.
     """

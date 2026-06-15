@@ -188,6 +188,33 @@ class TestApprovalsPending:
         assert summary["metrics"] == {"eval_loss": 0.42}
         assert summary["reason"] == "require_human_approval=true"
 
+    def test_pending_summary_includes_config_hash(self, tmp_path: Path, capsys) -> None:
+        """XP-11 / F-P4-OPUS-05: when the human_approval.required event records
+        a config_hash, the pending summary surfaces it. Pre-fix the event never
+        carried config_hash so pending[].config_hash was unconditionally null."""
+        output_dir = tmp_path / "run"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        staging_dir = output_dir / "final_model.staging"
+        staging_dir.mkdir(exist_ok=True)
+        (staging_dir / "adapter_config.json").write_text('{"r": 8}', encoding="utf-8")
+        _write_event(
+            output_dir / "audit_log.jsonl",
+            "human_approval.required",
+            "fg-hash00000000",
+            staging_path=str(staging_dir),
+            gate="final_model",
+            reason="require_human_approval=true",
+            metrics={"eval_loss": 0.42},
+            config_hash="sha256:deadbeef",
+        )
+
+        from forgelm.cli import _run_approvals_cmd
+
+        with pytest.raises(SystemExit):
+            _run_approvals_cmd(_build_args(output_dir, pending=True), output_format="json")
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["pending"][0]["config_hash"] == "sha256:deadbeef"
+
     def test_text_output_renders_table(self, tmp_path: Path, capsys) -> None:
         output_dir = tmp_path / "run"
         _seed_run(output_dir, "fg-xyz000000000")
@@ -548,6 +575,31 @@ class TestApprovalsShowRejectedAndMissingStaging:
         payload = json.loads(capsys.readouterr().out)
         # Real human_approval.required event is still surfaced.
         assert any(e.get("event") == "human_approval.required" for e in payload["chain"])
+
+    def test_show_corrupted_decision_line_flags_corruption_not_silent_pending(self, tmp_path: Path, capsys) -> None:
+        """F-P4-OPUS-29: a corrupted ``human_approval.granted`` line must not be
+        silently dropped and rendered as a benign "pending". ``--show`` flags
+        the corruption (matching the strict approve/reject guard's verdict on
+        the same log) instead of an authoritative status."""
+        output_dir = tmp_path / "run"
+        _seed_run(output_dir, "fg-corrupt00000", decision="granted")
+        audit_path = output_dir / "audit_log.jsonl"
+        # Corrupt the granted line (last line) -> lenient parser skips it.
+        lines = audit_path.read_text(encoding="utf-8").splitlines()
+        assert "human_approval.granted" in lines[-1]
+        lines[-1] = "{this is no longer valid json"
+        audit_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        from forgelm.cli import _run_approvals_cmd
+
+        with pytest.raises(SystemExit) as ei:
+            _run_approvals_cmd(_build_args(output_dir, show="fg-corrupt00000"), output_format="json")
+        assert ei.value.code == 0
+        payload = json.loads(capsys.readouterr().out)
+        # Lenient parse would report "pending"; the corruption must be surfaced
+        # so that status is not silently authoritative.
+        assert payload.get("corrupted") is True
+        assert "corrupted at line" in payload.get("corruption_detail", "")
 
 
 # ---------------------------------------------------------------------------

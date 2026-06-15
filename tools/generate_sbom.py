@@ -99,7 +99,15 @@ def build_sbom() -> dict[str, Any]:
     """Construct the CycloneDX 1.5 SBOM document."""
     now = _dt.datetime.now(tz=_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     forgelm_ver = _forgelm_version()
-    components = [_component(p) for p in _installed_packages()]
+    # Canonical sort by ``bom-ref`` (PEP 503-normalized purl, unique) so the
+    # emitted component order is stable regardless of pip version / install
+    # order. Without this, ``pip list`` ordering can differ across pip majors,
+    # making the documented "re-emit from the git tag and diff" auditor flow
+    # report spurious ordering-only diffs (F-P5-OPUS-18).
+    components = sorted(
+        (_component(p) for p in _installed_packages()),
+        key=lambda c: c["bom-ref"],
+    )
     return {
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",
@@ -163,7 +171,10 @@ def main() -> int:
     # variants (ENOSPC on a redirect target, write-after-close on a teed pipe)
     # land in the same bucket — operator-actionable I/O failure → runtime err.
     try:
-        json.dump(sbom, sys.stdout, indent=2, sort_keys=False)
+        # ``ensure_ascii=False`` keeps any non-ASCII package metadata (author
+        # names, descriptions) readable rather than ``\uXXXX``-escaped, matching
+        # the project's other JSON emitters (doctor / cache).
+        json.dump(sbom, sys.stdout, indent=2, sort_keys=False, ensure_ascii=False)
         sys.stdout.write("\n")
     except OSError as exc:
         # ``stderr`` is the right channel here: stdout is the SBOM payload and

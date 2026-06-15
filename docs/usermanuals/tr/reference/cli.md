@@ -22,8 +22,9 @@ ForgeLM, subcommand'larla tek bir `forgelm` binary'si yayınlar. Bu sayfa kanoni
 | `forgelm verify-audit` | Audit log zincirini doğrula (timestamp, prev_hash, HMAC). |
 | `forgelm verify-annex-iv` | Export edilmiş Annex IV artefact'ını doğrula (§1-9 alanlar + manifest hash). |
 | `forgelm verify-gguf` | GGUF model dosyası bütünlüğünü doğrula (magic header + metadata + SHA-256 sidecar). |
+| `forgelm verify-integrity` | Model dizinini Madde 15 SHA-256 bütünlük manifest'ine karşı doğrula. |
 | `forgelm approve` | İnsan onay isteğini imzala ve `final_model.staging/`'i promote et. |
-| `forgelm reject` | İnsan onay isteğini reddet ve staging'i at. |
+| `forgelm reject` | İnsan onay isteğini reddet; staging dizini adli inceleme için korunur. |
 | `forgelm approvals` | Bekleyen onayları listele (`--pending`) veya tek birini incele (`--show RUN_ID`). |
 | `forgelm purge` | GDPR Madde 17 silme: row-id, run-id veya `--check-policy` retention raporu. |
 | `forgelm reverse-pii` | GDPR Madde 15 erişim hakkı: maskelenmiş corpora'da subject kimlik bilgisini ara (plaintext veya hash-mask scan). |
@@ -48,7 +49,7 @@ Bunlardan herhangi biri için `forgelm <subcommand> --help`.
 | `--merge` | Config'in `merge:` bloğundan model birleştirmeyi koştur. Eğitim yok. |
 | `--generate-data` | Teacher modelle sentetik eğitim verisi üret. Eğitim yok. |
 | `--compliance-export OUTPUT_DIR` | EU AI Act uyum artifact'larını (audit trail, data provenance, Annex IV) OUTPUT_DIR'a export et. Manifest'in tamamlanması için eğitimden sonra koşturun. |
-| `--data-audit PATH` | **Deprecated alias**, `forgelm audit PATH` için. v0.7.0'da kaldırılacak. Yeni script'ler subcommand'ı kullanmalı. |
+| `--data-audit PATH` | **Deprecated alias**, `forgelm audit PATH` için. v0.8.0'da kaldırılacak. Yeni script'ler subcommand'ı kullanmalı. |
 | `--output DIR` | `--data-audit` / `--compliance-export` için çıktı dizini (varsayılan: `./audit/` veya `./compliance/`). |
 | `--output-format {text,json}` | Sonuçlar için çıktı formatı (varsayılan: `text`). CI için JSON. |
 | `--quiet, -q` | INFO loglarını bastır. Sadece warning ve error göster. |
@@ -78,7 +79,7 @@ $ forgelm doctor --offline                           # air-gap varyantı: cache 
 $ forgelm doctor --output-format json | jq .         # CI dostu envelope
 ```
 
-Python sürümünü, torch / CUDA / GPU'yu, opsiyonel extra'ları, HF Hub erişilebilirliğini (veya `--offline` ile HF cache'i), disk alanını, operatör kimliğini ve audit-secret yapılandırmasını probe eder. Exit kodları: `0` = hepsi geçti (warning OK), `1` = en az bir fail, `2` = bir probe'un kendisi crash etti.
+Python sürümünü, torch / CUDA / GPU'yu, opsiyonel extra'ları, HF Hub erişilebilirliğini (veya `--offline` ile HF cache'i), disk alanını ve operatör kimliğini probe eder. Exit kodları: `0` = hepsi geçti (warning OK), `1` = en az bir fail, `2` = bir probe'un kendisi crash etti.
 
 ## Audit: `forgelm audit`
 
@@ -152,7 +153,7 @@ $ forgelm export CHECKPOINT_DIR \
     [--no-integrity-update]
 ```
 
-Tek komutta çoklu seviye için `--quant`'ı virgülle ayırın. Bkz. [GGUF Export](#/deployment/gguf-export).
+`--quant` her çağrıda tek seviye alır; birden fazla GGUF çıktısı için `forgelm export`'u her seviye için bir kez çalıştırın. Bkz. [GGUF Export](#/deployment/gguf-export).
 
 ## Deploy: `forgelm deploy`
 
@@ -176,7 +177,7 @@ Bkz. [Deploy Hedefleri](#/deployment/deploy-targets).
 $ forgelm approvals --pending                        # bekleyen onay gate'lerini listele
 $ forgelm approvals --show RUN_ID                    # belirli bir koşunun chain + staging'ini incele
 $ forgelm approve  RUN_ID --comment "N. inceledi."   # final_model.staging/ → final_model/ promote
-$ forgelm reject   RUN_ID --comment "Sebep ..."      # staging'i at
+$ forgelm reject   RUN_ID --comment "Sebep ..."      # reddi kaydet (staging adli inceleme için korunur)
 ```
 
 Bkz. [İnsan Gözetim Gate'i](#/compliance/human-oversight). Exit kodları: `0` = bekleyen liste / onay kaydedildi, `1` = bilinmeyen run_id / config hatası, `4` (sadece eğitim modu) = onay bekliyor.
@@ -190,6 +191,15 @@ $ forgelm verify-audit PATH/TO/audit_log.jsonl --require-hmac
 ```
 
 Monoton timestamp'leri, `prev_hash` zincir bütünlüğünü, `seq` boşluk tespitini ve (yapılandırıldığında) HMAC imzalarını doğrular. Geçerli zincirde exit `0`; tahrif tespitinde structured error envelope ile non-zero.
+
+## Model bütünlüğü doğrula: `forgelm verify-integrity`
+
+```shell
+$ forgelm verify-integrity MODEL_DIR
+$ forgelm verify-integrity MODEL_DIR --output-format json
+```
+
+`<MODEL_DIR>/model_integrity.json` dosyasını (eğitim sırasında compliance export tarafından yazılır) okur ve kayıtlı her artefaktın SHA-256'sını yeniden hesaplar. Manifest oluşturulduğundan beri **değişen**, **kaldırılan** veya **eklenen** dosyaları raporlar. Manifest dosyasının kendisi yürüyüşten hariç tutulur. Her kayıtlı artefakt mevcut ve değişmemişse ve fazladan dosya yoksa exit `0`; herhangi bir uyuşmazlık veya girdi hatasında exit `1`; gerçek bir runtime I/O hatasında exit `2`.
 
 ## Kimlik Doğrulama
 
@@ -220,12 +230,18 @@ Env var set değilse ForgeLM config yüklemede net bir hata ile çıkar — eği
 | Exit | Anlamı |
 |---|---|
 | 0 | Başarı |
-| 1 | Config / argüman hatası |
-| 2 | Audit warning (`--strict` ile) / probe crash (`forgelm doctor`) |
+| 1 | Config / semantik doğrulama hatası (hatalı YAML, eksik dosya, boş `--query`, vb.) |
+| 2 | Argparse kullanım hatası (bilinmeyen flag/subcommand, eksik zorunlu argüman, hatalı choice, aralık dışı tip doğrulayıcı), eğitim çökmesi, probe crash (`forgelm doctor`) veya kıstırılmış Ctrl+C |
 | 3 | Auto-revert / regression |
 | 4 | İnsan onayı bekleniyor (eğitim pipeline) |
 | 5 | Sihirbaz iptal (operatör kaydı reddetti / non-tty reddi) |
-| 130 | Kullanıcı kesintiye uğrattı (Ctrl+C) |
+
+`argparse` kullanım hataları (hatalı flag, eksik zorunlu argüman, hatalı `choices`
+veya tip-doğrulayıcı sınırı) **2** ile çıkar — argparse'in kendi `error()` kuralı —
+ayrıştırmadan *sonra* ulaşılan config / semantik doğrulama ise **1** ile çıkar. Bir
+Ctrl+C sinyal kaynaklı 130'dur ancak süreç çıkmadan önce **2**'ye
+(`EXIT_TRAINING_ERROR`) kıstırılır, böylece public `0–5` kümesi dışında bir exit
+kodu asla döndürülmez.
 
 Tam kontrat için bkz. [Exit Kodları](#/reference/exit-codes).
 

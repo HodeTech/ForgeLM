@@ -216,6 +216,61 @@ class TestChoiceDrift:
 
 
 # ---------------------------------------------------------------------------
+# §4b — Prose comma-list claim on single-value choice flags (F-P7-OPUS-13)
+# ---------------------------------------------------------------------------
+
+
+class TestProseChoiceListClaim:
+    def test_comma_separate_quant_prose_strict_fails(self, tmp_path: Path, tool, capsys):
+        # F-P7-OPUS-13 regression: prose telling operators to
+        # "comma-separate --quant" is drift — argparse choices reject
+        # the comma form.
+        scope = tmp_path / "docs"
+        _write(
+            scope / "guide.md",
+            ("# Export\n\nComma-separate `--quant` for multiple levels in one command.\n"),
+        )
+        rc = tool.main(["--repo-root", str(tmp_path), "--scope", "docs", "--strict"])
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "--quant" in out
+        assert "single-value choices flag" in out
+
+    def test_comma_separate_quant_prose_tr_strict_fails(self, tmp_path: Path, tool, capsys):
+        scope = tmp_path / "docs"
+        _write(
+            scope / "guide.md",
+            ("# Export\n\nTek komutta çoklu seviye için `--quant`'ı virgülle ayırın.\n"),
+        )
+        rc = tool.main(["--repo-root", str(tmp_path), "--scope", "docs", "--strict"])
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "--quant" in out
+
+    def test_comma_separate_inside_code_fence_not_flagged(self, tmp_path: Path, tool, capsys):
+        # The claim must be PROSE — a comma-list claim mention inside a
+        # fenced code block is data, not an operator instruction.
+        scope = tmp_path / "docs"
+        _write(
+            scope / "guide.md",
+            ("# Export\n\n```text\n# comma-separate --quant (sample output)\n```\n"),
+        )
+        rc = tool.main(["--repo-root", str(tmp_path), "--scope", "docs", "--strict"])
+        assert rc == 0
+
+    def test_comma_separate_non_choice_flag_not_flagged(self, tmp_path: Path, tool, capsys):
+        # ``--tasks`` legitimately takes a comma-separated CSV; it is NOT
+        # a choices flag, so a comma-list claim about it is correct.
+        scope = tmp_path / "docs"
+        _write(
+            scope / "guide.md",
+            ("# Cache\n\nComma-separate `--tasks` to cache several lm-eval datasets at once.\n"),
+        )
+        rc = tool.main(["--repo-root", str(tmp_path), "--scope", "docs", "--strict"])
+        assert rc == 0
+
+
+# ---------------------------------------------------------------------------
 # §5 — False-positive heuristics
 # ---------------------------------------------------------------------------
 

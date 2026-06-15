@@ -56,7 +56,9 @@ class VerifyGgufResult:
 
 def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoReturn:
     if output_format == "json":
-        print(json.dumps({"success": False, "error": msg}))
+        # ``indent=2`` matches the success/result envelope below so this
+        # subcommand emits one consistent JSON shape on every branch.
+        print(json.dumps({"success": False, "error": msg}, indent=2))
     else:
         logger.error(msg)
     sys.exit(exit_code)

@@ -84,19 +84,15 @@ jobs:
         shell: bash
         run: python -m pip install pytest pytest-cov
 
-      - name: Verify --ignore target exists
-        shell: bash
-        # Guard against silent rename: if test_cost_estimation.py is renamed
-        # or removed without updating the --ignore flag below, the publish
-        # would silently start running it (or no-op the ignore). Fail fast.
-        run: test -f tests/test_cost_estimation.py
-
       - name: Test (CPU-only, no-network)
         shell: bash
-        # test_cost_estimation is excluded per Faz 31 closure plan: it
-        # depends on a snapshot pricing fixture that drifts on a different
-        # cadence than the release matrix.
-        run: pytest tests/ -q --ignore=tests/test_cost_estimation.py
+        # Drift-sensitive tests (test_cost_estimation: snapshot pricing
+        # fixture on a different cadence than the release matrix) are
+        # excluded via the @pytest.mark.fixture_drift marker — F-P8-C-20
+        # made the marker the single source of truth, so no filename guard
+        # is needed: a renamed/removed test simply keeps (or drops) the
+        # marker, and the exclusion follows the marker, not a brittle path.
+        run: pytest tests/ -q -m 'not fixture_drift'
 
       - name: Generate SBOM (CycloneDX 1.5)
         shell: bash

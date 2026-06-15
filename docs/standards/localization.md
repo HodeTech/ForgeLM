@@ -32,7 +32,7 @@ Rationale:
 | `docs/reference/usage.md` | Yes | End-user how-to |
 | `docs/reference/data_preparation.md` | Yes | End-user data prep |
 | `docs/reference/distributed_training.md` | Yes | End-user distributed |
-| `docs/reference/compliance_summary.md` | No (yet) | English only for now — TR mirror open task; the Wave 4 rewrite landed EN-side first |
+| `docs/reference/compliance_summary.md` | Yes | EN+TR mirror (`compliance_summary-tr.md`) registered and spine-gated |
 | `docs/guides/*.md` | Partial (Wave 1 + 2b + 3 + 4 progressively bilingualised) | Bilingualised today: `air_gap_deployment`, `data_audit`, `gdpr_erasure`, `getting-started`, `human_approval_gate`, `ingestion`, `iso_soc2_deployer_guide`, `library_api`, `performance`. Structurally bilingual; content translation pending v0.6.0 (TR mirror carries the H2/H3/H4 spine for the parity gate but section bodies link back to the EN sections — tracked in `docs/roadmap/risks-and-decisions.md`): `safety_compliance`. Single-language (EN): `alignment`, `cicd_pipeline`, `enterprise_deployment`, `quickstart`, `troubleshooting` — TR mirrors are open follow-ups |
 | `docs/usermanuals/{en,tr}/` | Yes | EN+TR manual content authored & reviewed; DE/FR/ES/ZH fall back to EN via the `tableForLang(...) → DEFAULT='en'` chain (deferred to a future translation cycle). **Link-isolated:** pages here may only link to other in-manual pages (via the SPA route `#/<section>/<page>`) or external HTTPS URLs — see [`documentation.md` "User-manual link discipline"](documentation.md#user-manual-link-discipline-docsusermanuals). |
 | `docs/design/*.md` | No | Internal design history |
@@ -72,7 +72,14 @@ TR mirrors must have the **same sections, in the same order, with the same numbe
 - H2 count and order.
 - Tables of contents, lists of files, and rule lists.
 - Code blocks (content is language-neutral).
-- Links (same targets, wrapped in TR link text).
+- Links: **same set of targets, wrapped in TR link text — but a TR page must
+  point at the TR mirror of a target when one exists.** A `*-tr.md` page that
+  links the un-suffixed English sibling (`audit_event_catalog.md`) when
+  `audit_event_catalog-tr.md` exists routes a Turkish reader out of Turkish;
+  rewrite it to the `-tr.md` mirror, preserving the translated link text. The
+  one exempt case is the `**Ayna:**` (Mirror) backlink line, which
+  intentionally points back at the EN original. Enforced by
+  `tools/check_tr_links_prefer_mirror.py` (wired into `ci.yml`).
 
 ## What to do when the EN doc changes
 

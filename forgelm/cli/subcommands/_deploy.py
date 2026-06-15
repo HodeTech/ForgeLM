@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 
-from .._exit_codes import EXIT_TRAINING_ERROR
+from .._exit_codes import EXIT_CONFIG_ERROR, EXIT_TRAINING_ERROR
 from .._logging import logger
 
 
@@ -44,4 +44,8 @@ def _run_deploy_cmd(args, output_format: str) -> None:
             logger.error("Deploy config generation failed: %s", result.error)
 
     if not result.success:
-        sys.exit(EXIT_TRAINING_ERROR)
+        # A caller-input error (unsupported target, model_path not a
+        # directory) is exit 1 per the public contract; only a genuine
+        # runtime failure (write error, render crash) is exit 2. Mirrors
+        # verify-gguf's input(1)/runtime(2) split.
+        sys.exit(EXIT_CONFIG_ERROR if result.error_kind == "input" else EXIT_TRAINING_ERROR)

@@ -235,3 +235,76 @@ def test_byod_relative_local_path_not_misclassified_as_hub_id(tmp_path, monkeypa
     _args, kwargs = mock_run.call_args
     # The override must point to the actual on-disk file, expanded to absolute.
     assert Path(kwargs["dataset_override"]) == real_file.resolve()
+
+
+def test_byod_cancel_at_nested_audit_prompt_falls_back(tmp_path, capsys):
+    """F-H-11: cancel typed at the audit-offer prompt inside _validate_local_jsonl
+    must be caught by _resolve_byod_dataset_path and return None (fall back to
+    the full wizard), NOT propagate WizardCancel up through the call stack.
+
+    Regression: before the fix the try/except WizardCancel in
+    _resolve_byod_dataset_path only wrapped the initial _prompt() call, so any
+    WizardCancel raised from the four secondary prompts inside
+    _offer_audit_for_jsonl / _offer_ingest_for_directory escaped uncaught and
+    terminated the wizard entirely instead of falling back.
+    """
+    from forgelm.wizard._byod import _resolve_byod_dataset_path
+
+    good = tmp_path / "good.jsonl"
+    good.write_text('{"messages": []}\n', encoding="utf-8")
+
+    # Inputs: JSONL path (valid) → "cancel" at the audit-offer prompt.
+    # "cancel" triggers WizardCancel inside _offer_audit_for_jsonl's
+    # _prompt_yes_no, which must be caught inside _resolve_byod_dataset_path.
+    answers = [str(good), "cancel"]
+    with patch("builtins.input", side_effect=_make_input(answers)):
+        result = _resolve_byod_dataset_path()
+
+    # Must return None (fall back) — not raise WizardCancel.
+    assert result is None
+    captured = capsys.readouterr().out
+    assert "Cancelled" in captured
+
+
+def test_byod_cancel_at_nested_audit_prompt_via_full_path(tmp_path, capsys):
+    """F-H-11 (via full wizard path): cancel at the nested audit prompt inside
+    _validate_local_jsonl returns None from _maybe_run_quickstart_template,
+    not a clean wizard exit.  Verifies the fix applies end-to-end.
+    """
+    good = tmp_path / "good.jsonl"
+    good.write_text('{"messages": []}\n', encoding="utf-8")
+
+    # After the prelude, answer with the JSONL path, then "cancel" at the
+    # audit-offer prompt.  The wizard should fall back gracefully.
+    answers = _PRELUDE + [str(good), "cancel"]
+    with patch("builtins.input", side_effect=_make_input(answers)):
+        result = wizard._maybe_run_quickstart_template()
+
+    assert result is None
+    captured = capsys.readouterr().out
+    assert "Cancelled" in captured
+
+
+def test_audit_failure_logs_warning(tmp_path, caplog):
+    """F-P7-OPUS-41: the BYOD audit-offer BLE001 handler previously surfaced a
+    failure only on stdout via ``_print``; a CI/log pipeline tailing logs saw
+    nothing. The wide-tail handler now logs at WARNING (per error-handling.md's
+    mandatory BLE001 hygiene) while keeping the offer advisory — the helper
+    still returns ``False`` so a failed audit does not abort BYOD selection."""
+    import logging
+
+    good = tmp_path / "good.jsonl"
+    good.write_text('{"messages": []}\n', encoding="utf-8")
+
+    with (
+        patch("builtins.input", side_effect=_make_input(["y"])),  # accept the audit offer
+        patch("forgelm.data_audit.audit_dataset", side_effect=RuntimeError("boom")),
+        caplog.at_level(logging.WARNING, logger="forgelm.wizard"),
+    ):
+        result = wizard._offer_audit_for_jsonl(good)
+
+    assert result is False
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(str(good) in r.getMessage() and "could not run" in r.getMessage() for r in warnings), (
+        f"expected a WARNING naming the dataset path; got {[r.getMessage() for r in warnings]}"
+    )

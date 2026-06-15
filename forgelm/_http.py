@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import re
 import socket
 from typing import Any, Dict, MutableMapping, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
@@ -52,6 +53,70 @@ import requests
 from requests.structures import CaseInsensitiveDict
 
 logger = logging.getLogger("forgelm._http")
+
+# Optional dependency — ``requests_toolbelt`` is needed only for the IP-pinning
+# HTTPS path.  Importing once at module level (instead of inside
+# ``_pinned_session`` on every call) avoids creating a new class object per
+# invocation and makes cross-session ``isinstance`` checks stable.
+try:
+    from requests.adapters import HTTPAdapter as _HTTPAdapter
+    from requests_toolbelt.adapters.host_header_ssl import HostHeaderSSLAdapter as _HostHeaderSSLAdapter
+
+    class _PortStrippingSSLAdapter(_HostHeaderSSLAdapter):
+        """``HostHeaderSSLAdapter`` subclass that strips the port (and IPv6
+        brackets) from the ``Host`` header before handing the hostname to
+        urllib3's ``assert_hostname`` / ``server_hostname`` pool kwargs.
+
+        urllib3's ``_dnsname_match`` does **not** strip the port, so passing
+        ``host:port`` verbatim would cause TLS certificate validation to fail
+        for non-standard-port HTTPS endpoints.  The wire ``Host`` header (with
+        the port) is left intact so the server receives the correct authority.
+        """
+
+        def send(self, request, **kwargs):  # type: ignore[override]
+            host_header = None
+            for header in request.headers:
+                if header.lower() == "host":
+                    host_header = request.headers[header]
+                    break
+            if host_header:
+                # Set assert_hostname AND server_hostname to the port-stripped
+                # host: assert_hostname makes urllib3 match the cert SAN,
+                # server_hostname makes the TLS handshake send the bare host as
+                # SNI (delegating to HTTPAdapter.send below skips the parent's
+                # own SNI derivation, so urllib3 would otherwise SNI the
+                # port-bearing host / IP literal and fail verification on
+                # endpoints like https://host:8443).  The wire Host header
+                # (with the port) is left intact for the server.
+                bare_host = _assert_hostname_from_host_header(host_header)
+                self.poolmanager.connection_pool_kw["assert_hostname"] = bare_host
+                self.poolmanager.connection_pool_kw["server_hostname"] = bare_host
+            else:
+                self.poolmanager.connection_pool_kw.pop("assert_hostname", None)
+                self.poolmanager.connection_pool_kw.pop("server_hostname", None)
+            # Bypass the parent's own (port-bearing) assert_hostname derivation
+            # by delegating straight to HTTPAdapter.send.
+            return _HTTPAdapter.send(self, request, **kwargs)
+
+except ImportError:  # pragma: no cover — requests_toolbelt installed in CI
+    _PortStrippingSSLAdapter = None  # type: ignore[assignment,misc]
+
+
+# Exported surface of the SSRF-guarded HTTP chokepoint. ``safe_post`` /
+# ``safe_get`` / ``HttpSafetyError`` are the primary API. ``_mask_netloc`` and
+# ``_mask_secrets_in_text`` keep their leading underscore (they are low-level
+# redaction helpers, not a stable contract) but are listed here as INTENTIONAL
+# cross-module exports: ``webhook.py`` and ``cli/subcommands/_purge.py`` reuse
+# them so log/audit redaction stays consolidated on this single chokepoint
+# (F-L-07 / F-L-21). A rename must update those call sites — this list is the
+# contract that makes that dependency explicit.
+__all__ = [
+    "HttpSafetyError",
+    "safe_post",
+    "safe_get",
+    "_mask_netloc",
+    "_mask_secrets_in_text",
+]
 
 
 class HttpSafetyError(Exception):
@@ -218,19 +283,51 @@ def _build_pinned_url(parsed_url, ip: str) -> str:
     )
 
 
+def _assert_hostname_from_host_header(host_header: str) -> str:
+    """Strip the port (and IPv6 brackets) from a ``Host`` header value.
+
+    The request-line ``Host`` header carries ``host:port`` for a
+    non-standard port per RFC 7230 § 5.4, but urllib3's certificate
+    ``assert_hostname`` matcher (``_dnsname_match``) does **not** strip
+    the port — it compares the full ``host:port`` string against the
+    cert SAN and fails (``_dnsname_match('h.example.com',
+    'h.example.com:8443') is False``).  So the value handed to the TLS
+    layer must be the bare hostname, with the port removed and any IPv6
+    brackets unwrapped (urllib3 matches against the bracket-less form).
+
+    Introduced when the issue-#14 IP-pinning routed HTTPS through
+    ``HostHeaderSSLAdapter``, which reuses the ``Host`` header verbatim as
+    ``assert_hostname`` — breaking TLS for any correctly configured HTTPS
+    endpoint on a non-standard port.
+    """
+    # ``urlparse`` needs a scheme + ``//`` to populate ``hostname``/``port``;
+    # synthesise an authority-only URL so it splits ``host:port`` and IPv6
+    # brackets for us rather than re-implementing the bracket/port grammar.
+    parsed = urlparse(f"//{host_header}")
+    # ``hostname`` is already lower-cased and bracket-stripped by urlparse;
+    # fall back to the raw value if parsing yields nothing (malformed input
+    # should still produce a deterministic, non-empty assert value).
+    return parsed.hostname or host_header
+
+
 def _pinned_session(scheme: str) -> requests.Session:
     """Return a ``requests.Session`` configured for IP-literal connections.
 
-    For HTTPS, mounts ``requests_toolbelt.adapters.host_header_ssl.
-    HostHeaderSSLAdapter`` so the SNI handshake and certificate
-    validation are performed against the original hostname (passed in
-    the ``Host`` header) rather than the IP literal in the URL.
+    For HTTPS, mounts a port-stripping subclass of
+    ``requests_toolbelt.adapters.host_header_ssl.HostHeaderSSLAdapter``
+    so the SNI handshake and certificate validation are performed
+    against the original hostname (passed in the ``Host`` header) rather
+    than the IP literal in the URL — and against the *bare* hostname,
+    with any non-standard port stripped, so TLS verification succeeds on
+    endpoints like ``https://host:8443``.
     """
     session = requests.Session()
     if scheme == "https":
-        from requests_toolbelt.adapters.host_header_ssl import HostHeaderSSLAdapter
-
-        session.mount("https://", HostHeaderSSLAdapter())
+        if _PortStrippingSSLAdapter is None:  # pragma: no cover
+            raise ImportError(
+                "requests-toolbelt is required for HTTPS IP-pinning; install it with: pip install 'forgelm[webhook]'"
+            )
+        session.mount("https://", _PortStrippingSSLAdapter())
     return session
 
 
@@ -266,6 +363,69 @@ def _mask_secrets_in_text(text: str, headers: Optional[MutableMapping[str, str]]
             continue
         if name.lower() in _MASK_HEADER_NAMES:
             masked = masked.replace(value, "[REDACTED]")
+    return masked
+
+
+# ``requests``/``urllib3`` transport-error strings embed the request URL as a
+# bare, scheme-less path token, e.g.
+#   "HTTPSConnectionPool(host='8.8.8.8', port=443): Max retries exceeded with
+#    url: /services/T0/B0/SECRETTOKEN (Caused by ...)"
+# Slack / Teams / Discord / custom webhook URLs carry their bearer token in
+# that path, so the path must be stripped before the exception string is
+# logged.  The IP-pinning already host-masks the ``host=`` field, but the
+# ``url:`` path leaks the secret.  Matched class is ``[^\s)]`` (stops at the
+# first whitespace or the closing paren ``requests`` appends) and the
+# quantifier is bounded to a generous-but-finite 4096 chars — no two
+# competing unbounded quantifiers, so this is ReDoS-safe per regex.md §3/§4.
+_URL_PATH_TOKEN_RE = re.compile(r"(url:\s*)([/?#][^\s)]{0,4096})")
+
+
+def _redact_url_paths_in_text(text: str, url: str) -> str:
+    """Strip secret-bearing URL paths/query/userinfo from a transport error.
+
+    Two redaction passes, both belt-and-suspenders so a leak survives only
+    if *both* miss:
+
+    1. **Exact known-URL pass** — replace the path/query/userinfo of the
+       *actual* request URL (the one ``safe_post`` / ``safe_get`` was called
+       with) wherever it appears verbatim in *text*, collapsing it to the
+       host-masked form from :func:`_mask_netloc`.  This is regex-free and
+       cannot over- or under-match.
+    2. **Generic ``url:`` token pass** — ``requests`` reports the URL as a
+       scheme-less path after ``url:``; strip any such path token to
+       ``url: [REDACTED-PATH]``.  Catches the dominant ``Max retries
+       exceeded with url: /services/.../TOKEN`` shape even when the IP-pinned
+       target URL (not the original) is what landed in the exception string.
+    """
+    if not text:
+        return text
+    masked = text
+    # Pass 1 — exact known-URL substring (path-bearing forms only; a bare
+    # ``scheme://host`` carries no secret and is left intact for signal).
+    try:
+        parts = urlparse(url)
+    except (ValueError, TypeError):
+        parts = None
+    if parts is not None and parts.scheme and parts.netloc:
+        host_only = f"{parts.scheme}://{parts.hostname or 'unknown-host'}"
+        # Replace the full URL (path + query + fragment + userinfo) first so
+        # the longest, most-specific form is collapsed before the shorter
+        # path-only token pass runs.
+        if parts.path or parts.query or parts.params or parts.fragment or "@" in parts.netloc:
+            masked = masked.replace(url, host_only)
+            # Also the scheme-less path tail on its own (urllib3 strips the
+            # authority and logs only the path component).
+            path_tail = urlunparse(("", "", parts.path, parts.params, parts.query, parts.fragment))
+            # Skip replacement for very short path tails (< 8 chars) such as
+            # ``/v1``, ``/api``, ``/t`` — low secret entropy and extremely
+            # common in non-secret contexts.  Pass 2 (the generic ``url:``
+            # token regex) already catches the urllib3 ``url: /path`` form
+            # that matters most, so this skip loses nothing for real secrets.
+            if path_tail and path_tail != "/" and len(path_tail) >= 8:
+                masked = masked.replace(path_tail, "[REDACTED-PATH]")
+    # Pass 2 — generic ``url: <path>`` token (covers the IP-pinned target
+    # URL and any path the exact-match pass did not catch).
+    masked = _URL_PATH_TOKEN_RE.sub(r"\1[REDACTED-PATH]", masked)
     return masked
 
 
@@ -402,8 +562,10 @@ def safe_post(
         # Mask the *outbound* header set (which includes the auto-set
         # ``Host`` and any caller secrets) — not the raw ``headers``
         # parameter, which may be ``None`` or stale relative to what
-        # actually went on the wire.
-        masked_reason = _mask_secrets_in_text(str(exc), request_headers)
+        # actually went on the wire.  Then strip the URL path/query —
+        # ``requests`` embeds the request path in its transport-error
+        # string and webhook URLs carry their bearer token there.
+        masked_reason = _redact_url_paths_in_text(_mask_secrets_in_text(str(exc), request_headers), url)
         logger.warning(
             "safe_post failed url=%s reason=%s",
             _mask_netloc(url),
@@ -530,7 +692,9 @@ def safe_get(
     except requests.RequestException as exc:
         # Mask the outbound header set, not the caller's possibly-None
         # ``headers`` parameter — see safe_post for the same rationale.
-        masked_reason = _mask_secrets_in_text(str(exc), request_headers)
+        # Strip the URL path/query too: ``requests`` embeds the request
+        # path in its transport-error string.
+        masked_reason = _redact_url_paths_in_text(_mask_secrets_in_text(str(exc), request_headers), url)
         logger.warning(
             "safe_get failed url=%s method=%s reason=%s",
             _mask_netloc(url),

@@ -85,6 +85,20 @@ class TestCacheModels:
         # Assert the underlying byte count instead.
         assert payload["models"][0]["size_bytes"] >= 4096
 
+    def test_cache_models_json_preserves_unicode_path(self, capsys) -> None:
+        """F-P7-OPUS-42: the success JSON now passes ``ensure_ascii=False``
+        (matching the doctor renderer), so a Unicode ``cache_dir`` renders as
+        the literal path rather than ``\\uXXXX`` escapes."""
+        from forgelm.cli.subcommands._cache import _emit_cache_success
+
+        payload = {"cache_dir": "/work/önbellek", "models": [], "total_size_mb": 0}
+        _emit_cache_success("json", payload, kind="models")
+
+        out = capsys.readouterr().out
+        assert "/work/önbellek" in out  # literal, un-escaped
+        assert "\\u" not in out
+        assert json.loads(out)["cache_dir"] == "/work/önbellek"
+
     def test_cache_models_with_safety_appends_classifier(self, tmp_path: Path, capsys) -> None:
         from forgelm.cli.subcommands import _cache
 
@@ -302,6 +316,26 @@ class TestCacheTasks:
             assert ei.value.code == 1
         payload = json.loads(capsys.readouterr().out)
         assert "bogus_task" in payload["error"]
+
+    def test_cache_tasks_output_help_matches_datasets_resolver(self) -> None:
+        # F-P7-OPUS-10: cache-tasks resolves + writes via the Datasets
+        # cache chain (HF_DATASETS_CACHE), not the Hub chain.  The --output
+        # help text must advertise the Datasets chain so an air-gap
+        # operator sets the right env var.
+        import subprocess
+        import sys as _sys
+
+        proc = subprocess.run(
+            [_sys.executable, "-m", "forgelm.cli", "cache-tasks", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr
+        help_text = proc.stdout + proc.stderr
+        assert "HF_DATASETS_CACHE" in help_text
+        assert "datasets" in help_text
+        assert "HF_HUB_CACHE" not in help_text
 
 
 # ---------------------------------------------------------------------------

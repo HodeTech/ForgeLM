@@ -33,6 +33,7 @@ from typing import List
 import pytest
 
 from forgelm.ingestion import (
+    IngestParameterError,
     ingest_path,
     strip_paragraph_packed_headers,
 )
@@ -624,19 +625,26 @@ class TestTask12PageRange:
         assert "Second page" in all_text or "Third page" in all_text
 
     def test_page_range_invalid_start_raises(self, tmp_path):
+        # F-P6-OPUS-10: pin the concrete IngestParameterError, not a bare
+        # ValueError. The per-file soft-fail dispatcher only re-raises
+        # (ImportError, IngestParameterError); a downgrade to plain
+        # ValueError would be SWALLOWED as a per-file skip, silently
+        # turning an operator mistake into a soft no-op — and a
+        # `pytest.raises(ValueError)` guard would not catch the regression.
         pages = [["A"], ["B"]]
         pdf = tmp_path / "doc.pdf"
         pdf.write_bytes(_synth_multipage_pdf(pages))
         out = tmp_path / "out.jsonl"
-        with pytest.raises(ValueError, match="page-range"):
+        with pytest.raises(IngestParameterError, match="page-range"):
             ingest_path(str(pdf), output_path=str(out), page_range=(0, 1))
 
     def test_page_range_start_after_end_raises(self, tmp_path):
+        # F-P6-OPUS-10: type-pinned (see sibling test above).
         pages = [["A"], ["B"]]
         pdf = tmp_path / "doc.pdf"
         pdf.write_bytes(_synth_multipage_pdf(pages))
         out = tmp_path / "out.jsonl"
-        with pytest.raises(ValueError, match="page-range"):
+        with pytest.raises(IngestParameterError, match="page-range"):
             ingest_path(str(pdf), output_path=str(out), page_range=(5, 1))
 
 
@@ -646,7 +654,7 @@ class TestTask12PageRange:
 
 
 class TestTask13FrontmatterHeuristic:
-    """Phase 15 Wave 2 Task 13: heuristic drops alpha < 0.45 + underscore > 0.10 + ≥ 5 page numbers."""
+    """Phase 15 Wave 2 Task 13: heuristic drops alpha < 0.30 + underscore > 0.10 + ≥ 5 page numbers."""
 
     def test_is_frontmatter_page_fires_on_toc_shape(self):
         from forgelm.ingestion import _is_frontmatter_page
@@ -668,6 +676,57 @@ class TestTask13FrontmatterHeuristic:
             "numbers. It should not trip the heuristic." * 3
         )
         assert not _is_frontmatter_page(body)
+
+    def test_is_frontmatter_page_positive_control_numeric_answer_key(self):
+        """F-P6-OPUS-09: pin the documented residual false-positive band.
+
+        A dense numeric answer-key / scoring page (short dotted-leader
+        labels + inline 1-3 digit answer rows) DOES trip the 3-signal
+        heuristic. This is an accepted, bounded trade-off (drop is
+        head/tail-only, WARNED, and ``--keep-frontmatter`` opt-out), but
+        leaving it unpinned means a future signal-widening could silently
+        change which pages get dropped with zero failing test. If this
+        page should ever NO LONGER be treated as front-matter, that is an
+        intentional calibration change and this assertion must be updated
+        deliberately.
+        """
+        from forgelm.ingestion import _is_frontmatter_page
+
+        answer_key = (
+            "\n".join(
+                [
+                    "Q1 ....... ",
+                    "12",
+                    "Q2 ....... ",
+                    "34",
+                    "Q3 ....... ",
+                    "56",
+                    "Q4 ....... ",
+                    "78",
+                    "Q5 ....... ",
+                    "90",
+                    "Q6 ....... ",
+                    "11",
+                ]
+            )
+            + "\n"
+        )
+        assert _is_frontmatter_page(answer_key)
+
+    def test_frontmatter_docstring_matches_active_alpha_threshold(self):
+        """F-P6-OPUS-03: the function docstring must not advertise the stale
+        0.45 alpha threshold — the active constant is 0.30, and the round-3
+        tightening's intent is undone on paper if the docstring drifts back."""
+        import inspect
+
+        from forgelm.ingestion import _FRONTMATTER_ALPHA_RATIO_MAX, _is_frontmatter_page
+
+        assert _FRONTMATTER_ALPHA_RATIO_MAX == 0.30
+        doc = inspect.getdoc(_is_frontmatter_page) or ""
+        # The docstring should reference the constant / its real value, never
+        # the pre-round-3 0.45 figure as the active gate.
+        assert "0.45" not in doc.split("Alphabetic-character ratio")[1].splitlines()[0]
+        assert "_FRONTMATTER_ALPHA_RATIO_MAX" in doc
 
 
 # ---------------------------------------------------------------------------
@@ -1048,6 +1107,37 @@ class TestStructuredNotesAdditive:
             "secrets_redaction_counts",
         ):
             assert key in ns, f"Pre-Phase-15 key {key!r} disappeared"
+
+
+class TestCorpusZeroChunksAggregateWarning:
+    """F-P6-OPUS-11: a corpus that yields ZERO usable chunks must emit a
+    single aggregate WARNING, not just per-file skip warnings + an INFO
+    summary — otherwise a pipeline that ingests-then-trains proceeds on an
+    empty dataset with no loud signal. Exit code is intentionally
+    unchanged (the WARNING is the tripwire, not a contract break)."""
+
+    def test_ingest_all_files_skipped_warns(self, tmp_path, caplog):
+        # A directory of empty .txt files: each is skipped (no extractable
+        # text), so chunk_count == 0 across the whole run.
+        (tmp_path / "a.txt").write_text("   \n")
+        (tmp_path / "b.txt").write_text("")
+        out = tmp_path / "out.jsonl"
+        with caplog.at_level("WARNING"):
+            result = ingest_path(str(tmp_path), output_path=str(out))
+        assert result.chunk_count == 0
+        assert any("produced 0 chunks" in r.message for r in caplog.records), (
+            "all-files-skipped corpus must emit a single aggregate WARNING"
+        )
+
+    def test_normal_run_does_not_emit_zero_chunk_warning(self, tmp_path, caplog):
+        # A run that produces chunks must NOT emit the aggregate warning.
+        src = tmp_path / "doc.txt"
+        src.write_text("Body content here.\n\nMore body content here.\n")
+        out = tmp_path / "out.jsonl"
+        with caplog.at_level("WARNING"):
+            result = ingest_path(str(src), output_path=str(out), strategy="paragraph")
+        assert result.chunk_count > 0
+        assert not any("produced 0 chunks" in r.message for r in caplog.records)
 
 
 if __name__ == "__main__":

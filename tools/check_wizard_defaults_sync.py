@@ -1,7 +1,8 @@
 """CI guard — wizard defaults JSON / JS shipped artefacts match the schema.
 
-Re-runs :mod:`tools.generate_wizard_defaults` into a temp directory and
-diffs the output against the committed files.  Fails the run with a
+Regenerates the expected artefact content in memory (via
+:mod:`tools.generate_wizard_defaults`'s ``render_*`` helpers) and
+byte-compares it against the committed files.  Fails the run with a
 clear message + a one-liner the operator can copy-paste to regenerate.
 
 Why a guard instead of always-regenerate?

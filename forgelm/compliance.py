@@ -40,7 +40,21 @@ from .config import ConfigError, WebhookConfig
 _WEBHOOK_SECRET_FIELDS = frozenset({"url"})
 _WEBHOOK_PERSIST_FIELDS = tuple(name for name in WebhookConfig.model_fields if name not in _WEBHOOK_SECRET_FIELDS)
 
-# flock is Unix-only; Windows falls back to advisory-only (no hard lock).
+# Stable machine token prefixed onto the OSError-shaped pipeline-manifest
+# violation so the CLI's exit-code routing keys off an unambiguous marker
+# rather than the free-text substring ``unreadable`` (which a future reworded
+# violation could accidentally contain, silently flipping exit 1 → exit 2).
+# The CLI matches this exact prefix; keep the two in lockstep (F-P4-OPUS-25).
+PIPELINE_MANIFEST_IO_ERROR_PREFIX = "IO_ERROR::"
+
+# Recommended minimum length for ``FORGELM_AUDIT_SECRET``.  Shorter secrets are
+# accepted (no hard-fail) but trigger a one-time weak-secret WARNING because the
+# audit HMAC key's entropy is bounded by the secret's (F-P5-OPUS-13).
+_MIN_AUDIT_SECRET_LEN = 16
+
+# flock is Unix-only; on Windows there is NO cross-process lock — the helpers
+# below are no-ops (no lock acquired). Do not share an output_dir across
+# concurrent processes on Windows; use a distinct output_dir per run.
 try:
     import fcntl as _fcntl
 
@@ -129,6 +143,24 @@ class AuditLogger:
         # tamper-evidence we cannot deliver.
         raw_secret = os.getenv("FORGELM_AUDIT_SECRET", "")
         if raw_secret:
+            # The HMAC key's entropy is bounded by the secret's, so a short,
+            # low-entropy secret makes the per-line ``_hmac`` tag we sell as
+            # "tamper-evident" brute-forceable.  We don't hard-fail (that would
+            # break deployments already running with a short secret on the
+            # mainline audit path), but we surface a one-time WARNING so the
+            # weak-secret risk is visible (F-P5-OPUS-13).  ForgeLM is "not a
+            # key-management system" — 32+ random bytes from a KMS is the
+            # documented recommendation (docs/design/iso27001_soc2_alignment.md).
+            if len(raw_secret) < _MIN_AUDIT_SECRET_LEN:
+                logger.warning(
+                    "FORGELM_AUDIT_SECRET is %d characters — shorter than the "
+                    "accepted minimum of %d. A low-entropy secret makes the "
+                    "per-line audit HMAC forgeable; use at least %d characters "
+                    "(32+ random bytes from a KMS is recommended for production).",
+                    len(raw_secret),
+                    _MIN_AUDIT_SECRET_LEN,
+                    _MIN_AUDIT_SECRET_LEN,
+                )
             self._hmac_key: Optional[bytes] = hashlib.sha256(raw_secret.encode() + self.run_id.encode()).digest()
         else:
             self._hmac_key = None
@@ -228,11 +260,21 @@ class AuditLogger:
             ) from e
 
     def _check_genesis_manifest(self) -> None:
-        """Warn if the manifest exists but the log was truncated back to genesis.
+        """Refuse to re-root the chain if the manifest pins a truncated-away log.
 
         An attacker who can write to the audit directory can delete the JSONL
         and start a new chain; they cannot also forge the manifest (written
         once on first entry, never overwritten) without detection.
+
+        This is the **sole write-time** truncation guard (``verify_audit_log``
+        is the strong verify-time gate). When the manifest pins a real first
+        entry but the log is absent/empty, the next write would silently
+        re-root the chain on disk — exactly the truncation the manifest exists
+        to detect. We log an ``AUDIT INTEGRITY`` ERROR and then raise
+        ``ConfigError`` so the re-root is refused at the moment it occurs,
+        mirroring the loud-fail operator-identity policy in ``__init__``.
+        An operator who deliberately rotated/cleared the log can opt in to the
+        re-root via ``FORGELM_ALLOW_AUDIT_REROOT=1`` (the ERROR still fires).
         """
         if not os.path.isfile(self._manifest_path):
             return
@@ -243,12 +285,22 @@ class AuditLogger:
             logger.warning("Audit genesis manifest unreadable (%s): %s", self._manifest_path, exc)
             return
         if not os.path.isfile(self.log_path) or os.path.getsize(self.log_path) == 0:
+            expected = manifest.get("first_entry_sha256", "unknown")
             logger.error(
                 "AUDIT INTEGRITY: genesis manifest exists at %s but audit log is absent or empty. "
                 "The log may have been truncated. First-entry hash expected: %s",
                 self._manifest_path,
-                manifest.get("first_entry_sha256", "unknown"),
+                expected,
             )
+            if os.getenv("FORGELM_ALLOW_AUDIT_REROOT") != "1":
+                raise ConfigError(
+                    f"Audit log re-root refused: genesis manifest at {self._manifest_path!r} "
+                    f"pins first-entry hash {expected} but the log is absent or empty — "
+                    "the chain would be silently re-rooted (a truncation the manifest exists "
+                    "to detect). Investigate or repair the log, or set "
+                    "FORGELM_ALLOW_AUDIT_REROOT=1 to deliberately start a fresh chain "
+                    "(not recommended for EU AI Act Article 12 record-keeping)."
+                )
 
     def _write_genesis_manifest(self, first_entry_sha256: str) -> None:
         """Pin the first-ever entry hash so log truncation is detectable.
@@ -458,6 +510,11 @@ def generate_data_governance_report(config: Any, dataset: Dict[str, Any]) -> Dic
     ``forgelm --data-audit`` and lives in the trainer's checkpoint dir,
     its findings are inlined under the ``data_audit`` key so the governance
     artifact is a single self-contained document rather than a pointer.
+
+    ``report["data_audit_inlined"]`` is always set to a bool so the caller can
+    record in the append-only audit log whether the Article 10 data-quality
+    section made it into the bundle (F-P4-OPUS-23) rather than relying on the
+    transient WARNING that ``_maybe_inline_audit_report`` emits.
     """
     report: Dict[str, Any] = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -470,6 +527,7 @@ def generate_data_governance_report(config: Any, dataset: Dict[str, Any]) -> Dic
         report["governance"] = governance
 
     audit = _maybe_inline_audit_report(config)
+    report["data_audit_inlined"] = audit is not None
     if audit is not None:
         report["data_audit"] = audit
 
@@ -481,7 +539,14 @@ def generate_data_governance_report(config: Any, dataset: Dict[str, Any]) -> Dic
 # ---------------------------------------------------------------------------
 
 
-def _hash_file(filepath: str, rel_path: str) -> dict:
+def hash_file(filepath: str, rel_path: str) -> dict:
+    """Hash one artifact for the Article 15 integrity manifest.
+
+    Public (non-underscore) because it is a stable cross-module helper: both
+    :func:`generate_model_integrity` here and ``forgelm verify-integrity``
+    (``cli/subcommands/_verify_integrity.verify_integrity``) depend on producing
+    byte-identical ``{file, sha256, size_bytes}`` records, so a signature change
+    must stay in lock-step across both (F-M-10)."""
     sha256 = hashlib.sha256()
     size = 0
     with open(filepath, "rb") as f:
@@ -492,8 +557,19 @@ def _hash_file(filepath: str, rel_path: str) -> dict:
 
 
 def generate_model_integrity(final_path: str) -> Dict[str, Any]:
-    """Compute SHA-256 checksums of all output model artifacts."""
-    integrity = {
+    """Compute SHA-256 checksums of all output model artifacts.
+
+    F-P5-OPUS-08: ``os.walk`` with the default ``followlinks=False``
+    correctly refuses to recurse *into* symlinked directories, but a
+    symlinked *file* inside the tree is still listed and ``open()``
+    transparently follows it to an out-of-tree target — so the Article 15
+    integrity bundle would attribute (and hash the contents of) an
+    external file as a model artifact.  Each file's realpath is bounded to
+    the model tree via ``commonpath``; any file whose real target escapes
+    is skipped and recorded under ``skipped_symlinks`` so the omission is
+    auditable rather than silent.
+    """
+    integrity: Dict[str, Any] = {
         "verified_at": datetime.now(timezone.utc).isoformat(),
         "model_path": final_path,
         "artifacts": [],
@@ -502,20 +578,40 @@ def generate_model_integrity(final_path: str) -> Dict[str, Any]:
     if not os.path.isdir(final_path):
         return integrity
 
+    base = os.path.realpath(final_path)
     file_pairs = []
-    for root, _dirs, files in os.walk(final_path):
+    skipped_symlinks: List[str] = []
+    # followlinks=False is the default; named explicitly so the symlinked-
+    # directory safety is not a silent assumption a refactor could drop.
+    for root, _dirs, files in os.walk(final_path, followlinks=False):
         for filename in sorted(files):
             filepath = os.path.join(root, filename)
-            rel_path = os.path.relpath(filepath, final_path)
+            # Normalise separators so a Windows-generated manifest records
+            # POSIX-style "subdir/file" rather than "subdir\\file"; the
+            # verifier compares this against an os.relpath on disk that it
+            # normalises the same way, keeping the manifest cross-platform.
+            rel_path = os.path.relpath(filepath, final_path).replace(os.sep, "/")
+            real = os.path.realpath(filepath)
+            try:
+                contained = os.path.commonpath([real, base]) == base
+            except ValueError:
+                # Different drives (Windows) → cannot share a common path;
+                # treat as escaping so an out-of-tree target is never hashed.
+                contained = False
+            if not contained:
+                skipped_symlinks.append(rel_path)
+                continue
             file_pairs.append((filepath, rel_path))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
-        futures = [ex.submit(_hash_file, fp, rp) for fp, rp in file_pairs]
+        futures = [ex.submit(hash_file, fp, rp) for fp, rp in file_pairs]
         # as_completed yields in completion order (non-deterministic); the
         # explicit sort below restores a stable, diff-friendly artifact list.
         integrity["artifacts"] = [f.result() for f in concurrent.futures.as_completed(futures)]
 
     integrity["artifacts"].sort(key=lambda x: x["file"])
+    if skipped_symlinks:
+        integrity["skipped_symlinks"] = sorted(skipped_symlinks)
 
     return integrity
 
@@ -656,6 +752,42 @@ def compute_dataset_fingerprint(dataset_path: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def compute_config_hash(config: Any) -> str:
+    """Canonical SHA-256 digest of the validated config that ran.
+
+    Binds the single-run training manifest / approval row / JSON envelope
+    to the configuration that produced the run, mirroring the multi-stage
+    pipeline's ``pipeline_config_hash`` (``_compute_pipeline_config_hash``)
+    so a verifier can recompute one digest across both paths.
+
+    The pipeline hashes the *raw YAML bytes*; the single-run path only
+    holds the validated :class:`ForgeConfig` object, so we serialise the
+    redacted ``model_dump(mode="json")`` with ``sort_keys=True`` for a
+    stable, order-independent canonical form.
+
+    Partial secret redaction: ``AuthConfig.hf_token`` and
+    ``SyntheticConfig.api_key`` are redacted by their per-block
+    ``model_dump`` overrides.  ``WebhookConfig.url`` (which may carry an
+    embedded Slack/Teams OAuth token in the URL path) has **no**
+    ``model_dump`` override and is included verbatim in the canonical
+    JSON.  The hash itself is a one-way digest and does not expose the
+    URL on disk, but a verifier attempting to reproduce the digest from a
+    stored config would need the unredacted URL.  Operators that treat
+    the webhook URL as a secret should use ``url_env`` indirection
+    instead of ``url`` directly (F-M-11).
+
+    Returns ``"sha256:" + hexdigest`` to match the pipeline format.
+    """
+    try:
+        payload = config.model_dump(mode="json")
+    except AttributeError:
+        # Hand-rolled config dicts / pre-pydantic-v2 callers: hash the repr
+        # rather than crash. Better a coarse digest than no binding at all.
+        payload = repr(config)
+    canonical = json.dumps(payload, sort_keys=True, default=str, ensure_ascii=False)
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def generate_training_manifest(
     config: Any,
     metrics: Dict[str, float],
@@ -663,11 +795,18 @@ def generate_training_manifest(
     safety_result: Optional[Dict[str, Any]] = None,
     judge_result: Optional[Dict[str, Any]] = None,
     benchmark_result: Optional[Dict[str, Any]] = None,
+    run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Generate a comprehensive training manifest for audit purposes."""
+    """Generate a comprehensive training manifest for audit purposes.
+
+    ``run_id`` (when supplied) and ``config_hash`` bind the manifest to the
+    specific run + the config that produced it, so a post-training config
+    edit before export is detectable (F-P4-OPUS-13 / XP-11).
+    """
     manifest = {
         "forgelm_version": _get_version(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "config_hash": compute_config_hash(config),
         "model_lineage": {
             "base_model": config.model.name_or_path,
             "backend": config.model.backend,
@@ -763,6 +902,9 @@ def generate_training_manifest(
             # absent key.  ``url`` is intentionally absent from the field
             # set so the credential never reaches disk via this branch.
             manifest["webhook_config"] = {k: getattr(webhook_cfg, k, None) for k in _WEBHOOK_PERSIST_FIELDS}
+
+    if run_id:
+        manifest["run_id"] = run_id
 
     if resource_usage:
         manifest["resource_usage"] = resource_usage
@@ -953,6 +1095,17 @@ def build_annex_iv_artifact(manifest: Dict[str, Any]) -> Optional[Dict[str, Any]
     if not isinstance(operator_block, dict):
         return None
 
+    # §1 identity-critical sub-fields: skip the file (as we do for an
+    # absent block) when provider_name / system_name / intended_purpose
+    # are all blank, rather than emit a §1 stub the verifier must then
+    # catch (F-P4-OPUS-17).  Mirrors the verifier's nested-completeness
+    # check so the writer never produces an artefact that fails its own
+    # verifier on the §1 gate.
+    if not any(
+        str(operator_block.get(subkey, "")).strip() for subkey in ("provider_name", "system_name", "intended_purpose")
+    ):
+        return None
+
     artifact: Dict[str, Any] = {
         # Annex IV §1: system identification + intended purpose.  Pulled
         # from the operator-supplied compliance block; the verifier
@@ -1003,10 +1156,28 @@ def build_annex_iv_artifact(manifest: Dict[str, Any]) -> Optional[Dict[str, Any]
 
     # Stamp manifest_hash so the verifier's tampering-detection branch
     # fires.  Computed AFTER the §1-9 fields are populated so the hash
-    # covers the full payload.  ``metadata`` block is intentionally
-    # added LAST so its presence does not perturb prior key ordering.
+    # covers the full payload.  ``metadata`` carries the hash of everything
+    # else, so it is added after the hash is computed (chicken-and-egg).
+    # Insertion order is irrelevant: ``compute_annex_iv_manifest_hash``
+    # strips the metadata block and serialises with ``sort_keys=True``, so
+    # neither this block's presence nor its position can affect the digest.
     artifact["metadata"] = {"manifest_hash": compute_annex_iv_manifest_hash(artifact)}
     return artifact
+
+
+def _manifest_json_default(o: Any) -> Any:
+    """``json.dumps`` fallback that serialises sets deterministically.
+
+    A bare ``default=str`` stringifies a ``set``/``frozenset`` (e.g. a
+    de-duplicated LoRA ``target_modules``) in PYTHONHASHSEED-dependent
+    iteration order, so the same artefact hashes differently across two
+    processes — a false-tampering verdict.  Emitting ``sorted(list(o))``
+    pins the on-disk shape so the verifier re-hashes a deterministic
+    structure (F-P4-OPUS-16).
+    """
+    if isinstance(o, (set, frozenset)):
+        return sorted(o, key=str)
+    return str(o)
 
 
 def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
@@ -1022,11 +1193,32 @@ def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
     Serialises the rest with ``sort_keys=True, separators=(",", ":")``
     so non-significant whitespace + key ordering does not affect the
     digest.
+
+    The payload is normalised through ``json.loads(json.dumps(...,
+    default=_manifest_json_default))`` *before* the canonical dump so the
+    writer (which hashes the in-memory dict) and the verifier (which
+    hashes the dict read back from disk) operate on byte-identical
+    structures even when the artefact carries non-JSON-native content.
+    Without this, an integrator passing a manifest with integer dict keys
+    or a ``set`` (e.g. de-duplicated ``target_modules``) would get a
+    false-tampering verdict: ``sort_keys=True`` orders integer keys
+    numerically pre-disk but lexicographically once they round-trip to
+    strings, and a bare ``default=str`` would stringify a set in
+    PYTHONHASHSEED-dependent order.  ``_manifest_json_default`` emits a
+    sorted list for sets so the digest is deterministic across processes
+    (F-P4-OPUS-16).  The config-driven path only ever feeds JSON-native
+    types, so this is a no-op there; it closes the gap for the
+    documented public library entry ``build_annex_iv_artifact``.
     """
-    import copy
     import hashlib as _hashlib
 
-    payload = copy.deepcopy(artifact)
+    # Normalise to the post-default shape the verifier will see on disk
+    # (this also deep-copies, so the metadata strip below does not mutate
+    # the caller's dict).  Sets/frozensets serialise to a sorted list so
+    # the digest is deterministic across PYTHONHASHSEED — ``str(set)``
+    # emits members in hash-randomised order, producing a different hash
+    # in a second process and a false-tampering verdict (F-P4-OPUS-16).
+    payload = json.loads(json.dumps(artifact, default=_manifest_json_default))
     metadata = payload.get("metadata")
     if isinstance(metadata, dict):
         metadata.pop("manifest_hash", None)
@@ -1036,7 +1228,7 @@ def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
         # metadata block carried only the (now-stripped) hash.
         if not metadata:
             payload.pop("metadata", None)
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -1155,12 +1347,33 @@ def _verify_manifest_payload(manifest: Dict[str, Any]) -> List[str]:
        still in ``running`` status — that indicates a process crash
        mid-stage that the archive must surface (Phase 14 review F-N-2).
     4. **Index monotonicity** — stage indices form 0..N-1 in order.
+    5. **Content hash** — when ``metadata.manifest_hash`` is present, it
+       is recomputed over the canonicalised manifest (minus the metadata
+       block) and a mismatch is flagged.  Absence downgrades to
+       structural-only verification (mirrors the single-stage Annex IV
+       artefact's policy), so older manifests written before the hash
+       was stamped still verify on their structural rules.
     """
     violations: List[str] = []
 
     for key in _PIPELINE_MANIFEST_REQUIRED_KEYS:
         if key not in manifest:
             violations.append(f"missing required top-level key: {key!r}")
+
+    # Content-tamper detection (F-P4-OPUS-20).  When the manifest carries
+    # a manifest_hash, recompute it; a mismatch means a stage field
+    # (metrics, gate_decision, output_model, provider metadata) was
+    # edited after generation in a way the structural/chain checks below
+    # cannot see.
+    metadata = manifest.get("metadata") if isinstance(manifest.get("metadata"), dict) else None
+    expected_hash = metadata.get("manifest_hash") if metadata else None
+    if expected_hash:
+        actual_hash = compute_annex_iv_manifest_hash(manifest)
+        if actual_hash != expected_hash:
+            violations.append(
+                "manifest hash mismatch — pipeline manifest may have been modified after "
+                f"generation (expected {expected_hash[:16]}…, recomputed {actual_hash[:16]}…)."
+            )
 
     stages = manifest.get("stages", [])
     if not isinstance(stages, list):
@@ -1216,69 +1429,141 @@ def export_compliance_artifacts(
     The *manifest* (produced by :func:`generate_training_manifest`) already
     contains all the config-derived data needed for the artifacts, so the
     config object itself is not required here.
+
+    The five Annex IV artefacts are written all-or-nothing (F-P4-OPUS-10 /
+    XP-12): each file is first written into a sibling ``.export-tmp`` staging
+    directory, and only after every write succeeds are they promoted into
+    *output_dir* with :func:`os.replace`.  Promotion itself is also
+    all-or-nothing: each pre-existing target is backed up into the staging
+    dir before it is overwritten, and a mid-promotion failure (disk full,
+    SIGKILL between renames) rolls the published bundle back to its previous
+    state before re-raising — a reader never observes a torn bundle that
+    mixes new and old artefacts.  Mirrors the tmp+rename discipline of
+    :func:`export_pipeline_manifest`.
     """
-    import yaml
+    import shutil
+    import tempfile
 
     os.makedirs(output_dir, exist_ok=True)
-    generated_files = []
 
-    # 1. Full compliance report (JSON)
-    report_path = os.path.join(output_dir, "compliance_report.json")
-    with open(report_path, "w") as f:
-        json.dump(manifest, f, indent=2, default=str)
-    generated_files.append(report_path)
-    logger.info("Compliance report saved to %s", report_path)
+    # Staging dir as a sibling of output_dir so the os.replace promotion is a
+    # same-filesystem atomic rename per file.
+    staging_dir = tempfile.mkdtemp(prefix=".export-tmp-", dir=output_dir)
+    # (staging filename, final filename) pairs, in promotion order.
+    pending: List[Tuple[str, str]] = []
 
-    # 2. Training manifest (YAML)
-    manifest_path = os.path.join(output_dir, "training_manifest.yaml")
-    yaml_manifest = {
-        "forgelm_version": manifest["forgelm_version"],
-        "generated_at": manifest["generated_at"],
-        "base_model": manifest["model_lineage"]["base_model"],
-        "adapter_method": manifest["model_lineage"]["adapter_method"],
-        "trainer_type": manifest["training_parameters"]["trainer_type"],
-        "dataset": manifest["data_provenance"]["primary_dataset"],
-        "epochs": manifest["training_parameters"]["epochs"],
-        "final_metrics": {
-            k: round(v, 4) if isinstance(v, float) else v
-            for k, v in manifest["evaluation_results"]["metrics"].items()
-            if not k.startswith("benchmark/")
-        },
-    }
-    with open(manifest_path, "w") as f:
-        yaml.dump(yaml_manifest, f, default_flow_style=False, sort_keys=False)
-    generated_files.append(manifest_path)
+    try:
+        import yaml
 
-    # 3. Data provenance (JSON)
-    provenance_path = os.path.join(output_dir, "data_provenance.json")
-    with open(provenance_path, "w") as f:
-        json.dump(manifest["data_provenance"], f, indent=2, default=str)
-    generated_files.append(provenance_path)
+        # 1. Full compliance report (JSON)
+        with open(os.path.join(staging_dir, "compliance_report.json"), "w") as f:
+            json.dump(manifest, f, indent=2, default=str)
+        pending.append(("compliance_report.json", "compliance_report.json"))
 
-    # 4. Risk assessment (JSON) — if present
-    if "risk_assessment" in manifest:
-        risk_path = os.path.join(output_dir, "risk_assessment.json")
-        with open(risk_path, "w") as f:
-            json.dump(manifest["risk_assessment"], f, indent=2)
-        generated_files.append(risk_path)
+        # 2. Training manifest (YAML)
+        yaml_manifest = {
+            "forgelm_version": manifest["forgelm_version"],
+            "generated_at": manifest["generated_at"],
+            "base_model": manifest["model_lineage"]["base_model"],
+            "adapter_method": manifest["model_lineage"]["adapter_method"],
+            "trainer_type": manifest["training_parameters"]["trainer_type"],
+            "dataset": manifest["data_provenance"]["primary_dataset"],
+            "epochs": manifest["training_parameters"]["epochs"],
+            "final_metrics": {
+                k: round(v, 4) if isinstance(v, float) else v
+                for k, v in manifest["evaluation_results"]["metrics"].items()
+                if not k.startswith("benchmark/")
+            },
+        }
+        with open(os.path.join(staging_dir, "training_manifest.yaml"), "w") as f:
+            yaml.dump(yaml_manifest, f, default_flow_style=False, sort_keys=False)
+        pending.append(("training_manifest.yaml", "training_manifest.yaml"))
 
-    # 5. Annex IV metadata (JSON) — emitted in the §1-9 canonical layout
-    # the verifier expects, with a manifest_hash stamp so tampering is
-    # detectable.  Wave 2b Round-4 review F-W2B-01 + F-W2B-05 fix:
-    # previously this wrote the flat 7-key provider-metadata block
-    # (provider_name / system_name / etc.) which the verifier rejected
-    # as missing 8 of 9 required fields, AND never emitted a
-    # manifest_hash so the verifier silently skipped tampering
-    # detection.  build_annex_iv_artifact synthesises the §1-9 keys
-    # from the manifest sub-blocks; compute_annex_iv_manifest_hash
-    # produces a hash the verifier recomputes byte-for-byte.
-    annex_artifact = build_annex_iv_artifact(manifest)
-    if annex_artifact is not None:
-        annex_path = os.path.join(output_dir, "annex_iv_metadata.json")
-        with open(annex_path, "w") as f:
-            json.dump(annex_artifact, f, indent=2, default=str)
-        generated_files.append(annex_path)
+        # 3. Data provenance (JSON)
+        with open(os.path.join(staging_dir, "data_provenance.json"), "w") as f:
+            json.dump(manifest["data_provenance"], f, indent=2, default=str)
+        pending.append(("data_provenance.json", "data_provenance.json"))
 
+        # 4. Risk assessment (JSON) — if present
+        if "risk_assessment" in manifest:
+            with open(os.path.join(staging_dir, "risk_assessment.json"), "w") as f:
+                json.dump(manifest["risk_assessment"], f, indent=2)
+            pending.append(("risk_assessment.json", "risk_assessment.json"))
+
+        # 5. Annex IV metadata (JSON) — emitted in the §1-9 canonical layout
+        # the verifier expects, with a manifest_hash stamp so tampering is
+        # detectable.  Wave 2b Round-4 review F-W2B-01 + F-W2B-05 fix:
+        # previously this wrote the flat 7-key provider-metadata block
+        # (provider_name / system_name / etc.) which the verifier rejected
+        # as missing 8 of 9 required fields, AND never emitted a
+        # manifest_hash so the verifier silently skipped tampering
+        # detection.  build_annex_iv_artifact synthesises the §1-9 keys
+        # from the manifest sub-blocks; compute_annex_iv_manifest_hash
+        # produces a hash the verifier recomputes byte-for-byte.
+        annex_artifact = build_annex_iv_artifact(manifest)
+        if annex_artifact is not None:
+            with open(os.path.join(staging_dir, "annex_iv_metadata.json"), "w") as f:
+                # Must use _manifest_json_default (not default=str) so sets/frozensets
+                # are serialised as sorted lists — matching what compute_annex_iv_manifest_hash
+                # normalises to when computing the stored digest.  default=str would
+                # emit a PYTHONHASHSEED-dependent string like "{'q_proj', 'v_proj'}" while
+                # the verifier re-hashes a list, producing a false-tampering verdict
+                # (F-H-05).
+                json.dump(annex_artifact, f, indent=2, default=_manifest_json_default)
+            pending.append(("annex_iv_metadata.json", "annex_iv_metadata.json"))
+
+        # All writes succeeded — promote into place.  os.replace is atomic
+        # per file, but a multi-file bundle is not atomic across files: a
+        # mid-loop failure (disk full on file 3) would leave files 1-2
+        # published while the rest are dropped on staging cleanup — a torn
+        # bundle a reader cannot distinguish from a complete one
+        # (F-P4-OPUS-10).  Make promotion all-or-nothing by backing up any
+        # pre-existing target into the staging dir before overwriting it; on
+        # any failure, restore every backup and remove the files promoted so
+        # far, leaving the OLD bundle (or an empty dir) intact.  The caller
+        # records the failure via the ``compliance.artifacts_export_failed``
+        # audit event when this function re-raises.
+        generated_files: List[str] = []
+        promoted: List[str] = []  # final paths newly written this run
+        backups: List[Tuple[str, str]] = []  # (final_path, backup_path) pairs
+        try:
+            for staging_name, final_name in pending:
+                final_path = os.path.join(output_dir, final_name)
+                if os.path.exists(final_path):
+                    backup_path = os.path.join(staging_dir, final_name + ".prev")
+                    os.replace(final_path, backup_path)
+                    backups.append((final_path, backup_path))
+                os.replace(os.path.join(staging_dir, staging_name), final_path)
+                promoted.append(final_path)
+                generated_files.append(final_path)
+        except OSError:
+            # Roll back: drop the files we just promoted, then restore the
+            # backed-up originals so the published bundle is exactly what it
+            # was before this run.
+            rollback_errors: List[str] = []
+            for final_path in promoted:
+                try:
+                    os.remove(final_path)
+                except OSError as exc:
+                    rollback_errors.append(f"remove failed for {final_path!r}: {exc}")
+            for final_path, backup_path in backups:
+                try:
+                    os.replace(backup_path, final_path)
+                except OSError as exc:
+                    rollback_errors.append(f"restore failed for {final_path!r} from {backup_path!r}: {exc}")
+            if rollback_errors:
+                logger.error(
+                    "Compliance rollback encountered errors after failed promotion: %s",
+                    "; ".join(rollback_errors),
+                )
+            raise
+    finally:
+        # Remove the staging dir whether we succeeded (now empty) or raised
+        # (still holding un-promoted partial files) — no torn bundle is ever
+        # left at output_dir, and no .export-tmp clutter survives.
+        shutil.rmtree(staging_dir, ignore_errors=True)
+
+    logger.info("Compliance report saved to %s", os.path.join(output_dir, "compliance_report.json"))
     logger.info("Compliance artifacts exported to %s (%d files)", output_dir, len(generated_files))
     return generated_files
 
@@ -1289,17 +1574,34 @@ def export_compliance_artifacts(
 
 
 def export_evidence_bundle(output_dir: str, bundle_path: str) -> str:
-    """Package all compliance artifacts into a single auditor-ready ZIP archive."""
+    """Package all compliance artifacts into a single auditor-ready ZIP archive.
+
+    Written tmp+rename (F-P4-OPUS-33 / XP-12): the ZIP is built at
+    ``<bundle_path>.tmp`` and promoted with :func:`os.replace` only after it
+    is fully written and closed.  An interrupted run (SIGKILL, I/O error
+    mid-walk) therefore never leaves a truncated/torn archive at the
+    auditor-facing path and never clobbers a previously-valid bundle.
+    """
     if not os.path.isdir(output_dir):
         logger.warning("Compliance directory not found: %s", output_dir)
         return ""
 
-    with zipfile.ZipFile(bundle_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for root, _dirs, files in os.walk(output_dir):
-            for filename in files:
-                filepath = os.path.join(root, filename)
-                arcname = os.path.relpath(filepath, os.path.dirname(output_dir))
-                zf.write(filepath, arcname)
+    tmp_path = bundle_path + ".tmp"
+    try:
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for root, _dirs, files in os.walk(output_dir):
+                for filename in files:
+                    filepath = os.path.join(root, filename)
+                    arcname = os.path.relpath(filepath, os.path.dirname(output_dir))
+                    zf.write(filepath, arcname)
+        os.replace(tmp_path, bundle_path)
+    except BaseException:
+        # On any failure (including SIGKILL-driven exceptions surfaced as
+        # OSError mid-write) remove the partial tmp so it never lingers at a
+        # path a reader might pick up; re-raise to surface the failure.
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
 
     logger.info("Evidence bundle saved to %s", bundle_path)
     return bundle_path
@@ -1622,7 +1924,10 @@ def verify_audit_log(
             tolerated (the writer omits the field when no secret is set)
             unless ``require_hmac=True``.
         require_hmac: When ``True``, every entry must carry a valid
-            ``_hmac`` field — a missing tag fails verification. Used by the
+            ``_hmac`` field — a missing tag fails verification. Requires a
+            non-empty ``hmac_secret``: ``require_hmac=True`` with
+            ``hmac_secret=None`` returns ``valid=False`` rather than
+            silently degrading to a presence-only check. Used by the
             CLI's ``--require-hmac`` flag for strict enterprise audits.
 
     Returns:
@@ -1634,6 +1939,20 @@ def verify_audit_log(
         bounded for large logs. Genesis-manifest sidecar
         (``<path>.manifest.json``) is checked when present.
     """
+    # ``require_hmac`` without a secret cannot authenticate anything: the
+    # per-entry check below would only confirm an ``_hmac`` tag is *present*,
+    # never that it is *valid*, so strict mode would silently degrade to a
+    # presence check and return valid=True on a forged log. The CLI seam
+    # already refuses this combination (``_verify_audit.py``); enforce the
+    # same contract at the library boundary so notebook/SDK callers cannot
+    # get a fail-open pass (F-P4-OPUS-03).
+    if require_hmac and not hmac_secret:
+        return VerifyResult(
+            valid=False,
+            entries_count=0,
+            first_invalid_index=None,
+            reason="require_hmac=True requires a non-empty hmac_secret to authenticate _hmac tags",
+        )
     failure, lines = _read_audit_log_lines(path)
     if failure is not None:
         return failure
@@ -1771,6 +2090,14 @@ def generate_pipeline_manifest(state: Any, root_cfg: Any) -> Dict[str, Any]:
         "stages": stages_payload,
     }
     manifest.update(_provider_metadata_from_config(root_cfg))
+    # Stamp a content hash over the whole manifest (minus the metadata
+    # block) so the verifier can detect post-generation edits to stage
+    # metrics / gate_decision / output_model that keep the chain links
+    # self-consistent.  Reuses the single-stage Annex IV canonicalisation
+    # so both manifests share one algorithm.  pipeline_config_hash only
+    # binds the config *inputs*, not the per-stage result payload, so it
+    # cannot stand in for this (F-P4-OPUS-20).
+    manifest["metadata"] = {"manifest_hash": compute_annex_iv_manifest_hash(manifest)}
     return manifest
 
 
@@ -1788,6 +2115,12 @@ def export_pipeline_manifest(manifest: Dict[str, Any], pipeline_output_dir: str)
     tmp_path = target_path + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, default=str)
+        # Flush userspace buffer then sync to storage before the rename so the
+        # artefact survives a kernel crash or OOM-kill between file-close and
+        # os.replace.  Mirrors the fsync discipline in log_event (Article 12
+        # durability requirement; F-M-12).
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp_path, target_path)
     return target_path
 
@@ -1833,7 +2166,7 @@ def verify_pipeline_manifest_at_path(pipeline_dir: str) -> List[str]:
     except json.JSONDecodeError as e:
         return [f"pipeline_manifest.json invalid JSON: {e}"]
     except OSError as e:
-        return [f"pipeline_manifest.json unreadable: {e}"]
+        return [f"{PIPELINE_MANIFEST_IO_ERROR_PREFIX}pipeline_manifest.json unreadable: {e}"]
 
     violations: List[str] = list(_verify_manifest_payload(manifest))
 

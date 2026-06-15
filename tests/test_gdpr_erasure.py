@@ -9,6 +9,7 @@ full surface.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import stat
@@ -724,6 +725,25 @@ evaluation:
         assert cfg.retention is not None
         assert cfg.retention.staging_ttl_days == 14
 
+    def test_alias_forward_warning_names_v080_removal_not_v070(self) -> None:
+        """Deprecation cadence (F-P1-FAB-16): v0.7.0 shipped without the
+        removal, so every message must name the deferred v0.8.0 target — a
+        warning still naming v0.7.0 is a past-release version stamp."""
+        from forgelm.config import ForgeConfig
+
+        with pytest.warns(DeprecationWarning) as record:
+            ForgeConfig(
+                model={"name_or_path": "gpt2"},
+                lora={},
+                training={"trainer_type": "sft"},
+                data={"dataset_name_or_path": "train.jsonl"},
+                evaluation={"staging_ttl_days": 14},
+            )
+        messages = [str(w.message) for w in record if issubclass(w.category, DeprecationWarning)]
+        assert messages, "expected an alias-forward DeprecationWarning"
+        assert any("v0.8.0" in m for m in messages)
+        assert not any("v0.7.0" in m for m in messages)
+
     def test_both_set_with_different_values_raises_config_error(self, tmp_path: Path) -> None:
         from forgelm.config import ConfigError, load_config
 
@@ -1207,6 +1227,142 @@ class TestAtomicityFsyncFdPinning:
 
 
 # ---------------------------------------------------------------------------
+# §7 Test matrix row 9 — Run-scoped erasure path-traversal boundary
+# (F-P5-OPUS-02): the design promises a realpath+commonpath check mirroring
+# _approve._staging_path_inside_output_dir, so a ``..``-bearing --run-id
+# cannot rmtree a directory outside output_dir.
+# ---------------------------------------------------------------------------
+
+
+class TestRunIdPathTraversal:
+    @staticmethod
+    def _stage_traversal(output_dir: Path, victim: Path) -> str:
+        """Build the on-disk shape that makes a ``..``-bearing --run-id
+        resolve to *victim* (outside *output_dir*) while still passing the
+        resolver's ``.exists()`` gate.
+
+        ``_staging_targets_for_run`` builds
+        ``output_dir / f"final_model.staging.{run_id}"`` and only appends the
+        target when ``Path.exists()`` is True.  For run_id='../../../victim'
+        the first path component is the literal ``final_model.staging...``
+        directory; creating it lets the OS walk
+        ``final_model.staging.../../../victim`` through to *victim*, whose
+        realpath escapes ``output_dir``.  Returns the malicious run_id.
+        """
+        run_id = "../../../victim"
+        # First component of f"final_model.staging.{run_id}" is the literal
+        # dir "final_model.staging..." — create it so the relative walk
+        # resolves to the sibling victim directory.
+        (output_dir / "final_model.staging...").mkdir(parents=True, exist_ok=True)
+        return run_id
+
+    def test_run_id_path_traversal_rejected_staging(self, tmp_path: Path, capsys) -> None:
+        from forgelm.cli.subcommands._purge import _run_purge_run_id
+
+        # output_dir is a child of tmp_path; the victim lives outside it.
+        output_dir = tmp_path / "run1"
+        output_dir.mkdir()
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        (victim / "data.bin").write_bytes(b"x" * 64)
+
+        run_id = self._stage_traversal(output_dir, victim)
+        args = _build_args(run_id=run_id, kind="staging", output_dir=str(output_dir))
+
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_run_id(args, output_format="json")
+
+        # EXIT_CONFIG_ERROR (1) — refused, not a runtime deletion failure.
+        assert ei.value.code == 1
+        # The victim directory and its contents are untouched.
+        assert victim.exists()
+        assert (victim / "data.bin").exists()
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert "traversal" in payload["error"].lower() or "outside" in payload["error"].lower()
+
+    def test_run_id_path_traversal_emits_failed_not_completed(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._purge import _run_purge_run_id
+
+        output_dir = tmp_path / "run1"
+        output_dir.mkdir()
+        victim = tmp_path / "victim"
+        victim.mkdir()
+
+        run_id = self._stage_traversal(output_dir, victim)
+        args = _build_args(run_id=run_id, kind="staging", output_dir=str(output_dir))
+        with pytest.raises(SystemExit):
+            _run_purge_run_id(args, output_format="json")
+
+        events = _read_audit_events(output_dir / "audit_log.jsonl")
+        names = [e["event"] for e in events]
+        assert "data.erasure_requested" in names
+        assert "data.erasure_failed" in names
+        assert "data.erasure_completed" not in names
+        failed = next(e for e in events if e["event"] == "data.erasure_failed")
+        assert failed["error_class"] == "PathTraversalRefused"
+
+    def test_path_traversal_failed_error_message_masked_and_bounded(self, tmp_path: Path) -> None:
+        """The ``PathTraversalRefused`` ``error_message`` embeds the refused
+        resolved path(s); route it through the same sanitiser so a
+        PII-shaped victim-dir name (or an overlong path) never lands raw in
+        the append-only chain (F-P5-OPUS-07, design gdpr_erasure.md §6).
+        """
+        from forgelm.cli.subcommands import _purge
+        from forgelm.cli.subcommands._purge import _run_purge_run_id
+
+        output_dir = tmp_path / "run1"
+        output_dir.mkdir()
+        # Victim dir name carries an email-shaped PII marker plus a long tail
+        # (kept under the 255-char filename limit) so the resolved escaping
+        # path is both PII-bearing and over the audit-message length cap.
+        leaked = "ali@example.com"
+        victim_name = f"victim-{leaked}-" + ("z" * 200)
+        victim = tmp_path / victim_name
+        try:
+            victim.mkdir()
+        except OSError as e:
+            if e.errno == errno.ENAMETOOLONG:
+                pytest.skip(f"filesystem filename limit too short for this test ({len(victim_name)} chars)")
+            raise
+        (output_dir / "final_model.staging...").mkdir(parents=True, exist_ok=True)
+
+        run_id = f"../../../{victim_name}"
+        args = _build_args(run_id=run_id, kind="staging", output_dir=str(output_dir))
+        with pytest.raises(SystemExit):
+            _run_purge_run_id(args, output_format="json")
+
+        events = _read_audit_events(output_dir / "audit_log.jsonl")
+        failed = next(e for e in events if e["event"] == "data.erasure_failed")
+        assert failed["error_class"] == "PathTraversalRefused"
+        # (a) PII marker masked out of the persisted error_message (the field
+        # this finding routes through the sanitiser; ``target_id`` carries the
+        # caller-supplied run_id verbatim by design and is out of scope here).
+        assert leaked not in failed["error_message"]
+        # (b) Length-bounded by the shared cap.
+        assert len(failed["error_message"]) <= _purge._AUDIT_ERROR_MESSAGE_MAX + len("…[truncated]")
+
+    def test_path_inside_output_dir_accepts_legitimate_target(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._purge import _path_inside_output_dir
+
+        output_dir = tmp_path / "run1"
+        output_dir.mkdir()
+        inside = output_dir / "final_model.staging.fg-ok"
+        inside.mkdir()
+        assert _path_inside_output_dir(inside, str(output_dir)) is True
+
+    def test_path_inside_output_dir_rejects_escape(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._purge import _path_inside_output_dir
+
+        output_dir = tmp_path / "run1"
+        output_dir.mkdir()
+        outside = tmp_path / "victim"
+        outside.mkdir()
+        assert _path_inside_output_dir(outside, str(output_dir)) is False
+
+
+# ---------------------------------------------------------------------------
 # Facade re-exports (test that public surface resolves)
 # ---------------------------------------------------------------------------
 
@@ -1227,3 +1383,55 @@ class TestFacadeReExports:
             "_scan_retention_violations",
         ):
             assert hasattr(_cli_facade, name), f"forgelm.cli must re-export {name!r}"
+
+
+# ---------------------------------------------------------------------------
+# F-P5-OPUS-07 — error_message masked + PII-redacted + length-bounded before
+# it enters the append-only audit chain (design gdpr_erasure.md §6).
+# ---------------------------------------------------------------------------
+
+
+class TestErasureFailedErrorMessageSanitised:
+    def test_sanitise_helper_redacts_email_and_bounds_length(self) -> None:
+        from forgelm.cli.subcommands._purge import (
+            _AUDIT_ERROR_MESSAGE_MAX,
+            _sanitise_audit_error_message,
+        )
+
+        raw = "rewrite failed near row {'email': 'ali@example.com'} " + ("x" * 500)
+        out = _sanitise_audit_error_message(raw)
+        assert "ali@example.com" not in out, "email must be masked by the PII regex pass"
+        assert len(out) <= _AUDIT_ERROR_MESSAGE_MAX + len("…[truncated]")
+
+    def test_row_erasure_failure_error_message_masked_and_bounded(self, tmp_path: Path, monkeypatch) -> None:
+        """Atomic-rewrite OSError whose message embeds an email + a long
+        body must NOT land that PII in the audit chain, and must be capped.
+        """
+        from forgelm.cli.subcommands import _purge
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "row-Z", "text": "subject data"}])
+
+        leaked = "ali@example.com"
+        long_tail = "Y" * 600
+
+        def _boom(*_a, **_k):
+            raise OSError(f"write failed at row containing {leaked} :: {long_tail}")
+
+        monkeypatch.setattr(_purge, "_atomic_rewrite_dropping_lines", _boom)
+
+        args = _build_args(row_id="row-Z", corpus=str(corpus), output_dir=str(tmp_path))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+        assert ei.value.code == _purge.EXIT_TRAINING_ERROR
+
+        events = _read_audit_events(tmp_path / "audit_log.jsonl")
+        failed = next(e for e in events if e["event"] == "data.erasure_failed")
+        assert failed["error_class"] == "OSError"
+        # PII masked.
+        assert leaked not in failed["error_message"]
+        # Bounded (not the full 600-char tail).
+        assert len(failed["error_message"]) <= _purge._AUDIT_ERROR_MESSAGE_MAX + len("…[truncated]")
+        # And the raw email never appears ANYWHERE in the persisted chain.
+        assert leaked not in (tmp_path / "audit_log.jsonl").read_text()

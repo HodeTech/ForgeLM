@@ -245,7 +245,7 @@ Kütüphane `logging.basicConfig()` **çağırmaz**. Uygulamanız çağırır. B
 
 ### `AuditLogger`'ı fork'lar arasında paylaşmak
 
-`AuditLogger` POSIX `fcntl.flock` (veya Windows'ta `msvcrt.locking`) kullanır. File handle'ı `os.fork()` çocukları arasında paylaşmak desteklenmez — her child aynı `output_dir`'i işaret eden kendi logger'ını kurmalıdır. Tüm yazımlar lock'u edindiği için zincir tutarlı kalır.
+`AuditLogger` POSIX `fcntl.flock` kullanır; Windows'ta süreçler-arası kilit **yoktur** (advisory flock yardımcısı no-op'tur). File handle'ı `os.fork()` çocukları arasında paylaşmak desteklenmez — her child aynı `output_dir`'i işaret eden kendi logger'ını kurmalıdır. POSIX'te tüm yazımlar lock'u edindiği için zincir tutarlı kalır; Windows'ta aynı `output_dir`'e karşı eşzamanlı süreç çalıştırmayın (her koşu için ayrı bir `output_dir` kullanın).
 
 ### Hot path'te yeniden import
 
@@ -268,6 +268,6 @@ Library API ve CLI aynı wheel'i, aynı audit log'u ve aynı lock semantik'ini p
 - [`../reference/library_api_reference-tr.md`](../reference/library_api_reference-tr.md) — tam sembol referansı.
 - [`../reference/audit_event_catalog-tr.md`](../reference/audit_event_catalog-tr.md) — `AuditLogger.log_event`'in kabul ettiği her olay.
 - [`../reference/configuration-tr.md`](../reference/configuration-tr.md) — `ForgeConfig` alan-by-alan referans.
-- [`cicd_pipeline.md`](cicd_pipeline.md) — bu rehberin CLI karşılığı.
+- [`cicd_pipeline-tr.md`](cicd_pipeline-tr.md) — bu rehberin CLI karşılığı.
 - [`iso_soc2_deployer_guide-tr.md`](iso_soc2_deployer_guide-tr.md) — audit katı cookbook'u (kütüphane çağıranları aynı artefaktları görür).
 - [`../design/library_api.md`](../design/library_api.md) — Faz 18 tasarım.

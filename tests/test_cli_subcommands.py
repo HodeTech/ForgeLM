@@ -122,6 +122,23 @@ class TestAuditSubcommand:
         assert "pii_severity" in envelope
         assert envelope["report_path"].endswith("data_audit_report.json")
 
+    def test_audit_dispatch_quality_filter_defaults_on_when_attr_absent(self):
+        """F-P7-OPUS-26: the dispatcher's getattr fallback must mirror the
+        parser's documented default-ON (v0.6.0+).  A Namespace without a
+        ``quality_filter`` attribute (the shape a future ``argparse.SUPPRESS``
+        switch would produce) must still pass ``enable_quality_filter=True``."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from forgelm.cli.subcommands._audit import _run_audit_cmd
+
+        args = SimpleNamespace(input_path="data.jsonl")  # no quality_filter attr
+        fake = MagicMock()
+        with patch("forgelm.cli._run_data_audit", fake):
+            _run_audit_cmd(args, "text")
+        assert fake.called, "_run_data_audit was never invoked; patch target may have drifted"
+        assert fake.call_args.kwargs["enable_quality_filter"] is True
+
     def test_legacy_data_audit_flag_still_works(self, tmp_path):
         data_path = tmp_path / "data.jsonl"
         self._make_jsonl(data_path, [{"text": "legacy alias still routes here"}])
@@ -137,6 +154,33 @@ class TestAuditSubcommand:
 
         # Same on-disk product as the subcommand path.
         assert (out_dir / "data_audit_report.json").is_file()
+
+    def test_legacy_data_audit_flag_runs_quality_filter_like_subcommand(self, tmp_path):
+        # F-P7-OPUS-01 regression: the legacy `--data-audit` alias claims
+        # "same behaviour, same output" as `forgelm audit`.  The subcommand
+        # defaults --quality-filter ON (v0.6.0+), so the legacy flag must
+        # also populate quality_summary — otherwise the two invocations emit
+        # divergent EU AI Act Art. 10 governance artifacts.
+        data_path = tmp_path / "data.jsonl"
+        self._make_jsonl(
+            data_path,
+            [{"text": "1234567890 !@#$%^&*()"}, {"text": "fine prose passes the heuristics."}],
+        )
+        out_dir = tmp_path / "audit"
+
+        with patch(
+            "sys.argv",
+            ["forgelm", "--data-audit", str(data_path), "--output", str(out_dir)],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == EXIT_SUCCESS
+
+        with open(out_dir / "data_audit_report.json", encoding="utf-8") as fh:
+            report = json.load(fh)
+        # Quality filter is ON by default for the subcommand; the legacy
+        # alias must match (populated quality_summary, not absent/empty).
+        assert report.get("quality_summary"), "legacy alias must run the quality filter like the subcommand"
 
     def test_legacy_data_audit_flag_emits_deprecation_warning_and_audit_event(self, tmp_path):
         """Phase 13 (Faz 13) — `--data-audit` is a documented deprecation path.
@@ -216,3 +260,84 @@ class TestAuditSubcommand:
                 main()
             # argparse error → exit code 2 (its standard convention).
             assert exc_info.value.code == 2
+
+
+class TestNumericFlagValidators:
+    """F-P7-OPUS-27: deploy/chat/safety-eval bounded numeric flags must fail
+    fast at the CLI boundary (parity with the audit/ingest validators)."""
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["forgelm", "deploy", "m", "--target", "vllm", "--gpu-memory-utilization", "9.5"],
+            ["forgelm", "deploy", "m", "--target", "tgi", "--port", "-1"],
+            ["forgelm", "deploy", "m", "--target", "vllm", "--max-length", "-5"],
+            ["forgelm", "chat", "m", "--temperature", "-3"],
+            ["forgelm", "chat", "m", "--max-new-tokens", "-10"],
+            ["forgelm", "safety-eval", "--model", "m", "--default-probes", "--max-new-tokens", "-1"],
+            # NaN/inf bypass the < / > bounds comparisons; isfinite() must reject them.
+            ["forgelm", "chat", "m", "--temperature", "nan"],
+            ["forgelm", "chat", "m", "--temperature", "inf"],
+            ["forgelm", "deploy", "m", "--target", "vllm", "--gpu-memory-utilization", "nan"],
+            ["forgelm", "deploy", "m", "--target", "vllm", "--gpu-memory-utilization", "inf"],
+        ],
+    )
+    def test_out_of_range_numeric_flag_rejected_at_parse_time(self, argv):
+        with patch("sys.argv", argv):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        # argparse usage error → exit 2 (conventional across the CLI).
+        assert exc_info.value.code == 2
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["forgelm", "deploy", "m", "--target", "vllm", "--gpu-memory-utilization", "0.9"],
+            ["forgelm", "chat", "m", "--temperature", "1.5"],
+        ],
+    )
+    def test_in_range_numeric_flag_parses(self, argv):
+        from forgelm.cli._parser import parse_args
+
+        with patch("sys.argv", argv):
+            # Must not raise SystemExit at parse time for in-range values,
+            # and the flag value must actually be stored in the Namespace.
+            ns = parse_args()
+
+        if "--gpu-memory-utilization" in argv:
+            assert ns.gpu_memory_utilization == pytest.approx(0.9)
+        if "--temperature" in argv:
+            assert ns.temperature == pytest.approx(1.5)
+
+
+class TestPipelineDispatchClamping:
+    """F-L-05: _dispatch_pipeline_mode must clamp non-public exit codes via
+    _clamp_exit_code before passing them to sys.exit."""
+
+    def test_dispatcher_clamps_nonpublic_pipeline_return(self, tmp_path, minimal_config):
+        """A pipeline run_pipeline_from_args returning a signal-derived code
+        (e.g. 130 = 128+SIGINT) must be clamped to EXIT_TRAINING_ERROR (2)
+        at the dispatch seam — mirroring the verify-audit clamping guarantee
+        (test_dispatcher_clamps_nonpublic_verify_audit_return in test_cli_phase10.py)."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from forgelm.cli._dispatch import _dispatch_pipeline_mode
+        from forgelm.cli._exit_codes import EXIT_TRAINING_ERROR
+
+        # Write a real (but minimal) YAML file so the open() inside
+        # _dispatch_pipeline_mode succeeds.
+        cfg_path = tmp_path / "pipeline.yaml"
+        cfg_path.write_text("pipeline:\n  stages: []\n")
+
+        config = MagicMock()
+        args = SimpleNamespace(config=str(cfg_path))
+
+        with patch(
+            "forgelm.cli._pipeline.run_pipeline_from_args",
+            MagicMock(return_value=130),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                _dispatch_pipeline_mode(config, args)
+
+        assert exc_info.value.code == EXIT_TRAINING_ERROR

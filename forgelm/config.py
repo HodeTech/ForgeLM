@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import warnings
 from typing import Any, Dict, List, Literal, Optional, Tuple
@@ -46,6 +47,52 @@ class MergeConfig(BaseModel):
         description="List of `{path, weight}` dicts naming the source models to merge.",
     )
     output_dir: str = Field(default="./merged_model", description="Directory to write the merged model into.")
+    ties_trim_fraction: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "TIES merge: fraction of smallest-magnitude deltas trimmed per task "
+            "(default `0.2` keeps the top ~80%; the published TIES default is sparser). "
+            "Only consulted when `method` is `ties`."
+        ),
+    )
+    dare_drop_rate: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "DARE merge: probability each delta is randomly dropped before rescaling "
+            "(default `0.3`; the DARE paper recommends 0.9+ for fine-tuned deltas). "
+            "Only consulted when `method` is `dare`."
+        ),
+    )
+    dare_seed: int = Field(
+        default=42,
+        description="DARE merge: RNG seed for the random drop mask, so a merge is reproducible run-to-run.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_merge_inputs(self):
+        """Reject an enabled merge with an unusable source list at config time.
+
+        Every merge algorithm needs at least two source models, each naming a
+        ``path``.  Without this check the failure surfaces only when the
+        no-train merge mode runs (`forgelm --merge`), where it lands on
+        EXIT_TRAINING_ERROR instead of the EXIT_CONFIG_ERROR a config defect
+        warrants — and ``--dry-run`` never catches it at all.
+        """
+        if not self.enabled:
+            return self
+        if len(self.models) < 2:
+            raise ValueError(
+                "merge.enabled is true but fewer than two source models are listed; "
+                "every merge algorithm needs at least two `{path, weight}` entries in merge.models."
+            )
+        for entry in self.models:
+            if "path" not in entry:
+                raise ValueError("Each merge.models entry must carry a `path` key naming the source model.")
+        return self
 
 
 class ModelConfig(BaseModel):
@@ -54,6 +101,7 @@ class ModelConfig(BaseModel):
     name_or_path: str = Field(description="HuggingFace Hub repo ID or local path to the base model.")
     max_length: int = Field(
         default=2048,
+        gt=0,
         description="Tokenizer/context max sequence length used during training.",
         json_schema_extra={"wizard": True},
     )
@@ -84,9 +132,9 @@ class ModelConfig(BaseModel):
         default="nf4",
         description="bitsandbytes 4-bit quantisation scheme: `nf4` (recommended) or `fp4`.",
     )
-    bnb_4bit_compute_dtype: str = Field(
+    bnb_4bit_compute_dtype: Literal["auto", "bfloat16", "bf16", "float16", "fp16", "float32", "fp32"] = Field(
         default="auto",
-        description="bitsandbytes 4-bit compute dtype: `auto` | `bfloat16` | `float16` | `float32`.  `float32` negates most VRAM savings.",
+        description="bitsandbytes 4-bit compute dtype: `auto` | `bfloat16` | `float16` | `float32` (each accepts the short `bf16`/`fp16`/`fp32` alias).  `float32` negates most VRAM savings.",
     )
 
     @model_validator(mode="after")
@@ -108,16 +156,20 @@ class LoraConfigModel(BaseModel):
 
     r: int = Field(
         default=8,
+        ge=1,
         description="LoRA rank: dimension of the low-rank update matrices.",
         json_schema_extra={"wizard": True},
     )
     alpha: int = Field(
         default=16,
+        ge=1,
         description="LoRA scaling factor (typically `2 * r`).",
         json_schema_extra={"wizard": True},
     )
     dropout: float = Field(
         default=0.1,
+        ge=0.0,
+        le=1.0,
         description="Dropout rate applied to the LoRA update.",
         json_schema_extra={"wizard": True},
     )
@@ -147,17 +199,52 @@ class LoraConfigModel(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_peft_method(self):
-        if self.use_dora and self.method == "lora":
-            logger.warning(
-                "lora.use_dora=True is deprecated. Use method='dora' instead. Automatically setting method='dora'."
+        # Reject contradictory deprecated flags rather than silently picking a
+        # winner (F-P1-FAB-20).  Previously use_dora=True + use_rslora=True kept
+        # both booleans (model.py re-ORs them into the PEFT config), and a
+        # deprecated flag set against a non-matching explicit `method` was a
+        # silent no-op.  Both are config-time mistakes → fail fast with exit 1.
+        if self.use_dora and self.use_rslora:
+            raise ValueError(
+                "lora.use_dora and lora.use_rslora are mutually exclusive "
+                "(DoRA and rsLoRA select different PEFT methods). Set a single "
+                "`method:` ('dora' or 'rslora') instead; both deprecated flags "
+                "are removed in v0.9.0."
             )
-            object.__setattr__(self, "method", "dora")
-        if self.use_rslora and self.method == "lora":
-            logger.warning(
-                "lora.use_rslora=True is deprecated. Use method='rslora' instead. "
-                "Automatically setting method='rslora'."
+        if self.use_dora and self.method not in ("lora", "dora"):
+            raise ValueError(
+                f"lora.use_dora=True contradicts method='{self.method}'. "
+                "Drop the deprecated flag and keep the explicit `method:`; "
+                "use_dora is removed in v0.9.0."
             )
-            object.__setattr__(self, "method", "rslora")
+        if self.use_rslora and self.method not in ("lora", "rslora"):
+            raise ValueError(
+                f"lora.use_rslora=True contradicts method='{self.method}'. "
+                "Drop the deprecated flag and keep the explicit `method:`; "
+                "use_rslora is removed in v0.9.0."
+            )
+        # Emit the deprecation unconditionally whenever the deprecated flag is set —
+        # including the compatible-redundant cases (use_dora + method='dora' or
+        # use_rslora + method='rslora').  Previously the warning only fired when
+        # method was 'lora', so operators who already wrote the correct explicit
+        # method alongside the deprecated flag received no nudge to drop it before
+        # v0.9.0 removal (F-L-09).
+        if self.use_dora:
+            message = "lora.use_dora=True is deprecated and removed in v0.9.0. Use method='dora' instead." + (
+                " Automatically setting method='dora'." if self.method == "lora" else ""
+            )
+            logger.warning(message)
+            warnings.warn(message, DeprecationWarning, stacklevel=2)
+            if self.method == "lora":
+                object.__setattr__(self, "method", "dora")
+        if self.use_rslora:
+            message = "lora.use_rslora=True is deprecated and removed in v0.9.0. Use method='rslora' instead." + (
+                " Automatically setting method='rslora'." if self.method == "lora" else ""
+            )
+            logger.warning(message)
+            warnings.warn(message, DeprecationWarning, stacklevel=2)
+            if self.method == "lora":
+                object.__setattr__(self, "method", "rslora")
         return self
 
 
@@ -223,11 +310,11 @@ class TrainingConfig(BaseModel):
     early_stopping_patience: int = Field(
         default=3, ge=1, description="Stop training after N evals without validation-loss improvement."
     )
-    orpo_beta: float = Field(default=0.1, description="ORPO odds-ratio weight (alignment paradigm parameter).")
-    dpo_beta: float = Field(default=0.1, description="DPO temperature parameter.")
-    simpo_gamma: float = Field(default=0.5, description="SimPO margin term.")
-    simpo_beta: float = Field(default=2.0, description="SimPO scaling parameter.")
-    kto_beta: float = Field(default=0.1, description="KTO loss parameter.")
+    orpo_beta: float = Field(default=0.1, gt=0, description="ORPO odds-ratio weight (alignment paradigm parameter).")
+    dpo_beta: float = Field(default=0.1, gt=0, description="DPO temperature parameter.")
+    simpo_gamma: float = Field(default=0.5, ge=0, description="SimPO margin term.")
+    simpo_beta: float = Field(default=2.0, gt=0, description="SimPO scaling parameter.")
+    kto_beta: float = Field(default=0.1, gt=0, description="KTO loss parameter.")
     grpo_num_generations: int = Field(
         default=4, ge=2, description="GRPO: number of responses to generate per prompt during rollout."
     )
@@ -264,11 +351,17 @@ class TrainingConfig(BaseModel):
         default="galore_adamw",
         description="GaLore optimiser variant.  `_8bit` halves optimiser-state VRAM; `_layerwise` cuts peak by recomputing per-layer.",
     )
-    galore_rank: int = Field(default=128, description="GaLore: low-rank subspace dimension for gradient projection.")
-    galore_update_proj_gap: int = Field(
-        default=200, description="GaLore: number of steps between SVD re-computations of the projection."
+    galore_rank: int = Field(
+        default=128, ge=1, description="GaLore: low-rank subspace dimension for gradient projection."
     )
-    galore_scale: float = Field(default=0.25, description="GaLore: gradient scaling factor (analogous to LoRA alpha).")
+    galore_update_proj_gap: int = Field(
+        default=200,
+        ge=1,
+        description="GaLore: number of steps between SVD re-computations of the projection.",
+    )
+    galore_scale: float = Field(
+        default=0.25, gt=0, description="GaLore: gradient scaling factor (analogous to LoRA alpha)."
+    )
     galore_proj_type: Literal["std", "reverse_std", "right", "left", "full"] = Field(
         default="std",
         description="GaLore projection type.  `std` is the documented default; `full` disables projection (debug only).",
@@ -294,13 +387,17 @@ class TrainingConfig(BaseModel):
     )
     sample_packing: bool = Field(
         default=False,
-        description="Pack multiple short sequences into one micro-batch slot.  Requires `packing=true`; saves compute on length-skewed corpora.",
+        description=(
+            "Deprecated alias for `packing`; TRL exposes a single sequence-packing knob. "
+            "Setting `sample_packing: true` forwards to `packing: true` with a "
+            "`DeprecationWarning`. Removal scheduled for v0.9.0 — use `packing` instead."
+        ),
     )
     oom_recovery: bool = Field(
         default=False, description="Auto-halve `per_device_train_batch_size` on CUDA OOM and retry."
     )
     oom_recovery_min_batch_size: int = Field(
-        default=1, description="Stop OOM retry once batch size reaches this floor; raise instead."
+        default=1, ge=1, description="Stop OOM retry once batch size reaches this floor; raise instead."
     )
     report_to: Literal["tensorboard", "wandb", "mlflow", "none"] = Field(
         default="tensorboard",
@@ -309,8 +406,44 @@ class TrainingConfig(BaseModel):
     run_name: Optional[str] = Field(default=None, description="W&B / MLflow run name.  Auto-generated when None.")
     gpu_cost_per_hour: Optional[float] = Field(
         default=None,
+        ge=0,
         description="USD per hour for the training GPU.  None = auto-detect from known GPUs (used by the cost-estimation report).",
     )
+
+    @model_validator(mode="after")
+    def _forward_deprecated_sample_packing(self):
+        """Forward the deprecated ``sample_packing`` flag onto ``packing``.
+
+        ``sample_packing`` was historically documented as a functional
+        sequence-packing knob but was never consumed by the trainer (TRL's
+        ``SFTConfig`` exposes a single ``packing`` parameter), so an operator
+        who set it got a silent no-op.  We now alias it to ``packing`` so the
+        documented behaviour actually fires during the deprecation window, and
+        emit both a ``DeprecationWarning`` (for ``-W error`` / CI deprecation
+        sweeps) and a ``logger.warning`` (visible on the CLI path), mirroring
+        the ``lora.use_dora`` alias pattern.  Removal target: v0.9.0.
+        """
+        if self.sample_packing:
+            # Always notify: emit when the deprecated flag is set regardless of
+            # whether packing is also true.  Previously the guard was
+            # ``if self.sample_packing and not self.packing``, which silently
+            # swallowed the deprecation when an operator wrote both
+            # ``sample_packing: true`` and ``packing: true``, leaving them with
+            # no nudge to remove the deprecated key before v0.9.0 removal (F-M-14).
+            logger.warning(
+                "training.sample_packing is deprecated and forwards to training.packing. "
+                "Use `packing: true` instead; sample_packing is removed in v0.9.0."
+            )
+            warnings.warn(
+                "`training.sample_packing` is deprecated and forwards to "
+                "`training.packing`. Use `packing: true` instead; the deprecated "
+                "field is removed in v0.9.0.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if not self.packing:
+                object.__setattr__(self, "packing", True)
+        return self
 
 
 class DistributedConfig(BaseModel):
@@ -318,7 +451,7 @@ class DistributedConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    strategy: Optional[str] = Field(
+    strategy: Optional[Literal["deepspeed", "fsdp"]] = Field(
         default=None,
         description="Distributed strategy: `deepspeed`, `fsdp`, or `None` for single-GPU (no distributed wrapping).",
     )
@@ -395,11 +528,38 @@ class DataConfig(BaseModel):
     @classmethod
     def _validate_mix_ratio(cls, v):
         if v is not None:
+            # Reject NaN / inf before the comparison checks: `nan < 0` and
+            # `nan == 0` are both False, so a non-finite weight would otherwise
+            # slip through and crash later in `data._apply_mix_ratio` at
+            # `int(max_dataset_size * nan)` (a runtime exit-2 instead of a
+            # config-time exit-1).
+            if any(not math.isfinite(r) for r in v):
+                raise ValueError("mix_ratio values must be finite (no NaN or inf).")
             if any(r < 0 for r in v):
                 raise ValueError("mix_ratio values must be non-negative.")
             if all(r == 0 for r in v):
                 raise ValueError("mix_ratio values cannot all be zero.")
         return v
+
+    @model_validator(mode="after")
+    def _validate_mix_ratio_length(self):
+        """Require one mix_ratio weight per dataset (primary + extras).
+
+        The field-level validator above cannot see ``extra_datasets``, so the
+        cross-field length check lives here.  A mismatch used to validate
+        cleanly and silently fall back to uniform mixing at runtime
+        (``data._merge_extra_datasets``) — i.e. the operator's declared
+        mixture was replaced by a different one with no error.
+        """
+        if self.mix_ratio is not None:
+            expected = 1 + len(self.extra_datasets or [])
+            if len(self.mix_ratio) != expected:
+                raise ValueError(
+                    f"mix_ratio length ({len(self.mix_ratio)}) must equal the dataset count "
+                    f"({expected} = 1 primary + {len(self.extra_datasets or [])} extra_datasets). "
+                    "List one weight per dataset, primary first."
+                )
+        return self
 
 
 class BenchmarkConfig(BaseModel):
@@ -419,8 +579,29 @@ class BenchmarkConfig(BaseModel):
     )
     min_score: Optional[float] = Field(
         default=None,
-        description="Minimum average accuracy.  When set + auto_revert=True, falling below triggers an auto-revert to the prior model.",
+        ge=0.0,
+        le=1.0,
+        description="Minimum average accuracy (0.0–1.0).  When set + auto_revert=True, falling below triggers an auto-revert to the prior model.",
     )
+
+    @model_validator(mode="after")
+    def _enabled_requires_tasks(self):
+        """Reject an enabled benchmark gate with no tasks (F-P1-FAB-19).
+
+        ``enabled=True`` + ``tasks=[]`` previously validated cleanly, then
+        ``trainer.py`` short-circuited to a skip-as-pass at runtime — the gate
+        the operator explicitly enabled (possibly with ``min_score`` +
+        ``auto_revert``) never executed and emitted no benchmark audit event.
+        That is a silently-disabled decision gate; fail fast at config time
+        (exit 1) so the operator lists a task or disables the block.
+        """
+        if self.enabled and not self.tasks:
+            raise ValueError(
+                "evaluation.benchmark.enabled is true but tasks is empty; "
+                "list at least one lm-eval task (e.g. ['arc_easy']) or set "
+                "enabled: false."
+            )
+        return self
 
 
 class SafetyConfig(BaseModel):
@@ -437,6 +618,8 @@ class SafetyConfig(BaseModel):
     )
     max_safety_regression: float = Field(
         default=0.05,
+        ge=0.0,
+        le=1.0,
         description="Maximum allowed unsafe-response ratio (0.0–1.0).  Auto-revert triggers when exceeded.",
     )
     scoring: Literal["binary", "confidence_weighted"] = Field(
@@ -445,10 +628,15 @@ class SafetyConfig(BaseModel):
     )
     min_safety_score: Optional[float] = Field(
         default=None,
+        ge=0.0,
+        le=1.0,
         description='Weighted score threshold (0.0–1.0); used when `scoring="confidence_weighted"`.',
     )
     min_classifier_confidence: float = Field(
-        default=0.7, description="Flag responses with classifier confidence below this floor for human review."
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Flag responses with classifier confidence below this floor for human review.",
     )
     track_categories: bool = Field(
         default=False, description="Parse Llama Guard S1-S14 harm categories per-response and surface in the report."
@@ -470,6 +658,84 @@ class SafetyConfig(BaseModel):
         ),
     )
 
+    @model_validator(mode="after")
+    def _validate_safety_gates(self):
+        """Reject reachable states that silently disable a configured safety gate.
+
+        Each branch closes an auto-revert bypass where the operator configured
+        a gate but the runtime evaluator (``safety.py``) would never fire it,
+        while ``safety.evaluation_completed`` still records ``passed=True``
+        (F-P1-FAB-04/07/08, F-P3-FABLE-15 / XP-06).
+        """
+        # Guard: skip cross-field consistency checks when safety evaluation is
+        # disabled.  An operator who disables the gate may leave threshold fields
+        # from a previous enabled run in their YAML; rejecting those at config
+        # time is user-hostile and inconsistent with the sister validators
+        # ``_validate_merge_inputs`` (line ~85) and ``_validate_synthetic_payload``
+        # (line ~943) which both early-return when ``enabled=False`` (F-M-13).
+        if not self.enabled:
+            return self
+
+        # (1) min_safety_score is only consulted under confidence_weighted
+        # scoring (safety.py); set under binary scoring it is a dead threshold.
+        if self.min_safety_score is not None and self.scoring != "confidence_weighted":
+            raise ValueError(
+                "evaluation.safety.min_safety_score is only enforced when "
+                'scoring="confidence_weighted" (current scoring='
+                f'"{self.scoring}"); under binary scoring the threshold is '
+                "silently ignored.  Set scoring to confidence_weighted or "
+                "remove min_safety_score."
+            )
+
+        # (2) severity_thresholds is only consulted when track_categories is on
+        # (safety.py gates on `severity_thresholds and track_categories`).  An
+        # operator who set per-severity limits clearly intends enforcement, so
+        # auto-enable category tracking rather than silently dropping the gate.
+        if self.severity_thresholds and not self.track_categories:
+            if "track_categories" in self.model_fields_set:
+                # Operator explicitly wrote ``track_categories: false`` alongside
+                # ``severity_thresholds``; the two settings directly contradict —
+                # auto-enabling would silently override a deliberate choice (F-M-15).
+                raise ValueError(
+                    "evaluation.safety.severity_thresholds requires track_categories=True "
+                    "to be enforced, but track_categories was explicitly set to false. "
+                    "Set track_categories to true or remove severity_thresholds."
+                )
+            # track_categories is the default (not explicitly set) → auto-enable and
+            # record the mutation in __pydantic_fields_set__ so it survives a
+            # ``model_dump(exclude_unset=True)`` round-trip in pipeline stage merges.
+            # Without adding it to model_fields_set, the auto-enabled value is
+            # excluded from the dump, re-validation re-runs this branch, and the
+            # warning fires N+1 times for an N-stage pipeline (F-M-15).
+            logger.warning(
+                "evaluation.safety.severity_thresholds requires track_categories=True "
+                "to be enforced; auto-enabling track_categories."
+            )
+            object.__setattr__(self, "track_categories", True)
+            object.__setattr__(
+                self,
+                "__pydantic_fields_set__",
+                self.model_fields_set | {"track_categories"},
+            )
+
+        # (3) restrict severity_thresholds to the known vocabulary and 0.0–1.0
+        # values so a typo'd/wrongly-cased key cannot validate and then never
+        # match a distribution bucket (permanently inert), and an out-of-range
+        # value cannot make the per-severity gate unfireable (>1.0) or fire
+        # unconditionally (<0.0).
+        if self.severity_thresholds:
+            for key, value in self.severity_thresholds.items():
+                if key not in SEVERITY_LEVELS:
+                    raise ValueError(
+                        f"evaluation.safety.severity_thresholds key {key!r} is not a "
+                        f"recognized severity level; allowed: {list(SEVERITY_LEVELS)}."
+                    )
+                if not 0.0 <= value <= 1.0:
+                    raise ValueError(
+                        f"evaluation.safety.severity_thresholds[{key!r}] must be in [0.0, 1.0], got {value}."
+                    )
+        return self
+
 
 class JudgeConfig(BaseModel):
     """LLM-as-Judge evaluation configuration."""
@@ -488,7 +754,10 @@ class JudgeConfig(BaseModel):
     )
     eval_dataset: str = Field(default="eval_prompts.jsonl", description="JSONL file of evaluation prompts to score.")
     min_score: float = Field(
-        default=5.0, description="Minimum average judge score (1–10 scale) to consider the model passing."
+        default=5.0,
+        ge=1.0,
+        le=10.0,
+        description="Minimum average judge score (1–10 scale) to consider the model passing.",
     )
     batch_size: int = Field(
         default=8,
@@ -504,6 +773,33 @@ class JudgeConfig(BaseModel):
             "Opt in for debugging."
         ),
     )
+
+    @model_validator(mode="after")
+    def _warn_extreme_min_score(self):
+        """Warn when min_score is so close to the scale edges that the gate is trivial.
+
+        ``min_score <= 2.0`` means 'any response scoring above 1/10 passes' —
+        effectively a no-op gate where auto_revert never fires.  ``min_score >= 9.0``
+        means 'only near-perfect responses pass' — an always-failing gate in practice.
+        Neither extreme raises a ValidationError (both are within the ``ge=1.0,
+        le=10.0`` bounds) but operators who write these values are likely configuring
+        an unintentional no-op or impossible gate (F-L-10).
+        """
+        if self.min_score <= 2.0:
+            logger.warning(
+                "evaluation.llm_judge.min_score=%.1f is near the scale minimum "
+                "(1–10); the judge gate passes for almost any response. "
+                "Consider raising min_score.",
+                self.min_score,
+            )
+        elif self.min_score >= 9.0:
+            logger.warning(
+                "evaluation.llm_judge.min_score=%.1f is near the scale maximum "
+                "(1–10); the judge gate will rarely pass. "
+                "Consider lowering min_score.",
+                self.min_score,
+            )
+        return self
 
 
 class EvaluationConfig(BaseModel):
@@ -530,7 +826,7 @@ class EvaluationConfig(BaseModel):
         default=False,
         description="Article 14: pause the pipeline for human review (stages model under `final_model.staging.<run_id>/` and exits 4).",
     )
-    # ``final_model.staging/`` retention horizon for `forgelm reject` paths.
+    # ``final_model.staging.<run_id>/`` retention horizon for `forgelm reject` paths.
     # Documented now (v0.5.5) so operators can plan their evidence-preservation
     # policy; auto-deletion enforcement is deferred to Phase 21 (GDPR
     # right-to-erasure) where it lands alongside the broader retention
@@ -540,7 +836,7 @@ class EvaluationConfig(BaseModel):
         default=7,
         ge=0,
         description=(
-            "Article 14: number of days to retain `final_model.staging/` after a "
+            "Article 14: number of days to retain `final_model.staging.<run_id>/` after a "
             "`forgelm reject` decision before scheduled cleanup. Zero means retain "
             "indefinitely. Auto-deletion enforcement is deferred to Phase 21 "
             "(GDPR right-to-erasure)."
@@ -564,6 +860,14 @@ RiskTier = Literal["unknown", "minimal-risk", "limited-risk", "high-risk", "unac
 # ``ForgeConfig._warn_high_risk_compliance`` and the wizard prompt so the new
 # tier is reachable + enforced everywhere the old high-risk-only set was.
 _STRICT_RISK_TIERS: frozenset[str] = frozenset({"high-risk", "unacceptable"})
+
+# Canonical safety severity vocabulary shared between config.py (validator)
+# and safety.py (runtime).  Defined here so the Config layer does not import
+# from the Quality layer (safety.py) — the architecture standard
+# (docs/standards/architecture.md) has no CONFIG → SAFETY directed edge.
+# safety.py keeps its own copy to avoid a circular import until a shared
+# ``forgelm._constants`` module is introduced (tracked separately).
+SEVERITY_LEVELS: tuple[str, ...] = ("critical", "high", "medium", "low")
 
 
 class RiskAssessmentConfig(BaseModel):
@@ -609,7 +913,7 @@ class MonitoringConfig(BaseModel):
     alert_on_drift: bool = Field(
         default=True, description="Emit a webhook alert when drift detector flags a regression."
     )
-    check_interval_hours: int = Field(default=24, description="Monitoring check cadence in hours.")
+    check_interval_hours: int = Field(default=24, ge=1, description="Monitoring check cadence in hours.")
 
 
 class ComplianceMetadataConfig(BaseModel):
@@ -655,20 +959,75 @@ class SyntheticConfig(BaseModel):
     api_key_env: Optional[str] = Field(
         default=None, description="Env var name carrying the API key (e.g. `OPENAI_API_KEY`)."
     )
-    api_delay: float = Field(default=0.5, description="Seconds between API calls (rate limiting).")
-    api_timeout: int = Field(default=60, description="Per-call API timeout in seconds.")
+    api_delay: float = Field(default=0.5, ge=0.0, description="Seconds between API calls (rate limiting).")
+    api_timeout: int = Field(
+        default=60,
+        ge=10,
+        description="Per-call API timeout in seconds (floored at 10s by the SSRF-guarded HTTP chokepoint).",
+    )
     seed_file: str = Field(
         default="", description="Path to seed prompts file (JSONL or plain text, one prompt per line)."
     )
     seed_prompts: List[str] = Field(default=[], description="Inline seed prompts (alternative to `seed_file`).")
     system_prompt: str = Field(default="", description="System prompt prepended on every teacher call.")
-    max_new_tokens: int = Field(default=1024, description="Max tokens per teacher response.")
-    temperature: float = Field(default=0.7, description="Sampling temperature passed to the teacher.")
+    max_new_tokens: int = Field(default=1024, ge=1, description="Max tokens per teacher response.")
+    temperature: float = Field(default=0.7, ge=0.0, description="Sampling temperature passed to the teacher.")
     output_file: str = Field(default="synthetic_data.jsonl", description="Output JSONL file path.")
     output_format: Literal["messages", "instruction", "chatml", "prompt_response"] = Field(
         default="messages",
-        description="Output format: `messages` (chat-style array), `instruction` (Alpaca-style), `chatml`, or `prompt_response`.",
+        description=(
+            "Output format: `messages` (chat-style array), `instruction` (Alpaca-style), "
+            "`chatml`, or `prompt_response`. NOTE: `chatml` emits ForgeLM's legacy "
+            "`{User, Assistant}` key layout (which `data.py` trains on natively), NOT "
+            "OpenAI `<|im_start|>` ChatML markup — pick `messages` if you need a "
+            "portable chat format for external tools."
+        ),
     )
+    min_success_rate: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum fraction of seed prompts that must yield a usable example for "
+            "`forgelm --generate-data` to report success (exit 0). Default `0.0` keeps "
+            "the legacy behaviour (any non-zero yield succeeds); raise it so a CI "
+            "pipeline does not train on a near-empty dataset from a mostly-failed run."
+        ),
+    )
+    sanity_failure_rate: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Failure-rate (0.0–1.0) above which `forgelm --generate-data` logs a WARNING "
+            "that the dataset may be small or skewed — independent of `min_success_rate`, "
+            "which gates the exit code. Default `0.2` warns when more than 20% of prompts fail."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_synthetic_payload(self):
+        """Reject an enabled synthetic block with an unusable payload at config time.
+
+        An enabled generation needs a teacher to call and seeds to expand; the
+        ``file`` backend reads pre-generated JSONL so it only needs a seed
+        source.  Without this check the run no-ops or fails at the first
+        teacher call (EXIT_TRAINING_ERROR) instead of being rejected at config
+        load / ``--dry-run`` with EXIT_CONFIG_ERROR.
+        """
+        if not self.enabled:
+            return self
+        if self.teacher_backend != "file" and not self.teacher_model:
+            raise ValueError(
+                "synthetic.enabled is true but teacher_model is empty; "
+                "set synthetic.teacher_model (or use teacher_backend: file with a seed source)."
+            )
+        if not self.seed_file and not self.seed_prompts:
+            raise ValueError(
+                "synthetic.enabled is true but no seeds are provided; "
+                "set synthetic.seed_file or synthetic.seed_prompts."
+            )
+        return self
 
     @model_validator(mode="after")
     def _warn_direct_api_key(self):
@@ -706,6 +1065,7 @@ class WebhookConfig(BaseModel):
     )
     timeout: int = Field(
         default=10,
+        ge=1,
         description=(
             "HTTP request timeout in seconds.  Clamped to ≥ 1s by the notifier.  "
             "Default raised to 10s in v0.5.5 (was 5s) — Slack/Teams gateway latency "
@@ -716,6 +1076,15 @@ class WebhookConfig(BaseModel):
     allow_private_destinations: bool = Field(
         default=False,
         description="SSRF opt-in.  Webhooks default to public-internet destinations only; in-cluster Slack proxies / on-prem Teams gateways need this set.",
+    )
+    require_https: bool = Field(
+        default=False,
+        description=(
+            "TLS-only enforcement.  When True, a plaintext `http://` webhook URL is "
+            "refused (the SSRF chokepoint raises) instead of warned-and-sent.  Default "
+            "False preserves the documented warn-then-send behaviour; set True on a "
+            "regulated estate to make cleartext delivery a hard failure."
+        ),
     )
     tls_ca_bundle: Optional[str] = Field(
         default=None,
@@ -781,7 +1150,7 @@ class RetentionConfig(BaseModel):
         description=(
             "Days to retain `final_model.staging.<run_id>/` after a `forgelm reject` decision before scheduled cleanup. "
             "Set to 0 to retain indefinitely.  Replaces (and supersedes) the deprecated "
-            "`evaluation.staging_ttl_days`; both fields are accepted with identical values during the v0.5.5 → v0.6.x deprecation window."
+            "`evaluation.staging_ttl_days`; both fields are accepted with identical values during the deprecation window (legacy field removed in v0.8.0)."
         ),
     )
     ephemeral_artefact_retention_days: int = Field(
@@ -809,6 +1178,15 @@ class RetentionConfig(BaseModel):
             "EXIT_EVAL_FAILURE (3) so a regulated CI gate does not silently extend the retention horizon."
         ),
     )
+
+
+# Module-level deduplication set for _warn_tier_disagreement.  Without this,
+# ``merge_pipeline_stage_config`` re-instantiates ForgeConfig once per pipeline
+# stage, re-runs _validate_consistency, and re-emits the warning N+1 times for
+# an N-stage pipeline run (F-L-11).  The set stores frozenset tier-pair tuples;
+# a process restart clears it (appropriate — cross-run deduplication would
+# suppress legitimate new mismatches).
+_tier_disagreement_warned: set[frozenset[str]] = set()
 
 
 class ForgeConfig(BaseModel):
@@ -1027,6 +1405,48 @@ class ForgeConfig(BaseModel):
             self._warn_unacceptable_practice()
         self._enforce_safety_gate_for_strict_tier(label)
 
+    def _warn_tier_disagreement(self) -> None:
+        """Warn when the two risk-tier siblings are explicitly set and disagree.
+
+        ``risk_assessment.risk_category`` and
+        ``compliance.risk_classification`` are independent fields that both
+        default to ``minimal-risk`` on their sub-models.  The strict gate ORs
+        across them (see ``_is_strict_tier``), so a disagreement never silently
+        bypasses a safety gate — but compliance.py emits BOTH values into the
+        governance / Annex IV bundle, so an explicit disagreement ships a
+        technical-documentation set whose declared tiers contradict each other
+        with no record that ForgeLM noticed.  Nudge the operator to reconcile
+        before the bundle becomes regulatory evidence.  Checks each
+        sub-model's ``model_fields_set`` (the keys default to the same value,
+        so root-level presence is not enough to prove an explicit choice).
+
+        Deduplication: ``merge_pipeline_stage_config`` re-instantiates
+        ``ForgeConfig`` once per pipeline stage, which re-runs
+        ``_validate_consistency`` and would re-emit this warning N+1 times for
+        an N-stage pipeline.  The module-level ``_tier_disagreement_warned`` set
+        suppresses repeat emissions within the same process (F-L-11).
+        """
+        if not (self.risk_assessment and self.compliance):
+            return
+        ra_set = "risk_category" in self.risk_assessment.model_fields_set
+        cm_set = "risk_classification" in self.compliance.model_fields_set
+        if not (ra_set and cm_set):
+            return
+        ra, cm = self._risk_tiers()
+        if ra != cm:
+            pair_key: frozenset[str] = frozenset({ra, cm})
+            if pair_key in _tier_disagreement_warned:
+                return
+            _tier_disagreement_warned.add(pair_key)
+            logger.warning(
+                "Risk tiers disagree: risk_assessment.risk_category=%r vs "
+                "compliance.risk_classification=%r. Both values are emitted into "
+                "the EU AI Act governance / Annex IV bundle; reconcile them before "
+                "the compliance documentation becomes regulatory evidence.",
+                ra,
+                cm,
+            )
+
     def _validate_galore(self) -> None:
         if not self.training.galore_enabled:
             return
@@ -1066,6 +1486,7 @@ class ForgeConfig(BaseModel):
     @model_validator(mode="after")
     def _validate_consistency(self):
         self._warn_general_consistency()
+        self._warn_tier_disagreement()
         self._warn_high_risk_compliance()
         # `trainer_type` validation now lives in TrainingConfig.trainer_type's
         # `Literal[...]` annotation — Pydantic raises ValidationError on
@@ -1086,7 +1507,7 @@ class ForgeConfig(BaseModel):
         - When **only** ``evaluation.staging_ttl_days`` is set →
           alias-forward to ``retention.staging_ttl_days`` (creating
           ``retention`` block if missing) and emit a single
-          ``DeprecationWarning`` naming the new field + the v0.7.0
+          ``DeprecationWarning`` naming the new field + the v0.8.0
           removal target.
         - When **only** ``retention.staging_ttl_days`` is set → no
           warning; canonical path.
@@ -1150,7 +1571,7 @@ class ForgeConfig(BaseModel):
             f"`evaluation.staging_ttl_days={legacy}` (deprecated, forwards to "
             f"`retention.staging_ttl_days`) vs `retention.staging_ttl_days={canonical}` "
             "(canonical).  Remove the deprecated entry; the canonical block wins.  "
-            "(Tracking issue: removal scheduled for v0.7.0 per "
+            "(Tracking issue: removal scheduled for v0.8.0 per "
             "docs/standards/release.md#deprecation-cadence.)"
         )
 
@@ -1172,14 +1593,20 @@ class ForgeConfig(BaseModel):
             self.retention = retention.model_copy(update={"staging_ttl_days": legacy})
         else:
             self.retention = RetentionConfig(staging_ttl_days=legacy)
-        warnings.warn(
+        # Pair the DeprecationWarning with a logger.warning: CPython's default
+        # filters suppress DeprecationWarning emitted outside __main__, so the
+        # warnings.warn call alone never reaches a CLI operator (F-P1-FAB-17).
+        # The logger line mirrors the lora.use_dora / sample_packing idiom and
+        # surfaces on the CLI path; the warnings.warn keeps `-W error` / CI
+        # deprecation sweeps working for library consumers.
+        message = (
             "`evaluation.staging_ttl_days` is deprecated and forwards to "
-            "`retention.staging_ttl_days` for the v0.5.5 → v0.6.x window. "
+            "`retention.staging_ttl_days`. "
             "Move the value under the new top-level `retention:` block; the "
-            "deprecated field is removed in v0.7.0.",
-            DeprecationWarning,
-            stacklevel=5,
+            "deprecated field is removed in v0.8.0."
         )
+        logger.warning(message)
+        warnings.warn(message, DeprecationWarning, stacklevel=5)
 
     def _emit_legacy_match_warning(self) -> None:
         """Warn when both fields are set to identical values; canonical wins.
@@ -1188,14 +1615,16 @@ class ForgeConfig(BaseModel):
         deprecation paths attribute the warning to the same operator
         call frame.
         """
-        warnings.warn(
+        # See `_apply_legacy_alias_forward`: pair the logger.warning so the
+        # deprecation reaches CLI operators, not just `-W error` consumers.
+        message = (
             "`evaluation.staging_ttl_days` is deprecated; the value matches "
             "`retention.staging_ttl_days` so the canonical block wins.  Remove "
             "`evaluation.staging_ttl_days` from your YAML — the deprecated field "
-            "is removed in v0.7.0.",
-            DeprecationWarning,
-            stacklevel=5,
+            "is removed in v0.8.0."
         )
+        logger.warning(message)
+        warnings.warn(message, DeprecationWarning, stacklevel=5)
 
 
 class ConfigError(Exception):
@@ -1422,24 +1851,33 @@ def merge_pipeline_stage_config(
     sees an ordinary single-stage config and behaves byte-identically to
     a v0.6.0 single-stage run.
     """
-    # ``model_dump(exclude_none=True)`` so we don't materialise inherited
-    # ``Optional[T] = None`` fields the root never set — the
-    # ``extra="forbid"`` re-validation below would tolerate them, but
-    # round-tripping no-op None values inflates the per-stage manifest
-    # and confuses operators reading the merged config.
-    base = root_cfg.model_dump(exclude_none=True)
+    # ``exclude_unset=True`` so only keys the operator actually wrote
+    # round-trip — re-validation re-fills defaults identically.  Without it,
+    # ``model_dump`` materialises *unset* defaults (e.g. an ``evaluation``
+    # block dumps ``staging_ttl_days=7``); on re-validation every dumped key
+    # counts as ``model_fields_set``, so a root with a canonical
+    # ``retention.staging_ttl_days != 7`` plus any ``evaluation`` block would
+    # falsely raise ``ConfigError`` ("conflicting staging_ttl_days") for a
+    # field the operator never wrote (F-P1-FAB-03).  ``exclude_none=True``
+    # additionally drops inherited ``Optional[T] = None`` fields so the
+    # per-stage manifest is not inflated with no-op None values.
+    base = root_cfg.model_dump(exclude_none=True, exclude_unset=True)
     base.pop("pipeline", None)
 
+    # Stage overrides use the same ``exclude_unset=True`` rationale as the root
+    # dump above: a stage ``evaluation`` block that omits ``staging_ttl_days``
+    # must not materialise the default ``7`` and falsely conflict with a
+    # canonical ``retention.staging_ttl_days`` on re-validation (F-P1-FAB-03).
     if stage.model is not None:
-        base["model"] = stage.model.model_dump(exclude_none=True)
+        base["model"] = stage.model.model_dump(exclude_none=True, exclude_unset=True)
     if stage.lora is not None:
-        base["lora"] = stage.lora.model_dump(exclude_none=True)
+        base["lora"] = stage.lora.model_dump(exclude_none=True, exclude_unset=True)
     if stage.training is not None:
-        base["training"] = stage.training.model_dump(exclude_none=True)
+        base["training"] = stage.training.model_dump(exclude_none=True, exclude_unset=True)
     if stage.data is not None:
-        base["data"] = stage.data.model_dump(exclude_none=True)
+        base["data"] = stage.data.model_dump(exclude_none=True, exclude_unset=True)
     if stage.evaluation is not None:
-        base["evaluation"] = stage.evaluation.model_dump(exclude_none=True)
+        base["evaluation"] = stage.evaluation.model_dump(exclude_none=True, exclude_unset=True)
 
     # Auto-chain resolution.  See docstring above for priority order.
     if input_model_override is not None:

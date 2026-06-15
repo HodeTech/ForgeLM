@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 
 from ._exit_codes import EXIT_SUCCESS, EXIT_WIZARD_CANCELLED
@@ -21,16 +22,37 @@ def _maybe_run_wizard(args) -> None:
           ``EXIT_SUCCESS`` so CI can differentiate "wizard finished" vs
           "wizard never produced output".
     """
+    as_json = getattr(args, "output_format", "text") == "json"
     if not args.wizard:
         # PR-D-B3 (PR-E review fix): warn the operator who passed
         # --wizard-start-from without --wizard so the typo doesn't
-        # silently no-op into the regular config-driven path.
+        # silently no-op into the regular config-driven path.  In JSON
+        # mode the warning must go to stderr so it never precedes the
+        # eventual ``{"success": false, ...}`` envelope on stdout
+        # (F-P7-OPUS-07).
         if getattr(args, "wizard_start_from", None):
             print(
                 "  ⚠ --wizard-start-from has no effect without --wizard.  "
-                "Add --wizard to launch the interactive wizard preloaded from your YAML."
+                "Add --wizard to launch the interactive wizard preloaded from your YAML.",
+                file=sys.stderr if as_json else sys.stdout,
             )
         return
+    if as_json:
+        # The wizard is interactive and emits human prompts + a multi-line
+        # refusal banner straight to stdout, with no JSON envelope.  Under
+        # ``--output-format json`` that breaks any ``| jq`` consumer
+        # (F-P7-OPUS-06).  Refuse the combination up front with a proper
+        # envelope on stdout and exit 5 (no config produced).
+        print(
+            json.dumps(
+                {
+                    "success": False,
+                    "error": "--wizard is interactive and cannot be combined with --output-format json. "
+                    "Use `forgelm quickstart <template>` for deterministic, machine-readable config generation.",
+                }
+            )
+        )
+        sys.exit(EXIT_WIZARD_CANCELLED)
     from ..wizard import run_wizard_full
 
     # ``--wizard-start-from`` (E3 / PR-D) preloads the wizard with an

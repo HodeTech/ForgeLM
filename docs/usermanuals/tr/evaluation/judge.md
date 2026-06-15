@@ -60,7 +60,7 @@ ForgeLM her prompt için eğitilmiş modelin completion'ını üretir ve judge'a
 }
 ```
 
-`mean_score < min_score` olduğunda trainer bunu evaluation gerilemesi olarak ele alır: `auto_revert: true` ise model revert edilir; aksi halde trainer audit log'a kaydedilen failure ile non-zero çıkar.
+`mean_score < min_score` olduğunda trainer bunu evaluation gerilemesi olarak ele alır: `auto_revert: true` ise model revert edilir ve koşu `3` (`EXIT_EVAL_FAILURE`) ile çıkar; sevk edilen varsayılan `auto_revert: false` ile failure audit log'a ve JSON `judge` bloğuna kaydedilir ama model yine terfi eder ve koşu `0` ile çıkar. Başarısız bir judge kapısının exit kodunu değiştirmesini istiyorsanız `auto_revert: true` ayarlayın.
 
 ## Judge model seçimi
 

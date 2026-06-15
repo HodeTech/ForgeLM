@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 # are deferred to method bodies so `import forgelm.trainer` is cheap. Eagerly importing
 # torch here costs ~3-5s of CLI startup per invocation. See closure-plan F-performance-101.
 from .config import ConfigError
+from .grpo_rewards import ANSWER_EXTRACT_PATTERN
 from .results import TrainResult
 from .webhook import WebhookNotifier
 
@@ -19,6 +20,11 @@ logger = logging.getLogger("forgelm.trainer")
 # Audit event names — kept as constants so the audit-log schema stays grep-able
 # and downstream consumers don't break on a typo.
 _EVT_REVERT_TRIGGERED = "model.reverted"
+# Loss/eval-loss auto-revert decision gate — emitted on PASS and FAIL so the
+# primary post-training quality gate leaves a discrete decision record with the
+# thresholds it was checked against, mirroring the benchmark/safety/judge
+# ``*.evaluation_completed`` events.
+_EVT_LOSS_GATE_COMPLETED = "evaluation.loss_gate_completed"
 
 
 # ---------------------------------------------------------------------------
@@ -28,30 +34,13 @@ _EVT_REVERT_TRIGGERED = "model.reverted"
 # Kept at module level (not a class method or closure) so TRL's GRPOTrainer
 # can pickle it across worker processes without dragging the surrounding
 # trainer state into the spawn.
-# ---------------------------------------------------------------------------
-
-# Stop the captured value at the next sentence boundary so
-# "Answer: 18. Çünkü …" does NOT swallow the trailing prose into the
-# comparison string. The boundary is "[.!?] followed by whitespace OR EOL"
-# — bare "." between digits ("Answer: 1.5") is preserved because a
-# decimal "." is not followed by whitespace or end-of-string.
 #
-# Implementation notes:
-#   - First chunk: ``[^\s.!?\n][^.!?\n]*`` — must start with a non-space,
-#     then any non-newline that isn't sentence punctuation. This covers
-#     "18", "70 km/h", "$40", "12:15", "2/5".
-#   - Optional repeats: ``[.!?](?!\s|$)[^.!?\n]*`` — sentence punctuation
-#     is allowed inside the capture *only* when not followed by
-#     whitespace/EOL, which keeps "1.5" / "3.14159" intact while still
-#     stopping at "18. Çünkü ...".
-#   - Greedy throughout — no reluctant quantifier needed because the
-#     character classes self-bound at the next sentence break.
-_ANSWER_PATTERN = re.compile(
-    # First class drops `\n` because `\s` already covers it.
-    r"answer\s*:\s*([^\s.!?][^.!?\n]*(?:[.!?](?!\s|$)[^.!?\n]*)*)",
-    re.IGNORECASE,
-)
-
+# The answer-extraction regex lives in :mod:`forgelm.grpo_rewards` as the
+# single source of truth (``ANSWER_EXTRACT_PATTERN``, imported at the top of
+# this module) so it cannot drift from the format reward's end-anchored gate.
+# ``_math_reward_fn`` grades the LAST marker (see its body) to stay consistent
+# with that gate.
+# ---------------------------------------------------------------------------
 
 # Units / suffixes the prompts in the grpo-math template attach to numeric
 # answers — stripped before comparison so "Answer: $15" matches gold "15".
@@ -94,7 +83,15 @@ _BOUNDARY_REQUIRED_TOKENS: frozenset[str] = frozenset({"m"})
 
 
 def _is_unit_suffix_safe_to_strip(out: str, unit: str) -> bool:
-    """True when ``out`` ends with ``unit`` AND the char before is a digit/space."""
+    """Whether stripping ``unit`` from the end of ``out`` is boundary-safe.
+
+    The caller must already have checked ``out.endswith(unit)`` (the call site
+    at :func:`_normalize_answer` gates on it); this helper does *not* re-verify
+    the suffix. With that precondition plus the ``len(out) == len(unit)``
+    early-return, the ``out[-len(unit) - 1]`` index is always in range. Returns
+    ``True`` for non-boundary tokens and for boundary tokens (only ``"m"``
+    today) whose preceding char is a digit/space so "them"/"method" survive.
+    """
     if unit not in _BOUNDARY_REQUIRED_TOKENS:
         return True
     if len(out) == len(unit):
@@ -104,7 +101,15 @@ def _is_unit_suffix_safe_to_strip(out: str, unit: str) -> bool:
 
 
 def _is_unit_prefix_safe_to_strip(out: str, unit: str) -> bool:
-    """True when ``out`` starts with ``unit`` AND the next char is a digit/space."""
+    """Whether stripping ``unit`` from the start of ``out`` is boundary-safe.
+
+    The caller must already have checked ``out.startswith(unit)`` (the call
+    site at :func:`_normalize_answer` gates on it); this helper does *not*
+    re-verify the prefix. With that precondition plus the
+    ``len(out) == len(unit)`` early-return, the ``out[len(unit)]`` index is
+    always in range. Returns ``True`` for non-boundary tokens and for boundary
+    tokens (only ``"m"`` today) whose following char is a digit/space.
+    """
     if unit not in _BOUNDARY_REQUIRED_TOKENS:
         return True
     if len(out) == len(unit):
@@ -143,6 +148,29 @@ def _normalize_answer(s: Any) -> str:
     return out.strip()
 
 
+# Comma-grouped thousands separators ("5,050", "1,234.5") — GSM8K's canonical
+# large-number rendering. Shape-anchored so only genuine grouped numerals are
+# rewritten: every comma must separate exactly three digits.
+# This deliberately does NOT match European decimals like "12,5" (one comma,
+# two trailing digits) — those stay untouched so they aren't silently coerced.
+# Bounded, no competing quantifiers (runs on short answer tokens, not corpora).
+_GROUPED_NUMBER_RE = re.compile(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?")
+
+
+def _parse_number(s: str) -> float:
+    """``float(s)`` but tolerant of comma-grouped thousands separators.
+
+    "5,050" → 5050.0 and "1,234.5" → 1234.5, matching GSM8K-style outputs
+    against comma-free golds. Only fully grouped numerals
+    (commas separating exactly three digits) are de-grouped; anything else is
+    handed to ``float`` unchanged, which raises ``ValueError`` for non-numeric
+    tokens exactly as before — including European decimals like "12,5".
+    """
+    if _GROUPED_NUMBER_RE.fullmatch(s):
+        s = s.replace(",", "")
+    return float(s)
+
+
 def _answers_match(extracted: str, gold: str) -> bool:
     """True when ``extracted`` is the same answer as ``gold``.
 
@@ -150,43 +178,82 @@ def _answers_match(extracted: str, gold: str) -> bool:
     tolerance — keeps non-numeric answers ("12:15", "2/5") correct without
     forcing the prompts into a single shape.
     """
+    # An empty side never counts as a match: a degenerate
+    # unit-only completion ("Answer: $") normalizes to "" and would otherwise
+    # equal a unit-only gold ("%") that also normalizes to "" — falsely scoring
+    # 1.0. Per-row gold holes can also reach here despite the dataset-level
+    # _dataset_has_gold_answers probe, so guard both operands.
+    if not extracted or not gold:
+        return False
     if extracted == gold:
         return True
     try:
-        return abs(float(extracted) - float(gold)) < 1e-6
+        return abs(_parse_number(extracted) - _parse_number(gold)) < 1e-6
     except ValueError:
         return False
+
+
+# Warn-once flag for _math_reward_fn: module-level bool instead of a function
+# attribute so it stays within the permitted module-level state (loggers,
+# constants, immutable registries) per architecture §4.
+_math_reward_fn_warned_no_golds: bool = False
 
 
 def _math_reward_fn(completions, **kwargs):
     """Built-in regex-based reward for grpo-math style prompts.
 
-    Each completion is expected to end with ``Answer: <value>``; the captured
-    value is normalized (units stripped) and compared to the dataset's
-    ``gold_answer`` field. TRL passes per-sample dataset columns as kwargs.
+    Each completion is expected to end with ``Answer: <value>``; the **last**
+    ``Answer:`` marker's value is normalized (units stripped) and compared to
+    the dataset's ``gold_answer`` field. TRL passes per-sample dataset columns
+    as kwargs.
+
+    Grading the *final* marker — rather than the first — keeps this correctness
+    reward consistent with :func:`forgelm.grpo_rewards.format_match_reward`,
+    which is ``\\Z``-anchored to the completion's end. A self-correcting
+    completion ("Answer: 5 … Answer: 7") is therefore graded on the answer it
+    actually concludes with (7), not an earlier discarded candidate (5). See
+    ``ANSWER_EXTRACT_PATTERN`` in :mod:`forgelm.grpo_rewards` for the shared,
+    documented pattern both signals derive from.
 
     Returns 1.0 for an exact match, 0.0 otherwise. Generations that don't
     contain an ``Answer:`` marker score 0.0 — the regex implicitly enforces
     the spec'd output format.
     """
+    global _math_reward_fn_warned_no_golds
+
     golds = kwargs.get("gold_answer")
     # No gold_answer column passed → reward function is wired but the dataset
     # carries no ground truth. Return zero rewards so training continues
     # (combined_format_length_reward still drives gradient via the format
     # signal). This branch should be unreachable in practice — the trainer
     # only wires _math_reward_fn after _dataset_has_gold_answers returns True.
+    # If a wiring regression DOES make it reachable, the correctness reward
+    # silently contributes a constant zero every batch — warn once (not per
+    # batch) so an inert-but-wired reward is visible in the run log.
     if golds is None:
+        if not _math_reward_fn_warned_no_golds:
+            logger.warning(
+                "_math_reward_fn is wired but no gold_answer column was received from "
+                "TRL — the correctness reward is contributing 0.0 every batch; check "
+                "the dataset columns / preprocessing."
+            )
+            _math_reward_fn_warned_no_golds = True
         return [0.0] * len(completions)
     # Use strict=True so a wiring regression (mismatched batch sizes) raises
     # immediately instead of silently truncating to the shorter list and
     # masking the bug as low reward.
     rewards: list[float] = []
     for completion, gold in zip(completions, golds, strict=True):
-        match = _ANSWER_PATTERN.search(completion or "")
-        if not match:
+        # Grade the LAST "Answer:" marker, not the first: ``.search`` would
+        # return the leftmost occurrence, so a chain-of-thought completion
+        # that proposes-then-revises ("Answer: 5 … Answer: 7") would be graded
+        # on its discarded candidate while the end-anchored format reward
+        # scored its final one — a reward-hacking divergence.
+        matches = list(ANSWER_EXTRACT_PATTERN.finditer(completion or ""))
+        if not matches:
             rewards.append(0.0)
             continue
-        extracted = _normalize_answer(match.group(1))
+        extracted = _normalize_answer(matches[-1].group(1))
         gold_norm = _normalize_answer(gold)
         rewards.append(1.0 if _answers_match(extracted, gold_norm) else 0.0)
     return rewards
@@ -216,10 +283,41 @@ def _dataset_has_gold_answers(dataset: Dict[str, Any]) -> bool:
                 return False
             val = first["gold_answer"]
             return val is not None and val != ""
-    except (IndexError, KeyError, TypeError):
+    except (IndexError, TypeError):
+        # IndexError: row access unsupported (streaming/iterable wrappers).
+        # TypeError: non-subscriptable train object. KeyError is unreachable
+        # here — dict access is guarded by the membership check above and
+        # non-dict rows fall through to the column_names probe.
         pass
     cols = getattr(train, "column_names", None)
-    return bool(cols and "gold_answer" in cols)
+    if not (cols and "gold_answer" in cols):
+        return False
+    # Column is present by name. Prefer a first-row value probe so a
+    # placeholder column (all None/"") isn't wired as real ground truth; if the
+    # wrapper isn't iterable, fall back to presence-only and say so.
+    try:
+        iterator = iter(train)
+        # A self-iterating / one-shot iterable returns itself from ``iter()``;
+        # consuming it here would silently drop the first training row. Trust
+        # presence-by-name for those and skip the value probe.
+        if iterator is train:
+            logger.debug(
+                "gold_answer column detected by name only (one-shot iterator); "
+                "skipping value probe to avoid consuming a training sample."
+            )
+            return True
+        probe = next(iterator)
+        if isinstance(probe, dict) and "gold_answer" in probe:
+            val = probe["gold_answer"]
+            return val is not None and val != ""
+    except (TypeError, StopIteration):
+        pass
+    logger.debug(
+        "gold_answer column detected by name only (value probe unavailable); "
+        "trusting presence — a placeholder-only column would still wire the "
+        "correctness reward."
+    )
+    return True
 
 
 class ForgeTrainer:
@@ -244,6 +342,14 @@ class ForgeTrainer:
             "pipeline.initialized", model=config.model.name_or_path, trainer_type=config.training.trainer_type
         )
 
+        # Canonical digest of the config that produced this run.  Bound into the
+        # human_approval.required event, the training manifest, and the JSON
+        # output envelope so the approval row / manifest / envelope all share one
+        # reproducibility anchor.
+        from .compliance import compute_config_hash
+
+        self._config_hash = compute_config_hash(config)
+
         # Validate evaluation config early
         self._validate_evaluation_config()
         # Fail fast (before the training loop) on a judge configured to use an
@@ -257,7 +363,7 @@ class ForgeTrainer:
         unset, ``judge.py`` would treat ``api_key=None`` as "local" and silently
         run a different evaluator than configured — and with ``auto_revert=true`` a
         failed local load deletes the trained adapters over a misdiagnosed env-var
-        problem (F-P3-FABLE-18). Checking here (called from ``__init__`` and again
+        problem. Checking here (called from ``__init__`` and again
         from ``_run_judge_if_configured``) fails the run BEFORE the expensive
         training loop instead of after it.
         """
@@ -276,6 +382,20 @@ class ForgeTrainer:
     def _validate_evaluation_config(self) -> None:
         """Warn about evaluation configuration issues before training starts."""
         eval_cfg = self.config.evaluation
+
+        # Fail fast on a benchmark gate whose heavy extra (lm-eval) is missing.
+        # ``from .benchmark import run_benchmark`` succeeds without lm-eval (the
+        # module top-level is stdlib-only); the real ImportError lives inside
+        # ``run_benchmark`` and would otherwise surface AFTER a full training
+        # run as exit 2, prompting CI retries of a deterministic, known-at-t=0
+        # misconfiguration. Probe here so the install hint fires pre-training
+        # Runs regardless of auto_revert — the gate is
+        # configured either way.
+        if eval_cfg and eval_cfg.benchmark and eval_cfg.benchmark.enabled and eval_cfg.benchmark.tasks:
+            from .benchmark import _check_lm_eval_available
+
+            _check_lm_eval_available()
+
         if not eval_cfg or not eval_cfg.auto_revert:
             return
 
@@ -423,6 +543,13 @@ class ForgeTrainer:
           - A preset name: "zero2", "zero3", "zero3_offload"
           - An absolute or relative file path to a JSON file
           - None: returns the default zero2 preset
+
+        A missing preset or custom-path file is an operator-fixable YAML
+        mistake, so it raises ``ConfigError`` (mapped to ``EXIT_CONFIG_ERROR``
+        / exit 1 at the CLI seam) rather than ``FileNotFoundError`` — the
+        latter reached the generic top-of-CLI catch and exited 2
+        ("training crashed"), telling CI to retry on infra instead of
+        prompting the operator to fix ``distributed.deepspeed_config``
         """
         presets = {
             "zero2": "configs/deepspeed/zero2.json",
@@ -446,9 +573,11 @@ class ForgeTrainer:
             # Fall back to CWD
             if os.path.isfile(preset_path):
                 return preset_path
-            raise FileNotFoundError(
+            raise ConfigError(
                 f"DeepSpeed preset '{config_ref}' not found at {full_path}. "
-                f"Ensure ForgeLM configs directory is accessible."
+                f"Ensure ForgeLM configs directory is accessible, or point "
+                f"distributed.deepspeed_config at a valid preset "
+                f"(zero2 / zero3 / zero3_offload) or JSON file."
             )
 
         # It's a file path
@@ -456,7 +585,11 @@ class ForgeTrainer:
             logger.info("Using custom DeepSpeed config: %s", config_ref)
             return config_ref
 
-        raise FileNotFoundError(f"DeepSpeed config not found: {config_ref}")
+        raise ConfigError(
+            f"DeepSpeed config not found: {config_ref}. Set "
+            f"distributed.deepspeed_config to an existing JSON file or one of "
+            f"the built-in presets (zero2 / zero3 / zero3_offload)."
+        )
 
     def _apply_max_length(self, kwargs: Dict[str, Any], param_name: str = "max_length") -> None:
         """Set ``model.max_length`` on a TRL config under *param_name*.
@@ -465,7 +598,7 @@ class ForgeTrainer:
         fall back to TRL's own 512/1024 ``max_length`` defaults while the config
         field, configuration.md, and the Article 11 compliance manifest all
         claim ``model.max_length`` applies — silent truncation plus a false
-        statement in an audit artefact (F-P3-FABLE-03). The preference configs'
+        statement in an audit artefact. The preference configs'
         ``max_length`` parameter is stable across the pinned TRL range; a future
         rename surfaces loudly as a ``TypeError`` at construction, never silent.
         """
@@ -554,7 +687,7 @@ class ForgeTrainer:
             kwargs["max_completion_length"] = self.config.training.grpo_max_completion_length
             # Honour model.max_length as the GRPO prompt cap so prompts aren't
             # silently truncated at TRL's 512 `max_prompt_length` default while
-            # the manifest claims model.max_length applies (F-P3-FABLE-03).
+            # the manifest claims model.max_length applies.
             self._apply_max_length(kwargs, "max_prompt_length")
             # GRPO trains on generation-based rewards, not validation loss, so
             # `_build_grpo_trainer` drops the eval_dataset. The eval-coupled
@@ -576,18 +709,45 @@ class ForgeTrainer:
             raise ValueError(f"Unknown trainer_type: {tt}")
 
     def execute_evaluation_checks(self, final_path: str, metrics: Dict[str, float]) -> bool:
-        """Evaluates final loss against constraints. Returns True if acceptable, False if reverted."""
-        if not self.config.evaluation or not self.config.evaluation.auto_revert:
+        """Evaluates final loss against constraints. Returns True if acceptable, False if reverted.
+
+        Detection is decoupled from reversion: when an eval-loss
+        threshold / baseline is configured, the NaN-Inf and threshold checks ALWAYS
+        run so a breach is recorded, matching the benchmark/safety/judge gates which
+        always evaluate. Only the *revert* is gated on ``auto_revert``. Without
+        ``auto_revert`` a breach logs a WARNING (and a NaN/Inf divergence an ERROR)
+        naming the threshold but keeps the model — previously the whole check was
+        skipped, so a diverged model could ship with exit 0 and no signal at all.
+        """
+        if not self.config.evaluation:
             return True
+
+        auto_revert = self.config.evaluation.auto_revert
 
         # No validation data means we can't evaluate
         if not self.dataset.get("validation"):
-            logger.warning("Skipping evaluation checks — no validation data available.")
+            if auto_revert:
+                logger.warning("Skipping evaluation checks — no validation data available.")
             return True
 
         final_loss = metrics.get("eval_loss")
         baseline_loss = self.config.evaluation.baseline_loss
         max_loss = self.config.evaluation.max_acceptable_loss
+
+        # A config-supplied NaN/Inf baseline would silently disable the
+        # regression check (``final_loss > nan`` is always False) and poison the
+        # improvement-percentage log below. Treat it as no baseline.
+        if baseline_loss is not None and (math.isnan(baseline_loss) or math.isinf(baseline_loss)):
+            logger.warning(
+                "Configured baseline_loss is %s (NaN or Inf) — ignoring it; baseline regression check disabled.",
+                baseline_loss,
+            )
+            baseline_loss = None
+
+        # When auto_revert is off and no threshold/baseline is configured there is
+        # nothing to detect — keep the original cheap early return.
+        if not auto_revert and max_loss is None and baseline_loss is None:
+            return True
 
         # Handle missing or invalid eval_loss
         if final_loss is None:
@@ -597,6 +757,10 @@ class ForgeTrainer:
         if math.isnan(final_loss) or math.isinf(final_loss):
             reason = f"eval_loss is {final_loss} (NaN or Inf) — training diverged."
             logger.error("EVALUATION FAILED: %s", reason)
+            self._emit_loss_gate_event(False, final_loss, max_loss, baseline_loss)
+            if not auto_revert:
+                logger.warning("auto_revert=false — diverged model NOT reverted (detection-only). %s", reason)
+                return True
             self._revert_model(final_path, reason, source="nan_inf")
             return False
 
@@ -611,9 +775,19 @@ class ForgeTrainer:
 
         if failed_reasons:
             reason = " ".join(failed_reasons)
+            self._emit_loss_gate_event(False, final_loss, max_loss, baseline_loss)
+            if not auto_revert:
+                logger.warning("Evaluation threshold breached but auto_revert=false — model kept. %s", reason)
+                return True
             logger.error("EVALUATION FAILED: %s", reason)
             self._revert_model(final_path, reason, source="threshold")
             return False
+
+        # PASS — record the discrete accept decision with the thresholds it was
+        # checked against, symmetric with the benchmark/safety/judge gates
+        # Previously the passing loss surfaced only inside the
+        # opaque pipeline.completed metrics_summary blob.
+        self._emit_loss_gate_event(True, final_loss, max_loss, baseline_loss)
 
         # Log success with improvement details
         if baseline_loss is not None and baseline_loss > 0:
@@ -628,6 +802,30 @@ class ForgeTrainer:
             logger.info("Evaluation passed: eval_loss=%.4f", final_loss)
 
         return True
+
+    def _emit_loss_gate_event(
+        self,
+        passed: bool,
+        eval_loss: float,
+        max_loss: Optional[float],
+        baseline_loss: Optional[float],
+    ) -> None:
+        """Emit the loss/eval-loss decision-gate audit event.
+
+        Mirrors the benchmark/safety/judge ``*.evaluation_completed`` events so
+        an auditor can grep a discrete pass/fail record for the primary
+        post-training quality gate, carrying the thresholds it was checked
+        against. Non-finite ``eval_loss`` (NaN/Inf divergence) is recorded as a
+        string sentinel rather than a bare float so the JSONL stays valid JSON.
+        """
+        loss_field: Any = eval_loss if math.isfinite(eval_loss) else str(eval_loss)
+        self.audit.log_event(
+            _EVT_LOSS_GATE_COMPLETED,
+            passed=passed,
+            eval_loss=loss_field,
+            max_acceptable_loss=max_loss,
+            baseline_loss=baseline_loss,
+        )
 
     def _revert_model(self, final_path: str, reason: str, *, source: str = "evaluation") -> None:
         """Delete generated model artifacts, emit audit event, and notify webhook.
@@ -651,6 +849,11 @@ class ForgeTrainer:
                 "nan_inf", "threshold") for the audit-event ``reason`` field.
                 The webhook payload also includes this in the masked reason.
         """
+        # Stash the operator-actionable reason so the returned TrainResult can
+        # surface it on ``.error`` even for the eval-loss path, which returns a
+        # freshly-built result that never saw the gate's computed reason
+        self._last_revert_reason = reason
+
         # Article 12 audit trail — emit before destructive action so the
         # record exists even if the rmtree below explodes.
         self.audit.log_event(_EVT_REVERT_TRIGGERED, reason=source, detail=reason)
@@ -806,6 +1009,19 @@ class ForgeTrainer:
         gradient_accumulation_steps (preserving effective batch size), clears
         the CUDA cache, rebuilds the trainer, and retries — until
         oom_recovery_min_batch_size is reached.
+
+        Residual semantics: the retry re-enters ``train()`` with
+        the *original* ``resume_from_checkpoint`` argument and a freshly-built
+        trainer (new optimizer + LR scheduler from step 0), while ``self.model``
+        keeps whatever weights it held when the OOM fired. So an OOM with no
+        explicit resume checkpoint restarts optimization from scratch at the
+        smaller batch size (not "continue from where it crashed"), and one with
+        an explicit checkpoint rewinds to that checkpoint. This is documented,
+        not silent — the manifest records the batch-size change and the
+        ``training.oom_recovery`` audit event is emitted per retry; the trade-off
+        is described in docs/guides/troubleshooting.md. A future enhancement to
+        resume from the latest on-disk ``checkpoint-*`` is a roadmap item, not a
+        hotfix.
         """
         import gc
 
@@ -813,8 +1029,19 @@ class ForgeTrainer:
 
         cfg = self.config.training
         oom_recovery = getattr(cfg, "oom_recovery", False)
-        min_bs = getattr(cfg, "oom_recovery_min_batch_size", 1)
-        callbacks: list = self.trainer.callback_handler.callbacks if hasattr(self.trainer, "callback_handler") else []
+        # Clamp defensively so a config that slipped past the ``ge=1`` Field
+        # bound (e.g. a TrainingConfig built by hand in a test) can never drive
+        # ``new_bs`` to 0 and raise ZeroDivisionError inside the handler instead
+        # of the clean "cannot recover" diagnostic.
+        min_bs = max(getattr(cfg, "oom_recovery_min_batch_size", 1), 1)
+        # Rebuild only from the *user-supplied* callbacks captured in train()
+        # — NOT self.trainer.callback_handler.callbacks, which already contains
+        # HF's instantiated defaults (DefaultFlowCallback / ProgressCallback /
+        # the report_to integration callback). Passing those back into
+        # _build_trainer makes HF prepend its defaults a second time, doubling
+        # progress output + metric writers and leaking stale EarlyStopping
+        # patience across the retry.
+        callbacks: list = list(getattr(self, "_user_callbacks", []))
 
         while True:
             try:
@@ -893,12 +1120,40 @@ class ForgeTrainer:
                 "Baseline regression check will be skipped."
             )
             return
-        eval_cfg.baseline_loss = float(baseline_loss)
-        metrics["baseline_eval_loss"] = float(baseline_loss)
+        baseline_loss = float(baseline_loss)
+        if math.isnan(baseline_loss) or math.isinf(baseline_loss):
+            # A NaN/Inf baseline silently disables the regression gate:
+            # ``final_loss > float('nan')`` is always False, so the operator
+            # believes the gate is armed while every model passes. Treat it like
+            # a missing baseline (leave eval_cfg.baseline_loss=None) and warn.
+            logger.warning(
+                "Baseline eval_loss is %s (NaN or Inf) — the pre-training eval "
+                "diverged. Baseline regression check will be skipped (gate not armed).",
+                baseline_loss,
+            )
+            return
+        eval_cfg.baseline_loss = baseline_loss
+        metrics["baseline_eval_loss"] = baseline_loss
         logger.info("Baseline eval_loss computed: %.4f", baseline_loss)
 
+    def _log_gate_kept_no_revert(self, gate_name: str, reason: str, train_result: TrainResult) -> None:
+        """WARN that a failed gate is being kept because auto_revert is off.
+
+        Without this line the run log shows an ERROR ("BENCHMARK FAILED") then a
+        successful exit 0 with nothing connecting them — the operator must
+        reverse-engineer the auto_revert=false rationale from the config
+        One helper keeps the wording identical across the three
+        gates; the failure reason is also recorded on the result.
+        """
+        logger.warning(
+            "%s gate failed (%s) but auto_revert=false — keeping model; failure recorded on TrainResult.",
+            gate_name,
+            reason,
+        )
+        train_result.error = reason
+
     @staticmethod
-    def _mark_reverted(train_result: TrainResult) -> None:
+    def _mark_reverted(train_result: TrainResult, reason: Optional[str] = None) -> None:
         """Mark a result as auto-reverted and clear every stale artifact path.
 
         ``_revert_model`` has just deleted the on-disk model, so neither
@@ -906,12 +1161,18 @@ class ForgeTrainer:
         CLI/JSON envelope must not advertise a path that no longer exists. A
         reverted run is also never "awaiting approval" (exit 3, not 4), so clear
         the discriminator defensively even though the gate hasn't fired here.
+
+        ``reason`` populates ``TrainResult.error`` so the pipeline stage error
+        and JSON envelope carry the gate's precise failure reason instead of the
+        generic "Stage gate failed." fallback.
         """
         train_result.success = False
         train_result.reverted = True
         train_result.staging_path = None
         train_result.final_model_path = None
         train_result.awaiting_approval = False
+        if reason:
+            train_result.error = reason
 
     def _apply_benchmark_result(
         self,
@@ -945,9 +1206,10 @@ class ForgeTrainer:
         reason = benchmark_result.failure_reason or "Benchmark score below threshold."
         if not (self.config.evaluation and self.config.evaluation.auto_revert):
             # Failure recorded on train_result; pipeline continues to safety/judge stages.
+            self._log_gate_kept_no_revert("benchmark", reason, train_result)
             return True
         self._revert_model(final_path, reason, source="benchmark")
-        self._mark_reverted(train_result)
+        self._mark_reverted(train_result, reason)
         return False
 
     def _apply_resource_usage(self, train_result: TrainResult, metrics: Dict[str, float]) -> None:
@@ -982,13 +1244,28 @@ class ForgeTrainer:
             "safety.evaluation_completed",
             passed=safety_result.passed,
             safe_ratio=safety_result.safe_ratio,
+            # total_count makes a vacuous pass (zero probes evaluated)
+            # distinguishable from a real 100%-safe evaluation in the
+            # append-only audit trail.
+            total_count=safety_result.total_count,
             safety_score=safety_result.safety_score,
             categories=safety_result.category_distribution,
         )
-        if safety_result.passed or not (self.config.evaluation and self.config.evaluation.auto_revert):
+        if safety_result.passed:
             return True
-        self._revert_model(final_path, safety_result.failure_reason or "Safety check failed.", source="safety")
-        self._mark_reverted(train_result)
+        safety_reason = safety_result.failure_reason or "Safety check failed."
+        # An infrastructure failure (missing probes file, classifier load error)
+        # sets evaluation_completed=False. Do not auto-revert a successfully
+        # trained model because of an infra misconfiguration — the operator must
+        # fix the infrastructure, not lose a trained model.
+        if not getattr(safety_result, "evaluation_completed", True):
+            self._log_gate_kept_no_revert("safety", safety_reason, train_result)
+            return True
+        if not (self.config.evaluation and self.config.evaluation.auto_revert):
+            self._log_gate_kept_no_revert("safety", safety_reason, train_result)
+            return True
+        self._revert_model(final_path, safety_reason, source="safety")
+        self._mark_reverted(train_result, safety_reason)
         return False
 
     def _apply_judge_result(
@@ -1009,10 +1286,14 @@ class ForgeTrainer:
             passed=judge_result.passed,
             average_score=judge_result.average_score,
         )
-        if judge_result.passed or not (self.config.evaluation and self.config.evaluation.auto_revert):
+        if judge_result.passed:
             return True
-        self._revert_model(final_path, judge_result.failure_reason or "Judge score below threshold.", source="judge")
-        self._mark_reverted(train_result)
+        judge_reason = judge_result.failure_reason or "Judge score below threshold."
+        if not (self.config.evaluation and self.config.evaluation.auto_revert):
+            self._log_gate_kept_no_revert("judge", judge_reason, train_result)
+            return True
+        self._revert_model(final_path, judge_reason, source="judge")
+        self._mark_reverted(train_result, judge_reason)
         return False
 
     def _finalize_artifacts(
@@ -1040,11 +1321,12 @@ class ForgeTrainer:
         final model must NOT land in the canonical ``final_model/`` directory
         before a human signs off, otherwise downstream consumers that watch
         that path treat the run as already deployed. Instead, the adapters
-        live in a sibling ``final_model.staging/`` directory until
+        live in a sibling ``final_model.staging.<run_id>/`` directory until
         ``forgelm approve <run_id>`` atomically renames it.
 
-        ``staging_path`` is the on-disk staging directory (``final_path +
-        ".staging"``). When ``already_saved=False`` (default) the method
+        ``staging_path`` is the on-disk staging directory (the only caller
+        passes ``f"{final_path}.staging.{run_id}"``). When
+        ``already_saved=False`` (default) the method
         also saves the model to ``staging_path``; this preserves backwards
         compatibility for callers who reach the gate without having staged
         the model themselves. The pipeline orchestrator passes
@@ -1069,6 +1351,7 @@ class ForgeTrainer:
             metrics=train_result.metrics,
             staging_path=staging_path,
             run_id=self.audit.run_id,
+            config_hash=getattr(self, "_config_hash", None),
         )
         self.notifier.notify_awaiting_approval(run_name=self.run_name, model_path=staging_path)
 
@@ -1108,7 +1391,7 @@ class ForgeTrainer:
         )
 
         # Article 14 (honest path): when ``require_human_approval`` is on the
-        # adapters land in ``final_model.staging/`` rather than the canonical
+        # adapters land in ``final_model.staging.<run_id>/`` rather than the canonical
         # ``final_model/`` directory — and the canonical directory is created
         # only by ``forgelm approve <run_id>`` after a human signs off.
         # ``_handle_human_approval_gate`` performs both the staging save and
@@ -1135,7 +1418,15 @@ class ForgeTrainer:
             self.save_final_model(gate_path)
 
         if not self.execute_evaluation_checks(gate_path, metrics):
-            return TrainResult(success=False, metrics=metrics, reverted=True)
+            # Surface the eval-loss gate's computed reason (NaN/Inf or threshold
+            # breach) on .error so the pipeline stage / JSON envelope don't fall
+            # back to the generic "Stage gate failed." string.
+            return TrainResult(
+                success=False,
+                metrics=metrics,
+                reverted=True,
+                error=getattr(self, "_last_revert_reason", None),
+            )
 
         if not self._apply_benchmark_result(self._run_benchmark_if_configured(), train_result, metrics, gate_path):
             return train_result
@@ -1170,15 +1461,41 @@ class ForgeTrainer:
         if self.dataset.get("validation"):
             patience = getattr(self.config.training, "early_stopping_patience", 3)
             callbacks.append(EarlyStoppingCallback(early_stopping_patience=patience))
-
-        self._build_trainer(callbacks)
+        # Stash the user-supplied callbacks so OOM-recovery rebuilds reuse THIS
+        # list (free of HF's instantiated defaults) rather than scraping the
+        # live callback_handler, which duplicates defaults on rebuild
+        self._user_callbacks = callbacks
 
         try:
-            return self._run_training_pipeline(resume_from_checkpoint)
+            # _build_trainer crosses TRL/Transformers config validation
+            # (GRPOConfig TypeError, eval_strategy/eval_dataset mismatch,
+            # DeepSpeed FileNotFoundError, …) — a real failure class. Keep it
+            # INSIDE the try so a construction failure still emits pipeline.failed
+            # + notify_failure after notify_start already fired.
+            self._build_trainer(callbacks)
+            train_result = self._run_training_pipeline(resume_from_checkpoint)
+            # Reproducibility anchors for the JSON run-output envelope:
+            # ``getattr`` keeps train() robust for tests that build a trainer
+            # via ``__new__`` without running __init__ (no _config_hash set).
+            train_result.run_id = getattr(self.audit, "run_id", None)
+            train_result.config_hash = getattr(self, "_config_hash", None)
+            return train_result
         except Exception as e:  # noqa: BLE001 — best-effort: top-of-pipeline catch must record an audit event and notify before re-raising regardless of failure type (CUDA, dataloader, optimizer, etc.); the bare re-raise preserves the original traceback.  # NOSONAR
             logger.exception("Training pipeline failed.")
-            self.audit.log_event("pipeline.failed", error=str(e))
-            self.notifier.notify_failure(run_name=self.run_name, reason=str(e))
+            # The terminal-event emissions are themselves best-effort: an
+            # audit-write failure (e.g. disk full — plausible exactly when
+            # training just crashed on an I/O error) must NOT suppress the
+            # failure webhook or replace the original training exception. Each
+            # emission is isolated so the bare ``raise`` below always re-raises
+            # ``e`` with its original traceback.
+            try:
+                self.audit.log_event("pipeline.failed", error=str(e))
+            except Exception:  # noqa: BLE001 — terminal audit emit is advisory at this point; never mask the training failure. # NOSONAR
+                logger.exception("Failed to write pipeline.failed audit event during failure handling.")
+            try:
+                self.notifier.notify_failure(run_name=self.run_name, reason=str(e))
+            except Exception:  # noqa: BLE001 — failure webhook is a notification, not a gate; never mask the training failure. # NOSONAR
+                logger.exception("Failed to emit failure notification during failure handling.")
             raise
 
     def save_final_model(self, final_path: str) -> None:
@@ -1230,13 +1547,18 @@ class ForgeTrainer:
             logger.warning("Benchmark enabled but no tasks specified. Skipping.")
             return None
 
+        # Note: this import is stdlib-only at module top, so it does NOT raise
+        # for a missing lm-eval — that ImportError is raised (with the install
+        # hint) by the _check_lm_eval_available preflight in
+        # _validate_evaluation_config before training starts.
+        # We re-raise rather than swallow-to-None here so a configured gate can
+        # never silently degrade to a skip-with-exit-0.
         try:
             from .benchmark import run_benchmark
-        except ImportError:
-            logger.exception(
+        except ImportError as e:
+            raise ImportError(
                 "Benchmark evaluation requested but lm-eval is not installed. Install with: pip install forgelm[eval]"
-            )
-            return None
+            ) from e
 
         logger.info("Running post-training benchmark evaluation...")
         output_dir = bench_cfg.output_dir or os.path.join(self.checkpoint_dir, "benchmark")
@@ -1381,11 +1703,16 @@ class ForgeTrainer:
         if not eval_cfg or not eval_cfg.safety or not eval_cfg.safety.enabled:
             return None
 
+        # safety.py is stdlib-only at module top; this never fires for a missing
+        # heavy dep. Re-raise rather than swallow-to-None so a configured safety
+        # gate can never silently degrade to a skip with exit 0.
         try:
             from .safety import run_safety_evaluation
-        except ImportError:
-            logger.exception("Safety evaluation import failed")
-            return None
+        except ImportError as e:
+            raise ImportError(
+                "Safety evaluation requested but its dependencies are not installed. "
+                "Install with: pip install forgelm[eval]"
+            ) from e
 
         safety_cfg = eval_cfg.safety
         logger.info("Running post-training safety evaluation (scoring=%s)...", getattr(safety_cfg, "scoring", "binary"))
@@ -1418,11 +1745,16 @@ class ForgeTrainer:
         if not eval_cfg or not eval_cfg.llm_judge or not eval_cfg.llm_judge.enabled:
             return None
 
+        # judge.py is stdlib-only at module top; this never fires for a missing
+        # heavy dep. Re-raise rather than swallow-to-None so a configured judge
+        # gate can never silently degrade to a skip with exit 0.
         try:
             from .judge import run_judge_evaluation
-        except ImportError:
-            logger.exception("Judge evaluation import failed")
-            return None
+        except ImportError as e:
+            raise ImportError(
+                "LLM-judge evaluation requested but its dependencies are not installed. "
+                "Install with: pip install forgelm[eval]"
+            ) from e
 
         judge_cfg = eval_cfg.llm_judge
         # Defence-in-depth: the preflight (__init__) already ran this, but guard
@@ -1494,7 +1826,7 @@ class ForgeTrainer:
             # gradient_accumulation_steps). The manifest records the *configured*
             # (pre-OOM) batch size — the documented contract — but the model card
             # reads the *effective* (post-OOM) value, so without an explicit
-            # marker the two artefacts silently contradict (F-P3-FABLE-04).
+            # marker the two artefacts silently contradict.
             # Record BOTH values + an ``oom_recovery`` flag so an auditor sees the
             # discrepancy explained, and restore inside ``finally`` so a manifest
             # build error can't leave config holding the configured values under
@@ -1514,6 +1846,7 @@ class ForgeTrainer:
                     safety_result=safety_dict,
                     judge_result=judge_dict,
                     benchmark_result=benchmark_dict,
+                    run_id=self.audit.run_id,
                 )
             finally:
                 self.config.training.per_device_train_batch_size = _effective_bs
@@ -1543,6 +1876,19 @@ class ForgeTrainer:
                     output_path=gov_path,
                     dataset_count=len(self.dataset),
                 )
+                # The governance report can be a clean success yet still drop
+                # the Article 10 data-quality section when data_audit_report.json
+                # is absent (audit CLI defaults to ./audit/, trainer to
+                # ./checkpoints/).  Without a discrete event the append-only log
+                # shows an unqualified success and an auditor over-trusts bundle
+                # completeness. Emit a distinct gap event so the
+                # omission is in the hash-chained record, not just stderr.
+                if not governance.get("data_audit_inlined", False):
+                    self.audit.log_event(
+                        "compliance.governance_section_missing",
+                        section="data_audit_report",
+                        expected_path=os.path.join(self.config.training.output_dir, "data_audit_report.json"),
+                    )
                 governance_ok = True
             except Exception as e:  # noqa: BLE001 — best-effort; broad catch keeps the audit trail honest  # NOSONAR
                 # OSError covers filesystem failures, but the governance
@@ -1555,22 +1901,33 @@ class ForgeTrainer:
                 logger.warning("Could not write data_governance_report.json: %s", e)
                 self.audit.log_event("compliance.governance_failed", reason=str(e))
 
-            # Only emit the rollup "all artefacts exported" event when both
-            # the Article 11 manifest export and the Article 10 governance
-            # report succeeded, so the audit chain truthfully reflects which
-            # artefacts are actually on disk.
-            if governance_ok:
-                try:
-                    files = sorted(os.listdir(compliance_dir))
-                except OSError:
-                    files = []
-                self.audit.log_event(
-                    "compliance.artifacts_exported",
-                    output_dir=compliance_dir,
-                    files=files,
-                )
+            # The Article 11 manifest export above is the load-bearing
+            # regulatory artefact; its success is the gate that MUST be logged
+            # (logging-observability.md "Compliance export invoked").  Emit the
+            # rollup unconditionally once the manifest export returned —
+            # carrying ``governance_ok`` so the chain still records whether the
+            # secondary Article 10 report made it.  Pre-fix this event was
+            # gated behind ``if governance_ok:``, so a successful manifest
+            # export with a failed governance report left NO audit trace of the
+            # Article 11 export.
+            try:
+                files = sorted(os.listdir(compliance_dir))
+            except OSError:
+                files = []
+            self.audit.log_event(
+                "compliance.artifacts_exported",
+                output_dir=compliance_dir,
+                files=files,
+                governance_ok=governance_ok,
+            )
         except Exception as e:  # noqa: BLE001 — best-effort: outer compliance-export gate. Article 11/12 export plumbing crosses pydantic validation, json serialization, hashing, filesystem writes, and audit emission; any leak from the inner narrow-class catches must not abort the surrounding training pipeline that already succeeded.  # NOSONAR
+            # The export IS the primary surface for the Article 11 / Annex IV
+            # artefacts: per error-handling.md BLE001 rule 3 the primary
+            # failure must be recorded independently. Emit an audit event so a
+            # failed/torn compliance export leaves an append-only trace rather
+            # than a silent exit-0 run with an empty compliance dir.
             logger.warning("Failed to export compliance artifacts: %s", e)
+            self.audit.log_event("compliance.artifacts_export_failed", reason=str(e))
 
     def _generate_model_integrity(self, final_path: str) -> None:
         """Art. 15: Generate SHA-256 checksums for all output artifacts."""

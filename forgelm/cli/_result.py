@@ -19,6 +19,15 @@ def _build_result_json_envelope(result) -> dict:
         # an ordinary success (exit 0). See docs json-output.md.
         "awaiting_approval": result.awaiting_approval,
     }
+    # Reproducibility anchors mandated by logging-observability.md "Structured
+    # JSON output" rule 2 (XP-11 / F-P4-OPUS-15): run_id correlates the run with
+    # its audit_log.jsonl; config_hash confirms the config that produced it.
+    # Emitted only when populated (library callers may construct TrainResult by
+    # hand) so the envelope stays well-typed rather than carrying nulls.
+    if getattr(result, "run_id", None) is not None:
+        output["run_id"] = result.run_id
+    if getattr(result, "config_hash", None) is not None:
+        output["config_hash"] = result.config_hash
     # Only present when the human-approval gate fired; carries the on-disk
     # staging directory the operator passes to `forgelm approve/reject`.
     if result.staging_path:

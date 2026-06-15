@@ -135,6 +135,45 @@ class TestGeneratorOptionalUnwrap:
         assert sink == {"inner": {"magic": 42}}, "Optional[Inner] sub-block was silently skipped — B1 regression"
 
 
+class TestGeneratorTopLevelScalarFlag:
+    """F-P1-FAB-41 — a wizard-flagged top-level scalar must not be dropped."""
+
+    def test_collect_defaults_emits_top_level_scalar_under_root(self, monkeypatch):
+        from pydantic import BaseModel, Field
+
+        import tools.generate_wizard_defaults as gen
+
+        class _Inner(BaseModel):
+            nested: int = Field(default=8, json_schema_extra={"wizard": True})
+
+        class _Root(BaseModel):
+            seed: int = Field(default=42, json_schema_extra={"wizard": True})
+            lora: _Inner = Field(default_factory=_Inner)
+
+        monkeypatch.setattr(gen, "ForgeConfig", _Root)
+        out = gen.collect_defaults()
+        # Pre-fix the flagged top-level ``seed`` scalar silently vanished.
+        assert out.get("root") == {"seed": 42}
+        assert out.get("lora") == {"nested": 8}
+
+    def test_walk_model_raises_on_flag_misplaced_on_submodel_field(self):
+        from typing import Optional
+
+        from pydantic import BaseModel, Field
+
+        from tools.generate_wizard_defaults import _walk_model
+
+        class _Inner(BaseModel):
+            r: int = Field(default=8, description="x")
+
+        class _Root(BaseModel):
+            # Wizard flag wrongly placed on the submodel-typed field itself.
+            lora: Optional[_Inner] = Field(default=None, json_schema_extra={"wizard": True})
+
+        with pytest.raises(ValueError, match="submodel-typed field"):
+            _walk_model(_Root, "root", {})
+
+
 class TestGeneratorPydanticUndefinedIdentity:
     """B2 — required fields detected via ``is PydanticUndefined``, not repr()."""
 

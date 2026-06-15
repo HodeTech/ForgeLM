@@ -11,10 +11,10 @@ ForgeLM's exit codes are a public contract. CI/CD pipelines, schedulers, and das
 
 | Exit | Constant | Meaning | Typical CI action |
 |---|---|---|---|
-| **0** | `EXIT_SUCCESS` | Run completed; all gates passed; checkpoint promoted. | Continue pipeline |
+| **0** | `EXIT_SUCCESS` | Run completed and the checkpoint was promoted. With `evaluation.auto_revert: true` every gate also passed; with the shipped default `auto_revert: false` a failed benchmark/safety/judge gate is **recorded in the JSON output but does not change the exit code** — see ["What exit 0 actually guarantees"](#what-exit-0-actually-guarantees) below. | Continue pipeline (parse gate blocks if `auto_revert` is off) |
 | **1** | `EXIT_CONFIG_ERROR` | YAML invalid, file missing, env var unset, or argument malformed. | Fail fast |
 | **2** | `EXIT_TRAINING_ERROR` | Training-time runtime error (any unhandled exception that isn't a config or eval-gate failure: data load, OOM, NaN loss, I/O failure, mid-stream audit-iteration OSError). | Investigate; surface logs |
-| **3** | `EXIT_EVAL_FAILURE` | Benchmark or safety gate failed; auto-reverted if configured. | Investigate; do NOT promote |
+| **3** | `EXIT_EVAL_FAILURE` | A benchmark/safety/judge gate failed **and** the model was auto-reverted (requires `evaluation.auto_revert: true`). With `auto_revert: false` a failed gate does not produce exit 3 — the run exits 0 with the failure recorded in the JSON gate blocks. | Investigate; do NOT promote |
 | **4** | `EXIT_AWAITING_APPROVAL` | `evaluation.require_human_approval: true` blocking. | Hold pipeline; trigger reviewer |
 | **5** | `EXIT_WIZARD_CANCELLED` | `forgelm --wizard` exited without producing a YAML — Ctrl-C, non-tty stdin refusal, or operator declined to save. Distinct from `EXIT_SUCCESS` so CI can tell "wizard finished" from "wizard never wrote anything". | Treat as no-op; surface message; do NOT continue with stale config |
 
@@ -83,8 +83,8 @@ stage('Train') {
 | `--config` points to non-existent file | 1 |
 | Final loss is NaN / OOM / I/O failure mid-training | 2 |
 | `forgelm verify-audit` chain break or HMAC mismatch | 1 (during the v0.5.5 cycle EXIT_CONFIG_ERROR covers both option errors and integrity failures; see the in-manual [Verify Audit](#/compliance/verify-audit) page for the v0.6.x deprecation note) |
-| DPO run, Llama Guard S5 regressed beyond tolerance | 3 |
-| Benchmark hellaswag dropped below floor | 3 |
+| DPO run, Llama Guard S5 regressed beyond tolerance | 3 with `evaluation.auto_revert: true`; 0 (recorded in JSON gate blocks) with the shipped default `false` |
+| Benchmark hellaswag dropped below floor | 3 with `evaluation.auto_revert: true`; 0 (recorded in JSON gate blocks) with the shipped default `false` |
 | `evaluation.require_human_approval: true` and no approval signed | 4 |
 | User Ctrl+C (signal-derived 128+N) | 2 (clamped) |
 
@@ -98,15 +98,18 @@ A run that exits 0 has:
 - Validated config without errors.
 - Loaded the model and dataset.
 - Completed all configured training steps.
-- Passed every configured benchmark floor.
-- Passed every configured safety threshold.
 - Written the model card.
 - Written the Annex IV bundle (if configured).
 - Written manifest.json with SHA-256 over all artifacts.
 - Optionally: written GGUF, deployment config.
 - Closed the audit log with `pipeline.completed` (canonical event name).
 
-If any of these failed, the exit code is non-zero. There is no "partial success" exit code by design.
+**Gates and exit 0.** Whether a *passed* benchmark/safety/judge gate is part of the exit-0 guarantee depends on `evaluation.auto_revert`:
+
+- With `evaluation.auto_revert: true` (the EU AI Act high-risk default), a failed gate auto-reverts the model and exits **3** — so exit 0 *does* mean every configured gate passed.
+- With the shipped default `evaluation.auto_revert: false`, a failed gate is **recorded** (the `benchmark` / `safety` / `judge` block in the JSON output carries `*_passed: false`) but the model is still promoted and the run exits **0**. Read those JSON blocks; do not infer gate success from exit 0 alone.
+
+There is no "partial success" exit code by design — turn on `auto_revert` if you want a failing gate to change the exit code.
 
 ## Compatibility guarantee
 

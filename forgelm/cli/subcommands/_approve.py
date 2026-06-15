@@ -477,14 +477,32 @@ def _run_approve_cmd(args, output_format: str) -> None:
     # shared workstation they intentionally diverge so the audit answers
     # "which pipeline ran this" *and* "which human approved it".
     approver = _cli_facade._resolve_approver_identity()
-    audit.log_event(
-        _EVT_HUMAN_APPROVAL_GRANTED,
-        gate="final_model",
-        run_id=run_id,
-        approver=approver,
-        comment=args.comment or "",
-        promote_strategy=promote_strategy,
-    )
+    # The rename above already promoted the model to ``final_path`` and the
+    # staging dir is consumed, so this write cannot be retried (the
+    # ``os.path.lexists(final_path)`` guard would block a re-run).  An
+    # unwrapped OSError here (ENOSPC, read-only remount in the window)
+    # would leave the model promoted with NO ``human_approval.granted``
+    # event — a permanent Article 12 audit gap surfaced only as a raw
+    # traceback + non-contract exit code.  Surface it loudly through the
+    # named exit code with an operator-actionable message that names the
+    # gap (F-P4-OPUS-18).
+    try:
+        audit.log_event(
+            _EVT_HUMAN_APPROVAL_GRANTED,
+            gate="final_model",
+            run_id=run_id,
+            approver=approver,
+            comment=args.comment or "",
+            promote_strategy=promote_strategy,
+        )
+    except OSError as exc:
+        _output_error_and_exit(
+            output_format,
+            f"Model promoted to {final_path!r} but the human_approval.granted audit event "
+            f"could not be written ({exc}). AUDIT GAP — record a manual `correction` entry "
+            "per docs/standards/logging-observability.md before relying on this run.",
+            EXIT_TRAINING_ERROR,
+        )
 
     metrics = _cli_facade._load_metrics_from_manifest(output_dir)
     notifier = _cli_facade._build_approval_notifier(output_dir)
@@ -559,14 +577,29 @@ def _run_reject_cmd(args, output_format: str) -> None:
     except ConfigError as exc:
         _output_error_and_exit(output_format, str(exc), EXIT_CONFIG_ERROR)
     approver = _cli_facade._resolve_approver_identity()
-    audit.log_event(
-        _EVT_HUMAN_APPROVAL_REJECTED,
-        gate="final_model",
-        run_id=run_id,
-        approver=approver,
-        comment=args.comment or "",
-        staging_path=staging_path,
-    )
+    # Mirror the approve handler's audit-write guard.  Unlike approve, no model
+    # has been promoted here — the staging dir is preserved — so an OSError
+    # (ENOSPC, read-only remount) means the decision was simply never recorded
+    # and can be retried after repairing storage.  Surface it through the named
+    # exit code BEFORE the webhook so a failed decision write never reaches
+    # notify_failure with a rejection that was never durably recorded.
+    try:
+        audit.log_event(
+            _EVT_HUMAN_APPROVAL_REJECTED,
+            gate="final_model",
+            run_id=run_id,
+            approver=approver,
+            comment=args.comment or "",
+            staging_path=staging_path,
+        )
+    except OSError as exc:
+        _output_error_and_exit(
+            output_format,
+            f"Could not write the human_approval.rejected audit event ({exc}). "
+            "Refusing to record a decision without a durable audit entry; "
+            "repair storage and retry.",
+            EXIT_TRAINING_ERROR,
+        )
 
     notifier = _cli_facade._build_approval_notifier(output_dir)
     run_name = os.path.basename(os.path.normpath(output_dir)) or "rejected"

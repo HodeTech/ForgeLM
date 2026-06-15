@@ -1,5 +1,6 @@
 """Unit tests for forgelm.trainer module (non-GPU tests only)."""
 
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -138,6 +139,18 @@ class TestEvaluationChecks:
         result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": float("inf")})
         assert result is False
 
+    def test_nan_baseline_config_is_ignored(self, caplog):
+        """A config-supplied NaN baseline_loss must be silently discarded so it
+        cannot covertly disable the regression check.  The guard must log a
+        WARNING mentioning 'NaN or Inf' and the call must return True (no revert)
+        because the baseline regression gate is disarmed, not triggered."""
+        trainer = self._make_trainer(auto_revert=True, baseline_loss=float("nan"))
+        with patch.object(trainer, "_revert_model") as revert, caplog.at_level("WARNING"):
+            result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.5})
+        assert result is True
+        revert.assert_not_called()
+        assert any("NaN or Inf" in r.getMessage() for r in caplog.records)
+
     def test_missing_eval_loss(self):
         trainer = self._make_trainer(max_loss=2.0)
         result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"train_loss": 0.5})
@@ -153,6 +166,266 @@ class TestEvaluationChecks:
         trainer = self._make_trainer(auto_revert=False, max_loss=0.1)
         result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 5.0})
         assert result is True  # auto_revert=False means always pass
+
+    def test_auto_revert_disabled_still_detects_breach(self, caplog):
+        """F-P3-FABLE-24: with auto_revert=false a configured max_acceptable_loss is
+        still EVALUATED — a breach logs a WARNING naming the threshold (detection),
+        but the model is kept (no revert, return True)."""
+        trainer = self._make_trainer(auto_revert=False, max_loss=0.1)
+        with patch.object(trainer, "_revert_model") as revert, caplog.at_level("WARNING"):
+            result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 5.0})
+        assert result is True  # detection-only, model kept
+        revert.assert_not_called()
+        assert "max_acceptable_loss" in caplog.text
+        assert "auto_revert=false" in caplog.text
+
+    def test_auto_revert_disabled_detects_nan_divergence(self, caplog):
+        """F-P3-FABLE-24: a NaN eval_loss (training diverged) is detected and logged
+        even when auto_revert=false; the diverged model is NOT silently shipped with
+        no signal (but is also not reverted)."""
+        trainer = self._make_trainer(auto_revert=False, max_loss=0.1)
+        with patch.object(trainer, "_revert_model") as revert, caplog.at_level("ERROR"):
+            result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": float("nan")})
+        assert result is True
+        revert.assert_not_called()
+        assert "diverged" in caplog.text
+
+    def test_auto_revert_disabled_no_threshold_is_silent_passthrough(self):
+        """No threshold/baseline + auto_revert=false → nothing to detect, early True."""
+        trainer = self._make_trainer(auto_revert=False)
+        with patch.object(trainer, "_revert_model") as revert:
+            result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": float("nan")})
+        assert result is True
+        revert.assert_not_called()
+
+    def _loss_gate_calls(self, trainer):
+        from forgelm.trainer import _EVT_LOSS_GATE_COMPLETED
+
+        return [c for c in trainer.audit.log_event.call_args_list if c.args and c.args[0] == _EVT_LOSS_GATE_COMPLETED]
+
+    def test_loss_gate_emits_evaluation_completed_on_pass(self):
+        """F-P4-OPUS-26: a passing loss gate emits a discrete decision event
+        carrying ``passed=True`` and the thresholds it was checked against —
+        symmetric with the benchmark/safety/judge gates."""
+        trainer = self._make_trainer(max_loss=2.0, baseline_loss=3.0)
+        assert trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.5}) is True
+        calls = self._loss_gate_calls(trainer)
+        assert len(calls) == 1
+        kwargs = calls[0].kwargs
+        assert kwargs["passed"] is True
+        assert kwargs["eval_loss"] == pytest.approx(1.5)
+        assert kwargs["max_acceptable_loss"] == pytest.approx(2.0)
+        assert kwargs["baseline_loss"] == pytest.approx(3.0)
+
+    def test_loss_gate_emits_evaluation_completed_on_fail(self):
+        """F-P4-OPUS-26: a threshold breach emits the same decision event with
+        ``passed=False`` before the revert, so the accept/reject record exists
+        independently of ``model.reverted``."""
+        trainer = self._make_trainer(max_loss=2.0)
+        assert trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 3.0}) is False
+        calls = self._loss_gate_calls(trainer)
+        assert len(calls) == 1
+        assert calls[0].kwargs["passed"] is False
+        assert calls[0].kwargs["eval_loss"] == pytest.approx(3.0)
+
+    def test_loss_gate_event_eval_loss_non_finite_is_stringified(self):
+        """A NaN/Inf divergence records eval_loss as a string sentinel so the
+        audit JSONL stays valid JSON (F-P4-OPUS-26)."""
+        trainer = self._make_trainer(max_loss=2.0)
+        trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": float("nan")})
+        calls = self._loss_gate_calls(trainer)
+        assert len(calls) == 1
+        assert calls[0].kwargs["passed"] is False
+        assert isinstance(calls[0].kwargs["eval_loss"], str)  # "nan", not a bare float
+
+    def test_revert_emits_audit_event_before_rmtree(self, tmp_path):
+        """F-P4-OPUS-27: ``_revert_model`` must emit ``model.reverted`` BEFORE the
+        destructive ``shutil.rmtree`` so the record survives even if the delete
+        explodes. Patch rmtree to raise and assert the emit still happened."""
+        from forgelm.trainer import _EVT_REVERT_TRIGGERED
+
+        trainer = self._make_trainer(max_loss=2.0)
+        final_path = tmp_path / "final"
+        final_path.mkdir()
+        (final_path / "adapter.bin").write_text("weights")
+
+        with patch("forgelm.trainer.shutil.rmtree", side_effect=OSError("disk gone")) as rmtree:
+            # The OSError is caught inside _revert_model (logged, non-fatal) —
+            # the emit must have already run.
+            trainer._revert_model(str(final_path), "boom", source="threshold")
+
+        rmtree.assert_called_once()
+        revert_calls = [
+            c for c in trainer.audit.log_event.call_args_list if c.args and c.args[0] == _EVT_REVERT_TRIGGERED
+        ]
+        assert len(revert_calls) == 1, "model.reverted must be emitted exactly once, even when rmtree fails"
+
+    def test_failed_benchmark_gate_when_auto_revert_disabled_continues_recording_failure(self):
+        """F-P1-FAB-14: with the shipped default ``auto_revert=False`` a failed
+        benchmark gate is *recorded* (``benchmark_passed=False``, scores attached)
+        but the pipeline continues — ``_apply_benchmark_result`` returns True, no
+        revert, no model deletion. This is the behaviour the corrected
+        error-handling.md row 0 / exit-codes.md documents (exit 0 does NOT imply
+        every gate passed unless ``auto_revert`` is on)."""
+        trainer = self._make_trainer(auto_revert=False)
+        train_result = TrainResult(success=True, metrics={}, final_model_path="/tmp/nonexistent/final")
+        metrics: dict[str, float] = {}
+        failing_benchmark = MagicMock()
+        failing_benchmark.passed = False
+        failing_benchmark.scores = {"hellaswag": 0.30}
+        failing_benchmark.average_score = 0.30
+        failing_benchmark.failure_reason = "Benchmark score below threshold."
+
+        with patch.object(trainer, "_revert_model") as revert:
+            result = trainer._apply_benchmark_result(failing_benchmark, train_result, metrics, "/tmp/nonexistent/final")
+
+        assert result is True  # continue → run still exits 0
+        assert train_result.benchmark_passed is False  # failure recorded
+        assert train_result.success is True  # NOT reverted
+        assert train_result.reverted is False
+        revert.assert_not_called()  # model not destroyed
+
+    def test_failed_benchmark_gate_when_auto_revert_enabled_reverts_and_halts(self):
+        """F-P1-FAB-14 counterpart: with ``auto_revert=True`` the SAME failing
+        gate reverts the model and halts (returns False → exit 3), so exit 0
+        legitimately means every gate passed on the auto_revert path."""
+        trainer = self._make_trainer(auto_revert=True)
+        train_result = TrainResult(success=True, metrics={}, final_model_path="/tmp/nonexistent/final")
+        metrics: dict[str, float] = {}
+        failing_benchmark = MagicMock()
+        failing_benchmark.passed = False
+        failing_benchmark.scores = {"hellaswag": 0.30}
+        failing_benchmark.average_score = 0.30
+        failing_benchmark.failure_reason = "Benchmark score below threshold."
+
+        with patch.object(trainer, "_revert_model") as revert:
+            result = trainer._apply_benchmark_result(failing_benchmark, train_result, metrics, "/tmp/nonexistent/final")
+
+        assert result is False  # halt → exit 3
+        assert train_result.benchmark_passed is False
+        assert train_result.reverted is True
+        revert.assert_called_once()
+
+    @pytest.mark.parametrize("gate", ["benchmark", "safety", "judge"])
+    def test_gate_failure_without_auto_revert_logs_warning(self, caplog, gate):
+        """F-P3-FABLE-49: a gate that fails while ``auto_revert=false`` keeps the
+        model, so the operator must see a WARNING connecting the ERROR-level gate
+        failure to the subsequent exit 0 — otherwise the auto_revert=false
+        rationale has to be reverse-engineered from the config."""
+        import logging
+
+        trainer = self._make_trainer(auto_revert=False)
+        train_result = TrainResult(success=True, metrics={}, final_model_path="/tmp/nonexistent/final")
+        metrics: dict[str, float] = {}
+
+        failing = MagicMock()
+        failing.passed = False
+        if gate == "benchmark":
+            failing.scores = {"hellaswag": 0.30}
+            failing.average_score = 0.30
+            failing.failure_reason = "Benchmark score below threshold."
+            apply = trainer._apply_benchmark_result
+        elif gate == "safety":
+            failing.safety_score = 0.10
+            failing.safe_ratio = 0.10
+            failing.category_distribution = {}
+            failing.severity_distribution = {}
+            failing.low_confidence_count = 0
+            failing.total_count = 5
+            failing.failure_reason = "Safety check failed."
+            apply = trainer._apply_safety_result
+        else:
+            failing.average_score = 2.0
+            failing.details = []
+            failing.failure_reason = "Judge score below threshold."
+            apply = trainer._apply_judge_result
+
+        with caplog.at_level(logging.WARNING, logger="forgelm.trainer"):
+            result = apply(failing, train_result, metrics, "/tmp/nonexistent/final")
+
+        assert result is True  # model kept, run continues
+        warnings = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING and gate in r.getMessage() and "auto_revert=false" in r.getMessage()
+        ]
+        assert len(warnings) == 1, f"expected one '{gate}' kept-no-revert WARNING"
+        assert train_result.error == failing.failure_reason
+
+
+@pytest.mark.skipif(not torch_available, reason="torch not installed")
+class TestGovernanceSectionMissingEvent:
+    """F-P4-OPUS-23: when data_audit_report.json is absent the governance bundle
+    silently drops the Article 10 data-quality section. The append-only log must
+    record that gap with a discrete ``compliance.governance_section_missing``
+    event, not only an ephemeral WARNING."""
+
+    def _make_trainer(self, tmp_path):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model"},
+            lora={},
+            training={"output_dir": str(tmp_path)},
+            data={"dataset_name_or_path": "org/dataset"},
+            evaluation={"auto_revert": False},
+        )
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.dataset = {"train": ["x"], "validation": ["y"]}
+            trainer.checkpoint_dir = str(tmp_path)
+            trainer.run_name = "test"
+            trainer.notifier = MagicMock()
+            trainer.audit = MagicMock()
+            trainer.audit.run_id = "fg-test"
+        return trainer
+
+    def _event_names(self, trainer):
+        return [c.args[0] for c in trainer.audit.log_event.call_args_list if c.args]
+
+    def _export_stub(self, tmp_path):
+        """export_compliance_artifacts normally creates ``compliance/``; the
+        governance writer relies on it existing, so emulate that side effect."""
+
+        def _stub(manifest, compliance_dir):
+            os.makedirs(compliance_dir, exist_ok=True)
+
+        return _stub
+
+    def test_missing_data_audit_emits_section_missing_event(self, tmp_path):
+        trainer = self._make_trainer(tmp_path)  # no data_audit_report.json on disk
+        result = TrainResult(success=True, metrics={}, final_model_path=str(tmp_path / "final"))
+        # Keep the heavy manifest machinery out of the way; only the governance
+        # branch is under test.
+        with (
+            patch("forgelm.compliance.generate_training_manifest", return_value={"x": 1}),
+            patch("forgelm.compliance.export_compliance_artifacts", side_effect=self._export_stub(tmp_path)),
+        ):
+            trainer._export_compliance_if_needed({"eval_loss": 1.0}, result)
+
+        names = self._event_names(trainer)
+        assert "compliance.governance_exported" in names
+        assert "compliance.governance_section_missing" in names
+
+    def test_present_data_audit_does_not_emit_section_missing(self, tmp_path):
+        import json as _json
+
+        (tmp_path / "data_audit_report.json").write_text(
+            _json.dumps({"total_samples": 5, "pii_summary": {}}), encoding="utf-8"
+        )
+        trainer = self._make_trainer(tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(tmp_path / "final"))
+        with (
+            patch("forgelm.compliance.generate_training_manifest", return_value={"x": 1}),
+            patch("forgelm.compliance.export_compliance_artifacts", side_effect=self._export_stub(tmp_path)),
+        ):
+            trainer._export_compliance_if_needed({"eval_loss": 1.0}, result)
+
+        names = self._event_names(trainer)
+        assert "compliance.governance_exported" in names
+        assert "compliance.governance_section_missing" not in names
 
 
 class TestTrainingArgsValidationGuard:
@@ -210,3 +483,305 @@ class TestTrainingArgsValidationGuard:
         kwargs = trainer._get_common_training_kwargs()
         assert kwargs["eval_strategy"] == "no"
         assert kwargs["load_best_model_at_end"] is False
+
+
+class TestGateRunnerImportContract:
+    """F-P3-FABLE-25: configured eval gates must fail fast / fail loud on a missing
+    extra, never silently degrade to a skip with exit 0."""
+
+    def _seed(self, tmp_path, eval_overrides):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model"},
+            lora={},
+            training={"output_dir": str(tmp_path)},
+            data={"dataset_name_or_path": "org/dataset"},
+            evaluation=eval_overrides,
+        )
+        trainer = ForgeTrainer.__new__(ForgeTrainer)
+        trainer.config = config
+        trainer.dataset = {"train": list(range(10)), "validation": list(range(2))}
+        trainer.checkpoint_dir = str(tmp_path)
+        trainer.run_name = "gate_runner_test"
+        trainer.notifier = MagicMock()
+        trainer.audit = MagicMock()
+        trainer.model = MagicMock()
+        trainer.tokenizer = MagicMock()
+        trainer.trainer = MagicMock()
+        return trainer
+
+    def test_benchmark_enabled_without_lm_eval_fails_at_preflight(self, tmp_path, monkeypatch):
+        """A benchmark gate enabled without lm-eval raises ImportError (with the
+        install hint) at the config-validation preflight — BEFORE training — rather
+        than after a full run as exit 2."""
+        trainer = self._seed(
+            tmp_path,
+            {"benchmark": {"enabled": True, "tasks": ["arc_easy"], "min_score": 0.5}},
+        )
+        monkeypatch.delitem(__import__("sys").modules, "lm_eval", raising=False)
+
+        def _raise():
+            raise ImportError(
+                "lm-evaluation-harness is required for benchmarking but not installed. "
+                "Install it with: pip install forgelm[eval]"
+            )
+
+        monkeypatch.setattr("forgelm.benchmark._check_lm_eval_available", _raise)
+        with pytest.raises(ImportError, match="forgelm\\[eval\\]"):
+            trainer._validate_evaluation_config()
+
+    def test_run_benchmark_does_not_swallow_importerror_into_none(self, tmp_path, monkeypatch):
+        """The benchmark runner re-raises a real ImportError with the install hint
+        instead of returning None (which would silently skip the gate)."""
+        trainer = self._seed(
+            tmp_path,
+            {"benchmark": {"enabled": True, "tasks": ["arc_easy"], "min_score": 0.5}},
+        )
+
+        import forgelm.benchmark as _bm
+
+        monkeypatch.setattr(_bm, "run_benchmark", None, raising=False)
+        # Force the local import inside _run_benchmark_if_configured to raise.
+        monkeypatch.delattr(_bm, "run_benchmark")
+        with pytest.raises(ImportError, match="forgelm\\[eval\\]"):
+            trainer._run_benchmark_if_configured()
+
+
+@pytest.mark.skipif(not torch_available, reason="torch not installed")
+class TestGateApplication:
+    """F-P2-FAB-16: trainer-side gate application + revert/continue matrix."""
+
+    def _make_trainer(self, auto_revert, tmp_path):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model"},
+            lora={},
+            training={"output_dir": str(tmp_path)},
+            data={"dataset_name_or_path": "org/dataset"},
+            evaluation={"auto_revert": auto_revert},
+        )
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.dataset = {"train": ["x"], "validation": ["y"]}
+            trainer.checkpoint_dir = str(tmp_path)
+            trainer.run_name = "gate_apply"
+            trainer.notifier = MagicMock()
+            trainer.audit = MagicMock()
+        return trainer
+
+    def test_safety_fail_with_auto_revert_reverts_and_marks_result(self, tmp_path):
+        trainer = self._make_trainer(auto_revert=True, tmp_path=tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(tmp_path / "final"))
+        safety = MagicMock(
+            passed=False,
+            safety_score=0.4,
+            safe_ratio=0.4,
+            total_count=10,
+            category_distribution={},
+            severity_distribution={},
+            low_confidence_count=0,
+            failure_reason="unsafe ratio too high",
+        )
+        with patch.object(trainer, "_revert_model") as revert:
+            cont = trainer._apply_safety_result(safety, result, {}, str(tmp_path / "final"))
+        assert cont is False  # halt → exit 3
+        assert result.reverted is True
+        assert result.staging_path is None  # cleared by _mark_reverted
+        revert.assert_called_once()
+
+    def test_safety_infra_failure_with_auto_revert_does_not_revert_model(self, tmp_path):
+        """Infrastructure safety failures (evaluation_completed=False) must never
+        trigger auto-revert even when auto_revert=True.  A classifier that fails
+        to load is an infra misconfiguration, not a genuine gate failure — deleting
+        a successfully trained model over it would be wrong."""
+        trainer = self._make_trainer(auto_revert=True, tmp_path=tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(tmp_path / "final"))
+        metrics: dict[str, float] = {}
+        from forgelm.safety import SafetyResult
+
+        infra_fail = SafetyResult(passed=False, evaluation_completed=False, safe_ratio=0.0)
+        with patch.object(trainer, "_revert_model") as revert:
+            cont = trainer._apply_safety_result(infra_fail, result, metrics, str(tmp_path / "final"))
+        assert cont is True  # pipeline continues — infra failure, not gate failure
+        revert.assert_not_called()  # model must not be deleted
+        assert result.reverted is False
+
+    def test_safety_infra_failure_audit_payload_does_not_report_perfect_ratio(self, tmp_path):
+        """F-P3-FABLE-26 trainer-side: an infra-failure SafetyResult (safe_ratio=0.0,
+        total_count=0) must not surface a 1.0 metric / audit payload."""
+        trainer = self._make_trainer(auto_revert=False, tmp_path=tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(tmp_path / "final"))
+        metrics: dict[str, float] = {}
+        from forgelm.safety import SafetyResult
+
+        infra_fail = SafetyResult(passed=False, evaluation_completed=False, safe_ratio=0.0)
+        cont = trainer._apply_safety_result(infra_fail, result, metrics, str(tmp_path / "final"))
+        assert cont is True  # recorded, not reverted (auto_revert off)
+        assert metrics["safety/safe_ratio"] == 0.0
+        audit_kwargs = trainer.audit.log_event.call_args.kwargs
+        assert audit_kwargs["safe_ratio"] == 0.0
+        assert audit_kwargs["total_count"] == 0
+
+    def test_judge_fail_with_auto_revert_reverts(self, tmp_path):
+        trainer = self._make_trainer(auto_revert=True, tmp_path=tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(tmp_path / "final"))
+        judge = MagicMock(passed=False, average_score=2.0, details=[], failure_reason="below min_score")
+        with patch.object(trainer, "_revert_model") as revert:
+            cont = trainer._apply_judge_result(judge, result, {}, str(tmp_path / "final"))
+        assert cont is False
+        assert result.reverted is True
+        revert.assert_called_once()
+
+    def test_judge_fail_without_auto_revert_records_but_continues(self, tmp_path):
+        trainer = self._make_trainer(auto_revert=False, tmp_path=tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(tmp_path / "final"))
+        metrics: dict[str, float] = {}
+        judge = MagicMock(passed=False, average_score=2.0, details=[], failure_reason="below min_score")
+        with patch.object(trainer, "_revert_model") as revert:
+            cont = trainer._apply_judge_result(judge, result, metrics, str(tmp_path / "final"))
+        assert cont is True
+        assert result.judge_score == 2.0
+        assert result.reverted is False
+        revert.assert_not_called()
+
+    def test_none_gate_results_are_noops(self, tmp_path):
+        trainer = self._make_trainer(auto_revert=True, tmp_path=tmp_path)
+        result = TrainResult(success=True, metrics={})
+        assert trainer._apply_safety_result(None, result, {}, str(tmp_path)) is True
+        assert trainer._apply_judge_result(None, result, {}, str(tmp_path)) is True
+        assert trainer._apply_benchmark_result(None, result, {}, str(tmp_path)) is True
+        trainer.audit.log_event.assert_not_called()
+
+
+@pytest.mark.skipif(not torch_available, reason="torch not installed")
+class TestBaselineLossCapture:
+    """F-P2-FAB-17: _measure_baseline_loss gating + happy / fallback / missing paths."""
+
+    def _make_trainer(self, *, auto_revert=True, baseline_loss=None, validation=True):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model"},
+            lora={},
+            training={"output_dir": "/tmp/test_baseline"},
+            data={"dataset_name_or_path": "org/dataset"},
+            evaluation={"auto_revert": auto_revert, "baseline_loss": baseline_loss},
+        )
+        dataset = {"train": ["x"], "validation": ["y"]} if validation else {"train": ["x"]}
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.dataset = dataset
+            trainer.checkpoint_dir = "/tmp/test_baseline"
+            trainer.run_name = "baseline"
+            trainer.notifier = MagicMock()
+            trainer.audit = MagicMock()
+            trainer.trainer = MagicMock()
+        return trainer
+
+    def test_baseline_captured_and_armed(self):
+        trainer = self._make_trainer()
+        # model without disable_adapter → plain evaluate() path
+        model_obj = MagicMock(spec=[])  # no disable_adapter attr
+        trainer.trainer.model = model_obj
+        trainer.trainer.evaluate = MagicMock(return_value={"eval_loss": 1.25})
+        metrics: dict[str, float] = {}
+        trainer._measure_baseline_loss(metrics)
+        assert trainer.config.evaluation.baseline_loss == pytest.approx(1.25)
+        assert metrics["baseline_eval_loss"] == pytest.approx(1.25)
+
+    def test_baseline_skipped_when_no_auto_revert(self):
+        trainer = self._make_trainer(auto_revert=False)
+        trainer.trainer.evaluate = MagicMock(return_value={"eval_loss": 1.25})
+        metrics: dict[str, float] = {}
+        trainer._measure_baseline_loss(metrics)
+        # Gating condition not met → no evaluate, no mutation.
+        trainer.trainer.evaluate.assert_not_called()
+        assert "baseline_eval_loss" not in metrics
+
+    def test_baseline_skipped_when_already_configured(self):
+        trainer = self._make_trainer(baseline_loss=0.9)
+        trainer.trainer.evaluate = MagicMock(return_value={"eval_loss": 1.25})
+        trainer._measure_baseline_loss({})
+        trainer.trainer.evaluate.assert_not_called()
+        assert trainer.config.evaluation.baseline_loss == pytest.approx(0.9)
+
+    def test_baseline_missing_eval_loss_does_not_arm_gate(self):
+        trainer = self._make_trainer()
+        model_obj = MagicMock(spec=[])
+        trainer.trainer.model = model_obj
+        trainer.trainer.evaluate = MagicMock(return_value={"something_else": 1.0})
+        trainer._measure_baseline_loss({})
+        assert trainer.config.evaluation.baseline_loss is None
+
+    def test_baseline_disable_adapter_fallback_used_on_error(self):
+        trainer = self._make_trainer()
+
+        class _Model:
+            def disable_adapter(self):
+                raise RuntimeError("adapter graph locked")
+
+        trainer.trainer.model = _Model()
+        trainer.trainer.evaluate = MagicMock(return_value={"eval_loss": 0.8})
+        trainer._measure_baseline_loss({})
+        # Fallback evaluate() (with adapters) supplied the baseline.
+        assert trainer.config.evaluation.baseline_loss == pytest.approx(0.8)
+
+
+class TestSaveFinalModelFallback:
+    """F-P2-FAB-39: save_final_model's narrow-tuple fallbacks (direct-save →
+    trainer.save_model; merge → unmerged save) were exercised by no test."""
+
+    def _make_trainer(self, tmp_path, *, merge_adapters):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model"},
+            lora={},
+            training={"output_dir": str(tmp_path), "merge_adapters": merge_adapters},
+            data={"dataset_name_or_path": "org/dataset"},
+        )
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.tokenizer = MagicMock()
+            trainer.trainer = MagicMock()
+        return trainer
+
+    def test_direct_save_falls_back_to_trainer_save_model(self, tmp_path):
+        """A ``save_pretrained`` failure (contract drift / serialization error)
+        falls back to HF Trainer's hardened ``save_model`` path with a WARNING."""
+        trainer = self._make_trainer(tmp_path, merge_adapters=False)
+        trainer.trainer.model.save_pretrained = MagicMock(side_effect=AttributeError("no save_pretrained"))
+        final_path = str(tmp_path / "final")
+        with patch("logging.Logger.warning") as warn:
+            trainer.save_final_model(final_path)
+        trainer.trainer.save_model.assert_called_once_with(final_path)
+        trainer.tokenizer.save_pretrained.assert_called_once_with(final_path)
+        assert any("falling back" in str(c.args).lower() for c in warn.call_args_list)
+
+    def test_merge_save_falls_back_to_unmerged_save(self, tmp_path):
+        """A non-PEFT model lacking ``merge_and_unload`` falls back to an
+        unmerged ``trainer.save_model`` so the run still produces an artefact."""
+        trainer = self._make_trainer(tmp_path, merge_adapters=True)
+        trainer.trainer.model.merge_and_unload = MagicMock(side_effect=AttributeError("not a PeftModel"))
+        final_path = str(tmp_path / "final_merged")
+        with patch("logging.Logger.warning") as warn:
+            trainer.save_final_model(final_path)
+        trainer.trainer.save_model.assert_called_once_with(final_path)
+        trainer.tokenizer.save_pretrained.assert_called_once_with(final_path)
+        assert any("merge failed" in str(c.args).lower() for c in warn.call_args_list)
+
+    def test_direct_save_happy_path_no_fallback(self, tmp_path):
+        """When ``save_pretrained`` succeeds, ``save_model`` is NOT called."""
+        trainer = self._make_trainer(tmp_path, merge_adapters=False)
+        trainer.trainer.model.save_pretrained = MagicMock()
+        trainer.save_final_model(str(tmp_path / "final_ok"))
+        trainer.trainer.save_model.assert_not_called()

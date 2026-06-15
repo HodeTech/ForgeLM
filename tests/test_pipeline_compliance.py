@@ -9,6 +9,8 @@ provenance index.
 
 from __future__ import annotations
 
+import json
+
 from forgelm.cli._pipeline import PipelineStageState, PipelineState
 from forgelm.compliance import _verify_manifest_payload, generate_pipeline_manifest
 from forgelm.config import ForgeConfig
@@ -217,6 +219,65 @@ class TestManifestVerification:
         manifest = generate_pipeline_manifest(state, _root_with_compliance())
         violations = _verify_manifest_payload(manifest)
         assert any("expected `failed` or `gated_pending_approval`" in v for v in violations)
+
+
+class TestManifestContentHash:
+    """F-P4-OPUS-20: ``generate_pipeline_manifest`` stamps a
+    ``metadata.manifest_hash`` over the whole manifest so the verifier
+    can detect post-generation content tampering that keeps the chain
+    links self-consistent (which the structural checks miss)."""
+
+    def test_generate_stamps_manifest_hash(self):
+        manifest = generate_pipeline_manifest(_three_stage_state(), _root_with_compliance())
+        assert isinstance(manifest.get("metadata"), dict)
+        assert len(manifest["metadata"].get("manifest_hash", "")) == 64
+
+    def test_clean_manifest_with_hash_passes(self):
+        manifest = generate_pipeline_manifest(_three_stage_state(), _root_with_compliance())
+        assert _verify_manifest_payload(manifest) == []
+
+    def test_tampered_stage_metric_fails_hash_check(self):
+        """Editing a stage metric AFTER generation (post-hash) must be
+        caught by the content-hash recompute even though the chain links
+        and indices stay consistent."""
+        manifest = generate_pipeline_manifest(_three_stage_state(), _root_with_compliance())
+        # Mutate a non-structural field on disk (chain links untouched).
+        manifest["stages"][0]["metrics"]["eval_loss"] = 0.0001
+        violations = _verify_manifest_payload(manifest)
+        assert any("manifest hash mismatch" in v for v in violations)
+
+    def test_tampered_gate_decision_fails_hash_check(self):
+        manifest = generate_pipeline_manifest(_three_stage_state(), _root_with_compliance())
+        manifest["stages"][0]["gate_decision"] = "forged-pass"
+        violations = _verify_manifest_payload(manifest)
+        assert any("manifest hash mismatch" in v for v in violations)
+
+    def test_manifest_without_hash_downgrades_to_structural_only(self):
+        """A manifest with no ``metadata.manifest_hash`` (e.g. older
+        artefacts) still verifies on its structural rules — absence
+        downgrades, it does not fail."""
+        manifest = generate_pipeline_manifest(_three_stage_state(), _root_with_compliance())
+        manifest.pop("metadata", None)
+        assert _verify_manifest_payload(manifest) == []
+
+    def test_export_round_trip_through_disk_verifies(self, tmp_path):
+        """The stamped hash survives the export ``default=str`` JSON
+        round-trip so the disk-backed verifier passes a clean manifest
+        and fails a tampered one."""
+        from forgelm.compliance import export_pipeline_manifest, verify_pipeline_manifest_at_path
+
+        manifest = generate_pipeline_manifest(_three_stage_state(), _root_with_compliance())
+        run_dir = tmp_path / "run"
+        export_pipeline_manifest(manifest, str(run_dir))
+        assert verify_pipeline_manifest_at_path(str(run_dir)) == []
+
+        # Tamper on disk, then re-verify.
+        manifest_path = run_dir / "compliance" / "pipeline_manifest.json"
+        on_disk = json.loads(manifest_path.read_text())
+        on_disk["stages"][0]["output_model"] = "swapped/model"
+        manifest_path.write_text(json.dumps(on_disk, indent=2))
+        violations = verify_pipeline_manifest_at_path(str(run_dir))
+        assert any("manifest hash mismatch" in v for v in violations)
 
 
 class TestVerifyOnAutoRevertScenario:
@@ -573,6 +634,34 @@ class TestVerifyAnnexIvPipelineModeExitCodes:
         assert code == 1  # EXIT_CONFIG_ERROR
         captured = capsys.readouterr().out
         assert "chain_integrity_violation" in captured
+
+    def test_io_error_prefix_maps_to_exit_2_and_strips_token(self, tmp_path, monkeypatch, capsys):
+        """F-P4-OPUS-25: only the stable ``IO_ERROR::`` machine prefix routes a
+        violation to EXIT_TRAINING_ERROR (2). The internal token must not leak
+        into operator-facing output."""
+        from forgelm.compliance import PIPELINE_MANIFEST_IO_ERROR_PREFIX
+
+        monkeypatch.setattr(
+            "forgelm.compliance.verify_pipeline_manifest_at_path",
+            lambda _p: [f"{PIPELINE_MANIFEST_IO_ERROR_PREFIX}pipeline_manifest.json unreadable: disk error"],
+        )
+        code = self._run(tmp_path, {})
+        assert code == 2  # EXIT_TRAINING_ERROR
+        captured = capsys.readouterr().out
+        assert "unreadable" in captured
+        assert PIPELINE_MANIFEST_IO_ERROR_PREFIX not in captured  # token stripped for display
+
+    def test_violation_containing_word_unreadable_does_not_map_to_exit_2(self, tmp_path, monkeypatch, capsys):
+        """F-P4-OPUS-25 guard: a structural violation whose free text merely
+        CONTAINS the substring ``unreadable`` (without the routing prefix) must
+        stay EXIT_CONFIG_ERROR (1) — the exit-code contract no longer couples to
+        a stray word."""
+        monkeypatch.setattr(
+            "forgelm.compliance.verify_pipeline_manifest_at_path",
+            lambda _p: ["Stage 'unreadable-by-design': input_model does not chain from prior output"],
+        )
+        code = self._run(tmp_path, {})
+        assert code == 1  # EXIT_CONFIG_ERROR, NOT 2
 
 
 class TestVerifyOnPartialFilterRun:

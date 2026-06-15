@@ -3,7 +3,7 @@
 > **Hedef kitle:** Madde 14 insan-onay kararı bekleyen koşumları keşfeden ForgeLM operatörleri ve tek bir koşumun audit zincirini uçtan uca okuyan denetçiler.
 > **Ayna:** [approvals_subcommand.md](approvals_subcommand.md)
 
-`forgelm approvals`, [`forgelm approve` / `forgelm reject`](approve_subcommand.md)'in **keşif tamamlayıcısıdır** (Phase 37). `--output-dir` altındaki `audit_log.jsonl`'i tarar ve karar bekleyen tüm koşumları (`--pending`) veya tek bir koşum için tam audit zincirini (`--show RUN_ID`) raporlar.
+`forgelm approvals`, [`forgelm approve` / `forgelm reject`](approve_subcommand-tr.md)'in **keşif tamamlayıcısıdır** (Phase 37). `--output-dir` altındaki `audit_log.jsonl`'i tarar ve karar bekleyen tüm koşumları (`--pending`) veya tek bir koşum için tam audit zincirini (`--show RUN_ID`) raporlar.
 
 Subcommand salt-okunurdur: audit log'u, staging dizinini veya başka herhangi bir on-disk artefact'ı asla değiştirmez.
 
@@ -163,7 +163,7 @@ Daha zengin bir policy kuran operatörler (örn. "herhangi bir bekleyen karar N 
 
 ## Bkz.
 
-- [`approve_subcommand.md`](approve_subcommand.md) — terminal karar tamamlayıcısı (`approve` / `reject`).
-- [`../guides/human_approval_gate.md`](../guides/human_approval_gate.md) — deployer akışı.
-- [`audit_event_catalog.md`](audit_event_catalog.md) — bu subcommand tarafından okunan `human_approval.*` satırları dahil tam event sözlüğü.
-- [`../qms/access_control.md`](../qms/access_control.md) §6 — segregation-of-duties cookbook (`--show`'un projelendirdiği `human_approval.granted` satırlarını kullanır).
+- [`approve_subcommand.md`](approve_subcommand-tr.md) — terminal karar tamamlayıcısı (`approve` / `reject`).
+- [`../guides/human_approval_gate.md`](../guides/human_approval_gate-tr.md) — deployer akışı.
+- [`audit_event_catalog.md`](audit_event_catalog-tr.md) — bu subcommand tarafından okunan `human_approval.*` satırları dahil tam event sözlüğü.
+- [`../qms/access_control.md`](../qms/access_control-tr.md) §6 — segregation-of-duties cookbook (`--show`'un projelendirdiği `human_approval.granted` satırlarını kullanır).

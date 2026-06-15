@@ -30,3 +30,14 @@ _PUBLIC_EXIT_CODES = frozenset(
         EXIT_WIZARD_CANCELLED,
     }
 )
+
+
+def _clamp_exit_code(code: int) -> int:
+    """Map any non-public exit code to :data:`EXIT_TRAINING_ERROR`.
+
+    Enforces the module-docstring invariant at the dispatch seam: a
+    dispatcher that returns a computed or signal-derived code (128+N) is
+    coerced to the runtime-error code rather than leaking verbatim to the
+    shell and breaking CI consumers that branch only on the 0-5 contract.
+    """
+    return code if code in _PUBLIC_EXIT_CODES else EXIT_TRAINING_ERROR

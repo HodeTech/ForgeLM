@@ -9,7 +9,7 @@
 
 ### Features:
 1. [x] **GaLore**: Optimizer-level memory optimization — full-parameter training via gradient low-rank projection as an alternative to LoRA. Config fields: `galore_enabled`, `galore_optim`, `galore_rank`, `galore_update_proj_gap`, `galore_scale`, `galore_proj_type`, `galore_target_modules`.
-2. [x] **Long-Context Training**: RoPE scaling, NEFTune noise injection, sliding window attention, and sample packing for extended context windows. Config fields: `rope_scaling`, `neftune_noise_alpha`, `sliding_window_attention`, `sample_packing`.
+2. [x] **Long-Context Training**: RoPE scaling, NEFTune noise injection, sliding window attention, and sequence packing for extended context windows. Config fields: `rope_scaling`, `neftune_noise_alpha`, `sliding_window_attention`, `packing` (`sample_packing` is a deprecated alias, removed in v0.9.0).
 3. [x] **Synthetic Data Pipeline**: Teacher-to-student distillation via `--generate-data` CLI flag. New `SyntheticDataGenerator` class in `forgelm/synthetic.py`. Configurable teacher model, backend, seed prompts, and output format.
 4. [x] **PyPI Publishing**: `pip install forgelm` now works. Automated publishing via `publish.yml` GitHub Actions workflow.
 5. [x] **GPU Cost Estimation**: Auto-detection for 16 GPU models with per-run cost tracking. Included in JSON output, webhook notifications, and model cards.
@@ -181,7 +181,7 @@ Fixes a `TypeError` in the SFT trainer that prevented every SFT training run fro
 
 ### Full changelog
 
-See [CHANGELOG.md `[0.5.7]`](../../CHANGELOG.md#057--2026-05-10).
+See [CHANGELOG.md `[0.5.7]`](../../CHANGELOG.md#057--2026-05-11).
 
 ---
 
@@ -245,7 +245,7 @@ See [CHANGELOG.md `[0.5.5]`](../../CHANGELOG.md#055--2026-05-10) for the complet
 
 ### Summary
 
-v0.7.0 ships [Phase 14 — Multi-Stage Pipeline Chains](completed-phases.md#phase-14-multi-stage-pipeline-chains-v070): one YAML, one CLI invocation, one Annex IV manifest covering SFT → DPO → GRPO (or any sequence of supported trainers).  Re-scheduled from v0.6.0 → v0.7.0 because v0.6.0 shipped Phase 15 (Ingestion Pipeline Reliability) after the 2026-05-11 pilot exposed the silent-failure gap that gated v0.6.0's credibility.  v0.7.0 also folds in the critical DNS-rebinding TOCTOU SSRF hardening (issue #14) on the webhook / judge / synthetic outbound paths.
+v0.7.0 ships [Phase 14 — Multi-Stage Pipeline Chains](completed-phases.md#phase-14--multi-stage-pipeline-chains-v070): one YAML, one CLI invocation, one Annex IV manifest covering SFT → DPO → GRPO (or any sequence of supported trainers).  Re-scheduled from v0.6.0 → v0.7.0 because v0.6.0 shipped Phase 15 (Ingestion Pipeline Reliability) after the 2026-05-11 pilot exposed the silent-failure gap that gated v0.6.0's credibility.  v0.7.0 also folds in the critical DNS-rebinding TOCTOU SSRF hardening (issue #14) on the webhook / judge / synthetic outbound paths.
 
 ### Highlights
 

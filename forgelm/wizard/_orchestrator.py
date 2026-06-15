@@ -48,6 +48,7 @@ from ._io import (
     _HF_HUB_ID_RE,
     _PLATFORM,
     WizardBack,
+    WizardCancel,
     WizardReset,
     _detect_hardware,
     _print,
@@ -61,6 +62,7 @@ from ._state import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_DROPOUT,
     DEFAULT_EPOCHS,
+    DEFAULT_GRAD_ACCUM,
     DEFAULT_LORA_R,
     DEFAULT_LR,
     DEFAULT_MAX_LENGTH,
@@ -580,7 +582,7 @@ def _step_training_params(state: _WizardState) -> None:
     training_block.setdefault("merge_adapters", False)
     training_block["num_train_epochs"] = epochs
     training_block["per_device_train_batch_size"] = batch_size
-    training_block.setdefault("gradient_accumulation_steps", 2)
+    training_block.setdefault("gradient_accumulation_steps", DEFAULT_GRAD_ACCUM)
     training_block.setdefault("learning_rate", DEFAULT_LR)
     training_block.setdefault("warmup_ratio", 0.1)
     training_block.setdefault("weight_decay", 0.01)
@@ -917,16 +919,28 @@ def run_wizard_full(start_from: Optional[str] = None) -> WizardOutcome:
         # E3: skip the quickstart prelude — operator's intent is "iterate
         # on this YAML", not "pick a curated template".
         return _run_full_wizard_outcome(start_from=start_from)
-    quickstart_path = _maybe_run_quickstart_template()
-    if quickstart_path is not None:
-        # Quickstart template path: ``_finalize_quickstart_path`` returns
-        # the path when the operator wants to train now, else None.
-        # Either way the YAML was saved by the quickstart machinery.
-        finalized = _finalize_quickstart_path(quickstart_path)
-        return WizardOutcome(
-            config_path=quickstart_path,
-            start_training=finalized is not None,
-        )
+    # The quickstart-template prelude runs BEFORE the step machine, so its
+    # prompts' navigation tokens have no handler of their own.  Catch them
+    # here (F-P7-OPUS-08): ``cancel`` exits cleanly; ``back``/``reset``
+    # before any step have nothing to go back to, so fall through to the
+    # full wizard rather than crashing with an uncaught traceback.
+    try:
+        quickstart_path = _maybe_run_quickstart_template()
+        if quickstart_path is not None:
+            # Quickstart template path: ``_finalize_quickstart_path`` returns
+            # the path when the operator wants to train now, else None.
+            # Either way the YAML was saved by the quickstart machinery.
+            finalized = _finalize_quickstart_path(quickstart_path)
+            return WizardOutcome(
+                config_path=quickstart_path,
+                start_training=finalized is not None,
+            )
+    except WizardCancel:
+        _print("\n  Wizard cancelled.  No config written.")
+        return WizardOutcome(config_path=None, start_training=False)
+    except (WizardBack, WizardReset):
+        _print("\n  Falling back to the full configuration wizard.")
+        return _run_full_wizard_outcome()
     _print("\n  Falling back to the full configuration wizard.")
     return _run_full_wizard_outcome()
 
@@ -1040,6 +1054,13 @@ def _run_full_wizard_outcome(start_from: Optional[str] = None) -> WizardOutcome:
         state = _maybe_resume_state()
     try:
         state = _drive_wizard_steps(state)
+    except WizardCancel:
+        # Operator typed ``cancel`` / ``q`` at a step prompt — the
+        # welcome banner promises this exits cleanly (F-P7-OPUS-05).
+        # Preserve state so a rerun can resume, mirroring the Ctrl-C path.
+        _persist_state(state)
+        _print("\n  Wizard cancelled.  No config written.")
+        return WizardOutcome(config_path=None, start_training=False)
     except (KeyboardInterrupt, EOFError):
         _persist_state(state)
         _print(f"\n  Interrupted.  State preserved at {_wizard_state_path()} — rerun `forgelm --wizard` to resume.")

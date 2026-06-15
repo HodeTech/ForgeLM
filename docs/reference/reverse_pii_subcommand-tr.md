@@ -3,7 +3,7 @@
 > **Hedef kitle:** Eğitim corpus'larına karşı GDPR Madde 15 erişim hakkı taleplerini yanıtlayan ForgeLM operatörleri ve ortaya çıkan `data.access_request_query` audit satırını doğrulayan denetçiler.
 > **Ayna:** [reverse_pii_subcommand.md](reverse_pii_subcommand.md)
 
-`forgelm reverse-pii`, ForgeLM eğitim corpus'ları için **GDPR Madde 15 erişim hakkı**'nın operatör-yüzlü uygulamasıdır (Phase 38). [`forgelm purge`](purge_subcommand.md) "satırımı sil" derken, `reverse-pii` "identifier'ımın geçtiği her satırı bul" der.
+`forgelm reverse-pii`, ForgeLM eğitim corpus'ları için **GDPR Madde 15 erişim hakkı**'nın operatör-yüzlü uygulamasıdır (Phase 38). [`forgelm purge`](purge_subcommand-tr.md) "satırımı sil" derken, `reverse-pii` "identifier'ımın geçtiği her satırı bul" der.
 
 ## Synopsis
 
@@ -65,7 +65,7 @@ $ forgelm reverse-pii --query "alice@example.com" --type email \
 
 ## Yayılan audit event'leri
 
-Her çağrı tam olarak bir event yayar ([katalog satırı](audit_event_catalog-tr.md#madde-15-gdpr-erişim-hakkı-phase-38-forgelm-reverse-pii)):
+Her çağrı tam olarak bir event yayar ([katalog satırı](audit_event_catalog-tr.md#madde-15--gdpr-erişim-hakkı-phase-38--forgelm-reverse-pii)):
 
 | Event | Ne zaman yayılır | Anahtar payload |
 |---|---|---|
@@ -123,7 +123,7 @@ Başarısız scan standart hata zarfını yayar (`_output_error_and_exit`):
 
 ## Bkz.
 
-- [`../guides/gdpr_erasure.md`](../guides/gdpr_erasure.md) §"Madde 15 erişim hakkı" — deployer akışı.
-- [`purge_subcommand.md`](purge_subcommand.md) — kardeş Madde 17 silinme hakkı aracı; cross-tool digest korelasyonu için per-output-dir salt'ı paylaşır.
-- [`audit_event_catalog.md`](audit_event_catalog.md) — zarf spec'i ile birlikte tam event sözlüğü.
-- [`../qms/access_control.md`](../qms/access_control.md) §3.4 — operatör kimliği sözleşmesi (her erişim talebi event'ında kayıtlı `FORGELM_OPERATOR`).
+- [`../guides/gdpr_erasure.md`](../guides/gdpr_erasure-tr.md) §"Madde 15 erişim hakkı" — deployer akışı.
+- [`purge_subcommand.md`](purge_subcommand-tr.md) — kardeş Madde 17 silinme hakkı aracı; cross-tool digest korelasyonu için per-output-dir salt'ı paylaşır.
+- [`audit_event_catalog.md`](audit_event_catalog-tr.md) — zarf spec'i ile birlikte tam event sözlüğü.
+- [`../qms/access_control.md`](../qms/access_control-tr.md) §3.4 — operatör kimliği sözleşmesi (her erişim talebi event'ında kayıtlı `FORGELM_OPERATOR`).

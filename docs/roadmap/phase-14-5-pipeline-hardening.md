@@ -2,7 +2,7 @@
 
 > **Status:** Planned for `v0.7.x` cycle.  Originates as the 4 review findings explicitly deferred during the v0.7.0 release cut (see PR #54 + the `risks-and-decisions.md` "2026-05-15 — v0.7.0 release review deferrals" section).  Wave 2 carry-overs from Phase 14 (intra-stage resume, DAG pipelines, parallel exec, wizard pipeline path) are tracked at the bottom as **future phases**, not in-flight Phase 14.5 work.
 >
-> **Note:** This file details a single planned phase.  See [../roadmap.md](../roadmap.md) for the cross-phase summary; the Phase 14 design + shipped scope is archived in [completed-phases.md#phase-14-multi-stage-pipeline-chains-v070](completed-phases.md#phase-14-multi-stage-pipeline-chains-v070).
+> **Note:** This file details a single planned phase.  See [../roadmap.md](../roadmap.md) for the cross-phase summary; the Phase 14 design + shipped scope is archived in [completed-phases.md#phase-14-multi-stage-pipeline-chains-v070](completed-phases.md#phase-14--multi-stage-pipeline-chains-v070).
 
 **Goal:** Close the four pipeline-manifest + webhook hygiene items that v0.7.0 deliberately deferred because each one carried a non-trivial design surface (golden-manifest regeneration, recursive Annex IV verification, webhook schema documentation, structured-payload typing).  Each item is small in code surface but needs careful test-fixture management; bundling them into one focused sub-phase isolates the change so Phase 15-style review absorption can land cleanly.
 
@@ -150,9 +150,9 @@
 
 ## Cross-references
 
-- **Phase 14 shipped scope:** [completed-phases.md#phase-14-multi-stage-pipeline-chains-v070](completed-phases.md#phase-14-multi-stage-pipeline-chains-v070)
+- **Phase 14 shipped scope:** [completed-phases.md#phase-14-multi-stage-pipeline-chains-v070](completed-phases.md#phase-14--multi-stage-pipeline-chains-v070)
 - **Pipeline operator guide:** [`../guides/pipeline.md`](../guides/pipeline.md) ([Türkçe](../guides/pipeline-tr.md))
-- **Pipeline schema reference:** [`../reference/configuration.md`](../reference/configuration.md#pipeline-optional-multi-stage-training-chains-phase-14) ([Türkçe](../reference/configuration-tr.md#pipeline-isteğe-bağlı-çok-aşamalı-eğitim-zincirleri-faz-14))
+- **Pipeline schema reference:** [`../reference/configuration.md`](../reference/configuration.md#pipeline-optional--multi-stage-training-chains-phase-14) ([Türkçe](../reference/configuration-tr.md#pipeline-isteğe-bağlı--çok-aşamalı-eğitim-zincirleri-faz-14))
 - **CLI surface:** [`../reference/usage.md`](../reference/usage.md) ([Türkçe](../reference/usage-tr.md))
 - **Deferred-findings tracking:** [risks-and-decisions.md](risks-and-decisions.md) — "2026-05-15 — v0.7.0 release review deferrals" section
 - **Code surface (planned):** [`forgelm/compliance.py`](../../forgelm/compliance.py) (`compute_pipeline_manifest_hash` + `verify_pipeline_manifest_at_path` deep-parse), [`forgelm/webhook.py`](../../forgelm/webhook.py) (`_ALLOWED_PIPELINE_EXTRAS`), `docs/reference/webhook_schema.md` (new file)

@@ -629,8 +629,11 @@ A.6.8, A.8.15, A.8.16.
    mapping.
 3. **Rollback procedure** — `auto_revert` for in-pipeline; manual
    redeploy of previous model SHA for post-deployment.
-4. **Configuration drift detection** — `tools/regenerate_config_doc.py`
-   diff-guard catches Pydantic-schema drift between code and docs.
+4. **Configuration drift detection** — `tools/check_field_descriptions.py --strict`
+   (CI) fails the build when a Pydantic field lacks a `description=`, and
+   `tools/check_bilingual_parity.py --strict` enforces EN↔TR doc parity;
+   the operator-facing configuration reference is maintained by hand and
+   reviewed against the schema.
 5. **SBOM drift detection** — `tools/generate_sbom.py` deterministic
    contract: a release's SBOM is reproducible from the corresponding
    `git tag`.

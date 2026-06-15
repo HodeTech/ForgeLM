@@ -322,17 +322,11 @@ __api_version__ = "MAJOR.MINOR"   # e.g. "0.5"
 
 The original rationale was that patch-level changes to the library are by definition non-breaking, so no consumer needs to detect them.  `release.md` later argued the opposite: keeping a `PATCH` slot lets consumers `packaging.version.Version`-compare reliably and gives implementation tweaks a parking spot without burning a MINOR.  The 3-segment shape won.
 
-### 5.2 Breaking-change detection (CI guard, optional)
+### 5.2 Breaking-change detection (in-repo snapshot test)
 
-Phase 19 ships a `tools/check_api_compat.py` script that compares the **stable** symbols of the current branch against the previously released `__api_version__` and flags any signature change.  Implementation sketch:
+Breaking-change detection runs as an **in-repo snapshot test** rather than the venv-diffing `tools/check_api_compat.py` script that earlier drafts of this section sketched (that standalone tool was never shipped).  `tests/test_library_api.py::TestApiSignatureSnapshot` records every public symbol's signature (callables), field roster (dataclasses), or `model_fields` keys (Pydantic models) in `tests/_data/api_signatures_<__api_version__>.json`, keyed to the current `__api_version__`.  The test fails whenever the live surface differs from the snapshot for that version.
 
-1. Pip install the previous release into a temp venv.
-2. `python -c "import forgelm; print(json.dumps({n: inspect.signature(getattr(forgelm, n)).__str__() for n in <STABLE>}))"`.
-3. Diff against the same dump from the working tree.
-
-CI trigger: **`pull_request` job that runs whenever the PR targets `main` AND modifies `forgelm/__init__.py` or `forgelm/_version.py`**, plus a manual `workflow_dispatch` step the `cut-release` skill invokes before tagging.  We do **not** use `release-*` branches as the trigger: `docs/standards/release.md:259` explicitly forbids release branches ("**No release branches** — if a hotfix is needed for an old version that has diverged, create a branch at that tag and cherry-pick — rare").  A `release-*` trigger would ship a CI step that never fires because no `release-*` branch ever exists.  No-op for the v0.5.5 release itself: there is no prior `__api_version__`-bearing release to diff against, so the script's first useful run is at v0.5.6 cut time.  Phase 19 ships the script + the `pull_request` + `workflow_dispatch` workflow steps; Phase 33 (v0.5.5 release) treats the script as a documented future contract rather than an immediate gate.
-
-This is not a blocking gate; it is a notification.  A genuinely-needed signature change still merges, but the release notes get an automatic "BREAKING:" line.
+Workflow: a genuinely-needed signature change makes the test red; the contributor then bumps `__api_version__` per the §5.1 rules (MAJOR for a removed/signature-changed **stable** symbol, MINOR for an addition) and regenerates the snapshot file under the new version key, so the bump and the surface change land in the same commit.  This is a blocking gate (the test is part of the suite) — stronger than the "notification only" posture the original sketch proposed, and it needs no temp-venv install of a prior release.
 
 ### 5.3 Deprecation cadence
 
@@ -438,7 +432,7 @@ The rule: **library code does not call `sys.exit`**.  Every exit-code mapping li
 |---|---|---|
 | `ForgeTrainer.train()` | No — TRL trainer holds GPU state. | No. |
 | `audit_dataset()` | Yes (multiple corpora in parallel threads); each call is self-contained. | Yes. |
-| `AuditLogger.log_event()` | Yes — uses `fcntl.flock` on POSIX (Wave 1).  Windows uses `msvcrt.locking`. | Each forked child should construct its own `AuditLogger`; sharing the file handle across forks is unsupported. |
+| `AuditLogger.log_event()` | Yes — uses `fcntl.flock` on POSIX (Wave 1).  On Windows there is no cross-process lock (the advisory flock helper is a no-op); do not share an `output_dir` across concurrent processes on Windows. | Each forked child should construct its own `AuditLogger`; sharing the file handle across forks is unsupported. |
 | `verify_audit_log()` | Yes — read-only. | Yes. |
 | `WebhookNotifier.notify_*()` | Yes — each call opens its own `requests` session. | Yes. |
 
@@ -530,4 +524,4 @@ The design above shipped end-to-end in v0.5.5:
 - Two version strings (§5): `__version__` (runtime, `importlib.metadata`-derived) + `__api_version__` (semver `1.0.0`); both live in `forgelm/_version.py`.
 - Integration tests (§6): `tests/test_library_api.py` covers public-surface invariants — stable-symbol roster matches `forgelm.__all__`, lazy-import discipline (subprocess assertion that `import forgelm` does not pull `torch` / `transformers` / `trl`), `__getattr__` resolution + caching, `dir(forgelm)` shape, `py.typed` marker presence, and `__api_version__` contract — paired with `tests/test_lazy_imports.py` for the per-submodule lazy-load regression corpus. End-to-end train-and-chat user journeys are exercised by the per-trainer test modules (`tests/test_trainer*.py`, `tests/test_chat.py`), not by `test_library_api.py`.
 - Docs (§7): `docs/reference/library_api_reference{,-tr}.md`, `docs/guides/library_api{,-tr}.md`, `docs/usermanuals/{en,tr}/reference/library-api.md`, README "Library API" section.
-- Errors + concurrency (§8): `ConfigError`, `OptionalDependencyError`, `HttpSafetyError`; multiprocess-safe `AuditLogger.log_event` via `fcntl.flock` / `msvcrt.locking`.
+- Errors + concurrency (§8): `ConfigError`, `OptionalDependencyError`, `HttpSafetyError`; `AuditLogger.log_event` is multiprocess-safe on POSIX via `fcntl.flock` (no cross-process lock on Windows — no-op).

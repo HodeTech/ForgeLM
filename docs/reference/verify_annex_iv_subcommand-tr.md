@@ -52,7 +52,7 @@ Doğrulayıcı statik bir katalogu (`_ANNEX_IV_REQUIRED_FIELDS`) yürür; böyle
 
 ## Emit edilen audit event'leri
 
-`forgelm verify-annex-iv` **salt-okunur bir doğrulayıcıdır** ve `audit_log.jsonl`'a **hiçbir** kayıt eklemez. Annex IV *üretimini* (doğrulamayı değil) işaretleyen event — `compliance.artifacts_exported` — [audit_event_catalog.md](audit_event_catalog.md)'nin Madde 11 + Annex IV bölümünde kataloglanmıştır. Doğrulama-anı kaydı isteyen operatörler bu alt-komutu CI'dan çağırıp JSON çıktısını artifact paketinin yanında saklayabilir.
+`forgelm verify-annex-iv` **salt-okunur bir doğrulayıcıdır** ve `audit_log.jsonl`'a **hiçbir** kayıt eklemez. Annex IV *üretimini* (doğrulamayı değil) işaretleyen event — `compliance.artifacts_exported` — [audit_event_catalog.md](audit_event_catalog-tr.md)'nin Madde 11 + Annex IV bölümünde kataloglanmıştır. Doğrulama-anı kaydı isteyen operatörler bu alt-komutu CI'dan çağırıp JSON çıktısını artifact paketinin yanında saklayabilir.
 
 ## Örnekler
 
@@ -113,8 +113,8 @@ $ echo $?
 
 ## Bkz.
 
-- [`audit_event_catalog.md`](audit_event_catalog.md) — `compliance.artifacts_exported` (Madde 11 + Annex IV) ve kanonik event sözlüğünün geri kalanı.
-- [`verify_audit.md`](verify_audit.md) — `audit_log.jsonl` için kardeş doğrulayıcı.
-- [`verify_gguf_subcommand.md`](verify_gguf_subcommand.md) — export edilmiş GGUF artifact'ları için kardeş doğrulayıcı.
+- [`audit_event_catalog.md`](audit_event_catalog-tr.md) — `compliance.artifacts_exported` (Madde 11 + Annex IV) ve kanonik event sözlüğünün geri kalanı.
+- [`verify_audit.md`](verify_audit-tr.md) — `audit_log.jsonl` için kardeş doğrulayıcı.
+- [`verify_gguf_subcommand.md`](verify_gguf_subcommand-tr.md) — export edilmiş GGUF artifact'ları için kardeş doğrulayıcı.
 - [Annex IV kullanım kılavuzu sayfası](../usermanuals/tr/compliance/annex-iv.md) — tam hızlı başlangıç örneği içeren operatör-odaklı kılavuz.
 - `forgelm.compliance.build_annex_iv_artifact` ve `forgelm.compliance.compute_annex_iv_manifest_hash` — bu doğrulayıcının yazıcı tarafındaki muadilleri.

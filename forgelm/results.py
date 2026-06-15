@@ -30,7 +30,7 @@ class TrainResult:
     estimated_cost_usd: Optional[float] = None
     # Article 14 — human approval gate. Populated when
     # ``evaluation.require_human_approval=true`` so the saved adapters land in
-    # ``<final_model_dir>.staging/`` instead of ``<final_model_dir>/``. The
+    # ``<final_model_dir>.staging.<run_id>/`` instead of ``<final_model_dir>/``. The
     # canonical ``final_model/`` directory only appears after
     # ``forgelm approve <run_id>`` promotes the staging artefacts.
     staging_path: Optional[str] = None
@@ -42,3 +42,11 @@ class TrainResult:
     # ``staging_path`` alone is not a safe discriminator (it can survive a
     # revert); ``awaiting_approval`` is the authoritative one.
     awaiting_approval: bool = False
+    # Reproducibility anchors surfaced in the JSON run-output envelope so a
+    # CI/CD consumer can correlate the run with its audit_log.jsonl (``run_id``)
+    # and confirm the config that produced it (``config_hash``). Mandated by
+    # logging-observability.md "Structured JSON output" rule 2 (XP-11 /
+    # F-P4-OPUS-15). Optional so library callers constructing TrainResult by
+    # hand are unaffected.
+    run_id: Optional[str] = None
+    config_hash: Optional[str] = None

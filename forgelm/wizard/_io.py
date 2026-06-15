@@ -1,11 +1,15 @@
 """I/O primitives + navigation tokens for the CLI wizard.
 
 Every interactive prompt funnels through one of the helpers here so
-navigation tokens (``back`` / ``reset``) get a chance to fire before
-validation runs.  Cancel-style tokens are deliberately NOT auto-
-raised — the BYOD path interprets them as "fall back to the full
-wizard" and the step orchestrator relies on Ctrl-C / Ctrl-D for clean
-exits.
+navigation tokens (``back`` / ``reset`` / ``cancel``) get a chance to
+fire before validation runs.  ``back``/``reset`` raise
+:class:`WizardBack`/:class:`WizardReset`; the cancel sentinels raise
+:class:`WizardCancel`, which the orchestrator converts into a clean
+``EXIT_WIZARD_CANCELLED`` outcome.  The BYOD prelude catches
+``WizardCancel`` locally and interprets it as "fall back to the full
+wizard" — the same operator-typed ``cancel`` it has always honoured —
+so the welcome banner's "type `cancel` / `q` to exit cleanly" promise
+holds at every prompt (F-P7-OPUS-05/08).
 
 The ``_print`` indirection mirrors :mod:`forgelm.chat` so wizard
 output can be captured via ``capsys`` in tests and re-routed through
@@ -62,21 +66,31 @@ class WizardReset(Exception):
     """Operator typed ``reset`` / ``r`` — caller catches and clears state."""
 
 
+class WizardCancel(Exception):
+    """Operator typed ``cancel`` / ``q`` / ``c`` / ``quit`` — caller exits cleanly.
+
+    The step orchestrator converts this into a
+    ``WizardOutcome(config_path=None)`` (→ ``EXIT_WIZARD_CANCELLED``); the
+    BYOD prelude catches it locally and falls back to the full wizard.
+    """
+
+
 _BACK_TOKENS: Tuple[str, ...] = ("back", "b")
 _RESET_TOKENS: Tuple[str, ...] = ("reset", "r")
-# Cancel sentinels stay context-local: the BYOD path interprets these
-# as "fall back to the full wizard" while the step orchestrator relies
-# on Ctrl-C / Ctrl-D for clean exits.  Kept as a tuple so the BYOD
-# helpers can keep their existing in-string membership check.
+# Cancel sentinels now auto-raise :class:`WizardCancel` from every
+# primitive prompt so the welcome banner's "type `cancel` / `q` to exit
+# cleanly" promise holds at every step (F-P7-OPUS-05).  The BYOD prelude
+# catches ``WizardCancel`` to preserve its long-standing "fall back to
+# the full wizard" semantics.  Kept as a tuple for the membership check.
 _CANCEL_TOKENS: Tuple[str, ...] = ("cancel", "c", "q", "quit")
 
 
 def _check_navigation_token(value: str) -> None:
     """Raise the matching navigation exception when *value* is a sentinel.
 
-    Only ``back`` and ``reset`` are wizard-machine navigation tokens
-    that auto-raise from the primitive prompts — ``cancel`` (and its
-    aliases) is contextual.  Token matching is case-insensitive and
+    ``back``/``reset`` raise :class:`WizardBack`/:class:`WizardReset`;
+    the cancel sentinels (``cancel``/``c``/``q``/``quit``) raise
+    :class:`WizardCancel`.  Token matching is case-insensitive and
     ignores surrounding whitespace.  The empty string is not a
     sentinel — the caller should treat that as "no answer" and apply
     its default.
@@ -88,6 +102,8 @@ def _check_navigation_token(value: str) -> None:
         raise WizardBack
     if lowered in _RESET_TOKENS:
         raise WizardReset
+    if lowered in _CANCEL_TOKENS:
+        raise WizardCancel
 
 
 # ---------------------------------------------------------------------------

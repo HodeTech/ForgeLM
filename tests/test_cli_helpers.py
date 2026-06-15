@@ -11,7 +11,8 @@ import argparse
 import re
 
 from forgelm.cli import _build_quickstart_inherited_flags
-from forgelm.trainer import _ANSWER_PATTERN, _math_reward_fn
+from forgelm.grpo_rewards import ANSWER_EXTRACT_PATTERN
+from forgelm.trainer import _math_reward_fn
 
 
 def _ns(**kwargs) -> argparse.Namespace:
@@ -74,8 +75,13 @@ def test_inherited_flags_combined() -> None:
 
 
 def test_math_reward_uses_module_level_pattern() -> None:
-    """The hoisted constant must be a compiled regex with case-insensitive flag."""
-    assert isinstance(_ANSWER_PATTERN, re.Pattern)
-    assert _ANSWER_PATTERN.flags & re.IGNORECASE
+    """The shared extraction constant must be a compiled regex with the I flag.
+
+    The pattern is the single source of truth in :mod:`forgelm.grpo_rewards`
+    (``ANSWER_EXTRACT_PATTERN``); ``forgelm.trainer._math_reward_fn`` imports
+    and applies it so the correctness reward and the format gate cannot drift.
+    """
+    assert isinstance(ANSWER_EXTRACT_PATTERN, re.Pattern)
+    assert ANSWER_EXTRACT_PATTERN.flags & re.IGNORECASE
     rewards = _math_reward_fn(["Answer: 7"], gold_answer=["7"])
     assert rewards == [1.0]

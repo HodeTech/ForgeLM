@@ -79,7 +79,7 @@ SFT-özgü ayarlar standart `training` bloğuyla yan yanadır.
 | `training.num_train_epochs` | int | `3` | Daha çok = daha çok ezberleme, daha az genelleme. |
 | `training.per_device_train_batch_size` | int | `4` | Cihaz başına. Etkili batch için `gradient_accumulation_steps` ile çarpın. |
 | `training.packing` | bool | `false` | Kısa dizileri throughput için paketle. %30-50 hız. |
-| `training.sample_packing` | bool | `false` | Alternatif TRL-tarafı packing yolu; `packing` ile karşılıklı dışlayıcı. |
+| `training.sample_packing` | bool | `false` | **Kullanımdan kaldırıldı** — `packing` için takma ad; `DeprecationWarning` ile `packing: true`'ya yönlendirir. v0.9.0'da kaldırılır — `packing` kullanın. |
 | `training.neftune_noise_alpha` | float | `null` | Embedding-noise regülarizasyonu. Küçük dataset'lerde `5.0` iyileştirir. |
 | `model.max_length` | int | `2048` | Eğitimdeki context (yapı `model:` altında, `training:` değil). Uzun = çok VRAM. |
 

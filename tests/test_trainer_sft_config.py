@@ -124,6 +124,37 @@ def test_sft_config_passes_packing_and_dataset_text_field(tmp_path):
     assert captured_kwargs["dataset_text_field"] == "text"
 
 
+def test_sample_packing_forwards_to_packing_in_trl_kwargs(tmp_path):
+    """Deprecated ``sample_packing: true`` must no longer be a silent no-op:
+    it forwards to ``packing`` at config time, so the TRL SFT kwargs reflect
+    it (F-P1-FAB-15)."""
+    from forgelm.config import ForgeConfig
+
+    captured_kwargs: dict = {}
+
+    class FakeSFTConfig:
+        def __init__(self, *, max_length=None, packing=False, dataset_text_field=None, **other):
+            captured_kwargs["packing"] = packing
+
+    config = ForgeConfig(
+        **{
+            "model": {"name_or_path": "org/model", "max_length": 2048},
+            "lora": {},
+            "training": {"trainer_type": "sft", "output_dir": str(tmp_path), "sample_packing": True},
+            "data": {"dataset_name_or_path": "org/dataset"},
+        }
+    )
+    # The deprecated flag was forwarded at validation time.
+    assert config.training.packing is True
+
+    trainer = _seed_trainer(tmp_path)
+    trainer.config = config
+    with patch("trl.SFTConfig", FakeSFTConfig):
+        trainer._get_training_args_for_type()
+
+    assert captured_kwargs["packing"] is True
+
+
 def test_sft_config_prefers_max_length_when_both_present(tmp_path):
     """Transitional alias release: if a trl version exposes BOTH
     ``max_length`` and ``max_seq_length`` (deprecated-alias window), the

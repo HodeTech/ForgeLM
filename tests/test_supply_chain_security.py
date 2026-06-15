@@ -126,6 +126,20 @@ class TestGenerateSbomDeterministic:
             assert comp.get("version"), comp
             assert comp.get("purl", "").startswith("pkg:pypi/"), comp
 
+    def test_components_emitted_in_canonical_bom_ref_order(self) -> None:
+        """F-P5-OPUS-18: components are sorted by ``bom-ref`` (PEP 503-normalized
+        purl) so the emitted order is stable regardless of pip version / install
+        order — the documented "re-emit from the git tag and diff" auditor flow
+        then holds with a plain diff, not just after a ``jq sort_by``."""
+        sbom_mod = _load_tool_module(_SBOM_TOOL, "generate_sbom_canon")
+        components = sbom_mod.build_sbom()["components"]
+        bom_refs = [c["bom-ref"] for c in components]
+        assert bom_refs == sorted(bom_refs), (
+            "SBOM components are not in canonical bom-ref order; a future refactor "
+            "dropped the sort and will cause spurious ordering diffs against the "
+            "released artefact"
+        )
+
 
 # ---------------------------------------------------------------------------
 # §2 — check_pip_audit.py severity-tiering
@@ -492,3 +506,49 @@ class TestSbomSerialNumberUniqueness:
             "serialNumber must be a fresh UUID per run per CycloneDX 1.5; "
             "Dependency-Track rejects duplicate-serial uploads"
         )
+
+
+# ---------------------------------------------------------------------------
+# §4 — supply_chain_security.md UNKNOWN-policy doc matches the code (F-P5-OPUS-04)
+# ---------------------------------------------------------------------------
+
+
+class TestSupplyChainDocMatchesPipAuditPolicy:
+    """F-P5-OPUS-04 regression: ``check_pip_audit.py`` fails closed on
+    UNKNOWN-severity findings (the dominant path, since pip-audit's JSON
+    omits OSV severity).  The reference doc (EN + TR) must describe that
+    fail-closed policy, not the pre-2026-05-24 'stays green' / 'yeşil kalır'
+    advisory wording.
+    """
+
+    _EN = _REPO_ROOT / "docs" / "reference" / "supply_chain_security.md"
+    _TR = _REPO_ROOT / "docs" / "reference" / "supply_chain_security-tr.md"
+
+    @staticmethod
+    def _unknown_bullet(doc_text: str) -> str:
+        """Return the UNKNOWN bullet's text (line + indented continuations)."""
+        lines = doc_text.splitlines()
+        for idx, line in enumerate(lines):
+            if "**UNKNOWN**" in line:
+                block = [line]
+                # Gather indented continuation lines until the next bullet.
+                for cont in lines[idx + 1 :]:
+                    if cont.strip().startswith("- ") or not cont.strip():
+                        break
+                    block.append(cont)
+                return "\n".join(block)
+        raise AssertionError("UNKNOWN policy bullet not found in supply-chain doc")
+
+    def test_en_unknown_bullet_says_fail_closed_not_stays_green(self) -> None:
+        bullet = self._unknown_bullet(self._EN.read_text(encoding="utf-8"))
+        assert "exit 1" in bullet, f"EN UNKNOWN bullet must document the fail-closed exit code: {bullet!r}"
+        assert "stays green" not in bullet, f"EN UNKNOWN bullet still claims 'stays green': {bullet!r}"
+
+    def test_tr_unknown_bullet_says_fail_closed_not_stays_green(self) -> None:
+        bullet = self._unknown_bullet(self._TR.read_text(encoding="utf-8"))
+        assert "exit 1" in bullet, f"TR UNKNOWN bullet must document the fail-closed exit code: {bullet!r}"
+        # The stale declarative claim was "Nightly yeşil kalır" (it stays
+        # green).  The corrected text may still say "yeşil kalmak için …
+        # güvenmeyin" (do not rely on staying green), so match the precise
+        # stale phrasing rather than the bare substring.
+        assert "yeşil kalır" not in bullet, f"TR UNKNOWN bullet still declares 'yeşil kalır': {bullet!r}"

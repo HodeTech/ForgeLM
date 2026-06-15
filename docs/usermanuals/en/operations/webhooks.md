@@ -31,8 +31,10 @@ $ forgelm --config configs/run.yaml
 
 ## Wire-format events
 
-ForgeLM emits exactly **five** webhook events. The table below is the
-canonical surface mirrored in the
+ForgeLM emits exactly **eight** webhook events: five single-stage
+lifecycle events plus the three `pipeline.*` events the multi-stage
+orchestrator emits alongside them. The table below is the canonical
+surface mirrored in the
 [Audit Event Catalog on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md):
 
 | Event | When fired | Gated by |
@@ -42,6 +44,9 @@ canonical surface mirrored in the
 | `training.failure` | Training raised (OOM, dataset error, unhandled exception). | `webhook.notify_on_failure` |
 | `training.reverted` | A post-training gate (eval / safety / judge / benchmark) rejected the run and `_revert_model` rolled adapters back. | `webhook.notify_on_failure` |
 | `approval.required` | Run succeeded, `evaluation.require_human_approval=true` is set, model staged for review (EU AI Act Article 14). | `webhook.notify_on_success` |
+| `pipeline.started` | A multi-stage pipeline run begins, before any stage executes. | `webhook.notify_on_start` |
+| `pipeline.completed` | A multi-stage pipeline run reaches its terminal state. | `webhook.notify_on_success` / `webhook.notify_on_failure` |
+| `pipeline.stage_reverted` | A pipeline stage auto-reverts, before downstream stages are skipped. | `webhook.notify_on_failure` |
 
 ## Payload shape
 
@@ -93,11 +98,12 @@ Real `WebhookConfig` (see `forgelm/config.py::WebhookConfig`):
 |---|---|---|
 | `url` | `null` | Inline URL — prefer `url_env` for secret hygiene. |
 | `url_env` | `null` | Env-var name carrying the URL. Overrides `url` when set. |
-| `notify_on_start` | `true` | Gates the `training.start` event. |
-| `notify_on_success` | `true` | Gates `training.success` AND `approval.required`. |
-| `notify_on_failure` | `true` | Gates `training.failure` AND `training.reverted`. |
+| `notify_on_start` | `true` | Gates `training.start` AND `pipeline.started`. |
+| `notify_on_success` | `true` | Gates `training.success`, `approval.required`, AND a successful `pipeline.completed`. |
+| `notify_on_failure` | `true` | Gates `training.failure`, `training.reverted`, `pipeline.stage_reverted`, AND a failing `pipeline.completed`. |
 | `timeout` | `10` | HTTP timeout in seconds; clamped to ≥ 1s. |
 | `allow_private_destinations` | `false` | Opt-in for RFC 1918 / loopback / link-local destinations (in-cluster Slack proxy, on-prem Teams gateway). Defaults reject — SSRF guard. |
+| `require_https` | `false` | TLS-only enforcement. `true` refuses a plaintext `http://` URL (the SSRF guard raises; the POST is skipped) instead of warning-and-sending. Default `false` preserves warn-then-send. |
 | `tls_ca_bundle` | `null` | Path to a custom CA bundle (corporate MITM CA). When unset, `certifi`'s bundled store is used. |
 
 There is no `template:`, `events: [...]`, `headers: {...}`,
@@ -108,7 +114,7 @@ live outside ForgeLM.
 
 ## Security considerations
 
-- **TLS strongly recommended.** ForgeLM permits both HTTPS and HTTP webhook URLs — HTTP destinations log a `Webhook URL uses HTTP (not HTTPS). Data will be sent unencrypted.` warning but are not rejected (see `forgelm/webhook.py` `_send`). Pin `https://` URLs in production.
+- **TLS strongly recommended.** ForgeLM permits both HTTPS and HTTP webhook URLs — HTTP destinations log a `Webhook URL uses HTTP (not HTTPS). Data will be sent unencrypted.` warning but are not rejected by default (see `forgelm/webhook.py` `_send`). On a regulated estate set `webhook.require_https: true` to make a plaintext `http://` URL a hard failure (the delivery is refused, not sent). Pin `https://` URLs in production.
 - **Curated payload.** ForgeLM never includes raw training data, full configs, or unredacted PII in webhook payloads. The notifier wraps a fixed-shape JSON; there is no `webhook.redact` toggle because there's nothing user-controllable to redact.
 - **Server-Side Request Forgery (SSRF) guard.** ForgeLM blocks webhook URLs pointing at internal IPs (RFC 1918, loopback, link-local, 169.254.x) unless you explicitly opt-in with `webhook.allow_private_destinations: true`. This prevents misconfigured runs from probing your internal network.
 - **No HMAC body signing.** ForgeLM does not sign webhook bodies — destination-side authenticity falls to TLS + URL secrecy via `url_env` plus the receiving system's bearer-token / signed-request controls (Slack signing secret, Teams connector token).
@@ -120,7 +126,7 @@ live outside ForgeLM.
 :::
 
 :::warn
-**Expecting per-epoch webhooks.** ForgeLM does not emit a per-epoch event — only the five lifecycle events listed above. If you need per-epoch progress, scrape it from the trainer's stdout / `audit_log.jsonl` rather than expecting a webhook fan-out.
+**Expecting per-epoch webhooks.** ForgeLM does not emit a per-epoch event — only the eight events listed above. If you need per-epoch progress, scrape it from the trainer's stdout / `audit_log.jsonl` rather than expecting a webhook fan-out.
 :::
 
 :::tip

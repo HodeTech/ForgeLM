@@ -136,17 +136,20 @@ class TestExportModel:
         result = export_model(str(tmp_path / "model"), str(tmp_path / "out.xyz"), output_format="xyz")
         assert result.success is False
         assert "xyz" in result.error
+        assert result.error_kind == "config"
 
     def test_unsupported_quant_returns_failure(self, tmp_path):
         result = export_model(str(tmp_path / "model"), str(tmp_path / "out.gguf"), quant="q99_k")
         assert result.success is False
         assert "q99_k" in result.error
+        assert result.error_kind == "config"
 
     def test_missing_llama_cpp_returns_failure(self, tmp_path):
         with patch.dict(sys.modules, {"llama_cpp": None}):
             result = export_model(str(tmp_path / "model"), str(tmp_path / "out.gguf"))
         assert result.success is False
         assert "forgelm[export]" in result.error
+        assert result.error_kind == "runtime"
 
     def test_successful_export_returns_sha256(self, tmp_path):
         output_path, fake_run = self._mock_successful_conversion(tmp_path)
@@ -265,6 +268,29 @@ class TestExportModel:
             data = json.load(f)
         assert len(data["exported_artifacts"]) == 1
         assert data["exported_artifacts"][0]["sha256"] == result.sha256
+
+    def test_malformed_gguf_converter_env_var_is_config_error(self, tmp_path):
+        """FORGELM_GGUF_CONVERTER pointing to a non-.py path must produce error_kind='config'."""
+        env = {"FORGELM_GGUF_CONVERTER": "/tmp/convert.sh"}
+        with patch.dict(os.environ, env, clear=False):
+            result = export_model(str(tmp_path / "model"), str(tmp_path / "out.gguf"))
+        assert result.success is False
+        assert result.error_kind == "config"
+        assert ".py" in result.error
+
+    def test_missing_converter_script_in_package_is_runtime_error(self, tmp_path):
+        """FileNotFoundError from _find_converter_script (missing .py) must produce error_kind='runtime'."""
+        llama_cpp_stub = MagicMock()
+        pkg_dir = str(tmp_path / "llama_cpp")
+        os.makedirs(pkg_dir, exist_ok=True)
+        llama_cpp_stub.__file__ = os.path.join(pkg_dir, "__init__.py")
+        # Do NOT create convert_hf_to_gguf.py so _find_converter_script raises FileNotFoundError.
+
+        with patch.dict(sys.modules, {"llama_cpp": llama_cpp_stub}):
+            result = export_model(str(tmp_path / "model"), str(tmp_path / "out.gguf"))
+
+        assert result.success is False
+        assert result.error_kind == "runtime"
 
     def test_all_supported_quants_accepted(self, tmp_path):
         """Every quant in SUPPORTED_QUANTS must pass format/quant validation."""

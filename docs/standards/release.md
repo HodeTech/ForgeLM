@@ -7,7 +7,7 @@
 
 **Semantic versioning 2.0 (MAJOR.MINOR.PATCH).**
 
-Current version lives in [`pyproject.toml`](../../pyproject.toml) line 7 (single source of truth — no `__version__` in code).
+Current version lives in [`pyproject.toml`](../../pyproject.toml)'s `version =` line (single source of truth). `forgelm.__version__` is a thin `importlib.metadata` wrapper over it — see [§Version in code](#version-in-code).
 
 | Bump | Trigger |
 |---|---|
@@ -17,7 +17,7 @@ Current version lives in [`pyproject.toml`](../../pyproject.toml) line 7 (single
 
 ### Pre-releases
 
-Current version is `0.5.5` (per `pyproject.toml`) — pre-1.0; release-candidate suffixes (`0.5.5rc1`, `0.5.5rc2`, …) are used during the rc window.
+The project is pre-1.0 (see `pyproject.toml`'s `version =` line for the current value); release-candidate suffixes (`rc1`, `rc2`, …) are used during the rc window.
 
 - `0.4.0rc1`, `0.4.0rc2`, ... — for PyPI distribution while collecting feedback
 - `0.4.0` — final release after rcN is stable
@@ -124,11 +124,13 @@ Rules:
 superseded by the `forgelm audit` subcommand in Phase 12. Deprecated in
 v0.5.0 (`forgelm/cli/_dispatch.py:165-172` raises `DeprecationWarning`
 and the surrounding handler at `_dispatch.py:154-205` writes an
-append-only `cli.legacy_flag_invoked` audit-log event naming v0.7.0 as
+append-only `cli.legacy_flag_invoked` audit-log event naming v0.8.0 as
 the removal target; the Phase 15 CLI split moved this from the original
 single-file `cli.py:1424-1428` location). The flag remains present and
-functional through v0.6.x, then is removed in v0.7.0 with a matching
-`### Removed` CHANGELOG entry.
+functional through v0.6.x–v0.7.x — the original v0.7.0 removal was pushed
+one minor out at the v0.7.0 cut to preserve the full one-minor warning
+window — then is removed in v0.8.0 with a matching `### Removed` CHANGELOG
+entry.
 
 ## Release checklist
 
@@ -222,10 +224,10 @@ Each combo:
    to cover the heaviest extras path. `qlora` pulls `bitsandbytes`, which
    only ships Linux wheels — we never claim Windows / macOS support for
    that extra.
-4. Runs `pytest tests/ -q --ignore=tests/test_cost_estimation.py`. The
-   cost-estimation test is excluded because its pricing fixture drifts on
-   a different cadence than the release matrix; a stale fixture would
-   break the chain for reasons unrelated to packaging health.
+4. Runs `pytest tests/ -q -m 'not fixture_drift'`. Tests marked
+   `@pytest.mark.fixture_drift` are excluded because their fixtures drift
+   on a different cadence than the release matrix; the marker follows the
+   file if renamed.
 5. Generates a CycloneDX 1.5 SBOM via `python tools/generate_sbom.py`,
    redirected to `sbom-${{ matrix.os }}-py${{ matrix.python }}.json`.
 6. Uploads each SBOM as its own artifact — 12 per release tag, retained
@@ -271,8 +273,9 @@ Current target:
   - `v0.4.0` → Phase 10 done (Post-Training Completion)
   - `v0.5.0` → Phases 11 + 12 done (Ingestion + Quickstart)
   - `v0.5.5` → Phase 12.6 closure cycle done (38 fazlar / 5 waves bundled)
-  - `v0.6.0` → Phase 14 done (Pipeline Chains)
+  - `v0.6.0` → Phase 15 done (Ingestion Pipeline Reliability)
   - `v0.6.0-pro` → Phase 13 done (Pro CLI; gated release)
+  - `v0.7.0` → Phase 14 done (Multi-Stage Pipeline Chains)
 - **Patch** (`0.N.M`) — as needed; typically within 1 week of a bug report for critical issues
 - **Pre-release** (`rcN`) — at least one rc before every minor, kept on PyPI for 1-2 weeks
 

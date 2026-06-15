@@ -237,6 +237,41 @@ class TestPydanticClassDetection:
         flagged_classes = {m.class_name for m in missing}
         assert flagged_classes == {"B", "C"}, f"expected only B and C to be flagged, got {flagged_classes}"
 
+    def test_indirect_inheritance_scanned(self, tmp_path: Path) -> None:
+        """F-P1-FAB-29: a class inheriting BaseModel through an
+        intermediate base must still be scanned.  Previously the
+        per-class check matched only a *direct* BaseModel base, so a
+        shared-base refactor would silently exempt every migrated model
+        from the description guard while CI stayed green."""
+        src = _write(
+            tmp_path / "m.py",
+            "from pydantic import BaseModel, Field\n"
+            "class ForgeBase(BaseModel):\n"
+            "    model_config = {'extra': 'forbid'}\n"
+            "class LeafConfig(ForgeBase):\n"
+            "    undocumented: int = Field(default=8)\n"  # missing — must be flagged
+            "    documented: int = Field(default=1, description='ok')\n",
+        )
+        missing = scan_file(str(src))
+        flagged = {(m.class_name, m.field_name) for m in missing}
+        assert flagged == {("LeafConfig", "undocumented")}, f"indirect-inheritance field not flagged; got {flagged}"
+
+    def test_two_level_indirect_inheritance_scanned(self, tmp_path: Path) -> None:
+        """Transitivity holds across more than one intermediate base."""
+        src = _write(
+            tmp_path / "m.py",
+            "from pydantic import BaseModel, Field\n"
+            "class L0(BaseModel):\n"
+            "    a: int = Field(default=1, description='ok')\n"
+            "class L1(L0):\n"
+            "    b: int = Field(default=2, description='ok')\n"
+            "class L2(L1):\n"
+            "    c: int = Field(default=3)\n",  # missing — must be flagged
+        )
+        missing = scan_file(str(src))
+        flagged = {(m.class_name, m.field_name) for m in missing}
+        assert flagged == {("L2", "c")}, f"two-level indirect field not flagged; got {flagged}"
+
 
 # ---------------------------------------------------------------------------
 # CLI surface (--strict mode)
@@ -286,3 +321,110 @@ class TestCanonicalFile:
         config_path = Path(__file__).parent.parent / "forgelm" / "config.py"
         rc = check_field_descriptions.main(["--strict", str(config_path)])
         assert rc == 0, "forgelm/config.py must pass --strict; some field is missing description="
+
+
+# ---------------------------------------------------------------------------
+# F-P1-FAB-39 — conditional-body fields are scanned
+# ---------------------------------------------------------------------------
+
+
+class TestConditionalBodyFields:
+    def test_field_under_if_block_flagged(self, tmp_path: Path) -> None:
+        """A field declared under ``if ...:`` in a class body is a real
+        runtime field and must be audited."""
+        src = _write(
+            tmp_path / "m.py",
+            "import sys\n"
+            "from pydantic import BaseModel, Field\n"
+            "class M(BaseModel):\n"
+            "    if sys.version_info >= (3, 10):\n"
+            "        undocumented: int = Field(default=8)\n",
+        )
+        missing = scan_file(str(src))
+        assert [m.field_name for m in missing] == ["undocumented"]
+
+    def test_field_under_try_block_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path / "m.py",
+            "from pydantic import BaseModel, Field\n"
+            "class M(BaseModel):\n"
+            "    try:\n"
+            "        undocumented: int = Field(default=8)\n"
+            "    except Exception:\n"
+            "        pass\n",
+        )
+        missing = scan_file(str(src))
+        assert [m.field_name for m in missing] == ["undocumented"]
+
+    def test_described_field_under_if_block_passes(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path / "m.py",
+            "import sys\n"
+            "from pydantic import BaseModel, Field\n"
+            "class M(BaseModel):\n"
+            "    if sys.version_info >= (3, 10):\n"
+            "        ok: int = Field(default=8, description='documented')\n",
+        )
+        assert scan_file(str(src)) == []
+
+
+# ---------------------------------------------------------------------------
+# F-P1-FAB-40 — false positives: aliased Field/Annotated + ClassVar
+# ---------------------------------------------------------------------------
+
+
+class TestFalsePositives:
+    def test_classvar_constant_not_flagged(self, tmp_path: Path) -> None:
+        """``ClassVar`` is a class-level constant, not a Pydantic field."""
+        src = _write(
+            tmp_path / "m.py",
+            "from typing import ClassVar\n"
+            "from pydantic import BaseModel\n"
+            "class M(BaseModel):\n"
+            "    NOT_A_FIELD: ClassVar[int] = 5\n",
+        )
+        assert scan_file(str(src)) == []
+
+    def test_aliased_field_import_described_passes(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path / "m.py",
+            "from pydantic import BaseModel, Field as F\n"
+            "class M(BaseModel):\n"
+            "    documented: int = F(default=8, description='via alias')\n",
+        )
+        assert scan_file(str(src)) == []
+
+    def test_aliased_annotated_import_described_passes(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path / "m.py",
+            "from typing import Annotated as Ann\n"
+            "from pydantic import BaseModel, Field\n"
+            "class M(BaseModel):\n"
+            "    documented: Ann[int, Field(default=8, description='via alias')]\n",
+        )
+        assert scan_file(str(src)) == []
+
+    def test_aliased_field_without_description_still_flagged(self, tmp_path: Path) -> None:
+        """Alias resolution must not blunt the guard — a described-less
+        aliased Field is still a real miss."""
+        src = _write(
+            tmp_path / "m.py",
+            "from pydantic import BaseModel, Field as F\nclass M(BaseModel):\n    undocumented: int = F(default=8)\n",
+        )
+        assert [m.field_name for m in scan_file(str(src))] == ["undocumented"]
+
+
+# ---------------------------------------------------------------------------
+# F-P1-FAB-42 — bare invocation (default paths) is runnable
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultPaths:
+    def test_bare_strict_scans_default_config(self, monkeypatch) -> None:
+        """``check_field_descriptions.py --strict`` with no positional
+        argument must scan forgelm/config.py and exit 0 (CHANGELOG /
+        gauntlet documented the bare form)."""
+        repo_root = Path(__file__).parent.parent
+        monkeypatch.chdir(repo_root)
+        rc = check_field_descriptions.main(["--strict"])
+        assert rc == 0

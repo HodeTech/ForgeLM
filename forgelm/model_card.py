@@ -24,6 +24,30 @@ def _is_secret_key(key: Any) -> bool:
     return any(tok in k for tok in _SECRET_KEY_TOKENS)
 
 
+# Characters that let an operator-controlled model/dataset/path string break
+# out of its Markdown context (table cells, the H1 heading, the YAML
+# front-matter, and the fenced Python usage block all embed these fields). We
+# *strip* rather than backslash-escape because the same value is interpolated
+# into a fenced code block and the YAML front-matter, where a literal backslash
+# would either show verbatim or break the parser. Path-legal characters
+# (``/ . - _``) are intentionally preserved so ``org/model`` stays intact —
+# they carry no injection power in these inline contexts (F-P4-OPUS-30).
+_MD_INJECTION_CHARS = "`|[]()<>\r\n*#"
+
+
+def _neutralize_md_inline(text: Any) -> str:
+    """Strip Markdown/link/table-injection characters from a config-derived field.
+
+    Sibling discipline to ``compliance._sanitize_md`` (which escapes the
+    Article-13 deployer instructions). The model card reuses each field across
+    YAML front-matter, table cells, a heading, and a fenced code block, so this
+    removes the injection-capable characters instead of backslash-escaping —
+    keeping the value valid in every one of those contexts.
+    """
+    s = str(text)
+    return "".join(ch for ch in s if ch not in _MD_INJECTION_CHARS).strip()
+
+
 def _redact_secrets(value: Any) -> Any:
     """Recursively redact any dict value whose key signals a secret.
 
@@ -225,27 +249,36 @@ def generate_model_card(
     config_dict = _redact_secrets(config_dict)
     config_yaml = yaml.dump(config_dict, default_flow_style=False, sort_keys=False)
 
+    # Operator-controlled free-text fields are neutralised before interpolation
+    # so a crafted model/dataset name or path cannot inject links, break the
+    # tables, or escape the YAML front-matter (parity with the deployer
+    # instructions' _sanitize_md discipline — F-P4-OPUS-30).
+    base_model = _neutralize_md_inline(config.model.name_or_path)
+    dataset = _neutralize_md_inline(config.data.dataset_name_or_path)
+    model_path = _neutralize_md_inline(final_path)
+    model_name = _neutralize_md_inline(config.model.name_or_path.split("/")[-1]) + "_finetune"
+
     card = MODEL_CARD_TEMPLATE.format(
-        model_name=config.model.name_or_path.split("/")[-1] + "_finetune",
-        base_model=config.model.name_or_path,
+        model_name=model_name,
+        base_model=base_model,
         backend=config.model.backend,
         method=method,
         lora_r=config.lora.r,
         lora_alpha=config.lora.alpha,
         use_dora=config.lora.use_dora,
-        target_modules=", ".join(config.lora.target_modules),
+        target_modules=", ".join(_neutralize_md_inline(m) for m in config.lora.target_modules),
         epochs=config.training.num_train_epochs,
         batch_size=config.training.per_device_train_batch_size,
         learning_rate=config.training.learning_rate,
         max_length=config.model.max_length,
         quantization="4-bit NF4" if config.model.load_in_4bit else "None",
-        dataset=config.data.dataset_name_or_path,
+        dataset=dataset,
         date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         metrics_table=metrics_table,
         benchmark_section=benchmark_section,
         safety_section=safety_section,
         config_yaml=config_yaml,
-        model_path=final_path,
+        model_path=model_path,
         version=__version__,
         extra_tags=extra_tags_str,
     )

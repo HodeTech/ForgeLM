@@ -142,12 +142,46 @@ class TestDeployCLI:
                 main()
         assert exc_info.value.code == EXIT_SUCCESS
 
-    def test_deploy_bad_target_exits_error(self, tmp_path):
+    def test_deploy_invalid_target_is_argparse_rejected(self, tmp_path, capsys):
+        """F-P7-OPUS-37: ``--target`` has argparse choices, so a bogus value is
+        rejected by argparse (exit 2) BEFORE generate_deploy_config runs — pin
+        that explicitly rather than relying on 2 == EXIT_TRAINING_ERROR."""
         out = str(tmp_path / "out.cfg")
         with patch("sys.argv", ["forgelm", "deploy", "./model", "--target", "bogus", "--output", out]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
-        assert exc_info.value.code == EXIT_TRAINING_ERROR
+        assert exc_info.value.code == 2
+        assert "invalid choice" in capsys.readouterr().err
+
+    def test_generate_deploy_config_unsupported_target_returns_failure(self):
+        """F-P7-OPUS-37: cover the library-level SUPPORTED_TARGETS branch that
+        the CLI seam can never reach (argparse blocks bad targets first)."""
+        from forgelm.deploy import generate_deploy_config
+
+        result = generate_deploy_config("m", "bogus")
+        assert result.success is False
+        assert "Unsupported target" in (result.error or "")
+
+    def test_export_success_json_envelope_keys(self, tmp_path, capsys):
+        """F-P7-OPUS-37: pin the export success-envelope top-level key set so a
+        future field rename/removal in the dispatcher is caught."""
+        from forgelm.export import ExportResult
+
+        ok = ExportResult(
+            success=True,
+            output_path="/tmp/m.gguf",
+            format="gguf",
+            quant="q4_k_m",
+            sha256="abc",
+            size_bytes=10,
+        )
+        with patch("forgelm.export.export_model", return_value=ok):
+            with patch("sys.argv", ["forgelm", "--output-format", "json", "export", "./m", "--output", "/tmp/m.gguf"]):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code == EXIT_SUCCESS
+        envelope = json.loads(capsys.readouterr().out)
+        assert set(envelope) == {"success", "output_path", "format", "quant", "sha256", "size_bytes", "error"}
 
     def test_deploy_json_output(self, tmp_path, capsys):
         model_dir = tmp_path / "model"
@@ -217,6 +251,16 @@ class TestExportCLI:
                     main()
         assert exc_info.value.code == EXIT_TRAINING_ERROR
 
+    def test_export_malformed_converter_env_exits_config_error(self, tmp_path, monkeypatch):
+        """F-P7-OPUS-36: a malformed FORGELM_GGUF_CONVERTER (non-.py path) is
+        operator input → EXIT_CONFIG_ERROR (1), not EXIT_TRAINING_ERROR (2)."""
+        monkeypatch.setenv("FORGELM_GGUF_CONVERTER", str(tmp_path / "not_a_script.bin"))
+        out = str(tmp_path / "model.gguf")
+        with patch("sys.argv", ["forgelm", "export", "./model", "--output", out]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == EXIT_CONFIG_ERROR
+
     def test_export_json_on_failure(self, tmp_path, capsys):
         out = str(tmp_path / "model.gguf")
         with patch.dict(sys.modules, {"llama_cpp": None}):
@@ -279,6 +323,34 @@ class TestExportCLI:
 
         assert exc_info.value.code == EXIT_SUCCESS
 
+    def test_export_rejects_comma_quant(self, capsys):
+        # F-P7-OPUS-13: --quant is a single-value choices flag; the comma
+        # form the docs once advertised is rejected by argparse (exit 2).
+        with patch("sys.argv", ["forgelm", "export", "./model", "--output", "o.gguf", "--quant", "q4_k_m,q8_0"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == 2
+        err = capsys.readouterr().err
+        assert "invalid choice" in err
+
+
+# ---------------------------------------------------------------------------
+# json-output.md envelope-contract parity (F-P7-OPUS-12)
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycleEnvelopeDocs:
+    def test_export_and_deploy_envelopes_documented(self):
+        """json-output.md (EN + TR) must carry export + deploy sections."""
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent
+        for lang in ("en", "tr"):
+            doc = repo_root / "docs" / "usermanuals" / lang / "reference" / "json-output.md"
+            text = doc.read_text(encoding="utf-8")
+            assert "## `forgelm export`" in text, f"{lang} json-output.md missing export section"
+            assert "## `forgelm deploy`" in text, f"{lang} json-output.md missing deploy section"
+
 
 # ---------------------------------------------------------------------------
 # forgelm chat subcommand (smoke tests; no actual model loaded)
@@ -287,13 +359,35 @@ class TestExportCLI:
 
 class TestChatCLI:
     def test_chat_does_not_require_config(self):
-        """Running forgelm chat without --config must not exit with CONFIG_ERROR."""
+        """Running forgelm chat without --config must not exit with CONFIG_ERROR.
+
+        Smoke check only — the SIGINT exit-code contract is pinned by the
+        two dedicated tests below."""
+        with patch("forgelm.cli._run_chat_cmd", return_value=None):
+            with patch("sys.argv", ["forgelm", "chat", "./model"]):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code != EXIT_CONFIG_ERROR
+
+    def test_chat_clean_exit_returns_success(self):
+        """F-P7-OPUS-28: a clean REPL exit (run_chat returns normally) must
+        exit EXIT_SUCCESS — the dispatcher's two-path SIGINT contract."""
+        with patch("forgelm.chat.run_chat", return_value=None):
+            with patch("sys.argv", ["forgelm", "chat", "./model"]):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code == EXIT_SUCCESS
+
+    def test_chat_inflight_sigint_exits_training_error(self):
+        """F-P7-OPUS-28: a KeyboardInterrupt during generation (not caught by
+        _run_chat_cmd's ``except Exception``) bubbles to the dispatcher and
+        exits EXIT_TRAINING_ERROR (2), NOT success. Pins the exact code so a
+        regression that swaps it cannot pass."""
         with patch("forgelm.cli._run_chat_cmd", side_effect=KeyboardInterrupt):
             with patch("sys.argv", ["forgelm", "chat", "./model"]):
                 with pytest.raises(SystemExit) as exc_info:
                     main()
-        # Should be SUCCESS (KeyboardInterrupt handled gracefully in _run_chat_cmd)
-        assert exc_info.value.code != EXIT_CONFIG_ERROR
+        assert exc_info.value.code == EXIT_TRAINING_ERROR
 
     def test_chat_subcommand_registered(self, capsys):
         """forgelm chat --help must succeed and document model_path."""
@@ -303,6 +397,46 @@ class TestChatCLI:
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
         assert "model_path" in captured.out
+
+    def test_chat_help_does_not_advertise_unshipped_safety(self, capsys):
+        # F-P7-OPUS-14 regression: chat has no --safety flag and performs
+        # no per-response safety screening; the help text must not promise
+        # one (the user manual explicitly says the feature does not exist).
+        with patch("sys.argv", ["forgelm", "chat", "--help"]):
+            with pytest.raises(SystemExit):
+                main()
+        captured = capsys.readouterr()
+        assert "safety" not in captured.out.lower()
+
+    def test_dispatch_docstring_does_not_hardcode_stale_subcommand_subset(self):
+        """F-P7-OPUS-40: the ``_dispatch_subcommand`` docstring used to
+        enumerate 11 of the 18 routed subcommands as prose, drifting silently as
+        new ones were added. It now points at the authoritative ``table``
+        literal. Guard against re-introducing a partial hard-coded list by
+        asserting subcommands present only in the newer cohort are NOT named in
+        the docstring prose (they would only appear there as a stale partial
+        enumeration)."""
+        from forgelm.cli._dispatch import _dispatch_subcommand
+
+        doc = _dispatch_subcommand.__doc__ or ""
+        for stale_only_name in ("purge", "reverse-pii", "safety-eval", "verify-gguf"):
+            assert stale_only_name not in doc, (
+                f"_dispatch_subcommand docstring hard-codes {stale_only_name!r}; "
+                "point at the table literal instead of enumerating subcommands"
+            )
+
+    def test_chat_manual_frontmatter_does_not_advertise_safety_routing(self):
+        # F-P7-OPUS-39: the chat manual frontmatter description (rendered as the
+        # SPA page summary) must not advertise 'safety routing' while --safety
+        # is unshipped — it contradicts the same page's own disclaimer.
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent
+        for lang in ("en", "tr"):
+            page = repo_root / "docs" / "usermanuals" / lang / "deployment" / "chat.md"
+            frontmatter = page.read_text(encoding="utf-8").split("---", 2)[1].lower()
+            assert "safety routing" not in frontmatter
+            assert "güvenlik routing" not in frontmatter
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +501,24 @@ class TestSubcommandRouting:
             with pytest.raises(SystemExit) as exc_info:
                 main()
         assert exc_info.value.code == EXIT_SUCCESS
+
+    def test_dispatcher_clamps_nonpublic_verify_audit_return(self):
+        """F-P7-OPUS-29: a dispatcher returning a non-public code (e.g. a
+        signal-derived 130) must be clamped to EXIT_TRAINING_ERROR at the
+        dispatch seam, making the _exit_codes docstring invariant real."""
+        with patch("forgelm.cli._run_verify_audit_cmd", MagicMock(return_value=130)):
+            with patch("sys.argv", ["forgelm", "verify-audit", "/tmp/out"]):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code == EXIT_TRAINING_ERROR
+
+    def test_dispatcher_passes_through_public_verify_audit_return(self):
+        """The clamp must not alter a legitimate public code."""
+        with patch("forgelm.cli._run_verify_audit_cmd", MagicMock(return_value=EXIT_CONFIG_ERROR)):
+            with patch("sys.argv", ["forgelm", "verify-audit", "/tmp/out"]):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code == EXIT_CONFIG_ERROR
 
     def test_wizard_still_works(self):
         """--wizard flow must remain reachable via the dispatcher.

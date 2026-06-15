@@ -481,7 +481,7 @@ is on the Wave 3 backlog.
 > wide-gutter regulatory publications) but misses publication-grade
 > two-column papers. A histogram-based bimodal-mode refactor is tracked
 > as a Wave 3 follow-up (see
-> [Phase 15 archive](../roadmap/completed-phases.md#phase-15-ingestion-pipeline-reliability-v060)
+> [Phase 15 archive](../roadmap/completed-phases.md#phase-15--ingestion-pipeline-reliability-v060)
 > Wave 3 — multi-column layout extraction).
 
 ### Markdown-aware splitter — `--strategy markdown` (Phase 12)

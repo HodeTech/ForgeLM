@@ -59,6 +59,8 @@ _EXPECTED_STABLE_SYMBOLS = {
     "VerifyAnnexIVResult",
     "verify_gguf",
     "VerifyGgufResult",
+    "verify_integrity",
+    "VerifyIntegrityResult",
     # Webhook notifier.
     "WebhookNotifier",
     # Auxiliary.
@@ -121,6 +123,18 @@ class TestPublicSurface:
 
         leaked = {n for n in dir(forgelm) if not n.startswith("_")} - set(forgelm.__all__)
         assert not leaked, f"Names exposed without being in __all__: {sorted(leaked)}"
+
+    def test_dir_is_exactly_sorted_unique_all_when_simplified(self) -> None:
+        """``__dir__`` derives its listing solely from ``__all__`` (the
+        former second statement that re-added dunders was dead code — the
+        ``and n in __all__`` filter guaranteed every candidate was already
+        present).  Pin the exact equality so a future reviewer who tries to
+        re-introduce a globals()-sourced surface, or who drops a dunder from
+        ``__all__``, trips this assertion instead of silently widening the
+        advertised API."""
+        import forgelm
+
+        assert dir(forgelm) == sorted(set(forgelm.__all__))
 
     def test_design_doc_experimental_symbols_are_exported(self) -> None:
         """F-PR29-A3-05: symbols listed Experimental in
@@ -389,7 +403,14 @@ data:
         from forgelm import verify_annex_iv_artifact
 
         artifact = {
-            "system_identification": {"name": "x"},
+            "system_identification": {
+                "name": "x",
+                # Identity-critical §1 sub-fields the verifier requires
+                # to be non-empty (F-P4-OPUS-17).
+                "provider_name": "Acme",
+                "system_name": "x",
+                "intended_purpose": "y",
+            },
             "intended_purpose": "y",
             "system_components": ["a"],
             "computational_resources": {"gpu": "x"},
@@ -411,3 +432,203 @@ data:
         path.write_bytes(b"GGUF" + b"\x00" * 256)
         result = verify_gguf(str(path))
         assert result.valid is True
+
+    def test_verify_result_types_resolve_via_top_level_facade(self) -> None:
+        """F-P1-FAB-37: the two Stable verification result TYPES must resolve
+        through the top-level facade (their functions already do).  Pins the
+        lazy targets so a CLI-package reorganisation cannot silently break
+        ``from forgelm import VerifyAnnexIVResult / VerifyGgufResult``."""
+        from forgelm import VerifyAnnexIVResult, VerifyGgufResult
+
+        assert isinstance(VerifyAnnexIVResult, type)
+        assert isinstance(VerifyGgufResult, type)
+
+
+# ---------------------------------------------------------------------------
+# Stability-tier roster — single source of truth (F-P1-FAB-27)
+# ---------------------------------------------------------------------------
+
+
+class TestStabilityTierMap:
+    """The per-symbol tier was previously contradicted across ``_version.py``,
+    the module docstring, the reference doc and the test fixtures.  Pin the
+    in-code ``_STABILITY_TIERS`` map as the single source of truth and assert
+    it agrees with the user-facing reference doc's Tier column.
+    """
+
+    @staticmethod
+    def _reference_tier_map() -> dict[str, str]:
+        import re
+
+        ref = (Path(__file__).parent.parent / "docs" / "reference" / "library_api_reference.md").read_text(
+            encoding="utf-8"
+        )
+        # Top-level symbol rows only: `| `forgelm.SYM` | <Tier> |` where SYM
+        # has no dot (method rows like `forgelm.ForgeTrainer.train` are skipped).
+        rows = re.findall(
+            r"^\|\s*`forgelm\.([A-Za-z_][A-Za-z0-9_]*)`\s*\|\s*(Stable|Experimental)\s*\|",
+            ref,
+            re.M,
+        )
+        return {sym: tier.lower() for sym, tier in rows}
+
+    def test_tier_map_covers_exactly_all(self) -> None:
+        import forgelm
+
+        assert set(forgelm._STABILITY_TIERS) == set(forgelm.__all__), (
+            "_STABILITY_TIERS must record a tier for every public symbol and nothing else."
+        )
+
+    def test_tier_map_matches_reference_doc(self) -> None:
+        import forgelm
+
+        ref_tiers = self._reference_tier_map()
+        # The reference doc carries a row for every top-level public symbol.
+        assert set(ref_tiers) == set(forgelm.__all__), (
+            f"Reference doc Tier column drifted from forgelm.__all__: {sorted(set(ref_tiers) ^ set(forgelm.__all__))}"
+        )
+        assert ref_tiers == forgelm._STABILITY_TIERS, (
+            "library_api_reference.md Tier column disagrees with forgelm._STABILITY_TIERS: "
+            f"{ {k: (ref_tiers.get(k), forgelm._STABILITY_TIERS.get(k)) for k in set(ref_tiers) | set(forgelm._STABILITY_TIERS) if ref_tiers.get(k) != forgelm._STABILITY_TIERS.get(k)} }"
+        )
+
+    def test_tiers_are_only_stable_or_experimental(self) -> None:
+        import forgelm
+
+        assert set(forgelm._STABILITY_TIERS.values()) <= {"stable", "experimental"}
+
+
+# ---------------------------------------------------------------------------
+# Lazy-symbol / __all__ / TYPE_CHECKING parity (F-P1-FAB-28)
+# ---------------------------------------------------------------------------
+
+
+class TestLazySymbolParity:
+    """Adding/removing a public symbol requires synchronised edits to
+    ``__all__``, ``_LAZY_SYMBOLS`` and the TYPE_CHECKING block.  Only the
+    ``__all__`` leg was tested; deleting a ``_LAZY_SYMBOLS`` row broke
+    ``from forgelm import X`` while the suite stayed green.  These tests pin
+    the other two legs.
+    """
+
+    # Eager (non-lazy) public symbols: the versioning + config trio imported
+    # directly in __init__.py rather than via the __getattr__ resolver.
+    _EAGER = {"__version__", "__api_version__", "load_config", "ForgeConfig", "ConfigError"}
+
+    def test_lazy_union_eager_equals_all(self) -> None:
+        import forgelm
+
+        assert set(forgelm._LAZY_SYMBOLS) | self._EAGER == set(forgelm.__all__), (
+            "_LAZY_SYMBOLS ∪ eager symbols must equal __all__: "
+            f"{sorted((set(forgelm._LAZY_SYMBOLS) | self._EAGER) ^ set(forgelm.__all__))}"
+        )
+
+    def test_every_public_symbol_resolves(self) -> None:
+        """Resolve every name in __all__ through the facade in a fresh
+        subprocess so a deleted ``_LAZY_SYMBOLS`` row (which leaves the name
+        in __all__ + dir() but breaks ``from forgelm import X``) is caught.
+        Subprocess keeps the heavy-submodule pollution out of the suite
+        process, mirroring the lazy-discipline tests above.
+        """
+        script = (
+            "import forgelm; "
+            "missing = [n for n in forgelm.__all__ if not hasattr(forgelm, n)]; "
+            "assert not missing, missing; "
+            "print('OK')"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, f"a public symbol failed to resolve through the facade: {result.stderr}"
+        assert result.stdout.strip() == "OK"
+
+    def test_type_checking_block_parity(self) -> None:
+        """Every lazy symbol must be imported inside the ``if _TYPE_CHECKING:``
+        block (and vice versa) so mypy / pyright consumers see the surface.
+        Parsed via AST so no heavy import is triggered."""
+        import ast
+
+        import forgelm
+
+        src = Path(forgelm.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        tc_names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.If):
+                test = node.test
+                is_tc = (isinstance(test, ast.Name) and test.id == "_TYPE_CHECKING") or (
+                    isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+                )
+                if not is_tc:
+                    continue
+                for stmt in ast.walk(node):
+                    if isinstance(stmt, ast.ImportFrom):
+                        for alias in stmt.names:
+                            tc_names.add(alias.asname or alias.name)
+        assert tc_names == set(forgelm._LAZY_SYMBOLS), (
+            f"TYPE_CHECKING import block drifted from _LAZY_SYMBOLS: {sorted(tc_names ^ set(forgelm._LAZY_SYMBOLS))}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Stable-symbol signature snapshot (F-P1-FAB-26)
+# ---------------------------------------------------------------------------
+
+
+class TestApiSignatureSnapshot:
+    """No automated control forced an ``__api_version__`` MAJOR bump when a
+    stable symbol's signature changed (the design-doc-promised
+    ``tools/check_api_compat.py`` was never created).  This snapshot test
+    fails whenever a public symbol's signature / field roster differs from
+    the recorded snapshot keyed to the current ``__api_version__`` — the
+    fixer then bumps the version (per the rules in ``_version.py``) and
+    regenerates the snapshot.
+    """
+
+    @staticmethod
+    def _describe(obj: object) -> dict:
+        import dataclasses
+        import inspect
+
+        from pydantic import BaseModel
+
+        if isinstance(obj, type) and issubclass(obj, BaseModel):
+            return {"kind": "pydantic_model", "fields": sorted(obj.model_fields.keys())}
+        if dataclasses.is_dataclass(obj):
+            return {"kind": "dataclass", "fields": [f.name for f in dataclasses.fields(obj)]}
+        try:
+            return {"kind": "callable", "signature": str(inspect.signature(obj))}
+        except (TypeError, ValueError):
+            return {"kind": "callable", "signature": None}
+
+    def _live_snapshot(self) -> dict:
+        import forgelm
+
+        symbols = {
+            name: self._describe(getattr(forgelm, name))
+            for name in forgelm.__all__
+            if name not in ("__version__", "__api_version__")
+        }
+        return {"__api_version__": forgelm.__api_version__, "symbols": symbols}
+
+    def test_stable_signatures_match_recorded_snapshot(self) -> None:
+        import json
+
+        import forgelm
+
+        snapshot_path = Path(__file__).parent / "_data" / f"api_signatures_{forgelm.__api_version__}.json"
+        assert snapshot_path.is_file(), (
+            f"No signature snapshot for __api_version__={forgelm.__api_version__}. "
+            "Generate tests/_data/api_signatures_<ver>.json and commit it with the bump."
+        )
+        recorded = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        live = self._live_snapshot()
+        assert live == recorded, (
+            "Public API surface changed without updating the snapshot. If this is an "
+            "intentional change, bump __api_version__ MAJOR (signature change) or MINOR "
+            "(additive) per forgelm/_version.py and regenerate "
+            f"tests/_data/api_signatures_{forgelm.__api_version__}.json."
+        )

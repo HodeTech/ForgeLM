@@ -62,7 +62,7 @@ def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoRe
     every Wave 2b subcommand.
     """
     if output_format == "json":
-        print(json.dumps({"success": False, "error": msg}))
+        print(json.dumps({"success": False, "error": msg}, ensure_ascii=False))
     else:
         logger.error(msg)
     sys.exit(exit_code)
@@ -532,7 +532,10 @@ def _maybe_audit_logger(audit_dir: str):
 def _emit_cache_success(output_format: str, payload: Dict[str, Any], *, kind: str) -> None:
     """Render the success envelope (text or JSON)."""
     if output_format == "json":
-        print(json.dumps(payload, indent=2, default=str))
+        # ``ensure_ascii=False`` matches the doctor renderer (PR #29 F-34-01):
+        # a Unicode ``cache_dir`` / ``cached_path`` (e.g. ``/work/önbellek``)
+        # would otherwise render as ``\uXXXX`` escapes, unreadable for operators.
+        print(json.dumps(payload, indent=2, default=str, ensure_ascii=False))
         return
     if kind == "models":
         models = payload.get("models", [])

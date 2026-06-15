@@ -15,6 +15,7 @@ Bu sayfa kanonik referanstır. `forgelm` çıktısını parse eden CI/CD pipelin
 - **Üst seviye sarmalayıcı.** Her envelope `"success": true | false` ile başlar. Tüketiciler önce bu tek anahtarda branch açabilir.
 - **Hata envelope'u.** `success: false` olduğunda envelope `"error": "<mesaj>"` (string) taşır. Opsiyonel zenginleştirilmiş alanlar (`exit_code`, `error_type`, `details`) [GitHub'daki error-handling standardı](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/error-handling.md) gereği var olabilir. Bu alanlardan kesinlik isteyen tüketiciler `$?` ile süreç exit kodunu da kontrol etmelidir.
 - **Exit kodları.** Bkz. [Exit Kodları](#/reference/exit-codes). `success: false` her zaman non-zero bir exit ile eşleşir. `success: true` normal durumda exit `0` ile eşleşir, **tek istisna** dışında: Article 14 insan-onay gate'inde duraklayan bir eğitim çalışması `success: true` **ve** `awaiting_approval: true` emit ederken exit `4` ile çıkar (model stage'lenmiştir, henüz promote edilmemiştir). "Bitti" ile "insan onayı bekliyor"u ayırması gereken tüketiciler tek başına `success` yerine `awaiting_approval` discriminator'ını (veya `$?`'i) okumalıdır.
+- **Argüman-ayrıştırma hataları istisnadır.** JSON-envelope garantisi argümanlar başarıyla ayrıştırıldıktan **sonra** başlar. Ayrıştırma anında saptanan bir kullanım hatası (bilinmeyen flag, hatalı `--choice`, `--workers 0` gibi aralık-dışı validator değeri) `argparse`'in kendisi tarafından raporlanır: **stderr**'e insana okunabilir bir `usage: ... error: ...` satırı ve exit kodu `2`, stdout'ta **hiçbir** JSON envelope olmadan. Her non-zero exit'te stdout-JSON okuyan bir tüketici, boş stdout'u (non-zero `$?` ile eşleşen) bir ayrıştırma/kullanım hatası olarak ele almalı ve mesaj için stderr'e dönmelidir. Envelope kontratı yalnızca dispatcher çalışmaya başladıktan sonra ortaya çıkan hatalar için geçerlidir.
 
 ## `forgelm doctor`
 
@@ -40,14 +41,66 @@ Ortam kontrolü. Bkz. [Doctor komutu](#/getting-started/first-run).
 | Anahtar | Tip | Notlar |
 |---|---|---|
 | `success` | bool | Hiçbir probe `fail` değilse VE hiçbir probe crash etmediyse `true`; aksi halde `false`. |
-| `checks` | list[object] | Çalıştırma sırasıyla probe başına bir entry. Probe adları stabildir (örn. `python.version`, `torch.cuda`, `numpy.torch_abi`, `gpu.inventory`, `extras.qlora`, `hf_hub.reachable`, `hf_hub.offline_cache`, `disk.workspace`, `operator.identity`). |
+| `checks` | list[object] | Çalıştırma sırasıyla probe başına bir entry. Probe adları stabildir (örn. `python.version`, `torch.cuda`, `numpy.torch_abi`, `gpu.inventory`, `extras.qlora`, `hf_hub.reachable`, `hf_hub.offline_cache`, `disk.workspace`, `operator.identity`, `pypdf_normalise.turkish`). `--offline` modunda `hf_hub.offline_cache`, `hf_hub.reachable` yerine geçer. |
 | `checks[].name` | str | Probe adı. Sürümler arası stabil; yeni probe'lar yeniden adlandırma yerine eklenir. |
-| `checks[].status` | str | `pass`, `warn`, `fail`, `crashed`'tan biri. |
+| `checks[].status` | str | `pass`, `warn`, `fail`'tan biri. Raise eden bir probe `status: "fail"` ve `extras.crashed: true` ile görünür; crash ayrıca `summary.crashed` içinde sayılır. |
 | `checks[].detail` | str | Sonuç için operatör-yüzlü tek satırlık açıklama. |
 | `checks[].extras` | object | Probe-spesifik yapısal veri. Per-probe anahtarlar `_doctor.py` docstring'lerinde belgelidir; tüketiciler bilinmeyen anahtarları forward-compatible olarak ele almalıdır. |
 | `summary` | object | `checks` arasında her status'ın sayısı. Toplam `len(checks)`'a eşittir. |
 
 **Exit code mapping:** `0` = tüm probe'lar `pass` veya `warn`; `1` = en az bir `fail`; `2` = en az bir `crashed` (probe raise etti; sonraki probe'lar yine de çalıştı).
+
+## `forgelm --dry-run` (config doğrulama)
+
+`forgelm --config <yaml> --dry-run --output-format json`, ağır stack'i yüklemeden veya GPU'ya dokunmadan config'i doğrular ve eğitimin *ne yapacağını* özetler. En sık kullanılan CI ön-uçuş çağrısıdır. Geçerli bir config'te şu envelope'u **stdout**'a basıp exit code `0` ile çıkar:
+
+```json
+{
+  "success": true,
+  "status": "valid",
+  "model": "org/model",
+  "backend": "auto",
+  "load_in_4bit": false,
+  "trust_remote_code": false,
+  "dora": false,
+  "lora_rank": 16,
+  "lora_alpha": 32,
+  "dataset": "org/dataset",
+  "epochs": 3,
+  "batch_size": 1,
+  "output_dir": "/work/output/final_model",
+  "offline": false,
+  "distributed": null,
+  "rope_scaling": null,
+  "neftune_noise_alpha": null,
+  "webhook_configured": false,
+  "galore_enabled": false,
+  "galore_optim": null,
+  "galore_rank": null,
+  "auto_revert": false,
+  "safety_enabled": false,
+  "safety_scoring": null,
+  "compliance_configured": false,
+  "risk_classification": null
+}
+```
+
+| Anahtar | Tip | Notlar |
+|---|---|---|
+| `success` | bool | Bu kod yolunda her zaman `true` — bir dry run stdout'a yalnızca config doğrulandıktan sonra ulaşır. Geçersiz config bunun yerine 2 anahtarlı hata envelope'u (`success: false`) ile `1` çıkar. |
+| `status` | str | Pre-0.7.1 tüketicilerle geriye dönük uyumluluk için korunan sabit token `"valid"`. Yeni tüketiciler `success` üzerinde branch yapmalı. |
+| `model` / `backend` / `dataset` | str | Config'ten çözülen model id'si, model backend'i ve dataset id'si. |
+| `output_dir` | str | Etkin nihai-model yolu (`training.output_dir`, `training.final_model_dir` ile birleştirilmiş). |
+| `load_in_4bit`, `trust_remote_code`, `dora`, `offline` | bool | İlgili config bayraklarının etkin değerleri. |
+| `lora_rank`, `lora_alpha`, `epochs`, `batch_size` | int | Etkin eğitim/LoRA hiper-parametreleri. |
+| `distributed` | str \| null | `distributed.strategy` veya dağıtık eğitim yapılandırılmadığında `null`. |
+| `rope_scaling`, `neftune_noise_alpha` | object \| float \| null | Etkin long-context / NEFTune ayarları, ayarlanmadığında `null`. |
+| `webhook_configured` | bool | Bir webhook URL'si (literal veya `url_env`) yapılandırıldığında `true`. |
+| `galore_enabled`, `galore_optim`, `galore_rank` | bool / str / int | GaLore optimizer özeti; GaLore kapalıyken son ikisi `null`. |
+| `auto_revert`, `safety_enabled`, `safety_scoring` | bool / bool / str | Değerlendirme-kapısı özeti (safety eval kapalıyken `safety_scoring` `null`). |
+| `compliance_configured`, `risk_classification` | bool / str | EU AI Act uyumluluk özeti; compliance yapılandırılmadığında `risk_classification` `null`. |
+
+**Exit code mapping:** geçerli config `0` (`EXIT_SUCCESS`) ile çıkar; geçersiz config standart hata envelope'u ile `1` (`EXIT_CONFIG_ERROR`) çıkar.
 
 ## `forgelm` (eğitim) — preflight abort envelope
 
@@ -85,7 +138,9 @@ Eğitim tamamlanana kadar çalıştığında pipeline **stdout**'a bir sonuç en
   "metrics": {"eval_loss": 0.42, "benchmark/average": 0.78},
   "final_model_path": "/work/output/final_model",
   "reverted": false,
-  "awaiting_approval": false
+  "awaiting_approval": false,
+  "run_id": "fg-abc123def456",
+  "config_hash": "sha256:..."
 }
 ```
 
@@ -122,6 +177,8 @@ Eğitim tamamlanana kadar çalıştığında pipeline **stdout**'a bir sonuç en
 | `reverted` | bool | Bir gate (eval-loss / benchmark / safety / judge) modeli auto-revert ettiyse `true`. `awaiting_approval` ile karşılıklı dışlayıcıdır. |
 | `awaiting_approval` | bool | **Discriminator.** Çalışma Article 14 insan-onay gate'inde durakladıysa (exit `4`) `true`. Revert edilmiş bir çalışma burada her zaman `false`'tur. |
 | `staging_path` | str | Yalnızca `awaiting_approval` `true` iken vardır; `forgelm approve <run_id>` / `forgelm reject <run_id>`'e geçilecek on-disk staging dizini. |
+| `run_id` | str | Çalışma tanımlayıcısı — çalışmayı `audit_log.jsonl`'i ve varsa onay gate'i ile ilişkilendirir. Trainer sonucu ürettiğinde her zaman vardır. |
+| `config_hash` | str | Çalışmayı üreten doğrulanmış config'in `sha256:` digest'i (yeniden-üretilebilirlik çıpası). Trainer sonucu ürettiğinde her zaman vardır. |
 
 Opsiyonel alt-bloklar (`benchmark`, `resource_usage`, `estimated_cost_usd`, `safety`, `judge`) yalnızca o değerlendirmeler çalıştığında eklenir.
 
@@ -187,6 +244,8 @@ Bir koşu için tam onay-gate audit chain'i + staging içeriğini incele.
 | `status` | str | `pending`, `granted`, `rejected`, `unknown`'dan biri. Latest-wins semantik: önceki bir karardan sonra re-stage edilen koşu `pending` gösterir. |
 | `chain` | list[object] | `run_id` için her onay-gate audit event'i, append sırasıyla. |
 | `staging_contents` | list[str] | `<output_dir>/final_model.staging.<run_id>` (veya canonical fallback) altında sıralı dosya/dizin adları. Staging eksik veya okunamıyorsa boş. |
+| `corrupted` | bool | Yalnızca audit log'un strict parse'ı bir satırı reddedeceğinde bulunur ve `true` olur. O durumda gösterilen `status` **yetkili değildir** — `approve`/`reject` (log'u strict okur) log onarılana kadar işlem yapmayı reddeder. Temiz log'da yoktur. |
+| `corruption_detail` | str | `corrupted` ile birlikte bulunur; ilk hatalı satırı belirtir (`audit log corrupted at line N: <neden>`). |
 
 ## `forgelm audit`
 
@@ -291,9 +350,11 @@ Audit log chain bütünlüğü kontrolü.
   "run_id": "fg-abc123def456",
   "approver": "alice@example.com@workstation-7",
   "final_model_path": "/work/output/final_model",
-  "promote_strategy": "atomic_rename"
+  "promote_strategy": "rename"
 }
 ```
+
+`promote_strategy` değeri `"rename"` (aynı-cihaz atomik `os.rename`) ya da `"move"` (cihazlar-arası `shutil.move` fallback)'tır.
 
 `approve` başarıda `0` ile çıkar; `reject` rejection kaydı sonrası `0` ile çıkar (staging dizini forensics için korunur). Bilinmeyen `run_id` / config hatasında `error` ile `success: false`.
 
@@ -508,7 +569,7 @@ Wave 2b Phase 36 — bir model checkpoint'ine karşı standalone safety evaluati
 | `category_distribution` | object | Per-harm-category sayımları (`track_categories=False` ise boş). |
 | `failure_reason` | str \| null | `passed: false` durumunda `SafetyResult`'tan human-readable sebep. |
 
-**Exit kodu:** `0` = threshold'lar geçildi; `1` = config hatası (eksik `--model`, çelişen probe flag'leri, GGUF model yolu); `2` = runtime hatası (model load failure, classifier load failure, broken environment); `3` = `EXIT_EVAL_FAILURE` — evaluation tamamlandı ama safety gate hayır dedi (operator-actionable: re-train veya re-classify).
+**Exit kodu:** `0` = threshold'lar geçildi; `1` = dispatcher'ın ulaştığı config hatası (GGUF model yolu, probes dosyası eksik/okunamıyor); `2` = argparse kullanım hatası (eksik `--model`, `--probes`/`--default-probes` ikisinin de eksikliği ya da ikisinin birden verilmesi — ikisinden tam olarak biri zorunlu olduğundan argparse dispatcher çalışmadan önce exit 2 ile reddeder) **veya** runtime hatası (model load failure, classifier load failure, broken environment); `3` = `EXIT_EVAL_FAILURE` — evaluation tamamlandı ama safety gate hayır dedi (operator-actionable: re-train veya re-classify).
 
 ## `forgelm verify-annex-iv`
 
@@ -573,6 +634,186 @@ Wave 2b Phase 36 — GGUF model dosyası bütünlük kontrolü.
 | `reason` | str | Tek-satır özet; `valid: false` durumunda failure detayını taşır. |
 
 **Exit kodu:** `0` = `valid: true`; `1` = `valid: false` (magic mismatch, metadata block *bozuk*, SHA-256 mismatch, malformed sidecar); `2` = runtime hatası (file not found, unreadable). Opsiyonel-`gguf`-paketi-eksik yolu `valid: true` + exit `0` olarak kalır (operatörün "metadata check skipped" durumu — magic header + SHA-256 sidecar checks load-bearing integrity yüzeyi olmaya devam eder).
+
+## `forgelm verify-integrity`
+
+Wave 2b Phase 36 / Madde 15 — model dizini artefakt bütünlük kontrolü.
+
+**Başarı zarfı** (`forgelm verify-integrity MODEL_DIR`):
+
+```json
+{
+  "success": true,
+  "valid": true,
+  "reason": "All 12 recorded artifact(s) present and unchanged.",
+  "changed": [],
+  "removed": [],
+  "added": [],
+  "verified_count": 12,
+  "path": "/work/output/my-model"
+}
+```
+
+**Uyuşmazlık / operatör-hatası zarfı** (`valid: false`, çıkış 1):
+
+```json
+{
+  "success": false,
+  "valid": false,
+  "reason": "Model artifacts do not match model_integrity.json: 1 changed, 1 removed.",
+  "changed": ["adapter_model.safetensors"],
+  "removed": ["tokenizer.model"],
+  "added": [],
+  "verified_count": 10,
+  "path": "/work/output/my-model"
+}
+```
+
+**Runtime-hatası zarfı** (çıkış 2):
+
+```json
+{
+  "success": false,
+  "error": "Could not verify model integrity for '/work/output/my-model': [Errno 13] Permission denied: '...'"
+}
+```
+
+| Anahtar | Tip | Not |
+|---|---|---|
+| `success` | bool | `valid: true` iken `true`; herhangi bir uyuşmazlık veya hatada `false`. |
+| `valid` | bool | Her kayıtlı artefakt mevcut ve SHA-256'sı eşleşiyorsa `true`; aksi hâlde `false`. |
+| `reason` | str | Tek-satır özet — başarıda temiz artefakt sayısı, başarısızlıkta uyuşmazlık sayıları. |
+| `changed` | list[str] | SHA-256'sı artık manifest ile eşleşmeyen artefaktların göreli yolları. |
+| `removed` | list[str] | Manifest'te kayıtlı ama diskte olmayan artefaktların göreli yolları. |
+| `added` | list[str] | Diskte olup manifest'te kayıtlı olmayan dosyaların göreli yolları. |
+| `verified_count` | int | Manifest ile başarıyla eşleşen artefakt sayısı. |
+| `path` | str | Doğrulanan model dizininin mutlak yolu. |
+
+**Exit kodu eşlemesi:** `0` = tüm kayıtlı artefaktlar mevcut ve değişmemiş (`valid: true`); `1` = bütünlük uyuşmazlığı (changed / removed / added dosya) **veya** operatör / girdi hatası (eksik yol, yolun dizin yerine dosya olması, manifest bulunamadı, malformed JSON, list olmayan `artifacts`, manifest girdi yolunun model dizininden kaçması); `2` = erişilebilir bir yolda gerçek runtime I/O hatası (okuma hatası, yürüyüş sırasında izin reddi).
+
+Runtime-hatası zarfı (`çıkış 2`) yalnızca `{"success": false, "error": "…"}` döndürür — `valid`, `changed`, `removed`, `added` veya `path` anahtarları olmadan. Önce `success` üzerinden dallanın, ardından `valid` ve diff listelerini inceleyin.
+
+## `forgelm export`
+
+Eğitim sonrası devir için GGUF / birleştirilmiş-ağırlık export'u.
+
+**Envelope** (`forgelm export MODEL --output OUT.gguf`):
+
+```json
+{
+  "success": true,
+  "output_path": "/work/exports/model.q4_k_m.gguf",
+  "format": "gguf",
+  "quant": "q4_k_m",
+  "sha256": "abcd1234...",
+  "size_bytes": 4815162342,
+  "error": null
+}
+```
+
+| Anahtar | Tip | Not |
+|---|---|---|
+| `output_path` | str \| null | Yazılan artefakt yolu; başarısızlıkta `null`. |
+| `format` | str \| null | Export formatı (örn. `gguf`, `merged`). |
+| `quant` | str \| null | Kullanılan quantizasyon seviyesi (tek değer — `--quant` çağrı başına tek seviye alır). |
+| `sha256` | str \| null | Yazılan artefakt üzerinde SHA-256; başarısızlıkta `null`. |
+| `size_bytes` | int \| null | Artefakt boyutu (byte); başarısızlıkta `null`. |
+| `error` | str \| null | Başarıda `null`; başarısızlıkta operatöre yönelik mesaj. `error` varlığına değil, `success`'e göre dallanın. |
+
+**Exit kodu:** `0` = export başarılı; `2` = runtime hatası (dönüşüm hatası, eksik `[export]` extra'sı, erişilemeyen model yolu).
+
+## `forgelm deploy`
+
+Ollama / vLLM / TGI / HF Endpoints için deployment-config üretimi.
+
+**Envelope** (`forgelm deploy MODEL --target ollama --output Modelfile`):
+
+```json
+{
+  "success": true,
+  "target": "ollama",
+  "output_path": "/work/deploy/Modelfile",
+  "error": null
+}
+```
+
+| Anahtar | Tip | Not |
+|---|---|---|
+| `target` | str \| null | Deployment hedefi (`ollama`, `vllm`, `tgi`, `hf-endpoints`). |
+| `output_path` | str \| null | Üretilen config yolu; başarısızlıkta `null`. |
+| `error` | str \| null | Başarıda `null`; başarısızlıkta operatöre yönelik mesaj. `error` varlığına değil, `success`'e göre dallanın. |
+
+**Exit kodu:** `0` = config üretildi; `1` = çağıran-girdisi hatası (desteklenmeyen hedef, `ollama`/`tgi` hedeflerinde `model_path`'in yerel bir dizin olmaması); `2` = runtime hatası (yazılamayan çıktı yolu, şablon render hatası).
+
+## `forgelm quickstart`
+
+Şablon → config → eğitim → chat tek-seferlik akış. Üç JSON şekli.
+
+**Şablon listesi** (`forgelm quickstart --list --output-format json`):
+
+```json
+{
+  "success": true,
+  "templates": [
+    {
+      "name": "customer-support",
+      "title": "Customer support assistant",
+      "description": "Fine-tune a helpful support agent.",
+      "primary_model": "Qwen/Qwen2.5-7B-Instruct",
+      "fallback_model": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+      "trainer_type": "sft",
+      "estimated_minutes": 20,
+      "min_vram_for_primary_gb": 16,
+      "bundled_dataset": "customer_support.jsonl",
+      "license_note": null
+    }
+  ],
+  "count": 1
+}
+```
+
+**Üretim başarısı** (`forgelm quickstart TEMPLATE [--dry-run] --output-format json`):
+
+```json
+{
+  "success": true,
+  "template": "customer-support",
+  "config_path": "/work/quickstart/config.yaml",
+  "model": "Qwen/Qwen2.5-7B-Instruct",
+  "dataset": "/work/quickstart/customer_support.jsonl",
+  "selection_reason": "primary model fits available VRAM",
+  "dry_run": false,
+  "chat_launched": false,
+  "notes": []
+}
+```
+
+**Eğitim başarısızlığı** (eğitim subprocess'i non-zero döndü):
+
+```json
+{
+  "success": false,
+  "error": "Training subprocess failed with exit code 3.",
+  "exit_code": 3,
+  "template": "customer-support",
+  "config_path": "/work/quickstart/config.yaml"
+}
+```
+
+| Anahtar | Tip | Not |
+|---|---|---|
+| `templates` | list[object] | Yalnızca `--list`. Kayıtlı her şablon için bir giriş; `count == len(templates)`. |
+| `template` | str | Seçilen şablon adı. |
+| `config_path` | str | Üretilen YAML config'in yolu. |
+| `model` | str | Çözümlenen model id'si (primary veya VRAM kaynaklı fallback). |
+| `dataset` | str | Paketlenmiş / override edilmiş veri kümesinin yolu. |
+| `selection_reason` | str | `model`'in neden seçildiği. |
+| `dry_run` | bool | `--dry-run` olduğunda `true` (config yazılır, eğitim yok). |
+| `chat_launched` | bool | JSON modunda her zaman `false` — etkileşimli chat REPL'i bastırılır ki insan metni stdout'taki JSON envelope ile araya girmesin. `forgelm chat <model_path>`'i manuel çalıştırın. |
+| `notes` | list[str] | Tavsiye notları (ör. lisans uyarıları). |
+| `exit_code` | int | Yalnızca eğitim-başarısızlığı envelope'u — eğitim subprocess'inin döndürdüğü, eşlenmiş public exit kodu. |
+
+**Exit kodu:** `0` = üretildi (ve, `--no-chat` olmadan text modunda, chat REPL'i çalıştı); `1` = çağıran-girdisi hatası (eksik/geçersiz şablon, yazılamayan çıktı dizini); auto-train subprocess'i başarısız olduğunda eğitim-başarısızlığı envelope'unun `exit_code`'u (`2`/`3`/`4`) aynen iletilir.
 
 ## Yeni subcommand eklerken
 

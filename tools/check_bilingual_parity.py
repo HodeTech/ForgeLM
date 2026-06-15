@@ -62,6 +62,11 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 # here; CI will then pick it up automatically.  Order is alphabetical
 # for predictable reporting.
 _PAIRS: Tuple[Tuple[str, str], ...] = (
+    # docs/ (top-level)
+    # ``docs/roadmap.md`` ↔ ``docs/roadmap-tr.md`` is a MANDATORY mirror per
+    # localization.md §"What is bilingual"; registering it here gives the
+    # standard's promise a real structural-parity gate (F-P8-C-21).
+    ("docs/roadmap.md", "docs/roadmap-tr.md"),
     # docs/guides/
     ("docs/guides/air_gap_deployment.md", "docs/guides/air_gap_deployment-tr.md"),
     ("docs/guides/alignment.md", "docs/guides/alignment-tr.md"),
@@ -112,15 +117,26 @@ _PAIRS: Tuple[Tuple[str, str], ...] = (
     ("docs/reference/verify_annex_iv_subcommand.md", "docs/reference/verify_annex_iv_subcommand-tr.md"),
     ("docs/reference/verify_audit.md", "docs/reference/verify_audit-tr.md"),
     ("docs/reference/verify_gguf_subcommand.md", "docs/reference/verify_gguf_subcommand-tr.md"),
-    # docs/usermanuals/ — newly mirrored Phase 14 page.  The rest of
-    # docs/usermanuals/{en,tr}/ is structural-parity-validated by the
-    # ``_meta.yaml``-driven nav build in ``tools/build_usermanuals.py``
-    # (every EN page MUST have a TR counterpart at the same relative
-    # path); registering pipelines.md here adds the *heading-spine*
-    # parity check on top, matching the discipline applied to
-    # docs/guides/pipeline{,-tr}.md.
-    ("docs/usermanuals/en/training/pipelines.md", "docs/usermanuals/tr/training/pipelines.md"),
+    ("docs/reference/verify_integrity_subcommand.md", "docs/reference/verify_integrity_subcommand-tr.md"),
+    # docs/usermanuals/ pairs are NOT hand-listed here — they are
+    # auto-discovered by ``_usermanual_pairs`` below (every
+    # ``docs/usermanuals/en/**/*.md`` paired with its ``tr/`` mirror) and
+    # appended to the scanned set.  Earlier this registry held only the
+    # single ``training/pipelines.md`` pair, on the rationale that
+    # ``tools/build_usermanuals.py`` validates the rest — but that build
+    # only checks path existence and silently substitutes the EN source
+    # when a TR page is missing (``used_fallback``); it never compares the
+    # H2/H3/H4 spine.  So 65 of 66 usermanual pairs had no heading-spine
+    # gate (F-P8-C-10).  Auto-discovery closes that gap and auto-covers
+    # future pages without a registry edit.
 )
+
+# Root of the bilingual user-manual tree.  EN is the source language; TR
+# mirrors live at the same relative path under ``tr/``.  Deeper locales
+# (de/fr/es/zh) are deferred tiers that intentionally fall back to EN, so
+# we scan ONLY the en↔tr pair here.
+_USERMANUAL_EN_ROOT = "docs/usermanuals/en"
+_USERMANUAL_TR_ROOT = "docs/usermanuals/tr"
 
 # Match a Markdown ATX heading prefix: 1-6 leading hashes followed by
 # at least one space.  We deliberately exclude setext headings
@@ -354,18 +370,58 @@ def scan_pairs(
     return drifts
 
 
-def _resolve_pairs(only: Optional[str]) -> Tuple[Tuple[str, str], ...]:
+def _usermanual_pairs(repo_root: Path) -> Tuple[Tuple[str, str], ...]:
+    """Auto-discover every EN/TR user-manual page pair.
+
+    Walks ``docs/usermanuals/en/**/*.md`` and pairs each page with its
+    ``tr/`` mirror at the same relative path.  Returns repo-relative
+    POSIX path tuples (matching the hand-written ``_PAIRS`` style) sorted
+    for predictable reporting.  A missing TR mirror is still emitted as a
+    pair so :func:`diff_pair` surfaces it as a "TR mirror is missing"
+    drift — that is exactly the silent-EN-fallback gap this closes.
+    """
+    en_root = repo_root / _USERMANUAL_EN_ROOT
+    if not en_root.is_dir():
+        return ()
+    pairs: List[Tuple[str, str]] = []
+    for en_path in sorted(en_root.rglob("*.md")):
+        rel = en_path.relative_to(en_root).as_posix()
+        en_rel = f"{_USERMANUAL_EN_ROOT}/{rel}"
+        tr_rel = f"{_USERMANUAL_TR_ROOT}/{rel}"
+        pairs.append((en_rel, tr_rel))
+    return tuple(pairs)
+
+
+def _all_pairs(repo_root: Path) -> Tuple[Tuple[str, str], ...]:
+    """The full scanned set: the explicit registry + discovered usermanuals.
+
+    Deduplicated (a usermanual page accidentally also hand-listed in
+    ``_PAIRS`` is scanned once) and order-stable.
+    """
+    seen: set[Tuple[str, str]] = set()
+    merged: List[Tuple[str, str]] = []
+    for pair in (*_PAIRS, *_usermanual_pairs(repo_root)):
+        if pair in seen:
+            continue
+        seen.add(pair)
+        merged.append(pair)
+    return tuple(merged)
+
+
+def _resolve_pairs(only: Optional[str], repo_root: Path) -> Tuple[Tuple[str, str], ...]:
     """When ``--only`` is supplied, return just that pair (matched on
-    either side); otherwise return the full registry."""
+    either side); otherwise return the full scanned set (explicit
+    registry + auto-discovered user-manual pairs)."""
+    all_pairs = _all_pairs(repo_root)
     if only is None:
-        return _PAIRS
+        return all_pairs
     target = os.path.normpath(only)
-    for en, tr in _PAIRS:
+    for en, tr in all_pairs:
         if os.path.normpath(en) == target or os.path.normpath(tr) == target:
             return ((en, tr),)
     raise SystemExit(
-        f"--only {only!r} did not match any registered pair.  "
-        f"Choose one of:\n  " + "\n  ".join(f"{en}  ↔  {tr}" for en, tr in _PAIRS)
+        f"--only {only!r} did not match any registered or discovered pair.  "
+        f"Choose one of:\n  " + "\n  ".join(f"{en}  ↔  {tr}" for en, tr in all_pairs)
     )
 
 
@@ -428,7 +484,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 1
 
     repo_root = Path(args.repo_root).resolve() if args.repo_root else Path(__file__).resolve().parent.parent
-    pairs = _resolve_pairs(args.only)
+    pairs = _resolve_pairs(args.only, repo_root)
     drifts = scan_pairs(pairs, repo_root=repo_root, levels=levels)
 
     for drift in drifts:
@@ -445,6 +501,8 @@ __all__ = [
     "Heading",
     "PairDrift",
     "_PAIRS",
+    "_all_pairs",
+    "_usermanual_pairs",
     "diff_pair",
     "extract_headings",
     "main",

@@ -22,6 +22,7 @@ reads and uses a temp directory for persistence.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -29,6 +30,7 @@ from unittest.mock import patch
 import pytest
 
 from forgelm import wizard
+from forgelm.cli import _exit_codes as wizard_exit_codes
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -122,6 +124,62 @@ class TestDefaultSafetyProbesPath:
 
 
 # ---------------------------------------------------------------------------
+# Wizard defaults loader degrade-cleanly contract — F-P7-OPUS-22 / M5
+# ---------------------------------------------------------------------------
+
+
+class TestLoadDefaultsDegradation:
+    """A present-but-corrupt _defaults.json must NOT crash the wizard at import."""
+
+    def _patch_defaults_to(self, tmp_path: Path, content: str):
+        """Return a patch context that makes ``_defaults.json`` yield *content*.
+
+        ``_load_defaults`` does ``from importlib.resources import files``
+        function-locally, so we patch the canonical ``importlib.resources.files``
+        symbol the local import resolves to.
+        """
+        corrupt = tmp_path / "_defaults.json"
+        corrupt.write_text(content, encoding="utf-8")
+
+        class _FakeTraversable:
+            def joinpath(self, _name):
+                return corrupt
+
+        return patch("importlib.resources.files", lambda _pkg: _FakeTraversable())
+
+    def test_corrupt_defaults_json_falls_back_to_empty_dict(self, tmp_path: Path):
+        # json.JSONDecodeError is a ValueError, NOT an OSError — the old
+        # except tuple (ModuleNotFoundError, OSError) let it escape and crash
+        # the whole wizard subsystem at module-import time. The loader must
+        # now degrade to the hardcoded fallbacks exactly like the absent-file
+        # case does.
+        from forgelm.wizard._state import _load_defaults
+
+        with self._patch_defaults_to(tmp_path, "{ corrupt json not valid "):
+            result = _load_defaults()
+        assert result == {}
+
+    def test_corrupt_defaults_logs_warning(self, tmp_path: Path, caplog):
+        import logging
+
+        from forgelm.wizard._state import _load_defaults
+
+        with caplog.at_level(logging.WARNING, logger="forgelm.wizard"):
+            with self._patch_defaults_to(tmp_path, "{ corrupt "):
+                _load_defaults()
+        assert any("corrupt" in rec.message.lower() for rec in caplog.records)
+
+    def test_wellformed_defaults_still_loads(self, tmp_path: Path):
+        # Regression guard: the broadened except must not swallow a valid
+        # file. A well-formed object still parses (sans ``//`` comment keys).
+        from forgelm.wizard._state import _load_defaults
+
+        with self._patch_defaults_to(tmp_path, '{"//comment": "x", "model": {"max_length": 4096}}'):
+            result = _load_defaults()
+        assert result == {"model": {"max_length": 4096}}
+
+
+# ---------------------------------------------------------------------------
 # Navigation tokens — Phase 22 / G3
 # ---------------------------------------------------------------------------
 
@@ -137,13 +195,15 @@ class TestNavigationTokens:
             with pytest.raises(wizard.WizardReset):
                 wizard._check_navigation_token(token)
 
-    def test_cancel_token_does_not_raise(self):
-        # Cancel is contextual — the BYOD path interprets it as "fall
-        # back to the full wizard" and the step orchestrator relies on
-        # Ctrl-C / Ctrl-D for clean exits.  Auto-raising on cancel
-        # would break the existing BYOD flow.
-        for token in ("cancel", "c", "q", "quit"):
-            wizard._check_navigation_token(token)
+    def test_cancel_token_raises_wizardcancel(self):
+        # F-P7-OPUS-05: the welcome banner promises ``cancel`` / ``q``
+        # exit cleanly "at any prompt", so the primitive prompt must
+        # auto-raise ``WizardCancel``.  The BYOD prelude catches it
+        # locally to preserve its "fall back to the full wizard"
+        # semantics (see test_byod fall-back tests).
+        for token in ("cancel", "c", "q", "quit", "CANCEL", "  Quit  "):
+            with pytest.raises(wizard.WizardCancel):
+                wizard._check_navigation_token(token)
 
     def test_empty_string_does_not_raise(self):
         wizard._check_navigation_token("")
@@ -278,6 +338,18 @@ class TestPersistence:
         wizard._save_wizard_state(snapshot)
         loaded = wizard._load_wizard_state()
         assert loaded == snapshot
+
+    def test_persist_state_swallows_unrepresentable_config(self, isolated_state_dir, caplog):
+        """F-P7-OPUS-31: a non-representable value in state.config makes
+        yaml.safe_dump raise RepresenterError (a YAMLError, not OSError).
+        The best-effort persist must catch it and log a WARNING so the
+        persist-on-interrupt handler still reaches its clean exit-5."""
+        import logging
+
+        state = wizard._WizardState(config={"data": {"governance": {"probes": Path("/x")}}})
+        with caplog.at_level(logging.WARNING, logger="forgelm.wizard"):
+            wizard._persist_state(state)  # must NOT raise
+        assert any("Could not persist wizard state" in rec.message for rec in caplog.records)
 
     def test_clear_removes_snapshot(self, isolated_state_dir):
         wizard._save_wizard_state({"experience": "expert"})
@@ -494,6 +566,25 @@ class TestSchemaDefaultParity:
         from forgelm.config import TrainingConfig
 
         assert wizard.DEFAULT_LR == TrainingConfig.model_fields["learning_rate"].default
+
+    def test_default_grad_accum_matches_schema(self):
+        """F-P7-OPUS-33: DEFAULT_GRAD_ACCUM must track the schema default."""
+        from forgelm.config import TrainingConfig
+        from forgelm.wizard._state import DEFAULT_GRAD_ACCUM
+
+        assert DEFAULT_GRAD_ACCUM == TrainingConfig.model_fields["gradient_accumulation_steps"].default
+
+    def test_orchestrator_uses_grad_accum_constant_not_literal(self):
+        """F-P7-OPUS-33: the orchestrator must emit gradient_accumulation_steps
+        via the schema-derived DEFAULT_GRAD_ACCUM, not a bare literal, so a
+        future schema bump flows through the sync guard for this field too."""
+        import inspect
+
+        from forgelm.wizard import _orchestrator
+
+        src = inspect.getsource(_orchestrator._step_training_params)
+        assert 'setdefault("gradient_accumulation_steps", DEFAULT_GRAD_ACCUM)' in src
+        assert 'setdefault("gradient_accumulation_steps", 2)' not in src
 
 
 # ---------------------------------------------------------------------------
@@ -1163,6 +1254,9 @@ class TestAtomicWriteTempCleanup:
     def test_dump_failure_also_cleans_up(self, isolated_state_dir, monkeypatch):
         # If yaml.safe_dump itself raises before os.replace runs, the
         # finally-branch defensive sweep must still unlink the temp.
+        # The outer handler in _save_wizard_state now catches YAMLError
+        # (broadened to OSError | YAMLError | TypeError | ValueError), so
+        # the exception is fully swallowed — no re-raise from the function.
         import yaml as _yaml
 
         from forgelm.wizard import _state as _state_mod
@@ -1172,10 +1266,8 @@ class TestAtomicWriteTempCleanup:
             raise _yaml.YAMLError("simulated dump failure")
 
         monkeypatch.setattr(_state_mod.yaml, "safe_dump", _broken_dump)
-        try:
-            wizard._save_wizard_state({"experience": "expert"})
-        except _yaml.YAMLError:
-            pass  # outer except OSError won't catch YAMLError; finally still runs
+        # Must not raise — YAMLError is swallowed by the broadened handler.
+        wizard._save_wizard_state({"experience": "expert"})
         state_dir = wizard._wizard_state_path().parent
         leftovers = list(state_dir.glob(".wizard_state.*.tmp"))
         assert leftovers == [], f"Temp file leak after dump failure: {leftovers}"
@@ -1835,3 +1927,114 @@ class TestPRDB6ExpanduserCanonicalisation:
         # ``C:\Users\foo\configs\...`` (no leading slash).  Use
         # ``os.path.isabs`` for cross-platform absoluteness.
         assert os.path.isabs(result)
+
+
+class TestWizardCancelToken:
+    """F-P7-OPUS-05 — `cancel`/`q` honoured at every prompt, exits cleanly."""
+
+    def test_cancel_token_in_step_machine_returns_cancelled_outcome(self, monkeypatch, isolated_state_dir):
+        # Force a TTY so the full-wizard path is taken, decline the
+        # quickstart prelude, then type `cancel` at the very first
+        # step-machine prompt.  The welcome banner promises this exits
+        # cleanly; assert a cancelled outcome rather than a corrupted config.
+        import sys as _sys
+
+        monkeypatch.setattr(_sys.stdin, "isatty", lambda: True)
+        with patch(
+            "builtins.input",
+            side_effect=_input_returning(
+                "n",  # decline the quickstart-template prelude
+                "cancel",  # first step-machine prompt → WizardCancel
+            ),
+        ):
+            outcome = wizard.run_wizard_full()
+        assert outcome.cancelled is True
+        assert outcome.config_path is None
+
+    def test_cancel_token_in_byod_prelude_falls_back_to_full_wizard(self):
+        # The BYOD prelude still treats `cancel` as "fall back to the full
+        # wizard" (its long-standing contextual meaning), proving the new
+        # WizardCancel raise does not break that flow.
+        with patch(
+            "builtins.input",
+            side_effect=_input_returning("y", "domain-expert", "cancel"),
+        ):
+            result = wizard._maybe_run_quickstart_template()
+        assert result is None
+
+
+class TestWizardPreludeNavigation:
+    """F-P7-OPUS-08 — back/reset/cancel in the prelude never crash the CLI."""
+
+    def test_back_in_quickstart_prelude_does_not_crash(self, monkeypatch, isolated_state_dir):
+        import sys as _sys
+
+        monkeypatch.setattr(_sys.stdin, "isatty", lambda: True)
+        # Accept the prelude offer, then type `back` at the template-pick
+        # prompt.  Pre-fix this raised an UNCAUGHT WizardBack (exit 1
+        # traceback); now it falls through to the full wizard.  Feed a
+        # follow-up `cancel` so the full wizard terminates deterministically.
+        with patch(
+            "builtins.input",
+            side_effect=_input_returning("y", "back", "n", "cancel"),
+        ):
+            outcome = wizard.run_wizard_full()
+        # Must be a clean WizardOutcome, never a raised WizardBack/Reset.
+        assert isinstance(outcome, wizard.WizardOutcome)
+
+    def test_reset_in_quickstart_prelude_does_not_crash(self, monkeypatch, isolated_state_dir):
+        import sys as _sys
+
+        monkeypatch.setattr(_sys.stdin, "isatty", lambda: True)
+        with patch(
+            "builtins.input",
+            side_effect=_input_returning("y", "reset", "n", "cancel"),
+        ):
+            outcome = wizard.run_wizard_full()
+        assert isinstance(outcome, wizard.WizardOutcome)
+
+
+class TestWizardJsonModeSeam:
+    """F-P7-OPUS-06 / -07 — wizard CLI seam honours --output-format json."""
+
+    def _args(self, **overrides):
+        defaults = {
+            "wizard": False,
+            "wizard_start_from": None,
+            "config": None,
+            "output_format": "text",
+        }
+        defaults.update(overrides)
+        return type("Args", (), defaults)()
+
+    def test_wizard_json_mode_emits_envelope_and_exits_cancelled(self, capsys):
+        from forgelm.cli._wizard import _maybe_run_wizard
+
+        with pytest.raises(SystemExit) as exc:
+            _maybe_run_wizard(self._args(wizard=True, output_format="json"))
+        assert exc.value.code == wizard_exit_codes.EXIT_WIZARD_CANCELLED
+        out = capsys.readouterr()
+        # Every line of stdout must be valid JSON with success=False.
+        payload = json.loads(out.out)
+        assert payload["success"] is False
+        assert "json" in payload["error"].lower()
+        # The interactive prompts/banner must NOT have leaked to stdout.
+        assert "Welcome" not in out.out
+
+    def test_wizard_start_from_warning_goes_to_stderr_in_json_mode(self, capsys):
+        from forgelm.cli._wizard import _maybe_run_wizard
+
+        # --wizard-start-from without --wizard, in JSON mode: the guidance
+        # warning must land on stderr so it never precedes the dispatcher's
+        # JSON envelope on stdout (F-P7-OPUS-07).
+        _maybe_run_wizard(self._args(wizard=False, wizard_start_from="x.yaml", output_format="json"))
+        out = capsys.readouterr()
+        assert out.out == ""  # nothing on the data stream
+        assert "no effect without --wizard" in out.err
+
+    def test_wizard_start_from_warning_goes_to_stdout_in_text_mode(self, capsys):
+        from forgelm.cli._wizard import _maybe_run_wizard
+
+        _maybe_run_wizard(self._args(wizard=False, wizard_start_from="x.yaml", output_format="text"))
+        out = capsys.readouterr()
+        assert "no effect without --wizard" in out.out

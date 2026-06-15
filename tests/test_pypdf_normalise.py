@@ -53,6 +53,30 @@ class TestApplyProfile:
         clean = "Türkçe metin doğru karakterler içerir."
         assert apply_profile(clean, "turkish") == clean
 
+    def test_multichar_rule_is_lossy_on_legitimate_o_umlaut(self):
+        # F-P6-OPUS-14: the ``"ö " → "Ğ"`` rule is a 2→1, space-consuming
+        # transform, so a token that legitimately ends in ``ö`` before a
+        # space is merged with the next token. This pins the known,
+        # accepted false-positive of the turkish profile so a future
+        # widening (or a docstring claim of 1:1 byte-for-byte behaviour)
+        # is caught.
+        assert apply_profile("foo ö bar", "turkish") == "foo Ğbar"
+
+    def test_docstring_acknowledges_multichar_rule_is_not_1to1(self):
+        # F-P6-OPUS-14: the apply_profile docstring previously claimed
+        # "1:1 substitutions preserve every other code point byte-for-byte
+        # — the function does not strip whitespace", contradicting the
+        # shipped 2→1 multi-char rule. The docstring must acknowledge the
+        # lossy multi-char transform.
+        import inspect
+
+        doc = " ".join((inspect.getdoc(apply_profile) or "").split())
+        assert "multi-character" in doc
+        assert "2→1" in doc
+        # The bare "1:1 ... byte-for-byte / does not strip whitespace"
+        # claim must no longer stand unqualified.
+        assert "not** 1:1" in doc
+
 
 class TestProfileSummary:
     def test_turkish_summary_returns_table_sizes(self):

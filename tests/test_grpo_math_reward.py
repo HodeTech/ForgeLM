@@ -62,6 +62,32 @@ class TestNormalizeAnswer:
         # km/h must be stripped before km — otherwise "70 km/h" would leave "/h".
         assert _normalize_answer("70 km/h") == "70"
 
+    def test_strip_tokens_order_container_before_contained(self):
+        """Structural guard for the ``_REWARD_STRIP_TOKENS`` ordering invariant.
+
+        ``_normalize_answer`` strips the first matching token, so any token that
+        *contains* a shorter sibling at a boundary (e.g. "km/h" contains "km",
+        "mL" contains "m") must be listed BEFORE that sibling — otherwise the
+        contained token strips first and corrupts the answer (the "/h" failure
+        that ``test_strips_compound_unit_first`` pins for the single km/h case).
+        The example test only guards km/h; this covers every container/contained
+        pair so a future insertion (e.g. "m" before "mL") fails here instead of
+        silently regressing a unit that lacks its own example.
+        """
+        from forgelm.trainer import _REWARD_STRIP_TOKENS
+
+        tokens = _REWARD_STRIP_TOKENS
+        for i, contained in enumerate(tokens):
+            for j, container in enumerate(tokens):
+                if container == contained:
+                    continue
+                if container.endswith(contained) or container.startswith(contained):
+                    assert j < i, (
+                        f"_REWARD_STRIP_TOKENS ordering violation: container "
+                        f"{container!r} (index {j}) must precede contained token "
+                        f"{contained!r} (index {i}) so the compound unit strips first"
+                    )
+
     @pytest.mark.parametrize(
         "raw,expected",
         [
@@ -106,6 +132,29 @@ class TestAnswersMatch:
 
     def test_extracted_number_matches_gold_string(self):
         assert _answers_match("40", "40") is True
+
+    def test_both_empty_does_not_match(self):
+        # F-P2-FAB-32: two values that both normalize to "" (e.g. "$" and "%")
+        # must NOT count as a match — empty-after-normalization is never an answer.
+        assert _answers_match("", "") is False
+
+    def test_one_side_empty_does_not_match(self):
+        # A per-row gold hole that slips past _dataset_has_gold_answers must not
+        # spuriously match a non-empty extraction.
+        assert _answers_match("", "5") is False
+        assert _answers_match("5", "") is False
+
+    @pytest.mark.parametrize(
+        "extracted,gold,expected",
+        [
+            ("5,050", "5050", True),  # F-P3-FABLE-51: GSM8K comma grouping
+            ("1,234.5", "1234.5", True),  # grouped with a decimal tail
+            ("12,5", "1234", False),  # European decimal — NOT de-grouped
+            ("12,34", "1234", False),  # malformed grouping stays unequal
+        ],
+    )
+    def test_comma_thousands_separator(self, extracted, gold, expected):
+        assert _answers_match(extracted, gold) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +228,28 @@ class TestMathRewardFn:
         rewards = _math_reward_fn(["Answer: 7", "Answer: 8"])
         assert rewards == [0.0, 0.0]
 
+    def test_missing_gold_answer_kwarg_warns_once(self, caplog):
+        """The golds-None fallback must surface a single WARNING so an
+        inert-but-wired correctness reward is visible in the run log, instead of
+        silently contributing 0.0 every batch (F-P3-FABLE-50)."""
+        import logging
+
+        # The warn-once flag is module-level state in forgelm.trainer; reset it
+        # so this test is order-independent and the assertion sees the
+        # first-call WARNING (F-L-20: migrated from a function attribute to a
+        # module-level bool, so the reset target moved with it).
+        import forgelm.trainer as _trainer_mod
+
+        _trainer_mod._math_reward_fn_warned_no_golds = False
+        try:
+            with caplog.at_level(logging.WARNING, logger="forgelm.trainer"):
+                _math_reward_fn(["Answer: 7"])
+                _math_reward_fn(["Answer: 8"])
+            warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "gold_answer" in r.getMessage()]
+            assert len(warnings) == 1, "expected exactly one warn-once record across repeated calls"
+        finally:
+            _trainer_mod._math_reward_fn_warned_no_golds = False
+
     def test_mismatched_lengths_raises(self):
         """Wiring regression: completions and gold_answer must have the same length."""
         with pytest.raises(ValueError, match="zip"):
@@ -244,6 +315,159 @@ class TestMathRewardFn:
         rewards = _math_reward_fn(completions, gold_answer=["1.5", "1.5", "3.14159"])
         assert rewards == [1.0, 1.0, 1.0]
 
+    def test_reward_grades_last_answer_occurrence_correct_final(self):
+        """A self-correcting completion is graded on its FINAL answer.
+
+        Regression (F-P2-FAB-06 / F-P3-FABLE-27): the old leftmost ``.search``
+        graded the FIRST ``Answer:`` marker while the format reward is
+        end-anchored. A completion that proposes then revises
+        ("Answer: 5 … Answer: 7") must be graded against its final answer (7),
+        not the discarded candidate (5).
+        """
+        completion = "Answer: 5.\nWait, I made an error. Answer: 7"
+        # Gold is the final answer → reward 1.0.
+        assert _math_reward_fn([completion], gold_answer=["7"]) == [1.0]
+        # Gold is the discarded earlier candidate → reward 0.0 (no longer a
+        # reward-hack: mentioning the gold in an early clause must not score).
+        assert _math_reward_fn([completion], gold_answer=["5"]) == [0.0]
+
+    def test_reward_last_occurrence_with_trailing_prose(self):
+        """The last marker is graded even when trailing prose follows it."""
+        completion = "Candidate Answer: 50, which is wrong. Answer: 42. Done."
+        assert _math_reward_fn([completion], gold_answer=["42"]) == [1.0]
+        assert _math_reward_fn([completion], gold_answer=["50"]) == [0.0]
+
+    def test_reward_grades_last_marker_on_same_line_multi_answer(self):
+        """PR#63 review: two markers on the SAME line (no sentence break
+        between them) must still grade the FINAL answer.
+
+        The greedy body class used to absorb the second marker into the first
+        capture ("Answer: 5 Answer: 7" → captures "5 Answer: 7"), so the LAST
+        ``finditer`` match still graded the discarded candidate — re-opening the
+        reward-hacking divergence the LAST-marker rule closes
+        (F-P2-FAB-06 / F-P3-FABLE-27). The body now refuses to cross into a new
+        ``answer:`` marker, so the markers split into separate matches.
+        """
+        completion = "Answer: 5 Answer: 7"
+        # Final answer (7) earns the reward.
+        assert _math_reward_fn([completion], gold_answer=["7"]) == [1.0]
+        # The discarded earlier candidate (5) does NOT.
+        assert _math_reward_fn([completion], gold_answer=["5"]) == [0.0]
+
+        # Three same-line markers: the final one wins.
+        triple = "Answer: 5 then Answer: 7 then Answer: 9"
+        assert _math_reward_fn([triple], gold_answer=["9"]) == [1.0]
+        assert _math_reward_fn([triple], gold_answer=["5"]) == [0.0]
+        assert _math_reward_fn([triple], gold_answer=["7"]) == [0.0]
+
+        # The marker guard keys on "answer:" — a bare word "answer" without a
+        # colon is NOT a new marker, so it must not split the capture.
+        from forgelm.grpo_rewards import ANSWER_EXTRACT_PATTERN
+
+        prose = "Answer: the final answer is 42"
+        captures = [m.group(1) for m in ANSWER_EXTRACT_PATTERN.finditer(prose)]
+        assert captures == ["the final answer is 42"]
+
+    def test_reward_leading_dot_decimal_extracted(self):
+        """A bare-dot decimal "Answer: .5" earns correctness reward.
+
+        Regression (F-P2-FAB-31): the extraction pattern's first-char class
+        excluded "." so ".5" didn't match at all → reward 0.0, while the format
+        gate's ``\\S`` start accepted it → 1.0 (asymmetric reward). The leading
+        ``\\.(?=\\d)`` alternative now admits the decimal so both signals agree.
+        """
+        assert _math_reward_fn(["Answer: .5"], gold_answer=["0.5"]) == [1.0]
+        assert _math_reward_fn(["Answer: .5"], gold_answer=[".5"]) == [1.0]
+        # A lone "." (not followed by a digit) must still not match.
+        assert _math_reward_fn(["Answer: ."], gold_answer=["0"]) == [0.0]
+
+    def test_reward_comma_thousands_separator_matches(self):
+        """GSM8K comma-grouped large numbers match comma-free golds.
+
+        Regression (F-P3-FABLE-51): "Answer: 5,050" against gold "5050" scored
+        0.0 because float("5,050") raised. The grouped-number de-grouping in
+        ``_parse_number`` now matches the canonical GSM8K rendering.
+        """
+        completions = ["The sum is 5050. Answer: 5,050"]
+        assert _math_reward_fn(completions, gold_answer=["5050"]) == [1.0]
+
+    def test_reward_unit_only_completion_does_not_match(self):
+        """A degenerate unit-only completion never scores against a unit-only gold.
+
+        Regression (F-P2-FAB-32): "Answer: $" normalizes to "" and would have
+        matched gold "%" (also "") → false 1.0.
+        """
+        assert _math_reward_fn(["Answer: $"], gold_answer=["%"]) == [0.0]
+
+    def test_reward_and_format_gate_agree_on_final_answer(self):
+        """Cross-module consistency: correctness and format rewards grade the
+        same (final) answer for a self-correcting completion.
+
+        Both signals are summed by TRL; if they disagreed about which answer a
+        completion gives, a completion could earn full format reward on its
+        final answer while the correctness reward credited an earlier one. This
+        pins that they now agree on the end-anchored final answer.
+        """
+        from forgelm.grpo_rewards import format_match_reward
+
+        completion = "Answer: 5.\nWait. Answer: 7"
+        # Format gate: end-anchored → matches the final "Answer: 7" → 1.0.
+        assert format_match_reward([completion]) == [1.0]
+        # Correctness against the actual final answer → 1.0 (agrees with gate).
+        assert _math_reward_fn([completion], gold_answer=["7"]) == [1.0]
+
+    def test_extract_pattern_linear_on_pathological_input(self):
+        """The leading-dot alternative adds no ReDoS surface (regex.md budget).
+
+        ``\\.(?=\\d)`` is a fixed single-char lookahead, not a quantifier, so
+        scaling stays linear. Measure the median search time at growing input
+        sizes; doubling the input must not super-linearly blow up.
+        """
+        import re as _re
+        import time
+
+        from forgelm.grpo_rewards import ANSWER_EXTRACT_PATTERN
+
+        def _median_ms(n: int) -> float:
+            # No "Answer:" → worst case: engine scans the whole non-matching line.
+            payload = "Answer:" + ("." * n)
+            samples = []
+            for _ in range(5):
+                t0 = time.perf_counter()
+                ANSWER_EXTRACT_PATTERN.search(payload)
+                samples.append((time.perf_counter() - t0) * 1000)
+            return sorted(samples)[2]
+
+        # Safety floor: linear-time scanning stays well under 100 ms at 10K.
+        assert _median_ms(10_000) < 100.0
+        assert isinstance(ANSWER_EXTRACT_PATTERN, _re.Pattern)
+
+    def test_extract_pattern_linear_on_many_same_line_markers(self):
+        """The same-line marker guard ``(?!answer\\s*:)`` stays linear under
+        ``finditer`` (the real call site) on a dense run of markers.
+
+        PR#63 review: the rejected lookahead alternative ``(?![\\s\\S]*answer:)``
+        re-scanned the whole tail per marker → O(n²) (≈3 s at n=5000). The
+        per-character fixed-prefix guard avoids that. Verify the curve is
+        approximately linear, not explosive.
+        """
+        import time
+
+        from forgelm.grpo_rewards import ANSWER_EXTRACT_PATTERN
+
+        def _median_ms(n: int) -> float:
+            payload = "answer: x " * n
+            samples = []
+            for _ in range(5):
+                t0 = time.perf_counter()
+                list(ANSWER_EXTRACT_PATTERN.finditer(payload))
+                samples.append((time.perf_counter() - t0) * 1000)
+            return sorted(samples)[2]
+
+        # Generous safety floor: a real ReDoS blows past this by orders of
+        # magnitude. Linear scanning of 10K markers stays well under 1 s.
+        assert _median_ms(10_000) < 1000.0
+
 
 # ---------------------------------------------------------------------------
 # _dataset_has_gold_answers
@@ -295,7 +519,8 @@ class TestDatasetHasGoldAnswers:
 
     def test_hf_dataset_via_column_names(self):
         # Simulate a HuggingFace Dataset that doesn't allow dict-style row
-        # access but exposes column_names.
+        # access but exposes column_names. Not iterable either → presence-only
+        # fallback returns True (F-P2-FAB-33 fallback path).
         class FakeHFDataset:
             def __init__(self, cols):
                 self.column_names = cols
@@ -309,3 +534,74 @@ class TestDatasetHasGoldAnswers:
 
         ds = {"train": FakeHFDataset(["prompt", "gold_answer"])}
         assert _dataset_has_gold_answers(ds) is True
+
+    def test_iterable_dataset_with_placeholder_gold_treated_as_missing(self):
+        # F-P2-FAB-33: a streaming/iterable wrapper whose row access raises but
+        # which is iterable must have its first-row VALUE probed — a
+        # placeholder-only column (all None) is not real ground truth.
+        class FakeIterable:
+            def __init__(self, cols, rows):
+                self.column_names = cols
+                self._rows = rows
+
+            def __len__(self):
+                return len(self._rows)
+
+            def __getitem__(self, _):
+                raise IndexError
+
+            def __iter__(self):
+                return iter(self._rows)
+
+        placeholder = {"train": FakeIterable(["prompt", "gold_answer"], [{"gold_answer": None}])}
+        assert _dataset_has_gold_answers(placeholder) is False
+
+    def test_iterable_dataset_with_real_gold_value(self):
+        # The same iterable wrapper with a genuine value probes True.
+        class FakeIterable:
+            def __init__(self, cols, rows):
+                self.column_names = cols
+                self._rows = rows
+
+            def __len__(self):
+                return len(self._rows)
+
+            def __getitem__(self, _):
+                raise IndexError
+
+            def __iter__(self):
+                return iter(self._rows)
+
+        real = {"train": FakeIterable(["prompt", "gold_answer"], [{"gold_answer": "42"}])}
+        assert _dataset_has_gold_answers(real) is True
+
+    def test_one_shot_iterator_not_consumed_during_probe(self):
+        # PR#63 review: a self-iterating / one-shot dataset returns itself from
+        # ``iter()`` and consuming it here would silently drop the first
+        # training row. The probe must NOT advance such an iterator — it falls
+        # back to presence-by-name (True) and leaves the stream intact.
+        class FakeOneShotIterable:
+            def __init__(self, cols, rows):
+                self.column_names = cols
+                self._rows = iter(rows)
+
+            def __len__(self):
+                # Non-zero so the empty-split guard passes.
+                return 1
+
+            def __getitem__(self, _):
+                # Force the column_names / iterator code path.
+                raise IndexError
+
+            def __iter__(self):
+                # Self-iterating: ``iter(self) is self``.
+                return self
+
+            def __next__(self):
+                return next(self._rows)
+
+        rows = [{"gold_answer": "42"}, {"gold_answer": "7"}]
+        ds = FakeOneShotIterable(["prompt", "gold_answer"], rows)
+        assert _dataset_has_gold_answers({"train": ds}) is True
+        # Critical: the first row must still be available to the training loop.
+        assert next(iter(ds)) == {"gold_answer": "42"}

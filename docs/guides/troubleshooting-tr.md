@@ -65,6 +65,8 @@ pip install forgelm[eval]
    Etkili batch size denemeler arasında korunur. Her deneme audit
    trail'e loglanır.
 
+   > **Yeniden deneme yörüngesi hakkında not.** Başarılı bir yeniden deneme, trainer'ı küçük batch size ile sıfırdan bir optimizer ve LR scheduler (adım 0) kurarak yeniden oluşturur; çalışmayı açıkça `--resume <checkpoint>` ile başlatmadıysanız OOM'un oluştuğu adımdan devam etmez (o durumda ilgili checkpoint'e geri sarılır). Bu nedenle optimizasyon yörüngesi kesintisiz bir çalışmadan biraz farklıdır. Bu beklenen bir durumdur — bit düzeyinde tekrar üretilebilirlik için otomatik kurtarmaya güvenmek yerine batch size'ı manuel olarak sabitleyin.
+
 3. **Batch size'ı manuel azalt**:
    ```yaml
    training:
@@ -155,24 +157,28 @@ Long-context eğitimi (büyük `sliding_window_attention` ya da RoPE
 ölçekleme) VRAM kullanımını ciddi şekilde artırır. Hafifletmek için:
 
 1. **Sliding window boyutunu azalt**:
+
    ```yaml
    training:
      sliding_window_attention: 2048  # 4096'dan indir
    ```
 
 2. **Gradient checkpointing'i aç** (hız pahasına VRAM azaltır):
+
    ```yaml
    training:
      gradient_checkpointing: true
    ```
 
-3. **Sample packing kullan** (padding israfını azalt):
+3. **Sekans paketleme kullan** (padding israfını azalt):
+
    ```yaml
    training:
-     sample_packing: true
+     packing: true
    ```
 
 4. **Ek bellek tasarrufu için GaLore ile birleştir**:
+
    ```yaml
    training:
      galore_enabled: true

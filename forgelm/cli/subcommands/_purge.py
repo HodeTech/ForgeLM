@@ -88,6 +88,41 @@ _ROW_ID_KEYS: Tuple[str, ...] = ("id", "row_id")
 # operator handles the residual disposal manually).
 _VALID_RUN_KINDS: Tuple[str, ...] = ("staging", "artefacts")
 
+# Cap for the ``error_message`` field persisted into the append-only audit
+# chain.  Mirrors ``reverse_pii._AUDIT_ERROR_MESSAGE_MAX`` so the two GDPR
+# subcommands bound the field identically (F-P5-OPUS-07).
+_AUDIT_ERROR_MESSAGE_MAX = 200
+
+
+def _sanitise_audit_error_message(message: str) -> str:
+    """Mask + redact + bound ``error_message`` before it enters the chain.
+
+    ``data.erasure_failed`` carries ``error_message=str(exc)`` for an
+    ``OSError`` raised mid-erasure.  A Python exception string can embed
+    secret-bearing header values or, worse, corpus row content (emails /
+    phone numbers / names) when a downstream library quotes the offending
+    line — which would land that PII in the append-only audit log
+    permanently (CLAUDE.md principle 5).  ``docs/design/gdpr_erasure.md``
+    §6 mandates this field be routed through
+    :func:`forgelm._http._mask_secrets_in_text` and then the
+    :mod:`forgelm.data_audit._pii_regex` mask helpers; reverse-pii already
+    length-bounds its sibling field.  This helper applies all three passes
+    (secret mask → PII regex mask → length bound) so the load-bearing
+    privacy mandate and the length-bound precedent are met together
+    (F-P5-OPUS-07).
+    """
+    from forgelm._http import _mask_secrets_in_text
+    from forgelm.data_audit._pii_regex import mask_pii
+
+    # ``_mask_secrets_in_text`` needs a header map to know which values to
+    # strip; the purge path has no outbound headers, so pass ``None`` (it
+    # short-circuits to a no-op) per design §6's explicit note.
+    masked = _mask_secrets_in_text(message, None)
+    masked = mask_pii(masked)
+    if len(masked) <= _AUDIT_ERROR_MESSAGE_MAX:
+        return masked
+    return masked[:_AUDIT_ERROR_MESSAGE_MAX] + "…[truncated]"
+
 
 def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoReturn:
     """Emit *msg* as a structured JSON error or a log record, then exit.
@@ -212,6 +247,12 @@ def _validate_row_id_args(args, output_format: str) -> None:
             "rejected per Article 17 (per-row decision + per-row audit event).",
             EXIT_CONFIG_ERROR,
         )
+    # ``--corpus`` is trusted operator self-service input (named directly on the
+    # CLI; design §4.5 scopes purge as a single-node operator tool), so it is NOT
+    # boundary-checked against output_dir — unlike the run-scoped staging path,
+    # which the design explicitly promises to constrain (F-P5-OPUS-16). Note that
+    # ``os.path.isfile`` follows symlinks, so a ``--corpus`` symlink would have
+    # its TARGET rewritten on match; that is operator-chosen input here.
     if not os.path.isfile(args.corpus):
         _output_error_and_exit(
             output_format,
@@ -583,7 +624,7 @@ def _perform_row_erasure_and_audit(
             _EVT_ERASURE_FAILED,
             **request_fields,
             error_class=exc.__class__.__name__,
-            error_message=str(exc),
+            error_message=_sanitise_audit_error_message(str(exc)),
         )
         _output_error_and_exit(
             output_format,
@@ -753,6 +794,31 @@ def _run_purge_run_id(args, output_format: str) -> None:
             EXIT_CONFIG_ERROR,
         )
 
+    # Boundary check (F-P5-OPUS-02): refuse any resolved target that escapes
+    # ``output_dir``.  ``--run-id`` is free-form, so a ``..``-bearing value
+    # could point the deletion at an arbitrary sibling directory; reject the
+    # whole batch (fail-closed — never a partial delete) before either the
+    # dry-run report or the real deletion runs.
+    escaping = [p for p in target_paths if not _path_inside_output_dir(p, output_dir)]
+    if escaping:
+        audit.log_event(
+            _EVT_ERASURE_FAILED,
+            **request_fields,
+            error_class="PathTraversalRefused",
+            error_message=_sanitise_audit_error_message(
+                f"Refusing to erase target(s) outside output_dir: {[str(p) for p in escaping]!r}."
+            ),
+        )
+        _output_error_and_exit(
+            output_format,
+            (
+                f"Refusing run-scoped erasure: run_id={args.run_id!r} resolves to "
+                f"{len(escaping)} target(s) outside output_dir {output_dir!r}. "
+                "Path traversal is not permitted."
+            ),
+            EXIT_CONFIG_ERROR,
+        )
+
     if args.dry_run:
         audit.log_event(
             _EVT_ERASURE_COMPLETED,
@@ -783,7 +849,7 @@ def _run_purge_run_id(args, output_format: str) -> None:
             _EVT_ERASURE_FAILED,
             **request_fields,
             error_class=exc.__class__.__name__,
-            error_message=str(exc),
+            error_message=_sanitise_audit_error_message(str(exc)),
             files_modified=files_modified,
         )
         _output_error_and_exit(
@@ -925,6 +991,31 @@ def _filename_contains_run_id(filename: str, run_id: str) -> bool:
         if before_ok and after_ok:
             return True
         idx = found + 1
+
+
+def _path_inside_output_dir(target: Path, output_dir: str) -> bool:
+    """Return ``True`` iff *target* resolves inside *output_dir*.
+
+    Defence-in-depth boundary check for run-scoped erasure (F-P5-OPUS-02):
+    ``--run-id`` is a free-form ``type=str`` argument with no charset
+    constraint, so a value containing ``..`` segments can make
+    :func:`_staging_targets_for_run` build a ``final_model.staging.<run_id>``
+    path that ``os.path.normpath`` resolves *outside* ``output_dir`` — an
+    arbitrary-directory ``shutil.rmtree``.  Mirrors
+    :func:`forgelm.cli.subcommands._approve._staging_path_inside_output_dir`
+    (realpath + commonpath) so both compliance paths share one boundary
+    policy.  ``realpath`` follows symlinks, so a legitimate symlink whose
+    target lives inside ``output_dir`` still validates — only paths that
+    *escape* the boundary are rejected.
+    """
+    real_output = os.path.realpath(output_dir)
+    real_target = os.path.realpath(str(target))
+    try:
+        return os.path.commonpath([real_output, real_target]) == real_output
+    except ValueError:
+        # commonpath raises ValueError when the paths live on different
+        # drives (Windows) — treat as out-of-bounds.
+        return False
 
 
 def _delete_path(path: Path) -> int:

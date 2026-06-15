@@ -61,7 +61,8 @@ See `config_template.yaml` for a complete annotated example.
 | `final_model_dir` | string | `"final_model"` | Subdirectory for final artifacts |
 | `merge_adapters` | bool | `false` | Merge adapters into base model before saving |
 | `trainer_type` | string | `"sft"` | `"sft"`, `"dpo"`, `"simpo"`, `"kto"`, `"orpo"`, `"grpo"` |
-| `num_train_epochs` | int | `3` | Number of training epochs |
+| `max_steps` | int | `-1` | Hard step cap. `-1` = use `num_train_epochs`; a positive value overrides epochs. |
+| `num_train_epochs` | int | `3` | Number of training epochs (only consulted when `max_steps == -1`). |
 | `per_device_train_batch_size` | int | `4` | Batch size per GPU |
 | `gradient_accumulation_steps` | int | `2` | Steps to accumulate before backward pass |
 | `learning_rate` | float | `2e-5` | Learning rate (lower for alignment: 5e-6) |
@@ -70,6 +71,7 @@ See `config_template.yaml` for a complete annotated example.
 | `eval_steps` | int | `200` | Evaluate every N steps |
 | `save_steps` | int | `200` | Save checkpoint every N steps |
 | `save_total_limit` | int | `3` | Max checkpoints to keep |
+| `early_stopping_patience` | int | `3` | Stop after N evals without validation-loss improvement (active only when a validation split exists). |
 | `packing` | bool | `false` | Sequence packing (SFT only) |
 | `report_to` | string | `"tensorboard"` | `"tensorboard"`, `"wandb"`, `"mlflow"`, `"none"` |
 | `run_name` | string | `null` | W&B/MLflow run name (auto-generated if null) |
@@ -117,7 +119,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `rope_scaling` | `Optional[Dict[str, Any]]` | `null` | RoPE scaling method dict (`{"type": "linear", "factor": 2.0}` etc.). Supported types: `"linear"`, `"dynamic"`, `"yarn"`, `"longrope"`. |
 | `neftune_noise_alpha` | float | `null` | NEFTune noise injection alpha (e.g., `5.0`) |
 | `sliding_window_attention` | int | `null` | Sliding window attention size in tokens |
-| `sample_packing` | bool | `false` | Pack multiple short samples into full-length sequences |
+| `sample_packing` | bool | `false` | **Deprecated** alias for `packing` (TRL exposes a single packing knob). Setting `true` forwards to `packing: true` with a `DeprecationWarning`; removed in v0.9.0. Use `packing` instead. |
 
 #### GPU Cost Estimation
 
@@ -181,7 +183,10 @@ across retries. Each retry attempt is logged to the audit trail.
 | `num_fewshot` | int | `null` | Few-shot examples (task default) |
 | `batch_size` | string | `"auto"` | Evaluation batch size |
 | `limit` | int | `null` | Samples per task (for quick checks) |
+| `output_dir` | string | `null` | Where to write the benchmark results JSON. `null` = the training `output_dir`. |
 | `min_score` | float | `null` | Minimum average accuracy |
+
+> `enabled: true` requires at least one entry in `tasks` — an enabled benchmark gate with no tasks is rejected at config-load time.
 
 #### `evaluation.safety` (Optional)
 
@@ -197,6 +202,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `track_categories` | bool | `false` | Parse Llama Guard S1-S14 harm categories |
 | `severity_thresholds` | dict | `null` | Per-severity limits: `{"critical": 0, "high": 0.01, "medium": 0.05}` |
 | `batch_size` | int | `8` | Batched generation size for safety evaluation. `1` disables batching; raise for throughput on large VRAM, lower to reduce OOM risk on small VRAM. |
+| `include_eval_samples` | bool | `false` | Persist raw `prompt` / `response` strings to `safety_results.json`. **Off by default** for GDPR / EU AI Act Art. 10 privacy — adversarial prompts and responses may surface sensitive content. Opt in only for debugging. |
 
 #### `evaluation.llm_judge` (Optional)
 
@@ -209,12 +215,21 @@ across retries. Each retry attempt is logged to the audit trail.
 | `eval_dataset` | string | `"eval_prompts.jsonl"` | Evaluation prompts file |
 | `min_score` | float | `5.0` | Minimum average score (1-10) |
 | `batch_size` | int | `8` | Number of (prompt, completion) pairs scored per LLM-judge round. `1` disables batching. |
+| `include_eval_samples` | bool | `false` | Persist raw eval `prompt`, `response`, and judge `reason` strings to `judge_results.json`. **Off by default** for GDPR / EU AI Act Art. 10 privacy — judge reasoning can quote PII from the eval set. Opt in only for debugging. |
 
+> **Judge input truncation:** when building each scoring prompt the judge
+> sees at most the first **500 characters of the eval prompt** and the first
+> **1000 characters of the model response**. This keeps the judge prompt
+> bounded (and the API path cheap); it is below a typical `max_new_tokens`
+> generation budget, so very long answers are judged on a leading fragment.
+> ForgeLM logs a one-time `WARNING` when a row is actually trimmed. The limits
+> are fixed (not yet config-driven) — keep this in mind when tuning `min_score`
+> for long-form fine-tunes.
+>
 > **Deprecated:** `evaluation.staging_ttl_days` is superseded by
-> [`retention.staging_ttl_days`](#retention-optional-gdpr-article-17-erasure-horizons).
-> The legacy key is alias-forwarded with a `DeprecationWarning` during the
-> v0.5.5 → v0.6.x window and removed in v0.7.0. See
-> [release.md](../standards/release.md#deprecation-cadence).
+> [`retention.staging_ttl_days`](#retention-optional--gdpr-article-17-erasure-horizons).
+> The legacy key is alias-forwarded with a `DeprecationWarning` and removed in
+> v0.8.0. See [release.md](../standards/release.md#deprecation-cadence).
 
 ---
 
@@ -229,14 +244,14 @@ silently extend the retention horizon by re-using a stale workspace.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `audit_log_retention_days` | int | `1825` (~5 years) | Days to retain `audit_log.jsonl` before flagging it as overdue under Article 5(1)(e). Set to `0` to retain indefinitely (Article 17(3)(b) defence). |
-| `staging_ttl_days` | int | `7` | Days to retain `final_model.staging.<run_id>/` after a `forgelm reject` decision before scheduled cleanup. Set to `0` to retain indefinitely. Replaces the deprecated `evaluation.staging_ttl_days`; both keys accepted with identical values during the v0.5.5 → v0.6.x deprecation window. |
+| `staging_ttl_days` | int | `7` | Days to retain `final_model.staging.<run_id>/` after a `forgelm reject` decision before scheduled cleanup. Set to `0` to retain indefinitely. Replaces the deprecated `evaluation.staging_ttl_days`; both keys accepted with identical values during the deprecation window (legacy key removed in v0.8.0). |
 | `ephemeral_artefact_retention_days` | int | `90` | Days to retain compliance bundles, data audit reports, and other run-scoped derived artefacts. Set to `0` to retain indefinitely. |
 | `raw_documents_retention_days` | int | `90` | Days to retain ingested raw documents (PDF / DOCX / EPUB / TXT / Markdown) under the operator's ingestion-output directory. Set to `0` to retain indefinitely. |
 | `enforce` | string | `"log_only"` | Policy enforcement mode: `"log_only"` (audit-log only), `"warn_on_excess"` (structured stderr warning), `"block_on_excess"` (abort trainer pre-flight with `EXIT_EVAL_FAILURE` = 3). |
 
 > **Deprecation:** `evaluation.staging_ttl_days` is deprecated as of v0.5.5 in
 > favour of `retention.staging_ttl_days`. The legacy key is alias-forwarded
-> with a `DeprecationWarning` until v0.7.0. See
+> with a `DeprecationWarning` until its removal in v0.8.0. See
 > [release.md](../standards/release.md#deprecation-cadence) for the full
 > deprecation cadence policy.
 
@@ -253,6 +268,7 @@ silently extend the retention horizon by re-using a stale workspace.
 | `notify_on_failure` | bool | `true` | Notify on failure |
 | `timeout` | int | `10` | HTTP request timeout (seconds). Clamped to ≥ 1s by the notifier. Default raised to 10s in v0.5.5 (was 5s) — Slack/Teams gateway latency spikes regularly cross 5s in production, and a webhook timeout silently degrades the audit chain (webhook failure is best-effort). |
 | `allow_private_destinations` | bool | `false` | Opt in to webhooks pointing at RFC1918 / loopback / link-local hosts (in-cluster Slack proxy, on-prem Teams gateway). Defaults to public-internet only — SSRF guard |
+| `require_https` | bool | `false` | TLS-only enforcement. `true` refuses a plaintext `http://` URL (the SSRF chokepoint raises; the POST is skipped) instead of warn-and-send. Default `false` preserves warn-then-send |
 | `tls_ca_bundle` | string | `null` | Path to a custom CA bundle forwarded to `requests` as `verify=` (e.g. corporate MITM CA). When unset, `certifi`'s bundled store is used |
 
 ---
@@ -279,6 +295,19 @@ silently extend the retention horizon by re-using a stale workspace.
 | `method` | string | `"ties"` | `"ties"`, `"dare"`, `"slerp"`, `"linear"` |
 | `models` | list | `[]` | List of `{path, weight}` dicts |
 | `output_dir` | string | `"./merged_model"` | Output directory |
+| `ties_trim_fraction` | float | `0.2` | TIES: fraction (0.0–1.0) of smallest-magnitude deltas trimmed per task. Only consulted when `method` is `ties`. |
+| `dare_drop_rate` | float | `0.3` | DARE: probability (0.0–1.0) each delta is randomly dropped before rescaling. Only consulted when `method` is `dare`. |
+| `dare_seed` | int | `42` | DARE: RNG seed for the random drop mask, so a merge is reproducible run-to-run. |
+
+> **TIES/DARE default hyperparameters are intentionally conservative.** ForgeLM's
+> native `ties` merge trims the bottom **20%** of weights by magnitude (keeps
+> the top 80%); the `dare` merge uses `drop_rate=0.3` with a fixed seed. These
+> defaults are intentionally more conservative than the published TIES (keep
+> top ~20%) and DARE (`drop_rate` 0.9+) defaults — they retain more signal so a
+> two-adapter merge is less destructive out of the box, but the result will
+> differ from a paper-faithful merge. Operators who need the published sparsity
+> regimes can raise `ties_trim_fraction` / `dare_drop_rate` (or merge with an
+> external tool such as mergekit).
 
 ---
 
@@ -339,7 +368,9 @@ silently extend the retention horizon by re-using a stale workspace.
 | `max_new_tokens` | int | `1024` | Max tokens per teacher response. |
 | `temperature` | float | `0.7` | Sampling temperature passed to the teacher. |
 | `output_file` | string | `"synthetic_data.jsonl"` | Output JSONL file path. |
-| `output_format` | string | `"messages"` | One of `"messages"` (chat-style array), `"instruction"` (Alpaca-style), `"chatml"`, `"prompt_response"`. |
+| `output_format` | string | `"messages"` | One of `"messages"` (chat-style array), `"instruction"` (Alpaca-style), `"chatml"`, `"prompt_response"`. **`chatml` emits ForgeLM's legacy `{User, Assistant}` key layout — NOT OpenAI `<\|im_start\|>` ChatML markup.** Use `messages` for a portable chat format. |
+| `min_success_rate` | float | `0.0` | Minimum fraction (0.0–1.0) of seed prompts that must yield a usable example for `forgelm --generate-data` to exit 0. Default `0.0` keeps the legacy "any non-zero yield succeeds" behaviour; raise it so a CI pipeline does not proceed on a near-empty dataset. |
+| `sanity_failure_rate` | float | `0.2` | Failure-rate (0.0–1.0) above which `forgelm --generate-data` logs a `WARNING` that the dataset may be small or skewed — independent of `min_success_rate` (which gates the exit code). Default `0.2` warns when more than 20% of prompts fail. |
 
 ---
 
@@ -358,7 +389,7 @@ Chains 2+ training stages (typically SFT → DPO → GRPO) into one config-drive
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `output_dir` | string | `"./pipeline_run"` | Root directory for chain-level artefacts: `pipeline_state.json`, `compliance/pipeline_manifest.json`, and the pipeline-scoped `audit_log.jsonl`.  Per-stage trainer artefacts continue to live under each stage's own `training.output_dir`. |
-| `stages` | `List[PipelineStage]` | `[]` (required: ≥ 1) | Ordered list of stages.  Each stage's `model.name_or_path` is auto-set to the previous stage's `training.output_dir/final_model` unless the stage supplies an explicit `model:` block. |
+| `stages` | `List[PipelineStage]` | *required* (≥ 1 stage) | Ordered list of stages.  Each stage's `model.name_or_path` is auto-set to the previous stage's `training.output_dir/final_model` unless the stage supplies an explicit `model:` block. |
 
 ### `pipeline.stages[].*` — PipelineStage fields
 

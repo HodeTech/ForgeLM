@@ -136,10 +136,12 @@ The result is full-precision GGUF, ~13 GB for a 7B model.
 :::
 
 :::warn
-**Quality regression vs original.** Aggressive quants (q3, q2) can shift Llama Guard scores. Always re-run safety eval on the GGUF if it's going into production:
+**Quality regression vs original.** Aggressive quants (q3, q2) can shift Llama Guard scores. `safety-eval` does not yet load GGUF files, so re-run it against the **pre-export HuggingFace checkpoint** before you quantise — and treat post-quant safety drift as a known limitation until GGUF safety-eval lands:
+
 ```shell
-$ forgelm safety-eval --model model.q4_k_m.gguf --probes data/safety-probes.jsonl
+$ forgelm safety-eval --model ./output/final_model --probes data/safety-probes.jsonl
 ```
+
 :::
 
 :::tip

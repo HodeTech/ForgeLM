@@ -60,6 +60,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
+from pydantic import ValidationError
+
 from ..config import ConfigError, ForgeConfig, PipelineConfig, PipelineStage, merge_pipeline_stage_config
 from ._exit_codes import (
     EXIT_AWAITING_APPROVAL,
@@ -185,6 +187,28 @@ def _compute_pipeline_config_hash(pipeline_yaml_bytes: bytes) -> str:
     return "sha256:" + hashlib.sha256(pipeline_yaml_bytes).hexdigest()
 
 
+# The on-disk staging-suffix contract shared with ``forgelm approve``.  A gated
+# stage's ``output_model`` points at ``<final_path>.staging.<run_id>``; after the
+# operator runs ``forgelm approve`` that directory is renamed to ``<final_path>``.
+# Kept in sync with ``forgelm/cli/subcommands/_approve.py`` (``_STAGING_SUFFIX``);
+# not imported across the layer to avoid a CLI-subcommand → orchestrator cycle.
+_STAGING_SUFFIX = ".staging"
+
+
+def _derive_promoted_path(staging_path: str) -> str:
+    """Return the promoted ``final_model/`` path for a gated stage's staging dir.
+
+    Strips the staging suffix (and any runtime ``.<run_id>`` segment appended
+    after it) from ``staging_path`` so ``final_model.staging.abc123`` yields
+    ``final_model``.  Mirrors the derivation in
+    ``forgelm/cli/subcommands/_approve.py`` (the rename target ``forgelm
+    approve`` promotes to) — ``rfind`` locates the last occurrence of the
+    suffix so a trailing run-id segment is handled correctly.
+    """
+    idx = staging_path.rfind(_STAGING_SUFFIX)
+    return staging_path[:idx] if idx != -1 else staging_path
+
+
 def _pipeline_paths(root_cfg: ForgeConfig) -> Dict[str, str]:
     """Resolve the canonical filesystem paths for the pipeline run.
 
@@ -226,6 +250,13 @@ def _atomic_write_json(path: str, payload: Dict[str, Any]) -> None:
     accidental double-invocation surfaces as last-writer-wins rather
     than a Python traceback.  The temp lives in the same directory as
     ``path`` so ``os.replace`` stays a same-filesystem atomic rename.
+
+    No fsync: the temp is not flushed to stable storage before the rename, so
+    on power loss the *previous* version may survive instead of the new one.
+    That is acceptable for resumable state/manifest files — a re-run
+    re-derives the dropped update — but means this helper MUST NOT be reused
+    for append-only audit data, where durability of each committed entry is a
+    contract (use the audit logger's fsync-backed writer for that).
     """
     target_dir = os.path.dirname(path) or "."
     os.makedirs(target_dir, exist_ok=True)
@@ -252,6 +283,16 @@ def _serialise_state(state: PipelineState) -> Dict[str, Any]:
     return asdict(state)
 
 
+# Stage fields the orchestrator dereferences as filesystem paths / strings
+# (e.g. ``os.path.isdir(output_model)``).  A tampered state file can carry a
+# wrong-typed value here (``output_model: 123``) that survives dataclass
+# construction (dataclasses don't type-check) and then crashes ``--resume-from``
+# with an opaque ``TypeError`` deep inside the skiplist resolution.  Validating
+# them at load time (F-P2-FAB-38) routes the bad file through the existing
+# "structurally invalid; treating as missing" guard instead.
+_STAGE_STR_FIELDS = ("output_model", "input_model", "training_manifest", "error", "skipped_reason")
+
+
 def _deserialise_state(payload: Dict[str, Any]) -> PipelineState:
     """Round-trip :class:`PipelineState` from its on-disk JSON shape.
 
@@ -259,12 +300,22 @@ def _deserialise_state(payload: Dict[str, Any]) -> PipelineState:
     (legacy state files).  Type-coerces ``stages[]`` back into
     :class:`PipelineStageState` instances so the rest of the orchestrator
     sees a strongly-typed object.
+
+    Shape-only validation is not enough: dataclasses accept any value type, so
+    a path/str field tampered to a non-string (``output_model: 123``) would load
+    here and only blow up later at the ``os.path.isdir`` call site.  Reject
+    wrong-typed path/str fields with a ``ValueError`` so the caller's
+    ``_load_state_file`` guard treats the file as missing (F-P2-FAB-38).
     """
     stages_raw = payload.get("stages", [])
-    stages = [
-        PipelineStageState(**{k: v for k, v in s.items() if k in PipelineStageState.__dataclass_fields__})
-        for s in stages_raw
-    ]
+    stages = []
+    for s in stages_raw:
+        kwargs = {k: v for k, v in s.items() if k in PipelineStageState.__dataclass_fields__}
+        for field_name in _STAGE_STR_FIELDS:
+            value = kwargs.get(field_name)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"stage field {field_name!r} must be a string or null, got {type(value).__name__}")
+        stages.append(PipelineStageState(**kwargs))
     return PipelineState(
         pipeline_run_id=payload["pipeline_run_id"],
         pipeline_config_hash=payload["pipeline_config_hash"],
@@ -326,6 +377,7 @@ class PipelineOrchestrator:
         *,
         resume_from: Optional[str],
         force_resume: bool,
+        stage_filter: Optional[str] = None,
     ) -> "tuple[Optional[PipelineState], Optional[int]]":
         """Load + validate state for ``--resume-from`` or build a fresh state.
 
@@ -346,8 +398,60 @@ class PipelineOrchestrator:
             refusal = self._validate_resume_state(existing, force=force_resume)
             if refusal is not None:
                 return None, EXIT_CONFIG_ERROR
+            # Reset the prior run's terminal fields so a resumed run is treated
+            # as in-flight again.  Without this, a previously-failed run keeps
+            # ``final_status="stopped_at_stage"`` (or a previously-gated run
+            # keeps ``"gated_pending_approval"``) and ``_finalise_pipeline``'s
+            # ``in_progress``-guarded rewrite never fires — so even a fully
+            # successful resume emits a ``pipeline.completed`` carrying the
+            # stale terminal status (or, for the gated case, emits nothing at
+            # all).  History stays in the append-only audit log; the state file
+            # is current-state, not history (P2-FAB-04).
+            existing.final_status = "in_progress"
+            existing.stopped_at = None
+            existing.finished_at = None
             return existing, None
+
+        # ``--stage X`` on a pipeline that already ran: build a fresh state but
+        # CARRY OVER the prior run's stage history (status / output_model /
+        # metrics) for every non-filtered stage when the topology is unchanged.
+        # Otherwise ``_init_state`` clobbers pipeline_state.json — the other
+        # stages become ``skipped_by_filter`` with ``output_model=None``, and a
+        # later ``--resume-from`` re-trains them even though their ``final_model/``
+        # sits on disk (F-P2-FAB-12).
+        if stage_filter is not None and existing is not None:
+            return self._init_state_preserving(existing, stage_filter=stage_filter), None
         return self._init_state(), None
+
+    def _init_state_preserving(self, existing: PipelineState, *, stage_filter: str) -> PipelineState:
+        """Fresh state for a ``--stage`` run that retains prior stage history.
+
+        Carries over the prior run's per-stage ``status`` / ``output_model`` /
+        ``metrics`` for every stage except the filtered one, but only when the
+        stage topology is unchanged (same ordered stage names). On a topology
+        mismatch we fall back to a clean ``_init_state`` — positional carry-over
+        would otherwise graft one stage's history onto another.
+        """
+        fresh = self._init_state()
+        prior_names = [s.name for s in existing.stages]
+        current_names = [s.name for s in fresh.stages]
+        if prior_names != current_names:
+            return fresh
+        prior_by_name = {s.name: s for s in existing.stages}
+        for stage_state in fresh.stages:
+            if stage_state.name == stage_filter:
+                continue
+            prior = prior_by_name.get(stage_state.name)
+            if prior is None:
+                continue
+            stage_state.status = prior.status
+            stage_state.output_model = prior.output_model
+            stage_state.input_model = prior.input_model
+            stage_state.input_source = prior.input_source
+            stage_state.metrics = dict(prior.metrics)
+            stage_state.gate_decision = prior.gate_decision
+            stage_state.training_manifest = prior.training_manifest
+        return fresh
 
     def _resolve_resume_skiplist(
         self,
@@ -381,13 +485,49 @@ class PipelineOrchestrator:
         # That directory existing on disk is exactly NOT proof the artefact
         # may be consumed — skipping such a stage would chain downstream
         # training from a model no human has signed off, defeating the gate
-        # (P2-FAB-01).  Refuse the resume with a clear, actionable error
-        # instead.  (The approval workflow that flips the stage to a
-        # skippable status is handled separately — until then, resuming past
-        # an un-approved gate is correctly blocked, never silently bypassed.)
+        # (P2-FAB-01).
+        #
+        # ``forgelm approve`` promotes by **renaming** the staging dir to the
+        # canonical ``final_model/`` path and does not (cannot — it runs against
+        # a single stage's output dir, not the pipeline state file) rewrite
+        # ``pipeline_state.json``.  So a post-approval resume still sees
+        # ``status=gated_pending_approval`` on disk.  We distinguish the two
+        # cases by the exact filesystem transition ``approve`` performs: the
+        # UNAPPROVED staging dir is **renamed away** and the **derived promoted
+        # path** (staging suffix stripped) now exists in its place.  Approval is
+        # therefore proven only when the staging dir is GONE *and* the promoted
+        # path is present — that stage is skip-eligible and downstream must chain
+        # from the *promoted* path (P2-FAB-03).  While the staging dir is still
+        # on disk (or the promoted path is absent), no human has signed off:
+        # refuse with an actionable error (P2-FAB-01).  Requiring the staging dir
+        # to be gone — not merely the promoted path to exist — keeps an unrelated
+        # ``final_model/`` sitting next to a still-staged gate from being
+        # mistaken for an approval.
         stages_to_skip_completed: List[str] = []
         for prior_state in state.stages[:resume_idx]:
             if prior_state.status == "gated_pending_approval":
+                staging_path = prior_state.output_model
+                promoted_path = _derive_promoted_path(staging_path) if staging_path else None
+                approved = bool(
+                    staging_path and promoted_path and not os.path.isdir(staging_path) and os.path.isdir(promoted_path)
+                )
+                if approved:
+                    # Operator approved (staging renamed → final_model/).  Skip
+                    # the stage and rewrite ``output_model`` to the promoted
+                    # path so the auto-chain seeds downstream from the approved
+                    # weights, not the vanished staging dir.  Flip the status to
+                    # ``completed`` so the persisted state stops claiming the
+                    # stage is still pending approval after a successful resume.
+                    prior_state.output_model = promoted_path
+                    prior_state.status = "completed"
+                    stages_to_skip_completed.append(prior_state.name)
+                    logger.info(
+                        "Resuming: gated stage %r was approved (promoted model at %s); "
+                        "skipping and chaining from the approved model.",
+                        prior_state.name,
+                        promoted_path,
+                    )
+                    continue
                 logger.error(
                     "Cannot --resume-from %r: prior stage %r is awaiting human approval "
                     "(status=gated_pending_approval) and has NOT been approved.  Resuming "
@@ -451,8 +591,27 @@ class PipelineOrchestrator:
         if filter_idx == 0:
             return None, None
 
+        # A stage that declares its own ``model:`` block ignores the auto-chain
+        # seed entirely (merge priority: stage-explicit model wins; the chain
+        # applies only when ``stage.model is None``). Demanding the predecessor's
+        # output on disk is a spurious refusal for such a stage (F-P2-FAB-11).
+        if self.pipeline.stages[filter_idx].model is not None:
+            return None, None
+
         prev_stage = self.pipeline.stages[filter_idx - 1]
-        prev_merged = merge_pipeline_stage_config(self.root_cfg, prev_stage, prev_output_model=None)
+        # Guard the merge like the in-loop _merge_and_validate_stage does: a
+        # per-stage Pydantic/merge failure here must route to EXIT_CONFIG_ERROR
+        # via the logged error path, not escape as a raw traceback (F-P2-FAB-13).
+        try:
+            prev_merged = merge_pipeline_stage_config(self.root_cfg, prev_stage, prev_output_model=None)
+        except (ConfigError, ValidationError) as exc:
+            logger.error(
+                "Cannot --stage %r: the preceding stage %r failed config validation: %s",
+                stage_filter,
+                prev_stage.name,
+                exc,
+            )
+            return None, EXIT_CONFIG_ERROR
         candidate = os.path.join(prev_merged.training.output_dir, "final_model")
         if not os.path.isdir(candidate):
             logger.error(
@@ -571,6 +730,19 @@ class PipelineOrchestrator:
         )
         stage_state.started_at = _utc_iso_now()
         stage_state.status = "running"
+        # Clear every attempt-scoped field from a prior attempt loaded off the
+        # resumed state file. Otherwise a stage that failed then resumed-to-success
+        # persists status="completed" alongside a stale error="Trainer crashed: …"
+        # (and a stale skipped_reason / gate_decision), so the green state file
+        # reports per-stage errors that did not occur this run (F-P2-FAB-07).
+        stage_state.error = None
+        stage_state.skipped_reason = None
+        stage_state.gate_decision = None
+        stage_state.auto_revert_triggered = False
+        stage_state.exit_code = None
+        stage_state.finished_at = None
+        stage_state.duration_seconds = None
+        stage_state.output_model = None
         self._save_state(state)
 
         # ``--input-model`` attaches to a single filtered stage only.
@@ -600,6 +772,18 @@ class PipelineOrchestrator:
 
         Mirrors the run-loop tail.  Extracted from :meth:`run` for
         Sonar python:S3776 cognitive-complexity hygiene.
+
+        On entry ``final_status`` is ``in_progress`` for any run that ran
+        the stage loop to its natural end (fresh runs start there; a
+        ``--resume-from`` run is reset to ``in_progress`` in
+        :meth:`_prepare_resume_or_init_state` so a resumed-successful run
+        no longer carries the prior run's stale ``stopped_at_stage`` /
+        ``gated_pending_approval`` terminal status — P2-FAB-04).  The only
+        way it is *not* ``in_progress`` here is when a stage re-gated this
+        run (``gated_pending_approval``); that is a coherent terminal state
+        — the gate already set ``stopped_at`` / ``finished_at`` and emitted
+        ``pipeline.stage_gated``, so we persist it but emit no
+        ``pipeline.completed``.
         """
         if state.final_status == "in_progress":
             state.final_status = "completed" if worst_exit == EXIT_SUCCESS else "stopped_at_stage"
@@ -642,20 +826,49 @@ class PipelineOrchestrator:
         complexity hygiene.
         """
         if stage_filter is not None and stage.name != stage_filter:
-            stage_state.status = "skipped_by_filter"
-            stage_state.skipped_reason = f"--stage {stage_filter!r} was specified; only that stage runs."
+            # Preserve a stage's prior ``completed`` history (carried over by
+            # ``_init_state_preserving``) instead of downgrading it to
+            # ``skipped_by_filter`` with no ``output_model`` — otherwise a later
+            # ``--resume-from`` would re-train a stage whose ``final_model/`` is
+            # already on disk (F-P2-FAB-12).  Only stamp ``skipped_by_filter`` on
+            # stages with no prior completed output to record.
+            if not (stage_state.status == "completed" and stage_state.output_model):
+                stage_state.status = "skipped_by_filter"
+                stage_state.skipped_reason = f"--stage {stage_filter!r} was specified; only that stage runs."
             self._save_state(state)
             return "filtered"
         if stage.name in stages_to_skip_completed:
             return "already_completed"
         if chain_broken:
             stage_state.status = "skipped_due_to_prior_revert"
-            stage_state.skipped_reason = (
-                f"Stage {state.stopped_at!r} triggered auto_revert; downstream stages did not run."
-            )
+            stage_state.skipped_reason = self._chain_break_reason(state)
             self._save_state(state)
             return "chain_broken"
         return None
+
+    def _chain_break_reason(self, state: PipelineState) -> str:
+        """Describe why the chain broke, reflecting the *actual* cause.
+
+        The status label ``skipped_due_to_prior_revert`` is kept for backward
+        compatibility, but the free-text reason must not claim "triggered
+        auto_revert" for a stage that actually crashed (exit 2) or failed
+        config validation (exit 1) — that sends the operator to investigate
+        gates that never ran (F-P2-FAB-36). Derive the cause from the stopped
+        stage's recorded ``exit_code`` / ``auto_revert_triggered``.
+        """
+        stopped = state.stopped_at
+        prior = next((s for s in state.stages if s.name == stopped), None)
+        if prior is not None and prior.auto_revert_triggered:
+            cause = "triggered auto_revert (an evaluation gate failed)"
+        elif prior is not None and prior.exit_code == EXIT_TRAINING_ERROR:
+            cause = "failed with a training error"
+        elif prior is not None and prior.exit_code == EXIT_CONFIG_ERROR:
+            cause = "failed with a config error"
+        elif prior is not None and prior.exit_code == EXIT_EVAL_FAILURE:
+            cause = "failed an evaluation gate"
+        else:
+            cause = "did not complete successfully"
+        return f"Stage {stopped!r} {cause}; downstream stages did not run."
 
     def _run_stage_loop(
         self,
@@ -744,16 +957,17 @@ class PipelineOrchestrator:
                     stage,
                     prev_output_model=prev_output,
                 )
-            except Exception as exc:  # noqa: BLE001 — see DEBUG log below
+            except Exception as exc:  # noqa: BLE001 — best-effort: pre-flight is scoped to output_dir layout; merge crosses Pydantic validation+runtime surfaces and re-surfaces with full diagnostics on the per-stage run path, so skip-with-INFO here rather than abort the layout check.
                 # Merge failures are intentionally skipped here because
                 # they re-surface through the per-stage pipeline-error
                 # path with full diagnostics — the pre-flight's job is
                 # scoped to ``output_dir`` layout only.  Codacy / bandit
                 # B112 flagged the bare ``continue`` as a silent-skip
-                # anti-pattern; logging the exception at DEBUG keeps the
-                # skip *traceable* without aborting the pre-flight on
-                # what is by-design a per-stage local failure.
-                logger.debug(
+                # anti-pattern; log at INFO (was DEBUG, F-P2-FAB-35) so an
+                # ``--log-level info`` run isn't blind to a skipped
+                # pre-flight check without aborting on a by-design
+                # per-stage local failure.
+                logger.info(
                     "Pre-flight skipped collision check for stage %r: merge raised %s (%s); "
                     "the per-stage run path will surface the same error.",
                     stage.name,
@@ -761,7 +975,12 @@ class PipelineOrchestrator:
                     exc,
                 )
                 continue
-            abs_out = os.path.abspath(merged.training.output_dir)
+            # realpath (not abspath, F-P2-FAB-34): two stages whose output_dir
+            # strings alias the same directory through symlinks must collide
+            # like any other aliasing — abspath normalises lexically only and
+            # lets a symlinked second stage overwrite the first mid-run.
+            # Hardlink aliasing remains out of scope.
+            abs_out = os.path.realpath(merged.training.output_dir)
             if abs_out in seen_dirs:
                 collisions.append(
                     f"Stage {stage.name!r}: training.output_dir collides with stage "
@@ -812,7 +1031,9 @@ class PipelineOrchestrator:
             return EXIT_CONFIG_ERROR
 
         # 1. Load (or initialise) state.
-        state, state_err = self._prepare_resume_or_init_state(resume_from=resume_from, force_resume=force_resume)
+        state, state_err = self._prepare_resume_or_init_state(
+            resume_from=resume_from, force_resume=force_resume, stage_filter=stage_filter
+        )
         if state is None:
             return state_err  # type: ignore[return-value]
 
@@ -911,9 +1132,10 @@ class PipelineOrchestrator:
 
             # Collision check (Phase 14 review F-G-1): every stage must
             # write its checkpoints + per-stage manifest into a distinct
-            # directory.  Comparing absolute paths so ``./out`` and
-            # ``out/`` collide as one.
-            abs_out = os.path.abspath(merged.training.output_dir)
+            # directory.  Comparing realpaths (F-P2-FAB-34) so ``./out`` and
+            # ``out/`` collide as one AND a symlinked alias is caught;
+            # hardlink aliasing remains out of scope.
+            abs_out = os.path.realpath(merged.training.output_dir)
             if abs_out in seen_dirs:
                 errors.append(
                     f"Stage {stage.name!r}: training.output_dir collides with stage "
@@ -1243,7 +1465,7 @@ class PipelineOrchestrator:
                 prev_output_model=prev_output,
                 input_model_override=input_model_override,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — best-effort: Pydantic merge crosses validation+runtime error surfaces; the failure is captured on stage_state.error and routed to EXIT_CONFIG_ERROR by the caller (F-P2-FAB-35).
             stage_state.error = f"Config merge failed: {exc}"
             logger.exception("Stage %r config merge failed.", stage.name)
             return None
@@ -1306,7 +1528,7 @@ class PipelineOrchestrator:
             # propagate so the caller routes it to EXIT_CONFIG_ERROR rather than
             # the generic EXIT_TRAINING_ERROR the None-return below maps to.
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — best-effort: ForgeTrainer.train() crosses every concern (HF load, dataset, TRL, safety, judge, audit, compliance, webhook); a non-ConfigError leak is captured on stage_state.error and routed to EXIT_TRAINING_ERROR rather than stranding the pipeline state with a raw traceback (F-P2-FAB-35).
             stage_state.error = f"Trainer crashed: {exc}"
             logger.exception("Stage %r trainer crashed.", stage_name)
             return None
@@ -1487,9 +1709,28 @@ def run_pipeline_from_args(
 
     if dry_run:
         return orchestrator.dry_run()
-    return orchestrator.run(
-        stage_filter=stage_filter,
-        resume_from=resume_from,
-        force_resume=force_resume,
-        input_model_override=input_model_override,
-    )
+
+    # Top-level exception boundary (F-P2-FAB-13). Single-run training has one in
+    # cli/_training.py; the pipeline path was called bare, so a mid-run
+    # _save_state OSError (disk full / permission flip) escaped as a raw
+    # traceback → interpreter exit 1, indistinguishable from EXIT_CONFIG_ERROR
+    # and breaking JSON-mode stdout parsers. Map config-class failures to exit 1
+    # and everything else to the runtime-error class (exit 2), always emitting
+    # the 2-key JSON error envelope in JSON mode.
+    try:
+        return orchestrator.run(
+            stage_filter=stage_filter,
+            resume_from=resume_from,
+            force_resume=force_resume,
+            input_model_override=input_model_override,
+        )
+    except (ConfigError, ValidationError) as e:
+        logger.error("Pipeline configuration error: %s", e)
+        if output_format == "json":
+            print(json.dumps({"success": False, "error": str(e)}))
+        return EXIT_CONFIG_ERROR
+    except Exception as e:  # noqa: BLE001 — best-effort: top-of-CLI pipeline catch mirrors cli/_training.py. The orchestrator crosses state-file I/O, manifest generation, per-stage merge/validation, and trainer invocation; any leak must surface as a structured CLI failure (traceback in the log) and the 2-key JSON envelope on stdout rather than a raw traceback that breaks JSON parsers.  # NOSONAR
+        logger.exception("Pipeline run failed.")
+        if output_format == "json":
+            print(json.dumps({"success": False, "error": str(e)}))
+        return EXIT_TRAINING_ERROR

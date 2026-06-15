@@ -6,6 +6,66 @@ All notable changes to ForgeLM are documented here.
 
 _(v0.7.1 dev cycle — entries will land here as PRs merge.)_
 
+### Added
+
+- **Config-driven merge hyperparameters.** `merge.ties_trim_fraction`,
+  `merge.dare_drop_rate`, and `merge.dare_seed` expose the TIES/DARE knobs
+  that were previously fixed module constants (defaults unchanged: `0.2`,
+  `0.3`, `42`). Operators can now reach paper-faithful sparsity from YAML.
+- **Config-driven synthetic sanity bound.** `synthetic.sanity_failure_rate`
+  (default `0.2`) replaces the hardcoded warn-only failure-rate threshold in
+  `forgelm --generate-data`; it is independent of `min_success_rate`, which
+  still gates the exit code.
+
+### Changed
+
+- **Config validation hardened.** `distributed.strategy` is now a
+  `Literal["deepspeed", "fsdp"]` (an unsupported value such as `horovod`
+  used to validate and then silently run single-GPU). `data.mix_ratio`
+  now rejects non-finite weights (NaN / inf) and must carry exactly one
+  weight per dataset (`1 primary + len(extra_datasets)`); a length
+  mismatch raised no config error and silently fell back to uniform
+  mixing at runtime. Both now fail fast at config time (exit 1).
+- **Deprecation removals deferred to v0.8.0.** `evaluation.staging_ttl_days`
+  and the `--data-audit` CLI flag were originally scheduled for removal in
+  v0.7.0, but v0.7.0 shipped with both still present to preserve the full
+  one-minor deprecation window. Every `DeprecationWarning`, `--help` text,
+  reference-doc note, and the release-standard worked example now name
+  **v0.8.0** consistently as the removal target. The `### Removed` section
+  lands in the v0.8.0 CHANGELOG.
+
+### Deprecated
+
+- **`training.sample_packing`** is now a deprecated alias for
+  `training.packing`. It was previously a documented-but-unconsumed field
+  (a silent no-op); it now forwards to `packing` with a
+  `DeprecationWarning` so the documented behaviour actually fires. Use
+  `packing` instead — `sample_packing` is removed in **v0.9.0**. See
+  [docs/standards/release.md](docs/standards/release.md#deprecation-cadence).
+
+### Fixed
+
+- **Eval artefact privacy-redaction documented.** `safety_results.json` and
+  `judge_results.json` have been privacy-redacted by default since v0.7.0;
+  this entry adds the previously missing CHANGELOG documentation. Raw
+  `prompt` / `response` / judge `reason` strings are not persisted unless the
+  opt-in flags `evaluation.safety.include_eval_samples` and
+  `evaluation.llm_judge.include_eval_samples` (both default `false`) are set.
+  This honours GDPR / EU AI Act Article 10 privacy-by-default — adversarial
+  prompts and judge reasoning can quote sensitive content. Set the flag to
+  `true` only for debugging.
+- **Nightly pip-audit gate — transformers PYSEC-2025-217 / CVE-2025-14929.**
+  Advisory records X-CLIP checkpoint-conversion deserialization RCE
+  (CVSS AV:L/UI:R — local + user-interaction required). No fixed version in
+  the `transformers<5.0.0` range. Codebase check 2026-05-24: no X-CLIP usage
+  in `forgelm/`, no direct `torch.load` calls. Risk accepted in
+  `tools/pip_audit_ignores.yaml`; re-evaluate each release cycle.
+- **Pipeline configs with `pipeline:` + `retention.staging_ttl_days` +
+  any `evaluation:` block** no longer raise a false
+  `ConfigError ("Conflicting staging_ttl_days values")`. The stage-merge
+  round-trip re-materialised the deprecated `staging_ttl_days=7` default as
+  if the operator had written it; the dump now excludes unset defaults.
+
 ## [0.7.0] — 2026-05-14
 
 Phase 14 (Multi-Stage Pipeline Chains) closes the "operators have to write
@@ -97,10 +157,11 @@ block is present.
   validator lives in private helper `_verify_manifest_payload` so the
   in-memory and disk-bound entry points cannot drift.
 
-### Fixed (Phase 14 review-response — PR #53)
+### Fixed
 
-Addresses the consolidated reviewer-pass findings (3 blocking +
-4 significant + Gemini's 3 inline comments) against the initial Phase
+Addresses the consolidated reviewer-pass findings from Phase 14 review-response
+(PR [#53](https://github.com/HodeTech/ForgeLM/pull/53)) — 3 blocking +
+4 significant + Gemini's 3 inline comments — against the initial Phase
 14 merge candidate:
 
 - **F-B-1** — `forgelm --config pipeline.yaml --dry-run` now reaches
@@ -872,7 +933,7 @@ collectors / BYOD / IO concerns.
   bash/shell `forgelm` invocations; reports drift classes
   (subcommand not in parser; flag not in parser; flag value not in
   parser's `choices` list).
-- **`tools/check_field_descriptions.py --strict`** — AST-based
+- **`tools/check_field_descriptions.py --strict forgelm/config.py`** — AST-based
   scanner of Pydantic `BaseModel` subclasses; exits 1 on any field
   missing a `description=`.
 - **`tools/check_no_analysis_refs.py`** — prohibits citations to

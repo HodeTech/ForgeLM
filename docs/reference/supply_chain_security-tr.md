@@ -92,11 +92,13 @@ Wave 4 / Faz 23 nightly workflow'a `pip-audit` ekler. Davranış:
   - **MEDIUM / MODERATE** → `::warning::` annotation; nightly yeşil
     kalır.
   - **LOW** → sessiz.
-  - **UNKNOWN** → adet + rapor path'ini listeleyen tek bir özet
-    `::warning::` annotation'ı; operator-triage SRE'leri workflow
-    YAML'ını dolaşmadan artefactı grep'leyebilsin diye. Nightly
-    yeşil kalır (pip-audit'in JSON'u severity taşımadığı için
-    gerçek raporlarda çoğu bulgu buraya düşer).
+  - **UNKNOWN** → exit 1 (run'ı fail eder, bulgu başına bir `::error::`).
+    pip-audit'in JSON'u OSV severity taşımadığı için gerçek bulguların
+    neredeyse tamamı buraya düşer — fail-closed davranış, eksik bir
+    severity alanının gate'i sessizce atlamasına izin vermek yerine
+    operatörü açık triyaja zorlar. Belirli bir CVE'yi kabul etmek için
+    opt-in ignore dosyasıyla dokümante edin (aşağıdaki Suppression'a
+    bakın); yeşil kalmak için UNKNOWN kovasına güvenmeyin.
 - OSV / GHSA veritabanlarını kullanır (pip-audit varsayılanı).
 
 Operatörler aynı tooling'i lokalde kurar:

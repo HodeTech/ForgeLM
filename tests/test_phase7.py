@@ -76,7 +76,13 @@ class TestMergeConfig:
 
     def test_in_forge_config(self, minimal_config):
         cfg = ForgeConfig(
-            **minimal_config(merge={"enabled": True, "method": "linear", "models": [{"path": "a", "weight": 1.0}]})
+            **minimal_config(
+                merge={
+                    "enabled": True,
+                    "method": "linear",
+                    "models": [{"path": "a", "weight": 0.5}, {"path": "b", "weight": 0.5}],
+                }
+            )
         )
         assert cfg.merge.enabled is True
         assert cfg.merge.method == "linear"

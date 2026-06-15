@@ -31,8 +31,9 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 | `training.started`         | Trainer fine-tuning koşusunu başlatır.                                          | _(payload yok — yalnız zarf)_                                                      | 12    |
 | `training.oom_recovery`    | OOM kurtarma yolu `per_device_train_batch_size`'i yarıya indirip yeniden denedi (eğitim-arası event). | `old_batch_size`, `new_batch_size`, `new_grad_accum` | 12 / 15 |
 | `benchmark.evaluation_completed` | `lm-eval-harness` yapılandırılmış benchmark suite'inin değerlendirmesini bitirdi. | `passed`, `average`, `scores`                  | 15 |
-| `safety.evaluation_completed`    | Güvenlik değerlendirmesi bitti (Llama Guard / ShieldGemma koşusu).             | `passed`, `safe_ratio`, `safety_score`, `categories` | 15 |
+| `safety.evaluation_completed`    | Güvenlik değerlendirmesi bitti (Llama Guard / ShieldGemma koşusu).             | `passed`, `safe_ratio`, `total_count`, `safety_score`, `categories` | 15 |
 | `judge.evaluation_completed`     | LLM-as-judge skorlaması bitti.                                                  | `passed`, `average_score`                       | 15 |
+| `evaluation.loss_gate_completed` | Kayıp/eval-loss otomatik geri-alma kapısı yapılandırılmış eşiklere göre karar verdi (geçti veya kaldı). | `passed`, `eval_loss`, `max_acceptable_loss`, `baseline_loss` | 15 |
 | `pipeline.completed`       | Uçtan uca CLI koşusu (eğitim + değerlendirme + dışa aktarma) 0 koduyla biter.   | `success`, `metrics_summary`                                                       | 12    |
 | `pipeline.failed`          | Pipeline tamamlanmadan bir hata ile iptal olur.                                 | `error`                                                                            | 12    |
 | `pipeline.started`         | Çok-aşamalı pipeline orchestrator yeni bir koşu başlattı (`--resume-from` değil). | `pipeline_run_id`, `config_hash`, `stage_count`, `stage_names`                   | 12    |
@@ -64,8 +65,10 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 | Event                            | Ne zaman emit edilir                                                          | Payload                                          | Madde         |
 |----------------------------------|-------------------------------------------------------------------------------|--------------------------------------------------|---------------|
 | `compliance.governance_exported` | Madde 10 veri yönetişim raporu diske yazıldı.                                 | `output_path`, `dataset_count`                   | 10            |
+| `compliance.governance_section_missing` | Yönetişim raporu yazıldı ancak Madde 10 veri-kalitesi bölümü eksikti (`data_audit_report.json` yok). | `section`, `expected_path`              | 10            |
 | `compliance.governance_failed`   | Yönetişim raporu üretimi iptal edildi (örn. şema uyumsuzluğu).                | `reason`                                          | 10            |
-| `compliance.artifacts_exported`  | Ek IV teknik dokümantasyon paketi (manifest, model card, audit zip) yazıldı.  | `output_dir`, `files`                            | 11, Ek IV     |
+| `compliance.artifacts_exported`  | Ek IV teknik dokümantasyon paketi (manifest, model card, audit zip) yazıldı.  | `output_dir`, `files`, `governance_ok`           | 11, Ek IV     |
+| `compliance.artifacts_export_failed` | Ek IV / Madde 11 manifest export'u başarısız oldu veya yarım kaldı (disk dolu, SIGKILL, serileştirme hatası). | `reason`                                          | 11, Ek IV     |
 
 ### Madde 17 — GDPR Silinme Hakkı (Phase 21 — `forgelm purge`)
 
@@ -111,7 +114,7 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 
 1. Mevcut isim alanlarını (`training.*`, `compliance.*`, `audit.*`, `human_approval.*`, `model.*`, `cli.*`) takip eden noktalı bir ad seçin.
 2. Yukarıdaki tabloya, payload anahtarları ve desteklediği Madde dahil olmak üzere bir satır ekleyin.
-3. Satırı [audit_event_catalog.md](audit_event_catalog.md)'ye yansıtın.
+3. Aynı satırı İngilizce kardeş katalog `audit_event_catalog.md`'ye de ekleyin (EN ↔ TR senkron kalmalı).
 4. `AuditLogger.log_event(event, **payload)` üzerinden emit edin. `audit_log.jsonl`'a doğrudan `json.dump` çağırmayın; hash zinciri kanonik yazıcıya bağımlıdır.
 
 ## Tampering-evidence özeti
@@ -128,8 +131,10 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 
 Webhook payload'ları (Slack / Teams / jenerik HTTP) operatör bildirimlerine kapsamlanmış ayrı bir sözlüktür, regülasyon kaydı değil. Webhook olayları `audit_log.jsonl`'a **eklenmez**; yan-kanal bildirim bus'ı üzerinde gider. Kanonik yaşam döngüsü sözlüğü ayrıca [logging-observability.md](../standards/logging-observability.md)'da da belgelenmiştir.
 
-Bu beş yaşam döngüsü olayı, webhook alıcılarının `WebhookNotifier`'dan
-beklemesi gereken **tek** olaylardır. Her biri, karşılık gelen bir
+Bu sekiz olay, webhook alıcılarının `WebhookNotifier`'dan
+beklemesi gereken **tek** olaylardır: beş tek-aşamalı yaşam döngüsü
+olayı ve çok-aşamalı orkestratörün bunların yanı sıra emit ettiği
+üç-olaylı `pipeline.*` ailesi. Her biri, karşılık gelen bir
 denetim günlüğü olayını yansıtır; böylece aşağı akıştaki bir operatör
 webhook ping → denetim girdisi korelasyonunu `run_name` + zaman
 damgasıyla kurabilir. Uygulama: `forgelm/webhook.py`.
@@ -137,10 +142,13 @@ damgasıyla kurabilir. Uygulama: `forgelm/webhook.py`.
 | Webhook `event` | Denetim günlüğü karşılığı | Tetikleyici | Kapı (gate) | Zorunlu payload alanları |
 |---|---|---|---|---|
 | `training.start` | `training.started` | `train()` çağrıldı, model yüklenmeden önce. | `webhook.notify_on_start` | `run_name`, `status="started"` |
-| `training.success` | `pipeline.completed` | Tüm kapılar geçildi, insan onayı gerekmiyor. | `webhook.notify_on_success` | `run_name`, `status="succeeded"`, `metrics` |
+| `training.success` | `pipeline.completed` | Koşu revert veya bekleyen onay olmadan tamamlandı. `evaluation.auto_revert: true` ile tüm kapılar geçildi; varsayılan `auto_revert: false` ile bir kapı geçemediği halde yalnızca kaydedildiğinde de tetiklenir (model yine terfi eder). | `webhook.notify_on_success` | `run_name`, `status="succeeded"`, `metrics` |
 | `training.failure` | `pipeline.failed` | Eğitim sürecinin kendisi hata fırlattı (OOM, veri seti hatası, yakalanmayan istisna). | `webhook.notify_on_failure` | `run_name`, `status="failed"`, `reason` (maskelenmiş, ≤2048 karakter) |
 | `training.reverted` | `model.reverted` | Eğitim sonrası bir kapı (değerlendirme, güvenlik, hakem, benchmark) çalışmayı reddetti ve `_revert_model` adaptörleri sildi. | `webhook.notify_on_failure` | `run_name`, `status="reverted"`, `reason` (maskelenmiş, ≤2048 karakter) |
 | `approval.required` | `human_approval.required` | Çalışma başarılı oldu, `evaluation.require_human_approval=true`, model insan incelemesi için staging'de (EU AI Act Madde 14). | `webhook.notify_on_success` | `run_name`, `status="awaiting_approval"`, `model_path` |
+| `pipeline.started` | `pipeline.started` | Çok-aşamalı bir pipeline koşusu başlar, herhangi bir aşama çalışmadan önce. | `webhook.notify_on_start` | `run_name`, `status="started"`, `stage_count` |
+| `pipeline.completed` | `pipeline.completed` | Çok-aşamalı bir pipeline koşusu terminal durumuna ulaşır. Denetim olayıyla aynı adı paylaşır (bilinen wire/audit çakışması; payload alan-kümesiyle korele edin). | `webhook.notify_on_success` / `webhook.notify_on_failure` | `run_name`, `status`, `final_status`, `stopped_at` |
+| `pipeline.stage_reverted` | `pipeline.stage_reverted` | Bir pipeline aşaması auto-revert olur, aşağı akış aşamaları skip işaretlenmeden önce. | `webhook.notify_on_failure` | `run_name`, `status="reverted"`, `stage_name`, `reason` (maskelenmiş, ≤2048 karakter) |
 
 ### Bu yaşam döngüsü durumlarından ikisinin neden ayrıldığı
 
@@ -162,9 +170,9 @@ Her webhook olayı aynı zarfı taşır:
 
 ```json
 {
-  "event": "training.start | training.success | training.failure | training.reverted | approval.required",
+  "event": "training.start | training.success | training.failure | training.reverted | approval.required | pipeline.started | pipeline.completed | pipeline.stage_reverted",
   "run_name": "<dize>",
-  "status": "started | succeeded | failed | reverted | awaiting_approval",
+  "status": "started | succeeded | failed | reverted | awaiting_approval | completed | stopped_at_stage",
   "metrics": {"<isim>": <sayı>, ...},
   "reason": "<maskelenmiş dize ya da null>",
   "model_path": "<dosya sistemi yolu ya da null>",

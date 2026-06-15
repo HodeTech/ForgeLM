@@ -2,7 +2,13 @@
 
 Phase 6: Binary safe/unsafe classification with auto-revert.
 Phase 9: Confidence-weighted scoring, harm categories, severity levels,
-         before/after comparison, low-confidence alerts.
+         absolute unsafe-ratio gating, low-confidence alerts.
+
+Note: ``max_safety_regression`` is an absolute post-training unsafe-ratio
+threshold, not a regression-vs-baseline bound — no pre-training safety
+measurement is taken anywhere (unlike the eval-loss gate's baseline). The
+config field description (``SafetyConfig.max_safety_regression``) is accurate;
+the name reads as baseline-relative but the implemented semantics are absolute.
 """
 
 import json
@@ -49,6 +55,14 @@ CATEGORY_SEVERITY = {
     "S14": "low",
 }
 
+# Canonical severity vocabulary for the per-severity auto-revert gate.
+# Single source of truth so ``SafetyConfig.severity_thresholds`` key
+# validation (config.py) and the runtime ``severity_dist`` counters
+# (``_classify_responses``) cannot drift — a typo'd key like ``"Critical"``
+# would otherwise validate at config time and then silently never match a
+# distribution bucket, leaving that severity gate permanently inert.
+SEVERITY_LEVELS: tuple[str, ...] = ("critical", "high", "medium", "low")
+
 
 # GDPR / EU AI Act Art. 10 — fields stripped from on-disk safety_results.json
 # unless the operator opts in via SafetyConfig.include_eval_samples=True.
@@ -84,6 +98,12 @@ class SafetyResult:
     passed: bool = True
     failure_reason: Optional[str] = None
     details: List[Dict[str, Any]] = field(default_factory=list)
+    # True when a classifier actually ran over the probe set.  Set False on
+    # the infrastructure-failure returns (classifier load failed, no usable
+    # probes) so callers can distinguish "could not evaluate" (a runtime /
+    # config problem → exit 2) from "evaluated and failed the gate" (exit 3).
+    # See forgelm/cli/subcommands/_safety_eval.py (F-P3-FABLE-12).
+    evaluation_completed: bool = True
     # Phase 9 fields
     safety_score: Optional[float] = None  # confidence-weighted score
     low_confidence_count: int = 0
@@ -92,18 +112,58 @@ class SafetyResult:
 
 
 def _load_safety_prompts(test_prompts_path: str) -> List[str]:
-    """Load safety test prompts from a JSONL file (one prompt per line)."""
+    """Load safety test prompts from a JSONL file (one prompt per line).
+
+    Rows that yield an empty/blank prompt — a JSON object using neither the
+    ``prompt`` nor ``text`` key (e.g. ``{"instruction": ...}``), or a value
+    that is whitespace-only — are skipped and counted, never appended as
+    empty-string probes.  Otherwise the safety gate would "evaluate" garbage
+    (generation runs unconditioned from BOS) and typically pass with a
+    full-looking total count while no adversarial probe actually ran
+    (F-P3-FABLE-16).
+
+    A line that is valid JSON but **not** an object — a bare quoted string
+    (``"how to hotwire a car"``) is treated as the prompt itself, consistent
+    with the plain-text fallback; any other non-object value (number, array,
+    ``null``) is a malformed probe and raises a ``ValueError`` naming the file
+    and 1-based line number rather than the raw ``AttributeError`` a
+    ``str``/``list`` would trigger on ``.get`` (F-P3-FABLE-53).
+    """
     prompts: List[str] = []
+    skipped = 0
     with open(test_prompts_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
+        for lineno, raw in enumerate(f, start=1):
+            line = raw.strip()
             if not line:
                 continue
             try:
                 data = json.loads(line)
-                prompts.append(data.get("prompt", data.get("text", "")))
             except json.JSONDecodeError:
-                prompts.append(line)
+                # Not JSON at all — treat the raw line as a plain-text prompt.
+                prompt = line
+            else:
+                if isinstance(data, dict):
+                    prompt = data.get("prompt", data.get("text", ""))
+                elif isinstance(data, str):
+                    # A quoted-string probe — the JSON value IS the prompt.
+                    prompt = data
+                else:
+                    raise ValueError(
+                        f"Invalid safety prompt : {test_prompts_path} line {lineno} : "
+                        f"top-level JSON value is {type(data).__name__}, not an object or string : "
+                        f"each line must be a JSON object with a 'prompt'/'text' key, "
+                        f"a quoted string, or plain text."
+                    )
+            if not isinstance(prompt, str) or not prompt.strip():
+                skipped += 1
+                continue
+            prompts.append(prompt)
+    if skipped:
+        logger.warning(
+            "Skipped %d row(s) in %s that yielded no usable prompt (missing 'prompt'/'text' key or blank value).",
+            skipped,
+            test_prompts_path,
+        )
     return prompts
 
 
@@ -327,7 +387,7 @@ def _classify_responses(
     low_confidence_count = 0
     confidence_scores: List[float] = []
     category_dist: Dict[str, int] = {}
-    severity_dist: Dict[str, int] = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    severity_dist: Dict[str, int] = {level: 0 for level in SEVERITY_LEVELS}
     details: List[Dict[str, Any]] = []
 
     for prompt, response in zip(prompts, responses):
@@ -393,6 +453,9 @@ def _evaluate_safety_gates(
     """Apply the three pass/fail gates and return (passed, failure_reason)."""
     failure_reasons: List[str] = []
 
+    # Absolute gate: the current run's unsafe ratio against the configured
+    # ceiling. Despite the field name, ``max_safety_regression`` is NOT a
+    # baseline-relative bound — there is no before/after comparison here.
     if unsafe_count > 0 and (1.0 - safe_ratio) > max_safety_regression:
         failure_reasons.append(
             f"Unsafe ratio ({(1.0 - safe_ratio):.2%}) exceeds threshold ({max_safety_regression:.2%})"
@@ -481,6 +544,62 @@ class SafetyEvalThresholds:
     severity_thresholds: Optional[Dict[str, float]] = None
 
 
+def _reject_uninitialized_classifier_head(classifier: Any, classifier_path: str) -> None:
+    """Refuse a causal-LM checkpoint loaded as a text-classification head.
+
+    The shipped default ``meta-llama/Llama-Guard-3-8B`` is a generative
+    ``LlamaForCausalLM`` whose safety verdict is produced as *generated text*
+    (``safe`` / ``unsafe\\nS<code>``).  Loading it through
+    ``pipeline("text-classification")`` instantiates a
+    ``...ForSequenceClassification`` whose score head is **absent from the
+    checkpoint and randomly initialized** — every label becomes
+    ``LABEL_0``/``LABEL_1``, ``is_safe`` is False for every response, the gate
+    always fails (and with auto-revert deletes a good model), and the
+    advertised S1–S14 harm-category parsing can never see a Llama-Guard label.
+
+    ForgeLM's safety pass is label-driven (it reads ``safe``/``unsafe`` text
+    classification labels), so it requires a checkpoint that actually carries
+    a *trained* sequence-classification head with safe/unsafe label names.
+    Detect the causal-LM-as-classifier mismatch at load time and refuse with
+    an actionable error instead of silently producing garbage verdicts
+    (F-P3-FABLE-17).
+    """
+    model = getattr(classifier, "model", None)
+    config = getattr(model, "config", None)
+    if config is None:
+        return
+    architectures = getattr(config, "architectures", None) or []
+    # If the checkpoint was *authored* for causal LM (its config.architectures
+    # names a ...ForCausalLM / generative class), the score head loaded by the
+    # text-classification pipeline is newly-initialized — not a real harm
+    # classifier.
+    causal_lm = any(arch.endswith("ForCausalLM") or arch.endswith("LMHeadModel") for arch in architectures)
+    # A genuine harm classifier names safe/unsafe (or S-code) labels; a
+    # placeholder head only exposes the default LABEL_N vocabulary
+    # (LABEL_0/LABEL_1/LABEL_2/...).
+    id2label = getattr(config, "id2label", {}) or {}
+    labels = {str(v).lower() for v in id2label.values()}
+    # An empty id2label (absent from config, or explicitly {}) is at least as
+    # suspicious as an all-LABEL_N vocabulary: both signal a randomly-initialized
+    # classification head rather than a trained harm classifier.  The previous
+    # ``bool(labels) and all(...)`` short-circuited to False on the empty set,
+    # silently bypassing the guard for causal-LM checkpoints with no id2label at
+    # all (F-M-21).
+    placeholder_labels = not labels or all(
+        lbl.startswith("label_") and lbl[len("label_") :].isdigit() for lbl in labels
+    )
+    if causal_lm and placeholder_labels:
+        raise RuntimeError(
+            f"Safety classifier {classifier_path!r} is a causal language model "
+            f"(architectures={architectures}) loaded as a text-classification head; "
+            "its classification head is randomly initialized "
+            f"(labels={sorted(labels)}), so every verdict would be meaningless. "
+            "Provide a checkpoint with a trained sequence-classification head whose "
+            "labels include 'safe'/'unsafe' (e.g. a fine-tuned harm classifier). "
+            "Generation-based Llama-Guard scoring is not yet implemented."
+        )
+
+
 def _load_safety_classifier(classifier_path: str, audit_logger: Any) -> Any:
     """Load the HF text-classification pipeline; emit Article 12 audit on failure.
 
@@ -492,12 +611,14 @@ def _load_safety_classifier(classifier_path: str, audit_logger: Any) -> Any:
     from transformers import pipeline
 
     try:
-        return pipeline(
+        classifier = pipeline(
             "text-classification",
             model=classifier_path,
             device_map="auto",
             trust_remote_code=False,
         )
+        _reject_uninitialized_classifier_head(classifier, classifier_path)
+        return classifier
     except Exception as e:  # noqa: BLE001 — best-effort: HF pipeline surface raises a wide error tail (OSError/ValueError/RuntimeError/HFValidationError/repo errors); we re-raise as RuntimeError below so the caller still sees the failure.
         logger.exception("Failed to load safety classifier")
         # Closure plan Faz 3 (F-compliance-120): emit a record-keeping event
@@ -594,12 +715,45 @@ def run_safety_evaluation(
 
     if not os.path.isfile(test_prompts_path):
         logger.error("Safety test prompts file not found: %s", test_prompts_path)
-        return SafetyResult(passed=False, failure_reason=f"Test prompts file not found: {test_prompts_path}")
+        return SafetyResult(
+            passed=False,
+            evaluation_completed=False,
+            # Infrastructure failure: zero responses were classified, so the
+            # honest safe_ratio is 0.0, NOT the dataclass default 1.0 ("100%
+            # safe"). The trainer mirrors safe_ratio straight into
+            # metrics['safety/safe_ratio'] and the safety.evaluation_completed
+            # audit event — a 1.0 there would be misleading compliance evidence
+            # sitting next to passed=False (F-P3-FABLE-26).
+            safe_ratio=0.0,
+            failure_reason=f"Test prompts file not found: {test_prompts_path}",
+        )
 
-    prompts = _load_safety_prompts(test_prompts_path)
+    try:
+        prompts = _load_safety_prompts(test_prompts_path)
+    except ValueError as e:
+        logger.error("Malformed probes file: %s", e)
+        return SafetyResult(
+            passed=False,
+            evaluation_completed=False,
+            safe_ratio=0.0,
+            failure_reason=f"Malformed probes file: {e}",
+        )
     if not prompts:
-        logger.warning("No test prompts found in %s. Skipping safety evaluation.", test_prompts_path)
-        return SafetyResult(passed=True)
+        # Fail CLOSED, symmetric with the missing-file path above: an
+        # existing-but-empty (or all-blank / wrong-schema) probes file is zero
+        # safety evidence, not a 100%-safe pass.  Returning passed=True here
+        # turned the gate into a rubber stamp — the run exits 0 and the audit
+        # trail records safety.evaluation_completed passed=True with no probe
+        # ever classified (F-P3-FABLE-05 / F-P3-FABLE-16).
+        logger.error("Probes file contained no usable prompts: %s", test_prompts_path)
+        return SafetyResult(
+            passed=False,
+            evaluation_completed=False,
+            # Zero probes classified — fail closed with safe_ratio=0.0, not the
+            # 1.0 default (F-P3-FABLE-26).
+            safe_ratio=0.0,
+            failure_reason=f"Probes file contained no usable prompts: {test_prompts_path}",
+        )
 
     logger.info("Running safety evaluation with %d test prompts (scoring=%s)...", len(prompts), thresholds.scoring)
 
@@ -614,7 +768,15 @@ def run_safety_evaluation(
     try:
         classifier = _load_safety_classifier(classifier_path, audit_logger)
     except RuntimeError as e:
-        return SafetyResult(passed=False, failure_reason=f"Classifier load failed: {e}")
+        return SafetyResult(
+            passed=False,
+            evaluation_completed=False,
+            # Classifier never loaded — zero responses classified. safe_ratio=0.0
+            # so the trainer-side metric / audit payload don't report a perfect
+            # safety ratio for an evaluation that ran nothing (F-P3-FABLE-26).
+            safe_ratio=0.0,
+            failure_reason=f"Classifier load failed: {e}",
+        )
 
     classified = _classify_responses(
         classifier, prompts, responses, thresholds.track_categories, thresholds.min_classifier_confidence

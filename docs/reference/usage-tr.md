@@ -99,7 +99,7 @@ forgelm verify-annex-iv --pipeline ./pipeline_run
 
 **Tek-aşama flag reddi:** Config bir `pipeline:` bloğu taşıdığında `--fit-check`, `--merge`, `--generate-data`, `--compliance-export`, `--benchmark-only` desteklenmez — ya bloğu kaldırın ya da flag'i kaldırın.  Tersine, `--stage`, `--resume-from`, `--force-resume`, `--input-model` `pipeline:` bloğu gerektirir — tek-aşama config'e karşı çalıştırıldıklarında flag'i sessizce yok saymak yerine `EXIT_CONFIG_ERROR (1)` ile çıkar.
 
-Operatör adım adım: [Çok Aşamalı Pipeline kılavuzu](../guides/pipeline-tr.md).  Şema detayları: [`pipeline` config bloğu](configuration-tr.md#pipeline-isteğe-bağlı-çok-aşamalı-eğitim-zincirleri-faz-14).
+Operatör adım adım: [Çok Aşamalı Pipeline kılavuzu](../guides/pipeline-tr.md).  Şema detayları: [`pipeline` config bloğu](configuration-tr.md#pipeline-isteğe-bağlı--çok-aşamalı-eğitim-zincirleri-faz-14).
 
 ### VRAM Fit Check
 
@@ -310,7 +310,7 @@ training:
   rope_scaling: {type: "linear", factor: 2.0}  # dict formu: type ∈ {"linear","dynamic","yarn","longrope"}, factor ≥ 1.0
   neftune_noise_alpha: 5.0            # Daha iyi genelleme için NEFTune gürültüsü
   sliding_window_attention: 4096      # Kayan pencere boyutu (token)
-  sample_packing: true                # Kısa örnekleri tam uzunluklu dizilere paketle
+  packing: true                       # Kısa örnekleri tam uzunluklu dizilere paketle
 ```
 
 ### GPU Maliyet Tahmini

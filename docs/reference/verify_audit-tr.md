@@ -38,7 +38,7 @@ Kodlar dispatcher tarafından `_run_verify_audit_cmd` (`forgelm/cli/subcommands/
 
 ## Emit edilen audit event'leri
 
-`forgelm verify-audit` **salt-okunur bir doğrulayıcıdır** ve `audit_log.jsonl`'a **hiçbir** kayıt eklemez. Yalnızca zinciri inceler. Doğrulanan log'un *içinde* görünen event'ler [audit_event_catalog.md](audit_event_catalog.md)'de kataloglanmıştır (verify-audit'in yürüdüğü `_hmac`, `prev_hash` ve `run_id` alanları için Ortak zarf satırına bakın).
+`forgelm verify-audit` **salt-okunur bir doğrulayıcıdır** ve `audit_log.jsonl`'a **hiçbir** kayıt eklemez. Yalnızca zinciri inceler. Doğrulanan log'un *içinde* görünen event'ler [audit_event_catalog.md](audit_event_catalog-tr.md)'de kataloglanmıştır (verify-audit'in yürüdüğü `_hmac`, `prev_hash` ve `run_id` alanları için Ortak zarf satırına bakın).
 
 ## Örnekler
 
@@ -99,8 +99,8 @@ $ echo $?
 
 ## Bkz.
 
-- [`audit_event_catalog.md`](audit_event_catalog.md) — bu komutun doğruladığı log'un *içinde* görünen event'ler.
-- [`verify_annex_iv_subcommand.md`](verify_annex_iv_subcommand.md) — Annex IV teknik dokümantasyon artifact'ı için kardeş doğrulayıcı.
-- [`verify_gguf_subcommand.md`](verify_gguf_subcommand.md) — export edilmiş GGUF model dosyaları için kardeş doğrulayıcı.
+- [`audit_event_catalog.md`](audit_event_catalog-tr.md) — bu komutun doğruladığı log'un *içinde* görünen event'ler.
+- [`verify_annex_iv_subcommand.md`](verify_annex_iv_subcommand-tr.md) — Annex IV teknik dokümantasyon artifact'ı için kardeş doğrulayıcı.
+- [`verify_gguf_subcommand.md`](verify_gguf_subcommand-tr.md) — export edilmiş GGUF model dosyaları için kardeş doğrulayıcı.
 - [Audit Log kullanım kılavuzu sayfası](../usermanuals/tr/compliance/audit-log.md) — log'un kendisine dair operatör-odaklı kılavuz.
 - `forgelm.compliance.verify_audit_log` — entegratörlerin CLI'dan geçmeden doğrudan çağırdığı kütüphane giriş noktası.

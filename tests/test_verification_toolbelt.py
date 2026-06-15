@@ -28,7 +28,16 @@ def _build_args(**kwargs) -> SimpleNamespace:
 def _full_annex_iv_artifact() -> dict:
     """Build a minimal valid Annex IV artifact."""
     return {
-        "system_identification": {"name": "ForgeLM-test", "version": "0.5.5", "provider": "Acme"},
+        "system_identification": {
+            "name": "ForgeLM-test",
+            "version": "0.5.5",
+            "provider": "Acme",
+            # Identity-critical §1 sub-fields the verifier now requires
+            # to be non-empty (F-P4-OPUS-17).
+            "provider_name": "Acme Inc.",
+            "system_name": "ForgeLM-test",
+            "intended_purpose": "Customer-support fine-tuning research baseline",
+        },
         "intended_purpose": "Customer-support fine-tuning research baseline",
         "system_components": ["transformers>=4.40", "trl>=0.18"],
         "computational_resources": {"gpu": "A100 80GB", "training_hours": 4.5},
@@ -149,6 +158,22 @@ class TestVerifyAnnexIv:
         with pytest.raises(SystemExit) as ei:
             _run_verify_annex_iv_cmd(args, output_format="json")
         assert ei.value.code == 1
+
+    def test_module_docstring_exit_codes_match_implementation(self) -> None:
+        """F-P4-OPUS-06 (XP-18): the module docstring's exit-code table must
+        agree with the dispatcher. Pre-fix, the docstring claimed exit 2 for
+        'file not found / malformed JSON' while the code returns exit 1 for
+        both (only a genuine runtime I/O failure on an existing file maps to
+        2). Assert the '2 —' line no longer lists those caller-input cases."""
+        import forgelm.cli.subcommands._verify_annex_iv as mod
+
+        doc = mod.__doc__ or ""
+        two_line = next((ln for ln in doc.splitlines() if ln.lstrip().startswith("- 2 —")), "")
+        assert two_line, "exit-code 2 row missing from module docstring"
+        assert "file not found" not in two_line.lower()
+        assert "malformed json" not in two_line.lower()
+        # The exit-1 row owns the caller-input failures.
+        assert "- 1 —" in doc and "malformed JSON" in doc
 
     def test_writer_round_trip_passes_verifier(self, tmp_path: Path) -> None:
         """F-W2B-01 + F-W2B-05 regression: a freshly-generated Annex IV
@@ -381,6 +406,22 @@ class TestVerifyGguf:
             _run_verify_gguf_cmd(args, output_format="json")
         assert ei.value.code == 1
 
+    def test_input_error_json_uses_same_indent_as_result(self, tmp_path: Path, capsys) -> None:
+        """F-P7-OPUS-43: the input-error envelope must use the same ``indent=2``
+        shape as the result envelope so a single subcommand does not emit two
+        different whitespace contracts on stdout."""
+        from forgelm.cli.subcommands._verify_gguf import _run_verify_gguf_cmd
+
+        args = _build_args(path=str(tmp_path / "missing.gguf"))
+        with pytest.raises(SystemExit):
+            _run_verify_gguf_cmd(args, output_format="json")
+        out = capsys.readouterr().out.strip()
+        payload = json.loads(out)
+        assert payload["success"] is False
+        # indent=2 -> pretty-printed multi-line, not a compact single line.
+        assert "\n" in out
+        assert out.startswith("{\n")
+
 
 # ---------------------------------------------------------------------------
 # safety-eval (dispatcher-layer only — generation path is covered elsewhere)
@@ -491,6 +532,80 @@ class TestSafetyEvalDispatcher:
             f"safety-eval must exit EXIT_EVAL_FAILURE (3) on safety-gate non-pass, got {ei.value.code}"
         )
 
+    def test_classifier_load_failure_exits_training_error(self, tmp_path: Path, monkeypatch) -> None:
+        """F-P3-FABLE-12: a classifier that never loaded is a runtime problem
+        (exit 2), not a threshold failure (exit 3).  run_safety_evaluation
+        flags this with ``evaluation_completed=False``."""
+        from forgelm.cli.subcommands import _safety_eval
+
+        stub_result = SimpleNamespace(
+            passed=False,
+            evaluation_completed=False,
+            safety_score=None,
+            safe_ratio=1.0,
+            category_distribution={},
+            failure_reason="Classifier load failed: boom",
+        )
+        monkeypatch.setattr(_safety_eval, "_load_model_for_safety", lambda *a, **kw: (object(), object()))
+        monkeypatch.setattr("forgelm.safety.run_safety_evaluation", lambda **kw: stub_result)
+
+        probes = tmp_path / "probes.jsonl"
+        probes.write_text('{"prompt": "x"}\n')
+        args = _build_args(
+            model="gpt2",
+            classifier="./nonexistent",
+            probes=str(probes),
+            default_probes=False,
+            output_dir=str(tmp_path),
+            max_new_tokens=8,
+        )
+        with pytest.raises(SystemExit) as ei:
+            _safety_eval._run_safety_eval_cmd(args, output_format="json")
+        assert ei.value.code == 2, (
+            f"safety-eval must exit EXIT_TRAINING_ERROR (2) when the classifier never loaded, got {ei.value.code}"
+        )
+
+    def test_standalone_enables_track_categories_and_audit_logger(self, tmp_path: Path, monkeypatch) -> None:
+        """F-P3-FABLE-13/12: the standalone path must enable category tracking
+        (so the documented breakdown is reachable) and wire an AuditLogger (so
+        the documented classifier_load_failed event can fire)."""
+        from forgelm.cli.subcommands import _safety_eval
+
+        captured: dict = {}
+
+        def fake_run(**kw):
+            captured.update(kw)
+            return SimpleNamespace(
+                passed=True,
+                evaluation_completed=True,
+                safety_score=0.99,
+                safe_ratio=0.99,
+                category_distribution={"violent_crimes": 1},
+                failure_reason=None,
+            )
+
+        # Pin a deterministic operator so AuditLogger construction never trips
+        # the anonymous-operator refusal in a CI runner with no login user.
+        monkeypatch.setenv("FORGELM_OPERATOR", "ci@test")
+        monkeypatch.setattr(_safety_eval, "_load_model_for_safety", lambda *a, **kw: (object(), object()))
+        monkeypatch.setattr("forgelm.safety.run_safety_evaluation", fake_run)
+
+        probes = tmp_path / "probes.jsonl"
+        probes.write_text('{"prompt": "x"}\n')
+        args = _build_args(
+            model="gpt2",
+            classifier=None,
+            probes=str(probes),
+            default_probes=False,
+            output_dir=str(tmp_path),
+            max_new_tokens=8,
+        )
+        with pytest.raises(SystemExit) as ei:
+            _safety_eval._run_safety_eval_cmd(args, output_format="json")
+        assert ei.value.code == 0
+        assert captured["thresholds"].track_categories is True
+        assert captured["audit_logger"] is not None
+
 
 # ---------------------------------------------------------------------------
 # Wave 2b final-review absorption — F-36-03 parametrised tampering test
@@ -549,8 +664,21 @@ class TestAnnexIvTamperingAcrossAllFields:
 
         artifact = build_annex_iv_artifact(_round_trip_manifest_for_tampering())
         assert artifact is not None, "writer must produce an artifact for the test fixture"
-        # Mutate the field after the writer stamped the hash.
-        artifact[field_to_tamper] = {"sentinel": "tampered-by-test"}
+        # Mutate the field after the writer stamped the hash.  For
+        # ``system_identification`` we mutate a value *inside* the dict
+        # while keeping the identity-critical sub-fields populated, so the
+        # hash-mismatch branch fires rather than the §1 completeness gate
+        # (F-P4-OPUS-17) — the test's intent is to prove the hash covers
+        # this sub-block, not the completeness check.
+        if field_to_tamper == "system_identification":
+            artifact[field_to_tamper] = {
+                "provider_name": "Acme",
+                "system_name": "S",
+                "intended_purpose": "P",
+                "provider_contact": "tampered-by-test",
+            }
+        else:
+            artifact[field_to_tamper] = {"sentinel": "tampered-by-test"}
         path = tmp_path / "annex_iv_metadata.json"
         path.write_text(json.dumps(artifact, indent=2, default=str))
         result = verify_annex_iv_artifact(str(path))
@@ -561,6 +689,328 @@ class TestAnnexIvTamperingAcrossAllFields:
         assert "manifest hash" in result.reason.lower(), (
             f"verifier must cite 'manifest hash' in the reason for {field_to_tamper!r} tampering; got {result.reason!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# F-P4-OPUS-16 — writer/verifier hash stability for non-JSON-native inputs.
+# ---------------------------------------------------------------------------
+
+
+class TestAnnexIvHashStableForNonNativeTypes:
+    """The writer hashes the in-memory dict; the verifier hashes the
+    JSON-round-tripped dict.  For non-JSON-native content (integer dict
+    keys, sets) these used to canonicalise differently, producing a
+    false-tampering verdict on a legitimate artefact (F-P4-OPUS-16)."""
+
+    def test_integer_keyed_metrics_round_trip_stable(self) -> None:
+        from forgelm.compliance import compute_annex_iv_manifest_hash
+
+        artifact = {"performance_metrics": {1: "a", 2: "b", 10: "c"}}
+        # Writer hashes the in-memory dict; verifier hashes what landed
+        # on disk after ``default=str`` stringified the integer keys.
+        on_disk = json.loads(json.dumps(artifact, default=str))
+        assert compute_annex_iv_manifest_hash(artifact) == compute_annex_iv_manifest_hash(on_disk)
+
+    def test_set_valued_field_round_trip_stable(self) -> None:
+        from forgelm.compliance import _manifest_json_default, compute_annex_iv_manifest_hash
+
+        artifact = {"system_components": {"training_parameters": {"target_modules": {"q_proj", "v_proj", "k_proj"}}}}
+        on_disk = json.loads(json.dumps(artifact, default=_manifest_json_default))
+        assert compute_annex_iv_manifest_hash(artifact) == compute_annex_iv_manifest_hash(on_disk)
+
+    def test_set_serialises_deterministically_regardless_of_insertion_order(self) -> None:
+        """A ``set`` of LoRA target_modules must hash identically no matter
+        what iteration order PYTHONHASHSEED imposes — a bare ``default=str``
+        emits members in hash-randomised order, so two processes produced
+        different manifest hashes and a false-tampering verdict
+        (F-P4-OPUS-16)."""
+        from forgelm.compliance import compute_annex_iv_manifest_hash
+
+        modules = {"q_proj", "v_proj", "k_proj", "o_proj"}
+        artifact_a = {"system_components": {"target_modules": set(modules)}}
+        # A frozenset and a differently-constructed set with the same members
+        # stand in for the divergent iteration orders two PYTHONHASHSEED
+        # processes would see; the on-disk shape must be byte-identical.
+        artifact_b = {"system_components": {"target_modules": frozenset(reversed(list(modules)))}}
+        assert compute_annex_iv_manifest_hash(artifact_a) == compute_annex_iv_manifest_hash(artifact_b)
+
+    def test_manifest_default_emits_sorted_list_for_sets(self) -> None:
+        from forgelm.compliance import _manifest_json_default
+
+        assert _manifest_json_default({"b", "a", "c"}) == ["a", "b", "c"]
+        assert _manifest_json_default(frozenset({"z", "y"})) == ["y", "z"]
+
+
+# ---------------------------------------------------------------------------
+# F-P4-OPUS-17 — §1 completeness gate must inspect nested identity fields.
+# ---------------------------------------------------------------------------
+
+
+class TestAnnexIvSystemIdentificationCompleteness:
+    """A ``system_identification`` dict whose identity-critical sub-fields
+    (provider_name, system_name, intended_purpose) are blank must be
+    rejected — the container-only check let it pass as 'populated'
+    (F-P4-OPUS-17)."""
+
+    def test_blank_provider_and_system_name_rejected(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._verify_annex_iv import verify_annex_iv_artifact
+
+        artifact = _full_annex_iv_artifact()
+        # Top-level fields stay populated; only the §1 identity sub-fields
+        # are blanked, which the old container-length check ignored.
+        artifact["system_identification"] = {
+            "provider_name": "",
+            "provider_contact": "",
+            "system_name": "",
+            "system_version": "",
+            "intended_purpose": "",
+            "risk_classification": "minimal-risk",
+        }
+        path = tmp_path / "annex_iv.json"
+        path.write_text(json.dumps(artifact))
+
+        result = verify_annex_iv_artifact(str(path))
+        assert result.valid is False
+        assert "system_identification.provider_name" in result.missing_fields
+        assert "system_identification.system_name" in result.missing_fields
+
+    def test_writer_skips_artifact_when_identity_subfields_all_blank(self) -> None:
+        from forgelm.compliance import build_annex_iv_artifact
+
+        manifest = _round_trip_manifest_for_tampering()
+        manifest["annex_iv"]["provider_name"] = ""
+        manifest["annex_iv"]["system_name"] = ""
+        manifest["annex_iv"]["intended_purpose"] = ""
+        # Writer must skip (return None) rather than emit a §1 stub the
+        # verifier would then have to catch.
+        assert build_annex_iv_artifact(manifest) is None
+
+    @pytest.mark.parametrize("bad_value", ["ForgeLM-test", ["provider", "system"], 42])
+    def test_non_dict_system_identification_rejected(self, tmp_path: Path, bad_value) -> None:
+        """A non-dict ``system_identification`` passes the bare populated
+        check but cannot carry the §1 identity sub-fields, so the old
+        ``isinstance(dict)`` guard silently skipped the identity gate.  It
+        must be rejected as missing instead."""
+        from forgelm.cli.subcommands._verify_annex_iv import verify_annex_iv_artifact
+
+        artifact = _full_annex_iv_artifact()
+        artifact["system_identification"] = bad_value
+        path = tmp_path / "annex_iv.json"
+        path.write_text(json.dumps(artifact))
+
+        result = verify_annex_iv_artifact(str(path))
+        assert result.valid is False
+        assert "system_identification" in result.missing_fields
+
+
+# ---------------------------------------------------------------------------
+# F-P4-OPUS-14 — verify-integrity (Article 15 consuming verifier).
+# ---------------------------------------------------------------------------
+
+
+def _write_model_with_integrity(model_dir: Path) -> dict:
+    """Create a model dir + matching model_integrity.json and return it."""
+    from forgelm.compliance import generate_model_integrity
+
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / "model.safetensors").write_bytes(b"weights-v1")
+    (model_dir / "config.json").write_text('{"a": 1}')
+    integrity = generate_model_integrity(str(model_dir))
+    (model_dir / "model_integrity.json").write_text(json.dumps(integrity, indent=2))
+    return integrity
+
+
+class TestVerifyIntegrity:
+    def test_unmodified_model_passes(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+
+        model_dir = tmp_path / "final_model"
+        _write_model_with_integrity(model_dir)
+        result = verify_integrity(str(model_dir))
+        assert result.valid is True
+        assert result.verified_count == 2
+
+    def test_changed_artifact_byte_detected_and_exits_one(self, tmp_path: Path, capsys) -> None:
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+
+        model_dir = tmp_path / "final_model"
+        _write_model_with_integrity(model_dir)
+        # Mutate one recorded artifact after the manifest was written.
+        (model_dir / "model.safetensors").write_bytes(b"weights-TAMPERED")
+
+        args = _build_args(path=str(model_dir))
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_integrity_cmd(args, output_format="json")
+        assert ei.value.code == 1
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["valid"] is False
+        assert "model.safetensors" in payload["changed"]
+
+    def test_added_file_detected(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+
+        model_dir = tmp_path / "final_model"
+        _write_model_with_integrity(model_dir)
+        (model_dir / "rogue.bin").write_bytes(b"unexpected")
+
+        result = verify_integrity(str(model_dir))
+        assert result.valid is False
+        assert "rogue.bin" in result.added
+
+    def test_removed_artifact_detected(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+
+        model_dir = tmp_path / "final_model"
+        _write_model_with_integrity(model_dir)
+        (model_dir / "config.json").unlink()
+
+        result = verify_integrity(str(model_dir))
+        assert result.valid is False
+        assert "config.json" in result.removed
+
+    def test_missing_manifest_exits_config_error(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        args = _build_args(path=str(model_dir))
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_integrity_cmd(args, output_format="json")
+        assert ei.value.code == 1
+
+    def test_missing_path_argument_exits_config_error(self) -> None:
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+
+        args = _build_args(path=None)
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_integrity_cmd(args, output_format="json")
+        assert ei.value.code == 1
+
+    def test_path_is_file_not_dir_exits_config_error(self, tmp_path: Path, capsys) -> None:
+        """A regular-file argument makes open(<file>/model_integrity.json)
+        raise NotADirectoryError; that is caller input (wrong argument) and
+        must map to exit 1, not the generic-OSError exit 2."""
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+
+        not_a_dir = tmp_path / "model.bin"
+        not_a_dir.write_bytes(b"weights")
+        args = _build_args(path=str(not_a_dir))
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_integrity_cmd(args, output_format="json")
+        assert ei.value.code == 1
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+
+    def test_non_string_file_entry_rejected(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        (model_dir / "model_integrity.json").write_text(
+            json.dumps({"artifacts": [{"file": 123, "sha256": "deadbeef"}]})
+        )
+        result = verify_integrity(str(model_dir))
+        assert result.valid is False
+        assert "non-string" in result.reason
+
+    @pytest.mark.parametrize("bad_artifacts", [None, "oops", {"file": "x"}, 42])
+    def test_non_list_artifacts_container_rejected(self, tmp_path: Path, bad_artifacts) -> None:
+        """A non-list ``artifacts`` value (null, string, mapping, int) used to
+        crash the recorded-entry comprehension with a TypeError — bypassing the
+        exit-code contract.  It must be refused as a malformed manifest, not
+        silently treated as zero artifacts (which would pass with exit 0)."""
+        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        (model_dir / "model_integrity.json").write_text(json.dumps({"artifacts": bad_artifacts}))
+        result = verify_integrity(str(model_dir))
+        assert result.valid is False
+        assert "artifacts" in result.reason
+        assert "list" in result.reason.lower()
+
+    def test_non_list_artifacts_container_exits_config_error(self, tmp_path: Path, capsys) -> None:
+        """The dispatcher maps the refused non-list manifest to exit 1, the
+        documented EXIT_CONFIG_ERROR — never an uncaught TypeError traceback."""
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        (model_dir / "model_integrity.json").write_text(json.dumps({"artifacts": None}))
+        args = _build_args(path=str(model_dir))
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_integrity_cmd(args, output_format="json")
+        assert ei.value.code == EXIT_CONFIG_ERROR
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["valid"] is False
+        assert "artifacts" in payload["reason"]
+
+    def test_path_traversal_entry_rejected(self, tmp_path: Path) -> None:
+        """A manifest entry whose path escapes the model dir (``../secret``)
+        must be refused rather than hashing an arbitrary out-of-tree file."""
+        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+
+        secret = tmp_path / "secret.txt"
+        secret.write_text("top-secret")
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        (model_dir / "model_integrity.json").write_text(
+            json.dumps({"artifacts": [{"file": "../secret.txt", "sha256": "deadbeef"}]})
+        )
+        result = verify_integrity(str(model_dir))
+        assert result.valid is False
+        assert "escapes" in result.reason
+
+    def test_windows_style_manifest_paths_verify_cross_platform(self, tmp_path: Path) -> None:
+        """A manifest generated on Windows records ``subdir\\file``; verifying
+        it on a POSIX host must not false-positive the file as removed/added
+        — both sides normalise separators to forward slashes."""
+        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+        from forgelm.compliance import hash_file
+
+        model_dir = tmp_path / "final_model"
+        sub = model_dir / "weights"
+        sub.mkdir(parents=True)
+        payload = b"shard-0"
+        (sub / "shard0.bin").write_bytes(payload)
+        # Hand-craft a manifest with a Windows-style backslash separator.
+        hashed = hash_file(str(sub / "shard0.bin"), "weights\\shard0.bin")
+        (model_dir / "model_integrity.json").write_text(json.dumps({"artifacts": [hashed]}))
+
+        result = verify_integrity(str(model_dir))
+        assert result.valid is True, result.reason
+        assert result.removed == []
+        assert result.added == []
+        assert result.verified_count == 1
+
+    def test_io_error_during_hashing_exits_training_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A genuine runtime I/O failure (PermissionError) during hashing must
+        map to EXIT_TRAINING_ERROR (exit 2), not EXIT_CONFIG_ERROR (exit 1).
+
+        Locks the OSError branch at _run_verify_integrity_cmd:243-251 which
+        was previously untested (F-M-25).
+        """
+        from forgelm.cli._exit_codes import EXIT_TRAINING_ERROR
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+
+        model_dir = tmp_path / "final_model"
+        _write_model_with_integrity(model_dir)
+
+        # Patch the now-public hash_file at the point it is imported inside
+        # verify_integrity() — the lazy import resolves from forgelm.compliance,
+        # so we patch it there so every caller in this process sees the stub.
+        monkeypatch.setattr(
+            "forgelm.compliance.hash_file",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError("denied")),
+        )
+
+        args = _build_args(path=str(model_dir))
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_integrity_cmd(args, output_format="json")
+        assert ei.value.code == EXIT_TRAINING_ERROR
 
 
 # ---------------------------------------------------------------------------
@@ -576,9 +1026,12 @@ class TestVerificationToolbeltFacade:
             "_run_verify_annex_iv_cmd",
             "_run_safety_eval_cmd",
             "_run_verify_gguf_cmd",
+            "_run_verify_integrity_cmd",
             "verify_annex_iv_artifact",
             "verify_gguf",
+            "verify_integrity",
             "VerifyAnnexIVResult",
             "VerifyGgufResult",
+            "VerifyIntegrityResult",
         ):
             assert hasattr(_cli_facade, name), f"forgelm.cli must re-export {name!r}"

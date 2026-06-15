@@ -63,6 +63,8 @@ pip install forgelm[eval]
    ```
    Effective batch size is preserved across retries. Each attempt is logged to the audit trail.
 
+   > **Note on the retry trajectory.** A successful retry rebuilds the trainer with a fresh optimizer and LR scheduler (step 0) at the smaller batch size; it does not continue from the exact step where the OOM fired unless you launched the run with an explicit `--resume <checkpoint>` (in which case it rewinds to that checkpoint). The optimization trajectory therefore differs slightly from an uninterrupted run. This is expected — for bit-for-bit reproducibility, fix the batch size manually instead of relying on auto-recovery.
+
 3. **Reduce batch size manually**:
    ```yaml
    training:
@@ -148,24 +150,28 @@ If you need both multi-GPU and GaLore, use `galore_adamw` or `galore_adamw_8bit`
 Long-context training (large `sliding_window_attention` or RoPE scaling) significantly increases VRAM usage. To mitigate:
 
 1. **Reduce sliding window size**:
+
    ```yaml
    training:
      sliding_window_attention: 2048  # down from 4096
    ```
 
 2. **Enable gradient checkpointing** (reduces VRAM at cost of speed):
+
    ```yaml
    training:
      gradient_checkpointing: true
    ```
 
-3. **Use sample packing** to reduce padding waste:
+3. **Use sequence packing** to reduce padding waste:
+
    ```yaml
    training:
-     sample_packing: true
+     packing: true
    ```
 
 4. **Combine with GaLore** for additional memory savings:
+
    ```yaml
    training:
      galore_enabled: true

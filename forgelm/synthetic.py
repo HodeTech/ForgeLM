@@ -151,8 +151,21 @@ class SyntheticDataGenerator:
                     # Support JSONL ({"prompt": "..."}) or plain text
                     try:
                         data = json.loads(line)
-                        prompts.append(data.get("prompt", data.get("text", line)))
                     except json.JSONDecodeError:
+                        prompts.append(line)
+                        continue
+                    # A line that is valid JSON but not an object (a bare
+                    # array/number/string/bool/null) has no ``.get`` — treat
+                    # the raw line as a plain-text prompt instead of crashing
+                    # the whole load with AttributeError. A bare quoted string
+                    # IS the prompt, so append the parsed value —
+                    # not the raw line, which would keep the JSON quotes —
+                    # matching ``safety._load_safety_prompts``.
+                    if isinstance(data, dict):
+                        prompts.append(data.get("prompt", data.get("text", line)))
+                    elif isinstance(data, str):
+                        prompts.append(data)
+                    else:
                         prompts.append(line)
             logger.info("Loaded %d seed prompts from %s", len(prompts), self.synth_cfg.seed_file)
             return prompts
@@ -173,7 +186,8 @@ class SyntheticDataGenerator:
         elif backend == "local":
             return self._call_local_teacher(prompt)
         elif backend == "file":
-            # File-based teacher — responses pre-loaded, keyed by prompt hash
+            # File-based teacher — responses pre-loaded, keyed by exact prompt
+            # string (byte-exact lookup; no hashing or whitespace normalisation).
             return self._call_file_teacher(prompt)
         else:
             raise ValueError(f"Unknown teacher_backend: {backend}")
@@ -304,6 +318,19 @@ class SyntheticDataGenerator:
                         line[:120].rstrip(),
                     )
                     continue
+                # Valid JSON but not an object (bare array/number/string/etc.)
+                # has no ``.get`` — count it as malformed and skip rather than
+                # crashing the whole load with AttributeError.
+                if not isinstance(data, dict):
+                    malformed += 1
+                    logger.debug(
+                        "Skipping non-object JSON in %s line %d (%s) — %s",
+                        seed_file,
+                        lineno,
+                        type(data).__name__,
+                        line[:120].rstrip(),
+                    )
+                    continue
                 p = data.get("prompt", "")
                 r = data.get("response") or data.get("completion") or data.get("output", "")
                 if p and r:
@@ -344,6 +371,11 @@ class SyntheticDataGenerator:
         elif fmt == "instruction":
             return {"instruction": prompt, "output": response}
         elif fmt == "chatml":
+            # This is ForgeLM's legacy {User, Assistant} key layout (data.py
+            # detects + trains on it natively), NOT OpenAI <|im_start|> ChatML
+            # wire markup. The config value name is kept for backward
+            # compatibility; the schema/doc description spells out the
+            # discrepancy so users feeding external ChatML tools pick `messages`.
             return {"User": prompt, "Assistant": response}
         else:
             # Default: simple prompt/response

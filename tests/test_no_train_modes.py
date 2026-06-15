@@ -153,3 +153,109 @@ class TestBenchmarkOnlyLoader:
             _run_benchmark_only(config, str(model_dir), output_format="json")
 
         bad_loader.assert_not_called()
+
+
+def _synthetic_config(min_success_rate=0.0, sanity_failure_rate=0.2):
+    from forgelm.config import ForgeConfig
+
+    return ForgeConfig(
+        model={"name_or_path": "org/base"},
+        lora={"r": 8},
+        training={"trainer_type": "sft"},
+        data={"dataset_name_or_path": "org/data"},
+        synthetic={
+            "enabled": True,
+            "teacher_model": "gpt-4o",
+            "seed_prompts": ["p1"],
+            "min_success_rate": min_success_rate,
+            "sanity_failure_rate": sanity_failure_rate,
+        },
+    )
+
+
+def _synthetic_result(successful, total):
+    from forgelm.synthetic import SyntheticResult
+
+    return SyntheticResult(
+        total_prompts=total,
+        successful=successful,
+        failed=total - successful,
+        output_file="out.jsonl",
+        duration_seconds=1.0,
+        errors=[],
+    )
+
+
+class TestGenerateDataGate:
+    """F-P3-FABLE-61: a near-total generation failure must not exit 0 with
+    success:true; the gate honours synthetic.min_success_rate and warns on a
+    high failure rate."""
+
+    def test_tiny_yield_below_threshold_exits_nonzero(self):
+        import pytest
+
+        from forgelm.cli._exit_codes import EXIT_TRAINING_ERROR
+
+        config = _synthetic_config(min_success_rate=0.5)
+        gen = MagicMock()
+        gen.generate.return_value = _synthetic_result(successful=1, total=1000)
+
+        with patch("forgelm.synthetic.SyntheticDataGenerator", return_value=gen):
+            from forgelm.cli._no_train_modes import _run_generate_data
+
+            with pytest.raises(SystemExit) as exc:
+                _run_generate_data(config, output_format="text")
+        assert exc.value.code == EXIT_TRAINING_ERROR
+
+    def test_legacy_default_any_yield_succeeds(self, caplog):
+        """With the default min_success_rate=0.0, a single yield still succeeds
+        (backward compatibility) — but a >20% failure rate logs a WARNING."""
+        import logging
+
+        config = _synthetic_config(min_success_rate=0.0)
+        gen = MagicMock()
+        gen.generate.return_value = _synthetic_result(successful=1, total=1000)
+
+        with patch("forgelm.synthetic.SyntheticDataGenerator", return_value=gen):
+            from forgelm.cli._no_train_modes import _run_generate_data
+
+            with caplog.at_level(logging.WARNING, logger="forgelm.cli._no_train_modes"):
+                # No SystemExit — legacy any-yield-succeeds path.
+                _run_generate_data(config, output_format="text")
+
+        assert any(r.levelno == logging.WARNING and "failure rate" in r.getMessage() for r in caplog.records), (
+            "a >20% failure rate must warn"
+        )
+
+    def test_json_envelope_carries_min_success_rate(self, capsys):
+        config = _synthetic_config(min_success_rate=0.9)
+        gen = MagicMock()
+        gen.generate.return_value = _synthetic_result(successful=950, total=1000)
+
+        with patch("forgelm.synthetic.SyntheticDataGenerator", return_value=gen):
+            from forgelm.cli._no_train_modes import _run_generate_data
+
+            _run_generate_data(config, output_format="json")
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is True  # 0.95 >= 0.9
+        assert payload["min_success_rate"] == 0.9
+
+    def test_sanity_failure_rate_is_config_driven(self, caplog):
+        """PR#63-review: a high configured sanity_failure_rate suppresses the
+        warn-only message that the hardcoded 0.2 bound would have emitted."""
+        import logging
+
+        # 30% failures: above the default 0.2 bound but below a configured 0.5.
+        config = _synthetic_config(min_success_rate=0.0, sanity_failure_rate=0.5)
+        gen = MagicMock()
+        gen.generate.return_value = _synthetic_result(successful=700, total=1000)
+
+        with patch("forgelm.synthetic.SyntheticDataGenerator", return_value=gen):
+            from forgelm.cli._no_train_modes import _run_generate_data
+
+            with caplog.at_level(logging.WARNING, logger="forgelm.cli._no_train_modes"):
+                _run_generate_data(config, output_format="text")
+
+        assert not any("failure rate" in r.getMessage() for r in caplog.records), (
+            "a 30% failure rate must not warn when sanity_failure_rate=0.5"
+        )

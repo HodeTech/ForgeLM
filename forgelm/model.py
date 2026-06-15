@@ -62,7 +62,9 @@ def _load_unsloth(config: Any) -> Tuple[Any, Any]:
     try:
         from unsloth import FastLanguageModel
     except ImportError as e:
-        raise ImportError("Unsloth backend selected but 'unsloth' is not installed. Please install it.") from e
+        raise ImportError(
+            "unsloth backend requires the 'unsloth' extra. Install with: pip install 'forgelm[unsloth]'"
+        ) from e
 
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=config.model.name_or_path,

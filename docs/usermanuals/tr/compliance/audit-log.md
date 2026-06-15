@@ -12,20 +12,25 @@ EU AI Act Madde 12, yüksek-riskli AI sistemlerinin operasyonel olarak ilgili ol
 Satır başına bir JSON nesnesi:
 
 ```jsonl
-{"ts":"2026-04-29T14:01:32Z","seq":1,"event":"training.started","run_id":"abc123","operator":"ci-runner@ml","_hmac":"..."}
-{"ts":"2026-04-29T14:33:08Z","seq":2,"event":"audit.classifier_load_failed","classifier":"meta-llama/Llama-Guard-3-8B","reason":"...","_hmac":"..."}
-{"ts":"2026-04-29T14:33:10Z","seq":3,"event":"model.reverted","reason":"safety.regression","metrics":{...},"_hmac":"..."}
-{"ts":"2026-04-29T14:33:11Z","seq":4,"event":"pipeline.completed","exit_code":0,"prev_hash":"sha256:beef...","_hmac":"..."}
+{"timestamp":"2026-04-29T14:01:32Z","run_id":"abc123","operator":"ci-runner@ml","event":"training.started","prev_hash":"genesis","_hmac":"..."}
+{"timestamp":"2026-04-29T14:33:08Z","run_id":"abc123","operator":"ci-runner@ml","event":"audit.classifier_load_failed","prev_hash":"sha256:1a2b...","classifier":"meta-llama/Llama-Guard-3-8B","reason":"...","_hmac":"..."}
+{"timestamp":"2026-04-29T14:33:10Z","run_id":"abc123","operator":"ci-runner@ml","event":"model.reverted","prev_hash":"sha256:3c4d...","reason":"safety","detail":"safe_ratio eşik altında","_hmac":"..."}
+{"timestamp":"2026-04-29T14:33:11Z","run_id":"abc123","operator":"ci-runner@ml","event":"pipeline.completed","prev_hash":"sha256:5e6f...","success":true,"_hmac":"..."}
 ```
 
-(Tam canonical olay listesi için aşağıdaki "Olay tipleri" tablosuna ve [GitHub'daki Audit Event Kataloğu](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md)'na bakın. Eski draft'larda görünen `run_start` / `run_complete` / `data_audit_complete` / `training_epoch_complete` / `benchmark_complete` / `safety_eval_complete` / `auto_revert` adları ship olmadı — `forgelm/` içinde emit eden hiçbir call site yok.)
+(Tam canonical olay listesi için aşağıdaki "Olay tipleri" tablosuna ve [GitHub'daki Audit Event Kataloğu](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog-tr.md)'na bakın. Eski draft'larda görünen `run_start` / `run_complete` / `data_audit_complete` / `training_epoch_complete` / `benchmark_complete` / `safety_eval_complete` / `auto_revert` adları ship olmadı — `forgelm/` içinde emit eden hiçbir call site yok.)
 
 Her kayıtta:
-- **`ts`** — ISO-8601 UTC zaman damgası.
-- **`seq`** — koşu içinde monotonik sıra numarası (her koşuda sıfırlanır).
+- **`timestamp`** — ISO-8601 UTC zaman damgası.
+- **`run_id`** — kaydı emit eden koşu.
+- **`operator`** — çözümlenen operatör kimliği (`$FORGELM_OPERATOR` veya `<kullanıcı>@<host>`).
 - **`event`** — olay tipi (aşağıda).
-- **`prev_hash`** — önceki kaydın SHA-256'sı (tamper-evidence için zincirleme).
+- **`prev_hash`** — önceki kaydın SHA-256'sı (tamper-evidence için zincirleme; ilk kayıt `"genesis"`).
+- **`_hmac`** — satır başına HMAC etiketi, yalnızca `FORGELM_AUDIT_SECRET` set olduğunda bulunur.
 - Olaya özgü alanlar.
+
+`seq` alanı **yoktur**. Boşluk- ve silme-tespiti tamamen `prev_hash`
+zincirine (ve genesis-manifest sidecar'ına) dayanır, sıra numaralarına değil.
 
 ## Olay tipleri
 
@@ -46,7 +51,7 @@ Her kayıtta:
 | `cli.legacy_flag_invoked` | Deprecated bir CLI flag'i kullanıldığında. |
 
 Tam event kataloğu (payload şeması ve emit yeri ile)
-[GitHub'daki Audit Event Kataloğu](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md) altındadır.
+[GitHub'daki Audit Event Kataloğu](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog-tr.md) altındadır.
 
 ## Tasarım gereği append-only
 
@@ -60,12 +65,10 @@ ForgeLM önceki log kayıtlarını asla yeniden yazmaz. Yeni olaylar sona ekleni
 
 ```shell
 $ forgelm verify-audit <output_dir>/audit_log.jsonl
-✓ 87 kayıt, tüm zaman damgaları monotonik
-✓ tüm prev_hash zincirleri geçerli
-✓ seq numaralarında boşluk yok
+OK: 87 entries verified
 ```
 
-`verify-audit` zincir kırığı raporlarsa, log üretimden sonra değiştirilmiş demektir. Kanıt olarak işlem görmeden önce araştırın.
+`FORGELM_AUDIT_SECRET` set iken `--require-hmac` ekleyin; başarı satırı `OK: 87 entries verified (HMAC validated)` olur. Tampered veya truncate edilmiş bir log `FAIL at line N: <neden>` ile başarısız olur (`prev_hash` zincir kırığı, HMAC uyuşmazlığı veya genesis-manifest uyuşmazlığı). Kanıt olarak işlem görmeden önce araştırın.
 
 ## Koşu başına
 
@@ -74,6 +77,8 @@ Her eğitim koşusu kendi `<output_dir>/audit_log.jsonl`'ini (top-level — `com
 ## Konfigürasyon
 
 `compliance.audit_log:` bloğu **yoktur**. Audit log'u açık/kapalı yapmak için bir knob değildir — her ForgeLM koşusu otomatik olarak `<output_dir>/audit_log.jsonl` yazar (ve genesis-pin sidecar `<output_dir>/audit_log.jsonl.manifest.json`). HMAC zincirlemesini etkinleştirmek için trainer'ı çalıştırmadan önce `FORGELM_AUDIT_SECRET` env var'ını set edin; ek bir YAML knob'u yoktur.
+
+Güçlü bir secret kullanın: bir secret manager'dan 32+ rastgele byte. Kısa, düşük-entropili bir `FORGELM_AUDIT_SECRET` kabul edilir ama (16 karakterin altında) bir weak-secret WARNING'i loglar; çünkü satır başına HMAC'in gücü secret'ın entropisiyle sınırlıdır. ForgeLM bir key-management sistemi değildir — secret'ı tüketir, üretmez veya döndürmez.
 
 ## Dış depolara yönlendirme
 
@@ -97,7 +102,7 @@ aws s3 cp <output_dir>/audit_log.jsonl s3://compliance-audit-logs/forgelm/<run_i
 İnsan incelemesi için:
 
 ```shell
-$ jq -r '.event + "\t" + .ts' checkpoints/run/audit_log.jsonl
+$ jq -r '.event + "\t" + .timestamp' checkpoints/run/audit_log.jsonl
 training.started               2026-04-29T14:01:32Z
 audit.classifier_load_failed   2026-04-29T14:33:08Z
 model.reverted                 2026-04-29T14:33:10Z
@@ -109,7 +114,7 @@ Dashboard için JSONL doğal olarak Loki, OpenSearch veya herhangi bir log-aggre
 ## Sık hatalar
 
 :::warn
-**"Bir typo'yu düzeltmek için" log'u editlemek.** Yapmayın. Kozmetik düzenlemeler bile zincir hash'ini bozar ve audit değerini düşürür. Gerçekten bilgi düzeltmek gerekirse `corrects_seq` referansıyla yeni bir `correction` olayı ekleyin.
+**"Bir typo'yu düzeltmek için" log'u editlemek.** Yapmayın. Kozmetik düzenlemeler bile zincir hash'ini bozar ve audit değerini düşürür. Gerçekten bilgi düzeltmek gerekirse, düzeltilen kaydın koşusunu ve zaman damgasını referans alan yeni bir olay ekleyin — orijinal satırı asla yeniden yazmayın.
 :::
 
 :::warn

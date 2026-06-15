@@ -533,7 +533,8 @@ class TestLoadModel:
 
         from forgelm.inference import _load_unsloth
 
-        with pytest.raises(ImportError, match="unsloth"):
+        # F-P3-FABLE-52: the message must carry the canonical extra-install hint.
+        with pytest.raises(ImportError, match=r"pip install 'forgelm\[unsloth\]'"):
             _load_unsloth(
                 "org/model",
                 adapter=None,
@@ -582,3 +583,34 @@ class TestGenerate:
             result = generate(mock_model, mock_tokenizer, "Hello")
 
         assert result == "Hello world"
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for type annotation consistency
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateStreamExcAnnotation:
+    """F-N-07 regression: _exc list in generate_stream must be typed List[Exception],
+    not List[BaseException].  The except clause can only ever append Exception
+    subclasses (KeyboardInterrupt / SystemExit are BaseException but not Exception
+    and are intentionally not caught).  A broad List[BaseException] annotation is
+    internally inconsistent with the except-clause boundary.
+    """
+
+    def test_exc_list_typed_as_exception_not_base_exception(self):
+        import inspect
+
+        import forgelm.inference as _inf_mod
+
+        src = inspect.getsource(_inf_mod.generate_stream)
+        # Must declare _exc as List[Exception]
+        assert "List[Exception]" in src, (
+            "_exc in generate_stream must be annotated List[Exception] to match "
+            "the except Exception clause that populates it"
+        )
+        # Must NOT declare _exc as List[BaseException] (the regressed form)
+        assert "List[BaseException]" not in src, (
+            "_exc must NOT be annotated List[BaseException] — only Exception "
+            "subclasses can ever be appended by the except Exception clause"
+        )

@@ -18,7 +18,7 @@ EXIT_WIZARD_CANCELLED = 5
 
 | Code | When | Who reads it |
 |---|---|---|
-| **0** | Happy path — training completed, all gates passed | CI/CD success |
+| **0** | Training completed. With `auto_revert: true` (the compliance default for high-risk tiers) this also means every gate passed; with the **shipped default** `auto_revert: false` a failed benchmark/safety/judge gate is *recorded* (`benchmark`/`safety`/`judge` block in the JSON, `*_passed: false`) but does **not** change the exit code — parse those blocks, don't trust exit 0 alone | CI/CD success |
 | **1** | Config validation failed (YAML schema, Pydantic error) | CI/CD "fail fast"; user fixes YAML |
 | **2** | Training crashed or failed mid-run (OOM, CUDA error, unhandled exception) | CI/CD retry logic |
 | **3** | Training completed but eval/safety/benchmark threshold failed, and auto-revert happened | CI/CD decision: do not deploy |
@@ -37,7 +37,7 @@ EXIT_WIZARD_CANCELLED = 5
 Custom exceptions are **deliberately few**. One class per coarse-grained failure domain:
 
 ```python
-# forgelm/config.py:387
+# forgelm/config.py
 class ConfigError(Exception):
     """Raised when configuration validation fails."""
 ```
@@ -62,13 +62,17 @@ class ConfigError(Exception):
 
 ## Validation errors from Pydantic
 
-Pydantic raises `ValidationError`. In `cli.py`:
+`load_config(path)` wraps Pydantic `ValidationError` and `yaml.YAMLError`
+into `ConfigError`; `FileNotFoundError` propagates unwrapped. Mirror the real
+CLI handler in `forgelm/cli/_config_load.py`:
 
 ```python
+from forgelm.config import ConfigError, load_config
+
 try:
-    config = ForgeConfig.load(args.config)
-except ValidationError as e:
-    logger.error("Configuration error:\n%s", e)
+    config = load_config(args.config)
+except ConfigError as e:
+    logger.error("Configuration error: %s", e)
     sys.exit(EXIT_CONFIG_ERROR)
 except FileNotFoundError:
     logger.error("Config file not found: %s", args.config)
@@ -200,13 +204,13 @@ except Exception:  # ❌ no narrow class, no BLE001, no rationale, no log
 
 ```python
 try:
-    config = ForgeConfig.load(path)
+    config = load_config(path)
 except Exception as e:  # noqa: BLE001 — "just in case"  ❌
     logger.warning("Config load failed: %s", e)
     config = ForgeConfig()
 ```
 
-The protected operation is config validation. Pydantic raises `ValidationError`, the loader raises `FileNotFoundError` and `yaml.YAMLError`. That is a precise tuple — write it.
+The protected operation is config validation. `load_config` raises `ConfigError` (wrapping Pydantic `ValidationError` and `yaml.YAMLError`) and lets `FileNotFoundError` propagate. That is a precise tuple — write it.
 
 ## User-facing error messages
 

@@ -78,6 +78,22 @@ by side without double-counting the same span."""
 _TEXT_COLUMNS: Tuple[str, ...] = ("text", "content", "completion", "prompt")
 
 
+# Instruction-tuning / chat shapes the rest of the codebase emits
+# (``forgelm.synthetic.SyntheticDataGenerator._format_entry`` and the loaders
+# in ``forgelm.data``). Each tuple is ``(user_half, assistant_half)``; when
+# BOTH keys are present on a row we join the halves so the audit scans the
+# teacher-generated response — the text most likely to carry memorised
+# PII/credentials — rather than dropping it (F-P6-OPUS-07). Without this the
+# ``instruction``/``chatml`` synthetic shapes extract to ``""`` (counted as
+# ``null_or_empty``, never scanned) and ``prompt_response`` loses its
+# ``response`` half.
+_INSTRUCTION_PAIRS: Tuple[Tuple[str, str], ...] = (
+    ("instruction", "output"),
+    ("User", "Assistant"),
+    ("prompt", "response"),
+)
+
+
 # Default Hamming-distance threshold for "near-duplicate" via 64-bit simhash.
 # 3 bits ~ ~95% similarity at 64-bit width — same threshold the simhash paper
 # uses for the canonical web-page-dedup deployment.
@@ -143,6 +159,7 @@ __all__ = [
     "PII_ML_SEVERITY",
     "PII_ML_TYPES",
     "_TEXT_COLUMNS",
+    "_INSTRUCTION_PAIRS",
     "DEFAULT_NEAR_DUP_HAMMING",
     "DEFAULT_MINHASH_JACCARD",
     "DEFAULT_MINHASH_NUM_PERM",

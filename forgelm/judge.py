@@ -7,6 +7,7 @@ on quality, helpfulness, and instruction-following.
 import json
 import logging
 import os
+import string
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -24,6 +25,16 @@ User prompt: {prompt}
 Assistant response: {response}
 
 Respond with ONLY a JSON object: {{"score": <1-10>, "reason": "<brief explanation>"}}"""
+
+
+class JudgeAuthError(Exception):
+    """Raised when the API judge endpoint rejects the credential (HTTP 401/403).
+
+    A bad/revoked key is deterministic — every subsequent prompt would hit the
+    same failure — so this aborts the whole evaluation on the first occurrence
+    instead of burning the full eval set as per-prompt ``score=None`` (mirrors
+    the ``HttpSafetyError`` fail-fast rationale; F-P3-FABLE-55).
+    """
 
 
 @dataclass
@@ -53,6 +64,79 @@ _PII_REDACT_FIELDS: frozenset[str] = frozenset({"prompt", "response", "reason"})
 # JSON parse failure, no-valid-scores summary). Operators grep the audit
 # trail on this exact prefix.
 _LOG_JUDGE_FAILED = "JUDGE EVALUATION FAILED: %s"
+
+# Char budgets the judge prompt is built with. These are intentionally
+# bounded so a single eval row can't blow the judge model's context (and so
+# the API judge stays cheap), but they are *documented* limits, not silent
+# magic numbers (F-P3-FABLE-57): the response budget in particular is shorter
+# than the default ``max_new_tokens`` generation budget, so long-form answers
+# are judged on a leading fragment — ``_score_eval_prompts`` logs once when
+# truncation actually trims content so the operator can see it in the run log.
+# Documented in docs/reference/configuration.md (judge section).
+_JUDGE_PROMPT_MAX_CHARS = 500
+_JUDGE_RESPONSE_MAX_CHARS = 1000
+
+
+def _validate_rubric(rubric: str) -> Optional[str]:
+    """Validate a judge rubric template at the library boundary.
+
+    ``run_judge_evaluation`` accepts a ``rubric`` directly (the YAML path always
+    uses :data:`DEFAULT_RUBRIC` since ``JudgeConfig`` has no rubric field), so a
+    direct/library caller can pass an arbitrary template. Two failure modes are
+    caught here (F-P3-FABLE-56):
+
+    * **Stray braces** — a literal JSON example like ``{"score": 7}`` without
+      doubled braces raises ``KeyError``/``ValueError`` at ``.format`` time and
+      crashes the run on the first prompt.
+    * **Missing placeholders** — a rubric with no ``{prompt}``/``{response}``
+      fields formats successfully but the judge never sees the model output and
+      silently scores the rubric text itself.
+
+    Returns ``None`` when the rubric is valid, or an actionable error string
+    (the caller turns it into ``JudgeResult(passed=False, ...)``).
+    """
+    try:
+        # ``.parse`` is a generator; brace-syntax errors surface during
+        # iteration. ``field_name`` is "" for an empty ``{}`` and may carry an
+        # attribute/index suffix (``{prompt.x}``) — take the root before the
+        # first ``.`` or ``[`` so the allowed-field check matches ``.format``'s
+        # ``get_field`` lookup key.
+        field_roots = {
+            fname.split(".")[0].split("[")[0]
+            for _, fname, _, _ in string.Formatter().parse(rubric)
+            if fname is not None
+        }
+    except ValueError as e:
+        # Unbalanced/stray braces — the same crash .format() would raise, but
+        # surfaced once up front with an actionable hint instead of mid-eval.
+        return (
+            f"rubric template has invalid brace syntax ({e}) — escape literal "
+            "braces as {{ }} and keep only {prompt} and {response} as fields"
+        )
+    # A positional ``{}`` placeholder has an empty field name and would raise
+    # IndexError at ``.format`` time (no positional args are passed) — reject it
+    # here so the fail-fast boundary catches it instead of crashing mid-eval.
+    if "" in field_roots:
+        return (
+            "rubric template uses positional {} placeholders — only named "
+            "{prompt} and {response} are allowed; escape literal braces as {{ }}"
+        )
+    # A field root outside {prompt, response} (e.g. a literal JSON example
+    # ``{\"score\": 7}`` whose field name is ``\"score\"``) would raise KeyError
+    # at ``.format`` time and crash the run — reject it here.
+    unexpected = {f for f in field_roots if f and f not in ("prompt", "response")}
+    if unexpected:
+        return (
+            f"rubric template references unknown placeholder(s) {{{', '.join(sorted(unexpected))}}} — "
+            "only {prompt} and {response} are substituted; escape literal braces as {{ }}"
+        )
+    missing = {"prompt", "response"} - field_roots
+    if missing:
+        return (
+            "rubric must contain both {prompt} and {response} placeholders "
+            f"(missing: {', '.join(sorted(missing))}); escape literal braces as {{ }}"
+        )
+    return None
 
 
 def _parse_judge_json(text: str) -> Dict[str, Any]:
@@ -113,6 +197,17 @@ def _call_api_judge(prompt: str, api_key: str, model: str = "gpt-4o", api_base: 
         # lets ``run_judge_evaluation`` abort the whole evaluation rather
         # than silently scoring every prompt as ``None``.
         raise
+    except requests.HTTPError as e:
+        # 401/403 are deterministic auth failures: a revoked/invalid key fails
+        # identically on every prompt. Abort the whole eval on first hit instead
+        # of scoring all N prompts as None after N wasted round-trips
+        # (F-P3-FABLE-55). All other HTTP errors (429/5xx/timeouts) stay
+        # per-prompt transient below.
+        status = getattr(e.response, "status_code", None)
+        if status in (401, 403):
+            raise JudgeAuthError(f"judge API authentication failed (HTTP {status}) — check the judge API key") from e
+        logger.warning("API judge call failed: %s", e)
+        return {"score": None, "reason": f"API error: {e}"}
     except json.JSONDecodeError as e:
         logger.warning("API judge returned invalid JSON: %s", e)
         return {"score": None, "reason": f"Invalid JSON from API: {e}"}
@@ -149,18 +244,51 @@ def _call_local_judge(prompt: str, model: Any, tokenizer: Any) -> Dict[str, Any]
 
 
 def _load_eval_prompts(path: str) -> List[str]:
-    """Load prompts from a JSONL file (one prompt per line, plain or JSON object)."""
+    """Load prompts from a JSONL file (one prompt per line, plain or JSON object).
+
+    A line that is valid JSON but **not** an object — a bare quoted string
+    (``"how to hotwire a car"``) is treated as the prompt itself, consistent
+    with the plain-text fallback; any other non-object value (number, array,
+    ``null``) is a malformed probe and raises a ``ValueError`` naming the file
+    and 1-based line number, rather than the raw ``AttributeError`` that
+    ``int``/``list``/``NoneType`` would trigger on ``.get`` (F-H-09).
+    """
     prompts: List[str] = []
+    skipped = 0
     with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
+        for lineno, raw in enumerate(f, start=1):
+            line = raw.strip()
             if not line:
                 continue
+            prompt: str
             try:
                 data = json.loads(line)
-                prompts.append(data.get("prompt", data.get("text", "")))
             except json.JSONDecodeError:
-                prompts.append(line)
+                # Not JSON at all — treat the raw line as a plain-text prompt.
+                prompt = line
+            else:
+                if isinstance(data, dict):
+                    prompt = data.get("prompt", data.get("text", ""))
+                elif isinstance(data, str):
+                    # A quoted-string probe — the JSON value IS the prompt.
+                    prompt = data
+                else:
+                    raise ValueError(
+                        f"Invalid eval prompt: {path} line {lineno}: "
+                        f"top-level JSON value is {type(data).__name__}, not an object or string: "
+                        f"each line must be a JSON object with a 'prompt'/'text' key, "
+                        f"a quoted string, or plain text."
+                    )
+            if not isinstance(prompt, str) or not prompt.strip():
+                skipped += 1
+                continue
+            prompts.append(prompt)
+    if skipped:
+        logger.warning(
+            "Skipped %d row(s) in %s that yielded no usable prompt (missing 'prompt'/'text' key or blank value).",
+            skipped,
+            path,
+        )
     return prompts
 
 
@@ -379,6 +507,10 @@ def run_judge_evaluation(
         return JudgeResult(passed=False, failure_reason=f"Eval dataset not found: {eval_dataset_path}")
 
     rubric = rubric or DEFAULT_RUBRIC
+    rubric_error = _validate_rubric(rubric)
+    if rubric_error:
+        logger.error(_LOG_JUDGE_FAILED, rubric_error)
+        return JudgeResult(passed=False, failure_reason=rubric_error)
     eval_prompts = _load_eval_prompts(eval_dataset_path)
     if not eval_prompts:
         logger.warning("No eval prompts found. Skipping judge evaluation.")
@@ -416,6 +548,13 @@ def run_judge_evaluation(
         # scheme, etc.). Treat as hard configuration failure, not a per-prompt
         # null score, so the trainer's auto-revert / approval gate can react.
         failure_reason = f"judge endpoint rejected by HTTP safety policy: {e}"
+        logger.error(_LOG_JUDGE_FAILED, failure_reason)
+        return JudgeResult(passed=False, failure_reason=failure_reason)
+    except JudgeAuthError as e:
+        # Deterministic credential failure (HTTP 401/403). Abort on first hit —
+        # no point retrying the same bad key across the rest of the eval set
+        # (F-P3-FABLE-55).
+        failure_reason = str(e)
         logger.error(_LOG_JUDGE_FAILED, failure_reason)
         return JudgeResult(passed=False, failure_reason=failure_reason)
 
@@ -465,11 +604,28 @@ def _score_eval_prompts(
     scores: List[Optional[float]] = []
     details: List[Dict[str, Any]] = []
     failure_count = 0
+    truncation_warned = False
 
     responses = _generate_responses_batched(model, tokenizer, eval_prompts, max_new_tokens, batch_size=batch_size)
 
     for prompt, response in zip(eval_prompts, responses):
-        judge_prompt = rubric.format(prompt=prompt[:500], response=response[:1000])
+        # Bounded, documented char budgets (F-P3-FABLE-57). Warn once if any
+        # row is actually trimmed so the operator knows scores are computed on a
+        # fragment — long-form answers can otherwise be penalised for looking
+        # "cut off" when it's this truncation, not the model, that cut them.
+        if not truncation_warned and (
+            len(prompt) > _JUDGE_PROMPT_MAX_CHARS or len(response) > _JUDGE_RESPONSE_MAX_CHARS
+        ):
+            logger.warning(
+                "Judge inputs truncated to prompt[:%d]/response[:%d] chars; long answers are "
+                "judged on a leading fragment (see configuration.md judge section).",
+                _JUDGE_PROMPT_MAX_CHARS,
+                _JUDGE_RESPONSE_MAX_CHARS,
+            )
+            truncation_warned = True
+        judge_prompt = rubric.format(
+            prompt=prompt[:_JUDGE_PROMPT_MAX_CHARS], response=response[:_JUDGE_RESPONSE_MAX_CHARS]
+        )
         if is_api_judge:
             result = _call_api_judge(judge_prompt, judge_api_key, judge_model, api_base=api_base)
         else:

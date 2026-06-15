@@ -1,6 +1,6 @@
 ---
 title: Interactive Chat
-description: Sanity-check your fine-tuned model in a streaming REPL with safety routing.
+description: Sanity-check your fine-tuned model in a streaming REPL.
 ---
 
 # Interactive Chat

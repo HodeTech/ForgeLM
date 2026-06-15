@@ -83,6 +83,41 @@ class TestGenerateModelCard:
         content = open(card_path).read()
         assert "hf_SECRET" not in content
 
+    def test_model_card_escapes_injection_in_base_model_and_dataset(self, tmp_path):
+        """F-P4-OPUS-30: a crafted base_model / dataset string must not inject a
+        Markdown link or break the card's tables. Injection characters are
+        stripped from the interpolated fields, path-legal characters
+        (``/ . -``) survive."""
+        from forgelm.model_card import generate_model_card
+
+        config = ForgeConfig(
+            **_card_config(
+                model={"name_or_path": "org/model](https://evil.example)#"},
+                data={"dataset_name_or_path": "ds | extra-col | x"},
+            )
+        )
+        final_path = str(tmp_path / "model")
+        card_path = generate_model_card(config=config, metrics={"eval_loss": 0.5}, final_path=final_path)
+        content = open(card_path).read()
+
+        # Inspect only the interpolated regions (heading + Training-Details
+        # table), NOT the fenced ```yaml config block where the raw value is
+        # safely quoted inside a code fence and cannot form Markdown.
+        heading = next(ln for ln in content.splitlines() if ln.startswith("# "))
+        base_row = next(ln for ln in content.splitlines() if ln.startswith("| Base Model"))
+        dataset_row = next(ln for ln in content.splitlines() if ln.startswith("| Dataset"))
+
+        # No link-forming sequence reaches the heading or the table cells.
+        for region in (heading, base_row, dataset_row):
+            assert "](" not in region
+            assert "(http" not in region
+        # The injected pipes that would add phantom table columns are gone — a
+        # normal 2-column row has exactly 3 pipes (its own borders).
+        assert dataset_row.count("|") == 3
+        # Path-legal text is preserved.
+        assert "org/model" in base_row
+        assert "extra-col" in dataset_row
+
     def test_dora_tag_in_frontmatter(self, tmp_path):
         from forgelm.model_card import generate_model_card
 
@@ -132,12 +167,40 @@ class TestGenerateModelCard:
         from forgelm.model_card import generate_model_card
 
         config = ForgeConfig(
-            **_card_config(synthetic={"enabled": True, "teacher_model": "gpt-4", "api_key": "sk-SUPERSECRET-LEAK"})
+            **_card_config(
+                synthetic={
+                    "enabled": True,
+                    "teacher_model": "gpt-4",
+                    "api_key": "sk-SUPERSECRET-LEAK",
+                    "seed_prompts": ["q"],
+                }
+            )
         )
         final_path = str(tmp_path / "model")
         card_path = generate_model_card(config=config, metrics={"eval_loss": 0.5}, final_path=final_path)
         content = open(card_path).read()
         assert "sk-SUPERSECRET-LEAK" not in content, "synthetic.api_key leaked into the model card"
+
+    def test_target_modules_pipe_neutralized(self, tmp_path):
+        """F-L-19: a target_modules entry containing '|' must not inject a phantom
+        column into the Training Details table. A normal 2-column row has exactly
+        3 pipe characters; an un-neutralized '|' inside the cell value produces 4."""
+        from forgelm.model_card import generate_model_card
+
+        config = ForgeConfig(
+            **_card_config(
+                lora={"r": 16, "alpha": 32, "use_dora": True, "target_modules": ["q_proj", "v_proj|evil"]},
+            )
+        )
+        final_path = str(tmp_path / "model")
+        card_path = generate_model_card(config=config, metrics={"eval_loss": 0.5}, final_path=final_path)
+        content = open(card_path).read()
+
+        target_row = next(ln for ln in content.splitlines() if ln.startswith("| Target Modules"))
+        # A 2-column table row must have exactly 3 pipe characters.
+        assert target_row.count("|") == 3, f"Phantom column injected via '|' in target_modules: {target_row!r}"
+        # The safe portion of the module name is preserved.
+        assert "v_projdevil" not in target_row or "v_proj" in target_row
 
     def test_residual_secret_keyed_value_is_masked(self, tmp_path):
         """Defence-in-depth: the recursive masker redacts any secret-keyed value

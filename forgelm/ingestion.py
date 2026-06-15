@@ -734,7 +734,9 @@ def _is_frontmatter_page(text: str) -> bool:
     A page is treated as "front-matter candidate" iff **all three**
     conditions hold:
 
-    * Alphabetic-character ratio < 0.45.
+    * Alphabetic-character ratio < ``_FRONTMATTER_ALPHA_RATIO_MAX`` (0.30 —
+      tightened from 0.45 in the round-3-follow-up review; see the
+      constant's own docstring).
     * Leader-character ratio > 0.10. Round-3 fix: the leader count
       now covers BOTH underscore runs (``_____``) AND dot runs
       (``.....``) of length ≥ 3, denominated over the non-whitespace
@@ -2522,6 +2524,20 @@ def ingest_path(  # NOSONAR python:S107 — every kwarg is a documented operator
         notes.append(f"--strip-urls {action} {extract_ctx.urls_handled_total} URL(s).")
     if quality_presignal_payload is not None:
         structured_notes["quality_presignal"] = quality_presignal_payload
+
+    # F-P6-OPUS-11: per-file skips warn individually, but a corpus that
+    # yields ZERO usable chunks is a louder-worthy aggregate signal — a
+    # pipeline that ingests-then-trains would otherwise proceed on an empty
+    # dataset because the summary below is only INFO. Exit code stays 0 to
+    # preserve the public contract; the WARNING is the tripwire.
+    if chunk_count == 0:
+        logger.warning(
+            "Ingest produced 0 chunks from %d file(s) (%d processed, %d skipped) — "
+            "all inputs were empty/unreadable. Check the source path and file formats.",
+            len(files),
+            files_processed,
+            files_skipped,
+        )
 
     logger.info(
         "ingest: source=%s output=%s files=%d chunks=%d chars=%d strategy=%s",

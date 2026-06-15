@@ -231,19 +231,28 @@ class TestTrainerArtefactNarrowing:
 
 
 class TestCallApiJudgeNarrowing:
-    @patch("forgelm._http.requests.post")
-    def test_request_exception_returns_none_score(self, mock_post):
+    # Patch the ``safe_post`` chokepoint, NOT ``forgelm._http.requests.post``.
+    # safe_post's default (SSRF-pinned) path issues the request via
+    # ``_pinned_session().post`` — it only falls back to ``requests.post`` on
+    # the ``allow_private`` legacy path — so a ``requests.post`` patch leaks
+    # through to a real DNS + HTTPS call to the default judge endpoint (which
+    # then returns a real 401, raising JudgeAuthError). Stubbing safe_post is
+    # both hermetic and the correct seam: it exercises exactly _call_api_judge's
+    # response/exception narrowing while implicitly asserting the judge routes
+    # outbound HTTP through the chokepoint.
+    @patch("forgelm._http.safe_post")
+    def test_request_exception_returns_none_score(self, mock_safe_post):
         import requests
 
         from forgelm.judge import _call_api_judge
 
-        mock_post.side_effect = requests.exceptions.ConnectionError("conn refused")
+        mock_safe_post.side_effect = requests.exceptions.ConnectionError("conn refused")
         result = _call_api_judge("p", "key")
         assert result["score"] is None
         assert "API error" in result["reason"]
 
-    @patch("forgelm._http.requests.post")
-    def test_keyerror_on_choices_returns_none_score(self, mock_post):
+    @patch("forgelm._http.safe_post")
+    def test_keyerror_on_choices_returns_none_score(self, mock_safe_post):
         from forgelm.judge import _call_api_judge
 
         # Provider returns an unexpected envelope so dict access on
@@ -251,20 +260,20 @@ class TestCallApiJudgeNarrowing:
         mock_response = MagicMock()
         mock_response.json.return_value = {"unexpected": "envelope"}
         mock_response.raise_for_status = MagicMock()
-        mock_post.return_value = mock_response
+        mock_safe_post.return_value = mock_response
 
         result = _call_api_judge("p", "key")
         assert result["score"] is None
         assert "API error" in result["reason"]
 
-    @patch("forgelm._http.requests.post")
-    def test_indexerror_on_empty_choices_returns_none_score(self, mock_post):
+    @patch("forgelm._http.safe_post")
+    def test_indexerror_on_empty_choices_returns_none_score(self, mock_safe_post):
         from forgelm.judge import _call_api_judge
 
         mock_response = MagicMock()
         mock_response.json.return_value = {"choices": []}
         mock_response.raise_for_status = MagicMock()
-        mock_post.return_value = mock_response
+        mock_safe_post.return_value = mock_response
 
         result = _call_api_judge("p", "key")
         assert result["score"] is None

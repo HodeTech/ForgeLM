@@ -6,8 +6,34 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from forgelm.benchmark import BenchmarkResult, _check_lm_eval_available, run_benchmark
+from forgelm.benchmark import (
+    BenchmarkResult,
+    _check_lm_eval_available,
+    _extract_task_score,
+    _parse_results,
+    run_benchmark,
+)
 from forgelm.config import BenchmarkConfig, ForgeConfig
+
+
+class TestExtractTaskScore:
+    """F-P3-FABLE-54: the fallback metric matcher must never pick an
+    ``*_stderr`` companion key as the task accuracy."""
+
+    def test_priority_key_selected(self):
+        assert _extract_task_score("t", {"acc,none": 0.70, "acc_stderr,none": 0.01}) == pytest.approx(0.70)
+
+    def test_fallback_skips_stderr_keys(self):
+        # No priority key matches (named filter), and the stderr key is ordered
+        # *before* the real metric — the matcher must still skip the 0.012.
+        result = {"alias": "taskC", "acc_stderr,flex": 0.012, "acc,flex": 0.70}
+        assert _extract_task_score("taskC", result) == pytest.approx(0.70)
+        assert _parse_results({"taskC": result}) == {"taskC": pytest.approx(0.70)}
+
+    def test_only_stderr_present_returns_none(self):
+        # A degenerate result with no real accuracy metric must not be rescued
+        # by the stderr value.
+        assert _extract_task_score("t", {"acc_stderr,none": 0.012}) is None
 
 
 class TestBenchmarkResult:

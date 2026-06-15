@@ -57,7 +57,7 @@ ForgeLM/
 │   │                        # _aggregator, _streaming, _simhash, _minhash,
 │   │                        # _pii_regex, _pii_ml, _secrets, _quality,
 │   │                        # _croissant, _summary, _splits
-│   ├── config.py            # Pydantic schemas (19 models)
+│   ├── config.py            # Pydantic schemas (23 models)
 │   ├── trainer.py           # TRL wrapper (SFT/DPO/SimPO/KTO/ORPO/GRPO)
 │   ├── model.py             # HF + PEFT model loading
 │   ├── data.py              # Dataset loading + format detection
@@ -158,11 +158,13 @@ Default workflow for a non-trivial change:
      python3 tools/check_no_analysis_refs.py && \
      python3 tools/check_no_unguarded_sys_modules_pop.py && \
      python3 tools/check_audit_event_catalog.py --strict && \
+     python3 tools/check_tr_links_prefer_mirror.py --strict && \
      python3 tools/check_usermanual_self_contained.py --strict && \
+     python3 tools/check_notebook_pins.py --strict && \
      python3 tools/update_site_version.py --check
    ```
 
-   All thirteen must pass. The first four are the historical gauntlet;
+   All fifteen must pass. The first four are the historical gauntlet;
    the three doc guards (Wave 3 / Wave 4 / Wave 5 additions) catch
    bilingual structural drift, broken markdown anchors, and CLI ↔ docs
    help-text drift before the PR opens. The wizard-defaults guard
@@ -180,7 +182,14 @@ Default workflow for a non-trivial change:
    table in `docs/reference/audit_event_catalog.md` in both directions —
    the append-only audit log is an EU AI Act Art. 12 contract, and this
    guard was previously unwired while six `pipeline.*` stage events
-   drifted into the code uncatalogued.  The
+   drifted into the code uncatalogued.  The TR-links-prefer-mirror
+   guard (full-project-review W1/H11, F-P8-C-04) fails when a
+   `docs/**/*-tr.md` page links the un-suffixed English sibling even
+   though a `<stem>-tr.md` mirror exists — a Turkish reader following
+   an in-prose link must stay in Turkish; the `**Ayna:**` backlink
+   line is the one exempt case.  62 leaks across 19 files were swept
+   to zero when this guard landed — see `docs/standards/localization.md`
+   "Structural mirror rule".  The
    usermanual self-contained guard (post-v0.7.0 cycle) blocks any
    link inside `docs/usermanuals/` that would 404 in the static SPA
    viewer: every link must be either a `#/<section>/<page>` SPA
@@ -192,7 +201,11 @@ Default workflow for a non-trivial change:
    latest released header and fails the PR if any of the 15+ literals
    across `site/*.html` and `site/js/translations.js` has drifted; the
    v0.5.5 → v0.6.0 release shipped with the hero badge still reading
-   `v0.5.5`, which this guard now prevents.
+   `v0.5.5`, which this guard now prevents.  The notebook-pin guard
+   (v0.7.0 / F-P8-C-09) verifies that every `*.ipynb` in the repo
+   pins its kernel and package versions so that example notebooks
+   remain reproducible; it was wired into CI at the v0.7.0 pin bump
+   but was absent from the local gauntlet until this update.
 
 ## Etiquette when communicating with the user
 

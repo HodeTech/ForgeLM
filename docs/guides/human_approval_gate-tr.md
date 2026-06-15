@@ -62,7 +62,7 @@ O tek flag, bu config'i tüketen her koşum için kapıyı açmaya yeter. Kapı 
 
 ## 2. Trainer'ın CI runner'ını yapılandır
 
-`forgelm`'i çalıştıran CI runner `FORGELM_OPERATOR`'ı makineokunabilir bir kimliğe SET ETMELİDİR (per [`../qms/access_control.md`](../qms/access_control.md) §3.2):
+`forgelm`'i çalıştıran CI runner `FORGELM_OPERATOR`'ı makineokunabilir bir kimliğe SET ETMELİDİR (per [`../qms/access_control.md`](../qms/access_control-tr.md) §3.2):
 
 ```yaml
 # .github/workflows/train.yml
@@ -90,7 +90,7 @@ steps:
 
 İki tamamlayıcı mekanizma:
 
-**Webhook (push).** Run config'inde `webhook.url_env: SLACK_WEBHOOK_URL` set et. Trainer `notify_awaiting_approval`'ı run id ve metric özetiyle fırlatır; Slack/Teams on-call rotasyonuna yönlendirir. Webhook secret hijyeni için bkz. [`../qms/access_control.md`](../qms/access_control.md) §7.
+**Webhook (push).** Run config'inde `webhook.url_env: SLACK_WEBHOOK_URL` set et. Trainer `notify_awaiting_approval`'ı run id ve metric özetiyle fırlatır; Slack/Teams on-call rotasyonuna yönlendirir. Webhook secret hijyeni için bkz. [`../qms/access_control.md`](../qms/access_control-tr.md) §7.
 
 **Keşif (pull).** Zamanlanmış bir CI job'ı:
 
@@ -149,7 +149,7 @@ Her satır önceki satıra bağlayan bir `prev_hash` (SHA-256) ve `FORGELM_AUDIT
 
 Onaylayanın `FORGELM_OPERATOR`'ı trainer'ınkinden FARKLI OLMALIDIR. ForgeLM bunu zorunlu kılmaz — bu deployer-tarafı IdP kontrolüdür — ancak audit zinciri her ikisini kaydeder; ihlal post-hoc tespit edilebilir.
 
-Kanonik tespit cookbook'u [`../qms/access_control.md`](../qms/access_control.md) §6'da bulunur. Kolaylık için burada da:
+Kanonik tespit cookbook'u [`../qms/access_control.md`](../qms/access_control-tr.md) §6'da bulunur. Kolaylık için burada da:
 
 ```bash
 # 1. Önce zincir bütünlüğünü doğrula (positional log_path; bu subcommand'da
@@ -228,6 +228,6 @@ jq -rs '
 - [`../usermanuals/tr/compliance/human-approval-gate.md`](../usermanuals/tr/compliance/human-approval-gate.md) — bu rehberle eşleşen deployer-yüzlü kullanıcı kılavuzu sayfası.
 - [`../reference/approve_subcommand-tr.md`](../reference/approve_subcommand-tr.md) — `approve` / `reject` için flag-başına, event-başına referans.
 - [`../reference/approvals_subcommand-tr.md`](../reference/approvals_subcommand-tr.md) — `approvals` için flag-başına, event-başına referans.
-- [`../qms/access_control.md`](../qms/access_control.md) §6 — kanonik segregation-of-duties cookbook.
+- [`../qms/access_control.md`](../qms/access_control-tr.md) §6 — kanonik segregation-of-duties cookbook.
 - [`iso_soc2_deployer_guide-tr.md`](iso_soc2_deployer_guide-tr.md) §"Q5" — kapının kanıtını tüketen auditor walkthrough.
 - [`gdpr_erasure-tr.md`](gdpr_erasure-tr.md) — GDPR Madde 15 + 17 için kardeş akış.

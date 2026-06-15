@@ -9,9 +9,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("forgelm.data")
 
+# Non-whitespace control characters (C0/C1 ranges, Unicode category ``Cc``)
+# that ``clean_text`` strips before tokenisation — NUL, BEL, ESC, and the
+# rest of the control set. The whitespace controls ``\t \n \x0b \x0c \r`` are
+# deliberately excluded here because ``str.split()`` already collapses them.
+_WHITESPACE_CONTROLS = frozenset("\t\n\x0b\x0c\r")
+_CONTROL_CHAR_DELETIONS = {
+    cp: None for cp in (*range(0x00, 0x20), *range(0x7F, 0xA0)) if chr(cp) not in _WHITESPACE_CONTROLS
+}
+
 
 def _detect_dataset_format(columns: list) -> dict:
-    """Detect the most likely dataset format from column names."""
+    """Detect the most likely dataset format from column names.
+
+    Advisory heuristic ONLY: returns the most likely format plus a suggested
+    trainer for use in user-facing error messages. It performs NO validation —
+    the authoritative schema gate is :func:`_validate_trainer_columns` (which
+    raises ``KeyError`` on a missing column) plus TRL's own column checks at
+    train time. Branch order encodes precedence (preference > binary-feedback >
+    messages > prompt-only > instruction > text); the first matching branch
+    wins, so do not rely on this to reject a malformed dataset.
+    """
     if "chosen" in columns and "rejected" in columns:
         return {"description": "preference format (chosen/rejected)", "suggested_trainer": "dpo"}
     if "completion" in columns and "label" in columns:
@@ -30,13 +48,42 @@ def _detect_dataset_format(columns: list) -> dict:
 
 
 def clean_string(text: str, do_clean: bool) -> str:
-    """Removes extra whitespace if configured."""
-    if text is None:
-        logger.warning("None value encountered in dataset column during text cleaning.")
-        return ""
-    if do_clean and isinstance(text, str):
-        return " ".join(text.split())
-    return str(text) if text else ""
+    """Normalise a single string cell, optionally collapsing whitespace and
+    stripping control characters.
+
+    When ``do_clean`` is set (the ``DataConfig.clean_text`` field), this
+    removes non-whitespace control characters (NUL, BEL, ESC, and the rest of
+    the C0/C1 ``Cc`` set) and collapses runs of whitespace into single spaces
+    — matching the field's documented "strip excessive whitespace + control
+    characters" contract. ``str.split()`` alone only handles the *whitespace*
+    control chars (``\\t \\n \\x0b \\x0c \\r``); NUL/BEL/ESC would otherwise
+    pass into the tokeniser verbatim.
+
+    Rejects non-string payloads loudly — symmetric with
+    ``_process_messages_format`` (see its docstring). The previous behaviour
+    coerced any non-string via ``str()`` (``{'a': 1}`` → ``"{'a': 1}"``,
+    ``42`` → ``"42"``) and silently mapped ``None``/falsy values to ``""``,
+    which baked schema bugs (a dict/int/None where a string was expected)
+    straight into the training corpus with only a WARNING for ``None``. The
+    text and User/Assistant formats route every cell through here, so a
+    malformed row now fails the run at this chokepoint instead of training
+    the model on Python ``repr`` strings or empty responses.
+
+    Raises:
+        ValueError: when ``text`` is not a ``str`` (including ``None``). The
+            caller is responsible for omitting genuinely-absent optional
+            cells (e.g. a missing system prompt) before reaching here.
+    """
+    if not isinstance(text, str):
+        raise ValueError(
+            f"Malformed dataset cell: expected a string, got {type(text).__name__}. "
+            "Each text/User/Assistant cell must be a string; fix the offending "
+            "row in your dataset (a null, number, or nested object where text "
+            "was expected is a schema bug, not training data)."
+        )
+    if do_clean:
+        return " ".join(text.translate(_CONTROL_CHAR_DELETIONS).split())
+    return text
 
 
 def _load_single_dataset(path: str):
@@ -60,8 +107,11 @@ def _load_single_dataset(path: str):
 def _process_text_format(examples: dict, clean_text: bool, add_eos: bool, eos_token: str) -> dict:
     """Pre-formatted text column (e.g., openassistant-guanaco)."""
     texts = []
-    for t in examples["text"]:
-        t = clean_string(t, clean_text)
+    for idx, t in enumerate(examples["text"]):
+        try:
+            t = clean_string(t, clean_text)
+        except ValueError as e:
+            raise ValueError(f"Malformed text-format row at index {idx}: {e}") from e
         if add_eos and t and eos_token and not t.endswith(eos_token):
             t += eos_token
         texts.append(t)
@@ -102,6 +152,15 @@ def _process_messages_format(examples: dict, add_eos: bool, eos_token: str) -> d
                         f"'content' must be a string, got {type(content).__name__}."
                     )
                 chunks.append(f"[{role.upper()}]\n{content}\n")
+            # An empty ``messages`` list (``[]``) produces no chunks, so the
+            # formatted text would be ``""`` (or a bare eos_token) — the exact
+            # "corpus of empty rows" failure the loud-raise rewrite exists to
+            # prevent. Reject it loudly instead of appending a blank sample.
+            if not chunks:
+                raise ValueError(
+                    f"Malformed messages-format row at index {idx}: "
+                    "'messages' list is empty (no role/content turns to format)."
+                )
             formatted_text = "".join(chunks)
             if add_eos and eos_token:
                 formatted_text += eos_token
@@ -123,10 +182,16 @@ def _format_user_assistant_row(
     sys_text: str, user_text: str, asst_text: str, clean_text: bool, add_eos: bool, eos_token: str
 ) -> str:
     """Render a single (System?, User, Assistant) row into a flat training string."""
-    sys_clean = clean_string(sys_text, clean_text) if sys_text else ""
+    # Only ``""`` means "no system prompt" (synthesised by
+    # ``_process_user_assistant_format`` as ``[""] * len``). Every other value —
+    # including falsy non-strings (``0``/``False``/``[]``) and ``None`` — is a
+    # schema bug that must fail loudly through ``clean_string``, symmetric with
+    # the user/assistant cells. A truthiness gate would let those slip past.
+    has_system = sys_text != ""
+    sys_clean = clean_string(sys_text, clean_text) if has_system else ""
     user_clean = clean_string(user_text, clean_text)
     asst_clean = clean_string(asst_text, clean_text)
-    sys_part = f"[SYSTEM]\n{sys_clean}\n" if sys_text else ""
+    sys_part = f"[SYSTEM]\n{sys_clean}\n" if sys_clean else ""
     formatted_text = sys_part + f"[USER]\n{user_clean}\n[ASSISTANT]\n{asst_clean}"
     if add_eos and eos_token:
         formatted_text += eos_token
@@ -154,10 +219,12 @@ def _process_user_assistant_format(examples: dict, clean_text: bool, add_eos: bo
     user_texts = examples.get("User", examples.get("instruction", []))
     asst_texts = examples.get("Assistant", examples.get("output", examples.get("response", [])))
     sys_texts = examples["System"] if has_system else [""] * len(user_texts)
-    texts = [
-        _format_user_assistant_row(s, u, a, clean_text, add_eos, eos_token)
-        for s, u, a in zip(sys_texts, user_texts, asst_texts, strict=True)
-    ]
+    texts = []
+    for idx, (s, u, a) in enumerate(zip(sys_texts, user_texts, asst_texts, strict=True)):
+        try:
+            texts.append(_format_user_assistant_row(s, u, a, clean_text, add_eos, eos_token))
+        except ValueError as e:
+            raise ValueError(f"Malformed User/Assistant-format row at index {idx}: {e}") from e
     return {"text": texts}
 
 
@@ -207,14 +274,13 @@ def _merge_extra_datasets(primary_dataset, extra_paths: list, mix_ratio: Optiona
         all_train.append(extra_ds["train"])
 
     if mix_ratio:
-        if len(mix_ratio) == len(all_train):
-            all_train = _apply_mix_ratio(all_train, mix_ratio)
-        else:
-            logger.warning(
-                "mix_ratio length (%d) doesn't match dataset count (%d). Using uniform mixing.",
-                len(mix_ratio),
-                len(all_train),
-            )
+        if len(mix_ratio) != len(all_train):
+            # DataConfig._validate_mix_ratio_length guarantees this at config
+            # time; reaching here means a non-config caller passed a mismatch.
+            # Raise loudly rather than silently re-weighting to a mixture the
+            # caller never asked for.
+            raise ValueError(f"mix_ratio length ({len(mix_ratio)}) does not match dataset count ({len(all_train)}).")
+        all_train = _apply_mix_ratio(all_train, mix_ratio)
 
     merged_train = concatenate_datasets(all_train)
     logger.info("Merged %d datasets into %d training samples.", len(all_train), len(merged_train))

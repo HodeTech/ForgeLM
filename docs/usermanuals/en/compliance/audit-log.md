@@ -12,20 +12,25 @@ EU AI Act Article 12 requires high-risk AI systems to maintain logs of operation
 One JSON object per line:
 
 ```jsonl
-{"ts":"2026-04-29T14:01:32Z","seq":1,"event":"training.started","run_id":"abc123","operator":"ci-runner@ml","_hmac":"..."}
-{"ts":"2026-04-29T14:33:08Z","seq":2,"event":"audit.classifier_load_failed","classifier":"meta-llama/Llama-Guard-3-8B","reason":"...","_hmac":"..."}
-{"ts":"2026-04-29T14:33:10Z","seq":3,"event":"model.reverted","reason":"safety.regression","metrics":{...},"_hmac":"..."}
-{"ts":"2026-04-29T14:33:11Z","seq":4,"event":"pipeline.completed","exit_code":0,"prev_hash":"sha256:beef...","_hmac":"..."}
+{"timestamp":"2026-04-29T14:01:32Z","run_id":"abc123","operator":"ci-runner@ml","event":"training.started","prev_hash":"genesis","_hmac":"..."}
+{"timestamp":"2026-04-29T14:33:08Z","run_id":"abc123","operator":"ci-runner@ml","event":"audit.classifier_load_failed","prev_hash":"sha256:1a2b...","classifier":"meta-llama/Llama-Guard-3-8B","reason":"...","_hmac":"..."}
+{"timestamp":"2026-04-29T14:33:10Z","run_id":"abc123","operator":"ci-runner@ml","event":"model.reverted","prev_hash":"sha256:3c4d...","reason":"safety","detail":"safe_ratio below threshold","_hmac":"..."}
+{"timestamp":"2026-04-29T14:33:11Z","run_id":"abc123","operator":"ci-runner@ml","event":"pipeline.completed","prev_hash":"sha256:5e6f...","success":true,"_hmac":"..."}
 ```
 
 (See the "Event types" table below and the [Audit Event Catalog on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md) for the full canonical list. Earlier drafts referenced `run_start` / `run_complete` / `data_audit_complete` / `training_epoch_complete` / `benchmark_complete` / `safety_eval_complete` / `auto_revert` — none of those names ship; no call site in `forgelm/` emits them.)
 
 Every entry has:
-- **`ts`** — ISO-8601 UTC timestamp.
-- **`seq`** — monotonic sequence number within the run (resets per-run).
+- **`timestamp`** — ISO-8601 UTC timestamp.
+- **`run_id`** — the run that emitted the entry.
+- **`operator`** — the resolved operator identity (`$FORGELM_OPERATOR`, or `<user>@<host>`).
 - **`event`** — event type (see below).
-- **`prev_hash`** — SHA-256 of the previous entry (chained for tamper-evidence).
+- **`prev_hash`** — SHA-256 of the previous entry (chained for tamper-evidence; the first entry is `"genesis"`).
+- **`_hmac`** — per-line HMAC tag, present only when `FORGELM_AUDIT_SECRET` is set.
 - Event-specific fields.
+
+There is **no** `seq` field. Gap- and deletion-detection rest entirely on the
+`prev_hash` chain (and the genesis-manifest sidecar), not on sequence numbers.
 
 ## Event types
 
@@ -60,12 +65,10 @@ ForgeLM never rewrites prior log entries. New events go at the end. The chained 
 
 ```shell
 $ forgelm verify-audit <output_dir>/audit_log.jsonl
-✓ 87 entries, all timestamps monotonic
-✓ all prev_hash chains valid
-✓ no gaps in seq numbers
+OK: 87 entries verified
 ```
 
-If `verify-audit` reports a chain break, the log was modified after generation. Investigate before treating it as evidence.
+With `FORGELM_AUDIT_SECRET` set, pass `--require-hmac` and the success line reads `OK: 87 entries verified (HMAC validated)`. A tampered or truncated log fails with `FAIL at line N: <reason>` (a `prev_hash` chain break, an HMAC mismatch, or a genesis-manifest mismatch). Investigate before treating it as evidence.
 
 ## Per-run
 
@@ -74,6 +77,8 @@ Each training run writes its own `<output_dir>/audit_log.jsonl` (top-level — n
 ## Configuration
 
 There is **no** `compliance.audit_log:` block. The audit log is not a knob to enable/disable — every ForgeLM run automatically writes `<output_dir>/audit_log.jsonl`. To enable HMAC chaining, set `FORGELM_AUDIT_SECRET` in the env before invoking the trainer; there is no additional YAML knob.
+
+Use a strong secret: 32+ random bytes from a secret manager. A short, low-entropy `FORGELM_AUDIT_SECRET` is accepted but logs a weak-secret WARNING (below 16 characters) because the per-line HMAC's strength is bounded by the secret's entropy. ForgeLM is not a key-management system — it consumes the secret, it does not generate or rotate it.
 
 ## Forwarding to external stores
 
@@ -97,7 +102,7 @@ aws s3 cp <output_dir>/audit_log.jsonl s3://compliance-audit-logs/forgelm/<run_i
 For human review:
 
 ```shell
-$ jq -r '.event + "\t" + .ts' checkpoints/run/audit_log.jsonl
+$ jq -r '.event + "\t" + .timestamp' checkpoints/run/audit_log.jsonl
 training.started               2026-04-29T14:01:32Z
 audit.classifier_load_failed   2026-04-29T14:33:08Z
 model.reverted                 2026-04-29T14:33:10Z
@@ -109,7 +114,7 @@ For dashboards, the JSONL flows naturally into Loki, OpenSearch, or any log-aggr
 ## Common pitfalls
 
 :::warn
-**Editing the log "to fix a typo".** Don't. Even cosmetic edits break the chain hash and undermine the audit value. If you genuinely need to amend information, append a new event of type `correction` with a `corrects_seq` reference.
+**Editing the log "to fix a typo".** Don't. Even cosmetic edits break the chain hash and undermine the audit value. If you genuinely need to amend information, append a new event that references the run and timestamp of the entry being corrected — never rewrite the original line.
 :::
 
 :::warn

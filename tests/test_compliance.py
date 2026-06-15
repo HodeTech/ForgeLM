@@ -174,6 +174,145 @@ class TestComplianceExport:
             data = json.load(f)
         assert "model_lineage" in data
 
+    def test_mid_promotion_failure_leaves_old_bundle_intact(self, tmp_path, minimal_config):
+        """F-P4-OPUS-10: a failure partway through promotion must roll the
+        published bundle back to its previous (complete) state, never leave a
+        torn bundle that mixes new + old artefacts."""
+        import forgelm.compliance as compliance
+        from forgelm.compliance import export_compliance_artifacts
+
+        cfg = ForgeConfig(**minimal_config())
+        output_dir = str(tmp_path / "compliance")
+
+        # 1. Publish a first, complete bundle (the OLD bundle).
+        manifest_v1 = generate_training_manifest(cfg, metrics={"eval_loss": 0.5})
+        export_compliance_artifacts(manifest_v1, output_dir)
+        report_path = os.path.join(output_dir, "compliance_report.json")
+        with open(report_path) as fh:
+            old_report = json.load(fh)
+        old_listing = sorted(os.listdir(output_dir))
+
+        # 2. Attempt a re-export that fails on the 2nd promotion rename.
+        real_replace = os.replace
+        calls = {"n": 0}
+
+        def flaky_replace(src, dst):
+            # Only count promotions into output_dir (not the backup renames
+            # into the staging dir, which carry a .prev suffix).
+            if os.path.dirname(dst) == output_dir:
+                calls["n"] += 1
+                if calls["n"] == 2:
+                    raise OSError("disk full mid-promotion")
+            return real_replace(src, dst)
+
+        manifest_v2 = generate_training_manifest(cfg, metrics={"eval_loss": 0.123456})
+        with mock.patch.object(compliance.os, "replace", side_effect=flaky_replace):
+            with pytest.raises(OSError, match="disk full"):
+                export_compliance_artifacts(manifest_v2, output_dir)
+
+        # 3. The OLD bundle must survive byte-for-byte and stay complete.
+        assert sorted(os.listdir(output_dir)) == old_listing
+        with open(report_path) as fh:
+            assert json.load(fh) == old_report
+        # No staging clutter left behind.
+        assert not any(name.startswith(".export-tmp-") for name in os.listdir(output_dir))
+
+
+class TestComplianceExportAuditTrail:
+    """F-P4-OPUS-11 / XP-12: a failed/torn compliance export must leave an
+    append-only audit trace, and the rollup 'exported' event must fire even
+    when the secondary Article-10 governance report fails."""
+
+    def _make_trainer(self, tmp_path, minimal_config):
+        from unittest.mock import MagicMock
+
+        from forgelm.compliance import AuditLogger, compute_config_hash
+        from forgelm.trainer import ForgeTrainer
+
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        config = ForgeConfig(**minimal_config())
+
+        with mock.patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+        trainer.config = config
+        trainer.dataset = {"train": ["dummy"]}
+        trainer.checkpoint_dir = str(output_dir)
+        trainer.notifier = MagicMock()
+        trainer.audit = AuditLogger(str(output_dir))
+        trainer._config_hash = compute_config_hash(config)
+        trainer._original_batch_size = config.training.per_device_train_batch_size
+        trainer._original_grad_accum = config.training.gradient_accumulation_steps
+        return trainer, output_dir
+
+    def _events(self, output_dir):
+        with open(output_dir / "audit_log.jsonl", encoding="utf-8") as fh:
+            return [json.loads(line) for line in fh if line.strip()]
+
+    def test_compliance_export_failure_emits_audit_event(self, tmp_path, minimal_config):
+        trainer, output_dir = self._make_trainer(tmp_path, minimal_config)
+        result = TrainResult(success=True, metrics={"eval_loss": 0.5})
+
+        with mock.patch(
+            "forgelm.compliance.export_compliance_artifacts",
+            side_effect=OSError("disk full"),
+        ):
+            # Best-effort: the outer catch must swallow the error but record it.
+            trainer._export_compliance_if_needed({"eval_loss": 0.5}, result)
+
+        events = {e["event"] for e in self._events(output_dir)}
+        assert "compliance.artifacts_export_failed" in events
+        assert "compliance.artifacts_exported" not in events
+
+    def test_artifacts_exported_event_fires_even_when_governance_fails(self, tmp_path, minimal_config):
+        trainer, output_dir = self._make_trainer(tmp_path, minimal_config)
+        result = TrainResult(success=True, metrics={"eval_loss": 0.5})
+
+        with mock.patch(
+            "forgelm.compliance.generate_data_governance_report",
+            side_effect=ValueError("schema drift"),
+        ):
+            trainer._export_compliance_if_needed({"eval_loss": 0.5}, result)
+
+        events = [e for e in self._events(output_dir)]
+        kinds = {e["event"] for e in events}
+        assert "compliance.governance_failed" in kinds
+        # The Article-11 manifest export succeeded → its rollup must be logged
+        # even though the secondary Article-10 governance report failed.
+        exported = [e for e in events if e["event"] == "compliance.artifacts_exported"]
+        assert len(exported) == 1
+        assert exported[0]["governance_ok"] is False
+
+
+class TestAuditLoggerWindowsLockDocClaim:
+    """XP-09 / F-P4-OPUS-02 / F-P5-OPUS-03: the docs must NOT claim the
+    Windows AuditLogger uses ``msvcrt.locking`` while no such implementation
+    exists. The Windows flock helper is a documented no-op."""
+
+    def test_code_has_no_msvcrt_lock_implementation(self):
+        import pathlib
+
+        forgelm_dir = pathlib.Path(__file__).resolve().parent.parent / "forgelm"
+        hits = [p for p in forgelm_dir.rglob("*.py") if "msvcrt" in p.read_text(encoding="utf-8")]
+        assert hits == [], f"msvcrt referenced in {hits} — implement the Windows lock or keep the no-op"
+
+    def test_docs_do_not_promise_msvcrt_locking(self):
+        import pathlib
+
+        repo = pathlib.Path(__file__).resolve().parent.parent
+        offenders = []
+        for md in (repo / "docs").rglob("*.md"):
+            # The gitignored analysis/ working memory quotes the old (buggy)
+            # text verbatim and is not a public doc surface.
+            if "analysis/" in md.as_posix():
+                continue
+            if "msvcrt.locking" in md.read_text(encoding="utf-8"):
+                offenders.append(md.relative_to(repo).as_posix())
+        assert offenders == [], (
+            "docs still claim AuditLogger uses msvcrt.locking on Windows, but the "
+            f"code has no such implementation: {offenders}"
+        )
+
 
 # --- AuditLogger hash chain ---
 
@@ -215,6 +354,98 @@ class TestAuditLoggerHashChain:
 
         assert h0 != h1
         assert h1 != h2
+
+    def test_second_writer_reread_under_lock_does_not_fork_chain(self, tmp_path):
+        """Two loggers sharing one log file must not fork the chain.
+
+        Writer B captures its in-memory ``_prev_hash`` at __init__ time
+        (before writer A appends).  If ``log_event`` appended against that
+        stale value instead of re-reading the chain head under the lock,
+        the chain would silently fork and ``verify_audit_log`` would fail.
+        Regression guard for the re-read-under-lock guarantee
+        (F-P4-OPUS-12).
+        """
+        from forgelm.compliance import AuditLogger, verify_audit_log
+
+        log_path = str(tmp_path / "audit_log.jsonl")
+
+        writer_a = AuditLogger(str(tmp_path))
+        writer_b = AuditLogger(str(tmp_path))  # captures _prev_hash == "genesis"
+
+        writer_a.log_event("a.first")
+        # B's cached _prev_hash is now stale ("genesis"); the under-lock
+        # re-read must override it so B chains onto A's entry.
+        writer_b.log_event("b.second")
+
+        result = verify_audit_log(log_path)
+        assert result.valid is True, f"Chain forked despite under-lock re-read: {result.reason}"
+        assert result.entries_count == 2
+
+
+class TestAuditLoggerGenesisManifest:
+    def test_write_after_truncation_with_stale_manifest_raises_and_logs(self, tmp_path, caplog, monkeypatch):
+        """A truncate-to-empty-then-write must REFUSE the re-root, not just warn.
+
+        After one event the genesis manifest pins the first-entry hash.
+        Truncating the log to empty and constructing a fresh logger that
+        writes again must emit the write-time ``AUDIT INTEGRITY`` ERROR AND
+        raise ``ConfigError`` — the write-time guard now refuses the silent
+        re-root rather than logging-and-continuing (F-P4-OPUS-21).
+        """
+        from forgelm.compliance import AuditLogger, ConfigError
+
+        monkeypatch.delenv("FORGELM_ALLOW_AUDIT_REROOT", raising=False)
+        log_path = tmp_path / "audit_log.jsonl"
+
+        AuditLogger(str(tmp_path)).log_event("first.event")
+        assert (tmp_path / "audit_log.jsonl.manifest.json").is_file()
+
+        # Truncate the log to empty, leaving the manifest in place.
+        log_path.write_text("", encoding="utf-8")
+
+        with caplog.at_level("ERROR", logger="forgelm.compliance"):
+            with pytest.raises(ConfigError, match="re-root refused"):
+                AuditLogger(str(tmp_path)).log_event("second.event")
+
+        assert any("AUDIT INTEGRITY" in rec.message for rec in caplog.records), (
+            "write-time stale-genesis-manifest path did not log an AUDIT INTEGRITY error"
+        )
+
+    def test_write_after_truncation_reroot_optin_allows_fresh_chain(self, tmp_path, monkeypatch):
+        """FORGELM_ALLOW_AUDIT_REROOT=1 lets a deliberate operator start fresh.
+
+        With the opt-in env set, the write-time guard still logs the integrity
+        ERROR but permits the new genesis entry instead of raising
+        (F-P4-OPUS-21 opt-in path, mirroring FORGELM_ALLOW_ANONYMOUS_OPERATOR).
+        """
+        from forgelm.compliance import AuditLogger
+
+        log_path = tmp_path / "audit_log.jsonl"
+
+        AuditLogger(str(tmp_path)).log_event("first.event")
+        log_path.write_text("", encoding="utf-8")  # truncate, keep manifest
+
+        monkeypatch.setenv("FORGELM_ALLOW_AUDIT_REROOT", "1")
+        # Must NOT raise — the deliberate re-root is permitted.
+        AuditLogger(str(tmp_path)).log_event("second.event")
+        assert log_path.read_text(encoding="utf-8").strip(), "opt-in re-root should have appended a fresh genesis entry"
+
+    def test_audit_envelope_has_no_seq_field(self, tmp_path):
+        """F-P4-OPUS-28: the user manual documented a ``seq`` field and a ``ts``
+        field name that the writer never emits. Lock the real envelope so the
+        doc cannot drift back: the line carries ``timestamp`` (not ``ts``) and
+        no ``seq``."""
+        import json as _json
+
+        from forgelm.compliance import AuditLogger
+
+        log_path = tmp_path / "audit_log.jsonl"
+        AuditLogger(str(tmp_path)).log_event("training.started")
+        entry = _json.loads(log_path.read_text(encoding="utf-8").splitlines()[0])
+        assert "timestamp" in entry
+        assert "ts" not in entry
+        assert "seq" not in entry
+        assert {"run_id", "operator", "event", "prev_hash"} <= entry.keys()
 
 
 # --- _sanitize_md ---
@@ -266,6 +497,16 @@ class TestGovernanceAuditInlining:
 
         report = generate_data_governance_report(config, dataset={})
         assert report["data_audit"] == audit_payload
+        assert report["data_audit_inlined"] is True
+
+    def test_data_audit_inlined_flag_false_when_audit_missing(self, tmp_path, minimal_config):
+        # F-P4-OPUS-23: the report must carry an explicit boolean signalling
+        # the Article 10 data-quality section was dropped, so the caller can
+        # record the gap in the append-only audit log (not just a WARNING).
+        config = ForgeConfig(**minimal_config(training={"output_dir": str(tmp_path)}))
+        report = generate_data_governance_report(config, dataset={})
+        assert report["data_audit_inlined"] is False
+        assert "data_audit" not in report
 
     def test_warns_when_audit_corrupt(self, tmp_path, caplog, minimal_config):
         config = ForgeConfig(**minimal_config(training={"output_dir": str(tmp_path)}))
@@ -627,7 +868,7 @@ class TestVerifyAuditLog:
         assert result.valid is True
         assert result.entries_count == 0
 
-    def test_verify_audit_genesis_manifest_mismatch_fails(self, tmp_path):
+    def test_verify_audit_genesis_manifest_mismatch_fails(self, tmp_path, monkeypatch):
         """P4-OPUS-22: an attacker who truncates the log and writes a fresh
         valid chain (re-rooted at genesis) is caught by the write-once manifest
         sidecar — the pinned ``first_entry_sha256`` no longer matches line 1."""
@@ -637,7 +878,10 @@ class TestVerifyAuditLog:
         assert os.path.isfile(log_path + ".manifest.json")
 
         # Wipe the body but keep the (write-once) manifest, then write a brand
-        # new valid chain — a re-root tamper.
+        # new valid chain — a re-root tamper. The write-time guard
+        # (F-P4-OPUS-21) now refuses this by default; force the re-root via the
+        # opt-in env to reach the verify-time mismatch detector under test.
+        monkeypatch.setenv("FORGELM_ALLOW_AUDIT_REROOT", "1")
         with open(log_path, "w", encoding="utf-8"):
             pass
         logger2 = AuditLogger(str(tmp_path))
@@ -688,6 +932,70 @@ class TestVerifyAuditLog:
         assert result.first_invalid_index == 1
         assert "HMAC mismatch" in (result.reason or "")
 
+    def test_verify_audit_require_hmac_without_secret_is_not_valid(self, tmp_path):
+        """F-P4-OPUS-03: the public library API ``verify_audit_log`` must
+        refuse ``require_hmac=True`` with ``hmac_secret=None`` instead of
+        fail-open. Pre-fix, an HMAC-keyed log verified with no secret returned
+        ``valid=True`` after only a *presence* check on the ``_hmac`` tag —
+        strict mode silently degraded to authenticating nothing. The CLI seam
+        already guarded this, but the exported library function did not.
+        """
+        from forgelm.compliance import verify_audit_log
+
+        # NOSONAR test fixture, not a real secret (rule python:S2068 hard-coded credential false-positive)
+        hmac_key = "operator-key"  # noqa: S105
+        log_path = self._build_log(tmp_path, secret=hmac_key, events=3)
+
+        result = verify_audit_log(log_path, hmac_secret=None, require_hmac=True)
+        assert result.valid is False
+        assert "hmac_secret" in (result.reason or "")
+
+    def test_verify_audit_require_hmac_with_empty_secret_is_not_valid(self, tmp_path):
+        """F-P4-OPUS-03 (boundary): ``require_hmac=True`` must reject an empty
+        ``hmac_secret=""`` exactly as it rejects ``None``. Pre-fix the guard
+        only checked ``hmac_secret is None``, so an empty string slipped past
+        the strict-mode gate and degraded to a presence-only check — the same
+        fail-open the ``None`` guard exists to prevent. The CLI seam already
+        treats an empty secret as absent; the library boundary must match.
+        """
+        from forgelm.compliance import verify_audit_log
+
+        # NOSONAR test fixture, not a real secret (rule python:S2068 hard-coded credential false-positive)
+        hmac_key = "operator-key"  # noqa: S105
+        log_path = self._build_log(tmp_path, secret=hmac_key, events=3)
+
+        result = verify_audit_log(log_path, hmac_secret="", require_hmac=True)
+        assert result.valid is False
+        assert "hmac_secret" in (result.reason or "")
+
+    def test_short_audit_secret_warns_but_still_produces_working_hmac(self, tmp_path, monkeypatch, caplog):
+        """F-P5-OPUS-13: a too-short FORGELM_AUDIT_SECRET is accepted (no
+        hard-fail) but logs a one-time weak-secret WARNING; the resulting HMAC
+        still verifies."""
+        import logging
+
+        from forgelm.compliance import AuditLogger, verify_audit_log
+
+        monkeypatch.setenv("FORGELM_AUDIT_SECRET", "x")  # 1 char < 16
+        with caplog.at_level(logging.WARNING, logger="forgelm.compliance"):
+            logger = AuditLogger(str(tmp_path))
+            logger.log_event("e0")
+        assert any("FORGELM_AUDIT_SECRET" in r.message and "shorter" in r.message for r in caplog.records)
+        # The short secret still yields a working _hmac (verification passes).
+        result = verify_audit_log(logger.log_path, hmac_secret="x")
+        assert result.valid is True
+
+    def test_adequate_audit_secret_does_not_warn(self, tmp_path, monkeypatch, caplog):
+        """F-P5-OPUS-13: a >=16-char secret emits no weak-secret warning."""
+        import logging
+
+        from forgelm.compliance import AuditLogger
+
+        monkeypatch.setenv("FORGELM_AUDIT_SECRET", "x" * 32)
+        with caplog.at_level(logging.WARNING, logger="forgelm.compliance"):
+            AuditLogger(str(tmp_path)).log_event("e0")
+        assert not any("shorter" in r.message for r in caplog.records)
+
     def test_verify_audit_require_hmac_no_secret(self, tmp_path, monkeypatch, capsys):
         """CLI dispatcher: ``--require-hmac`` without a configured secret
         env var must exit 1 (option / operator-actionable error) before
@@ -720,6 +1028,27 @@ class TestVerifyAuditLog:
         assert "FORGELM_AUDIT_SECRET" in captured.err
         assert "--require-hmac" in captured.err
 
+    def test_verify_audit_missing_file_exit_code(self, tmp_path, monkeypatch, capsys):
+        """F-P4-OPUS-04 (XP-18): a missing log file is an operator-actionable
+        error → exit 1, matching the exit-codes reference and the (now
+        reconciled) parser help. The help previously claimed exit 2 for this
+        case."""
+        from forgelm.cli import _run_verify_audit_cmd
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+
+        class _Args:
+            pass
+
+        ns = _Args()
+        ns.log_path = str(tmp_path / "does-not-exist.jsonl")
+        ns.hmac_secret_env = "FORGELM_AUDIT_SECRET"
+        ns.require_hmac = False
+
+        exit_code = _run_verify_audit_cmd(ns)
+        assert exit_code == 1
+        assert "not found" in capsys.readouterr().err
+
     def test_verify_audit_empty_log(self, tmp_path):
         """An empty file is trivially valid — entries_count == 0, no
         first_invalid_index. Mirrors AuditLogger's genesis convention
@@ -733,3 +1062,150 @@ class TestVerifyAuditLog:
         assert result.valid is True
         assert result.entries_count == 0
         assert result.first_invalid_index is None
+
+
+# ---------------------------------------------------------------------------
+# G05 regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestAuditLoggerRerootReglass:
+    """F-H-06 disposition: the audit re-root opt-in stays an env-var break-glass
+    (FORGELM_ALLOW_AUDIT_REROOT). Migrating it to a validated AuditConfig field
+    is the deferred roadmap item F-PR29-A6-14 (the audit subsystem takes no
+    ForgeConfig today; all 10 AuditLogger construction sites are config-less).
+    These tests lock the env-var gate behaviour in the meantime."""
+
+    def test_default_construction_refuses_reroot(self, tmp_path, monkeypatch):
+        """With the break-glass env var unset, a truncated-log re-root is refused."""
+
+        from forgelm.compliance import AuditLogger, ConfigError
+
+        monkeypatch.delenv("FORGELM_ALLOW_AUDIT_REROOT", raising=False)
+        log_path = tmp_path / "audit_log.jsonl"
+        AuditLogger(str(tmp_path)).log_event("first.event")
+        log_path.write_text("", encoding="utf-8")  # truncate, keep manifest
+
+        with pytest.raises(ConfigError, match="re-root refused"):
+            AuditLogger(str(tmp_path)).log_event("second.event")
+
+    def test_env_var_breakglass_permits_fresh_chain(self, tmp_path, monkeypatch):
+        """FORGELM_ALLOW_AUDIT_REROOT=1 is the operator break-glass: with it set,
+        a deliberate re-root is permitted (the integrity ERROR still fires)."""
+
+        from forgelm.compliance import AuditLogger
+
+        log_path = tmp_path / "audit_log.jsonl"
+        AuditLogger(str(tmp_path)).log_event("first.event")
+        log_path.write_text("", encoding="utf-8")  # truncate, keep manifest
+
+        monkeypatch.setenv("FORGELM_ALLOW_AUDIT_REROOT", "1")
+        AuditLogger(str(tmp_path)).log_event("second.event")  # must not raise
+        assert log_path.read_text(encoding="utf-8").strip()
+
+
+class TestExportPipelineManifestFsync:
+    """F-M-12 regression: export_pipeline_manifest must fsync before os.replace."""
+
+    def test_fsync_called_before_replace(self, tmp_path):
+        """flush+fsync must be called on the tmp file before os.replace so a
+        kernel crash between close and rename does not silently discard the
+        write (Article 12 durability requirement)."""
+        from unittest import mock
+
+        from forgelm.compliance import export_pipeline_manifest
+
+        manifest = {
+            "forgelm_version": "test",
+            "pipeline_run_id": "r1",
+            "pipeline_config_hash": "sha256:abc",
+            "started_at": "now",
+            "final_status": "completed",
+            "stages": [],
+        }
+
+        fsync_calls = []
+        real_fsync = os.fsync
+
+        def capturing_fsync(fd):
+            fsync_calls.append(fd)
+            return real_fsync(fd)
+
+        with mock.patch("forgelm.compliance.os.fsync", side_effect=capturing_fsync):
+            export_pipeline_manifest(manifest, str(tmp_path))
+
+        assert fsync_calls, "export_pipeline_manifest must call os.fsync before os.replace"
+
+
+class TestAuditSecretWarningConsistency:
+    """F-L-08 regression: weak-secret warning message must not contradict itself."""
+
+    def test_warning_message_does_not_say_32_plus_when_threshold_is_16(self, tmp_path, monkeypatch, caplog):
+        """The warning text must not tell the operator '32+ random bytes' while
+        the actual hard threshold is 16 chars — the contradiction was the bug.
+        After F-L-08 the message uses the phrase 'accepted minimum' (not
+        'recommended minimum') and refers to 'at least %d characters' bound to
+        the actual constant, followed by the KMS advisory."""
+        import logging
+
+        from forgelm.compliance import _MIN_AUDIT_SECRET_LEN, AuditLogger
+
+        # 8-char secret: definitely below the threshold.
+        monkeypatch.setenv("FORGELM_AUDIT_SECRET", "shortkey")
+        with caplog.at_level(logging.WARNING, logger="forgelm.compliance"):
+            AuditLogger(str(tmp_path)).log_event("e0")
+
+        warning_msgs = [r.message for r in caplog.records if "FORGELM_AUDIT_SECRET" in r.message]
+        assert warning_msgs, "expected at least one weak-secret warning"
+        msg = warning_msgs[0]
+        # Must reference the actual threshold value, not contradict it.
+        assert str(_MIN_AUDIT_SECRET_LEN) in msg
+        # Must not falsely claim the recommended minimum IS the threshold.
+        assert "recommended minimum of 16" not in msg
+        # Must mention KMS or 32+ as a production advisory, not as the threshold.
+        assert "32+" in msg or "KMS" in msg
+
+
+class TestComputeConfigHashDocstring:
+    """F-M-11 regression: compute_config_hash must document WebhookConfig.url is not redacted."""
+
+    def test_docstring_does_not_claim_full_redaction(self):
+        """The docstring must NOT claim 'Secrets are already redacted…the digest
+        never depends on a credential value' when WebhookConfig.url flows into
+        the hash unredacted (F-M-11)."""
+        from forgelm.compliance import compute_config_hash
+
+        doc = compute_config_hash.__doc__ or ""
+        # The false claim must be absent.
+        assert "never depends on a credential value" not in doc
+        # The accurate partial-redaction caveat must be present.
+        assert "WebhookConfig" in doc or "webhook" in doc.lower()
+
+    def test_webhook_url_affects_hash(self):
+        """Two configs identical except for WebhookConfig.url produce different
+        digests, confirming url is NOT silently redacted before hashing (F-M-11).
+        This documents the known behaviour so a future accidental redaction
+        would be caught here."""
+        from forgelm.compliance import compute_config_hash
+
+        class _FakeWebhook:
+            url = "https://hooks.slack.com/services/A/B/TOKEN1"
+
+            def model_dump(self, **kwargs):
+                return {"url": self.url}
+
+        class _FakeConfig:
+            webhook = _FakeWebhook()
+
+            def model_dump(self, **kwargs):
+                return {"webhook": self.webhook.model_dump(**kwargs)}
+
+        cfg1 = _FakeConfig()
+        h1 = compute_config_hash(cfg1)
+
+        cfg2 = _FakeConfig()
+        cfg2.webhook = type(cfg2.webhook)()
+        cfg2.webhook.url = "https://hooks.slack.com/services/A/B/TOKEN2"
+        h2 = compute_config_hash(cfg2)
+
+        assert h1 != h2, "different webhook.url values must produce different config hashes"

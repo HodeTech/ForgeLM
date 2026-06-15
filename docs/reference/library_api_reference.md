@@ -79,7 +79,7 @@ Tables grouped by concern. Every cell is a real attribute on the live `forgelm` 
 
 | Symbol | Tier | Signature | Description |
 |---|---|---|---|
-| `forgelm.AuditLogger` | Stable | `AuditLogger(output_dir: str, run_id: str \| None = None)` | Append-only Article 12 audit logger. POSIX uses `fcntl.flock`; Windows uses `msvcrt.locking`. Each forked child must construct its own instance. |
+| `forgelm.AuditLogger` | Stable | `AuditLogger(output_dir: str, run_id: str \| None = None)` | Append-only Article 12 audit logger. POSIX uses `fcntl.flock`; on Windows there is **no** cross-process lock (the advisory flock helper is a no-op) — do not share an `output_dir` across concurrent processes on Windows. Each forked child must construct its own instance. |
 | `forgelm.AuditLogger.log_event` | Stable | `log_event(event: str, **fields) -> None` | Append a structured event. The event vocabulary is documented in [`audit_event_catalog.md`](audit_event_catalog.md). |
 | `forgelm.verify_audit_log` | Stable | `verify_audit_log(path: str, *, hmac_secret: str \| None = None, require_hmac: bool = False) -> VerifyResult` | Walk the SHA-256 hash chain. Returns `VerifyResult(valid=False, reason=...)` for chain failures (not an exception); raises `OSError` only for unreadable files. |
 | `forgelm.VerifyResult` | Stable | `dataclass` | Canonical fields (per `forgelm/compliance.py:VerifyResult`): `valid: bool`, `entries_count: int`, `first_invalid_index: Optional[int]`, `reason: Optional[str]`. |
@@ -92,6 +92,8 @@ Tables grouped by concern. Every cell is a real attribute on the live `forgelm` 
 | `forgelm.VerifyAnnexIVResult` | Stable | `dataclass-like` | Canonical attributes: `valid: bool`, `reason: Optional[str]`, `missing_fields: List[str]`, `manifest_hash_actual: Optional[str]`, `manifest_hash_expected: Optional[str]`. (Note: `verify_annex_iv_artifact(path)` accepts a JSON manifest path, not a ZIP — the function calls `json.load` on `path`.) |
 | `forgelm.verify_gguf` | Stable | `verify_gguf(path: str) -> VerifyGgufResult` | Validate a GGUF export (header + tensor catalogue + tokenizer block). |
 | `forgelm.VerifyGgufResult` | Stable | `dataclass-like` | Canonical attributes: `valid: bool`, `reason: Optional[str]`, `checks: Dict[str, Any]` (everything else — header / tensor catalogue / tokenizer block — lives inside `checks`). |
+| `forgelm.verify_integrity` | Stable | `verify_integrity(model_dir: str) -> VerifyIntegrityResult` | Verify a model directory against its `model_integrity.json` SHA-256 manifest (Article 15): reports changed / removed / added artifacts. |
+| `forgelm.VerifyIntegrityResult` | Stable | `dataclass-like` | Canonical attributes: `valid: bool`, `reason: Optional[str]`, `changed: List[str]`, `removed: List[str]`, `added: List[str]`, `verified_count: int`. |
 
 ### Benchmark + synthetic data
 
@@ -246,7 +248,7 @@ This invariant exists because lightweight CI runners, `forgelm doctor`, and `pyt
 |---|---|---|
 | `ForgeTrainer.train()` | No — TRL holds GPU state | No |
 | `audit_dataset()` | Yes — each call is self-contained | Yes |
-| `AuditLogger.log_event()` | Yes — `flock` on POSIX, `msvcrt.locking` on Windows | Construct a fresh logger per child; sharing handles across forks is unsupported |
+| `AuditLogger.log_event()` | Yes on POSIX — `flock(LOCK_EX)`; on Windows there is no cross-process lock (no-op), so do not share an `output_dir` across processes | Construct a fresh logger per child; sharing handles across forks is unsupported |
 | `verify_audit_log()` | Yes — read-only | Yes |
 | `WebhookNotifier.notify_*()` | Yes — each call opens its own `requests` session | Yes |
 

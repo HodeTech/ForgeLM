@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 
 
 def _non_negative_int(value: str) -> int:
@@ -51,8 +52,25 @@ def _non_negative_float(value: str) -> float:
         fvalue = float(value)
     except (TypeError, ValueError) as exc:
         raise argparse.ArgumentTypeError(f"invalid float: {value!r}") from exc
-    if fvalue < 0.0 or fvalue > 1.0:
+    if not math.isfinite(fvalue) or fvalue < 0.0 or fvalue > 1.0:
         raise argparse.ArgumentTypeError(f"value must be in [0.0, 1.0], got {fvalue}")
+    return fvalue
+
+
+def _sampling_temperature(value: str) -> float:
+    """argparse type for ``--temperature`` (sampling temperature in [0.0, 2.0]).
+
+    Mirrors :func:`_non_negative_float` but allows the conventional upper
+    bound of 2.0 used by HF/OpenAI-style samplers, so a typo like
+    ``--temperature -3`` or ``--temperature 50`` fails at the CLI boundary
+    instead of producing a malformed generation config downstream.
+    """
+    try:
+        fvalue = float(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(f"invalid float: {value!r}") from exc
+    if not math.isfinite(fvalue) or fvalue < 0.0 or fvalue > 2.0:
+        raise argparse.ArgumentTypeError(f"value must be in [0.0, 2.0], got {fvalue}")
     return fvalue
 
 
