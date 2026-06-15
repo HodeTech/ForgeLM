@@ -34,7 +34,7 @@ sequenceDiagram
         end
     end
     Verify->>Manifest: load + cross-check first entry hash
-    Verify-->>CI: exit 0 (clean) / 1 (tamper) / 2 (option/runtime)
+    Verify-->>CI: exit 0 (clean) / 1 (operator-actionable failure)
 ```
 
 ## Quick start
@@ -66,7 +66,7 @@ $ FORGELM_AUDIT_SECRET="$(cat /run/secrets/audit-secret)" \
 
 Strict mode flips two safety nets:
 
-- If the configured env var is unset, exit `2` (option error). Catches the operator who forgot to load the secret before running the pipeline.
+- If the configured env var is unset, exit `1` (operator-actionable pre-flight error). Catches the operator who forgot to load the secret before running the pipeline.
 - If any line lacks an `_hmac` field, exit `1` (chain failure). Catches mixed-mode logs where HMAC was disabled mid-run.
 
 ### Naming a non-default secret variable

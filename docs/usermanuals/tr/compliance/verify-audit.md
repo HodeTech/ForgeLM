@@ -34,7 +34,7 @@ sequenceDiagram
         end
     end
     Verify->>Manifest: yükle + ilk girdi hash'iyle çapraz kontrol
-    Verify-->>CI: çıkış 0 (temiz) / 1 (tahrifat) / 2 (seçenek/runtime)
+    Verify-->>CI: çıkış 0 (temiz) / 1 (operatörün düzeltebileceği başarısızlık)
 ```
 
 ## Hızlı başlangıç
@@ -66,7 +66,7 @@ $ FORGELM_AUDIT_SECRET="$(cat /run/secrets/audit-secret)" \
 
 Sıkı mod iki güvenlik ağını birden devreye sokar:
 
-- Yapılandırılmış env var set değilse, çıkış `2` (seçenek hatası). Pipeline'ı çalıştırmadan önce sırrı yüklemeyi unutan operatörü yakalar.
+- Yapılandırılmış env var set değilse, çıkış `1` (operatörün düzeltebileceği ön-uçuş hatası). Pipeline'ı çalıştırmadan önce sırrı yüklemeyi unutan operatörü yakalar.
 - Herhangi bir satırda `_hmac` alanı eksikse, çıkış `1` (zincir hatası). HMAC'in koşu ortasında kapatıldığı karışık-mod log'larını yakalar.
 
 ### Varsayılan olmayan bir sır değişkenini adlandırma

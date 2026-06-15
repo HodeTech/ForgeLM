@@ -221,7 +221,7 @@ If the env var isn't set, ForgeLM fails at config load with a clear error — be
 |---|---|
 | 0 | Success |
 | 1 | Config / semantic validation error (bad YAML, missing file, empty `--query`, etc.) |
-| 2 | Argparse usage error (unknown flag/subcommand, missing required arg, bad choice, out-of-range type validator), training crash, audit warnings (with `--strict`) / probe crash (`forgelm doctor`), or a clamped Ctrl+C |
+| 2 | Argparse usage error (unknown flag/subcommand, missing required arg, bad choice, out-of-range type validator), training crash, probe crash (`forgelm doctor`), or a clamped Ctrl+C |
 | 3 | Auto-revert / regression |
 | 4 | Awaiting human approval (training pipeline) |
 | 5 | Wizard cancelled (operator declined to save / non-tty refusal) |

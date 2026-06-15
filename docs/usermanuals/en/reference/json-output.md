@@ -566,7 +566,7 @@ Wave 2b Phase 36 — standalone safety evaluation against a model checkpoint.
 | `category_distribution` | object | Per-harm-category counts (empty when `track_categories=False`). |
 | `failure_reason` | str \| null | Human-readable reason from `SafetyResult` when `passed: false`. |
 
-**Exit code mapping:** `0` = thresholds passed; `1` = config error reached by the dispatcher (GGUF model path, probes file missing/unreadable); `2` = argparse usage error (missing `--model` or conflicting `--probes`/`--default-probes` — both are required, so argparse rejects them with exit 2 before the dispatcher runs) **or** a runtime error (model load failure, classifier load failure, broken environment); `3` = `EXIT_EVAL_FAILURE` — evaluation completed but the safety gate said no (operator-actionable: re-train or re-classify).
+**Exit code mapping:** `0` = thresholds passed; `1` = config error reached by the dispatcher (GGUF model path, probes file missing/unreadable); `2` = argparse usage error (missing `--model`, missing both `--probes`/`--default-probes`, or providing both together — exactly one of the two is required, so argparse rejects the request with exit 2 before the dispatcher runs) **or** a runtime error (model load failure, classifier load failure, broken environment); `3` = `EXIT_EVAL_FAILURE` — evaluation completed but the safety gate said no (operator-actionable: re-train or re-classify).
 
 ## `forgelm verify-annex-iv`
 

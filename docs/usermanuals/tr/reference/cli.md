@@ -221,7 +221,7 @@ Env var set değilse ForgeLM config yüklemede net bir hata ile çıkar — eği
 |---|---|
 | 0 | Başarı |
 | 1 | Config / semantik doğrulama hatası (hatalı YAML, eksik dosya, boş `--query`, vb.) |
-| 2 | Argparse kullanım hatası (bilinmeyen flag/subcommand, eksik zorunlu argüman, hatalı choice, aralık dışı tip doğrulayıcı), eğitim çökmesi, audit warning (`--strict` ile) / probe crash (`forgelm doctor`) veya kıstırılmış Ctrl+C |
+| 2 | Argparse kullanım hatası (bilinmeyen flag/subcommand, eksik zorunlu argüman, hatalı choice, aralık dışı tip doğrulayıcı), eğitim çökmesi, probe crash (`forgelm doctor`) veya kıstırılmış Ctrl+C |
 | 3 | Auto-revert / regression |
 | 4 | İnsan onayı bekleniyor (eğitim pipeline) |
 | 5 | Sihirbaz iptal (operatör kaydı reddetti / non-tty reddi) |

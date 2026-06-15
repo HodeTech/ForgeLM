@@ -83,8 +83,8 @@ stage('Train') {
 | `--config` var olmayan dosyaya işaret ediyor | 1 |
 | Eğitim ortasında final loss NaN / OOM / I/O hatası | 2 |
 | `forgelm verify-audit` zincir kopması veya HMAC uyuşmazlığı | 1 (v0.5.5 döngüsünde EXIT_CONFIG_ERROR hem opsiyon hatalarını hem bütünlük arızalarını kapsar; v0.6.x deprecation notu için bkz. manuel içindeki [Audit Log Doğrulama](#/compliance/verify-audit) sayfası) |
-| DPO koşusu, Llama Guard S5 toleransı aştı | 3 |
-| Benchmark hellaswag floor altına düştü | 3 |
+| DPO koşusu, Llama Guard S5 toleransı aştı | `evaluation.auto_revert: true` ile 3; shipped default `false` ile 0 (JSON gate bloklarında kaydedilir) |
+| Benchmark hellaswag floor altına düştü | `evaluation.auto_revert: true` ile 3; shipped default `false` ile 0 (JSON gate bloklarında kaydedilir) |
 | `evaluation.require_human_approval: true` ve onay imzalanmamış | 4 |
 | Kullanıcı Ctrl+C (sinyal kaynaklı 128+N) | 2 (sıkıştırılır) |
 

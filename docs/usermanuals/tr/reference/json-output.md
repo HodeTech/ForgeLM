@@ -569,7 +569,7 @@ Wave 2b Phase 36 — bir model checkpoint'ine karşı standalone safety evaluati
 | `category_distribution` | object | Per-harm-category sayımları (`track_categories=False` ise boş). |
 | `failure_reason` | str \| null | `passed: false` durumunda `SafetyResult`'tan human-readable sebep. |
 
-**Exit kodu:** `0` = threshold'lar geçildi; `1` = dispatcher'ın ulaştığı config hatası (GGUF model yolu, probes dosyası eksik/okunamıyor); `2` = argparse kullanım hatası (eksik `--model` veya çelişen `--probes`/`--default-probes` — ikisi de required olduğundan argparse dispatcher çalışmadan önce exit 2 ile reddeder) **veya** runtime hatası (model load failure, classifier load failure, broken environment); `3` = `EXIT_EVAL_FAILURE` — evaluation tamamlandı ama safety gate hayır dedi (operator-actionable: re-train veya re-classify).
+**Exit kodu:** `0` = threshold'lar geçildi; `1` = dispatcher'ın ulaştığı config hatası (GGUF model yolu, probes dosyası eksik/okunamıyor); `2` = argparse kullanım hatası (eksik `--model`, `--probes`/`--default-probes` ikisinin de eksikliği ya da ikisinin birden verilmesi — ikisinden tam olarak biri zorunlu olduğundan argparse dispatcher çalışmadan önce exit 2 ile reddeder) **veya** runtime hatası (model load failure, classifier load failure, broken environment); `3` = `EXIT_EVAL_FAILURE` — evaluation tamamlandı ama safety gate hayır dedi (operator-actionable: re-train veya re-classify).
 
 ## `forgelm verify-annex-iv`
 

@@ -7,7 +7,7 @@ description: ForgeLM'in anladığı her YAML alanı — tipler, varsayılanlar, 
 
 Bu, ForgeLM'in kabul ettiği her YAML alanının kanonik referansıdır. Şema Pydantic ile zorlanır; `forgelm --config X.yaml --dry-run` dosyanızı şemaya karşı doğrular.
 
-Üst seviye config 13 bloktan oluşur:
+Üst seviye config 12 bloktan oluşur:
 
 ```yaml
 model:           {...}
@@ -22,7 +22,6 @@ distributed:     {...}
 compliance:      {...}
 output:          {...}
 auth:            {...}
-deployment:      {...}
 ```
 
 ## `model:`

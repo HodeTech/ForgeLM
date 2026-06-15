@@ -7,7 +7,7 @@ description: Every YAML field ForgeLM understands, with types, defaults, and not
 
 This is the canonical reference for every YAML field ForgeLM accepts. The schema is enforced by Pydantic; running `forgelm --config X.yaml --dry-run` validates your file against it.
 
-The top-level config has 13 blocks:
+The top-level config has 12 blocks:
 
 ```yaml
 model:           {...}
@@ -22,7 +22,6 @@ distributed:     {...}
 compliance:      {...}
 output:          {...}
 auth:            {...}
-deployment:      {...}
 ```
 
 ## `model:`
