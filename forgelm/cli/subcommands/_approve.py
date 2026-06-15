@@ -577,14 +577,29 @@ def _run_reject_cmd(args, output_format: str) -> None:
     except ConfigError as exc:
         _output_error_and_exit(output_format, str(exc), EXIT_CONFIG_ERROR)
     approver = _cli_facade._resolve_approver_identity()
-    audit.log_event(
-        _EVT_HUMAN_APPROVAL_REJECTED,
-        gate="final_model",
-        run_id=run_id,
-        approver=approver,
-        comment=args.comment or "",
-        staging_path=staging_path,
-    )
+    # Mirror the approve handler's audit-write guard.  Unlike approve, no model
+    # has been promoted here — the staging dir is preserved — so an OSError
+    # (ENOSPC, read-only remount) means the decision was simply never recorded
+    # and can be retried after repairing storage.  Surface it through the named
+    # exit code BEFORE the webhook so a failed decision write never reaches
+    # notify_failure with a rejection that was never durably recorded.
+    try:
+        audit.log_event(
+            _EVT_HUMAN_APPROVAL_REJECTED,
+            gate="final_model",
+            run_id=run_id,
+            approver=approver,
+            comment=args.comment or "",
+            staging_path=staging_path,
+        )
+    except OSError as exc:
+        _output_error_and_exit(
+            output_format,
+            f"Could not write the human_approval.rejected audit event ({exc}). "
+            "Refusing to record a decision without a durable audit entry; "
+            "repair storage and retry.",
+            EXIT_TRAINING_ERROR,
+        )
 
     notifier = _cli_facade._build_approval_notifier(output_dir)
     run_name = os.path.basename(os.path.normpath(output_dir)) or "rejected"

@@ -557,6 +557,43 @@ class TestForgelmReject:
         assert kwargs["run_name"] == "reject_run"
         assert "human_approval.rejected" in kwargs["reason"]
 
+    def test_reject_audit_write_failure_surfaces_error(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """The reject path mirrors approve's audit-write guard: an OSError on the
+        ``human_approval.rejected`` write must surface as a clean named exit
+        (EXIT_TRAINING_ERROR) with an operator-actionable message — not a raw
+        uncaught traceback. Unlike approve, no model was promoted, so the staging
+        directory is preserved for a retry after storage is repaired."""
+        run_id = "fg-reject0000abc"
+        output_dir = self._seed_run(tmp_path, run_id)
+        monkeypatch.setenv("FORGELM_OPERATOR", "bob")
+
+        from forgelm.cli import _run_reject_cmd
+        from forgelm.compliance import AuditLogger
+
+        def _raise_on_rejected(self, event, **details):  # noqa: ANN001
+            if event == "human_approval.rejected":
+                raise OSError("ENOSPC: no space left on device")
+
+        monkeypatch.setattr(AuditLogger, "log_event", _raise_on_rejected)
+
+        args = MagicMock()
+        args.run_id = run_id
+        args.output_dir = str(output_dir)
+        args.comment = None
+
+        with pytest.raises(SystemExit) as ei:
+            _run_reject_cmd(args, output_format="json")
+
+        assert ei.value.code == 2  # EXIT_TRAINING_ERROR
+        # No model was promoted; the staging dir must still be there for a retry.
+        assert (output_dir / "final_model.staging").is_dir()
+        assert not (output_dir / "final_model").exists()
+        # The operator gets a clean JSON error naming the storage/audit gap.
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert "human_approval.rejected" in payload["error"]
+        assert "audit" in payload["error"]
+
     def test_reject_without_staging_errors(self, tmp_path: Path) -> None:
         output_dir = tmp_path / "no_staging_reject"
         output_dir.mkdir()
