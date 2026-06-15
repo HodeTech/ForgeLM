@@ -15,8 +15,9 @@ in ``docs/reference/verify_integrity_subcommand.md``):
   unexpected extra files.
 - 1 — ``EXIT_CONFIG_ERROR``: caller / input error (missing path, the path is a
   file rather than a model directory, manifest not found / not a regular file,
-  malformed JSON, a manifest entry whose path is non-string or escapes the model
-  directory) OR an integrity mismatch (changed / removed / added file).  The
+  malformed JSON, a non-list ``artifacts`` container, a manifest entry whose
+  path is non-string or escapes the model directory) OR an integrity mismatch
+  (changed / removed / added file).  The
   artifacts do not match the manifest.
 - 2 — ``EXIT_TRAINING_ERROR``: genuine runtime I/O failure on a reachable path
   (read error, permission denied mid-walk, etc.).
@@ -105,6 +106,15 @@ def verify_integrity(model_dir: str) -> VerifyIntegrityResult:
         manifest = json.load(fh)
 
     recorded = manifest.get("artifacts", []) if isinstance(manifest, dict) else []
+    # A non-list ``artifacts`` container (null, a string, a mapping) is a
+    # malformed manifest, not an empty one — silently coercing it to ``[]``
+    # would report "All 0 artifacts present" and exit 0.  Refuse up front so
+    # the dispatcher maps it to EXIT_CONFIG_ERROR, the same as a bad entry.
+    if not isinstance(recorded, list):
+        return VerifyIntegrityResult(
+            valid=False,
+            reason=f"Manifest 'artifacts' is not a list: {type(recorded).__name__}.",
+        )
     # Normalise recorded paths to forward slashes so a Windows-generated
     # manifest ("subdir\\file") compares equal to the verifier's on-disk
     # relpath ("subdir/file") and does not false-positive as added/missing.

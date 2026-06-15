@@ -913,6 +913,39 @@ class TestVerifyIntegrity:
         assert result.valid is False
         assert "non-string" in result.reason
 
+    @pytest.mark.parametrize("bad_artifacts", [None, "oops", {"file": "x"}, 42])
+    def test_non_list_artifacts_container_rejected(self, tmp_path: Path, bad_artifacts) -> None:
+        """A non-list ``artifacts`` value (null, string, mapping, int) used to
+        crash the recorded-entry comprehension with a TypeError — bypassing the
+        exit-code contract.  It must be refused as a malformed manifest, not
+        silently treated as zero artifacts (which would pass with exit 0)."""
+        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        (model_dir / "model_integrity.json").write_text(json.dumps({"artifacts": bad_artifacts}))
+        result = verify_integrity(str(model_dir))
+        assert result.valid is False
+        assert "artifacts" in result.reason
+        assert "list" in result.reason.lower()
+
+    def test_non_list_artifacts_container_exits_config_error(self, tmp_path: Path, capsys) -> None:
+        """The dispatcher maps the refused non-list manifest to exit 1, the
+        documented EXIT_CONFIG_ERROR — never an uncaught TypeError traceback."""
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        (model_dir / "model_integrity.json").write_text(json.dumps({"artifacts": None}))
+        args = _build_args(path=str(model_dir))
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_integrity_cmd(args, output_format="json")
+        assert ei.value.code == EXIT_CONFIG_ERROR
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["valid"] is False
+        assert "artifacts" in payload["reason"]
+
     def test_path_traversal_entry_rejected(self, tmp_path: Path) -> None:
         """A manifest entry whose path escapes the model dir (``../secret``)
         must be refused rather than hashing an arbitrary out-of-tree file."""
