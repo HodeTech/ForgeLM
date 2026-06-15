@@ -331,6 +331,7 @@ class TestCacheTasks:
             text=True,
             check=False,
         )
+        assert proc.returncode == 0, proc.stderr
         help_text = proc.stdout + proc.stderr
         assert "HF_DATASETS_CACHE" in help_text
         assert "datasets" in help_text

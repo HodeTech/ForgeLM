@@ -9,6 +9,7 @@ constructed ``ChatSession`` before this module. We stub model/tokenizer
 
 from __future__ import annotations
 
+import importlib.util
 import json
 
 import pytest
@@ -17,12 +18,9 @@ import forgelm.chat as chat_mod
 from forgelm.chat import ChatSession
 
 # ``rich`` is an optional extra; the True-path assertion needs the real escaper.
-try:
-    import rich.markup  # noqa: F401
-
-    _RICH_INSTALLED = True
-except ImportError:
-    _RICH_INSTALLED = False
+# Explicit availability probe (not a silent ``try/except ImportError`` fallback)
+# per docs/standards/coding.md.
+_RICH_INSTALLED = importlib.util.find_spec("rich.markup") is not None
 
 
 def _make_session(**kwargs):

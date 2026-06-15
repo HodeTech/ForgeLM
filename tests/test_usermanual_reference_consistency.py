@@ -15,6 +15,7 @@ No GPU / no network — pure file reads against the shipped docs tree.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -37,8 +38,12 @@ class TestExitCodeTableConsistency:
     def test_argparse_usage_error_disclosed_as_exit_2(self, lang: str) -> None:
         text = _cli_md(lang).lower()
         # The corrected table prose must mention that argparse usage errors
-        # exit 2 (the clamp/usage-error disclosure F-P7-OPUS-03 added).
-        assert "argparse" in text
+        # exit 2 (the clamp/usage-error disclosure F-P7-OPUS-03 added). Assert
+        # the exit-code claim itself, not the bare ``argparse`` token, so a
+        # regression that drops the "exit 2" coupling fails.
+        assert re.search(r"argparse.{0,120}\b2\b|\b2\b.{0,120}argparse", text), (
+            f"{lang} cli.md must couple argparse usage errors with exit code 2"
+        )
 
 
 @pytest.mark.parametrize("lang", ["en", "tr"])
