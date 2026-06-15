@@ -97,6 +97,28 @@ class TestValidateStripPattern:
         # The canonical "strip header line" pattern shape.
         assert validate_strip_pattern(r"^[A-Z ]+CONFIDENTIAL[A-Z ]*$")
 
+    def test_alternation_branch_redos_accepted_and_docstring_documents_gap(self):
+        # F-L-04: ``(a+|b)+c`` is a catastrophically exponential ReDoS shape
+        # (confirmed O(2^n) in review) but the validator accepts it because it
+        # tracks only the *last atom per group*.  The last atom inside the group
+        # is the literal ``b`` (bounded), so the outer ``+`` bypasses the reject.
+        # This test locks two things at once:
+        #   1. validate_strip_pattern must NOT raise — changing the validator to
+        #      accidentally reject this shape would break the test.
+        #   2. The _check_unbounded_quantifier_sequence docstring MUST explicitly
+        #      call out the alternation-branch gap so operators are not misled
+        #      into thinking the shape is caught.
+        assert validate_strip_pattern(r"(a+|b)+c") == r"(a+|b)+c"
+
+        from forgelm._strip_pattern import _check_unbounded_quantifier_sequence
+
+        doc = _check_unbounded_quantifier_sequence.__doc__ or ""
+        assert "alternation" in doc.lower(), (
+            "_check_unbounded_quantifier_sequence docstring must document the "
+            "alternation-branch ReDoS gap (F-L-04). Add text mentioning "
+            "'Alternation-branch variants … are not caught here' to the Scope section."
+        )
+
 
 class TestCompileStripPatterns:
     def test_compile_returns_raw_plus_compiled_pairs(self):

@@ -107,6 +107,16 @@ import re
 # Callers take the LAST match (``finditer`` → ``[-1]``), not the first, so the
 # graded answer is the completion's final one — across newlines *and* within a
 # single line.
+#
+# Trailing-whitespace note (F-L-15): when multiple ``Answer:`` markers appear on
+# the same line (e.g. ``"Answer: 5 Answer: 7"``), the body of every *non-last*
+# match may include trailing whitespace before the next marker — the
+# ``(?!answer\s*:)`` guard fires at the ``A`` (or ``a``) of the next token, so
+# the space preceding it remains inside the capture group.  The LAST match is
+# unaffected (no following marker).  ``_normalize_answer`` strips whitespace at
+# comparison time, so reward values are always correct; the capture contract is
+# 'sentence-boundary trimmed after normalization', not 'raw trailing-whitespace
+# free'.
 ANSWER_EXTRACT_PATTERN = re.compile(
     # First class drops `\n` because `\s` already covers it. The leading-dot
     # alternative ``\.(?=\d)`` admits ".5"-style decimals (F-P2-FAB-31). The
@@ -159,6 +169,11 @@ def format_match_reward(completions: list[str], **kwargs) -> list[float]:
     ``Answer: $40`` both score). A completion that doesn't contain the
     ``Answer:`` token at all, or has the token but no value after it, scores
     0.0.
+
+    The ``\\s*`` after the colon in ``_ANSWER_END_PATTERN`` covers optional
+    whitespace *including a newline*, so ``Answer:\\n42`` (value on the next
+    line) is also accepted and returns 1.0 (F-L-16).  This matches the
+    behaviour of ``ANSWER_EXTRACT_PATTERN``, which uses the same prefix.
 
     ``**kwargs`` is accepted (and ignored) so this matches TRL's per-sample
     column passthrough convention.

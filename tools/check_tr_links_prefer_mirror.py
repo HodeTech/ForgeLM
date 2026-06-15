@@ -40,7 +40,7 @@ from typing import List, Tuple
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DOCS = _REPO_ROOT / "docs"
 
-# Inline + reference-style markdown links: ``](target)``. The target is
+# Inline markdown links: ``](target)``. The target is
 # captured up to the first closing paren; markdown does not allow an unescaped
 # ``)`` inside a plain link target, so this is sufficient for our doc corpus.
 _LINK_RE = re.compile(r"\]\(([^)]+)\)")

@@ -181,6 +181,27 @@ class TestGenerateModelCard:
         content = open(card_path).read()
         assert "sk-SUPERSECRET-LEAK" not in content, "synthetic.api_key leaked into the model card"
 
+    def test_target_modules_pipe_neutralized(self, tmp_path):
+        """F-L-19: a target_modules entry containing '|' must not inject a phantom
+        column into the Training Details table. A normal 2-column row has exactly
+        3 pipe characters; an un-neutralized '|' inside the cell value produces 4."""
+        from forgelm.model_card import generate_model_card
+
+        config = ForgeConfig(
+            **_card_config(
+                lora={"r": 16, "alpha": 32, "use_dora": True, "target_modules": ["q_proj", "v_proj|evil"]},
+            )
+        )
+        final_path = str(tmp_path / "model")
+        card_path = generate_model_card(config=config, metrics={"eval_loss": 0.5}, final_path=final_path)
+        content = open(card_path).read()
+
+        target_row = next(ln for ln in content.splitlines() if ln.startswith("| Target Modules"))
+        # A 2-column table row must have exactly 3 pipe characters.
+        assert target_row.count("|") == 3, f"Phantom column injected via '|' in target_modules: {target_row!r}"
+        # The safe portion of the module name is preserved.
+        assert "v_projdevil" not in target_row or "v_proj" in target_row
+
     def test_residual_secret_keyed_value_is_masked(self, tmp_path):
         """Defence-in-depth: the recursive masker redacts any secret-keyed value
         in the serialized config while keeping ``*_env`` env-var-NAME references."""

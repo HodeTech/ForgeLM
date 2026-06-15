@@ -241,6 +241,15 @@ def _check_unbounded_quantifier_sequence(pattern: str) -> None:
         non-CPython runtimes (PyPy 7.x, Pyston) should treat the
         SIGALRM net as the primary defence and consider replacing
         adjacent-quantified patterns with bounded alternatives.
+        Alternation-branch variants where one branch is unbounded
+        (``(a+|b)+c``) are also **not** caught here — the validator
+        tracks only the **last atom per group**, not each branch. In
+        ``(a+|b)+c`` the last parsed atom inside the group is the
+        literal ``b``, which is bounded, so the outer ``+``
+        bypasses the reject even though the ``a+`` branch can
+        backtrack catastrophically (O(2^n), verified in review
+        F-L-04). The SIGALRM timeout is the runtime defence for
+        these alternation-branch shapes.
     """
     # Each stack entry is ``(open_index, last_atom_unbounded)``. The
     # bottom entry represents the implicit "outer" pattern; pushed

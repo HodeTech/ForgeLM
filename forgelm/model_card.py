@@ -266,7 +266,7 @@ def generate_model_card(
         lora_r=config.lora.r,
         lora_alpha=config.lora.alpha,
         use_dora=config.lora.use_dora,
-        target_modules=", ".join(config.lora.target_modules),
+        target_modules=", ".join(_neutralize_md_inline(m) for m in config.lora.target_modules),
         epochs=config.training.num_train_epochs,
         batch_size=config.training.per_device_train_batch_size,
         learning_rate=config.training.learning_rate,

@@ -321,3 +321,96 @@ class TestGrpoClassifierTrustRemoteCode:
             "Both from_pretrained calls in _build_classifier_reward must pass "
             "trust_remote_code=False (M-202). Found:\n" + code_only
         )
+
+
+# ---------------------------------------------------------------------------
+# F-L-15: ANSWER_EXTRACT_PATTERN same-line multi-marker trailing-whitespace
+# ---------------------------------------------------------------------------
+
+
+class TestAnswerExtractPatternSameLineMultiMarker:
+    """Regression suite for F-L-15.
+
+    When multiple ``Answer:`` markers appear on the same line the body of
+    non-last captures may include trailing whitespace.  ``_normalize_answer``
+    strips it at comparison time so rewards are always correct.  These tests
+    lock both the raw-capture behaviour and the normalised result.
+    """
+
+    def test_non_last_capture_may_have_trailing_space(self):
+        """First match in 'Answer: 5 Answer: 7' has a trailing space in group(1).
+
+        This is the documented behaviour (F-L-15): the ``(?!answer\\s*:)`` guard
+        fires at the 'A' of the second marker, leaving the preceding space
+        inside the first capture body.  Reverting the comment-only fix should
+        not break this test; reverting normalization would.
+        """
+        from forgelm.grpo_rewards import ANSWER_EXTRACT_PATTERN
+
+        matches = list(ANSWER_EXTRACT_PATTERN.finditer("Answer: 5 Answer: 7"))
+        assert len(matches) == 2, "Expected exactly two markers on the same line"
+        # Raw group(1) for the first (non-last) match includes trailing space.
+        assert matches[0].group(1) == "5 ", f"Expected '5 ' (with trailing space), got {matches[0].group(1)!r}"
+        # Last match is clean.
+        assert matches[-1].group(1) == "7"
+
+    def test_normalize_answer_strips_trailing_space_from_non_last_capture(self):
+        """_normalize_answer('5 ') == '5': trailing space is stripped so reward is correct."""
+        from forgelm.trainer import _normalize_answer
+
+        assert _normalize_answer("5 ") == "5"
+        assert _normalize_answer("7") == "7"
+
+    def test_format_and_math_reward_agree_on_same_line_final_answer(self):
+        """Cross-signal consistency for same-line multi-marker case (F-L-15).
+
+        Mirrors ``test_reward_and_format_gate_agree_on_final_answer`` in
+        test_grpo_math_reward.py but exercises the same-line path (no newline
+        between the two markers).
+
+        format_match_reward uses the end-anchored ``_ANSWER_END_PATTERN`` which
+        sees only the trailing ``Answer: 7`` and returns 1.0.
+        _math_reward_fn uses ``ANSWER_EXTRACT_PATTERN`` finditer → [-1], also
+        grading ``7``.  Both must agree.
+        """
+        from forgelm.grpo_rewards import format_match_reward
+        from forgelm.trainer import _math_reward_fn
+
+        completion = "Answer: 5 Answer: 7"
+        # Format gate grabs the end-anchored final Answer: 7 → 1.0.
+        assert format_match_reward([completion]) == [1.0]
+        # Math reward grades the last extracted answer (7) against gold "7" → 1.0.
+        assert _math_reward_fn([completion], gold_answer=["7"]) == [1.0]
+        # Sanity: if gold is the wrong (first) answer, math reward must be 0.0.
+        assert _math_reward_fn([completion], gold_answer=["5"]) == [0.0]
+
+
+# ---------------------------------------------------------------------------
+# F-L-16: format_match_reward accepts Answer:\n<value>
+# ---------------------------------------------------------------------------
+
+
+class TestFormatMatchRewardNewlineTolerance:
+    """Regression suite for F-L-16.
+
+    ``_ANSWER_END_PATTERN`` uses ``\\s*`` after the colon, and ``\\s`` includes
+    ``\\n``, so ``Answer:\\n42`` is accepted.  The docstring now documents this.
+    """
+
+    def test_newline_between_colon_and_value_scores_one(self):
+        """'Answer:\\n42' must return 1.0 — newline after colon is tolerated."""
+        from forgelm.grpo_rewards import format_match_reward
+
+        assert format_match_reward(["Answer:\n42"]) == [1.0]
+
+    def test_standard_form_still_scores_one(self):
+        """Regression guard: 'Answer: 42' (no newline) must still return 1.0."""
+        from forgelm.grpo_rewards import format_match_reward
+
+        assert format_match_reward(["Answer: 42"]) == [1.0]
+
+    def test_missing_value_after_newline_scores_zero(self):
+        """'Answer:\\n' with no value must return 0.0 (\\S requires at least one char)."""
+        from forgelm.grpo_rewards import format_match_reward
+
+        assert format_match_reward(["Answer:\n"]) == [0.0]

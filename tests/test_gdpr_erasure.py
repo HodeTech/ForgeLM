@@ -9,6 +9,7 @@ full surface.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import stat
@@ -1319,7 +1320,12 @@ class TestRunIdPathTraversal:
         leaked = "ali@example.com"
         victim_name = f"victim-{leaked}-" + ("z" * 200)
         victim = tmp_path / victim_name
-        victim.mkdir()
+        try:
+            victim.mkdir()
+        except OSError as e:
+            if e.errno == errno.ENAMETOOLONG:
+                pytest.skip(f"filesystem filename limit too short for this test ({len(victim_name)} chars)")
+            raise
         (output_dir / "final_model.staging...").mkdir(parents=True, exist_ok=True)
 
         run_id = f"../../../{victim_name}"

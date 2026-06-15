@@ -41,7 +41,10 @@ def _add_chat_subcommand(subparsers) -> None:
     p.add_argument("--adapter", type=str, default=None, help="PEFT adapter directory to merge before chat.")
     p.add_argument("--system", type=str, default=None, metavar="PROMPT", help="Initial system prompt.")
     p.add_argument(
-        "--temperature", type=_sampling_temperature, default=0.7, help="Sampling temperature (default: 0.7)."
+        "--temperature",
+        type=_sampling_temperature,
+        default=0.7,
+        help="Sampling temperature in [0.0, 2.0] (default: 0.7).",
     )
     p.add_argument("--max-new-tokens", type=_positive_int, default=512, help="Max tokens per response (default: 512).")
     p.add_argument("--no-stream", action="store_true", help="Disable streaming output.")

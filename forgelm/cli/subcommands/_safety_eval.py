@@ -208,7 +208,7 @@ def _run_safety_eval_cmd(args, output_format: str) -> None:
     # (F-P3-FABLE-12): without it run_safety_evaluation's emission guard
     # (`if audit_logger is not None`) always skipped and no audit log was ever
     # written to --output-dir.
-    audit_logger = _build_audit_logger(output_dir, output_format)
+    audit_logger = _build_audit_logger(output_dir)
 
     # Enable category tracking on the standalone path so the documented
     # per-category breakdown the parser/docs advertise is actually reachable
@@ -262,7 +262,7 @@ def _run_safety_eval_cmd(args, output_format: str) -> None:
     sys.exit(EXIT_SUCCESS if payload["passed"] else EXIT_EVAL_FAILURE)
 
 
-def _build_audit_logger(output_dir: str, output_format: str) -> Any:
+def _build_audit_logger(output_dir: str) -> Any:
     """Construct an AuditLogger for the standalone safety-eval surface.
 
     Returns ``None`` (degrading to no audit emission) only if AuditLogger

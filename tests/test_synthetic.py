@@ -216,15 +216,14 @@ class TestSyntheticGenerator:
         )
         gen = SyntheticDataGenerator(config)
         entry = gen._format_entry("Q?", "A.")
-        # F-P3-FABLE-62: 'chatml' emits the legacy {User, Assistant} key layout,
+        # 'chatml' emits the legacy {User, Assistant} key layout,
         # NOT OpenAI <|im_start|> ChatML markup — and there must be no im_start.
         assert entry == {"User": "Q?", "Assistant": "A."}
         assert "<|im_start|>" not in json.dumps(entry)
 
     def test_chatml_naming_discrepancy_documented(self):
-        """F-P3-FABLE-62: the schema description must warn that 'chatml' is the
-        User/Assistant layout, not <|im_start|> markup, so the naming drift is
-        not silent."""
+        """The schema description must warn that 'chatml' is the User/Assistant
+        layout, not <|im_start|> markup, so the naming drift is not silent."""
         from forgelm.config import SyntheticConfig
 
         desc = SyntheticConfig.model_fields["output_format"].description
@@ -284,9 +283,9 @@ class TestSyntheticGenerator:
         assert result.successful == 0
 
     def test_seed_loader_skips_non_dict_json_line(self, tmp_path):
-        """F-P6-OPUS-08: a valid-JSON-but-non-object seed line (array, bare
-        number, …) must not crash the loader with AttributeError; it falls
-        back to treating the raw line as a plain-text prompt."""
+        """A valid-JSON-but-non-object seed line (array, bare number, …) must
+        not crash the loader with AttributeError; it falls back to treating
+        the raw line as a plain-text prompt."""
         seed_file = tmp_path / "seeds.jsonl"
         seed_file.write_text(
             "\n".join(
@@ -329,9 +328,9 @@ class TestSyntheticGenerator:
         assert "Explain ML." in prompts
 
     def test_file_responses_skips_non_dict_json_line(self, tmp_path):
-        """F-P6-OPUS-08: ``_load_file_responses`` must count a non-object JSON
-        line as malformed and skip it, honouring its 'loud about failures'
-        docstring instead of crashing with AttributeError."""
+        """``_load_file_responses`` must count a non-object JSON line as
+        malformed and skip it, honouring its 'loud about failures' docstring
+        instead of crashing with AttributeError."""
         seed_file = tmp_path / "responses.jsonl"
         seed_file.write_text(
             "\n".join(
@@ -355,11 +354,11 @@ class TestSyntheticGenerator:
         assert responses == {"Q1": "A1", "Q2": "A2"}
 
     def test_file_teacher_lookup_is_byte_exact_not_hashed(self, tmp_path):
-        """F-P3-FABLE-65: the file-teacher comment now states responses are
-        keyed by the *exact prompt string* (no hashing, no whitespace
-        normalisation). Pin that semantics: a byte-identical prompt resolves,
-        but a whitespace-variant of the same prompt misses (returns the empty
-        default) — which would not happen under a normalising/hash key."""
+        """The file-teacher stores responses keyed by the *exact prompt string*
+        (no hashing, no whitespace normalisation). Pin that semantics: a
+        byte-identical prompt resolves, but a whitespace-variant of the same
+        prompt misses (returns the empty default) — which would not happen
+        under a normalising/hash key."""
         seed_file = tmp_path / "responses.jsonl"
         seed_file.write_text(json.dumps({"prompt": "What is AI?", "response": "A intelligence."}))
         config = _config(
@@ -480,3 +479,27 @@ class TestSyntheticUsesSafePost:
             gen._call_api_teacher("x")
 
         mock_post.assert_not_called()
+
+
+class TestNoTrackingIDsInSource:
+    """Coding-standard guard: inline comments must not embed internal review
+    tracking labels (e.g. F-P6-OPUS-08, F-P3-FABLE-62).  This test fails if
+    any such ID is re-introduced into synthetic.py, ensuring compliance with
+    docs/standards/coding.md §Comments which prohibits PR/issue/fix references
+    in source code."""
+
+    def test_synthetic_py_has_no_review_tracking_ids(self):
+        import inspect
+        import re
+
+        from forgelm import synthetic
+
+        source = inspect.getsource(synthetic)
+        # Pattern: F-P<digit(s)>-<LETTERS>-<digit(s)>  (e.g. F-P6-OPUS-08)
+        tracking_id_re = re.compile(r"\bF-P\d+-[A-Z]+-\d+\b")
+        matches = tracking_id_re.findall(source)
+        assert not matches, (
+            f"synthetic.py contains internal review tracking ID(s) in inline "
+            f"comments, violating coding.md §Comments: {matches!r}.  "
+            f"Strip the ID prefix and keep only the explanatory rationale."
+        )

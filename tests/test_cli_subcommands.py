@@ -136,6 +136,7 @@ class TestAuditSubcommand:
         fake = MagicMock()
         with patch("forgelm.cli._run_data_audit", fake):
             _run_audit_cmd(args, "text")
+        assert fake.called, "_run_data_audit was never invoked; patch target may have drifted"
         assert fake.call_args.kwargs["enable_quality_filter"] is True
 
     def test_legacy_data_audit_flag_still_works(self, tmp_path):
@@ -299,5 +300,44 @@ class TestNumericFlagValidators:
         from forgelm.cli._parser import parse_args
 
         with patch("sys.argv", argv):
-            # Must not raise SystemExit at parse time for in-range values.
-            parse_args()
+            # Must not raise SystemExit at parse time for in-range values,
+            # and the flag value must actually be stored in the Namespace.
+            ns = parse_args()
+
+        if "--gpu-memory-utilization" in argv:
+            assert ns.gpu_memory_utilization == pytest.approx(0.9)
+        if "--temperature" in argv:
+            assert ns.temperature == pytest.approx(1.5)
+
+
+class TestPipelineDispatchClamping:
+    """F-L-05: _dispatch_pipeline_mode must clamp non-public exit codes via
+    _clamp_exit_code before passing them to sys.exit."""
+
+    def test_dispatcher_clamps_nonpublic_pipeline_return(self, tmp_path, minimal_config):
+        """A pipeline run_pipeline_from_args returning a signal-derived code
+        (e.g. 130 = 128+SIGINT) must be clamped to EXIT_TRAINING_ERROR (2)
+        at the dispatch seam — mirroring the verify-audit clamping guarantee
+        (test_dispatcher_clamps_nonpublic_verify_audit_return in test_cli_phase10.py)."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from forgelm.cli._dispatch import _dispatch_pipeline_mode
+        from forgelm.cli._exit_codes import EXIT_TRAINING_ERROR
+
+        # Write a real (but minimal) YAML file so the open() inside
+        # _dispatch_pipeline_mode succeeds.
+        cfg_path = tmp_path / "pipeline.yaml"
+        cfg_path.write_text("pipeline:\n  stages: []\n")
+
+        config = MagicMock()
+        args = SimpleNamespace(config=str(cfg_path))
+
+        with patch(
+            "forgelm.cli._pipeline.run_pipeline_from_args",
+            MagicMock(return_value=130),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                _dispatch_pipeline_mode(config, args)
+
+        assert exc_info.value.code == EXIT_TRAINING_ERROR

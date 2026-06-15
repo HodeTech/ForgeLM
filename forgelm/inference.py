@@ -302,7 +302,7 @@ def generate_stream(
         gen_kwargs.update(temperature=temperature, top_k=top_k, top_p=top_p)
     gen_kwargs["repetition_penalty"] = repetition_penalty
 
-    _exc: List[BaseException] = []
+    _exc: List[Exception] = []
 
     def _gen_thread() -> None:
         try:

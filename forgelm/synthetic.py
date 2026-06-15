@@ -157,8 +157,8 @@ class SyntheticDataGenerator:
                     # A line that is valid JSON but not an object (a bare
                     # array/number/string/bool/null) has no ``.get`` — treat
                     # the raw line as a plain-text prompt instead of crashing
-                    # the whole load with AttributeError (F-P6-OPUS-08). A bare
-                    # quoted string IS the prompt, so append the parsed value —
+                    # the whole load with AttributeError. A bare quoted string
+                    # IS the prompt, so append the parsed value —
                     # not the raw line, which would keep the JSON quotes —
                     # matching ``safety._load_safety_prompts``.
                     if isinstance(data, dict):
@@ -320,7 +320,7 @@ class SyntheticDataGenerator:
                     continue
                 # Valid JSON but not an object (bare array/number/string/etc.)
                 # has no ``.get`` — count it as malformed and skip rather than
-                # crashing the whole load with AttributeError (F-P6-OPUS-08).
+                # crashing the whole load with AttributeError.
                 if not isinstance(data, dict):
                     malformed += 1
                     logger.debug(
@@ -371,10 +371,10 @@ class SyntheticDataGenerator:
         elif fmt == "instruction":
             return {"instruction": prompt, "output": response}
         elif fmt == "chatml":
-            # NOTE (F-P3-FABLE-62): this is ForgeLM's legacy {User, Assistant}
-            # key layout (data.py detects + trains on it natively), NOT OpenAI
-            # <|im_start|> ChatML wire markup. The config value name is kept for
-            # backward compatibility; the schema/doc description spells out the
+            # This is ForgeLM's legacy {User, Assistant} key layout (data.py
+            # detects + trains on it natively), NOT OpenAI <|im_start|> ChatML
+            # wire markup. The config value name is kept for backward
+            # compatibility; the schema/doc description spells out the
             # discrepancy so users feeding external ChatML tools pick `messages`.
             return {"User": prompt, "Assistant": response}
         else:

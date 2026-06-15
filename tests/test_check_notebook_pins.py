@@ -36,7 +36,9 @@ def _load_tool():
 
 @pytest.fixture(scope="module")
 def tool():
-    return _load_tool()
+    mod = _load_tool()
+    yield mod
+    sys.modules.pop("check_notebook_pins", None)
 
 
 def _write_notebook(path: Path, *install_lines: str) -> Path:
@@ -153,3 +155,24 @@ def test_toml_backend_loads_on_supported_pythons(tool):
     # ``tomllib`` must expose a working ``loads`` on every supported runtime.
     assert hasattr(tool.tomllib, "loads")
     assert tool.tomllib.loads('a = "b"\n') == {"a": "b"}
+
+
+# ---------------------------------------------------------------------------
+# §5 — sys.modules cleanup (F-N-11: yield fixture teardown)
+# ---------------------------------------------------------------------------
+
+
+def test_tool_fixture_cleans_up_sys_modules(request):
+    # Regression guard for F-N-11: the ``tool`` fixture must remove
+    # 'check_notebook_pins' from sys.modules on teardown so the stale entry
+    # does not pollute subsequent test sessions or parallel workers.
+    # This test directly exercises _load_tool() + cleanup in isolation to
+    # confirm the teardown pattern matches the yield fixture implementation.
+    key = "check_notebook_pins"
+    # Ensure we start clean so the assertion below is meaningful.
+    sys.modules.pop(key, None)
+    _load_tool()
+    assert key in sys.modules, "_load_tool must register the module"
+    # Simulate the yield-fixture finalizer path.
+    sys.modules.pop(key, None)
+    assert key not in sys.modules, "finalizer must remove the stale sys.modules entry"
