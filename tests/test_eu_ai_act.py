@@ -229,6 +229,14 @@ class TestForgeConfigCompliance:
         does not pre-empt the warning."""
         import logging
 
+        # ``_warn_tier_disagreement`` dedupes by tier-pair across the process
+        # (F-L-11) so an N-stage pipeline does not spam the warning. That makes
+        # this assertion order-dependent: an earlier test that triggered the
+        # same (limited-risk, minimal-risk) pair would suppress it here. Clear
+        # the dedup set so the warning fires fresh (mirrors test_pipeline_config).
+        import forgelm.config as _cfg_module
+
+        _cfg_module._tier_disagreement_warned.clear()
         with caplog.at_level(logging.WARNING, logger="forgelm.config"):
             ForgeConfig(
                 **minimal_config(
