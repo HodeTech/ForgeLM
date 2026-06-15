@@ -1302,6 +1302,41 @@ class TestRunIdPathTraversal:
         failed = next(e for e in events if e["event"] == "data.erasure_failed")
         assert failed["error_class"] == "PathTraversalRefused"
 
+    def test_path_traversal_failed_error_message_masked_and_bounded(self, tmp_path: Path) -> None:
+        """The ``PathTraversalRefused`` ``error_message`` embeds the refused
+        resolved path(s); route it through the same sanitiser so a
+        PII-shaped victim-dir name (or an overlong path) never lands raw in
+        the append-only chain (F-P5-OPUS-07, design gdpr_erasure.md §6).
+        """
+        from forgelm.cli.subcommands import _purge
+        from forgelm.cli.subcommands._purge import _run_purge_run_id
+
+        output_dir = tmp_path / "run1"
+        output_dir.mkdir()
+        # Victim dir name carries an email-shaped PII marker plus a long tail
+        # (kept under the 255-char filename limit) so the resolved escaping
+        # path is both PII-bearing and over the audit-message length cap.
+        leaked = "ali@example.com"
+        victim_name = f"victim-{leaked}-" + ("z" * 200)
+        victim = tmp_path / victim_name
+        victim.mkdir()
+        (output_dir / "final_model.staging...").mkdir(parents=True, exist_ok=True)
+
+        run_id = f"../../../{victim_name}"
+        args = _build_args(run_id=run_id, kind="staging", output_dir=str(output_dir))
+        with pytest.raises(SystemExit):
+            _run_purge_run_id(args, output_format="json")
+
+        events = _read_audit_events(output_dir / "audit_log.jsonl")
+        failed = next(e for e in events if e["event"] == "data.erasure_failed")
+        assert failed["error_class"] == "PathTraversalRefused"
+        # (a) PII marker masked out of the persisted error_message (the field
+        # this finding routes through the sanitiser; ``target_id`` carries the
+        # caller-supplied run_id verbatim by design and is out of scope here).
+        assert leaked not in failed["error_message"]
+        # (b) Length-bounded by the shared cap.
+        assert len(failed["error_message"]) <= _purge._AUDIT_ERROR_MESSAGE_MAX + len("…[truncated]")
+
     def test_path_inside_output_dir_accepts_legitimate_target(self, tmp_path: Path) -> None:
         from forgelm.cli.subcommands._purge import _path_inside_output_dir
 

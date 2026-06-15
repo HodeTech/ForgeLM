@@ -805,7 +805,9 @@ def _run_purge_run_id(args, output_format: str) -> None:
             _EVT_ERASURE_FAILED,
             **request_fields,
             error_class="PathTraversalRefused",
-            error_message=(f"Refusing to erase target(s) outside output_dir: {[str(p) for p in escaping]!r}."),
+            error_message=_sanitise_audit_error_message(
+                f"Refusing to erase target(s) outside output_dir: {[str(p) for p in escaping]!r}."
+            ),
         )
         _output_error_and_exit(
             output_format,
