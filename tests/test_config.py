@@ -582,6 +582,35 @@ class TestMergeEnabledValidation:
         assert len(cfg.models) == 2
 
 
+class TestMergeHyperparameterFields:
+    """PR#63-review (F-P3-FABLE-60): TIES/DARE knobs are config-driven."""
+
+    def test_hyperparameter_defaults(self):
+        m = MergeConfig()
+        assert m.ties_trim_fraction == pytest.approx(0.2)
+        assert m.dare_drop_rate == pytest.approx(0.3)
+        assert m.dare_seed == 42
+
+    def test_hyperparameters_overridable(self):
+        m = MergeConfig(ties_trim_fraction=0.9, dare_drop_rate=0.95, dare_seed=7)
+        assert m.ties_trim_fraction == pytest.approx(0.9)
+        assert m.dare_drop_rate == pytest.approx(0.95)
+        assert m.dare_seed == 7
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("ties_trim_fraction", -0.1),
+            ("ties_trim_fraction", 1.1),
+            ("dare_drop_rate", -0.1),
+            ("dare_drop_rate", 1.1),
+        ],
+    )
+    def test_fraction_out_of_range_rejected(self, field, value):
+        with pytest.raises(ValidationError):
+            MergeConfig(**{field: value})
+
+
 class TestSyntheticEnabledValidation:
     def test_synthetic_enabled_requires_teacher_model(self):
         with pytest.raises(ValidationError, match="teacher_model is empty"):
@@ -597,6 +626,17 @@ class TestSyntheticEnabledValidation:
 
     def test_synthetic_disabled_empty_payload_accepted(self):
         assert SyntheticConfig(enabled=False).teacher_model == ""
+
+    def test_sanity_failure_rate_default(self):
+        assert SyntheticConfig().sanity_failure_rate == pytest.approx(0.2)
+
+    def test_sanity_failure_rate_overridable(self):
+        assert SyntheticConfig(sanity_failure_rate=0.5).sanity_failure_rate == pytest.approx(0.5)
+
+    @pytest.mark.parametrize("value", [-0.1, 1.1])
+    def test_sanity_failure_rate_out_of_range_rejected(self, value):
+        with pytest.raises(ValidationError):
+            SyntheticConfig(sanity_failure_rate=value)
 
 
 # --- L3: operational-knob numeric bounds (F-P1-FAB-33) ---

@@ -47,6 +47,30 @@ class MergeConfig(BaseModel):
         description="List of `{path, weight}` dicts naming the source models to merge.",
     )
     output_dir: str = Field(default="./merged_model", description="Directory to write the merged model into.")
+    ties_trim_fraction: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "TIES merge: fraction of smallest-magnitude deltas trimmed per task "
+            "(default `0.2` keeps the top ~80%; the published TIES default is sparser). "
+            "Only consulted when `method` is `ties`."
+        ),
+    )
+    dare_drop_rate: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "DARE merge: probability each delta is randomly dropped before rescaling "
+            "(default `0.3`; the DARE paper recommends 0.9+ for fine-tuned deltas). "
+            "Only consulted when `method` is `dare`."
+        ),
+    )
+    dare_seed: int = Field(
+        default=42,
+        description="DARE merge: RNG seed for the random drop mask, so a merge is reproducible run-to-run.",
+    )
 
     @model_validator(mode="after")
     def _validate_merge_inputs(self):
@@ -893,6 +917,16 @@ class SyntheticConfig(BaseModel):
             "`forgelm --generate-data` to report success (exit 0). Default `0.0` keeps "
             "the legacy behaviour (any non-zero yield succeeds); raise it so a CI "
             "pipeline does not train on a near-empty dataset from a mostly-failed run."
+        ),
+    )
+    sanity_failure_rate: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Failure-rate (0.0–1.0) above which `forgelm --generate-data` logs a WARNING "
+            "that the dataset may be small or skewed — independent of `min_success_rate`, "
+            "which gates the exit code. Default `0.2` warns when more than 20% of prompts fail."
         ),
     )
 

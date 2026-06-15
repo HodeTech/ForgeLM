@@ -6,6 +6,17 @@ All notable changes to ForgeLM are documented here.
 
 _(v0.7.1 dev cycle — entries will land here as PRs merge.)_
 
+### Added
+
+- **Config-driven merge hyperparameters.** `merge.ties_trim_fraction`,
+  `merge.dare_drop_rate`, and `merge.dare_seed` expose the TIES/DARE knobs
+  that were previously fixed module constants (defaults unchanged: `0.2`,
+  `0.3`, `42`). Operators can now reach paper-faithful sparsity from YAML.
+- **Config-driven synthetic sanity bound.** `synthetic.sanity_failure_rate`
+  (default `0.2`) replaces the hardcoded warn-only failure-rate threshold in
+  `forgelm --generate-data`; it is independent of `min_success_rate`, which
+  still gates the exit code.
+
 ### Changed
 
 - **Config validation hardened.** `distributed.strategy` is now a

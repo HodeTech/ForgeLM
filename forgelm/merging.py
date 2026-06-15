@@ -11,11 +11,13 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("forgelm.merging")
 
-# TIES/DARE merge hyperparameters (F-P3-FABLE-60). Fixed for now — not yet
-# config-driven via MergeConfig (roadmap). Named here so the values are a
-# single documented source of truth rather than bare magic numbers at the call
-# sites, and so the deliberate departure from the published paper defaults is
-# visible. See _ties_dare_merge's docstring for the rationale.
+# TIES/DARE merge hyperparameter defaults (F-P3-FABLE-60). These are the
+# fallback values used when the caller does not pass an explicit override; the
+# config-driven path threads ``MergeConfig.ties_trim_fraction`` /
+# ``.dare_drop_rate`` / ``.dare_seed`` in instead. Named here so the defaults
+# are a single documented source of truth rather than bare magic numbers at the
+# call sites, and so the deliberate departure from the published paper defaults
+# is visible. See _ties_dare_merge's docstring for the rationale.
 _TIES_TRIM_FRACTION = 0.2  # trim bottom 20% of weights → keep top 80%
 _DARE_DROP_RATE = 0.3  # drop 30% of deltas (paper recommends 0.9+ for FT deltas)
 _DARE_SEED = 42  # fixed so a merge is reproducible run-to-run
@@ -38,6 +40,9 @@ def merge_peft_adapters(
     method: str = "linear",
     output_dir: str = "./merged_model",
     trust_remote_code: bool = False,
+    ties_trim_fraction: float = _TIES_TRIM_FRACTION,
+    dare_drop_rate: float = _DARE_DROP_RATE,
+    dare_seed: int = _DARE_SEED,
 ) -> MergeResult:
     """Merge multiple LoRA/PEFT adapters into a single model.
 
@@ -47,6 +52,9 @@ def merge_peft_adapters(
         method: Merge strategy — "linear", "ties", "dare", "slerp".
         output_dir: Where to save the merged model.
         trust_remote_code: Allow custom code from model repos.
+        ties_trim_fraction: TIES trim fraction (only used when method == "ties").
+        dare_drop_rate: DARE drop probability (only used when method == "dare").
+        dare_seed: DARE RNG seed (only used when method == "dare").
 
     Returns:
         MergeResult with status.
@@ -69,7 +77,14 @@ def merge_peft_adapters(
         if method == "linear":
             merged = _linear_merge(base_model, adapters)
         elif method in ("ties", "dare"):
-            merged = _advanced_merge(base_model, adapters, method)
+            merged = _advanced_merge(
+                base_model,
+                adapters,
+                method,
+                ties_trim_fraction=ties_trim_fraction,
+                dare_drop_rate=dare_drop_rate,
+                dare_seed=dare_seed,
+            )
         elif method == "slerp":
             merged = _slerp_merge(base_model, adapters)
         else:
@@ -139,10 +154,24 @@ def _linear_merge(base_model, adapters):
     return base_model
 
 
-def _advanced_merge(base_model, adapters, method):
+def _advanced_merge(
+    base_model,
+    adapters,
+    method,
+    ties_trim_fraction=_TIES_TRIM_FRACTION,
+    dare_drop_rate=_DARE_DROP_RATE,
+    dare_seed=_DARE_SEED,
+):
     """TIES or DARE merge using native PyTorch implementation."""
     logger.info("Using %s merge strategy (native implementation).", method.upper())
-    return _ties_dare_merge(base_model, adapters, method)
+    return _ties_dare_merge(
+        base_model,
+        adapters,
+        method,
+        ties_trim_fraction=ties_trim_fraction,
+        dare_drop_rate=dare_drop_rate,
+        dare_seed=dare_seed,
+    )
 
 
 def _slerp_merge(base_model, adapters):
@@ -198,7 +227,14 @@ def _slerp_merge(base_model, adapters):
     return base_model
 
 
-def _ties_dare_merge(base_model, adapters, method):
+def _ties_dare_merge(
+    base_model,
+    adapters,
+    method,
+    ties_trim_fraction=_TIES_TRIM_FRACTION,
+    dare_drop_rate=_DARE_DROP_RATE,
+    dare_seed=_DARE_SEED,
+):
     """Merge using TIES or DARE algorithm directly on state dicts.
 
     TIES (TIES-Merging): Trim, Elect Sign, and Merge
@@ -210,10 +246,12 @@ def _ties_dare_merge(base_model, adapters, method):
     - Randomly drops delta values with probability ``drop_rate``
     - Rescales remaining values by 1/(1-drop_rate) to preserve expected magnitude
 
-    Hyperparameters (``trim_fraction``, ``drop_rate``, DARE ``seed``) are
-    currently fixed at the call sites below — they are **not** yet exposed in
-    :class:`forgelm.config.MergeConfig`. The shipped defaults are deliberately
-    conservative and differ from the published papers (F-P3-FABLE-60):
+    Hyperparameters (``ties_trim_fraction``, ``dare_drop_rate``, ``dare_seed``)
+    are config-driven via :class:`forgelm.config.MergeConfig` and threaded in
+    here; the module-level ``_TIES_TRIM_FRACTION`` / ``_DARE_DROP_RATE`` /
+    ``_DARE_SEED`` constants are the defaults used when no override is supplied.
+    The shipped defaults are deliberately conservative and differ from the
+    published papers (F-P3-FABLE-60):
 
     * TIES ``trim_fraction=0.2`` trims the bottom 20% of weights and **keeps the
       top 80%**. The TIES-Merging paper's headline default keeps the top ~20%
@@ -222,9 +260,9 @@ def _ties_dare_merge(base_model, adapters, method):
     * DARE ``drop_rate=0.3`` is below the 0.9+ regime the DARE paper recommends
       for fine-tuned deltas, again favouring signal retention.
 
-    Config-driven exposure of these knobs is tracked on the roadmap; until then
-    operators needing paper-faithful sparsity should merge with an external tool
-    (e.g. mergekit) — see docs/reference/configuration.md (merge section).
+    Operators needing paper-faithful sparsity can either raise these knobs in
+    ``merge:`` config or merge with an external tool (e.g. mergekit) — see
+    docs/reference/configuration.md (merge section).
     """
     from peft import PeftModel
 
@@ -260,9 +298,9 @@ def _ties_dare_merge(base_model, adapters, method):
             continue
 
         if method == "ties":
-            merged_delta[key] = _ties_merge_tensor(deltas, weights, trim_fraction=_TIES_TRIM_FRACTION)
+            merged_delta[key] = _ties_merge_tensor(deltas, weights, trim_fraction=ties_trim_fraction)
         elif method == "dare":
-            merged_delta[key] = _dare_merge_tensor(deltas, weights, drop_rate=_DARE_DROP_RATE, seed=_DARE_SEED)
+            merged_delta[key] = _dare_merge_tensor(deltas, weights, drop_rate=dare_drop_rate, seed=dare_seed)
         else:
             merged_delta[key] = sum(d * w for d, w in zip(deltas, weights))
 

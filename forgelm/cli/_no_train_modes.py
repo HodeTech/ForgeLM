@@ -139,6 +139,9 @@ def _run_merge(config: ForgeConfig, output_format: str) -> None:
         method=config.merge.method,
         output_dir=config.merge.output_dir,
         trust_remote_code=config.model.trust_remote_code,
+        ties_trim_fraction=config.merge.ties_trim_fraction,
+        dare_drop_rate=config.merge.dare_drop_rate,
+        dare_seed=config.merge.dare_seed,
     )
 
     if output_format == "json":
@@ -187,7 +190,7 @@ def _run_generate_data(config: ForgeConfig, output_format: str) -> None:
     # sanity bound so a degraded run is visible even without a configured floor.
     min_success_rate = config.synthetic.min_success_rate
     meets_threshold = result.successful > 0 and result.success_rate >= min_success_rate
-    _SANITY_FAILURE_RATE = 0.2  # >20% failures is suspicious regardless of the floor
+    sanity_failure_rate = config.synthetic.sanity_failure_rate  # warn-only bound, regardless of the floor
 
     if output_format == "json":
         print(
@@ -215,7 +218,7 @@ def _run_generate_data(config: ForgeConfig, output_format: str) -> None:
             result.output_file,
         )
 
-    if result.total_prompts > 0 and (1.0 - result.success_rate) > _SANITY_FAILURE_RATE:
+    if result.total_prompts > 0 and (1.0 - result.success_rate) > sanity_failure_rate:
         logger.warning(
             "Synthetic generation failure rate is %.1f%% (%d/%d prompts failed) — "
             "the resulting dataset may be small or skewed; inspect the errors before training.",

@@ -286,7 +286,8 @@ uzatmasını engeller.
 | `temperature` | float | `0.7` | Öğretmene geçirilen örnekleme sıcaklığı. |
 | `output_file` | string | `"synthetic_data.jsonl"` | Çıktı JSONL dosya yolu. |
 | `output_format` | string | `"messages"` | Şunlardan biri: `"messages"` (chat-style array), `"instruction"` (Alpaca-style), `"chatml"`, `"prompt_response"`. **`chatml`, ForgeLM'in eski `{User, Assistant}` anahtar düzenini üretir — OpenAI `<|im_start|>` ChatML işaretlemesini DEĞİL.** Taşınabilir bir sohbet formatı için `messages` kullanın. |
-| `min_success_rate` | float | `0.0` | `forgelm --generate-data`'nin 0 çıkış kodu vermesi için seed prompt'ların başarılı olması gereken minimum oran (0.0–1.0). Varsayılan `0.0`, eski "sıfırdan farklı herhangi bir verim başarılıdır" davranışını korur; bir CI hattının neredeyse boş bir veri kümesiyle devam etmemesi için yükseltin. %20'nin üzerindeki başarısızlık oranı her zaman bir `WARNING` kaydeder. |
+| `min_success_rate` | float | `0.0` | `forgelm --generate-data`'nin 0 çıkış kodu vermesi için seed prompt'ların başarılı olması gereken minimum oran (0.0–1.0). Varsayılan `0.0`, eski "sıfırdan farklı herhangi bir verim başarılıdır" davranışını korur; bir CI hattının neredeyse boş bir veri kümesiyle devam etmemesi için yükseltin. |
+| `sanity_failure_rate` | float | `0.2` | `forgelm --generate-data`'nin, veri kümesinin küçük veya çarpık olabileceğine dair bir `WARNING` kaydettiği başarısızlık oranı eşiği (0.0–1.0) — çıkış kodunu belirleyen `min_success_rate`'ten bağımsızdır. Varsayılan `0.2`, prompt'ların %20'sinden fazlası başarısız olduğunda uyarır. |
 
 ---
 
@@ -312,17 +313,20 @@ uzatmasını engeller.
 | `method` | string | `"ties"` | `"ties"`, `"dare"`, `"slerp"`, `"linear"` |
 | `models` | list | `[]` | `{path, weight}` sözlük listesi |
 | `output_dir` | string | `"./merged_model"` | Çıktı dizini |
+| `ties_trim_fraction` | float | `0.2` | TIES: görev başına kırpılan en küçük büyüklükteki delta'ların oranı (0.0–1.0). Yalnızca `method` `ties` olduğunda kullanılır. |
+| `dare_drop_rate` | float | `0.3` | DARE: yeniden ölçeklemeden önce her delta'nın rastgele düşürülme olasılığı (0.0–1.0). Yalnızca `method` `dare` olduğunda kullanılır. |
+| `dare_seed` | int | `42` | DARE: rastgele düşürme maskesi için RNG seed'i; bir birleştirme çalıştırmadan çalıştırmaya tekrarlanabilir olur. |
 
-> **TIES/DARE hiperparametreleri sabittir (henüz config ile ayarlanamaz).**
+> **TIES/DARE varsayılan hiperparametreleri kasıtlı olarak korumacıdır.**
 > ForgeLM'in yerel `ties` birleştirmesi, ağırlıkların büyüklüğe göre alttaki
 > **%20**'sini kırpar (üstteki %80'i tutar); `dare` birleştirmesi sabit bir
 > seed ile `drop_rate=0.3` kullanır. Bu varsayılanlar, yayımlanmış TIES (üstteki
 > ~%20'yi tut) ve DARE (`drop_rate` 0.9+) varsayılanlarından kasıtlı olarak daha
 > korumacıdır — daha fazla sinyal tutarlar, böylece iki-adaptörlü bir birleştirme
 > kutudan çıktığı haliyle daha az yıkıcıdır, ancak sonuç makaleye sadık bir
-> birleştirmeden farklı olacaktır. Yayımlanmış seyreklik rejimlerine (veya
-> knob başına kontrole) ihtiyaç duyan operatörler, bu knob'lar `MergeConfig`
-> üzerinde sunulana dek mergekit gibi harici bir araçla birleştirmelidir.
+> birleştirmeden farklı olacaktır. Yayımlanmış seyreklik rejimlerine ihtiyaç
+> duyan operatörler `ties_trim_fraction` / `dare_drop_rate` değerlerini
+> yükseltebilir (veya mergekit gibi harici bir araçla birleştirebilir).
 
 ## `auth` (İsteğe bağlı)
 

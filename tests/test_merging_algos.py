@@ -161,8 +161,9 @@ class TestAdvancedMergeDispatch:
 
         captured = {}
 
-        def _fake_ties_dare(base_model, adapters, m):
+        def _fake_ties_dare(base_model, adapters, m, **kwargs):
             captured["method"] = m
+            captured.update(kwargs)
             return base_model
 
         monkeypatch.setattr(merging, "_ties_dare_merge", _fake_ties_dare)
@@ -170,6 +171,29 @@ class TestAdvancedMergeDispatch:
         out = merging._advanced_merge(sentinel, [{"path": "a"}], method)
         assert out is sentinel
         assert captured["method"] == method
+
+    def test_hyperparameters_threaded_through(self, monkeypatch):
+        """PR#63-review: explicit knobs reach _ties_dare_merge unchanged."""
+        import forgelm.merging as merging
+
+        captured = {}
+
+        def _fake_ties_dare(base_model, adapters, m, **kwargs):
+            captured.update(kwargs)
+            return base_model
+
+        monkeypatch.setattr(merging, "_ties_dare_merge", _fake_ties_dare)
+        merging._advanced_merge(
+            object(),
+            [{"path": "a"}],
+            "ties",
+            ties_trim_fraction=0.9,
+            dare_drop_rate=0.95,
+            dare_seed=7,
+        )
+        assert captured["ties_trim_fraction"] == pytest.approx(0.9)
+        assert captured["dare_drop_rate"] == pytest.approx(0.95)
+        assert captured["dare_seed"] == 7
 
 
 class TestMergeHyperparameters:

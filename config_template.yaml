@@ -93,6 +93,7 @@ data:
 #   output_file: "synthetic_data.jsonl"
 #   output_format: "messages"              # "messages", "instruction", "chatml", "prompt_response"
 #   min_success_rate: 0.0                  # min fraction of seeds that must yield (0.0 = any yield succeeds)
+#   sanity_failure_rate: 0.2               # failure rate above which a WARNING is logged (warn-only)
 
 # GaLore — optimizer-level memory optimization (alternative to LoRA)
 # Enables full-parameter training with low-rank gradient projection.
@@ -127,6 +128,9 @@ data:
 #     - path: "./checkpoints/run2/final_model"
 #       weight: 0.3
 #   output_dir: "./merged_model"
+#   ties_trim_fraction: 0.2     # TIES: fraction of smallest deltas trimmed (0.0-1.0)
+#   dare_drop_rate: 0.3         # DARE: probability each delta is dropped (0.0-1.0)
+#   dare_seed: 42               # DARE: RNG seed for the random drop mask
 
 # Distributed training (multi-GPU). Requires: pip install forgelm[distributed]
 # Launch with: torchrun --nproc_per_node=N forgelm --config my_config.yaml

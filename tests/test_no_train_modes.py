@@ -155,7 +155,7 @@ class TestBenchmarkOnlyLoader:
         bad_loader.assert_not_called()
 
 
-def _synthetic_config(min_success_rate=0.0):
+def _synthetic_config(min_success_rate=0.0, sanity_failure_rate=0.2):
     from forgelm.config import ForgeConfig
 
     return ForgeConfig(
@@ -168,6 +168,7 @@ def _synthetic_config(min_success_rate=0.0):
             "teacher_model": "gpt-4o",
             "seed_prompts": ["p1"],
             "min_success_rate": min_success_rate,
+            "sanity_failure_rate": sanity_failure_rate,
         },
     )
 
@@ -238,3 +239,23 @@ class TestGenerateDataGate:
         payload = json.loads(capsys.readouterr().out)
         assert payload["success"] is True  # 0.95 >= 0.9
         assert payload["min_success_rate"] == 0.9
+
+    def test_sanity_failure_rate_is_config_driven(self, caplog):
+        """PR#63-review: a high configured sanity_failure_rate suppresses the
+        warn-only message that the hardcoded 0.2 bound would have emitted."""
+        import logging
+
+        # 30% failures: above the default 0.2 bound but below a configured 0.5.
+        config = _synthetic_config(min_success_rate=0.0, sanity_failure_rate=0.5)
+        gen = MagicMock()
+        gen.generate.return_value = _synthetic_result(successful=700, total=1000)
+
+        with patch("forgelm.synthetic.SyntheticDataGenerator", return_value=gen):
+            from forgelm.cli._no_train_modes import _run_generate_data
+
+            with caplog.at_level(logging.WARNING, logger="forgelm.cli._no_train_modes"):
+                _run_generate_data(config, output_format="text")
+
+        assert not any("failure rate" in r.getMessage() for r in caplog.records), (
+            "a 30% failure rate must not warn when sanity_failure_rate=0.5"
+        )
