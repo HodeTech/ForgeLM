@@ -335,6 +335,37 @@ class TestMathRewardFn:
         assert _math_reward_fn([completion], gold_answer=["42"]) == [1.0]
         assert _math_reward_fn([completion], gold_answer=["50"]) == [0.0]
 
+    def test_reward_grades_last_marker_on_same_line_multi_answer(self):
+        """PR#63 review: two markers on the SAME line (no sentence break
+        between them) must still grade the FINAL answer.
+
+        The greedy body class used to absorb the second marker into the first
+        capture ("Answer: 5 Answer: 7" → captures "5 Answer: 7"), so the LAST
+        ``finditer`` match still graded the discarded candidate — re-opening the
+        reward-hacking divergence the LAST-marker rule closes
+        (F-P2-FAB-06 / F-P3-FABLE-27). The body now refuses to cross into a new
+        ``answer:`` marker, so the markers split into separate matches.
+        """
+        completion = "Answer: 5 Answer: 7"
+        # Final answer (7) earns the reward.
+        assert _math_reward_fn([completion], gold_answer=["7"]) == [1.0]
+        # The discarded earlier candidate (5) does NOT.
+        assert _math_reward_fn([completion], gold_answer=["5"]) == [0.0]
+
+        # Three same-line markers: the final one wins.
+        triple = "Answer: 5 then Answer: 7 then Answer: 9"
+        assert _math_reward_fn([triple], gold_answer=["9"]) == [1.0]
+        assert _math_reward_fn([triple], gold_answer=["5"]) == [0.0]
+        assert _math_reward_fn([triple], gold_answer=["7"]) == [0.0]
+
+        # The marker guard keys on "answer:" — a bare word "answer" without a
+        # colon is NOT a new marker, so it must not split the capture.
+        from forgelm.grpo_rewards import ANSWER_EXTRACT_PATTERN
+
+        prose = "Answer: the final answer is 42"
+        captures = [m.group(1) for m in ANSWER_EXTRACT_PATTERN.finditer(prose)]
+        assert captures == ["the final answer is 42"]
+
     def test_reward_leading_dot_decimal_extracted(self):
         """A bare-dot decimal "Answer: .5" earns correctness reward.
 
@@ -408,6 +439,32 @@ class TestMathRewardFn:
         # Safety floor: linear-time scanning stays well under 100 ms at 10K.
         assert _median_ms(10_000) < 100.0
         assert isinstance(ANSWER_EXTRACT_PATTERN, _re.Pattern)
+
+    def test_extract_pattern_linear_on_many_same_line_markers(self):
+        """The same-line marker guard ``(?!answer\\s*:)`` stays linear under
+        ``finditer`` (the real call site) on a dense run of markers.
+
+        PR#63 review: the rejected lookahead alternative ``(?![\\s\\S]*answer:)``
+        re-scanned the whole tail per marker → O(n²) (≈3 s at n=5000). The
+        per-character fixed-prefix guard avoids that. Verify the curve is
+        approximately linear, not explosive.
+        """
+        import time
+
+        from forgelm.grpo_rewards import ANSWER_EXTRACT_PATTERN
+
+        def _median_ms(n: int) -> float:
+            payload = "answer: x " * n
+            samples = []
+            for _ in range(5):
+                t0 = time.perf_counter()
+                list(ANSWER_EXTRACT_PATTERN.finditer(payload))
+                samples.append((time.perf_counter() - t0) * 1000)
+            return sorted(samples)[2]
+
+        # Generous safety floor: a real ReDoS blows past this by orders of
+        # magnitude. Linear scanning of 10K markers stays well under 1 s.
+        assert _median_ms(10_000) < 1000.0
 
 
 # ---------------------------------------------------------------------------
@@ -515,3 +572,34 @@ class TestDatasetHasGoldAnswers:
 
         real = {"train": FakeIterable(["prompt", "gold_answer"], [{"gold_answer": "42"}])}
         assert _dataset_has_gold_answers(real) is True
+
+    def test_one_shot_iterator_not_consumed_during_probe(self):
+        # PR#63 review: a self-iterating / one-shot dataset returns itself from
+        # ``iter()`` and consuming it here would silently drop the first
+        # training row. The probe must NOT advance such an iterator — it falls
+        # back to presence-by-name (True) and leaves the stream intact.
+        class FakeOneShotIterable:
+            def __init__(self, cols, rows):
+                self.column_names = cols
+                self._rows = iter(rows)
+
+            def __len__(self):
+                # Non-zero so the empty-split guard passes.
+                return 1
+
+            def __getitem__(self, _):
+                # Force the column_names / iterator code path.
+                raise IndexError
+
+            def __iter__(self):
+                # Self-iterating: ``iter(self) is self``.
+                return self
+
+            def __next__(self):
+                return next(self._rows)
+
+        rows = [{"gold_answer": "42"}, {"gold_answer": "7"}]
+        ds = FakeOneShotIterable(["prompt", "gold_answer"], rows)
+        assert _dataset_has_gold_answers({"train": ds}) is True
+        # Critical: the first row must still be available to the training loop.
+        assert next(iter(ds)) == {"gold_answer": "42"}

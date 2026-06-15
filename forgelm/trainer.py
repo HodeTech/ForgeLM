@@ -289,7 +289,17 @@ def _dataset_has_gold_answers(dataset: Dict[str, Any]) -> bool:
     # placeholder column (all None/"") isn't wired as real ground truth; if the
     # wrapper isn't iterable, fall back to presence-only and say so (F-P2-FAB-33).
     try:
-        probe = next(iter(train))
+        iterator = iter(train)
+        # A self-iterating / one-shot iterable returns itself from ``iter()``;
+        # consuming it here would silently drop the first training row. Trust
+        # presence-by-name for those and skip the value probe (F-P2-FAB-33).
+        if iterator is train:
+            logger.debug(
+                "gold_answer column detected by name only (one-shot iterator); "
+                "skipping value probe to avoid consuming a training sample."
+            )
+            return True
+        probe = next(iterator)
         if isinstance(probe, dict) and "gold_answer" in probe:
             val = probe["gold_answer"]
             return val is not None and val != ""

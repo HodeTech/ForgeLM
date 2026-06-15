@@ -79,32 +79,44 @@ import re
 # ---------------------------------------------------------------------------
 
 # Capturing extraction pattern. Stops the captured value at the next sentence
-# boundary so "Answer: 18. Çünkü …" does NOT swallow the trailing prose into
+# boundary so "Answer: 18. Because ..." does NOT swallow the trailing prose into
 # the comparison string. The boundary is "[.!?] followed by whitespace OR EOL"
 # — a bare "." between digits ("Answer: 1.5") is preserved because a decimal
 # "." is not followed by whitespace or end-of-string.
 #
 # Implementation notes:
-#   - First chunk: ``(?:[^\s.!?]|\.(?=\d))[^.!?\n]*`` — must start with a
-#     non-space that isn't sentence punctuation, OR a leading "." immediately
-#     followed by a digit (so a bare-dot decimal "Answer: .5" matches and the
-#     correctness reward agrees with the format gate's ``\S`` start — F-P2-FAB-31).
-#     Then any non-newline that isn't sentence punctuation. Covers "18",
-#     "70 km/h", "$40", "12:15", "2/5", ".5".
-#   - Optional repeats: ``[.!?](?!\s|$)[^.!?\n]*`` — sentence punctuation is
-#     allowed inside the capture *only* when not followed by whitespace/EOL,
-#     keeping "1.5" / "3.14159" intact while still stopping at "18. Çünkü ...".
-#   - Greedy throughout — no reluctant quantifier needed because the character
-#     classes self-bound at the next sentence break (no ReDoS overlap): the
-#     leading ``\.(?=\d)`` alternative is a fixed single-char lookahead, not a
-#     quantifier, so it adds no backtracking surface.
+#   - First chunk: ``(?:[^\s.!?]|\.(?=\d))(?:(?!answer\s*:)[^.!?\n])*`` — must
+#     start with a non-space that isn't sentence punctuation, OR a leading "."
+#     immediately followed by a digit (so a bare-dot decimal "Answer: .5"
+#     matches and the correctness reward agrees with the format gate's ``\S``
+#     start — F-P2-FAB-31). Then any non-newline that isn't sentence
+#     punctuation, refusing to cross into a *new* ``answer:`` marker. Covers
+#     "18", "70 km/h", "$40", "12:15", "2/5", ".5".
+#   - Optional repeats: ``[.!?](?!\s|$)(?:(?!answer\s*:)[^.!?\n])*`` — sentence
+#     punctuation is allowed inside the capture *only* when not followed by
+#     whitespace/EOL, keeping "1.5" / "3.14159" intact while still stopping at
+#     "18. Because ...".
+#   - The ``(?!answer\s*:)`` guard on every body character stops a single match
+#     from swallowing a later same-line marker ("Answer: 5 Answer: 7"): without
+#     it the greedy body absorbs " Answer: 7" and the LAST match still captures
+#     "5 Answer: 7", grading the discarded candidate and re-opening the
+#     reward-hacking divergence the LAST-marker rule closes (F-P2-FAB-06 /
+#     F-P3-FABLE-27). The guard is a fixed-prefix lookahead, not a quantifier,
+#     so the body stays linear-time (no ReDoS overlap).
 #
 # Callers take the LAST match (``finditer`` → ``[-1]``), not the first, so the
-# graded answer is the completion's final one.
+# graded answer is the completion's final one — across newlines *and* within a
+# single line.
 ANSWER_EXTRACT_PATTERN = re.compile(
     # First class drops `\n` because `\s` already covers it. The leading-dot
-    # alternative ``\.(?=\d)`` admits ".5"-style decimals (F-P2-FAB-31).
-    r"answer\s*:\s*((?:[^\s.!?]|\.(?=\d))[^.!?\n]*(?:[.!?](?!\s|$)[^.!?\n]*)*)",
+    # alternative ``\.(?=\d)`` admits ".5"-style decimals (F-P2-FAB-31). The
+    # ``(?!answer\s*:)`` guard keeps each body run from crossing into the next
+    # ``answer:`` marker so same-line multi-answer output grades the final one.
+    r"answer\s*:\s*("
+    r"(?:[^\s.!?]|\.(?=\d))"
+    r"(?:(?!answer\s*:)[^.!?\n])*"
+    r"(?:[.!?](?!\s|$)(?:(?!answer\s*:)[^.!?\n])*)*"
+    r")",
     re.IGNORECASE,
 )
 
