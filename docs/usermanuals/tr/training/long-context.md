@@ -37,6 +37,10 @@ model:
   max_length: 32768
   load_in_4bit: true
 
+lora:
+  r: 16
+  alpha: 32
+
 training:
   trainer_type: "sft"
   packing: true                         # throughput için kritik

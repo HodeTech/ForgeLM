@@ -10,6 +10,8 @@ Bu, ForgeLM'in kabul ettiği her YAML alanının kanonik referansıdır. Şema P
 Üst seviye config 15 bloktan oluşur:
 
 ```yaml
+# INVALID: yalnızca yapı genel görünümü — her bloğun gerçek alanları aşağıda
+# belgelenmiştir; {...} yer tutucuları çalıştırılabilir bir config değildir.
 model:           {...}
 lora:            {...}
 training:        {...}

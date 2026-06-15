@@ -10,6 +10,8 @@ This is the canonical reference for every YAML field ForgeLM accepts. The schema
 The top-level config has 15 blocks:
 
 ```yaml
+# INVALID: structure overview only — each block's real fields are documented
+# below; the {...} placeholders are not a runnable config.
 model:           {...}
 lora:            {...}
 training:        {...}
