@@ -19,8 +19,13 @@ from forgelm.chat import ChatSession
 
 # ``rich`` is an optional extra; the True-path assertion needs the real escaper.
 # Explicit availability probe (not a silent ``try/except ImportError`` fallback)
-# per docs/standards/coding.md.
-_RICH_INSTALLED = importlib.util.find_spec("rich.markup") is not None
+# per docs/standards/coding.md. Probe the TOP-LEVEL ``rich`` package:
+# ``find_spec("rich.markup")`` *raises* ModuleNotFoundError when the parent
+# ``rich`` is absent (it imports the parent to locate the submodule), which
+# would break collection on a no-extras install; ``find_spec("rich")`` returns
+# None instead. ``rich.markup`` ships with ``rich``, so the top-level probe is
+# sufficient.
+_RICH_INSTALLED = importlib.util.find_spec("rich") is not None
 
 
 def _make_session(**kwargs):
