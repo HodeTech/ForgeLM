@@ -48,10 +48,10 @@ Unsloth, Llama, Qwen, Mistral ve birkaç model için drop-in optimizasyondur. At
 ```yaml
 model:
   name_or_path: "Qwen/Qwen2.5-7B-Instruct"
-  use_unsloth: true                     # ihtiyacınız olan tek bayrak
+  backend: "unsloth"                    # ihtiyacınız olan tek bayrak
 
 training:
-  trainer: "sft"
+  trainer_type: "sft"
   # ... eğitim config'i değişmez
 ```
 
@@ -117,7 +117,7 @@ Hangi backend'i kullanırsanız kullanın, gradient accumulation VRAM'in izin ve
 
 ```yaml
 training:
-  batch_size: 1                         # cihaz başına
+  per_device_train_batch_size: 1        # cihaz başına
   gradient_accumulation_steps: 32       # etkili batch = 1 × 32 × num_gpus
 ```
 

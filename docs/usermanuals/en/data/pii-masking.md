@@ -96,16 +96,13 @@ language hint, use the audit subcommand:
 $ forgelm audit ./data/*.jsonl --output ./out/ --pii-ml --pii-ml-language de
 ```
 
-Or pin it in YAML:
+For a Presidio ML-NER pass with a locale hint, pass `--pii-ml-language` to the CLI:
 
-```yaml
-ingestion:
-  pii_mask:
-    enabled: true
-    locale: "de"
-    categories: ["email", "phone", "iban", "id_de"]
-    skip: ["ip"]                       # don't redact IPs
+```shell
+$ forgelm ingest ./corpus/ --pii-mask --output out.jsonl
 ```
+
+> **Note:** There is no `ingestion:` top-level block in the YAML config (`ForgeConfig` rejects unknown keys). Locale and category selection for the regex PII layer are available only via the programmatic API — `mask_pii(text, locale="de")` — or via CLI flags such as `--pii-ml-language de` for the Presidio ML-NER pass.
 
 ## Programmatic API
 

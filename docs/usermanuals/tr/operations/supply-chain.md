@@ -19,7 +19,7 @@ ForgeLM sürüm tag'i başına bir CycloneDX 1.5 SBOM yayınlar ve `pip-audit` +
 
 ```bash
 # Bir sürüm için tüm SBOM'lar.
-gh release download v0.5.5 --pattern 'sbom-*'
+gh release download v0.7.0 --pattern 'sbom-*'
 
 # Birini güzel-yazdır.
 jq . sbom-ubuntu-latest-py3.11.json | less

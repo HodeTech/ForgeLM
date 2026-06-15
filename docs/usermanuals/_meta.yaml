@@ -387,6 +387,14 @@ sections:
           fr: Vérifier la chaîne d'audit
           es: Verificar la cadena de auditoría
           zh: 验证审计链
+      - id: verify-integrity
+        title:
+          en: Verify Model Integrity
+          tr: Model Bütünlüğünü Doğrula
+          de: Modellintegrität verifizieren
+          fr: Vérifier l'intégrité du modèle
+          es: Verificar la integridad del modelo
+          zh: 验证模型完整性
 
   - id: operations
     icon: server

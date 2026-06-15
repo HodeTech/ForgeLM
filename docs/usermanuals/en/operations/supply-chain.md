@@ -19,7 +19,7 @@ ForgeLM emits a CycloneDX 1.5 SBOM per release tag, and runs `pip-audit` + `band
 
 ```bash
 # All SBOMs for a release.
-gh release download v0.5.5 --pattern 'sbom-*'
+gh release download v0.7.0 --pattern 'sbom-*'
 
 # Pretty-print one.
 jq . sbom-ubuntu-latest-py3.11.json | less

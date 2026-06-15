@@ -64,7 +64,7 @@ lora:
   modules_to_save: []                    # extra modules trained at full precision
 
 training:
-  trainer: "sft"
+  trainer_type: "sft"
   learning_rate: 2.0e-4                  # LoRA tolerates higher LR than full FT
 ```
 

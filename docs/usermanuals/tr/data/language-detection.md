@@ -35,16 +35,9 @@ $ jq '.language_outliers[:3]' audit/data_audit_report.json
 
 ## Konfigürasyon
 
-```yaml
-audit:
-  language_detection:
-    enabled: true
-    expected: "tr"                     # açık beklenen dil
-    min_chars: 50                      # bundan kısa satırlar 'unknown'
-    mixed_threshold: 0.3               # ikinci-dil güveni > %30 ise 'mixed' işaretle
-```
+> **Not:** YAML konfigürasyonunda `audit:` üst düzey bloğu yoktur (`ForgeConfig` bilinmeyen anahtarları reddeder). Dil tespiti `forgelm audit`'te otomatik ve her zaman aktiftir. `--pii-ml-language` bayrağı yalnızca Presidio ML-NER katmanı için geçerlidir; `langdetect` tabanlı dil dağılım kontrolü için değil.
 
-`expected` ayarlamazsanız audit dağılımı aykırı flag'lemeden raporlar — gerçekten çok dilli dataset'ler için faydalı.
+Dataset'iniz bilinçli olarak çok dilli ise audit herhangi bir konfigürasyona gerek kalmadan dağılımı raporlar — aşağıdaki [Sık hatalar](#sık-hatalar) bölümündeki ipucuna bakın.
 
 ## Dil dağılım raporu
 

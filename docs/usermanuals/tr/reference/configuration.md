@@ -7,22 +7,27 @@ description: ForgeLM'in anladığı her YAML alanı — tipler, varsayılanlar, 
 
 Bu, ForgeLM'in kabul ettiği her YAML alanının kanonik referansıdır. Şema Pydantic ile zorlanır; `forgelm --config X.yaml --dry-run` dosyanızı şemaya karşı doğrular.
 
-Üst seviye config 12 bloktan oluşur:
+Üst seviye config 15 bloktan oluşur:
 
 ```yaml
 model:           {...}
 lora:            {...}
-galore:          {...}
-datasets:        [...]
 training:        {...}
-evaluation:      {...}
-synthetic:       {...}
-merge:           {...}
-distributed:     {...}
-compliance:      {...}
-output:          {...}
+data:            {...}
 auth:            {...}
+evaluation:      {...}
+webhook:         {...}
+distributed:     {...}
+merge:           {...}
+compliance:      {...}
+risk_assessment: {...}
+monitoring:      {...}
+synthetic:       {...}
+retention:       {...}
+pipeline:        {...}
 ```
+
+> **Not:** `galore` alanları ayrı bir üst-seviye blok değil, `training:` içinde düz alt-alanlardır (`galore_*` önekiyle). Aşağıdaki [`training:`](#training) bölümüne bakın.
 
 ## `model:`
 
@@ -58,22 +63,10 @@ lora:
   use_rslora: false
 ```
 
-## `galore:` (lora alternatifi)
+## `data:`
 
 ```yaml
-galore:
-  enabled: false                              # lora.r ile çakışır
-  rank: 256
-  update_proj_gap: 200
-  scale: 0.25
-  proj_type: "std"
-  target_modules: ["attn", "mlp"]
-```
-
-## `datasets:`
-
-```yaml
-datasets:
+data:
   - path: "data/train.jsonl"                  # gerekli
     format: "messages"                        # belirtilmezse otomatik algılanır
     weight: 1.0
@@ -130,7 +123,7 @@ evaluation:
   benchmark:
     enabled: false
     tasks: []
-    floors: {}
+    min_score: null  # görevler arası ortalama skalar taban (kaldırılan per-task floors dict'in yerine)
     num_fewshot: 0
     batch_size: 8
     limit: null
@@ -159,11 +152,7 @@ evaluation:
     lookback_runs: 10
     drift_p_threshold: 0.05
     fail_on_concern: "high"
-  auto_revert:
-    enabled: false
-    last_good_checkpoint: null
-    notify_on_revert: true
-    keep_failed_checkpoint: true
+  auto_revert: false  # boolean; EU AI Act yüksek-risk regresyon kapısını etkinleştirmek için true yapın
   guards: {}
 ```
 
@@ -246,30 +235,65 @@ compliance:
   license: "Apache-2.0"
 ```
 
-## `output:`
+## `webhook:`
 
 ```yaml
-output:
-  dir: "./checkpoints/run"                    # gerekli
-  model_card: true
-  save_format: "safetensors"
-  save_strategy: "epoch"
-  save_steps: 500
-  webhook:
-    url: null
-    template: "slack"
-    events: []
-  # cost_tracking:                             # yol haritası — henüz uygulanmadı; bkz. GPU Maliyet Tahmini sayfası + risks-and-decisions.md
-  #   enabled: false                           # forgelm/config.py tarafından honure edilmez (output.cost_tracking yüzeyi yok)
-  #   rate_per_hour: {}
-  #   currency: "USD"
-  #   alert_threshold_usd: null
-  #   halt_threshold_usd: null
-  gguf:
-    enabled: false
-    quant_levels: ["q4_k_m"]
-    output_dir: "${output.dir}/gguf/"
-    manifest: true
+webhook:
+  url: null                                   # Slack / Teams / Discord / özel; url_env tercihli
+  url_env: null                               # webhook URL'sini taşıyan env değişkeni
+  notify_on_start: true
+  notify_on_success: true
+  notify_on_failure: true
+  timeout: 10                                 # HTTP istek zaman aşımı (saniye)
+  allow_private_destinations: false           # küme-içi endpoint'ler için SSRF opt-in
+  require_https: false                        # true olduğunda düz http:// URL'leri reddeder
+  tls_ca_bundle: null                         # özel CA paketi yolu (kurumsal MITM)
+```
+
+## `risk_assessment:`
+
+```yaml
+risk_assessment:
+  intended_use: ""                            # Madde 9(2)(a): amaçlanan kullanım (serbest metin)
+  foreseeable_misuse: []                      # Madde 9(2)(b): öngörülebilir kötüye kullanım senaryoları
+  risk_category: "minimal-risk"              # unknown | minimal-risk | limited-risk | high-risk | unacceptable
+  mitigation_measures: []                    # Madde 9(2)(c): azaltım adımları
+  vulnerable_groups_considered: false        # Madde 9(2)(b): kırılgan gruplar değerlendirildi mi
+```
+
+## `monitoring:`
+
+```yaml
+monitoring:
+  enabled: false                              # Madde 12 pazar-sonrası izlemeyi etkinleştir
+  endpoint: ""                               # İzleme webhook URL'si (Prometheus / Datadog / özel)
+  endpoint_env: null                          # endpoint'i geçersiz kılan env değişkeni
+  metrics_export: "none"                     # none | prometheus | datadog | custom_webhook
+  alert_on_drift: true                       # drift tespitinde webhook uyarısı
+  check_interval_hours: 24                   # izleme periyodu (saat)
+```
+
+## `retention:`
+
+```yaml
+retention:
+  audit_log_retention_days: 1825             # varsayılan 5 yıl (Madde 5(1)(e))
+  staging_ttl_days: 7                        # forgelm reject sonrası staging modelini saklama süresi
+  ephemeral_artefact_retention_days: 90      # uyumluluk paketleri, denetim raporları
+  raw_documents_retention_days: 90           # ingest edilen PDF/DOCX/EPUB/TXT/Markdown
+  enforce: "log_only"                        # log_only | warn_on_excess | block_on_excess
+```
+
+## `pipeline:`
+
+```yaml
+pipeline:
+  output_dir: "./pipeline_run"               # pipeline-seviyesi çıktı dizini
+  stages:                                     # sıralı eğitim aşamaları listesi (min 1)
+    - name: "sft"
+      training: { trainer: "sft", epochs: 3 }
+    - name: "dpo"
+      training: { trainer: "dpo", epochs: 1 }
 ```
 
 ## `auth:`
@@ -285,7 +309,7 @@ auth:
 
 `deployment:` üst-seviye YAML anahtarı yoktur — `ForgeConfig` bilinmeyen anahtarları reddeder (`extra="forbid"`), dolayısıyla eğitim config'inize eklerseniz yükleme anında `ConfigError` fırlar. Deployment knob'ları YAML yerine `forgelm deploy` CLI bayrakları olarak açılır. Canlı target seçenekleri `--target {ollama,vllm,tgi,hf-endpoints}`'dir; tam surface için [Deploy hedefleri sayfasına](#/deployment/deploy-targets) ve [CLI referansına](#/reference/cli) bakın.
 
-> **v0.6.0+ için planlanan:** YAML-destekli `deployment:` bölümü [GitHub'daki Phase 14 pipeline-chains yol haritasında](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md) (eski v0.5.x placeholder'larından ertelendi). O zamana kadar, üçüncü taraf şablonlarda gördüğünüz herhangi bir "deployment:" YAML'ını bilgilendirici sayın; otoriter olan yalnızca `forgelm deploy` bayraklarıdır.
+> **Henüz planlanmadı:** YAML-destekli `deployment:` bölümü v0.7.0 sonrasına ertelenmiştir. O zamana kadar, üçüncü taraf şablonlarda gördüğünüz herhangi bir "deployment:" YAML'ını bilgilendirici sayın; otoriter olan yalnızca `forgelm deploy` bayraklarıdır.
 
 ## Bkz.
 

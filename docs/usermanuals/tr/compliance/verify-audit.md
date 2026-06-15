@@ -40,7 +40,7 @@ sequenceDiagram
 ## Hızlı başlangıç
 
 ```shell
-$ forgelm verify-audit checkpoints/run/compliance/audit_log.jsonl
+$ forgelm verify-audit checkpoints/run/audit_log.jsonl
 OK: 87 entries verified
 ```
 
@@ -48,7 +48,7 @@ HMAC ile yetkilendirilmiş log'lar için önce operatör sırrını set edin:
 
 ```shell
 $ FORGELM_AUDIT_SECRET="$(cat /run/secrets/audit-secret)" \
-    forgelm verify-audit checkpoints/run/compliance/audit_log.jsonl
+    forgelm verify-audit checkpoints/run/audit_log.jsonl
 OK: 87 entries verified (HMAC validated)
 ```
 
@@ -61,7 +61,7 @@ Her kaydın HMAC ile yetkilendirilmiş olması gerektiğinde (kurumsal denetim p
 ```shell
 $ FORGELM_AUDIT_SECRET="$(cat /run/secrets/audit-secret)" \
     forgelm verify-audit --require-hmac \
-        checkpoints/run/compliance/audit_log.jsonl
+        checkpoints/run/audit_log.jsonl
 ```
 
 Sıkı mod iki güvenlik ağını birden devreye sokar:
@@ -92,7 +92,7 @@ FAIL at line 53: prev_hash mismatch — chain break suggests entry was inserted,
 Satır numarası olmayan çıplak bir neden, hatanın zincir yürüyüşünden önce meydana geldiğini gösterir (örn. eksik genesis manifest, satır 1'de JSON çözüm hatası):
 
 ```text
-FAIL: manifest present but unreadable at 'checkpoints/run/compliance/audit_log.jsonl.manifest.json': …
+FAIL: manifest present but unreadable at 'checkpoints/run/audit_log.jsonl.manifest.json': …
 ```
 
 Her iki durumda da çıkış kodu `1`'dir. Log'u kanıt saymadan önce inceleyin.
@@ -127,4 +127,5 @@ Her iki durumda da çıkış kodu `1`'dir. Log'u kanıt saymadan önce inceleyin
 - [Audit Log](#/compliance/audit-log) — bu komutun doğruladığı log'a dair operatör-odaklı kılavuz.
 - [Annex IV](#/compliance/annex-iv) — doğrulayıcısı (`forgelm verify-annex-iv`) bu komutun tasarım desenini paylaşan teknik dokümantasyon artifact'ı.
 - [GGUF Doğrulama](#/deployment/verify-gguf) — deployment-bütünlük yüzeyindeki kardeş doğrulayıcı.
+- [Model Bütünlüğünü Doğrulama](#/compliance/verify-integrity) — Article 15 model-bütünlük manifestinin kardeş doğrulayıcısı.
 - [`audit_event_catalog-tr.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog-tr.md) — doğrulanan log'un *içinde* görünen event'ler (GitHub kaynağı).

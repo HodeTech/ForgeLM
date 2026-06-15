@@ -29,7 +29,7 @@ The output is a Markdown file at `checkpoints/run/README.md` ready to upload to 
 ```markdown
 # Acme Customer Support v1.2.0
 
-Customer-support assistant fine-tuned from Qwen2.5-7B-Instruct using ForgeLM 0.5.5.
+Customer-support assistant fine-tuned from Qwen2.5-7B-Instruct using ForgeLM 0.7.0.
 
 ## Model details
 
@@ -112,27 +112,14 @@ If you use this model, please cite:
   title  = {Acme Customer Support v1.2.0},
   author = {Acme Corp},
   year   = {2026},
-  note   = {Fine-tuned with ForgeLM 0.5.5}
+  note   = {Fine-tuned with ForgeLM 0.7.0}
 }
 ```
 ```
 
 ## Configuration
 
-```yaml
-output:
-  model_card: true                              # default
-  model_card_template: null                     # custom Jinja2 template path
-```
-
-For custom branding, override the default template:
-
-```yaml
-output:
-  model_card_template: "templates/acme-card.j2"
-```
-
-The template gets the same data as the default — just renders differently.
+Model card generation is automatic after every successful run — there is no YAML knob to enable or disable it. There is no `output:` top-level config block in ForgeLM; adding one will be rejected by Pydantic validation (`extra="forbid"`). If you need to customise the card template, check the current schema in `forgelm/config.py` for the actual field name before documenting it.
 
 ## Manual additions
 
@@ -156,4 +143,4 @@ For HuggingFace Hub publication, ForgeLM's model card uses HuggingFace's standar
 
 - [Annex IV](#/compliance/annex-iv) — the Article 11 sibling.
 - [Compliance Overview](#/compliance/overview) — context.
-- [Configuration Reference](#/reference/configuration) — `output.model_card` field.
+- [Configuration Reference](#/reference/configuration) — `compliance.*` fields used as model card inputs.

@@ -35,16 +35,9 @@ For very short rows (<50 characters), language detection becomes unreliable — 
 
 ## Configuration
 
-```yaml
-audit:
-  language_detection:
-    enabled: true
-    expected: "tr"                     # explicit expected language
-    min_chars: 50                      # rows shorter than this are 'unknown'
-    mixed_threshold: 0.3               # if second-language confidence > 30%, mark 'mixed'
-```
+> **Note:** There is no `audit:` top-level block in the YAML config (`ForgeConfig` rejects unknown keys). Language detection is automatic and always-on in `forgelm audit`. The `--pii-ml-language` flag is available only for the Presidio ML-NER layer, not for the `langdetect`-based language distribution check itself.
 
-If you don't set `expected`, audit reports the distribution without flagging outliers — useful for genuinely multilingual datasets.
+If your dataset is intentionally multilingual, audit reports the distribution without needing any configuration — see the tip in [Common pitfalls](#common-pitfalls) below.
 
 ## Per-language Distribution Report
 

@@ -11,7 +11,7 @@ description: Akışlı REPL'de fine-tuned modelinizi sınayın.
 
 ```shell
 $ forgelm chat ./checkpoints/customer-support
-ForgeLM 0.5.5 — checkpoints/customer-support ile sohbet
+ForgeLM 0.7.0 — checkpoints/customer-support ile sohbet
 forgelm> aboneliği nasıl iptal ederim?
 Aboneliğinizi Ayarlar → Faturalandırma → Aboneliği İptal Et adımlarıyla
 iptal edebilirsiniz. Erişiminiz mevcut faturalama döneminin sonuna kadar
@@ -131,7 +131,7 @@ v1 vs v2 win rate: 0.62 (sig p=0.04)
 :::
 
 :::tip
-Birçok prompt'un otomatik sondalanması için interaktif REPL yerine `forgelm batch-chat --prompts data/probes.jsonl --output responses.jsonl` kullanın. Aynı model, manuel yazma yok.
+Birçok prompt'u otomatik sondalarken toplu güvenlik taraması için `forgelm safety-eval` kullanın ya da her prompt'u `forgelm chat`'e besleyen ve çıktıyı toplayan bir döngü yazın. Mevcut sürümde ayrı bir batch-chat subcommand'ı bulunmamaktadır.
 :::
 
 ## Bkz.

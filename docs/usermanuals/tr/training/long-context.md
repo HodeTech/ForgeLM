@@ -35,20 +35,19 @@ flowchart LR
 model:
   name_or_path: "Qwen/Qwen2.5-7B-Instruct"
   max_length: 32768
-  rope_scaling:
-    type: "linear"
-    factor: 4.0                         # 8K base × 4 = 32K
-  sliding_window: 4096                  # 4K pencerelerde işle
   load_in_4bit: true
 
 training:
-  trainer: "sft"
+  trainer_type: "sft"
   packing: true                         # throughput için kritik
   neftune_noise_alpha: 5.0              # eğitim-zamanı embedding gürültüsü
+  rope_scaling:
+    type: "linear"
+    factor: 4.0                         # 8K base × 4 = 32K
+  sliding_window_attention: 4096        # 4K pencerelerde işle
 
-datasets:
-  - path: "data/long-docs.jsonl"
-    format: "messages"
+data:
+  dataset_name_or_path: "data/long-docs.jsonl"
 ```
 
 ## RoPE scaling tipleri
@@ -93,8 +92,9 @@ Packing'li:  [örnek1][örnek2][örnek3][örnek4][örnek5]
 ```yaml
 training:
   packing: true
-  packing_max_length: 32768            # genelde = max_length
 ```
+
+Maksimum paketlenmiş dizi uzunluğunu kontrol etmek için `model.max_length` ayarlayın.
 
 :::warn
 Packing örneklerin bağımsız olduğunu varsayar. Tam bağlamı koruması gereken uzun dokümanlarda (kitap bölümleri, kaynak kod repo'ları) `packing: false` ayarlayın.

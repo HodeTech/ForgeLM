@@ -38,13 +38,15 @@ $ forgelm audit data/preferences.jsonl --output ./audit/
 audit tamamlandı — bkz. ./audit/data_audit_report.json
 ```
 
-Exit kodu ciddiyeti yansıtır:
+`forgelm audit` exit kodları:
 
 | Exit | Anlam |
 |---|---|
-| `0` | Temiz. Eğitim güvenli. |
-| `2` | Uyarı. Raporu inceleyin; eğitim çalışır ama kalite düşebilir. |
-| `3` | Hata. Split-arası sızıntı veya başka kritik sorun. Düzelt. |
+| `0` | Audit tamamlandı (bulgulardan bağımsız — raporu okuyun). |
+| `1` | IO hatası (giriş yolu mevcut değil veya okunamıyor). |
+| `2` | Import hatası (gerekli bir opsiyonel extra eksik). |
+
+`forgelm audit`, bulguların *ciddiyetine* göre sıfır dışı exit vermez. CI'da belirli bulgulara göre kapı koymak için JSON raporunu `jq` ile süzün (aşağıdaki [Rapor içeriği](#rapor-içeriği) bölümüne bakın).
 
 ## Audit'in kontrol ettikleri
 
@@ -134,18 +136,17 @@ Yetkili kaynak: `forgelm/cli/_parser.py::_add_audit_subcommand`.
     },
     "overall_quality_score": 0.997
   },
-  "language_distribution": {"tr": 0.992, "en": 0.008},
-  "verdict": "warnings"
+  "language_distribution": {"tr": 0.992, "en": 0.008}
 }
 ```
 
-CI entegrasyonları `verdict` ve sayıları parse ederek merge'i kontrol eder. `--strict` flag'i yoktur (yukarıdaki "Kaldırılan flag'lar"a bakın) — JSON zarfını `jq` ile sarın:
+CI entegrasyonları bireysel sayıları parse ederek merge'i kontrol eder. `--strict` flag'i yoktur (yukarıdaki "Kaldırılan flag'lar"a bakın) ve raporda `verdict` alanı bulunmaz — JSON zarfını `jq` ile sarın:
 
 ```yaml
 - name: Audit data
   run: |
     forgelm audit data/train.jsonl --output-format json > audit.json
-    jq -e '.verdict != "errors" and .pii_summary.severity != "high"' audit.json
+    jq -e '.cross_split_overlap == 0 and .pii_summary.severity != "high"' audit.json
 ```
 
 ## Sık hatalar

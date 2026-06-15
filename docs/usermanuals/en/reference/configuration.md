@@ -7,22 +7,27 @@ description: Every YAML field ForgeLM understands, with types, defaults, and not
 
 This is the canonical reference for every YAML field ForgeLM accepts. The schema is enforced by Pydantic; running `forgelm --config X.yaml --dry-run` validates your file against it.
 
-The top-level config has 12 blocks:
+The top-level config has 15 blocks:
 
 ```yaml
 model:           {...}
 lora:            {...}
-galore:          {...}
-datasets:        [...]
 training:        {...}
-evaluation:      {...}
-synthetic:       {...}
-merge:           {...}
-distributed:     {...}
-compliance:      {...}
-output:          {...}
+data:            {...}
 auth:            {...}
+evaluation:      {...}
+webhook:         {...}
+distributed:     {...}
+merge:           {...}
+compliance:      {...}
+risk_assessment: {...}
+monitoring:      {...}
+synthetic:       {...}
+retention:       {...}
+pipeline:        {...}
 ```
+
+> **Note:** `galore` fields are flat sub-fields inside `training:` (prefixed `galore_*`), not a separate top-level block. See the [`training:`](#training) section below.
 
 ## `model:`
 
@@ -58,22 +63,10 @@ lora:
   use_rslora: false                           # rsLoRA scaling
 ```
 
-## `galore:` (alternative to `lora:`)
+## `data:`
 
 ```yaml
-galore:
-  enabled: false                              # incompatible with lora.r when true
-  rank: 256
-  update_proj_gap: 200
-  scale: 0.25
-  proj_type: "std"                            # std | reverse_std | right | left
-  target_modules: ["attn", "mlp"]
-```
-
-## `datasets:`
-
-```yaml
-datasets:
+data:
   - path: "data/train.jsonl"                  # required
     format: "messages"                        # auto-detected if omitted
     weight: 1.0                               # mixing weight; sum across all datasets
@@ -130,7 +123,7 @@ evaluation:
   benchmark:
     enabled: false
     tasks: []
-    floors: {}
+    min_score: null  # scalar float floor across averaged tasks (replaces removed per-task floors dict)
     num_fewshot: 0
     batch_size: 8
     limit: null
@@ -161,11 +154,7 @@ evaluation:
     lookback_runs: 10
     drift_p_threshold: 0.05
     fail_on_concern: "high"
-  auto_revert:
-    enabled: false
-    last_good_checkpoint: null
-    notify_on_revert: true
-    keep_failed_checkpoint: true
+  auto_revert: false  # boolean; set true to enable EU AI Act high-risk regression gate
   guards: {}                                  # custom callable guards
 ```
 
@@ -262,30 +251,65 @@ compliance:
   license: "Apache-2.0"
 ```
 
-## `output:`
+## `webhook:`
 
 ```yaml
-output:
-  dir: "./checkpoints/run"                    # required
-  model_card: true
-  save_format: "safetensors"                  # safetensors | pytorch
-  save_strategy: "epoch"                      # epoch | steps | no
-  save_steps: 500
-  webhook:                                    # see [Webhooks](#/operations/webhooks)
-    url: null
-    template: "slack"
-    events: []
-  # cost_tracking:                             # roadmap — not yet implemented; see GPU Cost Estimation page + risks-and-decisions.md
-  #   enabled: false                           # NOT honoured by forgelm/config.py (no output.cost_tracking surface)
-  #   rate_per_hour: {}
-  #   currency: "USD"
-  #   alert_threshold_usd: null
-  #   halt_threshold_usd: null
-  gguf:
-    enabled: false
-    quant_levels: ["q4_k_m"]
-    output_dir: "${output.dir}/gguf/"
-    manifest: true
+webhook:
+  url: null                                   # Slack / Teams / Discord / custom; prefer url_env
+  url_env: null                               # env var carrying the webhook URL
+  notify_on_start: true
+  notify_on_success: true
+  notify_on_failure: true
+  timeout: 10                                 # HTTP request timeout in seconds
+  allow_private_destinations: false           # SSRF opt-in for in-cluster endpoints
+  require_https: false                        # refuse plaintext http:// URLs when true
+  tls_ca_bundle: null                         # custom CA bundle path (corporate MITM)
+```
+
+## `risk_assessment:`
+
+```yaml
+risk_assessment:
+  intended_use: ""                            # Article 9(2)(a): intended purpose (free-text)
+  foreseeable_misuse: []                      # Article 9(2)(b): misuse scenarios list
+  risk_category: "minimal-risk"              # unknown | minimal-risk | limited-risk | high-risk | unacceptable
+  mitigation_measures: []                    # Article 9(2)(c): mitigation steps
+  vulnerable_groups_considered: false        # Article 9(2)(b): impact on vulnerable groups
+```
+
+## `monitoring:`
+
+```yaml
+monitoring:
+  enabled: false                              # Enable Article 12 post-market monitoring
+  endpoint: ""                               # Monitoring webhook URL (Prometheus / Datadog / custom)
+  endpoint_env: null                          # env var overriding endpoint
+  metrics_export: "none"                     # none | prometheus | datadog | custom_webhook
+  alert_on_drift: true                       # webhook alert on drift-detector regression
+  check_interval_hours: 24                   # monitoring cadence in hours
+```
+
+## `retention:`
+
+```yaml
+retention:
+  audit_log_retention_days: 1825             # 5 years default (Article 5(1)(e))
+  staging_ttl_days: 7                        # days to retain staging model after forgelm reject
+  ephemeral_artefact_retention_days: 90      # compliance bundles, audit reports
+  raw_documents_retention_days: 90           # ingested PDF/DOCX/EPUB/TXT/Markdown
+  enforce: "log_only"                        # log_only | warn_on_excess | block_on_excess
+```
+
+## `pipeline:`
+
+```yaml
+pipeline:
+  output_dir: "./pipeline_run"               # pipeline-level output directory
+  stages:                                     # ordered list of training stages (min 1)
+    - name: "sft"
+      training: { trainer: "sft", epochs: 3 }
+    - name: "dpo"
+      training: { trainer: "dpo", epochs: 1 }
 ```
 
 ## `auth:`
@@ -301,7 +325,7 @@ auth:
 
 There is no `deployment:` top-level YAML key — `ForgeConfig` rejects unknown keys (`extra="forbid"`), so adding one to your training config raises `ConfigError` at load time. Deployment knobs are exposed as `forgelm deploy` CLI flags instead. The live target choices are `--target {ollama,vllm,tgi,hf-endpoints}`; see the [Deploy targets page](#/deployment/deploy-targets) and the [CLI reference](#/reference/cli) for the full surface.
 
-> **Planned for v0.6.0+:** A YAML-backed `deployment:` section is on the [Phase 14 pipeline-chains roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md) (deferred from earlier v0.5.x placeholders). Until then, treat any "deployment:" YAML you find in third-party templates as informational; only the `forgelm deploy` flags are authoritative.
+> **Not yet scheduled:** A YAML-backed `deployment:` section has been deferred past v0.7.0. Until it ships, treat any "deployment:" YAML you find in third-party templates as informational; only the `forgelm deploy` flags are authoritative.
 
 ## See also
 

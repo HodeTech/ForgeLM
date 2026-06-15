@@ -48,10 +48,10 @@ Unsloth is a drop-in optimisation for Llama, Qwen, Mistral, and a few others. It
 ```yaml
 model:
   name_or_path: "Qwen/Qwen2.5-7B-Instruct"
-  use_unsloth: true                     # the only flag you need
+  backend: "unsloth"                    # the only flag you need
 
 training:
-  trainer: "sft"
+  trainer_type: "sft"
   # ... rest of training config unchanged
 ```
 
@@ -117,7 +117,7 @@ Whichever backend you use, gradient accumulation lets you target an effective ba
 
 ```yaml
 training:
-  batch_size: 1                         # per-device
+  per_device_train_batch_size: 1        # per-device
   gradient_accumulation_steps: 32       # effective batch = 1 × 32 × num_gpus
 ```
 

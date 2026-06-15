@@ -35,20 +35,19 @@ flowchart LR
 model:
   name_or_path: "Qwen/Qwen2.5-7B-Instruct"
   max_length: 32768
-  rope_scaling:
-    type: "linear"
-    factor: 4.0                         # 8K base × 4 = 32K
-  sliding_window: 4096                  # process in 4K windows
   load_in_4bit: true
 
 training:
-  trainer: "sft"
+  trainer_type: "sft"
   packing: true                         # critical for throughput
   neftune_noise_alpha: 5.0              # add training-time embedding noise
+  rope_scaling:
+    type: "linear"
+    factor: 4.0                         # 8K base × 4 = 32K
+  sliding_window_attention: 4096        # process in 4K windows
 
-datasets:
-  - path: "data/long-docs.jsonl"
-    format: "messages"
+data:
+  dataset_name_or_path: "data/long-docs.jsonl"
 ```
 
 ## RoPE scaling types
@@ -93,8 +92,9 @@ Throughput improves 30-50% on instruction-tuning data where most examples are fa
 ```yaml
 training:
   packing: true
-  packing_max_length: 32768            # usually = max_length
 ```
+
+Set `model.max_length` to control the maximum packed sequence length.
 
 :::warn
 Packing assumes examples are independent. If you're training on long documents that should preserve full context (book chapters, source code repos), set `packing: false`.

@@ -54,7 +54,7 @@ $ forgelm audit data/      # train.jsonl + val.jsonl + test.jsonl'ı denetler
 
 Audit bu split'leri onaylamayı reddeder. Çift seviyesinde tam rapor disk üzerindeki audit JSON'da.
 
-exit kodu: 3
+exit kodu: 0
 ```
 
 Hatayı tetikleyen satır seviyesindeki çiftleri `jq` ile inceleyin:
@@ -69,21 +69,11 @@ $ jq '.cross_split_overlap.pairs[]' audit/data_audit_report.json | head
 
 1. **Veriyi yeniden bölün**, bu sefer kaynak seviyesinde gruplayarak (parafraz'ları bölmeyin, dokümanları gruplayın). Splitter'ınızda `--group-by` bayrağı kullanın.
 2. **Yeniden çıkarma** sızıntı tekrar ingest'ten geliyorsa (aynı FAQ iki kez ingest edilmiş).
-3. **Kaldırma** küçük split'ten sızdıran satırları manuel olarak — audit JSON zarfının `cross_split_overlap.pairs` haritası her ihlal eden satır id'sini split-çifti girdisi başına adlandırır (ör. `cross_split_overlap.pairs["train↔val"]`). `jq` ile süzüp çıkarın, sonra `forgelm audit`'i yeniden koşturarak zincirin temiz geçtiğini doğrulayın. v0.5.5'te otomatik kaldırma CLI bayrağı yoktur — yol haritasında bulunsa da gelene kadar açık `jq` adımı silmeyi denetlenebilir tutar.
+3. **Kaldırma** küçük split'ten sızdıran satırları manuel olarak — audit JSON zarfının `cross_split_overlap.pairs` haritası her ihlal eden satır id'sini split-çifti girdisi başına adlandırır (ör. `cross_split_overlap.pairs["train↔val"]`). `jq` ile süzüp çıkarın, sonra `forgelm audit`'i yeniden koşturarak zincirin temiz geçtiğini doğrulayın. v0.7.0'da otomatik kaldırma CLI bayrağı yoktur — açık `jq` adımı silmeyi denetlenebilir tutar.
 
 ## Konfigürasyon
 
-```yaml
-audit:
-  leakage_check:
-    enabled: true
-    threshold: 0                        # sıfır tolerans — herhangi sızıntıda audit fail
-    near_dup_hamming: 3                 # eşleşme eşiği
-    fields_to_check: ["prompt", "chosen", "response"]
-    fail_severity: "error"              # `error` eğitimi engeller, `warn` sadece loglar
-```
-
-Çoğu ekip varsayılanı kullanır — sıfır tolerans. Bir miktar sızıntının kaçınılmaz olduğu çok büyük dataset'iniz varsa `threshold`'ı küçük bir orana yükseltin (ör. 0.001) ama nedenini belgeleyin.
+> **Not:** YAML konfigürasyonunda `audit:` üst düzey bloğu yoktur (`ForgeConfig` bilinmeyen anahtarları reddeder). Sızıntı tespiti, `forgelm audit` çok-split dataset üzerinde koşturulduğunda her zaman aktiftir. Near-duplicate Hamming eşiği `forgelm audit`'deki `--near-dup-threshold` bayrağıyla kontrol edilir (varsayılan 3).
 
 ## "Near-dup" neden önemli
 

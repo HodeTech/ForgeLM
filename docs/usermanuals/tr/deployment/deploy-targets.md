@@ -28,7 +28,7 @@ $ ollama run my-bot
 | `tgi` | `tgi-launcher.sh` + Dockerfile | HuggingFace'in text-generation-inference. |
 | `hf-endpoints` | `endpoints-config.json` | HuggingFace Inference Endpoints'a tek-tıkla deploy. |
 
-KServe ve NVIDIA Triton v0.5.5'te **dahili** hedef değildir. `forgelm deploy --target` parser'ı yalnızca yukarıdaki dört runtime'ı kabul eder. KServe / Triton'da servis sunan operatörler `InferenceService` manifest'ini veya `model_repository/` layout'unu GGUF / safetensors artefakt'ından elle yazar.
+KServe ve NVIDIA Triton **dahili** hedef değildir. `forgelm deploy --target` parser'ı yalnızca yukarıdaki dört runtime'ı kabul eder. KServe / Triton'da servis sunan operatörler `InferenceService` manifest'ini veya `model_repository/` layout'unu GGUF / safetensors artefakt'ından elle yazar.
 
 ## Ollama
 
@@ -47,7 +47,7 @@ PARAMETER temperature 0.7
 PARAMETER top_p 0.9
 PARAMETER stop "<|im_end|>"
 
-# customer-support v1.2.0 checkpoint'inden ForgeLM 0.5.5 ile üretildi
+# customer-support v1.2.0 checkpoint'inden ForgeLM <version> ile üretildi
 ```
 
 ForgeLM modelin tokenizer'ına dayanarak doğru `PARAMETER` satırlarını seçer (chat template, stop token) — manuel konfigürasyon gerekmez.
@@ -124,18 +124,22 @@ Veya tek-tıkla deployment için HuggingFace UI'sına yapıştırın.
 
 ## Konfigürasyon
 
-```yaml
-deployment:
-  target: "vllm"
-  served_model_name: "customer-support-v1.2"
-  max_input_length: 4096
-  max_total_tokens: 8192
-  gpu_memory_utilization: 0.85
-  chat_template: "default"              # veya .jinja dosyası yolu
-  system_prompt_default: "Sen..."
+`deployment:` üst-düzey YAML bloğu mevcut değildir — `ForgeConfig` `extra="forbid"` ile bilinmeyen anahtarları reddeder. Deploy, eğitimden sonra çağrılan açık bir CLI subcommand'ıdır; YAML-güdümlü otomatik bir adım değildir.
+
+Hedef ve çıktı yolu doğrudan komut satırından geçirilir:
+
+```shell
+$ forgelm deploy ./checkpoints/run \
+    --target vllm \
+    --output vllm.yaml
 ```
 
-YAML'da `deployment:` varsa `forgelm` son adım olarak (eval / güvenlik geçtikten sonra) `deploy`'u otomatik çalıştırır.
+`forgelm deploy` için temel flag'ler:
+
+| Flag | Açıklama |
+|---|---|
+| `--target <hedef>` | `ollama`, `vllm`, `tgi`, `hf-endpoints`'ten biri. |
+| `--output <yol>` | Üretilen config'in yazılacağı dosya veya dizin. |
 
 ## Otomatik tespit edilen
 

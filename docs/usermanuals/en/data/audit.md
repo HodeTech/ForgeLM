@@ -38,13 +38,15 @@ $ forgelm audit data/preferences.jsonl --output ./audit/
 audit complete — see ./audit/data_audit_report.json
 ```
 
-The exit code reflects severity:
+Exit codes from `forgelm audit`:
 
 | Exit | Meaning |
 |---|---|
-| `0` | Clean. Safe to train. |
-| `2` | Warnings. Review the report; training will work but quality may suffer. |
-| `3` | Errors. Cross-split leakage or other show-stoppers detected. Fix before training. |
+| `0` | Audit completed (regardless of findings — read the report). |
+| `1` | IO error (the input path does not exist or cannot be read). |
+| `2` | Import error (a required optional extra is missing). |
+
+`forgelm audit` does not exit non-zero based on the *severity* of what it finds. To gate CI on specific findings, pipe the JSON report through `jq` (see [What's in the report](#whats-in-the-report) below).
 
 ## What audit checks
 
@@ -139,19 +141,18 @@ Authoritative source: `forgelm/cli/_parser.py::_add_audit_subcommand`.
     },
     "overall_quality_score": 0.997
   },
-  "language_distribution": {"tr": 0.992, "en": 0.008},
-  "verdict": "warnings"
+  "language_distribution": {"tr": 0.992, "en": 0.008}
 }
 ```
 
-CI integrations parse `verdict` and individual counts to gate merges. There is no `--strict` flag (see "Removed flags" above) — wrap the JSON envelope with `jq`:
+CI integrations parse individual counts to gate merges. There is no `--strict` flag (see "Removed flags" above) and no `verdict` field in the report — wrap the JSON envelope with `jq`:
 
 ```yaml
 # .github/workflows/data.yml
 - name: Audit data
   run: |
     forgelm audit data/train.jsonl --output-format json > audit.json
-    jq -e '.verdict != "errors" and .pii_summary.severity != "high"' audit.json
+    jq -e '.cross_split_overlap == 0 and .pii_summary.severity != "high"' audit.json
 ```
 
 ## Common pitfalls

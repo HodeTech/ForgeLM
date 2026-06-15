@@ -1,11 +1,11 @@
 ---
 title: Benchmark Integration
-description: Run lm-evaluation-harness tasks with per-task floor thresholds and auto-revert.
+description: Run lm-evaluation-harness tasks with an average accuracy floor and auto-revert.
 ---
 
 # Benchmark Integration
 
-ForgeLM integrates with [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) — the standard benchmark suite for LLMs — and adds the production layer on top: per-task floor thresholds, auto-revert on regression, and structured artifacts that flow into your compliance bundle.
+ForgeLM integrates with [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) — the standard benchmark suite for LLMs — and adds the production layer on top: a minimum average accuracy floor, auto-revert on regression, and structured artifacts that flow into your compliance bundle.
 
 ## Quick example
 
@@ -14,18 +14,15 @@ evaluation:
   benchmark:
     enabled: true
     tasks: ["hellaswag", "arc_easy", "truthfulqa", "mmlu"]
-    floors:
-      hellaswag: 0.55
-      arc_easy: 0.70
-      truthfulqa: 0.45
-    num_fewshot: 0                      # zero-shot eval
+    min_score: 0.55                      # average accuracy floor across all tasks
+    num_fewshot: 0                       # zero-shot eval
     batch_size: 8
     output_dir: "./checkpoints/run/artifacts/"
 ```
 
-After training, ForgeLM runs the listed tasks, compares to floors, and:
-- All tasks pass floor → run succeeds (exit 0)
-- Any task drops below floor → auto-revert to last-good checkpoint, exit 3
+After training, ForgeLM runs the listed tasks, computes the mean score, and:
+- Mean score meets or exceeds `min_score` → run succeeds (exit 0)
+- Mean score falls below `min_score` → auto-revert to last-good checkpoint, exit 3
 
 ## Supported tasks
 
@@ -43,24 +40,21 @@ Anything in `lm-evaluation-harness` works. Common picks:
 
 For Turkish projects, ForgeLM ships templates for `mmlu_tr` and `belebele_tr` adapted to Turkish-specific tasks.
 
-## Per-task floors
+## Accuracy floor
 
-Floors define the minimum acceptable post-training score per task. The model isn't promoted until *every* task passes its floor.
+`min_score` defines the minimum acceptable post-training **mean** score across all listed tasks. The model is only promoted when the average accuracy meets or exceeds this value.
 
 ```yaml
 evaluation:
   benchmark:
-    floors:
-      hellaswag: 0.55
-      mmlu: 0.50
-      # tasks without floors are reported but don't block promotion
-      truthfulqa: 0.45
+    tasks: ["hellaswag", "mmlu", "truthfulqa"]
+    min_score: 0.50                      # average accuracy floor (0.0–1.0)
 ```
 
-A floor of `null` means "report but don't gate". A floor of `0` is the same as no floor (everything passes).
+When `min_score` is `null` (the default), benchmarks are run and results are recorded, but the score never blocks promotion. A value of `0.0` is equivalent to no floor.
 
 :::tip
-Set floors slightly below your pre-training baseline. Goal: catch *regressions*, not require improvement on every task. A model that gains 5% on the target task while losing 2% on hellaswag is usually fine; one that drops 15% on hellaswag is broken.
+Set `min_score` slightly below your pre-training average baseline. Goal: catch *regressions*, not require improvement on every task. A model that gains 5% on the target task while losing 2% on hellaswag is usually fine; one whose average drops 15% is broken.
 :::
 
 ## Pre-train baselines
@@ -81,16 +75,13 @@ $ forgelm --config baseline.yaml --benchmark-only "Qwen/Qwen2.5-7B-Instruct"
 {"hellaswag": 0.61, "arc_easy": 0.75, "truthfulqa": 0.49, "mmlu": 0.52}
 ```
 
-A reasonable floor is the baseline minus 0.03 (3% slack for stochastic variation):
+A reasonable floor is the baseline average minus 0.03 (3% slack for stochastic variation):
 
 ```yaml
 evaluation:
   benchmark:
-    floors:
-      hellaswag: 0.58                   # baseline 0.61 - 0.03
-      arc_easy: 0.72
-      truthfulqa: 0.46
-      mmlu: 0.49
+    tasks: ["hellaswag", "arc_easy", "truthfulqa", "mmlu"]
+    min_score: 0.56                    # baseline average ~0.59 - 0.03
 ```
 
 ## Output artifacts
@@ -129,16 +120,16 @@ CI pipelines parse `verdict`. See [Auto-Revert](#/evaluation/auto-revert) for th
 |---|---|---|---|
 | `enabled` | bool | `false` | Master switch. |
 | `tasks` | list | `[]` | Task names from lm-eval-harness. |
-| `floors` | dict | `{}` | Per-task minimum acceptable score. |
-| `num_fewshot` | int | `0` | 0 for zero-shot, 5 for 5-shot. |
-| `batch_size` | int | `8` | Eval batch size. |
+| `min_score` | float | `null` | Minimum average accuracy floor (0.0–1.0). Auto-revert triggers when mean score falls below this. |
+| `num_fewshot` | int | `null` | Few-shot example count. `null` uses each task's documented default. |
+| `batch_size` | string | `"auto"` | Eval batch size: `"auto"` or an integer string. |
 | `limit` | int | `null` | Cap rows per task — for fast smoke tests. |
-| `device` | string | `"cuda:0"` | Eval device. |
+| `output_dir` | string | `null` | Where to save benchmark results JSON. Defaults to the training `output_dir`. |
 
 ## Common pitfalls
 
 :::warn
-**Floors above pre-train baseline.** Set the floor higher than what the base model achieves and *every* run fails — auto-revert kicks in and you never get a checkpoint. Always start with `baseline - margin`.
+**`min_score` above pre-train baseline average.** Set `min_score` higher than the base model's mean task score and every run fails — auto-revert kicks in and you never get a checkpoint. Always start with `baseline average - margin`.
 :::
 
 :::warn
@@ -151,6 +142,6 @@ CI pipelines parse `verdict`. See [Auto-Revert](#/evaluation/auto-revert) for th
 
 ## See also
 
-- [Auto-Revert](#/evaluation/auto-revert) — what happens when floors fail.
+- [Auto-Revert](#/evaluation/auto-revert) — what happens when `min_score` is not met.
 - [LLM-as-Judge](#/evaluation/judge) — qualitative eval beyond benchmarks.
 - [Trend Tracking](#/evaluation/trend-tracking) — comparing scores across runs.

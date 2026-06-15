@@ -29,7 +29,7 @@ EU AI Act Madde 13 şeffaflığı zorunlu kılar: deploy edilen AI sistemleri ne
 ```markdown
 # Acme Customer Support v1.2.0
 
-ForgeLM 0.5.5 kullanılarak Qwen2.5-7B-Instruct'tan fine-tune edilmiş
+ForgeLM 0.7.0 kullanılarak Qwen2.5-7B-Instruct'tan fine-tune edilmiş
 müşteri-destek asistanı.
 
 ## Model detayları
@@ -113,27 +113,14 @@ Bu modeli kullanırsanız lütfen şöyle atıf yapın:
   title  = {Acme Customer Support v1.2.0},
   author = {Acme Corp},
   year   = {2026},
-  note   = {ForgeLM 0.5.5 ile fine-tune edildi}
+  note   = {ForgeLM 0.7.0 ile fine-tune edildi}
 }
 ```
 ```
 
 ## Konfigürasyon
 
-```yaml
-output:
-  model_card: true                              # varsayılan
-  model_card_template: null                     # özel Jinja2 template yolu
-```
-
-Marka için varsayılan template'i override edin:
-
-```yaml
-output:
-  model_card_template: "templates/acme-card.j2"
-```
-
-Template aynı veriyi alır — sadece farklı render eder.
+Model card üretimi her başarılı koşudan sonra otomatiktir — etkinleştirmek veya devre dışı bırakmak için YAML anahtarı yoktur. ForgeLM'de `output:` üst-düzey config bloğu bulunmaz; böyle bir blok eklenirse Pydantic doğrulaması tarafından reddedilir (`extra="forbid"`). Template'i özelleştirmeniz gerekiyorsa, belgelemeden önce gerçek alan adı için `forgelm/config.py`'daki güncel şemayı kontrol edin.
 
 ## Manuel eklemeler
 
@@ -157,4 +144,4 @@ HuggingFace Hub yayını için ForgeLM'in model card'ı HuggingFace'in standart 
 
 - [Annex IV](#/compliance/annex-iv) — Madde 11 kardeşi.
 - [Uyumluluk Genel Bakış](#/compliance/overview) — bağlam.
-- [Konfigürasyon Referansı](#/reference/configuration) — `output.model_card` alanı.
+- [Konfigürasyon Referansı](#/reference/configuration) — model card girdileri olarak kullanılan `compliance.*` alanları.

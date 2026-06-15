@@ -13,7 +13,7 @@ ForgeLM, CI/CD hattının bir adımı olarak temiz şekilde yerleşmek üzere ta
 |---|---|---|
 | `0` | Başarı | Artifact'ları terfi ettir |
 | `1` | Konfigürasyon hatası | Hızlıca başarısız ol; YAML'ı düzelt, sonra dene |
-| `2` | Audit uyarıları | İncelenmeden merge engellensin |
+| `2` | Eğitim hatası | Hızlıca başarısız ol; kilitlenmeyi / OOM / işlenmeyen istisnayı araştır |
 | `3` | Otomatik geri alma tetiklendi | Başarısız olarak işaretle; gerilemeyi araştır |
 | `4` | İnsan onayı bekliyor | Hattı askıya al; reviewer'ı tetikle |
 

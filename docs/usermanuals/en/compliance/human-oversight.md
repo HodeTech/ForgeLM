@@ -82,8 +82,7 @@ Every approval (or rejection) appends to `audit_log.jsonl`:
 
 ```json
 {
-  "ts": "2026-04-29T15:18:42Z",
-  "seq": 87,
+  "timestamp": "2026-04-29T15:18:42Z",
   "event": "human_approval.granted",
   "run_id": "abc123",
   "approver": "ci-reviewer@example",

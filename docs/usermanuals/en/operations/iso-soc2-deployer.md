@@ -23,7 +23,7 @@ The deep guide answers each with the exact `jq` / CLI command + the artefact it 
 1. "Show me the audit trail for every model promotion in the past 90 days" → `forgelm verify-audit` + `jq 'select(.event == "human_approval.granted")'`.
 2. "Show me the change-control evidence — who approved this model?" → cross-reference `training.started` + `human_approval.granted` events; two distinct operator IDs prove segregation of duties (ISO A.5.3, SOC 2 CC1.5).
 3. "Show me the data lineage" → `data_provenance.json`; `sha256` + `hf_revision` pin the corpus.
-4. "Show me the supply chain" → `gh release download v0.5.5 --pattern 'sbom-*'`; CycloneDX 1.5 JSON.
+4. "Show me the supply chain" → `gh release download v0.7.0 --pattern 'sbom-*'`; CycloneDX 1.5 JSON.
 5. "Show me the access controls" → IdP audit log + `FORGELM_OPERATOR` cross-reference.
 6. "Show me the encryption posture" → deployer-side substrate (KMS audit log + `data_governance_report.json`).
 7. "Show me the incident response" → `audit.classifier_load_failed` + F-compliance-110 strict gate.
