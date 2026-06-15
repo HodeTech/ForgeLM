@@ -967,7 +967,7 @@ class TestVerifyIntegrity:
         it on a POSIX host must not false-positive the file as removed/added
         — both sides normalise separators to forward slashes."""
         from forgelm.cli.subcommands._verify_integrity import verify_integrity
-        from forgelm.compliance import _hash_file
+        from forgelm.compliance import hash_file
 
         model_dir = tmp_path / "final_model"
         sub = model_dir / "weights"
@@ -975,7 +975,7 @@ class TestVerifyIntegrity:
         payload = b"shard-0"
         (sub / "shard0.bin").write_bytes(payload)
         # Hand-craft a manifest with a Windows-style backslash separator.
-        hashed = _hash_file(str(sub / "shard0.bin"), "weights\\shard0.bin")
+        hashed = hash_file(str(sub / "shard0.bin"), "weights\\shard0.bin")
         (model_dir / "model_integrity.json").write_text(json.dumps({"artifacts": [hashed]}))
 
         result = verify_integrity(str(model_dir))
@@ -983,6 +983,34 @@ class TestVerifyIntegrity:
         assert result.removed == []
         assert result.added == []
         assert result.verified_count == 1
+
+    def test_io_error_during_hashing_exits_training_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A genuine runtime I/O failure (PermissionError) during hashing must
+        map to EXIT_TRAINING_ERROR (exit 2), not EXIT_CONFIG_ERROR (exit 1).
+
+        Locks the OSError branch at _run_verify_integrity_cmd:243-251 which
+        was previously untested (F-M-25).
+        """
+        from forgelm.cli._exit_codes import EXIT_TRAINING_ERROR
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+
+        model_dir = tmp_path / "final_model"
+        _write_model_with_integrity(model_dir)
+
+        # Patch the now-public hash_file at the point it is imported inside
+        # verify_integrity() — the lazy import resolves from forgelm.compliance,
+        # so we patch it there so every caller in this process sees the stub.
+        monkeypatch.setattr(
+            "forgelm.compliance.hash_file",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError("denied")),
+        )
+
+        args = _build_args(path=str(model_dir))
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_integrity_cmd(args, output_format="json")
+        assert ei.value.code == EXIT_TRAINING_ERROR
 
 
 # ---------------------------------------------------------------------------

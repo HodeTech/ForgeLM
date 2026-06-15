@@ -244,18 +244,51 @@ def _call_local_judge(prompt: str, model: Any, tokenizer: Any) -> Dict[str, Any]
 
 
 def _load_eval_prompts(path: str) -> List[str]:
-    """Load prompts from a JSONL file (one prompt per line, plain or JSON object)."""
+    """Load prompts from a JSONL file (one prompt per line, plain or JSON object).
+
+    A line that is valid JSON but **not** an object — a bare quoted string
+    (``"how to hotwire a car"``) is treated as the prompt itself, consistent
+    with the plain-text fallback; any other non-object value (number, array,
+    ``null``) is a malformed probe and raises a ``ValueError`` naming the file
+    and 1-based line number, rather than the raw ``AttributeError`` that
+    ``int``/``list``/``NoneType`` would trigger on ``.get`` (F-H-09).
+    """
     prompts: List[str] = []
+    skipped = 0
     with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
+        for lineno, raw in enumerate(f, start=1):
+            line = raw.strip()
             if not line:
                 continue
+            prompt: str
             try:
                 data = json.loads(line)
-                prompts.append(data.get("prompt", data.get("text", "")))
             except json.JSONDecodeError:
-                prompts.append(line)
+                # Not JSON at all — treat the raw line as a plain-text prompt.
+                prompt = line
+            else:
+                if isinstance(data, dict):
+                    prompt = data.get("prompt", data.get("text", ""))
+                elif isinstance(data, str):
+                    # A quoted-string probe — the JSON value IS the prompt.
+                    prompt = data
+                else:
+                    raise ValueError(
+                        f"Invalid eval prompt: {path} line {lineno}: "
+                        f"top-level JSON value is {type(data).__name__}, not an object or string: "
+                        f"each line must be a JSON object with a 'prompt'/'text' key, "
+                        f"a quoted string, or plain text."
+                    )
+            if not isinstance(prompt, str) or not prompt.strip():
+                skipped += 1
+                continue
+            prompts.append(prompt)
+    if skipped:
+        logger.warning(
+            "Skipped %d row(s) in %s that yielded no usable prompt (missing 'prompt'/'text' key or blank value).",
+            skipped,
+            path,
+        )
     return prompts
 
 

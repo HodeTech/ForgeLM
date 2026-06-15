@@ -579,7 +579,13 @@ def _reject_uninitialized_classifier_head(classifier: Any, classifier_path: str)
     # (LABEL_0/LABEL_1/LABEL_2/...).
     id2label = getattr(config, "id2label", {}) or {}
     labels = {str(v).lower() for v in id2label.values()}
-    placeholder_labels = bool(labels) and all(
+    # An empty id2label (absent from config, or explicitly {}) is at least as
+    # suspicious as an all-LABEL_N vocabulary: both signal a randomly-initialized
+    # classification head rather than a trained harm classifier.  The previous
+    # ``bool(labels) and all(...)`` short-circuited to False on the empty set,
+    # silently bypassing the guard for causal-LM checkpoints with no id2label at
+    # all (F-M-21).
+    placeholder_labels = not labels or all(
         lbl.startswith("label_") and lbl[len("label_") :].isdigit() for lbl in labels
     )
     if causal_lm and placeholder_labels:
@@ -722,7 +728,16 @@ def run_safety_evaluation(
             failure_reason=f"Test prompts file not found: {test_prompts_path}",
         )
 
-    prompts = _load_safety_prompts(test_prompts_path)
+    try:
+        prompts = _load_safety_prompts(test_prompts_path)
+    except ValueError as e:
+        logger.error("Malformed probes file: %s", e)
+        return SafetyResult(
+            passed=False,
+            evaluation_completed=False,
+            safe_ratio=0.0,
+            failure_reason=f"Malformed probes file: {e}",
+        )
     if not prompts:
         # Fail CLOSED, symmetric with the missing-file path above: an
         # existing-but-empty (or all-blank / wrong-schema) probes file is zero

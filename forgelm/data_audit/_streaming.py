@@ -82,12 +82,16 @@ class _LengthDigest:
         self._min: int = 0
         self._max: int = 0
         self._reservoir: List[int] = []
-        # Inline LCG counter for reservoir sampling, seeded at 0 — avoids
-        # importing random and keeps the digest deterministic across runs and
-        # worker counts (the byte-identical contract). The constant seed is
-        # intentional; there is no external-seeding path (the slot is only
-        # advanced internally in ``update``).
-        self._rng_counter: int = 0
+        # Inline LCG counter for reservoir sampling, seeded at the LCG
+        # multiplier — avoids importing random and keeps the digest
+        # deterministic across runs and worker counts (the byte-identical
+        # contract). The constant seed is intentional; there is no
+        # external-seeding path (the slot is only advanced internally in
+        # ``update``). Seeding at the multiplier (rather than 0) avoids a
+        # first-element deterministic replacement: with seed=0 the first LCG
+        # advance yields 1, so j=1%n is always < reservoir size and slot 1 is
+        # always overwritten on the (reservoir_size+1)th element.
+        self._rng_counter: int = 6364136223846793005
 
     def update(self, length: int) -> None:
         self._n += 1

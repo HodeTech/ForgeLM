@@ -224,10 +224,10 @@ Each combo:
    to cover the heaviest extras path. `qlora` pulls `bitsandbytes`, which
    only ships Linux wheels — we never claim Windows / macOS support for
    that extra.
-4. Runs `pytest tests/ -q --ignore=tests/test_cost_estimation.py`. The
-   cost-estimation test is excluded because its pricing fixture drifts on
-   a different cadence than the release matrix; a stale fixture would
-   break the chain for reasons unrelated to packaging health.
+4. Runs `pytest tests/ -q -m 'not fixture_drift'`. Tests marked
+   `@pytest.mark.fixture_drift` are excluded because their fixtures drift
+   on a different cadence than the release matrix; the marker follows the
+   file if renamed.
 5. Generates a CycloneDX 1.5 SBOM via `python tools/generate_sbom.py`,
    redirected to `sbom-${{ matrix.os }}-py${{ matrix.python }}.json`.
 6. Uploads each SBOM as its own artifact — 12 per release tag, retained
@@ -273,9 +273,9 @@ Current target:
   - `v0.4.0` → Phase 10 done (Post-Training Completion)
   - `v0.5.0` → Phases 11 + 12 done (Ingestion + Quickstart)
   - `v0.5.5` → Phase 12.6 closure cycle done (38 fazlar / 5 waves bundled)
-  - `v0.6.0` → Phase 14 done (Pipeline Chains)
+  - `v0.6.0` → Phase 15 done (Ingestion Pipeline Reliability)
   - `v0.6.0-pro` → Phase 13 done (Pro CLI; gated release)
-  - `v0.7.0` → Phase 21 done (GDPR erasure / retention)
+  - `v0.7.0` → Phase 14 done (Multi-Stage Pipeline Chains)
 - **Patch** (`0.N.M`) — as needed; typically within 1 week of a bug report for critical issues
 - **Pre-release** (`rcN`) — at least one rc before every minor, kept on PyPI for 1-2 weeks
 

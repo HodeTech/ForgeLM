@@ -22,6 +22,7 @@ ForgeLM, subcommand'larla tek bir `forgelm` binary'si yayınlar. Bu sayfa kanoni
 | `forgelm verify-audit` | Audit log zincirini doğrula (timestamp, prev_hash, HMAC). |
 | `forgelm verify-annex-iv` | Export edilmiş Annex IV artefact'ını doğrula (§1-9 alanlar + manifest hash). |
 | `forgelm verify-gguf` | GGUF model dosyası bütünlüğünü doğrula (magic header + metadata + SHA-256 sidecar). |
+| `forgelm verify-integrity` | Model dizinini Madde 15 SHA-256 bütünlük manifest'ine karşı doğrula. |
 | `forgelm approve` | İnsan onay isteğini imzala ve `final_model.staging/`'i promote et. |
 | `forgelm reject` | İnsan onay isteğini reddet; staging dizini adli inceleme için korunur. |
 | `forgelm approvals` | Bekleyen onayları listele (`--pending`) veya tek birini incele (`--show RUN_ID`). |
@@ -190,6 +191,15 @@ $ forgelm verify-audit PATH/TO/audit_log.jsonl --require-hmac
 ```
 
 Monoton timestamp'leri, `prev_hash` zincir bütünlüğünü, `seq` boşluk tespitini ve (yapılandırıldığında) HMAC imzalarını doğrular. Geçerli zincirde exit `0`; tahrif tespitinde structured error envelope ile non-zero.
+
+## Model bütünlüğü doğrula: `forgelm verify-integrity`
+
+```shell
+$ forgelm verify-integrity MODEL_DIR
+$ forgelm verify-integrity MODEL_DIR --output-format json
+```
+
+`<MODEL_DIR>/model_integrity.json` dosyasını (eğitim sırasında compliance export tarafından yazılır) okur ve kayıtlı her artefaktın SHA-256'sını yeniden hesaplar. Manifest oluşturulduğundan beri **değişen**, **kaldırılan** veya **eklenen** dosyaları raporlar. Manifest dosyasının kendisi yürüyüşten hariç tutulur. Her kayıtlı artefakt mevcut ve değişmemişse ve fazladan dosya yoksa exit `0`; herhangi bir uyuşmazlık veya girdi hatasında exit `1`; gerçek bir runtime I/O hatasında exit `2`.
 
 ## Kimlik Doğrulama
 

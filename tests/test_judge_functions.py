@@ -716,6 +716,49 @@ class TestLoadEvalPrompts:
         with pytest.raises(OSError):
             _load_eval_prompts(str(tmp_path / "nope.jsonl"))
 
+    # F-H-09: non-dict/non-string JSON values must raise ValueError, not AttributeError
+    @pytest.mark.parametrize(
+        "line,label",
+        [
+            ("42\n", "integer"),
+            ("null\n", "null"),
+            ("[1, 2, 3]\n", "array"),
+        ],
+    )
+    def test_non_dict_json_raises_value_error_not_attribute_error(self, tmp_path, line, label):
+        """A top-level JSON number, null, or array must raise ValueError with a
+        diagnostic message — NOT an AttributeError from .get — so the caller
+        receives a clear error instead of a cryptic crash (F-H-09)."""
+        from forgelm.judge import _load_eval_prompts
+
+        path = tmp_path / f"bad_{label}.jsonl"
+        path.write_text(line, encoding="utf-8")
+        with pytest.raises(ValueError, match=r"Invalid eval prompt"):
+            _load_eval_prompts(str(path))
+
+    def test_quoted_string_json_is_accepted_as_prompt(self, tmp_path):
+        """A bare quoted JSON string should be accepted as a plain-text prompt
+        (consistent with safety.py's _load_safety_prompts behaviour, F-H-09)."""
+        from forgelm.judge import _load_eval_prompts
+
+        path = tmp_path / "quoted.jsonl"
+        path.write_text('"tell me something interesting"\n', encoding="utf-8")
+        assert _load_eval_prompts(str(path)) == ["tell me something interesting"]
+
+    def test_missing_prompt_key_skips_row_and_warns(self, tmp_path, caplog):
+        """A dict with no 'prompt'/'text' key yields an empty string, which must
+        be skipped (not appended) and cause a logged warning (F-H-09)."""
+        import logging
+
+        from forgelm.judge import _load_eval_prompts
+
+        path = tmp_path / "nokey.jsonl"
+        path.write_text('{"other": "value"}\n{"prompt": "good"}\n', encoding="utf-8")
+        with caplog.at_level(logging.WARNING, logger="forgelm.judge"):
+            result = _load_eval_prompts(str(path))
+        assert result == ["good"]
+        assert any("Skipped" in r.getMessage() for r in caplog.records)
+
 
 class TestJudgeBatchSize:
     """F-P8-C-16: the library-API batch_size guard (judge.py:373) was

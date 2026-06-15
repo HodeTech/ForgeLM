@@ -23,7 +23,7 @@ _EVT_REVERT_TRIGGERED = "model.reverted"
 # Loss/eval-loss auto-revert decision gate — emitted on PASS and FAIL so the
 # primary post-training quality gate leaves a discrete decision record with the
 # thresholds it was checked against, mirroring the benchmark/safety/judge
-# ``*.evaluation_completed`` events (F-P4-OPUS-26).
+# ``*.evaluation_completed`` events.
 _EVT_LOSS_GATE_COMPLETED = "evaluation.loss_gate_completed"
 
 
@@ -150,7 +150,7 @@ def _normalize_answer(s: Any) -> str:
 
 # Comma-grouped thousands separators ("5,050", "1,234.5") — GSM8K's canonical
 # large-number rendering. Shape-anchored so only genuine grouped numerals are
-# rewritten: every comma must separate exactly three digits (F-P3-FABLE-51).
+# rewritten: every comma must separate exactly three digits.
 # This deliberately does NOT match European decimals like "12,5" (one comma,
 # two trailing digits) — those stay untouched so they aren't silently coerced.
 # Bounded, no competing quantifiers (runs on short answer tokens, not corpora).
@@ -161,7 +161,7 @@ def _parse_number(s: str) -> float:
     """``float(s)`` but tolerant of comma-grouped thousands separators.
 
     "5,050" → 5050.0 and "1,234.5" → 1234.5, matching GSM8K-style outputs
-    against comma-free golds (F-P3-FABLE-51). Only fully grouped numerals
+    against comma-free golds. Only fully grouped numerals
     (commas separating exactly three digits) are de-grouped; anything else is
     handed to ``float`` unchanged, which raises ``ValueError`` for non-numeric
     tokens exactly as before — including European decimals like "12,5".
@@ -178,7 +178,7 @@ def _answers_match(extracted: str, gold: str) -> bool:
     tolerance — keeps non-numeric answers ("12:15", "2/5") correct without
     forcing the prompts into a single shape.
     """
-    # An empty side never counts as a match (F-P2-FAB-32): a degenerate
+    # An empty side never counts as a match: a degenerate
     # unit-only completion ("Answer: $") normalizes to "" and would otherwise
     # equal a unit-only gold ("%") that also normalizes to "" — falsely scoring
     # 1.0. Per-row gold holes can also reach here despite the dataset-level
@@ -191,6 +191,12 @@ def _answers_match(extracted: str, gold: str) -> bool:
         return abs(_parse_number(extracted) - _parse_number(gold)) < 1e-6
     except ValueError:
         return False
+
+
+# Warn-once flag for _math_reward_fn: module-level bool instead of a function
+# attribute so it stays within the permitted module-level state (loggers,
+# constants, immutable registries) per architecture §4.
+_math_reward_fn_warned_no_golds: bool = False
 
 
 def _math_reward_fn(completions, **kwargs):
@@ -207,12 +213,14 @@ def _math_reward_fn(completions, **kwargs):
     completion ("Answer: 5 … Answer: 7") is therefore graded on the answer it
     actually concludes with (7), not an earlier discarded candidate (5). See
     ``ANSWER_EXTRACT_PATTERN`` in :mod:`forgelm.grpo_rewards` for the shared,
-    documented pattern both signals derive from (F-P2-FAB-06 / F-P3-FABLE-27).
+    documented pattern both signals derive from.
 
     Returns 1.0 for an exact match, 0.0 otherwise. Generations that don't
     contain an ``Answer:`` marker score 0.0 — the regex implicitly enforces
     the spec'd output format.
     """
+    global _math_reward_fn_warned_no_golds
+
     golds = kwargs.get("gold_answer")
     # No gold_answer column passed → reward function is wired but the dataset
     # carries no ground truth. Return zero rewards so training continues
@@ -221,16 +229,15 @@ def _math_reward_fn(completions, **kwargs):
     # only wires _math_reward_fn after _dataset_has_gold_answers returns True.
     # If a wiring regression DOES make it reachable, the correctness reward
     # silently contributes a constant zero every batch — warn once (not per
-    # batch) so an inert-but-wired reward is visible in the run log
-    # (F-P3-FABLE-50).
+    # batch) so an inert-but-wired reward is visible in the run log.
     if golds is None:
-        if not getattr(_math_reward_fn, "_warned_no_golds", False):
+        if not _math_reward_fn_warned_no_golds:
             logger.warning(
                 "_math_reward_fn is wired but no gold_answer column was received from "
                 "TRL — the correctness reward is contributing 0.0 every batch; check "
                 "the dataset columns / preprocessing."
             )
-            _math_reward_fn._warned_no_golds = True  # type: ignore[attr-defined]
+            _math_reward_fn_warned_no_golds = True
         return [0.0] * len(completions)
     # Use strict=True so a wiring regression (mismatched batch sizes) raises
     # immediately instead of silently truncating to the shorter list and
@@ -280,19 +287,19 @@ def _dataset_has_gold_answers(dataset: Dict[str, Any]) -> bool:
         # IndexError: row access unsupported (streaming/iterable wrappers).
         # TypeError: non-subscriptable train object. KeyError is unreachable
         # here — dict access is guarded by the membership check above and
-        # non-dict rows fall through to the column_names probe (F-P2-FAB-33).
+        # non-dict rows fall through to the column_names probe.
         pass
     cols = getattr(train, "column_names", None)
     if not (cols and "gold_answer" in cols):
         return False
     # Column is present by name. Prefer a first-row value probe so a
     # placeholder column (all None/"") isn't wired as real ground truth; if the
-    # wrapper isn't iterable, fall back to presence-only and say so (F-P2-FAB-33).
+    # wrapper isn't iterable, fall back to presence-only and say so.
     try:
         iterator = iter(train)
         # A self-iterating / one-shot iterable returns itself from ``iter()``;
         # consuming it here would silently drop the first training row. Trust
-        # presence-by-name for those and skip the value probe (F-P2-FAB-33).
+        # presence-by-name for those and skip the value probe.
         if iterator is train:
             logger.debug(
                 "gold_answer column detected by name only (one-shot iterator); "
@@ -338,7 +345,7 @@ class ForgeTrainer:
         # Canonical digest of the config that produced this run.  Bound into the
         # human_approval.required event, the training manifest, and the JSON
         # output envelope so the approval row / manifest / envelope all share one
-        # reproducibility anchor (XP-11 / F-P4-OPUS-05,13,15).
+        # reproducibility anchor.
         from .compliance import compute_config_hash
 
         self._config_hash = compute_config_hash(config)
@@ -356,7 +363,7 @@ class ForgeTrainer:
         unset, ``judge.py`` would treat ``api_key=None`` as "local" and silently
         run a different evaluator than configured — and with ``auto_revert=true`` a
         failed local load deletes the trained adapters over a misdiagnosed env-var
-        problem (F-P3-FABLE-18). Checking here (called from ``__init__`` and again
+        problem. Checking here (called from ``__init__`` and again
         from ``_run_judge_if_configured``) fails the run BEFORE the expensive
         training loop instead of after it.
         """
@@ -382,7 +389,7 @@ class ForgeTrainer:
         # ``run_benchmark`` and would otherwise surface AFTER a full training
         # run as exit 2, prompting CI retries of a deterministic, known-at-t=0
         # misconfiguration. Probe here so the install hint fires pre-training
-        # (F-P3-FABLE-25). Runs regardless of auto_revert — the gate is
+        # Runs regardless of auto_revert — the gate is
         # configured either way.
         if eval_cfg and eval_cfg.benchmark and eval_cfg.benchmark.enabled and eval_cfg.benchmark.tasks:
             from .benchmark import _check_lm_eval_available
@@ -543,7 +550,6 @@ class ForgeTrainer:
         latter reached the generic top-of-CLI catch and exited 2
         ("training crashed"), telling CI to retry on infra instead of
         prompting the operator to fix ``distributed.deepspeed_config``
-        (F-P2-FAB-25).
         """
         presets = {
             "zero2": "configs/deepspeed/zero2.json",
@@ -592,7 +598,7 @@ class ForgeTrainer:
         fall back to TRL's own 512/1024 ``max_length`` defaults while the config
         field, configuration.md, and the Article 11 compliance manifest all
         claim ``model.max_length`` applies — silent truncation plus a false
-        statement in an audit artefact (F-P3-FABLE-03). The preference configs'
+        statement in an audit artefact. The preference configs'
         ``max_length`` parameter is stable across the pinned TRL range; a future
         rename surfaces loudly as a ``TypeError`` at construction, never silent.
         """
@@ -681,7 +687,7 @@ class ForgeTrainer:
             kwargs["max_completion_length"] = self.config.training.grpo_max_completion_length
             # Honour model.max_length as the GRPO prompt cap so prompts aren't
             # silently truncated at TRL's 512 `max_prompt_length` default while
-            # the manifest claims model.max_length applies (F-P3-FABLE-03).
+            # the manifest claims model.max_length applies.
             self._apply_max_length(kwargs, "max_prompt_length")
             # GRPO trains on generation-based rewards, not validation loss, so
             # `_build_grpo_trainer` drops the eval_dataset. The eval-coupled
@@ -705,7 +711,7 @@ class ForgeTrainer:
     def execute_evaluation_checks(self, final_path: str, metrics: Dict[str, float]) -> bool:
         """Evaluates final loss against constraints. Returns True if acceptable, False if reverted.
 
-        Detection is decoupled from reversion (F-P3-FABLE-24): when an eval-loss
+        Detection is decoupled from reversion: when an eval-loss
         threshold / baseline is configured, the NaN-Inf and threshold checks ALWAYS
         run so a breach is recorded, matching the benchmark/safety/judge gates which
         always evaluate. Only the *revert* is gated on ``auto_revert``. Without
@@ -730,7 +736,7 @@ class ForgeTrainer:
 
         # A config-supplied NaN/Inf baseline would silently disable the
         # regression check (``final_loss > nan`` is always False) and poison the
-        # improvement-percentage log below. Treat it as no baseline (F-P2-FAB-22).
+        # improvement-percentage log below. Treat it as no baseline.
         if baseline_loss is not None and (math.isnan(baseline_loss) or math.isinf(baseline_loss)):
             logger.warning(
                 "Configured baseline_loss is %s (NaN or Inf) — ignoring it; baseline regression check disabled.",
@@ -779,7 +785,7 @@ class ForgeTrainer:
 
         # PASS — record the discrete accept decision with the thresholds it was
         # checked against, symmetric with the benchmark/safety/judge gates
-        # (F-P4-OPUS-26). Previously the passing loss surfaced only inside the
+        # Previously the passing loss surfaced only inside the
         # opaque pipeline.completed metrics_summary blob.
         self._emit_loss_gate_event(True, final_loss, max_loss, baseline_loss)
 
@@ -804,7 +810,7 @@ class ForgeTrainer:
         max_loss: Optional[float],
         baseline_loss: Optional[float],
     ) -> None:
-        """Emit the loss/eval-loss decision-gate audit event (F-P4-OPUS-26).
+        """Emit the loss/eval-loss decision-gate audit event.
 
         Mirrors the benchmark/safety/judge ``*.evaluation_completed`` events so
         an auditor can grep a discrete pass/fail record for the primary
@@ -846,7 +852,6 @@ class ForgeTrainer:
         # Stash the operator-actionable reason so the returned TrainResult can
         # surface it on ``.error`` even for the eval-loss path, which returns a
         # freshly-built result that never saw the gate's computed reason
-        # (F-P2-FAB-30).
         self._last_revert_reason = reason
 
         # Article 12 audit trail — emit before destructive action so the
@@ -1005,7 +1010,7 @@ class ForgeTrainer:
         the CUDA cache, rebuilds the trainer, and retries — until
         oom_recovery_min_batch_size is reached.
 
-        Residual semantics (F-P2-FAB-24): the retry re-enters ``train()`` with
+        Residual semantics: the retry re-enters ``train()`` with
         the *original* ``resume_from_checkpoint`` argument and a freshly-built
         trainer (new optimizer + LR scheduler from step 0), while ``self.model``
         keeps whatever weights it held when the OOM fired. So an OOM with no
@@ -1027,7 +1032,7 @@ class ForgeTrainer:
         # Clamp defensively so a config that slipped past the ``ge=1`` Field
         # bound (e.g. a TrainingConfig built by hand in a test) can never drive
         # ``new_bs`` to 0 and raise ZeroDivisionError inside the handler instead
-        # of the clean "cannot recover" diagnostic (F-P3-FABLE-23).
+        # of the clean "cannot recover" diagnostic.
         min_bs = max(getattr(cfg, "oom_recovery_min_batch_size", 1), 1)
         # Rebuild only from the *user-supplied* callbacks captured in train()
         # — NOT self.trainer.callback_handler.callbacks, which already contains
@@ -1035,7 +1040,7 @@ class ForgeTrainer:
         # the report_to integration callback). Passing those back into
         # _build_trainer makes HF prepend its defaults a second time, doubling
         # progress output + metric writers and leaking stale EarlyStopping
-        # patience across the retry (F-P3-FABLE-22).
+        # patience across the retry.
         callbacks: list = list(getattr(self, "_user_callbacks", []))
 
         while True:
@@ -1120,8 +1125,7 @@ class ForgeTrainer:
             # A NaN/Inf baseline silently disables the regression gate:
             # ``final_loss > float('nan')`` is always False, so the operator
             # believes the gate is armed while every model passes. Treat it like
-            # a missing baseline (leave eval_cfg.baseline_loss=None) and warn
-            # (F-P2-FAB-22).
+            # a missing baseline (leave eval_cfg.baseline_loss=None) and warn.
             logger.warning(
                 "Baseline eval_loss is %s (NaN or Inf) — the pre-training eval "
                 "diverged. Baseline regression check will be skipped (gate not armed).",
@@ -1138,7 +1142,7 @@ class ForgeTrainer:
         Without this line the run log shows an ERROR ("BENCHMARK FAILED") then a
         successful exit 0 with nothing connecting them — the operator must
         reverse-engineer the auto_revert=false rationale from the config
-        (F-P3-FABLE-49). One helper keeps the wording identical across the three
+        One helper keeps the wording identical across the three
         gates; the failure reason is also recorded on the result.
         """
         logger.warning(
@@ -1160,7 +1164,7 @@ class ForgeTrainer:
 
         ``reason`` populates ``TrainResult.error`` so the pipeline stage error
         and JSON envelope carry the gate's precise failure reason instead of the
-        generic "Stage gate failed." fallback (F-P2-FAB-30).
+        generic "Stage gate failed." fallback.
         """
         train_result.success = False
         train_result.reverted = True
@@ -1242,7 +1246,7 @@ class ForgeTrainer:
             safe_ratio=safety_result.safe_ratio,
             # total_count makes a vacuous pass (zero probes evaluated)
             # distinguishable from a real 100%-safe evaluation in the
-            # append-only audit trail (F-P3-FABLE-16).
+            # append-only audit trail.
             total_count=safety_result.total_count,
             safety_score=safety_result.safety_score,
             categories=safety_result.category_distribution,
@@ -1250,6 +1254,13 @@ class ForgeTrainer:
         if safety_result.passed:
             return True
         safety_reason = safety_result.failure_reason or "Safety check failed."
+        # An infrastructure failure (missing probes file, classifier load error)
+        # sets evaluation_completed=False. Do not auto-revert a successfully
+        # trained model because of an infra misconfiguration — the operator must
+        # fix the infrastructure, not lose a trained model.
+        if not getattr(safety_result, "evaluation_completed", True):
+            self._log_gate_kept_no_revert("safety", safety_reason, train_result)
+            return True
         if not (self.config.evaluation and self.config.evaluation.auto_revert):
             self._log_gate_kept_no_revert("safety", safety_reason, train_result)
             return True
@@ -1409,7 +1420,7 @@ class ForgeTrainer:
         if not self.execute_evaluation_checks(gate_path, metrics):
             # Surface the eval-loss gate's computed reason (NaN/Inf or threshold
             # breach) on .error so the pipeline stage / JSON envelope don't fall
-            # back to the generic "Stage gate failed." string (F-P2-FAB-30).
+            # back to the generic "Stage gate failed." string.
             return TrainResult(
                 success=False,
                 metrics=metrics,
@@ -1453,7 +1464,6 @@ class ForgeTrainer:
         # Stash the user-supplied callbacks so OOM-recovery rebuilds reuse THIS
         # list (free of HF's instantiated defaults) rather than scraping the
         # live callback_handler, which duplicates defaults on rebuild
-        # (F-P3-FABLE-22).
         self._user_callbacks = callbacks
 
         try:
@@ -1461,11 +1471,10 @@ class ForgeTrainer:
             # (GRPOConfig TypeError, eval_strategy/eval_dataset mismatch,
             # DeepSpeed FileNotFoundError, …) — a real failure class. Keep it
             # INSIDE the try so a construction failure still emits pipeline.failed
-            # + notify_failure after notify_start already fired (F-P2-FAB-09).
+            # + notify_failure after notify_start already fired.
             self._build_trainer(callbacks)
             train_result = self._run_training_pipeline(resume_from_checkpoint)
-            # Reproducibility anchors for the JSON run-output envelope
-            # (XP-11 / F-P4-OPUS-15): the run's audit id + the config digest.
+            # Reproducibility anchors for the JSON run-output envelope:
             # ``getattr`` keeps train() robust for tests that build a trainer
             # via ``__new__`` without running __init__ (no _config_hash set).
             train_result.run_id = getattr(self.audit, "run_id", None)
@@ -1478,7 +1487,7 @@ class ForgeTrainer:
             # training just crashed on an I/O error) must NOT suppress the
             # failure webhook or replace the original training exception. Each
             # emission is isolated so the bare ``raise`` below always re-raises
-            # ``e`` with its original traceback (F-P2-FAB-46).
+            # ``e`` with its original traceback.
             try:
                 self.audit.log_event("pipeline.failed", error=str(e))
             except Exception:  # noqa: BLE001 — terminal audit emit is advisory at this point; never mask the training failure. # NOSONAR
@@ -1541,7 +1550,7 @@ class ForgeTrainer:
         # Note: this import is stdlib-only at module top, so it does NOT raise
         # for a missing lm-eval — that ImportError is raised (with the install
         # hint) by the _check_lm_eval_available preflight in
-        # _validate_evaluation_config before training starts (F-P3-FABLE-25).
+        # _validate_evaluation_config before training starts.
         # We re-raise rather than swallow-to-None here so a configured gate can
         # never silently degrade to a skip-with-exit-0.
         try:
@@ -1696,8 +1705,7 @@ class ForgeTrainer:
 
         # safety.py is stdlib-only at module top; this never fires for a missing
         # heavy dep. Re-raise rather than swallow-to-None so a configured safety
-        # gate can never silently degrade to a skip with exit 0 (F-P3-FABLE-25 /
-        # F-P3-FABLE-34).
+        # gate can never silently degrade to a skip with exit 0.
         try:
             from .safety import run_safety_evaluation
         except ImportError as e:
@@ -1739,7 +1747,7 @@ class ForgeTrainer:
 
         # judge.py is stdlib-only at module top; this never fires for a missing
         # heavy dep. Re-raise rather than swallow-to-None so a configured judge
-        # gate can never silently degrade to a skip with exit 0 (F-P3-FABLE-25).
+        # gate can never silently degrade to a skip with exit 0.
         try:
             from .judge import run_judge_evaluation
         except ImportError as e:
@@ -1818,7 +1826,7 @@ class ForgeTrainer:
             # gradient_accumulation_steps). The manifest records the *configured*
             # (pre-OOM) batch size — the documented contract — but the model card
             # reads the *effective* (post-OOM) value, so without an explicit
-            # marker the two artefacts silently contradict (F-P3-FABLE-04).
+            # marker the two artefacts silently contradict.
             # Record BOTH values + an ``oom_recovery`` flag so an auditor sees the
             # discrepancy explained, and restore inside ``finally`` so a manifest
             # build error can't leave config holding the configured values under
@@ -1873,7 +1881,7 @@ class ForgeTrainer:
                 # is absent (audit CLI defaults to ./audit/, trainer to
                 # ./checkpoints/).  Without a discrete event the append-only log
                 # shows an unqualified success and an auditor over-trusts bundle
-                # completeness (F-P4-OPUS-23). Emit a distinct gap event so the
+                # completeness. Emit a distinct gap event so the
                 # omission is in the hash-chained record, not just stderr.
                 if not governance.get("data_audit_inlined", False):
                     self.audit.log_event(
@@ -1901,7 +1909,7 @@ class ForgeTrainer:
             # secondary Article 10 report made it.  Pre-fix this event was
             # gated behind ``if governance_ok:``, so a successful manifest
             # export with a failed governance report left NO audit trace of the
-            # Article 11 export (F-P4-OPUS-11).
+            # Article 11 export.
             try:
                 files = sorted(os.listdir(compliance_dir))
             except OSError:
@@ -1917,8 +1925,7 @@ class ForgeTrainer:
             # artefacts: per error-handling.md BLE001 rule 3 the primary
             # failure must be recorded independently. Emit an audit event so a
             # failed/torn compliance export leaves an append-only trace rather
-            # than a silent exit-0 run with an empty compliance dir
-            # (F-P4-OPUS-11).
+            # than a silent exit-0 run with an empty compliance dir.
             logger.warning("Failed to export compliance artifacts: %s", e)
             self.audit.log_event("compliance.artifacts_export_failed", reason=str(e))
 

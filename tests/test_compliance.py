@@ -1062,3 +1062,150 @@ class TestVerifyAuditLog:
         assert result.valid is True
         assert result.entries_count == 0
         assert result.first_invalid_index is None
+
+
+# ---------------------------------------------------------------------------
+# G05 regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestAuditLoggerRerootReglass:
+    """F-H-06 disposition: the audit re-root opt-in stays an env-var break-glass
+    (FORGELM_ALLOW_AUDIT_REROOT). Migrating it to a validated AuditConfig field
+    is the deferred roadmap item F-PR29-A6-14 (the audit subsystem takes no
+    ForgeConfig today; all 10 AuditLogger construction sites are config-less).
+    These tests lock the env-var gate behaviour in the meantime."""
+
+    def test_default_construction_refuses_reroot(self, tmp_path, monkeypatch):
+        """With the break-glass env var unset, a truncated-log re-root is refused."""
+
+        from forgelm.compliance import AuditLogger, ConfigError
+
+        monkeypatch.delenv("FORGELM_ALLOW_AUDIT_REROOT", raising=False)
+        log_path = tmp_path / "audit_log.jsonl"
+        AuditLogger(str(tmp_path)).log_event("first.event")
+        log_path.write_text("", encoding="utf-8")  # truncate, keep manifest
+
+        with pytest.raises(ConfigError, match="re-root refused"):
+            AuditLogger(str(tmp_path)).log_event("second.event")
+
+    def test_env_var_breakglass_permits_fresh_chain(self, tmp_path, monkeypatch):
+        """FORGELM_ALLOW_AUDIT_REROOT=1 is the operator break-glass: with it set,
+        a deliberate re-root is permitted (the integrity ERROR still fires)."""
+
+        from forgelm.compliance import AuditLogger
+
+        log_path = tmp_path / "audit_log.jsonl"
+        AuditLogger(str(tmp_path)).log_event("first.event")
+        log_path.write_text("", encoding="utf-8")  # truncate, keep manifest
+
+        monkeypatch.setenv("FORGELM_ALLOW_AUDIT_REROOT", "1")
+        AuditLogger(str(tmp_path)).log_event("second.event")  # must not raise
+        assert log_path.read_text(encoding="utf-8").strip()
+
+
+class TestExportPipelineManifestFsync:
+    """F-M-12 regression: export_pipeline_manifest must fsync before os.replace."""
+
+    def test_fsync_called_before_replace(self, tmp_path):
+        """flush+fsync must be called on the tmp file before os.replace so a
+        kernel crash between close and rename does not silently discard the
+        write (Article 12 durability requirement)."""
+        from unittest import mock
+
+        from forgelm.compliance import export_pipeline_manifest
+
+        manifest = {
+            "forgelm_version": "test",
+            "pipeline_run_id": "r1",
+            "pipeline_config_hash": "sha256:abc",
+            "started_at": "now",
+            "final_status": "completed",
+            "stages": [],
+        }
+
+        fsync_calls = []
+        real_fsync = os.fsync
+
+        def capturing_fsync(fd):
+            fsync_calls.append(fd)
+            return real_fsync(fd)
+
+        with mock.patch("forgelm.compliance.os.fsync", side_effect=capturing_fsync):
+            export_pipeline_manifest(manifest, str(tmp_path))
+
+        assert fsync_calls, "export_pipeline_manifest must call os.fsync before os.replace"
+
+
+class TestAuditSecretWarningConsistency:
+    """F-L-08 regression: weak-secret warning message must not contradict itself."""
+
+    def test_warning_message_does_not_say_32_plus_when_threshold_is_16(self, tmp_path, monkeypatch, caplog):
+        """The warning text must not tell the operator '32+ random bytes' while
+        the actual hard threshold is 16 chars — the contradiction was the bug.
+        After F-L-08 the message uses the phrase 'accepted minimum' (not
+        'recommended minimum') and refers to 'at least %d characters' bound to
+        the actual constant, followed by the KMS advisory."""
+        import logging
+
+        from forgelm.compliance import _MIN_AUDIT_SECRET_LEN, AuditLogger
+
+        # 8-char secret: definitely below the threshold.
+        monkeypatch.setenv("FORGELM_AUDIT_SECRET", "shortkey")
+        with caplog.at_level(logging.WARNING, logger="forgelm.compliance"):
+            AuditLogger(str(tmp_path)).log_event("e0")
+
+        warning_msgs = [r.message for r in caplog.records if "FORGELM_AUDIT_SECRET" in r.message]
+        assert warning_msgs, "expected at least one weak-secret warning"
+        msg = warning_msgs[0]
+        # Must reference the actual threshold value, not contradict it.
+        assert str(_MIN_AUDIT_SECRET_LEN) in msg
+        # Must not falsely claim the recommended minimum IS the threshold.
+        assert "recommended minimum of 16" not in msg
+        # Must mention KMS or 32+ as a production advisory, not as the threshold.
+        assert "32+" in msg or "KMS" in msg
+
+
+class TestComputeConfigHashDocstring:
+    """F-M-11 regression: compute_config_hash must document WebhookConfig.url is not redacted."""
+
+    def test_docstring_does_not_claim_full_redaction(self):
+        """The docstring must NOT claim 'Secrets are already redacted…the digest
+        never depends on a credential value' when WebhookConfig.url flows into
+        the hash unredacted (F-M-11)."""
+        from forgelm.compliance import compute_config_hash
+
+        doc = compute_config_hash.__doc__ or ""
+        # The false claim must be absent.
+        assert "never depends on a credential value" not in doc
+        # The accurate partial-redaction caveat must be present.
+        assert "WebhookConfig" in doc or "webhook" in doc.lower()
+
+    def test_webhook_url_affects_hash(self):
+        """Two configs identical except for WebhookConfig.url produce different
+        digests, confirming url is NOT silently redacted before hashing (F-M-11).
+        This documents the known behaviour so a future accidental redaction
+        would be caught here."""
+        from forgelm.compliance import compute_config_hash
+
+        class _FakeWebhook:
+            url = "https://hooks.slack.com/services/A/B/TOKEN1"
+
+            def model_dump(self, **kwargs):
+                return {"url": self.url}
+
+        class _FakeConfig:
+            webhook = _FakeWebhook()
+
+            def model_dump(self, **kwargs):
+                return {"webhook": self.webhook.model_dump(**kwargs)}
+
+        cfg1 = _FakeConfig()
+        h1 = compute_config_hash(cfg1)
+
+        cfg2 = _FakeConfig()
+        cfg2.webhook = type(cfg2.webhook)()
+        cfg2.webhook.url = "https://hooks.slack.com/services/A/B/TOKEN2"
+        h2 = compute_config_hash(cfg2)
+
+        assert h1 != h2, "different webhook.url values must produce different config hashes"

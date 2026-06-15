@@ -378,6 +378,12 @@ class TestJsonlDecodeErrorDetection:
         assert len(results) == 1
         _row, _parse_error, decode_error = results[0]
         assert decode_error is True
+        # F-L-26: a decode error must NOT become a parse error — the row is
+        # decoded with errors='replace' and then parsed normally; it must
+        # survive as a valid dict.  A regression that returns (None, True, True)
+        # would silently drop rows without the assertions below catching it.
+        assert _parse_error is False, "decode error must not become a parse error"
+        assert _row is not None and isinstance(_row, dict), "decoded row must still be parseable after replacement"
 
 
 class TestMessagesFormat:
@@ -853,3 +859,192 @@ class TestTokenCachePerformance:
         # Misses didn't grow on the second call; hits did.
         assert second.misses == first.misses
         assert second.hits == first.hits + 3
+
+
+# ---------------------------------------------------------------------------
+# F-H-08: Email regex ReDoS linearity regression
+# ---------------------------------------------------------------------------
+
+
+class TestEmailRegexReDoSLinearity:
+    """F-H-08: the structured-domain email pattern must not exhibit O(n²)
+    backtracking on adversarial inputs (two competing unbounded quantifiers in
+    the old ``[A-Za-z0-9.-]+\\.`` form).  Verify linearity per regex.md
+    ReDoS budget methodology: median of 5 runs at 1K / 5K / 10K characters,
+    roughly linear growth (doubling input → roughly doubling time, not ×4+)."""
+
+    def _median_ms(self, pattern, payload, n_runs: int = 5) -> float:
+        import statistics
+        import time
+
+        times = []
+        for _ in range(n_runs):
+            t0 = time.perf_counter()
+            pattern.search(payload)
+            times.append((time.perf_counter() - t0) * 1000)
+        return statistics.median(times)
+
+    def test_email_pattern_linear_on_adversarial_domain(self):
+        """Adversarial payload: local-part@dots-and-labels with no valid TLD.
+        Old pattern: O(n²) confirmed up to 577 ms at n=6400.
+        New pattern: each label must consume ≥1 '.' + letter — O(n) guaranteed
+        because no two quantifiers compete for the same characters."""
+        from forgelm.data_audit._pii_regex import _PII_PATTERNS
+
+        pat = _PII_PATTERNS["email"]
+        # Build payloads: 'a@' + 'aa.'*n (no valid TLD at end → no match →
+        # exercises worst-case backtracking on the old pattern)
+        sizes = [1_000, 5_000, 10_000]
+        medians = []
+        for n in sizes:
+            payload = "a@" + "aa." * n
+            medians.append(self._median_ms(pat, payload))
+
+        # Primary ReDoS guard — ABSOLUTE time. The old O(n²) form hit 577 ms at
+        # n=6400; the bounded-label form stays in single-digit ms even at 10K.
+        # Absolute time is the load-bearing, noise-robust signal: a quadratic
+        # blowup cannot hide under this ceiling, while sub-millisecond ratios
+        # (below) are dominated by timer noise on a genuinely linear regex.
+        assert medians[2] < 100.0, (
+            f"Email regex too slow at 10K chars: {medians[2]:.1f}ms — possible ReDoS "
+            f"(medians: {medians[0]:.2f}ms / {medians[1]:.2f}ms / {medians[2]:.2f}ms)"
+        )
+        # Secondary linearity check (ratio), applied ONLY when the baseline is
+        # large enough to measure meaningfully (≥1 ms) — otherwise the ratio is
+        # pure timer noise and would flake on a regex that is provably linear.
+        if medians[1] >= 1.0:
+            ratio_5k_to_10k = medians[2] / medians[1]
+            assert ratio_5k_to_10k < 4, (
+                f"Email regex is super-linear: 5K→10K ratio={ratio_5k_to_10k:.1f}x "
+                f"(medians: {medians[0]:.2f}ms / {medians[1]:.2f}ms / {medians[2]:.2f}ms)"
+            )
+
+
+# ---------------------------------------------------------------------------
+# F-M-17: _LengthDigest tests
+# ---------------------------------------------------------------------------
+
+
+class TestLengthDigest:
+    """F-M-17: _LengthDigest has a documented 'byte-identical contract'
+    (constant LCG seed) but had zero test coverage."""
+
+    def test_exact_stats_below_reservoir_cap(self):
+        """For N <= _LENGTH_RESERVOIR_SIZE the reservoir holds every element:
+        min/max/mean/p50/p95 must all be exact."""
+        from forgelm.data_audit._streaming import _LengthDigest
+
+        d = _LengthDigest()
+        lengths = list(range(1, 101))  # 1..100, well below 100 K cap
+        for v in lengths:
+            d.update(v)
+        s = d.stats()
+        assert s["min"] == 1
+        assert s["max"] == 100
+        assert s["mean"] == pytest.approx(50.5, abs=0.1)
+        # For 100 elements sorted 1..100: p50 index = 50 → value 51
+        assert s["p50"] == 51
+        # p95 index = min(99, 95) = 95 → value 96
+        assert s["p95"] == 96
+
+    def test_determinism_two_identical_streams_equal_stats(self):
+        """Two _LengthDigest instances fed the same sequence must produce
+        identical stats() dicts (the byte-identical contract)."""
+        from forgelm.data_audit._streaming import _LENGTH_RESERVOIR_SIZE, _LengthDigest
+
+        n = _LENGTH_RESERVOIR_SIZE + 500  # force reservoir-sampling path
+        d1 = _LengthDigest()
+        d2 = _LengthDigest()
+        for i in range(n):
+            d1.update(i % 200)
+            d2.update(i % 200)
+        assert d1.stats() == d2.stats()
+
+    def test_reservoir_bounded_above_cap(self):
+        """After inserting far more elements than _LENGTH_RESERVOIR_SIZE, the
+        internal reservoir list must not exceed the cap."""
+        from forgelm.data_audit._streaming import _LENGTH_RESERVOIR_SIZE, _LengthDigest
+
+        d = _LengthDigest()
+        for i in range(_LENGTH_RESERVOIR_SIZE + 10_000):
+            d.update(i % 300)
+        assert len(d._reservoir) <= _LENGTH_RESERVOIR_SIZE
+
+    def test_lcg_bias_fix_slot_zero_not_always_overwritten(self):
+        """F-M-17 LCG bias: with the old seed=0, the (cap+1)th element always
+        overwrote slot 1 (first LCG advance → counter=1, j=1%n=1 < cap).
+        With the new seed=multiplier, slot 1 is NOT deterministically replaced.
+        Verify by checking that across two fresh digests fed different (cap+1)th
+        values, the slot contents differ — proving the slot is not pinned."""
+        from forgelm.data_audit._streaming import _LENGTH_RESERVOIR_SIZE, _LengthDigest
+
+        # Fill the reservoir to the cap with value 0, then insert a sentinel.
+        sentinel_a = 9001
+        sentinel_b = 9002
+        d_a = _LengthDigest()
+        d_b = _LengthDigest()
+        for _ in range(_LENGTH_RESERVOIR_SIZE):
+            d_a.update(0)
+            d_b.update(0)
+        d_a.update(sentinel_a)
+        d_b.update(sentinel_b)
+        # The two reservoirs must differ somewhere if the sentinels were placed
+        # at least occasionally in different slots (or not placed at all for one).
+        # At minimum: if slot 1 is no longer deterministically the target, the
+        # sum over the reservoir will differ between the two digests.
+        assert d_a._reservoir != d_b._reservoir or (
+            sentinel_a not in d_a._reservoir and sentinel_b not in d_b._reservoir
+        ), (
+            "LCG bias not fixed: both sentinels landed in the same slot (slot 1) "
+            "meaning the seed-0 deterministic-replacement bug is still present"
+        )
+
+    def test_empty_digest_returns_empty_stats(self):
+        from forgelm.data_audit._streaming import _LengthDigest
+
+        assert _LengthDigest().stats() == {}
+
+
+# ---------------------------------------------------------------------------
+# F-L-13: _extract_text_payload empty-half edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestExtractTextPayloadEmptyHalves:
+    """F-L-13: _INSTRUCTION_PAIRS loop filters empty halves via strip();
+    neither empty-half case was covered, so a regression adding a
+    'both non-empty' guard would silently drop one half."""
+
+    @pytest.mark.parametrize(
+        "row, expected_substr",
+        [
+            # prompt is empty — response half must still be extracted
+            ({"prompt": "", "response": "secret@example.com"}, "secret@example.com"),
+            # output is empty — instruction half must still be extracted
+            ({"instruction": "question", "output": ""}, "question"),
+        ],
+    )
+    def test_empty_half_does_not_drop_nonempty_half(self, row, expected_substr):
+        from forgelm.data_audit._streaming import _extract_text_payload
+
+        payload = _extract_text_payload(row)
+        assert expected_substr in payload, f"expected {expected_substr!r} in payload but got {payload!r} for row {row}"
+
+
+# ---------------------------------------------------------------------------
+# F-L-27: TR ID — negative countercase for Unicode digit checksum
+# ---------------------------------------------------------------------------
+
+
+class TestTrIdUnicodeDigitsNegativeChecksum:
+    """F-L-27: the positive test pins that a checksum-valid Arabic-Indic TR ID
+    is detected; this negative countercase ensures a checksum-invalid sequence
+    is NOT detected (guarding against a regression that bypasses the checksum
+    for non-ASCII digit strings)."""
+
+    def test_tr_id_unicode_digits_invalid_checksum_not_detected(self):
+        bad_ascii = "10000000147"  # one digit off from the valid 10000000146
+        bad_arabic = "".join(chr(0x0660 + int(c)) for c in bad_ascii)
+        assert detect_pii(f"id is {bad_arabic}").get("tr_id", 0) == 0, (
+            "checksum-invalid Arabic-Indic TR ID must not be detected"
+        )

@@ -75,7 +75,9 @@ class VerifyIntegrityResult:
 
 def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoReturn:
     if output_format == "json":
-        print(json.dumps({"success": False, "error": msg}))
+        # indent=2 matches the success/result envelope below so this subcommand
+        # emits one consistent JSON shape on every branch.
+        print(json.dumps({"success": False, "error": msg}, indent=2))
     else:
         logger.error(msg)
     sys.exit(exit_code)
@@ -99,7 +101,7 @@ def verify_integrity(model_dir: str) -> VerifyIntegrityResult:
     malformed, and :class:`OSError` for genuine I/O failures while
     re-hashing — the dispatcher maps each to its documented exit code.
     """
-    from forgelm.compliance import _hash_file
+    from forgelm.compliance import hash_file
 
     manifest_path = os.path.join(model_dir, _MANIFEST_NAME)
     with open(manifest_path, "r", encoding="utf-8") as fh:
@@ -157,7 +159,7 @@ def verify_integrity(model_dir: str) -> VerifyIntegrityResult:
         if not os.path.isfile(abs_path):
             removed.append(rel_path)
             continue
-        actual = _hash_file(abs_path, rel_path)
+        actual = hash_file(abs_path, rel_path)
         if actual["sha256"] != entry.get("sha256"):
             changed.append(rel_path)
         else:

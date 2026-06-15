@@ -632,6 +632,64 @@ Wave 2b Phase 36 — GGUF model file integrity check.
 
 **Exit code mapping:** `0` = `valid: true`; `1` = `valid: false` (magic mismatch, metadata block *corrupted*, SHA-256 mismatch, malformed sidecar); `2` = runtime error (file not found, unreadable). The optional-`gguf`-package-missing path stays at `valid: true` + exit `0` (operator's "metadata check skipped" — the magic header + SHA-256 sidecar checks remain the load-bearing integrity surface).
 
+## `forgelm verify-integrity`
+
+Wave 2b Phase 36 / Art. 15 — model-directory artifact integrity check.
+
+**Success envelope** (`forgelm verify-integrity MODEL_DIR`):
+
+```json
+{
+  "success": true,
+  "valid": true,
+  "reason": "All 12 recorded artifact(s) present and unchanged.",
+  "changed": [],
+  "removed": [],
+  "added": [],
+  "verified_count": 12,
+  "path": "/work/output/my-model"
+}
+```
+
+**Mismatch / operator-error envelope** (`valid: false`, exit 1):
+
+```json
+{
+  "success": false,
+  "valid": false,
+  "reason": "Model artifacts do not match model_integrity.json: 1 changed, 1 removed.",
+  "changed": ["adapter_model.safetensors"],
+  "removed": ["tokenizer.model"],
+  "added": [],
+  "verified_count": 10,
+  "path": "/work/output/my-model"
+}
+```
+
+**Runtime-error envelope** (exit 2):
+
+```json
+{
+  "success": false,
+  "error": "Could not verify model integrity for '/work/output/my-model': [Errno 13] Permission denied: '...'"
+}
+```
+
+| Key | Type | Notes |
+|---|---|---|
+| `success` | bool | `true` when `valid: true`; `false` on any mismatch or error. |
+| `valid` | bool | `true` when every recorded artifact is present and its SHA-256 matches; `false` otherwise. |
+| `reason` | str | Human-readable summary — number of clean artifacts on success, mismatch counts on failure. |
+| `changed` | list[str] | Relative paths of artifacts whose SHA-256 no longer matches the manifest. |
+| `removed` | list[str] | Relative paths of artifacts recorded in the manifest that are absent on disk. |
+| `added` | list[str] | Relative paths of on-disk files not recorded in the manifest. |
+| `verified_count` | int | Number of artifacts that matched the manifest successfully. |
+| `path` | str | Absolute path to the model directory that was verified. |
+
+**Exit code mapping:** `0` = all recorded artifacts present and unchanged (`valid: true`); `1` = integrity mismatch (changed / removed / added file) **or** operator / input error (missing path, path is a file not a directory, manifest not found, malformed JSON, non-list `artifacts`, manifest entry path escapes the model directory); `2` = genuine runtime I/O failure on a reachable path (read error, permission denied mid-walk).
+
+The runtime-error envelope (`exit 2`) emits only `{"success": false, "error": "…"}` — no `valid`, `changed`, `removed`, `added`, or `path` keys. Branch on `success` first, then inspect `valid` and the diff lists.
+
 ## `forgelm export`
 
 GGUF / merged-weights export for the post-training handoff.

@@ -22,6 +22,7 @@ ForgeLM ships a single `forgelm` binary with subcommands. This page is the canon
 | `forgelm verify-audit` | Validate audit log chain (timestamps, prev_hash, HMAC). |
 | `forgelm verify-annex-iv` | Verify an exported Annex IV artefact (§1-9 fields + manifest hash). |
 | `forgelm verify-gguf` | Verify GGUF model file integrity (magic header + metadata + SHA-256 sidecar). |
+| `forgelm verify-integrity` | Verify a model directory against its Article 15 SHA-256 integrity manifest. |
 | `forgelm approve` | Sign a human approval request and promote `final_model.staging/`. |
 | `forgelm reject` | Reject a human approval request; the staging directory is preserved for forensics. |
 | `forgelm approvals` | List pending approvals (`--pending`) or inspect one (`--show RUN_ID`). |
@@ -190,6 +191,15 @@ $ forgelm verify-audit PATH/TO/audit_log.jsonl --require-hmac
 ```
 
 Validates monotonic timestamps, `prev_hash` chain integrity, `seq` gap detection, and (when configured) HMAC signatures. Exit `0` on a valid chain; non-zero with a structured error envelope on tamper detection.
+
+## Verify model integrity: `forgelm verify-integrity`
+
+```shell
+$ forgelm verify-integrity MODEL_DIR
+$ forgelm verify-integrity MODEL_DIR --output-format json
+```
+
+Reads `<MODEL_DIR>/model_integrity.json` (written by the compliance export at training time) and re-computes the SHA-256 of every recorded artifact. Reports files that were **changed**, **removed**, or **added** since the manifest was generated. The manifest file itself is excluded from the walk. Exit `0` when every recorded artifact is present and unchanged and no extra files exist; exit `1` on any mismatch or input error; exit `2` on a genuine runtime I/O failure.
 
 ## Authentication
 

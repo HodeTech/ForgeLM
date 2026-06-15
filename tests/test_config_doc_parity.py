@@ -41,10 +41,28 @@ _REQUIRED_FIELDS = (
 def test_field_documented_in_reference(doc, field):
     text = doc.read_text(encoding="utf-8")
     if field == "evaluation.benchmark.output_dir":
-        # The benchmark table is introduced by an ``evaluation.benchmark``
-        # heading; require both that heading and an ``output_dir`` row so an
-        # unrelated ``output_dir`` mention cannot satisfy the gate.
-        assert "`evaluation.benchmark`" in text and "`output_dir`" in text, f"{field} missing from {doc.name}"
+        # ``output_dir`` appears in at least four unrelated sections
+        # (training, benchmark, merging, pipeline).  A plain ``in text`` check
+        # is a false-negative gate: removing the benchmark row leaves three other
+        # occurrences that still satisfy ``'`output_dir`' in text`` (F-L-25).
+        # Fix: slice the document to the evaluation.benchmark section and check
+        # that ``output_dir`` appears within that slice only.
+        heading_token = "`evaluation.benchmark`"
+        assert heading_token in text, f"'evaluation.benchmark' section missing from {doc.name}"
+        section_start = text.index(heading_token)
+        # Find the next #### heading after the benchmark section start; the
+        # output_dir row must appear before that boundary.
+        import re
+
+        next_heading_match = re.search(r"^####", text[section_start + len(heading_token) :], re.MULTILINE)
+        if next_heading_match:
+            section_end = section_start + len(heading_token) + next_heading_match.start()
+        else:
+            section_end = len(text)
+        section_slice = text[section_start:section_end]
+        assert "`output_dir`" in section_slice, (
+            f"`output_dir` not found in the `evaluation.benchmark` section of {doc.name}"
+        )
     else:
         assert f"`{field}`" in text, f"{field} missing from {doc.name}"
 

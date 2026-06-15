@@ -234,10 +234,13 @@ class TestMathRewardFn:
         silently contributing 0.0 every batch (F-P3-FABLE-50)."""
         import logging
 
-        # The warn-once flag is a function attribute; reset it so this test is
-        # order-independent and the assertion sees the first-call WARNING.
-        if hasattr(_math_reward_fn, "_warned_no_golds"):
-            del _math_reward_fn._warned_no_golds
+        # The warn-once flag is module-level state in forgelm.trainer; reset it
+        # so this test is order-independent and the assertion sees the
+        # first-call WARNING (F-L-20: migrated from a function attribute to a
+        # module-level bool, so the reset target moved with it).
+        import forgelm.trainer as _trainer_mod
+
+        _trainer_mod._math_reward_fn_warned_no_golds = False
         try:
             with caplog.at_level(logging.WARNING, logger="forgelm.trainer"):
                 _math_reward_fn(["Answer: 7"])
@@ -245,8 +248,7 @@ class TestMathRewardFn:
             warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "gold_answer" in r.getMessage()]
             assert len(warnings) == 1, "expected exactly one warn-once record across repeated calls"
         finally:
-            if hasattr(_math_reward_fn, "_warned_no_golds"):
-                del _math_reward_fn._warned_no_golds
+            _trainer_mod._math_reward_fn_warned_no_golds = False
 
     def test_mismatched_lengths_raises(self):
         """Wiring regression: completions and gold_answer must have the same length."""

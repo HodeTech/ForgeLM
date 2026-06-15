@@ -139,6 +139,18 @@ class TestEvaluationChecks:
         result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": float("inf")})
         assert result is False
 
+    def test_nan_baseline_config_is_ignored(self, caplog):
+        """A config-supplied NaN baseline_loss must be silently discarded so it
+        cannot covertly disable the regression check.  The guard must log a
+        WARNING mentioning 'NaN or Inf' and the call must return True (no revert)
+        because the baseline regression gate is disarmed, not triggered."""
+        trainer = self._make_trainer(auto_revert=True, baseline_loss=float("nan"))
+        with patch.object(trainer, "_revert_model") as revert, caplog.at_level("WARNING"):
+            result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.5})
+        assert result is True
+        revert.assert_not_called()
+        assert any("NaN or Inf" in r.getMessage() for r in caplog.records)
+
     def test_missing_eval_loss(self):
         trainer = self._make_trainer(max_loss=2.0)
         result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"train_loss": 0.5})
@@ -473,7 +485,6 @@ class TestTrainingArgsValidationGuard:
         assert kwargs["load_best_model_at_end"] is False
 
 
-@pytest.mark.skipif(not torch_available, reason="torch not installed")
 class TestGateRunnerImportContract:
     """F-P3-FABLE-25: configured eval gates must fail fast / fail loud on a missing
     extra, never silently degrade to a skip with exit 0."""
@@ -542,14 +553,14 @@ class TestGateRunnerImportContract:
 class TestGateApplication:
     """F-P2-FAB-16: trainer-side gate application + revert/continue matrix."""
 
-    def _make_trainer(self, auto_revert):
+    def _make_trainer(self, auto_revert, tmp_path):
         from forgelm.config import ForgeConfig
         from forgelm.trainer import ForgeTrainer
 
         config = ForgeConfig(
             model={"name_or_path": "org/model"},
             lora={},
-            training={"output_dir": "/tmp/test_forge_gate"},
+            training={"output_dir": str(tmp_path)},
             data={"dataset_name_or_path": "org/dataset"},
             evaluation={"auto_revert": auto_revert},
         )
@@ -557,15 +568,15 @@ class TestGateApplication:
             trainer = ForgeTrainer.__new__(ForgeTrainer)
             trainer.config = config
             trainer.dataset = {"train": ["x"], "validation": ["y"]}
-            trainer.checkpoint_dir = "/tmp/test_forge_gate"
+            trainer.checkpoint_dir = str(tmp_path)
             trainer.run_name = "gate_apply"
             trainer.notifier = MagicMock()
             trainer.audit = MagicMock()
         return trainer
 
-    def test_safety_fail_with_auto_revert_reverts_and_marks_result(self):
-        trainer = self._make_trainer(auto_revert=True)
-        result = TrainResult(success=True, metrics={}, final_model_path="/tmp/x/final")
+    def test_safety_fail_with_auto_revert_reverts_and_marks_result(self, tmp_path):
+        trainer = self._make_trainer(auto_revert=True, tmp_path=tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(tmp_path / "final"))
         safety = MagicMock(
             passed=False,
             safety_score=0.4,
@@ -577,56 +588,73 @@ class TestGateApplication:
             failure_reason="unsafe ratio too high",
         )
         with patch.object(trainer, "_revert_model") as revert:
-            cont = trainer._apply_safety_result(safety, result, {}, "/tmp/x/final")
+            cont = trainer._apply_safety_result(safety, result, {}, str(tmp_path / "final"))
         assert cont is False  # halt → exit 3
         assert result.reverted is True
         assert result.staging_path is None  # cleared by _mark_reverted
         revert.assert_called_once()
 
-    def test_safety_infra_failure_audit_payload_does_not_report_perfect_ratio(self):
-        """F-P3-FABLE-26 trainer-side: an infra-failure SafetyResult (safe_ratio=0.0,
-        total_count=0) must not surface a 1.0 metric / audit payload."""
-        trainer = self._make_trainer(auto_revert=False)
-        result = TrainResult(success=True, metrics={}, final_model_path="/tmp/x/final")
+    def test_safety_infra_failure_with_auto_revert_does_not_revert_model(self, tmp_path):
+        """Infrastructure safety failures (evaluation_completed=False) must never
+        trigger auto-revert even when auto_revert=True.  A classifier that fails
+        to load is an infra misconfiguration, not a genuine gate failure — deleting
+        a successfully trained model over it would be wrong."""
+        trainer = self._make_trainer(auto_revert=True, tmp_path=tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(tmp_path / "final"))
         metrics: dict[str, float] = {}
         from forgelm.safety import SafetyResult
 
         infra_fail = SafetyResult(passed=False, evaluation_completed=False, safe_ratio=0.0)
-        cont = trainer._apply_safety_result(infra_fail, result, metrics, "/tmp/x/final")
+        with patch.object(trainer, "_revert_model") as revert:
+            cont = trainer._apply_safety_result(infra_fail, result, metrics, str(tmp_path / "final"))
+        assert cont is True  # pipeline continues — infra failure, not gate failure
+        revert.assert_not_called()  # model must not be deleted
+        assert result.reverted is False
+
+    def test_safety_infra_failure_audit_payload_does_not_report_perfect_ratio(self, tmp_path):
+        """F-P3-FABLE-26 trainer-side: an infra-failure SafetyResult (safe_ratio=0.0,
+        total_count=0) must not surface a 1.0 metric / audit payload."""
+        trainer = self._make_trainer(auto_revert=False, tmp_path=tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(tmp_path / "final"))
+        metrics: dict[str, float] = {}
+        from forgelm.safety import SafetyResult
+
+        infra_fail = SafetyResult(passed=False, evaluation_completed=False, safe_ratio=0.0)
+        cont = trainer._apply_safety_result(infra_fail, result, metrics, str(tmp_path / "final"))
         assert cont is True  # recorded, not reverted (auto_revert off)
         assert metrics["safety/safe_ratio"] == 0.0
         audit_kwargs = trainer.audit.log_event.call_args.kwargs
         assert audit_kwargs["safe_ratio"] == 0.0
         assert audit_kwargs["total_count"] == 0
 
-    def test_judge_fail_with_auto_revert_reverts(self):
-        trainer = self._make_trainer(auto_revert=True)
-        result = TrainResult(success=True, metrics={}, final_model_path="/tmp/x/final")
+    def test_judge_fail_with_auto_revert_reverts(self, tmp_path):
+        trainer = self._make_trainer(auto_revert=True, tmp_path=tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(tmp_path / "final"))
         judge = MagicMock(passed=False, average_score=2.0, details=[], failure_reason="below min_score")
         with patch.object(trainer, "_revert_model") as revert:
-            cont = trainer._apply_judge_result(judge, result, {}, "/tmp/x/final")
+            cont = trainer._apply_judge_result(judge, result, {}, str(tmp_path / "final"))
         assert cont is False
         assert result.reverted is True
         revert.assert_called_once()
 
-    def test_judge_fail_without_auto_revert_records_but_continues(self):
-        trainer = self._make_trainer(auto_revert=False)
-        result = TrainResult(success=True, metrics={}, final_model_path="/tmp/x/final")
+    def test_judge_fail_without_auto_revert_records_but_continues(self, tmp_path):
+        trainer = self._make_trainer(auto_revert=False, tmp_path=tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(tmp_path / "final"))
         metrics: dict[str, float] = {}
         judge = MagicMock(passed=False, average_score=2.0, details=[], failure_reason="below min_score")
         with patch.object(trainer, "_revert_model") as revert:
-            cont = trainer._apply_judge_result(judge, result, metrics, "/tmp/x/final")
+            cont = trainer._apply_judge_result(judge, result, metrics, str(tmp_path / "final"))
         assert cont is True
         assert result.judge_score == 2.0
         assert result.reverted is False
         revert.assert_not_called()
 
-    def test_none_gate_results_are_noops(self):
-        trainer = self._make_trainer(auto_revert=True)
+    def test_none_gate_results_are_noops(self, tmp_path):
+        trainer = self._make_trainer(auto_revert=True, tmp_path=tmp_path)
         result = TrainResult(success=True, metrics={})
-        assert trainer._apply_safety_result(None, result, {}, "/tmp/x") is True
-        assert trainer._apply_judge_result(None, result, {}, "/tmp/x") is True
-        assert trainer._apply_benchmark_result(None, result, {}, "/tmp/x") is True
+        assert trainer._apply_safety_result(None, result, {}, str(tmp_path)) is True
+        assert trainer._apply_judge_result(None, result, {}, str(tmp_path)) is True
+        assert trainer._apply_benchmark_result(None, result, {}, str(tmp_path)) is True
         trainer.audit.log_event.assert_not_called()
 
 

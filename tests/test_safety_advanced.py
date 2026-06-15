@@ -569,3 +569,111 @@ class TestSafetyBatchSizeValidation:
 
         # No exception for positive ints.
         assert _validate_batch_size(good) is None
+
+
+# --- F-H-10: malformed probes file must not propagate unhandled ValueError ---
+
+
+class TestMalformedProbesFileHandling:
+    """F-H-10: _load_safety_prompts raises ValueError for non-dict/non-string
+    JSON top-level values (int, array, null).  run_safety_evaluation must catch
+    it and return SafetyResult(passed=False, evaluation_completed=False) instead
+    of propagating the exception to the trainer."""
+
+    @pytest.mark.parametrize("bad_line", ["42", "[1, 2]", "null"])
+    def test_malformed_probes_returns_safe_result_not_exception(self, tmp_path, bad_line):
+        """run_safety_evaluation must NOT raise when the probes file contains a
+        non-object/non-string JSON line; it must return a clean failure result.
+        Reverts to raising ValueError if the try/except around _load_safety_prompts
+        is removed."""
+        from forgelm.safety import run_safety_evaluation
+
+        probes = tmp_path / "bad.jsonl"
+        probes.write_text(f'{{"prompt": "hello"}}\n{bad_line}\n', encoding="utf-8")
+
+        # Must not raise — the ValueError from _load_safety_prompts must be
+        # caught and translated into a SafetyResult.
+        result = run_safety_evaluation(
+            model=None,
+            tokenizer=None,
+            classifier_path="x",
+            test_prompts_path=str(probes),
+        )
+        assert result.passed is False
+        assert result.evaluation_completed is False
+        assert result.safe_ratio == 0.0
+        assert "Malformed probes file" in (result.failure_reason or "")
+
+    def test_malformed_probes_failure_reason_mentions_original_error(self, tmp_path):
+        """The failure_reason must surface the original ValueError message so
+        the operator can diagnose which file and line caused the rejection."""
+        from forgelm.safety import run_safety_evaluation
+
+        probes = tmp_path / "bad.jsonl"
+        probes.write_text('{"prompt": "ok"}\n42\n', encoding="utf-8")
+
+        result = run_safety_evaluation(
+            model=None,
+            tokenizer=None,
+            classifier_path="x",
+            test_prompts_path=str(probes),
+        )
+        # The underlying ValueError names the path and line number.
+        assert result.failure_reason is not None
+        assert "line 2" in result.failure_reason
+
+
+# --- F-M-21: empty id2label must trigger the uninitialized-head guard ---
+
+
+class TestRejectUninitializedClassifierHeadEmptyLabels:
+    """F-M-21: _reject_uninitialized_classifier_head must also reject a causal-LM
+    checkpoint whose id2label is empty ({} or absent).  The old
+    ``bool(labels) and all(...)`` check short-circuited to False for empty sets,
+    silently bypassing the guard — allowing a randomly-initialized classification
+    head to produce garbage verdicts for all probes."""
+
+    def _stub_classifier(self, architectures, id2label):
+        clf = MagicMock()
+        clf.model.config.architectures = architectures
+        clf.model.config.id2label = id2label
+        return clf
+
+    def test_causal_lm_with_empty_id2label_rejected(self):
+        """A causal LM with id2label={} (explicitly empty) must raise RuntimeError.
+        Fails if the fix is reverted to ``bool(labels) and all(...)``."""
+        from forgelm.safety import _reject_uninitialized_classifier_head
+
+        clf = self._stub_classifier(["LlamaForCausalLM"], {})
+        with pytest.raises(RuntimeError, match="causal language model"):
+            _reject_uninitialized_classifier_head(clf, "meta-llama/Llama-Guard-3-8B")
+
+    def test_causal_lm_with_absent_id2label_rejected(self):
+        """A causal LM with no id2label attribute at all (getattr returns {})
+        must raise RuntimeError.  Fails if the fix is reverted."""
+        from forgelm.safety import _reject_uninitialized_classifier_head
+
+        clf = MagicMock()
+        clf.model.config.architectures = ["LlamaForCausalLM"]
+        # Simulate an absent id2label (getattr(..., {}) in safety.py will see {})
+        del clf.model.config.id2label
+        clf.model.config.id2label = {}
+        with pytest.raises(RuntimeError, match="causal language model"):
+            _reject_uninitialized_classifier_head(clf, "meta-llama/Llama-Guard-3-8B")
+
+    def test_sequence_classifier_with_empty_id2label_accepted(self):
+        """A non-causal-LM architecture (SequenceClassification) with empty
+        id2label should NOT be refused — only causal-LM architectures are gated."""
+        from forgelm.safety import _reject_uninitialized_classifier_head
+
+        clf = self._stub_classifier(["RobertaForSequenceClassification"], {})
+        # Must not raise — the guard only fires on causal-LM architectures.
+        _reject_uninitialized_classifier_head(clf, "some/seq-classifier")
+
+    def test_causal_lm_with_real_labels_still_accepted(self):
+        """A causal-LM architecture with a real id2label (safe/unsafe) must still
+        pass the guard; empty-id2label fix must not break the existing acceptance path."""
+        from forgelm.safety import _reject_uninitialized_classifier_head
+
+        clf = self._stub_classifier(["LlamaForCausalLM"], {0: "safe", 1: "unsafe"})
+        _reject_uninitialized_classifier_head(clf, "some/llama-harm-classifier")

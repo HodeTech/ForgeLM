@@ -635,6 +635,64 @@ Wave 2b Phase 36 — GGUF model dosyası bütünlük kontrolü.
 
 **Exit kodu:** `0` = `valid: true`; `1` = `valid: false` (magic mismatch, metadata block *bozuk*, SHA-256 mismatch, malformed sidecar); `2` = runtime hatası (file not found, unreadable). Opsiyonel-`gguf`-paketi-eksik yolu `valid: true` + exit `0` olarak kalır (operatörün "metadata check skipped" durumu — magic header + SHA-256 sidecar checks load-bearing integrity yüzeyi olmaya devam eder).
 
+## `forgelm verify-integrity`
+
+Wave 2b Phase 36 / Madde 15 — model dizini artefakt bütünlük kontrolü.
+
+**Başarı zarfı** (`forgelm verify-integrity MODEL_DIR`):
+
+```json
+{
+  "success": true,
+  "valid": true,
+  "reason": "All 12 recorded artifact(s) present and unchanged.",
+  "changed": [],
+  "removed": [],
+  "added": [],
+  "verified_count": 12,
+  "path": "/work/output/my-model"
+}
+```
+
+**Uyuşmazlık / operatör-hatası zarfı** (`valid: false`, çıkış 1):
+
+```json
+{
+  "success": false,
+  "valid": false,
+  "reason": "Model artifacts do not match model_integrity.json: 1 changed, 1 removed.",
+  "changed": ["adapter_model.safetensors"],
+  "removed": ["tokenizer.model"],
+  "added": [],
+  "verified_count": 10,
+  "path": "/work/output/my-model"
+}
+```
+
+**Runtime-hatası zarfı** (çıkış 2):
+
+```json
+{
+  "success": false,
+  "error": "Could not verify model integrity for '/work/output/my-model': [Errno 13] Permission denied: '...'"
+}
+```
+
+| Anahtar | Tip | Not |
+|---|---|---|
+| `success` | bool | `valid: true` iken `true`; herhangi bir uyuşmazlık veya hatada `false`. |
+| `valid` | bool | Her kayıtlı artefakt mevcut ve SHA-256'sı eşleşiyorsa `true`; aksi hâlde `false`. |
+| `reason` | str | Tek-satır özet — başarıda temiz artefakt sayısı, başarısızlıkta uyuşmazlık sayıları. |
+| `changed` | list[str] | SHA-256'sı artık manifest ile eşleşmeyen artefaktların göreli yolları. |
+| `removed` | list[str] | Manifest'te kayıtlı ama diskte olmayan artefaktların göreli yolları. |
+| `added` | list[str] | Diskte olup manifest'te kayıtlı olmayan dosyaların göreli yolları. |
+| `verified_count` | int | Manifest ile başarıyla eşleşen artefakt sayısı. |
+| `path` | str | Doğrulanan model dizininin mutlak yolu. |
+
+**Exit kodu eşlemesi:** `0` = tüm kayıtlı artefaktlar mevcut ve değişmemiş (`valid: true`); `1` = bütünlük uyuşmazlığı (changed / removed / added dosya) **veya** operatör / girdi hatası (eksik yol, yolun dizin yerine dosya olması, manifest bulunamadı, malformed JSON, list olmayan `artifacts`, manifest girdi yolunun model dizininden kaçması); `2` = erişilebilir bir yolda gerçek runtime I/O hatası (okuma hatası, yürüyüş sırasında izin reddi).
+
+Runtime-hatası zarfı (`çıkış 2`) yalnızca `{"success": false, "error": "…"}` döndürür — `valid`, `changed`, `removed`, `added` veya `path` anahtarları olmadan. Önce `success` üzerinden dallanın, ardından `valid` ve diff listelerini inceleyin.
+
 ## `forgelm export`
 
 Eğitim sonrası devir için GGUF / birleştirilmiş-ağırlık export'u.

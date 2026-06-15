@@ -1254,6 +1254,9 @@ class TestAtomicWriteTempCleanup:
     def test_dump_failure_also_cleans_up(self, isolated_state_dir, monkeypatch):
         # If yaml.safe_dump itself raises before os.replace runs, the
         # finally-branch defensive sweep must still unlink the temp.
+        # The outer handler in _save_wizard_state now catches YAMLError
+        # (broadened to OSError | YAMLError | TypeError | ValueError), so
+        # the exception is fully swallowed — no re-raise from the function.
         import yaml as _yaml
 
         from forgelm.wizard import _state as _state_mod
@@ -1263,10 +1266,8 @@ class TestAtomicWriteTempCleanup:
             raise _yaml.YAMLError("simulated dump failure")
 
         monkeypatch.setattr(_state_mod.yaml, "safe_dump", _broken_dump)
-        try:
-            wizard._save_wizard_state({"experience": "expert"})
-        except _yaml.YAMLError:
-            pass  # outer except OSError won't catch YAMLError; finally still runs
+        # Must not raise — YAMLError is swallowed by the broadened handler.
+        wizard._save_wizard_state({"experience": "expert"})
         state_dir = wizard._wizard_state_path().parent
         leftovers = list(state_dir.glob(".wizard_state.*.tmp"))
         assert leftovers == [], f"Temp file leak after dump failure: {leftovers}"

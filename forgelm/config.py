@@ -223,22 +223,28 @@ class LoraConfigModel(BaseModel):
                 "Drop the deprecated flag and keep the explicit `method:`; "
                 "use_rslora is removed in v0.9.0."
             )
-        if self.use_dora and self.method == "lora":
-            message = (
-                "lora.use_dora=True is deprecated and removed in v0.9.0. "
-                "Use method='dora' instead. Automatically setting method='dora'."
+        # Emit the deprecation unconditionally whenever the deprecated flag is set —
+        # including the compatible-redundant cases (use_dora + method='dora' or
+        # use_rslora + method='rslora').  Previously the warning only fired when
+        # method was 'lora', so operators who already wrote the correct explicit
+        # method alongside the deprecated flag received no nudge to drop it before
+        # v0.9.0 removal (F-L-09).
+        if self.use_dora:
+            message = "lora.use_dora=True is deprecated and removed in v0.9.0. Use method='dora' instead." + (
+                " Automatically setting method='dora'." if self.method == "lora" else ""
             )
             logger.warning(message)
             warnings.warn(message, DeprecationWarning, stacklevel=2)
-            object.__setattr__(self, "method", "dora")
-        if self.use_rslora and self.method == "lora":
-            message = (
-                "lora.use_rslora=True is deprecated and removed in v0.9.0. "
-                "Use method='rslora' instead. Automatically setting method='rslora'."
+            if self.method == "lora":
+                object.__setattr__(self, "method", "dora")
+        if self.use_rslora:
+            message = "lora.use_rslora=True is deprecated and removed in v0.9.0. Use method='rslora' instead." + (
+                " Automatically setting method='rslora'." if self.method == "lora" else ""
             )
             logger.warning(message)
             warnings.warn(message, DeprecationWarning, stacklevel=2)
-            object.__setattr__(self, "method", "rslora")
+            if self.method == "lora":
+                object.__setattr__(self, "method", "rslora")
         return self
 
 
@@ -417,7 +423,13 @@ class TrainingConfig(BaseModel):
         sweeps) and a ``logger.warning`` (visible on the CLI path), mirroring
         the ``lora.use_dora`` alias pattern.  Removal target: v0.9.0.
         """
-        if self.sample_packing and not self.packing:
+        if self.sample_packing:
+            # Always notify: emit when the deprecated flag is set regardless of
+            # whether packing is also true.  Previously the guard was
+            # ``if self.sample_packing and not self.packing``, which silently
+            # swallowed the deprecation when an operator wrote both
+            # ``sample_packing: true`` and ``packing: true``, leaving them with
+            # no nudge to remove the deprecated key before v0.9.0 removal (F-M-14).
             logger.warning(
                 "training.sample_packing is deprecated and forwards to training.packing. "
                 "Use `packing: true` instead; sample_packing is removed in v0.9.0."
@@ -429,7 +441,8 @@ class TrainingConfig(BaseModel):
                 DeprecationWarning,
                 stacklevel=2,
             )
-            object.__setattr__(self, "packing", True)
+            if not self.packing:
+                object.__setattr__(self, "packing", True)
         return self
 
 
@@ -654,7 +667,14 @@ class SafetyConfig(BaseModel):
         while ``safety.evaluation_completed`` still records ``passed=True``
         (F-P1-FAB-04/07/08, F-P3-FABLE-15 / XP-06).
         """
-        from .safety import SEVERITY_LEVELS
+        # Guard: skip cross-field consistency checks when safety evaluation is
+        # disabled.  An operator who disables the gate may leave threshold fields
+        # from a previous enabled run in their YAML; rejecting those at config
+        # time is user-hostile and inconsistent with the sister validators
+        # ``_validate_merge_inputs`` (line ~85) and ``_validate_synthetic_payload``
+        # (line ~943) which both early-return when ``enabled=False`` (F-M-13).
+        if not self.enabled:
+            return self
 
         # (1) min_safety_score is only consulted under confidence_weighted
         # scoring (safety.py); set under binary scoring it is a dead threshold.
@@ -672,11 +692,31 @@ class SafetyConfig(BaseModel):
         # operator who set per-severity limits clearly intends enforcement, so
         # auto-enable category tracking rather than silently dropping the gate.
         if self.severity_thresholds and not self.track_categories:
+            if "track_categories" in self.model_fields_set:
+                # Operator explicitly wrote ``track_categories: false`` alongside
+                # ``severity_thresholds``; the two settings directly contradict —
+                # auto-enabling would silently override a deliberate choice (F-M-15).
+                raise ValueError(
+                    "evaluation.safety.severity_thresholds requires track_categories=True "
+                    "to be enforced, but track_categories was explicitly set to false. "
+                    "Set track_categories to true or remove severity_thresholds."
+                )
+            # track_categories is the default (not explicitly set) → auto-enable and
+            # record the mutation in __pydantic_fields_set__ so it survives a
+            # ``model_dump(exclude_unset=True)`` round-trip in pipeline stage merges.
+            # Without adding it to model_fields_set, the auto-enabled value is
+            # excluded from the dump, re-validation re-runs this branch, and the
+            # warning fires N+1 times for an N-stage pipeline (F-M-15).
             logger.warning(
                 "evaluation.safety.severity_thresholds requires track_categories=True "
                 "to be enforced; auto-enabling track_categories."
             )
             object.__setattr__(self, "track_categories", True)
+            object.__setattr__(
+                self,
+                "__pydantic_fields_set__",
+                self.model_fields_set | {"track_categories"},
+            )
 
         # (3) restrict severity_thresholds to the known vocabulary and 0.0–1.0
         # values so a typo'd/wrongly-cased key cannot validate and then never
@@ -733,6 +773,33 @@ class JudgeConfig(BaseModel):
             "Opt in for debugging."
         ),
     )
+
+    @model_validator(mode="after")
+    def _warn_extreme_min_score(self):
+        """Warn when min_score is so close to the scale edges that the gate is trivial.
+
+        ``min_score <= 2.0`` means 'any response scoring above 1/10 passes' —
+        effectively a no-op gate where auto_revert never fires.  ``min_score >= 9.0``
+        means 'only near-perfect responses pass' — an always-failing gate in practice.
+        Neither extreme raises a ValidationError (both are within the ``ge=1.0,
+        le=10.0`` bounds) but operators who write these values are likely configuring
+        an unintentional no-op or impossible gate (F-L-10).
+        """
+        if self.min_score <= 2.0:
+            logger.warning(
+                "evaluation.llm_judge.min_score=%.1f is near the scale minimum "
+                "(1–10); the judge gate passes for almost any response. "
+                "Consider raising min_score.",
+                self.min_score,
+            )
+        elif self.min_score >= 9.0:
+            logger.warning(
+                "evaluation.llm_judge.min_score=%.1f is near the scale maximum "
+                "(1–10); the judge gate will rarely pass. "
+                "Consider lowering min_score.",
+                self.min_score,
+            )
+        return self
 
 
 class EvaluationConfig(BaseModel):
@@ -793,6 +860,14 @@ RiskTier = Literal["unknown", "minimal-risk", "limited-risk", "high-risk", "unac
 # ``ForgeConfig._warn_high_risk_compliance`` and the wizard prompt so the new
 # tier is reachable + enforced everywhere the old high-risk-only set was.
 _STRICT_RISK_TIERS: frozenset[str] = frozenset({"high-risk", "unacceptable"})
+
+# Canonical safety severity vocabulary shared between config.py (validator)
+# and safety.py (runtime).  Defined here so the Config layer does not import
+# from the Quality layer (safety.py) — the architecture standard
+# (docs/standards/architecture.md) has no CONFIG → SAFETY directed edge.
+# safety.py keeps its own copy to avoid a circular import until a shared
+# ``forgelm._constants`` module is introduced (tracked separately).
+SEVERITY_LEVELS: tuple[str, ...] = ("critical", "high", "medium", "low")
 
 
 class RiskAssessmentConfig(BaseModel):
@@ -1105,6 +1180,15 @@ class RetentionConfig(BaseModel):
     )
 
 
+# Module-level deduplication set for _warn_tier_disagreement.  Without this,
+# ``merge_pipeline_stage_config`` re-instantiates ForgeConfig once per pipeline
+# stage, re-runs _validate_consistency, and re-emits the warning N+1 times for
+# an N-stage pipeline run (F-L-11).  The set stores frozenset tier-pair tuples;
+# a process restart clears it (appropriate — cross-run deduplication would
+# suppress legitimate new mismatches).
+_tier_disagreement_warned: set[frozenset[str]] = set()
+
+
 class ForgeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1335,6 +1419,12 @@ class ForgeConfig(BaseModel):
         before the bundle becomes regulatory evidence.  Checks each
         sub-model's ``model_fields_set`` (the keys default to the same value,
         so root-level presence is not enough to prove an explicit choice).
+
+        Deduplication: ``merge_pipeline_stage_config`` re-instantiates
+        ``ForgeConfig`` once per pipeline stage, which re-runs
+        ``_validate_consistency`` and would re-emit this warning N+1 times for
+        an N-stage pipeline.  The module-level ``_tier_disagreement_warned`` set
+        suppresses repeat emissions within the same process (F-L-11).
         """
         if not (self.risk_assessment and self.compliance):
             return
@@ -1344,6 +1434,10 @@ class ForgeConfig(BaseModel):
             return
         ra, cm = self._risk_tiers()
         if ra != cm:
+            pair_key: frozenset[str] = frozenset({ra, cm})
+            if pair_key in _tier_disagreement_warned:
+                return
+            _tier_disagreement_warned.add(pair_key)
             logger.warning(
                 "Risk tiers disagree: risk_assessment.risk_category=%r vs "
                 "compliance.risk_classification=%r. Both values are emitted into "

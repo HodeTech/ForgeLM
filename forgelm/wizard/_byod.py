@@ -184,7 +184,7 @@ def _offer_audit_for_jsonl(jsonl_path: Path) -> bool:
     except ImportError as exc:
         _print(f"  Audit could not run (missing optional dep): {exc}")
         return False
-    except Exception as exc:  # noqa: BLE001 — best-effort inline audit; audit_dataset crosses the data_audit subsystem which raises a wide tail (streaming/parse/optional-dep errors) and the offer is advisory — a failure must not abort BYOD selection. # NOSONAR
+    except Exception as exc:  # noqa: BLE001 — best-effort inline audit; audit_dataset crosses the data_audit subsystem which raises a wide tail (streaming/parse/optional-dep errors) and the offer is advisory — a failure must not abort BYOD selection. # NOSONAR python:S5754
         logger.warning("Inline audit on %s could not run: %s", jsonl_path, exc)
         _print(f"  Audit could not run: {exc}")
         return False
@@ -265,9 +265,9 @@ def _resolve_byod_dataset_path() -> Optional[str]:
     """Prompt the user for a BYOD dataset path and validate it."""
     while True:
         # ``cancel`` (and its aliases) now raise ``WizardCancel`` from the
-        # primitive prompt (F-P7-OPUS-05); in the BYOD prelude we honour the
-        # long-standing "fall back to the full wizard" semantics by catching
-        # it here instead of letting it bubble to a clean exit.
+        # primitive prompt; in the BYOD prelude we honour the long-standing
+        # "fall back to the full wizard" semantics by catching it here instead
+        # of letting it bubble to a clean exit.
         try:
             dataset_path = _prompt(
                 "Path to your dataset JSONL (must exist as a JSONL file) or HF Hub ID, "
@@ -284,7 +284,11 @@ def _resolve_byod_dataset_path() -> Optional[str]:
             _print("  A dataset path is required for this template. Type 'cancel' to use the full wizard instead.")
             continue
 
-        result = _validate_local_jsonl(dataset_path)
+        try:
+            result = _validate_local_jsonl(dataset_path)
+        except WizardCancel:
+            _print("  Cancelled — falling back to the full wizard.")
+            return None
         if isinstance(result, str):
             return result
         if result is None:

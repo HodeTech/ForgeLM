@@ -35,7 +35,8 @@ from typing import Any, Dict
 # patterns into an ASCII-only credential context (the ``_secrets.py`` patterns
 # carry ``re.ASCII`` for exactly that reason).
 _PII_PATTERNS: Dict[str, re.Pattern] = {
-    "email": re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+    # ASCII class: RFC 5321 constrains email local-part and domain to US-ASCII
+    "email": re.compile(r"\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}\b"),
     "iban": re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"),
     # Credit cards captured first within the digit-run categories, then
     # Luhn-validated (see _is_credit_card). Greedy ``*`` instead of ``*?``:

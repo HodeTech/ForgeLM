@@ -154,10 +154,11 @@ class AuditLogger:
             if len(raw_secret) < _MIN_AUDIT_SECRET_LEN:
                 logger.warning(
                     "FORGELM_AUDIT_SECRET is %d characters — shorter than the "
-                    "recommended minimum of %d. A low-entropy secret makes the "
-                    "per-line audit HMAC forgeable; use 32+ random bytes from a "
-                    "secret manager.",
+                    "accepted minimum of %d. A low-entropy secret makes the "
+                    "per-line audit HMAC forgeable; use at least %d characters "
+                    "(32+ random bytes from a KMS is recommended for production).",
                     len(raw_secret),
+                    _MIN_AUDIT_SECRET_LEN,
                     _MIN_AUDIT_SECRET_LEN,
                 )
             self._hmac_key: Optional[bytes] = hashlib.sha256(raw_secret.encode() + self.run_id.encode()).digest()
@@ -538,7 +539,14 @@ def generate_data_governance_report(config: Any, dataset: Dict[str, Any]) -> Dic
 # ---------------------------------------------------------------------------
 
 
-def _hash_file(filepath: str, rel_path: str) -> dict:
+def hash_file(filepath: str, rel_path: str) -> dict:
+    """Hash one artifact for the Article 15 integrity manifest.
+
+    Public (non-underscore) because it is a stable cross-module helper: both
+    :func:`generate_model_integrity` here and ``forgelm verify-integrity``
+    (``cli/subcommands/_verify_integrity.verify_integrity``) depend on producing
+    byte-identical ``{file, sha256, size_bytes}`` records, so a signature change
+    must stay in lock-step across both (F-M-10)."""
     sha256 = hashlib.sha256()
     size = 0
     with open(filepath, "rb") as f:
@@ -596,7 +604,7 @@ def generate_model_integrity(final_path: str) -> Dict[str, Any]:
             file_pairs.append((filepath, rel_path))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
-        futures = [ex.submit(_hash_file, fp, rp) for fp, rp in file_pairs]
+        futures = [ex.submit(hash_file, fp, rp) for fp, rp in file_pairs]
         # as_completed yields in completion order (non-deterministic); the
         # explicit sort below restores a stable, diff-friendly artifact list.
         integrity["artifacts"] = [f.result() for f in concurrent.futures.as_completed(futures)]
@@ -755,9 +763,18 @@ def compute_config_hash(config: Any) -> str:
     The pipeline hashes the *raw YAML bytes*; the single-run path only
     holds the validated :class:`ForgeConfig` object, so we serialise the
     redacted ``model_dump(mode="json")`` with ``sort_keys=True`` for a
-    stable, order-independent canonical form.  Secrets are already
-    redacted by the per-block ``model_dump`` overrides, so the digest
-    never depends on a credential value.
+    stable, order-independent canonical form.
+
+    Partial secret redaction: ``AuthConfig.hf_token`` and
+    ``SyntheticConfig.api_key`` are redacted by their per-block
+    ``model_dump`` overrides.  ``WebhookConfig.url`` (which may carry an
+    embedded Slack/Teams OAuth token in the URL path) has **no**
+    ``model_dump`` override and is included verbatim in the canonical
+    JSON.  The hash itself is a one-way digest and does not expose the
+    URL on disk, but a verifier attempting to reproduce the digest from a
+    stored config would need the unredacted URL.  Operators that treat
+    the webhook URL as a secret should use ``url_env`` indirection
+    instead of ``url`` directly (F-M-11).
 
     Returns ``"sha256:" + hexdigest`` to match the pipeline format.
     """
@@ -1486,7 +1503,13 @@ def export_compliance_artifacts(
         annex_artifact = build_annex_iv_artifact(manifest)
         if annex_artifact is not None:
             with open(os.path.join(staging_dir, "annex_iv_metadata.json"), "w") as f:
-                json.dump(annex_artifact, f, indent=2, default=str)
+                # Must use _manifest_json_default (not default=str) so sets/frozensets
+                # are serialised as sorted lists — matching what compute_annex_iv_manifest_hash
+                # normalises to when computing the stored digest.  default=str would
+                # emit a PYTHONHASHSEED-dependent string like "{'q_proj', 'v_proj'}" while
+                # the verifier re-hashes a list, producing a false-tampering verdict
+                # (F-H-05).
+                json.dump(annex_artifact, f, indent=2, default=_manifest_json_default)
             pending.append(("annex_iv_metadata.json", "annex_iv_metadata.json"))
 
         # All writes succeeded — promote into place.  os.replace is atomic
@@ -2092,6 +2115,12 @@ def export_pipeline_manifest(manifest: Dict[str, Any], pipeline_output_dir: str)
     tmp_path = target_path + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, default=str)
+        # Flush userspace buffer then sync to storage before the rename so the
+        # artefact survives a kernel crash or OOM-kill between file-close and
+        # os.replace.  Mirrors the fsync discipline in log_event (Article 12
+        # durability requirement; F-M-12).
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp_path, target_path)
     return target_path
 

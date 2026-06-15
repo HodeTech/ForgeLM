@@ -572,7 +572,7 @@ class TestComplianceExportAtomicity:
                 export_compliance_artifacts(self._manifest(), out)
 
         assert any(
-            "Compliance rollback encountered errors" in r.getMessage() and r.levelno == _logging.ERROR
+            "Compliance rollback encountered errors" in r.message and r.levelno == _logging.ERROR
             for r in caplog.records
         ), "rollback failure was swallowed instead of logged at ERROR"
 
@@ -646,3 +646,81 @@ class TestManifestAnnexIV:
         assert "run_id" not in generate_training_manifest(config, {})
         with_run = generate_training_manifest(config, {}, run_id="fg-test123")
         assert with_run["run_id"] == "fg-test123"
+
+
+# ---------------------------------------------------------------------------
+# G05 regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestAnnexIVSetSerialisation:
+    """F-H-05 regression: annex_iv_metadata.json must be written with
+    _manifest_json_default so sets/frozensets serialise as sorted lists,
+    matching the hash computed at build time."""
+
+    @staticmethod
+    def _manifest_with_set_field():
+        """Return a training manifest whose training_parameters carries a Python
+        set, simulating a library caller that passes de-duplicated target_modules
+        as a set (the documented public-library entry point example)."""
+        return {
+            "forgelm_version": "0",
+            "generated_at": "now",
+            "config_hash": "sha256:abc",
+            "model_lineage": {"base_model": "m", "adapter_method": "LoRA r=8"},
+            "training_parameters": {
+                "trainer_type": "sft",
+                "epochs": 1,
+                # Python set: PYTHONHASHSEED-dependent str() order before fix.
+                "target_modules": {"q_proj", "v_proj", "k_proj"},
+            },
+            "data_provenance": {"primary_dataset": "ds"},
+            "evaluation_results": {"metrics": {"eval_loss": 0.5}},
+            "annex_iv": {
+                "provider_name": "Acme",
+                "system_name": "Bot",
+                "intended_purpose": "QA",
+                "system_version": "1.0",
+                "risk_classification": "minimal-risk",
+            },
+        }
+
+    def test_set_valued_export_verifies_valid(self, tmp_path):
+        """export_compliance_artifacts with a set-typed field must produce an
+        annex_iv_metadata.json whose manifest_hash passes verify_annex_iv_artifact.
+
+        Before F-H-05, json.dump(..., default=str) serialised the set as the
+        opaque string "{'q_proj', 'k_proj', 'v_proj'}" (PYTHONHASHSEED order)
+        while compute_annex_iv_manifest_hash normalised it to ["k_proj",
+        "q_proj", "v_proj"] — a false-tampering verdict on every verify run."""
+        from forgelm.cli.subcommands._verify_annex_iv import verify_annex_iv_artifact
+
+        out = str(tmp_path / "compliance")
+        export_compliance_artifacts(self._manifest_with_set_field(), out)
+
+        annex_path = os.path.join(out, "annex_iv_metadata.json")
+        assert os.path.isfile(annex_path), "annex_iv_metadata.json was not written"
+
+        result = verify_annex_iv_artifact(annex_path)
+        assert result.valid, (
+            f"verify_annex_iv_artifact returned invalid after export with set-typed field "
+            f"(F-H-05 regression): {result.reason!r}"
+        )
+
+    def test_set_on_disk_is_sorted_list_not_str(self, tmp_path):
+        """The on-disk target_modules value must be a JSON array (sorted list),
+        not the str(set) opaque string.  A string would pass JSON parsing but
+        make the hash non-reproducible across PYTHONHASHSEED values."""
+        out = str(tmp_path / "compliance")
+        export_compliance_artifacts(self._manifest_with_set_field(), out)
+
+        annex_path = os.path.join(out, "annex_iv_metadata.json")
+        with open(annex_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+
+        target_modules = data.get("system_components", {}).get("training_parameters", {}).get("target_modules")
+        assert isinstance(target_modules, list), (
+            f"target_modules must be a JSON array on disk, got {type(target_modules).__name__!r}: {target_modules!r}"
+        )
+        # Sorted deterministically — same order regardless of PYTHONHASHSEED.
+        assert target_modules == sorted(target_modules)

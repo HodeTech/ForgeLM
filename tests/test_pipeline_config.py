@@ -16,13 +16,20 @@ Covers:
 
 from __future__ import annotations
 
+import logging
+import warnings
+
 import pytest
 from pydantic import ValidationError
 
 from forgelm.config import (
     ForgeConfig,
+    JudgeConfig,
+    LoraConfigModel,
     PipelineConfig,
     PipelineStage,
+    SafetyConfig,
+    TrainingConfig,
     merge_pipeline_stage_config,
 )
 
@@ -421,3 +428,230 @@ class TestMergeRoundTripDefaults:
         assert merged.retention.staging_ttl_days == 30
         assert merged.evaluation is not None
         assert merged.evaluation.auto_revert is True
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for G06 findings
+# ---------------------------------------------------------------------------
+
+
+class TestSafetyConfigNoCircularImport:
+    """F-H-07: SafetyConfig must NOT import from safety.py at instantiation time."""
+
+    def test_safety_module_not_imported_when_safety_config_disabled(self):
+        """Instantiating SafetyConfig(enabled=False) must not pull in forgelm.safety."""
+        import sys
+
+        # Remove any previously cached safety module so the test is hermetic.
+        was_present = "forgelm.safety" in sys.modules
+        sys.modules.pop("forgelm.safety", None)
+        try:
+            SafetyConfig(enabled=False)
+            assert "forgelm.safety" not in sys.modules, (
+                "forgelm.safety appeared in sys.modules after SafetyConfig(enabled=False) "
+                "— the CONFIG → SAFETY architecture violation is still present."
+            )
+        finally:
+            if was_present:
+                import forgelm.safety  # noqa: F401 — restore module for other tests
+
+    def test_severity_levels_available_in_config_module(self):
+        """SEVERITY_LEVELS must be defined directly in forgelm.config (not imported from safety)."""
+        from forgelm import config as cfg_module
+
+        assert hasattr(cfg_module, "SEVERITY_LEVELS"), "SEVERITY_LEVELS missing from forgelm.config"
+        assert cfg_module.SEVERITY_LEVELS == ("critical", "high", "medium", "low")
+
+
+class TestSafetyConfigEarlyReturnWhenDisabled:
+    """F-M-13: _validate_safety_gates must skip cross-field checks when enabled=False."""
+
+    def test_disabled_safety_with_leftover_min_score_validates_cleanly(self):
+        """SafetyConfig(enabled=False, min_safety_score=0.9, scoring='binary') must not raise."""
+        # Before the fix this raised ValidationError because _validate_safety_gates
+        # ran unconditionally and the (min_safety_score, scoring) check fired.
+        cfg = SafetyConfig(enabled=False, min_safety_score=0.9, scoring="binary")
+        assert cfg.enabled is False
+        assert cfg.min_safety_score == pytest.approx(0.9)
+
+    def test_enabled_safety_with_mismatched_scoring_still_raises(self):
+        """The guard must still fire when enabled=True (existing behaviour must not regress)."""
+        with pytest.raises(ValidationError, match="confidence_weighted"):
+            SafetyConfig(enabled=True, min_safety_score=0.9, scoring="binary")
+
+
+class TestDeprecatedSamplePackingAlwaysWarns:
+    """F-M-14: DeprecationWarning must fire whenever sample_packing=True, even when packing=True."""
+
+    def test_both_true_emits_deprecation(self):
+        """sample_packing=True + packing=True must still emit DeprecationWarning."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            tc = TrainingConfig(
+                trainer_type="sft",
+                sample_packing=True,
+                packing=True,
+            )
+        dep_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert dep_warnings, (
+            "No DeprecationWarning when sample_packing=True + packing=True — "
+            "operator receives no nudge to remove the deprecated field."
+        )
+        # packing was already True; the forwarder must not clobber it.
+        assert tc.packing is True
+
+    def test_only_sample_packing_true_still_warns_and_forwards(self):
+        """Control case: sample_packing=True + packing=False must warn and set packing=True."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            tc = TrainingConfig(trainer_type="sft", sample_packing=True, packing=False)
+        dep_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert dep_warnings
+        assert tc.packing is True
+
+
+class TestSafetyConfigTrackCategoriesFieldsSet:
+    """F-M-15: auto-enabling track_categories must update __pydantic_fields_set__."""
+
+    def test_auto_enabled_track_categories_survives_round_trip(self):
+        """After auto-enable, track_categories must appear in model_fields_set."""
+        cfg = SafetyConfig(
+            enabled=True,
+            severity_thresholds={"critical": 0.0},
+        )
+        assert cfg.track_categories is True
+        assert "track_categories" in cfg.model_fields_set, (
+            "track_categories not in model_fields_set after auto-enable — "
+            "model_dump(exclude_unset=True) would omit it, causing repeated warnings per stage."
+        )
+        dumped = cfg.model_dump(exclude_unset=True)
+        assert dumped.get("track_categories") is True
+
+    def test_explicit_false_with_severity_thresholds_raises(self):
+        """Explicitly setting track_categories=False alongside severity_thresholds must raise."""
+        with pytest.raises(ValidationError, match="explicitly set to false"):
+            SafetyConfig(
+                enabled=True,
+                severity_thresholds={"critical": 0.0},
+                track_categories=False,
+            )
+
+
+class TestLoraDeprecatedFlagAlwaysWarns:
+    """F-L-09: DeprecationWarning must fire for use_dora/use_rslora even when method is already correct."""
+
+    def test_use_dora_with_method_dora_emits_deprecation(self):
+        """use_dora=True + method='dora' (compatible-redundant) must emit DeprecationWarning."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            lc = LoraConfigModel(use_dora=True, method="dora")
+        dep_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert dep_warnings, (
+            "No DeprecationWarning for use_dora=True + method='dora' — "
+            "operator receives no nudge to remove use_dora before v0.9.0."
+        )
+        assert lc.method == "dora"
+
+    def test_use_rslora_with_method_rslora_emits_deprecation(self):
+        """use_rslora=True + method='rslora' (compatible-redundant) must emit DeprecationWarning."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            lc = LoraConfigModel(use_rslora=True, method="rslora")
+        dep_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert dep_warnings, (
+            "No DeprecationWarning for use_rslora=True + method='rslora' — "
+            "operator receives no nudge to remove use_rslora before v0.9.0."
+        )
+        assert lc.method == "rslora"
+
+
+class TestJudgeConfigExtremeMinScoreWarns:
+    """F-L-10: JudgeConfig must emit logger.warning for near-trivial min_score values."""
+
+    def test_min_score_near_minimum_emits_warning(self, caplog):
+        """min_score=1.0 must trigger a logger.warning about near-trivial gate."""
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            JudgeConfig(min_score=1.0)
+        assert any("near the scale minimum" in r.message for r in caplog.records), (
+            "No warning for min_score=1.0 — near-trivial gate is silent."
+        )
+
+    def test_min_score_near_maximum_emits_warning(self, caplog):
+        """min_score=9.5 must trigger a logger.warning about near-impossible gate."""
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            JudgeConfig(min_score=9.5)
+        assert any("near the scale maximum" in r.message for r in caplog.records), (
+            "No warning for min_score=9.5 — near-impossible gate is silent."
+        )
+
+    def test_min_score_in_normal_range_does_not_warn(self, caplog):
+        """min_score=5.0 (the default) must not emit any warning."""
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            JudgeConfig(min_score=5.0)
+        assert not any("scale" in r.message for r in caplog.records)
+
+
+class TestTierDisagreementDeduplication:
+    """F-L-11: _warn_tier_disagreement must not fire more than once per unique tier-pair."""
+
+    def test_warning_fires_at_least_once_for_disagreeing_tiers(self, caplog):
+        """The disagreement warning must appear for a config with differing tiers."""
+        from forgelm import config as cfg_module
+
+        # Clear the module-level dedup set before the test.
+        cfg_module._tier_disagreement_warned.clear()
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            _root_cfg(
+                risk_assessment={"risk_category": "limited-risk"},
+                compliance={
+                    "provider_name": "Acme",
+                    "provider_contact": "a@b.test",
+                    "system_name": "S",
+                    "intended_purpose": "P",
+                    "risk_classification": "minimal-risk",
+                },
+            )
+        tier_warnings = [r for r in caplog.records if "Risk tiers disagree" in r.message]
+        assert tier_warnings, "Expected at least one 'Risk tiers disagree' warning."
+
+    def test_warning_fires_only_once_across_pipeline_merges(self, caplog):
+        """Running merge_pipeline_stage_config 3 times must not produce 4 warnings."""
+        from forgelm import config as cfg_module
+
+        cfg_module._tier_disagreement_warned.clear()
+        root = _root_cfg(
+            risk_assessment={"risk_category": "limited-risk"},
+            compliance={
+                "provider_name": "Acme",
+                "provider_contact": "a@b.test",
+                "system_name": "S",
+                "intended_purpose": "P",
+                "risk_classification": "minimal-risk",
+            },
+            pipeline={
+                "stages": [
+                    {"name": "s0"},
+                    {"name": "s1"},
+                    {"name": "s2"},
+                ]
+            },
+        )
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            caplog.clear()
+            cfg_module._tier_disagreement_warned.clear()
+            # Re-create to trigger the initial warning, then merge 3 times.
+            _root_cfg(
+                risk_assessment={"risk_category": "limited-risk"},
+                compliance={
+                    "provider_name": "Acme",
+                    "provider_contact": "a@b.test",
+                    "system_name": "S",
+                    "intended_purpose": "P",
+                    "risk_classification": "minimal-risk",
+                },
+            )
+            for stage in root.pipeline.stages:
+                merge_pipeline_stage_config(root, stage)
+        tier_warnings = [r for r in caplog.records if "Risk tiers disagree" in r.message]
+        # The dedup set must suppress all but the first emission.
+        assert len(tier_warnings) == 1, f"Expected exactly 1 'Risk tiers disagree' warning, got {len(tier_warnings)}."
