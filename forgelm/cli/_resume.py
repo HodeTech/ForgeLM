@@ -40,8 +40,9 @@ def _resolve_resume_checkpoint(checkpoint_dir: str, resume_arg: str) -> Optional
     for d in entries:
         if not (d.startswith("checkpoint-") and os.path.isdir(os.path.join(checkpoint_dir, d))):
             continue
-        suffix = d.split("-")[-1]
-        if suffix.isdecimal():
+        prefix = "checkpoint-"
+        suffix = d[len(prefix) :]
+        if d.startswith(prefix) and suffix.isdecimal():
             numbered.append(d)
         else:
             ignored.append(d)
@@ -54,7 +55,7 @@ def _resolve_resume_checkpoint(checkpoint_dir: str, resume_arg: str) -> Optional
             ", ".join(sorted(ignored)),
         )
 
-    checkpoint_dirs = sorted(numbered, key=lambda x: int(x.split("-")[-1]))
+    checkpoint_dirs = sorted(numbered, key=lambda x: int(x[len("checkpoint-") :]))
 
     if not checkpoint_dirs:
         logger.warning("No checkpoint-* directories found in %s. Starting fresh.", checkpoint_dir)

@@ -153,6 +153,26 @@ class TestResumeCheckpoint:
         result = _resolve_resume_checkpoint(str(tmp_path), "auto")
         assert result is None
 
+    def test_auto_rejects_multi_dash_numeric_suffix(self, tmp_path, caplog):
+        """``split("-")[-1]`` treated ``checkpoint-bad-900`` as suffix ``900`` and
+        could auto-select it as the latest; exact prefix slicing makes the suffix
+        ``bad-900`` (non-decimal) so it is ignored with a WARNING and the real
+        ``checkpoint-5`` wins."""
+        import logging
+
+        (tmp_path / "checkpoint-bad-900").mkdir()
+        (tmp_path / "checkpoint-5").mkdir()
+        with caplog.at_level(logging.WARNING):
+            result = _resolve_resume_checkpoint(str(tmp_path), "auto")
+        assert result.endswith("checkpoint-5")
+        assert any("non-numeric suffix" in r.message and "checkpoint-bad-900" in r.message for r in caplog.records)
+
+    def test_auto_only_multi_dash_numeric_starts_fresh(self, tmp_path):
+        """With only ``checkpoint-bad-900`` present the resolver starts fresh."""
+        (tmp_path / "checkpoint-bad-900").mkdir()
+        result = _resolve_resume_checkpoint(str(tmp_path), "auto")
+        assert result is None
+
 
 class TestMainEntrypoint:
     def test_missing_config_exits(self):
