@@ -87,6 +87,7 @@ Most fine-tuning tools stop at "the model trained." ForgeLM produces the artefac
 
 - **EU AI Act** — auto-generated Annex IV technical documentation, Article 10 data governance, Article 14 human-oversight staging gate
 - **GDPR** — `forgelm purge` (Article 17 right-to-erasure) and `forgelm reverse-pii` (Article 15 right-of-access)
+- **Model & log integrity** — a SHA-256 manifest per trained model (`forgelm verify-integrity`) and a tamper-evident audit chain (`forgelm verify-audit`) give you a one-command proof-of-integrity before you ship
 - **Append-only audit log** — HMAC-chained when `FORGELM_AUDIT_SECRET` is configured; every decision gate emits a structured event
 - **Supply-chain hardening** — CycloneDX 1.5 SBOM per release, nightly `pip-audit` + `bandit`, `gitleaks` pre-commit
 - **ISO 27001 / SOC 2 alignment** — software cannot be certified, but ForgeLM produces the change-management, data-lineage, and audit-trail evidence your deployer's auditor needs. See the [Deployer Audit Guide](docs/guides/iso_soc2_deployer_guide.md).
