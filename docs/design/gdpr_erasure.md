@@ -80,14 +80,14 @@ Two pre-existing surfaces overlap with this design and must be resolved up front
 
   **Conflict-resolution semantics (dual-set window v0.5.5–v0.6.x):**
 
-  - When only `evaluation.staging_ttl_days` is set → alias-forward to `retention.staging_ttl_days` and emit a single `DeprecationWarning` naming the new field + the v0.7.0 removal target.
+  - When only `evaluation.staging_ttl_days` is set → alias-forward to `retention.staging_ttl_days` and emit a single `DeprecationWarning` naming the new field + the v0.8.0 removal target.
   - When only `retention.staging_ttl_days` is set → no warning; canonical path.
   - In the case where **both** are set with **identical** values → emit `DeprecationWarning` for the deprecated field; the canonical `retention.staging_ttl_days` value is used; the operator's intent is unambiguous.
   - If **both** are set with **different** values → raise `ConfigError` at validation time naming both keys, both values, and instructing the operator to remove the deprecated entry.  Silent winner = wrong winner; ambiguous configs are refused.
 
   Phase 21 ships `tests/test_config.py::test_staging_ttl_days_dual_set_with_different_values_refused` asserting the `ConfigError` and that the message mentions both keys + both values.
 
-  **Tracking issue (per `docs/standards/release.md:95`):** Phase 21 also files a tracking issue `'Remove EvaluationConfig.staging_ttl_days in v0.7.0'` and links it from both the `DeprecationWarning` message text and the v0.5.5 CHANGELOG `### Deprecated` entry.  The v0.7.0 removal PR closes that issue.
+  **Tracking issue (per `docs/standards/release.md:95`):** Phase 21 also files a tracking issue `'Remove EvaluationConfig.staging_ttl_days in v0.8.0'` and links it from both the `DeprecationWarning` message text and the v0.5.5 CHANGELOG `### Deprecated` entry.  The v0.8.0 removal PR closes that issue.
 - **`docs/usermanuals/en/compliance/gdpr.md` lines 51-64** + closure plan §15.5 row GH-023 reference an `ingestion.retention.raw_documents.ttl_days` shape.  This design (§10 Q1) standardises on the top-level `retention.*` form because the policy covers more than ingestion artefacts (audit logs, staging dirs, ephemeral snapshots).  Phase 21 updates the GDPR user-manual page in the same PR; closure plan §15.5 GH-023 entry is amended to "absorbed under top-level `retention.*`" rather than carrying the `ingestion.retention.*` shape forward.
 
 ### 3.2 Schema

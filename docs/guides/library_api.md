@@ -12,7 +12,7 @@ ForgeLM ships **two equally first-class entry points**: the `forgelm` console sc
 
 Choose the **CLI** when:
 
-- You're shipping a Bash / GitHub Actions / GitLab CI pipeline. The exit-code contract (0/1/2/3/4) is the integration surface.
+- You're shipping a Bash / GitHub Actions / GitLab CI pipeline. The exit-code contract (0/1/2/3/4/5) is the integration surface.
 - You want the structured logging + JSON envelopes ForgeLM emits to stdout out of the box.
 - You're running on infrastructure where one process per stage is the operational unit (most CI runners, most Argo pipelines).
 
@@ -47,8 +47,8 @@ assert "torch" not in sys.modules
 
 # But the public surface is fully discoverable for autocomplete.
 print("ForgeTrainer" in dir(forgelm))   # True
-print(forgelm.__version__)              # e.g. "0.5.5"
-print(forgelm.__api_version__)          # e.g. "0.5"
+print(forgelm.__version__)              # e.g. "0.7.0"
+print(forgelm.__api_version__)          # e.g. "1.0.0"
 ```
 
 A runnable notebook (`notebooks/library_api_example.ipynb`) ships with the wheel and walks the same three patterns this page covers — see the design doc Phase 19 task #13 for its provenance.

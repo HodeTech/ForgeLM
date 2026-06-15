@@ -130,7 +130,7 @@ ForgeLM-spesifik kontrol envanteriyle ilgilidir.
 | A.8.21 Ağ hizmetlerinin güvenliği | YES | TLS-only webhooks (HTTPS-only + SSRF guard); audit-log chain HMAC `FORGELM_AUDIT_SECRET` üzerinden (not: webhook **gövdeleri** HMAC ile imzalanmaz — hedef-tarafı authenticity alıcı sistemin sorumluluğundadır) | TLS 1.2+ enforcement |
 | A.8.22 Ağ ayrımı | YES | VPC / subnet design | Benimse |
 | A.8.23 Web filtreleme | YES | Egress proxy | Benimse |
-| A.8.24 Kriptografi kullanımı | YES | SHA-256 + HMAC-SHA-256 (audit chain key = `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)`, bkz. `forgelm/compliance.py:104-114`); ayrıca `forgelm purge` / `forgelm reverse-pii` için salted SHA-256 identifier hashing (`_purge._resolve_salt`, ayrı bir konu — chain-key türetimine katılmaz) | `FORGELM_AUDIT_SECRET` için KMS |
+| A.8.24 Kriptografi kullanımı | YES | SHA-256 + HMAC-SHA-256 (audit chain key = `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)`, bkz. `AuditLogger.__init__` — `forgelm/compliance.py:164`); ayrıca `forgelm purge` / `forgelm reverse-pii` için salted SHA-256 identifier hashing (`_purge._resolve_salt`, ayrı bir konu — chain-key türetimine katılmaz) | `FORGELM_AUDIT_SECRET` için KMS |
 | A.8.25 Güvenli geliştirme yaşam döngüsü | YES | `docs/standards/code-review.md`, `release.md`, CI gate'leri | SDLC framework |
 | A.8.26 Uygulama güvenliği gereksinimleri | YES | F-compliance-110 strict gate; Pydantic validation; `_reverse_pii`'da ReDoS guard | App-seviyesi tehdit modelleme |
 | A.8.27 Güvenli sistem mimarisi ve mühendislik prensipleri | YES | Append-only audit log mimarisi; HMAC chain; lazy import; SSRF guard | Defence-in-depth |

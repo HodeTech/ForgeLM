@@ -42,7 +42,7 @@ audit log'u ve ForgeLM audit log'u çapraz-referanslanabilir.
 ForgeLM operatör kimliğini audit-event emit anında resolve eder:
 
 1. `FORGELM_OPERATOR` env var (tercih edilen — açık set).
-2. `getpass.getuser()` (POSIX kullanıcı adı fallback).
+2. `getpass.getuser() + '@' + socket.gethostname()` (POSIX kullanıcıadı@hostname fallback).
 3. `FORGELM_ALLOW_ANONYMOUS_OPERATOR=1` kimlik olmadan emit'e izin
    verir (yalnız kısa-ömürlü test koşumları içindir; aksi takdirde
    ConfigError).
@@ -79,7 +79,7 @@ ID'leri sonsuza kadar chain'de kalır. Bir operatör ayrıldığında:
 ### 3.4 `FORGELM_AUDIT_SECRET` rotasyonu
 
 HMAC-chain imzalama anahtarı **audit koşumu başına**
-`AuditLogger.__init__` içinde `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)`
+`AuditLogger.__init__` (`forgelm/compliance.py:164`) içinde `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)`
 olarak türetilir (birleştirme; verifier
 `forgelm.compliance.verify_audit_log` aynı türetimi byte-byte
 yansıtır). Not:

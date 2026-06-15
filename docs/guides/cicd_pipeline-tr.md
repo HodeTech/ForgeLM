@@ -116,7 +116,6 @@ stages:
   - validate
   - train
   - evaluate
-  - deploy
 
 validate:
   stage: validate

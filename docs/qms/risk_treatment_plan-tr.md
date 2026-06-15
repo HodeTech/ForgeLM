@@ -79,7 +79,7 @@ ekler.
 |---|---|
 | Açıklama | `audit_log.jsonl`'a write erişimi olan adversary girişleri yeniden yazıp bir dağıtımı gizler / onaylanmamış bir modeli onaylar |
 | L × I (inherent) | Low × High = MED |
-| Treatment | Append-only `O_APPEND` + `flock` + per-line `fsync`; HMAC chain (per-line `_hmac` alanı, per-run imzalama anahtarı `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)` olarak türetilir — `forgelm/compliance.py:104-114` — per-output-dir `.forgelm_audit_salt` ayrı bir konudur, purge / reverse-pii tanımlayıcı hash'lerini salt'lar ve chain-key türetimine KATILMAZ); SHA-256 prev-hash chain; genesis manifest sidecar (`_check_genesis_manifest` truncate-and-resume reddeder); `forgelm verify-audit` uçtan uca doğrular |
+| Treatment | Append-only `O_APPEND` + `flock` + per-line `fsync`; HMAC chain (per-line `_hmac` alanı, per-run imzalama anahtarı `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)` olarak türetilir — `forgelm/compliance.py:164` — per-output-dir `.forgelm_audit_salt` ayrı bir konudur, purge / reverse-pii tanımlayıcı hash'lerini salt'lar ve chain-key türetimine KATILMAZ); SHA-256 prev-hash chain; genesis manifest sidecar (`_check_genesis_manifest` truncate-and-resume reddeder); `forgelm verify-audit` uçtan uca doğrular |
 | Residual L × I | Low × Low = LOW |
 | Sahip | AI Officer |
 | Review cadence | Continuous (`forgelm verify-audit` cron) |

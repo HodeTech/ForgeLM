@@ -170,11 +170,16 @@ that an attacker may have observed.
        bodies).
 2. [ ] **Walk the audit chain** to confirm the attacker did not splice
        events into the recipient: filter
-       `audit_log.jsonl` by event class
-       (`jq 'select(.event | startswith("notify_"))'`) and confirm
-       every emitted lifecycle entry corresponds to a real
-       `pipeline.*` event in the same `run_id`. Mismatched timestamps
-       or orphan `notify_*` rows are the splice signal.
+       `audit_log.jsonl` to the core lifecycle events
+       (`jq 'select(.event | test("^(training\\.|pipeline\\.|human_approval\\.)"))'`)
+       and confirm each lifecycle event in the `run_id` window matches
+       the expected sequence. Note: webhook wire-event names
+       (`training.start`, `training.success`, etc.) differ from
+       audit-log event names (`training.started`, `pipeline.completed`,
+       etc.) — only audit-log events appear in `audit_log.jsonl`;
+       `notify_*` are internal method names never written to the log.
+       Mismatched timestamps or unexpected entries for a `run_id` are
+       the splice signal.
 3. [ ] **Check `safe_post` error logs** for masked Authorization
        headers post-rotation — confirm the attacker no longer holds
        a valid token.

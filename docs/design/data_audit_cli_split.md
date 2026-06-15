@@ -597,7 +597,7 @@ A PR in either series is "accepted" when ALL of the following hold:
 10. **ruff format + ruff check clean.**
 11. **No new top-level imports of torch / transformers / unsloth / deepspeed / lm_eval inside `forgelm/cli/**` or `forgelm/data_audit/**`.**
 12. **Logger names unchanged.**
-13. **Public exit codes preserved:** `EXIT_SUCCESS == 0`, `EXIT_CONFIG_ERROR == 1`, `EXIT_TRAINING_ERROR == 2`, `EXIT_EVAL_FAILURE == 3`, `EXIT_AWAITING_APPROVAL == 4`, `_PUBLIC_EXIT_CODES == frozenset({0,1,2,3,4})`.
+13. **Public exit codes preserved:** `EXIT_SUCCESS == 0`, `EXIT_CONFIG_ERROR == 1`, `EXIT_TRAINING_ERROR == 2`, `EXIT_EVAL_FAILURE == 3`, `EXIT_AWAITING_APPROVAL == 4`, `EXIT_WIZARD_CANCELLED == 5`, `_PUBLIC_EXIT_CODES == frozenset({0,1,2,3,4,5})`.
 
 ---
 

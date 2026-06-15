@@ -350,7 +350,7 @@ require_hmac=False)`, bir `VerifyResult` dataclass'ı (`valid`,
 
 ```json
 {
-  "forgelm_version": "0.5.5",
+  "forgelm_version": "0.7.0",
   "generated_at": "2026-03-23T14:30:00+00:00",
   "model_lineage": {
     "base_model": "meta-llama/Llama-3.1-8B-Instruct",
@@ -478,7 +478,7 @@ evaluation:
 
 **Ne olur:**
 1. Eğitim tamamlanır, tüm otomatik değerlendirmeler geçer
-2. Model nihai dizine kaydedilir
+2. Model staging dizinine kaydedilir (`final_model.staging.<run_id>/`)
 3. ForgeLM **kod 4** ("onay bekleniyor") ile çıkar
 4. Bir insan değerlendirme sonuçlarını, model card'ı ve uyumluluk
    artefaktlarını inceler

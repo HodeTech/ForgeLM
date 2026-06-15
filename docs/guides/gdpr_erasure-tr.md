@@ -93,7 +93,7 @@ Wave 1 `evaluation.staging_ttl_days` field'ı (v0.5.5'te shipped) **deprecate** 
 - İkisi de **aynı** değerlerle açıkça set'liyse `DeprecationWarning` yayılır (canonical block kazanır).
 - İkisi de **farklı** değerlerle açıkça set'liyse config-load zamanında `ConfigError` raise edilir. Sessiz kazanan = yanlış kazanan.
 
-Deprecate edilen field **v0.7.0**'da kaldırılır.
+Deprecate edilen field **v0.8.0**'da kaldırılır.
 
 ## Audit-event sözlüğü
 
@@ -185,5 +185,5 @@ glob); `2` = runtime hatası (mid-scan I/O failure).  JSON envelope
 ## Bkz.
 
 - `docs/qms/sop_data_management.md` — retention + erasure prosedürleri dahil tam data-lifecycle SOP.
-- `docs/usermanuals/tr/compliance/safety_compliance.md` — buraya link veren operator-facing compliance overview.
+- `docs/usermanuals/tr/compliance/overview.md` — buraya link veren operator-facing compliance overview.
 - [`docs/design/gdpr_erasure.md`](../design/gdpr_erasure.md) — bu implementation'ın gerçekleştirdiği Phase 20 design dokümanı.

@@ -78,7 +78,7 @@ section §4.
 |---|---|
 | Description | Adversary with write access to `audit_log.jsonl` rewrites entries to hide a deployment / approve a model that wasn't approved |
 | L × I (inherent) | Low × High = MED |
-| Treatment | Append-only `O_APPEND` + `flock` + `fsync` per line; HMAC chain (per-line `_hmac` field, per-run signing key derived as `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)` per `forgelm/compliance.py:104-114` — the per-output-dir `.forgelm_audit_salt` is a distinct concern that salts purge / reverse-pii identifier hashes and does NOT participate in chain-key derivation); SHA-256 prev-hash chain; genesis manifest sidecar (`_check_genesis_manifest` refuses truncate-and-resume); `forgelm verify-audit` validates end-to-end |
+| Treatment | Append-only `O_APPEND` + `flock` + `fsync` per line; HMAC chain (per-line `_hmac` field, per-run signing key derived as `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)` per `forgelm/compliance.py:164` — the per-output-dir `.forgelm_audit_salt` is a distinct concern that salts purge / reverse-pii identifier hashes and does NOT participate in chain-key derivation); SHA-256 prev-hash chain; genesis manifest sidecar (`_check_genesis_manifest` refuses truncate-and-resume); `forgelm verify-audit` validates end-to-end |
 | Residual L × I | Low × Low = LOW |
 | Owner | AI Officer |
 | Review cadence | Continuous (`forgelm verify-audit` cron) |

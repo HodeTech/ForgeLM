@@ -168,12 +168,17 @@ olabilir.
        ediyorsan, secret manager'da yeni değeri set'le; ForgeLM şu
        an gövdeleri HMAC ile imzalamıyor).
 2. [ ] **Audit chain'i yürü** saldırganın olayları recipient'a splice
-       etmediğini teyit için: `audit_log.jsonl`'ı event sınıfına göre
-       filtrele (`jq 'select(.event | startswith("notify_"))'`) ve
-       emit edilen her lifecycle girişinin aynı `run_id` içindeki
-       gerçek bir `pipeline.*` event'ına karşılık geldiğini doğrula.
-       Eşleşmeyen timestamp'lar veya yetim `notify_*` satırları
-       splice sinyalidir.
+       etmediğini teyit için: `audit_log.jsonl`'ı çekirdek lifecycle
+       olaylarına göre filtrele
+       (`jq 'select(.event | test("^(training\\.|pipeline\\.|human_approval\\.)"))'`)
+       ve `run_id` penceresindeki her lifecycle olayının beklenen
+       sırayla eşleştiğini doğrula. Not: webhook wire-event adları
+       (`training.start`, `training.success`, vb.) audit-log olay
+       adlarından (`training.started`, `pipeline.completed`, vb.)
+       farklıdır — `audit_log.jsonl`'da yalnız audit-log olayları
+       görünür; `notify_*` log'a asla yazılmayan dahili metot
+       adlarıdır. Bir `run_id` için eşleşmeyen timestamp'lar veya
+       beklenmedik girişler splice sinyalidir.
 3. [ ] **`safe_post` error log'larını kontrol et** rotation sonrası
        redact'lı Authorization header'lar için — saldırganın artık
        geçerli token tutmadığını teyit et.

@@ -41,7 +41,7 @@ and ForgeLM audit log can be cross-referenced.
 ForgeLM resolves the operator identity at audit-event emit time:
 
 1. `FORGELM_OPERATOR` env var (preferred — explicit set).
-2. `getpass.getuser()` (POSIX user name fallback).
+2. `getpass.getuser() + '@' + socket.gethostname()` (POSIX username@hostname fallback).
 3. `FORGELM_ALLOW_ANONYMOUS_OPERATOR=1` permits emission without
    identity (intended for short-lived test runs only; ConfigError
    otherwise).
@@ -79,7 +79,7 @@ remain in the chain forever. When an operator leaves:
 
 The HMAC-chain signing key is derived **per audit run** as
 `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)` (concatenation, see
-`forgelm/compliance.py:104-114`). Note: the per-output-dir salt
+`AuditLogger.__init__` at `forgelm/compliance.py:164`). Note: the per-output-dir salt
 written to `<output_dir>/.forgelm_audit_salt` is a **distinct
 concern** — it salts identifier hashing inside `forgelm purge` /
 `forgelm reverse-pii` events (`_purge._resolve_salt` /

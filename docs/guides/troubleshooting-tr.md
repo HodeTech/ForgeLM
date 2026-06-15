@@ -197,7 +197,7 @@ synthetic:
   max_new_tokens: 512 # asılı kalıyorsa teacher yanıt boyutunu sınırla
 ```
 
-`SyntheticConfig`, v0.5.5'te ayrı retry / batch ayarları yüzeylemiyor —
+`SyntheticConfig`, v0.7.0'da ayrı retry / batch ayarları yüzeylemiyor —
 retry'lar HTTP-client katmanında ele alınır ve batch size API çağrısı
 başına bir prompt'a sabittir. Phase 28+ backlog'u açık retry-count ve
 batched-call parametreleri eklemeyi takip ediyor.
@@ -414,6 +414,7 @@ docker run --gpus all --shm-size=16g ...
 | `2` | Eğitim hatası | GPU, bellek, bağımlılıkları kontrol edin |
 | `3` | Değerlendirme arızası | Model kalitesi eşiğin altında — eşikleri ayarlayın ya da veriyi iyileştirin |
 | `4` | Onay bekleniyor | İnsan incelemesi gerekli — staging dizinini incelemek için `forgelm approvals --show <run_id> --output-dir <dir>` çalıştırın, sonra promote için `forgelm approve <run_id> --output-dir <dir>` ya da kalıcı reject için `forgelm reject <run_id> --output-dir <dir>`. Staging yolu `<output_dir>/final_model.staging.<run_id>/`'dir. |
+| `5` | Sihirbaz iptal | Sihirbaz iptal edildi (Ctrl-C veya açık iptal) — config yazılmadı; `--wizard` ile yeniden çalıştırın ya da etkileşimsiz kullanım için `forgelm quickstart <template>` kullanın. |
 
 ---
 

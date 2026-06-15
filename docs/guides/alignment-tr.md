@@ -61,8 +61,7 @@ Ya da modern `messages` formatı:
 ```yaml
 model:
   name_or_path: "meta-llama/Llama-3.1-8B-Instruct"
-  max_length: 4096
-  backend: "transformers"
+  load_in_4bit: true
 
 lora:
   r: 16
@@ -266,10 +265,7 @@ forgelm --config configs/stage2_dpo.yaml
 forgelm --config configs/stage3_grpo.yaml
 ```
 
-> **Planlanan (Faz 14 — pipeline chains):** Tek bir YAML dosyasında
-> çok-aşamalı eğitim zincirlerini tanımlayan bir `pipeline:` config
-> anahtarı, aşamalar arası manuel config curating'i ortadan kaldıracak.
-> Takip issue'su v0.6.0+ release penceresine bağlı.
+> **v0.7.0'dan itibaren mevcut (Faz 14):** `pipeline:` config bloğu, tek bir YAML'da çok-aşamalı eğitimi (SFT → DPO → GRPO) zincirler. Tam kılavuz için [Çok Aşamalı Eğitim Pipeline'ları](pipeline-tr.md) sayfasına bakın.
 
 ---
 
