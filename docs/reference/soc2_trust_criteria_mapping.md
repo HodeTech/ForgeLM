@@ -97,7 +97,7 @@ Strong ForgeLM contribution.
 | P2.1 Choice and consent | `evaluation.require_human_approval` Article 14 gate |
 | P3.1 Collection | `data.governance.personal_data_included`; `dpia_completed` |
 | P3.2 Quality of personal data | `data_audit_report.json` quality stats |
-| P4.1 Use, retention, and disposal | `retention.staging_ttl_days` (canonical; legacy alias `evaluation.staging_ttl_days` forwards transparently during the v0.5.5 → v0.6.x deprecation window); `forgelm purge --check-policy` |
+| P4.1 Use, retention, and disposal | `retention.staging_ttl_days` (canonical; legacy alias `evaluation.staging_ttl_days` was removed in v0.8.0); `forgelm purge --check-policy` |
 | P5.1 Access | `forgelm reverse-pii` Article 15 scan; salted query-hash |
 | P5.2 Inquiries and complaints | (Deployer-side workflow) |
 | P6.1 Disclosure to third parties | `safe_post` webhook discipline (TLS-only, SSRF guard, redirect refusal); note: webhook bodies are NOT HMAC-signed — see ISO 27001 A.8.21 |

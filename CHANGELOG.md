@@ -4,10 +4,19 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
-_(v0.7.1 dev cycle — entries will land here as PRs merge.)_
+_(v0.8.1 dev cycle — entries will land here as PRs merge.)_
+
+## [0.8.0] — 2026-06-16
 
 ### Added
 
+- **Model-integrity verification.** New `forgelm verify-integrity MODEL_DIR`
+  subcommand and `forgelm.verify_integrity()` / `VerifyIntegrityResult` public
+  API: re-hashes a trained model directory against its EU AI Act Article 15
+  `model_integrity.json` SHA-256 manifest (written by the compliance export at
+  training time) and reports `changed` / `removed` / `added` artifacts. Exit
+  `0` (all match) / `1` (mismatch or input error) / `2` (runtime I/O failure);
+  `--output-format json` for CI gates. Bumps `__api_version__` to `1.1.0`.
 - **Config-driven merge hyperparameters.** `merge.ties_trim_fraction`,
   `merge.dare_drop_rate`, and `merge.dare_seed` expose the TIES/DARE knobs
   that were previously fixed module constants (defaults unchanged: `0.2`,
@@ -26,13 +35,6 @@ _(v0.7.1 dev cycle — entries will land here as PRs merge.)_
   weight per dataset (`1 primary + len(extra_datasets)`); a length
   mismatch raised no config error and silently fell back to uniform
   mixing at runtime. Both now fail fast at config time (exit 1).
-- **Deprecation removals deferred to v0.8.0.** `evaluation.staging_ttl_days`
-  and the `--data-audit` CLI flag were originally scheduled for removal in
-  v0.7.0, but v0.7.0 shipped with both still present to preserve the full
-  one-minor deprecation window. Every `DeprecationWarning`, `--help` text,
-  reference-doc note, and the release-standard worked example now name
-  **v0.8.0** consistently as the removal target. The `### Removed` section
-  lands in the v0.8.0 CHANGELOG.
 
 ### Deprecated
 
@@ -42,6 +44,18 @@ _(v0.7.1 dev cycle — entries will land here as PRs merge.)_
   `DeprecationWarning` so the documented behaviour actually fires. Use
   `packing` instead — `sample_packing` is removed in **v0.9.0**. See
   [docs/standards/release.md](docs/standards/release.md#deprecation-cadence).
+
+### Removed
+
+- **`evaluation.staging_ttl_days`** (deprecated in v0.7.0) is removed. Use the
+  canonical `retention.staging_ttl_days`; `EvaluationConfig` is `extra="forbid"`,
+  so the legacy key now raises a validation error instead of forwarding.
+- **`forgelm --data-audit PATH`** CLI flag (deprecated in v0.7.0) is removed.
+  Use the first-class `forgelm audit PATH` subcommand — identical behaviour and
+  output. `argparse` now rejects the flag (exit 2).
+- **`cli.legacy_flag_invoked`** audit event is no longer emitted (it recorded
+  use of the removed `--data-audit` flag) and has been dropped from the
+  audit-event catalog.
 
 ### Fixed
 
@@ -2134,7 +2148,8 @@ Major release: ForgeLM goes from a basic SFT fine-tuning tool to a full-stack LL
 - Basic evaluation checks (max loss, baseline comparison)
 - Auto-revert on quality degradation
 
-[Unreleased]: https://github.com/HodeTech/ForgeLM/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/HodeTech/ForgeLM/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/HodeTech/ForgeLM/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/HodeTech/ForgeLM/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/HodeTech/ForgeLM/compare/v0.5.7...v0.6.0
 [0.5.7]: https://github.com/HodeTech/ForgeLM/compare/v0.5.6...v0.5.7

@@ -546,20 +546,20 @@ class TestLoraDeprecatedFlagConflicts:
 # --- M3: staging_ttl deprecation reaches the logger path (F-P1-FAB-17) ---
 
 
-class TestStagingTtlDeprecationVisibility:
-    """The deprecation must surface on the CLI logger path, not only via a
-    DeprecationWarning that CPython's default filters suppress.
+class TestStagingTtlLegacyFieldRemoved:
+    """The legacy ``evaluation.staging_ttl_days`` alias was removed in v0.8.0
+    (deprecated in v0.7.0). Only the canonical ``retention.staging_ttl_days``
+    remains; ``EvaluationConfig`` has ``extra="forbid"`` so the legacy key is
+    now a hard validation error rather than a forwarded deprecation.
     """
 
-    def test_staging_ttl_forward_emits_logger_warning(self, caplog):
-        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+    def test_legacy_evaluation_staging_ttl_days_is_rejected(self):
+        with pytest.raises(ValidationError, match="staging_ttl_days"):
             ForgeConfig(**minimal_config(evaluation={"staging_ttl_days": 14}))
-        assert any("staging_ttl_days` is deprecated" in r.message for r in caplog.records)
 
-    def test_staging_ttl_match_emits_logger_warning(self, caplog):
-        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
-            ForgeConfig(**minimal_config(evaluation={"staging_ttl_days": 7}, retention={"staging_ttl_days": 7}))
-        assert any("canonical block wins" in r.message for r in caplog.records)
+    def test_canonical_retention_staging_ttl_days_still_works(self):
+        cfg = ForgeConfig(**minimal_config(retention={"staging_ttl_days": 30}))
+        assert cfg.retention.staging_ttl_days == 30
 
 
 # --- L3: merge / synthetic empty-payload validators (F-P1-FAB-32) ---

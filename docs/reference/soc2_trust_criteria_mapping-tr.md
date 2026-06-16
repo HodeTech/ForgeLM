@@ -96,7 +96,7 @@ Güçlü ForgeLM katkısı.
 | P2.1 Seçim ve onay | `evaluation.require_human_approval` Madde 14 gate |
 | P3.1 Toplama | `data.governance.personal_data_included`; `dpia_completed` |
 | P3.2 Kişisel veri kalitesi | `data_audit_report.json` quality stats |
-| P4.1 Kullanım, saklama ve imha | `retention.staging_ttl_days` (kanonik; eski takma ad `evaluation.staging_ttl_days` v0.5.5 → v0.6.x deprecation penceresi boyunca şeffaf yönlendirir); `forgelm purge --check-policy` |
+| P4.1 Kullanım, saklama ve imha | `retention.staging_ttl_days` (kanonik; eski takma ad `evaluation.staging_ttl_days` v0.8.0'da kaldırıldı); `forgelm purge --check-policy` |
 | P5.1 Erişim | `forgelm reverse-pii` Madde 15 scan; salted query-hash |
 | P5.2 Sorular ve şikayetler | (Operatör-tarafı workflow) |
 | P6.1 Üçüncü taraflara açıklama | `safe_post` webhook discipline (yalnız TLS, SSRF koruması, yönlendirme reddi); not: webhook gövdeleri HMAC ile imzalanmaz — bkz. ISO 27001 A.8.21 |

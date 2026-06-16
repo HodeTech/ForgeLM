@@ -49,8 +49,7 @@ Run `forgelm <subcommand> --help` for any of these.
 | `--merge` | Run model merging from the `merge:` config block. No training. |
 | `--generate-data` | Generate synthetic training data using the teacher model. No training. |
 | `--compliance-export OUTPUT_DIR` | Export EU AI Act compliance artifacts (audit trail, data provenance, Annex IV) to OUTPUT_DIR. Run after training so the manifest is complete. |
-| `--data-audit PATH` | **Deprecated alias** for `forgelm audit PATH`. Scheduled for removal in v0.8.0. New scripts should use the subcommand. |
-| `--output DIR` | Output directory for `--data-audit` / `--compliance-export` (default: `./audit/` or `./compliance/`). |
+| `--output DIR` | Output directory for `--compliance-export` (default: `./compliance/`). |
 | `--output-format {text,json}` | Output format for results (default: `text`). JSON for CI. |
 | `--quiet, -q` | Suppress INFO logs. Only show warnings and errors. |
 | `--log-level {DEBUG,INFO,WARNING,ERROR}` | Set logging verbosity (default: INFO). |

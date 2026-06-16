@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import sys
-import warnings
 
 from ._config_load import _apply_offline_flag, _load_config_or_exit
 from ._exit_codes import EXIT_CONFIG_ERROR, EXIT_SUCCESS, EXIT_TRAINING_ERROR, _clamp_exit_code
@@ -170,76 +169,6 @@ def main():
         sys.exit(EXIT_TRAINING_ERROR)
 
 
-def _dispatch_legacy_data_audit(args) -> None:
-    """Handle ``forgelm --data-audit PATH`` (deprecated flag).
-
-    Pulled out of ``_main_inner`` for Sonar python:S3776 cognitive-
-    complexity hygiene.  Emits the standard deprecation
-    ``DeprecationWarning`` + an audit-log breadcrumb (best-effort), then
-    delegates to the canonical ``_run_data_audit`` and ``sys.exit``s.
-    Calls back to ``_main_inner`` are impossible — this function always
-    terminates the process.
-    """
-    json_output = args.output_format == "json"
-    log_level = "WARNING" if args.quiet else args.log_level
-    _setup_logging(log_level, json_format=json_output)
-    # Phase 13 (Faz 13): emit a structured Python ``DeprecationWarning``
-    # so `pytest -W error::DeprecationWarning` and `python -Wd` tooling
-    # surface it, plus an append-only audit-log event so operators who
-    # only read the JSONL trail see the migration signal too. Cadence
-    # for the v0.8.0 removal follows the "Deprecation cadence" section
-    # in ``docs/standards/release.md`` (one-minor warning window
-    # minimum).  Originally targeted v0.7.0; pushed one minor out to
-    # v0.8.0 at the v0.7.0 cut to preserve the one-minor warning
-    # window for operators who only upgrade once per minor release.
-    warnings.warn(
-        "`forgelm --data-audit PATH` is deprecated and will be removed "
-        "in v0.8.0. Use the `forgelm audit PATH` subcommand instead — "
-        "same behaviour, same output. "
-        "See docs/standards/release.md#deprecation-cadence for the removal timeline.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    # Audit-log event: append-only Article 12 record of the legacy
-    # invocation so compliance reviewers can prove the operator was
-    # warned.  Best-effort — a read-only output dir must not abort the
-    # actual audit run.
-    legacy_target = args.output or "./audit"
-    try:
-        from ..compliance import AuditLogger
-        from ..config import ConfigError
-
-        AuditLogger(legacy_target).log_event(
-            "cli.legacy_flag_invoked",
-            flag="--data-audit",
-            replacement="forgelm audit",
-            version="v0.8.0 removal",
-        )
-    except (OSError, ConfigError) as audit_exc:
-        logger.warning(
-            "Failed to emit deprecation audit event to %s: %s",
-            legacy_target,
-            audit_exc,
-        )
-    # Late import via the package facade so monkeypatched
-    # ``forgelm.cli._run_data_audit`` references resolve correctly.
-    from forgelm import cli as _cli_facade
-
-    # The deprecation warning, the parser help, and the helper docstring all
-    # promise "same behaviour, same output" as `forgelm audit PATH`.  The
-    # subcommand defaults --quality-filter ON (v0.6.0+), so the legacy alias
-    # must pass enable_quality_filter=True to keep that promise — otherwise it
-    # falls back to the helper's opt-in default (False) and emits a
-    # quality_summary-less data_audit_report.json (F-P7-OPUS-01).
-    _cli_facade._run_data_audit(
-        args.data_audit,
-        args.output,
-        args.output_format,
-        enable_quality_filter=True,
-    )
-    sys.exit(EXIT_SUCCESS)
-
-
 def _dispatch_pipeline_mode(config, args) -> None:
     """Handle a config that carries a ``pipeline:`` block.
 
@@ -284,18 +213,8 @@ def _main_inner() -> None:
         _setup_logging(log_level, json_format=json_output)
         _dispatch_subcommand(command, args)
 
-    # --data-audit operates on a JSONL file/directory only — no config needed.
-    # Run before the config-required check so operators can audit raw data
-    # without writing a YAML. Phase 11.5 promoted the same code path to
-    # `forgelm audit PATH` (a real subcommand); the legacy flag is preserved
-    # as an alias and slated for removal in v0.8.0.  (Removal originally
-    # targeted v0.7.0; pushed one minor out at the v0.7.0 cut to preserve
-    # the documented one-minor warning window — see the matching
-    # DeprecationWarning message + audit-event ``version`` field below
-    # and ``docs/standards/release.md#deprecation-cadence``.)
-    if getattr(args, "data_audit", None):
-        _dispatch_legacy_data_audit(args)
-
+    # (The legacy ``forgelm --data-audit PATH`` flag was removed in v0.8.0;
+    # use the first-class ``forgelm audit PATH`` subcommand instead.)
     _maybe_run_wizard(args)
 
     if not args.config:

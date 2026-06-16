@@ -226,10 +226,10 @@ across retries. Each retry attempt is logged to the audit trail.
 > are fixed (not yet config-driven) — keep this in mind when tuning `min_score`
 > for long-form fine-tunes.
 >
-> **Deprecated:** `evaluation.staging_ttl_days` is superseded by
-> [`retention.staging_ttl_days`](#retention-optional--gdpr-article-17-erasure-horizons).
-> The legacy key is alias-forwarded with a `DeprecationWarning` and removed in
-> v0.8.0. See [release.md](../standards/release.md#deprecation-cadence).
+> **Removed:** `evaluation.staging_ttl_days` was superseded by
+> [`retention.staging_ttl_days`](#retention-optional--gdpr-article-17-erasure-horizons)
+> and was removed in v0.8.0. Use `retention.staging_ttl_days`; YAML files that
+> still set the legacy key will fail config-load with `EXIT_CONFIG_ERROR`.
 
 ---
 
@@ -244,16 +244,14 @@ silently extend the retention horizon by re-using a stale workspace.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `audit_log_retention_days` | int | `1825` (~5 years) | Days to retain `audit_log.jsonl` before flagging it as overdue under Article 5(1)(e). Set to `0` to retain indefinitely (Article 17(3)(b) defence). |
-| `staging_ttl_days` | int | `7` | Days to retain `final_model.staging.<run_id>/` after a `forgelm reject` decision before scheduled cleanup. Set to `0` to retain indefinitely. Replaces the deprecated `evaluation.staging_ttl_days`; both keys accepted with identical values during the deprecation window (legacy key removed in v0.8.0). |
+| `staging_ttl_days` | int | `7` | Days to retain `final_model.staging.<run_id>/` after a `forgelm reject` decision before scheduled cleanup. Set to `0` to retain indefinitely. Replaces the removed `evaluation.staging_ttl_days` (removed in v0.8.0). |
 | `ephemeral_artefact_retention_days` | int | `90` | Days to retain compliance bundles, data audit reports, and other run-scoped derived artefacts. Set to `0` to retain indefinitely. |
 | `raw_documents_retention_days` | int | `90` | Days to retain ingested raw documents (PDF / DOCX / EPUB / TXT / Markdown) under the operator's ingestion-output directory. Set to `0` to retain indefinitely. |
 | `enforce` | string | `"log_only"` | Policy enforcement mode: `"log_only"` (audit-log only), `"warn_on_excess"` (structured stderr warning), `"block_on_excess"` (abort trainer pre-flight with `EXIT_EVAL_FAILURE` = 3). |
 
-> **Deprecation:** `evaluation.staging_ttl_days` is deprecated as of v0.5.5 in
-> favour of `retention.staging_ttl_days`. The legacy key is alias-forwarded
-> with a `DeprecationWarning` until its removal in v0.8.0. See
-> [release.md](../standards/release.md#deprecation-cadence) for the full
-> deprecation cadence policy.
+> **Removed:** `evaluation.staging_ttl_days` (deprecated as of v0.5.5) was
+> removed in v0.8.0. `retention.staging_ttl_days` is now the only accepted form.
+> YAML files that still set the legacy key will fail config-load with `EXIT_CONFIG_ERROR`.
 
 ---
 

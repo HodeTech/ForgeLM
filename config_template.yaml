@@ -224,7 +224,8 @@ data:
 #   check_interval_hours: 24
 
 # Retention horizons — GDPR Article 5(1)(e) "storage limitation" + Article 17
-# "right to erasure".  Replaces deprecated `evaluation.staging_ttl_days`.
+# "right to erasure".  `staging_ttl_days` is the canonical staging-retention
+# field (the legacy `evaluation.staging_ttl_days` alias was removed in v0.8.0).
 # retention:
 #   audit_log_retention_days: 1825    # ~5 years (Article 12 record-keeping baseline)
 #   staging_ttl_days: 7               # final_model.staging.<run_id>/ TTL after `forgelm reject`

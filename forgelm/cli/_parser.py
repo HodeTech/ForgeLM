@@ -481,8 +481,8 @@ def _add_audit_subcommand(subparsers) -> None:
         "audit",
         help="Run a Phase 11/11.5/12 dataset audit on a JSONL file or split-keyed directory.",
         description=(
-            "Phase 11.5: first-class audit subcommand (the legacy `--data-audit FLAG` is preserved "
-            "as a deprecation alias). Computes per-split length distribution, top-3 language detection, "
+            "Phase 11.5: first-class audit subcommand (the legacy `--data-audit FLAG` was removed in "
+            "v0.8.0). Computes per-split length distribution, top-3 language detection, "
             "near-duplicate detection (LSH-banded), cross-split overlap, and PII flags with severity "
             "tiers — feeding the EU AI Act Article 10 governance artifact when run inside a training "
             "output directory. Phase 12 added: --dedup-method minhash for MinHash LSH, --quality-filter "
@@ -1356,23 +1356,11 @@ def parse_args():
         ),
     )
     parser.add_argument(
-        "--data-audit",
-        type=str,
-        default=None,
-        metavar="PATH",
-        help=(
-            "DEPRECATED — alias for `forgelm audit PATH` (kept so existing pipelines keep "
-            "working). Scheduled for removal in v0.8.0. Behaviour is identical; new scripts "
-            "should use the subcommand. Writes `data_audit_report.json` under --output "
-            "(default ./audit/). No training."
-        ),
-    )
-    parser.add_argument(
         "--output",
         type=str,
         default=None,
         metavar="DIR",
-        help="Output directory for --data-audit / --compliance-export (default: ./audit or ./compliance).",
+        help="Output directory for --compliance-export (default: ./compliance).",
     )
     parser.add_argument(
         "-q",

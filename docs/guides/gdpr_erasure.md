@@ -83,17 +83,9 @@ retention:
 
 Setting any horizon to `0` disables the policy for that artefact kind (retain indefinitely). `enforce` controls how the trainer pre-flight gate reacts to violations.
 
-## Deprecation: `evaluation.staging_ttl_days`
+## Removed: `evaluation.staging_ttl_days`
 
-The Wave 1 `evaluation.staging_ttl_days` field (shipped in v0.5.5) is **deprecated**. Use `retention.staging_ttl_days` instead:
-
-- "Set" is determined by Pydantic v2's `model_fields_set`: a field is "set" when the operator wrote it in YAML (e.g. `evaluation.staging_ttl_days: 7`), independent of whether the value matches the Pydantic default. This replaces the earlier "non-default value" heuristic that mishandled operators who explicitly re-stated the default.
-- Setting only the legacy field explicitly alias-forwards to `retention.staging_ttl_days` and emits a single `DeprecationWarning`.
-- Setting only the canonical field explicitly is the silent canonical path.
-- Setting both explicitly with **identical** values emits a `DeprecationWarning` (the canonical block wins).
-- Setting both explicitly with **different** values raises `ConfigError` at config-load time. Silent winner = wrong winner.
-
-The deprecated field is removed in **v0.8.0**.
+The `evaluation.staging_ttl_days` field (originally shipped in v0.5.5) was **removed in v0.8.0**. Use `retention.staging_ttl_days` — the canonical field — instead. YAML files that still set `evaluation.staging_ttl_days` will fail config-load with `EXIT_CONFIG_ERROR` in v0.8.0 and later.
 
 ## Audit-event vocabulary
 

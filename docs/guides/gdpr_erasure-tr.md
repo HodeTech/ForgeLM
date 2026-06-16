@@ -83,17 +83,9 @@ retention:
 
 Herhangi bir horizon'u `0` olarak ayarlamak o artefact kind'ı için policy'yi devre dışı bırakır (sınırsız tut). `enforce`, trainer pre-flight gate'inin ihlallere nasıl tepki vereceğini kontrol eder.
 
-## Deprecation: `evaluation.staging_ttl_days`
+## Kaldırıldı: `evaluation.staging_ttl_days`
 
-Wave 1 `evaluation.staging_ttl_days` field'ı (v0.5.5'te shipped) **deprecate** edildi. Yerine `retention.staging_ttl_days` kullan:
-
-- "Set" kararı Pydantic v2'nin `model_fields_set` setine bakılarak verilir: bir field YAML'de açıkça yazıldıysa (örn. `evaluation.staging_ttl_days: 7`) Pydantic'in default'la doldurmasından bağımsız olarak "set" sayılır. Bu, "default değerle eşit" gibi heuristik tahminlerin operatörü yanıltmasını engeller.
-- Sadece legacy field açıkça set'liyse `retention.staging_ttl_days`'e alias-forward edilir ve tek bir `DeprecationWarning` yayılır.
-- Sadece canonical field açıkça set'liyse sessiz canonical path.
-- İkisi de **aynı** değerlerle açıkça set'liyse `DeprecationWarning` yayılır (canonical block kazanır).
-- İkisi de **farklı** değerlerle açıkça set'liyse config-load zamanında `ConfigError` raise edilir. Sessiz kazanan = yanlış kazanan.
-
-Deprecate edilen field **v0.8.0**'da kaldırılır.
+`evaluation.staging_ttl_days` field'ı (başlangıçta v0.5.5'te shipped) **v0.8.0'da kaldırıldı**. Bunun yerine kanonik field olan `retention.staging_ttl_days` kullanın. `evaluation.staging_ttl_days` hâlâ set edilmiş YAML dosyaları v0.8.0 ve sonrasında `EXIT_CONFIG_ERROR` ile config-load başarısızlığına yol açar.
 
 ## Audit-event sözlüğü
 

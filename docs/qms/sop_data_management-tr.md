@@ -73,7 +73,7 @@ ForgeLM otomatik kontroller:
 - Trainer tipine göre format doğrulama (SFT, DPO, KTO, GRPO)
 - Metin temizleme (`clean_text: true`)
 - **ForgeLM audit pipeline (v0.5.0+, `forgelm audit <jsonl>`; legacy
-  `forgelm --data-audit` deprecated, v0.8.0'da kaldırılma planlandı)** —
+  `forgelm --data-audit` flag'i v0.8.0'da kaldırıldı)** —
   per-split sample sayıları, uzunluk dağılımı, top-3 dil tespiti,
   near-duplicate oranı (varsayılan 64-bit simhash, veya >50K-row
   corpora için `--dedup-method minhash` üzerinden **MinHash LSH**),

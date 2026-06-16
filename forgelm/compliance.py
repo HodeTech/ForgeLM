@@ -507,7 +507,7 @@ def generate_data_governance_report(config: Any, dataset: Dict[str, Any]) -> Dic
     """Generate data quality and governance report per EU AI Act Article 10.
 
     When an audit report (``data_audit_report.json``) was produced by
-    ``forgelm --data-audit`` and lives in the trainer's checkpoint dir,
+    ``forgelm audit`` and lives in the trainer's checkpoint dir,
     its findings are inlined under the ``data_audit`` key so the governance
     artifact is a single self-contained document rather than a pointer.
 
