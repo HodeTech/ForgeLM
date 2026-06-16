@@ -121,5 +121,9 @@ jobs:
       - name: Publish to PyPI
         # Pinned by commit SHA for supply-chain integrity (SonarCloud S7637 /
         # OpenSSF Scorecard "pinned-dependencies"). The pin maps to PyPA's
-        # v1.9.0 release; bump deliberately when upgrading.
-        uses: pypa/gh-action-pypi-publish@ec4db0b4ddc65acdf4bff5fa45ac92d78b56bdf0  # v1.9.0
+        # v1.14.0 release; bump deliberately when upgrading.
+        # v1.9.0 → v1.14.0: v1.9.0 bundled a pkginfo/twine that rejected
+        # Metadata-Version 2.4 wheels (setuptools ≥77 emits 2.4 for PEP 639
+        # license expressions) with "Metadata is missing required fields:
+        # Name, Version"; v1.14.0 parses 2.4 correctly.
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
