@@ -213,7 +213,6 @@ def _main_inner() -> None:
         _setup_logging(log_level, json_format=json_output)
         _dispatch_subcommand(command, args)
 
-    # --data-audit operates on a JSONL file/directory only — no config needed.
     # (The legacy ``forgelm --data-audit PATH`` flag was removed in v0.8.0;
     # use the first-class ``forgelm audit PATH`` subcommand instead.)
     _maybe_run_wizard(args)
