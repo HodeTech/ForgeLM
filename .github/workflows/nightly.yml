@@ -223,11 +223,22 @@ jobs:
         # forgelm`` before any test runs.
         run: |
           pip install --upgrade pip
-          # Install TRL first (most restrictive), let pip resolve transitive deps
+          # transformers-5 migration floor (v0.9.0). Every gate is pinned
+          # EXPLICITLY so this job tests the true documented minimum — trl puts
+          # no upper bound on transformers, so an unpinned resolve would silently
+          # pull the newest 5.x and stop exercising the floor. transformers
+          # 5.3.0 is the CVE-2026-4372 fix floor and requires torch>=2.4 /
+          # huggingface_hub>=1.3 / tokenizers>=0.22; trl 1.0.0 pulls the
+          # accelerate>=1.4 and datasets>=4.7 floor. Keep 1:1 with the pyproject
+          # [project].dependencies minimums.
           pip install \
-            "torch==2.3.0" \
-            "trl==0.12.0" \
-            "peft==0.11.0" \
+            "torch==2.4.0" \
+            "transformers==5.3.0" \
+            "huggingface_hub==1.3.0" \
+            "peft==0.19.0" \
+            "accelerate==1.4.0" \
+            "datasets==4.7.0" \
+            "trl==1.0.0" \
             "pydantic==2.0.0" \
             "pyyaml==6.0.1" \
             "tensorboard==2.15.0" \

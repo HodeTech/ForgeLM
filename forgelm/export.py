@@ -143,9 +143,10 @@ def _find_converter_script() -> str:
 def _merge_adapter(model_path: str, adapter_path: str, merged_dir: str) -> None:
     """Merge a PEFT LoRA adapter into the base model and save to *merged_dir*.
 
-    Forces ``torch_dtype=float16`` for the merge: GGUF f16 conversion will cast
+    Forces ``dtype=float16`` for the merge: GGUF f16 conversion will cast
     to fp16 anyway, and bf16 math on CPU silently falls back to fp32 (much
-    slower for large models).
+    slower for large models). (``dtype`` is the transformers-5 name for the
+    former ``torch_dtype`` kwarg.)
     """
     import torch
     from peft import PeftModel
@@ -158,13 +159,16 @@ def _merge_adapter(model_path: str, adapter_path: str, merged_dir: str) -> None:
     # architecture should fork and pre-convert before exporting.
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=False)
     model = AutoModelForCausalLM.from_pretrained(
-        model_path, torch_dtype=torch.float16, device_map="cpu", trust_remote_code=False
+        model_path, dtype=torch.float16, device_map="cpu", trust_remote_code=False
     )
     model = PeftModel.from_pretrained(model, adapter_path)
     model = model.merge_and_unload()
 
     os.makedirs(merged_dir, exist_ok=True)
-    model.save_pretrained(merged_dir, safe_serialization=True)
+    # safetensors is the enforced default in transformers 5.x, which removed the
+    # `safe_serialization` kwarg from save_pretrained entirely — passing it now
+    # raises TypeError. Dropping it preserves the previous safetensors output.
+    model.save_pretrained(merged_dir)
     tokenizer.save_pretrained(merged_dir)
     logger.info("Merged model saved to %s", merged_dir)
 

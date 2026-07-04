@@ -278,7 +278,8 @@ class SyntheticDataGenerator:
         tokenizer = AutoTokenizer.from_pretrained(self.synth_cfg.teacher_model, trust_remote_code=False)
         model = AutoModelForCausalLM.from_pretrained(
             self.synth_cfg.teacher_model,
-            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            # ``dtype`` is the transformers-5 name for the former ``torch_dtype``.
+            dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
             device_map="auto" if torch.cuda.is_available() else None,
             trust_remote_code=False,
         )

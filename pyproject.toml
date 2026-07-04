@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "forgelm"
-version = "0.8.1rc1"
+version = "0.9.0rc1"
 description = "Config-driven LLM fine-tuning with safety evaluation, EU AI Act compliance, 6 alignment methods, and one-command bundled quickstart templates."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -39,25 +39,23 @@ classifiers = [
 ]
 
 dependencies = [
-  "torch>=2.2.0,<3.0.0",
-  # Intel Mac (x86_64) is wheel-locked to torch 2.2.x — PyTorch Foundation
-  # stopped publishing >=2.3 wheels for x86_64 Darwin. torch 2.2 was
-  # compiled against NumPy 1.x; without this marker pip pulls numpy>=2 and
-  # triggers an ABI mismatch (`_ARRAY_API not found`) that silently
-  # degrades the numpy bridge inside torch. Other platforms keep numpy
-  # unconstrained — torch 2.3+ on Linux / Apple Silicon / Windows is
-  # binary-compatible with NumPy 2.x.
-  "numpy<2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-  "transformers>=4.38.0,<5.0.0",
-  "peft>=0.9.0,<1.0.0",
-  "datasets>=2.21.0,<5.0.0",
-  "accelerate>=0.27.0,<2.0.0",
+  "torch>=2.4.0,<3.0.0",
+  # transformers 5.x requires torch>=2.4. PyTorch Foundation never published
+  # >=2.3 wheels for x86_64 Darwin, so Intel Macs (x86_64) can no longer
+  # install ForgeLM's core dependency stack — that platform was dropped with
+  # the transformers-5 migration (v0.9.0). Apple Silicon, Linux and Windows
+  # are unaffected. The previous `numpy<2; darwin x86_64` ABI-guard marker is
+  # gone with the platform it protected (torch 2.4+ ships against NumPy 2.x).
+  "transformers>=5.3.0,<6.0.0",
+  "peft>=0.19.0,<1.0.0",
+  "datasets>=4.7.0,<6.0.0",
+  "accelerate>=1.4.0,<2.0.0",
   "pyyaml>=6.0.1,<7.0.0",
   "pydantic>=2.0.0,<3.0.0",
-  "trl>=0.12.0,<2.0.0",
+  "trl>=1.0.0,<2.0.0",
   "tensorboard>=2.15.0,<3.0.0",
-  "huggingface_hub>=0.23.2,<1.0.0",
-  "requests>=2.31.0,<3.0.0",
+  "huggingface_hub>=1.3.0,<2.0.0",
+  "requests>=2.32.2,<3.0.0",
   # requests-toolbelt is required by forgelm._http for the HostHeaderSSLAdapter
   # used to close the DNS-rebinding TOCTOU window in safe_post / safe_get
   # (issue #14). Small (~30KB) and from the same requests ecosystem, so it's

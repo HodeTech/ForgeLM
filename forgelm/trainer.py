@@ -615,9 +615,11 @@ class ForgeTrainer:
             kwargs["packing"] = bool(getattr(self.config.training, "packing", False))
             kwargs["dataset_text_field"] = "text"
             # Sequence-length cap parameter was renamed in trl 0.13:
-            #   trl 0.12.x: ``SFTConfig(max_seq_length=...)``
-            #   trl 0.13+ / 1.x: ``SFTConfig(max_length=...)`` — old name removed
-            # ``pyproject.toml`` pins ``trl>=0.12.0,<2.0.0``, so detect at runtime.
+            #   trl 0.13+ / 1.x: ``SFTConfig(max_length=...)`` — the current floor
+            #   trl 0.12.x: ``SFTConfig(max_seq_length=...)`` — pre-floor fallback
+            # ``pyproject.toml`` now pins ``trl>=1.0.0,<2.0.0``, so ``max_length``
+            # is always present; we still detect at runtime so a future rename
+            # fails loud rather than silently dropping the cap.
             # Hard-fail (don't warn-and-continue) if neither name is exposed:
             # silently dropping ``model.max_length`` would let TRL pick its
             # default and produce a model trained against an unintended
@@ -1525,7 +1527,9 @@ class ForgeTrainer:
         model_to_save = self.trainer.model
         try:
             merged = model_to_save.merge_and_unload()
-            merged.save_pretrained(final_path, safe_serialization=True)
+            # transformers 5.x removed the `safe_serialization` kwarg
+            # (safetensors is the enforced default); passing it raises TypeError.
+            merged.save_pretrained(final_path)
         except (OSError, RuntimeError, AttributeError, ValueError) as e:
             # AttributeError: non-PEFT model lacking merge_and_unload.
             # RuntimeError: torch-side merge / dtype / device errors.

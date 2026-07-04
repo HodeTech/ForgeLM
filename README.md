@@ -139,7 +139,7 @@ cd ForgeLM
 pip install -e .
 ```
 
-**Prerequisites:** Python 3.10+, `torch>=2.2.0`. Platform-specific notes are in the [installation guide](docs/usermanuals/en/getting-started/installation.md).
+**Prerequisites:** Python 3.10+, `torch>=2.4.0` (required by `transformers>=5.3.0`). Intel Macs (x86_64) are no longer supported — PyPI has no `torch>=2.4` wheel for that platform. Platform-specific notes are in the [installation guide](docs/usermanuals/en/getting-started/installation.md).
 
 ### Optional extras
 
