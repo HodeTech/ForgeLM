@@ -4,6 +4,8 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
+_(v0.9.1 dev cycle — entries land here as PRs merge.)_
+
 ## [0.9.0] — 2026-07-05
 
 ### Changed
