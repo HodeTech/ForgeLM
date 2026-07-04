@@ -584,7 +584,11 @@ def test_project_ignore_file_passes_schema_validation(tool):
     assert project_file.exists(), "project ignore file must be checked in"
     loaded = tool._load_ignores(project_file)
     assert loaded is not None, "checked-in ignore file failed schema validation"
-    # Every entry indexed under at least its primary id.
-    assert "CVE-2026-1839" in loaded, (
-        "the historical transformers ignore must still be present; if you removed it intentionally update this test"
+    # Every entry indexed under at least its primary id. (The transformers
+    # advisories that used to be asserted here — CVE-2026-1839 and
+    # PYSEC-2025-217 — were dropped in the v0.9.0 transformers-5 migration:
+    # pip-audit no longer reports either under the transformers>=5.3.0 pin.
+    # Assert on a still-present torch entry so the loader/indexing check holds.)
+    assert "PYSEC-2025-191" in loaded, (
+        "a known suppression must be indexed by its primary id; if you removed it intentionally update this test"
     )
