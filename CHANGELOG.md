@@ -4,7 +4,44 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
-_(v0.8.1 dev cycle — entries will land here as PRs merge.)_
+_(v0.9.0 dev cycle — a breaking dependency migration; entries land here as PRs merge.)_
+
+### Changed
+
+- **transformers 5.x migration (breaking).** Raised the core dependency floor to
+  `transformers>=5.3.0,<6.0.0` and cascaded the co-dependencies it requires:
+  `torch>=2.4.0`, `huggingface_hub>=1.3.0,<2.0.0`, `peft>=0.19.0`,
+  `accelerate>=1.4.0`, `datasets>=4.7.0,<6.0.0`, `trl>=1.0.0`, and
+  `requests>=2.32.2` (trl 1.0 pulls the `accelerate>=1.4` / `datasets>=4.7`
+  floor; datasets 4.7 pulls `requests>=2.32.2`). transformers 5.3.0 is the first
+  release carrying the fix for **CVE-2026-4372**; the previous `<5.0.0` pin could
+  not reach it. The `test-min-deps` nightly floor and `tools/pip_audit_ignores.yaml`
+  were updated to match the new minimums.
+- **`from_pretrained` dtype kwarg.** Renamed `torch_dtype=` → `dtype=` at the two
+  base-model load sites (`export.py`, `synthetic.py`); `torch_dtype` is a
+  deprecated alias in transformers 5 slated for removal. Behaviour is unchanged.
+
+### Removed
+
+- **transformers 4.x support (breaking).** ForgeLM now requires transformers 5.x.
+  The `safe_serialization=True` kwarg (removed from `save_pretrained` in
+  transformers 5, where safetensors is the enforced default) was dropped from the
+  three model-save call sites (`export.py`, `merging.py`, `trainer.py`) — the
+  on-disk output is unchanged.
+- **Intel Mac (x86_64) support (breaking).** transformers 5 requires `torch>=2.4`,
+  for which PyPI publishes no x86_64-Darwin wheel, so that platform can no longer
+  install ForgeLM's core stack. Apple Silicon, Linux, and Windows are unaffected.
+  The now-moot `numpy<2; darwin x86_64` ABI-guard marker was removed with it.
+
+### Security
+
+- **CVE-2026-4372** — a critical `AutoModelForCausalLM.from_pretrained()` RCE in
+  transformers <5.3.0 (a malicious `config.json` `_attn_implementation_internal`
+  field downloads and executes attacker code, bypassing `trust_remote_code`) — is
+  resolved by the `transformers>=5.3.0` floor above. Both transformers
+  suppressions in `tools/pip_audit_ignores.yaml` — `CVE-2026-1839` (fixed in
+  5.0.0rc3) and `PYSEC-2025-217` / `CVE-2025-14929` (X-CLIP RCE, OSV
+  last-affected 5.0.0rc0) — are now inert under the raised pin and were removed.
 
 ## [0.8.0] — 2026-06-16
 

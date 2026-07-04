@@ -33,48 +33,13 @@
 
 ignores:
   # ----- transformers -----
-
-  - id: CVE-2026-1839
-    package: transformers
-    reason: >-
-      Fix only in transformers 5.0.0rc3 (release candidate); pyproject
-      pins <5.0.0 due to TRL adapter + tokenizer-config breaking
-      changes.
-    threat_model: >-
-      ForgeLM's pyproject pins ``transformers>=4.38.0,<5.0.0``.  The
-      5.x branch is a major version bump that breaks downstream
-      callers (TRL adapter signature changes + tokenizer-config API
-      drift).  No 4.x backport at time of ignore.
-    verified_at: '2026-05-10'
-    reevaluate_after: >-
-      Each release cycle, or when transformers ships a 4.x point
-      release with the fix, or when ForgeLM cuts a tracked
-      major-version-bump cycle that raises the upper bound.
-
-  - id: PYSEC-2025-217
-    aliases: [CVE-2025-14929]
-    package: transformers
-    reason: >-
-      CVE-2025-14929 — X-CLIP checkpoint-conversion deserialization
-      RCE (CVSS:3.0 AV:L/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H).  The
-      advisory records no fixed version for the 4.x line that
-      pyproject pins.
-    threat_model: >-
-      CVSS is local + user-interaction (AV:L/UI:R): the target must
-      open a malicious checkpoint/file.  Same trust model as
-      ``torch.load(pickle)`` — operators are documented as required
-      to only load trusted checkpoints.  Codebase check on
-      2026-05-24 (``git grep`` over ``forgelm/``): no X-CLIP usage,
-      no checkpoint-conversion path other than the HF->GGUF export
-      wrapper, and zero direct ``torch.load`` call sites — all model
-      loading goes through HuggingFace ``from_pretrained``.  The
-      vulnerable X-CLIP conversion path is therefore not reachable
-      from ForgeLM code.
-    verified_at: '2026-05-24'
-    reevaluate_after: >-
-      Each release cycle, or when the advisory gains a fixed version
-      within the pinned ``transformers<5.0.0`` range, or when ForgeLM
-      bumps to a transformers release that carries the fix.
+  #
+  # No transformers advisories are currently suppressed. Two were dropped in
+  # the v0.9.0 transformers-5 migration once pyproject pinned
+  # transformers>=5.3.0 — pip-audit no longer reports either under that floor,
+  # so a suppression would be dead weight:
+  #   - CVE-2026-1839 — fixed in transformers 5.0.0rc3.
+  #   - PYSEC-2025-217 / CVE-2025-14929 (X-CLIP RCE) — OSV last_affected 5.0.0rc0.
 
   # ----- torch (added 2026-05-21, triage in issue #58) -----
   #

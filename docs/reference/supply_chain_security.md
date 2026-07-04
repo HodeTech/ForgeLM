@@ -133,9 +133,10 @@ the run summary so the audit trail stays visible.
 
 ForgeLM's own nightly does carry a checked-in
 [`tools/pip_audit_ignores.yaml`](../../tools/pip_audit_ignores.yaml) for
-project-internal triage (currently **two** transformers advisories
-(`CVE-2026-1839` and `PYSEC-2025-217` / `CVE-2025-14929`), nine
-no-fix torch advisories, and one OSV-misclassified markdown record). That file is consumed only by the
+project-internal triage (currently nine no-fix torch advisories and one
+OSV-misclassified markdown record; the two transformers advisories it once
+carried were dropped once the `transformers>=5.3.0` floor made them
+unreportable by pip-audit). That file is consumed only by the
 project's own workflow via `--ignores`; deployers do not inherit it.
 Review at every release cycle.
 

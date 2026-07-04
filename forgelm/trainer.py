@@ -614,35 +614,31 @@ class ForgeTrainer:
 
             kwargs["packing"] = bool(getattr(self.config.training, "packing", False))
             kwargs["dataset_text_field"] = "text"
-            # Sequence-length cap parameter was renamed in trl 0.13:
-            #   trl 0.12.x: ``SFTConfig(max_seq_length=...)``
-            #   trl 0.13+ / 1.x: ``SFTConfig(max_length=...)`` — old name removed
-            # ``pyproject.toml`` pins ``trl>=0.12.0,<2.0.0``, so detect at runtime.
-            # Hard-fail (don't warn-and-continue) if neither name is exposed:
-            # silently dropping ``model.max_length`` would let TRL pick its
-            # default and produce a model trained against an unintended
-            # context window — exactly the "no silent failures" rule in
+            # ``SFTConfig``'s sequence-length cap is ``max_length`` in trl 0.13+
+            # (the ``max_seq_length`` name was retired after trl 0.12.x).
+            # ``pyproject.toml`` pins ``trl>=1.0.0,<2.0.0``, so every supported
+            # trl exposes ``max_length``; we drive it directly but still verify
+            # it via the runtime signature and hard-fail if a future trl removes
+            # or hides the parameter. Silently dropping ``model.max_length``
+            # would let TRL pick its default and train against an unintended
+            # context window — the "no silent failures" rule in
             # docs/standards/error-handling.md.
             sft_params = inspect.signature(SFTConfig).parameters
-            if "max_length" in sft_params:
-                kwargs["max_length"] = self.config.model.max_length
-            elif "max_seq_length" in sft_params:
-                kwargs["max_seq_length"] = self.config.model.max_length
-            else:
+            if "max_length" not in sft_params:
                 # Probe the trl version off the already-loaded module rather
-                # than re-importing — ``from trl import SFTConfig`` above
-                # left trl in ``sys.modules`` and ``SFTConfig.__module__``
-                # gives us the canonical package name without a redundant
-                # ``import trl`` line.
+                # than re-importing — ``from trl import SFTConfig`` above left
+                # trl in ``sys.modules`` and ``SFTConfig.__module__`` gives the
+                # canonical package name without a redundant ``import trl``.
                 trl_module = sys.modules.get(SFTConfig.__module__.split(".", 1)[0])
                 trl_version = getattr(trl_module, "__version__", "?")
                 raise ValueError(
                     f"SFTConfig in trl {trl_version} exposes neither "
-                    "`max_length` nor `max_seq_length` as a named parameter; cannot apply "
-                    f"the sequence-length cap from config (model.max_length={self.config.model.max_length}). "
+                    "`max_length` nor the legacy `max_seq_length` as a named parameter; "
+                    f"cannot apply the sequence-length cap from config (model.max_length={self.config.model.max_length}). "
                     f"Detected parameters: {sorted(sft_params)}. Pin trl to a known-compatible "
                     "version or file an issue referencing this error."
                 )
+            kwargs["max_length"] = self.config.model.max_length
             return SFTConfig(**kwargs)
 
         elif tt == "orpo":
@@ -1525,7 +1521,9 @@ class ForgeTrainer:
         model_to_save = self.trainer.model
         try:
             merged = model_to_save.merge_and_unload()
-            merged.save_pretrained(final_path, safe_serialization=True)
+            # transformers 5.x removed the `safe_serialization` kwarg
+            # (safetensors is the enforced default); passing it raises TypeError.
+            merged.save_pretrained(final_path)
         except (OSError, RuntimeError, AttributeError, ValueError) as e:
             # AttributeError: non-PEFT model lacking merge_and_unload.
             # RuntimeError: torch-side merge / dtype / device errors.

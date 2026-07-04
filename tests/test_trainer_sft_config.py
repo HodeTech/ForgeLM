@@ -5,8 +5,9 @@ Regression guard: trl 0.13 renamed the sequence-length cap from
 name. Passing the old kwarg raises ``TypeError`` at trainer args build
 time and aborts training on every modern trl install.
 
-``pyproject.toml`` pins ``trl>=0.12.0,<2.0.0``, so the trainer must
-detect at runtime which parameter the installed ``SFTConfig`` accepts.
+``pyproject.toml`` pins ``trl>=1.0.0,<2.0.0`` (all expose ``max_length``),
+so the trainer drives ``max_length`` directly but verifies it at runtime
+and hard-fails if a future trl removes or hides the parameter.
 """
 
 from __future__ import annotations
@@ -75,31 +76,6 @@ def test_sft_config_uses_max_length_on_modern_trl(tmp_path):
         "Legacy `max_seq_length` kwarg must NOT be passed to a modern SFTConfig — trl 0.13+ raises TypeError on it."
     )
     assert captured_kwargs["dataset_text_field"] == "text"
-
-
-def test_sft_config_uses_max_seq_length_on_legacy_trl(tmp_path):
-    """trl 0.12.x: ``SFTConfig`` accepts ``max_seq_length`` only. The
-    trainer must fall back to that name when the modern ``max_length``
-    parameter is unavailable."""
-
-    captured_kwargs: dict = {}
-
-    class FakeLegacySFTConfig:
-        def __init__(self, *, max_seq_length=None, packing=False, dataset_text_field=None, **other):
-            captured_kwargs["max_seq_length"] = max_seq_length
-            captured_kwargs["packing"] = packing
-            captured_kwargs["dataset_text_field"] = dataset_text_field
-            captured_kwargs.update(other)
-
-    trainer = _seed_trainer(tmp_path)
-
-    with patch("trl.SFTConfig", FakeLegacySFTConfig):
-        trainer._get_training_args_for_type()
-
-    assert captured_kwargs["max_seq_length"] == 2048
-    assert "max_length" not in captured_kwargs, (
-        "Modern `max_length` kwarg must NOT be passed to legacy trl 0.12.x SFTConfig."
-    )
 
 
 def test_sft_config_passes_packing_and_dataset_text_field(tmp_path):

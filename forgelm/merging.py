@@ -91,9 +91,11 @@ def merge_peft_adapters(
         else:
             return MergeResult(success=False, error=f"Unknown merge method: {method}")
 
-        # Save merged model
+        # Save merged model. transformers 5.x removed the `safe_serialization`
+        # kwarg (safetensors is now the enforced default); passing it raises
+        # TypeError, so we rely on the default.
         os.makedirs(output_dir, exist_ok=True)
-        merged.save_pretrained(output_dir, safe_serialization=True)
+        merged.save_pretrained(output_dir)
         tokenizer.save_pretrained(output_dir)
         logger.info("Merged model saved to %s", output_dir)
 

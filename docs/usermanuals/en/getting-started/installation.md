@@ -21,6 +21,10 @@ ForgeLM ships as a single PyPI package with optional dependency groups (called *
 **No GPU?** You can still use ForgeLM for ingestion, audit, evaluation prep, and deployment config generation — every CPU-only workflow runs on the same `forgelm` command.
 :::
 
+:::note
+**Intel Macs (x86_64) are not supported.** ForgeLM requires `torch>=2.4.0` (pulled in by `transformers>=5.3.0`), and PyPI publishes no `torch>=2.4` wheel for x86_64 macOS. Use Apple Silicon, Linux, or Windows.
+:::
+
 ## Base install
 
 ```shell

@@ -133,9 +133,10 @@ annotation olarak loglanır; audit trail görünür kalır.
 
 ForgeLM'in kendi nightly'si proje-içi triage için check-in edilmiş
 bir [`tools/pip_audit_ignores.yaml`](../../tools/pip_audit_ignores.yaml)
-taşır (şu an **iki** transformers advisory'si (`CVE-2026-1839` ve
-`PYSEC-2025-217` / `CVE-2025-14929`), dokuz no-fix torch advisory'si ve
-bir OSV-yanlış-sınıflandırılmış markdown kaydı). Bu dosya yalnız projenin kendi workflow'u tarafından
+taşır (şu an dokuz no-fix torch advisory'si ve bir
+OSV-yanlış-sınıflandırılmış markdown kaydı; daha önce taşıdığı iki
+transformers advisory'si `transformers>=5.3.0` floor'u onları pip-audit
+tarafından raporlanamaz hâle getirince kaldırıldı). Bu dosya yalnız projenin kendi workflow'u tarafından
 `--ignores` ile tüketilir; deployer'lar miras almaz. Her release
 cycle'da gözden geçirilir.
 
