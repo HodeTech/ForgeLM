@@ -93,12 +93,7 @@ Eğitim sırasında `nvidia-smi`: GPU kullanımı %85+ olmalı. %50'nin altında
 
 **Sebep:** Eval genelde sliding-window veya packing olmadan koşar — peak eğitim peak'ini aşabilir.
 
-**Çözüm:** Eval `max_length`'ini eğitiminkinden düşük ayarlayın:
-
-```yaml
-evaluation:
-  max_length: 4096      # eğitim 32K'da, eval 4K'da
-```
+**Çözüm:** Ayrı bir `evaluation.max_length` alanı yoktur — `model.max_length` hem eğitim hem eval geçişini yönetir (TRL her ikisi için de aynı trainer config'ini kullanır). Training fit ederken eval OOM oluyorsa, `model.max_length`'i düşürün (eğitim context penceresini de küçültmeyi kabul ederek) veya uzun aykırı değerlerin bir eval batch'ine daha az düşmesi için validation split'inizi küçültün.
 
 ## Veri sorunları
 

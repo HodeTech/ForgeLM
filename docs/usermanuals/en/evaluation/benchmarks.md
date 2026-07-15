@@ -63,17 +63,20 @@ To know what floor to set, you need a pre-training baseline. Use the `--benchmar
 
 ```yaml
 # baseline.yaml
-model: { name: "Qwen/Qwen2.5-7B-Instruct" }
+model:
+  name_or_path: "Qwen/Qwen2.5-7B-Instruct"
 evaluation:
   benchmark:
     tasks: ["hellaswag", "arc_easy", "truthfulqa", "mmlu"]
-    output: "baselines/qwen-2.5-7b.json"
+    output_dir: "baselines/qwen-2.5-7b/"
 ```
 
 ```shell
 $ forgelm --config baseline.yaml --benchmark-only "Qwen/Qwen2.5-7B-Instruct"
 {"hellaswag": 0.61, "arc_easy": 0.75, "truthfulqa": 0.49, "mmlu": 0.52}
 ```
+
+Results land at `baselines/qwen-2.5-7b/benchmark_results.json` — `output_dir` names the directory; the filename is always `benchmark_results.json`.
 
 A reasonable floor is the baseline average minus 0.03 (3% slack for stochastic variation):
 
@@ -90,29 +93,26 @@ After eval, ForgeLM writes:
 
 ```text
 checkpoints/run/artifacts/
-├── benchmark_results.json             ← per-task scores + floor verdicts
-└── benchmark_run.log                  ← full lm-eval-harness output
+└── benchmark_results.json             ← per-task scores + overall pass/fail
 ```
 
 `benchmark_results.json` structure:
 
 ```json
 {
-  "tasks": {
-    "hellaswag": {
-      "score": 0.617, "floor": 0.55, "passed": true,
-      "fewshot": 0, "n": 10042
-    },
-    "truthfulqa": {
-      "score": 0.42, "floor": 0.45, "passed": false
-    }
+  "tasks": ["hellaswag", "truthfulqa"],
+  "scores": {
+    "hellaswag": 0.617,
+    "truthfulqa": 0.42
   },
-  "verdict": "regression",
-  "regressed_tasks": ["truthfulqa"]
+  "average_score": 0.5185,
+  "passed": false,
+  "num_fewshot": 0,
+  "limit": null
 }
 ```
 
-CI pipelines parse `verdict`. See [Auto-Revert](#/evaluation/auto-revert) for the gating logic.
+CI pipelines parse `passed` (bool) and `average_score` (the single `min_score` floor is checked against the mean across all tasks, not per task). See [Auto-Revert](#/evaluation/auto-revert) for the gating logic.
 
 ## Configuration parameters
 

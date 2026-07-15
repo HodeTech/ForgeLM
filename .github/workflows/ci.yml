@@ -304,12 +304,10 @@ jobs:
         # model+training+data triplet; single-block fragments (the common
         # case in a user-manual page explaining one section) are skipped
         # there. This guard AST-walks forgelm/config.py's Pydantic schema
-        # and flags fragment keys that don't exist on it. Run WITHOUT
-        # --strict: at introduction it already found real fabricated-key
-        # drift in docs/usermanuals/ (see the tool's own module docstring
-        # for a worked example) that is a docs-content fix, out of scope
-        # for this change. Flip to --strict once that backlog is cleaned up.
-        run: python3 tools/check_usermanual_schema_drift.py
+        # and flags fragment keys that don't exist on it. Runs with --strict:
+        # the introduction-time fabricated-key backlog (38 instances across 8
+        # EN/TR page-pairs) has been cleaned, so any new drift now fails CI.
+        run: python3 tools/check_usermanual_schema_drift.py --strict
 
       - name: Site chrome (EN/TR translation) parity
         # W1/H11 (F-P8-C-07): the active-tier (EN<->TR) translation-key sets in

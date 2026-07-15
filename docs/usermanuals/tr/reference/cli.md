@@ -212,17 +212,19 @@ ForgeLM credential'ları environment variable'lardan alır. Asla YAML'a koymayı
 | W&B | `WANDB_API_KEY` | Experiment tracking |
 | Cohere | `COHERE_API_KEY` | (sentetik veri) |
 
-YAML interpolation:
+ForgeLM'in YAML loader'ı düz `yaml.safe_load`'dur — `${VAR}` shell-tarzı interpolation yoktur. Yukarıdaki credential'lar için iki farklı desen geçerlidir:
+
+- **HF token'ı:** `auth:` altına hiçbir şey koymayın — shell'de `HF_TOKEN`'ı (veya eski `HUGGINGFACE_TOKEN`'ı) export edin; hem `huggingface_hub`'ın kendi otomatik algılaması hem de ForgeLM'in login adımı onu bulur.
+- **Sentetik veri teacher API key'i:** env var'ı `synthetic.api_key_env`'de adlandırın (`SyntheticConfig` üzerinde bir alan, nested bir `teacher:` objesi değil — teacher model'in kendisi `synthetic.teacher_model`'dir):
 
 ```yaml
-auth:
-  hf_token: "${HF_TOKEN}"
 synthetic:
-  teacher:
-    api_key: "${OPENAI_API_KEY}"
+  teacher_model: "gpt-4o"
+  teacher_backend: "api"
+  api_key_env: "OPENAI_API_KEY"      # env var'ı adlandırır; key'in kendisi hiç YAML'a değmez
 ```
 
-Env var set değilse ForgeLM config yüklemede net bir hata ile çıkar — eğitime 6 saat girmiş halde eksik token ile crash etmekten iyidir.
+Sentetik veri adımı çalıştığında adlandırılan env var set değilse, config-zamanı bir kontrol yoktur — `api_key_env` set değilken istek `Authorization` header'ı olmadan gönderilir ve teacher API bunu ilk çağrıda reddeder (tipik olarak HTTP 401). `--generate-data`'yı çalıştırmadan önce env var'ı export edin; böylece hata koşu ortasında değil hemen ortaya çıkar.
 
 ## Exit kodları
 

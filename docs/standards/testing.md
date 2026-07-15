@@ -145,7 +145,7 @@ From [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml):
 3. **Coverage** — `pytest --cov=forgelm --cov-fail-under=40` (enforced via `addopts` in `pyproject.toml`'s `[tool.pytest.ini_options]`, kept in lock-step with `[tool.coverage.report].fail_under`).
 4. **Dry-run validation** — `forgelm --config config_template.yaml --dry-run` must succeed.
 5. **Doc CI guards** (Wave 3 / Wave 4 / Wave 5):
-   - `python3 tools/check_bilingual_parity.py --strict` — H2/H3/H4 spine sync between EN and TR mirrors (39/39 pairs today).
+   - `python3 tools/check_bilingual_parity.py --strict` — H2/H3/H4 spine sync between EN and TR mirrors (every registered pair plus the auto-discovered `docs/usermanuals/` pairs; the count self-updates as mirrors are added).
    - `python3 tools/check_anchor_resolution.py --strict` — every relative markdown link with a `#anchor` fragment resolves to a real heading.
    - `python3 tools/check_cli_help_consistency.py --strict` — CLI `--help` output ↔ `docs/usermanuals/{en,tr}/reference/cli.md` parity.
 

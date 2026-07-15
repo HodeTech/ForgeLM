@@ -74,6 +74,15 @@ once a module crosses that line count and has cohesive subsections, it
 graduates to a `module_name/` sub-package, **keeping the public API at
 `forgelm.module_name.X`** so existing imports do not break.
 
+Enforced by [`tools/check_module_size.py --strict`](../../tools/check_module_size.py)
+(CI step "Module-size ceiling guard" in `.github/workflows/ci.yml`'s `validate` job):
+it fails on any `forgelm/` module that newly crosses the ceiling, while a
+`_GRANDFATHERED_OVER_CEILING` allowlist tracks modules that were already over
+the line when the guard landed (see the tool's own docstring for the grandfather
+policy and the v0.6.x split roadmap). A module can only join the allowlist with
+an inline comment naming the phase/release cycle of its planned split and a
+tracking artefact — it is not a way to permanently exempt a module from this rule.
+
 Two such splits are permanent today (Phase 12.6 closure cycle, Wave 1):
 
 | Sub-package | Pre-split source | Reason | Public surface |
@@ -225,14 +234,28 @@ From [`pyproject.toml`](../../pyproject.toml):
 
 **Why a single chokepoint:** the policy lives in one module so that a future fix (rotate to a stricter allowlist, add a new mask pattern, plug a new metric) lands in one place rather than `N` scattered call sites.  Webhook delivery (`forgelm/webhook.py`), the doctor's HF Hub probe (`forgelm/cli/subcommands/_doctor.py`), and any future telemetry / license / cloud integration all share the same policy.
 
-**Acceptance gate (CI-enforced — see `.github/workflows/ci.yml` `lint-http-discipline` step):**
+**Acceptance gate (CI-enforced — see `.github/workflows/ci.yml` "HTTP discipline guard" step, `lint` job):**
 
 ```bash
-! grep -rn -E "(requests\.(get|post|put|delete|patch)|urllib\.request\.urlopen|httpx\.[a-z]+)" forgelm/ \
-    --include='*.py' | grep -v "forgelm/_http.py"
+python3 tools/check_http_discipline.py
 ```
 
-The gate stays empty.  A new contributor who reaches for `requests.get` directly fails CI immediately and is redirected to `safe_get`.  If `_http.py` itself needs to expand (e.g., add `safe_get` because no helper covers an outbound HEAD probe yet — Phase 34's doctor surfaced this gap), the addition lands inside `_http.py` and gets a corresponding test in `tests/test_http.py`.
+[`tools/check_http_discipline.py`](../../tools/check_http_discipline.py) is
+the promotion of a former inline `ci.yml` grep to a tested tool (F-P8-C-19)
+— the grep matched only direct dotted calls (`requests.get(`) and missed
+`requests.Session()`-bound calls, aliased imports (`from requests import get`,
+`from urllib.request import urlopen`), whitespace before the paren
+(`requests.get (url)`), and `httpx.Client()` / `httpx.AsyncClient()`
+construction. The tool rejoins logical lines (so a call split across
+physical lines by an open `(` is still caught) and flags all of the above,
+while exempting `forgelm/_http.py` itself and comment-only lines. It has
+its own test suite (`tests/test_check_http_discipline.py`). A new
+contributor who reaches for `requests.get` directly — including via an
+aliased import — fails CI immediately and is redirected to `safe_get`. If
+`_http.py` itself needs to expand (e.g., add `safe_get` because no helper
+covers an outbound HEAD probe yet — Phase 34's doctor surfaced this gap),
+the addition lands inside `_http.py` and gets a corresponding test in
+`tests/test_http.py`.
 
 **Deliberate exceptions:** `forgelm/compliance.py:1146-1182` (audit-log HMAC verifier) does its own JSONL line-byte parsing because it must hash raw bytes — but it does not perform outbound HTTP.  No HTTP-discipline carve-outs exist today; if one is ever needed (e.g., a cloud provider's SDK that wraps its own HTTP), document it inline + add a `# noqa: forgelm-http-discipline` style marker.
 

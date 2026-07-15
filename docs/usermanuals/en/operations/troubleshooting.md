@@ -93,12 +93,7 @@ $ pip install torch --index-url https://download.pytorch.org/whl/cu121   # match
 
 **Cause:** Eval often runs without sliding-window or packing — peak can exceed training peak.
 
-**Fix:** Set evaluation `max_length` lower than training:
-
-```yaml
-evaluation:
-  max_length: 4096      # train at 32K, eval at 4K
-```
+**Fix:** There is no separate `evaluation.max_length` field — `model.max_length` governs both the train and eval passes (TRL reuses the same trainer config for both). If eval OOMs while training fits, lower `model.max_length` (accepting that it also shrinks the training context window) or shrink your validation split so fewer long outliers land in an eval batch.
 
 ## Data issues
 

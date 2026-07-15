@@ -218,22 +218,32 @@ follow the canonical schemes for new reviews.
 
 ## Quick self-review command
 
-Before pushing:
+Before pushing, run the full local gauntlet documented in the root
+[`CLAUDE.md`](../../CLAUDE.md) ("Verify before opening PR"). It starts:
 
 ```bash
-# Formatter + linter + all tests + dry-run + 3 doc CI guards
 ruff format . && ruff check . && pytest tests/ && \
-forgelm --config config_template.yaml --dry-run && \
-python3 tools/check_bilingual_parity.py --strict && \
-python3 tools/check_anchor_resolution.py --strict && \
-python3 tools/check_cli_help_consistency.py --strict
+  forgelm --config config_template.yaml --dry-run && \
+  python3 tools/check_bilingual_parity.py --strict && \
+  python3 tools/check_anchor_resolution.py --strict && \
+  python3 tools/check_cli_help_consistency.py --strict && \
+  ...
 ```
 
-The first four are the historical gauntlet (`ruff` + `pytest` + `--dry-run`).
-The three doc guards landed across Waves 3-5 (Faz 24, 26, 30J): bilingual
-EN/TR spine parity, markdown anchor resolution, and CLI ↔ docs help-text
-parity. Every PR runs all seven checks in CI; passing locally means CI will
-too.
+`ruff` + `pytest` + `--dry-run` are the historical core; the doc guards
+landed across Waves 3-9 (Faz 24, 26, 30J, and the full-project-review
+W1/H11 sweep). **This is a representative subset, not the full list** —
+`.github/workflows/ci.yml`'s `lint` and `validate` jobs are the
+authoritative inventory (over a dozen additional `tools/check_*.py`
+guards: field descriptions, HTTP discipline, doc-numerical-claims,
+site-claims, library-API-doc parity, bilingual code-block parity, YAML
+snippet validation, module-size ceiling, wizard-defaults sync, audit-event
+catalog, TR-links-prefer-mirror, notebook pins, usermanual self-contained
+links, site-version sync, plus bandit). `tests/test_guard_wiring.py` fails
+CI if any `tools/check_*.py` guard is left unwired without an allowlisted
+rationale, so the CI file itself — not this doc or CLAUDE.md's list — is
+the single source of truth for "will this PR pass." Running CLAUDE.md's
+full command sequence locally is the closest local approximation.
 
 If that passes and the PR template is honest, you're ready.
 

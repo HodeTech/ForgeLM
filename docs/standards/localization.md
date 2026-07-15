@@ -1,7 +1,7 @@
 # Localization Standard
 
 > **Scope:** Which parts of ForgeLM get translated, how translations are paired with originals, and what stays English only.
-> **Enforced by:** Review + [`tools/check_bilingual_parity.py --strict`](../../tools/check_bilingual_parity.py) (Wave 3 / Faz 24): a CI guard that fails on any H2/H3/H4 spine mismatch between an EN file and its `-tr.md` mirror. Scope expanded from 9/9 to 23/23 pairs through Wave 4 (post-Faz-26 QMS bilingualisation).
+> **Enforced by:** Review + [`tools/check_bilingual_parity.py --strict`](../../tools/check_bilingual_parity.py) (Wave 3 / Faz 24): a CI guard that fails on any H2/H3/H4 spine mismatch between an EN file and its `-tr.md` mirror. Scope has grown release over release (9/9 at introduction, 23/23 through Wave 4's QMS bilingualisation, 49 hand-registered pairs as of this writing) — the pair registry (`_PAIRS` in the tool) plus every auto-discovered `docs/usermanuals/en/**` ↔ `tr/**` page pair (`_all_pairs()`) is the authoritative, self-updating count; don't hardcode a snapshot number here.
 
 ## The policy in one line
 
@@ -33,7 +33,7 @@ Rationale:
 | `docs/reference/data_preparation.md` | Yes | End-user data prep |
 | `docs/reference/distributed_training.md` | Yes | End-user distributed |
 | `docs/reference/compliance_summary.md` | Yes | EN+TR mirror (`compliance_summary-tr.md`) registered and spine-gated |
-| `docs/guides/*.md` | Partial (Wave 1 + 2b + 3 + 4 progressively bilingualised) | Bilingualised today: `air_gap_deployment`, `data_audit`, `gdpr_erasure`, `getting-started`, `human_approval_gate`, `ingestion`, `iso_soc2_deployer_guide`, `library_api`, `performance`. Structurally bilingual; content translation pending v0.6.0 (TR mirror carries the H2/H3/H4 spine for the parity gate but section bodies link back to the EN sections — tracked in `docs/roadmap/risks-and-decisions.md`): `safety_compliance`. Single-language (EN): `alignment`, `cicd_pipeline`, `enterprise_deployment`, `quickstart`, `troubleshooting` — TR mirrors are open follow-ups |
+| `docs/guides/*.md` | Yes, except one (Wave 1 + 2b + 3 + 4 progressively bilingualised) | Bilingualised today (complete, reviewed Turkish translations, registered in `tools/check_bilingual_parity.py::_PAIRS`): `air_gap_deployment`, `alignment`, `cicd_pipeline`, `data_audit`, `gdpr_erasure`, `getting-started`, `human_approval_gate`, `ingestion`, `iso_soc2_deployer_guide`, `library_api`, `performance`, `pipeline`, `quickstart`, `safety_compliance`, `troubleshooting`. Single-language (EN): `enterprise_deployment` — TR mirror is an open follow-up |
 | `docs/usermanuals/{en,tr}/` | Yes | EN+TR manual content authored & reviewed; DE/FR/ES/ZH fall back to EN via the `tableForLang(...) → DEFAULT='en'` chain (deferred to a future translation cycle). **Link-isolated:** pages here may only link to other in-manual pages (via the SPA route `#/<section>/<page>`) or external HTTPS URLs — see [`documentation.md` "User-manual link discipline"](documentation.md#user-manual-link-discipline-docsusermanuals). |
 | `docs/design/*.md` | No | Internal design history |
 | `docs/standards/*.md` | No | Contributor-facing |
@@ -172,11 +172,15 @@ that a native reader would have to retire later. This mirrors the
 
 The bilingual-parity gate (`tools/check_bilingual_parity.py --strict`)
 does NOT extend to site chrome — its scope is the EN ↔ TR `*.md` /
-`*-tr.md` doc pairs only. An advisory companion guard,
-`tools/check_site_chrome_parity.py`, reports the deferred-tier drift
-locally; it is intentionally NOT wired into CI at v0.5.5 (per this
-deferred-tier policy) and stays local-only until v0.6.x activates the
-native-review cycle. See `docs/roadmap/risks-and-decisions.md` for the
+`*-tr.md` doc pairs only. Site chrome has its own gate:
+`tools/check_site_chrome_parity.py` IS wired into CI (`.github/workflows/ci.yml`
+step "Site chrome (EN/TR translation) parity") and runs on every PR — but
+**without `--strict`**, so it enforces only the active-tier EN ↔ TR key
+parity described above; drift there fails the build. `--strict` (which
+additionally gates the DE/FR/ES/ZH deferred tiers) is intentionally
+withheld from CI per this deferred-tier policy until v0.6.x activates the
+native-review cycle; operators can still run `--strict` locally to audit
+the deferred-tier gap. See `docs/roadmap/risks-and-decisions.md` for the
 v0.6.x activation plan.
 
 ## Future (not today)

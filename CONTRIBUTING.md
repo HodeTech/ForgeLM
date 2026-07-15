@@ -50,26 +50,28 @@ Edit the code, then run the full validation gauntlet (every guard CI also
 enforces — passing locally means CI will too):
 
 ```bash
-# 1. Lint + format
-ruff format . && ruff check .
-
-# 2. Test suite
-pytest tests/ -q
-
-# 3. Config dry-run smoke test
-forgelm --config config_template.yaml --dry-run
-
-# 4. Doc-side guards (Wave 4 / Wave 5 additions)
-python3 tools/check_bilingual_parity.py --strict
-python3 tools/check_anchor_resolution.py --strict
-python3 tools/check_cli_help_consistency.py --strict
+ruff format . && ruff check . && pytest tests/ && \
+  forgelm --config config_template.yaml --dry-run && \
+  python3 tools/check_bilingual_parity.py --strict && \
+  python3 tools/check_anchor_resolution.py --strict && \
+  python3 tools/check_cli_help_consistency.py --strict && \
+  python3 tools/check_wizard_defaults_sync.py && \
+  python3 tools/check_no_analysis_refs.py && \
+  python3 tools/check_no_unguarded_sys_modules_pop.py && \
+  python3 tools/check_audit_event_catalog.py --strict && \
+  python3 tools/check_tr_links_prefer_mirror.py --strict && \
+  python3 tools/check_usermanual_self_contained.py --strict && \
+  python3 tools/check_notebook_pins.py --strict && \
+  python3 tools/update_site_version.py --check
 ```
 
-The four-tool sequence at the top of the gauntlet (`ruff` + `pytest` +
-`--dry-run`) is the historical "self-review" command from
-[`docs/standards/code-review.md`](docs/standards/code-review.md). The three
-doc guards landed in Waves 3-5 and run on every PR via `.github/workflows/`;
-running them locally before pushing avoids CI round-trips.
+All fifteen must pass. The first four are the historical "self-review"
+command from [`docs/standards/code-review.md`](docs/standards/code-review.md).
+The rest are doc/schema/audit-log guards that landed across Waves 3-5 and
+later review cycles and run on every PR via `.github/workflows/`; running
+them locally before pushing avoids CI round-trips. See
+[`CLAUDE.md`](CLAUDE.md#how-to-work-on-a-task) for what each guard checks —
+keep this list and that one in sync if either changes.
 
 ### 5. Submit a PR
 
@@ -172,12 +174,12 @@ If you add a new config field:
 
 ### Adding a New Trainer Type
 
-1. Add the type to `valid_trainers` set in `config.py`
+1. Add the type to the `Literal[...]` on `TrainingConfig.trainer_type` in `config.py`
 2. Add trainer-specific parameters to `TrainingConfig`
 3. Add the TRL config builder in `trainer.py:_get_training_args_for_type()`
 4. Add the trainer initialization in `trainer.py:train()`
 5. Add dataset format detection in `data.py`
-6. Update the wizard in `wizard.py`
+6. Update the trainer-specific prompts in `forgelm/wizard/_collectors.py` (and `forgelm/wizard/_defaults.json` if the new type needs its own defaults)
 7. Add tests in `tests/test_alignment.py`
 8. Add a notebook in `notebooks/`
 

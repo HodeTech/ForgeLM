@@ -192,6 +192,21 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   `ForgeConfig` fields; the SSRF blocklist docs list RFC 6598 CGNAT; the
   `reference/configuration` and `reference/safety_eval_subcommand` pages
   document the real audit-event payloads and the safety-classifier requirement.
+- **All remaining fabricated user-manual config keys corrected.** The new
+  schema-drift guard's 38-instance backlog (worst: `deployment/model-merging`'s
+  `merge.algorithm/base_model/parameters/output` → real `MergeConfig`
+  `method/models/output_dir/…`; plus `evaluation.trend`, `evaluation.max_length`,
+  `synthetic.teacher.*`, `training.optimizer`, `model.name`, …) is cleared across
+  8 EN/TR page-pairs, and the guard is now enforced with `--strict` in CI and the
+  local gauntlet.
+- **Top-level docs corrected.** README's documentation table no longer hides
+  fully-translated Turkish guides; `CLAUDE.md`/`AGENTS.md` no longer link into the
+  gitignored `docs/marketing/` tree and now show the `wizard/` sub-package;
+  `CONTRIBUTING.md`'s self-review gauntlet matches the canonical one; `site/README`
+  reflects the real site structure. The standards rulebook's CI-guard claims were
+  reconciled against the actual `.github/workflows/` + `tools/`, and the example
+  notebooks were reconciled against the current output schemas (notably
+  `safety_evaluation.ipynb`'s results cell).
 
 ## [0.9.0] — 2026-07-05
 

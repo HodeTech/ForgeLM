@@ -38,7 +38,7 @@ If you're new to the codebase, read them in this order — each one takes 5-10 m
 These apply to this directory:
 
 1. **Every rule must cite real code.** No rule may say "the style is X" without pointing to a file that demonstrates X. If the codebase and the rule disagree, one of them is wrong — the rule does not automatically win.
-2. **Keep each standard under ~250 lines.** A standard you can't skim in 5 minutes gets ignored. Push deep examples to [guides/](../guides/) and link.
+2. **Keep each standard skimmable — soft ceiling ~400 lines.** A standard you can't skim in 5-10 minutes gets ignored. Push deep examples to [guides/](../guides/) and link. This is a soft cap, not a hard gate: several standards (`release.md`, `documentation.md`) carry operationally load-bearing detail (worked release sequences, CI guard inventories) that would fragment badly if force-split just to hit a line count. If a standard meaningfully exceeds ~400 lines, that's a prompt to look for a section that belongs in `guides/` instead — not an automatic rule violation.
 3. **Prefer imperative, testable statements.** "Log errors at `ERROR` level before `sys.exit()`" is better than "log errors appropriately."
 4. **Update with code.** A PR that violates a standard must either (a) get rejected, (b) fix the violation, or (c) update the standard in the same PR with reasoning.
 

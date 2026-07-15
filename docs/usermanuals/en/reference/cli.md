@@ -212,17 +212,19 @@ ForgeLM picks up credentials from environment variables. Never put them in YAML.
 | W&B | `WANDB_API_KEY` | Experiment tracking |
 | Cohere | `COHERE_API_KEY` | (synthetic data) |
 
-YAML interpolation:
+ForgeLM's YAML loader is plain `yaml.safe_load` — there is no `${VAR}` shell-style interpolation. Two different patterns cover the credentials above:
+
+- **HF token:** don't set anything under `auth:` — export `HF_TOKEN` (or the legacy `HUGGINGFACE_TOKEN`) in the shell and both `huggingface_hub`'s own auto-pickup and ForgeLM's login step find it.
+- **Synthetic-data teacher API key:** name the env var in `synthetic.api_key_env` (a field on `SyntheticConfig`, not a nested `teacher:` object — the teacher model itself is `synthetic.teacher_model`):
 
 ```yaml
-auth:
-  hf_token: "${HF_TOKEN}"
 synthetic:
-  teacher:
-    api_key: "${OPENAI_API_KEY}"
+  teacher_model: "gpt-4o"
+  teacher_backend: "api"
+  api_key_env: "OPENAI_API_KEY"      # names the env var; the key itself never touches YAML
 ```
 
-If the env var isn't set, ForgeLM fails at config load with a clear error — better than crashing 6 hours into training because of a missing token.
+There is no config-time check that the named env var actually resolves — an unset `api_key_env` sends the request with no `Authorization` header, and the teacher API rejects it (typically HTTP 401) on the first call. Export the env var before running `--generate-data` so that failure surfaces immediately rather than mid-run.
 
 ## Exit codes
 

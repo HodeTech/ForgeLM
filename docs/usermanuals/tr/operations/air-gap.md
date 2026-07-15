@@ -99,13 +99,7 @@ evaluation:
 $ forgelm cache-tasks --tasks hellaswag,arc_easy,truthfulqa,mmlu
 ```
 
-ForgeLM'i cache kullanacak şekilde konfigüre edin:
-
-```yaml
-evaluation:
-  benchmark:
-    tasks_dir: "${HF_HOME}/lm-evaluation-harness/"
-```
+Cache'i işaret edecek bir `evaluation.benchmark.tasks_dir` (veya başka bir) YAML alanı yoktur — `forgelm cache-tasks`, `lm-evaluation-harness`'ın altındaki `datasets` kütüphanesinin eval zamanında okuduğu aynı `HF_DATASETS_CACHE` (yoksa `HF_HOME/datasets`'e düşer) environment variable'ını kullanır. `--benchmark-only` çalıştırmadan önce yukarıdaki ["Air-gap host üzerinde"](#air-gap-host-üzerinde) bölümündeki environment variable'ları (`HF_HOME`, `HF_DATASETS_OFFLINE=1`) ayarlayın; cache otomatik olarak kullanılır — config bloğuna gerek yoktur.
 
 ## Air-gap modu doğrulama
 

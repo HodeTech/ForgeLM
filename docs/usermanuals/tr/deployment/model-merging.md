@@ -29,10 +29,12 @@ Birleştirme her uzmanın kalitesinden biraz feda eder, genişlik kazanır. Birl
 ## Hızlı örnek: TIES
 
 ```yaml
+model:
+  name_or_path: "Qwen/Qwen2.5-7B-Instruct"   # her adapter'ın eğitildiği base model
+
 merge:
   enabled: true
-  algorithm: "ties"
-  base_model: "Qwen/Qwen2.5-7B-Instruct"
+  method: "ties"
   models:
     - path: "./checkpoints/customer-support"
       weight: 0.5
@@ -40,33 +42,29 @@ merge:
       weight: 0.3
     - path: "./checkpoints/math-reasoning"
       weight: 0.2
-  parameters:
-    threshold: 0.7                      # TIES-özgü: tutulacak delta'ların top-K%'si
-  output:
-    dir: "./checkpoints/merged"
-    model_card: true
+  ties_trim_fraction: 0.3              # büyüklüğe göre en küçük %30 delta'yı budar, üstteki ~%70'i tutar
+  output_dir: "./checkpoints/merged"
 ```
 
 ```shell
 $ forgelm --merge --config configs/merge.yaml
-✓ 3 adapter yüklendi
-✓ TIES merge: top %70 delta tutuldu, 1247 işaret çatışması çözüldü
-✓ ./checkpoints/merged yazıldı
-✓ model card üretildi
+INFO Running TIES merge on 3 adapters...
+INFO Model merge completed: 3 models merged with 'ties' → ./checkpoints/merged
 ```
 
 ## Hızlı örnek: Lineer
 
 ```yaml
+model:
+  name_or_path: "Qwen/Qwen2.5-7B-Instruct"
+
 merge:
   enabled: true
-  algorithm: "linear"
-  base_model: "Qwen/Qwen2.5-7B-Instruct"
+  method: "linear"
   models:
     - { path: "./checkpoints/v1", weight: 0.5 }
     - { path: "./checkpoints/v2", weight: 0.5 }
-  output:
-    dir: "./checkpoints/v1-v2-blend"
+  output_dir: "./checkpoints/v1-v2-blend"
 ```
 
 Lineer en basit — ağırlıkları ortalar. Başlangıç noktası olarak her zaman çalışır; optimal olmayabilir.
@@ -75,30 +73,26 @@ Lineer en basit — ağırlıkları ortalar. Başlangıç noktası olarak her za
 
 | Algoritma | Anahtar parametreler |
 |---|---|
-| `linear` | Model başı `weights:` |
-| `slerp` | `t:` interpolasyon faktörü (0.0 = ilk adapter, 1.0 = ikinci) |
-| `ties` | `threshold:` (tutulacak delta'ların top-K%'si, tipik 0.6-0.8), `density:` (alternatif formülasyon) |
-| `dare` | `density:` (tutulacak oran, 0.5-0.9), `epsilon:` (yeniden ölçekleme) |
-| `dare_ties` | Hem DARE hem TIES parametreleri |
+| `linear` | `merge.models` içinde model başı `weight` (toplamı 1.0 olacak şekilde otomatik normalize edilir). |
+| `slerp` | Ayrı bir faktör yok — interpolasyon ağırlığı `merge.models`'daki iki girdinin göreli `weight` değerinden türetilir. Tam olarak iki girdi gerektirir. |
+| `ties` | `merge.ties_trim_fraction` — işaret oylamasından önce model başına budanacak en küçük büyüklükteki delta'ların oranı (varsayılan `0.2`, yani üstteki ~%80 tutulur). |
+| `dare` | `merge.dare_drop_rate` — yeniden ölçeklemeden önce her delta'nın rastgele düşürülme olasılığı (varsayılan `0.3`). `merge.dare_seed` — DARE birleştirmesinin çalıştırmadan çalıştırmaya tekrarlanabilir olması için RNG seed (varsayılan `42`). |
 
 ## Birleştirme sonrası değerlendirme
 
-Birleştirilmiş modeli her zaman yeniden değerlendirin — herhangi bir girdi modelden farklı bir model.
+Birleştirilmiş modeli her zaman yeniden değerlendirin — herhangi bir girdi modelden farklı bir model. `merge` ve `evaluation` ayrı üst düzey config bloklarıdır; `forgelm --merge` bittikten sonra ikinci bir config'in `model.name_or_path`'ini birleştirilmiş çıktı dizinine yönlendirip benchmark/güvenlik kapılarını doğrudan `--benchmark-only` ile (eğitim olmadan) çalıştırın:
 
 ```yaml
-merge:
-  enabled: true
-  algorithm: "ties"
-  ...
-  evaluation:
-    benchmark:
-      tasks: ["hellaswag", "humaneval", "gsm8k"]    # her uzmandan beceri karışımı
-      floors:
-        hellaswag: 0.55
-        humaneval: 0.40
-        gsm8k: 0.50
-    safety:
-      enabled: true
+evaluation:
+  benchmark:
+    tasks: ["hellaswag", "humaneval", "gsm8k"]    # her uzmandan beceri karışımı
+    min_score: 0.5
+  safety:
+    enabled: true
+```
+
+```shell
+$ forgelm --benchmark-only ./checkpoints/merged --config configs/eval.yaml
 ```
 
 Birleştirilmiş model herhangi bir görevde gerilerse uzmanlardan birine fallback yapın veya farklı algoritma deneyin.
@@ -109,30 +103,27 @@ Kötü birleştirme belirtileri:
 
 | Belirti | Olası sebep | Çözüm |
 |---|---|---|
-| Tutarlı ama generic çıktı | Lineer merge uzmanlaşmaları ortaladı | `threshold: 0.7` ile TIES dene |
+| Tutarlı ama generic çıktı | Lineer merge uzmanlaşmaları ortaladı | `merge.method`'u `ties`'a çevir, `ties_trim_fraction: 0.3` kullan |
 | Bozuk çıktı | Adapter base uyuşmazlığı | Tüm adapter'ların aynı base'i kullandığını kontrol et |
-| Her görevde rastgele düşük puan | DARE density çok düşük | `density:`'i 0.9'a yükselt |
-| Bir uzman baskın | Lineer ağırlık o adapter için çok yüksek | Ağırlıkları yeniden dengele |
+| Her görevde rastgele düşük puan | `dare_drop_rate` çok yüksek (çok fazla delta düşürülüyor) | `merge.dare_drop_rate`'i düşür (0.1-0.3 dene) |
+| Bir uzman baskın | Diğerlerine göre bir `weight` çok yüksek | `merge.models` içindeki `weight` değerlerini yeniden dengele |
 
 ## Konfigürasyon
 
 ```yaml
+model:
+  name_or_path: "Qwen/Qwen2.5-7B-Instruct"
+
 merge:
   enabled: true
-  algorithm: "ties"
-  base_model: "Qwen/Qwen2.5-7B-Instruct"
+  method: "ties"
   models:
     - path: "./checkpoints/v1"
       weight: 0.4
     - path: "./checkpoints/v2"
       weight: 0.6
-  parameters:
-    threshold: 0.7
-    normalize: true                     # ağırlıkları 1.0'a normalize et
-  output:
-    dir: "./checkpoints/merged"
-    model_card: true
-    save_format: "safetensors"
+  ties_trim_fraction: 0.3              # ağırlıklar otomatik olarak 1.0'a normalize edilir
+  output_dir: "./checkpoints/merged"
 ```
 
 ## Programatik birleştirme
@@ -140,16 +131,16 @@ merge:
 Otomasyon hatları için:
 
 ```python
-from forgelm.merging import merge_adapters
+from forgelm.merging import merge_peft_adapters
 
-merge_adapters(
-    base="Qwen/Qwen2.5-7B-Instruct",
+result = merge_peft_adapters(
+    base_model_path="Qwen/Qwen2.5-7B-Instruct",
     adapters=[
-        ("./checkpoints/v1", 0.5),
-        ("./checkpoints/v2", 0.5),
+        {"path": "./checkpoints/v1", "weight": 0.5},
+        {"path": "./checkpoints/v2", "weight": 0.5},
     ],
-    algorithm="ties",
-    threshold=0.7,
+    method="ties",
+    ties_trim_fraction=0.3,
     output_dir="./checkpoints/merged",
 )
 ```

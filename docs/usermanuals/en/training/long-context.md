@@ -126,11 +126,7 @@ Higher `alpha` = more regularisation. Above 10 the model starts producing noise 
 :::
 
 :::warn
-**OOM at evaluation, not training.** Eval often runs without sliding window or packing — it can OOM even when training fits. Set evaluation `max_length` lower if needed:
-```yaml
-evaluation:
-  max_length: 4096   # eval at native context, train at 32K
-```
+**OOM at evaluation, not training.** Eval often runs without sliding window or packing — it can OOM even when training fits. There is no separate `evaluation.max_length` field; `model.max_length` governs both the train and eval passes (TRL reuses the same trainer config for both), so the only lever is lowering `model.max_length` itself — which also shrinks the training context window.
 :::
 
 ## Continued pre-training

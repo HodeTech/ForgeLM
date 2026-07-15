@@ -46,7 +46,7 @@ Each skill's `SKILL.md` has the full checklist. Follow it; don't skip steps to s
 
 ```text
 ForgeLM/
-├── forgelm/                 # Source code: ~22 single-file modules + 2 sub-packages
+├── forgelm/                 # Source code: ~22 single-file modules + 3 sub-packages
 │   ├── cli/                 # CLI package (Phase 15 split): _parser, _dispatch,
 │   │                        # _exit_codes, subcommands/{ingest, audit, chat,
 │   │                        # export, deploy, quickstart, doctor, cache,
@@ -57,6 +57,8 @@ ForgeLM/
 │   │                        # _aggregator, _streaming, _simhash, _minhash,
 │   │                        # _pii_regex, _pii_ml, _secrets, _quality,
 │   │                        # _croissant, _summary, _splits
+│   ├── wizard/              # Interactive --wizard config generation: _collectors,
+│   │                        # _orchestrator, _state, _byod, _io, _defaults.json
 │   ├── config.py            # Pydantic schemas (23 models)
 │   ├── trainer.py           # TRL wrapper (SFT/DPO/SimPO/KTO/ORPO/GRPO)
 │   ├── model.py             # HF + PEFT model loading
@@ -68,7 +70,7 @@ ForgeLM/
 │   ├── grpo_rewards.py      # Built-in GRPO format/length shaping reward fallback
 │   ├── _http.py             # SSRF-guarded HTTP chokepoint (safe_post / safe_get)
 │   ├── _version.py          # `__version__` + `__api_version__` (decoupled)
-│   └── ...                  # benchmark, judge, merging, synthetic, wizard,
+│   └── ...                  # benchmark, judge, merging, synthetic,
 │                            # quickstart, model_card, fit_check, deploy, chat,
 │                            # export, inference, results, utils
 ├── tests/                   # 70 test modules; count grows over time (run `pytest --collect-only -q` for current)
@@ -113,7 +115,7 @@ These come from the standards documents; summarized here for quick reference:
 
 ## What ForgeLM is not
 
-Reinforced in [docs/marketing/strategy/05-yapmayacaklarimiz.md](docs/marketing/strategy/05-yapmayacaklarimiz.md). Do not propose or implement:
+Reinforced in the internal marketing strategy notes (`docs/marketing/strategy/05-yapmayacaklarimiz.md`, gitignored, not present in this checkout). Do not propose or implement:
 
 - **Web UI / GUI.** Config-driven is the identity. Dashboard for Pro CLI only.
 - **Custom inference engine.** Hand off to Ollama / vLLM / TGI / llama.cpp.
@@ -161,6 +163,7 @@ Default workflow for a non-trivial change:
      python3 tools/check_tr_links_prefer_mirror.py --strict && \
      python3 tools/check_usermanual_self_contained.py --strict && \
      python3 tools/check_notebook_pins.py --strict && \
+     python3 tools/check_usermanual_schema_drift.py --strict && \
      python3 tools/update_site_version.py --check
    ```
 
@@ -226,7 +229,7 @@ Default workflow for a non-trivial change:
 
 - The `docs/marketing/` directory is gitignored (internal strategy). Content there is real; treat it as a source of truth for direction but don't reference it in public-facing code or docs.
 - The `docs/analysis/` directory is gitignored research / audit working memory (PR-cycle review notes, external-repo comparisons, drafts). **Never reference its contents from production code, public docs, CHANGELOG entries, commit messages, or PR descriptions.** Decisions distilled from those notes live in `docs/standards/`, `docs/roadmap/`, the CHANGELOG, and inline code comments — those are the citations reviewers see.
-- The roadmap ([docs/roadmap.md](docs/roadmap.md)) is what ships. The marketing strategy roadmap ([docs/marketing/marketing_strategy_roadmap.md](docs/marketing/marketing_strategy_roadmap.md)) is what gets announced. Don't conflate the two.
+- The roadmap ([docs/roadmap.md](docs/roadmap.md)) is what ships. The marketing strategy roadmap (`docs/marketing/marketing_strategy_roadmap.md`, gitignored, not present in this checkout) is what gets announced. Don't conflate the two.
 
 ---
 
