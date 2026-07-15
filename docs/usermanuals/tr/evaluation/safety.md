@@ -27,11 +27,15 @@ evaluation:
     batch_size: 8
 ```
 
-Her eğitim koşusunun ardından ForgeLM şunları yapar:
+Her eğitim koşusunun ardından (`evaluation.safety.enabled: true` iken), ForgeLM şunları yapar:
 1. Ayrılmış güvenlik probe prompt'larına yanıt üretir.
 2. Yanıtları 14 Llama Guard kategorisinde skorlar.
-3. Pre-train baseline'la ve konfigüre eşiklerle karşılaştırır.
-4. Bloklu kategoriler tolerans ötesinde gerilerse otomatik geri almayı tetikler.
+3. Koşunun unsafe-response oranını konfigüre edilmiş **mutlak** eşiklerle karşılaştırır (`max_safety_regression`, ve — ayarlıysa — `min_safety_score` / `severity_thresholds`).
+4. Konfigüre edilmiş herhangi bir eşik aşılırsa otomatik geri almayı tetikler.
+
+:::warn
+**`max_safety_regression` mutlak bir tavandır, baseline'a göre regresyon sınırı değildir.** İsme rağmen, ForgeLM eğitim öncesi base modelin güvenlik skorunu ölçüp sonrasıyla karşılaştırmaz — hiçbir yerde pre-training güvenlik ölçümü yapılmaz. Alan doğrudan *post-training* unsafe-response oranına tavan koyar: aşarsanız, base model ne skorlamış olursa olsun otomatik geri alma tetiklenir. Bu, `forgelm/safety.py`'nin modül docstring'inde açıkça belirtilir ve bir regresyon testiyle (`TestSafetyGateIsAbsoluteNotBaseline`) sabitlenmiştir.
+:::
 
 ## Zarar kategorileri (S1–S14)
 
@@ -52,7 +56,7 @@ Her eğitim koşusunun ardından ForgeLM şunları yapar:
 | **S13** | Seçim / dezenformasyon |
 | **S14** | Code interpreter kötüye kullanımı |
 
-`track_categories: true` olduğunda her güvenlik probe yanıtı kategori-başı confidence'a parse edilir ve `safety_report.json`'da yüzeye çıkar. `block_categories:` whitelist alanı yoktur — gating ya `max_safety_regression` (binary mode) ya da `severity_thresholds` (kategori-severity'yi izin verilen unsafe ratio'ya eşleyen dict) ile sürülür.
+`track_categories: true` olduğunda her güvenlik probe yanıtı bir zarar kategorisi + severity'ye parse edilir ve sayımlar `safety_results.json`'un `category_distribution` / `severity_distribution` alanlarında yüzeye çıkar. `block_categories:` whitelist alanı yoktur — gating ya `max_safety_regression` (binary mode) ya da `severity_thresholds` (severity seviyesini izin verilen unsafe ratio'ya eşleyen dict) ile sürülür.
 
 ## Severity eşikleri
 
@@ -66,9 +70,9 @@ Her eğitim koşusunun ardından ForgeLM şunları yapar:
 
 `severity_thresholds` `null` (varsayılan) iken yalnızca binary `max_safety_regression` tavanı uygulanır.
 
-## Pre-train baseline
+## Bağımsız deployment-öncesi kontrol
 
-Llama Guard'ı kapı olarak kullanmadan önce *base* modelinizi skorlayın:
+`forgelm safety-eval`, herhangi bir bağımsız modele karşı aynı mutlak-eşik kapısını çalıştırır — üçüncü taraf bir model için deployment-öncesi kontrol, harm classifier güncellendikten sonra bir post-incident yeniden değerlendirme, veya bir eğitim koşusundan bağımsız release-zamanı kontrolü için kullanışlıdır:
 
 ```shell
 $ forgelm safety-eval --model "Qwen/Qwen2.5-7B-Instruct" \
@@ -76,7 +80,7 @@ $ forgelm safety-eval --model "Qwen/Qwen2.5-7B-Instruct" \
     --output-dir baselines/qwen-7b/
 ```
 
-Bu, karşılaştırma noktasıdır — otomatik geri alma fine-tune'un baseline'ın altına *gerilemesi* durumunda tetiklenir, mutlak skor kötü olduğunda değil. Fine-tuning güvenliği nadiren iyileştirir; hedef onu kötüleştirmemek.
+Bu, daha sonraki bir eğitim-zamanı koşusunun karşılaştıracağı bir baseline saklamaz — işaret ettiğiniz modele aynı mutlak unsafe-ratio tavanını uygular. Exit code `0` = model eşiği geçti, `3` = değerlendirme tamamlandı ama eşik aşıldı, `2` = runtime hatası (model veya classifier yükleme). Bunu "önce" anlık görüntüsü olarak değil, her aday model için bir kez çalıştırın.
 
 ## Probe prompt tasarımı
 
@@ -91,25 +95,37 @@ ForgeLM **51 prompt** içeren ve **18 zarar kategorisini** kapsayan bir varsayı
 ## Çıktı artifact'ları
 
 ```text
-checkpoints/run/artifacts/
-├── safety_report.json                 ← kategori başı güven puanları
-├── safety_examples.jsonl              ← inceleme için en kötü flaglenen 10 yanıt
-└── safety_run.log                     ← tam Llama Guard çıktıları
+<output-dir>/
+├── safety_results.json                ← tam skorlama özeti + pass/fail verdict
+└── safety_trend.jsonl                 ← koşular-arası geçmiş (koşu başına bir satır eklenir)
 ```
 
-`safety_report.json`:
+`safety_results.json`:
 
 ```json
 {
-  "model": "meta-llama/Llama-Guard-3-8B",
-  "categories": {
-    "S1": {"max": 0.04, "mean": 0.01, "regressed": false},
-    "S5": {"max": 0.42, "mean": 0.08, "regressed": true},
-    ...
-  },
-  "verdict": "regression",
-  "regressed_blocked_categories": ["S5"]
+  "scoring_method": "confidence_weighted",
+  "safe_ratio": 0.96,
+  "safety_score": 0.9412,
+  "unsafe_count": 2,
+  "total_count": 50,
+  "low_confidence_count": 1,
+  "passed": false,
+  "failure_reason": "Unsafe ratio (4.00%) exceeds threshold (5.00%)",
+  "details": [
+    {"prompt": "...", "response": "...", "label": "unsafe\nS5", "confidence": 0.82, "safe": false, "category": "defamation", "severity": "high"}
+  ],
+  "category_distribution": {"defamation": 2},
+  "severity_distribution": {"high": 2}
 }
+```
+
+`category_distribution` / `severity_distribution` yalnızca `track_categories: true` iken mevcuttur. `details[].prompt` / `details[].response` GDPR / EU AI Act Madde 10 gizliliği için varsayılan olarak temizlenir — debug için ham metni saklamak üzere `include_eval_samples: true` ayarlayın.
+
+`safety_trend.jsonl` koşu başına bir JSON objesi ekler:
+
+```json
+{"timestamp": "2026-07-15T10:00:00+00:00", "safety_score": 0.9412, "safe_ratio": 0.96, "passed": false}
 ```
 
 ## Konfigürasyon parametreleri
@@ -126,6 +142,7 @@ checkpoints/run/artifacts/
 | `track_categories` | bool | `false` | Yanıt başı Llama Guard S1-S14 kategorilerini parse et ve raporda yüzeye çıkar. |
 | `severity_thresholds` | `Optional[Dict[str,float]]` | `null` | Severity-başı unsafe-ratio tavanları — yukarıdaki Severity eşikleri'ne bakın. |
 | `batch_size` | int | `8` | Safety eval için batched generation boyutu; `1` batching'i kapatır. |
+| `include_eval_samples` | bool | `false` | Ham `prompt` / `response` string'lerini `safety_results.json`'a kaydeder. GDPR / EU AI Act Madde 10 gizliliği için varsayılan kapalı. |
 
 ## Sık hatalar
 

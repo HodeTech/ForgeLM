@@ -36,7 +36,7 @@ my-finetune/
 |---|---|---|
 | `forgelm ingest` | `--output` (genelde `data/*.jsonl`) | Ham döküman → SFT-hazır JSONL. |
 | `forgelm audit` | `--output` (genelde `audit/`) | PII / sızıntı / kalite raporu. |
-| `forgelm --config X.yaml` | YAML'daki `output.dir` | Tüm eğitim artifact'ları. |
+| `forgelm --config X.yaml` | YAML'daki `training.output_dir` | Tüm eğitim artifact'ları. |
 | `forgelm export` | `--output` (`.gguf` yolu) | Kuantize tek-dosya model. |
 | `forgelm deploy` | `--output` (Modelfile, K8s manifest vb.) | Deployment iskeletleri. |
 | `forgelm chat` | hiçbir yere (interaktif) | Terminal'e akıtır. |
@@ -77,9 +77,9 @@ ingested/
 |---|---|---|
 | Config dosyası | `configs/<isim>.yaml` | `--config PATH` |
 | Audit çıktısı | `./audit/` | `forgelm audit --output PATH` |
-| Eğitim çıktısı | `./checkpoints/<isim>/` | YAML'da `output.dir:` |
+| Eğitim çıktısı | `./checkpoints/<isim>/` | YAML'da `training.output_dir:` |
 | HuggingFace cache | `~/.cache/huggingface/` | `HF_HOME` env var (canonical; ForgeLM kendi cache-dir override'ını eklemiyor) |
-| HuggingFace token | `HF_TOKEN` env | YAML'da `auth.hf_token:` |
+| HuggingFace token | `HUGGINGFACE_TOKEN` env | YAML'da `auth.hf_token:` |
 
 ## Çoklu config iş akışı
 

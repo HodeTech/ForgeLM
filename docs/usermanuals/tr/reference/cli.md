@@ -287,19 +287,15 @@ $ forgelm approve RUN_ID --comment "İnceledim."      # staging'i promote et
 
 ### "Eğit, GGUF export et, Ollama'ya deploy et"
 
-```yaml
-# configs/run.yaml
-output:
-  gguf:
-    enabled: true
-deployment:
-  target: ollama
-```
+Üst-seviye `output:` veya `deployment:` YAML anahtarı yoktur — `ForgeConfig` bilinmeyen anahtarları reddeder (`extra="forbid"`), dolayısıyla bunlardan birini taşıyan bir config anında `--dry-run`'da başarısız olur. Export ve deploy, eğitim tamamlandıktan *sonra* çalıştırılan ayrı CLI adımlarıdır, config-driven pipeline aşamaları değil:
 
 ```shell
-$ forgelm --config configs/run.yaml
-# Eğitim, export ve deploy config üretimi hep birlikte gerçekleşir.
+$ forgelm --config configs/run.yaml                                             # 1. eğit (./checkpoints/final_model'a yazar)
+$ forgelm export ./checkpoints/final_model --output model.gguf --quant q4_k_m   # 2. GGUF'a export et
+$ forgelm deploy ./checkpoints/final_model --target ollama --output ./Modelfile # 3. Ollama Modelfile'ını üret
 ```
+
+Yukarıdaki [Export: `forgelm export`](#export-forgelm-export) ve [Deploy: `forgelm deploy`](#deploy-forgelm-deploy) bölümlerine, ve YAML-driven bir deploy adımının neden olmadığının tam açıklaması için [Konfigürasyon Referansı `deployment:`](#/reference/configuration) bölümüne bakın.
 
 ## Ayrıca bakın
 

@@ -286,19 +286,15 @@ $ forgelm approve RUN_ID --comment "Reviewed."       # promote staging
 
 ### "Train, export GGUF, deploy to Ollama"
 
-```yaml
-# configs/run.yaml
-output:
-  gguf:
-    enabled: true
-deployment:
-  target: ollama
-```
+There is no `output:` or `deployment:` top-level YAML key — `ForgeConfig` rejects unknown keys (`extra="forbid"`), so a config carrying either fails `--dry-run` immediately. Export and deploy are separate CLI steps run *after* training completes, not config-driven pipeline stages:
 
 ```shell
-$ forgelm --config configs/run.yaml
-# Training, export, and deploy config generation all happen.
+$ forgelm --config configs/run.yaml                                    # 1. train (writes ./checkpoints/final_model)
+$ forgelm export ./checkpoints/final_model --output model.gguf --quant q4_k_m   # 2. export to GGUF
+$ forgelm deploy ./checkpoints/final_model --target ollama --output ./Modelfile # 3. generate the Ollama Modelfile
 ```
+
+See [Export: `forgelm export`](#export-forgelm-export) and [Deploy: `forgelm deploy`](#deploy-forgelm-deploy) above, and the [Configuration Reference `deployment:`](#/reference/configuration) section for the full explanation of why there is no YAML-driven deploy step.
 
 ## See also
 

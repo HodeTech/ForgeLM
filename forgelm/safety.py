@@ -226,8 +226,12 @@ def _generate_safety_batch_with_oom_retry(
         )
         try:
             torch.cuda.empty_cache()
-        except RuntimeError:
-            pass
+        except RuntimeError as cache_exc:
+            # Mirror _release_model_from_gpu: a failed cache-clear on a
+            # flaky/degraded CUDA driver is non-fatal here (we still fall back to
+            # per-prompt generation), but swallowing it silently hides why a
+            # second OOM on the fallback path is more likely.
+            logger.warning("Could not empty CUDA cache during OOM fallback: %s", cache_exc)
         return [_generate_one_safety_response(model, tokenizer, p, max_new_tokens) for p in batch]
     except (RuntimeError, ValueError, TypeError, IndexError, KeyError) as e:
         # Non-OOM batch failure — fall back to per-prompt so a single
@@ -544,6 +548,59 @@ class SafetyEvalThresholds:
     severity_thresholds: Optional[Dict[str, float]] = None
 
 
+# Well-known generative Llama-Guard checkpoints (LlamaForCausalLM).  These emit
+# their safety verdict as *generated text* ("safe" / "unsafe\nS<code>"), so they
+# cannot be scored through the ``pipeline("text-classification")`` path this
+# module uses — that path attaches a randomly-initialized sequence-classification
+# head (see ``_reject_uninitialized_classifier_head``).  The config default and
+# standalone-CLI fallback ``meta-llama/Llama-Guard-3-8B`` is one of these, so we
+# reject it (and its published siblings) with an actionable pre-flight error at
+# eval start — BEFORE a multi-GB download and a full response-generation pass are
+# spent on a classifier that can never produce a meaningful verdict.  Until
+# generation-based Llama-Guard scoring is implemented (deferred follow-up), these
+# checkpoints are not usable defaults; the config default and its docs should be
+# updated to a genuinely-loadable checkpoint (cross-module change, tracked
+# separately).  Compared case-insensitively against ``classifier_path``.
+_GENERATION_ONLY_CLASSIFIERS: frozenset[str] = frozenset(
+    {
+        "meta-llama/llama-guard-3-8b",
+        "meta-llama/llama-guard-3-8b-int8",
+        "meta-llama/llama-guard-3-1b",
+        "meta-llama/meta-llama-guard-2-8b",
+        "meta-llama/llamaguard-7b",
+    }
+)
+
+
+def _reject_generation_only_classifier(classifier_path: str) -> None:
+    """Fail fast when a known generation-only guard is selected as the classifier.
+
+    ForgeLM scores safety through ``pipeline("text-classification")``, which can
+    only use a checkpoint that carries a *trained* sequence-classification head.
+    The published Llama-Guard checkpoints — including the config default
+    ``meta-llama/Llama-Guard-3-8B`` — are generative ``LlamaForCausalLM`` models
+    with no such head, so they can never produce a meaningful verdict on this
+    path.  :func:`_reject_uninitialized_classifier_head` already refuses them, but
+    only *after* the multi-GB weights are downloaded and the fine-tuned model's
+    responses are generated.  This name-based check surfaces the same actionable
+    error at eval start so the operator is not left waiting on a run that is
+    guaranteed to fail.
+
+    Raises:
+        RuntimeError: if ``classifier_path`` names a known generation-only guard.
+    """
+    if classifier_path.strip().lower() in _GENERATION_ONLY_CLASSIFIERS:
+        raise RuntimeError(
+            f"Safety classifier {classifier_path!r} is a generative Llama-Guard "
+            "checkpoint (LlamaForCausalLM) and cannot be scored through ForgeLM's "
+            "text-classification pipeline: it has no trained sequence-classification "
+            "head, so every verdict would be meaningless (and with auto_revert on it "
+            "would delete a good model). Set evaluation.safety.classifier to a "
+            "checkpoint whose head carries 'safe'/'unsafe' labels. "
+            "Generation-based Llama-Guard scoring is not yet implemented."
+        )
+
+
 def _reject_uninitialized_classifier_head(classifier: Any, classifier_path: str) -> None:
     """Refuse a causal-LM checkpoint loaded as a text-classification head.
 
@@ -600,6 +657,28 @@ def _reject_uninitialized_classifier_head(classifier: Any, classifier_path: str)
         )
 
 
+def _emit_classifier_load_failed_audit(audit_logger: Any, classifier_path: str, reason: str) -> None:
+    """Best-effort Article 12 record-keeping for a safety-classifier outage.
+
+    A failure to load — or a fail-fast rejection of — the safety classifier is a
+    safety-gate outage, so surface it in the append-only audit trail, not only in
+    process logs (F-compliance-120). Shared by ``_load_safety_classifier`` and the
+    ``run_safety_evaluation`` top pre-flight so both failure paths audit
+    identically. Best-effort: an audit failure here must never mask the primary
+    classifier error the caller is handling.
+    """
+    if audit_logger is None:
+        return
+    try:
+        audit_logger.log_event(
+            "audit.classifier_load_failed",
+            classifier=classifier_path,
+            reason=str(reason)[:500],
+        )
+    except Exception as audit_exc:  # noqa: BLE001 — best-effort: audit emission must not mask the primary classifier failure.
+        logger.warning("Failed to emit classifier_load_failed audit event: %s", audit_exc)
+
+
 def _load_safety_classifier(classifier_path: str, audit_logger: Any) -> Any:
     """Load the HF text-classification pipeline; emit Article 12 audit on failure.
 
@@ -611,6 +690,10 @@ def _load_safety_classifier(classifier_path: str, audit_logger: Any) -> Any:
     from transformers import pipeline
 
     try:
+        # Reject known generation-only guards before the multi-GB download, so a
+        # direct caller of this helper (bypassing run_safety_evaluation's own
+        # pre-flight) still fails fast — and the audit event below still fires.
+        _reject_generation_only_classifier(classifier_path)
         classifier = pipeline(
             "text-classification",
             model=classifier_path,
@@ -623,17 +706,8 @@ def _load_safety_classifier(classifier_path: str, audit_logger: Any) -> Any:
         logger.exception("Failed to load safety classifier")
         # Closure plan Faz 3 (F-compliance-120): emit a record-keeping event
         # so safety classifier outages are visible in the EU AI Act Article 12
-        # audit trail, not only in process logs. Best-effort: a failure here
-        # must not mask the original classifier error.
-        if audit_logger is not None:
-            try:
-                audit_logger.log_event(
-                    "audit.classifier_load_failed",
-                    classifier=classifier_path,
-                    reason=str(e)[:500],
-                )
-            except Exception as audit_exc:  # noqa: BLE001 — best-effort: audit emission must not mask the primary classifier load failure being re-raised below.
-                logger.warning("Failed to emit classifier_load_failed audit event: %s", audit_exc)
+        # audit trail, not only in process logs.
+        _emit_classifier_load_failed_audit(audit_logger, classifier_path, str(e))
         raise RuntimeError(str(e)) from e
 
 
@@ -708,10 +782,39 @@ def run_safety_evaluation(
     Phase 9 thresholds are bundled into the ``thresholds`` parameter; pass
     ``None`` for the conservative defaults (binary scoring, no
     severity / score gates, classifier confidence floor 0.7).
+
+    ``classifier_path`` must point to a checkpoint that carries a *trained*
+    sequence-classification head with 'safe'/'unsafe' labels.  Generative
+    Llama-Guard checkpoints (including the config default
+    ``meta-llama/Llama-Guard-3-8B``) are **not** loadable through this path and
+    are refused fast, before generation, with an actionable error — see
+    :func:`_reject_generation_only_classifier`.
     """
     if thresholds is None:
         thresholds = SafetyEvalThresholds()
     _validate_batch_size(batch_size)
+
+    # Fail fast on a known generation-only guard (e.g. the shipped default
+    # meta-llama/Llama-Guard-3-8B) BEFORE the expensive response-generation pass
+    # and the multi-GB classifier download — the text-classification pipeline can
+    # never score it.  Return through the same evaluation_completed=False
+    # infrastructure-failure shape the CLI maps to exit 2, symmetric with the
+    # classifier-load-failure path below (never a silent pass).
+    try:
+        _reject_generation_only_classifier(classifier_path)
+    except RuntimeError as e:
+        logger.error("%s", e)
+        # Article 12 record-keeping: this top pre-flight short-circuits before
+        # _load_safety_classifier's own emission, so surface the rejected
+        # (unloadable) classifier here too — otherwise the generative-default
+        # rejection would leave no audit trace (F-compliance-120).
+        _emit_classifier_load_failed_audit(audit_logger, classifier_path, str(e))
+        return SafetyResult(
+            passed=False,
+            evaluation_completed=False,
+            safe_ratio=0.0,
+            failure_reason=str(e),
+        )
 
     if not os.path.isfile(test_prompts_path):
         logger.error("Safety test prompts file not found: %s", test_prompts_path)

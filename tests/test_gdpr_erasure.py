@@ -1229,3 +1229,186 @@ class TestErasureFailedErrorMessageSanitised:
         assert len(failed["error_message"]) <= _purge._AUDIT_ERROR_MESSAGE_MAX + len("…[truncated]")
         # And the raw email never appears ANYWHERE in the persisted chain.
         assert leaked not in (tmp_path / "audit_log.jsonl").read_text()
+
+
+# ---------------------------------------------------------------------------
+# Finding 1 (CRITICAL) — non-UTF-8 corpus must close the audit chain with
+# data.erasure_failed and exit EXIT_TRAINING_ERROR, never leave a dangling
+# data.erasure_requested (Art. 12 record-keeping integrity).
+# ---------------------------------------------------------------------------
+
+
+class TestNonUtf8Corpus:
+    # ``\xff`` is never valid in a UTF-8 stream, so text-mode iteration of a
+    # line carrying it raises UnicodeDecodeError deterministically.
+    _BAD_CORPUS = b'{"id": "row-1", "text": "valid ascii"}\n{"id": "row-2", "text": "legacy \xff byte"}\n'
+
+    def test_non_utf8_corpus_closes_chain_with_failed_and_exits_training_error(self, tmp_path: Path, capsys) -> None:
+        from forgelm.cli.subcommands import _purge
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        corpus = tmp_path / "train.jsonl"
+        corpus.write_bytes(self._BAD_CORPUS)
+
+        args = _build_args(row_id="row-1", corpus=str(corpus), output_dir=str(tmp_path))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+        # A DOCUMENTED exit code (2), not Python's uncaught-exception default.
+        assert ei.value.code == _purge.EXIT_TRAINING_ERROR
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+
+        # The audit chain is CLOSED: request → failed, never a dangling request.
+        events = _read_audit_events(tmp_path / "audit_log.jsonl")
+        names = [e["event"] for e in events]
+        assert "data.erasure_requested" in names
+        assert "data.erasure_failed" in names
+        assert "data.erasure_completed" not in names
+        assert names.index("data.erasure_requested") < names.index("data.erasure_failed")
+        failed = next(e for e in events if e["event"] == "data.erasure_failed")
+        assert failed["error_class"] == "UnicodeDecodeError"
+
+        # Fail-closed: the corpus is left byte-for-byte unchanged.
+        assert corpus.read_bytes() == self._BAD_CORPUS
+
+    def test_atomic_rewrite_cleans_temp_file_on_non_utf8(self, tmp_path: Path) -> None:
+        """The widened ``(OSError, UnicodeDecodeError)`` handler in
+        ``_atomic_rewrite_dropping_lines`` must clean up the mkstemp temp
+        file when the source turns out to carry non-UTF-8 bytes mid-read —
+        UnicodeDecodeError is NOT an OSError, so the narrow handler would
+        have orphaned the temp file."""
+        from forgelm.cli.subcommands._purge import _atomic_rewrite_dropping_lines
+
+        corpus = tmp_path / "train.jsonl"
+        corpus.write_bytes(self._BAD_CORPUS)
+
+        with pytest.raises(UnicodeDecodeError):
+            _atomic_rewrite_dropping_lines(str(corpus), [1])
+
+        leftovers = list(tmp_path.glob(".forgelm_purge_*.tmp"))
+        assert leftovers == [], f"orphaned temp file(s) after decode failure: {leftovers}"
+        # Source corpus untouched.
+        assert corpus.read_bytes() == self._BAD_CORPUS
+
+
+# ---------------------------------------------------------------------------
+# Finding 2 (MEDIUM) — a --config load failure that silences the
+# external-copies warning must be visible (WARNING), not swallowed at DEBUG.
+# ---------------------------------------------------------------------------
+
+
+class TestConfigLoadWarningVisibility:
+    def test_bad_config_in_row_mode_logs_warning_not_debug(self, tmp_path: Path, caplog) -> None:
+        import logging
+
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "row-1", "text": "x"}])
+        # A non-existent --config → FileNotFoundError (OSError) → best-effort
+        # fallback.  Before the fix this logged at DEBUG (invisible under the
+        # INFO default AND the WARNING-forced JSON mode).
+        missing_config = tmp_path / "does_not_exist.yaml"
+        args = _build_args(
+            row_id="row-1",
+            corpus=str(corpus),
+            output_dir=str(tmp_path),
+            config=str(missing_config),
+        )
+        with caplog.at_level(logging.WARNING, logger="forgelm.cli"):
+            with pytest.raises(SystemExit) as ei:
+                _run_purge_cmd(args, output_format="json")
+        # The erasure still succeeds config-free.
+        assert ei.value.code == 0
+        warnings = [r for r in caplog.records if r.levelname == "WARNING" and "config" in r.message.lower()]
+        assert warnings, (
+            "a --config load failure must surface at WARNING so an operator who explicitly "
+            "passed --config sees that external-copies warning detection was disabled"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Finding 4 (MEDIUM) — warning events must carry ONLY their catalog-scoped
+# extras; a shared mutable dict cross-contaminated payloads.
+# ---------------------------------------------------------------------------
+
+
+class TestWarningPayloadIsolation:
+    def test_memorisation_and_synthetic_warnings_do_not_cross_contaminate(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        # Trigger BOTH the memorisation and synthetic-data warnings in one run.
+        (tmp_path / "final_model").mkdir()
+        (tmp_path / "final_model.staging.fg-run1").mkdir()
+        (tmp_path / "synthetic_data.jsonl").write_text("{}\n")
+
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "row-1", "text": "x"}])
+        args = _build_args(row_id="row-1", corpus=str(corpus), output_dir=str(tmp_path))
+        with pytest.raises(SystemExit):
+            _run_purge_cmd(args, output_format="json")
+
+        events = _read_audit_events(tmp_path / "audit_log.jsonl")
+        mem = next(e for e in events if e["event"] == "data.erasure_warning_memorisation")
+        syn = next(e for e in events if e["event"] == "data.erasure_warning_synthetic_data_present")
+        # Each event carries ONLY its own catalog-scoped field.
+        assert "affected_run_ids" in mem
+        assert "synthetic_files" not in mem, "memorisation event leaked the synthetic-data-scoped field"
+        assert "synthetic_files" in syn
+        assert "affected_run_ids" not in syn, "synthetic-data event leaked the memorisation-scoped field"
+
+
+# ---------------------------------------------------------------------------
+# Finding 5 (LOW) — run-scoped erasure records the PLAIN run_id as target_id
+# (design §5.3); the module docstring now documents this asymmetry.
+# ---------------------------------------------------------------------------
+
+
+class TestRunModeTargetIdPlain:
+    def test_run_mode_target_id_is_plain_run_id_not_hashed(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        run_id = "fg-plainrun01"
+        staging = tmp_path / f"final_model.staging.{run_id}"
+        staging.mkdir()
+        (staging / "w.bin").write_bytes(b"x" * 32)
+
+        args = _build_args(run_id=run_id, kind="staging", output_dir=str(tmp_path))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+        assert ei.value.code == 0
+
+        events = _read_audit_events(tmp_path / "audit_log.jsonl")
+        req = next(e for e in events if e["event"] == "data.erasure_requested")
+        # Run mode keeps target_id in the clear (operational id, not subject
+        # input); a future "hash everything" change would break cross-tool
+        # correlation and surface here.
+        assert req["target_id"] == run_id
+
+
+# ---------------------------------------------------------------------------
+# Finding 7 (LOW) — --dry-run intentionally creates output_dir + the
+# persistent salt file + the audit-intent record (documented side effects).
+# ---------------------------------------------------------------------------
+
+
+class TestDryRunSideEffects:
+    def test_dry_run_creates_salt_and_audit_intent_by_design(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "row-X", "text": "x"}])
+        args = _build_args(row_id="row-X", corpus=str(corpus), output_dir=str(tmp_path), dry_run=True)
+        with pytest.raises(SystemExit):
+            _run_purge_cmd(args, output_format="json")
+
+        # The salt file + audit-intent record are documented dry-run side
+        # effects (the chain must record the previewed erasure with its
+        # hashed target_id, which requires the persistent salt).
+        assert (tmp_path / ".forgelm_audit_salt").is_file()
+        assert (tmp_path / "audit_log.jsonl").is_file()
+        events = _read_audit_events(tmp_path / "audit_log.jsonl")
+        names = [e["event"] for e in events]
+        assert "data.erasure_requested" in names
+        assert "data.erasure_completed" in names

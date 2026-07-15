@@ -669,10 +669,14 @@ class TestSafetyClassifierLoadFailureAudit:
         prompts_path.write_text(json.dumps({"prompt": "hi"}) + "\n")
 
         audit = AuditLogger(str(tmp_path))
+        # Use a NON-generative classifier name so the run reaches the pipeline
+        # load (this test's intent: a genuine pipeline-load failure surfaces as
+        # an audit event). The generative default is instead intercepted by the
+        # fail-fast pre-flight, covered by its own test below.
         result = safety.run_safety_evaluation(
             model=mock.Mock(),
             tokenizer=mock.Mock(),
-            classifier_path="meta-llama/Llama-Guard-3-8B",
+            classifier_path="acme/custom-harm-classifier",
             test_prompts_path=str(prompts_path),
             audit_logger=audit,
         )
@@ -684,8 +688,37 @@ class TestSafetyClassifierLoadFailureAudit:
         events = [entry["event"] for entry in lines]
         assert "audit.classifier_load_failed" in events
         load_failed = next(e for e in lines if e["event"] == "audit.classifier_load_failed")
-        assert load_failed["classifier"] == "meta-llama/Llama-Guard-3-8B"
+        assert load_failed["classifier"] == "acme/custom-harm-classifier"
         assert "classifier checkpoint corrupt" in load_failed["reason"]
+
+    def test_generative_default_rejection_emits_audit_event(self, tmp_path):
+        """The fail-fast pre-flight rejection of a generative-only guard must
+        still land an Article 12 audit event — the top pre-flight short-circuits
+        before the classifier-load path's own emission (F-compliance-120)."""
+        import json
+
+        from forgelm import safety
+        from forgelm.compliance import AuditLogger
+
+        prompts_path = tmp_path / "prompts.jsonl"
+        prompts_path.write_text(json.dumps({"prompt": "hi"}) + "\n")
+
+        audit = AuditLogger(str(tmp_path))
+        result = safety.run_safety_evaluation(
+            model=mock.Mock(),
+            tokenizer=mock.Mock(),
+            classifier_path="meta-llama/Llama-Guard-3-8B",
+            test_prompts_path=str(prompts_path),
+            audit_logger=audit,
+        )
+
+        assert result.passed is False
+        assert result.evaluation_completed is False
+        with open(audit.log_path, "r", encoding="utf-8") as fh:
+            lines = [json.loads(line) for line in fh if line.strip()]
+        load_failed = next(e for e in lines if e["event"] == "audit.classifier_load_failed")
+        assert load_failed["classifier"] == "meta-llama/Llama-Guard-3-8B"
+        assert "generative" in load_failed["reason"].lower()
 
 
 class TestHFRevisionPin:

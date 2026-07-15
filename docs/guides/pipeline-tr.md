@@ -12,7 +12,7 @@ zinciri uçtan uca yürütür.
 
 ---
 
-## When to use a pipeline (and when not to)
+## Bir pipeline ne zaman kullanılır (ve ne zaman kullanılmaz)
 
 `pipeline:` bloğunu **tüm** aşağıdaki koşullar geçerliyse kullanın:
 
@@ -34,7 +34,7 @@ zinciri uçtan uca yürütür.
 
 ---
 
-## Anatomy of a pipeline config
+## Bir pipeline config'inin anatomisi
 
 ```yaml
 # Root config — her aşamanın aşmadığı sürece miras aldığı varsayılanları
@@ -92,7 +92,7 @@ yönlendiremezsiniz.
 
 ---
 
-## Inheritance matrix
+## Kalıtım matrisi
 
 Section-wholesale override semantiği — bir aşama üst seviye blok (`model`,
 `lora`, `training`, `data`, `evaluation`) tanımlarsa **tüm** blok root'unkini
@@ -146,7 +146,7 @@ forgelm --config pipeline.yaml --resume-from dpo_stage
 forgelm --config pipeline.yaml --stage dpo_stage --input-model ./other/checkpoint
 ```
 
-### `--stage <name>` partial-run rules
+### `--stage <name>` kısmi-koşu kuralları
 
 | Senaryo | Davranış |
 |---|---|
@@ -156,7 +156,7 @@ forgelm --config pipeline.yaml --stage dpo_stage --input-model ./other/checkpoin
 | `--stage <name> --input-model <path>` | Operatör kaçış kapısı: otomatik zincirlemeyi atlar, `<path>`'i kullanır.  Audit log `input_source: cli_override` kaydeder. |
 | `--stage <name>` ve `<name>` config'te yok | Parse zamanında valid aşama adları listesiyle hard-fail. |
 
-### `--resume-from <name>` semantics
+### `--resume-from <name>` semantiği
 
 - State dosyası: `<pipeline.output_dir>/pipeline_state.json` (atomic-write).
 - `status: completed` ve `output_model` yolu hâlâ diskte olan aşamalar
@@ -174,7 +174,7 @@ forgelm --config pipeline.yaml --stage dpo_stage --input-model ./other/checkpoin
 
 ---
 
-## Human-approval gate within a pipeline
+## Bir pipeline içinde insan-onay kapısı
 
 Bir aşama `evaluation.require_human_approval: true` taşıyorsa, ForgeLM'in
 mevcut Faz 9 akışı aynen koşar: model `final_model.staging.<run_id>/`'ye
@@ -203,7 +203,7 @@ $ forgelm --config pipeline.yaml --resume-from dpo_stage
 
 ---
 
-## Audit events
+## Audit event'leri
 
 Orkestratör bu olayları pipeline-level `audit_log.jsonl`'a (pipeline.output_dir
 altında) emit eder:
@@ -226,7 +226,7 @@ ettiği `training.*` olaylarının yanında yaşar; `training.failure`
 
 ---
 
-## Annex IV manifest
+## Annex IV manifesti
 
 Her aşama geçişi `<pipeline.output_dir>/compliance/pipeline_manifest.json`
 dosyasını (atomic-write) yeniden yazar.  Pipeline manifest, aşama bazında
@@ -258,7 +258,7 @@ Sıfır olmayan exit kodu ihlalleri keşfedildikleri sırayla listeler.
 
 ---
 
-## Limitations (Phase 14 Wave 1)
+## Kısıtlamalar (Faz 14 Wave 1)
 
 - **Aşama içi checkpoint resume yok.**  `--resume-from` sadece aşama
   sınırlarında devam alır.  Bir aşamanın `ForgeTrainer.train()`
@@ -307,10 +307,10 @@ Sıfır olmayan exit kodu ihlalleri keşfedildikleri sırayla listeler.
 
 ---
 
-## Cross-references
+## Çapraz referanslar
 
-- Faz 14 yayınlanan kapsam: [docs/roadmap/completed-phases.md](../roadmap/completed-phases.md#phase-14--multi-stage-pipeline-chains-v070)
-- Faz 14.5 takip planı: [docs/roadmap/phase-14-5-pipeline-hardening.md](../roadmap/phase-14-5-pipeline-hardening.md)
+- Faz 14 yayınlanan kapsam (İngilizce): [docs/roadmap/completed-phases.md](../roadmap/completed-phases.md#phase-14--multi-stage-pipeline-chains-v070)
+- Faz 14.5 takip planı (İngilizce): [docs/roadmap/phase-14-5-pipeline-hardening.md](../roadmap/phase-14-5-pipeline-hardening.md)
 - Roadmap girişi: [docs/roadmap-tr.md](../roadmap-tr.md)
 - Annex IV doğrulayıcısı: `forgelm verify-annex-iv --pipeline <run_dir>` (CLI help'e bakın)
 - Audit log standardı: [docs/standards/logging-observability.md](../standards/logging-observability.md)

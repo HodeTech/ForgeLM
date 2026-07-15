@@ -6,6 +6,50 @@ All notable changes to ForgeLM are documented here.
 
 _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
+### Fixed
+
+- **GRPO training no longer crashes at post-train evaluation.** `ForgeTrainer`
+  called `self.trainer.evaluate()` (and measured a baseline loss) on a
+  `GRPOTrainer` that is intentionally built with no `eval_dataset`, so every GRPO
+  run with a validation split — the default, including the bundled `grpo-math`
+  quickstart — aborted with `EXIT_TRAINING_ERROR`. Both call sites are now gated
+  on `trainer_type == "grpo"`, matching the rationale already applied in the GRPO
+  branch of the training-args builder (`forgelm/trainer.py`).
+- **GDPR `purge --row-id` survives a non-UTF-8 corpus.** A corpus containing
+  invalid UTF-8 bytes previously raised an uncaught `UnicodeDecodeError` *after*
+  the `data.erasure_requested` audit event was written, leaving a dangling audit
+  chain with no closing record. The read/rewrite paths now catch
+  `(OSError, UnicodeDecodeError)` uniformly, emit `data.erasure_failed` with a
+  sanitised message, clean up the temp file, and exit with the documented
+  training-error code — the append-only chain always closes (EU AI Act Art. 12).
+- **Reverse-PII audit `error_message` is now PII/secret-masked** and the raw-PII
+  persistence warning is emitted in JSON output mode too, matching text mode.
+- **Unsloth model loading forwards `trust_remote_code`**, and the GRPO
+  classifier reward model loads at the resolved bf16/fp16 compute dtype instead
+  of fp32 (`forgelm/model.py`, `forgelm/trainer.py`).
+
+### Security
+
+- **Un-loadable default safety classifier now fails fast and is audited.** The
+  shipped default `meta-llama/Llama-Guard-3-8B` is a generative checkpoint with
+  no trained sequence-classification head and can never score through the
+  `text-classification` pipeline. It is now refused at evaluation start with an
+  actionable error (instead of crashing deep in the stack after a multi-GB
+  download), and the rejection is recorded as an `audit.classifier_load_failed`
+  Article 12 event on both the fail-fast and load-failure paths (`forgelm/safety.py`).
+
+### Documentation
+
+- **The canonical Configuration Reference user manual (EN + TR) no longer
+  documents a fabricated schema.** The `training`, `data`, `synthetic`,
+  `compliance`, `evaluation`/`llm_judge`, `model`, `lora`, and `distributed`
+  blocks now match the real `ForgeConfig` field names exactly (copy-pasting an
+  example previously failed `forgelm --dry-run`); fictional `${...}`
+  interpolation syntax was removed. Several sibling user-manual pages
+  (`concepts/data-formats`, `reference/cli`, `evaluation/safety`,
+  `deployment/gguf-export`, `operations/air-gap`, `getting-started/project-layout`)
+  were corrected against the source of truth as well.
+
 ## [0.9.0] — 2026-07-05
 
 ### Changed

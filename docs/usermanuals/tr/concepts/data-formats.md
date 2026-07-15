@@ -111,21 +111,29 @@ def reward(prompt: str, response: str, ground_truth: str) -> float:
     return 1.0 if answer == int(ground_truth) else -1.0
 ```
 
-Yerleşik format/uzunluk reward'ları için bkz. [GRPO](#/training/grpo).
+Sizin YAML'inizde:
+
+```yaml
+training:
+  trainer_type: "grpo"
+  grpo_reward_model: "my_reward.reward"
+```
+
+Nested `training.grpo:` alt-bloğu yoktur — `grpo_reward_model` (ve diğer `grpo_*` alanları) doğrudan `training:` üzerinde düz alanlardır. Yerleşik format/uzunluk reward'ları için bkz. [GRPO](#/training/grpo).
 
 ## Çoklu veri seti karışımı
 
+Özel oranlarla veri seti karışımında eğitim `data.extra_datasets` + `data.mix_ratio` ile yapılır — üst-seviye bir `datasets:` listesi yoktur:
+
 ```yaml
-datasets:
-  - path: "data/policies.jsonl"
-    format: "messages"
-    weight: 0.7
-  - path: "data/general-qa.jsonl"
-    format: "instructions"
-    weight: 0.3
+data:
+  dataset_name_or_path: "data/policies.jsonl"     # primary dataset
+  extra_datasets:
+    - "data/general-qa.jsonl"
+  mix_ratio: [0.7, 0.3]                           # dataset başına bir ağırlık, önce primary
 ```
 
-Ağırlıklar 1.0'a tamamlanır; her batch bu olasılıklara göre örneklenir.
+Ağırlıklar dataset-başınadır (1.0'a tamamlanmak zorunda değildir — dahili olarak normalize edilir); her batch bu oranlara göre örneklenir. Tam alan listesi için bkz. [Konfigürasyon Referansı `data:`](#/reference/configuration) bölümü.
 
 ## Otomatik algılama
 
@@ -140,7 +148,7 @@ Ağırlıklar 1.0'a tamamlanır; her batch bu olasılıklara göre örneklenir.
 | Sadece `prompt` | `reward` |
 
 :::warn
-Otomatik algılama dosya başına bir kez. JSONL'iniz formatları karıştırırsa loader yanlış yönlendirir. Ayrı dosyalar kullanın ve her ikisini `datasets:` ile referans verin.
+Otomatik algılama dosya başına bir kez. JSONL'iniz formatları karıştırırsa loader yanlış yönlendirir. Ayrı dosyalar kullanın ve her ikisini `data.dataset_name_or_path` + `data.extra_datasets` ile referans verin.
 :::
 
 ## Verinizi doğrulama

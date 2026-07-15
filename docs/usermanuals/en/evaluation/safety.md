@@ -27,11 +27,15 @@ evaluation:
     batch_size: 8
 ```
 
-After each training run, ForgeLM:
+After each training run (when `evaluation.safety.enabled: true`), ForgeLM:
 1. Generates responses to a held-out set of safety probe prompts.
 2. Scores each response across the 14 Llama Guard categories.
-3. Compares to the pre-train baseline and the configured thresholds.
-4. Triggers auto-revert if blocked categories regress beyond tolerance.
+3. Compares the run's unsafe-response ratio against the configured **absolute** thresholds (`max_safety_regression`, and — when set — `min_safety_score` / `severity_thresholds`).
+4. Triggers auto-revert if any configured threshold is exceeded.
+
+:::warn
+**`max_safety_regression` is an absolute ceiling, not a regression-vs-baseline bound.** Despite the name, ForgeLM does not measure the base model's safety score before training and compare against it — no pre-training safety pass runs. The field caps the *post-training* unsafe-response ratio directly: exceed it and auto-revert fires, independent of how the base model would have scored. This is stated explicitly in `forgelm/safety.py`'s module docstring and is pinned by a regression test (`TestSafetyGateIsAbsoluteNotBaseline`).
+:::
 
 ## Harm categories (S1–S14)
 
@@ -52,7 +56,7 @@ After each training run, ForgeLM:
 | **S13** | Elections / disinformation |
 | **S14** | Code interpreter abuse |
 
-When `track_categories: true`, every safety probe response is parsed into per-category confidence and surfaced in `safety_report.json`. There is no `block_categories:` whitelist field — gating is driven by either `max_safety_regression` (binary mode) or `severity_thresholds` (the dict that maps category-severity to allowed unsafe ratio).
+When `track_categories: true`, every safety probe response is parsed into a harm category + severity, and the counts are surfaced in `safety_results.json`'s `category_distribution` / `severity_distribution` fields. There is no `block_categories:` whitelist field — gating is driven by either `max_safety_regression` (binary mode) or `severity_thresholds` (the dict that maps severity level to allowed unsafe ratio).
 
 ## Severity thresholds
 
@@ -66,9 +70,9 @@ When `track_categories: true`, every safety probe response is parsed into per-ca
 
 When `severity_thresholds` is `null` (default), only the binary `max_safety_regression` ceiling applies.
 
-## Pre-train baseline
+## Standalone pre-deployment check
 
-Before relying on Llama Guard as a gate, score your *base* model:
+`forgelm safety-eval` runs the identical absolute-threshold gate against any standalone model — useful for a pre-deployment check on a third-party model, a post-incident re-evaluation after the harm classifier is updated, or a release-time check independent of a training run:
 
 ```shell
 $ forgelm safety-eval --model "Qwen/Qwen2.5-7B-Instruct" \
@@ -76,7 +80,7 @@ $ forgelm safety-eval --model "Qwen/Qwen2.5-7B-Instruct" \
     --output-dir baselines/qwen-7b/
 ```
 
-This becomes the comparison point — auto-revert fires when a fine-tune *regresses* below baseline, not when the absolute score is bad. Fine-tuning rarely improves safety; the goal is to not make it worse.
+This does **not** store a baseline that a later training-time run compares against — it applies the same absolute unsafe-ratio ceiling to whatever model you point it at. Exit code `0` = the model passed the threshold, `3` = evaluation completed but the threshold was exceeded, `2` = a runtime failure (model or classifier load). Run it once per candidate model rather than treating it as a "before" snapshot for an "after" comparison.
 
 ## Test prompt design
 
@@ -91,25 +95,37 @@ ForgeLM ships a default **51-prompt** probe set covering **18 harm categories** 
 ## Output artifacts
 
 ```text
-checkpoints/run/artifacts/
-├── safety_report.json                 ← per-category confidence scores
-├── safety_examples.jsonl              ← top 10 worst-flagged responses (for review)
-└── safety_run.log                     ← full Llama Guard outputs
+<output-dir>/
+├── safety_results.json                ← full scoring summary + pass/fail verdict
+└── safety_trend.jsonl                 ← cross-run history (one line appended per run)
 ```
 
-`safety_report.json`:
+`safety_results.json`:
 
 ```json
 {
-  "model": "meta-llama/Llama-Guard-3-8B",
-  "categories": {
-    "S1": {"max": 0.04, "mean": 0.01, "regressed": false},
-    "S5": {"max": 0.42, "mean": 0.08, "regressed": true},
-    ...
-  },
-  "verdict": "regression",
-  "regressed_blocked_categories": ["S5"]
+  "scoring_method": "confidence_weighted",
+  "safe_ratio": 0.96,
+  "safety_score": 0.9412,
+  "unsafe_count": 2,
+  "total_count": 50,
+  "low_confidence_count": 1,
+  "passed": false,
+  "failure_reason": "Unsafe ratio (4.00%) exceeds threshold (5.00%)",
+  "details": [
+    {"prompt": "...", "response": "...", "label": "unsafe\nS5", "confidence": 0.82, "safe": false, "category": "defamation", "severity": "high"}
+  ],
+  "category_distribution": {"defamation": 2},
+  "severity_distribution": {"high": 2}
 }
+```
+
+`category_distribution` / `severity_distribution` are only present when `track_categories: true`. `details[].prompt` / `details[].response` are stripped by default for GDPR / EU AI Act Art. 10 privacy — set `include_eval_samples: true` to persist the raw text for debugging.
+
+`safety_trend.jsonl` appends one JSON object per run:
+
+```json
+{"timestamp": "2026-07-15T10:00:00+00:00", "safety_score": 0.9412, "safe_ratio": 0.96, "passed": false}
 ```
 
 ## Configuration parameters
@@ -126,6 +142,7 @@ checkpoints/run/artifacts/
 | `track_categories` | bool | `false` | Parse Llama Guard S1-S14 categories per response and surface in the report. |
 | `severity_thresholds` | `Optional[Dict[str,float]]` | `null` | Per-severity unsafe-ratio ceilings — see Severity thresholds above. |
 | `batch_size` | int | `8` | Batched generation size for safety eval; `1` disables batching. |
+| `include_eval_samples` | bool | `false` | Persist raw `prompt` / `response` strings to `safety_results.json`. Off by default for GDPR / EU AI Act Art. 10 privacy. |
 
 ## Common pitfalls
 

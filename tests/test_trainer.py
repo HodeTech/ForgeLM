@@ -662,14 +662,14 @@ class TestGateApplication:
 class TestBaselineLossCapture:
     """F-P2-FAB-17: _measure_baseline_loss gating + happy / fallback / missing paths."""
 
-    def _make_trainer(self, *, auto_revert=True, baseline_loss=None, validation=True):
+    def _make_trainer(self, *, auto_revert=True, baseline_loss=None, validation=True, trainer_type="sft"):
         from forgelm.config import ForgeConfig
         from forgelm.trainer import ForgeTrainer
 
         config = ForgeConfig(
             model={"name_or_path": "org/model"},
             lora={},
-            training={"output_dir": "/tmp/test_baseline"},
+            training={"output_dir": "/tmp/test_baseline", "trainer_type": trainer_type},
             data={"dataset_name_or_path": "org/dataset"},
             evaluation={"auto_revert": auto_revert, "baseline_loss": baseline_loss},
         )
@@ -732,6 +732,55 @@ class TestBaselineLossCapture:
         trainer._measure_baseline_loss({})
         # Fallback evaluate() (with adapters) supplied the baseline.
         assert trainer.config.evaluation.baseline_loss == pytest.approx(0.8)
+
+    def test_baseline_skipped_for_grpo_even_with_validation_split(self):
+        """GRPO builds its trainer with no eval_dataset, so calling
+        ``self.trainer.evaluate()`` for a baseline would raise ValueError. The
+        baseline measurement must be skipped entirely for GRPO — even on the
+        default path where a validation split exists and auto_revert is on."""
+        trainer = self._make_trainer(trainer_type="grpo")
+        trainer.trainer.model = MagicMock(spec=[])
+        trainer.trainer.evaluate = MagicMock(side_effect=ValueError("Trainer: evaluation requires an eval_dataset."))
+        metrics: dict[str, float] = {}
+        trainer._measure_baseline_loss(metrics)
+        trainer.trainer.evaluate.assert_not_called()
+        assert trainer.config.evaluation.baseline_loss is None
+        assert "baseline_eval_loss" not in metrics
+
+
+@pytest.mark.skipif(not torch_available, reason="torch not installed")
+class TestClassifierRewardDtype:
+    """The GRPO classifier reward model must load at a resolved compute dtype
+    (bf16 if supported, else fp16), not the checkpoint default (typically fp32),
+    so it does not OOM beside a 4-bit policy model."""
+
+    def test_reward_model_loaded_with_resolved_dtype(self):
+        import torch
+
+        from forgelm.trainer import ForgeTrainer
+
+        captured: dict = {}
+
+        def fake_model_from_pretrained(_path, **kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        with (
+            patch(
+                "transformers.AutoModelForSequenceClassification.from_pretrained",
+                side_effect=fake_model_from_pretrained,
+            ),
+            patch("transformers.AutoTokenizer.from_pretrained", return_value=MagicMock()),
+        ):
+            ForgeTrainer._build_classifier_reward("org/reward")
+
+        assert "dtype" in captured, (
+            "GRPO reward classifier must be loaded with an explicit dtype, not the "
+            f"checkpoint default (fp32); got kwargs {sorted(captured)}"
+        )
+        assert captured["dtype"] in (torch.bfloat16, torch.float16), (
+            f"reward-model dtype must be bf16 or fp16; got {captured['dtype']!r}"
+        )
 
 
 class TestSaveFinalModelFallback:

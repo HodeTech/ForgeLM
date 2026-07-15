@@ -72,20 +72,20 @@ pip install forgelm[eval]
      gradient_accumulation_steps: 8  # keep effective batch size
    ```
 
-3. **Reduce max sequence length**:
+4. **Reduce max sequence length**:
    ```yaml
    model:
      max_length: 1024  # down from 2048
    ```
 
-4. **Use DeepSpeed ZeRO-3 for large models**:
+5. **Use DeepSpeed ZeRO-3 for large models**:
    ```yaml
    distributed:
      strategy: "deepspeed"
      deepspeed_config: "zero3_offload"
    ```
 
-5. **Reduce LoRA rank**:
+6. **Reduce LoRA rank**:
    ```yaml
    lora:
      r: 8  # down from 16

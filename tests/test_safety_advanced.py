@@ -677,3 +677,160 @@ class TestRejectUninitializedClassifierHeadEmptyLabels:
 
         clf = self._stub_classifier(["LlamaForCausalLM"], {0: "safe", 1: "unsafe"})
         _reject_uninitialized_classifier_head(clf, "some/llama-harm-classifier")
+
+
+# --- F-safety-critical: the shipped default classifier cannot load through the
+#     text-classification pipeline; it must be refused fast at eval start. ---
+
+
+class TestGenerationOnlyClassifierFailFast:
+    """The shipped default ``meta-llama/Llama-Guard-3-8B`` is a generative
+    ``LlamaForCausalLM`` checkpoint that can never load through ForgeLM's
+    text-classification pipeline.  Selecting it (or a published sibling) must
+    fail fast at eval start with an actionable error — before a multi-GB
+    download and a full response-generation pass — not crash deep in the stack.
+    """
+
+    def test_default_generation_only_classifier_rejected_by_name(self):
+        from forgelm.safety import _reject_generation_only_classifier
+
+        with pytest.raises(RuntimeError, match="Generation-based Llama-Guard scoring is not yet implemented"):
+            _reject_generation_only_classifier("meta-llama/Llama-Guard-3-8B")
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "meta-llama/Llama-Guard-3-1B",
+            "meta-llama/Llama-Guard-3-8B-INT8",
+            "meta-llama/Meta-Llama-Guard-2-8B",
+            "meta-llama/LlamaGuard-7b",
+        ],
+    )
+    def test_published_llama_guard_siblings_rejected(self, path):
+        from forgelm.safety import _reject_generation_only_classifier
+
+        with pytest.raises(RuntimeError, match="generative Llama-Guard"):
+            _reject_generation_only_classifier(path)
+
+    def test_rejection_is_case_and_whitespace_insensitive(self):
+        from forgelm.safety import _reject_generation_only_classifier
+
+        with pytest.raises(RuntimeError, match="generative Llama-Guard"):
+            _reject_generation_only_classifier("  META-LLAMA/Llama-Guard-3-8B  ")
+
+    def test_real_sequence_classifier_path_not_rejected(self):
+        """A genuine harm-classifier repo must pass the name pre-flight untouched."""
+        from forgelm.safety import _reject_generation_only_classifier
+
+        assert _reject_generation_only_classifier("some-org/harm-classifier") is None
+
+    def test_run_safety_evaluation_fails_fast_before_generation(self, tmp_path, monkeypatch):
+        """run_safety_evaluation must short-circuit on the un-loadable default
+        BEFORE generating responses or loading the classifier, returning a clean
+        infrastructure-failure result (evaluation_completed=False → CLI exit 2),
+        not a silent pass and not a deep pipeline crash."""
+        from forgelm import safety as _safety
+
+        def _must_not_run(*a, **k):
+            raise AssertionError("fail-fast pre-flight did not short-circuit before this call")
+
+        # If the pre-flight works, neither generation nor classifier load runs.
+        # With a *valid* probes file present, removing the pre-flight would let
+        # execution reach _generate_safety_responses and trip these guards — so
+        # this test genuinely fails before the fix, not only via failure_reason.
+        monkeypatch.setattr(_safety, "_generate_safety_responses", _must_not_run)
+        monkeypatch.setattr(_safety, "_load_safety_classifier", _must_not_run)
+
+        probes = tmp_path / "probes.jsonl"
+        probes.write_text(json.dumps({"prompt": "hello"}) + "\n", encoding="utf-8")
+
+        result = _safety.run_safety_evaluation(
+            model=MagicMock(),
+            tokenizer=MagicMock(),
+            classifier_path="meta-llama/Llama-Guard-3-8B",
+            test_prompts_path=str(probes),
+            output_dir=str(tmp_path / "out"),
+        )
+        assert result.passed is False
+        assert result.evaluation_completed is False
+        assert result.safe_ratio == 0.0
+        assert "Llama-Guard" in (result.failure_reason or "")
+        assert "not yet implemented" in (result.failure_reason or "")
+
+    def test_load_safety_classifier_rejects_before_download(self, monkeypatch):
+        """Defense-in-depth: a direct _load_safety_classifier caller must also be
+        refused before the pipeline() download, and the Article-12 audit event
+        must fire on that failure."""
+        from forgelm import safety as _safety
+
+        def _pipeline_must_not_run(*a, **k):
+            raise AssertionError("pipeline() reached despite generation-only classifier")
+
+        # Patch transformers.pipeline so a regression (missing pre-flight) trips.
+        monkeypatch.setattr("transformers.pipeline", _pipeline_must_not_run)
+
+        audit = MagicMock()
+        with pytest.raises(RuntimeError, match="not yet implemented"):
+            _safety._load_safety_classifier("meta-llama/Llama-Guard-3-8B", audit)
+        audit.log_event.assert_called_once()
+        assert audit.log_event.call_args.args[0] == "audit.classifier_load_failed"
+
+
+# --- F-safety-low: the CUDA cache-clear inside the OOM fallback must log, not
+#     swallow silently (mirrors _release_model_from_gpu). ---
+
+
+@pytest.mark.skipif(not torch_available, reason="torch required for the OOM-fallback path")
+class TestOOMFallbackCacheClearLogging:
+    def test_cache_clear_failure_during_oom_is_logged(self, monkeypatch, caplog):
+        """When the post-OOM torch.cuda.empty_cache() itself raises, the failure
+        must surface as a WARNING (not be swallowed by ``except RuntimeError: pass``)
+        so a subsequent second OOM on the per-prompt fallback is diagnosable."""
+        import torch
+
+        from forgelm import safety as _safety
+
+        class _FakeTensor:
+            def to(self, *a, **k):
+                return self
+
+        tokenizer = MagicMock()
+        tokenizer.return_value = {"input_ids": _FakeTensor()}
+
+        model = MagicMock()
+        model.device = "cpu"
+
+        def _oom(*a, **k):
+            raise torch.cuda.OutOfMemoryError("CUDA out of memory")
+
+        model.generate.side_effect = _oom
+
+        def _empty_cache_fails():
+            raise RuntimeError("CUDA driver unavailable")
+
+        monkeypatch.setattr(torch.cuda, "empty_cache", _empty_cache_fails)
+        # Keep the per-prompt fallback cheap and deterministic.
+        monkeypatch.setattr(_safety, "_generate_one_safety_response", lambda *a, **k: "safe-response")
+
+        with caplog.at_level("WARNING", logger="forgelm.safety"):
+            out = _safety._generate_safety_batch_with_oom_retry(model, tokenizer, ["a", "b"], 0, 16)
+
+        assert out == ["safe-response", "safe-response"]
+        assert any("Could not empty CUDA cache during OOM fallback" in r.message for r in caplog.records)
+
+
+# --- F-safety-low: SEVERITY_LEVELS is duplicated in config.py and safety.py to
+#     avoid a config->safety import edge; drift silently disables a severity gate. ---
+
+
+class TestSeverityLevelsParity:
+    """config.py and safety.py deliberately duplicate ``SEVERITY_LEVELS``.  If the
+    two tuples drift, a validated ``severity_thresholds`` key never matches a
+    ``severity_dist`` bucket and that per-severity gate goes permanently inert —
+    exactly the failure safety.py's own comment warns about.  Pin them equal."""
+
+    def test_safety_levels_match_config_levels(self):
+        from forgelm.config import SEVERITY_LEVELS as CFG_LEVELS
+        from forgelm.safety import SEVERITY_LEVELS as SAFETY_LEVELS
+
+        assert SAFETY_LEVELS == CFG_LEVELS

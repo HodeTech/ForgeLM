@@ -977,14 +977,24 @@ class ForgeTrainer:
         from transformers import AutoModelForSequenceClassification
         from transformers import AutoTokenizer as _AutoTok
 
+        from .model import _resolve_bnb_compute_dtype
+
         # `trust_remote_code=False` is the secure default — a reward model
         # downloaded from the Hub should never execute arbitrary repo code
         # at load time. Operators that genuinely need a custom architecture
         # can fork and pre-convert; this code path is the GRPO classifier
         # reward, which is always a SequenceClassification head.
         _rw_tok = _AutoTok.from_pretrained(reward_model_path, trust_remote_code=False)
+        # Load the reward classifier at the same compute dtype the rest of the
+        # pipeline resolves (bf16 if supported, else fp16) rather than the
+        # checkpoint default (typically fp32). A full-precision reward model
+        # sitting beside a 4-bit policy model is a realistic single-GPU OOM path.
+        # (`dtype` is the transformers-5 name for the former `torch_dtype`.)
         _rw_model = AutoModelForSequenceClassification.from_pretrained(
-            reward_model_path, device_map="auto", trust_remote_code=False
+            reward_model_path,
+            device_map="auto",
+            trust_remote_code=False,
+            dtype=_resolve_bnb_compute_dtype("auto"),
         )
 
         def _reward_fn(completions, **kwargs):
@@ -1084,6 +1094,13 @@ class ForgeTrainer:
 
     def _measure_baseline_loss(self, metrics: Dict[str, float]) -> None:
         """Compute baseline eval_loss before training (used for regression gates)."""
+        # GRPO builds its trainer with no eval_dataset (generation-based rewards,
+        # not validation loss), so `self.trainer.evaluate()` would raise
+        # ValueError. The eval-loss regression gate does not apply to GRPO — skip
+        # the baseline measurement entirely, mirroring the GRPO branch of
+        # `_get_training_args_for_type`.
+        if self._trainer_type == "grpo":
+            return
         eval_cfg = self.config.evaluation
         if not (
             self.dataset.get("validation") and eval_cfg and eval_cfg.auto_revert and eval_cfg.baseline_loss is None
@@ -1378,7 +1395,12 @@ class ForgeTrainer:
         hf_train_result = self._run_with_oom_recovery(resume_from_checkpoint)
         metrics.update(hf_train_result.metrics)
 
-        if self.dataset.get("validation"):
+        # GRPO trains on generation-based rewards, not validation loss, so
+        # `_build_grpo_trainer` builds its trainer with no eval_dataset and
+        # `_get_training_args_for_type` forces `eval_strategy="no"`. Calling
+        # `evaluate()` on that trainer raises ValueError ("evaluation requires an
+        # eval_dataset"); skip the post-train eval for GRPO in lockstep.
+        if self._trainer_type != "grpo" and self.dataset.get("validation"):
             metrics.update(self.trainer.evaluate())
 
         final_path = os.path.join(

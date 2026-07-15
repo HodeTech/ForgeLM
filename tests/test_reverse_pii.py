@@ -1010,6 +1010,102 @@ class TestReDoSGuard:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Finding 3 — JSON-mode output must surface the same raw-PII caution the text
+# branch prints (parity), to stderr so the stdout JSON stream stays clean.
+# ---------------------------------------------------------------------------
+
+
+class TestJsonModeRawPiiWarning:
+    def test_json_mode_with_matches_warns_about_raw_pii_on_stderr(self, tmp_path: Path, caplog) -> None:
+        import logging
+
+        from forgelm.cli.subcommands._reverse_pii import _run_reverse_pii_cmd
+
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "row-B", "text": "Contact me at alice@example.com now"}])
+        args = _build_args(
+            query="alice@example.com",
+            type="email",
+            files=[str(corpus)],
+            output_dir=str(tmp_path),
+        )
+        with caplog.at_level(logging.WARNING, logger="forgelm.cli"):
+            with pytest.raises(SystemExit) as ei:
+                _run_reverse_pii_cmd(args, output_format="json")
+        assert ei.value.code == 0
+        warnings = [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING" and "reverse-pii" in r.message and "pii" in r.message.lower()
+        ]
+        assert warnings, "JSON mode with matches must warn about raw PII in snippets (parity with text mode)"
+
+    def test_json_mode_zero_matches_does_not_warn_about_raw_pii(self, tmp_path: Path, caplog) -> None:
+        import logging
+
+        from forgelm.cli.subcommands._reverse_pii import _run_reverse_pii_cmd
+
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "row-A", "text": "nothing sensitive here"}])
+        args = _build_args(
+            query="absent@example.com",
+            type="email",
+            files=[str(corpus)],
+            output_dir=str(tmp_path),
+        )
+        with caplog.at_level(logging.WARNING, logger="forgelm.cli"):
+            with pytest.raises(SystemExit) as ei:
+                _run_reverse_pii_cmd(args, output_format="json")
+        assert ei.value.code == 0
+        pii_warnings = [r for r in caplog.records if r.levelname == "WARNING" and "raw corpus" in r.message.lower()]
+        assert not pii_warnings, "zero matches must not emit the raw-PII caution"
+
+
+# ---------------------------------------------------------------------------
+# Finding 6 — the failure-path audit ``error_message`` must be masked (secret
+# + PII) before it enters the append-only chain, matching purge's sibling
+# field, not merely length-bounded.
+# ---------------------------------------------------------------------------
+
+
+class TestAuditErrorMessageMasked:
+    def test_mid_scan_failure_error_message_masks_pii(self, tmp_path: Path, monkeypatch) -> None:
+        from forgelm.cli.subcommands import _reverse_pii
+
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "1", "text": "x"}])
+        audit_dir = tmp_path / "audit"
+        audit_dir.mkdir()
+
+        leaked = "victim@example.com"
+
+        def _boom(path: str, pattern):
+            # A downstream read error whose message quotes corpus content.
+            raise OSError(f"decode failed near record for {leaked} in corpus")
+
+        monkeypatch.setattr(_reverse_pii, "_scan_file", _boom)
+
+        args = _build_args(
+            query="alice@example.com",
+            type="email",
+            files=[str(corpus)],
+            output_dir=str(tmp_path),
+            audit_dir=str(audit_dir),
+        )
+        with pytest.raises(SystemExit) as ei:
+            _reverse_pii._run_reverse_pii_cmd(args, output_format="json")
+        assert ei.value.code == 2
+
+        events = _read_audit_events(audit_dir / "audit_log.jsonl")
+        evt = next(e for e in events if e["event"] == "data.access_request_query")
+        assert evt["error_class"] == "OSError"
+        # PII echoed by the exception must be masked before the chain, exactly
+        # like purge's _sanitise_audit_error_message.
+        assert leaked not in evt["error_message"], "PII in exception message must be masked before entering the chain"
+        assert leaked not in (audit_dir / "audit_log.jsonl").read_text()
+
+
 class TestReversePiiFacade:
     def test_facade_re_exports_dispatcher_and_helpers(self) -> None:
         """F-W3-10 + F-W3FU-T-11 regression: facade must re-export every

@@ -34,18 +34,7 @@ $ forgelm export ./checkpoints/customer-support \
 
 `q4_k_m` tatlı nokta — consumer donanıma rahat sığar, full precision'a karşı minimum kalite kaybı.
 
-## Konfigürasyon
-
-```yaml
-output:
-  gguf:
-    enabled: true                       # eğitimden sonra otomatik export
-    quant_levels: ["q4_k_m", "q5_k_m"] # tek seferde birden çok seviye
-    output_dir: "${output.dir}/gguf/"
-    manifest: true
-```
-
-`enabled: true` iken ForgeLM `forgelm` koşularının eval'i geçmesinin ardından otomatik export eder. `false` (varsayılan) ise `forgelm export`'u ad hoc kullanın.
+GGUF export her zaman ayrı, açık bir `forgelm export` çağrısıdır — config-driven bir otomatik export toggle'ı yoktur. `forgelm/config.py`'de bir `output:` bloğu ve şemada hiçbir yerde `gguf` alanı yoktur, dolayısıyla bir eğitim YAML'ı eval kapısının geçmesinin yan etkisi olarak export'u tetikleyemez; eğitim bittiğinde `forgelm export`'u kendiniz çalıştırın.
 
 ## Çoklu-quant export
 
@@ -152,5 +141,5 @@ HuggingFace Hub yüklemesi için ForgeLM'in model card'ı GGUF dosyanıza refera
 ## Bkz.
 
 - [Deploy Hedefleri](#/deployment/deploy-targets) — GGUF dışı deployment seçenekleri.
-- [Konfigürasyon Referansı](#/reference/configuration) — `output.gguf` bloğu.
+- [CLI Referansı](#/reference/cli) — tam `forgelm export` bayrak yüzeyi.
 - [Model Birleştirme](#/deployment/model-merging) — export öncesi adapter birleştirme.

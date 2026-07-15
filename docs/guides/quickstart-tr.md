@@ -317,7 +317,7 @@ bir teacher çağrısı); tam alan seti için `forgelm/config.py` içindeki
 
 - [CI/CD Pipeline Entegrasyonu](cicd_pipeline-tr.md) — pipeline'ınızda eğitimi otomatikleştir
 - [Hizalama Rehberi](alignment-tr.md) — DPO, SimPO, KTO, GRPO
-- [Kurumsal Dağıtım](enterprise_deployment.md) — Docker, offline, multi-GPU
+- [Kurumsal Dağıtım (İngilizce)](enterprise_deployment.md) — Docker, offline, multi-GPU
 - [Güvenlik & Uyumluluk](safety_compliance-tr.md) — EU AI Act, güvenlik değerlendirmesi
 - [Troubleshooting](troubleshooting-tr.md) — sık sorunlar ve çözümler
 

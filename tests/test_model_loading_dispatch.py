@@ -106,6 +106,39 @@ def test_unsloth_honours_dora_method(monkeypatch):
     assert captured.get("use_dora") is True, "unsloth must honour lora.method='dora'"
 
 
+def test_unsloth_forwards_trust_remote_code(monkeypatch):
+    """``model.trust_remote_code: true`` + backend unsloth must forward
+    ``trust_remote_code=True`` to FastLanguageModel.from_pretrained. The training
+    path previously dropped the flag silently while get_model_and_tokenizer still
+    logged the security warning — a custom-architecture repo would then fail to
+    load with Unsloth's default (False) despite the operator opting in."""
+    captured = {}
+
+    fake_flm = MagicMock()
+    fake_flm.from_pretrained.side_effect = lambda **kw: captured.update(kw) or (MagicMock(), MagicMock())
+    fake_flm.get_peft_model.side_effect = lambda model, **kw: model
+    fake_unsloth = SimpleNamespace(FastLanguageModel=fake_flm)
+    monkeypatch.setitem(__import__("sys").modules, "unsloth", fake_unsloth)
+
+    config = SimpleNamespace(
+        model=SimpleNamespace(name_or_path="org/m", max_length=2048, load_in_4bit=False, trust_remote_code=True),
+        lora=SimpleNamespace(
+            method="lora",
+            use_dora=False,
+            use_rslora=False,
+            r=8,
+            target_modules=["q_proj"],
+            alpha=16,
+            dropout=0.0,
+            bias="none",
+        ),
+    )
+    m._load_unsloth(config)
+    assert captured.get("trust_remote_code") is True, (
+        "unsloth path must forward model.trust_remote_code to FastLanguageModel.from_pretrained"
+    )
+
+
 def test_unsloth_pissa_raises(monkeypatch):
     """``method: pissa`` + unsloth must raise (no silent downgrade to LoRA)."""
     from forgelm.config import ConfigError
