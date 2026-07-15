@@ -6,6 +6,17 @@ All notable changes to ForgeLM are documented here.
 
 _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
+### Added
+
+- **`ingest --input-encoding`** to read source documents in a non-UTF-8 legacy
+  encoding, and **`verify-audit … --output-format json`** now works when the flag
+  follows the subcommand (matching the other `verify-*` commands).
+- **A CI guard (`check_usermanual_schema_drift.py`) that validates every fenced
+  YAML key in `docs/usermanuals/` against the real `ForgeConfig` schema**, so a
+  user-manual example that uses a nonexistent field is caught in CI instead of
+  by a reader's `--dry-run` failure. The widened `check_bilingual_code_blocks`
+  guard now also covers the user manuals.
+
 ### Fixed
 
 - **GRPO training no longer crashes at post-train evaluation.** `ForgeTrainer`
@@ -97,6 +108,28 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   `rope_scaling` prompt recomputes the factor fresh instead of reusing a stale
   one; a strict-tier safety-eval override prints an in-context Article 9 notice;
   and the HF-Hub id / webhook-preflight paths are hardened (`forgelm/wizard/`).
+- **Mutually-exclusive non-training mode flags.** Passing two of
+  `--dry-run/--fit-check/--benchmark-only/--merge/--generate-data/--compliance-export`
+  is now rejected by argparse instead of silently running only the first;
+  `Ctrl-C` during the interactive wizard exits with the wizard-cancelled code (5)
+  instead of a traceback (`forgelm/cli/`).
+- **An unsupported dataset file extension fails fast.** `data.dataset_name_or_path`
+  pointing at, e.g., a `.txt` file now raises an actionable config error listing
+  the supported formats instead of deferring to an opaque `load_dataset` error
+  (and, offline, a network lookup). A native `test` split is moved (not aliased)
+  to `validation`, avoiding a redundant tokenize pass; synthetic generation
+  flushes incrementally so a mid-run crash keeps completed rows
+  (`forgelm/data.py`, `forgelm/synthetic.py`).
+- **Archive helpers clean up on failure and pin encodings.** `manage_checkpoints`
+  now catches `tarfile.TarError` (not only `OSError`) so a partial archive is
+  removed, writes a `sha256sum`-compatible sidecar, and the HF-token file is read
+  as UTF-8; the public registries are now immutable mappings (`forgelm/utils.py`,
+  `forgelm/__init__.py`).
+- **CI hardening.** Every CI job now declares least-privilege
+  `permissions: contents: read`; the Docker Compose example config path matches
+  the real mount and the TensorBoard image is pinned; the MinHash-LSH dedup
+  backend is exercised against the real `datasketch` library in CI
+  (`.github/workflows/`, `docker-compose.yaml`).
 
 ### Security
 

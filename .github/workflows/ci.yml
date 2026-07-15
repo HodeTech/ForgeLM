@@ -14,10 +14,16 @@ on:
 env:
   FORGELM_OPERATOR: ci-smoke
 
+# No workflow-level permissions; each job declares the minimum it needs
+# (checkout-only read access), per Sonar githubactions:S8233 / S8264 —
+# matches the pattern in nightly.yml / publish.yml / site-deploy.yml.
+
 jobs:
   # --- Job 1: Lint (fast, no heavy deps) ---
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
 
@@ -58,6 +64,8 @@ jobs:
   # --- Job 2: Test (matrix across Python versions) ---
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -71,9 +79,18 @@ jobs:
           cache: pip
 
       - name: Install package (dev)
+        # `ingestion-scale` (datasketch) is included so
+        # tests/test_data_audit_phase12.py::TestMinHashLshDedup — which
+        # `skipif`s itself when the real library is absent — actually runs
+        # the genuine MinHash/MinHashLSH backend on every push/PR across
+        # all four Python versions, not just the pure-Python stub coverage
+        # in TestMinHashLshBackendExecutedWithStub. datasketch is a light
+        # numpy/scipy-based dep, not one of the heavy extras (bitsandbytes,
+        # unsloth, deepspeed, lm-eval, wandb, mergekit) that stay off the
+        # default test matrix.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install -e ".[dev,ingestion-scale]"
 
       - name: Run tests with coverage
         # --cov, --cov-report=term-missing, and --cov-fail-under=40 come from
@@ -92,6 +109,8 @@ jobs:
   # --- Job 3: Validate (config, CLI, assets) ---
   validate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
 
@@ -279,6 +298,18 @@ jobs:
         # must pass Pydantic validation. Previously unwired despite catching
         # real doc-vs-schema drift.
         run: python3 tools/check_yaml_snippets.py --strict
+
+      - name: User-manual YAML example schema-key drift (report-only)
+        # check_yaml_snippets.py only validates snippets carrying the full
+        # model+training+data triplet; single-block fragments (the common
+        # case in a user-manual page explaining one section) are skipped
+        # there. This guard AST-walks forgelm/config.py's Pydantic schema
+        # and flags fragment keys that don't exist on it. Run WITHOUT
+        # --strict: at introduction it already found real fabricated-key
+        # drift in docs/usermanuals/ (see the tool's own module docstring
+        # for a worked example) that is a docs-content fix, out of scope
+        # for this change. Flip to --strict once that backlog is cleaned up.
+        run: python3 tools/check_usermanual_schema_drift.py
 
       - name: Site chrome (EN/TR translation) parity
         # W1/H11 (F-P8-C-07): the active-tier (EN<->TR) translation-key sets in

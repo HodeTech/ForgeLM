@@ -160,6 +160,7 @@ def _run_ingest_cmd(args, output_format: str) -> None:
             recursive=args.recursive,
             pii_mask=pii_mask,
             secrets_mask=secrets_mask,
+            input_encoding=getattr(args, "input_encoding", None),
             chunk_tokens=getattr(args, "chunk_tokens", None),
             overlap_tokens=getattr(args, "overlap_tokens", 0),
             tokenizer=getattr(args, "tokenizer", None),

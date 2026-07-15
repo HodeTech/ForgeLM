@@ -80,19 +80,30 @@ from ._no_train_modes import (
     _run_merge,  # noqa: F401 — re-export for tests
 )
 
-# Parser (registrars + parse_args).
+# Parser (registrars + parse_args).  Every subcommand registrar defined in
+# ``_parser`` is re-exported here so the facade's "the dotted path must resolve
+# *here* for monkeypatch to work" contract holds for the full subcommand
+# surface, not just the pre-Phase-14 half.
 from ._parser import (
     _add_approvals_subcommand,  # noqa: F401 — re-export for tests
     _add_approve_subcommand,  # noqa: F401 — re-export for tests
     _add_audit_subcommand,  # noqa: F401 — re-export for tests
+    _add_cache_models_subcommand,  # noqa: F401 — re-export for tests
+    _add_cache_tasks_subcommand,  # noqa: F401 — re-export for tests
     _add_chat_subcommand,  # noqa: F401 — re-export for tests
     _add_deploy_subcommand,  # noqa: F401 — re-export for tests
     _add_doctor_subcommand,  # noqa: F401 — re-export for tests
     _add_export_subcommand,  # noqa: F401 — re-export for tests
     _add_ingest_subcommand,  # noqa: F401 — re-export for tests
+    _add_purge_subcommand,  # noqa: F401 — re-export for tests
     _add_quickstart_subcommand,  # noqa: F401 — re-export for tests
     _add_reject_subcommand,  # noqa: F401 — re-export for tests
+    _add_reverse_pii_subcommand,  # noqa: F401 — re-export for tests
+    _add_safety_eval_subcommand,  # noqa: F401 — re-export for tests
+    _add_verify_annex_iv_subcommand,  # noqa: F401 — re-export for tests
     _add_verify_audit_subcommand,  # noqa: F401 — re-export for tests
+    _add_verify_gguf_subcommand,  # noqa: F401 — re-export for tests
+    _add_verify_integrity_subcommand,  # noqa: F401 — re-export for tests
     parse_args,
 )
 

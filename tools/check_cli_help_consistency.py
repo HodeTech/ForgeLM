@@ -60,9 +60,11 @@ surface that ``forgelm/`` honours):
 - ``1`` — at least one drift finding (strict mode), or
   parser-discovery failure.
 
-Per Wave 4 / Faz 26 anchor-checker precedent, this guard ships in
-**advisory mode** by default in CI.  The maintainer flips
-``--strict`` once the baseline drift is cleaned up.
+The tool defaults to **advisory mode** (no flag) for local iteration —
+report drift, exit 0.  CI (``.github/workflows/ci.yml`` validate job)
+already invokes this tool with ``--strict``, so any drift a
+contributor sees locally without the flag will fail CI; run with
+``--strict`` locally to see the same result CI will produce.
 
 Usage::
 
@@ -854,11 +856,10 @@ def _build_argparser() -> argparse.ArgumentParser:
         "--strict",
         action="store_true",
         help=(
-            "Strict mode: exit 1 on any drift finding.  Default is "
-            "advisory: report drift to stdout but exit 0 so the "
-            "tool can land before the docs tree is clean.  CI gate "
-            "wire-up uses --strict once Faz 30 baseline cleanup is "
-            "complete."
+            "Strict mode: exit 1 on any drift finding.  Default (no "
+            "flag) is advisory: report drift to stdout but exit 0 — "
+            "useful for local iteration.  CI (ci.yml validate job) "
+            "already invokes this tool with --strict."
         ),
     )
     parser.add_argument(

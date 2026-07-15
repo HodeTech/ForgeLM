@@ -265,6 +265,75 @@ class TestSyntheticGenerator:
         assert entries[0]["instruction"] == "What is AI?"
         assert entries[0]["output"] == "AI is artificial intelligence."
 
+    def test_generate_flushes_incrementally_survives_mid_run_crash(self, tmp_path):
+        """Entries must be flushed to disk as each prompt succeeds, not
+        buffered in memory and written once at the end — a crash partway
+        through a run must not lose the already-generated (and, for an API
+        teacher, already-paid-for) rows written before the interruption."""
+        seed_file = tmp_path / "seeds.jsonl"
+        seed_file.write_text("\n".join(json.dumps({"prompt": f"Q{i}", "response": f"A{i}"}) for i in range(3)))
+        output_file = tmp_path / "output.jsonl"
+        config = _config(
+            synthetic={
+                "enabled": True,
+                "teacher_model": "n/a",
+                "teacher_backend": "file",
+                "seed_file": str(seed_file),
+                "output_file": str(output_file),
+                "output_format": "instruction",
+                "seed_prompts": [f"Q{i}" for i in range(3)],
+            }
+        )
+        gen = SyntheticDataGenerator(config)
+
+        # Simulate a crash after the 2nd successful entry: raise once
+        # _generate_one has already appended two entries to the (real,
+        # unmocked) open file handle, then verify those two rows survived.
+        real_generate_one = gen._generate_one
+        call_count = {"n": 0}
+
+        def _crash_after_two(prompt, idx, result):
+            call_count["n"] += 1
+            if call_count["n"] > 2:
+                raise RuntimeError("simulated crash")
+            return real_generate_one(prompt, idx, result)
+
+        gen._generate_one = _crash_after_two
+
+        with pytest.raises(RuntimeError, match="simulated crash"):
+            gen.generate()
+
+        assert os.path.isfile(str(output_file))
+        with open(str(output_file)) as f:
+            entries = [json.loads(line) for line in f]
+        # The first two entries (written+flushed before the crash) survive
+        # on disk even though generate() never returned.
+        assert len(entries) == 2
+        assert entries[0]["instruction"] == "Q0"
+        assert entries[1]["instruction"] == "Q1"
+
+    def test_generate_no_output_file_when_zero_successes(self, tmp_path):
+        """Preserves the pre-existing contract: a run with zero successful
+        generations must not create the output file at all."""
+        output_file = tmp_path / "output.jsonl"
+        config = _config(
+            synthetic={
+                "enabled": True,
+                "teacher_model": "n/a",
+                "teacher_backend": "file",
+                # No seed_file configured for the "file" backend responses ->
+                # every prompt resolves to an empty response -> every
+                # _generate_one call records a failure, not a success.
+                "output_file": str(output_file),
+                "seed_prompts": ["Q0", "Q1"],
+            }
+        )
+        gen = SyntheticDataGenerator(config)
+        result = gen.generate()
+
+        assert result.successful == 0
+        assert not os.path.exists(str(output_file))
+
     def test_empty_prompts_no_crash(self, tmp_path):
         # The config validator now rejects enabled+no-seeds, so reach the
         # zero-prompt runtime path via an empty seed file (still a valid config).

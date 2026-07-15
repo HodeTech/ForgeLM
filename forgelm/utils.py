@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import shutil
@@ -25,7 +26,7 @@ def setup_authentication(token: Optional[str] = None) -> None:
         # Fallback to local token store if nothing provided
         for token_path in _HF_TOKEN_PATHS:
             try:
-                with open(token_path, "r") as f:
+                with open(token_path, "r", encoding="utf-8") as f:
                     hf_token = f.read().strip()
                 if hf_token:
                     break
@@ -59,7 +60,10 @@ def manage_checkpoints(checkpoint_dir: str, action: str = "keep") -> None:
     Actions:
         keep: No-op (default safety behavior — checkpoints remain as-is)
         delete: Remove every ``checkpoint-*`` subdirectory (not the output dir)
-        compress: Create a tar.gz archive next to the dir and keep originals
+        compress: Create a tar.gz archive next to the dir and keep originals;
+            also writes a ``sha256sum``-compatible ``<archive>.sha256``
+            sidecar next to it (best-effort — a sidecar-write failure does
+            not fail the compression)
 
     Reachability (F-P2-FAB-28): the production training path
     (``forgelm/cli/_training.py``) always calls this with ``action="keep"`` —
@@ -107,14 +111,42 @@ def manage_checkpoints(checkpoint_dir: str, action: str = "keep") -> None:
         try:
             with tarfile.open(archive_path, "w:gz") as tar:
                 tar.add(checkpoint_dir, arcname=os.path.basename(checkpoint_dir))
-        except OSError:
-            # Don't leave a torn .tar.gz behind on failure.
+        except (OSError, tarfile.TarError, UnicodeError):
+            # Don't leave a torn .tar.gz behind on failure. tarfile.TarError
+            # (e.g. CompressionError, StreamError) and UnicodeError are not
+            # OSError subclasses but can equally abort mid-archive, after the
+            # file has already been created on disk.
             if os.path.exists(archive_path):
                 try:
                     os.unlink(archive_path)
                 except OSError as cleanup_err:
                     logger.warning("Could not remove partial archive %s: %s", archive_path, cleanup_err)
             raise
+        _write_archive_sha256_sidecar(archive_path)
         logger.info("Compression complete.")
     else:
         logger.warning("Unknown checkpoint action: '%s'. Keeping checkpoints.", action)
+
+
+def _write_archive_sha256_sidecar(archive_path: str) -> None:
+    """Write a ``sha256sum``-compatible ``<archive>.sha256`` sidecar.
+
+    Mirrors the tamper-evidence sidecar convention ``verify_gguf`` already
+    knows how to read (``<hex>  <filename>``) so an operator can confirm a
+    compressed checkpoint archive was not corrupted or altered between
+    compression and a later restore, e.g. via
+    ``sha256sum -c checkpoints_....tar.gz.sha256``.
+
+    Best-effort: a sidecar-write failure must not undo an otherwise
+    successful compression, so it is logged at WARNING rather than raised.
+    """
+    digest = hashlib.sha256()
+    try:
+        with open(archive_path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                digest.update(chunk)
+        sidecar_path = archive_path + ".sha256"
+        with open(sidecar_path, "w", encoding="utf-8") as fh:
+            fh.write(f"{digest.hexdigest()}  {os.path.basename(archive_path)}\n")
+    except OSError as e:
+        logger.warning("Could not write SHA-256 sidecar for %s: %s", archive_path, e)

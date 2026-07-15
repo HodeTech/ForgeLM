@@ -235,3 +235,87 @@ class TestMainEntrypoint:
         # Cleanup
         for key in ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE"]:
             os.environ.pop(key, None)
+
+
+class TestNonTrainingModeMutualExclusion:
+    """Finding 2: the six non-training-mode flags each ``sys.exit()`` in an
+    ordered if-chain in ``_maybe_run_no_train_mode``; passing two at once used
+    to silently run only the first and drop the rest with a 0 exit code.  They
+    are now in an ``add_mutually_exclusive_group`` so argparse rejects the
+    combination at parse time (exit 2, "not allowed with")."""
+
+    @pytest.mark.parametrize(
+        ("flag_a", "flag_b"),
+        [
+            ("--dry-run", "--merge"),
+            ("--merge", "--generate-data"),
+            ("--dry-run", "--compliance-export"),
+            ("--fit-check", "--benchmark-only"),
+        ],
+    )
+    def test_two_mode_flags_are_rejected(self, flag_a, flag_b, capsys):
+        argv = ["forgelm", flag_a]
+        # Value-taking mode flags need an argument so argparse reaches the
+        # mutual-exclusion check rather than an "expected one argument" error.
+        if flag_a in ("--benchmark-only", "--compliance-export"):
+            argv.append("model_or_dir")
+        argv.append(flag_b)
+        if flag_b in ("--benchmark-only", "--compliance-export"):
+            argv.append("model_or_dir")
+        with patch("sys.argv", argv):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        # argparse usage errors exit 2 (its own convention, matching every
+        # other choices/mutually-exclusive rejection in this CLI).
+        assert exc_info.value.code == 2
+        assert "not allowed with" in capsys.readouterr().err
+
+    def test_single_mode_flag_still_accepted(self, tmp_path, minimal_config):
+        """A single mode flag must still parse + run (no false rejection)."""
+        cfg_path = str(tmp_path / "config.yaml")
+        with open(cfg_path, "w") as f:
+            yaml.dump(minimal_config(), f)
+        with patch("sys.argv", ["forgelm", "--config", cfg_path, "--dry-run"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == EXIT_SUCCESS
+
+
+class TestParserPublicApi:
+    def test_parse_args_has_namespace_return_annotation(self):
+        """Finding 8: ``parse_args`` is the one function in _parser imported and
+        called from other modules; coding.md requires a return annotation on it.
+        (``from __future__ import annotations`` keeps the value as a string.)"""
+        from forgelm.cli._parser import parse_args
+
+        assert parse_args.__annotations__.get("return") == "argparse.Namespace"
+
+    def test_facade_reexports_every_subcommand_registrar(self):
+        """Finding 5: the ``forgelm.cli`` facade docstring promises every
+        registrar resolves *here* so monkeypatch works; the Phase-14+ half was
+        missing.  All 19 registrars must now be importable from the facade."""
+        from forgelm import cli
+
+        registrars = [
+            "_add_chat_subcommand",
+            "_add_export_subcommand",
+            "_add_deploy_subcommand",
+            "_add_quickstart_subcommand",
+            "_add_ingest_subcommand",
+            "_add_audit_subcommand",
+            "_add_doctor_subcommand",
+            "_add_verify_audit_subcommand",
+            "_add_approve_subcommand",
+            "_add_reject_subcommand",
+            "_add_approvals_subcommand",
+            "_add_purge_subcommand",
+            "_add_reverse_pii_subcommand",
+            "_add_cache_models_subcommand",
+            "_add_cache_tasks_subcommand",
+            "_add_verify_annex_iv_subcommand",
+            "_add_safety_eval_subcommand",
+            "_add_verify_gguf_subcommand",
+            "_add_verify_integrity_subcommand",
+        ]
+        for name in registrars:
+            assert callable(getattr(cli, name, None)), f"{name} is not re-exported from forgelm.cli"

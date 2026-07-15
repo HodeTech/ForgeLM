@@ -41,6 +41,7 @@ the in-source type hints without needing a separate stubs package.
 
 from __future__ import annotations as _annotations
 
+from types import MappingProxyType as _MappingProxyType
 from typing import TYPE_CHECKING as _TYPE_CHECKING
 
 from ._version import __api_version__, __version__
@@ -129,40 +130,51 @@ __all__ = [
 # Tier semantics (design §2): ``stable`` symbols are semver-protected and a
 # signature change requires an ``__api_version__`` MAJOR bump; ``experimental``
 # symbols may change without a MAJOR bump (the surface is still public).
-_STABILITY_TIERS: dict[str, str] = {
-    "__version__": "stable",
-    "__api_version__": "stable",
-    "load_config": "stable",
-    "ForgeConfig": "stable",
-    "ConfigError": "stable",
-    "ForgeTrainer": "stable",
-    "TrainResult": "stable",
-    "prepare_dataset": "experimental",
-    "get_model_and_tokenizer": "experimental",
-    "audit_dataset": "stable",
-    "AuditReport": "stable",
-    "detect_pii": "stable",
-    "mask_pii": "stable",
-    "detect_secrets": "stable",
-    "mask_secrets": "stable",
-    "compute_simhash": "experimental",
-    "compute_minhash": "experimental",
-    "AuditLogger": "stable",
-    "verify_audit_log": "stable",
-    "VerifyResult": "stable",
-    "verify_annex_iv_artifact": "stable",
-    "VerifyAnnexIVResult": "stable",
-    "verify_gguf": "stable",
-    "VerifyGgufResult": "stable",
-    "verify_integrity": "stable",
-    "VerifyIntegrityResult": "stable",
-    "WebhookNotifier": "experimental",
-    "setup_authentication": "experimental",
-    "manage_checkpoints": "experimental",
-    "run_benchmark": "experimental",
-    "BenchmarkResult": "experimental",
-    "SyntheticDataGenerator": "experimental",
-}
+#
+# Wrapped in ``MappingProxyType`` (architecture.md §4: "no module-level
+# mutable state" — only "immutable registries" are permitted as module-level
+# state).  A plain ``dict`` here would let a stray ``forgelm._STABILITY_TIERS
+# ["X"] = ...`` (e.g. a test that forgot ``monkeypatch.setattr``, or a
+# notebook cell) permanently corrupt the registry for the rest of the
+# process, since module-level singletons persist across subsequent ``import
+# forgelm`` calls in the same interpreter.  The proxy makes such a mutation
+# raise ``TypeError`` immediately at the mutation site instead.
+_STABILITY_TIERS: _MappingProxyType[str, str] = _MappingProxyType(
+    {
+        "__version__": "stable",
+        "__api_version__": "stable",
+        "load_config": "stable",
+        "ForgeConfig": "stable",
+        "ConfigError": "stable",
+        "ForgeTrainer": "stable",
+        "TrainResult": "stable",
+        "prepare_dataset": "experimental",
+        "get_model_and_tokenizer": "experimental",
+        "audit_dataset": "stable",
+        "AuditReport": "stable",
+        "detect_pii": "stable",
+        "mask_pii": "stable",
+        "detect_secrets": "stable",
+        "mask_secrets": "stable",
+        "compute_simhash": "experimental",
+        "compute_minhash": "experimental",
+        "AuditLogger": "stable",
+        "verify_audit_log": "stable",
+        "VerifyResult": "stable",
+        "verify_annex_iv_artifact": "stable",
+        "VerifyAnnexIVResult": "stable",
+        "verify_gguf": "stable",
+        "VerifyGgufResult": "stable",
+        "verify_integrity": "stable",
+        "VerifyIntegrityResult": "stable",
+        "WebhookNotifier": "experimental",
+        "setup_authentication": "experimental",
+        "manage_checkpoints": "experimental",
+        "run_benchmark": "experimental",
+        "BenchmarkResult": "experimental",
+        "SyntheticDataGenerator": "experimental",
+    }
+)
 
 
 # Submodule path constants — kept here so a future rename (e.g.
@@ -181,35 +193,42 @@ _M_BENCHMARK = "forgelm.benchmark"
 # Centralised so adding a new lazy export is one row, the
 # ``__getattr__`` hook stays a generic dispatcher, and ``__dir__`` can
 # enumerate the surface without triggering imports.
-_LAZY_SYMBOLS: dict[str, tuple[str, str]] = {
-    "ForgeTrainer": ("forgelm.trainer", "ForgeTrainer"),
-    "TrainResult": ("forgelm.results", "TrainResult"),
-    "prepare_dataset": ("forgelm.data", "prepare_dataset"),
-    "get_model_and_tokenizer": ("forgelm.model", "get_model_and_tokenizer"),
-    "audit_dataset": (_M_DATA_AUDIT, "audit_dataset"),
-    "AuditReport": (_M_DATA_AUDIT, "AuditReport"),
-    "detect_pii": (_M_DATA_AUDIT, "detect_pii"),
-    "mask_pii": (_M_DATA_AUDIT, "mask_pii"),
-    "detect_secrets": (_M_DATA_AUDIT, "detect_secrets"),
-    "mask_secrets": (_M_DATA_AUDIT, "mask_secrets"),
-    "compute_simhash": (_M_DATA_AUDIT, "compute_simhash"),
-    "compute_minhash": (_M_DATA_AUDIT, "compute_minhash"),
-    "AuditLogger": (_M_COMPLIANCE, "AuditLogger"),
-    "verify_audit_log": (_M_COMPLIANCE, "verify_audit_log"),
-    "VerifyResult": (_M_COMPLIANCE, "VerifyResult"),
-    "verify_annex_iv_artifact": (_M_VERIFY_ANNEX_IV, "verify_annex_iv_artifact"),
-    "VerifyAnnexIVResult": (_M_VERIFY_ANNEX_IV, "VerifyAnnexIVResult"),
-    "verify_gguf": (_M_VERIFY_GGUF, "verify_gguf"),
-    "VerifyGgufResult": (_M_VERIFY_GGUF, "VerifyGgufResult"),
-    "verify_integrity": (_M_VERIFY_INTEGRITY, "verify_integrity"),
-    "VerifyIntegrityResult": (_M_VERIFY_INTEGRITY, "VerifyIntegrityResult"),
-    "WebhookNotifier": ("forgelm.webhook", "WebhookNotifier"),
-    "setup_authentication": (_M_UTILS, "setup_authentication"),
-    "manage_checkpoints": (_M_UTILS, "manage_checkpoints"),
-    "run_benchmark": (_M_BENCHMARK, "run_benchmark"),
-    "BenchmarkResult": (_M_BENCHMARK, "BenchmarkResult"),
-    "SyntheticDataGenerator": ("forgelm.synthetic", "SyntheticDataGenerator"),
-}
+#
+# Wrapped in ``MappingProxyType`` for the same reason as ``_STABILITY_TIERS``
+# above: this table is load-bearing for the public-surface contract (it
+# drives ``__getattr__`` resolution), so it must not be mutable module-level
+# state per architecture.md §4.
+_LAZY_SYMBOLS: _MappingProxyType[str, tuple[str, str]] = _MappingProxyType(
+    {
+        "ForgeTrainer": ("forgelm.trainer", "ForgeTrainer"),
+        "TrainResult": ("forgelm.results", "TrainResult"),
+        "prepare_dataset": ("forgelm.data", "prepare_dataset"),
+        "get_model_and_tokenizer": ("forgelm.model", "get_model_and_tokenizer"),
+        "audit_dataset": (_M_DATA_AUDIT, "audit_dataset"),
+        "AuditReport": (_M_DATA_AUDIT, "AuditReport"),
+        "detect_pii": (_M_DATA_AUDIT, "detect_pii"),
+        "mask_pii": (_M_DATA_AUDIT, "mask_pii"),
+        "detect_secrets": (_M_DATA_AUDIT, "detect_secrets"),
+        "mask_secrets": (_M_DATA_AUDIT, "mask_secrets"),
+        "compute_simhash": (_M_DATA_AUDIT, "compute_simhash"),
+        "compute_minhash": (_M_DATA_AUDIT, "compute_minhash"),
+        "AuditLogger": (_M_COMPLIANCE, "AuditLogger"),
+        "verify_audit_log": (_M_COMPLIANCE, "verify_audit_log"),
+        "VerifyResult": (_M_COMPLIANCE, "VerifyResult"),
+        "verify_annex_iv_artifact": (_M_VERIFY_ANNEX_IV, "verify_annex_iv_artifact"),
+        "VerifyAnnexIVResult": (_M_VERIFY_ANNEX_IV, "VerifyAnnexIVResult"),
+        "verify_gguf": (_M_VERIFY_GGUF, "verify_gguf"),
+        "VerifyGgufResult": (_M_VERIFY_GGUF, "VerifyGgufResult"),
+        "verify_integrity": (_M_VERIFY_INTEGRITY, "verify_integrity"),
+        "VerifyIntegrityResult": (_M_VERIFY_INTEGRITY, "VerifyIntegrityResult"),
+        "WebhookNotifier": ("forgelm.webhook", "WebhookNotifier"),
+        "setup_authentication": (_M_UTILS, "setup_authentication"),
+        "manage_checkpoints": (_M_UTILS, "manage_checkpoints"),
+        "run_benchmark": (_M_BENCHMARK, "run_benchmark"),
+        "BenchmarkResult": (_M_BENCHMARK, "BenchmarkResult"),
+        "SyntheticDataGenerator": ("forgelm.synthetic", "SyntheticDataGenerator"),
+    }
+)
 
 
 # ``TYPE_CHECKING`` is False at runtime so this block never executes;

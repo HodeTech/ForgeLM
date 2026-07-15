@@ -46,6 +46,36 @@ class TestSetupAuthentication:
             utils.setup_authentication()
         mock_login.assert_called_once_with(token="hf_from_file")
 
+    def test_token_file_read_pins_utf8_encoding(self, monkeypatch, tmp_path):
+        # Regression: the token-file open() must pin encoding="utf-8" rather
+        # than relying on the platform's locale-preferred encoding, matching
+        # every other text-mode file I/O call site in forgelm/. Assert the
+        # exact kwargs open() is called with, since a non-UTF-8-locale
+        # platform reproducing the failure mode is not practical to simulate
+        # portably in a unit test.
+        monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+        token_file = tmp_path / "token"
+        token_file.write_text("hf_from_file\n", encoding="utf-8")
+        monkeypatch.setattr(utils, "_HF_TOKEN_PATHS", [str(token_file)])
+
+        real_open = open
+        calls = []
+
+        def spy_open(path, *args, **kwargs):
+            if path == str(token_file):
+                calls.append((args, kwargs))
+            return real_open(path, *args, **kwargs)
+
+        with patch("builtins.open", side_effect=spy_open):
+            with patch("forgelm.utils.login"):
+                utils.setup_authentication()
+
+        assert calls, "open() was not called on the token file path"
+        args, kwargs = calls[0]
+        assert kwargs.get("encoding") == "utf-8" or (len(args) >= 2 and args[1] == "utf-8"), (
+            f"open(token_path, ...) must pass encoding='utf-8' explicitly; got args={args}, kwargs={kwargs}"
+        )
+
     def test_no_token_anywhere_warns_and_skips_login(self, monkeypatch, caplog):
         monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
         monkeypatch.setattr(utils, "_HF_TOKEN_PATHS", ["/nonexistent/forgelm-token"])
@@ -173,6 +203,85 @@ class TestManageCheckpoints:
             utils.manage_checkpoints(str(ckpt), action="compress")
         # No partial archive left behind.
         assert not list((tmp_path / "run").glob("checkpoints_*.tar.gz"))
+
+    def test_compress_failure_removes_partial_archive_on_tarerror(self, tmp_path, monkeypatch):
+        # Regression: `tarfile.TarError` (e.g. CompressionError, StreamError)
+        # is not an OSError subclass, so the original `except OSError:` alone
+        # would skip cleanup entirely for this failure mode and leave a torn
+        # .tar.gz on disk despite the "Don't leave a torn .tar.gz behind on
+        # failure" comment's intent. Pin the broadened except clause.
+        ckpt = tmp_path / "run" / "output"
+        self._make_tree(ckpt)
+
+        real_open = tarfile.open
+
+        class FailingTar:
+            def __init__(self, path):
+                self._fh = real_open(path, "w:gz")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self._fh.close()
+                return False
+
+            def add(self, *args, **kwargs):
+                raise tarfile.CompressionError("bad compression method")
+
+        monkeypatch.setattr(utils.tarfile, "open", lambda path, mode: FailingTar(path))
+        import pytest
+
+        with pytest.raises(tarfile.CompressionError, match="bad compression method"):
+            utils.manage_checkpoints(str(ckpt), action="compress")
+        # No partial archive left behind.
+        assert not list((tmp_path / "run").glob("checkpoints_*.tar.gz"))
+
+    def test_compress_writes_sha256_sidecar(self, tmp_path):
+        # Regression: a successful compress must also write a
+        # sha256sum-compatible <archive>.tar.gz.sha256 sidecar, mirroring
+        # the tamper-evidence pattern the rest of the artifact-verification
+        # surface uses (see forgelm.verify_gguf's sidecar check).
+        import hashlib
+
+        ckpt = tmp_path / "run" / "output"
+        self._make_tree(ckpt)
+        utils.manage_checkpoints(str(ckpt), action="compress")
+
+        archives = list((tmp_path / "run").glob("checkpoints_*.tar.gz"))
+        assert len(archives) == 1
+        archive_path = archives[0]
+        sidecar_path = Path(str(archive_path) + ".sha256")
+        assert sidecar_path.is_file()
+
+        expected_digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+        sidecar_text = sidecar_path.read_text(encoding="utf-8").strip()
+        digest_field, name_field = sidecar_text.split(None, 1)
+        assert digest_field == expected_digest
+        assert name_field == archive_path.name
+
+    def test_compress_sidecar_write_failure_is_best_effort(self, tmp_path, monkeypatch, caplog):
+        # A sidecar-write failure (e.g. disk full right after a successful
+        # tar write) must not undo or mask an otherwise successful
+        # compression — it is logged at WARNING, not raised.
+        ckpt = tmp_path / "run" / "output"
+        self._make_tree(ckpt)
+
+        real_open = open
+
+        def flaky_open(path, *args, **kwargs):
+            if str(path).endswith(".sha256"):
+                raise OSError("disk full")
+            return real_open(path, *args, **kwargs)
+
+        with patch("builtins.open", side_effect=flaky_open):
+            with caplog.at_level("WARNING"):
+                utils.manage_checkpoints(str(ckpt), action="compress")  # must not raise
+
+        archives = list((tmp_path / "run").glob("checkpoints_*.tar.gz"))
+        assert len(archives) == 1  # archive itself is intact
+        assert not list((tmp_path / "run").glob("*.sha256"))
+        assert any("Could not write SHA-256 sidecar" in r.message for r in caplog.records)
 
     def test_delete_failure_is_counted_not_swallowed(self, tmp_path, monkeypatch, caplog):
         # F-P2-FAB-26: a deletion failure must be logged at WARNING and excluded

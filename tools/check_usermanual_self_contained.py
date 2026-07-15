@@ -277,9 +277,10 @@ def _build_argparser() -> argparse.ArgumentParser:
         "--strict",
         action="store_true",
         help=(
-            "Strict mode: exit 1 on any broken link.  Default is "
-            "advisory: report to stdout but exit 0 so the guard can "
-            "land before any in-flight cleanup completes."
+            "Strict mode: exit 1 on any broken link.  Default (no "
+            "flag) is advisory: report to stdout but exit 0 — useful "
+            "for local iteration.  CI (ci.yml validate job) already "
+            "invokes this tool with --strict."
         ),
     )
     parser.add_argument(

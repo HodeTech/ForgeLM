@@ -96,7 +96,12 @@ SFT bellek olarak en hafif post-training paradigmasıdır:
 | 8B Llama 3 | 32 | 8192 | 16 GB |
 | 70B | 16 | 2048 | 2× A100 + ZeRO gerekir |
 
-Her zaman göndermeden önce `--fit-check` koşturun.
+Her zaman göndermeden önce `--fit-check` koşturun:
+
+```shell
+$ forgelm --config configs/sft.yaml --fit-check
+FITS  est. peak 7.8 GB / 12 GB available
+```
 
 ## Sık yapılan hatalar
 

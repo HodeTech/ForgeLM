@@ -86,6 +86,23 @@ def clean_string(text: str, do_clean: bool) -> str:
     return text
 
 
+# HF `datasets.load_dataset` builder name for each extension ForgeLM
+# accepts for a local file. Any extension not in this map (``.txt``,
+# ``.tsv``, ``.xlsx``, ``.arrow``, a typo like ``.jsom``, ...) must be
+# rejected here rather than passed through to ``load_dataset`` — an
+# unrecognised string is not treated as "invalid builder" by the
+# ``datasets`` library, it is treated as a Hugging Face Hub *dataset id*,
+# which triggers an outbound network lookup even for a fully local,
+# offline-intended run and then fails with a generic "repository not
+# found" error instead of an actionable message.
+_SUPPORTED_DATASET_EXTENSIONS: Dict[str, str] = {
+    "json": "json",
+    "jsonl": "json",
+    "csv": "csv",
+    "parquet": "parquet",
+}
+
+
 def _load_single_dataset(path: str):
     """Load a single dataset from a local file or HF Hub."""
     from datasets import load_dataset
@@ -93,14 +110,14 @@ def _load_single_dataset(path: str):
     if os.path.isfile(path):
         _, ext_with_dot = os.path.splitext(path)
         ext = ext_with_dot.lstrip(".").lower()
-        if not ext:
+        builder = _SUPPORTED_DATASET_EXTENSIONS.get(ext)
+        if builder is None:
+            reason = "no file extension found" if not ext else f"unsupported extension '.{ext}'"
             raise ValueError(
-                f"Cannot determine file format for '{path}': no file extension found. "
+                f"Cannot determine file format for '{path}': {reason}. "
                 "Rename the file with a supported extension: .json, .jsonl, .csv, or .parquet."
             )
-        if ext == "jsonl":
-            ext = "json"
-        return load_dataset(ext, data_files=path)
+        return load_dataset(builder, data_files=path)
     return load_dataset(path)
 
 
@@ -219,6 +236,19 @@ def _process_user_assistant_format(examples: dict, clean_text: bool, add_eos: bo
     user_texts = examples.get("User", examples.get("instruction", []))
     asst_texts = examples.get("Assistant", examples.get("output", examples.get("response", [])))
     sys_texts = examples["System"] if has_system else [""] * len(user_texts)
+
+    # Pre-check lengths so a mismatch raises the module's own actionable
+    # message. Without this, zip(..., strict=True) raises from inside the
+    # `for` statement's implicit next() call — outside the try/except below
+    # — surfacing Python's generic "zip() argument N is longer/shorter"
+    # message instead of the row-indexed framing used for every other
+    # malformed shape in this function.
+    if not (len(sys_texts) == len(user_texts) == len(asst_texts)):
+        raise ValueError(
+            "Malformed User/Assistant-format batch: 'System'/'User'/'Assistant' columns have mismatched "
+            f"lengths (System={len(sys_texts)}, User={len(user_texts)}, Assistant={len(asst_texts)})."
+        )
+
     texts = []
     for idx, (s, u, a) in enumerate(zip(sys_texts, user_texts, asst_texts, strict=True)):
         try:
@@ -297,7 +327,14 @@ def _ensure_validation_split(dataset):
     if "validation" in dataset:
         return dataset
     if "test" in dataset:
-        dataset["validation"] = dataset["test"]
+        # Pop (not alias) so the returned DatasetDict carries exactly one
+        # copy of these rows. Aliasing left both "test" and "validation"
+        # keys pointing at the same underlying Dataset, and every
+        # downstream per-split loop (_shuffle_and_passthrough,
+        # _format_sft_dataset) iterates every key in the DatasetDict —
+        # doubling shuffle/format/tokenize cost for no functional benefit,
+        # since trainer.py only ever reads "train" and "validation".
+        dataset["validation"] = dataset.pop("test")
         return dataset
     dataset_size = len(dataset["train"])
     if dataset_size < 2:

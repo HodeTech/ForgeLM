@@ -634,3 +634,153 @@ class TestSubcommandRouting:
         # and routed into the (stubbed) trainer pipeline.
         assert captured["config"] == str(cfg_path)
         assert exc_info.value.code == EXIT_SUCCESS
+
+    def test_wizard_ctrl_c_exits_wizard_cancelled(self):
+        """Routed D: a Ctrl-C during the wizard's un-guarded prompts (save
+        filename / "start training now?") escapes ``run_wizard_full``.  It must
+        map to EXIT_WIZARD_CANCELLED (5), not the EXIT_TRAINING_ERROR (2) that
+        main()'s top-level KeyboardInterrupt handler would otherwise assign."""
+        from forgelm.cli._exit_codes import EXIT_WIZARD_CANCELLED
+
+        with patch("forgelm.wizard.run_wizard_full", MagicMock(side_effect=KeyboardInterrupt)):
+            with patch("sys.argv", ["forgelm", "--wizard"]):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code == EXIT_WIZARD_CANCELLED
+
+    def test_wizard_with_config_warns_config_ignored(self, tmp_path, capsys):
+        """Finding 3: ``--wizard`` + ``--config`` (without --wizard-start-from)
+        silently discarded the operator's --config.  It must now print a note,
+        mirroring the existing --wizard-start-from-without-wizard warning."""
+        from forgelm.wizard._orchestrator import WizardOutcome
+
+        deferred = WizardOutcome(config_path=str(tmp_path / "saved.yaml"), start_training=False)
+        with patch("forgelm.wizard.run_wizard_full", MagicMock(return_value=deferred)):
+            with patch("sys.argv", ["forgelm", "--wizard", "--config", "operator.yaml"]):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code == EXIT_SUCCESS
+        assert "--config is ignored" in capsys.readouterr().out
+
+    def test_wizard_start_from_suppresses_config_ignored_warning(self, tmp_path, capsys):
+        """The note must NOT fire when --wizard-start-from is the seed mechanism
+        (the supported way to preload the wizard from an existing file)."""
+        from forgelm.wizard._orchestrator import WizardOutcome
+
+        deferred = WizardOutcome(config_path=str(tmp_path / "saved.yaml"), start_training=False)
+        with patch("forgelm.wizard.run_wizard_full", MagicMock(return_value=deferred)):
+            with patch("sys.argv", ["forgelm", "--wizard", "--wizard-start-from", "seed.yaml"]):
+                with pytest.raises(SystemExit):
+                    main()
+        assert "--config is ignored" not in capsys.readouterr().out
+
+
+class TestVerifyAuditOutputFormat:
+    """Finding 6 / routed A: ``--output-format json`` is now registered on the
+    verify-audit subparser so it works *after* the subcommand name, matching the
+    verify-annex-iv / verify-gguf / verify-integrity siblings."""
+
+    def test_output_format_json_accepted_after_subcommand(self, tmp_path, capsys):
+        # Point at a nonexistent log so the handler takes its not-found branch
+        # and emits the 2-key JSON error envelope — proving --output-format
+        # threaded through the subparser to the dispatcher (before this fix the
+        # flag was an "unrecognized arguments" argparse error, exit 2).
+        missing = str(tmp_path / "audit_log.jsonl")
+        with patch("sys.argv", ["forgelm", "verify-audit", missing, "--output-format", "json"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == EXIT_CONFIG_ERROR
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert "error" in payload
+
+
+class TestDeployVendorChoices:
+    """Finding 7: ``--vendor`` was the one enum-like flag without ``choices=``."""
+
+    def test_invalid_vendor_is_argparse_rejected(self, tmp_path, capsys):
+        out = str(tmp_path / "endpoint.json")
+        with patch(
+            "sys.argv",
+            ["forgelm", "deploy", "./model", "--target", "hf-endpoints", "--vendor", "azur", "--output", out],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == 2
+        assert "invalid choice" in capsys.readouterr().err
+
+    def test_valid_vendor_accepted(self, tmp_path):
+        out = str(tmp_path / "endpoint.json")
+        with patch(
+            "sys.argv",
+            ["forgelm", "deploy", "./model", "--target", "hf-endpoints", "--vendor", "gcp", "--output", out],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == EXIT_SUCCESS
+
+
+class TestIngestInputEncoding:
+    """Routed B: ``--input-encoding`` threads through to ``ingest_path`` so an
+    operator can decode legacy-Windows corpora instead of silently replacing
+    every non-ASCII byte with U+FFFD."""
+
+    def test_input_encoding_threads_to_ingest_path(self, tmp_path):
+        src = tmp_path / "in.txt"
+        src.write_text("hello", encoding="utf-8")
+        out = tmp_path / "out.jsonl"
+        with (
+            patch("forgelm.ingestion.ingest_path", return_value=MagicMock()) as ingest_mock,
+            patch("forgelm.ingestion.summarize_result", return_value="ok"),
+        ):
+            with patch(
+                "sys.argv",
+                ["forgelm", "ingest", str(src), "--output", str(out), "--input-encoding", "cp1254"],
+            ):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code == EXIT_SUCCESS
+        assert ingest_mock.call_args.kwargs["input_encoding"] == "cp1254"
+
+    def test_input_encoding_defaults_to_none(self, tmp_path):
+        src = tmp_path / "in.txt"
+        src.write_text("hello", encoding="utf-8")
+        out = tmp_path / "out.jsonl"
+        with (
+            patch("forgelm.ingestion.ingest_path", return_value=MagicMock()) as ingest_mock,
+            patch("forgelm.ingestion.summarize_result", return_value="ok"),
+        ):
+            with patch("sys.argv", ["forgelm", "ingest", str(src), "--output", str(out)]):
+                with pytest.raises(SystemExit):
+                    main()
+        assert ingest_mock.call_args.kwargs["input_encoding"] is None
+
+
+class TestHelpTextHygiene:
+    def test_default_probes_help_matches_bundled_count(self, capsys):
+        """Routed C: the ``--default-probes`` help said "50-prompt ... ~14 harm
+        categories"; the bundled file is 51 prompts / 18 categories (the value
+        docs/reference already document)."""
+        with patch("sys.argv", ["forgelm", "safety-eval", "--help"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == 0
+        # argparse wraps help lines, so collapse whitespace before matching the
+        # phrase (it can straddle a wrap boundary).
+        normalized = " ".join(capsys.readouterr().out.split())
+        assert "51-prompt probe set covering 18 harm categories" in normalized
+        assert "50-prompt" not in normalized
+
+    def test_help_strings_use_single_backticks(self, capsys):
+        """Finding 4: RST-style double backticks leaked verbatim into --help
+        terminal output for --input-model (top-level) and verify-annex-iv's
+        path / --pipeline args."""
+        with patch("sys.argv", ["forgelm", "--help"]):
+            with pytest.raises(SystemExit):
+                main()
+        assert "``" not in capsys.readouterr().out
+
+        with patch("sys.argv", ["forgelm", "verify-annex-iv", "--help"]):
+            with pytest.raises(SystemExit):
+                main()
+        assert "``" not in capsys.readouterr().out
