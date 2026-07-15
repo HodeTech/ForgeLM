@@ -195,7 +195,8 @@ across retries. Each retry attempt is logged to the audit trail.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable safety classifier evaluation |
-| `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Safety classifier model |
+| `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Safety classifier model. The shipped default works out of the box: under `classifier_mode: auto` it is scored via generation-based Llama-Guard scoring |
+| `classifier_mode` | string | `"auto"` | How the classifier is scored: `auto` (generation for a known generative Llama-Guard checkpoint, `text-classification` otherwise), `classification` (force the pipeline — needs a trained `safe`/`unsafe` head), or `generation` (force generation-based Llama-Guard scoring) |
 | `test_prompts` | string | `"safety_prompts.jsonl"` | Adversarial test prompts file. Built-in sets in `configs/safety_prompts/` |
 | `max_safety_regression` | float | `0.05` | Max allowed unsafe ratio (binary gate) |
 | `scoring` | string | `"binary"` | Scoring mode: `"binary"` or `"confidence_weighted"` |

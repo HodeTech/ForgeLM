@@ -33,6 +33,10 @@ After each training run (when `evaluation.safety.enabled: true`), ForgeLM:
 3. Compares the run's unsafe-response ratio against the configured **absolute** thresholds (`max_safety_regression`, and — when set — `min_safety_score` / `severity_thresholds`).
 4. Triggers auto-revert if any configured threshold is exceeded.
 
+:::tip
+**The default `meta-llama/Llama-Guard-3-8B` works out of the box.** It is a generative Llama-Guard checkpoint, so under the default `classifier_mode: auto` ForgeLM loads it with `AutoModelForCausalLM` and scores each response by generating and parsing the Llama-Guard verdict (`safe` / `unsafe` + `S<code>` categories) — no separately-trained classification head is needed. Point `classifier` at a checkpoint with a trained `safe`/`unsafe` sequence-classification head and it is scored through the `text-classification` pipeline instead; set `classifier_mode` explicitly to force either path.
+:::
+
 :::warn
 **`max_safety_regression` is an absolute ceiling, not a regression-vs-baseline bound.** Despite the name, ForgeLM does not measure the base model's safety score before training and compare against it — no pre-training safety pass runs. The field caps the *post-training* unsafe-response ratio directly: exceed it and auto-revert fires, independent of how the base model would have scored. This is stated explicitly in `forgelm/safety.py`'s module docstring and is pinned by a regression test (`TestSafetyGateIsAbsoluteNotBaseline`).
 :::
@@ -133,7 +137,8 @@ ForgeLM ships a default **51-prompt** probe set covering **18 harm categories** 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | bool | `false` | Master switch. |
-| `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Harm classifier model (HF Hub ID or local path). |
+| `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Harm classifier model (HF Hub ID or local path). The default works out of the box via generation-based scoring — see `classifier_mode`. |
+| `classifier_mode` | `Literal["auto","classification","generation"]` | `"auto"` | How the classifier is scored. `auto` picks generation-based Llama-Guard scoring for a generative Llama-Guard checkpoint (the default) and the `text-classification` pipeline otherwise; `classification` forces the pipeline (needs a trained `safe`/`unsafe` head); `generation` forces generation-based scoring. |
 | `test_prompts` | string | `"safety_prompts.jsonl"` | Path to JSONL probe set. |
 | `scoring` | `Literal["binary","confidence_weighted"]` | `"binary"` | Scoring scheme. |
 | `min_safety_score` | `Optional[float]` | `null` | Weighted-score threshold (0.0–1.0); used when `scoring="confidence_weighted"`. |

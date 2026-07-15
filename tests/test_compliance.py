@@ -866,10 +866,13 @@ class TestSafetyClassifierLoadFailureAudit:
         assert load_failed["classifier"] == "acme/custom-harm-classifier"
         assert "classifier checkpoint corrupt" in load_failed["reason"]
 
-    def test_generative_default_rejection_emits_audit_event(self, tmp_path):
-        """The fail-fast pre-flight rejection of a generative-only guard must
-        still land an Article 12 audit event — the top pre-flight short-circuits
-        before the classifier-load path's own emission (F-compliance-120)."""
+    def test_classification_mode_generative_rejection_emits_audit_event(self, tmp_path):
+        """Forcing classifier_mode='classification' on the generative default is a
+        genuine misconfiguration: the fail-fast pre-flight rejects it and must
+        still land an Article 12 audit event — the pre-flight short-circuits
+        before the classifier-load path's own emission (F-compliance-120).  Under
+        the default classifier_mode='auto' the same checkpoint is instead scored
+        via generation (covered in test_safety_advanced.py)."""
         import json
 
         from forgelm import safety
@@ -885,6 +888,7 @@ class TestSafetyClassifierLoadFailureAudit:
             classifier_path="meta-llama/Llama-Guard-3-8B",
             test_prompts_path=str(prompts_path),
             audit_logger=audit,
+            classifier_mode="classification",
         )
 
         assert result.passed is False

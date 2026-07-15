@@ -180,7 +180,10 @@ data:
 #     # min_score: 0.4        # Minimum average accuracy; triggers revert if below
 #   safety:
 #     enabled: true
-#     classifier: "meta-llama/Llama-Guard-3-8B"
+#     classifier: "meta-llama/Llama-Guard-3-8B"  # default guard; scored via generation (see classifier_mode)
+#     # classifier_mode: "auto"   # "auto" (default): generation for a generative Llama-Guard, else text-classification;
+#     #                           # "classification" forces the pipeline (needs a trained safe/unsafe head);
+#     #                           # "generation" forces generation-based Llama-Guard scoring
 #     test_prompts: "safety_prompts.jsonl"  # or "configs/safety_prompts/general_safety.jsonl"
 #     max_safety_regression: 0.05
 #     # Advanced scoring (Phase 9):

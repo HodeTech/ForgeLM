@@ -143,7 +143,8 @@ evaluation:
     min_score: null                           # scalar float floor across averaged tasks
   safety:
     enabled: false
-    classifier: "meta-llama/Llama-Guard-3-8B"
+    classifier: "meta-llama/Llama-Guard-3-8B"  # default works out of the box via generation-based scoring
+    classifier_mode: "auto"                   # auto | classification | generation — see [Llama Guard Safety](#/evaluation/safety)
     test_prompts: "safety_prompts.jsonl"
     max_safety_regression: 0.05               # absolute post-training unsafe-ratio ceiling — see [Llama Guard Safety](#/evaluation/safety)
     scoring: "binary"                         # binary | confidence_weighted

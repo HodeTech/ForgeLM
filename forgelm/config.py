@@ -653,6 +653,16 @@ class SafetyConfig(BaseModel):
     classifier: str = Field(
         default="meta-llama/Llama-Guard-3-8B", description="Harm classifier model (HF Hub ID or local path)."
     )
+    classifier_mode: Literal["auto", "classification", "generation"] = Field(
+        default="auto",
+        description=(
+            "How the classifier is scored: `auto` picks generation-based scoring for a known "
+            "generative Llama-Guard checkpoint (e.g. the default `meta-llama/Llama-Guard-3-8B`) "
+            "and the `text-classification` pipeline otherwise; `classification` forces the "
+            "pipeline path (needs a trained safe/unsafe head); `generation` forces generation-based "
+            "Llama-Guard scoring (parse the generated `safe`/`unsafe`+S-code verdict)."
+        ),
+    )
     test_prompts: str = Field(
         default="safety_prompts.jsonl", description="Path to JSONL file with adversarial test prompts."
     )

@@ -33,6 +33,10 @@ Her eğitim koşusunun ardından (`evaluation.safety.enabled: true` iken), Forge
 3. Koşunun unsafe-response oranını konfigüre edilmiş **mutlak** eşiklerle karşılaştırır (`max_safety_regression`, ve — ayarlıysa — `min_safety_score` / `severity_thresholds`).
 4. Konfigüre edilmiş herhangi bir eşik aşılırsa otomatik geri almayı tetikler.
 
+:::tip
+**Varsayılan `meta-llama/Llama-Guard-3-8B` kutudan çıkar çıkmaz çalışır.** Bu generative bir Llama-Guard checkpoint'idir; dolayısıyla varsayılan `classifier_mode: auto` altında ForgeLM onu `AutoModelForCausalLM` ile yükler ve her yanıtı, Llama-Guard verdictini (`safe` / `unsafe` + `S<code>` kategorileri) üretip ayrıştırarak puanlar — ayrıca eğitilmiş bir classification head'e gerek yoktur. `classifier`'ı eğitilmiş bir `safe`/`unsafe` sequence-classification head'i olan bir checkpoint'e yönlendirirseniz bunun yerine `text-classification` pipeline'ı üzerinden puanlanır; her iki yolu zorlamak için `classifier_mode`'u açıkça ayarlayın.
+:::
+
 :::warn
 **`max_safety_regression` mutlak bir tavandır, baseline'a göre regresyon sınırı değildir.** İsme rağmen, ForgeLM eğitim öncesi base modelin güvenlik skorunu ölçüp sonrasıyla karşılaştırmaz — hiçbir yerde pre-training güvenlik ölçümü yapılmaz. Alan doğrudan *post-training* unsafe-response oranına tavan koyar: aşarsanız, base model ne skorlamış olursa olsun otomatik geri alma tetiklenir. Bu, `forgelm/safety.py`'nin modül docstring'inde açıkça belirtilir ve bir regresyon testiyle (`TestSafetyGateIsAbsoluteNotBaseline`) sabitlenmiştir.
 :::
@@ -133,7 +137,8 @@ ForgeLM **51 prompt** içeren ve **18 zarar kategorisini** kapsayan bir varsayı
 | Parametre | Tip | Vars. | Açıklama |
 |---|---|---|---|
 | `enabled` | bool | `false` | Ana anahtar. |
-| `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Harm classifier modeli (HF Hub ID veya yerel yol). |
+| `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Harm classifier modeli (HF Hub ID veya yerel yol). Varsayılan, generation tabanlı puanlamayla kutudan çıkar çıkmaz çalışır — bkz. `classifier_mode`. |
+| `classifier_mode` | `Literal["auto","classification","generation"]` | `"auto"` | Sınıflandırıcının nasıl puanlandığı. `auto`, generative bir Llama-Guard checkpoint'i (varsayılan) için generation tabanlı Llama-Guard puanlamasını, diğerleri için `text-classification` pipeline'ını seçer; `classification` pipeline'ı zorlar (eğitilmiş bir `safe`/`unsafe` head'i gerektirir); `generation` generation tabanlı puanlamayı zorlar. |
 | `test_prompts` | string | `"safety_prompts.jsonl"` | JSONL probe seti yolu. |
 | `scoring` | `Literal["binary","confidence_weighted"]` | `"binary"` | Skorlama şeması. |
 | `min_safety_score` | `Optional[float]` | `null` | Weighted-score eşiği (0.0–1.0); `scoring="confidence_weighted"` iken kullanılır. |

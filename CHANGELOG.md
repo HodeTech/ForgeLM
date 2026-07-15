@@ -8,6 +8,18 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Added
 
+- **Generation-based Llama-Guard safety scoring — the default classifier now
+  works out of the box.** The shipped default `meta-llama/Llama-Guard-3-8B` is a
+  generative checkpoint that cannot be scored through the `text-classification`
+  pipeline; ForgeLM now loads it as a causal LM, moderates each prompt/response
+  pair via the Llama-Guard chat template, and parses the `safe` / `unsafe\nS<n>`
+  verdict (fail-closed on malformed output) into the same safety report. A new
+  `evaluation.safety.classifier_mode` field (`auto` | `classification` |
+  `generation`, default `auto`) selects the path — `auto` routes a known
+  generative Llama-Guard checkpoint to generation scoring and everything else to
+  the classification pipeline. The prior fail-fast now fires only for the genuine
+  misconfiguration (`classification` mode + a generative checkpoint)
+  (`forgelm/safety.py`, `forgelm/config.py`).
 - **`ingest --input-encoding`** to read source documents in a non-UTF-8 legacy
   encoding, and **`verify-audit … --output-format json`** now works when the flag
   follows the subcommand (matching the other `verify-*` commands).

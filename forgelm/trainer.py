@@ -1757,6 +1757,7 @@ class ForgeTrainer:
             batch_size=getattr(safety_cfg, "batch_size", 8),
             audit_logger=self.audit,
             include_samples=getattr(safety_cfg, "include_eval_samples", False),
+            classifier_mode=getattr(safety_cfg, "classifier_mode", "auto"),
         )
 
     def _run_judge_if_configured(self):

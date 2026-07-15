@@ -192,7 +192,8 @@ training:
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
 | `enabled` | bool | `false` | Güvenlik sınıflandırıcı değerlendirmesi |
-| `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Güvenlik sınıflandırıcı modeli |
+| `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Güvenlik sınıflandırıcı modeli. Varsayılan kutudan çıkar çıkmaz çalışır: `classifier_mode: auto` altında generation tabanlı Llama-Guard puanlamasıyla değerlendirilir |
+| `classifier_mode` | string | `"auto"` | Sınıflandırıcının nasıl puanlanacağı: `auto` (bilinen bir generative Llama-Guard checkpoint'i için generation, diğerleri için `text-classification`), `classification` (pipeline'ı zorlar — eğitilmiş `safe`/`unsafe` başlığı gerektirir) veya `generation` (generation tabanlı Llama-Guard puanlamasını zorlar) |
 | `test_prompts` | string | `"safety_prompts.jsonl"` | Adversarial test prompt dosyası. Yerleşik: `configs/safety_prompts/` |
 | `max_safety_regression` | float | `0.05` | Maksimum güvensiz oran (binary kapı) |
 | `scoring` | string | `"binary"` | Puanlama modu: `"binary"` veya `"confidence_weighted"` |

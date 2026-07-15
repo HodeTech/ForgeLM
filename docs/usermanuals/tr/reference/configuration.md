@@ -144,7 +144,8 @@ evaluation:
     min_score: null                           # görevler arası ortalama skalar taban
   safety:
     enabled: false
-    classifier: "meta-llama/Llama-Guard-3-8B"
+    classifier: "meta-llama/Llama-Guard-3-8B"  # varsayılan, generation tabanlı puanlamayla kutudan çıkar çıkmaz çalışır
+    classifier_mode: "auto"                   # auto | classification | generation — bkz. [Llama Guard Güvenliği](#/evaluation/safety)
     test_prompts: "safety_prompts.jsonl"
     max_safety_regression: 0.05               # mutlak post-training unsafe-ratio tavanı — bkz. [Llama Guard Güvenliği](#/evaluation/safety)
     scoring: "binary"                         # binary | confidence_weighted
