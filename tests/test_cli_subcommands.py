@@ -263,6 +263,6 @@ class TestPipelineDispatchClamping:
             MagicMock(return_value=130),
         ):
             with pytest.raises(SystemExit) as exc_info:
-                _dispatch_pipeline_mode(config, args)
+                _dispatch_pipeline_mode(config, args, False)
 
         assert exc_info.value.code == EXIT_TRAINING_ERROR

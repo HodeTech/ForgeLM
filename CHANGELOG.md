@@ -56,6 +56,31 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   evaluated-sample counts now always reach the denominator. Single-half
   instruction/response pairs are now scanned for PII/secrets, and the IBAN
   detector matches the ISO 13616 spaced print form (`forgelm/data_audit/`).
+- **`forgelm ingest` no longer leaves a torn output file on a multi-file abort.**
+  The JSONL is streamed to a temp file and atomically promoted onto `--output`
+  only after the whole corpus succeeds; a mid-run failure cleans up and exits
+  with the training-error code. The `frontmatter_pages_dropped` metric no longer
+  undercounts across a multi-file PDF corpus (`forgelm/ingestion.py`).
+- **The human-approval gate is concurrency-safe and container-safe.**
+  `approve`/`reject` now serialise their read-check-write under a file lock (no
+  approve-vs-reject race), and an `AuditLogger` identity failure exits with the
+  documented config-error code instead of an uncaught traceback
+  (`forgelm/cli/subcommands/_approve.py`).
+- **Pipeline errors honour the JSON output contract.** Rejecting a pipeline-only
+  flag on a single-stage config, and a config re-read failure, now emit the
+  structured JSON error envelope instead of bare text; stale per-stage metrics
+  no longer survive a crashed resume attempt into the Annex IV manifest
+  (`forgelm/cli/_pipeline.py`, `forgelm/cli/_dispatch.py`).
+- **The audit/verification toolbelt no longer crashes on a corrupt log.**
+  `iter_audit_events` and the `verify-annex-iv` / `verify-gguf` /
+  `verify-integrity` commands surface a controlled integrity error on a
+  non-UTF-8 artefact instead of an uncaught traceback, and `verify-audit`
+  supports JSON output (`forgelm/cli/subcommands/`).
+- **Webhook delivery keeps its fire-and-forget contract.** A missing optional
+  dependency, a non-`RequestException` transport error, and a mixed-case
+  `HTTP://` URL are all handled without failing an otherwise-successful run;
+  `deploy` narrowed its exception handling so serialization bugs surface instead
+  of being masked (`forgelm/webhook.py`, `forgelm/deploy.py`).
 
 ### Security
 
@@ -76,6 +101,13 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 - **ReDoS hardening in the OpenSSH/PGP private-key secret detectors.** The
   unbounded `.*?` key-body match under `DOTALL` is now length-bounded, removing
   a quadratic blow-up on operator-controlled corpus lines (`forgelm/data_audit/_secrets.py`).
+- **The SSRF guard now blocks RFC 6598 Shared Address Space (100.64.0.0/10).**
+  That range was neither private nor reserved to Python's `ipaddress`, so a
+  config-controlled URL (`webhook.url`, `judge.judge_api_base`,
+  `synthetic.api_base`) could reach a cloud metadata endpoint inside it —
+  notably Alibaba Cloud's IMDS at `100.100.100.200`. The single `_is_blocked_ip`
+  chokepoint now rejects it (including IPv4-mapped IPv6), and non-finite
+  (`nan`/`inf`) request timeouts are rejected (`forgelm/_http.py`).
 
 ### Changed
 

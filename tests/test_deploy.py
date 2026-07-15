@@ -343,3 +343,50 @@ class TestDeployDispatcherExitCodes:
         with pytest.raises(SystemExit) as exc_info:
             _run_deploy_cmd(args, "text")
         assert exc_info.value.code == EXIT_TRAINING_ERROR
+
+
+class TestDeployExceptionNarrowing:
+    """The ``generate_deploy_config`` catch is narrowed from ``except
+    Exception`` to ``except OSError``.
+
+    OSError (the filesystem write — disk full, permission denied, parent is
+    not a directory) is the only genuinely-external, non-bug failure in the
+    function's primary job, so it converts to a domain
+    ``DeployResult(error_kind="runtime")``.  A programming bug in a per-target
+    generator must instead propagate loudly rather than be silently masked as
+    ``success=False`` — the previous broad catch mislabeled this outermost
+    boundary as the error-handling.md "best-effort" secondary-side-effect
+    carve-out, which requires an outer handler that owns the primary failure
+    (there is none here).
+    """
+
+    def test_filesystem_write_error_tagged_runtime(self, tmp_path):
+        # Make the output path's parent a regular file so ``os.makedirs`` on it
+        # raises FileExistsError (an OSError subclass) — a genuine external
+        # write failure.  ``vllm`` imposes no local-dir requirement on
+        # model_path, so we reach the write stage.
+        blocker = tmp_path / "not_a_dir"
+        blocker.write_text("i am a file, not a directory")
+        out = str(blocker / "vllm_config.yaml")
+
+        result = generate_deploy_config("/model", "vllm", out)
+
+        assert result.success is False
+        assert result.error_kind == "runtime"
+        assert result.target == "vllm"
+
+    def test_generator_programming_bug_propagates(self, tmp_path, monkeypatch):
+        """A KeyError from a per-target generator (a code bug) must surface as
+        a raised exception, NOT be swallowed into a runtime DeployResult."""
+        import pytest
+
+        import forgelm.deploy as deploy_mod
+
+        def _boom(*_args, **_kwargs):
+            raise KeyError("typo_in_generator")
+
+        monkeypatch.setattr(deploy_mod, "_vllm_config", _boom)
+        out = str(tmp_path / "vllm_config.yaml")
+
+        with pytest.raises(KeyError, match="typo_in_generator"):
+            generate_deploy_config("/model", "vllm", out)

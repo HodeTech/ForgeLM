@@ -2,6 +2,7 @@ import json
 import logging
 import os
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 import requests
 
@@ -134,6 +135,25 @@ class WebhookNotifier:
                 exc,
             )
             return
+        except ImportError as exc:
+            # ``_http._pinned_session`` raises a bare ImportError when
+            # ``requests-toolbelt`` (the HTTPS IP-pinning adapter) is missing —
+            # e.g. a ``--no-deps`` / vendored / frozen environment.  It is a
+            # mandatory base dependency, so this is low-likelihood, but
+            # ImportError is NOT a ``requests.RequestException`` subclass and
+            # would otherwise propagate straight out of ``notify_*`` and crash
+            # an otherwise-successful training run at the final notification
+            # step — the exact outcome this module's contract forbids
+            # ("notify_* is never allowed to fail the training run").  Log and
+            # swallow with the same non-fatal semantics as the transport
+            # branches below.
+            logger.warning(
+                "Webhook dependency unavailable for event '%s' (url=%s): %s",
+                event,
+                masked_url,
+                exc,
+            )
+            return
         except requests.exceptions.Timeout:
             logger.warning("Webhook request timed out for event '%s' (url=%s).", event, masked_url)
             return
@@ -208,7 +228,11 @@ class WebhookNotifier:
         # recommendation but plaintext is supported for closed-network
         # receivers, and the SSRF guard in ``forgelm._http`` still applies.
         # The warning below makes the unencrypted path loud in operator logs.
-        if url.startswith("http://"):  # NOSONAR python:S5332
+        # Compare the parsed, lower-cased scheme (matching the case-insensitive
+        # gate ``_http.safe_post`` enforces via ``urlparse``) so a mixed-case
+        # ``HTTP://`` URL — which still routes through the cleartext path — does
+        # not silently skip this operator-facing plaintext warning.
+        if urlparse(url).scheme.lower() == "http":  # NOSONAR python:S5332
             logger.warning("Webhook URL uses HTTP (not HTTPS). Data will be sent unencrypted.")
 
         # Sanitize metrics — only include numeric values

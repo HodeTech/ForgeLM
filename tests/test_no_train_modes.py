@@ -136,6 +136,35 @@ class TestBenchmarkOnlyLoader:
 
         assert exc_info.value.code == EXIT_CONFIG_ERROR
 
+    def test_trust_remote_code_forwarded_from_config(self, tmp_path, minimal_config):
+        """Finding 4: ``trust_remote_code`` flows from ``config.model`` straight
+        through to ``load_model``.  ``ModelConfig.trust_remote_code`` is a real
+        Pydantic field with a default, so the loader reads it directly (no
+        ``getattr`` fallback that masked the field and diverged from
+        ``_run_merge``'s direct access)."""
+        from forgelm.config import ForgeConfig
+
+        config = ForgeConfig(
+            **minimal_config(
+                model={"name_or_path": "org/model", "trust_remote_code": True},
+                evaluation={
+                    "benchmark": {"tasks": ["arc_easy"], "min_score": 0.0, "output_dir": str(tmp_path / "out")}
+                },
+            )
+        )
+        model_dir = tmp_path / "merged_model"
+        model_dir.mkdir()
+
+        with (
+            patch("forgelm.inference.load_model", return_value=(MagicMock(), MagicMock())) as load_mock,
+            patch("forgelm.benchmark.run_benchmark", return_value=_passing_benchmark_result()),
+        ):
+            from forgelm.cli._no_train_modes import _run_benchmark_only
+
+            _run_benchmark_only(config, str(model_dir), output_format="json")
+
+        assert load_mock.call_args.kwargs["trust_remote_code"] is True
+
     def test_get_model_and_tokenizer_not_called(self, tmp_path, minimal_config):
         """Regression for P1-1: the training-time loader must not be used —
         it always wraps a fresh untrained LoRA via get_peft_model."""

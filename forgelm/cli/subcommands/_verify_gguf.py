@@ -13,7 +13,8 @@ contract in ``docs/reference/verify_gguf_subcommand.md``):
   sidecar (when present).
 - 1 — ``EXIT_CONFIG_ERROR``: caller / input error (missing path, not
   a regular file, magic mismatch, metadata corruption, malformed
-  sidecar, SHA-256 mismatch).  Artifact is not safe to serve.
+  sidecar, non-UTF-8 sidecar, SHA-256 mismatch).  Artifact is not safe
+  to serve.
 - 2 — ``EXIT_TRAINING_ERROR``: genuine runtime I/O failure on a
   reachable path (read error, permission denied mid-read, etc.).
 """
@@ -218,6 +219,20 @@ def _run_verify_gguf_cmd(args, output_format: str) -> None:
         _output_error_and_exit(
             output_format,
             f"GGUF file not found or not a regular file: {path!r} ({exc.__class__.__name__}).",
+            EXIT_CONFIG_ERROR,
+        )
+    except UnicodeDecodeError as exc:
+        # A non-UTF-8 ``<model>.gguf.sha256`` sidecar (the only text-mode
+        # read in verify_gguf; the model file itself is opened binary).
+        # UnicodeDecodeError is a ValueError subclass, not an OSError
+        # subclass, so without this branch a corrupted/binary sidecar
+        # escaped the except chain and crashed with a raw traceback and
+        # no JSON envelope.  Caller-input error → exit 1, matching the
+        # malformed-sidecar branch inside verify_gguf and the same fix in
+        # _verify_annex_iv.py / _verify_integrity.py.
+        _output_error_and_exit(
+            output_format,
+            f"GGUF SHA-256 sidecar for {path!r} is not valid UTF-8: {exc}.",
             EXIT_CONFIG_ERROR,
         )
     except OSError as exc:

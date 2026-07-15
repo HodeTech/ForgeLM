@@ -1140,6 +1140,371 @@ class TestCorpusZeroChunksAggregateWarning:
         assert not any("produced 0 chunks" in r.message for r in caplog.records)
 
 
+# ---------------------------------------------------------------------------
+# Atomic all-or-nothing output — a later-file abort must not leave a torn JSONL
+# ---------------------------------------------------------------------------
+
+
+class TestAtomicOutputOnAbort:
+    """Multi-file ingest must not leave a silently-incomplete JSONL at --output.
+
+    ``ingest_path`` streams chunks to a sibling temp file and promotes it
+    onto ``--output`` with ``os.replace`` only after the whole corpus loop
+    finishes. When a later file aborts the run (out-of-bounds --page-range
+    on a shorter PDF), the operator-visible path must be left untouched —
+    a downstream ``forgelm --config train.yaml`` step must never train on a
+    truncated corpus that only checks the file's existence.
+    """
+
+    def test_abort_on_later_file_leaves_no_partial_output(self, tmp_path, monkeypatch):
+        # pypdf-free variant so the core atomicity regression runs even
+        # without the ingestion extra. A later .txt file aborts the run via
+        # IngestParameterError (an abort-class error the per-file soft-fail
+        # deliberately re-raises); the first file's chunk was already written
+        # to the temp file, reproducing the exact torn-output scenario.
+        import forgelm.ingestion as ing
+
+        corpus = tmp_path / "corpus"
+        corpus.mkdir()
+        (corpus / "a_good.txt").write_text("First file paragraph body.\n\nSecond paragraph body.\n")
+        (corpus / "b_abort.txt").write_text("This file simulates a later-file abort.\n")
+        out = tmp_path / "out.jsonl"
+
+        original = ing._EXTRACTORS[".txt"]
+
+        def _maybe_abort(path, *, ctx=None):
+            if path.name == "b_abort.txt":
+                raise ing.IngestParameterError("simulated later-file abort")
+            return original(path, ctx=ctx)
+
+        monkeypatch.setitem(ing._EXTRACTORS, ".txt", _maybe_abort)
+
+        with pytest.raises(ing.IngestParameterError):
+            ingest_path(str(corpus), output_path=str(out), strategy="paragraph", quality_presignal=False)
+
+        assert not out.exists(), "aborted multi-file ingest left a torn JSONL at --output"
+        assert not (tmp_path / "out.jsonl.tmp").exists(), "partial temp file was not cleaned up"
+
+    @pytest.mark.skipif(not HAS_PYPDF, reason="pypdf not installed")
+    def test_page_range_abort_on_second_file_leaves_no_partial_output(self, tmp_path):
+        # a_valid.pdf: 6 pages (page-range 5-6 is in-bounds → writes chunks).
+        # b_short.pdf: 2 pages (page-range 5-6 is out-of-bounds → aborts).
+        # Lex order puts a_valid before b_short, so real chunks are written
+        # to the temp file *before* the abort — the exact pre-fix torn-output
+        # scenario.
+        corpus = tmp_path / "corpus"
+        corpus.mkdir()
+        (corpus / "a_valid.pdf").write_bytes(
+            _synth_multipage_pdf([[f"Body A page {i} detailed content here."] for i in range(1, 7)])
+        )
+        (corpus / "b_short.pdf").write_bytes(_synth_multipage_pdf([["Body B page one."], ["Body B page two."]]))
+        out = tmp_path / "out.jsonl"
+
+        with pytest.raises(IngestParameterError, match="page-range"):
+            ingest_path(
+                str(corpus),
+                output_path=str(out),
+                page_range=(5, 6),
+                keep_frontmatter=True,
+                quality_presignal=False,
+            )
+
+        # The operator-visible path must be absent (not a torn partial), and
+        # the temp file must be cleaned up.
+        assert not out.exists(), "aborted multi-file ingest left a torn JSONL at --output"
+        assert not (tmp_path / "out.jsonl.tmp").exists(), "partial temp file was not cleaned up"
+
+    def test_successful_run_promotes_output_atomically(self, tmp_path):
+        # Sanity: the happy path still lands the JSONL at --output and leaves
+        # no temp residue behind.
+        src = tmp_path / "doc.txt"
+        src.write_text("First paragraph body.\n\nSecond paragraph body.\n")
+        out = tmp_path / "out.jsonl"
+        result = ingest_path(str(src), output_path=str(out), strategy="paragraph", quality_presignal=False)
+        assert out.exists()
+        assert result.chunk_count > 0
+        assert not (tmp_path / "out.jsonl.tmp").exists()
+
+
+# ---------------------------------------------------------------------------
+# frontmatter_pages_dropped must SUM across files, not dedup by page index
+# ---------------------------------------------------------------------------
+
+
+class TestFrontmatterMetricMultiFile:
+    """The audit metric must count total dropped pages across a batch.
+
+    Front-matter almost always sits at low page indices (0, 1, 2, ...) in
+    every PDF of a batch. The pre-fix aggregate took ``set()`` over a flat
+    cross-file list of indices, collapsing N files that each drop the same
+    3 pages down to a reported 3 instead of the true 3*N.
+    """
+
+    def test_frontmatter_metric_aggregates_without_cross_file_dedup(self, tmp_path, monkeypatch):
+        # pypdf-free variant: a fake PDF extractor drops the same three low
+        # indices for every file (the common batch case). Guards the
+        # aggregation in ingest_path — the reported total must be the sum,
+        # not a cross-file set() collapse.
+        import forgelm.ingestion as ing
+
+        corpus = tmp_path / "corpus"
+        corpus.mkdir()
+        (corpus / "a.pdf").write_bytes(b"%PDF stub a")  # never read — extractor faked
+        (corpus / "b.pdf").write_bytes(b"%PDF stub b")
+
+        def _fake_extract_pdf(path, *, ctx=None):
+            if ctx is None:
+                ctx = ing._ExtractContext()
+            dropped = [0, 1, 2]
+            ctx.frontmatter_dropped_pages.extend(dropped)
+            ctx.frontmatter_dropped_total += len(dropped)
+            return f"Body content for {path.name} with enough text to form a chunk."
+
+        monkeypatch.setitem(ing._EXTRACTORS, ".pdf", _fake_extract_pdf)
+
+        out = tmp_path / "out.jsonl"
+        result = ingest_path(str(corpus), output_path=str(out), quality_presignal=False)
+        assert result.frontmatter_pages_dropped == 6
+        assert result.notes_structured["frontmatter_pages_dropped"] == [0, 1, 2]
+
+    @pytest.mark.skipif(not HAS_PYPDF, reason="pypdf not installed")
+    def test_frontmatter_pages_dropped_sums_across_files(self, tmp_path, monkeypatch):
+        import forgelm.ingestion as ing
+
+        # Force the heuristic to report the SAME three low indices for every
+        # file (the common batch case) while keeping all pages so bodies
+        # still chunk. Deterministic — the real alpha/leader/page-number
+        # heuristic is not exercised here; the accounting is.
+        def _fake_drop(pages, probe=ing._FRONTMATTER_PROBE_PAGES):
+            return pages, [0, 1, 2]
+
+        monkeypatch.setattr(ing, "_drop_frontmatter_pages", _fake_drop)
+
+        corpus = tmp_path / "corpus"
+        corpus.mkdir()
+        for name in ("a.pdf", "b.pdf"):
+            (corpus / name).write_bytes(_synth_multipage_pdf([["Body content sentence one and two here."]]))
+
+        out = tmp_path / "out.jsonl"
+        result = ingest_path(str(corpus), output_path=str(out), quality_presignal=False)
+
+        # 2 files x 3 dropped pages = 6, NOT 3 (the cross-file set() bug).
+        assert result.frontmatter_pages_dropped == 6
+        # The structured-notes list keeps its documented flat-index shape
+        # (which page positions were dropped) — intra-file dedup is intact.
+        assert result.notes_structured["frontmatter_pages_dropped"] == [0, 1, 2]
+
+
+# ---------------------------------------------------------------------------
+# Legacy source-encoding knob for TXT / MD (input_encoding)
+# ---------------------------------------------------------------------------
+
+
+class TestInputEncoding:
+    """``input_encoding`` pins the source codec for legacy TXT / MD corpora."""
+
+    def test_cp1254_decoded_correctly_with_input_encoding(self, tmp_path):
+        src = tmp_path / "legacy.txt"
+        raw = "Müşteri hizmetleri kaydı numarası. Şikayet çözümü: ğıİ öçş. " * 3
+        src.write_bytes(raw.encode("cp1254"))
+        out = tmp_path / "out.jsonl"
+        ingest_path(str(src), output_path=str(out), input_encoding="cp1254", quality_presignal=False)
+        text = "\n".join(_read_jsonl(out))
+        assert "Müşteri hizmetleri" in text
+        assert "�" not in text  # no replacement chars — decoded correctly
+
+    def test_default_utf8_replaces_non_utf8_bytes(self, tmp_path):
+        # Regression contrast: without the knob, cp1254 bytes decode as
+        # utf-8-sig(+replace) and every non-ASCII byte becomes U+FFFD.
+        src = tmp_path / "legacy.txt"
+        raw = "Müşteri hizmetleri kaydı numarası. Şikayet çözümü: ğıİ öçş. " * 3
+        src.write_bytes(raw.encode("cp1254"))
+        out = tmp_path / "out.jsonl"
+        ingest_path(str(src), output_path=str(out), quality_presignal=False)
+        text = "\n".join(_read_jsonl(out))
+        assert "�" in text
+        assert "Müşteri hizmetleri" not in text
+
+
+# ---------------------------------------------------------------------------
+# CLI dispatch layer — page-range parsing, normalise-profile precedence,
+# and the error-envelope exit-code routing
+# ---------------------------------------------------------------------------
+
+
+class TestIngestCliParsePageRange:
+    """Direct unit coverage for ``_parse_page_range`` malformed-input branches."""
+
+    def test_none_returns_none(self):
+        from forgelm.cli.subcommands._ingest import _parse_page_range
+
+        assert _parse_page_range(None) is None
+
+    def test_valid_range_parses_and_strips_whitespace(self):
+        from forgelm.cli.subcommands._ingest import _parse_page_range
+
+        assert _parse_page_range("12-193") == (12, 193)
+        assert _parse_page_range("  12-193  ") == (12, 193)
+
+    def test_missing_dash_rejected(self):
+        from forgelm.cli.subcommands._ingest import _parse_page_range
+
+        with pytest.raises(ValueError, match="START-END"):
+            _parse_page_range("12")
+
+    def test_wrong_part_count_rejected(self):
+        from forgelm.cli.subcommands._ingest import _parse_page_range
+
+        with pytest.raises(ValueError, match="exactly two integers"):
+            _parse_page_range("1-2-3")
+
+    def test_non_integer_parts_rejected(self):
+        from forgelm.cli.subcommands._ingest import _parse_page_range
+
+        with pytest.raises(ValueError, match="must be integers"):
+            _parse_page_range("abc-def")
+
+
+class TestIngestCliResolveNormaliseProfile:
+    """Three-way precedence: --no-normalise-unicode > explicit profile > tr-hint."""
+
+    def test_no_normalise_wins_over_everything(self):
+        from types import SimpleNamespace
+
+        from forgelm.cli.subcommands._ingest import _resolve_normalise_profile
+
+        args = SimpleNamespace(no_normalise_unicode=True, normalise_profile="turkish", language_hint="tr")
+        assert _resolve_normalise_profile(args) == "none"
+
+    def test_explicit_profile_wins_over_language_hint(self):
+        from types import SimpleNamespace
+
+        from forgelm.cli.subcommands._ingest import _resolve_normalise_profile
+
+        args = SimpleNamespace(no_normalise_unicode=False, normalise_profile="latin", language_hint="tr")
+        assert _resolve_normalise_profile(args) == "latin"
+
+    def test_tr_hint_derives_turkish(self):
+        from types import SimpleNamespace
+
+        from forgelm.cli.subcommands._ingest import _resolve_normalise_profile
+
+        args = SimpleNamespace(language_hint="tr")
+        assert _resolve_normalise_profile(args) == "turkish"
+
+    def test_non_tr_hint_and_unset_default_to_none(self):
+        from types import SimpleNamespace
+
+        from forgelm.cli.subcommands._ingest import _resolve_normalise_profile
+
+        assert _resolve_normalise_profile(SimpleNamespace(language_hint="en")) == "none"
+        assert _resolve_normalise_profile(SimpleNamespace()) == "none"
+
+
+class TestIngestCliExitCodeRouting:
+    """The dispatcher must route runtime I/O failures and operator-input errors
+    to distinct exit codes so CI/CD retry-vs-fail-fast branches correctly."""
+
+    @staticmethod
+    def _args(tmp_path, **over):
+        from types import SimpleNamespace
+
+        base = dict(
+            input_path=str(tmp_path / "in"),
+            output=str(tmp_path / "out.jsonl"),
+            chunk_size=None,
+            overlap=None,
+            strategy="paragraph",
+            recursive=False,
+        )
+        base.update(over)
+        return SimpleNamespace(**base)
+
+    def test_mid_write_oserror_maps_to_training_error(self, tmp_path, monkeypatch):
+        import forgelm.ingestion as ing
+        from forgelm.cli._exit_codes import EXIT_TRAINING_ERROR
+        from forgelm.cli.subcommands._ingest import _run_ingest_cmd
+
+        def _boom(*_a, **_k):
+            raise OSError("No space left on device")
+
+        monkeypatch.setattr(ing, "ingest_path", _boom)
+        with pytest.raises(SystemExit) as exc:
+            _run_ingest_cmd(self._args(tmp_path), "text")
+        assert exc.value.code == EXIT_TRAINING_ERROR
+
+    def test_value_error_maps_to_config_error(self, tmp_path, monkeypatch):
+        import forgelm.ingestion as ing
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._ingest import _run_ingest_cmd
+
+        def _bad_param(*_a, **_k):
+            raise ValueError("chunk_size must be positive")
+
+        monkeypatch.setattr(ing, "ingest_path", _bad_param)
+        with pytest.raises(SystemExit) as exc:
+            _run_ingest_cmd(self._args(tmp_path), "text")
+        assert exc.value.code == EXIT_CONFIG_ERROR
+
+    def test_multi_file_abort_via_cli_leaves_no_output_and_exits_config(self, tmp_path, monkeypatch):
+        # Rule-4 combined check (pypdf-free): the dispatcher must exit with
+        # the correct code AND the operator-visible output must be absent —
+        # not a torn partial JSONL.
+        import forgelm.ingestion as ing
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._ingest import _run_ingest_cmd
+
+        corpus = tmp_path / "corpus"
+        corpus.mkdir()
+        (corpus / "a_good.txt").write_text("First file paragraph body.\n\nSecond paragraph body.\n")
+        (corpus / "b_abort.txt").write_text("Later-file abort trigger.\n")
+        out = tmp_path / "out.jsonl"
+
+        original = ing._EXTRACTORS[".txt"]
+
+        def _maybe_abort(path, *, ctx=None):
+            if path.name == "b_abort.txt":
+                raise ing.IngestParameterError("simulated later-file abort")
+            return original(path, ctx=ctx)
+
+        monkeypatch.setitem(ing._EXTRACTORS, ".txt", _maybe_abort)
+
+        args = self._args(tmp_path, input_path=str(corpus), output=str(out))
+        with pytest.raises(SystemExit) as exc:
+            _run_ingest_cmd(args, "text")
+        # IngestParameterError is a ValueError → operator-input → config error.
+        assert exc.value.code == EXIT_CONFIG_ERROR
+        assert not out.exists(), "aborted CLI ingest left a torn JSONL at --output"
+        assert not (tmp_path / "out.jsonl.tmp").exists()
+
+    @pytest.mark.skipif(not HAS_PYPDF, reason="pypdf not installed")
+    def test_page_range_abort_via_cli_leaves_no_output_and_exits_config(self, tmp_path):
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._ingest import _run_ingest_cmd
+
+        corpus = tmp_path / "corpus"
+        corpus.mkdir()
+        (corpus / "a_valid.pdf").write_bytes(
+            _synth_multipage_pdf([[f"Body A page {i} detailed content here."] for i in range(1, 7)])
+        )
+        (corpus / "b_short.pdf").write_bytes(_synth_multipage_pdf([["Body B one."], ["Body B two."]]))
+        out = tmp_path / "out.jsonl"
+        args = self._args(
+            tmp_path,
+            input_path=str(corpus),
+            output=str(out),
+            page_range="5-6",
+            keep_frontmatter=True,
+            no_quality_presignal=True,
+        )
+        with pytest.raises(SystemExit) as exc:
+            _run_ingest_cmd(args, "text")
+        # IngestParameterError is a ValueError → operator-input → config error.
+        assert exc.value.code == EXIT_CONFIG_ERROR
+        assert not out.exists(), "aborted CLI ingest left a torn JSONL at --output"
+        assert not (tmp_path / "out.jsonl.tmp").exists()
+
+
 if __name__ == "__main__":
     import sys
 

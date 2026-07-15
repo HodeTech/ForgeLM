@@ -213,6 +213,10 @@ class _ExtractContext:
     page_range: Optional[Tuple[int, int]] = None  # 1-indexed inclusive
     normalise_profile: str = _DEFAULT_NORMALISE_PROFILE
     language_hint: Optional[str] = None
+    # Source codec for TXT / MD decoding. ``None`` keeps the auto
+    # ``utf-8-sig`` behaviour; an explicit legacy codec (cp1254 / cp1252 /
+    # latin-1) is honoured for corpora exported from older Windows tooling.
+    input_encoding: Optional[str] = None
     script_sanity_threshold: float = _DEFAULT_SCRIPT_SANITY_THRESHOLD
     script_sanity_reports: List[ScriptSanityReport] = field(default_factory=list)
     keep_md_frontmatter: bool = False
@@ -229,6 +233,12 @@ class _ExtractContext:
     strip_pattern_timeout: Optional[int] = 5
     strip_urls_mode: str = "keep"  # keep | mask | strip
     frontmatter_dropped_pages: List[int] = field(default_factory=list)
+    # Run-global count of dropped front-matter pages, summed per file so a
+    # multi-file batch reports the true total. The list above keeps
+    # file-local indices for the structured-notes spot-check; a cross-file
+    # ``set()`` over that list would collapse the common case where every PDF
+    # drops the same low indices (0, 1, 2, ...) and silently undercount.
+    frontmatter_dropped_total: int = 0
     urls_handled_total: int = 0
     strip_pattern_substitutions_total: int = 0
 
@@ -983,6 +993,11 @@ def _extract_pdf(path: Path, *, ctx: Optional[_ExtractContext] = None) -> str:
         indexed_pages, dropped = _drop_frontmatter_pages(indexed_pages)
         if dropped:
             ctx.frontmatter_dropped_pages.extend(dropped)
+            # ``dropped`` is already intra-file deduped by
+            # _drop_frontmatter_pages (head + tail walks can't double-count a
+            # page); summing len() per file gives the truthful run total
+            # without a cross-file set() collapse.
+            ctx.frontmatter_dropped_total += len(dropped)
             logger.warning(
                 "Dropped %d front-matter / back-matter page(s) from '%s' "
                 "(indices=%s). Use --keep-frontmatter to retain them.",
@@ -1333,7 +1348,7 @@ def _extract_epub(path: Path, *, ctx: Optional[_ExtractContext] = None) -> str:
     return "\n\n".join(chunks)
 
 
-def _read_text_with_bom_strip(path: Path) -> str:
+def _read_text_with_bom_strip(path: Path, *, encoding: Optional[str] = None) -> str:
     """Phase 15 Task 8 — read a TXT / MD file and strip a leading UTF-8 BOM.
 
     Why a dedicated helper: the previous behaviour passed the BOM through
@@ -1350,11 +1365,20 @@ def _read_text_with_bom_strip(path: Path) -> str:
     non-UTF-8 bytes. We now use ``"utf-8-sig"`` on both paths and
     additionally strip an explicit leading ``\\ufeff`` so any encoding-
     detection edge case is caught belt-and-braces.
+
+    ``encoding`` pins the *source* codec for legacy corpora (``cp1254`` /
+    ``cp1252`` / ``latin-1``). ``None`` keeps the default auto
+    ``utf-8-sig`` behaviour. An explicit codec decodes with
+    ``errors="replace"`` so a mislabelled byte still surfaces via the
+    binary-contamination warning rather than aborting the file.
     """
-    try:
-        raw = path.read_text(encoding="utf-8-sig")
-    except UnicodeDecodeError:
-        raw = path.read_text(encoding="utf-8-sig", errors="replace")
+    if encoding is None:
+        try:
+            raw = path.read_text(encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            raw = path.read_text(encoding="utf-8-sig", errors="replace")
+    else:
+        raw = path.read_text(encoding=encoding, errors="replace")
     if raw.startswith("﻿"):
         raw = raw[1:]
     return raw
@@ -1377,13 +1401,13 @@ def _warn_if_binary_contamination(raw: str, path: Path) -> None:
 def _extract_text(path: Path, *, ctx: Optional[_ExtractContext] = None) -> str:
     """Extract plain TXT with UTF-8 BOM stripping (Phase 15 Task 8).
 
-    The ``ctx`` parameter is accepted for signature parity with the
-    other format extractors (the dispatcher calls every extractor with
-    ``ctx=ctx``) and intentionally unused inside this body — TXT has
-    no PDF / DOCX / EPUB-style options that need threading through.
+    ``ctx.input_encoding`` pins the source codec for legacy corpora; the
+    remaining ``ctx`` knobs (PDF / DOCX / EPUB-style options) do not apply
+    to plain TXT.
     """
-    del ctx  # signature parity only; Sonar S1854.
-    raw = _read_text_with_bom_strip(path)
+    if ctx is None:
+        ctx = _ExtractContext()
+    raw = _read_text_with_bom_strip(path, encoding=ctx.input_encoding)
     _warn_if_binary_contamination(raw, path)
     return raw
 
@@ -1400,7 +1424,7 @@ def _extract_markdown(path: Path, *, ctx: Optional[_ExtractContext] = None) -> s
     """
     if ctx is None:
         ctx = _ExtractContext()
-    raw = _read_text_with_bom_strip(path)
+    raw = _read_text_with_bom_strip(path, encoding=ctx.input_encoding)
     _warn_if_binary_contamination(raw, path)
     if not ctx.keep_md_frontmatter:
         match = _YAML_FRONTMATTER_PATTERN.match(raw)
@@ -2201,6 +2225,7 @@ def ingest_path(  # NOSONAR python:S107 — every kwarg is a documented operator
     pii_mask: bool = False,
     secrets_mask: bool = False,
     encoding: str = "utf-8",
+    input_encoding: Optional[str] = None,
     chunk_tokens: Optional[int] = None,
     overlap_tokens: int = 0,
     tokenizer: Optional[str] = None,
@@ -2247,6 +2272,14 @@ def ingest_path(  # NOSONAR python:S107 — every kwarg is a documented operator
             so secrets matched by both detectors are scrubbed under the
             stronger label first.
         encoding: Output encoding (default UTF-8).
+        input_encoding: Source codec for TXT / MD decoding. ``None``
+            (default) auto-detects via ``utf-8-sig`` with a BOM-strip +
+            ``errors="replace"`` fallback — the unchanged pre-existing
+            behaviour. Set a legacy codec (``cp1254`` / ``cp1252`` /
+            ``latin-1``) to correctly decode corpora exported from older
+            Windows tooling instead of silently replacing every non-ASCII
+            byte with U+FFFD. Applies to TXT / MD only; PDF / DOCX / EPUB
+            carry their own encoding metadata.
         chunk_tokens: Phase 11.5 token-aware mode. When set, chunks are
             sized against the supplied ``tokenizer`` (in tokens), not
             characters. Use this when the operator's downstream model has
@@ -2375,6 +2408,7 @@ def ingest_path(  # NOSONAR python:S107 — every kwarg is a documented operator
         page_range=page_range,
         normalise_profile=normalise_profile,
         language_hint=language_hint,
+        input_encoding=input_encoding,
         script_sanity_threshold=script_sanity_threshold,
         keep_md_frontmatter=keep_md_frontmatter,
         epub_skip_frontmatter=epub_skip_frontmatter,
@@ -2404,37 +2438,67 @@ def ingest_path(  # NOSONAR python:S107 — every kwarg is a documented operator
     else:
         sampler = None
 
-    # newline="\n" pins LF on Windows. JSONL Files spec requires LF, and
-    # piping through tooling (jq -c, wc -l, downstream HF dataset loaders)
-    # avoids CRLF surprises. Linux/macOS default is already LF.
-    with open(dst, "w", encoding=encoding, newline="\n") as out_fh:
-        for fpath in files:
-            outcome = _process_one_file(
-                fpath,
-                out_fh,
-                strategy=strategy,
-                chunk_size=effective_chunk_size,
-                overlap=overlap,
-                mask_pii=mask_pii_fn,
-                mask_secrets=mask_secrets_fn,
-                chunk_tokens=chunk_tokens,
-                overlap_tokens=overlap_tokens,
-                tokenizer=tokenizer_obj,
-                extract_ctx=extract_ctx,
-                sampler=sampler,
-            )
-            chunk_count += outcome.chunks_written
-            total_chars += outcome.chars_written
-            if outcome.file_processed:
-                files_processed += 1
-                if outcome.extension:
-                    format_counts[outcome.extension] = format_counts.get(outcome.extension, 0) + 1
-            if outcome.file_skipped:
-                files_skipped += 1
-            for kind, count in outcome.pii_counts.items():
-                pii_redaction_counts[kind] = pii_redaction_counts.get(kind, 0) + count
-            for kind, count in outcome.secrets_counts.items():
-                secrets_redaction_counts[kind] = secrets_redaction_counts.get(kind, 0) + count
+    # Atomic all-or-nothing output. Chunks stream to a sibling temp file
+    # and are promoted onto ``dst`` with ``os.replace`` only after the whole
+    # corpus loop completes. If a later file aborts the run — a missing
+    # optional extra (OptionalDependencyError), an out-of-bounds --page-range
+    # (IngestParameterError), or a disk-full mid-write (OSError) — the partial
+    # temp file is deleted instead of being left as a torn JSONL at the
+    # operator-visible --output path. A downstream ``forgelm --config
+    # train.yaml`` step must never silently train on a truncated corpus that
+    # only checks the file's existence, not the ingest exit code. Mirrors the
+    # tmp + os.replace discipline in compliance.py::export_pipeline_manifest.
+    #
+    # ``open(...)`` (not ``mkstemp``) keeps the umask-based output permissions
+    # the pre-atomic path produced — mkstemp would silently narrow the JSONL
+    # to 0600. newline="\n" pins LF on Windows (JSONL spec; jq -c / wc -l /
+    # HF dataset loaders expect LF).
+    tmp_path = dst.with_name(dst.name + ".tmp")
+    committed = False
+    try:
+        with open(tmp_path, "w", encoding=encoding, newline="\n") as out_fh:
+            for fpath in files:
+                outcome = _process_one_file(
+                    fpath,
+                    out_fh,
+                    strategy=strategy,
+                    chunk_size=effective_chunk_size,
+                    overlap=overlap,
+                    mask_pii=mask_pii_fn,
+                    mask_secrets=mask_secrets_fn,
+                    chunk_tokens=chunk_tokens,
+                    overlap_tokens=overlap_tokens,
+                    tokenizer=tokenizer_obj,
+                    extract_ctx=extract_ctx,
+                    sampler=sampler,
+                )
+                chunk_count += outcome.chunks_written
+                total_chars += outcome.chars_written
+                if outcome.file_processed:
+                    files_processed += 1
+                    if outcome.extension:
+                        format_counts[outcome.extension] = format_counts.get(outcome.extension, 0) + 1
+                if outcome.file_skipped:
+                    files_skipped += 1
+                for kind, count in outcome.pii_counts.items():
+                    pii_redaction_counts[kind] = pii_redaction_counts.get(kind, 0) + count
+                for kind, count in outcome.secrets_counts.items():
+                    secrets_redaction_counts[kind] = secrets_redaction_counts.get(kind, 0) + count
+        # All files processed without an abort — promote the complete JSONL
+        # atomically onto the operator-visible path.
+        os.replace(tmp_path, dst)
+        committed = True
+    finally:
+        if not committed:
+            # Any failure (per-file abort, disk-full, KeyboardInterrupt) must
+            # not leave a truncated JSONL at --output. Remove the temp file;
+            # the original exception continues to propagate so the CLI
+            # dispatcher's exit-code contract is preserved. Best-effort:
+            # a cleanup OSError must never replace/mask the primary abort.
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError as cleanup_exc:
+                logger.warning("Could not remove partial ingest temp file %s: %s", tmp_path, cleanup_exc)
 
     if files_skipped:
         notes.append(f"skipped {files_skipped} file(s) — see warnings above")
@@ -2565,7 +2629,7 @@ def ingest_path(  # NOSONAR python:S107 — every kwarg is a documented operator
         script_sanity_triggered=(script_sanity_summary or {}).get("files_triggered", 0) if script_sanity_summary else 0,
         strip_pattern_substitutions=extract_ctx.strip_pattern_substitutions_total,
         urls_handled=extract_ctx.urls_handled_total,
-        frontmatter_pages_dropped=len(set(extract_ctx.frontmatter_dropped_pages)),
+        frontmatter_pages_dropped=extract_ctx.frontmatter_dropped_total,
     )
 
 

@@ -58,7 +58,7 @@ import os
 import secrets
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import ValidationError
 
@@ -328,6 +328,24 @@ def _deserialise_state(payload: Dict[str, Any]) -> PipelineState:
     )
 
 
+@dataclass
+class _StageDirScanEntry:
+    """One stage's result from :meth:`PipelineOrchestrator._scan_output_dirs`.
+
+    ``merge_error`` is set (and every other field left at its default)
+    when :func:`merge_pipeline_stage_config` raised for this stage.
+    Otherwise ``abs_output_dir`` holds the stage's resolved
+    ``training.output_dir`` realpath and ``collides_with`` names the
+    earlier stage that already claimed the same realpath, or ``None``
+    when this stage is the first to claim it.
+    """
+
+    stage_name: str
+    merge_error: Optional[Exception] = None
+    abs_output_dir: Optional[str] = None
+    collides_with: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
@@ -378,7 +396,7 @@ class PipelineOrchestrator:
         resume_from: Optional[str],
         force_resume: bool,
         stage_filter: Optional[str] = None,
-    ) -> "tuple[Optional[PipelineState], Optional[int]]":
+    ) -> Tuple[Optional[PipelineState], Optional[int]]:
         """Load + validate state for ``--resume-from`` or build a fresh state.
 
         Returns ``(state, None)`` on success; ``(None, EXIT_CONFIG_ERROR)``
@@ -458,7 +476,7 @@ class PipelineOrchestrator:
         *,
         state: PipelineState,
         resume_from: str,
-    ) -> "tuple[Optional[List[str]], Optional[int]]":
+    ) -> Tuple[Optional[List[str]], Optional[int]]:
         """Compute the list of already-completed stages to skip on resume.
 
         Returns ``(skiplist, None)`` on success or ``(None,
@@ -566,7 +584,7 @@ class PipelineOrchestrator:
         *,
         stage_filter: str,
         input_model_override: Optional[str],
-    ) -> "tuple[Optional[str], Optional[int]]":
+    ) -> Tuple[Optional[str], Optional[int]]:
         """Validate ``--stage <name>`` + seed the auto-chain on a non-first stage.
 
         Returns ``(prev_output_for_filter, None)`` on success or
@@ -631,7 +649,7 @@ class PipelineOrchestrator:
         exit_code: int,
         state: PipelineState,
         worst_exit: int,
-    ) -> "tuple[int, Optional[str], bool, bool]":
+    ) -> Tuple[int, Optional[str], bool, bool]:
         """Persist + audit + webhook the outcome of a single executed stage.
 
         Returns ``(worst_exit, new_prev_output, chain_broken, should_break)``:
@@ -743,6 +761,18 @@ class PipelineOrchestrator:
         stage_state.finished_at = None
         stage_state.duration_seconds = None
         stage_state.output_model = None
+        # F-P2-FAB-07 follow-up: also clear metrics from a prior attempt.
+        # ``_run_single_stage`` only overwrites ``stage_state.metrics`` when
+        # ``_invoke_trainer`` returns a non-None ``TrainResult`` (success or
+        # an eval-gate failure that still produced a result). A resumed
+        # attempt that crashes before producing a result (missing-dependency
+        # ImportError, or an uncaught trainer exception) would otherwise
+        # leave the *previous* attempt's numeric metrics attached to a
+        # ``status: "failed"`` stage — and those stale numbers flow straight
+        # into pipeline_state.json and the Annex IV manifest
+        # (``generate_pipeline_manifest`` in compliance.py), misattributing
+        # eval results to a run that produced none.
+        stage_state.metrics = {}
         self._save_state(state)
 
         # ``--input-model`` attaches to a single filtered stage only.
@@ -936,6 +966,49 @@ class PipelineOrchestrator:
                 break
         return worst_exit
 
+    def _scan_output_dirs(self) -> List[_StageDirScanEntry]:
+        """Walk every stage, merging its config and tracking output_dir realpaths.
+
+        Single source of truth for the ``training.output_dir`` collision
+        scan.  :meth:`_check_output_dir_collisions` (``run()``'s
+        pre-flight) and :meth:`dry_run` previously reimplemented this
+        walk independently — same merge call, same ``seen_dirs`` map,
+        same ``os.path.realpath`` comparison — and had drifted into two
+        copies differing only in message formatting and merge-failure
+        handling (Phase 14 post-release review, finding 3). This method
+        is policy-free: it returns one :class:`_StageDirScanEntry` per
+        stage in stage order and leaves both message formatting and
+        merge-failure handling (skip-with-INFO vs. collect-as-error) to
+        the caller.
+        """
+        prev_output: Optional[str] = None
+        seen_dirs: Dict[str, str] = {}  # abs output_dir -> first stage that claimed it
+        entries: List[_StageDirScanEntry] = []
+        for stage in self.pipeline.stages:
+            try:
+                merged = merge_pipeline_stage_config(
+                    self.root_cfg,
+                    stage,
+                    prev_output_model=prev_output,
+                )
+            except Exception as exc:  # noqa: BLE001 — best-effort: this scan crosses Pydantic validation+runtime surfaces; callers either collect the failure as a report-everything validation error (dry_run) or skip it because it re-surfaces with full diagnostics on the per-stage run path (run()'s pre-flight) — either way this method just carries the exception, it does not decide.
+                entries.append(_StageDirScanEntry(stage_name=stage.name, merge_error=exc))
+                continue
+            # realpath (not abspath, F-P2-FAB-34): two stages whose output_dir
+            # strings alias the same directory through symlinks must collide
+            # like any other aliasing — abspath normalises lexically only and
+            # lets a symlinked second stage overwrite the first mid-run.
+            # Hardlink aliasing remains out of scope.
+            abs_out = os.path.realpath(merged.training.output_dir)
+            collides_with = seen_dirs.get(abs_out)
+            if collides_with is None:
+                seen_dirs[abs_out] = stage.name
+            entries.append(
+                _StageDirScanEntry(stage_name=stage.name, abs_output_dir=abs_out, collides_with=collides_with)
+            )
+            prev_output = os.path.join(merged.training.output_dir, "final_model")
+        return entries
+
     def _check_output_dir_collisions(self) -> Optional[str]:
         """Pre-flight: detect two stages writing to the same ``training.output_dir``.
 
@@ -946,49 +1019,30 @@ class PipelineOrchestrator:
         first running ``--dry-run`` could overwrite per-stage manifests
         and checkpoints across stages silently.  Now called from both
         :meth:`dry_run` and :meth:`run` so the guard is unmissable.
+
+        A merge failure is intentionally skipped here (logged at INFO,
+        was DEBUG — F-P2-FAB-35 — so an ``--log-level info`` run isn't
+        blind to a skipped pre-flight check) rather than surfaced as a
+        pre-flight error: it re-surfaces through the per-stage pipeline-
+        error path with full diagnostics, and the pre-flight's job is
+        scoped to ``output_dir`` layout only.
         """
-        prev_output: Optional[str] = None
-        seen_dirs: Dict[str, str] = {}
         collisions: List[str] = []
-        for stage in self.pipeline.stages:
-            try:
-                merged = merge_pipeline_stage_config(
-                    self.root_cfg,
-                    stage,
-                    prev_output_model=prev_output,
-                )
-            except Exception as exc:  # noqa: BLE001 — best-effort: pre-flight is scoped to output_dir layout; merge crosses Pydantic validation+runtime surfaces and re-surfaces with full diagnostics on the per-stage run path, so skip-with-INFO here rather than abort the layout check.
-                # Merge failures are intentionally skipped here because
-                # they re-surface through the per-stage pipeline-error
-                # path with full diagnostics — the pre-flight's job is
-                # scoped to ``output_dir`` layout only.  Codacy / bandit
-                # B112 flagged the bare ``continue`` as a silent-skip
-                # anti-pattern; log at INFO (was DEBUG, F-P2-FAB-35) so an
-                # ``--log-level info`` run isn't blind to a skipped
-                # pre-flight check without aborting on a by-design
-                # per-stage local failure.
+        for entry in self._scan_output_dirs():
+            if entry.merge_error is not None:
                 logger.info(
                     "Pre-flight skipped collision check for stage %r: merge raised %s (%s); "
                     "the per-stage run path will surface the same error.",
-                    stage.name,
-                    type(exc).__name__,
-                    exc,
+                    entry.stage_name,
+                    type(entry.merge_error).__name__,
+                    entry.merge_error,
                 )
                 continue
-            # realpath (not abspath, F-P2-FAB-34): two stages whose output_dir
-            # strings alias the same directory through symlinks must collide
-            # like any other aliasing — abspath normalises lexically only and
-            # lets a symlinked second stage overwrite the first mid-run.
-            # Hardlink aliasing remains out of scope.
-            abs_out = os.path.realpath(merged.training.output_dir)
-            if abs_out in seen_dirs:
+            if entry.collides_with is not None:
                 collisions.append(
-                    f"Stage {stage.name!r}: training.output_dir collides with stage "
-                    f"{seen_dirs[abs_out]!r} (both resolve to {abs_out!r})."
+                    f"Stage {entry.stage_name!r}: training.output_dir collides with stage "
+                    f"{entry.collides_with!r} (both resolve to {entry.abs_output_dir!r})."
                 )
-            else:
-                seen_dirs[abs_out] = stage.name
-            prev_output = os.path.join(merged.training.output_dir, "final_model")
         if collisions:
             return (
                 "Pre-flight: per-stage `training.output_dir` collision(s) detected; "
@@ -1116,38 +1170,25 @@ class PipelineOrchestrator:
         end up sharing the root's ``output_dir`` — that's the canonical
         misconfiguration this guard catches.
         """
+        # Report-everything pass (Phase 14 review F-G-1): unlike the
+        # pre-flight in ``_check_output_dir_collisions``, a merge failure
+        # here is collected as a validation error rather than skipped —
+        # dry-run's job is to enumerate every stage's problem in one pass,
+        # mirroring ``pytest --collectonly``. Comparing realpaths
+        # (F-P2-FAB-34) so ``./out`` and ``out/`` collide as one AND a
+        # symlinked alias is caught; hardlink aliasing remains out of scope.
         errors: List[str] = []
-        prev_output: Optional[str] = None
-        seen_dirs: Dict[str, str] = {}  # abs output_dir -> first stage that claimed it
-        for stage in self.pipeline.stages:
-            try:
-                merged = merge_pipeline_stage_config(
-                    self.root_cfg,
-                    stage,
-                    prev_output_model=prev_output,
-                )
-            except Exception as exc:  # noqa: BLE001 — best-effort: collect every per-stage validation error for a single operator report instead of stopping at the first.
-                errors.append(f"Stage {stage.name!r}: merge failed: {exc}")
+        for entry in self._scan_output_dirs():
+            if entry.merge_error is not None:
+                errors.append(f"Stage {entry.stage_name!r}: merge failed: {entry.merge_error}")
                 continue
-
-            # Collision check (Phase 14 review F-G-1): every stage must
-            # write its checkpoints + per-stage manifest into a distinct
-            # directory.  Comparing realpaths (F-P2-FAB-34) so ``./out`` and
-            # ``out/`` collide as one AND a symlinked alias is caught;
-            # hardlink aliasing remains out of scope.
-            abs_out = os.path.realpath(merged.training.output_dir)
-            if abs_out in seen_dirs:
+            if entry.collides_with is not None:
                 errors.append(
-                    f"Stage {stage.name!r}: training.output_dir collides with stage "
-                    f"{seen_dirs[abs_out]!r} (both resolve to {abs_out!r}); per-stage "
+                    f"Stage {entry.stage_name!r}: training.output_dir collides with stage "
+                    f"{entry.collides_with!r} (both resolve to {entry.abs_output_dir!r}); per-stage "
                     "checkpoints and manifests would overwrite each other.  Set a "
                     "unique 'training.output_dir' in each stage."
                 )
-            else:
-                seen_dirs[abs_out] = stage.name
-
-            # Project the output path the next stage would auto-chain to.
-            prev_output = os.path.join(merged.training.output_dir, "final_model")
 
         if errors:
             logger.error("Pipeline dry-run found %d stage error(s):", len(errors))

@@ -1426,6 +1426,61 @@ class TestReExecuteClearsStaleFields:
         assert dpo2["error"] is None, "stale error must be cleared on re-execution"
         assert dpo2["skipped_reason"] is None
 
+    def test_resumed_crashed_stage_clears_prior_metrics(self, tmp_path, monkeypatch):
+        """HIGH finding 2 (cli-pipeline wave 2): a resumed attempt that
+        crashes before ``_invoke_trainer`` produces a ``TrainResult``
+        must not carry the *previous* attempt's numeric ``metrics``
+        into ``pipeline_state.json`` or the Annex-IV manifest
+        (``generate_pipeline_manifest`` in ``forgelm/compliance.py``).
+
+        Pre-fix, ``_execute_one_stage``'s attempt-scoped reset block
+        cleared ``error`` / ``skipped_reason`` / ``gate_decision`` /
+        ``exit_code`` / etc. but not ``metrics`` — so a crash-on-resume
+        left the stale metrics from an earlier eval-gate-failed attempt
+        attached to a ``status: "failed"`` stage in both the state file
+        and the regulator-facing manifest, misattributing eval numbers
+        to a run that produced none.
+        """
+        cfg = _three_stage_config(tmp_path)
+        # First run: stage 2 (dpo_stage) fails an eval gate but still
+        # produces a TrainResult carrying non-empty metrics — this is
+        # the "prior attempt" whose numbers must not leak forward.
+        _install_trainer_mocks(
+            monkeypatch,
+            [
+                TrainResult(success=True),
+                TrainResult(success=False, error="Eval gate failed", metrics={"eval_loss": 1.23, "eval_acc": 0.5}),
+            ],
+        )
+        orch1 = PipelineOrchestrator(cfg, b"yaml bytes")
+        assert orch1.run() == EXIT_EVAL_FAILURE
+        with open(orch1.paths["state_file"]) as f:
+            payload1 = json.load(f)
+        dpo1 = next(s for s in payload1["stages"] if s["name"] == "dpo_stage")
+        assert dpo1["metrics"] == {"eval_loss": 1.23, "eval_acc": 0.5}, "sanity: first attempt recorded metrics"
+
+        # Resume from stage 2, but this attempt CRASHES before producing
+        # any TrainResult (``_invoke_trainer`` returns None) — no metrics
+        # were produced this attempt.
+        _install_crashing_trainer(monkeypatch, crash_on_stage_index=0, exc=RuntimeError("CUDA OOM on resume"))
+        orch2 = PipelineOrchestrator(cfg, b"yaml bytes")
+        assert orch2.run(resume_from="dpo_stage") == EXIT_TRAINING_ERROR
+
+        with open(orch2.paths["state_file"]) as f:
+            payload2 = json.load(f)
+        dpo2_state = next(s for s in payload2["stages"] if s["name"] == "dpo_stage")
+        assert dpo2_state["status"] == "failed"
+        assert dpo2_state["metrics"] == {}, (
+            f"stale metrics from the prior attempt leaked into the state file: {dpo2_state['metrics']!r}"
+        )
+
+        with open(orch2.paths["manifest_file"]) as f:
+            manifest2 = json.load(f)
+        dpo2_manifest = next(s for s in manifest2["stages"] if s["name"] == "dpo_stage")
+        assert dpo2_manifest["metrics"] == {}, (
+            f"stale metrics from the prior attempt leaked into the Annex-IV manifest: {dpo2_manifest['metrics']!r}"
+        )
+
 
 def _pipeline_args(**overrides):
     """Build an argparse-style namespace for run_pipeline_from_args."""

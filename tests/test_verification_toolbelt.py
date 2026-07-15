@@ -1035,3 +1035,344 @@ class TestVerificationToolbeltFacade:
             "VerifyIntegrityResult",
         ):
             assert hasattr(_cli_facade, name), f"forgelm.cli must re-export {name!r}"
+
+
+# ---------------------------------------------------------------------------
+# Wave 2 review — _audit_log_reader.py UTF-8-corruption handling
+# ---------------------------------------------------------------------------
+
+
+class TestAuditLogReaderUtf8Corruption:
+    """A non-UTF-8 line must be a controlled, per-line integrity failure
+    (skip + count in non-strict mode, ``AuditLogParseError`` in strict
+    mode) — not an uncaught ``UnicodeDecodeError`` crashing the generator.
+    Pre-fix, ``iter_audit_events`` opened the file in text mode
+    (``encoding="utf-8"``) so a corrupted line raised ``UnicodeDecodeError``
+    straight out of the ``for`` loop, uncaught by anything in this module
+    or by ``_approve.py``'s ``except AuditLogParseError`` decision-guard
+    handlers."""
+
+    def test_non_strict_skips_non_utf8_line_and_continues(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._audit_log_reader import iter_audit_events
+
+        path = tmp_path / "audit_log.jsonl"
+        path.write_bytes(b'{"event": "a", "run_id": "r1"}\n\xff\xfe not valid utf-8\n{"event": "b", "run_id": "r1"}\n')
+
+        events = [event for _line_no, event in iter_audit_events(str(path), strict=False)]
+        assert events == [
+            {"event": "a", "run_id": "r1"},
+            {"event": "b", "run_id": "r1"},
+        ]
+
+    def test_non_strict_logs_skip_count_for_non_utf8_line(self, tmp_path: Path, caplog) -> None:
+        from forgelm.cli.subcommands._audit_log_reader import iter_audit_events
+
+        path = tmp_path / "audit_log.jsonl"
+        path.write_bytes(b'{"event": "a", "run_id": "r1"}\n\xff\xfe not valid utf-8\n')
+
+        with caplog.at_level("WARNING", logger="forgelm.cli.audit_log_reader"):
+            list(iter_audit_events(str(path), strict=False))
+        assert any("Skipped 1 malformed line" in rec.message for rec in caplog.records)
+
+    def test_strict_raises_audit_log_parse_error_not_unicode_decode_error(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._audit_log_reader import (
+            AuditLogParseError,
+            iter_audit_events,
+        )
+
+        path = tmp_path / "audit_log.jsonl"
+        path.write_bytes(b'{"event": "a", "run_id": "r1"}\n\xff\xfe not valid utf-8\n')
+
+        with pytest.raises(AuditLogParseError) as ei:
+            list(iter_audit_events(str(path), strict=True))
+        assert ei.value.line_number == 2
+        assert "utf-8" in ei.value.reason.lower()
+        # AuditLogParseError IS a ValueError but must not itself be a
+        # UnicodeDecodeError — approve.py's guards only catch the former.
+        assert not isinstance(ei.value, UnicodeDecodeError)
+
+    def test_find_latest_event_for_run_surfaces_controlled_error_on_corruption(self, tmp_path: Path) -> None:
+        """The approve / reject decision-guard entry point (strict=True by
+        default) must raise the same controlled AuditLogParseError, since
+        it is what _approve.py's ``except AuditLogParseError`` handlers
+        catch to produce an actionable operator message instead of a bare
+        traceback."""
+        from forgelm.cli.subcommands._audit_log_reader import (
+            AuditLogParseError,
+            find_latest_event_for_run,
+        )
+
+        path = tmp_path / "audit_log.jsonl"
+        path.write_bytes(b"\xff\xfe corrupted line\n")
+
+        with pytest.raises(AuditLogParseError):
+            find_latest_event_for_run(str(path), run_id="r1", matches=lambda _e: True)
+
+
+# ---------------------------------------------------------------------------
+# Wave 2 review — `forgelm verify-audit` JSON output support
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyAuditJsonOutput:
+    """Pre-fix, ``_run_verify_audit_cmd`` never read ``output_format`` and
+    only ever printed plain text, silently ignoring a top-level
+    ``--output-format json`` flag and breaking the documented JSON
+    contract at ``docs/usermanuals/en/reference/json-output.md``."""
+
+    def _write_valid_chain(self, tmp_path: Path, *, n_events: int = 2) -> Path:
+        from forgelm.compliance import AuditLogger
+
+        logger = AuditLogger(str(tmp_path))
+        for i in range(n_events):
+            logger.log_event(f"test.event.{i}")
+        return tmp_path / "audit_log.jsonl"
+
+    def test_valid_chain_emits_documented_json_envelope(self, tmp_path: Path, capsys, monkeypatch) -> None:
+        from forgelm.cli._exit_codes import EXIT_SUCCESS
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        log_path = self._write_valid_chain(tmp_path)
+
+        args = _build_args(
+            log_path=str(log_path),
+            hmac_secret_env="FORGELM_AUDIT_SECRET",
+            require_hmac=False,
+            output_format="json",
+        )
+        exit_code = _run_verify_audit_cmd(args)
+        assert exit_code == EXIT_SUCCESS
+
+        out = capsys.readouterr().out
+        payload = json.loads(out)
+        # Exact shape per docs/usermanuals/en/reference/json-output.md's
+        # "forgelm verify-audit" section.
+        assert payload == {
+            "success": True,
+            "valid": True,
+            "entries_count": 2,
+            "hmac_verified": None,  # no --hmac-secret-env value configured
+            "errors": [],
+        }
+        assert out.startswith("{\n"), "JSON envelope should use indent=2 like sibling verify-* subcommands"
+
+    def test_hmac_verified_true_when_secret_configured_and_chain_valid(
+        self, tmp_path: Path, capsys, monkeypatch
+    ) -> None:
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+
+        monkeypatch.setenv("FORGELM_AUDIT_SECRET", "x" * 40)
+        log_path = self._write_valid_chain(tmp_path, n_events=1)
+
+        args = _build_args(
+            log_path=str(log_path),
+            hmac_secret_env="FORGELM_AUDIT_SECRET",
+            require_hmac=False,
+            output_format="json",
+        )
+        _run_verify_audit_cmd(args)
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["hmac_verified"] is True
+
+    def test_tampered_chain_reports_errors_list_and_config_error_exit(
+        self, tmp_path: Path, capsys, monkeypatch
+    ) -> None:
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        log_path = self._write_valid_chain(tmp_path)
+
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+        entry = json.loads(lines[1])
+        entry["prev_hash"] = "0" * 64  # break the chain at line 2
+        lines[1] = json.dumps(entry)
+        log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        args = _build_args(
+            log_path=str(log_path),
+            hmac_secret_env="FORGELM_AUDIT_SECRET",
+            require_hmac=False,
+            output_format="json",
+        )
+        exit_code = _run_verify_audit_cmd(args)
+        assert exit_code == EXIT_CONFIG_ERROR
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert payload["valid"] is False
+        assert payload["entries_count"] == 2
+        assert len(payload["errors"]) == 1
+        assert "line 2" in payload["errors"][0]
+
+    def test_missing_log_file_emits_json_error_envelope(self, tmp_path: Path, capsys) -> None:
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+
+        args = _build_args(
+            log_path=str(tmp_path / "missing.jsonl"),
+            hmac_secret_env="FORGELM_AUDIT_SECRET",
+            require_hmac=False,
+            output_format="json",
+        )
+        exit_code = _run_verify_audit_cmd(args)
+        assert exit_code == EXIT_CONFIG_ERROR
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert "audit log not found" in payload["error"]
+
+    def test_text_mode_output_unchanged_when_output_format_absent(self, tmp_path: Path, capsys) -> None:
+        """Backward-compat: an ``args`` namespace with no ``output_format``
+        attribute at all (the shape produced by the verify-audit subparser
+        today, since it registers no ``--output-format`` flag) must still
+        print the original plain-text line, not JSON."""
+        from forgelm.cli._exit_codes import EXIT_SUCCESS
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+
+        log_path = self._write_valid_chain(tmp_path, n_events=1)
+        args = _build_args(
+            log_path=str(log_path),
+            hmac_secret_env="FORGELM_AUDIT_SECRET",
+            require_hmac=False,
+        )
+        exit_code = _run_verify_audit_cmd(args)
+        assert exit_code == EXIT_SUCCESS
+        out = capsys.readouterr().out
+        assert out.startswith("OK: 1 entries verified")
+
+
+# ---------------------------------------------------------------------------
+# Wave 2 review — verify-annex-iv UnicodeDecodeError + JSON indent hygiene
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyAnnexIvUtf8CorruptionAndJsonIndent:
+    def test_non_utf8_file_exits_config_error_not_traceback(self, tmp_path: Path, capsys) -> None:
+        from forgelm.cli.subcommands._verify_annex_iv import _run_verify_annex_iv_cmd
+
+        path = tmp_path / "annex_iv.json"
+        path.write_bytes(b'{"system_identification": {\xff\xfe not valid utf-8')
+
+        args = _build_args(path=str(path))
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_annex_iv_cmd(args, output_format="json")
+        assert ei.value.code == 1
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert "utf-8" in payload["error"].lower()
+
+    def test_non_utf8_file_text_mode_does_not_raise(self, tmp_path: Path, capsys) -> None:
+        from forgelm.cli.subcommands._verify_annex_iv import _run_verify_annex_iv_cmd
+
+        path = tmp_path / "annex_iv.json"
+        path.write_bytes(b"\xff\xfe not valid utf-8 at all")
+
+        args = _build_args(path=str(path))
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_annex_iv_cmd(args, output_format="text")
+        assert ei.value.code == 1
+
+    def test_error_envelope_uses_indent_two_like_success_envelope(self, tmp_path: Path, capsys) -> None:
+        """Finding 4: the error envelope was emitted with no indent while
+        the success envelope (and sibling verify-gguf/verify-integrity
+        copies of this helper) use indent=2 — assert the branches now
+        agree."""
+        from forgelm.cli.subcommands._verify_annex_iv import _run_verify_annex_iv_cmd
+
+        args = _build_args(path=str(tmp_path / "missing.json"))
+        with pytest.raises(SystemExit):
+            _run_verify_annex_iv_cmd(args, output_format="json")
+        out = capsys.readouterr().out
+        assert out.startswith("{\n"), "error envelope must be indent=2 like the success envelope"
+
+
+# ---------------------------------------------------------------------------
+# Wave 2 review — verify-gguf / verify-integrity UnicodeDecodeError handling
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyGgufUtf8Corruption:
+    """A non-UTF-8 ``<model>.gguf.sha256`` sidecar must map to the
+    documented ``EXIT_CONFIG_ERROR (1)`` with the JSON error envelope, not
+    crash with a raw traceback.  Pre-fix, ``_run_verify_gguf_cmd``'s except
+    chain caught only ``(FileNotFoundError, IsADirectoryError)`` and
+    ``OSError``; ``UnicodeDecodeError`` (a ``ValueError`` subclass) from the
+    sidecar text read escaped uncaught."""
+
+    def test_non_utf8_sidecar_exits_config_error_json_envelope(self, tmp_path: Path, capsys, monkeypatch) -> None:
+        _stub_metadata_parse(monkeypatch)
+        from forgelm.cli.subcommands._verify_gguf import _run_verify_gguf_cmd
+
+        path = tmp_path / "model.gguf"
+        _make_minimal_gguf(path)
+        # Sidecar with invalid UTF-8 bytes (disk corruption / binary paste).
+        (tmp_path / "model.gguf.sha256").write_bytes(b"\xff\xfe not valid utf-8")
+
+        args = _build_args(path=str(path))
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_gguf_cmd(args, output_format="json")
+        assert ei.value.code == 1
+
+        out = capsys.readouterr().out
+        payload = json.loads(out)
+        assert payload["success"] is False
+        assert "utf-8" in payload["error"].lower()
+        assert out.startswith("{\n"), "error envelope must be indent=2 like the result envelope"
+
+    def test_non_utf8_sidecar_text_mode_does_not_traceback(self, tmp_path: Path, monkeypatch) -> None:
+        _stub_metadata_parse(monkeypatch)
+        from forgelm.cli.subcommands._verify_gguf import _run_verify_gguf_cmd
+
+        path = tmp_path / "model.gguf"
+        _make_minimal_gguf(path)
+        (tmp_path / "model.gguf.sha256").write_bytes(b"\xff\xfe")
+
+        args = _build_args(path=str(path))
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_gguf_cmd(args, output_format="text")
+        assert ei.value.code == 1
+
+
+class TestVerifyIntegrityUtf8Corruption:
+    """A non-UTF-8 ``model_integrity.json`` must map to the documented
+    ``EXIT_CONFIG_ERROR (1)`` with the JSON error envelope, not crash with a
+    raw traceback.  Pre-fix, ``_run_verify_integrity_cmd``'s except chain
+    handled ``FileNotFoundError`` / ``JSONDecodeError`` / ``IsADirectoryError``
+    / ``NotADirectoryError`` / ``OSError`` but not ``UnicodeDecodeError``
+    (a ``ValueError`` subclass) from the manifest text read."""
+
+    def test_non_utf8_manifest_exits_config_error_json_envelope(self, tmp_path: Path, capsys) -> None:
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        (model_dir / "model.safetensors").write_bytes(b"weights-v1")
+        # Corrupt manifest: valid JSON prefix followed by invalid UTF-8 bytes
+        # so the failure is the decode, not json parsing.
+        (model_dir / "model_integrity.json").write_bytes(b'{"artifacts": [\xff\xfe]}')
+
+        args = _build_args(path=str(model_dir))
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_integrity_cmd(args, output_format="json")
+        assert ei.value.code == 1
+
+        out = capsys.readouterr().out
+        payload = json.loads(out)
+        assert payload["success"] is False
+        assert "utf-8" in payload["error"].lower()
+        assert out.startswith("{\n"), "error envelope must be indent=2 like the result envelope"
+
+    def test_non_utf8_manifest_text_mode_does_not_traceback(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        (model_dir / "model_integrity.json").write_bytes(b"\xff\xfe not valid utf-8")
+
+        args = _build_args(path=str(model_dir))
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_integrity_cmd(args, output_format="text")
+        assert ei.value.code == 1

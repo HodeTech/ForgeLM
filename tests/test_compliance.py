@@ -899,6 +899,7 @@ class TestSafetyClassifierLoadFailureAudit:
 class TestHFRevisionPin:
     """F-compliance-117: dataset fingerprint pins HF Hub revision SHA."""
 
+    @pytest.mark.real_fingerprint
     def test_hf_revision_pinned_in_fingerprint(self, monkeypatch):
         # Simulate ``huggingface_hub.HfApi().dataset_info`` returning a
         # commit-pinned info object. We patch the import target so the

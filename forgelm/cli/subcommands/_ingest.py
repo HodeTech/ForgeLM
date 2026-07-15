@@ -188,24 +188,34 @@ def _run_ingest_cmd(args, output_format: str) -> None:
             log_prefix="Strip-pattern rejected: %s",
         )
     except (
-        FileNotFoundError,  # NOSONAR — OSError subclass; listed explicitly so the error type is visible to readers
+        FileNotFoundError,  # NOSONAR — OSError subclass; caught before bare OSError so a bad --input path stays a config error
         ValueError,
-        PermissionError,  # NOSONAR — OSError subclass; listed explicitly so the error type is visible to readers
-        IsADirectoryError,  # NOSONAR — OSError subclass; listed explicitly so the error type is visible to readers
-        OSError,
     ) as exc:
-        # FileNotFoundError / PermissionError / IsADirectoryError are all
-        # OSError subclasses, but listed explicitly so the error class is
-        # visible to readers; OSError covers ENOSPC, broken-symlink walk
-        # failures, and locked-file open() errors that would otherwise leak
-        # through with a confusing traceback. ValueError stays first because
-        # ingest_path raises it for invalid chunking parameters before any
-        # filesystem access.
+        # Operator-input errors → EXIT_CONFIG_ERROR ("fix your invocation").
+        # FileNotFoundError = missing --input path; ValueError (incl. the
+        # IngestParameterError / StripPatternError subclasses) = invalid
+        # chunking / page-range / strip-pattern parameters. FileNotFoundError
+        # is listed before the bare-OSError clause below so it routes here,
+        # not to the runtime bucket.
         _emit_error_and_exit(
             exc,
             output_format=output_format,
             exit_code=EXIT_CONFIG_ERROR,
             log_prefix="Ingest failed: %s",
+        )
+    except OSError as exc:
+        # Runtime / environment I/O failure → EXIT_TRAINING_ERROR so CI/CD
+        # retry logic treats it like other mid-run crashes rather than a
+        # fix-the-YAML config error. This bucket is ENOSPC surfacing from the
+        # atomic mid-write, PermissionError / IsADirectoryError on --output's
+        # parent, locked-file open() errors, and broken-symlink walk failures
+        # — none of which the operator fixes by editing parameters. Matches
+        # the exit-code contract table (2 = crashed/failed mid-run).
+        _emit_error_and_exit(
+            exc,
+            output_format=output_format,
+            exit_code=EXIT_TRAINING_ERROR,
+            log_prefix="Ingest failed (I/O): %s",
         )
     except OptionalDependencyError as exc:
         # Catch the narrow optional-extras subclass only.  Plain ``ImportError``
