@@ -361,7 +361,7 @@ ForgeLM is a single-node CLI; availability is dominantly deployer-side.
 | P4.1 Use, retention, and disposal | `retention.staging_ttl_days` (canonical; legacy alias `evaluation.staging_ttl_days` forwards transparently during the v0.5.5 → v0.6.x deprecation window) + `forgelm purge --check-policy` retention audit |
 | P5.1 Access | `forgelm reverse-pii` Article 15 scan; salted query-hash in audit |
 | P5.2 Inquiries and complaints | (Deployer-side workflow) |
-| P6.1 Disclosure to third parties | `safe_post` webhook discipline; HMAC payload signing |
+| P6.1 Disclosure to third parties | `safe_post` webhook discipline (TLS + URL-secrecy); HMAC payload signing not yet implemented (Phase 28+ backlog) — destination-side authenticity is the receiving system's responsibility |
 | P6.2 Third-party agreements | (Deployer DPAs) |
 | P7.1 Breach notification | `data.erasure_failed`, `audit.classifier_load_failed` events feed breach-detection |
 | P7.2 Breach disclosure | (Deployer regulator-contact playbook) |
@@ -562,7 +562,7 @@ template:
 | R-04 | Audit-log tampering | Low | High | Append-only + HMAC + manifest sidecar; `forgelm verify-audit` | Low |
 | R-05 | Memorisation of removed PII (Article 17) | High | Med | `data.erasure_warning_memorisation` flag; `forgelm safety-eval` post-erasure | Med |
 | R-06 | Safety-classifier load failure | Med | High | F-compliance-110 strict gate raises `ConfigError`; `audit.classifier_load_failed` event | Low |
-| R-07 | Webhook SSRF / data exfiltration | Low | Med | `safe_post` SSRF guard; HTTPS-only; HMAC sign | Low |
+| R-07 | Webhook SSRF / data exfiltration | Low | Med | `safe_post` SSRF guard; HTTPS-only; URL-secrecy via `url_env` (no HMAC body signing — Phase 28+ backlog) | Low |
 | R-08 | ReDoS via `--type custom` regex | Low | Low | POSIX SIGALRM 30s budget in `_scan_file_with_alarm` | Low |
 | R-09 | Cross-tool digest mismatch (purge vs reverse-pii) | Low | Med | Salted-SHA-256 reuse via `_resolve_salt`; `salt_source` in audit | Low |
 | R-10 | Unauthorised model deployment | Med | High | `evaluation.require_human_approval` Article 14 gate; staging dir | Low |

@@ -106,7 +106,7 @@ SoA'sının uçtan uca auditable olması için tamlık adına listelenmiştir.
 | A.8.6 Kapasite yönetimi | FL-helps | `forgelm doctor` resource report; `resource_usage` manifest block |
 | A.8.7 Kötü amaçlı yazılıma karşı koruma | OOS | — |
 | A.8.8 Teknik zafiyetlerin yönetimi | FL-helps | SBOM; `pip-audit` nightly; `bandit` CI |
-| A.8.9 Yapılandırma yönetimi | FL | YAML Pydantic ile valide (`extra="forbid"` her config bloğunda); `forgelm --dry-run` eğitim yapmadan resolve + valide eder; `pipeline.training_started` audit event'lerinde pinned model + adapter SHA'ları |
+| A.8.9 Yapılandırma yönetimi | FL | YAML Pydantic ile valide (`extra="forbid"` her config bloğunda); `forgelm --dry-run` eğitim yapmadan resolve + valide eder; koşum başına `config_hash` (bkz. `compute_config_hash`) `training_manifest.yaml`'a, `human_approval.required` audit event'ine ve JSON çıktı zarfına bağlanır; `model_integrity.json`'da (`model.integrity_verified` audit event) çıktı artefaktlarının SHA-256 hash'leri |
 | A.8.10 Bilgi silme | FL | `forgelm purge` Madde 17; salted-hash audit; `data.erasure_warning_memorisation` |
 | A.8.11 Veri maskeleme | FL | `forgelm audit` regex + Presidio ML-NER |
 | A.8.12 Veri sızıntısı önleme | FL | `forgelm reverse-pii` plaintext residual scan |
@@ -129,7 +129,7 @@ SoA'sının uçtan uca auditable olması için tamlık adına listelenmiştir.
 | A.8.29 Geliştirme ve kabul aşamasında güvenlik testi | FL-helps | `pytest` ~1493 test; `bandit` static analysis |
 | A.8.30 Dış kaynaklı geliştirme | OOS | — |
 | A.8.31 Geliştirme, test ve üretim ortamlarının ayrılması | FL-helps | `forgelm --dry-run`; staging dir |
-| A.8.32 Değişim yönetimi | FL | `human_approval.required/granted/rejected` audit zinciri; promotion'a kadar staging snapshot saklanır; `pipeline.training_started` diff için run-pinned model ve adapter revision'larını kaydeder |
+| A.8.32 Değişim yönetimi | FL | `human_approval.required/granted/rejected` audit zinciri; promotion'a kadar staging snapshot saklanır; `model_integrity.json`'daki (`model.integrity_verified` audit event) SHA-256 artefakt hash'leri `forgelm verify-integrity`'nin terfi edilmiş bir modeli kayıtlı manifest'ine karşı diff'lemesini sağlar — not: ForgeLM bugün upstream temel-model Hub revision SHA'sını pin'lemez, yalnızca config kimliğini (`config_hash`) ve çıktı artefaktlarını pin'ler |
 | A.8.33 Test bilgisi | FL-helps | `forgelm audit` test setlerinde de PII / secrets'i flag eder |
 | A.8.34 Denetim testi sırasında bilgi sistemlerinin korunması | OOS | — |
 

@@ -34,7 +34,7 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 | `safety.evaluation_completed`    | Güvenlik değerlendirmesi bitti (Llama Guard / ShieldGemma koşusu).             | `passed`, `safe_ratio`, `total_count`, `safety_score`, `categories` | 15 |
 | `judge.evaluation_completed`     | LLM-as-judge skorlaması bitti.                                                  | `passed`, `average_score`                       | 15 |
 | `evaluation.loss_gate_completed` | Kayıp/eval-loss otomatik geri-alma kapısı yapılandırılmış eşiklere göre karar verdi (geçti veya kaldı). | `passed`, `eval_loss`, `max_acceptable_loss`, `baseline_loss` | 15 |
-| `pipeline.completed`       | Uçtan uca CLI koşusu (eğitim + değerlendirme + dışa aktarma) 0 koduyla biter.   | `success`, `metrics_summary`                                                       | 12    |
+| `pipeline.completed`       | Uçtan uca CLI koşusu (eğitim + değerlendirme + dışa aktarma) 0 koduyla biter. Çok-aşamalı pipeline orkestratörü (`_finalise_pipeline`) tarafından da **yapısal olarak farklı bir payload** ile yayılır — bir parser `success` alanının her zaman mevcut olduğunu varsaymamalı. | tek-aşamalı: `success`, `metrics_summary`; çok-aşamalı orkestratör: `pipeline_run_id`, `final_status`, `stopped_at` (`success` anahtarı yok) | 12    |
 | `pipeline.failed`          | Pipeline tamamlanmadan bir hata ile iptal olur.                                 | `error`                                                                            | 12    |
 | `pipeline.started`         | Çok-aşamalı pipeline orchestrator yeni bir koşu başlattı (`--resume-from` değil). | `pipeline_run_id`, `config_hash`, `stage_count`, `stage_names`                   | 12    |
 | `pipeline.force_resume`    | `--resume-from`, saklanan config-hash uyuşmazlığını `--force-resume` ayarlı olduğu için geçti. | `pipeline_run_id`, `old_config_hash`, `new_config_hash`            | 12    |
@@ -48,7 +48,7 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 
 | Event                        | Ne zaman emit edilir                                                                                             | Payload                                              | Madde |
 |------------------------------|-------------------------------------------------------------------------------------------------------------------|------------------------------------------------------|-------|
-| `human_approval.required`    | `requires_human_approval: true` işaretli bir kapı pipeline'ı duraklatıp operatör kararını bekler.                | `gate`, `reason`, `metrics`, `staging_path`, `run_id`                    | 14    |
+| `human_approval.required`    | `requires_human_approval: true` işaretli bir kapı pipeline'ı duraklatıp operatör kararını bekler.                | `gate`, `reason`, `metrics`, `staging_path`, `run_id`, `config_hash`                    | 14    |
 | `human_approval.granted`     | Operatör duraklatılan kapıyı `forgelm approve` ile onayladı.                                                     | `gate`, `approver`, `comment`, `run_id`, `promote_strategy`              | 14    |
 | `human_approval.rejected`    | Operatör duraklatılan kapıyı `forgelm reject` ile reddetti.                                                      | `gate`, `approver`, `comment`, `run_id`, `staging_path`                  | 14    |
 
@@ -100,8 +100,7 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 
 ### CLI / göç
 
-| Event                       | Ne zaman emit edilir                                                                                  | Payload                          | Madde |
-|-----------------------------|--------------------------------------------------------------------------------------------------------|----------------------------------|-------|
+_Ayrılmış ad alanı — `cli`, tanınan bir event-namespace önekidir (aşağıdaki "Yeni bir event eklemek" bölümüne bakın), ancak `forgelm/` içindeki hiçbir kod şu anda bir `cli.*` event'i emit etmiyor. Bu bölüme henüz satır eklenmedi._
 
 ### Audit-sistem event'leri (meta)
 
@@ -196,8 +195,9 @@ ihtiyaç duyan olaylarda doldurulur. `attachments`, Slack uyumlu blok'tur
 3. **Model ağırlıkları yok.** `approval.required` yalnızca staging
    dosya sistemi yolunu taşır. Ağırlıklar diskte kalır; o dizini zaten
    operatör kontrol eder.
-4. **Webhook URL'si sızdırılmaz.** URL'ler günlüklerde maskelenir
-   (`scheme://host/<ilk-segment>/...`) ve 2xx olmayan yanıt gövdesi
+4. **Webhook URL'si sızdırılmaz.** URL'ler günlüklerde `scheme://host`'a
+   maskelenir (userinfo, path ve query tamamen atılır — bkz. `_mask_netloc`,
+   [`forgelm/_http.py`](../../forgelm/_http.py)) ve 2xx olmayan yanıt gövdesi
    bastırılır.
 5. **SSRF koruması.** `webhook.allow_private_destinations=true`
    ayarlanmadığı sürece özel / loopback / link-local hedefler

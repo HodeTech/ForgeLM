@@ -320,3 +320,259 @@ class TestExportModel:
             assert "Unsupported quantisation" not in (result.error or ""), (
                 f"Export failed quant validation for {quant}: {result.error}"
             )
+
+    def _stub_llama_cpp(self, tmp_path):
+        """Place a converter script inside a stub llama_cpp package + return it."""
+        llama_cpp_stub = MagicMock()
+        pkg_dir = str(tmp_path / "llama_cpp")
+        os.makedirs(pkg_dir, exist_ok=True)
+        llama_cpp_stub.__file__ = os.path.join(pkg_dir, "__init__.py")
+        open(os.path.join(pkg_dir, "convert_hf_to_gguf.py"), "w").close()
+        return llama_cpp_stub
+
+    def test_kquant_request_carries_structured_substitution_signal(self, tmp_path):
+        """F2 (HIGH) regression: a K-quant request (incl. the CLI default
+        q4_k_m) is silently produced as f16. ExportResult must carry a
+        machine-readable substitution signal so a CI/CD JSON consumer can
+        detect it did not get the artifact it asked for without scraping the
+        warning out of the log stream."""
+        output_path, fake_run = self._mock_successful_conversion(tmp_path)
+        llama_cpp_stub = self._stub_llama_cpp(tmp_path)
+
+        with patch.dict(sys.modules, {"llama_cpp": llama_cpp_stub}):
+            with patch("subprocess.run", side_effect=fake_run):
+                result = export_model(
+                    str(tmp_path / "model"),
+                    output_path,
+                    quant="q4_k_m",
+                    update_integrity=False,
+                )
+
+        assert result.success is True
+        # The file actually written is f16 …
+        assert result.quant == "f16"
+        # … but the structured signal records the K-quant the operator asked for
+        # plus the exact follow-up command to complete it.
+        assert result.requested_quant == "q4_k_m"
+        assert result.manual_step_required is True
+        assert result.followup_command is not None
+        assert "llama-quantize" in result.followup_command
+        assert "Q4_K_M" in result.followup_command
+
+    def test_direct_quant_has_no_substitution_signal(self, tmp_path):
+        """A quant convert_hf_to_gguf.py emits directly (q8_0) must report no
+        substitution: requested_quant == quant, no manual step, no follow-up."""
+        output_path, fake_run = self._mock_successful_conversion(tmp_path)
+        llama_cpp_stub = self._stub_llama_cpp(tmp_path)
+
+        with patch.dict(sys.modules, {"llama_cpp": llama_cpp_stub}):
+            with patch("subprocess.run", side_effect=fake_run):
+                result = export_model(
+                    str(tmp_path / "model"),
+                    output_path,
+                    quant="q8_0",
+                    update_integrity=False,
+                )
+
+        assert result.success is True
+        assert result.quant == "q8_0"
+        assert result.requested_quant == "q8_0"
+        assert result.manual_step_required is False
+        assert result.followup_command is None
+
+    def test_timeout_seconds_forwarded_to_converter_subprocess(self, tmp_path):
+        """F6: the converter subprocess timeout is configurable via
+        export_model(timeout_seconds=...) instead of a hardcoded 3600s."""
+        output_path = str(tmp_path / "model.gguf")
+        llama_cpp_stub = self._stub_llama_cpp(tmp_path)
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["timeout"] = kwargs.get("timeout")
+            actual = cmd[cmd.index("--outfile") + 1]
+            with open(actual, "wb") as f:
+                f.write(b"gguf")
+            m = MagicMock()
+            m.returncode = 0
+            m.stderr = ""
+            m.stdout = ""
+            return m
+
+        with patch.dict(sys.modules, {"llama_cpp": llama_cpp_stub}):
+            with patch("subprocess.run", side_effect=fake_run):
+                result = export_model(
+                    str(tmp_path / "model"),
+                    output_path,
+                    quant="q8_0",
+                    update_integrity=False,
+                    timeout_seconds=123,
+                )
+
+        assert result.success is True
+        assert captured["timeout"] == 123
+
+    def test_creates_missing_output_parent_directory(self, tmp_path):
+        """F7: export_model must create the output file's parent directory
+        before invoking the converter (parity with _merge_adapter), so a
+        not-yet-created ./exports/ dir does not surface as an opaque converter
+        stderr failure."""
+        nested_output = str(tmp_path / "exports" / "sub" / "model.gguf")
+        assert not os.path.isdir(os.path.dirname(nested_output))
+        llama_cpp_stub = self._stub_llama_cpp(tmp_path)
+
+        def fake_run(cmd, **kwargs):
+            actual = cmd[cmd.index("--outfile") + 1]
+            # The parent must already exist by the time the converter runs.
+            assert os.path.isdir(os.path.dirname(actual))
+            with open(actual, "wb") as f:
+                f.write(b"gguf")
+            m = MagicMock()
+            m.returncode = 0
+            m.stderr = ""
+            m.stdout = ""
+            return m
+
+        with patch.dict(sys.modules, {"llama_cpp": llama_cpp_stub}):
+            with patch("subprocess.run", side_effect=fake_run):
+                result = export_model(str(tmp_path / "model"), nested_output, quant="q8_0", update_integrity=False)
+
+        assert result.success is True
+        assert os.path.isfile(nested_output)
+
+
+# ---------------------------------------------------------------------------
+# export_model — adapter merge path (routed coverage: tests-standalone)
+# ---------------------------------------------------------------------------
+
+
+class TestExportModelAdapter:
+    """The adapter-merge export path — ``_merge_adapter``, the ``merged_dir``
+    construction/cleanup, and the merge-failure ``except`` branch — had zero
+    test coverage. Mirrors the mocked-peft/transformers pattern used in
+    tests/test_inference.py::TestLoadModel.test_adapter_is_merged."""
+
+    def _stub_llama_cpp(self, tmp_path):
+        llama_cpp_stub = MagicMock()
+        pkg_dir = str(tmp_path / "llama_cpp")
+        os.makedirs(pkg_dir, exist_ok=True)
+        llama_cpp_stub.__file__ = os.path.join(pkg_dir, "__init__.py")
+        open(os.path.join(pkg_dir, "convert_hf_to_gguf.py"), "w").close()
+        return llama_cpp_stub
+
+    def test_adapter_merged_then_converted_and_cleaned_up(self, tmp_path):
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        adapter_dir = tmp_path / "adapter"
+        adapter_dir.mkdir()
+        output_path = str(tmp_path / "out.gguf")
+        merged_dir = str(model_dir) + "_merged_for_export"
+
+        llama_cpp_stub = self._stub_llama_cpp(tmp_path)
+        torch_stub = MagicMock()
+        transformers_stub = MagicMock()
+        peft_stub = MagicMock()
+
+        def fake_run(cmd, **kwargs):
+            # The converter must be pointed at the merged dir (source_path),
+            # proving the merge-then-convert wiring, and that dir must exist.
+            assert cmd[2] == merged_dir
+            assert os.path.isdir(merged_dir)
+            actual = cmd[cmd.index("--outfile") + 1]
+            with open(actual, "wb") as f:
+                f.write(b"gguf")
+            m = MagicMock()
+            m.returncode = 0
+            m.stderr = ""
+            m.stdout = ""
+            return m
+
+        mods = {
+            "llama_cpp": llama_cpp_stub,
+            "torch": torch_stub,
+            "transformers": transformers_stub,
+            "peft": peft_stub,
+        }
+        with patch.dict(sys.modules, mods):
+            with patch("subprocess.run", side_effect=fake_run):
+                result = export_model(
+                    str(model_dir),
+                    output_path,
+                    quant="q8_0",
+                    adapter=str(adapter_dir),
+                    update_integrity=False,
+                )
+
+        assert result.success is True
+        peft_stub.PeftModel.from_pretrained.assert_called_once()
+        # Temporary merged dir cleaned up after a successful conversion.
+        assert not os.path.isdir(merged_dir)
+
+    def test_adapter_merged_dir_cleaned_up_on_converter_failure(self, tmp_path):
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        adapter_dir = tmp_path / "adapter"
+        adapter_dir.mkdir()
+        output_path = str(tmp_path / "out.gguf")
+        merged_dir = str(model_dir) + "_merged_for_export"
+
+        llama_cpp_stub = self._stub_llama_cpp(tmp_path)
+        mods = {
+            "llama_cpp": llama_cpp_stub,
+            "torch": MagicMock(),
+            "transformers": MagicMock(),
+            "peft": MagicMock(),
+        }
+
+        def failing_run(cmd, **kwargs):
+            assert os.path.isdir(merged_dir)  # merge happened first
+            m = MagicMock()
+            m.returncode = 1
+            m.stderr = "boom"
+            m.stdout = ""
+            return m
+
+        with patch.dict(sys.modules, mods):
+            with patch("subprocess.run", side_effect=failing_run):
+                result = export_model(
+                    str(model_dir),
+                    output_path,
+                    quant="q8_0",
+                    adapter=str(adapter_dir),
+                    update_integrity=False,
+                )
+
+        assert result.success is False
+        # The finally-block cleanup must remove the merged dir even on failure.
+        assert not os.path.isdir(merged_dir)
+
+    def test_adapter_merge_failure_returns_actionable_error(self, tmp_path):
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        adapter_dir = tmp_path / "adapter"
+        adapter_dir.mkdir()
+        output_path = str(tmp_path / "out.gguf")
+
+        llama_cpp_stub = self._stub_llama_cpp(tmp_path)
+        transformers_stub = MagicMock()
+        transformers_stub.AutoModelForCausalLM.from_pretrained.side_effect = RuntimeError("dtype mismatch")
+        mods = {
+            "llama_cpp": llama_cpp_stub,
+            "torch": MagicMock(),
+            "transformers": transformers_stub,
+            "peft": MagicMock(),
+        }
+
+        with patch.dict(sys.modules, mods):
+            with patch("subprocess.run") as run_mock:
+                result = export_model(
+                    str(model_dir),
+                    output_path,
+                    quant="q8_0",
+                    adapter=str(adapter_dir),
+                    update_integrity=False,
+                )
+                # Merge fails before the converter runs.
+                run_mock.assert_not_called()
+
+        assert result.success is False
+        assert "Adapter merge failed" in result.error

@@ -59,14 +59,19 @@ lora:
   r: 16
   alpha: 32
   dropout: 0.05
-  use_dora: false                       # DoRA için true
+  method: "lora"                        # lora | dora | pissa | rslora
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
-  modules_to_save: []                   # full-precision modüller (ör. embedding)
 
 training:
   trainer_type: "sft"
   learning_rate: 2.0e-4                 # LoRA full FT'den yüksek LR tolere eder
 ```
+
+## PEFT yöntemi seçimi
+
+`lora.method`, hangi PEFT varyantının kullanılacağını seçen güncel alandır: `lora` (standart), `dora` (weight-decomposed, aşağıya bakın), `pissa` (principal singular bileşenlerden başlatılan LoRA — küçük dataset'lerde daha hızlı yakınsama) veya `rslora` (rank-stabilised scaling — `r ≥ 64`'te daha kararlı).
+
+`use_dora` ve `use_rslora`, `method: "dora"` / `method: "rslora"` için deprecated boolean kısayollardır — hâlâ kabul edilir, ancak **v0.10.0**'da kaldırılması planlanmıştır. Deprecated bir bayrağı çelişen açık bir `method:` ile birlikte ayarlamak (ör. `method: "rslora"` ile `use_dora: true`) bir config hatasıdır; `use_dora: true` ve `use_rslora: true`'yu birlikte ayarlamak da reddedilir — tek bir yol seçin. PiSSA'nın boolean karşılığı yoktur; yalnızca `method: "pissa"` ile seçilir.
 
 ## `r` rank seçimi
 
@@ -104,7 +109,7 @@ DoRA her ağırlığı magnitude vektörü ve direction matrisine ayırır. Empi
 lora:
   r: 16
   alpha: 32
-  use_dora: true
+  method: "dora"
 ```
 
 Ödünleşim: ~%5-10 yavaş eğitim ve ~%10 fazla VRAM. Kullan:
@@ -114,15 +119,11 @@ lora:
 ## Sık hatalar
 
 :::warn
-**`r`'yi çok yüksek ayarlamak.** Rank 128 LoRA compute ve kalite olarak kısmi full fine-tune'a yakın — ve genelde daha küçük model + full FT daha iyi. `r > 64` sürekli geliyorsa yaklaşımı yeniden düşünün.
+**`r`'yi çok yüksek ayarlamak.** Rank 128 LoRA compute ve kalite olarak kısmi full fine-tune'a yakın — ve genelde daha küçük model + full FT daha iyi. `method: "rslora"` olmadan `r > 64` bir kararlılık uyarısı loglar; rank'ı bu kadar yükseltiyorsanız `method: "rslora"`'ya geçin ya da yaklaşımı yeniden düşünün.
 :::
 
 :::warn
-**Embedding değişiklikleri için `modules_to_save` unutmak.** Tokenizer'a yeni token eklerseniz embedding ve lm_head full-precision eğitim ister:
-```yaml
-lora:
-  modules_to_save: ["embed_tokens", "lm_head"]
-```
+**`modules_to_save` bir ForgeLM alanı değildir.** Native PEFT, LoRA adapter'ının yanında modülleri (ör. `embed_tokens` / `lm_head`) full precision'da eğitmek için `modules_to_save`'i sunar, ama `LoraConfigModel` bunu yüzeylemez — `extra="forbid"`, `--dry-run`'da bunu reddeder. Tokenizer'a yeni token eklerseniz embedding'i `target_modules`'e adını ekleyerek yine de LoRA-adapte edebilirsiniz (ör. `["q_proj", "v_proj", "embed_tokens"]`), ama bu full-precision eğitim değil, düşük-rank bir güncellemedir.
 :::
 
 :::warn

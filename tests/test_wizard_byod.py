@@ -12,6 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from forgelm import wizard
 
 
@@ -115,6 +117,30 @@ def test_byod_accepts_valid_jsonl(tmp_path):
     assert kwargs["dataset_override"] == str(good)
 
 
+def test_byod_run_quickstart_file_exists_error_falls_back(capsys):
+    # LOW finding: forgelm.quickstart._resolve_dataset raises
+    # FileExistsError by design when the per-run scratch dataset path
+    # already exists (an OSError subclass distinct from
+    # FileNotFoundError). Pre-fix, the prelude's except tuple was
+    # (FileNotFoundError, ValueError) only, so FileExistsError propagated
+    # uncaught and crashed the interactive wizard instead of hitting the
+    # friendly fallback message.
+    hub_id = "tatsu-lab/alpaca"
+    answers = _PRELUDE + [hub_id]
+    with (
+        patch("builtins.input", side_effect=_make_input(answers)),
+        patch(
+            "forgelm.quickstart.run_quickstart",
+            side_effect=FileExistsError("Dataset already exists at /x/y.jsonl"),
+        ),
+    ):
+        result = wizard._maybe_run_quickstart_template()
+    assert result is None
+    captured = capsys.readouterr().out
+    assert "Quickstart failed" in captured
+    assert "Falling back to the full wizard" in captured
+
+
 def test_byod_accepts_hf_hub_id(tmp_path, capsys):
     hub_id = "tatsu-lab/alpaca"
     answers = _PRELUDE + [hub_id]
@@ -142,6 +168,52 @@ def test_byod_accepts_hf_hub_id(tmp_path, capsys):
     # The HF ID must be passed through unchanged — not turned into a Path.
     _args, kwargs = mock_run.call_args
     assert kwargs["dataset_override"] == hub_id
+
+
+def test_prompt_dataset_path_accepts_bare_canonical_hub_id(capsys):
+    # LOW finding: _HF_HUB_ID_RE required exactly one slash, rejecting
+    # legitimate no-namespace canonical HF Hub datasets (e.g. squad, glue,
+    # imdb). The regex now also accepts a bare <name> form.
+    with patch("builtins.input", side_effect=_make_input(["squad"])):
+        result = wizard._prompt_dataset_path_with_ingest_offer("Dataset")
+    assert result == "squad"
+    captured = capsys.readouterr().out
+    assert "Treating 'squad' as an HF Hub dataset ID" in captured
+
+
+def test_prompt_dataset_path_still_rejects_multi_slash(capsys):
+    # Regression guard: broadening the regex to accept bare names must not
+    # accidentally accept multi-segment paths that aren't a real local
+    # file/directory.
+    answers = ["a/b/c", "cancel"]
+    with patch("builtins.input", side_effect=_make_input(answers)):
+        with pytest.raises(wizard.WizardCancel):
+            wizard._prompt_dataset_path_with_ingest_offer("Dataset")
+    captured = capsys.readouterr().out
+    assert "not a valid HF Hub ID" in captured
+
+
+def test_offer_ingest_pii_mask_defaults_to_true_on_bare_enter(tmp_path):
+    # LOW finding: the prompt calls masking "Recommended for shared
+    # corpora" but pre-fix defaulted to False — an operator who reads
+    # "Recommended" and presses Enter got the non-recommended, less-
+    # protective outcome.  The default now matches the copy.
+    (tmp_path / "doc.txt").write_text("alpha\n\nbeta", encoding="utf-8")
+    fake_result = type("R", (), {"chunk_count": 1, "files_processed": 1})()
+    answers = [
+        "y",  # run ingestion now?
+        "",  # output JSONL path — bare Enter (default)
+        "",  # mask PII — bare Enter (default)
+        "n",  # decline the post-ingest audit offer
+    ]
+    with (
+        patch("builtins.input", side_effect=_make_input(answers)),
+        patch("forgelm.ingestion.ingest_path", return_value=fake_result) as mock_ingest,
+    ):
+        result = wizard._offer_ingest_for_directory(tmp_path)
+    assert result is not None
+    _args, kwargs = mock_ingest.call_args
+    assert kwargs["pii_mask"] is True
 
 
 def test_byod_expands_user_home(tmp_path, monkeypatch):

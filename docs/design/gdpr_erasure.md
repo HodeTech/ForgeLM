@@ -76,7 +76,7 @@ Article 5(1)(e) requires personal data to be kept "no longer than is necessary".
 
 Two pre-existing surfaces overlap with this design and must be resolved up front so Phase 21 does not ship a second source of truth:
 
-- **`EvaluationConfig.staging_ttl_days`** (`forgelm/config.py:301`, shipped in Wave 1 Faz 9) is a doc-only field — its docstring promises Phase 21 enforcement.  Phase 21 implements the enforcement under the new `RetentionConfig.staging_ttl_days` (this design); the `EvaluationConfig` field is **deprecated** in the same release per `docs/standards/release.md` cadence: emit a `DeprecationWarning` on access in v0.5.5, alias-forward the value to `retention.staging_ttl_days`, keep both working in v0.6.x, remove `evaluation.staging_ttl_days` in v0.7.0.
+- **`EvaluationConfig.staging_ttl_days`** (`forgelm/config.py:301`, shipped in Wave 1 Faz 9) is a doc-only field — its docstring promises Phase 21 enforcement.  Phase 21 implements the enforcement under the new `RetentionConfig.staging_ttl_days` (this design); the `EvaluationConfig` field is **deprecated** in the same release per `docs/standards/release.md` cadence: emit a `DeprecationWarning` on access in v0.5.5, alias-forward the value to `retention.staging_ttl_days`, keep both working through v0.6.x-v0.7.x, remove `evaluation.staging_ttl_days` in v0.8.0.
 
   **Conflict-resolution semantics (dual-set window v0.5.5–v0.6.x):**
 

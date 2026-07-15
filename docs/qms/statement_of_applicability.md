@@ -143,6 +143,18 @@ ForgeLM-specific control inventory.
 
 ## 3. Coverage tally
 
+**Terminology.** The per-theme tally below classifies every control
+using the same three-tier scheme as the cross-referenced design doc's
+§3: **`FL`** (*ForgeLM-supported* — ForgeLM directly produces audit
+evidence), **`FL-helps`** (*deployer responsibility, ForgeLM helps* —
+ForgeLM provides partial evidence the deployer combines with other
+sources), and **`OOS`** (*Out of scope* — deployer-only, ForgeLM
+contributes nothing). `OOS` is a per-**control** count spread across
+every theme and is distinct from the table's "Excluded (ForgeLM
+scope)" column, which counts only entire control **themes** ForgeLM's
+inventory excludes wholesale (today just A.7 Physical, 14 controls) —
+that is why the two numbers (14 vs. 34) differ.
+
 | Theme | Total | Applicable | Excluded (ForgeLM scope) | FL-supported | FL-helps |
 |---|---|---|---|---|---|
 | A.5 Organisational | 37 | 37 | 0 | 3 | 24 |
@@ -152,11 +164,11 @@ ForgeLM-specific control inventory.
 | **Total** | **93** | **93 (deployer ISMS)** | **14 (ForgeLM-specific)** | **11** | **48** |
 
 Row-by-row recount of §2.1–§2.4 above (the SoA matrix). Per-theme
-tally — A.5: 3 / 24 / 10 OOS; A.6: 0 / 5 / 3 OOS; A.7: 0 / 0 / 14
-OOS; A.8: 8 / 19 / 7 OOS — sums to 11 `FL` + 48 `FL-helps` + 34 OOS
-= 93. Cross-check the design doc's §3 "Coverage tally" paragraph
-(`docs/design/iso27001_soc2_alignment.md`);
-the two must match.
+`FL`/`FL-helps`/`OOS` tally — A.5: 3 / 24 / 10 OOS; A.6: 0 / 5 / 3
+OOS; A.7: 0 / 0 / 14 OOS; A.8: 8 / 19 / 7 OOS — sums to 11 `FL` + 48
+`FL-helps` + 34 `OOS` = 93. Cross-check the design doc's §3 "Coverage
+tally" paragraph (`docs/design/iso27001_soc2_alignment.md`); the two
+must match.
 
 ## 4. Review
 

@@ -126,7 +126,7 @@ section §4.
 |---|---|
 | Description | Adversary configures `webhook.url_env=http://internal-metadata-server/...` to exfiltrate AWS instance credentials |
 | L × I (inherent) | Low × Med = LOW |
-| Treatment | `safe_post` (Phase 7) — HTTPS-only, SSRF guard rejects RFC 1918 / 169.254.x / loopback / link-local, no redirect-following, masked auth headers in error logs; webhook URL must come from `url_env`, never inline |
+| Treatment | `safe_post` (Phase 7) — HTTPS-only, SSRF guard rejects RFC 1918 / loopback / link-local (incl. cloud IMDS at 169.254.169.254) / RFC 6598 Shared Address Space (`100.64.0.0/10`, incl. Alibaba Cloud IMDS at `100.100.100.200`) / reserved / multicast, no redirect-following, masked auth headers in error logs; webhook URL must come from `url_env`, never inline |
 | Residual L × I | Low × Low = LOW |
 | Owner | Security |
 | Review cadence | Per config review |

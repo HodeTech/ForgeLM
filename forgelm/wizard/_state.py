@@ -191,47 +191,18 @@ def _save_wizard_state(state: Mapping[str, Any]) -> None:
     Best-effort: filesystem errors (read-only home, ENOSPC, sandboxed
     container) are logged at WARNING and swallowed — the wizard's
     contract is to *produce a config*, not to guarantee resumability.
-    """
-    import tempfile
 
+    Delegates the temp-file + fsync + ``os.replace`` + cleanup sequence
+    to :func:`_atomic_yaml_write` (F8 / review-cycle: this function used
+    to hand-roll its own copy of that exact skeleton, which is how its
+    exception handling drifted away from ``_atomic_yaml_write``'s and
+    needed a separate F-P7-OPUS-31 fix).  Adds the version envelope and
+    the ``0o600`` permission tightening on top of the shared primitive.
+    """
     target = _wizard_state_path()
-    tmp_name: Optional[str] = None
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
         snapshot = {"v": _STATE_VERSION, **dict(state)}
-        # Atomic write: serialise to a sibling temp file, fsync, then
-        # ``os.replace`` so a SIGKILL / power loss / concurrent wizard
-        # process never leaves a half-written ``wizard_state.yaml``.
-        # ``NamedTemporaryFile(delete=False)`` is the standard idiom for
-        # this; ``os.replace`` is atomic on POSIX and Windows.
-        tmp = tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=str(target.parent),
-            prefix=".wizard_state.",
-            suffix=".tmp",
-            delete=False,
-        )
-        tmp_name = tmp.name
-        try:
-            yaml.safe_dump(snapshot, tmp, default_flow_style=False, sort_keys=False)
-            tmp.flush()
-            os.fsync(tmp.fileno())
-        finally:
-            tmp.close()
-        # A3 (review-cycle 3): when ``os.replace`` fails (cross-device
-        # /home overlay, EACCES, EXDEV) the temp file would otherwise
-        # accumulate under ``$XDG_CACHE_HOME/forgelm/`` on every run.
-        # Wrap the rename in its own try/except so the cleanup runs
-        # even when the outer ``except OSError`` would otherwise just
-        # log and return.
-        try:
-            os.replace(tmp_name, target)
-            tmp_name = None  # successful rename — nothing to clean up
-        except OSError:
-            _safe_unlink(tmp_name)
-            tmp_name = None
-            raise
+        _atomic_yaml_write(snapshot, str(target))
         # Wizard state can carry compliance metadata (provider name,
         # contact, governance fields) that operators consider sensitive.
         # ``0o600`` keeps it readable only by the operator running the
@@ -248,13 +219,6 @@ def _save_wizard_state(state: Mapping[str, Any]) -> None:
         # interrupt handler always reaches its clean exit-5 instead of
         # surfacing a raw traceback.
         logger.warning("Could not persist wizard state to %s: %s", target, exc)
-    finally:
-        # Defensive sweep: if any branch above left the temp file behind
-        # (e.g., ``yaml.safe_dump`` raised before we even reached
-        # ``os.replace``), unlink it here. ``tmp_name = None`` after
-        # successful rename means this is a no-op on the happy path.
-        if tmp_name is not None:
-            _safe_unlink(tmp_name)
 
 
 def _safe_unlink(path: str) -> None:
@@ -517,7 +481,15 @@ def _save_config_to_file(config: Dict[str, Any], requested_filename: str) -> str
         _print(f"\n  Config saved to: {requested_filename}")
         logger.info("Wizard config saved to %s", requested_filename)
         return requested_filename
-    except OSError as e:
+    except (OSError, yaml.YAMLError, TypeError, ValueError) as e:
+        # Besides filesystem OSErrors, a non-representable value in
+        # ``config`` (an accidental Path / set leak from a collector)
+        # makes ``yaml.safe_dump`` raise ``RepresenterError`` — a
+        # ``yaml.YAMLError`` subclass, NOT an ``OSError`` subclass.  Catch
+        # it too (matches the ``_save_wizard_state`` fix for the same
+        # failure mode, F-P7-OPUS-31) so this reaches the graceful
+        # fallback-path retry below instead of propagating as a raw
+        # traceback out of ``run_wizard_full``.
         logger.exception("Could not save wizard config to %s", requested_filename)
         _print(f"\n  Error: Could not save config to {requested_filename}: {e}")
 
@@ -533,7 +505,7 @@ def _save_config_to_file(config: Dict[str, Any], requested_filename: str) -> str
         _print(f"  Saved to fallback location: {fallback}")
         logger.info("Wizard config saved to fallback location %s", fallback)
         return fallback
-    except OSError as e:
+    except (OSError, yaml.YAMLError, TypeError, ValueError) as e:
         logger.exception("Fallback wizard config save also failed (%s)", fallback)
         _print(f"  Fallback save also failed ({fallback}): {e}")
         raise

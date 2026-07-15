@@ -181,7 +181,18 @@ class TestDeployCLI:
                     main()
         assert exc_info.value.code == EXIT_SUCCESS
         envelope = json.loads(capsys.readouterr().out)
-        assert set(envelope) == {"success", "output_path", "format", "quant", "sha256", "size_bytes", "error"}
+        assert set(envelope) == {
+            "success",
+            "output_path",
+            "format",
+            "quant",
+            "requested_quant",
+            "manual_step_required",
+            "followup_command",
+            "sha256",
+            "size_bytes",
+            "error",
+        }
 
     def test_deploy_json_output(self, tmp_path, capsys):
         model_dir = tmp_path / "model"

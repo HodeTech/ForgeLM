@@ -81,6 +81,22 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   `HTTP://` URL are all handled without failing an otherwise-successful run;
   `deploy` narrowed its exception handling so serialization bugs surface instead
   of being masked (`forgelm/webhook.py`, `forgelm/deploy.py`).
+- **`cache-models` reports the real on-disk size.** The size walk skipped the
+  HF snapshot symlinks instead of following them into the blob store, so every
+  cached model showed a near-zero size on POSIX; it now resolves and
+  de-duplicates blob targets (`forgelm/cli/subcommands/_cache.py`).
+- **GGUF export surfaces the K-quant two-step as structured data.** When a
+  requested K-quant (e.g. `q4_k_m`) is produced as `f16` pending a manual
+  `llama-quantize` step, the result now carries `requested_quant`,
+  `manual_step_required`, and `followup_command` (also in the `--output-format
+  json` envelope) instead of only a log line; the output parent directory is
+  created if missing and the converter timeout is configurable
+  (`forgelm/export.py`, `forgelm/cli/subcommands/_export.py`).
+- **The config wizard is more robust.** `_save_config_to_file` now catches
+  `yaml.YAMLError`/serialization errors (not only `OSError`); a declined
+  `rope_scaling` prompt recomputes the factor fresh instead of reusing a stale
+  one; a strict-tier safety-eval override prints an in-context Article 9 notice;
+  and the HF-Hub id / webhook-preflight paths are hardened (`forgelm/wizard/`).
 
 ### Security
 
@@ -129,6 +145,20 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   (`concepts/data-formats`, `reference/cli`, `evaluation/safety`,
   `deployment/gguf-export`, `operations/air-gap`, `getting-started/project-layout`)
   were corrected against the source of truth as well.
+- **Compliance-mapping docs no longer cite a nonexistent audit event as
+  evidence.** The ISO 27001 / SOC 2 control mappings and the deployer guide
+  cited a fabricated `pipeline.training_started` event; they now reference real
+  emitted evidence (`config_hash` in the training manifest / `human_approval.*`
+  chain, and `model_integrity.json` SHA-256 artifact hashes). A design doc's
+  claim that ForgeLM HMAC-signs webhook payloads (it does not), a phantom
+  `webhook.secret_env` field, and a Statement-of-Applicability tally that did
+  not reconcile were also corrected.
+- **User-manual schema drift swept.** The `model`, `lora`, and `distributed`
+  YAML blocks across `reference/configuration`, `reference/yaml-templates`,
+  `training/lora`, and `training/distributed` (EN + TR) now match the real
+  `ForgeConfig` fields; the SSRF blocklist docs list RFC 6598 CGNAT; the
+  `reference/configuration` and `reference/safety_eval_subcommand` pages
+  document the real audit-event payloads and the safety-classifier requirement.
 
 ## [0.9.0] — 2026-07-05
 

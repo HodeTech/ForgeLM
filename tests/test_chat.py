@@ -147,6 +147,73 @@ class TestBuildMessages:
         assert messages[-1] == {"role": "user", "content": "now"}
 
 
+class TestGenerateAndPrint:
+    """Routed coverage (tests-standalone): ``_generate_and_print`` — the
+    streaming loop, the non-streaming branch, and both exception-recovery
+    handlers — was never invoked by any test. We inject a fake
+    ``forgelm.inference.generate`` / ``generate_stream`` (the names
+    ``_generate_and_print`` imports at call time) so no model/GPU is touched.
+    chat.py itself is not modified — this is pure test coverage."""
+
+    def test_streaming_happy_path_prints_tokens_and_records_history(self, monkeypatch):
+        session, out = _make_session(stream=True)
+
+        def fake_stream(model, tokenizer, prompt, *, messages, temperature, max_new_tokens):  # noqa: ARG001
+            yield "Hello"
+            yield " world"
+
+        monkeypatch.setattr("forgelm.inference.generate_stream", fake_stream)
+        session._generate_and_print("hi there")
+
+        blob = "".join(out)
+        assert "Hello" in blob and "world" in blob
+        # Both turns appended to history on success.
+        assert session.history[-2] == {"role": "user", "content": "hi there"}
+        assert session.history[-1] == {"role": "assistant", "content": "Hello world"}
+
+    def test_streaming_error_recovers_without_recording_history(self, monkeypatch):
+        session, out = _make_session(stream=True)
+
+        def boom_stream(model, tokenizer, prompt, *, messages, temperature, max_new_tokens):  # noqa: ARG001
+            yield "partial"
+            raise RuntimeError("CUDA OOM")
+
+        monkeypatch.setattr("forgelm.inference.generate_stream", boom_stream)
+        session._generate_and_print("hi")
+
+        blob = "".join(out)
+        assert "Generation error" in blob
+        assert "CUDA OOM" in blob
+        # Early return on error → the failed turn is NOT recorded.
+        assert session.history == []
+
+    def test_non_streaming_happy_path_prints_and_records_history(self, monkeypatch):
+        session, out = _make_session(stream=False)
+        monkeypatch.setattr(
+            "forgelm.inference.generate",
+            lambda *a, **k: "full response",
+        )
+        session._generate_and_print("question")
+
+        blob = "".join(out)
+        assert "full response" in blob
+        assert session.history[-1] == {"role": "assistant", "content": "full response"}
+
+    def test_non_streaming_error_recovers_without_recording_history(self, monkeypatch):
+        session, out = _make_session(stream=False)
+
+        def boom(*a, **k):
+            raise ValueError("bad tokenizer")
+
+        monkeypatch.setattr("forgelm.inference.generate", boom)
+        session._generate_and_print("question")
+
+        blob = "".join(out)
+        assert "Generation error" in blob
+        assert "bad tokenizer" in blob
+        assert session.history == []
+
+
 class TestRichDualPath:
     """F-P7-OPUS-44: architecture.md §3 carve-out condition 4 requires the
     ``_HAS_RICH`` boolean be monkeypatched to exercise BOTH the extras-installed

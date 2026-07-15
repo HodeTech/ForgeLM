@@ -126,6 +126,17 @@ def _load_unsloth(
     load_in_8bit: bool = False,
 ) -> Tuple[Any, Any]:
     """Load model via the Unsloth backend for faster inference."""
+    # Reject the unsupported adapter combination before the expensive import +
+    # multi-GB ``from_pretrained`` load, so an operator passing --adapter to the
+    # unsloth backend gets an immediate rejection rather than paying the full
+    # model-load cost only to be refused at the end.
+    if adapter:
+        raise ValueError(
+            "Unsloth backend does not support loading a separate adapter at inference time. "
+            "Merge the adapter into the base model before inference "
+            "(forgelm export --adapter ...), or use backend='transformers'."
+        )
+
     try:
         from unsloth import FastLanguageModel
     except ImportError as e:
@@ -146,12 +157,6 @@ def _load_unsloth(
     )
     FastLanguageModel.for_inference(model)
 
-    if adapter:
-        raise ValueError(
-            "Unsloth backend does not support loading a separate adapter at inference time. "
-            "Merge the adapter into the base model before inference "
-            "(forgelm export --adapter ...), or use backend='transformers'."
-        )
     return model, tokenizer
 
 

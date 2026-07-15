@@ -108,15 +108,20 @@ Each `human_approval.granted` entry carries:
   trainer).
 - `run_id` — links back to the training run that produced the model.
 - `prev_hash` + `_hmac` — chain integrity.
-- The training-run identity (model SHA, adapter SHA, dataset
-  fingerprint) lives in the `pipeline.training_started` event payload,
-  not in the `human_approval.granted` entry itself; an auditor pivots
-  by `run_id` to the earlier event and diffs the YAML in `git log`.
-  (Note: `config_hash` is read forward-compatibly by `forgelm
-  approvals` — `forgelm/cli/subcommands/_approvals.py` falls back to a
-  legacy `config_fingerprint` key — but no producer in the current
-  codebase emits either field; the read path is wired for a future
-  emitter. See `docs/reference/approvals_subcommand.md`.)
+- The training-run identity — `config_hash`, the base model name +
+  adapter method (`model_lineage`), and the dataset fingerprint
+  (`data_provenance`) — lives in the run's `training_manifest.yaml`;
+  `config_hash` is additionally stamped on the earlier
+  `human_approval.required` audit event, so an auditor pivots by
+  `run_id` to that event (or the manifest) and diffs the YAML in `git
+  log`. (Note: ForgeLM records the base model by name and pins the
+  *dataset*'s HF Hub commit SHA, but does **not** pin an upstream
+  base-model Hub revision SHA; the promoted artefacts are hash-verified
+  through `model_integrity.json` / the `model.integrity_verified`
+  event instead. `forgelm approvals` reads `config_hash` from the
+  `human_approval.required` event and falls back to a legacy
+  `config_fingerprint` key that no current producer emits. See
+  `docs/reference/approvals_subcommand.md`.)
 
 ### Q2: "Show me the change-control evidence — who approved this model?"
 

@@ -248,6 +248,69 @@ class TestValidationHelpersOutput:
         captured = capsys.readouterr().out
         assert "Long context detected" not in captured
 
+    def test_collect_rope_scaling_decline_recomputes_fresh_factor(self):
+        # MEDIUM finding: declining "Keep existing RoPE scaling?" fell
+        # through to `float(existing['factor']) if existing and
+        # existing.get('factor') is not None else recompute` — i.e. the
+        # decline was ignored for `factor` specifically, silently keeping
+        # a stale value even though max_length may have just changed.
+        # Post-fix: decline always recomputes fresh, exactly like having
+        # no existing block at all.
+        existing = {"type": "yarn", "factor": 99.0}  # deliberately stale/mismatched
+        max_length = 8192  # fresh factor should be 8192 / 4096 = 2.0
+        with patch(
+            "builtins.input",
+            side_effect=_input_returning(
+                "n",  # decline "Keep existing RoPE scaling?"
+                "y",  # accept "Enable RoPE scaling for extended context?"
+                "1",  # rope type = linear
+            ),
+        ):
+            result = wizard._collect_rope_scaling(max_length, existing=existing)
+        assert result["factor"] == pytest.approx(2.0)
+        assert result["factor"] != existing["factor"]
+
+    def test_collect_rope_scaling_decline_with_malformed_existing_factor_does_not_crash(self):
+        # The crash half of the MEDIUM finding: pre-fix,
+        # `float(existing['factor'])` ran unconditionally on decline, so a
+        # non-numeric factor (e.g. from an unvalidated resumed
+        # wizard_state.yaml snapshot — ForgeConfig schema validation only
+        # covers --wizard-start-from YAMLs, not resumed state) raised an
+        # uncaught ValueError instead of the wizard degrading gracefully.
+        existing = {"type": "yarn", "factor": "auto"}  # non-numeric — would crash float()
+        max_length = 8192
+        with patch(
+            "builtins.input",
+            side_effect=_input_returning(
+                "n",  # decline "Keep existing RoPE scaling?"
+                "y",  # accept "Enable RoPE scaling for extended context?"
+                "1",  # rope type = linear
+            ),
+        ):
+            result = wizard._collect_rope_scaling(max_length, existing=existing)  # must not raise
+        assert result["factor"] == pytest.approx(2.0)
+
+    def test_collect_rope_scaling_malformed_existing_factor_on_keep_falls_back(self, capsys):
+        # Defense in depth alongside the finding fix: the "keep existing"
+        # accept path must not blindly return an unvalidated factor either
+        # (a resumed wizard_state.yaml is not schema-validated) — it
+        # degrades to a fresh recompute with a visible warning instead of
+        # producing a config that fails ForgeConfig validation downstream.
+        existing = {"type": "yarn", "factor": "auto"}  # non-numeric
+        max_length = 8192
+        with patch(
+            "builtins.input",
+            side_effect=_input_returning(
+                "y",  # accept "Keep existing RoPE scaling?"
+                "y",  # accept "Enable RoPE scaling for extended context?" (fallback path)
+                "1",  # rope type = linear
+            ),
+        ):
+            result = wizard._collect_rope_scaling(max_length, existing=existing)
+        assert result["factor"] == pytest.approx(2.0)
+        captured = capsys.readouterr().out
+        assert "invalid" in captured.lower()
+
     def test_print_wizard_summary_includes_strategy_and_dataset(self, capsys):
         # Phase 22 rewrite: ``_print_wizard_summary`` takes the resolved
         # config dict instead of ~12 keyword arguments.  The summary
@@ -329,3 +392,34 @@ class TestSaveConfigToFile:
         assert target.is_file()
         captured = capsys.readouterr().out
         assert f"Config saved to: {target}" in captured
+
+    def test_save_config_catches_yaml_error_and_falls_back(self, tmp_path, monkeypatch, capsys):
+        """HIGH finding: _save_config_to_file's docstring says yaml.safe_dump
+        can raise a representable-value error (RepresenterError, a
+        yaml.YAMLError subclass — NOT an OSError subclass), but pre-fix both
+        except blocks in this function only caught OSError, so it propagated
+        uncaught instead of hitting the graceful fallback-path retry.
+        Mirrors the sibling _save_wizard_state fix for the identical failure
+        mode (F-P7-OPUS-31)."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        from forgelm.wizard import _state as _state_mod
+
+        real_dump = _state_mod.yaml.safe_dump
+        calls = {"n": 0}
+
+        def _dump_first_call_raises_yaml_error(data, stream, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise _state_mod.yaml.YAMLError("simulated representer error")
+            return real_dump(data, stream, **kw)
+
+        monkeypatch.setattr(_state_mod.yaml, "safe_dump", _dump_first_call_raises_yaml_error)
+        target = tmp_path / "requested" / "out.yaml"
+        result = wizard._save_config_to_file({"model": {"name_or_path": "x"}}, str(target))
+
+        assert not target.exists(), "the primary write must not have completed"
+        assert Path(result).is_file()
+        assert Path(result) != target, "must have fallen back to a different path"
+        out = capsys.readouterr().out
+        assert "Error: Could not save config" in out
+        assert "Saved to fallback location" in out

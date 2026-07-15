@@ -36,7 +36,7 @@ categories are scoped per-engagement.
 | CC3.1 | Specifies suitable objectives | `compliance.intended_purpose`; risk classification |
 | CC3.2 | Identifies and analyses risks | `risk_assessment` Pydantic block; safety eval; `risk_treatment_plan.md` |
 | CC3.3 | Considers fraud risks | Audit log tamper-evidence; HMAC chain; manifest sidecar |
-| CC3.4 | Identifies and assesses changes | `human_approval.required` gate; `pipeline.training_started` audit event records run-pinned model + adapter SHAs for diff |
+| CC3.4 | Identifies and assesses changes | `human_approval.required/granted/rejected` audit chain; per-run `config_hash` (stamped into `training_manifest.yaml`, the `human_approval.required` event, and the JSON envelope); `model_integrity.json` / `model.integrity_verified` SHA-256 artifact hashes for diff (no upstream base-model Hub revision SHA is pinned) |
 | CC4.1 | Selects, develops, performs evaluations | `forgelm verify-audit`; `forgelm safety-eval` |
 | CC4.2 | Communicates internal-control deficiencies | `pipeline.failed`/`reverted`/`erasure_failed` events |
 | CC5.1 | Selects, develops control activities | F-compliance-110 strict gate; auto-revert; staging |
@@ -79,7 +79,7 @@ Strong ForgeLM contribution.
 | PI1.1 Quality of inputs | `compute_dataset_fingerprint`; `data_governance_report` |
 | PI1.2 System processing | `forgelm verify-audit`; `data_audit_report.json` |
 | PI1.3 Outputs are accurate | `model_integrity.json` SHA-256 checksums; `model_card.md` |
-| PI1.4 Inputs traceable | `_describe_adapter_method`; `pipeline.training_started` event payload (model SHA, adapter SHA, dataset fingerprint); HF-revision pin |
+| PI1.4 Inputs traceable | `compute_dataset_fingerprint` (dataset SHA-256 fingerprint) + `_fingerprint_hf_revision` (dataset HF Hub commit SHA pin) recorded in the `training_manifest.yaml` `data_provenance` block; `_describe_adapter_method` + `config_hash` in `model_lineage` (no upstream base-model Hub revision SHA is pinned) |
 | PI1.5 Outputs traceable | Annex IV bundle co-locates manifest + report + audit + integrity |
 
 ## Confidentiality (C1.x)

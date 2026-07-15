@@ -66,10 +66,13 @@ ZeRO-2 optimizer state'i sharder (Adam gibi adaptif optimizer'larda en ağır VR
 ```yaml
 distributed:
   strategy: "deepspeed"
-  zero_stage: 2
+  deepspeed_config: "zero2"             # preset adı (veya bir DeepSpeed JSON dosya yolu)
+
+training:
   gradient_accumulation_steps: 4
-  cpu_offload: false
 ```
+
+`DistributedConfig`'te `zero_stage` veya `cpu_offload` alanı yoktur — ZeRO aşaması (ve CPU/NVMe offload) `deepspeed_config` üzerinden seçilir; `gradient_accumulation_steps` ise `distributed:` değil `training:` alanıdır.
 
 Başlatma:
 
@@ -86,11 +89,13 @@ ZeRO-3 ek olarak gradient ve parametreleri de GPU'lar arası sharder. Her GPU mo
 ```yaml
 distributed:
   strategy: "deepspeed"
-  zero_stage: 3
+  deepspeed_config: "zero3_offload"     # "zero3" (offload yok) | "zero3_offload" (CPU offload) | NVMe için özel DeepSpeed JSON yolu
+
+training:
   gradient_accumulation_steps: 8
-  cpu_offload: false                    # 70B'i 8x24 GB'a sığdırmak için true
-  nvme_offload_path: null               # ZeRO-Infinity için NVMe yolu
 ```
+
+`zero3_offload` preset'i, optimizer state ve parametreleri CPU'ya boşaltarak 70B'i 8×24 GB'a sığdırır. ZeRO-Infinity'nin NVMe offload'u hazır bir preset değildir — bunun için `deepspeed_config`'i, `offload_param`/`offload_optimizer` alanları `device: nvme` olarak ayarlanmış özel bir DeepSpeed JSON dosyasına yönlendirin.
 
 | Model | GPU | ZeRO-3 + offload? |
 |---|---|---|
@@ -106,10 +111,13 @@ FSDP, ZeRO-3 gibi sharder ama PyTorch'un yerli FullyShardedDataParallel'ini kull
 ```yaml
 distributed:
   strategy: "fsdp"
-  fsdp_state_dict_type: "FULL_STATE_DICT"
-  fsdp_auto_wrap_policy: "TRANSFORMER_BASED_WRAP"
-  fsdp_offload_params: false
+  fsdp_strategy: "full_shard"             # full_shard | shard_grad_op | no_shard | hybrid_shard
+  fsdp_auto_wrap: true                    # transformer katmanlarını otomatik sar (önerilir)
+  fsdp_offload: false                     # forward/backward arasında parametreleri CPU'ya boşalt
+  fsdp_state_dict_type: "FULL_STATE_DICT" # FULL_STATE_DICT | SHARDED_STATE_DICT
 ```
+
+`DistributedConfig`'te `fsdp_auto_wrap_policy` veya `fsdp_offload_params` alanı yoktur — auto-wrap düz bir `fsdp_auto_wrap` boolean'ıdır, CPU offload ise `fsdp_offload`'dur (`_params` eki yoktur).
 
 ## Gradient accumulation
 
@@ -126,11 +134,11 @@ training:
 ## Sık hatalar
 
 :::warn
-**ZeRO-3 + LoRA yüklemesi başarısız.** ZeRO-3, eğitilmeyen parametreler için özel işleme gerektirir. `lora.modules_to_save`'i dikkatli ayarlayın ve raw `python -m` yerine `accelerate launch` kullanın.
+**ZeRO-3 başlatma sırası.** ZeRO-3, her rank'te eğitilmeyen parametreler için özel işleme gerektirir — DeepSpeed'in parametre-bölme sarmalayıcısı model yüklenmeden önce başlatılsın diye her zaman `accelerate launch` üzerinden başlatın (raw `python -m forgelm` değil).
 :::
 
 :::warn
-**DeepSpeed ve FSDP config'lerini karıştırmak.** Birini seçin. Şema, aynı anda `distributed.zero_stage` ve `distributed.fsdp_*` ayarlamayı reddeder.
+**DeepSpeed ve FSDP alanlarını karıştırmak.** `distributed.strategy` tam olarak tek bir backend seçer (`deepspeed` veya `fsdp`) — yalnızca etkin stratejinin alanları dikkate alınır. `distributed.zero_stage` diye bir alan yoktur; DeepSpeed'in ZeRO aşaması `deepspeed_config` üzerinden (bir preset adı veya bir DeepSpeed JSON yolu) seçilir.
 :::
 
 :::warn

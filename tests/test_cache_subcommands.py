@@ -99,6 +99,67 @@ class TestCacheModels:
         assert "\\u" not in out
         assert json.loads(out)["cache_dir"] == "/work/önbellek"
 
+    def test_cache_models_follows_symlink_farm_to_blob_store(self, tmp_path: Path, capsys) -> None:
+        """F1 (HIGH) regression: ``snapshot_download`` returns the
+        ``snapshots/<commit>/`` directory whose entries are symlinks into a
+        sibling ``blobs/`` store holding the real content-addressed bytes (the
+        default POSIX HF cache layout). ``_walk_directory_size`` must follow
+        those symlinks to the real blob; the previous ``skip symlinks`` walk
+        reported ~0 for every downloaded model."""
+        from forgelm.cli.subcommands import _cache
+
+        blob_size = 1024 * 1024  # 1 MiB, unmistakably non-zero
+
+        def _fake_snapshot_download(repo_id: str, cache_dir: str) -> str:
+            repo_root = Path(cache_dir) / ("models--" + repo_id.replace("/", "--"))
+            blobs = repo_root / "blobs"
+            snapshot = repo_root / "snapshots" / "deadbeefdeadbeef"
+            blobs.mkdir(parents=True, exist_ok=True)
+            snapshot.mkdir(parents=True, exist_ok=True)
+            blob_file = blobs / "sha256-abc123"
+            blob_file.write_bytes(b"x" * blob_size)
+            # snapshot entry is a symlink into the blob store (POSIX HF layout).
+            os.symlink(blob_file, snapshot / "model.safetensors")
+            # snapshot_download returns the snapshot dir, NOT the repo root.
+            return str(snapshot)
+
+        with patch.dict(
+            "sys.modules",
+            {"huggingface_hub": MagicMock(snapshot_download=_fake_snapshot_download)},
+        ):
+            args = _build_args(
+                model=["org/model"],
+                output=str(tmp_path / "hf_cache"),
+                audit_dir=str(tmp_path / "audit"),
+            )
+            with pytest.raises(SystemExit) as ei:
+                _cache._run_cache_models_cmd(args, output_format="json")
+            assert ei.value.code == 0
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["models"][0]["size_bytes"] == blob_size, (
+            "symlink farm must be followed to the real blob bytes, not skipped (which reported 0)"
+        )
+
+    def test_walk_directory_size_follows_symlinks_and_dedups(self, tmp_path: Path) -> None:
+        """Direct unit: two snapshot entries symlinked to the SAME blob are
+        counted once (dedup by resolved path); a broken symlink is ignored."""
+        from forgelm.cli.subcommands._cache import _walk_directory_size
+
+        blobs = tmp_path / "blobs"
+        snapshot = tmp_path / "snapshots" / "rev"
+        blobs.mkdir(parents=True)
+        snapshot.mkdir(parents=True)
+        blob = blobs / "blob-1"
+        blob.write_bytes(b"y" * 2048)
+        # Two snapshot revisions both symlink the same blob → count once.
+        os.symlink(blob, snapshot / "weights-a.safetensors")
+        os.symlink(blob, snapshot / "weights-b.safetensors")
+        # A broken symlink must not raise or contribute.
+        os.symlink(blobs / "does-not-exist", snapshot / "dangling")
+
+        assert _walk_directory_size(str(snapshot)) == 2048
+
     def test_cache_models_with_safety_appends_classifier(self, tmp_path: Path, capsys) -> None:
         from forgelm.cli.subcommands import _cache
 
@@ -316,6 +377,37 @@ class TestCacheTasks:
             assert ei.value.code == 1
         payload = json.loads(capsys.readouterr().out)
         assert "bogus_task" in payload["error"]
+
+    def test_cache_tasks_text_summary_no_bare_none_for_missing_dataset(self, capsys) -> None:
+        """F8: a task with no downloadable dataset returns
+        ``{'cached': False, 'error': None}``. The text renderer must not print
+        the bare literal ``warn (None)`` (``dict.get(key, default)`` only
+        substitutes when the key is *absent*, not when its value is None)."""
+        from forgelm.cli.subcommands._cache import _emit_cache_success
+
+        payload = {
+            "tasks": [{"name": "weird_task", "cached": False, "error": None}],
+            "cache_dir": "/tmp/cache",
+        }
+        _emit_cache_success("text", payload, kind="tasks")
+
+        out = capsys.readouterr().out
+        assert "warn (None)" not in out
+        assert "no downloadable dataset attribute" in out
+
+    def test_cache_tasks_text_summary_surfaces_real_error(self, capsys) -> None:
+        """When a real per-task error IS recorded it must be shown verbatim,
+        not replaced by the no-dataset fallback message."""
+        from forgelm.cli.subcommands._cache import _emit_cache_success
+
+        payload = {
+            "tasks": [{"name": "boom_task", "cached": False, "error": "RuntimeError: decode failed"}],
+            "cache_dir": "/tmp/cache",
+        }
+        _emit_cache_success("text", payload, kind="tasks")
+
+        out = capsys.readouterr().out
+        assert "RuntimeError: decode failed" in out
 
     def test_cache_tasks_output_help_matches_datasets_resolver(self) -> None:
         # F-P7-OPUS-10: cache-tasks resolves + writes via the Datasets

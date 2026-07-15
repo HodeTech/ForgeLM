@@ -324,8 +324,17 @@ def _download_one_model(name: str, cache_dir: str, snapshot_download_callable) -
 
 
 def _walk_directory_size(path: str) -> int:
-    """Sum regular-file sizes under ``path``.  Symlinks ignored to avoid
-    double-counting the HF blob store."""
+    """Sum the real on-disk size of unique files reachable under ``path``.
+
+    ``huggingface_hub.snapshot_download`` returns the ``snapshots/<commit>/``
+    directory, whose entries are *symlinks* into the sibling ``blobs/`` store
+    that holds the actual content-addressed bytes (the default POSIX cache
+    layout on ForgeLM's Linux/macOS deployment targets).  Skipping symlinks —
+    the naive approach — therefore reaches none of the real bytes and reports
+    ~0 for every downloaded model.  We resolve each entry to its target and sum
+    the real file size, de-duplicating by resolved path so a blob shared across
+    multiple snapshot revisions is counted once.
+    """
     total = 0
     base = Path(path)
     if not base.is_dir():
@@ -333,14 +342,23 @@ def _walk_directory_size(path: str) -> int:
             return base.stat().st_size
         except OSError:
             return 0
+    seen: set[str] = set()
     for entry in base.rglob("*"):
-        if entry.is_symlink():
+        try:
+            resolved = entry.resolve()
+        except OSError:
+            # Broken symlink / unresolvable path — nothing to size.
             continue
-        if entry.is_file():
-            try:
-                total += entry.stat().st_size
-            except OSError:
-                continue
+        if not resolved.is_file():
+            continue
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            total += resolved.stat().st_size
+        except OSError:
+            continue
     return total
 
 
@@ -463,9 +481,11 @@ def _prepare_one_task(name: str, task_obj, cache_dir: str | None = None) -> Dict
 
     ``lm-eval`` tasks expose a ``dataset`` (or callable that returns one);
     we tolerate both shapes since lm-eval has flipped the surface across
-    versions.  When neither is reachable we mark the task as cached
-    pessimistically (the operator can re-run with verbose lm-eval logging
-    to inspect the task's own download path).
+    versions.  When neither is reachable the task is reported with
+    ``cached=False`` and ``error=None`` (nothing was downloadable, but nothing
+    failed either); the text renderer surfaces that as an actionable
+    "task exposes no downloadable dataset attribute" note so the operator can
+    re-run with verbose lm-eval logging to inspect the task's own download path.
 
     Wave 2b Round-5 review F-W2B-CACHE: the caller pre-stamps
     ``HF_DATASETS_CACHE`` so the underlying ``datasets`` library writes
@@ -548,7 +568,12 @@ def _emit_cache_success(output_format: str, payload: Dict[str, Any], *, kind: st
         ok = sum(1 for t in tasks if t.get("cached"))
         print(f"Cached {ok} of {len(tasks)} task(s) under {payload.get('cache_dir')}.")
         for entry in tasks:
-            status = "ok" if entry.get("cached") else f"warn ({entry.get('error', 'unknown')})"
+            # ``entry['error']`` is present-but-None when a task exposes no
+            # downloadable dataset attribute (see ``_prepare_one_task``); use
+            # ``or`` so that case renders an actionable message rather than the
+            # bare literal ``None`` that ``dict.get(key, default)`` would leave.
+            reason = entry.get("error") or "unknown (task exposes no downloadable dataset attribute)"
+            status = "ok" if entry.get("cached") else f"warn ({reason})"
             print(f"  - {entry['name']}: {status}")
 
 

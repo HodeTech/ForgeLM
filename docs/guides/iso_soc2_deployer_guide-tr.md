@@ -25,9 +25,8 @@ ForgeLM kanıtına sahip:
    `forgelm verify-audit` zinciri uçtan uca doğrular.
 2. **Change control** — Madde 14 staging gate (`forgelm approve` /
    `reject`) + `human_approval.required/granted/rejected` audit
-   olayları + `pipeline.training_started` event payload'unda
-   damgalanan koşum kimliği (model SHA, adapter SHA, dataset
-   fingerprint). Her model promotion çift kontrollü ve forensic olarak
+   olayları + koşum başına damgalanan `config_hash` (manifest sidecar
+   alanı). Her model promotion çift kontrollü ve forensic olarak
    attribute edilmiştir.
 3. **Data lineage** — `data_provenance.json` (SHA-256 fingerprint +
    size + mtime + HF Hub revision pin); `data_governance_report.json`
@@ -109,16 +108,20 @@ Her `human_approval.granted` girişi şunları taşır:
 - `operator` — kim onayladı (eğiten DEĞİL **onaylayan** kimliği).
 - `run_id` — modeli üreten eğitim koşumuna geri bağlanır.
 - `prev_hash` + `_hmac` — zincir bütünlüğü.
-- Eğitim-koşumu kimliği (model SHA, adapter SHA, dataset fingerprint)
-  `human_approval.granted` girişinin kendisinde değil,
-  `pipeline.training_started` event payload'unda yaşar; denetçi
-  `run_id` üzerinden önceki event'e pivot eder ve `git log` içindeki
-  YAML ile diff alır. (Not: `forgelm approvals` `config_hash`'i
-  forward-compatible olarak okur —
-  `forgelm/cli/subcommands/_approvals.py` legacy `config_fingerprint`
-  anahtarına fallback yapar — ancak mevcut codebase'de hiçbir producer
-  iki alanı da emit etmez; read path bağlı, gelecekteki bir emitter
-  için. Bkz. `docs/reference/approvals_subcommand.md`.)
+- Eğitim-koşumu kimliği — `config_hash`, temel model adı + adapter
+  yöntemi (`model_lineage`) ve dataset fingerprint (`data_provenance`)
+  — koşumun `training_manifest.yaml` dosyasında yaşar; `config_hash`
+  ayrıca önceki `human_approval.required` audit event'ine de
+  damgalanır, böylece denetçi `run_id` üzerinden o event'e (veya
+  manifest'e) pivot eder ve `git log` içindeki YAML ile diff alır.
+  (Not: ForgeLM temel modeli adıyla kaydeder ve *dataset*'in HF Hub
+  commit SHA'sını pin'ler, ancak upstream temel-model Hub revision
+  SHA'sını pin'le**mez**; terfi edilen artefaktlar
+  `model_integrity.json` / `model.integrity_verified` event'i
+  üzerinden hash ile doğrulanır. `forgelm approvals`, `config_hash`'i
+  `human_approval.required` event'inden okur ve hiçbir mevcut
+  producer'ın emit etmediği legacy `config_fingerprint` anahtarına
+  fallback yapar. Bkz. `docs/reference/approvals_subcommand.md`.)
 
 ### S2: "Change-control kanıtı göster — bu modeli kim onayladı?"
 

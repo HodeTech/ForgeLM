@@ -36,7 +36,7 @@ kategoriler engagement-bazında scoplanır.
 | CC3.1 | Uygun hedefler belirler | `compliance.intended_purpose`; risk classification |
 | CC3.2 | Riskleri tanımlar ve analiz eder | `risk_assessment` Pydantic block; safety eval; `risk_treatment_plan.md` |
 | CC3.3 | Sahtekarlık risklerini değerlendirir | Audit log tamper-evidence; HMAC chain; manifest sidecar |
-| CC3.4 | Değişimleri tanımlar ve değerlendirir | `human_approval.required` kapısı; `pipeline.training_started` audit event'i diff için run-pinned model + adapter SHA'larını kaydeder |
+| CC3.4 | Değişimleri tanımlar ve değerlendirir | `human_approval.required/granted/rejected` audit zinciri; koşum başına `config_hash` (`training_manifest.yaml`'a, `human_approval.required` event'ine ve JSON zarfına damgalanır); diff için `model_integrity.json` / `model.integrity_verified` SHA-256 artefakt hash'leri (upstream temel-model Hub revision SHA'sı pin'lenmez) |
 | CC4.1 | Değerlendirmeleri seçer, geliştirir, gerçekleştirir | `forgelm verify-audit`; `forgelm safety-eval` |
 | CC4.2 | İç kontrol eksikliklerini iletir | `pipeline.failed`/`reverted`/`erasure_failed` olayları |
 | CC5.1 | Kontrol aktivitelerini seçer, geliştirir | F-compliance-110 strict gate; auto-revert; staging |
@@ -78,7 +78,7 @@ Güçlü ForgeLM katkısı.
 | PI1.1 Girdi kalitesi | `compute_dataset_fingerprint`; `data_governance_report` |
 | PI1.2 Sistem işleme | `forgelm verify-audit`; `data_audit_report.json` |
 | PI1.3 Çıktıların doğruluğu | `model_integrity.json` SHA-256 checksums; `model_card.md` |
-| PI1.4 Girdilerin izlenebilirliği | `_describe_adapter_method`; `pipeline.training_started` event payload (model SHA, adapter SHA, dataset fingerprint); HF-revision pin |
+| PI1.4 Girdilerin izlenebilirliği | `training_manifest.yaml` `data_provenance` bloğunda kayıtlı `compute_dataset_fingerprint` (dataset SHA-256 fingerprint) + `_fingerprint_hf_revision` (dataset HF Hub commit SHA pin); `model_lineage`'de `_describe_adapter_method` + `config_hash` (upstream temel-model Hub revision SHA'sı pin'lenmez) |
 | PI1.5 Çıktıların izlenebilirliği | Annex IV bundle manifest + report + audit + integrity'i co-locate eder |
 
 ## Confidentiality (C1.x)

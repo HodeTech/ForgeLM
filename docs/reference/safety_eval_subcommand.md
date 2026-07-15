@@ -20,7 +20,7 @@ Implementation: [`forgelm/cli/subcommands/_safety_eval.py`](../../forgelm/cli/su
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--model PATH` | string (required) | — | HuggingFace Hub ID, local checkpoint dir, or `.gguf` path. See "Supported model formats" below. |
-| `--classifier PATH` | string | `meta-llama/Llama-Guard-3-8B` | Harm classifier — Hub ID or local path. |
+| `--classifier PATH` | string | `meta-llama/Llama-Guard-3-8B` | Harm classifier — Hub ID or local path. **The default is not usable as-is**; see "Supported model formats" below — a working checkpoint must carry a trained `safe`/`unsafe` sequence-classification head. |
 | `--probes JSONL` | path | — | JSONL probe file (each line `{"prompt": ..., "category": ...}`). Mutually exclusive with `--default-probes`. |
 | `--default-probes` | bool | `false` | Use the bundled probe set (`forgelm/safety_prompts/default_probes.jsonl`) — 51 prompts spanning 18 harm categories (`benign-control`, `animal-cruelty`, `biosecurity`, `controlled-substances`, `credentials`, `csam`, `cybersecurity`, `extremism`, `fraud`, `harassment`, `hate-speech`, `jailbreak`, `malware`, `medical-misinfo`, `privacy-violence`, `self-harm`, `sexual-content`, `weapons-violence`). Mutually exclusive with `--probes`. |
 | `--output-dir DIR` | path | cwd | Where per-prompt results + audit log are written. |
@@ -39,7 +39,7 @@ Exactly one of `--probes` or `--default-probes` is required; supplying both is a
 | Local checkpoint directory (`./final_model/`) | Supported | Same |
 | `.gguf` file | **Refused** with `EXIT_CONFIG_ERROR` | GGUF safety-eval is planned for a Phase 36+ extension. Convert the GGUF back to a HF checkpoint (or run safety-eval against the pre-export HF model) and retry. |
 
-The classifier follows the same loader; the default `meta-llama/Llama-Guard-3-8B` requires an HF token gated to the meta-llama license.
+The classifier follows the same loader, but **the shipped default `meta-llama/Llama-Guard-3-8B` does not work out of the box**: it is a generative `LlamaForCausalLM` checkpoint with no trained sequence-classification head, and ForgeLM scores safety through a `pipeline("text-classification")` path that requires one. Passing it (or any of its published siblings) as `--classifier` fails fast with an actionable `RuntimeError` before any download or generation happens — it is never silently scored. `--classifier` must point to a checkpoint whose head was actually trained with `safe`/`unsafe` sequence-classification labels; ForgeLM does not ship a replacement default, so operators must supply one explicitly.
 
 ## Exit codes
 
@@ -79,7 +79,7 @@ The training-time pre-flight gate emits richer events through the trainer's own 
 }
 ```
 
-`success` is `true` iff `passed` is `true`. `failure_reason` is populated only on a non-passing result and explains *why* the gate refused (e.g. `regression_blocked_categories=['S5']`).
+`success` is `true` iff `passed` is `true`. `failure_reason` is populated only on a non-passing result and explains *why* the gate refused — it is one of three fixed formats emitted by `_evaluate_safety_gates` (`forgelm/safety.py`), joined with ` | ` when multiple gates fail: `"Unsafe ratio (8.00%) exceeds threshold (5.00%)"`, `"Confidence-weighted safety score (0.6200) below threshold (0.7000)"`, or `"Severity 'critical' count (2/40 = 5.00%) exceeds threshold (0.00%)"`.
 
 ## Output artefacts
 
