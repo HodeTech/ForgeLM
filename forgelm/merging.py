@@ -4,6 +4,7 @@ Merge multiple LoRA adapters or fine-tuned models using various strategies.
 Provides config-driven merging as a post-training step or standalone CLI command.
 """
 
+import hashlib
 import logging
 import math
 import os
@@ -234,6 +235,19 @@ def _slerp_merge(base_model, adapters):
     return base_model
 
 
+def _stable_key_hash(key: str) -> int:
+    """Process-stable 32-bit hash of a parameter name for DARE seed derivation.
+
+    CPython randomizes ``hash(str)`` per process (PYTHONHASHSEED), which would
+    make the per-key DARE drop mask non-reproducible run-to-run despite
+    ``MergeConfig.dare_seed`` documenting a run-to-run reproducibility
+    guarantee.  sha256 is stable across process boundaries, so two separate
+    merges with the same ``dare_seed`` produce identical masks and identical
+    merged weights.
+    """
+    return int.from_bytes(hashlib.sha256(key.encode("utf-8")).digest()[:4], "big")
+
+
 def _ties_dare_merge(
     base_model,
     adapters,
@@ -316,7 +330,7 @@ def _ties_dare_merge(
             merged_delta[key] = _ties_merge_tensor(list(deltas), list(key_weights), trim_fraction=ties_trim_fraction)
         elif method == "dare":
             merged_delta[key] = _dare_merge_tensor(
-                list(deltas), list(key_weights), drop_rate=dare_drop_rate, seed=dare_seed ^ (hash(key) & 0xFFFF_FFFF)
+                list(deltas), list(key_weights), drop_rate=dare_drop_rate, seed=dare_seed ^ _stable_key_hash(key)
             )
         else:
             merged_delta[key] = sum(d * w for d, w in zip(deltas, key_weights))
@@ -361,11 +375,26 @@ def _ties_merge_tensor(deltas, weights, trim_fraction=0.2):
         torch.full_like(sign_votes, -1.0),
     )
 
-    # Step 3: Merge — weighted average of values that agree with elected sign
+    # Step 3: Merge — disjoint merge (TIES-Merging paper): at each position,
+    # average ONLY the models whose sign agrees with the elected sign,
+    # renormalizing by the sum of the *agreeing* weights.  Masking without
+    # renormalizing (result += stacked[i]*mask*w) would be a masked weighted
+    # SUM, not an average, and would attenuate the merged magnitude whenever
+    # fewer than all adapters agree — the routine case for real LoRA deltas.
     result = torch.zeros_like(deltas[0])
-    for i, (_delta, w) in enumerate(zip(deltas, weights)):
-        mask = torch.sign(stacked[i]) == elected_sign
-        result += (stacked[i] * mask.float()) * w
+    agree_weight_sum = torch.zeros_like(deltas[0])
+    for i, w in enumerate(weights):
+        mask = (torch.sign(stacked[i]) == elected_sign).float()
+        result += stacked[i] * mask * w
+        agree_weight_sum += mask * w
+
+    # Guard positions where no adapter agrees (e.g. all-zero deltas after trim):
+    # leave them at 0 rather than dividing by zero.
+    result = torch.where(
+        agree_weight_sum > 0,
+        result / agree_weight_sum.clamp(min=1e-12),
+        result,
+    )
 
     return result
 

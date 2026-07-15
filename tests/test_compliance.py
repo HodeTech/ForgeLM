@@ -430,6 +430,78 @@ class TestAuditLoggerGenesisManifest:
         AuditLogger(str(tmp_path)).log_event("second.event")
         assert log_path.read_text(encoding="utf-8").strip(), "opt-in re-root should have appended a fresh genesis entry"
 
+    def test_genesis_manifest_written_atomically(self, tmp_path, monkeypatch):
+        """The genesis manifest must be promoted via tmp+os.replace, not a plain
+        ``open(...,"w")`` — a crash mid-write must never leave a truncated
+        manifest that disarms the write-time re-root guard (parity with
+        export_pipeline_manifest's atomic discipline)."""
+        from forgelm import compliance
+
+        replace_calls = []
+        real_replace = os.replace
+
+        def _spy_replace(src, dst):
+            replace_calls.append((str(src), str(dst)))
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(compliance.os, "replace", _spy_replace)
+
+        compliance.AuditLogger(str(tmp_path)).log_event("first.event")
+
+        manifest_path = str(tmp_path / "audit_log.jsonl.manifest.json")
+        # Promoted from a .tmp sibling via os.replace (atomic write).
+        assert any(dst == manifest_path and src == manifest_path + ".tmp" for src, dst in replace_calls), (
+            "genesis manifest was not written via tmp + os.replace"
+        )
+        # The published manifest is complete/valid and no partial .tmp lingers.
+        assert os.path.isfile(manifest_path)
+        assert not os.path.exists(manifest_path + ".tmp")
+        with open(manifest_path, encoding="utf-8") as fh:
+            assert "first_entry_sha256" in json.load(fh)
+
+    def test_corrupt_manifest_fails_closed(self, tmp_path, caplog, monkeypatch):
+        """A present-but-unreadable manifest must fail closed at write time, not
+        warn-and-continue. Corrupting the manifest (instead of deleting the log)
+        must not silently disarm the truncation guard."""
+        from forgelm.compliance import AuditLogger, ConfigError
+
+        monkeypatch.delenv("FORGELM_ALLOW_AUDIT_REROOT", raising=False)
+        log_path = tmp_path / "audit_log.jsonl"
+        manifest_path = tmp_path / "audit_log.jsonl.manifest.json"
+
+        AuditLogger(str(tmp_path)).log_event("first.event")
+        assert manifest_path.is_file()
+
+        # Truncate the log to empty (so the next write re-roots) and corrupt the
+        # manifest so it can no longer be read to detect the re-root.
+        log_path.write_text("", encoding="utf-8")
+        manifest_path.write_text("{ this is not valid json", encoding="utf-8")
+
+        with caplog.at_level("ERROR", logger="forgelm.compliance"):
+            with pytest.raises(ConfigError, match="unreadable"):
+                AuditLogger(str(tmp_path)).log_event("second.event")
+
+        assert any("AUDIT INTEGRITY" in rec.message for rec in caplog.records), (
+            "corrupt-manifest path did not log an AUDIT INTEGRITY error"
+        )
+
+    def test_corrupt_manifest_reroot_optin_allows_fresh_chain(self, tmp_path, monkeypatch):
+        """FORGELM_ALLOW_AUDIT_REROOT=1 lets a deliberate operator start fresh
+        even when the manifest is corrupt — the ERROR still fires but the write
+        proceeds (parity with the absent/empty-log opt-in path)."""
+        from forgelm.compliance import AuditLogger
+
+        log_path = tmp_path / "audit_log.jsonl"
+        manifest_path = tmp_path / "audit_log.jsonl.manifest.json"
+
+        AuditLogger(str(tmp_path)).log_event("first.event")
+        log_path.write_text("", encoding="utf-8")
+        manifest_path.write_text("{ this is not valid json", encoding="utf-8")
+
+        monkeypatch.setenv("FORGELM_ALLOW_AUDIT_REROOT", "1")
+        AuditLogger(str(tmp_path)).log_event("second.event")  # must NOT raise
+        assert log_path.read_text(encoding="utf-8").strip(), "opt-in re-root should have appended a fresh entry"
+
     def test_audit_envelope_has_no_seq_field(self, tmp_path):
         """F-P4-OPUS-28: the user manual documented a ``seq`` field and a ``ts``
         field name that the writer never emits. Lock the real envelope so the
@@ -607,6 +679,52 @@ class TestAuditLoggerOperatorIdentity:
         log = compliance.AuditLogger(str(tmp_path))
         assert log.operator == "anonymous@sandbox-host"
 
+    def test_operator_raises_on_keyerror_no_flag(self, tmp_path, monkeypatch):
+        """Containerised no-passwd-entry case: ``getpass.getuser()`` raises
+        ``KeyError`` (arbitrary numeric UID with no /etc/passwd entry — the
+        ``docker run --user 12345`` / OpenShift random-UID scenario this
+        fallback claims to handle). Without the opt-in this must surface as the
+        actionable ConfigError, not crash the run with a raw KeyError."""
+        from forgelm import compliance
+
+        monkeypatch.delenv("FORGELM_OPERATOR", raising=False)
+        monkeypatch.delenv("FORGELM_ALLOW_ANONYMOUS_OPERATOR", raising=False)
+
+        def _boom():
+            raise KeyError("getpwuid(): uid not found: 12345")
+
+        monkeypatch.setattr(compliance.getpass, "getuser", _boom)
+        with pytest.raises(compliance.ConfigError, match="Operator identity unavailable"):
+            compliance.AuditLogger(str(tmp_path))
+
+    def test_operator_anonymous_on_keyerror_with_flag(self, tmp_path, monkeypatch):
+        """The same missing-passwd-entry KeyError, with the anonymous opt-in set,
+        degrades to ``anonymous@host`` instead of propagating."""
+        from forgelm import compliance
+
+        monkeypatch.delenv("FORGELM_OPERATOR", raising=False)
+        monkeypatch.setenv("FORGELM_ALLOW_ANONYMOUS_OPERATOR", "1")
+        monkeypatch.setattr(compliance.getpass, "getuser", lambda: _raise(KeyError("getpwuid(): uid not found: 12345")))
+        monkeypatch.setattr(compliance.socket, "gethostname", lambda: "pod-xyz")
+
+        log = compliance.AuditLogger(str(tmp_path))
+        assert log.operator == "anonymous@pod-xyz"
+
+    def test_operator_handles_importerror_windows_no_pwd(self, tmp_path, monkeypatch):
+        """Windows without USERNAME: ``getpass.getuser()`` raises
+        ``ModuleNotFoundError`` (an ImportError subclass) because there is no
+        ``pwd`` module. With the anonymous opt-in this degrades gracefully
+        rather than propagating an uncaught import failure."""
+        from forgelm import compliance
+
+        monkeypatch.delenv("FORGELM_OPERATOR", raising=False)
+        monkeypatch.setenv("FORGELM_ALLOW_ANONYMOUS_OPERATOR", "1")
+        monkeypatch.setattr(compliance.getpass, "getuser", lambda: _raise(ModuleNotFoundError("No module named 'pwd'")))
+        monkeypatch.setattr(compliance.socket, "gethostname", lambda: "win-host")
+
+        log = compliance.AuditLogger(str(tmp_path))
+        assert log.operator == "anonymous@win-host"
+
     def test_no_unknown_fallback_in_default_path(self, tmp_path, monkeypatch):
         """Belt-and-braces: the literal string 'unknown' must never become
         the operator when the resolution chain succeeds."""
@@ -629,15 +747,72 @@ class TestAuditLoggerFsync:
 
         log = AuditLogger(str(tmp_path))
 
+        # The first event also fsyncs the atomically-written genesis manifest;
+        # measure a steady-state event so this asserts exactly the audit-line
+        # fsync (the genesis-manifest fsync is covered by its own test).
+        log.log_event("genesis.event")
+
         with mock.patch("forgelm.compliance.os.fsync") as mock_fsync:
             log.log_event("test.event", key="value")
 
         assert mock_fsync.called, "log_event() must invoke os.fsync after flushing the audit line"
-        # Called exactly once per event (not per flush call elsewhere in the
-        # process); the file descriptor argument is an int from f.fileno().
+        # Called exactly once per steady-state event (not per flush call
+        # elsewhere); the file descriptor argument is an int from f.fileno().
         assert mock_fsync.call_count == 1
         (fileno_arg,), _ = mock_fsync.call_args
         assert isinstance(fileno_arg, int)
+
+
+class TestComplianceArtifactEncoding:
+    """Compliance-artifact and deployer-instruction text writes must pin
+    ``encoding='utf-8'`` so a non-ASCII operator-supplied field cannot crash
+    export (or produce mojibake) on a host whose default text encoding is not
+    UTF-8 (slim CI images with no LANG, pre-PEP-686 Windows)."""
+
+    def test_export_artifacts_opened_with_utf8(self, tmp_path, monkeypatch, minimal_config):
+        import builtins
+
+        from forgelm.compliance import export_compliance_artifacts
+
+        cfg = ForgeConfig(**minimal_config(data={"dataset_name_or_path": "veri/çğşöü"}))
+        manifest = generate_training_manifest(cfg, metrics={"eval_loss": 0.5})
+
+        recorded = {}
+        real_open = builtins.open
+
+        def _spy_open(file, mode="r", *args, **kwargs):
+            name = os.path.basename(str(file))
+            if "w" in mode and name.endswith((".json", ".yaml", ".md")):
+                recorded[name] = kwargs.get("encoding")
+            return real_open(file, mode, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", _spy_open)
+        export_compliance_artifacts(manifest, str(tmp_path))
+
+        assert recorded, "no compliance artifact writes were observed"
+        for name, encoding in recorded.items():
+            assert encoding == "utf-8", f"{name} was opened without encoding='utf-8'"
+
+    def test_deployer_instructions_opened_with_utf8(self, tmp_path, monkeypatch, minimal_config):
+        import builtins
+
+        from forgelm.compliance import generate_deployer_instructions
+
+        cfg = ForgeConfig(**minimal_config())
+
+        recorded = {}
+        real_open = builtins.open
+
+        def _spy_open(file, mode="r", *args, **kwargs):
+            name = os.path.basename(str(file))
+            if "w" in mode and name == "deployer_instructions.md":
+                recorded[name] = kwargs.get("encoding")
+            return real_open(file, mode, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", _spy_open)
+        generate_deployer_instructions(cfg, metrics={"eval_loss": 0.5}, final_path=str(tmp_path / "m"))
+
+        assert recorded.get("deployer_instructions.md") == "utf-8"
 
 
 class TestSafetyClassifierLoadFailureAudit:

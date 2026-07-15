@@ -37,14 +37,27 @@ from typing import Any, Dict
 _PII_PATTERNS: Dict[str, re.Pattern] = {
     # ASCII class: RFC 5321 constrains email local-part and domain to US-ASCII
     "email": re.compile(r"\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}\b"),
-    "iban": re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"),
+    # IBAN: 2-letter country + 2 check digits + 11-30 alphanumerics. The body
+    # allows an optional single space before each character so the ISO 13616
+    # print grouping ("TR33 0006 1001 5478 …") — how IBANs actually appear on
+    # invoices / statements / email — is detected, not only the compact form.
+    # ``(?: ?[A-Z0-9])`` (no single-char class per regex.md rule 2); the space
+    # and the alphanumeric are disjoint so the two never compete, and the
+    # {11,30} bound (regex.md rule 3) keeps backtracking bounded — linearity
+    # verified at tests/test_data_audit.py::TestPiiRegexLinearity.
+    "iban": re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b"),
     # Credit cards captured first within the digit-run categories, then
     # Luhn-validated (see _is_credit_card). Greedy ``*`` instead of ``*?``:
     # both match the same set of strings here (``\b`` end-anchor forces a
     # full match) but the greedy form avoids unnecessary engine backtracking.
     "credit_card": re.compile(r"\b(?:\d[ -]*){13,19}\b"),
     "us_ssn": re.compile(r"\b(?!000|666|9\d{2})\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b"),
-    "fr_ssn": re.compile(r"\b[12]\d{2}(0[1-9]|1[0-2])(2[AB]|\d{2})\d{3}\d{3}(\d{2})?\b"),
+    # Non-capturing groups (?:...) throughout: capturing groups make
+    # ``pattern.findall`` return a tuple of only the captured spans instead of
+    # the full match, which would corrupt ``detect_pii``'s payload (and any
+    # future checksum validation) for this one pattern. Every other entry in
+    # this dict is group-free for the same reason.
+    "fr_ssn": re.compile(r"\b[12]\d{2}(?:0[1-9]|1[0-2])(?:2[AB]|\d{2})\d{3}\d{3}(?:\d{2})?\b"),
     "tr_id": re.compile(r"\b\d{11}\b"),  # TR national ID is 11 digits, see _is_tr_id
     # German Personalausweis serial: leading letter, then 7-8 digits, then
     # optional alphanumeric check char. Tighter than the previous
@@ -57,6 +70,10 @@ _PII_PATTERNS: Dict[str, re.Pattern] = {
     # don't trip false positives. Use ingestion --pii-mask to redact at write
     # time; keep audit's recall slightly lower than the other categories to
     # avoid audit fatigue.
+    # Every quantifier is bounded and each optional ``[\s.-]?`` sits over a
+    # character class disjoint from the adjacent ``\d`` run, so no two
+    # quantifiers compete for the same characters (regex.md rule 4). ReDoS
+    # linearity verified at tests/test_data_audit.py::TestPiiRegexLinearity.
     "phone": re.compile(
         r"(?<!\w)"
         r"(?:"

@@ -76,6 +76,16 @@ class _StreamingAggregator:
     quality_samples_flagged: int = 0
     quality_samples_evaluated: int = 0  # rows that actually went through _row_quality_flags
     lang_sample: List[str] = field(default_factory=list)
+    # Reservoir-sampling state for ``lang_sample`` so the fixed-size language
+    # sample is representative regardless of row ordering (a corpus built by
+    # concatenating per-language source files would otherwise report only the
+    # first block's language). ``lang_sample_seen`` counts every text-bearing
+    # payload offered; ``lang_rng_counter`` is the inline LCG mirrored from
+    # ``_LengthDigest`` — deterministic across runs and worker counts so the
+    # byte-identical contract holds. Seeded at the multiplier (not 0) for the
+    # same first-element reason documented on ``_LengthDigest._rng_counter``.
+    lang_sample_seen: int = 0
+    lang_rng_counter: int = 6364136223846793005
     # Phase 12 configuration (set once by the orchestrator; never mutated).
     dedup_method: str = "simhash"
     minhash_num_perm: int = DEFAULT_MINHASH_NUM_PERM
@@ -116,11 +126,23 @@ def _record_dedup_sentinel(agg: _StreamingAggregator) -> None:
 
 def _record_text_metrics(agg: _StreamingAggregator, payload: str) -> None:
     agg.length_digest.update(len(payload))
+    # Cap each sample at 512 chars: lang detection only needs a short snippet
+    # to identify the language, and unbounded payloads inflate peak memory on
+    # multi-GB JSONL inputs.
+    snippet = payload[:512]
+    agg.lang_sample_seen += 1
     if len(agg.lang_sample) < _LANG_SAMPLE_SIZE:
-        # Cap each sample at 512 chars: lang detection only needs a short
-        # snippet to identify the language, and unbounded payloads inflate
-        # peak memory on multi-GB JSONL inputs.
-        agg.lang_sample.append(payload[:512])
+        agg.lang_sample.append(snippet)
+    else:
+        # Algorithm R reservoir sampling: replace a random slot with
+        # probability _LANG_SAMPLE_SIZE / seen so the sample stays uniform
+        # over the whole stream instead of freezing on the first N rows.
+        # Same inline LCG as ``_LengthDigest.update`` — no ``random`` import,
+        # deterministic across runs and worker counts.
+        agg.lang_rng_counter = (agg.lang_rng_counter * 6364136223846793005 + 1) & 0xFFFFFFFFFFFFFFFF
+        j = agg.lang_rng_counter % agg.lang_sample_seen
+        if j < _LANG_SAMPLE_SIZE:
+            agg.lang_sample[j] = snippet
     _record_dedup_signature(agg, payload)
     for kind, count in detect_pii(payload).items():
         agg.pii_counts[kind] = agg.pii_counts.get(kind, 0) + count
@@ -207,10 +229,20 @@ def _populate_optional_findings(info: Dict[str, Any], agg: _StreamingAggregator)
         info["pii_counts"] = dict(agg.pii_counts)
     if agg.secrets_counts:
         info["secrets_counts"] = dict(agg.secrets_counts)
-    if agg.enable_quality_filter and agg.quality_flags_counts:
-        info["quality_flags_counts"] = dict(agg.quality_flags_counts)
-        info["quality_samples_flagged"] = agg.quality_samples_flagged
+    if agg.enable_quality_filter:
+        # ``quality_samples_evaluated`` / ``quality_samples_flagged`` are
+        # accumulated for *every* row the filter ran on (see
+        # ``_record_text_metrics``), including a perfectly clean split with
+        # zero flags. Surface them whenever the filter was enabled — NOT only
+        # when a flag fired — otherwise a clean split's evaluated-row count
+        # never reaches ``_build_quality_summary``'s denominator and
+        # ``overall_quality_score`` (an EU AI Act Article 10 number) is
+        # silently biased low on any multi-split corpus with a clean split.
+        # ``quality_flags_counts`` stays gated on non-empty as before.
         info["quality_samples_evaluated"] = agg.quality_samples_evaluated
+        info["quality_samples_flagged"] = agg.quality_samples_flagged
+        if agg.quality_flags_counts:
+            info["quality_flags_counts"] = dict(agg.quality_flags_counts)
 
 
 def _within_split_pairs(

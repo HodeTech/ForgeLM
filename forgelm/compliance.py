@@ -111,12 +111,22 @@ class AuditLogger:
         else:
             try:
                 username = getpass.getuser()
-            except OSError:
-                # ``getpass.getuser()`` raises ``OSError`` on systems where
-                # neither ``LOGNAME``/``USER``/``LNAME``/``USERNAME`` env vars
-                # nor the ``pwd`` lookup resolves an identity (rootless
-                # containers, sandboxed CI). We still honour the explicit
-                # opt-in below; fall through with no username.
+            except (OSError, KeyError, ImportError):
+                # ``getpass.getuser()`` fails on systems where neither
+                # ``LOGNAME``/``USER``/``LNAME``/``USERNAME`` env vars nor the
+                # ``pwd`` lookup resolves an identity. Its failure surface is
+                # wider than ``OSError`` alone:
+                #   - ``KeyError``: the current UID has no ``/etc/passwd``
+                #     entry, so ``pwd.getpwuid(os.getuid())`` raises — the
+                #     arbitrary-numeric-UID container case (``docker run
+                #     --user 12345``, OpenShift's random-UID policy) this
+                #     fallback exists to handle.
+                #   - ``ImportError``: Windows has no ``pwd`` module, so
+                #     ``getpass.getuser()`` raises ``ModuleNotFoundError``
+                #     when ``USERNAME`` is unset.
+                #   - ``OSError``: other identity-resolution failures.
+                # We still honour the explicit opt-in below; fall through
+                # with no username.
                 username = None
             hostname = socket.gethostname() or "unknown-host"
             if username:
@@ -267,14 +277,20 @@ class AuditLogger:
         once on first entry, never overwritten) without detection.
 
         This is the **sole write-time** truncation guard (``verify_audit_log``
-        is the strong verify-time gate). When the manifest pins a real first
-        entry but the log is absent/empty, the next write would silently
-        re-root the chain on disk — exactly the truncation the manifest exists
-        to detect. We log an ``AUDIT INTEGRITY`` ERROR and then raise
-        ``ConfigError`` so the re-root is refused at the moment it occurs,
-        mirroring the loud-fail operator-identity policy in ``__init__``.
-        An operator who deliberately rotated/cleared the log can opt in to the
-        re-root via ``FORGELM_ALLOW_AUDIT_REROOT=1`` (the ERROR still fires).
+        is the strong verify-time gate). Two conditions fail closed here, each
+        logging an ``AUDIT INTEGRITY`` ERROR and raising ``ConfigError`` so the
+        re-root is refused at the moment it occurs (mirroring the loud-fail
+        operator-identity policy in ``__init__``):
+
+        1. The manifest is present but **unreadable/corrupt** — the chain can
+           no longer be verified, so corrupting the manifest must not be a
+           quieter path to disarming the guard than deleting the log.
+        2. The manifest pins a real first entry but the **log is absent/empty**
+           — the next write would silently re-root the chain on disk.
+
+        An operator who deliberately rotated/cleared the log (or accepts a
+        corrupt manifest) can opt in to the re-root via
+        ``FORGELM_ALLOW_AUDIT_REROOT=1`` (the ERROR still fires).
         """
         if not os.path.isfile(self._manifest_path):
             return
@@ -282,7 +298,28 @@ class AuditLogger:
             with open(self._manifest_path, "r", encoding="utf-8") as fh:
                 manifest = json.load(fh)
         except (OSError, json.JSONDecodeError) as exc:
-            logger.warning("Audit genesis manifest unreadable (%s): %s", self._manifest_path, exc)
+            # A present-but-unreadable manifest fails closed, matching the
+            # verify-time gate (``_verify_genesis_manifest``) which marks the
+            # identical situation ``valid=False``. Warning-and-returning here
+            # would let the next append silently re-root the chain — exactly
+            # the truncation this guard exists to detect, reachable by
+            # corrupting the manifest instead of deleting the log. The same
+            # ``FORGELM_ALLOW_AUDIT_REROOT`` opt-in as the absent/empty-log
+            # branch lets a deliberate operator proceed (the ERROR still fires).
+            logger.error(
+                "AUDIT INTEGRITY: genesis manifest at %s is present but unreadable (%s). "
+                "The chain cannot be verified and would be silently re-rooted.",
+                self._manifest_path,
+                exc,
+            )
+            if os.getenv("FORGELM_ALLOW_AUDIT_REROOT") != "1":
+                raise ConfigError(
+                    f"Audit log re-root refused: genesis manifest at {self._manifest_path!r} "
+                    f"is present but unreadable ({exc}) — the chain cannot be verified and "
+                    "would be silently re-rooted. Investigate or repair the manifest, or set "
+                    "FORGELM_ALLOW_AUDIT_REROOT=1 to deliberately start a fresh chain "
+                    "(not recommended for EU AI Act Article 12 record-keeping)."
+                ) from exc
             return
         if not os.path.isfile(self.log_path) or os.path.getsize(self.log_path) == 0:
             expected = manifest.get("first_entry_sha256", "unknown")
@@ -316,11 +353,24 @@ class AuditLogger:
             "run_id": self.run_id,
             "first_entry_sha256": first_entry_sha256,
         }
+        # Atomic write (tmp + fsync + os.replace), matching export_pipeline_manifest
+        # and log_event's fsync discipline. A crash mid-write (power loss, OOM-kill)
+        # must never leave a truncated manifest — a corrupt manifest disarms the
+        # write-time re-root guard just as effectively as deleting the log.
+        tmp_path = self._manifest_path + ".tmp"
         try:
-            with open(self._manifest_path, "w", encoding="utf-8") as fh:
+            with open(tmp_path, "w", encoding="utf-8") as fh:
                 json.dump(manifest, fh, indent=2)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_path, self._manifest_path)
         except OSError as exc:
             logger.warning("Could not write genesis manifest to %s: %s", self._manifest_path, exc)
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
     def log_event(self, event: str, **details) -> None:
         """Append a tamper-evident structured event to the audit log.
@@ -1051,7 +1101,7 @@ If the model produces harmful, biased, or incorrect outputs in production:
 
     doc_path = os.path.join(final_path, "deployer_instructions.md")
     os.makedirs(final_path, exist_ok=True)
-    with open(doc_path, "w") as f:
+    with open(doc_path, "w", encoding="utf-8") as f:
         f.write(content)
     logger.info("Deployer instructions saved to %s", doc_path)
     return doc_path
@@ -1118,6 +1168,11 @@ def build_annex_iv_artifact(manifest: Dict[str, Any]) -> Optional[Dict[str, Any]
             "intended_purpose": operator_block.get("intended_purpose", ""),
             "risk_classification": operator_block.get("risk_classification", "minimal-risk"),
         },
+        # Top-level duplicate of the §1 intended-purpose: the Annex IV verifier
+        # (``cli/subcommands/_verify_annex_iv.py``) lists ``intended_purpose`` as
+        # a required top-level §1 field in ``_ANNEX_IV_REQUIRED_FIELDS`` and fails
+        # the artefact if it is absent, so this is a load-bearing consumer, not
+        # leftover duplication. Keep it in lockstep with ``system_identification``.
         "intended_purpose": operator_block.get("intended_purpose", ""),
         # Annex IV §2: software / hardware components + supplier list.
         # Synthesised from the manifest's model lineage + training
@@ -1456,7 +1511,7 @@ def export_compliance_artifacts(
         import yaml
 
         # 1. Full compliance report (JSON)
-        with open(os.path.join(staging_dir, "compliance_report.json"), "w") as f:
+        with open(os.path.join(staging_dir, "compliance_report.json"), "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2, default=str)
         pending.append(("compliance_report.json", "compliance_report.json"))
 
@@ -1475,18 +1530,18 @@ def export_compliance_artifacts(
                 if not k.startswith("benchmark/")
             },
         }
-        with open(os.path.join(staging_dir, "training_manifest.yaml"), "w") as f:
+        with open(os.path.join(staging_dir, "training_manifest.yaml"), "w", encoding="utf-8") as f:
             yaml.dump(yaml_manifest, f, default_flow_style=False, sort_keys=False)
         pending.append(("training_manifest.yaml", "training_manifest.yaml"))
 
         # 3. Data provenance (JSON)
-        with open(os.path.join(staging_dir, "data_provenance.json"), "w") as f:
+        with open(os.path.join(staging_dir, "data_provenance.json"), "w", encoding="utf-8") as f:
             json.dump(manifest["data_provenance"], f, indent=2, default=str)
         pending.append(("data_provenance.json", "data_provenance.json"))
 
         # 4. Risk assessment (JSON) — if present
         if "risk_assessment" in manifest:
-            with open(os.path.join(staging_dir, "risk_assessment.json"), "w") as f:
+            with open(os.path.join(staging_dir, "risk_assessment.json"), "w", encoding="utf-8") as f:
                 json.dump(manifest["risk_assessment"], f, indent=2)
             pending.append(("risk_assessment.json", "risk_assessment.json"))
 
@@ -1502,7 +1557,7 @@ def export_compliance_artifacts(
         # produces a hash the verifier recomputes byte-for-byte.
         annex_artifact = build_annex_iv_artifact(manifest)
         if annex_artifact is not None:
-            with open(os.path.join(staging_dir, "annex_iv_metadata.json"), "w") as f:
+            with open(os.path.join(staging_dir, "annex_iv_metadata.json"), "w", encoding="utf-8") as f:
                 # Must use _manifest_json_default (not default=str) so sets/frozensets
                 # are serialised as sorted lists — matching what compute_annex_iv_manifest_hash
                 # normalises to when computing the stored digest.  default=str would

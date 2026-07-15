@@ -17,8 +17,7 @@ lora:
   alpha: 16
   dropout: 0.1
   bias: "none"
-  use_dora: false
-  target_modules: 
+  target_modules:
     - "q_proj"
     - "v_proj"
   task_type: "CAUSAL_LM"
@@ -62,11 +61,22 @@ data:
   shuffle: true
   clean_text: true
   add_eos: true
+  # EU AI Act Article 10 data-governance metadata (optional)
+  # governance:
+  #   collection_method: "Public web scraping + manual curation"
+  #   annotation_process: "Human-reviewed, single annotator per example"
+  #   known_biases: "Skewed toward English; under-represents dialectal variants"
+  #   personal_data_included: false   # Article 10(5): contains PII of identifiable subjects
+  #   dpia_completed: false           # Article 35 GDPR: DPIA completed for this dataset
 
-# Advanced PEFT method (default: "lora")
+# Advanced PEFT method (default: "lora").  Pick ONE canonical `method:` value —
+# `dora`/`pissa`/`rslora` are selected via `method:`, not via the deprecated
+# `use_dora`/`use_rslora` booleans (those are removed in v0.10.0).
 # lora:
 #   method: "pissa"   # "lora", "dora", "pissa", "rslora"
-#   use_rslora: true   # rank-stabilized LoRA for high ranks (r>64)
+# For rank-stabilized LoRA (recommended for high ranks, r>64):
+# lora:
+#   method: "rslora"
 
 # Long-context optimizations (for training on >4K token sequences)
 # training:
@@ -118,6 +128,13 @@ data:
 #     quantize_experts: true     # quantize inactive experts for VRAM savings
 #     experts_to_train: "all"    # "all" or comma-separated expert indices
 
+# Multimodal / VLM fine-tuning (for image-text models like Llava, Qwen-VL)
+# model:
+#   multimodal:
+#     enabled: true
+#     image_column: "image"      # dataset column with image paths or URLs
+#     text_column: "text"        # dataset column with text or captions
+
 # Model merging (post-training). Run with: forgelm --config config.yaml --merge
 # merge:
 #   enabled: true
@@ -150,6 +167,7 @@ data:
 # evaluation:
 #   auto_revert: true
 #   max_acceptable_loss: 0.8  # If final eval_loss is higher, reverts adapters
+#   require_human_approval: false  # Article 14: pause + stage the model for human sign-off (exit code 4)
 #   # baseline_loss: 0.75     # Optional; if omitted, computed pre-training when validation exists
 #   benchmark:
 #     enabled: true

@@ -87,6 +87,11 @@ def _load_arch_params(model_name_or_path: str, trust_remote_code: bool = False) 
         params["vocab_size"] = getattr(cfg, "vocab_size", None)
         params["num_attention_heads"] = getattr(cfg, "num_attention_heads", None)
         params["num_key_value_heads"] = getattr(cfg, "num_key_value_heads", None)
+        # The checkpoint's declared storage dtype (transformers 5.x: ``cfg.dtype``).
+        # model.py passes no explicit dtype to from_pretrained, so transformers'
+        # ``dtype="auto"`` default loads the base weights in exactly this dtype —
+        # _resolve_quant_scheme mirrors that instead of assuming a fixed dtype.
+        params["declared_dtype"] = getattr(cfg, "dtype", None)
         logger.debug("Loaded architecture config from %s", model_name_or_path)
     except Exception as e:  # noqa: BLE001 — best-effort: AutoConfig.from_pretrained surfaces OSError (network/cache miss), HF repo errors, ValueError on unknown architecture, and ImportError when the optional config-class module is missing.  fit-check fallback uses regex name-hints (3b/7b/13b/...) so a config probe failure does not abort the VRAM estimate.  # NOSONAR
         logger.debug("Could not load AutoConfig for %s: %s — using size hint fallback.", model_name_or_path, e)
@@ -234,22 +239,31 @@ _DTYPE_TO_QUANT = {
 }
 
 
-def _resolve_quant_scheme(m: Any) -> str:
+def _resolve_quant_scheme(m: Any, declared_dtype: Any = None) -> str:
     """Pick the storage dtype string used by the VRAM table.
 
-    bnb_4bit_compute_dtype only describes 4-bit math precision and is
-    irrelevant when the model isn't actually loaded in 4-bit, so the
-    branches here are ordered: 4-bit → 8-bit → declared torch_dtype →
-    bf16 fallback.
+    Mirrors the real load path in ``forgelm/model.py``: 4-bit QLoRA storage
+    when ``load_in_4bit`` is set, otherwise the base weights load under
+    transformers' default ``dtype="auto"`` (transformers >=5.3) — i.e. the
+    checkpoint's *declared/native* dtype, since model.py passes no explicit
+    dtype to ``from_pretrained``.  ``bnb_4bit_compute_dtype`` only describes
+    4-bit math precision and is irrelevant when the model isn't loaded in 4-bit.
+
+    ``declared_dtype`` is the checkpoint dtype read from the HF config by
+    :func:`_load_arch_params`.  When it is unknown (config unavailable or no
+    dtype entry), fall back to fp32 — the conservative over-estimate that
+    avoids a false FITS/TIGHT verdict that would otherwise end in a
+    mid-training OOM.  (bf16 was the old fallback and silently halved the
+    base-model footprint on fp32 checkpoints.)
     """
     if m.load_in_4bit:
         return "4bit"
     if getattr(m, "load_in_8bit", False):
         return "8bit"
-    torch_dtype = getattr(m, "torch_dtype", None) or getattr(getattr(m, "config", None), "torch_dtype", None)
-    if torch_dtype is None:
-        return "bf16"
-    return _DTYPE_TO_QUANT.get(str(torch_dtype).lower(), "bf16")
+    dtype = declared_dtype if declared_dtype is not None else getattr(m, "torch_dtype", None)
+    if dtype is None:
+        return "fp32"
+    return _DTYPE_TO_QUANT.get(str(dtype).lower().removeprefix("torch."), "fp32")
 
 
 def _component_breakdown(
@@ -329,7 +343,7 @@ def estimate_vram(config: Any) -> FitCheckResult:
 
     arch = _load_arch_params(m.name_or_path, trust_remote_code=m.trust_remote_code)
     num_params = _estimate_param_count(arch)
-    quant = _resolve_quant_scheme(m)
+    quant = _resolve_quant_scheme(m, arch.get("declared_dtype"))
     grad_ckpt = getattr(t, "gradient_checkpointing", False)
 
     components = _component_breakdown(

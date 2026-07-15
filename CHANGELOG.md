@@ -27,6 +27,35 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 - **Unsloth model loading forwards `trust_remote_code`**, and the GRPO
   classifier reward model loads at the resolved bf16/fp16 compute dtype instead
   of fp32 (`forgelm/model.py`, `forgelm/trainer.py`).
+- **`AuditLogger` no longer crashes when the OS user has no passwd entry.** The
+  operator-identity fallback caught only `OSError`; `getpass.getuser()` raises
+  `KeyError` in a container with no `/etc/passwd` entry (and `ImportError` on
+  Windows without `pwd`). Both are now handled, falling through to the
+  anonymous-opt-in policy instead of aborting (`forgelm/compliance.py`).
+- **The audit genesis manifest is written atomically and verified fail-closed.**
+  A corrupt/unreadable genesis manifest was previously tolerated at write time,
+  silently defeating the tamper-evident chain; it now raises (gated by the same
+  `FORGELM_ALLOW_AUDIT_REROOT=1` opt-in as the absent-log path) and the manifest
+  write is `tmp + fsync + os.replace` atomic (`forgelm/compliance.py`).
+- **A non-numeric LLM-judge score no longer crashes the whole evaluation.** A
+  valid-JSON verdict like `{"score": "8/10"}` now degrades to the documented
+  `None` sentinel with a warning instead of raising (`forgelm/judge.py`).
+- **`fit-check` VRAM estimates read the checkpoint's declared dtype.** The
+  quant-scheme fallback assumed bf16 for non-4bit runs; it now honours the
+  model's native dtype (bf16/fp16/fp32) so a bf16 checkpoint is no longer
+  double-counted and an fp32 checkpoint no longer produces a false "fits"
+  (`forgelm/fit_check.py`).
+- **DARE adapter merges are reproducible run-to-run.** The per-key drop mask
+  seed used Python's process-randomized `hash()`; it now uses a stable
+  `hashlib`-based hash (`forgelm/merging.py`).
+- **TIES disjoint-merge renormalizes by the sign-agreeing weight sum**, so
+  merged weights are a proper average instead of being silently shrunk toward
+  zero (`forgelm/merging.py`).
+- **Data-audit quality score no longer undercounts.** `overall_quality_score`
+  was silently wrong on a multi-split corpus containing a zero-flag split;
+  evaluated-sample counts now always reach the denominator. Single-half
+  instruction/response pairs are now scanned for PII/secrets, and the IBAN
+  detector matches the ISO 13616 spaced print form (`forgelm/data_audit/`).
 
 ### Security
 
@@ -37,6 +66,25 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   actionable error (instead of crashing deep in the stack after a multi-GB
   download), and the rejection is recorded as an `audit.classifier_load_failed`
   Article 12 event on both the fail-fast and load-failure paths (`forgelm/safety.py`).
+- **`auth.hf_token` and `synthetic.api_key` are now redacted from root-level
+  config dumps and hashes.** The per-field redaction was dead code once nested
+  under `ForgeConfig` (Pydantic v2 does not invoke a nested model's
+  `model_dump()` override), so a root `model_dump()` — and `compute_config_hash`
+  — leaked the raw secret into serialised manifests. A root `ForgeConfig`
+  `model_dump()` override now masks both paths while keeping attribute access
+  as plain strings for internal consumers (`forgelm/config.py`).
+- **ReDoS hardening in the OpenSSH/PGP private-key secret detectors.** The
+  unbounded `.*?` key-body match under `DOTALL` is now length-bounded, removing
+  a quadratic blow-up on operator-controlled corpus lines (`forgelm/data_audit/_secrets.py`).
+
+### Changed
+
+- **`rope_scaling` is validated at config load.** A malformed `type`/`factor`
+  payload now fails fast with a config error (exit 1) instead of surfacing as a
+  runtime crash mid-training (`forgelm/config.py`).
+- **Deprecation removal target corrected to `v0.10.0`.** The
+  `use_dora`/`use_rslora`/`sample_packing` deprecation warnings claimed removal
+  in `v0.9.0`, which already shipped without removing them (`forgelm/config.py`).
 
 ### Documentation
 

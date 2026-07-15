@@ -369,8 +369,23 @@ def summarize_report(report: AuditReport, *, verbose: bool = False) -> str:
         method = report.cross_split_overlap.get("method", "simhash")
         lines.append(f"  Cross-split leakage ({method}):")
         for pair_name, payload in report.cross_split_overlap["pairs"].items():
-            lines.append(f"    {pair_name}: {payload}")
+            lines.append(_render_cross_split_pair(pair_name, payload))
     return "\n".join(lines)
+
+
+def _render_cross_split_pair(pair_name: str, payload: Dict[str, Any]) -> str:
+    """Human-readable one-liner for a cross-split leak pair.
+
+    Renders ``leaked=`` counts + ``rate=`` percentages per direction instead
+    of dumping the raw payload dict, matching the hand-formatted style of the
+    split / PII / secrets / quality blocks elsewhere in this module.
+    """
+    a, b = pair_name.split("__", 1)
+    leaked_a = payload.get(f"leaked_rows_in_{a}", 0)
+    leaked_b = payload.get(f"leaked_rows_in_{b}", 0)
+    rate_a = payload.get(f"leak_rate_{a}", 0.0)
+    rate_b = payload.get(f"leak_rate_{b}", 0.0)
+    return f"    {pair_name}: leaked={leaked_a}/{leaked_b} rate={rate_a:.2%}/{rate_b:.2%}"
 
 
 __all__ = [
@@ -385,5 +400,6 @@ __all__ = [
     "_split_has_findings",
     "_render_split_block",
     "_render_pii_severity",
+    "_render_cross_split_pair",
     "summarize_report",
 ]

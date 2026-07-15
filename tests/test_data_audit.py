@@ -1048,3 +1048,212 @@ class TestTrIdUnicodeDigitsNegativeChecksum:
         assert detect_pii(f"id is {bad_arabic}").get("tr_id", 0) == 0, (
             "checksum-invalid Arabic-Indic TR ID must not be detected"
         )
+
+
+# ---------------------------------------------------------------------------
+# IBAN — compact + ISO 13616 spaced print form (previously zero coverage)
+# ---------------------------------------------------------------------------
+
+
+class TestIbanDetection:
+    """The IBAN detector must surface both the compact run and the ISO 13616
+    four-character-grouped print form (how IBANs actually appear on invoices,
+    statements, and email); previously only the contiguous run matched, so the
+    common spaced form was silently under-reported."""
+
+    def test_compact_iban_detected(self):
+        assert detect_pii("IBAN: TR330006100154780000002668").get("iban") == 1
+
+    def test_spaced_iban_detected(self):
+        assert detect_pii("IBAN: TR33 0006 1001 5478 0000 0026 68").get("iban") == 1
+
+    def test_de_spaced_iban_detected(self):
+        assert detect_pii("Please wire to DE89 3704 0044 0532 0130 00 today").get("iban") == 1
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "prose with no structured identifiers whatsoever",
+            "DE89 3704",  # body far below the 11-char minimum
+        ],
+    )
+    def test_non_iban_shape_not_flagged(self, text):
+        assert detect_pii(text).get("iban", 0) == 0
+
+
+# ---------------------------------------------------------------------------
+# fr_ssn — non-capturing groups so findall returns the full match
+# ---------------------------------------------------------------------------
+
+
+class TestFrSsnDetection:
+    """fr_ssn was the only pattern with capturing groups, so ``findall``
+    returned a truncated group-tuple instead of the full 15-digit match,
+    corrupting detect_pii's payload (and any future checksum validation).
+    Converting to non-capturing groups restores the full-match contract."""
+
+    def test_fr_ssn_pattern_is_group_free(self):
+        from forgelm.data_audit._pii_regex import _PII_PATTERNS
+
+        pat = _PII_PATTERNS["fr_ssn"]
+        assert pat.groups == 0
+        # findall returns the FULL match string, not a captured-group tuple.
+        assert pat.findall("num 295037531234567 done") == ["295037531234567"]
+
+    def test_fr_ssn_detected(self):
+        assert detect_pii("num 295037531234567 done").get("fr_ssn") == 1
+
+    def test_non_fr_ssn_leading_digit_not_flagged(self):
+        # INSEE serials start with 1 or 2; a 3-prefixed run is not fr_ssn.
+        assert detect_pii("num 395037531234567 done").get("fr_ssn", 0) == 0
+
+
+# ---------------------------------------------------------------------------
+# _extract_text_payload — single-half instruction pairs must still be scanned
+# ---------------------------------------------------------------------------
+
+
+class TestExtractTextPayloadHalfPresent:
+    """A row carrying only ONE half of a recognised instruction pair (sibling
+    key absent or ``None``) must still be extracted: instruction / output /
+    User / Assistant / response have no ``_TEXT_COLUMNS`` fallback, so such a
+    row previously extracted to ``""`` and was silently counted as
+    null/empty — never scanned for PII/secrets/quality."""
+
+    @pytest.mark.parametrize(
+        "row, expected_substr",
+        [
+            ({"instruction": "My IBAN is DE89370400440532013000, refund it."}, "DE89370400440532013000"),
+            ({"instruction": "question", "output": None}, "question"),
+            ({"User": "my SSN is 123-45-6789"}, "123-45-6789"),
+            ({"Assistant": "leaked secret@example.com here"}, "secret@example.com"),
+            ({"response": "reply carrying alice@example.com"}, "alice@example.com"),
+            ({"output": "the answer text"}, "the answer text"),
+        ],
+    )
+    def test_single_half_still_extracted(self, row, expected_substr):
+        from forgelm.data_audit._streaming import _extract_text_payload
+
+        payload = _extract_text_payload(row)
+        assert expected_substr in payload, f"expected {expected_substr!r} in payload but got {payload!r} for {row}"
+
+    def test_canonical_text_column_still_wins_over_lone_pair_half(self):
+        # A row with both a lone pair-half and a canonical text column keeps
+        # extracting the canonical column (the half-present scan is last-resort).
+        from forgelm.data_audit._streaming import _extract_text_payload
+
+        assert _extract_text_payload({"instruction": "inst half", "text": "canonical body"}) == "canonical body"
+
+    def test_single_half_pii_reaches_audit(self, tmp_path):
+        _write_jsonl(tmp_path / "x.jsonl", [{"instruction": "email me at alice@example.com"}])
+        report = audit_dataset(str(tmp_path))
+        assert report.pii_summary.get("email") == 1
+        only_split = next(iter(report.splits.values()))
+        assert only_split.get("null_or_empty_count", 0) == 0
+
+
+# ---------------------------------------------------------------------------
+# Cross-split leakage rendering — human-readable, not raw dict repr
+# ---------------------------------------------------------------------------
+
+
+class TestCrossSplitSummaryRendering:
+    """The cross-split leakage block must render a hand-formatted line like the
+    other summary blocks, not dump the raw payload dict via f-string repr."""
+
+    def test_pair_line_is_human_readable(self, tmp_path):
+        _write_jsonl(tmp_path / "train.jsonl", [{"text": "alpha bravo charlie delta echo"}])
+        _write_jsonl(tmp_path / "test.jsonl", [{"text": "alpha bravo charlie delta echo"}])
+        report = audit_dataset(str(tmp_path))
+        text = summarize_report(report)
+        assert "Cross-split leakage" in text
+        # No raw dict dump: payload keys / dict braces must not leak into output.
+        assert "leaked_rows_in_train" not in text
+        assert "{'" not in text
+        # Hand-formatted rendering present.
+        assert "leaked=" in text and "rate=" in text
+
+    def test_render_cross_split_pair_shape(self):
+        from forgelm.data_audit._summary import _render_cross_split_pair
+
+        payload = {
+            "leaked_rows_in_train": 2,
+            "leak_rate_train": 0.1667,
+            "leaked_rows_in_test": 1,
+            "leak_rate_test": 0.25,
+        }
+        line = _render_cross_split_pair("train__test", payload)
+        assert "{" not in line
+        assert "leaked=2/1" in line
+        assert "16.67%" in line and "25.00%" in line
+
+
+# ---------------------------------------------------------------------------
+# NOSONAR discipline — every suppression carries its Sonar rule code
+# ---------------------------------------------------------------------------
+
+
+class TestCroissantNosonarRuleCode:
+    """coding.md NOSONAR rule 1: every ``# NOSONAR`` must carry the Sonar rule
+    code on the same line; bare ``# NOSONAR`` is rejected."""
+
+    def test_all_nosonar_lines_carry_rule_code(self):
+        import re as _re
+        from pathlib import Path as _Path
+
+        import forgelm.data_audit._croissant as croissant_mod
+
+        source = _Path(croissant_mod.__file__).read_text(encoding="utf-8")
+        nosonar_lines = [ln for ln in source.splitlines() if "# NOSONAR" in ln]
+        assert nosonar_lines, "expected NOSONAR suppressions in _croissant.py"
+        for ln in nosonar_lines:
+            assert _re.search(r"# NOSONAR\s+python:S\d+", ln), (
+                f"bare NOSONAR without a rule code (coding.md rule 1): {ln.strip()!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# ReDoS linearity — detect_pii runs on operator-controlled text, no timeout
+# ---------------------------------------------------------------------------
+
+
+class TestPiiRegexLinearity:
+    """regex.md ReDoS-budget: detect_pii/mask_pii run the fixed pattern set on
+    every row with no per-call timeout, so the phone and (space-tolerant) IBAN
+    patterns must scale linearly on pathological input. Median-of-5 growth-
+    ratio check (absolute ms is flaky on shared CI)."""
+
+    _TOLERANCE = 3
+
+    def _median_ms(self, fn, payload, samples=5):
+        import statistics
+        import time
+
+        obs = []
+        for _ in range(samples):
+            t0 = time.perf_counter()
+            fn(payload)
+            obs.append((time.perf_counter() - t0) * 1000)
+        return statistics.median(obs)
+
+    @pytest.mark.parametrize(
+        "name, builder",
+        [
+            ("phone", lambda n: "+1" + " 2" * n),
+            ("iban", lambda n: "AB12" + "C" * n),
+        ],
+    )
+    def test_pattern_linear_on_pathological_input(self, name, builder):
+        from forgelm.data_audit._pii_regex import _PII_PATTERNS
+
+        pat = _PII_PATTERNS[name]
+        sizes = (1_000, 5_000, 10_000)
+        timings = {n: self._median_ms(pat.search, builder(n)) for n in sizes}
+        baseline = max(timings[1_000], 0.001)
+        for n in sizes[1:]:
+            ratio = timings[n] / baseline
+            allowed = (n / 1_000) * self._TOLERANCE
+            assert ratio <= allowed, (
+                f"{name} regex grew {ratio:.1f}x from n=1000 to n={n} "
+                f"(allowed {allowed:.1f}x); possible ReDoS regression. timings_ms={timings}"
+            )

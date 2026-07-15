@@ -548,7 +548,7 @@ class TestLoraDeprecatedFlagAlwaysWarns:
         dep_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
         assert dep_warnings, (
             "No DeprecationWarning for use_dora=True + method='dora' — "
-            "operator receives no nudge to remove use_dora before v0.9.0."
+            "operator receives no nudge to remove use_dora before v0.10.0."
         )
         assert lc.method == "dora"
 
@@ -560,7 +560,7 @@ class TestLoraDeprecatedFlagAlwaysWarns:
         dep_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
         assert dep_warnings, (
             "No DeprecationWarning for use_rslora=True + method='rslora' — "
-            "operator receives no nudge to remove use_rslora before v0.9.0."
+            "operator receives no nudge to remove use_rslora before v0.10.0."
         )
         assert lc.method == "rslora"
 
@@ -655,3 +655,32 @@ class TestTierDisagreementDeduplication:
         tier_warnings = [r for r in caplog.records if "Risk tiers disagree" in r.message]
         # The dedup set must suppress all but the first emission.
         assert len(tier_warnings) == 1, f"Expected exactly 1 'Risk tiers disagree' warning, got {len(tier_warnings)}."
+
+
+class TestMergePreservesRootSecrets:
+    """The root-level ``ForgeConfig.model_dump`` override masks ``auth.hf_token``
+    / ``synthetic.api_key`` by default, but ``merge_pipeline_stage_config`` must
+    round-trip the REAL credential values into each per-stage config — a masked
+    token would break HF authentication at ``cli/_pipeline.py`` runtime.
+    """
+
+    def test_root_auth_token_survives_merge(self):
+        root = _root_cfg(auth={"hf_token": "hf_REALSECRET"})
+        stage = PipelineStage(name="s1", training={"trainer_type": "dpo"})
+        merged = merge_pipeline_stage_config(root, stage, prev_output_model="./prev/model")
+        assert merged.auth is not None
+        assert merged.auth.hf_token == "hf_REALSECRET"
+
+    def test_root_synthetic_api_key_survives_merge(self):
+        root = _root_cfg(
+            synthetic={
+                "enabled": True,
+                "teacher_model": "gpt-4",
+                "api_key": "sk-REALKEY",
+                "seed_prompts": ["hello"],
+            }
+        )
+        stage = PipelineStage(name="s1", training={"trainer_type": "dpo"})
+        merged = merge_pipeline_stage_config(root, stage, prev_output_model="./prev/model")
+        assert merged.synthetic is not None
+        assert merged.synthetic.api_key == "sk-REALKEY"

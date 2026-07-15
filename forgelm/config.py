@@ -209,28 +209,28 @@ class LoraConfigModel(BaseModel):
                 "lora.use_dora and lora.use_rslora are mutually exclusive "
                 "(DoRA and rsLoRA select different PEFT methods). Set a single "
                 "`method:` ('dora' or 'rslora') instead; both deprecated flags "
-                "are removed in v0.9.0."
+                "are removed in v0.10.0."
             )
         if self.use_dora and self.method not in ("lora", "dora"):
             raise ValueError(
                 f"lora.use_dora=True contradicts method='{self.method}'. "
                 "Drop the deprecated flag and keep the explicit `method:`; "
-                "use_dora is removed in v0.9.0."
+                "use_dora is removed in v0.10.0."
             )
         if self.use_rslora and self.method not in ("lora", "rslora"):
             raise ValueError(
                 f"lora.use_rslora=True contradicts method='{self.method}'. "
                 "Drop the deprecated flag and keep the explicit `method:`; "
-                "use_rslora is removed in v0.9.0."
+                "use_rslora is removed in v0.10.0."
             )
         # Emit the deprecation unconditionally whenever the deprecated flag is set —
         # including the compatible-redundant cases (use_dora + method='dora' or
         # use_rslora + method='rslora').  Previously the warning only fired when
         # method was 'lora', so operators who already wrote the correct explicit
         # method alongside the deprecated flag received no nudge to drop it before
-        # v0.9.0 removal (F-L-09).
+        # v0.10.0 removal (F-L-09).
         if self.use_dora:
-            message = "lora.use_dora=True is deprecated and removed in v0.9.0. Use method='dora' instead." + (
+            message = "lora.use_dora=True is deprecated and removed in v0.10.0. Use method='dora' instead." + (
                 " Automatically setting method='dora'." if self.method == "lora" else ""
             )
             logger.warning(message)
@@ -238,7 +238,7 @@ class LoraConfigModel(BaseModel):
             if self.method == "lora":
                 object.__setattr__(self, "method", "dora")
         if self.use_rslora:
-            message = "lora.use_rslora=True is deprecated and removed in v0.9.0. Use method='rslora' instead." + (
+            message = "lora.use_rslora=True is deprecated and removed in v0.10.0. Use method='rslora' instead." + (
                 " Automatically setting method='rslora'." if self.method == "lora" else ""
             )
             logger.warning(message)
@@ -390,7 +390,7 @@ class TrainingConfig(BaseModel):
         description=(
             "Deprecated alias for `packing`; TRL exposes a single sequence-packing knob. "
             "Setting `sample_packing: true` forwards to `packing: true` with a "
-            "`DeprecationWarning`. Removal scheduled for v0.9.0 — use `packing` instead."
+            "`DeprecationWarning`. Removal scheduled for v0.10.0 — use `packing` instead."
         ),
     )
     oom_recovery: bool = Field(
@@ -410,6 +410,46 @@ class TrainingConfig(BaseModel):
         description="USD per hour for the training GPU.  None = auto-detect from known GPUs (used by the cost-estimation report).",
     )
 
+    @field_validator("rope_scaling")
+    @classmethod
+    def _validate_rope_scaling(cls, v):
+        """Reject a malformed ``rope_scaling`` payload at config time.
+
+        ``rope_scaling`` flows verbatim into ``AutoModelForCausalLM.from_pretrained``
+        via ``model.py``; a typo'd ``type``, a missing ``factor`` key, or a
+        non-numeric factor would otherwise pass ``--dry-run`` cleanly and only
+        crash once training loads the model (EXIT_TRAINING_ERROR) instead of at
+        config load (EXIT_CONFIG_ERROR) — the same gap the sibling validators
+        (``_validate_merge_inputs``, ``_validate_synthetic_payload``) close for
+        their blocks.  Validates the shape documented on the field:
+        ``{"type": "linear"|"dynamic"|"yarn"|"longrope", "factor": <positive number>}``.
+        """
+        if v is None:
+            return v
+        allowed_types = ("linear", "dynamic", "yarn", "longrope")
+        rope_type = v.get("type")
+        if rope_type is None:
+            raise ValueError(
+                "training.rope_scaling requires a `type` key "
+                f"(one of {list(allowed_types)}), e.g. {{'type': 'linear', 'factor': 4.0}}."
+            )
+        if rope_type not in allowed_types:
+            raise ValueError(
+                f"training.rope_scaling.type={rope_type!r} is not recognized; must be one of {list(allowed_types)}."
+            )
+        factor = v.get("factor")
+        if factor is None:
+            raise ValueError(
+                "training.rope_scaling requires a positive `factor` (context-length multiplier, e.g. 4.0)."
+            )
+        # ``bool`` is a subclass of ``int`` — exclude it explicitly so
+        # ``factor: true`` is rejected as a type error rather than treated as 1.
+        if isinstance(factor, bool) or not isinstance(factor, (int, float)):
+            raise ValueError(f"training.rope_scaling.factor must be a number, got {type(factor).__name__}.")
+        if factor <= 0:
+            raise ValueError(f"training.rope_scaling.factor must be positive, got {factor}.")
+        return v
+
     @model_validator(mode="after")
     def _forward_deprecated_sample_packing(self):
         """Forward the deprecated ``sample_packing`` flag onto ``packing``.
@@ -421,7 +461,7 @@ class TrainingConfig(BaseModel):
         documented behaviour actually fires during the deprecation window, and
         emit both a ``DeprecationWarning`` (for ``-W error`` / CI deprecation
         sweeps) and a ``logger.warning`` (visible on the CLI path), mirroring
-        the ``lora.use_dora`` alias pattern.  Removal target: v0.9.0.
+        the ``lora.use_dora`` alias pattern.  Removal target: v0.10.0.
         """
         if self.sample_packing:
             # Always notify: emit when the deprecated flag is set regardless of
@@ -429,15 +469,15 @@ class TrainingConfig(BaseModel):
             # ``if self.sample_packing and not self.packing``, which silently
             # swallowed the deprecation when an operator wrote both
             # ``sample_packing: true`` and ``packing: true``, leaving them with
-            # no nudge to remove the deprecated key before v0.9.0 removal (F-M-14).
+            # no nudge to remove the deprecated key before v0.10.0 removal (F-M-14).
             logger.warning(
                 "training.sample_packing is deprecated and forwards to training.packing. "
-                "Use `packing: true` instead; sample_packing is removed in v0.9.0."
+                "Use `packing: true` instead; sample_packing is removed in v0.10.0."
             )
             warnings.warn(
                 "`training.sample_packing` is deprecated and forwards to "
                 "`training.packing`. Use `packing: true` instead; the deprecated "
-                "field is removed in v0.9.0.",
+                "field is removed in v0.10.0.",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -1226,6 +1266,34 @@ class ForgeConfig(BaseModel):
         ),
     )
 
+    def model_dump(self, *, redact_secrets: bool = True, **kwargs):
+        """Serialise the config, masking nested secrets at the root.
+
+        Pydantic v2 serialises nested submodels through the parent's compiled
+        core-schema serializer, which bypasses the Python-level
+        ``AuthConfig.model_dump`` / ``SyntheticConfig.model_dump`` redaction
+        overrides.  A root-level ``ForgeConfig.model_dump()`` would therefore
+        emit ``auth.hf_token`` / ``synthetic.api_key`` in plaintext into
+        compliance manifests, config hashes, and debug dumps.  Re-apply the
+        mask at the root so a credential can never survive a root-level dump.
+        The per-block overrides remain for direct ``cfg.auth.model_dump()``
+        calls.
+
+        ``redact_secrets=False`` is the internal escape used by
+        ``merge_pipeline_stage_config`` to round-trip the *real* credential
+        values into a materialised per-stage config; any caller that persists
+        or hashes the result must keep the redacting default.
+        """
+        data = super().model_dump(**kwargs)
+        if redact_secrets:
+            auth = data.get("auth")
+            if isinstance(auth, dict) and auth.get("hf_token"):
+                auth["hf_token"] = "***REDACTED***"
+            synthetic = data.get("synthetic")
+            if isinstance(synthetic, dict) and synthetic.get("api_key"):
+                synthetic["api_key"] = "***REDACTED***"
+        return data
+
     def _warn_general_consistency(self) -> None:
         """Emit warnings for the broad cross-field config inconsistencies."""
         if self.evaluation and self.evaluation.auto_revert and self.training.merge_adapters:
@@ -1254,9 +1322,14 @@ class ForgeConfig(BaseModel):
             self.training.eval_steps
             and self.training.save_steps
             and self.training.eval_steps > self.training.save_steps
-            and self.evaluation
-            and getattr(self.evaluation, "auto_revert", False)
         ):
+            # ``trainer.py`` sets ``load_best_model_at_end = has_validation``,
+            # driven by validation-split presence — NOT by ``auto_revert``.
+            # ``data._ensure_validation_split`` auto-derives a split for
+            # essentially every dataset, so this condition fires on the common
+            # minimal config that omits the evaluation block entirely; gating
+            # the warning on ``evaluation.auto_revert`` hid it from exactly the
+            # operators who hit the runtime failure.
             logger.warning(
                 "eval_steps (%d) > save_steps (%d): load_best_model_at_end may not work correctly. "
                 "Set eval_steps <= save_steps.",
@@ -1715,8 +1788,12 @@ def merge_pipeline_stage_config(
     # cross-field validators that fire only on operator-written values
     # (F-P1-FAB-03).  ``exclude_none=True`` additionally drops inherited
     # ``Optional[T] = None`` fields so the per-stage manifest is not inflated
-    # with no-op None values.
-    base = root_cfg.model_dump(exclude_none=True, exclude_unset=True)
+    # with no-op None values.  ``redact_secrets=False`` keeps the *real*
+    # ``auth.hf_token`` / ``synthetic.api_key`` values (root-only sections
+    # inherited by every stage) so the reconstructed per-stage config can
+    # still authenticate; the root override masks them by default for every
+    # persist/hash caller (compute_config_hash, model card, debug dumps).
+    base = root_cfg.model_dump(exclude_none=True, exclude_unset=True, redact_secrets=False)
     base.pop("pipeline", None)
 
     # Stage overrides use the same ``exclude_unset=True`` rationale as the root

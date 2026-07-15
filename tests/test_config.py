@@ -679,3 +679,187 @@ class TestTemplateOutputFormatComment:
         )
         for value in typing.get_args(SyntheticConfig.model_fields["output_format"].annotation):
             assert value in comment_line, f"{value!r} missing from config_template output_format comment"
+
+
+# --- Finding 1: root-level secret redaction (nested override is dead code) ---
+
+
+class TestRootDumpSecretRedaction:
+    """A root-level ``ForgeConfig.model_dump()`` must mask nested secrets.
+
+    Pydantic v2 serialises submodels through the parent's core-schema
+    serializer, bypassing ``AuthConfig`` / ``SyntheticConfig`` per-block
+    ``model_dump`` overrides — so before the root override, a root dump
+    leaked ``auth.hf_token`` / ``synthetic.api_key`` verbatim into config
+    hashes and manifests.
+    """
+
+    def _cfg_with_secrets(self):
+        data = _full_config()
+        data["auth"] = {"hf_token": "hf_SUPERSECRET"}
+        data["synthetic"] = {
+            "enabled": True,
+            "teacher_model": "gpt-4",
+            "api_key": "sk-LEAK",
+            "seed_prompts": ["hello"],
+        }
+        return ForgeConfig(**data)
+
+    def test_root_dump_redacts_hf_token(self):
+        cfg = self._cfg_with_secrets()
+        assert cfg.model_dump()["auth"]["hf_token"] == "***REDACTED***"
+
+    def test_root_dump_json_mode_redacts_hf_token(self):
+        cfg = self._cfg_with_secrets()
+        assert cfg.model_dump(mode="json")["auth"]["hf_token"] == "***REDACTED***"
+
+    def test_root_dump_redacts_synthetic_api_key(self):
+        cfg = self._cfg_with_secrets()
+        assert cfg.model_dump()["synthetic"]["api_key"] == "***REDACTED***"
+
+    def test_raw_secret_never_appears_in_serialised_payload(self):
+        import json
+
+        cfg = self._cfg_with_secrets()
+        payload = json.dumps(cfg.model_dump(mode="json"))
+        assert "hf_SUPERSECRET" not in payload
+        assert "sk-LEAK" not in payload
+
+    def test_config_without_auth_dumps_cleanly(self):
+        """No auth/synthetic block → redaction is a no-op, not a crash."""
+        cfg = ForgeConfig(**_full_config())
+        dumped = cfg.model_dump()
+        assert dumped.get("auth") is None
+
+    def test_redact_secrets_false_preserves_raw_values(self):
+        """The internal escape hatch used by pipeline stage materialisation
+        keeps the real credential so the reconstructed config can auth."""
+        cfg = self._cfg_with_secrets()
+        raw = cfg.model_dump(redact_secrets=False)
+        assert raw["auth"]["hf_token"] == "hf_SUPERSECRET"
+        assert raw["synthetic"]["api_key"] == "sk-LEAK"
+
+    def test_config_hash_independent_of_hf_token(self):
+        """compute_config_hash hashes ``model_dump(mode='json')``; with the
+        secret redacted the digest can no longer depend on the raw token."""
+        from forgelm.compliance import compute_config_hash
+
+        d1 = _full_config()
+        d1["auth"] = {"hf_token": "hf_AAAAAAAA"}
+        d2 = _full_config()
+        d2["auth"] = {"hf_token": "hf_BBBBBBBB"}
+        assert compute_config_hash(ForgeConfig(**d1)) == compute_config_hash(ForgeConfig(**d2))
+
+
+# --- Finding 3: rope_scaling structural validation ---
+
+
+class TestRopeScalingValidation:
+    @pytest.mark.parametrize("rope_type", ["linear", "dynamic", "yarn", "longrope"])
+    def test_valid_rope_scaling_accepted(self, rope_type):
+        t = TrainingConfig(rope_scaling={"type": rope_type, "factor": 4.0})
+        assert t.rope_scaling["type"] == rope_type
+
+    def test_none_is_the_default_and_valid(self):
+        assert TrainingConfig().rope_scaling is None
+
+    def test_missing_type_rejected(self):
+        with pytest.raises(ValidationError, match="requires a `type` key"):
+            TrainingConfig(rope_scaling={"factor": 4.0})
+
+    def test_unknown_type_rejected(self):
+        with pytest.raises(ValidationError, match="not recognized"):
+            TrainingConfig(rope_scaling={"type": "lineur", "factor": 4.0})
+
+    def test_missing_factor_rejected(self):
+        with pytest.raises(ValidationError, match="positive `factor`"):
+            TrainingConfig(rope_scaling={"type": "linear"})
+
+    @pytest.mark.parametrize("bad_factor", [0, -1.0])
+    def test_non_positive_factor_rejected(self, bad_factor):
+        with pytest.raises(ValidationError, match="must be positive"):
+            TrainingConfig(rope_scaling={"type": "linear", "factor": bad_factor})
+
+    def test_non_numeric_factor_rejected(self):
+        with pytest.raises(ValidationError, match="must be a number"):
+            TrainingConfig(rope_scaling={"type": "linear", "factor": "4x"})
+
+    def test_bool_factor_rejected(self):
+        """``bool`` is an ``int`` subclass; ``factor: true`` must be a type error."""
+        with pytest.raises(ValidationError, match="must be a number"):
+            TrainingConfig(rope_scaling={"type": "linear", "factor": True})
+
+
+# --- Finding 2: eval_steps > save_steps warning is decoupled from auto_revert ---
+
+
+class TestEvalStepsSaveStepsWarning:
+    def test_warning_fires_without_evaluation_block(self, caplog):
+        """load_best_model_at_end is driven by validation-split presence, not
+        auto_revert — the warning must fire even on a minimal config with no
+        evaluation block (previously gated on evaluation.auto_revert)."""
+        data = _full_config()
+        data["training"]["eval_steps"] = 300
+        data["training"]["save_steps"] = 200
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            ForgeConfig(**data)
+        assert any("load_best_model_at_end may not work correctly" in r.message for r in caplog.records)
+
+    def test_no_warning_when_eval_le_save(self, caplog):
+        data = _full_config()
+        data["training"]["eval_steps"] = 100
+        data["training"]["save_steps"] = 200
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            ForgeConfig(**data)
+        assert not any("load_best_model_at_end may not work correctly" in r.message for r in caplog.records)
+
+
+# --- Finding 5: deprecation removal-version strings are not retroactively false ---
+
+
+class TestDeprecationRemovalVersion:
+    def test_use_dora_warning_states_future_removal_version(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            LoraConfigModel(use_dora=True)
+        messages = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert messages, "expected a DeprecationWarning for use_dora"
+        assert all("v0.9.0" not in m for m in messages)
+        assert any("v0.10.0" in m for m in messages)
+
+    def test_sample_packing_warning_states_future_removal_version(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            TrainingConfig(sample_packing=True)
+        messages = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert messages, "expected a DeprecationWarning for sample_packing"
+        assert all("v0.9.0" not in m for m in messages)
+        assert any("v0.10.0" in m for m in messages)
+
+
+# --- Findings 4/6/7: config_template completeness + no deprecated-flag demos ---
+
+
+class TestTemplateCompleteness:
+    def _template_text(self) -> str:
+        from pathlib import Path
+
+        return (Path(__file__).resolve().parents[1] / "config_template.yaml").read_text(encoding="utf-8")
+
+    def test_template_has_no_deprecated_peft_flags(self):
+        """Finding 4: the PEFT example must not demonstrate the deprecated
+        use_dora / use_rslora booleans (removed in v0.10.0)."""
+        text = self._template_text()
+        assert "use_dora:" not in text
+        assert "use_rslora:" not in text
+
+    def test_template_documents_multimodal(self):
+        assert "multimodal:" in self._template_text()
+
+    def test_template_documents_data_governance(self):
+        text = self._template_text()
+        assert "governance:" in text
+        assert "collection_method:" in text
+
+    def test_template_documents_require_human_approval(self):
+        assert "require_human_approval:" in self._template_text()

@@ -237,7 +237,7 @@ def detect_pii_ml(text: Any, *, language: str = "en") -> Dict[str, int]:
     try:
         analyzer = _get_presidio_analyzer(language)
         results = analyzer.analyze(text=text, language=language)
-    except (ValueError, RuntimeError) as exc:  # pragma: no cover — Presidio edge cases
+    except (ValueError, RuntimeError) as exc:
         # Per-row resilience for the narrow class of failures Presidio
         # raises on bad input or transient engine state. ``OSError`` is
         # deliberately NOT caught here — that's the missing-spaCy-model

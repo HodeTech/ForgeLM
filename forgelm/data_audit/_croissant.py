@@ -51,7 +51,7 @@ _CROISSANT_CONTEXT: Dict[str, Any] = {
     # ``https://`` here would diverge from the spec-canonical form and
     # break exact-match consumers. The S5332 hotspot is a false positive
     # for this dual-purpose URI.
-    "cr": "http://mlcommons.org/croissant/",  # NOSONAR — JSON-LD namespace IRI, not a fetch URL
+    "cr": "http://mlcommons.org/croissant/",  # NOSONAR python:S5332 — JSON-LD namespace IRI, not a fetch URL
     "data": {_JSONLD_ID_KEY: "cr:data", _JSONLD_TYPE_KEY: "@json"},
     "dataType": {_JSONLD_ID_KEY: "cr:dataType", _JSONLD_TYPE_KEY: "@vocab"},
     "extract": "cr:extract",
@@ -214,7 +214,7 @@ def _build_croissant_metadata(
         # identifier (RDF reference), not a network endpoint — strict
         # consumers exact-match the canonical spec form. Same S5332
         # false-positive rationale as ``cr:`` in ``_CROISSANT_CONTEXT``.
-        "conformsTo": "http://mlcommons.org/croissant/1.0",  # NOSONAR — JSON-LD identifier
+        "conformsTo": "http://mlcommons.org/croissant/1.0",  # NOSONAR python:S5332 — JSON-LD identifier
         "name": name,
         "description": (
             "ForgeLM audit-generated dataset card. "

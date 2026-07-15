@@ -32,6 +32,21 @@ SECRET_TYPES: Tuple[str, ...] = (
 )
 
 
+# Upper bound on the character span between a private-key BEGIN and END marker.
+# The previous patterns used an UNBOUNDED lazy ``.*?`` under ``re.DOTALL``:
+# every BEGIN with no matching END forced a full lazy scan to end-of-string,
+# which is O(n^2) on a row carrying many banner-like ``-----BEGIN … PRIVATE
+# KEY-----`` substrings (a scraped doc, a corrupted PEM dump, one crafted
+# training row) — measured at ~18.9 s on a 500 KB adversarial row, a DoS on
+# the ``forgelm audit`` / ``ingest`` hot path (regex.md "ReDoS exposure
+# budget"). Bounding the lazy span makes each BEGIN cost O(N) instead of O(n),
+# so the scan is linear in row length. 8192 comfortably covers the largest
+# realistic PEM/PGP body (RSA-8192 base64 ≈ 6.4 KB); larger key blocks are a
+# recall miss, never a stall. Linearity verified at
+# tests/test_data_audit_phase12.py::TestSecretsPrivateKeyReDoS.
+_PRIVATE_KEY_BODY_MAX_CHARS: int = 8192
+
+
 _SECRET_PATTERNS: Dict[str, re.Pattern] = {
     # AWS access key IDs follow AKIA / ASIA + 16 uppercase alphanum.
     "aws_access_key": re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
@@ -64,15 +79,17 @@ _SECRET_PATTERNS: Dict[str, re.Pattern] = {
     # The literal block markers below are spelled with concatenation to keep
     # naive secret-scanners on the source tree from misreading the regex
     # itself as a leaked private key.
+    # ``.{0,N}?`` (bounded lazy span) rather than ``.*?`` — see
+    # ``_PRIVATE_KEY_BODY_MAX_CHARS`` for the ReDoS rationale.
     "openssh_private_key": re.compile(
         r"-----" + r"BEGIN " + r"(?:OPENSSH|RSA|DSA|EC) PRIVATE KEY-----"
-        r".*?"
+        r".{0," + str(_PRIVATE_KEY_BODY_MAX_CHARS) + r"}?"
         r"-----" + r"END " + r"(?:OPENSSH|RSA|DSA|EC) PRIVATE KEY-----",
         re.DOTALL,
     ),
     "pgp_private_key": re.compile(
         r"-----" + r"BEGIN " + r"PGP PRIVATE KEY BLOCK-----"
-        r".*?"
+        r".{0," + str(_PRIVATE_KEY_BODY_MAX_CHARS) + r"}?"
         r"-----" + r"END " + r"PGP PRIVATE KEY BLOCK-----",
         re.DOTALL,
     ),
