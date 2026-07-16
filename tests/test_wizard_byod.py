@@ -193,6 +193,21 @@ def test_prompt_dataset_path_still_rejects_multi_slash(capsys):
     assert "not a valid HF Hub ID" in captured
 
 
+def test_prompt_dataset_path_rejection_message_covers_both_accepted_shapes(capsys):
+    # LOW doc-drift fix: after the regex broadening accepted bare
+    # no-namespace canonical ids (squad, imdb — see the test above), the
+    # rejection message still told the operator the only valid shape was
+    # '<org>/<name>', understating what the acceptance branch actually
+    # allows. It must now name both accepted shapes.
+    answers = ["a/b/c", "cancel"]
+    with patch("builtins.input", side_effect=_make_input(answers)):
+        with pytest.raises(wizard.WizardCancel):
+            wizard._prompt_dataset_path_with_ingest_offer("Dataset")
+    captured = capsys.readouterr().out
+    assert "'<org>/<name>'" in captured
+    assert "squad" in captured, "rejection message must also mention the canonical no-namespace shape"
+
+
 def test_offer_ingest_pii_mask_defaults_to_true_on_bare_enter(tmp_path):
     # LOW finding: the prompt calls masking "Recommended for shared
     # corpora" but pre-fix defaulted to False — an operator who reads

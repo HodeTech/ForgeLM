@@ -46,6 +46,8 @@ def _run_deploy_cmd(args, output_format: str) -> None:
     if not result.success:
         # A caller-input error (unsupported target, model_path not a
         # directory) is exit 1 per the public contract; only a genuine
-        # runtime failure (write error, render crash) is exit 2. Mirrors
-        # verify-gguf's input(1)/runtime(2) split.
+        # runtime failure (filesystem write error) is exit 2 — a
+        # per-target generator bug (e.g. KeyError/TypeError from a
+        # template render) is not caught here and propagates instead.
+        # Mirrors verify-gguf's input(1)/runtime(2) split.
         sys.exit(EXIT_CONFIG_ERROR if result.error_kind == "input" else EXIT_TRAINING_ERROR)

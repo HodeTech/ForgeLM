@@ -107,6 +107,7 @@ $ forgelm ingest INPUT_PATH \
     [--strategy {sliding,paragraph,markdown}] \
     [--chunk-size N] [--overlap N] \
     [--chunk-tokens N] [--overlap-tokens N] [--tokenizer MODEL_NAME] \
+    [--input-encoding CODEC] \
     [--pii-mask] [--secrets-mask] [--all-mask] \
     [--language-hint LANG] [--script-sanity-threshold X] \
     [--normalise-profile {turkish,none} | --no-normalise-unicode] \
@@ -127,6 +128,16 @@ parsing the text summary. Phase 15 (v0.6.0) added the
 `--epub-no-skip-frontmatter`, `--keep-md-frontmatter`, `--strip-pattern`,
 `--strip-pattern-no-timeout`, `--page-range`, `--keep-frontmatter`, and
 `--strip-urls` flags. See [Document Ingestion](#/data/ingestion).
+
+`--input-encoding CODEC` pins the source codec for `.txt` / `.md` input
+only — PDF / DOCX / EPUB carry their own encoding metadata and ignore
+this flag. Default (unset) auto-detects via `utf-8-sig` with a
+BOM-strip + `errors="replace"` fallback, unchanged from the prior
+behaviour. Pass a legacy codec name (e.g. `cp1254`, `cp1252`,
+`latin-1`) to decode older Windows-exported corpora correctly instead
+of replacing every non-ASCII byte with `U+FFFD`. An unrecognised codec
+name is rejected up front, before any file is read, with a config
+error (`1`).
 
 ## Chat: `forgelm chat`
 

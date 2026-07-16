@@ -209,7 +209,7 @@ def _run_safety_eval_cmd(args, output_format: str) -> None:
             EXIT_TRAINING_ERROR,
         )
 
-    # Wire an AuditLogger so the documented Article-15
+    # Wire an AuditLogger so the documented Article 15
     # ``audit.classifier_load_failed`` record actually fires on this surface
     # (F-P3-FABLE-12): without it run_safety_evaluation's emission guard
     # (`if audit_logger is not None`) always skipped and no audit log was ever

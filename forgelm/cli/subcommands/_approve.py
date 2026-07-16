@@ -64,10 +64,20 @@ def _approval_decision_lock(output_dir: str) -> Iterator[None]:
     An exclusive ``flock`` on ``<output_dir>/.approval.lock`` held for the whole
     window makes ``{approve, reject}`` mutually exclusive per ``run_id``: the
     loser blocks until the winner commits, then re-reads the log, sees the
-    committed decision, and refuses. ``output_dir`` is created if absent (matching
-    ``AuditLogger.__init__``) so the lock file always has a home.
+    committed decision, and refuses.
+
+    ``output_dir`` must already exist for a real run (training created it
+    when it wrote ``audit_log.jsonl``); this helper does NOT create it. A
+    decision (``forgelm approve``/``reject``) against a non-existent or
+    mistyped ``--output-dir`` must fail via the downstream missing-audit-log
+    / missing-required-event guard, not materialise a directory + lock file
+    for a run that never happened. When ``output_dir`` is absent, lock
+    acquisition is skipped entirely — there is nothing to serialise against
+    for a directory that does not exist.
     """
-    os.makedirs(output_dir, exist_ok=True)
+    if not os.path.isdir(output_dir):
+        yield
+        return
     lock_path = os.path.join(output_dir, _APPROVAL_LOCK_NAME)
     # "a+b": create-if-absent without truncating; the file is a pure lock token,
     # never read or written.

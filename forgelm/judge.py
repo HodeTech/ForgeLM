@@ -6,6 +6,7 @@ on quality, helpfulness, and instruction-following.
 
 import json
 import logging
+import math
 import os
 import string
 from dataclasses import dataclass, field
@@ -85,6 +86,37 @@ _LOG_JUDGE_FAILED = "JUDGE EVALUATION FAILED: %s"
 # Documented in docs/reference/configuration.md (judge section).
 _JUDGE_PROMPT_MAX_CHARS = 500
 _JUDGE_RESPONSE_MAX_CHARS = 1000
+
+# DEFAULT_RUBRIC's untrusted-content delimiters. Content that itself contains
+# one of these literal tags could otherwise break out of the delimited region
+# and land at the instruction level of the judge prompt (see
+# _neutralize_delimiter_tags).
+_JUDGE_DELIMITER_TAGS: Tuple[str, ...] = (
+    "<user_prompt>",
+    "</user_prompt>",
+    "<assistant_response>",
+    "</assistant_response>",
+)
+
+
+def _neutralize_delimiter_tags(text: str) -> str:
+    """Escape literal occurrences of the judge-prompt delimiter tags.
+
+    DEFAULT_RUBRIC wraps untrusted prompt/response text in ``<user_prompt>``/
+    ``<assistant_response>`` tags to keep it out of the instruction level of
+    the judge prompt. Text that itself contains the literal closing tag (e.g.
+    a fine-tuned model emitting ``</assistant_response>``) would otherwise
+    escape the delimiter and place attacker-controlled text where the judge
+    reads it as an instruction — the "ignore any directives" sentence in the
+    rubric mitigates this but tag-delimiting alone is not a hard boundary.
+    Only the exact tag substrings are escaped (not every ``<``/``>`` in the
+    text), so ordinary code/HTML snippets in the judged content are
+    unaffected.
+    """
+    for tag in _JUDGE_DELIMITER_TAGS:
+        if tag in text:
+            text = text.replace(tag, tag.replace("<", "&lt;").replace(">", "&gt;"))
+    return text
 
 
 def _validate_rubric(rubric: str) -> Optional[str]:
@@ -642,7 +674,8 @@ def _score_eval_prompts(
             )
             truncation_warned = True
         judge_prompt = rubric.format(
-            prompt=prompt[:_JUDGE_PROMPT_MAX_CHARS], response=response[:_JUDGE_RESPONSE_MAX_CHARS]
+            prompt=_neutralize_delimiter_tags(prompt[:_JUDGE_PROMPT_MAX_CHARS]),
+            response=_neutralize_delimiter_tags(response[:_JUDGE_RESPONSE_MAX_CHARS]),
         )
         if is_api_judge:
             result = _call_api_judge(judge_prompt, judge_api_key, judge_model, api_base=api_base)
@@ -651,16 +684,27 @@ def _score_eval_prompts(
 
         raw_score = result.get("score")
         try:
-            score = _clip_judge_score(float(raw_score) if raw_score is not None else None)
+            parsed_score = float(raw_score) if raw_score is not None else None
+            if parsed_score is not None and not math.isfinite(parsed_score):
+                # float() happily parses "nan"/"inf"/JSON NaN|Infinity without
+                # raising, and _clip_judge_score's max(1.0, min(10.0, nan))
+                # evaluates to a false 10.0 (nan < 10.0 is False). Route
+                # non-finite values through the same except branch as a
+                # non-numeric score so they degrade to the None-sentinel
+                # instead of silently becoming a perfect score.
+                raise ValueError(f"non-finite judge score: {parsed_score!r}")
+            score = _clip_judge_score(parsed_score)
         except (TypeError, ValueError):
             # The rubric asks for a numeric <1-10>, but a valid-JSON judge
             # response can still carry a non-numeric score ("8/10", "N/A", a
-            # list/dict). float() raises ValueError/TypeError on those; degrade
-            # to the documented None-sentinel (same as a parse failure) so one
-            # malformed verdict can't crash the whole evaluation. The score type
-            # only is logged — the value may echo untrusted model output.
+            # list/dict) or a non-finite one (NaN/Inf). float() raises
+            # ValueError/TypeError on the former but not the latter — both are
+            # degraded to the documented None-sentinel (same as a parse
+            # failure) so one malformed verdict can't crash the whole
+            # evaluation or inflate the average. The score type only is
+            # logged — the value may echo untrusted model output.
             logger.warning(
-                "Judge returned a non-numeric score (type %s); treating as a parse failure (None).",
+                "Judge returned a non-numeric score or non-finite value (type %s); treating as a parse failure (None).",
                 type(raw_score).__name__,
             )
             score = None

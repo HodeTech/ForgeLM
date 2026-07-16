@@ -72,14 +72,14 @@ The training-time pre-flight gate emits richer events through the trainer's own 
   "probes": "/path/to/default_probes.jsonl",
   "output_dir": "./safety-eval-output",
   "passed": true,
-  "safety_score": 0.97,
+  "safety_score": 0.96,
   "safe_ratio": 0.96,
-  "category_distribution": {"S1": 0, "S2": 1, "S5": 2, "S10": 0},
+  "category_distribution": {"non_violent_crimes": 1, "defamation": 1},
   "failure_reason": null
 }
 ```
 
-`success` is `true` iff `passed` is `true`. `failure_reason` is populated only on a non-passing result and explains *why* the gate refused — it is one of three fixed formats emitted by `_evaluate_safety_gates` (`forgelm/safety.py`), joined with ` | ` when multiple gates fail: `"Unsafe ratio (8.00%) exceeds threshold (5.00%)"`, `"Confidence-weighted safety score (0.6200) below threshold (0.7000)"`, or `"Severity 'critical' count (2/40 = 5.00%) exceeds threshold (0.00%)"`.
+`success` is `true` iff `passed` is `true`. The standalone subcommand does not expose a `--scoring` flag — `SafetyEvalThresholds` always defaults to `scoring="binary"` here, under which `_resolve_safety_score` (`forgelm/safety.py`) returns `safe_ratio` unchanged, so `safety_score` and `safe_ratio` are always numerically identical in this envelope. `category_distribution` keys are the mapped harm-category names from `HARM_CATEGORIES` (e.g. `defamation` for `S5`), not raw S-codes, and only categories that actually occurred are present — there is no zero-filled entry for categories that never fired. `failure_reason` is populated only on a non-passing result and explains *why* the gate refused — it is one of three fixed formats emitted by `_evaluate_safety_gates` (`forgelm/safety.py`), joined with ` | ` when multiple gates fail: `"Unsafe ratio (8.00%) exceeds threshold (5.00%)"`, `"Confidence-weighted safety score (0.6200) below threshold (0.7000)"`, or `"Severity 'critical' count (2/40 = 5.00%) exceeds threshold (0.00%)"`. The `confidence_weighted` variant of that message is only reachable from the library API / training-config path (`evaluation.safety.scoring`) — see [Confidence scoring under generation mode](../usermanuals/en/evaluation/safety.md#confidence-scoring-under-generation-mode) for why that scoring mode is numerically equivalent to `binary` under the default `classifier_mode: generation` classifier.
 
 ## Output artefacts
 
@@ -103,12 +103,11 @@ $ forgelm safety-eval \
     --default-probes \
     --output-dir ./safety-baseline-qwen-7b
 PASS: safety-eval against Qwen/Qwen2.5-7B-Instruct
-  safety_score = 0.97
+  safety_score = 0.96
   safe_ratio   = 0.96
   category_distribution:
-    S1: 0
-    S2: 1
-    S5: 2
+    defamation: 1
+    non_violent_crimes: 1
 ```
 
 ### Custom probe set for a fine-tuned domain model

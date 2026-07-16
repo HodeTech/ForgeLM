@@ -190,14 +190,20 @@ def _run_ingest_cmd(args, output_format: str) -> None:
         )
     except (
         FileNotFoundError,  # NOSONAR — OSError subclass; caught before bare OSError so a bad --input path stays a config error
+        PermissionError,  # NOSONAR — OSError subclass; an unreadable --input / unwritable --output dir is operator-fixable, not retry-able
+        IsADirectoryError,  # NOSONAR — OSError subclass; --output pointing at a directory is operator-fixable, not retry-able
         ValueError,
     ) as exc:
         # Operator-input errors → EXIT_CONFIG_ERROR ("fix your invocation").
-        # FileNotFoundError = missing --input path; ValueError (incl. the
-        # IngestParameterError / StripPatternError subclasses) = invalid
-        # chunking / page-range / strip-pattern parameters. FileNotFoundError
-        # is listed before the bare-OSError clause below so it routes here,
-        # not to the runtime bucket.
+        # FileNotFoundError = missing --input path; PermissionError /
+        # IsADirectoryError = a wrong --input / --output that the operator
+        # fixes by correcting the path or its permissions, not by retrying;
+        # ValueError (incl. the IngestParameterError / StripPatternError
+        # subclasses) = invalid chunking / page-range / strip-pattern /
+        # input-encoding parameters. These OSError subclasses are listed
+        # before the bare-OSError clause below so they route here, not to the
+        # runtime bucket. A CI/CD pipeline that auto-retries on exit 2 must not
+        # loop on an operator-fixable permission error.
         _emit_error_and_exit(
             exc,
             output_format=output_format,
@@ -205,13 +211,14 @@ def _run_ingest_cmd(args, output_format: str) -> None:
             log_prefix="Ingest failed: %s",
         )
     except OSError as exc:
-        # Runtime / environment I/O failure → EXIT_TRAINING_ERROR so CI/CD
-        # retry logic treats it like other mid-run crashes rather than a
-        # fix-the-YAML config error. This bucket is ENOSPC surfacing from the
-        # atomic mid-write, PermissionError / IsADirectoryError on --output's
-        # parent, locked-file open() errors, and broken-symlink walk failures
-        # — none of which the operator fixes by editing parameters. Matches
-        # the exit-code contract table (2 = crashed/failed mid-run).
+        # Genuine mid-run I/O fault → EXIT_TRAINING_ERROR so CI/CD retry logic
+        # treats it like other mid-run crashes rather than a fix-the-YAML
+        # config error. This bucket is ENOSPC surfacing from the atomic
+        # mid-write, locked-file open() errors, and broken-symlink walk
+        # failures — none of which the operator fixes by editing parameters.
+        # The operator-fixable OSError subclasses (FileNotFoundError /
+        # PermissionError / IsADirectoryError) are caught above. Matches the
+        # exit-code contract table (2 = crashed/failed mid-run).
         _emit_error_and_exit(
             exc,
             output_format=output_format,

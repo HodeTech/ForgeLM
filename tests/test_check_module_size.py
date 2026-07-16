@@ -121,7 +121,7 @@ class TestCountCodeLines:
 class TestGrandfatheredSet:
     def test_contains_expected_modules(self):
         tool = _load_tool()
-        assert len(tool._GRANDFATHERED_OVER_CEILING) == 8
+        assert len(tool._GRANDFATHERED_OVER_CEILING) == 9
 
     def test_contains_expected_paths(self):
         tool = _load_tool()
@@ -137,6 +137,10 @@ class TestGrandfatheredSet:
             # split tracked for v0.7.x alongside the Phase 15 audit
             # split pattern.
             "forgelm/cli/_pipeline.py",
+            # v0.9.1: crossed 1000 LOC with generation-based Llama-Guard
+            # scoring; forgelm/safety/ sub-package split is the planned
+            # next step.
+            "forgelm/safety.py",
         }
         assert set(tool._GRANDFATHERED_OVER_CEILING) == expected
 
@@ -288,6 +292,8 @@ class TestWalkForgelm:
         # lockstep with ``_GRANDFATHERED_OVER_CEILING`` in
         # ``tools/check_module_size.py``.
         "forgelm/cli/_pipeline.py",
+        # v0.9.1: safety.py (generation-based Llama-Guard scoring).
+        "forgelm/safety.py",
     ],
 )
 def test_grandfathered_module_exists_in_tree(rel_path: str):

@@ -72,14 +72,14 @@ Eğitim-zamanı pre-flight gate'i, trainer'ın kendi audit zinciri üzerinden da
   "probes": "/path/to/default_probes.jsonl",
   "output_dir": "./safety-eval-output",
   "passed": true,
-  "safety_score": 0.97,
+  "safety_score": 0.96,
   "safe_ratio": 0.96,
-  "category_distribution": {"S1": 0, "S2": 1, "S5": 2, "S10": 0},
+  "category_distribution": {"non_violent_crimes": 1, "defamation": 1},
   "failure_reason": null
 }
 ```
 
-`success`, `passed` `true` ise `true`'dur. `failure_reason` yalnızca geçmeyen sonuçlarda doludur ve gate'in *neden* reddettiğini açıklar — `_evaluate_safety_gates` (`forgelm/safety.py`) tarafından üretilen üç sabit formattan biridir; birden fazla gate başarısız olduğunda ` | ` ile birleştirilir: `"Unsafe ratio (8.00%) exceeds threshold (5.00%)"`, `"Confidence-weighted safety score (0.6200) below threshold (0.7000)"` veya `"Severity 'critical' count (2/40 = 5.00%) exceeds threshold (0.00%)"`.
+`success`, `passed` `true` ise `true`'dur. Bağımsız subcommand bir `--scoring` flag'i sunmaz — `SafetyEvalThresholds` burada her zaman `scoring="binary"` varsayılanına döner, ki bu altında `_resolve_safety_score` (`forgelm/safety.py`) `safe_ratio`'yu değiştirmeden döndürür; dolayısıyla `safety_score` ve `safe_ratio` bu envelope'da her zaman sayısal olarak özdeştir. `category_distribution` anahtarları `HARM_CATEGORIES`'ten eşlenen harm-category isimleridir (örn. `S5` için `defamation`), ham S-kodları değil; ve yalnızca gerçekten oluşan kategoriler mevcuttur — hiç ateşlenmeyen kategoriler için sıfır-doldurulmuş bir entry yoktur. `failure_reason` yalnızca geçmeyen sonuçlarda doludur ve gate'in *neden* reddettiğini açıklar — `_evaluate_safety_gates` (`forgelm/safety.py`) tarafından üretilen üç sabit formattan biridir; birden fazla gate başarısız olduğunda ` | ` ile birleştirilir: `"Unsafe ratio (8.00%) exceeds threshold (5.00%)"`, `"Confidence-weighted safety score (0.6200) below threshold (0.7000)"` veya `"Severity 'critical' count (2/40 = 5.00%) exceeds threshold (0.00%)"`. Bu mesajın `confidence_weighted` varyantı yalnızca kütüphane API'si / eğitim-config yolundan (`evaluation.safety.scoring`) erişilebilir — bu skorlama modunun varsayılan `classifier_mode: generation` sınıflandırıcısı altında neden `binary`'ye sayısal olarak eşdeğer olduğu için bkz. [Generation modunda confidence skorlaması](../usermanuals/tr/evaluation/safety.md#generation-modunda-confidence-skorlaması).
 
 ## Çıktı artefaktları
 
@@ -103,12 +103,11 @@ $ forgelm safety-eval \
     --default-probes \
     --output-dir ./safety-baseline-qwen-7b
 PASS: safety-eval against Qwen/Qwen2.5-7B-Instruct
-  safety_score = 0.97
+  safety_score = 0.96
   safe_ratio   = 0.96
   category_distribution:
-    S1: 0
-    S2: 1
-    S5: 2
+    defamation: 1
+    non_violent_crimes: 1
 ```
 
 ### Fine-tune edilmiş domain modeli için özel probe seti

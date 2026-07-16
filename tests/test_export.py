@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import sys
 from unittest.mock import MagicMock, patch
@@ -576,3 +577,68 @@ class TestExportModelAdapter:
 
         assert result.success is False
         assert "Adapter merge failed" in result.error
+
+
+# ---------------------------------------------------------------------------
+# CLI dispatcher: text-mode manual_step_required follow-up line
+# ---------------------------------------------------------------------------
+
+
+class TestExportCmdTextModeFollowup:
+    """Regression: the text-mode success branch previously printed only
+    'Export complete: ...' even when result.manual_step_required is True,
+    silently omitting the mandatory llama-quantize follow-up step that the
+    JSON envelope already exposes via requested_quant/followup_command."""
+
+    def _make_args(self):
+        args = MagicMock()
+        args.model_path = "/fake/model"
+        args.output = "/fake/out.gguf"
+        args.format = "gguf"
+        args.quant = "q4_k_m"
+        args.adapter = None
+        args.no_integrity_update = False
+        return args
+
+    def test_manual_step_required_prints_followup_command_in_text_mode(self, caplog):
+        from forgelm.cli.subcommands._export import _run_export_cmd
+
+        fake_result = ExportResult(
+            success=True,
+            output_path="/fake/out.f16.gguf",
+            format="gguf",
+            quant="f16",
+            requested_quant="q4_k_m",
+            manual_step_required=True,
+            followup_command="llama-quantize /fake/out.f16.gguf /fake/out.gguf Q4_K_M",
+            sha256="a" * 64,
+            size_bytes=123,
+        )
+
+        with patch("forgelm.export.export_model", return_value=fake_result):
+            with caplog.at_level(logging.INFO, logger="forgelm.cli"):
+                _run_export_cmd(self._make_args(), output_format="text")
+
+        assert "Manual quantization step required" in caplog.text
+        assert fake_result.followup_command in caplog.text
+
+    def test_no_manual_step_omits_followup_line_in_text_mode(self, caplog):
+        from forgelm.cli.subcommands._export import _run_export_cmd
+
+        fake_result = ExportResult(
+            success=True,
+            output_path="/fake/out.gguf",
+            format="gguf",
+            quant="q8_0",
+            requested_quant="q8_0",
+            manual_step_required=False,
+            followup_command=None,
+            sha256="b" * 64,
+            size_bytes=456,
+        )
+
+        with patch("forgelm.export.export_model", return_value=fake_result):
+            with caplog.at_level(logging.INFO, logger="forgelm.cli"):
+                _run_export_cmd(self._make_args(), output_format="text")
+
+        assert "Manual quantization step required" not in caplog.text

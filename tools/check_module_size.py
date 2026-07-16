@@ -117,6 +117,14 @@ _GRANDFATHERED_OVER_CEILING: frozenset[str] = frozenset(
         # _verify}.py``) is tracked for the v0.7.x cycle and will
         # land alongside the Phase 15 audit-package split pattern.
         "forgelm/cli/_pipeline.py",
+        # v0.9.1 — crossed 1000 LOC when generation-based Llama-Guard
+        # scoring was added (the causal-LM load + moderation chat-template
+        # build + safe/unsafe verdict parser + the dual classification /
+        # generation aggregators, on top of the existing pipeline scorer).
+        # A ``forgelm/safety/{__init__,_classify,_generate,_gates}.py``
+        # sub-package split is the planned next step per the guard's own
+        # advisory; grandfathered here until that lands.
+        "forgelm/safety.py",
     }
 )
 

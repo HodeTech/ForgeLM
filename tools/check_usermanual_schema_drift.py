@@ -13,9 +13,12 @@ intentionally skipped there because they cannot be validated as a
 complete config.  This guard closes that gap for the fragment case,
 without duplicating full-config validation.
 
-Approach (AST-based, no import of ``forgelm.config`` — mirrors
-``tools/check_field_descriptions.py``'s ClassDef walker so this stays a
-fast, dependency-free lint-stage check):
+Approach: the schema is resolved by AST-parsing ``forgelm/config.py`` as
+text (mirroring ``tools/check_field_descriptions.py``'s ClassDef walker)
+rather than importing the Pydantic models, so schema resolution itself
+pulls in no runtime dependencies. Note the YAML-fence extraction reuses
+``tools/check_yaml_snippets.py``, so the guard still needs ``forgelm``
+importable and exits non-zero if it is not.
 
 1. Parse ``forgelm/config.py`` and build, for every Pydantic
    ``BaseModel`` subclass, a map of ``field_name -> FieldType`` where
@@ -57,16 +60,14 @@ that ``forgelm/`` honours):
 - ``1`` — at least one fabricated key path found (strict mode), or
   invalid arguments.
 
-CI wiring: this guard runs in ``.github/workflows/ci.yml`` **without**
-``--strict`` (report-only). At introduction it already found real
-fabricated-key drift in ``docs/usermanuals/`` (e.g.
-``deployment/model-merging.md``'s ``merge:`` block uses
-``algorithm``/``base_model``/``output`` — none of which are
-``MergeConfig`` fields; the real names are ``method``/``models``
-(list of ``{path, weight}``)/``output_dir``) — a docs-content fix that
-is out of scope for this tool. Flip to ``--strict`` once that drift is
-cleaned up; don't infer a timeline from this comment, check the tool's
-own advisory-mode output for the current live count.
+CI wiring: this guard runs in ``.github/workflows/ci.yml`` with
+``--strict`` — any fabricated key path fails the build. The
+introduction-time backlog (38 instances across 8 EN/TR page-pairs,
+e.g. ``deployment/model-merging.md``'s ``merge:`` block that used
+``algorithm``/``base_model``/``output`` instead of the real
+``MergeConfig`` names ``method``/``models``/``output_dir``) has been
+cleaned, so the guard now protects against regressions rather than
+merely reporting a standing backlog.
 
 Usage::
 

@@ -10,7 +10,7 @@ Lazy-import discipline (Phase 19):
 
 - ``import forgelm`` is *cheap*: no torch, no transformers, no trl, no
   datasets at import time.  Only ``importlib.metadata`` and a tiny
-  module-level state dict are touched.
+  module-level immutable state mapping are touched.
 - Heavy attributes (``ForgeTrainer``, ``audit_dataset``,
   ``setup_authentication``, etc.) are resolved on first attribute
   access via the module-level ``__getattr__`` hook (PEP 562); each

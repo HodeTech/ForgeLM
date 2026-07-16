@@ -227,6 +227,7 @@ forgelm quickstart domain-expert --dataset data/policies.jsonl
 forgelm ingest INPUT_PATH \
   --output FILE \
   [--chunk-size N | --chunk-tokens N --tokenizer MODEL_NAME] \
+  [--input-encoding CODEC] \
   [--overlap N] \
   [--overlap-tokens N] \
   [--strategy {sliding,paragraph,markdown}] \
@@ -378,6 +379,32 @@ strip edilir. Markdown dosyaları ayrıca `^---\n…\n---\n` YAML
 frontmatter'ı tespit edip varsayılan olarak strip eder — metadata
 bloğunda eğitim *istediğinizde* `--keep-md-frontmatter` ile geri
 açabilirsiniz.
+
+### Kaynak-codec override'ı — `--input-encoding CODEC`
+
+Yukarıdaki otomatik-tespit edilen `utf-8-sig` varsayılanı modern
+korpusları kapsar, ama eski Windows araçlarıyla export edilmiş legacy
+korpuslar sıklıkla UTF-8 bile değildir. Her ASCII-olmayan karakteri
+`errors="replace"` fallback'ine kaybetmek yerine gerçek kaynak codec'i
+sabitlemek için `--input-encoding CODEC` geçirin:
+
+```bash
+forgelm ingest ./legacy_docs/ --output data/legacy.jsonl \
+  --input-encoding cp1254
+```
+
+Yalnızca `.txt` / `.md` girdisi için geçerlidir — PDF, DOCX ve EPUB
+extractor'ları kendi gömülü encoding metadata'sını okur ve bu flag'i
+yok sayar. Codec *adı* hiçbir dosya okunmadan önce doğrulanır: Python'un
+`codecs.lookup()` fonksiyonunun reddettiği tanınmayan bir ad, tüm
+çalışmayı `EXIT_CONFIG_ERROR` (`1`) ile ve geçerli örnek codec'leri
+listeleyen bir mesajla (`utf-8`, `cp1254`, `cp1252`, `latin-1`)
+sonlandırır — per-file decode adımına sessizce ulaşıp her TXT/MD
+dosyasını çıktıdan düşürmek yerine. Sözdizimsel olarak geçerli ama
+fiilen yanlış bir codec (örn. gerçekte `cp1254` olan bir dosyada
+`cp1252` kullanmak) reddedilmez — `errors="replace"` ile decode edilir
+ve config hatası değil, olağan binary-contamination uyarısı olarak
+yüzeye çıkar.
 
 ### Operatör strip-pattern'leri — `--strip-pattern REGEX` (Faz 15 Wave 2 Görev 11)
 
@@ -567,8 +594,12 @@ tablo Q&A, finansal asistan, kod-ile-veri prompt'ları.
   parser'ı bağlı değil).
 - **Metadata:** başlık / yazar / sayfa numarası düşürülür — yalnızca gövde
   metni JSONL'a iner.
-- **Encoding:** non-UTF-8 girdi `errors="replace"` ile okunur; binary
-  noise Unicode replacement karakterlerine dönüşür.
+- **Encoding:** TXT / MD girdisi varsayılan olarak `utf-8-sig` ile
+  otomatik tespit edilir; `--input-encoding CODEC` gerçek kaynak
+  codec'i sabitlemediği sürece non-UTF-8 byte'lar `errors="replace"`'e
+  düşer (binary noise Unicode replacement karakterlerine dönüşür).
+  PDF / DOCX / EPUB kendi encoding metadata'sını taşır ve bu flag'den
+  etkilenmez.
 - **Semantik chunking:** embedding desteği bir sonraki fazda gelene kadar
   `NotImplementedError` raise eder.
 

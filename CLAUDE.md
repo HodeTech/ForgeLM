@@ -167,7 +167,11 @@ Default workflow for a non-trivial change:
      python3 tools/update_site_version.py --check
    ```
 
-   All fifteen must pass. The first four are the historical gauntlet;
+   All sixteen must pass (the usermanual-schema-drift guard —
+   `check_usermanual_schema_drift.py --strict` — validates that every
+   fenced YAML key under `docs/usermanuals/` resolves against the real
+   `ForgeConfig` schema, catching fabricated-field examples that would
+   fail `--dry-run`). The first four are the historical gauntlet;
    the three doc guards (Wave 3 / Wave 4 / Wave 5 additions) catch
    bilingual structural drift, broken markdown anchors, and CLI ↔ docs
    help-text drift before the PR opens. The wizard-defaults guard

@@ -189,37 +189,52 @@ _WEBHOOK_DNS_PREFLIGHT_TIMEOUT_SECONDS = 3.0
 def _webhook_preflight_is_private(host: str) -> bool:
     """Bounded-timeout wrapper around ``_http._is_private_destination``.
 
-    ``_is_private_destination`` performs a real ``socket.getaddrinfo``
-    DNS lookup with no timeout of its own, which can hang this
-    interactive prompt for the OS resolver's default timeout (tens of
-    seconds) on a sandboxed CI runner, an air-gapped machine, or a
-    network with a slow/unreachable resolver.  Scope a short
-    ``socket.setdefaulttimeout`` around just this call so a slow
-    resolver degrades to "skip the preflight" — ``_http.safe_post``
-    still enforces the real SSRF check at training time — instead of
-    blocking the wizard.  Returns ``False`` (don't block) whenever the
-    check itself cannot complete, whether because ``forgelm._http`` is
-    unavailable or the resolver timed out.
+    ``_is_private_destination`` performs a real ``socket.getaddrinfo`` DNS
+    lookup with no timeout of its own, which can hang this interactive
+    prompt for the OS resolver's default timeout (tens of seconds) on a
+    sandboxed CI runner, an air-gapped machine, or a network with a
+    slow/unreachable resolver.  ``socket.setdefaulttimeout`` does NOT bound
+    this: CPython's ``getaddrinfo`` is a blocking libc call that only
+    consults the socket default timeout for socket-object operations
+    (``connect``/``recv``), never for name resolution — so that approach
+    was previously a no-op against the exact hang it claimed to bound.
+
+    Instead, run the lookup in a daemon worker thread and join with a
+    ``_WEBHOOK_DNS_PREFLIGHT_TIMEOUT_SECONDS`` bound. If the thread has not
+    finished by then, the resolver is treated as unbounded-slow and the
+    preflight is skipped — ``_http.safe_post`` still enforces the real SSRF
+    check at training time — instead of blocking the wizard. The worker
+    thread is daemonized so an actually-hung resolver cannot keep the
+    process alive; its (possibly late) result is simply discarded. Returns
+    ``False`` (don't block) whenever the check itself cannot complete,
+    whether because ``forgelm._http`` is unavailable, the resolver raised,
+    or the timeout was hit.
     """
-    import socket
+    import threading
 
     try:
         from .._http import _is_private_destination
     except ImportError:  # pragma: no cover — _http always present
         return False
 
-    previous_timeout = socket.getdefaulttimeout()
-    socket.setdefaulttimeout(_WEBHOOK_DNS_PREFLIGHT_TIMEOUT_SECONDS)
-    try:
-        return _is_private_destination(host)
-    except OSError:
-        # Resolver timed out or failed at the socket layer (``_is_private_
-        # destination`` already narrows ``socket.gaierror`` internally, so
-        # this is chiefly ``socket.timeout``/``TimeoutError``) — treat as
-        # "could not determine", not "reject".
+    outcome: Dict[str, Any] = {}
+
+    def _resolve() -> None:
+        try:
+            outcome["result"] = _is_private_destination(host)
+        except OSError as exc:
+            # ``_is_private_destination`` already narrows
+            # ``socket.gaierror`` internally; anything else surfacing here
+            # (e.g. a socket-layer timeout) is "could not determine", not
+            # "reject".
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=_resolve, daemon=True)
+    worker.start()
+    worker.join(_WEBHOOK_DNS_PREFLIGHT_TIMEOUT_SECONDS)
+    if worker.is_alive() or "error" in outcome:
         return False
-    finally:
-        socket.setdefaulttimeout(previous_timeout)
+    return bool(outcome.get("result", False))
 
 
 # ---------------------------------------------------------------------------

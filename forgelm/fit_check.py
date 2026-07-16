@@ -62,6 +62,7 @@ class FitCheckResult:
     recommendations: List[str] = field(default_factory=list)
     breakdown: Dict[str, float] = field(default_factory=dict)
     hypothetical: bool = False  # True when no GPU was detected
+    notes: List[str] = field(default_factory=list)  # advisory caveats, e.g. an assumed dtype
 
 
 # ---------------------------------------------------------------------------
@@ -343,8 +344,27 @@ def estimate_vram(config: Any) -> FitCheckResult:
 
     arch = _load_arch_params(m.name_or_path, trust_remote_code=m.trust_remote_code)
     num_params = _estimate_param_count(arch)
-    quant = _resolve_quant_scheme(m, arch.get("declared_dtype"))
+    declared_dtype = arch.get("declared_dtype")
+    quant = _resolve_quant_scheme(m, declared_dtype)
     grad_ckpt = getattr(t, "gradient_checkpointing", False)
+
+    notes: List[str] = []
+    if (
+        not m.load_in_4bit
+        and not getattr(m, "load_in_8bit", False)
+        and declared_dtype is None
+        and getattr(m, "torch_dtype", None) is None
+    ):
+        # Mirrors the "dtype is None" branch of _resolve_quant_scheme: neither
+        # AutoConfig (offline / cache miss) nor the model config supplied a
+        # dtype, so the conservative fp32 fallback was assumed. Surface it so
+        # an offline user understands why the estimate jumped relative to a
+        # run where the checkpoint dtype was known.
+        notes.append(
+            "Checkpoint dtype could not be determined (AutoConfig unavailable or no dtype "
+            "declared); assumed fp32 as a conservative estimate. If the checkpoint actually "
+            "loads in bf16/fp16, base-model VRAM may be overstated by up to 2x."
+        )
 
     components = _component_breakdown(
         num_params=num_params, arch=arch, t=t, m=m, lora=lora, quant=quant, grad_ckpt=grad_ckpt
@@ -386,6 +406,7 @@ def estimate_vram(config: Any) -> FitCheckResult:
         recommendations=recommendations,
         breakdown=breakdown,
         hypothetical=hypothetical,
+        notes=notes,
     )
 
 
@@ -465,6 +486,11 @@ def format_fit_check(result: FitCheckResult) -> str:
             lines.append(f"    {k}: {v} GB")
         else:
             lines.append(f"    {k}: {v}")
+
+    if result.notes:
+        lines.append("")
+        for note in result.notes:
+            lines.append(f"  Note: {note}")
 
     if result.recommendations:
         lines.append("")

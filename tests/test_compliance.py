@@ -459,6 +459,48 @@ class TestAuditLoggerGenesisManifest:
         with open(manifest_path, encoding="utf-8") as fh:
             assert "first_entry_sha256" in json.load(fh)
 
+    def test_genesis_manifest_fsyncs_parent_directory(self, tmp_path, monkeypatch):
+        """LOW fix: the genesis-manifest rename must fsync the parent
+        directory fd (not just the tmp file's data blocks) so the rename's
+        directory-entry write-back is durable — mirrors
+        ``_purge.py::_atomic_rewrite_dropping_lines``'s dir-fsync
+        discipline.  Without this, a crash between the ``os.replace`` and
+        the directory metadata flush can silently drop the manifest,
+        permanently disarming truncation-detection for that log with no
+        error on the next run."""
+        if not hasattr(os, "O_DIRECTORY"):
+            pytest.skip("O_DIRECTORY is POSIX-only")
+
+        from forgelm import compliance
+
+        fsync_calls: list[int] = []
+        real_fsync = os.fsync
+
+        def _spy_fsync(fd: int) -> None:
+            fsync_calls.append(fd)
+            real_fsync(fd)
+
+        monkeypatch.setattr(compliance.os, "fsync", _spy_fsync)
+
+        opened_dir_fds: list[int] = []
+        real_open = os.open
+
+        def _spy_open(path, flags, *args, **kwargs):
+            fd = real_open(path, flags, *args, **kwargs)
+            if flags & os.O_DIRECTORY:
+                opened_dir_fds.append(fd)
+            return fd
+
+        monkeypatch.setattr(compliance.os, "open", _spy_open)
+
+        compliance.AuditLogger(str(tmp_path)).log_event("first.event")
+
+        assert opened_dir_fds, "parent directory was never opened with O_DIRECTORY for fsync"
+        assert any(fd in fsync_calls for fd in opened_dir_fds), (
+            f"os.fsync was not called on the parent-directory fd; fsync targets={fsync_calls}, "
+            f"dir_fds={opened_dir_fds}.  The genesis-manifest rename is not durable."
+        )
+
     def test_corrupt_manifest_fails_closed(self, tmp_path, caplog, monkeypatch):
         """A present-but-unreadable manifest must fail closed at write time, not
         warn-and-continue. Corrupting the manifest (instead of deleting the log)

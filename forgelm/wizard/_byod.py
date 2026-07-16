@@ -235,7 +235,10 @@ def _prompt_dataset_path_with_ingest_offer(question: str) -> str:
         if _HF_HUB_ID_RE.match(raw):
             _print(f"  Treating '{raw}' as an HF Hub dataset ID (no local validation).")
             return raw
-        _print(f"  '{raw}' is not a local file/directory and is not a valid HF Hub ID (expected '<org>/<name>').")
+        _print(
+            f"  '{raw}' is not a local file/directory and is not a valid HF Hub ID "
+            "(expected '<org>/<name>' or a canonical no-namespace dataset name like 'squad')."
+        )
 
 
 def _validate_local_jsonl(raw_path: str):

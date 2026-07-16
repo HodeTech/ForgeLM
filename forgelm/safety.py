@@ -9,6 +9,17 @@ threshold, not a regression-vs-baseline bound — no pre-training safety
 measurement is taken anywhere (unlike the eval-loss gate's baseline). The
 config field description (``SafetyConfig.max_safety_regression``) is accurate;
 the name reads as baseline-relative but the implemented semantics are absolute.
+
+Note: ``scoring="confidence_weighted"`` degenerates to binary (mathematically
+equal to ``safe_ratio``) under ``classifier_mode="generation"`` — the
+shipped default for the shipped default classifier
+(``meta-llama/Llama-Guard-3-8B``). Generation-based scoring only ever
+greedily decodes a categorical ``safe``/``unsafe`` verdict; it never samples
+a token-probability distribution, so ``_classify_one_generative`` can only
+synthesize a placeholder confidence (1.0 well-formed, 0.0 malformed), not a
+real guard probability. See ``_resolve_safety_score`` and
+``_classify_one_generative`` for the implementation and
+``docs/usermanuals/en/evaluation/safety.md`` for the operator-facing note.
 """
 
 import json
@@ -660,7 +671,7 @@ def _reject_uninitialized_classifier_head(classifier: Any, classifier_path: str)
 
 
 def _emit_classifier_load_failed_audit(audit_logger: Any, classifier_path: str, reason: str) -> None:
-    """Best-effort Article 12 record-keeping for a safety-classifier outage.
+    """Best-effort Article 15 record-keeping for a safety-classifier outage.
 
     A failure to load — or a fail-fast rejection of — the safety classifier is a
     safety-gate outage, so surface it in the append-only audit trail, not only in
@@ -682,7 +693,7 @@ def _emit_classifier_load_failed_audit(audit_logger: Any, classifier_path: str, 
 
 
 def _load_safety_classifier(classifier_path: str, audit_logger: Any) -> Any:
-    """Load the HF text-classification pipeline; emit Article 12 audit on failure.
+    """Load the HF text-classification pipeline; emit Article 15 audit on failure.
 
     Returns the classifier or raises a ``RuntimeError`` whose message is
     the original load failure. ``trust_remote_code=False`` is pinned so a
@@ -707,8 +718,8 @@ def _load_safety_classifier(classifier_path: str, audit_logger: Any) -> Any:
     except Exception as e:  # noqa: BLE001 — best-effort: HF pipeline surface raises a wide error tail (OSError/ValueError/RuntimeError/HFValidationError/repo errors); we re-raise as RuntimeError below so the caller still sees the failure.
         logger.exception("Failed to load safety classifier")
         # Closure plan Faz 3 (F-compliance-120): emit a record-keeping event
-        # so safety classifier outages are visible in the EU AI Act Article 12
-        # audit trail, not only in process logs.
+        # so safety classifier outages are visible in the EU AI Act Article 15
+        # (Model Integrity) audit trail, not only in process logs.
         _emit_classifier_load_failed_audit(audit_logger, classifier_path, str(e))
         raise RuntimeError(str(e)) from e
 
@@ -734,7 +745,16 @@ def _resolve_safety_score(
     safe_ratio: float,
     confidence_scores: list,
 ) -> float:
-    """Pick the safety score per the configured scoring strategy."""
+    """Pick the safety score per the configured scoring strategy.
+
+    Under ``classifier_mode="generation"`` (the shipped default for
+    ``meta-llama/Llama-Guard-3-8B``), ``confidence_scores`` only ever holds
+    the synthetic 1.0/0.0 values set in :func:`_classify_one_generative` —
+    never a real guard probability — so ``confidence_weighted`` here reduces
+    to exactly ``safe_ratio``. A ``min_safety_score`` gate configured under
+    that mode is therefore a safe-ratio floor in practice, not a
+    probability-weighted threshold.
+    """
     if scoring == "confidence_weighted" and confidence_scores:
         return sum(confidence_scores) / len(confidence_scores)
     return safe_ratio
@@ -811,7 +831,7 @@ def _load_generative_guard(classifier_path: str, audit_logger: Any) -> Tuple[Any
     """Load a generative Llama-Guard checkpoint (``AutoModelForCausalLM`` + tokenizer).
 
     Mirrors :func:`_load_safety_classifier`'s failure contract: on any load error
-    emit the Article 12 ``audit.classifier_load_failed`` event and re-raise as
+    emit the Article 15 ``audit.classifier_load_failed`` event and re-raise as
     ``RuntimeError`` so the caller returns the same infrastructure-failure shape.
     ``trust_remote_code=False`` is pinned so the production safety pass never runs
     checkpoint-side custom code.
@@ -898,6 +918,22 @@ def _classify_one_generative(
     ``low_confidence``).  A parsed verdict carries confidence ``1.0`` (the
     categorical verdict text is unambiguous); a malformed verdict is scored
     unsafe with confidence ``0.0`` and ``low_confidence=True``.
+
+    Note — ``confidence`` here is a *synthetic* placeholder, not a probability
+    read off the guard's output logits: generation-based scoring never samples
+    a safe/unsafe token distribution, only greedily decodes text. Because
+    ``evaluation.safety.scoring="confidence_weighted"`` averages exactly these
+    two values (``_resolve_safety_score``), that scoring mode is mathematically
+    identical to ``safe_ratio`` under ``classifier_mode="generation"`` — which
+    is the shipped default (``meta-llama/Llama-Guard-3-8B`` auto-routes here).
+    A ``min_safety_score`` gate configured expecting real probability-weighted
+    gating therefore behaves as a plain safe-ratio floor in the default
+    configuration. See docs/usermanuals/en/evaluation/safety.md "Confidence
+    scoring under generation mode" for the operator-facing version of this
+    note. Extracting a real probability would require reading the guard's
+    safe/unsafe token logits instead of greedily decoded text — not
+    implemented; documented here as a known scoring-mode limitation rather
+    than silently shipped as if it were probability-weighted.
     """
     verdict_text = _generate_guard_verdict(model, tokenizer, prompt, response)
     is_safe, malformed = _parse_guard_verdict(verdict_text)
@@ -906,6 +942,8 @@ def _classify_one_generative(
         "prompt": prompt[:200],
         "response": response[:200],
         "label": (verdict_text.strip()[:200] or "malformed"),
+        # Synthetic confidence, not a real guard probability — see the
+        # docstring note above on the confidence_weighted-vs-binary collapse.
         "confidence": 0.0 if malformed else 1.0,
         "safe": is_safe,
     }
@@ -942,9 +980,20 @@ def _classify_responses_generative(
     same aggregate dict shape as :func:`_classify_responses` so the downstream
     gates and :class:`SafetyResult` are identical across scoring paths.
 
+    Performance note: unlike :func:`_generate_safety_responses` (which batches
+    the fine-tuned model's response generation at ``batch_size``, pad-longest),
+    this loop below calls :func:`_classify_one_generative` — one
+    ``model.generate`` on the (typically 8B) guard checkpoint — per pair, at
+    batch size 1. For a probe set of a few hundred prompts this un-batched
+    guard pass is the dominant wall-clock cost of a safety evaluation. This is
+    an accepted v1 tradeoff (documented, not implemented): batching would need
+    left-padded batched generation plus a per-batch OOM fallback mirroring
+    :func:`_generate_safety_batch_with_oom_retry`. Functionally correct as-is;
+    revisit if guard-pass latency becomes the bottleneck operators report.
+
     Raises:
         RuntimeError: if the guard checkpoint cannot be loaded (after emitting
-            the Article 12 ``audit.classifier_load_failed`` event).
+            the Article 15 ``audit.classifier_load_failed`` event).
     """
     model, tokenizer = _load_generative_guard(classifier_path, audit_logger)
 
@@ -955,6 +1004,7 @@ def _classify_responses_generative(
     severity_dist: Dict[str, int] = {level: 0 for level in SEVERITY_LEVELS}
     details: List[Dict[str, Any]] = []
 
+    # Sequential, batch-size-1 guard calls — see the performance note above.
     for prompt, response in zip(prompts, responses):
         detail = _classify_one_generative(
             model,
@@ -967,6 +1017,11 @@ def _classify_responses_generative(
         )
         if not detail["safe"]:
             unsafe_count += 1
+        # Aggregate confidence used by scoring="confidence_weighted"
+        # (_resolve_safety_score): 1.0 per safe pair, 0.0 per unsafe pair —
+        # never a real guard probability (see _classify_one_generative's
+        # docstring), so sum(confidence_scores)/len(...) reduces to
+        # safe_ratio exactly under classifier_mode="generation".
         confidence_scores.append(detail["confidence"] if detail["safe"] else 0.0)
         if detail.get("low_confidence"):
             low_confidence_count += 1
@@ -994,7 +1049,7 @@ def run_safety_evaluation(
     # Phase 4 (closure F-performance-102) — batched generation
     batch_size: int = 8,
     # Closure plan Faz 3: optional audit logger so a classifier load failure
-    # surfaces as an Article 12 record-keeping event in addition to the
+    # surfaces as an Article 15 record-keeping event in addition to the
     # existing ``passed=False`` return path.
     audit_logger: Any = None,
     include_samples: bool = False,
@@ -1046,7 +1101,7 @@ def run_safety_evaluation(
             _reject_generation_only_classifier(classifier_path)
         except RuntimeError as e:
             logger.error("%s", e)
-            # Article 12 record-keeping: this pre-flight short-circuits before
+            # Article 15 record-keeping: this pre-flight short-circuits before
             # _load_safety_classifier's own emission, so surface the rejected
             # (unloadable) classifier here too (F-compliance-120).
             _emit_classifier_load_failed_audit(audit_logger, classifier_path, str(e))
@@ -1111,7 +1166,7 @@ def run_safety_evaluation(
     # Both scoring paths share the classifier-load-failure contract: on any load
     # failure return the evaluation_completed=False shape (safe_ratio=0.0 so the
     # trainer-side metric / audit payload never report a perfect safety ratio for
-    # an evaluation that ran nothing — F-P3-FABLE-26) after the Article-12
+    # an evaluation that ran nothing — F-P3-FABLE-26) after the Article 15
     # ``audit.classifier_load_failed`` event is emitted inside the loader.
     if effective_mode == "generation":
         logger.info("Scoring safety via generation-based Llama-Guard: %s", classifier_path)

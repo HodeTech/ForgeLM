@@ -1360,6 +1360,38 @@ class TestWarningPayloadIsolation:
 
 
 # ---------------------------------------------------------------------------
+# Opus-review fix — warning events must carry the FULL `completed`-field set
+# (docs/reference/audit_event_catalog.md: "All `completed` fields + X"), not
+# just `request_fields`.  Regression for the payload-shape defect where
+# `data.erasure_warning_*` events omitted bytes_freed / files_modified /
+# pre_erasure_line_number / match_count.
+# ---------------------------------------------------------------------------
+
+
+class TestWarningPayloadCatalogCompleteness:
+    def test_warning_event_carries_completed_field_set(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        (tmp_path / "final_model").mkdir()
+        (tmp_path / "final_model.staging.fg-run1").mkdir()
+
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "row-1", "text": "x"}])
+        args = _build_args(row_id="row-1", corpus=str(corpus), output_dir=str(tmp_path))
+        with pytest.raises(SystemExit):
+            _run_purge_cmd(args, output_format="json")
+
+        events = _read_audit_events(tmp_path / "audit_log.jsonl")
+        completed = next(e for e in events if e["event"] == "data.erasure_completed")
+        warn_evt = next(e for e in events if e["event"] == "data.erasure_warning_memorisation")
+        for field in ("bytes_freed", "files_modified", "pre_erasure_line_number", "match_count"):
+            assert field in warn_evt, f"warning event missing catalog-mandated completed field {field!r}"
+            assert warn_evt[field] == completed[field]
+        # The scoped extra must still be present alongside the completed set.
+        assert "affected_run_ids" in warn_evt
+
+
+# ---------------------------------------------------------------------------
 # Finding 5 (LOW) — run-scoped erasure records the PLAIN run_id as target_id
 # (design §5.3); the module docstring now documents this asymmetry.
 # ---------------------------------------------------------------------------

@@ -1059,13 +1059,16 @@ class TestIbanDetection:
     """The IBAN detector must surface both the compact run and the ISO 13616
     four-character-grouped print form (how IBANs actually appear on invoices,
     statements, and email); previously only the contiguous run matched, so the
-    common spaced form was silently under-reported."""
+    common spaced form was silently under-reported. Real IBANs (checksum
+    valid via ISO 7064 mod-97) are used throughout — the detector validates
+    the checksum in _validate_match precisely so checksum-invalid all-caps
+    prose does NOT get flagged (see TestIbanFalsePositiveGuard below)."""
 
     def test_compact_iban_detected(self):
-        assert detect_pii("IBAN: TR330006100154780000002668").get("iban") == 1
+        assert detect_pii("IBAN: TR460006100154780000002668").get("iban") == 1
 
     def test_spaced_iban_detected(self):
-        assert detect_pii("IBAN: TR33 0006 1001 5478 0000 0026 68").get("iban") == 1
+        assert detect_pii("IBAN: TR46 0006 1001 5478 0000 0026 68").get("iban") == 1
 
     def test_de_spaced_iban_detected(self):
         assert detect_pii("Please wire to DE89 3704 0044 0532 0130 00 today").get("iban") == 1
@@ -1075,9 +1078,29 @@ class TestIbanDetection:
         [
             "prose with no structured identifiers whatsoever",
             "DE89 3704",  # body far below the 11-char minimum
+            "TR330006100154780000002668",  # right shape, wrong checksum (33 vs valid 46)
         ],
     )
     def test_non_iban_shape_not_flagged(self, text):
+        assert detect_pii(text).get("iban", 0) == 0
+
+
+class TestIbanFalsePositiveGuard:
+    """The spaced print-form pattern's optional per-character space lets a
+    ``[A-Z]{2}\\d{2}`` token followed by >=11 spaced uppercase letters span
+    all-caps prose word boundaries. Without a checksum, every one of these
+    was counted as a critical-tier PII hit and would be redacted by
+    ``ingest --pii-mask``, corrupting legitimate training text."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "US20 MEN WENT TO THE STORE AND BOUGHT MILK TODAY",
+            "NO20 PEOPLE CAME BUT MANY LEFT EARLY",
+            "THE OLD PA55 CODES AND STUFF WERE RETIRED LAST YEAR",
+        ],
+    )
+    def test_all_caps_prose_not_flagged_as_iban(self, text):
         assert detect_pii(text).get("iban", 0) == 0
 
 
@@ -1186,6 +1209,27 @@ class TestCrossSplitSummaryRendering:
         assert "{" not in line
         assert "leaked=2/1" in line
         assert "16.67%" in line and "25.00%" in line
+
+    def test_render_cross_split_pair_split_name_containing_double_underscore(self):
+        """A split named 'train__aug' paired with 'test' builds the composite
+        pair key 'train__aug__test'. ``pair_name.split("__", 1)`` used to
+        mis-parse this as a=('train', b='aug__test'), missing both real
+        payload keys and silently rendering 'leaked=0/0' for a genuine leak.
+        Split names must come from the payload's own keys, not the composite
+        key."""
+        from forgelm.data_audit._summary import _render_cross_split_pair
+
+        payload = {
+            "leaked_rows_in_train__aug": 5,
+            "leak_rate_train__aug": 0.05,
+            "leaked_rows_in_test": 2,
+            "leak_rate_test": 0.2,
+        }
+        line = _render_cross_split_pair("train__aug__test", payload)
+        assert "leaked=5/2" in line
+        assert "5.00%" in line and "20.00%" in line
+        # The old bug rendered exactly this string for a genuine leak.
+        assert "leaked=0/0" not in line
 
 
 # ---------------------------------------------------------------------------

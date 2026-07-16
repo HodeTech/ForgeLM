@@ -62,6 +62,7 @@ ruff format . && ruff check . && pytest tests/ && \
   python3 tools/check_tr_links_prefer_mirror.py --strict && \
   python3 tools/check_usermanual_self_contained.py --strict && \
   python3 tools/check_notebook_pins.py --strict && \
+  python3 tools/check_usermanual_schema_drift.py --strict && \
   python3 tools/update_site_version.py --check
 ```
 

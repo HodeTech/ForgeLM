@@ -107,6 +107,7 @@ $ forgelm ingest INPUT_PATH \
     [--strategy {sliding,paragraph,markdown}] \
     [--chunk-size N] [--overlap N] \
     [--chunk-tokens N] [--overlap-tokens N] [--tokenizer MODEL_NAME] \
+    [--input-encoding CODEC] \
     [--pii-mask] [--secrets-mask] [--all-mask] \
     [--language-hint LANG] [--script-sanity-threshold X] \
     [--normalise-profile {turkish,none} | --no-normalise-unicode] \
@@ -127,6 +128,16 @@ processed üzerinden branch eden CI gate'ler için kullanışlı, metin
 `--strip-pattern`, `--strip-pattern-no-timeout`, `--page-range`,
 `--keep-frontmatter` ve `--strip-urls` bayraklarını ekledi. Bkz.
 [Doküman Ingestion](#/data/ingestion).
+
+`--input-encoding CODEC` yalnızca `.txt` / `.md` girdisi için kaynak
+codec'i sabitler — PDF / DOCX / EPUB kendi encoding metadata'sını
+taşır ve bu flag'i yok sayar. Varsayılan (set edilmediğinde) `utf-8-sig`
+üzerinden BOM-strip + `errors="replace"` fallback'iyle otomatik
+tespit eder — önceki davranıştan farksız. Eski Windows araçlarıyla
+export edilmiş korpusları her ASCII-olmayan byte'ı `U+FFFD` ile
+değiştirmek yerine doğru decode etmek için bir legacy codec adı geçirin
+(örn. `cp1254`, `cp1252`, `latin-1`). Tanınmayan bir codec adı, hiçbir
+dosya okunmadan önce config hatasıyla (`1`) reddedilir.
 
 ## Chat: `forgelm chat`
 

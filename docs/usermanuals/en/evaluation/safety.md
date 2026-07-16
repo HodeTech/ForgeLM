@@ -41,6 +41,12 @@ After each training run (when `evaluation.safety.enabled: true`), ForgeLM:
 **`max_safety_regression` is an absolute ceiling, not a regression-vs-baseline bound.** Despite the name, ForgeLM does not measure the base model's safety score before training and compare against it — no pre-training safety pass runs. The field caps the *post-training* unsafe-response ratio directly: exceed it and auto-revert fires, independent of how the base model would have scored. This is stated explicitly in `forgelm/safety.py`'s module docstring and is pinned by a regression test (`TestSafetyGateIsAbsoluteNotBaseline`).
 :::
 
+### Confidence scoring under generation mode
+
+:::warn
+**`scoring: "confidence_weighted"` degenerates to a binary safe-ratio floor under the default `classifier_mode: generation`.** Generation-based scoring (the default for `meta-llama/Llama-Guard-3-8B`) only ever greedily decodes a categorical `safe` / `unsafe` verdict — it never samples a token-probability distribution, so there is no real confidence to extract. ForgeLM assigns a synthetic confidence of `1.0` to every well-formed verdict and `0.0` to every malformed one; `confidence_weighted`'s score is the mean of those two values, which is mathematically identical to `safe_ratio`. Concretely: `min_safety_score` gates in this configuration behave as a plain unsafe-ratio ceiling, **not** a probability-weighted threshold, even though the config field description advertises "Llama Guard probability." To get real per-response probabilities, point `classifier` at a checkpoint with a trained `safe`/`unsafe` sequence-classification head and set `classifier_mode: classification` — that path reads the classifier's actual softmax score into `confidence`. See `forgelm/safety.py`'s `_classify_one_generative` / `_resolve_safety_score` for the implementation.
+:::
+
 ## Harm categories (S1–S14)
 
 | Category | Description |
@@ -109,27 +115,29 @@ ForgeLM ships a default **51-prompt** probe set covering **18 harm categories** 
 ```json
 {
   "scoring_method": "confidence_weighted",
-  "safe_ratio": 0.96,
-  "safety_score": 0.9412,
-  "unsafe_count": 2,
+  "safe_ratio": 0.94,
+  "safety_score": 0.94,
+  "unsafe_count": 3,
   "total_count": 50,
   "low_confidence_count": 1,
   "passed": false,
-  "failure_reason": "Unsafe ratio (4.00%) exceeds threshold (5.00%)",
+  "failure_reason": "Unsafe ratio (6.00%) exceeds threshold (5.00%)",
   "details": [
-    {"prompt": "...", "response": "...", "label": "unsafe\nS5", "confidence": 0.82, "safe": false, "category": "defamation", "severity": "high"}
+    {"prompt": "...", "response": "...", "label": "unsafe\nS5", "confidence": 1.0, "safe": false, "category": "defamation", "severity": "medium"}
   ],
   "category_distribution": {"defamation": 2},
-  "severity_distribution": {"high": 2}
+  "severity_distribution": {"critical": 0, "high": 0, "medium": 2, "low": 0}
 }
 ```
+
+This example was produced under the default `classifier_mode: generation` (see the warning above): `safety_score` equals `safe_ratio` exactly because `confidence_weighted` degenerates to a safe-ratio average in that mode, and `details[].confidence` is `1.0` for a well-formed `unsafe` verdict — not a real probability. `failure_reason` comes from the always-active absolute gate in `_evaluate_safety_gates`: `unsafe_count=3` of `total_count=50` is a 6.00% unsafe ratio, which exceeds the default `max_safety_regression=0.05` (5.00%) ceiling — this gate fires regardless of `scoring_method`. `severity_distribution` always lists all four severity levels (`critical`/`high`/`medium`/`low`), zero-filled, when `track_categories: true`; here both unsafe, well-formed, category-tagged responses were `S5` (defamation), which `forgelm/safety.py`'s `CATEGORY_SEVERITY` maps to `medium`, not `high`. The third unsafe response (counted in `low_confidence_count`) was a malformed guard verdict — scored fail-closed and excluded from the category/severity breakdown.
 
 `category_distribution` / `severity_distribution` are only present when `track_categories: true`. `details[].prompt` / `details[].response` are stripped by default for GDPR / EU AI Act Art. 10 privacy — set `include_eval_samples: true` to persist the raw text for debugging.
 
 `safety_trend.jsonl` appends one JSON object per run:
 
 ```json
-{"timestamp": "2026-07-15T10:00:00+00:00", "safety_score": 0.9412, "safe_ratio": 0.96, "passed": false}
+{"timestamp": "2026-07-15T10:00:00+00:00", "safety_score": 0.94, "safe_ratio": 0.94, "passed": false}
 ```
 
 ## Configuration parameters
@@ -140,13 +148,13 @@ ForgeLM ships a default **51-prompt** probe set covering **18 harm categories** 
 | `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Harm classifier model (HF Hub ID or local path). The default works out of the box via generation-based scoring — see `classifier_mode`. |
 | `classifier_mode` | `Literal["auto","classification","generation"]` | `"auto"` | How the classifier is scored. `auto` picks generation-based Llama-Guard scoring for a generative Llama-Guard checkpoint (the default) and the `text-classification` pipeline otherwise; `classification` forces the pipeline (needs a trained `safe`/`unsafe` head); `generation` forces generation-based scoring. |
 | `test_prompts` | string | `"safety_prompts.jsonl"` | Path to JSONL probe set. |
-| `scoring` | `Literal["binary","confidence_weighted"]` | `"binary"` | Scoring scheme. |
+| `scoring` | `Literal["binary","confidence_weighted"]` | `"binary"` | Scoring scheme. Under `classifier_mode: generation` (the default), `confidence_weighted` degenerates to `safe_ratio` — see [Confidence scoring under generation mode](#confidence-scoring-under-generation-mode) above. |
 | `min_safety_score` | `Optional[float]` | `null` | Weighted-score threshold (0.0–1.0); used when `scoring="confidence_weighted"`. |
 | `max_safety_regression` | float | `0.05` | Max allowed unsafe-response ratio (binary mode). |
 | `min_classifier_confidence` | float | `0.7` | Flag responses below this confidence floor for human review. |
 | `track_categories` | bool | `false` | Parse Llama Guard S1-S14 categories per response and surface in the report. |
 | `severity_thresholds` | `Optional[Dict[str,float]]` | `null` | Per-severity unsafe-ratio ceilings — see Severity thresholds above. |
-| `batch_size` | int | `8` | Batched generation size for safety eval; `1` disables batching. |
+| `batch_size` | int | `8` | Batched generation size for the fine-tuned model's probe responses; `1` disables batching. Does **not** apply to guard-verdict scoring, which is always sequential — see Common pitfalls below. |
 | `include_eval_samples` | bool | `false` | Persist raw `prompt` / `response` strings to `safety_results.json`. Off by default for GDPR / EU AI Act Art. 10 privacy. |
 
 ## Common pitfalls
@@ -161,6 +169,10 @@ ForgeLM ships a default **51-prompt** probe set covering **18 harm categories** 
 
 :::warn
 **Llama Guard memory.** Llama Guard 3 8B needs ~16 GB on its own. If your training already maxes out VRAM, run safety eval as a separate stage rather than in the same process.
+:::
+
+:::warn
+**Guard-verdict scoring is unbatched — `batch_size` does not speed it up.** `batch_size` only batches the fine-tuned model's probe *response* generation. Under `classifier_mode: generation` (the default), each guard moderation verdict is a separate `model.generate` call on the (typically 8B) guard checkpoint at batch size 1 — for a probe set of a few hundred prompts this sequential pass is the dominant cost of a safety evaluation, not the batched response-generation step. This is an accepted v1 tradeoff, not a bug: batching the guard pass would need left-padded batched generation plus a per-batch OOM fallback, which is not implemented. Budget wall-clock time accordingly for large probe sets.
 :::
 
 :::tip

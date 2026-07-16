@@ -935,28 +935,45 @@ class TestWebhookSSRFPreflight:
         section = wizard._parse_webhook_value("env:SLACK_WEBHOOK_URL")
         assert section == {"url_env": "SLACK_WEBHOOK_URL"}
 
-    def test_dns_preflight_bounds_socket_timeout(self, monkeypatch):
-        # LOW finding: the SSRF preflight's socket.getaddrinfo call (inside
-        # _is_private_destination) has no timeout of its own, which can
-        # hang the interactive prompt on a sandboxed / air-gapped resolver.
-        # A short-lived socket.setdefaulttimeout must be scoped around the
-        # call.
+    def test_dns_preflight_bounds_a_genuinely_slow_resolver(self, monkeypatch):
+        # LOW finding (fix regression test): the original fix scoped a
+        # socket.setdefaulttimeout around the preflight call, but CPython's
+        # socket.getaddrinfo is a blocking libc call that does NOT consult
+        # the socket default timeout — setdefaulttimeout never bounded it.
+        # The prior test only asserted the timeout value was set/restored
+        # by monkeypatching `_is_private_destination` entirely out, so it
+        # passed despite the defect. This test instead makes the real
+        # socket-layer call itself slow (socket.getaddrinfo, not
+        # `_is_private_destination`) and proves the wrapper returns well
+        # before the resolver would — the fix now bounds the hang with a
+        # joined worker thread instead.
         import socket
+        import time
 
-        import forgelm._http as _http_mod
+        from forgelm.wizard import _collectors
 
-        seen = {}
+        # Shrink the bound for test speed; the mechanism under test (thread
+        # + join(timeout)) is identical regardless of the bound's value.
+        monkeypatch.setattr(_collectors, "_WEBHOOK_DNS_PREFLIGHT_TIMEOUT_SECONDS", 0.3)
 
-        def _fake_is_private_destination(host):
-            seen["timeout_during_call"] = socket.getdefaulttimeout()
-            return False
+        resolver_delay_seconds = 3.0
 
-        monkeypatch.setattr(_http_mod, "_is_private_destination", _fake_is_private_destination)
-        assert socket.getdefaulttimeout() is None  # sane starting point
-        result = wizard._parse_webhook_value("https://example.com/hook")
-        assert result == {"url": "https://example.com/hook"}
-        assert seen["timeout_during_call"] == wizard._collectors._WEBHOOK_DNS_PREFLIGHT_TIMEOUT_SECONDS
-        assert socket.getdefaulttimeout() is None, "the previous (unset) timeout must be restored after the call"
+        def _slow_getaddrinfo(host, *args, **kwargs):
+            time.sleep(resolver_delay_seconds)
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+        monkeypatch.setattr(socket, "getaddrinfo", _slow_getaddrinfo)
+
+        start = time.monotonic()
+        result = _collectors._webhook_preflight_is_private("example.com")
+        elapsed = time.monotonic() - start
+
+        assert elapsed < resolver_delay_seconds, (
+            f"preflight blocked for {elapsed:.2f}s (resolver takes "
+            f"{resolver_delay_seconds}s) — the worker-thread join timeout did not "
+            "bound the genuinely slow resolver"
+        )
+        assert result is False, "a resolver that cannot complete in time must degrade to 'skip preflight'"
 
     def test_dns_preflight_timeout_degrades_to_skip_not_crash(self, monkeypatch):
         # A resolver timeout must not crash the wizard or block the URL —

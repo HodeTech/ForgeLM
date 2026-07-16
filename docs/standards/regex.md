@@ -221,7 +221,7 @@ Each rule above traces back to a concrete review finding:
 | Single-char class | `ingestion.py:_MARKDOWN_HEADING_PATTERN` | 12 round 2 |
 | Two competing quantifiers | `ingestion.py:_MARKDOWN_HEADING_PATTERN` | 12 round 2.5 (ReDoS confirmed) |
 | `\s` overlap with `\n` | `ingestion.py:_MARKDOWN_HEADING_PATTERN` (early Phase 12) | 12 round 1 |
-| `.*?` + back-ref + DOTALL | `forgelm/data_audit/_quality.py:_CODE_FENCE_BLOCK` | 12 round 2.5 |
+| `.*?` + back-ref + DOTALL | `forgelm/data_audit/_quality.py:_strip_code_fences` (the `_CODE_FENCE_BLOCK` regex named in Rule 6 above was eliminated outright by the state-machine rewrite; `_strip_code_fences` + its `_is_code_fence_open` / `_is_code_fence_close` helpers are the current implementation) | 12 round 2.5 |
 | Test fixture fragmentation | `tests/test_data_audit_phase12.py`, `tests/test_ingestion_phase12.py` | 12 round 2 |
 | PEM marker fragmentation | `forgelm/data_audit/_secrets.py:_SECRET_PATTERNS["openssh_private_key"]` | 12 round 2 |
 

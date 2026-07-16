@@ -1,3 +1,4 @@
+import json
 import logging
 import math
 import os
@@ -373,8 +374,11 @@ class TrainingConfig(BaseModel):
     rope_scaling: Optional[Dict[str, Any]] = Field(
         default=None,
         description=(
-            "RoPE scaling config for long-context fine-tuning, e.g. "
-            '`{"type": "linear"|"dynamic"|"yarn"|"longrope", "factor": 4.0}`.'
+            "RoPE scaling for long-context fine-tuning.  `linear` / `dynamic` / `yarn` take a "
+            'scalar `factor` (e.g. `{"type": "linear", "factor": 4.0}`); `longrope` (e.g. Phi-3) '
+            "takes per-dimension `short_factor` / `long_factor` lists instead, with `factor` "
+            'optional (e.g. `{"type": "longrope", "short_factor": [...], "long_factor": [...]}`).  '
+            "The transformers-5 canonical `rope_type` key is accepted as an alias for `type`."
         ),
     )
     neftune_noise_alpha: Optional[float] = Field(
@@ -416,38 +420,73 @@ class TrainingConfig(BaseModel):
         """Reject a malformed ``rope_scaling`` payload at config time.
 
         ``rope_scaling`` flows verbatim into ``AutoModelForCausalLM.from_pretrained``
-        via ``model.py``; a typo'd ``type``, a missing ``factor`` key, or a
+        via ``model.py``; a typo'd type, a missing scaling parameter, or a
         non-numeric factor would otherwise pass ``--dry-run`` cleanly and only
         crash once training loads the model (EXIT_TRAINING_ERROR) instead of at
         config load (EXIT_CONFIG_ERROR) — the same gap the sibling validators
         (``_validate_merge_inputs``, ``_validate_synthetic_payload``) close for
-        their blocks.  Validates the shape documented on the field:
-        ``{"type": "linear"|"dynamic"|"yarn"|"longrope", "factor": <positive number>}``.
+        their blocks.
+
+        The required parameters are per-type, mirroring transformers'
+        ``RotaryEmbeddingConfigMixin.validate_rope``: ``linear`` / ``dynamic`` /
+        ``yarn`` take a scalar ``factor``; ``longrope`` (e.g. Phi-3 long-context)
+        is parameterised by per-dimension ``short_factor`` / ``long_factor`` lists
+        and treats ``factor`` as optional.  transformers 5.x canonicalises the
+        discriminator as ``rope_type`` while keeping ``type`` as a backward-compat
+        alias, so either key is accepted here.
         """
         if v is None:
             return v
+
+        def _check_factor(value):
+            # ``bool`` is a subclass of ``int`` — exclude it explicitly so
+            # ``factor: true`` is rejected as a type error rather than treated as 1.
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"training.rope_scaling.factor must be a number, got {type(value).__name__}.")
+            if value <= 0:
+                raise ValueError(f"training.rope_scaling.factor must be positive, got {value}.")
+
+        def _check_factor_list(key):
+            value = v.get(key)
+            if not isinstance(value, list) or not value:
+                raise ValueError(
+                    f"training.rope_scaling.{key} must be a non-empty list of numbers when "
+                    "rope_type='longrope' (per-dimension scaling factors)."
+                )
+            for item in value:
+                if isinstance(item, bool) or not isinstance(item, (int, float)):
+                    raise ValueError(
+                        f"training.rope_scaling.{key} must contain only numbers, got {type(item).__name__}."
+                    )
+
         allowed_types = ("linear", "dynamic", "yarn", "longrope")
-        rope_type = v.get("type")
+        # transformers 5.x reads ``rope_parameters.get("rope_type", ...get("type"))``,
+        # so accept the canonical ``rope_type`` key as well as the legacy ``type`` alias.
+        rope_type = v.get("rope_type", v.get("type"))
         if rope_type is None:
             raise ValueError(
                 "training.rope_scaling requires a `type` key "
-                f"(one of {list(allowed_types)}), e.g. {{'type': 'linear', 'factor': 4.0}}."
+                f"(or its transformers-5 alias `rope_type`), one of {list(allowed_types)}, "
+                "e.g. {'type': 'linear', 'factor': 4.0}."
             )
         if rope_type not in allowed_types:
             raise ValueError(
                 f"training.rope_scaling.type={rope_type!r} is not recognized; must be one of {list(allowed_types)}."
             )
-        factor = v.get("factor")
-        if factor is None:
-            raise ValueError(
-                "training.rope_scaling requires a positive `factor` (context-length multiplier, e.g. 4.0)."
-            )
-        # ``bool`` is a subclass of ``int`` — exclude it explicitly so
-        # ``factor: true`` is rejected as a type error rather than treated as 1.
-        if isinstance(factor, bool) or not isinstance(factor, (int, float)):
-            raise ValueError(f"training.rope_scaling.factor must be a number, got {type(factor).__name__}.")
-        if factor <= 0:
-            raise ValueError(f"training.rope_scaling.factor must be positive, got {factor}.")
+        if rope_type == "longrope":
+            # transformers' longrope path is parameterised by short_factor /
+            # long_factor lists; a top-level scalar factor is optional.
+            _check_factor_list("short_factor")
+            _check_factor_list("long_factor")
+            if v.get("factor") is not None:
+                _check_factor(v["factor"])
+        else:
+            factor = v.get("factor")
+            if factor is None:
+                raise ValueError(
+                    "training.rope_scaling requires a positive `factor` (context-length multiplier, e.g. 4.0)."
+                )
+            _check_factor(factor)
         return v
 
     @model_validator(mode="after")
@@ -674,7 +713,13 @@ class SafetyConfig(BaseModel):
     )
     scoring: Literal["binary", "confidence_weighted"] = Field(
         default="binary",
-        description="Scoring scheme: `binary` (safe/unsafe per response) or `confidence_weighted` (Llama Guard probability).",
+        description=(
+            "Scoring scheme: `binary` (safe/unsafe per response) or `confidence_weighted` "
+            "(Llama Guard probability).  Caveat: `confidence_weighted` yields a true probability "
+            "only on the `classification` pipeline path; under `generation` mode (what the default "
+            "generative Llama-Guard checkpoint resolves to) each verdict is categorical (safe=1.0 / "
+            "unsafe=0.0), so the weighted score degenerates to the binary safe-ratio."
+        ),
     )
     min_safety_score: Optional[float] = Field(
         default=None,
@@ -1303,6 +1348,20 @@ class ForgeConfig(BaseModel):
             if isinstance(synthetic, dict) and synthetic.get("api_key"):
                 synthetic["api_key"] = "***REDACTED***"
         return data
+
+    def model_dump_json(self, *, redact_secrets: bool = True, indent: Optional[int] = None, **kwargs) -> str:
+        """Serialise to a JSON string with nested secrets masked.
+
+        Pydantic v2's native ``model_dump_json`` runs through the compiled Rust
+        serializer, which bypasses the Python-level redaction in
+        :meth:`model_dump` (the same reason the nested ``AuthConfig`` /
+        ``SyntheticConfig`` overrides are bypassed).  Route JSON serialisation
+        through the redacting ``model_dump`` instead so ``auth.hf_token`` /
+        ``synthetic.api_key`` can never survive a root-level JSON dump either;
+        without this a caller trusting ``model_dump_json`` would leak the raw
+        credential into a manifest or log.
+        """
+        return json.dumps(self.model_dump(mode="json", redact_secrets=redact_secrets, **kwargs), indent=indent)
 
     def _warn_general_consistency(self) -> None:
         """Emit warnings for the broad cross-field config inconsistencies."""

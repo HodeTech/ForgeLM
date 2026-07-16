@@ -48,6 +48,16 @@ def _run_export_cmd(args, output_format: str) -> None:
                 result.quant,
                 (result.sha256 or "")[:12],
             )
+            if result.manual_step_required:
+                # Text-mode parity with the JSON envelope: the artefact at
+                # output_path is an intermediate (actual quant != requested
+                # K-quant), and the operator must run followup_command to
+                # finish it — otherwise they may ship the intermediate
+                # believing it is already the requested quant.
+                logger.info(
+                    "Manual quantization step required — run: %s",
+                    result.followup_command,
+                )
         else:
             logger.error("Export failed: %s", result.error)
 

@@ -974,6 +974,7 @@ class ForgeTrainer:
     @staticmethod
     def _build_classifier_reward(reward_model_path: str):
         """Wrap an HF sequence-classification model as a TRL reward callable."""
+        import torch as _rw_torch
         from transformers import AutoModelForSequenceClassification
         from transformers import AutoTokenizer as _AutoTok
 
@@ -990,11 +991,18 @@ class ForgeTrainer:
         # checkpoint default (typically fp32). A full-precision reward model
         # sitting beside a 4-bit policy model is a realistic single-GPU OOM path.
         # (`dtype` is the transformers-5 name for the former `torch_dtype`.)
+        # CUDA-only: on a CPU-only host `_resolve_bnb_compute_dtype("auto")`
+        # still resolves to float16 (no bf16-support probe on CPU), and
+        # `device_map="auto"` places the model on CPU — an fp16 matmul on
+        # CPU is not implemented by PyTorch and crashes the reward path.
+        # Fall back to float32 (the checkpoint default) whenever there is
+        # no CUDA device to actually benefit from the lower-precision load.
+        _rw_dtype = _resolve_bnb_compute_dtype("auto") if _rw_torch.cuda.is_available() else _rw_torch.float32
         _rw_model = AutoModelForSequenceClassification.from_pretrained(
             reward_model_path,
             device_map="auto",
             trust_remote_code=False,
-            dtype=_resolve_bnb_compute_dtype("auto"),
+            dtype=_rw_dtype,
         )
 
         def _reward_fn(completions, **kwargs):

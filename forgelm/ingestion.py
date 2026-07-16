@@ -26,6 +26,7 @@ Public API:
 
 from __future__ import annotations
 
+import codecs
 import json
 import logging
 import math
@@ -2301,6 +2302,21 @@ def ingest_path(  # NOSONAR python:S107 — every kwarg is a documented operator
             without a ``tokenizer``.
         ImportError: optional extras not installed for the format being ingested.
     """
+    # Validate the source codec up front, before any filesystem side effect.
+    # An invalid --input-encoding name otherwise reaches path.read_text() per
+    # file, where it raises LookupError — swallowed by the extractor's
+    # soft-skip, which silently drops every TXT / MD file and promotes a
+    # 0-byte JSONL as a successful run. Convert it to a ValueError so the CLI
+    # dispatcher exits with EXIT_CONFIG_ERROR and an actionable message.
+    if input_encoding is not None:
+        try:
+            codecs.lookup(input_encoding)
+        except LookupError as exc:
+            raise ValueError(
+                f"Unknown input_encoding codec {input_encoding!r}. Use a Python codec "
+                "name such as 'utf-8', 'cp1254', 'cp1252', or 'latin-1'."
+            ) from exc
+
     src = Path(input_path).expanduser().resolve()
     dst = Path(output_path).expanduser().resolve()
     dst.parent.mkdir(parents=True, exist_ok=True)

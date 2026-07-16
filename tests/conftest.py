@@ -68,6 +68,12 @@ def _block_network(request, monkeypatch):
     offline-only failure. Loopback (127.0.0.0/8, ``::1``, ``localhost``) and
     ``AF_UNIX`` sockets stay allowed so tests that spin up a local server keep
     working; mark a test ``@pytest.mark.allow_network`` to opt out entirely.
+
+    Scope: this patches ``socket.socket.connect``/``connect_ex`` — the TCP
+    connect surface that ``requests``/``urllib3``/``httpx`` use. It is not a
+    full egress sandbox: bare DNS resolution (``getaddrinfo``), raw UDP, and
+    subprocess network calls are not intercepted. It is a fail-fast tripwire
+    for the common accidental-HTTP-call case, not a security boundary.
     """
     if request.node.get_closest_marker("allow_network"):
         return

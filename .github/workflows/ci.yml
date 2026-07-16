@@ -299,7 +299,7 @@ jobs:
         # real doc-vs-schema drift.
         run: python3 tools/check_yaml_snippets.py --strict
 
-      - name: User-manual YAML example schema-key drift (report-only)
+      - name: User-manual YAML example schema-key drift
         # check_yaml_snippets.py only validates snippets carrying the full
         # model+training+data triplet; single-block fragments (the common
         # case in a user-manual page explaining one section) are skipped

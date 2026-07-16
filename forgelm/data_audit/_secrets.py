@@ -41,10 +41,22 @@ SECRET_TYPES: Tuple[str, ...] = (
 # the ``forgelm audit`` / ``ingest`` hot path (regex.md "ReDoS exposure
 # budget"). Bounding the lazy span makes each BEGIN cost O(N) instead of O(n),
 # so the scan is linear in row length. 8192 comfortably covers the largest
-# realistic PEM/PGP body (RSA-8192 base64 ≈ 6.4 KB); larger key blocks are a
+# realistic PEM body (RSA-8192 base64 ≈ 6.4 KB); larger key blocks are a
 # recall miss, never a stall. Linearity verified at
 # tests/test_data_audit_phase12.py::TestSecretsPrivateKeyReDoS.
 _PRIVATE_KEY_BODY_MAX_CHARS: int = 8192
+
+# PGP private-key blocks are bounded separately and much higher than PEM: a
+# PGP block routinely carries multiple subkeys, user IDs, and signature
+# packets (and optionally a photo-ID attribute packet), which push real
+# blocks past 8 KB — the shared 8192 bound silently dropped detection for
+# those (a leaked key that ``ingest --secrets-mask`` should have redacted but
+# didn't). The anchored END marker keeps the scan O(N) per BEGIN regardless
+# of the bound's size (see above), so raising this constant only widens
+# recall, it does not reintroduce the O(n^2) shape. Linearity verified at
+# tests/test_data_audit_phase12.py::TestSecretsPrivateKeyReDoS; recall floor
+# pinned by TestSecretsPrivateKeyReDoS::test_large_pgp_block_still_detected.
+_PGP_PRIVATE_KEY_BODY_MAX_CHARS: int = 65536
 
 
 _SECRET_PATTERNS: Dict[str, re.Pattern] = {
@@ -89,7 +101,7 @@ _SECRET_PATTERNS: Dict[str, re.Pattern] = {
     ),
     "pgp_private_key": re.compile(
         r"-----" + r"BEGIN " + r"PGP PRIVATE KEY BLOCK-----"
-        r".{0," + str(_PRIVATE_KEY_BODY_MAX_CHARS) + r"}?"
+        r".{0," + str(_PGP_PRIVATE_KEY_BODY_MAX_CHARS) + r"}?"
         r"-----" + r"END " + r"PGP PRIVATE KEY BLOCK-----",
         re.DOTALL,
     ),

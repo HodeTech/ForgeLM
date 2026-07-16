@@ -1325,6 +1325,27 @@ class TestInputEncoding:
         assert "�" in text
         assert "Müşteri hizmetleri" not in text
 
+    def test_unknown_codec_raises_valueerror_and_writes_no_output(self, tmp_path):
+        # A typo'd codec (e.g. 'cp1254x') otherwise reaches path.read_text()
+        # per file, raises LookupError, gets soft-skipped, and promotes a
+        # 0-byte JSONL as a *successful* run (exit 0). ingest_path must fail
+        # fast with an actionable ValueError and leave no output behind.
+        src = tmp_path / "legacy.txt"
+        src.write_text("Some body text.\n\nMore body text.\n")
+        out = tmp_path / "out.jsonl"
+        with pytest.raises(ValueError, match="input_encoding"):
+            ingest_path(str(src), output_path=str(out), input_encoding="bogus-codec")
+        assert not out.exists()
+
+    def test_unknown_codec_fails_before_touching_the_filesystem(self, tmp_path):
+        # The codec check runs before path resolution / mkdir, so even a
+        # nonexistent --input and an --output whose parent dir does not yet
+        # exist surface the codec error first — no directory litter on a typo.
+        out = tmp_path / "nonexistent_parent" / "out.jsonl"
+        with pytest.raises(ValueError, match="Unknown input_encoding codec"):
+            ingest_path(str(tmp_path / "absent.txt"), output_path=str(out), input_encoding="utf8-nope")
+        assert not out.parent.exists()
+
 
 # ---------------------------------------------------------------------------
 # CLI dispatch layer — page-range parsing, normalise-profile precedence,
@@ -1445,6 +1466,42 @@ class TestIngestCliExitCodeRouting:
         with pytest.raises(SystemExit) as exc:
             _run_ingest_cmd(self._args(tmp_path), "text")
         assert exc.value.code == EXIT_CONFIG_ERROR
+
+    @pytest.mark.parametrize("exc_cls", [PermissionError, IsADirectoryError])
+    def test_operator_fixable_oserror_maps_to_config_error(self, tmp_path, monkeypatch, exc_cls):
+        # Operator-fixable OSError subclasses (a wrong / unwritable --input or
+        # --output path) must stay EXIT_CONFIG_ERROR, not the retry-able
+        # EXIT_TRAINING_ERROR bucket — a CI/CD pipeline that auto-retries on
+        # exit 2 would loop forever on an unfixable permission error.
+        import forgelm.ingestion as ing
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._ingest import _run_ingest_cmd
+
+        def _boom(*_a, **_k):
+            raise exc_cls("operator-fixable path problem")
+
+        monkeypatch.setattr(ing, "ingest_path", _boom)
+        with pytest.raises(SystemExit) as exc:
+            _run_ingest_cmd(self._args(tmp_path), "text")
+        assert exc.value.code == EXIT_CONFIG_ERROR
+
+    def test_unknown_input_encoding_exits_config_and_leaves_no_output(self, tmp_path):
+        # End-to-end through the real dispatcher: a typo'd --input-encoding
+        # used to soft-skip every TXT file and report success:true / exit 0.
+        # It must now surface as an actionable EXIT_CONFIG_ERROR with no
+        # output written.
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._ingest import _run_ingest_cmd
+
+        corpus = tmp_path / "corpus"
+        corpus.mkdir()
+        (corpus / "doc.txt").write_text("First paragraph body.\n\nSecond paragraph body.\n")
+        out = tmp_path / "out.jsonl"
+        args = self._args(tmp_path, input_path=str(corpus), output=str(out), input_encoding="bogus-codec")
+        with pytest.raises(SystemExit) as exc:
+            _run_ingest_cmd(args, "text")
+        assert exc.value.code == EXIT_CONFIG_ERROR
+        assert not out.exists()
 
     def test_multi_file_abort_via_cli_leaves_no_output_and_exits_config(self, tmp_path, monkeypatch):
         # Rule-4 combined check (pypdf-free): the dispatcher must exit with

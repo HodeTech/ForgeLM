@@ -352,6 +352,27 @@ class TestSecretsPrivateKeyReDoS:
         assert "QUFB" not in masked
         assert "[REDACTED-SECRET]" in masked
 
+    def test_large_pgp_block_still_detected(self):
+        """PGP blocks with multiple subkeys / user IDs / a photo-ID packet
+        routinely exceed 8 KB — well past the shared PEM bound the pgp_private_key
+        pattern used to reuse. A block just over that old 8192-char body bound
+        must still be detected and masked (recall floor for
+        _PGP_PRIVATE_KEY_BODY_MAX_CHARS)."""
+        from forgelm.data_audit._secrets import _PRIVATE_KEY_BODY_MAX_CHARS
+
+        begin = "-----" + "BEGIN " + "PGP PRIVATE KEY BLOCK" + "-----"
+        end = "-----" + "END " + "PGP PRIVATE KEY BLOCK" + "-----"
+        # >8192 chars of body — would have been a recall miss under the old
+        # shared PEM/PGP bound.
+        body = "\n".join("QUFB" * 16 for _ in range(_PRIVATE_KEY_BODY_MAX_CHARS // 64 + 20))
+        assert len(body) > _PRIVATE_KEY_BODY_MAX_CHARS
+        key = f"{begin}\n{body}\n{end}"
+
+        assert detect_secrets(f"pre\n{key}\npost").get("pgp_private_key") == 1
+        masked = mask_secrets(f"pre\n{key}\npost")
+        assert "QUFB" not in masked
+        assert "[REDACTED-SECRET]" in masked
+
 
 # ---------------------------------------------------------------------------
 # Routed (tests-standalone): MinHash LSH backend had zero real execution.

@@ -380,6 +380,15 @@ class TestSafetyGateValidation:
         s = SafetyConfig(enabled=True, scoring="confidence_weighted", min_safety_score=0.9)
         assert s.min_safety_score == pytest.approx(0.9)
 
+    def test_scoring_description_documents_generation_degeneracy(self):
+        """Under generation mode (the default generative Llama-Guard path),
+        confidence_weighted degenerates to the binary safe-ratio; the field
+        description must warn operators so the knob is not mistaken for a real
+        probability."""
+        desc = SafetyConfig.model_fields["scoring"].description
+        assert "generation" in desc
+        assert "safe-ratio" in desc
+
     def test_max_safety_regression_above_one_raises(self):
         with pytest.raises(ValidationError):
             SafetyConfig(enabled=True, max_safety_regression=5.0)
@@ -717,6 +726,39 @@ class TestRootDumpSecretRedaction:
         cfg = self._cfg_with_secrets()
         assert cfg.model_dump()["synthetic"]["api_key"] == "***REDACTED***"
 
+    def test_model_dump_json_redacts_secrets(self):
+        """Pydantic's native model_dump_json bypasses the Python-level
+        model_dump redaction (Rust serializer); the override must route it
+        through the redacting dump so a JSON dump cannot leak the raw token."""
+        import json
+
+        cfg = self._cfg_with_secrets()
+        payload = json.loads(cfg.model_dump_json())
+        assert payload["auth"]["hf_token"] == "***REDACTED***"
+        assert payload["synthetic"]["api_key"] == "***REDACTED***"
+        raw = cfg.model_dump_json()
+        assert "hf_SUPERSECRET" not in raw
+        assert "sk-LEAK" not in raw
+
+    def test_model_dump_json_indent_passthrough(self):
+        """The indent kwarg is honoured (routed to json.dumps, not lost)."""
+        import json
+
+        cfg = self._cfg_with_secrets()
+        pretty = cfg.model_dump_json(indent=2)
+        assert "\n  " in pretty
+        assert json.loads(pretty)["auth"]["hf_token"] == "***REDACTED***"
+
+    def test_model_dump_json_redact_secrets_false_preserves_raw(self):
+        """The escape hatch mirrors model_dump: raw credentials round-trip
+        when redaction is explicitly disabled."""
+        import json
+
+        cfg = self._cfg_with_secrets()
+        raw = json.loads(cfg.model_dump_json(redact_secrets=False))
+        assert raw["auth"]["hf_token"] == "hf_SUPERSECRET"
+        assert raw["synthetic"]["api_key"] == "sk-LEAK"
+
     def test_raw_secret_never_appears_in_serialised_payload(self):
         import json
 
@@ -755,10 +797,62 @@ class TestRootDumpSecretRedaction:
 
 
 class TestRopeScalingValidation:
-    @pytest.mark.parametrize("rope_type", ["linear", "dynamic", "yarn", "longrope"])
+    @pytest.mark.parametrize("rope_type", ["linear", "dynamic", "yarn"])
     def test_valid_rope_scaling_accepted(self, rope_type):
+        # linear/dynamic/yarn are parameterised by a scalar `factor`.  longrope
+        # is *not* (see the dedicated tests below) — parametrizing it here with
+        # a `factor` masked the false-rejection this fix addresses.
         t = TrainingConfig(rope_scaling={"type": rope_type, "factor": 4.0})
         assert t.rope_scaling["type"] == rope_type
+
+    def test_longrope_without_factor_accepted(self):
+        """A valid Phi-3-style longrope config carries short_factor/long_factor
+        and *no* top-level factor; it must load (regression: the blanket factor
+        check rejected it at config time)."""
+        payload = {"type": "longrope", "short_factor": [1.0, 1.2], "long_factor": [1.0, 1.5]}
+        t = TrainingConfig(rope_scaling=payload)
+        assert t.rope_scaling["type"] == "longrope"
+        assert "factor" not in t.rope_scaling
+
+    def test_longrope_with_optional_factor_accepted(self):
+        """longrope may still supply an optional scalar factor (Phi-3 divergence)."""
+        t = TrainingConfig(
+            rope_scaling={"type": "longrope", "short_factor": [1.0], "long_factor": [1.5], "factor": 4.0}
+        )
+        assert t.rope_scaling["factor"] == 4.0
+
+    def test_longrope_missing_scaling_lists_rejected(self):
+        with pytest.raises(ValidationError, match="short_factor"):
+            TrainingConfig(rope_scaling={"type": "longrope"})
+
+    def test_longrope_missing_long_factor_rejected(self):
+        with pytest.raises(ValidationError, match="long_factor"):
+            TrainingConfig(rope_scaling={"type": "longrope", "short_factor": [1.0]})
+
+    def test_longrope_non_list_factor_rejected(self):
+        with pytest.raises(ValidationError, match="non-empty list"):
+            TrainingConfig(rope_scaling={"type": "longrope", "short_factor": 4.0, "long_factor": [1.0]})
+
+    def test_longrope_non_numeric_list_item_rejected(self):
+        with pytest.raises(ValidationError, match="only numbers"):
+            TrainingConfig(rope_scaling={"type": "longrope", "short_factor": ["x"], "long_factor": [1.0]})
+
+    def test_longrope_bad_optional_factor_rejected(self):
+        with pytest.raises(ValidationError, match="must be positive"):
+            TrainingConfig(
+                rope_scaling={"type": "longrope", "short_factor": [1.0], "long_factor": [1.0], "factor": -1.0}
+            )
+
+    @pytest.mark.parametrize("rope_type", ["linear", "dynamic", "yarn"])
+    def test_rope_type_alias_accepted(self, rope_type):
+        """transformers 5.x canonicalises the discriminator as `rope_type`;
+        a config using that key (not the legacy `type`) must not be rejected."""
+        t = TrainingConfig(rope_scaling={"rope_type": rope_type, "factor": 4.0})
+        assert t.rope_scaling["rope_type"] == rope_type
+
+    def test_rope_type_alias_accepted_for_longrope(self):
+        t = TrainingConfig(rope_scaling={"rope_type": "longrope", "short_factor": [1.0], "long_factor": [1.0]})
+        assert t.rope_scaling["rope_type"] == "longrope"
 
     def test_none_is_the_default_and_valid(self):
         assert TrainingConfig().rope_scaling is None

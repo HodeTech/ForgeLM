@@ -104,17 +104,18 @@ def _sanitise_audit_error_message(message: str) -> str:
 
     ``data.erasure_failed`` carries ``error_message=str(exc)`` for an
     ``OSError`` raised mid-erasure.  A Python exception string can embed
-    secret-bearing header values or, worse, corpus row content (emails /
-    phone numbers / names) when a downstream library quotes the offending
-    line — which would land that PII in the append-only audit log
-    permanently (CLAUDE.md principle 5).  ``docs/design/gdpr_erasure.md``
-    §6 mandates this field be routed through
-    :func:`forgelm._http._mask_secrets_in_text` and then the
-    :mod:`forgelm.data_audit._pii_regex` mask helpers; reverse-pii already
-    length-bounds its sibling field.  This helper applies all three passes
-    (secret mask → PII regex mask → length bound) so the load-bearing
-    privacy mandate and the length-bound precedent are met together
-    (F-P5-OPUS-07).
+    corpus row content (emails / phone numbers) when a downstream
+    library quotes the offending line — which would land that PII in
+    the append-only audit log permanently (CLAUDE.md principle 5).
+    This helper runs the message through
+    :func:`forgelm._http._mask_secrets_in_text` (a no-op on this path:
+    called with ``headers=None`` per design §6, since purge has no
+    outbound HTTP headers to strip) and then
+    :mod:`forgelm.data_audit._pii_regex`'s regex catalogue (email /
+    phone / IBAN / card / national-id — not free-form names) before
+    bounding the result to :data:`_AUDIT_ERROR_MESSAGE_MAX` chars. The
+    length bound is the residual backstop for anything the regex
+    catalogue does not shape-match (F-P5-OPUS-07).
     """
     from forgelm._http import _mask_secrets_in_text
     from forgelm.data_audit._pii_regex import mask_pii
@@ -666,7 +667,20 @@ def _perform_row_erasure_and_audit(
         match_count=len(matches),
     )
     for event_name in warning_events:
-        audit.log_event(event_name, **request_fields, **warning_extras.get(event_name, {}))
+        # Catalog contract (docs/reference/audit_event_catalog.md): each
+        # ``erasure_warning_*`` payload is "All `completed` fields + <scoped
+        # field>" — so mirror the exact ``data.erasure_completed`` payload
+        # above (not just ``request_fields``) alongside the event's scoped
+        # extra from ``warning_extras``.
+        audit.log_event(
+            event_name,
+            **request_fields,
+            bytes_freed=bytes_freed,
+            files_modified=[os.path.abspath(args.corpus)],
+            pre_erasure_line_number=pre_first_line,
+            match_count=len(matches),
+            **warning_extras.get(event_name, {}),
+        )
 
     _emit_purge_success(
         output_format,
@@ -1396,8 +1410,10 @@ def _maybe_load_config(config_path: Optional[str], *, strict: bool = False):
     ``strict=False`` (default) is the best-effort mode used by the
     row-id / run-id erasure paths: those subcommands work without a
     config (the corpus-row erasure is intentionally config-agnostic),
-    so a missing / unreadable / invalid YAML degrades silently to
-    ``None``.
+    so a missing / unreadable / invalid YAML falls back to ``None``.
+    When *config_path* was explicitly supplied the fallback is logged
+    at ``WARNING`` (not silent) so an operator relying on it for
+    external-copies detection sees that the load failed.
 
     ``strict=True`` is used by ``--check-policy`` where the operator
     is *explicitly* asking for a retention-policy report against the

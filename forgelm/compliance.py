@@ -364,6 +364,25 @@ class AuditLogger:
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(tmp_path, self._manifest_path)
+            # Also fsync the parent directory so the rename's *directory
+            # entry* is durable, not just the file contents — mirrors
+            # ``_purge.py::_atomic_rewrite_dropping_lines``. Without this,
+            # a crash between the rename and the directory metadata
+            # flush can drop the manifest on non-journaled filesystems;
+            # since the manifest is genesis-only (write-once), a lost
+            # rename here permanently disarms truncation-detection for
+            # this log with no error surfaced on the next run.
+            # ``O_DIRECTORY`` is unsupported on Windows; trap and continue.
+            manifest_dir = os.path.dirname(self._manifest_path) or "."
+            try:
+                dir_fd = os.open(manifest_dir, os.O_DIRECTORY)
+            except (AttributeError, OSError):  # pragma: no cover — Windows / unusual FS
+                pass
+            else:
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
         except OSError as exc:
             logger.warning("Could not write genesis manifest to %s: %s", self._manifest_path, exc)
             if os.path.exists(tmp_path):

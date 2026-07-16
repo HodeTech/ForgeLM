@@ -750,11 +750,52 @@ class TestBaselineLossCapture:
 
 @pytest.mark.skipif(not torch_available, reason="torch not installed")
 class TestClassifierRewardDtype:
-    """The GRPO classifier reward model must load at a resolved compute dtype
-    (bf16 if supported, else fp16), not the checkpoint default (typically fp32),
-    so it does not OOM beside a 4-bit policy model."""
+    """The GRPO classifier reward model loads at a resolved compute dtype
+    (bf16 if supported, else fp16) ONLY on a CUDA host, so it does not OOM
+    beside a 4-bit policy model. On a CPU-only host it must fall back to
+    float32 (the checkpoint default): `_resolve_bnb_compute_dtype("auto")`
+    still resolves to float16 with no CUDA device, and `device_map="auto"`
+    places the model on CPU — an fp16 matmul on CPU is not implemented by
+    PyTorch (`addmm_impl_cpu_` RuntimeError), which crashed the CPU-only
+    GRPO reward path before this fix."""
 
-    def test_reward_model_loaded_with_resolved_dtype(self):
+    def test_reward_model_loaded_with_resolved_dtype_on_cuda(self):
+        import torch
+
+        from forgelm.trainer import ForgeTrainer
+
+        captured: dict = {}
+
+        def fake_model_from_pretrained(_path, **kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        # `_resolve_bnb_compute_dtype` itself queries
+        # `torch.cuda.is_bf16_supported()`, which on a real CUDA-less test
+        # runner would try to touch an actual device once `is_available()`
+        # is patched True. Stub the resolver directly (like the export.py
+        # dispatcher tests stub `forgelm.export.export_model`) so this test
+        # only exercises the CUDA-vs-CPU branch under test, not torch's own
+        # device-query internals.
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("forgelm.model._resolve_bnb_compute_dtype", return_value=torch.bfloat16) as resolve_mock,
+            patch(
+                "transformers.AutoModelForSequenceClassification.from_pretrained",
+                side_effect=fake_model_from_pretrained,
+            ),
+            patch("transformers.AutoTokenizer.from_pretrained", return_value=MagicMock()),
+        ):
+            ForgeTrainer._build_classifier_reward("org/reward")
+
+        resolve_mock.assert_called_once_with("auto")
+        assert captured.get("dtype") == torch.bfloat16, (
+            f"reward-model dtype on a CUDA host must be the resolved compute dtype; got {captured.get('dtype')!r}"
+        )
+
+    def test_reward_model_falls_back_to_float32_without_cuda(self):
+        """Regression: forcing the resolved bf16/fp16 dtype unconditionally
+        crashes the CPU-only reward path; a CPU-only host must get float32."""
         import torch
 
         from forgelm.trainer import ForgeTrainer
@@ -766,6 +807,7 @@ class TestClassifierRewardDtype:
             return MagicMock()
 
         with (
+            patch("torch.cuda.is_available", return_value=False),
             patch(
                 "transformers.AutoModelForSequenceClassification.from_pretrained",
                 side_effect=fake_model_from_pretrained,
@@ -774,12 +816,8 @@ class TestClassifierRewardDtype:
         ):
             ForgeTrainer._build_classifier_reward("org/reward")
 
-        assert "dtype" in captured, (
-            "GRPO reward classifier must be loaded with an explicit dtype, not the "
-            f"checkpoint default (fp32); got kwargs {sorted(captured)}"
-        )
-        assert captured["dtype"] in (torch.bfloat16, torch.float16), (
-            f"reward-model dtype must be bf16 or fp16; got {captured['dtype']!r}"
+        assert captured.get("dtype") == torch.float32, (
+            f"reward-model dtype on a CPU-only host must fall back to float32; got {captured.get('dtype')!r}"
         )
 
 

@@ -457,6 +457,25 @@ class TestForgelmApprove:
             _run_approve_cmd(args, output_format="text")
         assert ei.value.code == 1
 
+    def test_approve_with_nonexistent_output_dir_does_not_create_it(self, tmp_path: Path) -> None:
+        """Regression: approve against a bogus/mistyped --output-dir must fail
+        via the missing-audit-log guard, not materialise the directory and a
+        `.approval.lock` file for a run that never happened."""
+        output_dir = tmp_path / "does_not_exist"
+        assert not output_dir.exists()
+
+        from forgelm.cli import _run_approve_cmd
+
+        args = MagicMock()
+        args.run_id = "fg-anything000000"
+        args.output_dir = str(output_dir)
+        args.comment = None
+
+        with pytest.raises(SystemExit) as ei:
+            _run_approve_cmd(args, output_format="text")
+        assert ei.value.code == 1
+        assert not output_dir.exists(), "approve must not materialise output_dir for a non-existent run"
+
     def test_approve_concurrent_second_call_fails(self, tmp_path: Path, monkeypatch) -> None:
         """Second approve on the same staging dir hits the missing-staging guard."""
         run_id = "fg-concurrentrace"
@@ -674,6 +693,25 @@ class TestForgelmReject:
         with pytest.raises(SystemExit) as ei:
             _run_reject_cmd(args, output_format="text")
         assert ei.value.code == 1
+
+    def test_reject_with_nonexistent_output_dir_does_not_create_it(self, tmp_path: Path) -> None:
+        """Reject twin of the approve regression: a bogus/mistyped
+        --output-dir must fail via the missing-audit-log guard, not
+        materialise the directory and a `.approval.lock` file."""
+        output_dir = tmp_path / "does_not_exist_reject"
+        assert not output_dir.exists()
+
+        from forgelm.cli import _run_reject_cmd
+
+        args = MagicMock()
+        args.run_id = "fg-anything000000"
+        args.output_dir = str(output_dir)
+        args.comment = None
+
+        with pytest.raises(SystemExit) as ei:
+            _run_reject_cmd(args, output_format="text")
+        assert ei.value.code == 1
+        assert not output_dir.exists(), "reject must not materialise output_dir for a non-existent run"
 
     def test_reject_audit_logger_keyerror_exits_config_error(self, tmp_path: Path, monkeypatch) -> None:
         """Finding 1 (defence-in-depth, reject twin): a bare ``KeyError`` from

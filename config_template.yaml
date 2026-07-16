@@ -81,8 +81,12 @@ data:
 # Long-context optimizations (for training on >4K token sequences)
 # training:
 #   rope_scaling:                        # RoPE positional encoding extension
-#     type: "linear"                     # "linear", "dynamic", "yarn", "longrope"
+#     type: "linear"                     # "linear", "dynamic", "yarn" take a scalar `factor`;
 #     factor: 4.0                        # Context length multiplier (4.0 = 4x original)
+#     # longrope (e.g. Phi-3) takes per-dimension lists instead of `factor`:
+#     #   type: "longrope"
+#     #   short_factor: [...]            # per-dimension short-context scaling
+#     #   long_factor: [...]             # per-dimension long-context scaling
 #   neftune_noise_alpha: 5.0             # NEFTune: add noise to embeddings (improves quality)
 #   sliding_window_attention: 4096       # Override model's sliding window (e.g. Mistral)
 #   packing: true                        # Pack multiple short sequences into one (sample_packing is a deprecated alias)

@@ -151,14 +151,15 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   `text-classification` pipeline. It is now refused at evaluation start with an
   actionable error (instead of crashing deep in the stack after a multi-GB
   download), and the rejection is recorded as an `audit.classifier_load_failed`
-  Article 12 event on both the fail-fast and load-failure paths (`forgelm/safety.py`).
+  Article 15 event on both the fail-fast and load-failure paths (`forgelm/safety.py`).
 - **`auth.hf_token` and `synthetic.api_key` are now redacted from root-level
   config dumps and hashes.** The per-field redaction was dead code once nested
   under `ForgeConfig` (Pydantic v2 does not invoke a nested model's
-  `model_dump()` override), so a root `model_dump()` — and `compute_config_hash`
-  — leaked the raw secret into serialised manifests. A root `ForgeConfig`
-  `model_dump()` override now masks both paths while keeping attribute access
-  as plain strings for internal consumers (`forgelm/config.py`).
+  `model_dump()` override), so a root `model_dump()` / `model_dump_json()` — and
+  `compute_config_hash` — leaked the raw secret into serialised manifests. Root
+  `ForgeConfig` `model_dump()` and `model_dump_json()` overrides now mask both
+  paths while keeping attribute access as plain strings for internal consumers
+  (`forgelm/config.py`).
 - **ReDoS hardening in the OpenSSH/PGP private-key secret detectors.** The
   unbounded `.*?` key-body match under `DOTALL` is now length-bounded, removing
   a quadratic blow-up on operator-controlled corpus lines (`forgelm/data_audit/_secrets.py`).
@@ -212,8 +213,9 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   8 EN/TR page-pairs, and the guard is now enforced with `--strict` in CI and the
   local gauntlet.
 - **Top-level docs corrected.** README's documentation table no longer hides
-  fully-translated Turkish guides; `CLAUDE.md`/`AGENTS.md` no longer link into the
-  gitignored `docs/marketing/` tree and now show the `wizard/` sub-package;
+  fully-translated Turkish guides; `CLAUDE.md`/`AGENTS.md` no longer carry
+  clickable links into a gitignored internal-only working-memory tree and now
+  show the `wizard/` sub-package;
   `CONTRIBUTING.md`'s self-review gauntlet matches the canonical one; `site/README`
   reflects the real site structure. The standards rulebook's CI-guard claims were
   reconciled against the actual `.github/workflows/` + `tools/`, and the example
