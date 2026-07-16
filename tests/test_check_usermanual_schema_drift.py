@@ -9,9 +9,12 @@ style: ``BaseModel`` subclasses, ``Field(...)``, ``Optional[X]``,
 pinned independently of the real, evolving schema. A separate smoke
 test exercises the AST walker against the real ``forgelm/config.py`` to
 catch a schema-shape regression (e.g. ``ForgeConfig`` renamed or losing
-a top-level block) without asserting anything about current doc content
-— this guard ships advisory-only precisely because it already found
-real (and out-of-scope-to-fix-here) drift in ``docs/usermanuals/``.
+a top-level block). The guard's introduction-time backlog (38 fabricated
+key-path instances across 8 EN/TR page-pairs) has since been cleaned, and
+``.github/workflows/ci.yml`` now runs it with ``--strict`` — so a
+real-corpus test here also pins the zero-drift invariant CI relies on by
+calling ``main(["--strict", "--quiet"])`` and asserting exit ``0``,
+not just that the walk doesn't crash.
 """
 
 from __future__ import annotations
@@ -233,9 +236,10 @@ class TestCheckSnippet:
 
 
 class TestRealSchemaSmoke:
-    """Regression-pins the AST walker's shape against the real schema
-    without asserting anything about current doc content (which this
-    guard ships advisory-only for — see module docstring)."""
+    """Regression-pins the AST walker's shape against the real schema, and
+    separately pins the zero-drift invariant that CI enforces with
+    ``--strict`` against the real ``docs/usermanuals/`` corpus (see module
+    docstring)."""
 
     def test_forge_config_resolves_with_known_top_level_blocks(self, tool):
         schema = tool.build_schema_map(tool.CONFIG_PATH)
@@ -260,9 +264,17 @@ class TestRealSchemaSmoke:
         assert expected.issubset(top.keys())
 
     def test_main_runs_against_the_real_repo_without_crashing(self, tool):
-        # Advisory mode (no --strict) always exits 0; this only proves the
-        # full walk + report path executes cleanly end-to-end.
+        # Advisory mode (no --strict) always exits 0 regardless of drift; this
+        # only proves the full walk + report path executes cleanly end-to-end.
         assert tool.main(["--quiet"]) == 0
+
+    def test_main_strict_finds_zero_drift_in_the_real_corpus(self, tool):
+        # This is the invariant CI actually relies on: ci.yml's validate job
+        # runs this guard with --strict, which exits 1 on any fabricated
+        # schema key path. Calling main() the same way here means a pytest
+        # run alone — not just the raw CI shell step — fails if new drift
+        # creeps into docs/usermanuals/.
+        assert tool.main(["--strict", "--quiet"]) == 0
 
     def test_guard_wired_into_ci(self):
         ci = (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")

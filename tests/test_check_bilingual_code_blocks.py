@@ -76,6 +76,28 @@ def test_real_repo_is_clean(tool):
     assert tool.main(["--quiet"]) == 0
 
 
+def test_all_pairs_covers_the_usermanuals(tool):
+    # Regression pin for the fix that switched this guard from the
+    # hand-registered ``_PAIRS`` to ``_all_pairs(REPO_ROOT)`` (the sibling
+    # ``check_bilingual_parity`` registry, which additionally auto-discovers
+    # every docs/usermanuals/en/**/*.md <-> tr/** pair). Before that fix,
+    # ``_PAIRS`` alone silently skipped all ~67 usermanual page pairs, so
+    # ``test_real_repo_is_clean`` above would still pass trivially (fewer/zero
+    # pairs scanned = "clean") even if the scan were reverted or returned
+    # nothing. Pin both the raw count and that a known usermanual pair is
+    # actually present, so that regression fails loudly instead of silently.
+    pairs = tool._all_pairs(tool.REPO_ROOT)
+    assert len(pairs) > 100
+
+    # Pairs are repo-relative POSIX path strings (see
+    # check_bilingual_parity._usermanual_pairs), not Path objects.
+    usermanual_pairs = [(en, tr) for en, tr in pairs if en.startswith("docs/usermanuals/en/")]
+    assert len(usermanual_pairs) > 50
+
+    # A known, real training-manual page must be among the discovered pairs.
+    assert ("docs/usermanuals/en/training/sft.md", "docs/usermanuals/tr/training/sft.md") in pairs
+
+
 def test_guard_wired_into_ci():
     ci = (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "check_bilingual_code_blocks.py" in ci

@@ -1104,6 +1104,28 @@ class TestIbanFalsePositiveGuard:
         assert detect_pii(text).get("iban", 0) == 0
 
 
+class TestIbanCheckDigitsAsciiOnly:
+    """The 2-digit IBAN check-digit group must be ASCII-only (``[0-9]``),
+    matching the ASCII-only ``[A-Z0-9]`` body — a single structured
+    identifier should not accept a non-ASCII digit script in one sub-part
+    (bare ``\\d`` is Unicode-aware) while requiring ASCII everywhere else."""
+
+    def test_fullwidth_check_digits_do_not_match_iban_pattern(self):
+        from forgelm.data_audit._pii_regex import _PII_PATTERNS
+
+        pat = _PII_PATTERNS["iban"]
+        # U+FF14 U+FF16 = fullwidth "4" "6" — Unicode Nd category, so bare
+        # \\d would match them; [0-9] must not.
+        fullwidth_candidate = "TR４６0006100154780000002668"
+        assert pat.search(fullwidth_candidate) is None
+
+    def test_ascii_check_digits_still_match_iban_pattern(self):
+        from forgelm.data_audit._pii_regex import _PII_PATTERNS
+
+        pat = _PII_PATTERNS["iban"]
+        assert pat.search("TR460006100154780000002668") is not None
+
+
 # ---------------------------------------------------------------------------
 # fr_ssn — non-capturing groups so findall returns the full match
 # ---------------------------------------------------------------------------

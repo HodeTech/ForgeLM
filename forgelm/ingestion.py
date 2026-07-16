@@ -2319,6 +2319,16 @@ def ingest_path(  # NOSONAR python:S107 — every kwarg is a documented operator
 
     src = Path(input_path).expanduser().resolve()
     dst = Path(output_path).expanduser().resolve()
+    if dst.is_dir():
+        # Fail fast, before any corpus processing. Without this guard the
+        # atomic-write path (a sibling ``dst.tmp`` file, promoted onto
+        # ``dst`` via os.replace() only after the whole corpus loop
+        # completes) opens successfully even though ``dst`` is a directory —
+        # os.replace() only raises IsADirectoryError at promotion time, not
+        # at open time. On a multi-thousand-document corpus that turns a
+        # common --output typo into an expensive fail-slow abort instead of
+        # an instant one.
+        raise IsADirectoryError(f"--output '{dst}' is a directory, not a file path.")
     dst.parent.mkdir(parents=True, exist_ok=True)
 
     if strip_urls not in ("keep", "mask", "strip"):

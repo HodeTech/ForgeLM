@@ -80,8 +80,46 @@ def minimal_config(**overrides):
 
 1. **Factory functions over static fixtures.** `minimal_config(training={"trainer_type": "dpo"})` is better than 50 parametrized fixtures.
 2. **No GPU in unit tests.** Mock `torch.cuda.is_available()` or use CPU-only paths. Unit tests must run on a laptop with no GPU.
-3. **No network in unit tests.** Mock `requests.post`, `huggingface_hub.snapshot_download`, etc. Integration tests may hit `localhost` but never external services.
+3. **No network in unit tests.** Mock `requests.post`, `huggingface_hub.snapshot_download`, etc. Integration tests may hit `localhost` but never external services. This is mechanically enforced — see "No-network guard" below.
 4. **Deterministic.** `random.seed(42)`, `torch.manual_seed(42)` in any test that touches RNG. Flaky test = broken test.
+
+### No-network guard
+
+Rule 3 above is not prose-only: [`tests/conftest.py`](../../tests/conftest.py)
+registers two `autouse=True` fixtures that enforce it mechanically for
+every test in the suite, no opt-in required.
+
+- **`_block_network`** monkeypatches `socket.socket.connect` /
+  `connect_ex` — the TCP-connect surface `requests`/`urllib3`/`httpx`
+  all funnel through. A real connection attempt to anything other than
+  a loopback address (`127.0.0.0/8`, `::1`, `localhost`, `0.0.0.0`) or
+  an `AF_UNIX` socket raises `RuntimeError` immediately, naming the
+  offending address and the failing test's node ID. It is a fail-fast
+  tripwire, not a full egress sandbox: bare DNS resolution
+  (`getaddrinfo`), raw UDP, and subprocess network calls are not
+  intercepted.
+- **`_stub_hf_dataset_fingerprint`** stubs `forgelm.compliance`'s two
+  Hub-fingerprint helpers (`_fingerprint_hf_metadata`,
+  `_fingerprint_hf_revision`) to no-ops by default. The shared
+  `minimal_config` factory uses a hub-style `org/dataset` id, so
+  without this stub every test that builds a training manifest would
+  otherwise reach out to the HF Hub — now blocked by `_block_network`
+  anyway, but this fixture keeps the manifest-building code path itself
+  offline rather than merely converting the failure into a `RuntimeError`.
+
+**Escape hatches (two markers, both registered in `conftest.py`'s
+`pytest_configure`):**
+
+- `@pytest.mark.allow_network` — opts a test out of `_block_network`
+  entirely. Use only when a test genuinely needs a live connection
+  (e.g. spinning up a real local server on a non-loopback-looking
+  address); loopback traffic never needs this marker.
+- `@pytest.mark.real_fingerprint` — opts a test out of the default
+  fingerprint stub so it exercises the real
+  `_fingerprint_hf_metadata` / `_fingerprint_hf_revision` code paths.
+  The test itself is responsible for stubbing the underlying network
+  call (e.g. mock `huggingface_hub`) since `_block_network` still
+  applies unless also marked `allow_network`.
 
 ## Test categories
 

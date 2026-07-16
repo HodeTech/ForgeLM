@@ -445,7 +445,12 @@ masthead / index / glossary boilerplate.
 Opt out with `--keep-frontmatter` to restore the pre-Phase-15 "keep
 everything" behaviour. The structured-notes payload reports
 `frontmatter_pages_dropped` so an audit downstream can spot-check the
-operation.
+operation. On a multi-file batch, the top-level `frontmatter_pages_dropped`
+integer is a true sum across every file, while the nested
+`notes_structured.frontmatter_pages_dropped` list is a distinct-index
+sample (which page positions were dropped, not how many times) — it can
+legitimately be shorter than the top-level total when multiple files drop
+the same indices, and that is not a bug.
 
 > **Calibration caveat (round-5 independent review).** The heuristic
 > is calibrated for the audit's pilot Turkish-textbook ToC shape:

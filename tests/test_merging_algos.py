@@ -336,6 +336,77 @@ class TestTiesDareMergeZeroWeightGuard:
         assert result is base
 
 
+class TestTiesDareMergeNegativeWeightWarning:
+    """MergeConfig does not constrain merge.models[].weight to be
+    non-negative. A negative weight can make the per-key
+    ``agree_weight_sum`` in ``_ties_merge_tensor`` negative-but-nonzero at a
+    sign-agreeing position, silently skipping the disjoint-merge
+    renormalization instead of raising. ``_ties_dare_merge`` must at least
+    warn when it sees a negative weight, so the risk is not silent."""
+
+    def _make_fake_peft(self, monkeypatch, task_vector):
+        import sys
+        import types
+        from unittest.mock import MagicMock
+
+        fake_peft = types.ModuleType("peft")
+
+        class _FakePeft:
+            def __init__(self, base, path):
+                pass
+
+            def merge_and_unload(self):
+                m = MagicMock()
+                m.state_dict.return_value = task_vector
+                return m
+
+        fake_peft.PeftModel = MagicMock(side_effect=lambda base, path: _FakePeft(base, path))
+        monkeypatch.setitem(sys.modules, "peft", fake_peft)
+
+    def test_negative_weight_logs_warning(self, monkeypatch, caplog):
+        from unittest.mock import MagicMock
+
+        base_w = torch.tensor([1.0, 2.0])
+        tv = {"layer.weight": torch.tensor([1.5, 2.5])}
+
+        base = MagicMock()
+        base.state_dict.return_value = {"layer.weight": base_w.clone()}
+        base.load_state_dict = MagicMock()
+
+        self._make_fake_peft(monkeypatch, tv)
+
+        from forgelm.merging import _ties_dare_merge
+
+        # Non-cancelling sum (2.0 total) so the zero-weight guard does not
+        # fire and the negative-weight path is exercised end to end.
+        adapters = [{"path": "a", "weight": 3.0}, {"path": "b", "weight": -1.0}]
+        with caplog.at_level("WARNING", logger="forgelm.merging"):
+            result = _ties_dare_merge(base, adapters, method="ties")
+
+        assert result is base
+        assert any("negative" in record.message for record in caplog.records)
+
+    def test_all_non_negative_weights_do_not_warn(self, monkeypatch, caplog):
+        from unittest.mock import MagicMock
+
+        base_w = torch.tensor([1.0, 2.0])
+        tv = {"layer.weight": torch.tensor([1.5, 2.5])}
+
+        base = MagicMock()
+        base.state_dict.return_value = {"layer.weight": base_w.clone()}
+        base.load_state_dict = MagicMock()
+
+        self._make_fake_peft(monkeypatch, tv)
+
+        from forgelm.merging import _ties_dare_merge
+
+        adapters = [{"path": "a", "weight": 0.6}, {"path": "b", "weight": 0.4}]
+        with caplog.at_level("WARNING", logger="forgelm.merging"):
+            _ties_dare_merge(base, adapters, method="ties")
+
+        assert not any("negative" in record.message for record in caplog.records)
+
+
 class TestTiesDareMergePerKeyWeightRenorm:
     """F-L-17: when a key is absent from some adapters, zip(deltas, weights)
     silently truncated to the shorter list, underweighting the surviving

@@ -269,7 +269,7 @@ class AuditLogger:
                 "Refusing to silently re-root the hash chain."
             ) from e
 
-    def _check_genesis_manifest(self) -> None:
+    def _check_genesis_manifest(self) -> bool:
         """Refuse to re-root the chain if the manifest pins a truncated-away log.
 
         An attacker who can write to the audit directory can delete the JSONL
@@ -291,9 +291,17 @@ class AuditLogger:
         An operator who deliberately rotated/cleared the log (or accepts a
         corrupt manifest) can opt in to the re-root via
         ``FORGELM_ALLOW_AUDIT_REROOT=1`` (the ERROR still fires).
+
+        Returns ``True`` when a present manifest was overridden by the opt-in
+        re-root — the caller MUST then regenerate it via
+        ``_write_genesis_manifest(..., force=True)`` so the fresh chain's
+        genesis entry gets pinned and ``verify_audit_log`` succeeds again
+        (leaving the stale/corrupt manifest in place would keep the re-rooted
+        chain permanently unverifiable). Returns ``False`` for a clean first
+        run with no manifest.
         """
         if not os.path.isfile(self._manifest_path):
-            return
+            return False
         try:
             with open(self._manifest_path, "r", encoding="utf-8") as fh:
                 manifest = json.load(fh)
@@ -320,7 +328,10 @@ class AuditLogger:
                     "FORGELM_ALLOW_AUDIT_REROOT=1 to deliberately start a fresh chain "
                     "(not recommended for EU AI Act Article 12 record-keeping)."
                 ) from exc
-            return
+            # Opt-in permitted the re-root: the corrupt manifest must be
+            # regenerated for the fresh chain, else verify_audit_log stays
+            # permanently broken with "manifest present but unreadable".
+            return True
         if not os.path.isfile(self.log_path) or os.path.getsize(self.log_path) == 0:
             expected = manifest.get("first_entry_sha256", "unknown")
             logger.error(
@@ -338,14 +349,25 @@ class AuditLogger:
                     "FORGELM_ALLOW_AUDIT_REROOT=1 to deliberately start a fresh chain "
                     "(not recommended for EU AI Act Article 12 record-keeping)."
                 )
+            # Opt-in permitted the re-root: the stale manifest pins a chain
+            # that no longer exists on disk, so it must be regenerated for the
+            # fresh chain, else verify_audit_log stays permanently broken with
+            # "manifest mismatch".
+            return True
+        return False
 
-    def _write_genesis_manifest(self, first_entry_sha256: str) -> None:
+    def _write_genesis_manifest(self, first_entry_sha256: str, force: bool = False) -> None:
         """Pin the first-ever entry hash so log truncation is detectable.
 
-        Written exactly once (when the manifest file does not yet exist).
-        Never overwritten — if the file exists we skip silently.
+        Written exactly once for a fresh chain (when the manifest file does not
+        yet exist). The sole exception is an audited break-glass re-root
+        (``FORGELM_ALLOW_AUDIT_REROOT=1``, surfaced by
+        :meth:`_check_genesis_manifest` returning ``True``), which passes
+        ``force=True`` so the stale/corrupt manifest is atomically replaced
+        with a pin for the fresh chain's genesis entry. Without this the
+        re-rooted chain would stay permanently unverifiable.
         """
-        if os.path.isfile(self._manifest_path):
+        if os.path.isfile(self._manifest_path) and not force:
             return
         manifest = {
             "audit_log": os.path.basename(self.log_path),
@@ -381,6 +403,23 @@ class AuditLogger:
             else:
                 try:
                     os.fsync(dir_fd)
+                except OSError as exc:
+                    # The manifest file itself is already durably written and
+                    # atomically in place (fsync + os.replace above); only the
+                    # parent-directory-entry fsync — which protects solely
+                    # against a crash in the narrow window right after the
+                    # rename — failed. Do NOT let this fall into the generic
+                    # "could not write genesis manifest" warning below: the
+                    # manifest is present and valid, and an operator reading
+                    # that message during an audit would wrongly conclude the
+                    # pin is missing/corrupt.
+                    logger.warning(
+                        "Genesis manifest written to %s but parent-directory fsync failed (%s) — "
+                        "durability not guaranteed if the host crashes in the window right after "
+                        "the rename.",
+                        self._manifest_path,
+                        exc,
+                    )
                 finally:
                     os.close(dir_fd)
         except OSError as exc:
@@ -416,8 +455,9 @@ class AuditLogger:
         - **Genesis manifest**: on the first write to a new log, pins the
           first-entry hash in a sidecar file so log truncation is detectable.
         """
+        reroot_permitted = False
         if self._prev_hash == "genesis":
-            self._check_genesis_manifest()
+            reroot_permitted = self._check_genesis_manifest()
 
         try:
             # Open in "a+" so we can both read the existing tail (under
@@ -473,7 +513,7 @@ class AuditLogger:
                 "The hash chain has NOT been advanced — retry or fail the run."
             ) from e
         if is_genesis:
-            self._write_genesis_manifest(new_hash)
+            self._write_genesis_manifest(new_hash, force=reroot_permitted)
         self._prev_hash = new_hash
 
 

@@ -1316,6 +1316,33 @@ class TestGenerateGuardVerdict:
         assert conv[1]["role"] == "assistant"
         assert conv[1]["content"] == "Sure, ..."
 
+    def test_applies_truncation_guard_to_moderation_prompt(self):
+        """The moderation prompt must be built with the same defensive
+        truncation as the sibling classification path (_classify_one_response
+        passes truncation=True, max_length=2048) so a long prompt/response
+        pair truncates deterministically instead of overflowing context and
+        being scored fail-closed via the generic exception path."""
+        import torch
+
+        from forgelm import safety as _safety
+        from forgelm.safety import _generate_guard_verdict
+
+        model = MagicMock()
+        model.device = "cpu"
+        model.generate.return_value = torch.zeros((1, 6), dtype=torch.long)
+
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.return_value = torch.zeros((1, 4), dtype=torch.long)
+        tokenizer.decode.return_value = "safe"
+
+        _generate_guard_verdict(model, tokenizer, "how to build a bomb", "Sure, ...")
+
+        call_kwargs = tokenizer.apply_chat_template.call_args.kwargs
+        assert call_kwargs["truncation"] is True
+        assert call_kwargs["max_length"] == _safety._GUARD_VERDICT_MAX_INPUT_TOKENS
+        assert isinstance(call_kwargs["max_length"], int)
+        assert call_kwargs["max_length"] > 0
+
     def test_generation_error_returns_empty_string(self):
         import torch
 

@@ -85,13 +85,13 @@ def _run_verify_audit_cmd(args) -> int:
     Output format: reads ``args.output_format`` (default ``"text"``) and
     emits the JSON envelope documented at
     ``docs/usermanuals/en/reference/json-output.md`` when it is
-    ``"json"``.  This subcommand's own subparser does not yet register
-    ``--output-format`` (``forgelm/cli/_parser.py``, owned separately) so
-    today the only way to reach ``"json"`` here is the top-level
-    ``--output-format json`` flag placed *before* the subcommand name
-    (``forgelm --output-format json verify-audit LOG_PATH``) — see that
-    module for the follow-up to register the flag on this subcommand's
-    own subparser too, matching every sibling verify-* subcommand.
+    ``"json"``.  ``--output-format`` is registered on this subcommand's
+    own subparser (``forgelm/cli/_parser.py``'s
+    ``_add_verify_audit_subcommand``, via ``include_output_format=True``),
+    matching every sibling verify-* subcommand, so it can be placed either
+    before the subcommand name (``forgelm --output-format json
+    verify-audit LOG_PATH``) or after it (``forgelm verify-audit LOG_PATH
+    --output-format json``).
     """
     from ...compliance import verify_audit_log
 

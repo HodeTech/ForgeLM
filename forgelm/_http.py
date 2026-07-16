@@ -147,9 +147,20 @@ def _is_cgnat_shared_address(ip: ipaddress._BaseAddress) -> bool:
     """Return ``True`` when *ip* falls in RFC 6598 Shared Address Space.
 
     Handles the IPv4-mapped IPv6 form (``::ffff:100.100.100.200``) by
-    testing the embedded IPv4 address, so the check cannot be bypassed
-    by expressing the CGNAT target as a mapped v6 literal.  ``in`` against
-    a differently-versioned (pure-IPv6) address safely returns ``False``.
+    testing the embedded IPv4 address.  ``in`` against a
+    differently-versioned (pure-IPv6) address safely returns ``False``.
+
+    In the real request path (:func:`_is_blocked_ip`, which ``or``-chains
+    ``ip.is_private`` before this helper), an IPv4-mapped IPv6 CGNAT literal
+    is already caught upstream — the stdlib's private-network classification
+    covers the entire ``::ffff:0:0/96`` mapped range unconditionally, so
+    ``ip.is_private`` short-circuits before this function is ever reached
+    for a mapped literal. The ``ipv4_mapped`` handling here is
+    defense-in-depth: it protects direct callers of this helper (as the
+    unit tests exercise) and keeps the result correct if
+    ``_is_blocked_ip``'s ``or``-chain order is ever changed — it is not
+    the primary mechanism preventing the bypass in the current request
+    path.
     """
     candidate = getattr(ip, "ipv4_mapped", None) or ip
     return candidate in _CGNAT_SHARED_ADDRESS_SPACE

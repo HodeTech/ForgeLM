@@ -788,6 +788,19 @@ def _log_safety_diagnostics(
 # target; it is deliberately small so generation-based scoring stays cheap.
 _GUARD_VERDICT_MAX_NEW_TOKENS = 128
 
+# Upper bound on tokens in the moderation *input* (Llama-Guard's built-in
+# category-taxonomy system prompt + the prompt/response conversation turns),
+# mirroring the defensive truncation already applied on the sibling
+# classification path (``_classify_one_response``'s ``max_length=2048``).
+# Sized larger than that budget because the taxonomy text baked into the
+# Llama-Guard chat template precedes the conversation turns, so a tighter
+# cap could truncate the taxonomy itself. With the shipped default
+# (Llama-Guard-3-8B, 128k context) this bound is never hit in practice; it
+# exists so a long response (large ``max_new_tokens`` config) or a custom
+# generative guard with a smaller context window truncates deterministically
+# instead of overflowing context and being scored fail-closed.
+_GUARD_VERDICT_MAX_INPUT_TOKENS = 4096
+
 
 def _resolve_classifier_mode(classifier_mode: str, classifier_path: str) -> str:
     """Resolve the effective scoring path: ``"generation"`` or ``"classification"``.
@@ -879,7 +892,12 @@ def _generate_guard_verdict(
             {"role": "user", "content": prompt},
             {"role": "assistant", "content": response},
         ]
-        input_ids = tokenizer.apply_chat_template(conversation, return_tensors="pt")
+        input_ids = tokenizer.apply_chat_template(
+            conversation,
+            return_tensors="pt",
+            truncation=True,
+            max_length=_GUARD_VERDICT_MAX_INPUT_TOKENS,
+        )
         input_ids = input_ids.to(model.device)
         with torch.no_grad():
             output = model.generate(input_ids=input_ids, max_new_tokens=max_new_tokens, do_sample=False)

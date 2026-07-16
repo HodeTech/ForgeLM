@@ -417,8 +417,14 @@ class TestAuditLoggerGenesisManifest:
         With the opt-in env set, the write-time guard still logs the integrity
         ERROR but permits the new genesis entry instead of raising
         (F-P4-OPUS-21 opt-in path, mirroring FORGELM_ALLOW_ANONYMOUS_OPERATOR).
+
+        The re-root must also REGENERATE the genesis manifest so the fresh
+        chain verifies cleanly — pre-fix the stale manifest was left in place
+        and ``verify_audit_log`` stayed permanently ``valid=False`` with
+        "manifest mismatch" (the reroot escape hatch never re-established a
+        valid genesis root).
         """
-        from forgelm.compliance import AuditLogger
+        from forgelm.compliance import AuditLogger, verify_audit_log
 
         log_path = tmp_path / "audit_log.jsonl"
 
@@ -429,6 +435,11 @@ class TestAuditLoggerGenesisManifest:
         # Must NOT raise — the deliberate re-root is permitted.
         AuditLogger(str(tmp_path)).log_event("second.event")
         assert log_path.read_text(encoding="utf-8").strip(), "opt-in re-root should have appended a fresh genesis entry"
+
+        # The fresh chain must be verifiable end-to-end: the manifest now
+        # pins the new genesis entry rather than the truncated-away one.
+        result = verify_audit_log(str(log_path))
+        assert result.valid is True, f"re-rooted chain must verify clean; got reason: {result.reason!r}"
 
     def test_genesis_manifest_written_atomically(self, tmp_path, monkeypatch):
         """The genesis manifest must be promoted via tmp+os.replace, not a plain
@@ -501,6 +512,60 @@ class TestAuditLoggerGenesisManifest:
             f"dir_fds={opened_dir_fds}.  The genesis-manifest rename is not durable."
         )
 
+    def test_genesis_manifest_dir_fsync_failure_reports_distinct_message(self, tmp_path, monkeypatch, caplog):
+        """LOW fix: an OSError from the post-replace parent-directory fsync must
+        NOT be misreported as a failed manifest write.  The manifest file is
+        already atomically in place (fsync + os.replace); only the
+        directory-entry durability fsync failed, so the WARNING must say so
+        distinctly rather than claim the write itself failed — an operator
+        reading "Could not write genesis manifest" during an audit would
+        wrongly conclude the pin is missing/corrupt when it is present and
+        valid."""
+        if not hasattr(os, "O_DIRECTORY"):
+            pytest.skip("O_DIRECTORY is POSIX-only")
+
+        from forgelm import compliance
+
+        real_open = os.open
+        dir_fds: list[int] = []
+
+        def _spy_open(path, flags, *args, **kwargs):
+            fd = real_open(path, flags, *args, **kwargs)
+            if flags & os.O_DIRECTORY:
+                dir_fds.append(fd)
+            return fd
+
+        real_fsync = os.fsync
+
+        def _spy_fsync(fd):
+            # Fail ONLY on the parent-directory fd, after os.replace has
+            # already published the manifest — the LOW-fix scenario.
+            if fd in dir_fds:
+                raise OSError("injected parent-directory fsync failure")
+            return real_fsync(fd)
+
+        monkeypatch.setattr(compliance.os, "open", _spy_open)
+        monkeypatch.setattr(compliance.os, "fsync", _spy_fsync)
+
+        with caplog.at_level("WARNING", logger="forgelm.compliance"):
+            compliance.AuditLogger(str(tmp_path)).log_event("first.event")
+
+        manifest_path = tmp_path / "audit_log.jsonl.manifest.json"
+        # The manifest is present, valid, and no partial .tmp lingers despite
+        # the injected dir-fsync failure.
+        assert manifest_path.is_file()
+        assert not (tmp_path / "audit_log.jsonl.manifest.json.tmp").exists()
+        with open(manifest_path, encoding="utf-8") as fh:
+            assert "first_entry_sha256" in json.load(fh)
+
+        messages = [rec.message for rec in caplog.records]
+        assert any("parent-directory fsync failed" in m for m in messages), (
+            f"dir-fsync failure did not emit its distinct WARNING; messages={messages}"
+        )
+        assert not any("Could not write genesis manifest" in m for m in messages), (
+            "dir-fsync failure was misreported as a failed manifest write"
+        )
+
     def test_corrupt_manifest_fails_closed(self, tmp_path, caplog, monkeypatch):
         """A present-but-unreadable manifest must fail closed at write time, not
         warn-and-continue. Corrupting the manifest (instead of deleting the log)
@@ -530,8 +595,13 @@ class TestAuditLoggerGenesisManifest:
     def test_corrupt_manifest_reroot_optin_allows_fresh_chain(self, tmp_path, monkeypatch):
         """FORGELM_ALLOW_AUDIT_REROOT=1 lets a deliberate operator start fresh
         even when the manifest is corrupt — the ERROR still fires but the write
-        proceeds (parity with the absent/empty-log opt-in path)."""
-        from forgelm.compliance import AuditLogger
+        proceeds (parity with the absent/empty-log opt-in path).
+
+        The corrupt manifest must be REPLACED with a valid pin for the fresh
+        chain so ``verify_audit_log`` succeeds afterward — pre-fix the corrupt
+        manifest was left on disk and verification stayed permanently
+        ``valid=False`` with "manifest present but unreadable"."""
+        from forgelm.compliance import AuditLogger, verify_audit_log
 
         log_path = tmp_path / "audit_log.jsonl"
         manifest_path = tmp_path / "audit_log.jsonl.manifest.json"
@@ -543,6 +613,13 @@ class TestAuditLoggerGenesisManifest:
         monkeypatch.setenv("FORGELM_ALLOW_AUDIT_REROOT", "1")
         AuditLogger(str(tmp_path)).log_event("second.event")  # must NOT raise
         assert log_path.read_text(encoding="utf-8").strip(), "opt-in re-root should have appended a fresh entry"
+
+        # The corrupt manifest is now a valid JSON pin over the fresh chain's
+        # genesis entry, so verification passes.
+        result = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert "first_entry_sha256" in result, "corrupt manifest was not regenerated on re-root"
+        verify = verify_audit_log(str(log_path))
+        assert verify.valid is True, f"re-rooted chain must verify clean; got reason: {verify.reason!r}"
 
     def test_audit_envelope_has_no_seq_field(self, tmp_path):
         """F-P4-OPUS-28: the user manual documented a ``seq`` field and a ``ts``
@@ -1130,18 +1207,28 @@ class TestVerifyAuditLog:
         from forgelm.compliance import AuditLogger, verify_audit_log
 
         log_path = self._build_log(tmp_path, events=3)
-        assert os.path.isfile(log_path + ".manifest.json")
+        manifest_path = log_path + ".manifest.json"
+        assert os.path.isfile(manifest_path)
+        # Snapshot the write-once manifest that pins the original chain's
+        # genesis entry.  An attacker can rewrite the JSONL body but cannot
+        # forge this sidecar.
+        with open(manifest_path, encoding="utf-8") as fh:
+            original_manifest = fh.read()
 
         # Wipe the body but keep the (write-once) manifest, then write a brand
         # new valid chain — a re-root tamper. The write-time guard
-        # (F-P4-OPUS-21) now refuses this by default; force the re-root via the
-        # opt-in env to reach the verify-time mismatch detector under test.
+        # (F-P4-OPUS-21) refuses this by default; force the re-root via the
+        # opt-in env (which now regenerates the manifest for the fresh chain),
+        # then restore the ORIGINAL pin so line 1's hash no longer matches it —
+        # exactly the situation the verify-time mismatch detector must catch.
         monkeypatch.setenv("FORGELM_ALLOW_AUDIT_REROOT", "1")
         with open(log_path, "w", encoding="utf-8"):
             pass
         logger2 = AuditLogger(str(tmp_path))
         logger2.log_event("rewritten.genesis", forged=True)
         logger2.log_event("rewritten.second")
+        with open(manifest_path, "w", encoding="utf-8") as fh:
+            fh.write(original_manifest)
 
         result = verify_audit_log(log_path)
         assert result.valid is False

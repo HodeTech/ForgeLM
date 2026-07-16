@@ -872,3 +872,63 @@ class TestSaveFinalModelFallback:
         trainer.trainer.model.save_pretrained = MagicMock()
         trainer.save_final_model(str(tmp_path / "final_ok"))
         trainer.trainer.save_model.assert_not_called()
+
+
+@pytest.mark.skipif(not torch_available, reason="torch not installed")
+class TestSafetyClassifierModeThreading:
+    """``evaluation.safety.classifier_mode`` must reach ``run_safety_evaluation``.
+
+    Regression coverage for a kwarg-forwarding fix in
+    ``ForgeTrainer._run_safety_if_configured``
+    (``classifier_mode=getattr(safety_cfg, "classifier_mode", "auto")``) that
+    previously had no test — a future refactor of the kwargs dict could
+    silently drop the forwarded value without any test catching it.
+    """
+
+    def _make_trainer(self, tmp_path, classifier_mode):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model"},
+            lora={},
+            training={"output_dir": str(tmp_path)},
+            data={"dataset_name_or_path": "org/dataset"},
+            evaluation={
+                "safety": {
+                    "enabled": True,
+                    "classifier_mode": classifier_mode,
+                },
+            },
+        )
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.checkpoint_dir = str(tmp_path)
+            trainer.tokenizer = MagicMock()
+            trainer.trainer = MagicMock()
+            trainer.audit = MagicMock()
+        return trainer
+
+    @pytest.mark.parametrize("classifier_mode", ["classification", "generation"])
+    def test_classifier_mode_passed_through_to_run_safety_evaluation(self, tmp_path, classifier_mode):
+        trainer = self._make_trainer(tmp_path, classifier_mode=classifier_mode)
+
+        with patch("forgelm.safety.run_safety_evaluation") as mock_run:
+            mock_run.return_value = MagicMock()
+            trainer._run_safety_if_configured()
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["classifier_mode"] == classifier_mode
+
+    def test_classifier_mode_defaults_to_auto_when_unset(self, tmp_path):
+        """The `auto` default (config default) still threads through, not just
+        the non-default override — guards against a fix that only forwards
+        the value when explicitly set."""
+        trainer = self._make_trainer(tmp_path, classifier_mode="auto")
+
+        with patch("forgelm.safety.run_safety_evaluation") as mock_run:
+            mock_run.return_value = MagicMock()
+            trainer._run_safety_if_configured()
+
+        assert mock_run.call_args.kwargs["classifier_mode"] == "auto"

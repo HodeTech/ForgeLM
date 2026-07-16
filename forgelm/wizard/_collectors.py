@@ -449,6 +449,93 @@ def _collect_trainer_hyperparameters(
 _ROPE_SCALING_TYPES: Tuple[str, ...] = ("linear", "dynamic", "yarn", "longrope")
 
 
+def _rope_scaling_is_valid(candidate: Dict[str, Any]) -> bool:
+    """Return True when *candidate* passes ``ForgeConfig``'s rope_scaling validator.
+
+    Runs the block through the real ``TrainingConfig`` field validator so
+    the wizard's "keep existing" branch can never honour a shape that
+    ``ForgeConfig`` will later reject — and never reject one it accepts.
+    This mirrors the validator's per-type branching (scalar ``factor`` for
+    ``linear`` / ``dynamic`` / ``yarn``; non-empty ``short_factor`` /
+    ``long_factor`` lists for ``longrope``) and the ``rope_type`` alias
+    without duplicating that logic here.
+    """
+    from pydantic import ValidationError
+
+    from ..config import TrainingConfig
+
+    try:
+        TrainingConfig(rope_scaling=candidate)
+    except ValidationError:
+        return False
+    return True
+
+
+def _describe_rope_scaling(block: Dict[str, Any]) -> str:
+    """Render a one-line human summary of an existing rope_scaling block."""
+    rope_type = block.get("type", block.get("rope_type", "?"))
+    if rope_type == "longrope":
+        short = block.get("short_factor")
+        long = block.get("long_factor")
+        short_len = len(short) if isinstance(short, list) else "?"
+        long_len = len(long) if isinstance(long, list) else "?"
+        return f"type={rope_type}, short_factor[{short_len}], long_factor[{long_len}]"
+    return f"type={rope_type}, factor={block.get('factor', '?')}"
+
+
+def _prompt_factor_list(question: str, default: list) -> list:
+    """Prompt for a non-empty comma-separated list of numbers, re-asking until valid.
+
+    Backs the LongRoPE ``short_factor`` / ``long_factor`` prompts, whose
+    ``ForgeConfig`` validator requires non-empty numeric lists.  Funnels
+    through :func:`_prompt` so navigation tokens (``back`` / ``reset`` /
+    ``cancel``) still fire; a bare Enter keeps *default*.
+    """
+    default_csv = ", ".join(repr(value) for value in default)
+    while True:
+        raw = _prompt(f"{question} (comma-separated numbers)", default_csv)
+        items = [item.strip() for item in raw.split(",") if item.strip()]
+        if not items:
+            _print("    At least one numeric factor is required.")
+            continue
+        try:
+            return [float(item) for item in items]
+        except ValueError:
+            _print("    All entries must be numbers (e.g. `1.0, 1.2, 1.5`).")
+
+
+def _collect_longrope_factors(max_length: int, base_context: int) -> Dict[str, Any]:
+    """Collect a LongRoPE ``rope_scaling`` block (short_factor / long_factor).
+
+    LongRoPE is parameterised by per-dimension ``short_factor`` /
+    ``long_factor`` lists (one entry per ``head_dim / 2``), not a scalar
+    ``factor`` — this is exactly what ``ForgeConfig``'s ``rope_scaling``
+    validator requires for ``rope_type='longrope'``.  The values are
+    model-specific (copied from the model's ``config.json``; e.g. Phi-3
+    ships them), so the wizard cannot compute them from ``max_length``
+    alone; it prompts for both lists with non-empty placeholder defaults
+    the operator is told to replace, and always returns a block that
+    round-trips through ``ForgeConfig``.
+    """
+    fallback_factor = round(max_length / base_context, 4)
+    _print(
+        "  Note: LongRoPE uses per-dimension short_factor / long_factor lists "
+        "(one entry per head_dim/2), not a scalar factor.  These values are "
+        "model-specific — copy them from your model's config.json (e.g. Phi-3 "
+        "ships them under `rope_scaling`).  The defaults below are non-empty "
+        "placeholders; replace them with your model's factors before training."
+    )
+    short_factor = _prompt_factor_list(
+        "short_factor — per-dimension factors for the short-context regime",
+        [1.0],
+    )
+    long_factor = _prompt_factor_list(
+        "long_factor — per-dimension factors for the extended-context regime",
+        [fallback_factor],
+    )
+    return {"type": "longrope", "short_factor": short_factor, "long_factor": long_factor}
+
+
 def _collect_rope_scaling(
     max_length: int,
     *,
@@ -461,36 +548,33 @@ def _collect_rope_scaling(
     YAML carries one, the helper asks "Keep existing RoPE scaling?"
     (default yes) and returns the stored dict on accept; on decline,
     or when there is no prior block, the standard prompt flow runs and
-    ``factor`` is always recomputed fresh from ``max_length`` — reusing
-    a stale ``existing['factor']`` after an explicit decline would
-    silently ignore the operator's answer.
+    the scaling parameters are always recomputed fresh from
+    ``max_length`` — reusing a stale ``existing`` block after an explicit
+    decline would silently ignore the operator's answer.
 
-    ``existing['factor']`` is validated (numeric, positive) before the
-    "keep existing" branch returns it verbatim.  ``ForgeConfig``'s
-    ``rope_scaling`` field validator normally guarantees this shape for
-    anything loaded via ``--wizard-start-from``, but a resumed
-    ``wizard_state.yaml`` snapshot (``_load_wizard_state``) is not
-    schema-validated, so a corrupted/hand-edited factor degrades to a
-    fresh recompute here instead of crashing on ``float(...)``.
+    The "keep existing" branch validates the whole block through
+    ``ForgeConfig``'s own ``rope_scaling`` field validator
+    (:func:`_rope_scaling_is_valid`) before returning it verbatim, so a
+    valid ``longrope`` block (``short_factor`` / ``long_factor`` lists,
+    ``factor`` optional) is honoured while a corrupted / hand-edited one
+    degrades to a fresh recompute.  ``ForgeConfig`` normally guarantees
+    this shape for anything loaded via ``--wizard-start-from``, but a
+    resumed ``wizard_state.yaml`` snapshot (``_load_wizard_state``) is not
+    schema-validated, so the check must run here too.
     """
     if max_length <= 4096:
         return None
     base_context = 4096
     if existing:
-        _print(f"\n  Existing RoPE scaling: type={existing.get('type', '?')}, factor={existing.get('factor', '?')}")
+        _print(f"\n  Existing RoPE scaling: {_describe_rope_scaling(existing)}")
         if _prompt_yes_no("  Keep existing RoPE scaling?", default=True):
-            try:
-                kept_factor = float(existing["factor"])
-                if kept_factor <= 0:
-                    raise ValueError(f"factor must be positive, got {kept_factor}")
-            except (KeyError, TypeError, ValueError) as exc:
-                _print(f"  ⚠ Existing RoPE scaling factor is invalid ({exc}) — recomputing instead of keeping it.")
-            else:
+            if _rope_scaling_is_valid(existing):
                 return dict(existing)
+            _print("  ⚠ Existing RoPE scaling is invalid — recomputing instead of keeping it.")
     _print(f"\n  Long context detected ({max_length} tokens).")
     if not _prompt_yes_no("Enable RoPE scaling for extended context?", default=True):
         return None
-    existing_type = existing.get("type") if existing else None
+    existing_type = existing.get("type", existing.get("rope_type")) if existing else None
     type_default = _ROPE_SCALING_TYPES.index(existing_type) + 1 if existing_type in _ROPE_SCALING_TYPES else 1
     rope_type = _prompt_choice(
         "RoPE scaling type:",
@@ -501,19 +585,21 @@ def _collect_rope_scaling(
             "longrope (newest — 32K+ context, requires LongRoPE-aware model)",
         ],
         default=type_default,
-    )
+    ).split(" ")[0]
     # Reaching this point means either there was no existing block, or
     # the operator explicitly declined to keep it (or it failed
     # validation above) — always recompute fresh from max_length rather
-    # than falling back to a stale/unvalidated existing factor, which
+    # than falling back to a stale/unvalidated existing block, which
     # would silently override the operator's decline.
+    if rope_type == "longrope":
+        return _collect_longrope_factors(max_length, base_context)
     rope_factor = max_length / base_context
     _print(
         f"  Note: RoPE factor {rope_factor:.1f}x computed assuming base context of "
         f"{base_context} tokens.  Adjust manually if your model has a different "
         f"original context length (e.g., Llama 3.1 = 131072, Mistral v0.3 = 32768)."
     )
-    return {"type": rope_type.split(" ")[0], "factor": rope_factor}
+    return {"type": rope_type, "factor": rope_factor}
 
 
 def _collect_neftune_alpha() -> Optional[float]:

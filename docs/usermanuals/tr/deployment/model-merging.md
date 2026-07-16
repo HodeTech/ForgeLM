@@ -80,22 +80,21 @@ Lineer en basit — ağırlıkları ortalar. Başlangıç noktası olarak her za
 
 ## Birleştirme sonrası değerlendirme
 
-Birleştirilmiş modeli her zaman yeniden değerlendirin — herhangi bir girdi modelden farklı bir model. `merge` ve `evaluation` ayrı üst düzey config bloklarıdır; `forgelm --merge` bittikten sonra ikinci bir config'in `model.name_or_path`'ini birleştirilmiş çıktı dizinine yönlendirip benchmark/güvenlik kapılarını doğrudan `--benchmark-only` ile (eğitim olmadan) çalıştırın:
+Birleştirilmiş modeli her zaman yeniden değerlendirin — herhangi bir girdi modelden farklı bir model. `merge` ve `evaluation` ayrı üst düzey config bloklarıdır; `forgelm --merge` bittikten sonra ikinci bir config'in `model.name_or_path`'ini birleştirilmiş çıktı dizinine yönlendirip benchmark kapısını doğrudan `--benchmark-only` ile (eğitim olmadan) çalıştırın. `--benchmark-only` yalnızca `evaluation.benchmark`'ı okur — güvenlik sınıflandırıcısını hiç çağırmaz, bu yüzden aynı config'teki bir `evaluation.safety` bloğu bu kod yolunda sessizce yok sayılır. İki kapıyı iki ayrı komut olarak çalıştırın:
 
 ```yaml
 evaluation:
   benchmark:
     tasks: ["hellaswag", "humaneval", "gsm8k"]    # her uzmandan beceri karışımı
     min_score: 0.5
-  safety:
-    enabled: true
 ```
 
 ```shell
 $ forgelm --benchmark-only ./checkpoints/merged --config configs/eval.yaml
+$ forgelm safety-eval --model ./checkpoints/merged --default-probes --output-dir ./checkpoints/merged/safety
 ```
 
-Birleştirilmiş model herhangi bir görevde gerilerse uzmanlardan birine fallback yapın veya farklı algoritma deneyin.
+Bağımsız `safety-eval` alt komutu [Llama Guard Güvenliği](#/evaluation/safety) sayfasında belgelenmiştir. Birleştirilmiş model herhangi bir görevde veya güvenlik kategorisinde gerilerse uzmanlardan birine fallback yapın veya farklı algoritma deneyin.
 
 ## Birleştirme başarısızlıklarını teşhis
 

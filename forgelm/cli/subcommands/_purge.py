@@ -109,7 +109,7 @@ def _sanitise_audit_error_message(message: str) -> str:
     the append-only audit log permanently (CLAUDE.md principle 5).
     This helper runs the message through
     :func:`forgelm._http._mask_secrets_in_text` (a no-op on this path:
-    called with ``headers=None`` per design §6, since purge has no
+    called with ``headers=None`` per design §5.4, since purge has no
     outbound HTTP headers to strip) and then
     :mod:`forgelm.data_audit._pii_regex`'s regex catalogue (email /
     phone / IBAN / card / national-id — not free-form names) before
@@ -122,7 +122,7 @@ def _sanitise_audit_error_message(message: str) -> str:
 
     # ``_mask_secrets_in_text`` needs a header map to know which values to
     # strip; the purge path has no outbound headers, so pass ``None`` (it
-    # short-circuits to a no-op) per design §6's explicit note.
+    # short-circuits to a no-op) per design §5.4's explicit note.
     masked = _mask_secrets_in_text(message, None)
     masked = mask_pii(masked)
     if len(masked) <= _AUDIT_ERROR_MESSAGE_MAX:
@@ -658,27 +658,28 @@ def _perform_row_erasure_and_audit(
         )
 
     warning_events, warning_extras = _detect_warning_conditions(output_dir, config_loaded)
+    # Computed once and reused for both the completed event and every
+    # warning event below, so the catalog contract (each
+    # ``erasure_warning_*`` payload is "All `completed` fields + <scoped
+    # field>", per docs/reference/audit_event_catalog.md) cannot drift: a
+    # future field added to (or renamed in) ``data.erasure_completed`` only
+    # needs to change in one place.
+    completed_fields: Dict[str, Any] = {
+        "bytes_freed": bytes_freed,
+        "files_modified": [os.path.abspath(args.corpus)],
+        "pre_erasure_line_number": pre_first_line,
+        "match_count": len(matches),
+    }
     audit.log_event(
         _EVT_ERASURE_COMPLETED,
         **request_fields,
-        bytes_freed=bytes_freed,
-        files_modified=[os.path.abspath(args.corpus)],
-        pre_erasure_line_number=pre_first_line,
-        match_count=len(matches),
+        **completed_fields,
     )
     for event_name in warning_events:
-        # Catalog contract (docs/reference/audit_event_catalog.md): each
-        # ``erasure_warning_*`` payload is "All `completed` fields + <scoped
-        # field>" — so mirror the exact ``data.erasure_completed`` payload
-        # above (not just ``request_fields``) alongside the event's scoped
-        # extra from ``warning_extras``.
         audit.log_event(
             event_name,
             **request_fields,
-            bytes_freed=bytes_freed,
-            files_modified=[os.path.abspath(args.corpus)],
-            pre_erasure_line_number=pre_first_line,
-            match_count=len(matches),
+            **completed_fields,
             **warning_extras.get(event_name, {}),
         )
 

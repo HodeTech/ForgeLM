@@ -1226,6 +1226,45 @@ class TestAtomicOutputOnAbort:
         assert not (tmp_path / "out.jsonl.tmp").exists()
 
 
+class TestOutputDirectoryFailsFast:
+    """--output pointing at an existing directory must fail immediately.
+
+    The atomic-write path streams chunks to a sibling ``dst.tmp`` file,
+    which opens successfully even when ``dst`` itself is a directory —
+    ``os.replace()`` only raises ``IsADirectoryError`` at promotion time,
+    after the whole corpus loop has run. Without an upfront guard, a
+    common --output typo (pointing at a directory instead of a file path)
+    regresses from an instant failure to one that only surfaces after a
+    potentially expensive full-corpus run.
+    """
+
+    def test_output_is_directory_raises_before_processing(self, tmp_path, monkeypatch):
+        import forgelm.ingestion as ing
+
+        corpus = tmp_path / "corpus"
+        corpus.mkdir()
+        (corpus / "a.txt").write_text("First paragraph body.\n\nSecond paragraph body.\n")
+        out_dir = tmp_path / "out_is_a_dir"
+        out_dir.mkdir()
+
+        processed: List[str] = []
+        original = ing._EXTRACTORS[".txt"]
+
+        def _tracking(path, *, ctx=None):
+            processed.append(path.name)
+            return original(path, ctx=ctx)
+
+        monkeypatch.setitem(ing._EXTRACTORS, ".txt", _tracking)
+
+        with pytest.raises(IsADirectoryError, match="directory"):
+            ingest_path(str(corpus), output_path=str(out_dir), quality_presignal=False)
+
+        # The regression this guards against: pre-fix, the corpus loop ran
+        # to completion (writing to a sibling temp file) before the abort
+        # surfaced at the final os.replace() promotion.
+        assert processed == [], "corpus processing started before the --output directory check"
+
+
 # ---------------------------------------------------------------------------
 # frontmatter_pages_dropped must SUM across files, not dedup by page index
 # ---------------------------------------------------------------------------

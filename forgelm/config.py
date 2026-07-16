@@ -1360,8 +1360,19 @@ class ForgeConfig(BaseModel):
         ``synthetic.api_key`` can never survive a root-level JSON dump either;
         without this a caller trusting ``model_dump_json`` would leak the raw
         credential into a manifest or log.
+
+        ``ensure_ascii=False`` matches both Pydantic's native
+        ``model_dump_json`` (which emits raw UTF-8) and the codebase's own
+        ``json.dumps`` convention (``compliance.py``, ``chat.py``,
+        ``ingestion.py``, ``synthetic.py`` all pass it) so bilingual EN/TR
+        content — e.g. ``risk_assessment.intended_use`` — round-trips as
+        readable UTF-8 instead of being escaped to ``\\uXXXX``.
         """
-        return json.dumps(self.model_dump(mode="json", redact_secrets=redact_secrets, **kwargs), indent=indent)
+        return json.dumps(
+            self.model_dump(mode="json", redact_secrets=redact_secrets, **kwargs),
+            indent=indent,
+            ensure_ascii=False,
+        )
 
     def _warn_general_consistency(self) -> None:
         """Emit warnings for the broad cross-field config inconsistencies."""

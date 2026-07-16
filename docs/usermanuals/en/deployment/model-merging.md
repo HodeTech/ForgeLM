@@ -80,22 +80,21 @@ Linear is the simplest — just averages weights. Always works as a starting poi
 
 ## Evaluating after merging
 
-Always re-evaluate the merged model — it's a different model than any of the inputs. `merge` and `evaluation` are separate top-level config blocks; after `forgelm --merge` finishes, point a second config's `model.name_or_path` at the merged output directory and run the benchmark/safety gates against it directly with `--benchmark-only` (no training):
+Always re-evaluate the merged model — it's a different model than any of the inputs. `merge` and `evaluation` are separate top-level config blocks; after `forgelm --merge` finishes, point a second config's `model.name_or_path` at the merged output directory and run the benchmark gate against it directly with `--benchmark-only` (no training). `--benchmark-only` only reads `evaluation.benchmark` — it never invokes the safety classifier, so an `evaluation.safety` block in the same config is silently ignored on this code path. Run the two gates as two separate commands:
 
 ```yaml
 evaluation:
   benchmark:
     tasks: ["hellaswag", "humaneval", "gsm8k"]    # mix of skills from each specialist
     min_score: 0.5
-  safety:
-    enabled: true
 ```
 
 ```shell
 $ forgelm --benchmark-only ./checkpoints/merged --config configs/eval.yaml
+$ forgelm safety-eval --model ./checkpoints/merged --default-probes --output-dir ./checkpoints/merged/safety
 ```
 
-If the merged model regresses on any task, fall back to one of the specialists or try a different algorithm.
+The standalone `safety-eval` subcommand is documented in [Llama Guard Safety](#/evaluation/safety). If the merged model regresses on any task or safety category, fall back to one of the specialists or try a different algorithm.
 
 ## Diagnosing merge failures
 

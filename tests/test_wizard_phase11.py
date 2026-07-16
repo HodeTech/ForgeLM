@@ -311,6 +311,52 @@ class TestValidationHelpersOutput:
         captured = capsys.readouterr().out
         assert "invalid" in captured.lower()
 
+    # (rope_type, menu index in the type-choice prompt, a valid existing block)
+    _ROPE_TYPE_CASES = [
+        ("linear", 1, {"type": "linear", "factor": 4.0}),
+        ("dynamic", 2, {"type": "dynamic", "factor": 4.0}),
+        ("yarn", 3, {"type": "yarn", "factor": 4.0}),
+        (
+            "longrope",
+            4,
+            {"type": "longrope", "short_factor": [1.0, 1.0, 1.0, 1.0], "long_factor": [2.0, 2.0, 2.0, 2.0]},
+        ),
+    ]
+
+    @pytest.mark.parametrize("rope_type,menu_index,_existing", _ROPE_TYPE_CASES)
+    def test_collect_rope_scaling_fresh_roundtrips_through_forgeconfig(
+        self, rope_type, menu_index, _existing, minimal_config
+    ):
+        # HIGH regression: a wave fix tightened ForgeConfig's rope_scaling
+        # validator so `longrope` requires non-empty short_factor /
+        # long_factor lists (factor optional).  Every type the type-choice
+        # menu offers must survive a fresh collect and construct a real
+        # ForgeConfig — pre-fix, choosing `longrope` emitted
+        # `{'type': 'longrope', 'factor': N}` and ForgeConfig rejected it.
+        from forgelm.config import ForgeConfig
+
+        answers = ["y", str(menu_index)]
+        if rope_type == "longrope":
+            answers += ["", ""]  # accept placeholder short_factor / long_factor defaults
+        with patch("builtins.input", side_effect=_input_returning(*answers)):
+            result = wizard._collect_rope_scaling(8192)
+        assert result["type"] == rope_type
+        # Real config construction is ground truth — must not raise ValidationError.
+        ForgeConfig(**minimal_config(training={"rope_scaling": result}))
+
+    @pytest.mark.parametrize("rope_type,_menu_index,existing", _ROPE_TYPE_CASES)
+    def test_collect_rope_scaling_keep_existing_roundtrips(self, rope_type, _menu_index, existing, minimal_config):
+        # HIGH defect: 'Keep existing RoPE scaling?' rejected a valid
+        # longrope block (no top-level 'factor') and silently recomputed a
+        # broken one.  Accepting 'keep' must return the block verbatim for
+        # every type, and that kept block must construct a real ForgeConfig.
+        from forgelm.config import ForgeConfig
+
+        with patch("builtins.input", side_effect=_input_returning("y")):
+            result = wizard._collect_rope_scaling(8192, existing=existing)
+        assert result == existing
+        ForgeConfig(**minimal_config(training={"rope_scaling": result}))
+
     def test_print_wizard_summary_includes_strategy_and_dataset(self, capsys):
         # Phase 22 rewrite: ``_print_wizard_summary`` takes the resolved
         # config dict instead of ~12 keyword arguments.  The summary

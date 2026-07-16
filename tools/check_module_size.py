@@ -123,7 +123,8 @@ _GRANDFATHERED_OVER_CEILING: frozenset[str] = frozenset(
         # generation aggregators, on top of the existing pipeline scorer).
         # A ``forgelm/safety/{__init__,_classify,_generate,_gates}.py``
         # sub-package split is the planned next step per the guard's own
-        # advisory; grandfathered here until that lands.
+        # advisory; grandfathered here until that lands (tracked in
+        # docs/roadmap/risks-and-decisions.md, 2026-07-16).
         "forgelm/safety.py",
     }
 )

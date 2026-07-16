@@ -49,8 +49,14 @@ _PII_PATTERNS: Dict[str, re.Pattern] = {
     # boundaries (e.g. "US20 MEN WENT TO THE STORE..."); _validate_match
     # closes that gap with an ISO 7064 mod-97 checksum (see _is_valid_iban)
     # rather than tightening the shape, so both the compact and any spacing
-    # of the print form are still detected.
-    "iban": re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b"),
+    # of the print form are still detected. The 2 check digits use ASCII
+    # ``[0-9]`` (not bare ``\d``) to match the ASCII-only ``[A-Z0-9]`` body —
+    # unlike tr_id/phone/credit_card (which deliberately use Unicode-aware
+    # ``\d`` per the module-level note above), an IBAN's alphanumeric body
+    # can never contain non-ASCII digit forms, so the check digits shouldn't
+    # either; a single structured identifier should have one script grammar
+    # throughout.
+    "iban": re.compile(r"\b[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]){11,30}\b"),
     # Credit cards captured first within the digit-run categories, then
     # Luhn-validated (see _is_credit_card). Greedy ``*`` instead of ``*?``:
     # both match the same set of strings here (``\b`` end-anchor forces a

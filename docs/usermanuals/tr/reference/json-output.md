@@ -316,6 +316,12 @@ additive alanlar ekledi; Faz 15 öncesi anahtarlar değişmedi.
 }
 ```
 
+Çok dosyalı bir batch'te, üst düzey `frontmatter_pages_dropped` tamsayısı
+tüm dosyalar boyunca gerçek bir toplamdır; `notes_structured.frontmatter_pages_dropped`
+ise distinct-index bir örnektir (hangi sayfa pozisyonlarının düşürüldüğü,
+kaç kez düşürüldüğü değil) — üst düzey toplamdan daha kısa olabilir ve bu
+bir hata değildir.
+
 Faz 15 additive alanları [Doküman Ingestion](#/data/ingestion)'da
 belgelenmiştir. Faz 15 öncesi `output_path` / `chunk_count` / `notes`
 okuyan tüketiciler değişmeden çalışmaya devam eder.

@@ -307,6 +307,23 @@ def _ties_dare_merge(
         task_vectors.append(delta)
         del adapter_model, merged
 
+    if any(w < 0 for w in weights):
+        # MergeConfig does not constrain merge.models[].weight to be
+        # non-negative. A negative weight can make the per-key
+        # ``agree_weight_sum`` in ``_ties_merge_tensor`` negative-but-nonzero
+        # at a sign-agreeing position, which silently falls through the
+        # ``agree_weight_sum > 0`` renormalization guard to the
+        # un-renormalized masked-sum value instead of raising — surface the
+        # risk here since it is otherwise silent.
+        logger.warning(
+            "Adapter weight(s) %s include a negative value; TIES/DARE's "
+            "disjoint-merge renormalization assumes non-negative weights and "
+            "may silently skip renormalization at positions where the only "
+            "sign-agreeing adapter has negative weight. Use non-negative "
+            "merge.models[].weight values.",
+            weights,
+        )
+
     # Normalize weights
     total_w = sum(weights)
     if total_w == 0:

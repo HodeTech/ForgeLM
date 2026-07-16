@@ -454,7 +454,13 @@ boilerplate'ini yakalar.
 
 `--keep-frontmatter` ile Faz 15 öncesi "her şeyi tut" davranışına
 geri dönülür. Yapılandırılmış notlar `frontmatter_pages_dropped`
-raporlar; downstream audit operasyonu spot-check edebilir.
+raporlar; downstream audit operasyonu spot-check edebilir. Çok dosyalı
+bir batch'te, üst düzey `frontmatter_pages_dropped` tamsayısı tüm
+dosyalar boyunca gerçek bir toplamdır; iç içe geçmiş
+`notes_structured.frontmatter_pages_dropped` listesi ise distinct-index
+bir örnektir (hangi sayfa pozisyonlarının düşürüldüğü, kaç kez
+düşürüldüğü değil) — birden fazla dosya aynı indeksleri düşürdüğünde
+üst düzey toplamdan daha kısa olabilir ve bu bir hata değildir.
 
 > **Kalibrasyon uyarısı (round-5 bağımsız review).** Heuristic,
 > audit'in pilot Türkçe-textbook ToC şekli için kalibre edilmiştir:

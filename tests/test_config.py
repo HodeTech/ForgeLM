@@ -749,6 +749,21 @@ class TestRootDumpSecretRedaction:
         assert "\n  " in pretty
         assert json.loads(pretty)["auth"]["hf_token"] == "***REDACTED***"
 
+    def test_model_dump_json_preserves_non_ascii(self):
+        """ensure_ascii=False matches Pydantic's native model_dump_json and
+        the codebase's own json.dumps convention (compliance.py, chat.py,
+        ingestion.py, synthetic.py) — bilingual EN/TR content must round-trip
+        as readable UTF-8, not \\uXXXX escapes."""
+        data = _full_config()
+        data["risk_assessment"] = {
+            "intended_use": "Kullanım: İşletmeler için çıkarım—Türkçe metin",
+        }
+        cfg = ForgeConfig(**data)
+        raw = cfg.model_dump_json()
+        assert "İşletmeler" in raw
+        assert "çıkarım" in raw
+        assert "\\u" not in raw
+
     def test_model_dump_json_redact_secrets_false_preserves_raw(self):
         """The escape hatch mirrors model_dump: raw credentials round-trip
         when redaction is explicitly disabled."""
