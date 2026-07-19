@@ -28,6 +28,13 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   user-manual example that uses a nonexistent field is caught in CI instead of
   by a reader's `--dry-run` failure. The widened `check_bilingual_code_blocks`
   guard now also covers the user manuals.
+- **A CI guard (`check_release_record_sync.py`) that enforces the post-release
+  bookkeeping step.** Every released version in `CHANGELOG.md` must have a
+  matching section in `docs/roadmap/releases.md` (a `(Planned)` section does not
+  count), and `docs/roadmap.md`'s `**Released:**` headline must name the newest
+  one. The release ritual's "update the roadmap" step had been skipped for two
+  consecutive releases — `v0.8.0` and `v0.9.0` shipped while the roadmap still
+  announced `v0.7.0` as current — so it is now checked rather than trusted.
 - **A CI guard (`check_deprecation_targets.py`) that keeps every deprecation
   removal promise honest.** `forgelm/config.py` now carries a single
   `DEPRECATION_REMOVAL_VERSION` constant that every runtime deprecation message

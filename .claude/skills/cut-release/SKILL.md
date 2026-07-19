@@ -218,6 +218,19 @@ If this release completes a phase, update [`docs/roadmap.md`](../../../docs/road
 - Move phase from "Planned" row to archived
 - Append detail to [`docs/roadmap/completed-phases.md`](../../../docs/roadmap/completed-phases.md)
 - Update [`docs/roadmap/releases.md`](../../../docs/roadmap/releases.md)
+- Refresh the `**Released:**` headline in [`docs/roadmap.md`](../../../docs/roadmap.md)
+
+> **This step is now enforced, not trusted.** `tools/check_release_record_sync.py`
+> (CI `validate` job, `--strict`) fails the build when a `## [X.Y.Z] — DATE`
+> heading in `CHANGELOG.md` has no matching non-planned section in
+> `docs/roadmap/releases.md`, or when the `**Released:**` headline does not
+> name the newest released version. A `(Planned)` section does not count as a
+> record. The guard exists because this exact step was skipped for two
+> consecutive releases (v0.8.0 and v0.9.0), leaving the public roadmap
+> announcing v0.7.0 while PyPI already had v0.9.0 — it is the last item on the
+> checklist, run after the release feels finished. Run
+> `python3 tools/check_release_record_sync.py --strict` before you consider the
+> release closed.
 
 ## Hotfix release variant
 

@@ -64,10 +64,11 @@ ruff format . && ruff check . && pytest tests/ && \
   python3 tools/check_notebook_pins.py --strict && \
   python3 tools/check_usermanual_schema_drift.py --strict && \
   python3 tools/check_deprecation_targets.py --strict && \
+  python3 tools/check_release_record_sync.py --strict && \
   python3 tools/update_site_version.py --check
 ```
 
-All seventeen must pass. The first four are the historical "self-review"
+All eighteen must pass. The first four are the historical "self-review"
 command from [`docs/standards/code-review.md`](docs/standards/code-review.md).
 The rest are doc/schema/audit-log guards that landed across Waves 3-5 and
 later review cycles and run on every PR via `.github/workflows/`; running

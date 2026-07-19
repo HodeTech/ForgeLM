@@ -274,6 +274,73 @@ See [CHANGELOG.md `[0.7.0]`](../../CHANGELOG.md#070--2026-05-14) for the complet
 
 ---
 
+## v0.8.0 — "Model Integrity Verification & Deprecation Cleanup" (2026-06-16)
+
+**Status:** Released to PyPI 2026-06-16. Minor release on top of v0.7.0. GitHub Release: [v0.8.0](https://github.com/HodeTech/ForgeLM/releases/tag/v0.8.0).
+
+### Summary
+
+v0.8.0 adds standalone model-integrity verification, exposes previously-hardcoded merge and synthetic-data knobs as config fields, hardens two config validators that previously failed silently, and completes the deprecation cadence opened in v0.7.0 by removing `evaluation.staging_ttl_days` and the `--data-audit` CLI flag.
+
+### Highlights
+
+- **`forgelm verify-integrity MODEL_DIR`** — new subcommand and `forgelm.verify_integrity()` / `VerifyIntegrityResult` public API. Re-hashes a trained model directory against its EU AI Act Article 15 `model_integrity.json` SHA-256 manifest and reports `changed` / `removed` / `added` artifacts. Exit `0` (all match) / `1` (mismatch or input error) / `2` (runtime I/O failure); `--output-format json` for CI gates. Bumps `__api_version__` to `1.1.0`.
+- **Config-driven merge hyperparameters** — `merge.ties_trim_fraction`, `merge.dare_drop_rate`, and `merge.dare_seed` expose the TIES/DARE knobs that were previously fixed module constants (defaults unchanged: `0.2`, `0.3`, `42`).
+- **Config-driven synthetic sanity bound** — `synthetic.sanity_failure_rate` (default `0.2`) replaces the hardcoded warn-only failure-rate threshold in `forgelm --generate-data`; independent of `min_success_rate`, which still gates the exit code.
+- **Config validation hardened** — `distributed.strategy` is now a `Literal["deepspeed", "fsdp"]` (an unsupported value such as `horovod` used to validate and then silently run single-GPU). `data.mix_ratio` now rejects non-finite weights (NaN / inf) and must carry exactly one weight per dataset; a length mismatch used to raise no config error and silently fall back to uniform mixing at runtime. Both now fail fast at config time (exit 1).
+- **`training.sample_packing`** becomes a deprecated alias for `training.packing` — it was previously a documented-but-unconsumed no-op field; it now forwards to `packing` with a `DeprecationWarning`. Removal target: `v1.0.0` (removing a YAML field is a MAJOR change — see [docs/standards/release.md](../standards/release.md#deprecation-cadence)).
+
+### Removed
+
+- **`evaluation.staging_ttl_days`** (deprecated in v0.7.0) — use the canonical `retention.staging_ttl_days`; `EvaluationConfig` is `extra="forbid"`, so the legacy key now raises a validation error instead of forwarding. <!-- deprecation-target-ok: historical claim about an unrelated YAML field, caught only by line-window proximity to the deprecation bullet above. -->
+- **`forgelm --data-audit PATH`** CLI flag (deprecated in v0.7.0) — use the first-class `forgelm audit PATH` subcommand (identical behaviour and output). `argparse` now rejects the flag (exit 2).
+- **`cli.legacy_flag_invoked`** audit event — recorded use of the removed `--data-audit` flag; dropped from the audit-event catalog.
+
+### Fixed
+
+- Eval artefact privacy-redaction (in effect since v0.7.0) is now documented in the CHANGELOG: `safety_results.json` / `judge_results.json` omit raw `prompt` / `response` / judge `reason` text unless the opt-in `include_eval_samples` flags are set.
+- A pipeline config combining `pipeline:` + `retention.staging_ttl_days` + any `evaluation:` block no longer raises a false `ConfigError` on the stage-merge round-trip.
+
+### Public surface changes
+
+- New CLI subcommand `forgelm verify-integrity`; new public API `forgelm.verify_integrity()` / `VerifyIntegrityResult`. `__api_version__` bumps `1.0.0 → 1.1.0` (new stable library symbol added to `forgelm.__all__`). `__version__` bumps `0.7.0 → 0.8.0` (MINOR).
+- Schema removal: `evaluation.staging_ttl_days` and `--data-audit PATH` are gone, completing the one-minor warning window opened in v0.7.0.
+
+### Full changelog
+
+See [CHANGELOG.md `[0.8.0]`](../../CHANGELOG.md#080--2026-06-16) for the complete list of additions, changes, deprecations, removals, and fixes.
+
+---
+
+## v0.9.0 — "transformers 5.x Migration & CVE-2026-4372 Fix" (2026-07-05)
+
+**Status:** Released to PyPI 2026-07-05. Minor release on top of v0.8.0. GitHub Release: [v0.9.0](https://github.com/HodeTech/ForgeLM/releases/tag/v0.9.0).
+
+### Summary
+
+v0.9.0 raises the `transformers` dependency floor to `>=5.3.0,<6.0.0` — the first release carrying the fix for **CVE-2026-4372**, a critical `AutoModelForCausalLM.from_pretrained()` remote-code-execution vulnerability — and cascades the co-dependency floors that transformers 5.x requires (`torch`, `huggingface_hub`, `peft`, `accelerate`, `datasets`, `trl`, `requests`). Dropping transformers 4.x support pulls `torch>=2.4.0` along with it, and PyPI publishes no `torch>=2.4` wheel for Intel Mac (x86_64) — **that platform can no longer install ForgeLM's core stack.** Apple Silicon, Linux, and Windows are unaffected.
+
+### Breaking changes
+
+- **transformers 5.x required.** Floor raised to `transformers>=5.3.0,<6.0.0`; transformers 4.x support removed. Cascaded co-dependency floors: `torch>=2.4.0`, `huggingface_hub>=1.3.0,<2.0.0`, `peft>=0.19.0`, `accelerate>=1.4.0`, `datasets>=4.7.0,<6.0.0`, `trl>=1.0.0`, `requests>=2.32.2`.
+- **Intel Mac (x86_64) support dropped.** transformers 5 requires `torch>=2.4`, for which PyPI publishes no x86_64-Darwin wheel, so that platform can no longer install ForgeLM. Apple Silicon, Linux, and Windows are unaffected. The now-moot `numpy<2; darwin x86_64` ABI-guard marker was removed with it.
+- **`from_pretrained` dtype kwarg renamed.** `torch_dtype=` → `dtype=` at the two base-model load sites (`export.py`, `synthetic.py`); `torch_dtype` is a deprecated alias in transformers 5 slated for removal. Behaviour is unchanged.
+- **`safe_serialization=True` dropped** from the three model-save call sites (`export.py`, `merging.py`, `trainer.py`) — safetensors is the enforced default in transformers 5, so the kwarg no longer applies. On-disk output is unchanged.
+
+### Security
+
+- **CVE-2026-4372** — a critical `AutoModelForCausalLM.from_pretrained()` RCE in transformers <5.3.0 (a malicious `config.json` `_attn_implementation_internal` field downloads and executes attacker code, bypassing `trust_remote_code`) — is resolved by the `transformers>=5.3.0` floor above. Two now-inert transformers suppressions in `tools/pip_audit_ignores.yaml` (`CVE-2026-1839`, fixed in 5.0.0rc3; `PYSEC-2025-217` / `CVE-2025-14929`, the X-CLIP RCE) were removed.
+
+### Public surface changes
+
+- `__api_version__` stays at `1.1.0` — no stable library symbol added or changed. `__version__` bumps `0.8.0 → 0.9.0` (MINOR release, though the dropped-platform-support change is breaking in effect for Intel Mac operators — see the Breaking changes section above).
+
+### Full changelog
+
+See [CHANGELOG.md `[0.9.0]`](../../CHANGELOG.md#090--2026-07-05) for the complete list of dependency-floor changes and the CVE fix.
+
+---
+
 ## v0.7.x — "Pipeline Hardening" (Planned)
 
 **Status:** Planned. Focus: [Phase 14.5](phase-14-5-pipeline-hardening.md).  Four review-deferred items from v0.7.0: canonical pipeline manifest hash + non-chain-field tamper detection, per-stage `training_manifest.json` deep-parse validation, webhook `pipeline.*` event vocabulary documentation, `WebhookNotifier._send(**extra)` explicit allowlist.  Targets the v0.7.x patch cycle (v0.7.1 or split across v0.7.1 / v0.7.2 depending on bandwidth).

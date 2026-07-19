@@ -165,10 +165,11 @@ Default workflow for a non-trivial change:
      python3 tools/check_notebook_pins.py --strict && \
      python3 tools/check_usermanual_schema_drift.py --strict && \
      python3 tools/check_deprecation_targets.py --strict && \
+     python3 tools/check_release_record_sync.py --strict && \
      python3 tools/update_site_version.py --check
    ```
 
-   All seventeen must pass (the usermanual-schema-drift guard —
+   All eighteen must pass (the usermanual-schema-drift guard —
    `check_usermanual_schema_drift.py --strict` — validates that every
    fenced YAML key under `docs/usermanuals/` resolves against the real
    `ForgeConfig` schema, catching fabricated-field examples that would
@@ -224,6 +225,16 @@ Default workflow for a non-trivial change:
    (`docs/standards/release.md`) and a due promise is a false one. The
    literal was previously duplicated across ~20 sites and rotted twice
    (v0.9.0 → v0.10.0 → v1.0.0), each retarget leaving stragglers behind.
+   The release-record-sync guard (post-v0.9.0 backlog sweep) enforces the
+   `cut-release` skill's post-release step: every `## [X.Y.Z] — DATE`
+   heading in `CHANGELOG.md` must have a non-planned section in
+   `docs/roadmap/releases.md`, and `docs/roadmap.md`'s `**Released:**`
+   headline must name the newest released version. That step lives after
+   the satisfying part of a release, which is when a checklist stops
+   being read — it was skipped for two consecutive releases (v0.8.0 and
+   v0.9.0), leaving the public roadmap announcing v0.7.0 while PyPI had
+   v0.9.0. A `(Planned)` section is a promise, not a record, and never
+   satisfies a released version.
 
 ## Etiquette when communicating with the user
 

@@ -20,7 +20,15 @@
 
 > **Durum lejantı:** ✅ Yayınlandı (PyPI) · 🟡 main'e indi, publish bekliyor · ⏳ Planlandı
 
-**Yayınlandı:** `v0.5.0` — "Doküman Yutma + Veri Curation Pipeline'ı" — PyPI 2026-04-30 (Faz 11 + 11.5 + 12 + 12.5 birleştirildi).
+**Yayınlandı:** `v0.9.0` — "transformers 5.x Geçişi ve CVE-2026-4372 Düzeltmesi" — PyPI 2026-07-05.  `transformers` alt sınırını `>=5.3.0,<6.0.0`'a yükseltir — kritik bir `from_pretrained` remote-code-execution açığı olan **CVE-2026-4372**'yi düzeltir — ve transformers 5.x'in gerektirdiği bağımlı paket alt sınırlarını (`torch`, `huggingface_hub`, `peft`, `accelerate`, `datasets`, `trl`, `requests`) buna göre yükseltir.  Intel Mac (x86_64) desteğini kaldırır — PyPI bu platform için `torch>=2.4` wheel'i yayınlamıyor; Apple Silicon, Linux ve Windows etkilenmez.  Bir bağımlılık-göçü sürümü — yeni bir roadmap fazı eklemez.  Bkz. [releases.md](roadmap/releases.md#v090--transformers-5x-migration--cve-2026-4372-fix-2026-07-05).
+
+**Önceki sürüm:** `v0.8.0` — "Model Bütünlüğü Doğrulaması ve Deprecation Temizliği" — PyPI 2026-06-16.  `forgelm verify-integrity`'i ekler (eğitilmiş bir model dizinini Madde 15 `model_integrity.json` manifestine karşı yeniden hash'ler) ve config-driven merge (`merge.ties_trim_fraction` / `dare_drop_rate` / `dare_seed`) ile synthetic-sanity (`synthetic.sanity_failure_rate`) ayarlarını ekler; `distributed.strategy` / `data.mix_ratio` doğrulamasını sertleştirir; `evaluation.staging_ttl_days` ve `--data-audit` CLI flag'ini kaldırarak v0.7.0'da başlayan deprecation cadence'ini tamamlar.  Bir bakım sürümü — yeni bir roadmap fazı eklemez.  Bkz. [releases.md](roadmap/releases.md#v080--model-integrity-verification--deprecation-cleanup-2026-06-16).
+
+**Önceki sürüm:** `v0.7.0` — "Faz 14 Çok Aşamalı Pipeline Zincirleri" — PyPI 2026-05-15.  2 veya daha fazla eğitim aşamasını (SFT → DPO → GRPO vb.) otomatik zincirlenen model yolları, aşama bazında kapılar, crash-safe resume ve chain-seviyesinde bir Annex IV manifestiyle tek bir config-driven run'da zincirler.  Ayrıca kritik bir DNS-rebinding TOCTOU SSRF sertleştirmesi (issue #14) içerir.  Bkz. [completed-phases.md](roadmap/completed-phases.md#phase-14--multi-stage-pipeline-chains-v070).
+
+**Önceki sürüm:** `v0.6.0` — "Faz 15 Yutma Pipeline'ı Güvenilirliği" (2026-05-11).  2026-05-11 pilotunun PDF / DOCX / EPUB / TXT / Markdown yutma ile playground notebook'unda açığa çıkardığı sessiz-başarısızlık boşluklarını kapatır — Wave 1 + Wave 2 + 5 review-absorption turu tek sürümde.  Tüm ingest-time koruma listesi için [completed-phases.md](roadmap/completed-phases.md#phase-15--ingestion-pipeline-reliability-v060)'e bakın.
+
+**Önceki sürüm:** `v0.5.0` — "Doküman Yutma + Veri Curation Pipeline'ı" — PyPI 2026-04-30 (Faz 11 + 11.5 + 12 + 12.5 birleştirildi).
 
 - **Faz 11** — `forgelm ingest` (PDF / DOCX / EPUB / TXT / Markdown → SFT'ye uygun JSONL) + `forgelm audit` (uzunluk / dil / near-duplicate / cross-split sızıntı / Luhn + TC Kimlik validatörlü PII regex) + EU AI Act Madde 10 governance entegrasyonu.
 - **Faz 11.5** — operasyonel cila: LSH bantlı near-duplicate tespiti, streaming JSONL okuyucu, token-aware `--chunk-tokens`, PDF sayfa-seviyesi header/footer dedup, `forgelm audit` subcommand'i, PII şiddet katmanları, atomic audit yazımı, wizard "ingest first" girişi.
@@ -29,19 +37,15 @@
 
 Başlangıçta dört ardışık PyPI tag'i (`v0.5.0` / `v0.5.1` / `v0.5.2` / `v0.5.3`) olarak planlandı, dört faz tek tutarlı yüzey (yut → cila → olgunlaş → cila) oluşturduğu için tek kapsamlı `v0.5.0` release'inde birleştirildi.
 
-**PyPI'deki son sürüm:** `v0.7.0` — "Faz 14 Çok Aşamalı Pipeline Zincirleri" (2026-05-15).  Tek YAML, tek CLI çağrısı, tüm zinciri kapsayan tek bir Annex IV manifesti: SFT → DPO → GRPO (veya desteklenen trainer'ların herhangi bir dizisi) otomatik zincirlenen model yolları, aşama bazında kapılar (auto-revert / human-approval / safety), crash-safe state ve aynı top-level `run_id`'yi paylaşan 7 yeni pipeline-kapsamlı audit olayı.  Ayrıca kritik bir DNS-rebinding TOCTOU SSRF sertleştirmesi yayınlandı (issue #14).  `pipeline:` bloğu olmayan tek-aşama config'leri `forgelm/trainer.py`'a v0.6.0 ile byte-byte aynı şekilde ulaşır.  Bkz. [completed-phases.md#phase-14-multi-stage-pipeline-chains-v070](roadmap/completed-phases.md#phase-14--multi-stage-pipeline-chains-v070).
+**Daha öncesi:** `v0.4.5` — Quickstart Katmanı (2026-04-26); `v0.4.0` — Post-Training Tamamlama (2026-04-26).
 
-**Önceki sürüm:** `v0.6.0` — "Faz 15 Yutma Pipeline'ı Güvenilirliği" (2026-05-11).  2026-05-11 pilotunun PDF / DOCX / EPUB / TXT / Markdown yutma ile playground notebook'unda açığa çıkardığı sessiz-başarısızlık boşluklarını kapatır — Wave 1 + Wave 2 + 5 review-absorption turu tek sürümde.  Tüm ingest-time koruma listesi için [completed-phases.md](roadmap/completed-phases.md#phase-15--ingestion-pipeline-reliability-v060)'e bakın.
-
-**Daha öncesi:** `v0.5.0` — Doküman Yutma + Veri Curation Pipeline'ı (2026-04-30); `v0.4.5` — Quickstart Katmanı (2026-04-26); `v0.4.0` — Post-Training Tamamlama (2026-04-26).
-
-**Güncel durum:** PyPI'da `v0.7.0` üzerinden 21 faz (1, 2, 2.5, 3, 4, 5, 5.5, 6, 7, 8, 9, 10, 10.5, 11, 11.5, 12, 12.5, 12.6, 14, 15, 22) yayınlandı.  Faz 13 adoption gate'leri karşılandığında ayrıca `v0.6.0-pro` olarak yayınlanır.
+**Güncel durum:** PyPI'da `v0.7.0` üzerinden 21 faz (1, 2, 2.5, 3, 4, 5, 5.5, 6, 7, 8, 9, 10, 10.5, 11, 11.5, 12, 12.5, 12.6, 14, 15, 22) yayınlandı; `v0.8.0` ve `v0.9.0` yeni bir roadmap fazı eklemeyen sonraki bakım / bağımlılık-göçü sürümleridir — kapsamlarının tamamı için [releases.md](roadmap/releases.md)'e bakın.  Faz 13 adoption gate'leri karşılandığında ayrıca `v0.6.0-pro` olarak yayınlanır.
 
 > **Faz 12.6 görev / alt-görev iki eksenli not:** Faz 12.6 kendi içinde 38 görevlik bir kapanış döngüsüdür (Görev 1-38) ve [`roadmap/completed-phases.md`](roadmap/completed-phases.md) dosyasında izlenir; her wave'in PR açıklaması o wave'in kapsadığı görev delta'sını taşır.
 
 ## Planlanan işlerin özeti
 
-> **Not:** Oklar yayınlama sırasını gösterir, faz numaralarını değil (Faz 15 v0.6.0 ile yayınlandı; Faz 14 v0.7.0 ile yayınlandı (Faz 15 önceliği aldıktan sonra); Faz 13 Pro katmanında ayrıca daha sonra yayınlanır).
+> **Not:** Oklar yayınlama sırasını gösterir, faz numaralarını değil (Faz 15 v0.6.0 ile yayınlandı; Faz 14 v0.7.0 ile yayınlandı (Faz 15 önceliği aldıktan sonra); v0.8.0 ve v0.9.0 yeni faz eklemeyen bakım / bağımlılık-göçü sürümleridir; Faz 13 Pro katmanında ayrıca daha sonra yayınlanır).
 
 ```mermaid
 graph LR
@@ -67,6 +71,8 @@ graph LR
     P126 -.-> V25[v0.5.5]
     P15 -.-> V23[v0.6.0 ✅ Yayınlandı]
     P14 -.-> V27[v0.7.0 ✅ Yayınlandı]
+    V27 -.-> V28[v0.8.0 ✅ Yayınlandı]
+    V28 -.-> V29[v0.9.0 ✅ Yayınlandı]
     P145 -.-> V275[v0.7.x]
     P13 -.-> V3[v0.6.0-pro]
 
@@ -98,7 +104,7 @@ docs/
     ├── completed-phases.md                     # Faz 1-12.6 arşivi (detaylı, İngilizce) — Faz 10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 12.6 inline gömüldü (sırasıyla v0.4.0 / v0.4.5 / v0.5.0 / v0.5.5)
     ├── phase-13-pro-cli.md                     # Planlandı — v0.6.0-pro (gated)
     ├── phase-14-5-pipeline-hardening.md        # Planlandı — v0.7.x patch döngüsü (Faz 14'ten 4 review-deferred öğe)
-    ├── releases.md                             # v0.3.0 → v0.7.0 sürüm notları
+    ├── releases.md                             # v0.3.0 → v0.9.0 sürüm notları
     └── risks-and-decisions.md                  # Risk matrisi, fırsatlar, rekabet analizi, karar günlüğü
 ```
 
