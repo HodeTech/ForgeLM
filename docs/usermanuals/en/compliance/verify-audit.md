@@ -89,13 +89,21 @@ A chain break prints the 1-based line number:
 FAIL at line 53: prev_hash mismatch — chain break suggests entry was inserted, removed, or reordered
 ```
 
-A bare reason without a line number means the failure happened before the chain walk (e.g. missing genesis manifest, JSON decode error on line 1):
+Genesis-manifest failures are attributed to line 1 — the entry the manifest pins — so they also carry a line number:
 
 ```text
-FAIL: manifest present but unreadable at 'checkpoints/run/audit_log.jsonl.manifest.json': …
+FAIL at line 1: manifest present but unreadable at 'checkpoints/run/audit_log.jsonl.manifest.json': …
 ```
 
-Either way, the log file itself was found and read — so this is an integrity verdict, and the exit code is `6`, not `1`. Investigate before treating the log as evidence. `1` is reserved for the case where the verifier never got as far as reading the log at all (missing path, `--require-hmac` without a secret).
+(A manifest that is *absent* is not a failure: the verifier logs a warning that truncate-and-resume detection is limited to in-chain hash continuity, and continues.)
+
+A bare reason without any line number means the failure is a property of the file as a whole rather than of one entry — through the CLI the reachable case is a log containing non-UTF-8 bytes:
+
+```text
+FAIL: audit log is not valid UTF-8: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte
+```
+
+In every case above the log file itself was found and read — so this is an integrity verdict, and the exit code is `6`, not `1`. Investigate before treating the log as evidence. `1` is reserved for the case where the verifier never got as far as reading the log at all (missing path, `--require-hmac` without a secret).
 
 ### Exit-code summary
 

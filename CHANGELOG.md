@@ -15,6 +15,14 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   validates whatever is installed in site-packages rather than the working
   tree. A stale non-editable install made that step report success against a
   package weeks older than the checkout.
+- **`tools/check_cli_exit_code_prose.py`** — fails when a `--help` string in
+  `forgelm/cli/_parser.py` claims an exit code the CLI does not actually
+  return. `--help` is the most authoritative place an operator reads the
+  contract, and it was the one surface the `EXIT_INTEGRITY_FAILURE` change
+  missed: the parser still told operators that tampering exits `1`, and one
+  line still described the constant as deferred to a version that had already
+  shipped it. The existing CLI-help guard could not catch this because it
+  validates invocation *syntax*, not exit-code *prose*.
 - **`tools/check_import_origin.py`** — fails when `import forgelm` resolves
   outside the checkout, catching a stale or shadowing install before it can
   produce a false-green gauntlet run. It leads the gauntlet rather than

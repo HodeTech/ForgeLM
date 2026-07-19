@@ -324,12 +324,21 @@ def verify_gguf(path: str) -> VerifyGgufResult:
        wrong path or a corrupted download).
     2. **Metadata block** (optional, when the ``gguf`` package is
        installed): parse the metadata + tensor descriptors via the
-       upstream reader; mismatch means the writer crashed mid-stream
-       or the file was truncated.
+       upstream reader; a parse failure means either the file was
+       truncated / corrupted, or the installed ``gguf`` release cannot
+       read this file's format revision.
     3. **SHA-256 sidecar** (optional, when ``<path>.sha256`` exists):
        recompute the file hash and compare to the sidecar's contents.
        The forgelm exporter writes this sidecar by default; mismatch
        means the file was modified after export.
+
+    A metadata-parse failure deliberately does **not** short-circuit the
+    sidecar comparison (D1-07).  The sidecar is the stronger evidence: it
+    can prove the file is byte-identical to what was exported, which
+    settles the corruption-vs-parser-incompatibility ambiguity that the
+    metadata error alone leaves open.  The two signals are therefore both
+    collected and reported together, and
+    :func:`is_gguf_integrity_failure` decides the verdict from the pair.
 
     Returns the structured result; raises :class:`OSError` for I/O
     failures so the dispatcher can surface them as ``EXIT_TRAINING_ERROR``.
@@ -337,6 +346,7 @@ def verify_gguf(path: str) -> VerifyGgufResult:
     checks: Dict[str, Any] = {
         "magic_ok": False,
         "metadata_parsed": False,
+        "metadata_error": None,
         "sidecar_present": False,
         "sidecar_match": None,
     }
@@ -352,13 +362,12 @@ def verify_gguf(path: str) -> VerifyGgufResult:
 
     metadata_check = _maybe_parse_metadata(path)
     checks["metadata_parsed"] = metadata_check["parsed"]
-    if metadata_check.get("error"):
-        # Metadata corruption is a real integrity problem.
-        return VerifyGgufResult(
-            valid=False,
-            reason=f"GGUF metadata block could not be parsed: {metadata_check['error']}",
-            checks=checks,
-        )
+    metadata_error = metadata_check.get("error")
+    checks["metadata_error"] = metadata_error
+    # NOTE: no early return here.  See the "does not short-circuit" note in
+    # the docstring — the sidecar below can prove the bytes are exactly what
+    # was exported, which downgrades this from "corrupted artefact" to
+    # "your gguf package cannot read this file".
     if metadata_check.get("tensor_count") is not None:
         checks["tensor_count"] = metadata_check["tensor_count"]
 
@@ -399,6 +408,28 @@ def verify_gguf(path: str) -> VerifyGgufResult:
                 checks=checks,
             )
         checks["sidecar_match"] = True
+
+    if metadata_error:
+        # Every comparison that *could* run has now run.  Report the parse
+        # failure alongside what the sidecar established, so the operator
+        # message says which of the two situations they are in.
+        if checks["sidecar_match"]:
+            detail = (
+                "  The SHA-256 sidecar matches, so the file is byte-identical to what was "
+                "exported — this is almost certainly a `gguf` package version that cannot "
+                "read this file's format revision, not a corrupted artifact.  Upgrade `gguf` "
+                "and re-run before treating it as a tampering event."
+            )
+        else:
+            detail = (
+                "  No SHA-256 sidecar was available to rule out corruption, so the file must "
+                "be treated as truncated or damaged."
+            )
+        return VerifyGgufResult(
+            valid=False,
+            reason=f"GGUF metadata block could not be parsed: {metadata_error}.{detail}",
+            checks=checks,
+        )
 
     return VerifyGgufResult(
         valid=True,
@@ -456,14 +487,25 @@ def is_gguf_integrity_failure(result: VerifyGgufResult) -> bool:
     - ``magic_ok`` false → the first four bytes are not ``b"GGUF"``.  The
       file is not a GGUF at all; the overwhelmingly common cause is the
       operator naming the wrong path.  **Input error → exit 1.**
-    - magic OK but no sidecar recorded → the run stopped at the metadata
-      layer, i.e. the file *is* a GGUF whose metadata block could not be
-      parsed.  The artefact is structurally broken.  **Integrity → exit 6.**
     - sidecar present but ``sha256_expected`` is not a 64-char hex digest
       → the sidecar itself is unusable (empty, ``TODO``, truncated paste).
       Nothing was compared.  **Input error → exit 1.**
     - sidecar present with a well-formed digest that does not match →
-      the file changed after export.  **Integrity → exit 6.**
+      the file changed after export.  **Integrity → exit 6.**  This holds
+      whether or not the metadata block also failed to parse: a checksum
+      mismatch is the strongest evidence available and it dominates.
+    - sidecar present with a well-formed digest that **matches**, yet the
+      result is still invalid → the only remaining failure is a metadata
+      parse error, and the checksum has just proven the file is
+      byte-identical to what was exported.  Nothing was tampered with; the
+      overwhelmingly likely cause is a ``gguf`` package too old for this
+      file's format revision.  **Input error → exit 1** (D1-07: exit 6
+      means "page the artefact owner", and a library-version mismatch must
+      never trigger that).
+    - magic OK, no usable sidecar, and still invalid → a GGUF whose
+      metadata block could not be parsed, with nothing available to rule
+      out corruption.  The artefact must be treated as structurally
+      broken.  **Integrity → exit 6.**
     """
     if result.valid:
         return False
@@ -474,7 +516,15 @@ def is_gguf_integrity_failure(result: VerifyGgufResult) -> bool:
         # ``sha256_expected`` is only absent when the sidecar branch never
         # ran, which ``sidecar_present`` already rules out; default to ""
         # so a hand-built result cannot raise here.
-        return bool(_SHA256_HEX_RE.match(checks.get("sha256_expected") or ""))
+        if not _SHA256_HEX_RE.match(checks.get("sha256_expected") or ""):
+            return False
+        # Read the recorded comparison outcome rather than re-deriving it.
+        # ``is not True`` rather than ``is False`` so an incomplete result
+        # (``sidecar_match`` absent, which ``verify_gguf`` never produces
+        # but a hand-built result could) fails *closed* onto the tamper
+        # verdict.  Only a positively-recorded match — the checksum proving
+        # the bytes are what was exported — earns the softer exit 1.
+        return checks.get("sidecar_match") is not True
     return True
 
 
@@ -665,11 +715,55 @@ def is_model_integrity_failure(result: VerifyIntegrityResult) -> bool:
     return not result.valid and bool(result.changed or result.removed or result.added)
 
 
+# ---------------------------------------------------------------------------
+# Audit-log verification classification
+# ---------------------------------------------------------------------------
+#
+# The verifier itself stays in ``forgelm.compliance`` (see the module
+# docstring above for why).  Only the *classification* predicate lives
+# here, next to its three siblings, so the four verify-* subcommands read
+# their exit-code decision from one place.
+
+
+def is_audit_integrity_failure(failure_kind: str | None) -> bool:
+    """Return ``True`` when an audit-log failure is a **tamper** verdict.
+
+    Completes the set alongside :func:`is_annex_iv_integrity_failure`,
+    :func:`is_gguf_integrity_failure` and :func:`is_model_integrity_failure`.
+    ``verify-audit`` previously had no predicate at all and blanket-mapped
+    every ``valid=False`` to exit 6, leaning entirely on the CLI's
+    readability probe having pre-caught the non-integrity cases — so a
+    failure mode the probe missed (a character device, whose ``open``
+    succeeds and whose verdict is "not found") was reported to CI as
+    tampering (F-4 / D1-09).
+
+    - **Integrity failure** (``True`` → exit 6): the log was located and
+      read end-to-end, and the SHA-256 chain, an HMAC tag, the genesis
+      manifest, or the UTF-8 encoding of the record itself did not hold up.
+    - **Input / runtime error** (``False`` → exit 1 or 2): there was no log
+      at that path, the option combination was impossible, or the read
+      failed part-way.  Nothing was compared.
+
+    Takes the ``AUDIT_FAILURE_*`` token from
+    :func:`forgelm.compliance._verify_audit_log_classified` (``None`` for a
+    passing verification) rather than a result object, because that
+    classification deliberately does not live on the stable-tier
+    :class:`~forgelm.compliance.VerifyResult` — see the constants for why.
+    The three sibling predicates read their results' typed fields for the
+    same reason this one reads a token: never operator-facing ``reason``
+    prose, so rewording a message cannot move a verdict between exit codes.
+    """
+    from forgelm.compliance import AUDIT_FAILURE_ENCODING, AUDIT_FAILURE_INTEGRITY
+
+    return failure_kind in (AUDIT_FAILURE_INTEGRITY, AUDIT_FAILURE_ENCODING)
+
+
 __all__ = [
     "VerifyAnnexIVResult",
     "VerifyGgufResult",
     "VerifyIntegrityResult",
     "is_annex_iv_integrity_failure",
+    "is_audit_integrity_failure",
     "is_gguf_integrity_failure",
     "is_model_integrity_failure",
     "verify_annex_iv_artifact",

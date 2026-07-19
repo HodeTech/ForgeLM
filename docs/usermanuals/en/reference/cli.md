@@ -200,7 +200,7 @@ $ forgelm verify-audit PATH/TO/audit_log.jsonl --hmac-secret-env FORGELM_AUDIT_S
 $ forgelm verify-audit PATH/TO/audit_log.jsonl --require-hmac
 ```
 
-Validates monotonic timestamps, `prev_hash` chain integrity, `seq` gap detection, and (when configured) HMAC signatures. Exit `0` on a valid chain; non-zero with a structured error envelope on tamper detection.
+Validates monotonic timestamps, `prev_hash` chain integrity, `seq` gap detection, and (when configured) HMAC signatures. Exit `0` on a valid chain; exit `6` with a structured error envelope on tamper detection (chain break, HMAC mismatch, genesis-manifest mismatch); exit `1` when the verifier never got to read the log (missing path, `--require-hmac` without a secret); exit `2` on a genuine runtime I/O failure. See [Verify Audit](#/compliance/verify-audit).
 
 ## Verify model integrity: `forgelm verify-integrity`
 
@@ -209,7 +209,7 @@ $ forgelm verify-integrity MODEL_DIR
 $ forgelm verify-integrity MODEL_DIR --output-format json
 ```
 
-Reads `<MODEL_DIR>/model_integrity.json` (written by the compliance export at training time) and re-computes the SHA-256 of every recorded artifact. Reports files that were **changed**, **removed**, or **added** since the manifest was generated. The manifest file itself is excluded from the walk. Exit `0` when every recorded artifact is present and unchanged and no extra files exist; exit `1` on any mismatch or input error; exit `2` on a genuine runtime I/O failure.
+Reads `<MODEL_DIR>/model_integrity.json` (written by the compliance export at training time) and re-computes the SHA-256 of every recorded artifact. Reports files that were **changed**, **removed**, or **added** since the manifest was generated. The manifest file itself is excluded from the walk. Exit `0` when every recorded artifact is present and unchanged and no extra files exist; exit `6` on any mismatch (changed / removed / added file — the manifest parsed and the walk ran); exit `1` on an input error that returns before anything is hashed (missing path, manifest not found, malformed JSON, out-of-tree manifest entry); exit `2` on a genuine runtime I/O failure. See [Verify Integrity](#/compliance/verify-integrity).
 
 ## Authentication
 
@@ -247,12 +247,18 @@ There is no config-time check that the named env var actually resolves — an un
 | 3 | Auto-revert / regression |
 | 4 | Awaiting human approval (training pipeline) |
 | 5 | Wizard cancelled (operator declined to save / non-tty refusal) |
+| 6 | Integrity failure on one of the four `verify-*` subcommands — the artefact was read and its hash / chain / manifest comparison failed |
 
 `argparse` usage errors (mistyped flag, missing required argument, bad `choices`,
 or a type-validator boundary) exit **2** — argparse's own `error()` convention —
 while config / semantic validation reached *after* parsing exits **1**. A Ctrl+C
 is signal-derived 130 but is clamped to **2** (`EXIT_TRAINING_ERROR`) before the
-process exits, so no exit code outside the public `0–5` set is ever returned.
+process exits, so no exit code outside the public `0–6` set is ever returned.
+
+For the four `verify-*` subcommands, `1` and `6` split on one question: did the
+verifier get far enough to compare anything? Nothing compared (missing path,
+malformed manifest, a file that isn't a GGUF at all) is **1**; compared and
+disagreed is **6**.
 
 See [Exit Codes](#/reference/exit-codes) for the full contract.
 

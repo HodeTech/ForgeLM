@@ -645,11 +645,13 @@ def _add_verify_audit_subcommand(subparsers) -> None:
     :class:`forgelm.compliance.AuditLogger`. Exit codes:
 
     - ``0`` — chain (and HMAC, if checked) intact
-    - ``1`` — operator-actionable failure: chain broken / HMAC mismatch /
-      manifest mismatch, file missing / unreadable, or option error (e.g.
-      ``--require-hmac`` without a configured secret env var). A dedicated
-      ``EXIT_INTEGRITY_FAILURE`` constant is deferred to v0.6.x to avoid
-      expanding the public 0/1/2/3/4 surface.
+    - ``1`` — the comparison never ran: log file missing, or an option
+      error (``--require-hmac`` without a configured secret env var)
+    - ``2`` — the log exists but could not be read (permission denied,
+      mid-read I/O failure)
+    - ``6`` — ``EXIT_INTEGRITY_FAILURE``: the log was read and did not
+      verify — chain break, HMAC mismatch, a line missing its ``_hmac``
+      tag under ``--require-hmac``, or a genesis-manifest mismatch
     """
     p = subparsers.add_parser(
         "verify-audit",
@@ -659,8 +661,9 @@ def _add_verify_audit_subcommand(subparsers) -> None:
             "(EU AI Act Article 12 record-keeping). When the operator's "
             "FORGELM_AUDIT_SECRET is set in the environment, HMAC tags on "
             "each line are also verified. Designed for CI/CD pipelines: "
-            "exit code 0 means the chain is intact, 1 means tampering or "
-            "corruption was detected."
+            "exit code 0 means the chain is intact, 6 means tampering or "
+            "corruption was detected, and 1 means the chain was never "
+            "checked (log missing, or an option error)."
         ),
     )
     p.add_argument(
@@ -683,9 +686,10 @@ def _add_verify_audit_subcommand(subparsers) -> None:
         "--require-hmac",
         action="store_true",
         help=(
-            "Strict mode: exit 1 if the configured env var is unset, and exit 1 "
-            "if any line lacks an _hmac field. Use this in regulated CI pipelines "
-            "where every entry must be HMAC-authenticated."
+            "Strict mode: exit 1 if the configured env var is unset (nothing "
+            "could be authenticated), and exit 6 if any line lacks an _hmac "
+            "field. Use this in regulated CI pipelines where every entry must "
+            "be HMAC-authenticated."
         ),
     )
     # ``--output-format json`` emits the {success, valid, entries_count,
@@ -783,7 +787,9 @@ def _add_verify_annex_iv_subcommand(subparsers) -> None:
             "Reads an Annex IV technical-documentation JSON file, validates "
             "the nine required field categories per Annex IV §1-9, and "
             "recomputes the manifest hash to detect post-generation tampering. "
-            "Exits 0 on valid; 1 on missing field or hash mismatch."
+            "Exits 0 on valid; 1 when a required field is missing or still "
+            "holds a template placeholder; 6 when every field is populated "
+            "but the manifest hash no longer matches (edited after generation)."
         ),
     )
     p.add_argument(
@@ -874,8 +880,10 @@ def _add_verify_gguf_subcommand(subparsers) -> None:
             "Three-layer GGUF integrity check: 4-byte `GGUF` magic header, "
             "metadata block parse via the optional `gguf` package, and a "
             "SHA-256 comparison against `<path>.sha256` sidecar (when "
-            "present).  Exits 0 on valid; 1 on magic / metadata / sha "
-            "mismatch."
+            "present).  Exits 0 on valid; 1 when the file is not a GGUF at "
+            "all or the sidecar is not a 64-char hex digest; 6 when a real "
+            "GGUF fails its own integrity check (unparsable metadata block, "
+            "SHA-256 mismatch)."
         ),
     )
     p.add_argument("path", help="Path to the GGUF model file.")
@@ -892,7 +900,9 @@ def _add_verify_integrity_subcommand(subparsers) -> None:
             "compliance export), recomputes the SHA-256 of every recorded "
             "artifact, and reports any file that was changed, removed, or "
             "added since the manifest was generated.  Exits 0 when all "
-            "artifacts match; 1 on any mismatch or missing/malformed manifest."
+            "artifacts match; 6 when any artifact was changed, removed, or "
+            "added; 1 when the manifest is missing or malformed and nothing "
+            "could be compared."
         ),
     )
     p.add_argument("path", help="Path to the model directory containing model_integrity.json.")

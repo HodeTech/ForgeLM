@@ -72,7 +72,7 @@ ForgeLM/
 │   ├── safety.py             # Güvenlik değerlendirme (Llama Guard, S1-S14)
 │   ├── judge.py              # LLM-Hakim (API + yerel)
 │   ├── compliance.py         # EU AI Act uyumluluk + AuditLogger + kaynak takibi
-│   ├── verify.py            # Annex IV / GGUF / model-bütünlük doğrulama primitifleri
+│   ├── verify.py             # Annex IV / GGUF / model-bütünlük doğrulama primitifleri
 │   ├── model_card.py         # HF uyumlu model kartı üretimi
 │   ├── merging.py            # Model birleştirme (TIES/DARE/SLERP/linear)
 │   ├── synthetic.py          # Sentetik veri üretimi (öğretmen→öğrenci)

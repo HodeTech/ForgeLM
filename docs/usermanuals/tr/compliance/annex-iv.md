@@ -10,7 +10,7 @@ description: EU AI Act Annex IV teknik dokümantasyon artifact'ını doğrulayı
 ## Ne zaman kullanılır
 
 - **Bir Annex IV paketini "denetlemeye hazır" saymadan önce.** Temiz bir çıkış, bir düzenleyiciye veya notified body'ye verilmesi gereken minimum şema-tamamlama sinyalidir.
-- **Eğitim sonrası CI kapısında.** Annex IV emit eden her pipeline'dan sonra çalıştırın; çıkış `1`'de yayını başarısız sayın.
+- **Eğitim sonrası CI kapısında.** Annex IV emit eden her pipeline'dan sonra çalıştırın; sıfırdan farklı her çıkışta yayını başarısız sayın — `6` (artifact okundu ve manifest hash'i eşleşmiyor: tahrifat) da `1` (gerekli alanlar hiç doldurulmamış ya da dosya hiç ayrıştırılamamış) da yayını bloklamalıdır. Tam sözleşme için [Çıkış Kodları](#/reference/exit-codes) sayfasına bakın.
 - **Üçüncü-taraf bir trainer'dan Annex IV alındığında.** Gönderilen ile imzalanan arasındaki sapmayı tespit etmek için manifest hash'ini yeniden hesaplayın.
 - **Arşivlenmiş paketler genelinde periyodik olarak.** Geçmiş Annex IV dosyaları üzerinde gece taraması, sessiz arşiv-sonrası düzenlemeleri ortaya çıkarır.
 
@@ -31,7 +31,7 @@ sequenceDiagram
     Verify->>Verify: compute_annex_iv_manifest_hash(artifact)
     Verify->>Verify: metadata.manifest_hash ile karşılaştır
     alt hash uyuşmazlığı
-        Verify-->>CI: çıkış 1 (tahrifat tespit edildi)
+        Verify-->>CI: çıkış 6 (tahrifat tespit edildi)
     end
     Verify-->>CI: çıkış 0 (artifact geçerli)
 ```
@@ -100,8 +100,9 @@ OK: …/annex_iv_metadata.json
 | Kod | Anlam |
 |---|---|
 | `0` | Tüm §1-9 alanları doldurulmuş VE (mevcutsa) manifest hash'i eşleşiyor. |
-| `1` | Eksik alan, manifest uyuşmazlığı, bozuk JSON veya nesne olmayan kök (validation failure — `valid=False`). |
-| `2` | Dosya bulunamadı veya okunamadı (I/O hatası — argüman ya da ortam hatası). |
+| `1` | Hiçbir şey karşılaştırılmadı: gerekli bir §1-9 alanı eksik / boş, kök bir JSON nesnesi değil, JSON bozuk ya da geçerli UTF-8 değil veya yol yok / normal bir dosya değil. Operatörün müdahale etmesi gerekir — artifact mevcut hâliyle Annex IV açısından tam değildir. |
+| `2` | Mevcut ve erişilebilir bir dosyada gerçek çalışma-zamanı I/O hatası (okuma sırasında izin reddi, okuma hatası). Yeniden denenebilir. |
+| `6` | Bütünlük hatası: tüm §1-9 alanları dolu, artifact bir `metadata.manifest_hash` taşıyor ve yeniden hesaplanan hash bununla uyuşmuyor. Belge üretimden sonra düzenlenmiştir — bunu bir yapılandırma düzeltmesi değil, güvenlik olayı olarak ele alın. |
 
 ## Sık hatalar
 
@@ -118,7 +119,7 @@ OK: …/annex_iv_metadata.json
 :::
 
 :::tip
-**Doğrulayıcıyı CI'da sert bir kapı olarak sabitleyin.** Annex IV üreten her pipeline'dan sonra `forgelm verify-annex-iv --output-format json`'u bağlayın; metin ayrıştırmadan yayını başarısız etmek için `jq -e '.valid'`'e boruyla bağlayın.
+**Doğrulayıcıyı CI'da sert bir kapı olarak sabitleyin.** Annex IV üreten her pipeline'dan sonra `forgelm verify-annex-iv --output-format json`'u bağlayın; metin ayrıştırmadan yayını başarısız etmek için `jq -e '.valid'`'e boruyla bağlayın. Bunun yerine süreç çıkış koduna göre kapı kuruyorsanız sıfırdan farklı olmasına bakın — yalnızca `== 1` kontrolü, tahrif edilmiş bir artifact'ı (çıkış `6`) geçirir.
 :::
 
 ## Bkz.
@@ -127,4 +128,5 @@ OK: …/annex_iv_metadata.json
 - [Audit Log](#/compliance/audit-log) — append-only event log; `compliance.artifacts_exported` (Madde 11 + Annex IV) bu doğrulayıcının üretici tarafındaki muadilidir.
 - [Audit Log Doğrulama](#/compliance/verify-audit) — audit log için kardeş doğrulayıcı.
 - [GGUF Doğrulama](#/deployment/verify-gguf) — deployment-bütünlük yüzeyindeki kardeş doğrulayıcı.
+- [Çıkış Kodları](#/reference/exit-codes) — `0/1/2/3/4/5/6` kamuya açık sözleşmesi; dört `verify-*` alt komutunun paylaştığı `1` ile `6` ayrımı dâhil.
 - [`verify_annex_iv_subcommand.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/verify_annex_iv_subcommand.md) — tam bayrak tablosu ve kütüphane-sembol atıfları içeren referans doc (GitHub kaynağı).

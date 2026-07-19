@@ -119,7 +119,7 @@ forgelm doctor - environment check
 Summary: 11 pass, 0 warn, 0 fail.
 ```
 
-> Yukarıda bazı `extras.*` satırları kısalık için atlandı; `pyproject.toml`'daki `[project.optional-dependencies]` içindeki her extra kendi satırını alır (bu yazı itibarıyla dokuz tane).
+> Yukarıda bazı `extras.*` satırları kısalık için atlandı; `forgelm doctor` prob edilen her extra için bir satır yazar (bu yazı itibarıyla dokuz tane). `pyproject.toml`'daki `[project.optional-dependencies]` içindeki her girdi bir satır almaz: `merging` bilinçli olarak dışarıda bırakılmıştır çünkü model birleştirme çekirdek bağımlılıklarla çalışır; yalnızca araç zinciri için olan `dev` / `security` / `chat` extra'larının da probu yoktur.
 
 Anahtar kontroller:
 

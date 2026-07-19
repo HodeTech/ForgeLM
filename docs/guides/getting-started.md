@@ -59,7 +59,7 @@ forgelm doctor - environment check
 Summary: 9 pass, 2 warn, 0 fail.
 ```
 
-> Some `extras.*` rows are omitted above for brevity — every extra in `pyproject.toml`'s `[project.optional-dependencies]` gets its own row (nine as of this writing); run `forgelm doctor` locally to see the full list for your install.
+> Some `extras.*` rows are omitted above for brevity — `forgelm doctor` emits one row per probed extra (nine as of this writing). Not every entry in `pyproject.toml`'s `[project.optional-dependencies]` gets one: `merging` is deliberately excluded because model merging runs on the core dependencies, and the tooling-only `dev` / `security` / `chat` extras have no probe either. Run `forgelm doctor` locally to see the full list for your install.
 
 **What each probe means:**
 

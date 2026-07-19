@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import signal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1947,3 +1949,487 @@ def forgelm_verify_path() -> str:
     import forgelm.verify as _verify_mod
 
     return _verify_mod.__file__ or ""
+
+
+# ---------------------------------------------------------------------------
+# verify-audit: the structural predicate, the readability probe, and the
+# single exit-decision point (F-4 / D1-09 / T-02 / F1 / F2 / T-05).
+# ---------------------------------------------------------------------------
+
+
+def _write_chained_log(tmp_path: Path, monkeypatch) -> Path:
+    """Write a two-entry audit log with a broken hash chain on line 2."""
+    from forgelm.compliance import AuditLogger
+
+    monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+    audit_logger = AuditLogger(str(tmp_path))
+    audit_logger.log_event("test.event.0")
+    audit_logger.log_event("test.event.1")
+    log_path = tmp_path / "audit_log.jsonl"
+
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    entry = json.loads(lines[1])
+    entry["prev_hash"] = "0" * 64
+    lines[1] = json.dumps(entry)
+    log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return log_path
+
+
+def _audit_args(path, output_format: str = "json"):
+    return _build_args(
+        log_path=str(path),
+        hmac_secret_env="FORGELM_AUDIT_SECRET",
+        require_hmac=False,
+        output_format=output_format,
+    )
+
+
+class TestAuditIntegrityPredicate:
+    """``verify-audit`` was the one verifier with no structural predicate: it
+    blanket-mapped every ``valid=False`` to exit 6 and leaned entirely on the
+    readability probe having pre-caught the non-integrity cases.  It now has
+    ``is_audit_integrity_failure``, keyed off the ``AUDIT_FAILURE_*``
+    classification, consistent with its three siblings (F-4 / D1-09)."""
+
+    @pytest.mark.parametrize(
+        "kind_attr,expected",
+        [
+            ("AUDIT_FAILURE_INTEGRITY", True),
+            ("AUDIT_FAILURE_ENCODING", True),
+            ("AUDIT_FAILURE_NOT_FOUND", False),
+            ("AUDIT_FAILURE_UNREADABLE", False),
+            ("AUDIT_FAILURE_USAGE", False),
+        ],
+    )
+    def test_predicate_splits_on_failure_kind(self, kind_attr: str, expected: bool) -> None:
+        from forgelm import compliance as _compliance
+        from forgelm.verify import is_audit_integrity_failure
+
+        assert is_audit_integrity_failure(getattr(_compliance, kind_attr)) is expected
+
+    def test_passing_verification_is_never_an_integrity_failure(self) -> None:
+        """A clean run classifies as ``None``, which must not route to 6."""
+        from forgelm.verify import is_audit_integrity_failure
+
+        assert is_audit_integrity_failure(None) is False
+
+    def test_classification_stays_off_the_public_result_type(self) -> None:
+        """``VerifyResult`` is stable-tier public API and its field roster is
+        pinned by ``tests/_data/api_signatures_<ver>.json``.  The routing token
+        rides beside the result precisely so this internal need does not spend
+        an ``__api_version__`` bump — assert the surface really is unchanged."""
+        import dataclasses
+
+        from forgelm.compliance import VerifyResult
+
+        assert [f.name for f in dataclasses.fields(VerifyResult)] == [
+            "valid",
+            "entries_count",
+            "first_invalid_index",
+            "reason",
+        ]
+
+    def test_untagged_failure_defaults_to_integrity(self, tmp_path: Path, monkeypatch) -> None:
+        """Every chain-walk / HMAC / manifest failure is tagged in one place
+        rather than at each ``return``; the default must keep them on 6."""
+        from forgelm.compliance import AUDIT_FAILURE_INTEGRITY, _verify_audit_log_classified
+
+        log_path = _write_chained_log(tmp_path, monkeypatch)
+        result, kind = _verify_audit_log_classified(str(log_path))
+        assert result.valid is False
+        assert kind == AUDIT_FAILURE_INTEGRITY
+
+    def test_passing_run_is_classified_none(self, tmp_path: Path, monkeypatch) -> None:
+        from forgelm.compliance import AuditLogger, _verify_audit_log_classified
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        AuditLogger(str(tmp_path)).log_event("e0")
+        result, kind = _verify_audit_log_classified(str(tmp_path / "audit_log.jsonl"))
+        assert result.valid is True
+        assert kind is None
+
+    def test_missing_log_is_classified_not_found(self, tmp_path: Path) -> None:
+        from forgelm.compliance import AUDIT_FAILURE_NOT_FOUND, _verify_audit_log_classified
+
+        _result, kind = _verify_audit_log_classified(str(tmp_path / "nope.jsonl"))
+        assert kind == AUDIT_FAILURE_NOT_FOUND
+
+    def test_usage_error_is_classified_usage_not_integrity(self, tmp_path: Path, monkeypatch) -> None:
+        """``require_hmac`` without a secret never looked at the chain."""
+        from forgelm.compliance import (
+            AUDIT_FAILURE_USAGE,
+            AuditLogger,
+            _verify_audit_log_classified,
+        )
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        AuditLogger(str(tmp_path)).log_event("e0")
+        result, kind = _verify_audit_log_classified(str(tmp_path / "audit_log.jsonl"), require_hmac=True)
+        assert result.valid is False
+        assert kind == AUDIT_FAILURE_USAGE
+
+    def test_public_wrapper_still_returns_the_bare_result(self, tmp_path: Path, monkeypatch) -> None:
+        """``verify_audit_log`` keeps its documented contract: one
+        ``VerifyResult``, no tuple, for every existing library caller."""
+        from forgelm.compliance import VerifyResult, verify_audit_log
+
+        log_path = _write_chained_log(tmp_path, monkeypatch)
+        result = verify_audit_log(str(log_path))
+        assert isinstance(result, VerifyResult)
+        assert result.valid is False
+
+
+class TestVerifyAuditExitCodeIsDecidedOnce:
+    """Both output branches used to decide the exit code independently, and
+    every test asserting a chain break returns 6 passed ``output_format="json"``
+    — so the default *text* branch had no coverage at all and could be mutated
+    from 6 to 1 with the whole suite still green (T-02)."""
+
+    @pytest.mark.parametrize("output_format", ["text", "json"])
+    def test_chain_break_exits_integrity_failure_in_both_formats(
+        self, tmp_path: Path, monkeypatch, output_format: str
+    ) -> None:
+        from forgelm.cli._exit_codes import EXIT_INTEGRITY_FAILURE
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+
+        log_path = _write_chained_log(tmp_path, monkeypatch)
+        assert _run_verify_audit_cmd(_audit_args(log_path, output_format)) == EXIT_INTEGRITY_FAILURE
+
+    @pytest.mark.parametrize("output_format", ["text", "json"])
+    def test_missing_log_exits_config_error_in_both_formats(
+        self, tmp_path: Path, monkeypatch, output_format: str
+    ) -> None:
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        args = _audit_args(tmp_path / "typo.jsonl", output_format)
+        assert _run_verify_audit_cmd(args) == EXIT_CONFIG_ERROR
+
+    @pytest.mark.parametrize("output_format", ["text", "json"])
+    def test_clean_log_exits_success_in_both_formats(self, tmp_path: Path, monkeypatch, output_format: str) -> None:
+        from forgelm.cli._exit_codes import EXIT_SUCCESS
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+        from forgelm.compliance import AuditLogger
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        AuditLogger(str(tmp_path)).log_event("e0")
+        args = _audit_args(tmp_path / "audit_log.jsonl", output_format)
+        assert _run_verify_audit_cmd(args) == EXIT_SUCCESS
+
+    def test_the_two_output_formats_cannot_disagree(self, tmp_path: Path, monkeypatch) -> None:
+        """The property the duplication violated, asserted directly."""
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+
+        log_path = _write_chained_log(tmp_path, monkeypatch)
+        assert _run_verify_audit_cmd(_audit_args(log_path, "text")) == _run_verify_audit_cmd(
+            _audit_args(log_path, "json")
+        )
+
+    def test_mid_read_io_failure_exits_training_error_not_integrity(self, tmp_path: Path, monkeypatch) -> None:
+        """The probe reads byte 1; it says nothing about byte 10,000,000 (F2).
+        The guarantee therefore has to live in the verdict, not the probe: an
+        ``OSError`` raised *inside* the verifier comes back tagged
+        ``AUDIT_FAILURE_UNREADABLE`` and routes to 2, not to a chain break."""
+        from forgelm.cli._exit_codes import EXIT_TRAINING_ERROR
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+        from forgelm.compliance import AuditLogger
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        AuditLogger(str(tmp_path)).log_event("e0")
+        log_path = tmp_path / "audit_log.jsonl"
+
+        def _fail_mid_read(*_args, **_kwargs):
+            raise OSError("Input/output error")
+
+        # Shadow ``open`` in the *verifier's* namespace only, so the CLI
+        # probe still succeeds and the failure genuinely originates inside
+        # the verifier — which is the case the docstring claims to cover.
+        import forgelm.compliance as _compliance
+
+        monkeypatch.setattr(_compliance, "open", _fail_mid_read, raising=False)
+
+        assert _run_verify_audit_cmd(_audit_args(log_path)) == EXIT_TRAINING_ERROR
+
+
+class TestVerifyAuditProbeRejectsNonRegularFiles:
+    """``open()`` succeeds on FIFOs, character devices and sockets, so the
+    open-and-read-one-byte probe let them through: a FIFO blocked forever and
+    ``/dev/zero`` reached the verifier, which reported "not found" — mapped, by
+    the old blanket rule, to exit 6 (F1)."""
+
+    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFOs are POSIX-only")
+    def test_fifo_exits_config_error_without_hanging(self, tmp_path: Path, monkeypatch) -> None:
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        fifo = tmp_path / "audit_log.jsonl"
+        os.mkfifo(fifo)
+
+        # A hang is worse than a wrong exit code: an unattended CI job waits
+        # for a writer that never comes.  SIGALRM turns "blocks forever" into
+        # a deterministic failure instead of a stuck test run.
+        def _timed_out(*_a):
+            raise AssertionError("verify-audit blocked on a FIFO — the probe opened a non-regular file")
+
+        previous = signal.signal(signal.SIGALRM, _timed_out)
+        signal.alarm(5)
+        try:
+            assert _run_verify_audit_cmd(_audit_args(fifo)) == EXIT_CONFIG_ERROR
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
+
+    @pytest.mark.skipif(not os.path.exists("/dev/zero"), reason="requires /dev/zero")
+    def test_character_device_is_not_reported_as_tampering(self, monkeypatch) -> None:
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR, EXIT_INTEGRITY_FAILURE
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        code = _run_verify_audit_cmd(_audit_args("/dev/zero", "text"))
+        assert code == EXIT_CONFIG_ERROR
+        assert code != EXIT_INTEGRITY_FAILURE
+
+    def test_library_verifier_also_refuses_a_fifo(self, tmp_path: Path) -> None:
+        """Defence in depth: the CLI probe is not the only caller.  The
+        library path must not block either — ``_read_audit_log_lines``'
+        ``os.path.isfile`` guard is what stops it, so pin that it is."""
+        if not hasattr(os, "mkfifo"):
+            pytest.skip("FIFOs are POSIX-only")
+        from forgelm.compliance import AUDIT_FAILURE_NOT_FOUND, _verify_audit_log_classified
+
+        fifo = tmp_path / "audit_log.jsonl"
+        os.mkfifo(fifo)
+
+        def _timed_out(*_a):
+            raise AssertionError("verify_audit_log blocked on a FIFO")
+
+        previous = signal.signal(signal.SIGALRM, _timed_out)
+        signal.alarm(5)
+        try:
+            _result, kind = _verify_audit_log_classified(str(fifo))
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
+        assert kind == AUDIT_FAILURE_NOT_FOUND
+
+
+class TestVerifyAuditProbeRationaleIsPinned:
+    """The two refinements in ``_probe_log_readable`` that carry explicit
+    docstring rationale but were pinned by no test (T-05)."""
+
+    def test_directory_verdict_is_platform_uniform(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """POSIX raises ``IsADirectoryError`` opening a directory; Windows
+        raises ``PermissionError``, which the ``OSError`` branch would map to
+        exit 2.  The verdict is decided from ``st_mode`` instead, so the answer
+        must be 1 even when ``open`` behaves the Windows way.
+
+        Asserts the *message* too, not only the code: the generic
+        non-regular-file branch below already yields exit 1 for a directory, so
+        code alone would not notice the dedicated branch disappearing — and
+        "path is a directory" is the actionable half of the answer."""
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands import _verify_audit as _mod
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        a_directory = tmp_path / "logs"
+        a_directory.mkdir()
+
+        def _windows_style(*_args, **_kwargs):
+            raise PermissionError("Permission denied")
+
+        monkeypatch.setattr(_mod, "open", _windows_style, raising=False)
+        assert _mod._run_verify_audit_cmd(_audit_args(a_directory)) == EXIT_CONFIG_ERROR
+        assert "path is a directory" in json.loads(capsys.readouterr().out)["error"]
+
+    def test_specific_oserror_subclasses_are_caught_before_the_catch_all(self, tmp_path: Path, monkeypatch) -> None:
+        """``FileNotFoundError`` and ``NotADirectoryError`` are ``OSError``
+        subclasses: if the generic branch were ordered first it would swallow
+        them and a mistyped path would exit 2 (retry me) instead of 1 (fix your
+        command).  Ordering is behaviour, so it gets a test."""
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR, EXIT_TRAINING_ERROR
+        from forgelm.cli.subcommands import _verify_audit as _mod
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        a_file = tmp_path / "audit_log.jsonl"
+        a_file.write_text("{}\n", encoding="utf-8")
+
+        # A path component that is a file, not a directory → NotADirectoryError.
+        nested = a_file / "audit_log.jsonl"
+        assert _mod._run_verify_audit_cmd(_audit_args(nested)) == EXIT_CONFIG_ERROR
+        assert _mod._run_verify_audit_cmd(_audit_args(tmp_path / "absent.jsonl")) == EXIT_CONFIG_ERROR
+
+        # …while a genuine reachability failure still reaches the catch-all.
+        def _denied(*_args, **_kwargs):
+            raise PermissionError("denied")
+
+        monkeypatch.setattr(_mod.os, "stat", _denied)
+        assert _mod._run_verify_audit_cmd(_audit_args(a_file)) == EXIT_TRAINING_ERROR
+
+
+# ---------------------------------------------------------------------------
+# verify-gguf: a metadata-parse error must not outrank the checksum (D1-07)
+# ---------------------------------------------------------------------------
+
+
+def _stub_metadata_error(monkeypatch, message: str = "struct.error: unpack requires 8 bytes") -> None:
+    from forgelm import verify as _verify_mod
+
+    monkeypatch.setattr(
+        _verify_mod,
+        "_maybe_parse_metadata",
+        lambda _p: {"parsed": False, "error": message, "tensor_count": None},
+    )
+
+
+class TestGgufMetadataErrorDoesNotOutrankTheChecksum:
+    """The metadata-parse error used to return *before* the SHA-256 sidecar
+    comparison, so a ``gguf`` package too old to read a file's format revision
+    was reported as an integrity failure — exit 6, "page the artefact owner" —
+    even when the checksum proved the file was byte-identical to what was
+    exported (D1-07)."""
+
+    def test_matching_sidecar_downgrades_a_parse_error_to_config_error(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR, EXIT_INTEGRITY_FAILURE
+        from forgelm.cli.subcommands._verify_gguf import _run_verify_gguf_cmd
+
+        _stub_metadata_error(monkeypatch)
+        path = tmp_path / "model.gguf"
+        _make_minimal_gguf(path)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        (tmp_path / "model.gguf.sha256").write_text(f"{digest}  model.gguf\n")
+
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_gguf_cmd(_build_args(path=str(path)), output_format="json")
+        assert ei.value.code == EXIT_CONFIG_ERROR
+        assert ei.value.code != EXIT_INTEGRITY_FAILURE
+
+        payload = json.loads(capsys.readouterr().out)
+        # The comparison must actually have run — the whole point is that the
+        # verifier no longer returns before reaching it.
+        assert payload["checks"]["sidecar_match"] is True
+        assert payload["checks"]["metadata_error"]
+        assert "byte-identical" in payload["reason"]
+
+    def test_mismatching_sidecar_keeps_a_parse_error_at_integrity_failure(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """The mirror case: reordering must not let a genuinely corrupt file
+        slip to a softer code.  A checksum that disagrees is the strongest
+        evidence available and it dominates."""
+        from forgelm.cli._exit_codes import EXIT_INTEGRITY_FAILURE
+        from forgelm.cli.subcommands._verify_gguf import _run_verify_gguf_cmd
+
+        _stub_metadata_error(monkeypatch)
+        path = tmp_path / "model.gguf"
+        _make_minimal_gguf(path)
+        (tmp_path / "model.gguf.sha256").write_text("0" * 64 + "  model.gguf\n")
+
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_gguf_cmd(_build_args(path=str(path)), output_format="json")
+        assert ei.value.code == EXIT_INTEGRITY_FAILURE
+        assert "sha-256" in json.loads(capsys.readouterr().out)["reason"].lower()
+
+    def test_no_sidecar_keeps_a_parse_error_at_integrity_failure(self, tmp_path: Path, monkeypatch) -> None:
+        """Nothing available to rule out corruption → still a tamper verdict."""
+        from forgelm.cli._exit_codes import EXIT_INTEGRITY_FAILURE
+        from forgelm.cli.subcommands._verify_gguf import _run_verify_gguf_cmd
+
+        _stub_metadata_error(monkeypatch)
+        path = tmp_path / "model.gguf"
+        _make_minimal_gguf(path)
+
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_gguf_cmd(_build_args(path=str(path)), output_format="json")
+        assert ei.value.code == EXIT_INTEGRITY_FAILURE
+
+    def test_malformed_sidecar_keeps_a_parse_error_at_config_error(self, tmp_path: Path, monkeypatch) -> None:
+        """A ``TODO`` sidecar compared nothing, so it cannot rescue *or* damn
+        the file; the unusable-sidecar verdict (1) stands."""
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._verify_gguf import _run_verify_gguf_cmd
+
+        _stub_metadata_error(monkeypatch)
+        path = tmp_path / "model.gguf"
+        _make_minimal_gguf(path)
+        (tmp_path / "model.gguf.sha256").write_text("TODO\n")
+
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_gguf_cmd(_build_args(path=str(path)), output_format="json")
+        assert ei.value.code == EXIT_CONFIG_ERROR
+
+    def test_predicate_requires_a_positively_recorded_match(self) -> None:
+        """Fail closed: only a recorded ``sidecar_match is True`` earns the
+        softer code.  An incomplete result stays on the tamper verdict."""
+        from forgelm.verify import VerifyGgufResult, is_gguf_integrity_failure
+
+        base = {"magic_ok": True, "sidecar_present": True, "sha256_expected": "a" * 64}
+        assert is_gguf_integrity_failure(VerifyGgufResult(valid=False, checks={**base, "sidecar_match": True})) is False
+        assert is_gguf_integrity_failure(VerifyGgufResult(valid=False, checks={**base, "sidecar_match": False})) is True
+        assert is_gguf_integrity_failure(VerifyGgufResult(valid=False, checks=base)) is True
+
+
+# ---------------------------------------------------------------------------
+# verify-annex-iv --pipeline: a non-UTF-8 manifest (D1-08)
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineManifestNonUtf8:
+    """``verify_pipeline_manifest_at_path`` caught ``json.JSONDecodeError`` and
+    ``OSError`` but not ``UnicodeDecodeError`` — a ``ValueError`` subclass that
+    is neither — and ``_run_pipeline_mode`` guarded only ``OSError``.  All three
+    sibling single-artefact paths carry an explicit branch, so a non-UTF-8
+    pipeline manifest escaped as an unhandled traceback (D1-08)."""
+
+    @staticmethod
+    def _write_binary_manifest(tmp_path: Path) -> Path:
+        run_dir = tmp_path / "run"
+        (run_dir / "compliance").mkdir(parents=True)
+        (run_dir / "compliance" / "pipeline_manifest.json").write_bytes(b'{"stages": \xff\xfe}')
+        return run_dir
+
+    def test_library_returns_a_tagged_input_error_violation(self, tmp_path: Path) -> None:
+        from forgelm.compliance import (
+            PIPELINE_MANIFEST_INPUT_ERROR_PREFIX,
+            verify_pipeline_manifest_at_path,
+        )
+
+        run_dir = self._write_binary_manifest(tmp_path)
+        violations = verify_pipeline_manifest_at_path(str(run_dir))
+        assert len(violations) == 1
+        assert violations[0].startswith(PIPELINE_MANIFEST_INPUT_ERROR_PREFIX)
+        assert "UTF-8" in violations[0]
+
+    def test_cli_exits_config_error_rather_than_tracebacking(self, tmp_path: Path, capsys) -> None:
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._verify_annex_iv import _run_verify_annex_iv_cmd
+
+        run_dir = self._write_binary_manifest(tmp_path)
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_annex_iv_cmd(_build_args(path=str(run_dir), pipeline=True), output_format="json")
+        assert ei.value.code == EXIT_CONFIG_ERROR
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        # The routing token is internal and must never reach the operator.
+        assert not any(v.startswith("INPUT_ERROR::") for v in payload["violations"])
+
+    def test_dispatcher_guard_also_covers_a_bubbled_unicode_error(self, tmp_path: Path, monkeypatch) -> None:
+        """The defensive ``try`` around the verifier: if a future change there
+        lets a ``UnicodeDecodeError`` bubble, it must still land on 1, not on a
+        raw traceback and not on the ``OSError`` branch's exit 2."""
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands import _verify_annex_iv as _mod
+
+        def _bubble(_path):
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+        import forgelm.compliance as _compliance
+
+        monkeypatch.setattr(_compliance, "verify_pipeline_manifest_at_path", _bubble)
+
+        with pytest.raises(SystemExit) as ei:
+            _mod._run_verify_annex_iv_cmd(_build_args(path=str(tmp_path), pipeline=True), output_format="json")
+        assert ei.value.code == EXIT_CONFIG_ERROR

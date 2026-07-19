@@ -129,10 +129,30 @@ def _run_pipeline_mode(path: str, output_format: str) -> NoReturn:
     from forgelm.compliance import verify_pipeline_manifest_at_path
 
     # Defensive try/except: the verifier already maps OSError /
-    # JSONDecodeError to violation strings, but a future change there
-    # could let an exception bubble — fail loud rather than swallow.
+    # JSONDecodeError / UnicodeDecodeError to violation strings, but a
+    # future change there could let an exception bubble — fail loud rather
+    # than swallow.  ``UnicodeDecodeError`` needs its own branch because it
+    # is a ``ValueError`` subclass, not an ``OSError`` one, and is a caller-
+    # input verdict (exit 1) rather than a retryable I/O failure (exit 2) —
+    # matching the three sibling single-artefact paths (D1-08).
     try:
         violations = verify_pipeline_manifest_at_path(path)
+    except UnicodeDecodeError as exc:
+        if output_format == "json":
+            print(
+                json.dumps(
+                    {
+                        "success": False,
+                        "mode": "pipeline",
+                        "path": os.path.abspath(path),
+                        "violations": [f"pipeline manifest is not valid UTF-8: {exc}"],
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            print(f"FAIL: pipeline manifest at {path} — not valid UTF-8: {exc}")
+        sys.exit(EXIT_CONFIG_ERROR)
     except OSError as exc:
         msg = f"FAIL: pipeline manifest at {path} — runtime I/O error: {exc}"
         if output_format == "json":

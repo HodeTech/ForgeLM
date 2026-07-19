@@ -89,13 +89,21 @@ Bir zincir kopması 1-tabanlı satır numarasını yazar:
 FAIL at line 53: prev_hash mismatch — chain break suggests entry was inserted, removed, or reordered
 ```
 
-Satır numarası olmayan çıplak bir neden, hatanın zincir yürüyüşünden önce meydana geldiğini gösterir (örn. eksik genesis manifest, satır 1'de JSON çözüm hatası):
+Genesis-manifest hataları, manifest'in sabitlediği girdi olan 1. satıra atfedilir; dolayısıyla onlar da bir satır numarası taşır:
 
 ```text
-FAIL: manifest present but unreadable at 'checkpoints/run/audit_log.jsonl.manifest.json': …
+FAIL at line 1: manifest present but unreadable at 'checkpoints/run/audit_log.jsonl.manifest.json': …
 ```
 
-Her iki durumda da log dosyasının kendisi bulundu ve okundu — bu yüzden bu bir bütünlük kararıdır ve çıkış kodu `1` değil `6`'dır. Log'u kanıt saymadan önce inceleyin. `1`, doğrulayıcının log'u okumaya bile başlayamadığı durum için ayrılmıştır (eksik yol, sırsız `--require-hmac`).
+(Manifest'in *hiç olmaması* bir hata değildir: doğrulayıcı, truncate-and-resume tespitinin yalnızca zincir-içi hash sürekliliğiyle sınırlı kaldığına dair bir uyarı yazar ve devam eder.)
+
+Hiç satır numarası taşımayan çıplak bir neden, hatanın tek bir girdinin değil dosyanın bütününün bir özelliği olduğunu gösterir — CLI üzerinden erişilebilen durum, UTF-8 olmayan bayt içeren bir log'dur:
+
+```text
+FAIL: audit log is not valid UTF-8: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte
+```
+
+Yukarıdaki durumların hepsinde log dosyasının kendisi bulundu ve okundu — bu yüzden bu bir bütünlük kararıdır ve çıkış kodu `1` değil `6`'dır. Log'u kanıt saymadan önce inceleyin. `1`, doğrulayıcının log'u okumaya bile başlayamadığı durum için ayrılmıştır (eksik yol, sırsız `--require-hmac`).
 
 ### Çıkış-kodu özeti
 

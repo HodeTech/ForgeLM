@@ -86,13 +86,20 @@ jobs:
 
       - name: Test (CPU-only, no-network)
         shell: bash
-        # Drift-sensitive tests (test_cost_estimation: snapshot pricing
-        # fixture on a different cadence than the release matrix) are
-        # excluded via the @pytest.mark.fixture_drift marker — F-P8-C-20
-        # made the marker the single source of truth, so no filename guard
-        # is needed: a renamed/removed test simply keeps (or drops) the
-        # marker, and the exclusion follows the marker, not a brittle path.
-        run: pytest tests/ -q -m 'not fixture_drift'
+        # Two marker-driven exclusions, both following the marker rather
+        # than a brittle path (F-P8-C-20 made the marker the single source
+        # of truth: a renamed test keeps its marker and stays excluded).
+        #
+        # - fixture_drift: snapshot fixtures (test_cost_estimation's pricing
+        #   table) that drift upstream on a different cadence than releases.
+        # - requires_editable_install: assertions that are only true under
+        #   `pip install -e .`. This job installs the wheel NON-editably on
+        #   purpose, and tools/check_import_origin.py correctly reports that
+        #   as "forgelm resolves outside this checkout" — so its CLI-level
+        #   tests would fail here for exactly the reason the guard exists.
+        #   Its pure-function tests (TestVerdict) are unmarked and still run,
+        #   so the contract itself stays covered in this matrix.
+        run: pytest tests/ -q -m 'not fixture_drift and not requires_editable_install'
 
       - name: Generate SBOM (CycloneDX 1.5)
         shell: bash

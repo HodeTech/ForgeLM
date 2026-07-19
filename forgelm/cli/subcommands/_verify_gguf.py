@@ -18,14 +18,18 @@ contract in ``docs/reference/verify_gguf_subcommand.md``):
   sidecar (when present).
 - 1 — ``EXIT_CONFIG_ERROR``: caller / input error (missing path, not
   a regular file, magic mismatch — the file is not a GGUF at all —,
-  malformed sidecar, non-UTF-8 sidecar).  Nothing was compared; the
-  operator has to fix the command or the sidecar.
+  malformed sidecar, non-UTF-8 sidecar), or a metadata block that could
+  not be parsed on a file whose SHA-256 sidecar *matches* — the bytes are
+  provably what was exported, so this is a ``gguf`` library-version
+  problem, not a tamper event (D1-07).  Nothing was compared, or what was
+  compared came out clean; either way the operator fixes their side.
 - 2 — ``EXIT_TRAINING_ERROR``: genuine runtime I/O failure on a
   reachable path (read error, permission denied mid-read, etc.).
 - 6 — ``EXIT_INTEGRITY_FAILURE``: the file *is* a GGUF and it failed its
-  integrity check — SHA-256 sidecar mismatch (modified after export) or a
-  metadata block that could not be parsed (truncated / corrupted stream).
-  Artifact is not safe to serve.
+  integrity check — SHA-256 sidecar mismatch (modified after export), or a
+  metadata block that could not be parsed with no matching sidecar to rule
+  out corruption (truncated / corrupted stream).  Artifact is not safe to
+  serve.
 """
 
 from __future__ import annotations

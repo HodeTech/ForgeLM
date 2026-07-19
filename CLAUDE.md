@@ -157,6 +157,7 @@ Default workflow for a non-trivial change:
      python3 tools/check_bilingual_parity.py --strict && \
      python3 tools/check_anchor_resolution.py --strict && \
      python3 tools/check_cli_help_consistency.py --strict && \
+     python3 tools/check_cli_exit_code_prose.py --strict && \
      python3 tools/check_wizard_defaults_sync.py && \
      python3 tools/check_no_analysis_refs.py && \
      python3 tools/check_no_unguarded_sys_modules_pop.py && \
@@ -183,14 +184,25 @@ Default workflow for a non-trivial change:
    does not cover the `tools/check_*.py` guards that import `forgelm`
    with `sys.path[0] == tools/`.
 
-   All twenty must pass (the usermanual-schema-drift guard —
+   All twenty-one must pass (the usermanual-schema-drift guard —
    `check_usermanual_schema_drift.py --strict` — validates that every
    fenced YAML key under `docs/usermanuals/` resolves against the real
    `ForgeConfig` schema, catching fabricated-field examples that would
    fail `--dry-run`). The first four are the historical gauntlet;
    the three doc guards (Wave 3 / Wave 4 / Wave 5 additions) catch
    bilingual structural drift, broken markdown anchors, and CLI ↔ docs
-   help-text drift before the PR opens. The wizard-defaults guard
+   help-text drift before the PR opens.  Its companion, the
+   exit-code-prose guard (`check_cli_exit_code_prose.py --strict`,
+   Step 3 follow-up), covers the half `check_cli_help_consistency.py`
+   does not: that guard validates invocation *syntax*, never exit-code
+   *prose*, so `forgelm verify-audit --help` told operators "1 means
+   tampering" for a full release cycle after the routing moved to
+   `EXIT_INTEGRITY_FAILURE` (6).  It asserts one bit per subcommand in
+   both directions — a dispatcher that can emit 6 must say so in
+   `--help`, one that cannot must not claim it — with both sides
+   derived from source (`_dispatch.py`'s routing table plus the
+   `subcommands/` modules against `_parser.py`'s `help=` literals), so
+   there is no mapping table to rot. The wizard-defaults guard
    (review-cycle 3) catches schema-vs-shipped-JSON drift for the
    wizard's source-of-truth defaults. The working-memory-refs guard
    (review-cycle 5) keeps the public tree from citing gitignored

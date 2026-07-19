@@ -75,8 +75,12 @@ detection event class.
 
 ### 4.1 Audit-chain integrity violation
 
-**Trigger:** `forgelm verify-audit` exits non-zero (chain hash
-mismatch, manifest sidecar truncation, HMAC signature mismatch).
+**Trigger:** `forgelm verify-audit` exits `6` — `EXIT_INTEGRITY_FAILURE`
+(chain hash mismatch, manifest sidecar truncation, HMAC signature
+mismatch). Exit `1` (the verifier never ran: missing log path, or
+`--require-hmac` without the secret) and exit `2` (runtime I/O failure)
+are operator / environment faults, not security incidents — correct them
+and re-run before opening this playbook.
 
 **Severity:** Critical.
 
@@ -92,14 +96,27 @@ mismatch, manifest sidecar truncation, HMAC signature mismatch).
        integrity proof lives inside each line's `_hmac` and
        `prev_hash` fields plus the genesis manifest.)
 3. [ ] **Identify the last trusted entry** — run
-       `forgelm verify-audit ./outputs/audit_log.jsonl --require-hmac 2>&1 | tee verify.log`;
-       the verifier exits 1 on first failure and the offending line
-       number lands in stderr. If you need the precise boundary,
-       bisect manually with `head -n N audit_log.jsonl > tmp.jsonl`
-       and re-run `verify-audit` against `tmp.jsonl` until the last
-       N that exits 0 is found. Everything up to that line is
-       forensically trusted; everything after must be considered
-       tainted.
+       `forgelm verify-audit ./outputs/audit_log.jsonl --require-hmac --output-format json 2>&1 | tee verify.log`;
+       the verifier stops at the first failure and reports the
+       offending line number (`first_invalid_index`). **Read the exit
+       code before you read anything else:** `6` is the integrity
+       verdict — the log was read and it does not verify, so this is a
+       genuine incident. `1` means the verifier never got as far as
+       comparing anything (log path missing, or `--require-hmac` with
+       the secret env var unset in this shell) and `2` means a runtime
+       I/O failure; both are your setup, not evidence of tampering —
+       fix and re-run before escalating. If you need the precise
+       boundary, bisect manually with
+       `head -n N audit_log.jsonl > tmp.jsonl` and re-run
+       `verify-audit` against `tmp.jsonl` until the largest N that
+       exits `0` is found — treating any non-zero code as "chain broken
+       at N" will converge on the wrong boundary the moment a `1`
+       (unexported secret) enters the loop. Everything up to that line
+       is forensically trusted; everything after must be considered
+       tainted. Note that the truncated `tmp.jsonl` carries no genesis
+       manifest sidecar, so the bisect proves chain continuity only —
+       the manifest cross-check runs against the original log in the
+       step above.
 4. [ ] **Notify** the AI Officer + Security team + DPO (if any
        PII-bearing event was after the bad line).
 5. [ ] **Decide** whether to retain the tainted-tail entries as
@@ -246,3 +263,4 @@ Under Article 73, providers must report serious incidents to market surveillance
 |---------|------|--------|---------|
 | 1.0 | [DATE] | [AUTHOR] | Initial version |
 | 1.1 | 2026-05-05 | Wave 4 / Faz 23 | Added §4 security-incident playbook (audit-chain integrity, credential leak, supply-chain CVE, webhook compromise, GDPR Art. 15/17 DSARs); ISO 27001:2022 + SOC 2 control mapping in header |
+| 1.2 | 2026-07-19 | `EXIT_INTEGRITY_FAILURE` cycle | §4.1 retargeted onto `EXIT_INTEGRITY_FAILURE` (6): the trigger is now exit `6`, not "non-zero", and the last-trusted-entry bisect distinguishes `6` (integrity verdict) from `1` (verifier never ran) / `2` (I/O failure) so a setup fault cannot be mistaken for a tamper boundary |

@@ -240,6 +240,16 @@ testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
 markers = [
     "fixture_drift: tests sensitive to upstream pricing/dataset drift; excluded from the release matrix via `pytest -m 'not fixture_drift'` in publish.yml",
+    # A sibling of fixture_drift rather than a reuse of it: fixture_drift means
+    # "the expected value may have moved upstream", this means "the assertion is
+    # only true when `pip install -e .` is what put forgelm on sys.path".
+    # tools/check_import_origin.py FAILS by design against a non-editable
+    # install, so its CLI-level tests cannot pass in publish.yml's
+    # `pip install dist/*.whl` matrix. Deselected there via the same
+    # `-m 'not ...'` expression. Do NOT weaken the guard to make them pass —
+    # the guard is right and the assumption baked into the test is what is
+    # environment-bound. See tests/test_check_import_origin.py::TestCli.
+    "requires_editable_install: assertions that hold only under `pip install -e .`; excluded from the release matrix via `pytest -m 'not requires_editable_install'` in publish.yml",
 ]
 
 [tool.ruff]

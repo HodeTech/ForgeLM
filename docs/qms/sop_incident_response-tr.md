@@ -74,8 +74,12 @@ ikisi de bu SOP'tan akar; ayırt edici tespit olay sınıfıdır.
 
 ### 4.1 Audit-chain integrity ihlali
 
-**Tetik:** `forgelm verify-audit` sıfır-olmayan çıkar (chain hash
-mismatch, manifest sidecar truncation, HMAC signature mismatch).
+**Tetik:** `forgelm verify-audit` `6` ile çıkar — `EXIT_INTEGRITY_FAILURE`
+(chain hash mismatch, manifest sidecar truncation, HMAC signature
+mismatch). Exit `1` (verifier hiç çalışmadı: eksik log yolu ya da secret
+olmadan `--require-hmac`) ve exit `2` (runtime I/O hatası) güvenlik olayı
+değil, operatör / ortam hatasıdır — bu playbook'u açmadan önce düzeltip
+yeniden çalıştırın.
 
 **Önem:** Critical.
 
@@ -91,13 +95,26 @@ mismatch, manifest sidecar truncation, HMAC signature mismatch).
        kanıtı her satırın `_hmac` ve `prev_hash` alanlarında ve
        genesis manifest'te tutulur.)
 3. [ ] **Son güvenilen girişi tanımla** —
-       `forgelm verify-audit ./outputs/audit_log.jsonl --require-hmac 2>&1 | tee verify.log`
-       çalıştır; verifier ilk başarısızlıkta exit 1 yapar ve hatalı
-       satır numarası stderr'e iner. Tam sınır gerekiyorsa,
-       `head -n N audit_log.jsonl > tmp.jsonl` ile manuel bisect
-       yap ve exit 0 veren son N bulunana kadar `verify-audit`'ı
-       `tmp.jsonl`'a karşı yeniden çalıştır. O satıra kadar her şey
-       forensic olarak güvenilirdir; sonrası tainted sayılmalıdır.
+       `forgelm verify-audit ./outputs/audit_log.jsonl --require-hmac --output-format json 2>&1 | tee verify.log`
+       çalıştır; verifier ilk başarısızlıkta durur ve hatalı satır
+       numarasını (`first_invalid_index`) raporlar. **Başka bir şeye
+       bakmadan önce exit kodunu okuyun:** `6` bütünlük verdiktidir —
+       log okundu ve doğrulanmıyor, yani gerçek bir olaydır. `1`
+       verifier'ın hiçbir şeyi karşılaştıracak kadar ilerlemediği
+       anlamına gelir (log yolu eksik ya da bu shell'de secret env
+       var'ı set değilken `--require-hmac`), `2` ise runtime I/O
+       hatasıdır; ikisi de sizin kurulumunuzdur, tahrifat kanıtı
+       değildir — escalate etmeden önce düzeltip yeniden çalıştırın.
+       Tam sınır gerekiyorsa, `head -n N audit_log.jsonl > tmp.jsonl`
+       ile manuel bisect yapın ve `0` ile çıkan en büyük N bulunana
+       kadar `verify-audit`'ı `tmp.jsonl`'a karşı yeniden çalıştırın —
+       sıfır-olmayan her kodu "zincir N'de kırıldı" saymak, döngüye bir
+       `1` (export edilmemiş secret) girdiği anda yanlış sınırda
+       yakınsar. O satıra kadar her şey forensic olarak güvenilirdir;
+       sonrası tainted sayılmalıdır. Kısaltılmış `tmp.jsonl`'ın genesis
+       manifest sidecar'ı olmadığına dikkat edin; bu nedenle bisect
+       yalnızca zincir sürekliliğini kanıtlar — manifest çapraz
+       kontrolü yukarıdaki adımda orijinal log'a karşı çalışır.
 4. [ ] **Bildir** AI Officer + Güvenlik ekibi + DPO (kötü satırdan
        sonra herhangi bir PII-bearing event varsa).
 5. [ ] **Karar ver** tainted-tail girişlerini kanıt olarak (önerilen)
@@ -246,3 +263,4 @@ otoritelerine raporlamalıdır. "Ciddi bir olay" şunları içerir:
 |---------|------|--------|---------|
 | 1.0 | [DATE] | [AUTHOR] | İlk versiyon |
 | 1.1 | 2026-05-05 | Wave 4 / Faz 23 | §4 güvenlik-olay playbook'u eklendi (audit-chain integrity, credential leak, supply-chain CVE, webhook compromise, GDPR Md. 15/17 DSAR'ları); başlıkta ISO 27001:2022 + SOC 2 kontrol haritalaması |
+| 1.2 | 2026-07-19 | `EXIT_INTEGRITY_FAILURE` döngüsü | §4.1 `EXIT_INTEGRITY_FAILURE` (6) üzerine yeniden hedeflendi: tetik artık "sıfır-olmayan" değil exit `6`; son-güvenilen-giriş bisect'i `6`'yı (bütünlük verdikti) `1`'den (verifier hiç çalışmadı) / `2`'den (I/O hatası) ayırıyor, böylece bir kurulum hatası tahrifat sınırı sanılamıyor |

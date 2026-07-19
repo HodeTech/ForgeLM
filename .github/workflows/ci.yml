@@ -264,6 +264,20 @@ jobs:
         # for local feedback during a docs PR.
         run: python3 tools/check_cli_help_consistency.py --strict
 
+      - name: CLI --help exit-code prose guard (strict)
+        # Step 3 follow-up (F-2): the guard above validates invocation
+        # *syntax*, never exit-code *prose*, so when EXIT_INTEGRITY_FAILURE
+        # (6) shipped for the four verify-* subcommands, `forgelm
+        # verify-audit --help` kept telling CI engineers that "1 means
+        # tampering" — the most authoritative statement of a public
+        # contract was the one surface with no mechanical reader.
+        # Asserts one bit per subcommand in both directions (an emitter
+        # of 6 must document it; a non-emitter must not claim it), with
+        # both sides derived from source so there is no mapping table to
+        # maintain.  Lands straight in --strict: the live finding count
+        # is already 0.
+        run: python3 tools/check_cli_exit_code_prose.py --strict
+
       - name: Unguarded sys.modules.pop guard
         # v0.5.7 round-4 absorption: the v0.5.7 round-3 review traced
         # 35 spurious full-suite failures to three test sites that

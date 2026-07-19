@@ -57,6 +57,36 @@ PIPELINE_MANIFEST_IO_ERROR_PREFIX = "IO_ERROR::"
 # match the prefix, never the free text.
 PIPELINE_MANIFEST_INPUT_ERROR_PREFIX = "INPUT_ERROR::"
 
+# Structural failure taxonomy for the audit-log verifier.
+#
+# ``verify_audit_log`` folds five very different situations into the same
+# ``valid=False``, and the CLI has to route them to three different exit
+# codes.  Routing keys off these typed tokens — never off ``reason`` prose —
+# so rewording an operator message cannot silently move a verdict between
+# exit codes (the discipline ``forgelm/verify.py``'s ``is_*_integrity_failure``
+# predicates already impose on the sibling verifiers).
+#
+# The classification travels beside the result, out of
+# :func:`_verify_audit_log_classified`, rather than as a field on
+# :class:`VerifyResult`.  ``VerifyResult`` is stable-tier public API
+# (``forgelm.__all__``); adding a field to it is an additive public-surface
+# change that requires an ``__api_version__`` MINOR bump plus a regenerated
+# ``tests/_data/api_signatures_<ver>.json``.  This routing detail does not
+# need to be public to do its job, and an internal need is a poor reason to
+# spend a version bump — promote it to a field the next time the public
+# surface moves for a reason of its own.
+#
+# ``AUDIT_FAILURE_INTEGRITY`` is the *default* for any ``valid=False``
+# result that does not classify itself: every failure raised from the chain
+# walk, the HMAC check and the genesis manifest is an integrity verdict, and
+# a future unclassified failure on our own append-only Art. 12 record is
+# safer over-reported as tampering than silently downgraded to a typo.
+AUDIT_FAILURE_NOT_FOUND = "not_found"  # no log at that path        → CLI exit 1
+AUDIT_FAILURE_USAGE = "usage"  # impossible option combination      → CLI exit 1
+AUDIT_FAILURE_UNREADABLE = "unreadable"  # exists, read failed      → CLI exit 2
+AUDIT_FAILURE_ENCODING = "encoding"  # log body is not UTF-8        → CLI exit 6
+AUDIT_FAILURE_INTEGRITY = "integrity"  # chain / HMAC / manifest    → CLI exit 6
+
 # Recommended minimum length for ``FORGELM_AUDIT_SECRET``.  Shorter secrets are
 # accepted (no hard-fail) but trigger a one-time weak-secret WARNING because the
 # audit HMAC key's entropy is bounded by the secret's (F-P5-OPUS-13).
@@ -1779,6 +1809,13 @@ class VerifyResult:
         reason: Human-readable explanation of the first failure (chain
             break, HMAC mismatch, JSON decode error, manifest mismatch,
             missing-but-required HMAC tag), or ``None`` when valid.
+    Note:
+        The machine-readable classification of a failure (which of the
+        ``AUDIT_FAILURE_*`` families ``reason`` belongs to) is deliberately
+        **not** a field here — see the comment on those constants.  Callers
+        that must route on the outcome rather than display it use
+        :func:`_verify_audit_log_classified`, which returns the token beside
+        the result; nothing routes on ``reason`` prose.
     """
 
     valid: bool
@@ -1972,21 +2009,37 @@ def _verify_chain_walk(
     return VerifyResult(valid=True, entries_count=entries_count)
 
 
-def _read_audit_log_lines(path: str) -> Tuple[Optional[VerifyResult], List[str]]:
-    """Stream the audit log line-by-line; return (failure-or-None, non-empty-lines).
+def _read_audit_log_lines(path: str) -> Tuple[Optional[Tuple[VerifyResult, str]], List[str]]:
+    """Stream the audit log line-by-line.
+
+    Returns ``((failure, failure_kind) or None, non-empty-lines)``.  The
+    classification token rides alongside the result rather than inside it —
+    see the ``AUDIT_FAILURE_*`` constants for why it is not a
+    :class:`VerifyResult` field.
 
     Streaming via line iteration avoids ``fh.read()`` into a single string
     which would balloon RAM for large logs. Lines are stripped of trailing
     newline so ``hashlib.sha256(line.encode("utf-8"))`` matches the writer's
     canonicalisation byte-for-byte.
+
+    The ``os.path.isfile`` guard is load-bearing beyond "does it exist": it
+    is also what keeps this function from ``open``-ing a FIFO — which blocks
+    until a writer appears, i.e. forever — or streaming a character device
+    such as ``/dev/zero`` without end.  Both report as
+    :data:`AUDIT_FAILURE_NOT_FOUND` (no audit log to verify at that path),
+    never as an integrity verdict.
     """
     if not os.path.isfile(path):
+        detail = "not a regular file" if os.path.exists(path) else "no such file"
         return (
-            VerifyResult(
-                valid=False,
-                entries_count=0,
-                first_invalid_index=None,
-                reason=f"audit log not found at {path!r}",
+            (
+                VerifyResult(
+                    valid=False,
+                    entries_count=0,
+                    first_invalid_index=None,
+                    reason=f"audit log not found at {path!r} ({detail})",
+                ),
+                AUDIT_FAILURE_NOT_FOUND,
             ),
             [],
         )
@@ -1998,26 +2051,85 @@ def _read_audit_log_lines(path: str) -> Tuple[Optional[VerifyResult], List[str]]
                 if line:
                     lines.append(line)
     except OSError as exc:
+        # Mid-read I/O failure on a log that opened fine.  The bytes were
+        # never all seen, so there is no chain verdict to give: retryable
+        # infrastructure problem, not tampering.
         return (
-            VerifyResult(
-                valid=False,
-                entries_count=0,
-                first_invalid_index=None,
-                reason=f"could not read audit log: {exc}",
+            (
+                VerifyResult(
+                    valid=False,
+                    entries_count=0,
+                    first_invalid_index=None,
+                    reason=f"could not read audit log: {exc}",
+                ),
+                AUDIT_FAILURE_UNREADABLE,
             ),
             [],
         )
     except UnicodeDecodeError as exc:
+        # Deliberately an *integrity* verdict, unlike the sibling verifiers'
+        # UnicodeDecodeError → exit 1: those read third-party documents an
+        # operator may have mis-typed a path to, whereas this is ForgeLM's
+        # own append-only Art. 12 record, which we wrote as UTF-8.  Non-UTF-8
+        # bytes inside it mean the record was corrupted after we wrote it.
+        return (
+            (
+                VerifyResult(
+                    valid=False,
+                    entries_count=0,
+                    first_invalid_index=None,
+                    reason=f"audit log is not valid UTF-8: {exc}",
+                ),
+                AUDIT_FAILURE_ENCODING,
+            ),
+            [],
+        )
+    return None, lines
+
+
+def _verify_audit_log_classified(
+    path: str,
+    *,
+    hmac_secret: Optional[str] = None,
+    require_hmac: bool = False,
+) -> Tuple[VerifyResult, Optional[str]]:
+    """:func:`verify_audit_log` plus the routing classification.
+
+    Returns ``(result, failure_kind)`` where ``failure_kind`` is ``None``
+    for a passing verification and one of the ``AUDIT_FAILURE_*`` tokens
+    otherwise.  Internal surface (underscore-prefixed, absent from
+    ``forgelm.__all__``, no stability guarantee): the CLI needs to route
+    "the log could not be read" and "the chain does not verify" to
+    different exit codes, and neither ``valid`` nor ``reason`` can tell
+    them apart — the first is not granular enough and the second is prose.
+
+    Untagged failures from the chain walk / HMAC check / genesis manifest
+    default to :data:`AUDIT_FAILURE_INTEGRITY`; see the constants for the
+    rationale of that default and for why the token is not a public field.
+    """
+    # ``require_hmac`` without a secret cannot authenticate anything: the
+    # per-entry check would only confirm an ``_hmac`` tag is *present*, never
+    # that it is *valid*, so strict mode would silently degrade to a presence
+    # check and return valid=True on a forged log. The CLI seam already
+    # refuses this combination (``_verify_audit.py``); enforce the same
+    # contract at the library boundary so notebook/SDK callers cannot get a
+    # fail-open pass (F-P4-OPUS-03).
+    if require_hmac and not hmac_secret:
         return (
             VerifyResult(
                 valid=False,
                 entries_count=0,
                 first_invalid_index=None,
-                reason=f"audit log is not valid UTF-8: {exc}",
+                reason="require_hmac=True requires a non-empty hmac_secret to authenticate _hmac tags",
             ),
-            [],
+            AUDIT_FAILURE_USAGE,
         )
-    return None, lines
+    classified_failure, lines = _read_audit_log_lines(path)
+    if classified_failure is not None:
+        return classified_failure
+
+    result = _verify_audit_log_chain(path, lines, hmac_secret, require_hmac)
+    return (result, None if result.valid else AUDIT_FAILURE_INTEGRITY)
 
 
 def verify_audit_log(
@@ -2063,23 +2175,27 @@ def verify_audit_log(
         bounded for large logs. Genesis-manifest sidecar
         (``<path>.manifest.json``) is checked when present.
     """
-    # ``require_hmac`` without a secret cannot authenticate anything: the
-    # per-entry check below would only confirm an ``_hmac`` tag is *present*,
-    # never that it is *valid*, so strict mode would silently degrade to a
-    # presence check and return valid=True on a forged log. The CLI seam
-    # already refuses this combination (``_verify_audit.py``); enforce the
-    # same contract at the library boundary so notebook/SDK callers cannot
-    # get a fail-open pass (F-P4-OPUS-03).
-    if require_hmac and not hmac_secret:
-        return VerifyResult(
-            valid=False,
-            entries_count=0,
-            first_invalid_index=None,
-            reason="require_hmac=True requires a non-empty hmac_secret to authenticate _hmac tags",
-        )
-    failure, lines = _read_audit_log_lines(path)
-    if failure is not None:
-        return failure
+    result, _failure_kind = _verify_audit_log_classified(
+        path,
+        hmac_secret=hmac_secret,
+        require_hmac=require_hmac,
+    )
+    return result
+
+
+def _verify_audit_log_chain(
+    path: str,
+    lines: List[str],
+    hmac_secret: Optional[str],
+    require_hmac: bool,
+) -> VerifyResult:
+    """Chain + HMAC + genesis-manifest verification over already-read lines.
+
+    Split out of :func:`verify_audit_log` when the classification moved to
+    :func:`_verify_audit_log_classified`: every failure this function can
+    return is an integrity verdict, which is what lets the caller tag the
+    whole branch in one place instead of at each ``return``.
+    """
     if not lines:
         # An empty log is legitimate ONLY when no genesis manifest pins a
         # non-empty first entry. A manifest present + empty log is the
@@ -2297,6 +2413,13 @@ def verify_pipeline_manifest_at_path(pipeline_dir: str) -> List[str]:
             manifest = json.load(f)
     except json.JSONDecodeError as e:
         return [f"{PIPELINE_MANIFEST_INPUT_ERROR_PREFIX}pipeline_manifest.json invalid JSON: {e}"]
+    except UnicodeDecodeError as e:
+        # UnicodeDecodeError is a ValueError subclass, not an OSError one, so
+        # it matches neither branch around it and escaped this function as an
+        # unhandled traceback (D1-08).  All three sibling single-artefact
+        # verifiers carry an explicit branch for the same failure mode; a
+        # non-UTF-8 manifest is operator-actionable input, not a chain verdict.
+        return [f"{PIPELINE_MANIFEST_INPUT_ERROR_PREFIX}pipeline_manifest.json is not valid UTF-8: {e}"]
     except OSError as e:
         return [f"{PIPELINE_MANIFEST_IO_ERROR_PREFIX}pipeline_manifest.json unreadable: {e}"]
 

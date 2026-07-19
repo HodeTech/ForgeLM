@@ -10,7 +10,7 @@ description: Validate the EU AI Act Annex IV technical-documentation artifact an
 ## When to use it
 
 - **Before treating an Annex IV bundle as "audit-ready".** A clean exit is the minimum schema-completeness signal you should give to a regulator or notified body.
-- **In the post-training CI gate.** Run after every pipeline that emits Annex IV; fail the release on exit `1`.
+- **In the post-training CI gate.** Run after every pipeline that emits Annex IV; fail the release on any non-zero exit — `6` (the artifact was read and its manifest hash doesn't match: tampering) and `1` (required fields never populated, or the file couldn't be parsed at all) are both release-blocking. See [Exit Codes](#/reference/exit-codes) for the full contract.
 - **When receiving an Annex IV from a third-party trainer.** Recompute the manifest hash to detect drift between what they sent and what they signed.
 - **Periodically across archived bundles.** A nightly sweep of historical Annex IV files surfaces silent post-archive edits.
 
@@ -31,7 +31,7 @@ sequenceDiagram
     Verify->>Verify: compute_annex_iv_manifest_hash(artifact)
     Verify->>Verify: compare to metadata.manifest_hash
     alt hash mismatch
-        Verify-->>CI: exit 1 (tamper detected)
+        Verify-->>CI: exit 6 (tamper detected)
     end
     Verify-->>CI: exit 0 (artifact valid)
 ```
@@ -100,8 +100,9 @@ OK: …/annex_iv_metadata.json
 | Code | Meaning |
 |---|---|
 | `0` | All §1-9 fields populated AND manifest hash matches (when present). |
-| `1` | Missing field, manifest mismatch, malformed JSON, or non-object root (validation failure — `valid=False`). |
-| `2` | File not found or unreadable (I/O error — argument or environment mistake). |
+| `1` | Nothing was ever compared: a required §1-9 field is missing / empty, the root is not a JSON object, the JSON is malformed or not valid UTF-8, or the path does not exist / is not a regular file. Operator-actionable — the artifact is not Annex IV complete as-is. |
+| `2` | Genuine runtime I/O failure on an existing, reachable file (permission denied mid-read, read error). Retryable. |
+| `6` | Integrity failure: every §1-9 field is populated, the artifact carries a `metadata.manifest_hash`, and the recomputed hash disagrees with it. The document was edited after generation — treat it as a security event, not a config fix. |
 
 ## Common pitfalls
 
@@ -118,7 +119,7 @@ OK: …/annex_iv_metadata.json
 :::
 
 :::tip
-**Pin the verifier in CI as a hard gate.** Wire `forgelm verify-annex-iv --output-format json` after every pipeline that produces Annex IV; pipe to `jq -e '.valid'` so exit-on-false fails the release without parsing text.
+**Pin the verifier in CI as a hard gate.** Wire `forgelm verify-annex-iv --output-format json` after every pipeline that produces Annex IV; pipe to `jq -e '.valid'` so exit-on-false fails the release without parsing text. If you gate on the process exit code instead, branch on non-zero — gating on `== 1` alone lets a tampered artifact (exit `6`) through.
 :::
 
 ## See also
@@ -127,4 +128,5 @@ OK: …/annex_iv_metadata.json
 - [Audit Log](#/compliance/audit-log) — append-only event log; `compliance.artifacts_exported` (Article 11 + Annex IV) is the production-side counterpart to this verifier.
 - [Verify Audit](#/compliance/verify-audit) — companion verifier for the audit log.
 - [Verify GGUF](#/deployment/verify-gguf) — companion verifier on the deployment-integrity surface.
+- [Exit Codes](#/reference/exit-codes) — the `0/1/2/3/4/5/6` public contract, including the `1` vs. `6` split shared by all four `verify-*` subcommands.
 - [`verify_annex_iv_subcommand.md`](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/verify_annex_iv_subcommand.md) — the reference doc with full flag table and library-symbol citations (GitHub source).

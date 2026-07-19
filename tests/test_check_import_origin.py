@@ -18,6 +18,19 @@ Pinned contracts:
    to catch).
 5. ``--quiet`` silences success only; failures always print.
 6. ``--strict`` is accepted and behaves as the default.
+7. The probe runs from a neutral cwd, so a ``forgelm`` directory that
+   merely happens to sit in the caller's working directory cannot be
+   mistaken for an install.
+
+A note on ``@pytest.mark.requires_editable_install`` below: three cases
+here assert ``main(...) == 0``, which is a statement about the *machine*,
+not about the tool — it holds only when ``pip install -e .`` put this
+checkout on ``sys.path``. ``.github/workflows/publish.yml`` installs the
+built wheel non-editably on purpose, so there the guard correctly exits
+1 and those three would fail for precisely the reason the guard was
+written. The marker deselects them there. The verdict contract itself is
+pinned by :class:`TestVerdict` as a pure function, which runs everywhere,
+so nothing is actually left uncovered.
 """
 
 from __future__ import annotations
@@ -25,6 +38,8 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+
+import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _TOOL_PATH = _REPO_ROOT / "tools" / "check_import_origin.py"
@@ -102,31 +117,80 @@ class TestProbe:
         assert diagnostic  # the failure reason is carried, not swallowed
 
     def test_probe_finds_forgelm_in_this_environment(self):
-        """End-to-end: the dev environment these tests run in must have an
-        editable install, which is exactly what the guard asserts."""
+        """End-to-end: forgelm must be importable from a neutral cwd.
+
+        True for an editable install *and* for a wheel install, so this
+        needs no marker — it only asserts importability, not location.
+        """
         tool = _load_tool()
         resolved, diagnostic = tool._probe_forgelm_location()
         assert resolved is not None, f"forgelm not importable from a neutral cwd: {diagnostic}"
         assert Path(resolved).name == "__init__.py"
 
+    def test_probe_ignores_a_forgelm_directory_in_the_callers_cwd(self, tmp_path, monkeypatch):
+        """The ``cwd=<temp dir>`` kwarg is the whole mechanism, so pin it.
+
+        ``python -c`` puts the process's working directory first on
+        ``sys.path``. If the probe inherited the caller's cwd, any stray
+        ``./forgelm/`` — a scratch copy, a half-finished worktree, or in
+        the extreme a checkout with no install at all — would satisfy the
+        import and the guard would report a shadowing install as healthy.
+        Running from a throwaway directory is what models the *console
+        script's* least-favourable path ordering instead.
+
+        Delete ``cwd=neutral_cwd`` from ``_probe_forgelm_location`` and
+        this test fails: the decoy below is what gets imported.
+        """
+        tool = _load_tool()
+        decoy = tmp_path / "forgelm"
+        decoy.mkdir()
+        (decoy / "__init__.py").write_text("", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+
+        resolved, diagnostic = tool._probe_forgelm_location()
+
+        assert resolved is not None, f"probe could not import forgelm at all: {diagnostic}"
+        assert Path(resolved).resolve() != (decoy / "__init__.py").resolve(), (
+            "the probe imported a forgelm/ from its caller's cwd — the neutral-cwd "
+            "guarantee in _probe_forgelm_location is gone, and the guard can no "
+            "longer tell a real install from a directory that happens to be there"
+        )
+
 
 class TestCli:
+    """CLI surface.
+
+    The three ``== 0`` cases carry ``@pytest.mark.requires_editable_install``
+    (see the module docstring); they are marked one by one rather than at
+    class level so ``test_failure_goes_to_stderr``, which stubs the probe
+    and is therefore environment-independent, keeps running in the release
+    matrix.
+    """
+
+    @pytest.mark.requires_editable_install
     def test_exit_zero_in_this_checkout(self, capsys):
         tool = _load_tool()
-        assert tool.main([]) == 0
-        out = capsys.readouterr().out
+        code = tool.main([])
+        captured = capsys.readouterr()
+        assert code == 0, f"guard rejected this environment:\n{captured.err}"
         # Success must name its subject, not just say OK.
-        assert str((_REPO_ROOT / "forgelm").resolve()) in out
+        assert str((_REPO_ROOT / "forgelm").resolve()) in captured.out
 
+    @pytest.mark.requires_editable_install
     def test_quiet_suppresses_success_output(self, capsys):
         tool = _load_tool()
-        assert tool.main(["--quiet"]) == 0
-        assert capsys.readouterr().out == ""
+        code = tool.main(["--quiet"])
+        captured = capsys.readouterr()
+        assert code == 0, f"guard rejected this environment:\n{captured.err}"
+        assert captured.out == ""
 
+    @pytest.mark.requires_editable_install
     def test_strict_is_alias_of_default(self, capsys):
         tool = _load_tool()
-        assert tool.main(["--strict"]) == 0
-        assert "resolves inside this checkout" in capsys.readouterr().out
+        code = tool.main(["--strict"])
+        captured = capsys.readouterr()
+        assert code == 0, f"guard rejected this environment:\n{captured.err}"
+        assert "resolves inside this checkout" in captured.out
 
     def test_failure_goes_to_stderr(self, capsys, monkeypatch):
         """Failures must reach stderr so a CI log separates them from the

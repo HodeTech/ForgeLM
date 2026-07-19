@@ -200,7 +200,7 @@ $ forgelm verify-audit PATH/TO/audit_log.jsonl --hmac-secret-env FORGELM_AUDIT_S
 $ forgelm verify-audit PATH/TO/audit_log.jsonl --require-hmac
 ```
 
-Monoton timestamp'leri, `prev_hash` zincir bütünlüğünü, `seq` boşluk tespitini ve (yapılandırıldığında) HMAC imzalarını doğrular. Geçerli zincirde exit `0`; tahrif tespitinde structured error envelope ile non-zero.
+Monoton timestamp'leri, `prev_hash` zincir bütünlüğünü, `seq` boşluk tespitini ve (yapılandırıldığında) HMAC imzalarını doğrular. Geçerli zincirde exit `0`; tahrif tespitinde (zincir kırılması, HMAC uyuşmazlığı, genesis-manifest uyuşmazlığı) structured error envelope ile exit `6`; doğrulayıcı log'u okumaya hiç sıra gelmediğinde (eksik yol, secret olmadan `--require-hmac`) exit `1`; gerçek bir runtime I/O hatasında exit `2`. Bkz. [Audit Log Doğrulama](#/compliance/verify-audit).
 
 ## Model bütünlüğü doğrula: `forgelm verify-integrity`
 
@@ -209,7 +209,7 @@ $ forgelm verify-integrity MODEL_DIR
 $ forgelm verify-integrity MODEL_DIR --output-format json
 ```
 
-`<MODEL_DIR>/model_integrity.json` dosyasını (eğitim sırasında compliance export tarafından yazılır) okur ve kayıtlı her artefaktın SHA-256'sını yeniden hesaplar. Manifest oluşturulduğundan beri **değişen**, **kaldırılan** veya **eklenen** dosyaları raporlar. Manifest dosyasının kendisi yürüyüşten hariç tutulur. Her kayıtlı artefakt mevcut ve değişmemişse ve fazladan dosya yoksa exit `0`; herhangi bir uyuşmazlık veya girdi hatasında exit `1`; gerçek bir runtime I/O hatasında exit `2`.
+`<MODEL_DIR>/model_integrity.json` dosyasını (eğitim sırasında compliance export tarafından yazılır) okur ve kayıtlı her artefaktın SHA-256'sını yeniden hesaplar. Manifest oluşturulduğundan beri **değişen**, **kaldırılan** veya **eklenen** dosyaları raporlar. Manifest dosyasının kendisi yürüyüşten hariç tutulur. Her kayıtlı artefakt mevcut ve değişmemişse ve fazladan dosya yoksa exit `0`; herhangi bir uyuşmazlıkta (değişen / kaldırılan / eklenen dosya — manifest ayrıştırıldı ve yürüyüş çalıştı) exit `6`; hiçbir şey hash'lenmeden önce dönen girdi hatalarında (eksik yol, manifest bulunamadı, bozuk JSON, dizin dışına çıkan manifest girdisi) exit `1`; gerçek bir runtime I/O hatasında exit `2`. Bkz. [Model Bütünlüğü Doğrulama](#/compliance/verify-integrity).
 
 ## Kimlik Doğrulama
 
@@ -247,13 +247,19 @@ Sentetik veri adımı çalıştığında adlandırılan env var set değilse, co
 | 3 | Auto-revert / regression |
 | 4 | İnsan onayı bekleniyor (eğitim pipeline) |
 | 5 | Sihirbaz iptal (operatör kaydı reddetti / non-tty reddi) |
+| 6 | Dört `verify-*` alt komutundan birinde bütünlük hatası — artefakt okundu ve hash / zincir / manifest karşılaştırması başarısız oldu |
 
 `argparse` kullanım hataları (hatalı flag, eksik zorunlu argüman, hatalı `choices`
 veya tip-doğrulayıcı sınırı) **2** ile çıkar — argparse'in kendi `error()` kuralı —
 ayrıştırmadan *sonra* ulaşılan config / semantik doğrulama ise **1** ile çıkar. Bir
 Ctrl+C sinyal kaynaklı 130'dur ancak süreç çıkmadan önce **2**'ye
-(`EXIT_TRAINING_ERROR`) kıstırılır, böylece public `0–5` kümesi dışında bir exit
+(`EXIT_TRAINING_ERROR`) kıstırılır, böylece public `0–6` kümesi dışında bir exit
 kodu asla döndürülmez.
+
+Dört `verify-*` alt komutunda `1` ile `6` tek bir soruya göre ayrılır: doğrulayıcı
+bir şeyi karşılaştıracak kadar ilerledi mi? Hiçbir şey karşılaştırılmadıysa (eksik
+yol, bozuk manifest, hiç GGUF olmayan bir dosya) **1**; karşılaştırıldı ve
+uyuşmadıysa **6**.
 
 Tam kontrat için bkz. [Exit Kodları](#/reference/exit-codes).
 

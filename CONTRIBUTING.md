@@ -56,6 +56,7 @@ python3 tools/check_import_origin.py --strict && \
   python3 tools/check_bilingual_parity.py --strict && \
   python3 tools/check_anchor_resolution.py --strict && \
   python3 tools/check_cli_help_consistency.py --strict && \
+  python3 tools/check_cli_exit_code_prose.py --strict && \
   python3 tools/check_wizard_defaults_sync.py && \
   python3 tools/check_no_analysis_refs.py && \
   python3 tools/check_no_unguarded_sys_modules_pop.py && \
@@ -81,7 +82,7 @@ every later step depends on — that the `forgelm` being imported is the one
 you just edited — and `-m` alone does not cover the `tools/check_*.py`
 guards that import `forgelm` with `sys.path[0] == tools/`.
 
-All twenty must pass. The first four are the historical "self-review"
+All twenty-one must pass. The first four are the historical "self-review"
 command from [`docs/standards/code-review.md`](docs/standards/code-review.md).
 The rest are doc/schema/audit-log guards that landed across Waves 3-5 and
 later review cycles and run on every PR via `.github/workflows/`; running
