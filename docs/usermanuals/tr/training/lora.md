@@ -71,7 +71,7 @@ training:
 
 `lora.method`, hangi PEFT varyantının kullanılacağını seçen güncel alandır: `lora` (standart), `dora` (weight-decomposed, aşağıya bakın), `pissa` (principal singular bileşenlerden başlatılan LoRA — küçük dataset'lerde daha hızlı yakınsama) veya `rslora` (rank-stabilised scaling — `r ≥ 64`'te daha kararlı).
 
-`use_dora` ve `use_rslora`, `method: "dora"` / `method: "rslora"` için deprecated boolean kısayollardır — hâlâ kabul edilir, ancak **v0.10.0**'da kaldırılması planlanmıştır. Deprecated bir bayrağı çelişen açık bir `method:` ile birlikte ayarlamak (ör. `method: "rslora"` ile `use_dora: true`) bir config hatasıdır; `use_dora: true` ve `use_rslora: true`'yu birlikte ayarlamak da reddedilir — tek bir yol seçin. PiSSA'nın boolean karşılığı yoktur; yalnızca `method: "pissa"` ile seçilir.
+`use_dora` ve `use_rslora`, `method: "dora"` / `method: "rslora"` için deprecated boolean kısayollardır — hâlâ kabul edilir, ancak **v1.0.0**'da kaldırılması planlanmıştır. Deprecated bir bayrağı çelişen açık bir `method:` ile birlikte ayarlamak (ör. `method: "rslora"` ile `use_dora: true`) bir config hatasıdır; `use_dora: true` ve `use_rslora: true`'yu birlikte ayarlamak da reddedilir — tek bir yol seçin. PiSSA'nın boolean karşılığı yoktur; yalnızca `method: "pissa"` ile seçilir.
 
 ## `r` rank seçimi
 

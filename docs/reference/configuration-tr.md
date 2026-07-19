@@ -46,8 +46,8 @@ Tam açıklamalı örnek için `config_template.yaml` dosyasına bakın.
 | `dropout` | float | `0.1` | Dropout olasılığı |
 | `bias` | string | `"none"` | `"none"`, `"all"` veya `"lora_only"` |
 | `method` | string | `"lora"` | PEFT yöntemi: `"lora"`, `"dora"`, `"pissa"`, `"rslora"` |
-| `use_dora` | bool | `false` | **Kullanımdan kaldırıldı** — `method: "dora"` için takma ad; v0.10.0'da kaldırılır. `true` ayarlamak `DeprecationWarning` ile `method: "dora"`'ya yönlendirir. Bunun yerine `method` kullanın. |
-| `use_rslora` | bool | `false` | **Kullanımdan kaldırıldı** — `method: "rslora"` için takma ad (r>64 için önerilir); v0.10.0'da kaldırılır. `true` ayarlamak `DeprecationWarning` ile `method: "rslora"`'ya yönlendirir. Bunun yerine `method` kullanın. |
+| `use_dora` | bool | `false` | **Kullanımdan kaldırıldı** — `method: "dora"` için takma ad; v1.0.0'da kaldırılır. `true` ayarlamak `DeprecationWarning` ile `method: "dora"`'ya yönlendirir. Bunun yerine `method` kullanın. |
+| `use_rslora` | bool | `false` | **Kullanımdan kaldırıldı** — `method: "rslora"` için takma ad (r>64 için önerilir); v1.0.0'da kaldırılır. `true` ayarlamak `DeprecationWarning` ile `method: "rslora"`'ya yönlendirir. Bunun yerine `method` kullanın. |
 | `target_modules` | list | `["q_proj", "v_proj"]` | LoRA uygulanacak modüller |
 | `task_type` | string | `"CAUSAL_LM"` | PEFT için görev tipi |
 
@@ -118,7 +118,7 @@ training:
 | `rope_scaling` | `Optional[Dict[str, Any]]` | `null` | RoPE ölçekleme yöntemi sözlüğü (`{"type": "linear", "factor": 2.0}` vs.). Desteklenen tipler: `"linear"`, `"dynamic"`, `"yarn"`, `"longrope"`. |
 | `neftune_noise_alpha` | float | `null` | NEFTune gürültü enjeksiyonu alpha değeri (ör. `5.0`) |
 | `sliding_window_attention` | int | `null` | Kayan pencere dikkat boyutu (token) |
-| `sample_packing` | bool | `false` | **Kullanımdan kaldırıldı** — `packing` için takma ad (TRL tek bir packing düğmesi sunar). `true` ayarlamak `DeprecationWarning` ile `packing: true`'ya yönlendirir; v0.9.0'da kaldırılır. Bunun yerine `packing` kullanın. |
+| `sample_packing` | bool | `false` | **Kullanımdan kaldırıldı** — `packing` için takma ad (TRL tek bir packing düğmesi sunar). `true` ayarlamak `DeprecationWarning` ile `packing: true`'ya yönlendirir; v1.0.0'da kaldırılır. Bunun yerine `packing` kullanın. |
 
 #### GPU Maliyet Tahmini
 

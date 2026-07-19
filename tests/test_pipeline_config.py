@@ -548,7 +548,7 @@ class TestLoraDeprecatedFlagAlwaysWarns:
         dep_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
         assert dep_warnings, (
             "No DeprecationWarning for use_dora=True + method='dora' — "
-            "operator receives no nudge to remove use_dora before v0.10.0."
+            "operator receives no nudge to remove use_dora before v1.0.0."
         )
         assert lc.method == "dora"
 
@@ -560,7 +560,7 @@ class TestLoraDeprecatedFlagAlwaysWarns:
         dep_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
         assert dep_warnings, (
             "No DeprecationWarning for use_rslora=True + method='rslora' — "
-            "operator receives no nudge to remove use_rslora before v0.10.0."
+            "operator receives no nudge to remove use_rslora before v1.0.0."
         )
         assert lc.method == "rslora"
 

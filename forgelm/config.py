@@ -210,28 +210,28 @@ class LoraConfigModel(BaseModel):
                 "lora.use_dora and lora.use_rslora are mutually exclusive "
                 "(DoRA and rsLoRA select different PEFT methods). Set a single "
                 "`method:` ('dora' or 'rslora') instead; both deprecated flags "
-                "are removed in v0.10.0."
+                "are removed in v1.0.0."
             )
         if self.use_dora and self.method not in ("lora", "dora"):
             raise ValueError(
                 f"lora.use_dora=True contradicts method='{self.method}'. "
                 "Drop the deprecated flag and keep the explicit `method:`; "
-                "use_dora is removed in v0.10.0."
+                "use_dora is removed in v1.0.0."
             )
         if self.use_rslora and self.method not in ("lora", "rslora"):
             raise ValueError(
                 f"lora.use_rslora=True contradicts method='{self.method}'. "
                 "Drop the deprecated flag and keep the explicit `method:`; "
-                "use_rslora is removed in v0.10.0."
+                "use_rslora is removed in v1.0.0."
             )
         # Emit the deprecation unconditionally whenever the deprecated flag is set —
         # including the compatible-redundant cases (use_dora + method='dora' or
         # use_rslora + method='rslora').  Previously the warning only fired when
         # method was 'lora', so operators who already wrote the correct explicit
         # method alongside the deprecated flag received no nudge to drop it before
-        # v0.10.0 removal (F-L-09).
+        # v1.0.0 removal (F-L-09).
         if self.use_dora:
-            message = "lora.use_dora=True is deprecated and removed in v0.10.0. Use method='dora' instead." + (
+            message = "lora.use_dora=True is deprecated and removed in v1.0.0. Use method='dora' instead." + (
                 " Automatically setting method='dora'." if self.method == "lora" else ""
             )
             logger.warning(message)
@@ -239,7 +239,7 @@ class LoraConfigModel(BaseModel):
             if self.method == "lora":
                 object.__setattr__(self, "method", "dora")
         if self.use_rslora:
-            message = "lora.use_rslora=True is deprecated and removed in v0.10.0. Use method='rslora' instead." + (
+            message = "lora.use_rslora=True is deprecated and removed in v1.0.0. Use method='rslora' instead." + (
                 " Automatically setting method='rslora'." if self.method == "lora" else ""
             )
             logger.warning(message)
@@ -394,7 +394,7 @@ class TrainingConfig(BaseModel):
         description=(
             "Deprecated alias for `packing`; TRL exposes a single sequence-packing knob. "
             "Setting `sample_packing: true` forwards to `packing: true` with a "
-            "`DeprecationWarning`. Removal scheduled for v0.10.0 — use `packing` instead."
+            "`DeprecationWarning`. Removal scheduled for v1.0.0 — use `packing` instead."
         ),
     )
     oom_recovery: bool = Field(
@@ -500,7 +500,7 @@ class TrainingConfig(BaseModel):
         documented behaviour actually fires during the deprecation window, and
         emit both a ``DeprecationWarning`` (for ``-W error`` / CI deprecation
         sweeps) and a ``logger.warning`` (visible on the CLI path), mirroring
-        the ``lora.use_dora`` alias pattern.  Removal target: v0.10.0.
+        the ``lora.use_dora`` alias pattern.  Removal target: v1.0.0.
         """
         if self.sample_packing:
             # Always notify: emit when the deprecated flag is set regardless of
@@ -508,15 +508,15 @@ class TrainingConfig(BaseModel):
             # ``if self.sample_packing and not self.packing``, which silently
             # swallowed the deprecation when an operator wrote both
             # ``sample_packing: true`` and ``packing: true``, leaving them with
-            # no nudge to remove the deprecated key before v0.10.0 removal (F-M-14).
+            # no nudge to remove the deprecated key before v1.0.0 removal (F-M-14).
             logger.warning(
                 "training.sample_packing is deprecated and forwards to training.packing. "
-                "Use `packing: true` instead; sample_packing is removed in v0.10.0."
+                "Use `packing: true` instead; sample_packing is removed in v1.0.0."
             )
             warnings.warn(
                 "`training.sample_packing` is deprecated and forwards to "
                 "`training.packing`. Use `packing: true` instead; the deprecated "
-                "field is removed in v0.10.0.",
+                "field is removed in v1.0.0.",
                 DeprecationWarning,
                 stacklevel=2,
             )

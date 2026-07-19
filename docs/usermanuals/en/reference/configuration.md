@@ -58,11 +58,11 @@ lora:
   bias: "none"                                # none | all | lora_only
   method: "lora"                              # lora | dora | pissa | rslora
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
-  use_dora: false                             # deprecated boolean shortcut for method: "dora"; removed in v0.10.0
-  use_rslora: false                           # deprecated boolean shortcut for method: "rslora"; removed in v0.10.0
+  use_dora: false                             # deprecated boolean shortcut for method: "dora"; removed in v1.0.0
+  use_rslora: false                           # deprecated boolean shortcut for method: "rslora"; removed in v1.0.0
 ```
 
-`LoraConfigModel` has no `modules_to_save` or `use_pissa` field — `extra="forbid"` rejects both at `--dry-run`. PiSSA initialisation is selected with `method: "pissa"` (there is no boolean toggle); `use_dora` / `use_rslora` are deprecated boolean shortcuts for `method: "dora"` / `method: "rslora"`, scheduled for removal in v0.10.0 — setting both at once, or setting one against a contradictory explicit `method:`, is a config error.
+`LoraConfigModel` has no `modules_to_save` or `use_pissa` field — `extra="forbid"` rejects both at `--dry-run`. PiSSA initialisation is selected with `method: "pissa"` (there is no boolean toggle); `use_dora` / `use_rslora` are deprecated boolean shortcuts for `method: "dora"` / `method: "rslora"`, scheduled for removal in v1.0.0 — setting both at once, or setting one against a contradictory explicit `method:`, is a config error.
 
 ## `data:`
 

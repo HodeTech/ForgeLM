@@ -160,6 +160,12 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   `ForgeConfig` `model_dump()` and `model_dump_json()` overrides now mask both
   paths while keeping attribute access as plain strings for internal consumers
   (`forgelm/config.py`).
+- **Build toolchain moved off a vulnerable `setuptools`.** The build-system
+  floor is now `setuptools>=83.0.0` — the first release carrying the fix for
+  **PYSEC-2026-3447** — and the nightly supply-chain job upgrades the scanned
+  environment to match. The nightly `pip-audit` gate had been failing closed on
+  this advisory since 2026-07-15 (#69); it is now fixed rather than suppressed
+  (no entry was added to `tools/pip_audit_ignores.yaml`).
 - **ReDoS hardening in the OpenSSH/PGP private-key secret detectors.** The
   unbounded `.*?` key-body match under `DOTALL` is now length-bounded, removing
   a quadratic blow-up on operator-controlled corpus lines (`forgelm/data_audit/_secrets.py`).
@@ -170,6 +176,20 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   notably Alibaba Cloud's IMDS at `100.100.100.200`. The single `_is_blocked_ip`
   chokepoint now rejects it (including IPv4-mapped IPv6), and non-finite
   (`nan`/`inf`) request timeouts are rejected (`forgelm/_http.py`).
+
+### Deprecated
+
+- **The `lora.use_dora` / `lora.use_rslora` / `training.sample_packing` removal
+  target is now `v1.0.0`.** These are YAML schema fields, and
+  [`docs/standards/release.md`](docs/standards/release.md) classifies "changed
+  YAML schema with removed/renamed fields" as a **MAJOR** change — so the earlier
+  targets (`v0.9.0`, then `v0.10.0`) promised a breaking removal inside a MINOR
+  release, a promise no minor could legitimately keep. That mismatch is why the
+  deadline slipped: `v0.9.0` shipped with the aliases still present, and the
+  reference docs still advertised `sample_packing` as "removed in v0.9.0" until
+  now. Re-targeting to the next MAJOR makes the deprecation contract consistent
+  with the project's own versioning policy; the aliases keep forwarding with a
+  `DeprecationWarning` until then.
 
 ### Changed
 

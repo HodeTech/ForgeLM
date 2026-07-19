@@ -71,7 +71,7 @@ training:
 
 `lora.method` is the current selector for which PEFT variant to use: `lora` (standard), `dora` (weight-decomposed, see below), `pissa` (LoRA initialised from the principal singular components — faster convergence on small datasets), or `rslora` (rank-stabilised scaling — more stable once `r ≥ 64`).
 
-`use_dora` and `use_rslora` are deprecated boolean shortcuts for `method: "dora"` / `method: "rslora"` — still accepted, but scheduled for removal in **v0.10.0**. Setting a deprecated flag against a contradicting explicit `method:` (e.g. `use_dora: true` with `method: "rslora"`) is a config error, and setting `use_dora: true` and `use_rslora: true` together is also rejected — pick one path. PiSSA has no boolean alias; select it only with `method: "pissa"`.
+`use_dora` and `use_rslora` are deprecated boolean shortcuts for `method: "dora"` / `method: "rslora"` — still accepted, but scheduled for removal in **v1.0.0**. Setting a deprecated flag against a contradicting explicit `method:` (e.g. `use_dora: true` with `method: "rslora"`) is a config error, and setting `use_dora: true` and `use_rslora: true` together is also rejected — pick one path. PiSSA has no boolean alias; select it only with `method: "pissa"`.
 
 ## Choosing rank `r`
 

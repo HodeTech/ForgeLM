@@ -58,11 +58,11 @@ lora:
   bias: "none"                                # none | all | lora_only
   method: "lora"                              # lora | dora | pissa | rslora
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
-  use_dora: false                             # method: "dora" için deprecated boolean kısayolu; v0.10.0'da kaldırılır
-  use_rslora: false                           # method: "rslora" için deprecated boolean kısayolu; v0.10.0'da kaldırılır
+  use_dora: false                             # method: "dora" için deprecated boolean kısayolu; v1.0.0'da kaldırılır
+  use_rslora: false                           # method: "rslora" için deprecated boolean kısayolu; v1.0.0'da kaldırılır
 ```
 
-`LoraConfigModel`'de `modules_to_save` veya `use_pissa` alanı yoktur — `extra="forbid"` ikisini de `--dry-run`'da reddeder. PiSSA initialisation bir boolean toggle değil `method: "pissa"` ile seçilir; `use_dora` / `use_rslora`, `method: "dora"` / `method: "rslora"` için deprecated boolean kısayollardır, v0.10.0'da kaldırılması planlanmıştır — ikisini birden ayarlamak, veya birini çelişen açık bir `method:` ile ayarlamak config hatasıdır.
+`LoraConfigModel`'de `modules_to_save` veya `use_pissa` alanı yoktur — `extra="forbid"` ikisini de `--dry-run`'da reddeder. PiSSA initialisation bir boolean toggle değil `method: "pissa"` ile seçilir; `use_dora` / `use_rslora`, `method: "dora"` / `method: "rslora"` için deprecated boolean kısayollardır, v1.0.0'da kaldırılması planlanmıştır — ikisini birden ayarlamak, veya birini çelişen açık bir `method:` ile ayarlamak config hatasıdır.
 
 ## `data:`
 

@@ -284,6 +284,11 @@ jobs:
       - name: Install ForgeLM with [security] extra
         run: |
           pip install --upgrade pip
+          # setuptools ships in the runner image and is what pip-audit scans.
+          # PYSEC-2026-3447 is fixed in 83.0.0; upgrade the *scanned environment*
+          # (pyproject's build-system floor only governs the isolated build env)
+          # so the nightly reports the fixed version instead of failing closed.
+          pip install --upgrade "setuptools>=83.0.0"
           pip install -e ".[security]"
 
       - name: pip-audit (transitive CVE scan)

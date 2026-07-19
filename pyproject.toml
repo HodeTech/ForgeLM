@@ -7,7 +7,11 @@
 # F-PR29-A6-lock-file in docs/roadmap/risks-and-decisions.md (v0.6.x).
 
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+# setuptools floor is a SECURITY floor, not a feature floor: 83.0.0 is the
+# first release carrying the fix for PYSEC-2026-3447, which the nightly
+# supply-chain scan (pip-audit) fails closed on. Raise it here so a
+# build-from-source never provisions a vulnerable build toolchain.
+requires = ["setuptools>=83.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]

@@ -934,7 +934,7 @@ class TestDeprecationRemovalVersion:
         messages = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
         assert messages, "expected a DeprecationWarning for use_dora"
         assert all("v0.9.0" not in m for m in messages)
-        assert any("v0.10.0" in m for m in messages)
+        assert any("v1.0.0" in m for m in messages)
 
     def test_sample_packing_warning_states_future_removal_version(self):
         with warnings.catch_warnings(record=True) as caught:
@@ -943,7 +943,7 @@ class TestDeprecationRemovalVersion:
         messages = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
         assert messages, "expected a DeprecationWarning for sample_packing"
         assert all("v0.9.0" not in m for m in messages)
-        assert any("v0.10.0" in m for m in messages)
+        assert any("v1.0.0" in m for m in messages)
 
 
 # --- Findings 4/6/7: config_template completeness + no deprecated-flag demos ---
@@ -957,7 +957,7 @@ class TestTemplateCompleteness:
 
     def test_template_has_no_deprecated_peft_flags(self):
         """Finding 4: the PEFT example must not demonstrate the deprecated
-        use_dora / use_rslora booleans (removed in v0.10.0)."""
+        use_dora / use_rslora booleans (removed in v1.0.0)."""
         text = self._template_text()
         assert "use_dora:" not in text
         assert "use_rslora:" not in text
