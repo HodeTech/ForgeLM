@@ -10,16 +10,19 @@ version (the promise would be retroactively false).
 Detection logic is pinned against synthetic in-memory fixtures so it stays
 independent of the real, evolving corpus: a matching claim, a stale claim, a
 version with no removal language, removal language with no deprecated field
-nearby, the Turkish ``kaldır*`` wording, and the ``deprecation-target-ok``
-opt-out. A separate live-repo class asserts the invariant CI actually relies
-on — ``main(["--strict", "--quiet"]) == 0`` — mirroring
+nearby, the Turkish ``kaldır*`` wording, prose that wraps the removal sentence
+across two physical lines, and the ``deprecation-target-ok`` opt-out. A
+separate live-repo class asserts the invariant CI actually relies on —
+``main(["--strict", "--quiet"]) == 0`` — mirroring
 ``tests/test_check_usermanual_schema_drift.py``.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import statistics
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -63,6 +66,23 @@ class TestReadCanonicalVersion:
         # the no-runtime-dependency AST approach — fail loudly rather than skip.
         config = tmp_path / "config.py"
         config.write_text(f'{tool.CANONICAL_CONSTANT} = "v" + str(1)\n', encoding="utf-8")
+        with pytest.raises(SystemExit):
+            tool.read_canonical_version(config)
+
+    def test_reads_an_annotated_assignment(self, tool, tmp_path):
+        # forgelm/config.py already annotates sibling module constants
+        # (`_STRICT_RISK_TIERS: frozenset[str] = ...`), so a routine style pass
+        # adding `: str` here must not make the guard silently unable to find
+        # its own source of truth.
+        config = tmp_path / "config.py"
+        config.write_text(f'{tool.CANONICAL_CONSTANT}: str = "{_CANON}"\n', encoding="utf-8")
+        assert tool.read_canonical_version(config) == _CANON
+
+    def test_bare_annotation_without_a_value_is_a_hard_error(self, tool, tmp_path):
+        # `X: str` declares nothing readable — fail loudly rather than fall
+        # through to the "not found" branch with a misleading message.
+        config = tmp_path / "config.py"
+        config.write_text(f"{tool.CANONICAL_CONSTANT}: str\n", encoding="utf-8")
         with pytest.raises(SystemExit):
             tool.read_canonical_version(config)
 
@@ -141,11 +161,120 @@ class TestScanText:
         assert claims[0].excerpt == line
         assert claims[0].path == Path("docs/x.md")
 
+    def test_wrapped_prose_version_then_removal_verb_on_the_next_line(self, tool):
+        # THE regression case. docs/guides/troubleshooting-tr.md wraps exactly
+        # here: version at the end of one physical line, removal verb at the
+        # start of the next. The original same-line pairing found ZERO claims
+        # in that whole file, so a future retarget could have left it stale
+        # with --strict CI still green.
+        text = f"Boolean flag'lar `lora.use_dora` ve `lora.use_rslora` deprecated — {_STALE}'da\nkaldırılacaklar.\n"
+        claims = self._scan(tool, text)
+        assert [c.version for c in claims] == [_STALE]
+        # Reported at the line carrying the version, which is what a reader
+        # has to edit to fix the drift.
+        assert claims[0].line == 1
+
+    def test_wrapped_prose_removal_verb_then_version_on_the_next_line(self, tool):
+        # The mirror wrap: the sentence breaks before the version instead.
+        text = f"`sample_packing` is deprecated and will be removed\nin {_STALE}.\n"
+        claims = self._scan(tool, text)
+        assert [c.version for c in claims] == [_STALE]
+        assert claims[0].line == 2
+
+    def test_version_outside_the_removal_window_does_not_pair(self, tool):
+        # A version from a neighbouring paragraph must not be dragged into a
+        # removal sentence — the window is tolerance for wrapping, not a
+        # licence to pair anything in the file.
+        text = "`use_dora` will be removed.\n" + "filler\n" * 5 + f"Unrelated: {_STALE}.\n"
+        assert self._scan(tool, text) == []
+
+    def test_ignore_marker_on_the_removal_line_suppresses_a_wrapped_claim(self, tool):
+        # The opt-out has to survive the wrap too, or the marker becomes
+        # unusable on exactly the prose that needed the window.
+        text = f"`use_dora` deprecated — {_STALE}'da\nkaldırılacaklar. <!-- {tool._IGNORE_MARKER} historical -->\n"
+        assert self._scan(tool, text) == []
+
     def test_f_string_interpolated_message_names_no_literal(self, tool):
         # This is the shape forgelm/config.py now uses — the version is
         # interpolated from the constant, so there is nothing to drift.
         source = 'raise ValueError(f"use_dora will be removed in {DEPRECATION_REMOVAL_VERSION}.")\n'
         assert self._scan(tool, source) == []
+
+
+class TestVersionTokenShapes:
+    """The token regex must accept every spelling that occurs in the corpus.
+
+    A shape the regex misses is a silent false negative: the claim is simply
+    never checked, and ``--strict`` stays green while the promise rots.
+    """
+
+    def _versions(self, tool, fragment: str) -> list[str]:
+        text = f"`use_dora` will be removed in {fragment}.\n"
+        return [c.version for c in tool.scan_text(text, Path("synthetic.md"))]
+
+    @pytest.mark.parametrize(
+        "fragment",
+        [
+            "v0" + ".9.0",  # lowercase prefix, three segments (the classic form)
+            "V0" + ".9.0",  # uppercase prefix — case-insensitive
+            "0" + ".9.0",  # unprefixed: the natural copy-paste from pyproject
+            "v0" + ".9",  # prefixed two-segment MAJOR.MINOR
+            "v0" + ".9.0rc1",  # release candidate
+            "v0" + ".9.0RC1",  # release candidate, uppercased
+        ],
+    )
+    def test_accepted_shapes(self, tool, fragment):
+        assert self._versions(tool, fragment) == [fragment]
+
+    def test_bare_two_segment_number_is_not_a_version(self, tool):
+        # An unprefixed MAJOR.MINOR is indistinguishable from a decimal. Config
+        # tables document `neftune_noise_alpha` as `5.0` two lines from a
+        # sample_packing deprecation row; treating that as a version made the
+        # guard report four bogus divergent claims on the real tree.
+        assert self._versions(tool, "5.0") == []
+
+    def test_version_embedded_in_a_word_is_not_matched(self, tool):
+        assert self._versions(tool, "abc1.0.0") == []
+
+
+class TestClaimMatchesCanonical:
+    """Divergence is about the promised *release*, not its spelling."""
+
+    @pytest.mark.parametrize("claimed", ["v1" + ".0.0", "V1" + ".0.0", "1" + ".0.0", "v1" + ".0"])
+    def test_equivalent_spellings_agree(self, tool, claimed):
+        assert tool.claim_matches_canonical(claimed, _CANON) is True
+
+    @pytest.mark.parametrize("claimed", [_STALE, "v1" + ".0.1", "v2" + ".0.0", "v1" + ".0.0rc1"])
+    def test_different_releases_diverge(self, tool, claimed):
+        assert tool.claim_matches_canonical(claimed, _CANON) is False
+
+    def test_unparseable_token_falls_back_to_a_normalised_string_compare(self, tool):
+        assert tool.claim_matches_canonical("vNOPE", "vNOPE") is True
+        assert tool.claim_matches_canonical("vNOPE", _CANON) is False
+
+
+class TestVersionRegexLinearity:
+    """ReDoS regression pin for ``_VERSION_RE`` (docs/standards/regex.md).
+
+    Every quantifier in the pattern is bounded and no two of them can consume
+    the same character, so a scan is O(n) by construction. Measured at 1K/5K/10K
+    with a median of 5 runs per the standard's methodology; the assertion is a
+    generous absolute safety floor, since a genuine ReDoS blows past it by
+    orders of magnitude rather than by a few percent.
+    """
+
+    def test_pathological_input_scans_in_linear_time(self, tool):
+        for size in (1_000, 5_000, 10_000):
+            # Adversarial: endless near-miss version prefixes that force the
+            # engine to start (and abandon) a match at every position.
+            payload = "v1." * size
+            timings = []
+            for _ in range(5):
+                start = time.perf_counter()
+                tool._VERSION_RE.findall(payload)
+                timings.append(time.perf_counter() - start)
+            median = statistics.median(timings)
+            assert median < 1.0, f"n={size}: {median * 1000:.1f} ms — possible ReDoS in _VERSION_RE"
 
 
 class TestFileSelection:
@@ -162,8 +291,21 @@ class TestFileSelection:
         assert tool._is_excluded(Path("tools/check_deprecation_targets.py")) is True
         assert tool._is_excluded(Path("tests/test_check_deprecation_targets.py")) is True
 
+    def test_agent_guidance_mirrors_are_excluded(self, tool):
+        # CLAUDE.md / AGENTS.md narrate the repo's own review history
+        # ("post-v0.9.0 Opus review") right next to the deprecated field names,
+        # which is the CHANGELOG.md rationale, not a removal promise to an
+        # operator. Deliberate omission — pinned so it stays a decision rather
+        # than drifting back in unnoticed.
+        assert tool._is_excluded(Path("CLAUDE.md")) is True
+        assert tool._is_excluded(Path("AGENTS.md")) is True
+
     def test_normal_doc_is_not_excluded(self, tool):
         assert tool._is_excluded(Path("docs/reference/configuration.md")) is False
+
+    def test_public_root_markdown_is_not_excluded(self, tool):
+        assert tool._is_excluded(Path("README.md")) is False
+        assert tool._is_excluded(Path("CONTRIBUTING.md")) is False
 
     def test_target_files_cover_the_documented_scope(self, tool):
         rels = {p.relative_to(_REPO_ROOT) for p in tool.iter_target_files()}
@@ -173,6 +315,15 @@ class TestFileSelection:
         assert Path("tests/test_config.py") in rels
         assert Path("CHANGELOG.md") not in rels
         assert Path("tests/test_check_deprecation_targets.py") not in rels
+
+    def test_repo_root_markdown_is_scanned(self, tool):
+        # README.md states the product's public claims; leaving repo-root docs
+        # out of the scan set was a hole a stale removal promise could sit in.
+        rels = {p.relative_to(_REPO_ROOT) for p in tool.iter_target_files()}
+        assert Path("README.md") in rels
+        assert Path("CONTRIBUTING.md") in rels
+        assert Path("CLAUDE.md") not in rels
+        assert Path("AGENTS.md") not in rels
 
 
 class TestRealRepo:
@@ -196,6 +347,25 @@ class TestRealRepo:
 
         assert tool.read_canonical_version() == DEPRECATION_REMOVAL_VERSION
 
+    def test_wrapped_turkish_troubleshooting_claim_is_detected(self, tool):
+        """The concrete false negative this guard's windowing was fixed for.
+
+        ``docs/guides/troubleshooting-tr.md`` states the removal promise across
+        a line break. Under the original same-line pairing the entire file
+        yielded zero claims, so a retarget could silently leave it stale. This
+        asserts the file is genuinely under enforcement — not merely that the
+        overall claim count went up somewhere.
+        """
+        page = _REPO_ROOT / "docs" / "guides" / "troubleshooting-tr.md"
+        claims = tool.scan_text(page.read_text(encoding="utf-8"), page)
+        assert claims, "troubleshooting-tr.md states a removal version but yields no claim"
+        canonical = tool.read_canonical_version()
+        for claim in claims:
+            assert tool.claim_matches_canonical(claim.version, canonical)
+
     def test_guard_wired_into_ci(self):
+        # Assert the exact invocation, not just the filename: a step that runs
+        # the guard without --strict reports drift and still exits 0, which is
+        # the fake-green failure mode the guard exists to prevent.
         ci = (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        assert "check_deprecation_targets.py" in ci
+        assert "python3 tools/check_deprecation_targets.py --strict" in ci

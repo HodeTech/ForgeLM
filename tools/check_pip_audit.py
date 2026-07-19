@@ -8,6 +8,10 @@ applies ForgeLM's severity policy:
 - ``MEDIUM`` findings emit a ``::warning::`` GitHub annotation but do
   not fail.
 - ``LOW`` findings are silent.
+- Any severity string the gate cannot positively classify — absent,
+  empty, whitespace-only, or an unrecognised tier such as ``SEVERE`` —
+  normalises to ``UNKNOWN`` and is handled as such.  Bucketing is
+  total: no finding can match zero buckets and vanish from the gate.
 - ``UNKNOWN`` findings (pip-audit's JSON omits OSV severity for
   nearly every real advisory — see the empirical note near
   ``_HIGH_TIERS`` below) also exit 1, failing closed. The
@@ -109,16 +113,42 @@ from typing import Any, Iterable, Optional
 # emit a top-level ``severity: "HIGH"`` and have the gate honour it).
 _HIGH_TIERS: frozenset[str] = frozenset({"HIGH", "CRITICAL"})
 _MED_TIERS: frozenset[str] = frozenset({"MEDIUM", "MODERATE"})
+# ``LOW`` is the only tier this gate is willing to treat as silent, so it is
+# spelled out rather than inferred from "not high and not medium".  Any other
+# vocabulary (``NEGLIGIBLE``, ``NONE``, ``SEVERE``, a typo) normalises to
+# ``UNKNOWN`` and fails closed — see ``_normalise_severity``.
+_LOW_TIERS: frozenset[str] = frozenset({"LOW"})
 
 
 def _normalise_severity(raw: Optional[str]) -> str:
-    """Upper-case + collapse synonyms; unknown/missing → ``UNKNOWN``."""
-    if not raw:
+    """Upper-case + collapse synonyms; unknown/missing/blank → ``UNKNOWN``.
+
+    Every input this gate cannot positively classify must land on
+    ``UNKNOWN``, because ``UNKNOWN`` is the tier that fails the run.  Three
+    inputs reach that outcome:
+
+    - ``None`` and ``""`` — no severity was reported at all;
+    - whitespace-only (``"   "``) — the strip happens *before* the
+      emptiness test, so a blank string cannot survive as ``""`` and match
+      no tier;
+    - any unrecognised tier string (``"SEVERE"``, ``"NEGLIGIBLE"``, a
+      typo) — an unmodelled severity vocabulary is a reason for manual
+      triage, never a reason to skip the finding.
+
+    The returned value is therefore always one of ``HIGH`` / ``CRITICAL`` /
+    ``MEDIUM`` / ``LOW`` / ``UNKNOWN``, which is what lets
+    ``_bucket_findings`` guarantee that no finding escapes every bucket.
+    """
+    if raw is None:
         return "UNKNOWN"
-    upper = raw.upper().strip()
-    if upper == "MODERATE":
+    upper = raw.strip().upper()
+    if not upper:
+        return "UNKNOWN"
+    if upper in _MED_TIERS:
         return "MEDIUM"
-    return upper
+    if upper in _HIGH_TIERS or upper in _LOW_TIERS:
+        return upper
+    return "UNKNOWN"
 
 
 def _vuln_severity(vuln: dict[str, Any]) -> str:
@@ -389,10 +419,21 @@ def _has_fix_available(vuln: dict[str, Any]) -> bool:
 def _bucket_findings(
     report: dict[str, Any],
     ignores: Optional[dict[str, dict[str, Any]]] = None,
-) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str]]:
     """Walk every (name, vuln) pair and return
-    ``(high, medium, unknown_fixable, unknown_no_fix, suppressed)`` lists
-    of pre-formatted lines.
+    ``(high, medium, low, unknown_fixable, unknown_no_fix, suppressed)``
+    lists of pre-formatted lines.
+
+    **Bucketing is total**: every finding yielded by ``_iter_findings``
+    lands in exactly one returned list, so
+    ``sum(map(len, _bucket_findings(report))) == <vuln count>`` always
+    holds.  That invariant is the whole point of the terminal ``else``
+    below — a finding that matched no tier used to be dropped on the
+    floor (a blank ``severity: "   "`` or an unrecognised tier such as
+    ``"SEVERE"`` normalised to something outside every branch), which
+    turned a security gate into a silent pass.  ``_normalise_severity``
+    now closes that at the source; the ``else`` keeps it closed even if a
+    future tier is added there without updating this function.
 
     The UNKNOWN-severity bucket (pip-audit's JSON omits OSV severity for
     almost every real vuln — see the module docstring) is split on
@@ -410,11 +451,16 @@ def _bucket_findings(
 
     ``suppressed`` carries findings whose ``{id} ∪ aliases`` intersected
     the ignore set; the caller surfaces each one as a ``::notice::``
-    annotation so suppressions stay audit-visible.  LOW tier is silent
-    — the raw JSON remains in build artefacts for post-mortem if needed.
+    annotation so suppressions stay audit-visible.  ``low`` is returned
+    but deliberately not annotated by ``main()`` — LOW tier stays silent
+    per policy, and the raw JSON remains in build artefacts for
+    post-mortem.  It is returned rather than discarded so the
+    conservation invariant above is checkable by a test instead of being
+    a comment nobody can enforce.
     """
     high: list[str] = []
     medium: list[str] = []
+    low: list[str] = []
     unknown_fixable: list[str] = []
     unknown_no_fix: list[str] = []
     suppressed: list[str] = []
@@ -436,12 +482,18 @@ def _bucket_findings(
             high.append(_format_finding(name, vuln, severity))
         elif severity in _MED_TIERS:
             medium.append(_format_finding(name, vuln, severity))
-        elif severity == "UNKNOWN":
+        elif severity in _LOW_TIERS:
+            low.append(_format_finding(name, vuln, severity))
+        else:
+            # UNKNOWN, plus anything _normalise_severity could not classify.
+            # This branch is deliberately the catch-all rather than an
+            # `elif severity == "UNKNOWN"`: a finding must fail closed when
+            # its tier is unrecognised, not disappear.
             if _has_fix_available(vuln):
                 unknown_fixable.append(_format_finding(name, vuln, "UNKNOWN (fix available)"))
             else:
                 unknown_no_fix.append(_format_finding(name, vuln, "UNKNOWN (no fix)"))
-    return high, medium, unknown_fixable, unknown_no_fix, suppressed
+    return high, medium, low, unknown_fixable, unknown_no_fix, suppressed
 
 
 def _parse_argv(argv: list[str]) -> argparse.Namespace:
@@ -482,7 +534,9 @@ def main(argv: list[str]) -> int:
         if ignores is None:
             return 1
 
-    high, medium, unknown_fixable, unknown_no_fix, suppressed = _bucket_findings(report, ignores)
+    # ``low`` is intentionally unused: LOW tier is silent per policy. It is
+    # returned by _bucket_findings so bucketing stays provably total.
+    high, medium, _low, unknown_fixable, unknown_no_fix, suppressed = _bucket_findings(report, ignores)
 
     for line in suppressed:
         # ::notice:: keeps every suppression in the run log so a reviewer

@@ -96,9 +96,20 @@ Wave 4 / Faz 23 nightly workflow'a `pip-audit` ekler. Davranış:
     pip-audit'in JSON'u OSV severity taşımadığı için gerçek bulguların
     neredeyse tamamı buraya düşer — fail-closed davranış, eksik bir
     severity alanının gate'i sessizce atlamasına izin vermek yerine
-    operatörü açık triyaja zorlar. Belirli bir CVE'yi kabul etmek için
-    opt-in ignore dosyasıyla dokümante edin (aşağıdaki Suppression'a
-    bakın); yeşil kalmak için UNKNOWN kovasına güvenmeyin.
+    operatörü açık triyaja zorlar. Her UNKNOWN bulgu için politika
+    aynıdır (fail), ancak `::error::` mesajı bir fix'in mevcut olup
+    olmamasına göre ikiye ayrılır, böylece operatörün sıradaki adımı
+    açıktır:
+    - **Fix mevcut** (`fix_versions` boş değil) — mesaj fix
+      version(lar)ını adlandırır ve etkilenen paket(ler)i yükseltmeyi
+      söyler.
+    - **Henüz fix yok** (`fix_versions` boş/yok) — mesaj suppression
+      workflow'unu (`tools/pip_audit_ignores.yaml`) ve onun zorunlu
+      `id` / `package` / `reason` / `threat_model` / `verified_at` /
+      `reevaluate_after` şemasını işaret eder.
+    Belirli bir CVE'yi kabul etmek için opt-in ignore dosyasıyla
+    dokümante edin (aşağıdaki Suppression'a bakın); yeşil kalmak için
+    UNKNOWN kovasına güvenmeyin.
 - OSV / GHSA veritabanlarını kullanır (pip-audit varsayılanı).
 
 Operatörler aynı tooling'i lokalde kurar:

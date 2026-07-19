@@ -16,10 +16,12 @@ catches the same class of regression end-to-end.
 from __future__ import annotations
 
 import importlib.resources as ir
-import re
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 import forgelm.templates
 from forgelm.quickstart import TEMPLATES
@@ -166,11 +168,14 @@ def test_merging_extra_is_a_noop() -> None:
 # of waiting for the nightly to go red.
 # ---------------------------------------------------------------------------
 
-_SETUPTOOLS_LOWER_BOUND_RE = re.compile(r"^setuptools\b.*?>=\s*([0-9]+(?:\.[0-9]+)*)", re.IGNORECASE)
-
 # The PYSEC-2026-3447 fix floor. Do not lower without re-verifying the
 # advisory is resolved by an earlier setuptools release.
-_SETUPTOOLS_SECURITY_FLOOR = (83, 0, 0)
+_SETUPTOOLS_SECURITY_FLOOR = Version("83.0.0")
+
+# Operators that establish a lower bound on the admissible versions. `~=X.Y`
+# and `==X.Y.*` both floor at their own version, so they count; `<`, `<=`,
+# `!=` and `===` do not bound below and are ignored when deriving the floor.
+_LOWER_BOUND_OPERATORS = frozenset({">=", ">", "==", "~="})
 
 
 def _load_build_system_requires() -> list:
@@ -195,26 +200,45 @@ def test_setuptools_security_floor_meets_pysec_2026_3447() -> None:
     red for days (2026-07-15 onward) until the floor was raised. This is a
     security floor, not a feature floor: a hygiene PR that bumps or
     reformats [build-system].requires must not silently drop below it.
+
+    Parsing goes through ``packaging`` rather than a hand-rolled regex so
+    the assertion tracks what pip would actually resolve: ``setuptools >=
+    83.0.0``, ``setuptools[core]>=83.0.0,<84``, ``setuptools ~= 83.0`` and
+    ``setuptools==83.1.0`` are all semantically fine and must pass, while a
+    regex over the raw string rejects most of them for cosmetic reasons.
     """
     requires = _load_build_system_requires()
-    setuptools_reqs = [r for r in requires if re.match(r"^setuptools\b", r, re.IGNORECASE)]
+    parsed = [Requirement(entry) for entry in requires]
+    setuptools_reqs = [r for r in parsed if canonicalize_name(r.name) == "setuptools"]
     assert setuptools_reqs, (
         "[build-system].requires has no 'setuptools' entry; PYSEC-2026-3447 "
         "(fixed in setuptools 83.0.0) requires an explicit lower-bound pin."
     )
     assert len(setuptools_reqs) == 1, (
-        f"expected exactly one setuptools requirement in [build-system].requires, found {setuptools_reqs!r}"
+        f"expected exactly one setuptools requirement in [build-system].requires, found {requires!r}"
     )
-    spec = setuptools_reqs[0]
-    match = _SETUPTOOLS_LOWER_BOUND_RE.match(spec)
-    assert match is not None, (
-        f"[build-system].requires setuptools entry {spec!r} has no '>=' lower bound; "
-        "PYSEC-2026-3447 (fixed in setuptools 83.0.0) requires an explicit floor, "
-        "not just an upper bound or an unpinned dependency."
+    requirement = setuptools_reqs[0]
+    specifier_set = requirement.specifier
+
+    lower_bounds = [
+        Version(spec.version.rstrip(".*")) for spec in specifier_set if spec.operator in _LOWER_BOUND_OPERATORS
+    ]
+    assert lower_bounds, (
+        f"[build-system].requires setuptools entry {str(requirement)!r} has no lower bound; "
+        f"PYSEC-2026-3447 (fixed in setuptools {_SETUPTOOLS_SECURITY_FLOOR}) requires an explicit "
+        "floor, not just an upper bound or an unpinned dependency."
     )
-    lower_bound = tuple(int(part) for part in match.group(1).split("."))
-    assert lower_bound >= _SETUPTOOLS_SECURITY_FLOOR, (
-        f"[build-system].requires setuptools lower bound is {spec!r} (parsed as {lower_bound}), "
-        f"which is below the PYSEC-2026-3447 fix floor of setuptools>={'.'.join(map(str, _SETUPTOOLS_SECURITY_FLOOR))}. "
+    effective_floor = max(lower_bounds)
+    assert effective_floor >= _SETUPTOOLS_SECURITY_FLOOR, (
+        f"[build-system].requires setuptools entry {str(requirement)!r} floors at {effective_floor}, "
+        f"which is below the PYSEC-2026-3447 fix floor of setuptools>={_SETUPTOOLS_SECURITY_FLOOR}. "
         "Do not lower this floor without re-verifying the advisory is resolved by an earlier release."
+    )
+    # The property the floor exists to guarantee, asserted directly: no
+    # pre-fix setuptools may satisfy the pin. Catches an exotic specifier
+    # whose effective floor the operator modelling above reads too kindly.
+    vulnerable = Version("82.999.999")
+    assert not specifier_set.contains(vulnerable, prereleases=True), (
+        f"[build-system].requires setuptools entry {str(requirement)!r} still admits {vulnerable}, "
+        f"which predates the PYSEC-2026-3447 fix in setuptools {_SETUPTOOLS_SECURITY_FLOOR}."
     )

@@ -161,9 +161,19 @@ dev = [
   # ``pytest --randomly-seed=<n>`` to reproduce a failure.
   "pytest-randomly>=3.15.0,<4.0.0",
   "ruff>=0.4.0",
+  # packaging supplies Version() for semantic (not lexical) version comparison
+  # in tools/check_deprecation_targets.py and tests/test_config.py — "v1.10.0"
+  # sorts below "v1.2.0" as a string, which would silently invert the
+  # "removal target is still ahead of the shipping version" gate. Declared here
+  # rather than in [project].dependencies because nothing under forgelm/
+  # imports it: it is dev/CI tooling only. It also arrives transitively via
+  # transformers/huggingface_hub, so this entry exists to make the import
+  # declared rather than accidental (no undeclared imports).
+  "packaging>=23.0",
   # tomllib is stdlib only on 3.11+; the 3.10 CI runner needs the tomli
-  # backport so the dev-only ``tools/check_notebook_pins.py`` guard (and its
-  # test module) can parse pyproject.toml.  Never imported by the runtime path.
+  # backport so the dev-only guards that parse pyproject.toml
+  # (``tools/check_notebook_pins.py``, ``tools/check_deprecation_targets.py``)
+  # and their test modules can run.  Never imported by the runtime path.
   "tomli>=2.0.0; python_version < '3.11'",
 ]
 

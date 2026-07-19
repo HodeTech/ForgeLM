@@ -13,6 +13,12 @@ finding's ``::error::`` names the fix version; a no-fix UNKNOWN finding's
 ``::error::`` points at the ``tools/pip_audit_ignores.yaml`` suppression
 workflow. Both sub-buckets still fail the gate — the split changes the
 message, never the pass/fail outcome.
+
+Finally, pins the fail-closed severity-normalisation contract and the
+bucket-conservation invariant: a severity string the gate cannot classify
+(blank, whitespace-only, or an unrecognised tier) normalises to UNKNOWN and
+fails, and every finding lands in exactly one bucket so none can be dropped
+on the floor.
 """
 
 from __future__ import annotations
@@ -117,7 +123,9 @@ def test_unknown_severity_fails_after_a7_11_flip(tool, tmp_path, capsys):
     previous warn-only branch converted real findings into noise the
     operator never saw.  Failing closed forces explicit triage.  This
     fixture has no ``fix_versions``, so it lands in the no-fix sub-bucket
-    (see ``TestUnknownFixNoFixSplit`` below for the fixable branch).
+    (see ``test_unknown_with_fix_available_names_the_fix_version`` in the
+    "UNKNOWN-severity fix/no-fix split" section below for the fixable
+    branch).
     """
     p = _write_audit(
         tmp_path,
@@ -304,6 +312,176 @@ def test_unknown_mixed_fixable_and_no_fix_both_reported(tool, tmp_path, capsys):
     assert "GHSA-mix-nofix" in captured.out
     assert "WITH a published fix" in captured.out
     assert "no published fix" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Severity normalisation must fail closed, and bucketing must be total.
+#
+# Regression cover for a fail-open hole: `_normalise_severity` returned early
+# only on falsy input, so a whitespace-only severity survived the guard,
+# stripped to `''`, matched no tier, and the finding landed in NO bucket at
+# all — silently dropped from a security gate. An unrecognised tier string
+# ("SEVERE") vanished the same way. Both now normalise to UNKNOWN and fail.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param(None, id="none"),
+        pytest.param("", id="empty"),
+        pytest.param("   ", id="spaces"),
+        pytest.param("\t", id="tab"),
+        pytest.param("\n  \t ", id="mixed-whitespace"),
+        pytest.param("SEVERE", id="unrecognised-tier"),
+        pytest.param("NEGLIGIBLE", id="unmodelled-vocabulary"),
+        pytest.param("HGIH", id="typo"),
+    ],
+)
+def test_unclassifiable_severity_normalises_to_unknown(tool, raw):
+    """Anything the gate cannot positively classify must become UNKNOWN.
+
+    UNKNOWN is the tier that fails the run, so this is the fail-closed
+    contract: a severity we cannot read is never a severity we can ignore.
+    """
+    assert tool._normalise_severity(raw) == "UNKNOWN"
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        pytest.param("HIGH", "HIGH", id="high"),
+        pytest.param(" critical ", "CRITICAL", id="critical-padded"),
+        pytest.param("MODERATE", "MEDIUM", id="moderate-collapses-to-medium"),
+        pytest.param("medium", "MEDIUM", id="medium-lowercase"),
+        pytest.param("Low", "LOW", id="low-mixed-case"),
+    ],
+)
+def test_recognised_severities_still_normalise_unchanged(tool, raw, expected):
+    """The fail-closed default must not swallow the tiers we DO recognise —
+    otherwise every finding would fail and the tiering would be meaningless."""
+    assert tool._normalise_severity(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "severity",
+    [
+        pytest.param("   ", id="whitespace-only"),
+        pytest.param("", id="empty-string"),
+        pytest.param("SEVERE", id="unrecognised-tier"),
+    ],
+)
+def test_unclassifiable_severity_fails_the_gate(tool, tmp_path, capsys, severity):
+    """End-to-end: a finding whose severity cannot be classified must fail.
+
+    Before the fix these exited 0 with no annotation whatsoever — the
+    vulnerability was invisible to both the exit code and the run summary.
+    """
+    p = _write_audit(
+        tmp_path,
+        {
+            "dependencies": [
+                {
+                    "name": "synthetic-pkg",
+                    "version": "1.0.0",
+                    "vulns": [{"id": "CVE-2026-BLANK", "severity": severity}],
+                }
+            ]
+        },
+    )
+    assert tool.main([str(_TOOL_PATH), str(p)]) == 1
+    captured = capsys.readouterr()
+    assert "::error::pip-audit" in captured.out
+    assert "CVE-2026-BLANK" in captured.out
+    assert "without parseable" in captured.out
+
+
+def test_low_severity_stays_silent_and_passes(tool, tmp_path, capsys):
+    """LOW remains a documented silent pass — the fail-closed default must
+    not accidentally promote it into the UNKNOWN failure bucket."""
+    p = _write_audit(
+        tmp_path,
+        {
+            "dependencies": [
+                {
+                    "name": "synthetic-pkg",
+                    "version": "1.0.0",
+                    "vulns": [{"id": "CVE-2026-LOW", "severity": "LOW"}],
+                }
+            ]
+        },
+    )
+    assert tool.main([str(_TOOL_PATH), str(p)]) == 0
+    captured = capsys.readouterr()
+    assert "::error::" not in captured.out
+    assert "::warning::" not in captured.out
+
+
+def test_every_finding_lands_in_exactly_one_bucket(tool):
+    """Conservation invariant: sum of all buckets == number of vulns.
+
+    This is the structural guard the fail-open hole needed. Asserting on
+    exit codes alone cannot catch a finding that silently matches no
+    bucket; counting can. Any future severity vocabulary that slips past
+    every branch makes this arithmetic fail immediately.
+    """
+    severities = [
+        "CRITICAL",
+        "HIGH",
+        "MEDIUM",
+        "MODERATE",
+        "LOW",
+        "UNKNOWN",
+        "SEVERE",  # unrecognised tier
+        "   ",  # whitespace-only
+        "",  # empty
+        None,  # absent severity (real pip-audit shape)
+    ]
+    vulns = []
+    for index, severity in enumerate(severities):
+        vuln = {"id": f"CVE-2026-{index:04d}"}
+        if severity is not None:
+            vuln["severity"] = severity
+        # Alternate fix availability so both UNKNOWN sub-buckets are exercised.
+        if index % 2 == 0:
+            vuln["fix_versions"] = ["9.9.9"]
+        vulns.append(vuln)
+    report = {"dependencies": [{"name": "synthetic-pkg", "version": "1.0.0", "vulns": vulns}]}
+
+    buckets = tool._bucket_findings(report)
+    assert sum(len(bucket) for bucket in buckets) == len(vulns), (
+        f"bucketing lost findings: {len(vulns)} vulns in, "
+        f"{sum(len(b) for b in buckets)} bucketed out. A finding that matches "
+        f"no bucket is silently dropped from the severity gate."
+    )
+
+
+def test_bucket_conservation_holds_with_suppressions(tool, tmp_path):
+    """Suppressed findings must be conserved too — an ignore entry moves a
+    finding into the `suppressed` bucket, it does not delete it."""
+    report = {
+        "dependencies": [
+            {
+                "name": "synthetic-pkg",
+                "version": "1.0.0",
+                "vulns": [
+                    {"id": "CVE-2026-9999", "severity": "HIGH"},
+                    {"id": "CVE-2026-0002", "severity": "   "},
+                    {"id": "CVE-2026-0003"},
+                ],
+            }
+        ]
+    }
+    ignores = _write_ignores(tmp_path, "ignores:\n" + _valid_ignore_entry())
+    loaded = tool._load_ignores(ignores)
+    assert loaded is not None
+
+    high, medium, low, unknown_fixable, unknown_no_fix, suppressed = tool._bucket_findings(report, loaded)
+    assert len(suppressed) == 1, "the listed CVE must be suppressed"
+    total = len(high) + len(medium) + len(low) + len(unknown_fixable) + len(unknown_no_fix) + len(suppressed)
+    assert total == 3
+    # The blank-severity finding must be in the UNKNOWN failure path, not gone.
+    assert len(unknown_no_fix) == 2
 
 
 # ---------------------------------------------------------------------------

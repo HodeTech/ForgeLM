@@ -96,6 +96,15 @@ Wave 4 / Faz 23 adds `pip-audit` to the nightly workflow. Behaviour:
     pip-audit's JSON does not carry OSV severity, so almost every real
     finding lands here — failing closed forces explicit operator triage
     rather than letting a missing-severity field silently skip the gate.
+    The policy is the same for every UNKNOWN finding (fail), but the
+    `::error::` message is split by whether a fix is available, so the
+    operator's next action is obvious:
+    - **Fixable** (`fix_versions` non-empty) — the message names the
+      fix version(s) and says to upgrade the affected package(s).
+    - **No fix yet** (`fix_versions` empty/absent) — the message points
+      at the suppression workflow (`tools/pip_audit_ignores.yaml`) and
+      its required `id` / `package` / `reason` / `threat_model` /
+      `verified_at` / `reevaluate_after` schema.
     To accept a specific CVE, document it via the opt-in ignore file
     (see Suppression below); do not rely on the UNKNOWN bucket to stay
     green.

@@ -140,6 +140,13 @@ _EXEMPT: dict[str, frozenset[str]] = {
     # the gitignored dirs it EXCLUDES from its scan (a functional path filter,
     # the opposite of a content citation).  Wired into CI in W1/H11.
     "tests/test_phantom_tool_citations.py": _BOTH_DIRS,
+    # The deprecation-target guard excludes the same gitignored working-memory
+    # trees from its repo-wide scan; its module docstring documents that
+    # exclusion and its tests assert ``_is_excluded()`` returns True for them.
+    # Both are functional path filters — the opposite of citing the content —
+    # exactly like check_yaml_snippets.py and test_phantom_tool_citations.py.
+    "tools/check_deprecation_targets.py": _BOTH_DIRS,
+    "tests/test_check_deprecation_targets.py": _BOTH_DIRS,
     # This guard itself contains the prohibited substrings as patterns.
     "tools/check_no_analysis_refs.py": frozenset(
         {

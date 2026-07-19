@@ -20,9 +20,14 @@ logger = logging.getLogger("forgelm.config")
 # Every runtime deprecation message, field `description=`, docs claim and
 # `config_template.yaml` comment must be built from / agree with this
 # constant.  It was previously a hardcoded literal duplicated across ~20
-# sites and rotted twice (v0.9.0 -> v0.10.0 -> v1.0.0) because nothing
+# sites and rotted twice (v0.9.0 -> v0.10.0 -> v1.0.0) because nothing  deprecation-target-ok
 # cross-checked them; `tools/check_deprecation_targets.py` now reads this
 # constant as canonical and fails CI on any divergent claim.
+# (The `deprecation-target-ok` marker above exempts the historical
+# narration from the guard: those two versions are a record of what the
+# promise used to say, not a competing claim about what it says now.
+# Without the marker, a future edit that moves a field name within the
+# guard's line window would turn this comment into a CI failure.)
 DEPRECATION_REMOVAL_VERSION = "v1.0.0"
 
 

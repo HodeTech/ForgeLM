@@ -4,13 +4,18 @@ import logging
 import os
 import re
 import warnings
+from pathlib import Path
 
 import pytest
 import yaml
 from packaging.version import Version
 from pydantic import ValidationError
 
-from forgelm import __version__
+try:
+    import tomllib  # Python 3.11+ stdlib.
+except ModuleNotFoundError:  # pragma: no cover — 3.10 path, covered by the `dev` extra's tomli pin
+    import tomli as tomllib
+
 from forgelm.config import (
     DEPRECATION_REMOVAL_VERSION,
     BenchmarkConfig,
@@ -935,6 +940,27 @@ def _promised_removal_versions(messages: list[str]) -> list[str]:
     return [m for message in messages for m in re.findall(r"\bv\d+\.\d+\.\d+\b", message)]
 
 
+def _shipping_version() -> str:
+    """Return ``project.version`` from ``pyproject.toml``.
+
+    Read from pyproject rather than ``forgelm.__version__`` so this contract
+    test and ``tools/check_deprecation_targets.py`` — which enforces the same
+    "target is still ahead of the shipping version" invariant repo-wide — sit
+    on one oracle. Two sources of truth for "the current version" is precisely
+    the drift class both are here to prevent.
+
+    ``__version__`` is also the *weaker* oracle here: it resolves through
+    ``importlib.metadata.version("forgelm")``, i.e. whatever was last
+    pip-installed. In a source checkout whose editable install predates a
+    version bump it lags pyproject (observed: metadata 0.9.0 vs pyproject
+    0.9.1rc1), so a target that had already come due against the real shipping
+    version could still read as "in the future".
+    """
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    with pyproject.open("rb") as fh:
+        return str(tomllib.load(fh)["project"]["version"])
+
+
 class TestDeprecationRemovalVersion:
     """The removal promise must stay a *promise*, not a literal that happens to
     read correctly today.
@@ -946,7 +972,16 @@ class TestDeprecationRemovalVersion:
     version out of the message and assert the *contract*: the promised version
     is the single source of truth (``DEPRECATION_REMOVAL_VERSION``) and is
     strictly ahead of the version the operator is running. ``tools/
-    check_deprecation_targets.py`` enforces the same invariant repo-wide.
+    check_deprecation_targets.py`` enforces the same invariant repo-wide, and
+    both read the shipping version from ``pyproject.toml`` so there is one
+    oracle rather than two.
+
+    All **six** runtime sites are covered: the three ``DeprecationWarning``
+    messages (``use_dora``, ``use_rslora``, ``sample_packing``) *and* the three
+    ``ValueError`` messages raised by ``LoraConfigModel._normalize_peft_method``
+    for contradictory flags. The error paths name the removal version too, and
+    an operator hitting a hard config failure is exactly the reader most likely
+    to act on the date — so they carry the same contract.
     """
 
     def _deprecation_messages(self, factory) -> list[str]:
@@ -956,56 +991,70 @@ class TestDeprecationRemovalVersion:
         messages = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
         return obj, messages
 
+    def _assert_promise_holds(self, messages: list[str], site: str) -> None:
+        """Assert every removal version named in ``messages`` honours the contract.
+
+        Two assertions per promise: it is built from the canonical constant,
+        and it has not already come due against the shipping version.
+        """
+        shipping = _shipping_version()
+        promised = _promised_removal_versions(messages)
+        assert promised, f"no removal version named by {site} in {messages!r}"
+        for version in promised:
+            assert version == DEPRECATION_REMOVAL_VERSION, (
+                f"{site} names {version} but forgelm.config.DEPRECATION_REMOVAL_VERSION "
+                f"is {DEPRECATION_REMOVAL_VERSION} — build the message from the constant."
+            )
+            assert Version(version.lstrip("v")) > Version(shipping), (
+                f"{site} promises removal in {version}, but the shipping version in "
+                f"pyproject.toml is already {shipping} — the promise is retroactively "
+                "false. Land the removal or retarget DEPRECATION_REMOVAL_VERSION (a "
+                "YAML-field removal is MAJOR — docs/standards/release.md)."
+            )
+
+    def _validation_error_message(self, factory) -> str:
+        with pytest.raises(ValidationError) as excinfo:
+            factory()
+        return str(excinfo.value)
+
     def test_use_dora_warning_promises_a_version_still_in_the_future(self):
         lc, messages = self._deprecation_messages(lambda: LoraConfigModel(use_dora=True))
         assert messages, "expected a DeprecationWarning for use_dora"
-        promised = _promised_removal_versions(messages)
-        assert promised, f"no removal version named in {messages!r}"
-        for version in promised:
-            assert version == DEPRECATION_REMOVAL_VERSION, (
-                f"message names {version} but forgelm.config.DEPRECATION_REMOVAL_VERSION "
-                f"is {DEPRECATION_REMOVAL_VERSION} — build the message from the constant."
-            )
-            assert Version(version.lstrip("v")) > Version(__version__), (
-                f"the use_dora deprecation promises removal in {version}, but the running "
-                f"version is already {__version__} — the promise is retroactively false. "
-                "Land the removal or retarget DEPRECATION_REMOVAL_VERSION (a YAML-field "
-                "removal is MAJOR — docs/standards/release.md)."
-            )
+        self._assert_promise_holds(messages, "the use_dora deprecation warning")
         # The alias must keep working for the whole deprecation window.
         assert lc.method == "dora"
 
     def test_sample_packing_warning_promises_a_version_still_in_the_future(self):
         tc, messages = self._deprecation_messages(lambda: TrainingConfig(sample_packing=True))
         assert messages, "expected a DeprecationWarning for sample_packing"
-        promised = _promised_removal_versions(messages)
-        assert promised, f"no removal version named in {messages!r}"
-        for version in promised:
-            assert version == DEPRECATION_REMOVAL_VERSION, (
-                f"message names {version} but forgelm.config.DEPRECATION_REMOVAL_VERSION "
-                f"is {DEPRECATION_REMOVAL_VERSION} — build the message from the constant."
-            )
-            assert Version(version.lstrip("v")) > Version(__version__), (
-                f"the sample_packing deprecation promises removal in {version}, but the "
-                f"running version is already {__version__} — the promise is retroactively "
-                "false. Land the removal or retarget DEPRECATION_REMOVAL_VERSION."
-            )
+        self._assert_promise_holds(messages, "the sample_packing deprecation warning")
         # The alias must keep forwarding for the whole deprecation window.
         assert tc.packing is True
 
     def test_use_rslora_warning_promises_a_version_still_in_the_future(self):
         lc, messages = self._deprecation_messages(lambda: LoraConfigModel(use_rslora=True))
         assert messages, "expected a DeprecationWarning for use_rslora"
-        promised = _promised_removal_versions(messages)
-        assert promised, f"no removal version named in {messages!r}"
-        for version in promised:
-            assert version == DEPRECATION_REMOVAL_VERSION
-            assert Version(version.lstrip("v")) > Version(__version__)
+        self._assert_promise_holds(messages, "the use_rslora deprecation warning")
         assert lc.method == "rslora"
+
+    def test_mutually_exclusive_flags_error_promises_a_canonical_version(self):
+        message = self._validation_error_message(lambda: LoraConfigModel(use_dora=True, use_rslora=True))
+        assert "mutually exclusive" in message
+        self._assert_promise_holds([message], "the use_dora/use_rslora exclusivity error")
+
+    def test_use_dora_contradiction_error_promises_a_canonical_version(self):
+        message = self._validation_error_message(lambda: LoraConfigModel(use_dora=True, method="pissa"))
+        assert "contradicts" in message
+        self._assert_promise_holds([message], "the use_dora-vs-method contradiction error")
+
+    def test_use_rslora_contradiction_error_promises_a_canonical_version(self):
+        message = self._validation_error_message(lambda: LoraConfigModel(use_rslora=True, method="pissa"))
+        assert "contradicts" in message
+        self._assert_promise_holds([message], "the use_rslora-vs-method contradiction error")
 
     def test_canonical_target_is_ahead_of_the_shipping_version(self):
         """The constant itself — checked once, independently of any message."""
-        assert Version(DEPRECATION_REMOVAL_VERSION.lstrip("v")) > Version(__version__)
+        assert Version(DEPRECATION_REMOVAL_VERSION.lstrip("v")) > Version(_shipping_version())
 
     def test_removal_messages_use_future_tense(self):
         """A message that says a field 'is removed' in a version that has not

@@ -38,20 +38,42 @@ Two failure modes follow from that, and this guard closes both:
 
 What counts as a claim
 ----------------------
-A line is a *claim* when it carries removal language (``remov*`` in
-English, ``kaldır*`` in Turkish) **and** a ``vN.N.N`` token, **and** one
-of the deprecated field names appears on that line or within
-:data:`_FIELD_WINDOW` lines of it.  The field-proximity requirement is
-what keeps the guard from flagging unrelated version prose; the
-same-line requirement for (removal language + version) is what keeps it
-from pairing a removal sentence with a version from a neighbouring
-paragraph.
+A version token is a *claim* when removal language (``remov*`` in
+English, ``kaldır*`` in Turkish) appears within :data:`_CLAIM_WINDOW`
+lines of it, **and** one of the deprecated field names appears within
+:data:`_CLAIM_WINDOW` lines of *that removal line*.  The field-proximity
+requirement is what keeps the guard from flagging unrelated version
+prose.
 
-Scope: ``forgelm/**/*.py``, ``config_template.yaml``, ``docs/**/*.md``,
-``tests/**/*.py``.  Deliberately excluded:
+The window on the removal-language pairing is not cosmetic.  It was
+originally a same-line requirement, which produced a silent **false
+negative** on wrapped prose: ``docs/guides/troubleshooting-tr.md`` writes
+
+    ... `lora.use_rslora` deprecated — v1.0.0'da
+    kaldırılacaklar. ...
+
+with the version on one physical line and the verb on the next, so the
+whole file yielded *zero* claims and a future retarget could have left it
+behind while ``--strict`` CI stayed green.  Prose wraps; the guard has to
+tolerate it exactly as it already does for field names.
+
+Version tokens are matched case-insensitively, with the ``v`` prefix
+optional and the patch segment optional, so ``v1.0.0``, ``V1.0.0``,
+``1.0.0`` (the natural copy-paste from ``pyproject.toml``'s unprefixed
+version) and ``v1.0`` are all caught.  Divergence is then decided by
+:func:`claim_matches_canonical`, which compares *parsed* versions — so
+``1.0`` and ``v1.0.0`` agree with a canonical ``v1.0.0`` rather than
+being reported as drift over pure formatting.
+
+Scope: repo-root ``*.md``, ``forgelm/**/*.py``, ``config_template.yaml``,
+``docs/**/*.md``, ``tests/**/*.py``.  Deliberately excluded:
 
 * ``CHANGELOG.md`` — an append-only historical record; past entries
   legitimately name the version that was promised at the time.
+* ``CLAUDE.md`` / ``AGENTS.md`` — agent-guidance mirrors that narrate the
+  repo's own review history in the same retrospective register
+  ("post-v0.9.0 Opus review"), next to the very field names this guard
+  keys on.  Same rationale as ``CHANGELOG.md``.
 * ``docs/analysis/`` and ``docs/marketing/`` — gitignored working memory
   (see ``docs/standards/documentation.md`` "Working-memory directories").
 * This guard and its own test — both must quote non-canonical versions as
@@ -115,23 +137,50 @@ CANONICAL_CONSTANT = "DEPRECATION_REMOVAL_VERSION"
 #: single-source-of-truth rule.
 DEPRECATED_FIELDS = ("use_dora", "use_rslora", "sample_packing")
 
-#: How many lines away from a removal sentence a field name may sit and still
-#: be considered "attached" to it.  Markdown tables and YAML comments keep the
-#: two together on one line; prose occasionally wraps them onto adjacent lines.
-_FIELD_WINDOW = 2
+#: How many lines apart the three parts of a claim (version token, removal
+#: language, field name) may sit and still be considered "attached".  Markdown
+#: tables and YAML comments keep them together on one line; prose wraps them
+#: onto adjacent lines — see the module docstring's troubleshooting-tr.md case.
+_CLAIM_WINDOW = 2
 
 #: Opt-out marker for a deliberate historical statement inside an in-scope file.
 _IGNORE_MARKER = "deprecation-target-ok"
 
-# Per docs/standards/regex.md: explicit character classes, bounded quantifiers,
-# no two unbounded quantifiers competing for the same characters.
+# Per docs/standards/regex.md: explicit alternation, bounded quantifiers, no two
+# unbounded quantifiers competing for the same characters.
 _FIELD_RE = re.compile(r"(?:" + r"|".join(DEPRECATED_FIELDS) + r")")
 # English "remove/removed/removal" + Turkish "kaldır/kaldırılır/kaldırıldı".
 # Substring match rather than \b-anchored: \b against Turkish 'ı' depends on
 # the Unicode word-char universe (regex.md rule 1) and buys nothing here.
 _REMOVAL_RE = re.compile(r"remov|kaldır|kaldir", re.IGNORECASE)
-# vMAJOR.MINOR.PATCH with an optional rcN suffix, e.g. v1.0.0, v0.10.0, v1.0.0rc1.
-_VERSION_RE = re.compile(r"\bv\d{1,3}\.\d{1,3}\.\d{1,3}(?:rc\d{1,3})?\b")
+# A version token, in either of the two shapes that actually occur in the
+# corpus this guard polices:
+#
+#   * prefixed, patch optional — v1.0.0, V1.0.0, v1.0, v1.0.0rc1
+#   * unprefixed, patch REQUIRED — 1.0.0, 0.9.1rc1
+#
+# The `v` prefix is optional because "removed in 1.0.0" is the natural
+# copy-paste from pyproject.toml's unprefixed version, and IGNORECASE admits
+# "V1.0.0" / "1.0.0RC1"; missing either is a false negative, the exact failure
+# this guard exists to prevent.  But an *unprefixed two-segment* number is not
+# accepted: `MAJOR.MINOR` with no `v` is indistinguishable from an ordinary
+# decimal, and admitting it made the guard flag the `neftune_noise_alpha`
+# default (`5.0`) in four config tables as a divergent removal claim.  A bare
+# number has to carry the full three-segment shape to read as a version.
+#
+# ReDoS reasoning (regex.md rules 3/4 + "ReDoS exposure budget"): every
+# quantifier is bounded ({1,3}); no two of them can consume the same character
+# (the `\d{1,3}` runs are separated by mandatory literal dots, and the optional
+# groups are anchored on distinct literals, '.' and 'rc'); the two alternatives
+# are tried at most once each per start position; and there is no
+# back-reference and no nesting.  A match attempt therefore costs O(1) and a
+# whole-line scan is O(n).  This guard reads repo-controlled files rather than
+# operator-supplied corpora, but the linearity is pinned by a benchmark test
+# anyway (test_check_deprecation_targets.py::TestVersionRegexLinearity).
+_VERSION_RE = re.compile(
+    r"\b(?:v\d{1,3}\.\d{1,3}(?:\.\d{1,3})?|\d{1,3}\.\d{1,3}\.\d{1,3})(?:rc\d{1,3})?\b",
+    re.IGNORECASE,
+)
 
 #: Files scanned for claims.  Kept explicit (rather than "everything") so the
 #: guard's blast radius is reviewable.
@@ -140,6 +189,10 @@ _SCAN_GLOBS = (
     ("docs", "**/*.md"),
     ("tests", "**/*.py"),
 )
+#: Repo-root markdown is public-facing (README, CONTRIBUTING, the agent guides)
+#: and states the same deprecation contract, so it is scanned too; CHANGELOG.md
+#: is filtered back out by ``_EXCLUDED_FILES``.
+_SCAN_ROOT_GLOBS = ("*.md",)
 _SCAN_FILES = ("config_template.yaml",)
 
 #: Paths never scanned — see the module docstring for the rationale of each.
@@ -149,6 +202,14 @@ _EXCLUDED_DIRS = (
 )
 _EXCLUDED_FILES = (
     Path("CHANGELOG.md"),
+    # Agent-guidance mirrors.  Like CHANGELOG.md these narrate the repo's own
+    # review history ("the deprecation-target guard (post-v0.9.0 Opus review)
+    # reads ...") — retrospective version references next to the field names,
+    # not a removal promise made to an operator.  Excluded rather than papered
+    # over with per-line `deprecation-target-ok` markers.  If either file ever
+    # does state the contract, drop it from this tuple.
+    Path("CLAUDE.md"),
+    Path("AGENTS.md"),
     Path("tools") / "check_deprecation_targets.py",
     Path("tests") / "test_check_deprecation_targets.py",
 )
@@ -171,14 +232,24 @@ def read_canonical_version(config_path: Path = CONFIG_PATH) -> str:
     pulls in no runtime dependencies (same approach as
     ``tools/check_field_descriptions.py``).
 
+    Both bare assignment (``X = "v1.0.0"``) and annotated assignment
+    (``X: str = "v1.0.0"``) are accepted.  ``forgelm/config.py`` already
+    annotates sibling module constants (``_STRICT_RISK_TIERS:
+    frozenset[str] = ...``), so a routine style pass adding ``: str`` here
+    must not silently decapitate the guard.
+
     Raises:
         SystemExit: when the constant is absent or is not a string literal.
     """
     tree = ast.parse(config_path.read_text(encoding="utf-8"), filename=str(config_path))
     for node in tree.body:
-        if not isinstance(node, ast.Assign):
+        if isinstance(node, ast.Assign):
+            targets: Sequence[ast.expr] = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
             continue
-        for target in node.targets:
+        for target in targets:
             if isinstance(target, ast.Name) and target.id == CANONICAL_CONSTANT:
                 value = node.value
                 if isinstance(value, ast.Constant) and isinstance(value.value, str):
@@ -188,6 +259,29 @@ def read_canonical_version(config_path: Path = CONFIG_PATH) -> str:
                     "must be a plain string literal so it can be read without importing."
                 )
     raise SystemExit(f"check_deprecation_targets: {CANONICAL_CONSTANT} not found in {config_path}.")
+
+
+def _strip_version_prefix(token: str) -> str:
+    """Return ``token`` without a leading ``v``/``V`` (``V1.0.0`` -> ``1.0.0``)."""
+    stripped = token.strip()
+    return stripped[1:] if stripped[:1] in ("v", "V") else stripped
+
+
+def claim_matches_canonical(claim_version: str, canonical: str) -> bool:
+    """Return True when ``claim_version`` names the same release as ``canonical``.
+
+    Compared as *parsed* versions so the guard polices the promise, not its
+    spelling: ``V1.0.0``, ``1.0.0`` and ``v1.0`` all agree with a canonical
+    ``v1.0.0``.  Only a genuinely different release counts as drift.  Falls
+    back to a normalised string compare if either side is unparseable (the
+    canonical constant is validated separately by
+    :func:`target_is_still_in_the_future`).
+    """
+    left, right = _strip_version_prefix(claim_version), _strip_version_prefix(canonical)
+    try:
+        return Version(left) == Version(right)
+    except InvalidVersion:
+        return left.lower() == right.lower()
 
 
 def read_package_version(pyproject_path: Path = PYPROJECT_PATH) -> str:
@@ -207,7 +301,7 @@ def target_is_still_in_the_future(canonical: str, package_version: str) -> bool:
     ``"v1.10.0" < "v1.2.0"`` lexically (release.md §``__api_version__``).
     """
     try:
-        return Version(canonical.lstrip("v")) > Version(package_version)
+        return Version(_strip_version_prefix(canonical)) > Version(_strip_version_prefix(package_version))
     except InvalidVersion as exc:
         raise SystemExit(
             f"check_deprecation_targets: cannot compare versions "
@@ -215,24 +309,47 @@ def target_is_still_in_the_future(canonical: str, package_version: str) -> bool:
         ) from exc
 
 
-def scan_text(text: str, path: Path, window: int = _FIELD_WINDOW) -> List[VersionClaim]:
+def scan_text(text: str, path: Path, window: int = _CLAIM_WINDOW) -> List[VersionClaim]:
     """Return every removal-version claim in ``text`` attached to a deprecated field.
 
-    See the module docstring for what "attached" means.  Returns *all*
-    claims, canonical or not — the caller decides which diverge, which
-    keeps this function directly assertable from tests.
+    A version token is reported when a removal-language line sits within
+    ``window`` lines of it and a deprecated field name sits within
+    ``window`` lines of *that* removal line.  Both hops are windowed
+    because prose wraps mid-sentence — see the module docstring.
+
+    Returns *all* claims, canonical or not — the caller decides which
+    diverge, which keeps this function directly assertable from tests.
     """
     lines = text.splitlines()
     field_lines = {i for i, line in enumerate(lines) if _FIELD_RE.search(line)}
+    removal_lines = {i for i, line in enumerate(lines) if _REMOVAL_RE.search(line)}
+    ignored_lines = {i for i, line in enumerate(lines) if _IGNORE_MARKER in line}
+
+    def _attached_removal_line(index: int) -> bool:
+        """True when a usable removal sentence sits within ``window`` of ``index``.
+
+        "Usable" = not itself opted out, and with a deprecated field name in
+        its own ``window``.  Anchoring the field hop on the *removal* line
+        (not the version line) keeps the field-proximity radius exactly what
+        it was before the version hop became windowed.
+        """
+        for removal in range(index - window, index + window + 1):
+            if removal not in removal_lines or removal in ignored_lines:
+                continue
+            if any(field in field_lines for field in range(removal - window, removal + window + 1)):
+                return True
+        return False
+
     claims: List[VersionClaim] = []
     for index, line in enumerate(lines):
-        if _IGNORE_MARKER in line:
+        if index in ignored_lines:
             continue
-        if not _REMOVAL_RE.search(line):
+        matches = list(_VERSION_RE.finditer(line))
+        if not matches:
             continue
-        if not any(j in field_lines for j in range(index - window, index + window + 1)):
+        if not _attached_removal_line(index):
             continue
-        for match in _VERSION_RE.finditer(line):
+        for match in matches:
             claims.append(
                 VersionClaim(path=path, line=index + 1, version=match.group(0), excerpt=line.strip()),
             )
@@ -252,6 +369,10 @@ def iter_target_files(repo_root: Path = REPO_ROOT) -> List[Path]:
         candidate = repo_root / name
         if candidate.is_file() and not _is_excluded(Path(name)):
             found.append(candidate)
+    for pattern in _SCAN_ROOT_GLOBS:
+        for candidate in repo_root.glob(pattern):
+            if candidate.is_file() and not _is_excluded(candidate.relative_to(repo_root)):
+                found.append(candidate)
     for directory, pattern in _SCAN_GLOBS:
         root = repo_root / directory
         if not root.is_dir():
@@ -322,7 +443,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
 
     claims = collect_claims()
-    divergent = [c for c in claims if c.version != canonical]
+    divergent = [c for c in claims if not claim_matches_canonical(c.version, canonical)]
     if divergent:
         failed = True
         print(
