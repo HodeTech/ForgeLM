@@ -105,6 +105,10 @@ Operatörler aynı tooling'i lokalde kurar:
 
 ```bash
 pip install forgelm[security]
+# pip-audit'in taradığı şey setuptools'tur; PYSEC-2026-3447 düzeltmesini
+# almak için runtime floor'dan önce yükseltin (bkz. CHANGELOG.md) —
+# aksi halde tarama, ortamın kendi setuptools'u için bir HIGH bulgu raporlar.
+pip install --upgrade "setuptools>=83.0.0"
 pip-audit --strict --format json --output /tmp/pip-audit.json
 python3 tools/check_pip_audit.py /tmp/pip-audit.json
 ```

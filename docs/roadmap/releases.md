@@ -9,7 +9,7 @@
 
 ### Features:
 1. [x] **GaLore**: Optimizer-level memory optimization — full-parameter training via gradient low-rank projection as an alternative to LoRA. Config fields: `galore_enabled`, `galore_optim`, `galore_rank`, `galore_update_proj_gap`, `galore_scale`, `galore_proj_type`, `galore_target_modules`.
-2. [x] **Long-Context Training**: RoPE scaling, NEFTune noise injection, sliding window attention, and sequence packing for extended context windows. Config fields: `rope_scaling`, `neftune_noise_alpha`, `sliding_window_attention`, `packing` (`sample_packing` is a deprecated alias, removed in v0.9.0).
+2. [x] **Long-Context Training**: RoPE scaling, NEFTune noise injection, sliding window attention, and sequence packing for extended context windows. Config fields: `rope_scaling`, `neftune_noise_alpha`, `sliding_window_attention`, `packing` (`sample_packing` is a deprecated alias, removal targeted for v1.0.0).
 3. [x] **Synthetic Data Pipeline**: Teacher-to-student distillation via `--generate-data` CLI flag. New `SyntheticDataGenerator` class in `forgelm/synthetic.py`. Configurable teacher model, backend, seed prompts, and output format.
 4. [x] **PyPI Publishing**: `pip install forgelm` now works. Automated publishing via `publish.yml` GitHub Actions workflow.
 5. [x] **GPU Cost Estimation**: Auto-detection for 16 GPU models with per-run cost tracking. Included in JSON output, webhook notifications, and model cards.

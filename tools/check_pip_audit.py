@@ -8,6 +8,16 @@ applies ForgeLM's severity policy:
 - ``MEDIUM`` findings emit a ``::warning::`` GitHub annotation but do
   not fail.
 - ``LOW`` findings are silent.
+- ``UNKNOWN`` findings (pip-audit's JSON omits OSV severity for
+  nearly every real advisory — see the empirical note near
+  ``_HIGH_TIERS`` below) also exit 1, failing closed. The
+  ``::error::`` annotation is split on
+  whether the advisory has a published fix: **fixable** findings name
+  the fix version so the operator's next action is "upgrade";
+  **no-fix** findings instead point at the documented suppression
+  workflow (``tools/pip_audit_ignores.yaml``). Both sub-buckets still
+  fail — this refines the message, not the severity policy — see
+  ``_bucket_findings`` for the full rationale.
 
 Used in ``.github/workflows/nightly.yml`` after the ``pip-audit`` step.
 
@@ -29,9 +39,27 @@ that ``forgelm/`` honours):
 - ``1`` — at least one high or critical CVE, OR at least one
   UNKNOWN-severity finding (F-PR29-A7-11: pip-audit's JSON omits
   severity, so UNKNOWN means we cannot prove a vulnerability is
-  low-impact; failing closed avoids silent drop), OR the input file is
-  missing / unparseable, OR the ignore file (when supplied) is missing,
-  unparseable, or schema-invalid.
+  low-impact; failing closed avoids silent drop — see the fix/no-fix
+  split below), OR the input file is missing / unparseable, OR the
+  ignore file (when supplied) is missing, unparseable, or
+  schema-invalid.
+
+UNKNOWN-severity findings are further split by whether pip-audit
+reports a non-empty ``fix_versions``. Both sub-buckets still fail the
+gate — no finding may become a silent pass — this only changes which
+``::error::`` message the operator sees:
+
+- **Fixable** (``fix_versions`` non-empty) — an upgrade resolves it.
+  The annotation names the fix version(s).
+- **No fix yet** (``fix_versions`` empty/absent) — no upstream release
+  resolves it yet. The annotation directs the operator to the
+  documented suppression workflow (``tools/pip_audit_ignores.yaml`` —
+  see that file's header for the required id/package/reason/
+  threat_model/verified_at/reevaluate_after schema), so an
+  accepted-risk advisory has a concrete next step instead of leaving
+  the gate red with no actionable path — a MEDIUM-tier local advisory
+  with no fix previously had no triage route other than a suppression
+  entry, which is what this split fixes.
 
 Usage::
 
@@ -343,12 +371,42 @@ def _vuln_identifiers(vuln: dict[str, Any]) -> set[str]:
     return ids
 
 
+def _has_fix_available(vuln: dict[str, Any]) -> bool:
+    """Return ``True`` when the advisory names at least one fix version.
+
+    Mirrors ``_format_finding``'s ``fix_versions`` / ``fix_version``
+    fallback so the "is this actionable" check and the "what do we print"
+    check never disagree about what counts as a fix.
+    """
+    fix_versions = vuln.get("fix_versions") or vuln.get("fix_version") or []
+    if isinstance(fix_versions, str):
+        return bool(fix_versions.strip())
+    if isinstance(fix_versions, list):
+        return len(fix_versions) > 0
+    return False
+
+
 def _bucket_findings(
     report: dict[str, Any],
     ignores: Optional[dict[str, dict[str, Any]]] = None,
-) -> tuple[list[str], list[str], list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
     """Walk every (name, vuln) pair and return
-    ``(high, medium, unknown, suppressed)`` lists of pre-formatted lines.
+    ``(high, medium, unknown_fixable, unknown_no_fix, suppressed)`` lists
+    of pre-formatted lines.
+
+    The UNKNOWN-severity bucket (pip-audit's JSON omits OSV severity for
+    almost every real vuln — see the module docstring) is split on
+    whether ``fix_versions`` is non-empty. Both sub-buckets still fail
+    the gate in ``main()`` — this split changes the ``::error::``
+    message an operator sees, not the pass/fail outcome:
+
+    - ``unknown_fixable`` — an upgrade resolves the finding; the
+      operator action is "bump the pin". The advisory's fix version(s)
+      are already embedded in the formatted line via ``_format_finding``.
+    - ``unknown_no_fix`` — no upstream fix exists yet; the operator
+      action is to document accepted risk via the
+      ``tools/pip_audit_ignores.yaml`` suppression workflow (or keep
+      monitoring). A missing fix is not a reason to pass silently.
 
     ``suppressed`` carries findings whose ``{id} ∪ aliases`` intersected
     the ignore set; the caller surfaces each one as a ``::notice::``
@@ -357,7 +415,8 @@ def _bucket_findings(
     """
     high: list[str] = []
     medium: list[str] = []
-    unknown: list[str] = []
+    unknown_fixable: list[str] = []
+    unknown_no_fix: list[str] = []
     suppressed: list[str] = []
     # Materialise the ignore id set once rather than rebuilding the keys
     # view on every finding.
@@ -373,14 +432,16 @@ def _bucket_findings(
                 suppressed.append(f"{name} {vid} — reason: {entry.get('reason')}")
                 continue
         severity = _vuln_severity(vuln)
-        line = _format_finding(name, vuln, severity)
         if severity in _HIGH_TIERS:
-            high.append(line)
+            high.append(_format_finding(name, vuln, severity))
         elif severity in _MED_TIERS:
-            medium.append(line)
+            medium.append(_format_finding(name, vuln, severity))
         elif severity == "UNKNOWN":
-            unknown.append(line)
-    return high, medium, unknown, suppressed
+            if _has_fix_available(vuln):
+                unknown_fixable.append(_format_finding(name, vuln, "UNKNOWN (fix available)"))
+            else:
+                unknown_no_fix.append(_format_finding(name, vuln, "UNKNOWN (no fix)"))
+    return high, medium, unknown_fixable, unknown_no_fix, suppressed
 
 
 def _parse_argv(argv: list[str]) -> argparse.Namespace:
@@ -421,7 +482,7 @@ def main(argv: list[str]) -> int:
         if ignores is None:
             return 1
 
-    high, medium, unknown, suppressed = _bucket_findings(report, ignores)
+    high, medium, unknown_fixable, unknown_no_fix, suppressed = _bucket_findings(report, ignores)
 
     for line in suppressed:
         # ::notice:: keeps every suppression in the run log so a reviewer
@@ -440,22 +501,41 @@ def main(argv: list[str]) -> int:
         print(f"::error::pip-audit found {len(high)} high/critical-severity finding(s); failing the run.")
         return 1
 
-    if unknown:
-        # F-PR29-A7-11 (post-flip policy): UNKNOWN-severity findings now
+    if unknown_fixable or unknown_no_fix:
+        # F-PR29-A7-11 (post-flip policy): UNKNOWN-severity findings still
         # fail the gate.  Rationale: pip-audit's JSON omits OSV severity
-        # for almost every real vuln, so the previous "warn only" branch
-        # converted nearly all findings into a silent advisory — operators
-        # never saw the failures.  Failing closed surfaces every vuln for
-        # explicit triage; if a vuln is genuinely low-impact, the operator
-        # documents it (e.g. via a pip-audit ignore file or a YAML allow
-        # entry) rather than relying on missing severity to skip the gate.
-        for line in unknown:
+        # for almost every real vuln, so a "warn only" branch would convert
+        # nearly all findings into a silent advisory — operators would
+        # never see the failures.  Failing closed surfaces every vuln for
+        # explicit triage.
+        #
+        # Fix/no-fix split (this refines the *message*, not the *policy*
+        # — neither sub-bucket below is a pass): a fixable finding's next
+        # step is "upgrade"; a no-fix finding's next step is "document
+        # accepted risk", and printing the same generic message for both
+        # is what let a no-fix MEDIUM-tier advisory take the nightly red
+        # for days with no clear triage path beyond guessing at a
+        # suppression entry.
+        for line in unknown_fixable:
             print(f"::error::pip-audit {line}")
-        print(
-            f"::error::pip-audit found {len(unknown)} finding(s) without parseable "
-            f"severity in {args.report}; pip-audit's JSON does not serialise OSV "
-            f"severity, so each must be reviewed manually (failing closed)."
-        )
+        for line in unknown_no_fix:
+            print(f"::error::pip-audit {line}")
+        if unknown_fixable:
+            print(
+                f"::error::pip-audit found {len(unknown_fixable)} finding(s) without parseable "
+                f"severity in {args.report} but WITH a published fix (see the fix version(s) "
+                f"named above); upgrade the affected package(s) to resolve."
+            )
+        if unknown_no_fix:
+            print(
+                f"::error::pip-audit found {len(unknown_no_fix)} finding(s) without parseable "
+                f"severity in {args.report} and no published fix; pip-audit's JSON does not "
+                f"serialise OSV severity, so each must be reviewed manually (failing closed). "
+                f"If the advisory is accepted risk, document it via the suppression workflow "
+                f"in tools/pip_audit_ignores.yaml (see that file's header for the required "
+                f"id/package/reason/threat_model/verified_at/reevaluate_after schema) rather "
+                f"than leaving the gate red with no actionable path."
+            )
         return 1
 
     if medium:

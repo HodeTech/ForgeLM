@@ -79,7 +79,7 @@ The SFT-specific knobs live alongside the standard `training` block.
 | `training.num_train_epochs` | int | `3` | More epochs = more memorisation, less generalisation. |
 | `training.per_device_train_batch_size` | int | `4` | Per-device. Multiply by `gradient_accumulation_steps` for effective batch. |
 | `training.packing` | bool | `false` | Pack short sequences together for throughput. Adds 30-50% speed. |
-| `training.sample_packing` | bool | `false` | **Deprecated** alias for `packing`; forwards to `packing: true` with a `DeprecationWarning`. Removed in v0.9.0 — use `packing`. |
+| `training.sample_packing` | bool | `false` | **Deprecated** alias for `packing`; forwards to `packing: true` with a `DeprecationWarning`. Scheduled for removal in v1.0.0 — use `packing`. |
 | `training.neftune_noise_alpha` | float | `null` | Embedding-noise regularisation. `5.0` improves on small datasets. |
 | `model.max_length` | int | `2048` | Context window during training (lives under `model:`, not `training:`). Longer = more VRAM. |
 

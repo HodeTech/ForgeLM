@@ -273,8 +273,8 @@ değerlerini listeleyen `forgelm --config job.yaml --dry-run` çalıştırın.
 
 ### Deprecated LoRA method söz dizimi
 
-Boolean flag'lar `lora.use_dora` ve `lora.use_rslora` deprecated.
-Bunun yerine `lora.method` kullanın:
+Boolean flag'lar `lora.use_dora` ve `lora.use_rslora` deprecated — v1.0.0'da
+kaldırılacaklar. Bunun yerine `lora.method` kullanın:
 
 ```yaml
 # Yeni (önerilen)

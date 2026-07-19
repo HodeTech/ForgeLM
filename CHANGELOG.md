@@ -28,6 +28,15 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   user-manual example that uses a nonexistent field is caught in CI instead of
   by a reader's `--dry-run` failure. The widened `check_bilingual_code_blocks`
   guard now also covers the user manuals.
+- **A CI guard (`check_deprecation_targets.py`) that keeps every deprecation
+  removal promise honest.** `forgelm/config.py` now carries a single
+  `DEPRECATION_REMOVAL_VERSION` constant that every runtime deprecation message
+  is built from, and the guard fails the build when any claim across `forgelm/`,
+  `config_template.yaml`, `docs/**` or `tests/**` names a different version —
+  or when the promised version is no longer ahead of the shipping version (i.e.
+  the promise has gone retroactively false). This is the drift class that let
+  the same removal date rot twice (`v0.9.0` → `v0.10.0` → `v1.0.0`); it is now
+  mechanically impossible to reintroduce silently.
 
 ### Fixed
 
@@ -196,10 +205,6 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 - **`rope_scaling` is validated at config load.** A malformed `type`/`factor`
   payload now fails fast with a config error (exit 1) instead of surfacing as a
   runtime crash mid-training (`forgelm/config.py`).
-- **Deprecation removal target corrected to `v0.10.0`.** The
-  `use_dora`/`use_rslora`/`sample_packing` deprecation warnings claimed removal
-  in `v0.9.0`, which already shipped without removing them (`forgelm/config.py`).
-
 ### Documentation
 
 - **The canonical Configuration Reference user manual (EN + TR) no longer

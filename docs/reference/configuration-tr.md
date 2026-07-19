@@ -52,6 +52,11 @@ Tam açıklamalı örnek için `config_template.yaml` dosyasına bakın.
 | `task_type` | string | `"CAUSAL_LM"` | PEFT için görev tipi |
 
 > `use_dora` ve `use_rslora` birbirini dışlar; her biri, farklı bir PEFT yöntemi belirten açıkça set edilmiş bir `method` ile de çelişir (ör. `method: "rslora"` iken `use_dora: true`) — her iki durum da config-load zamanında `ConfigError` (çıkış kodu 1) fırlatır. Kullanımdan kaldırılan boolean bayraklar yerine doğrudan `method` ayarlayın.
+>
+> Kaldırma, daha erken değil v1.0.0'da gerçekleşir; çünkü bir YAML alanını
+> kaldırmak sürümleme politikasına göre bir MAJOR değişikliktir — bkz.
+> [`docs/standards/release.md`](../standards/release.md#what-constitutes-breaking)
+> (İngilizce).
 
 ---
 
@@ -119,6 +124,11 @@ training:
 | `neftune_noise_alpha` | float | `null` | NEFTune gürültü enjeksiyonu alpha değeri (ör. `5.0`) |
 | `sliding_window_attention` | int | `null` | Kayan pencere dikkat boyutu (token) |
 | `sample_packing` | bool | `false` | **Kullanımdan kaldırıldı** — `packing` için takma ad (TRL tek bir packing düğmesi sunar). `true` ayarlamak `DeprecationWarning` ile `packing: true`'ya yönlendirir; v1.0.0'da kaldırılır. Bunun yerine `packing` kullanın. |
+
+> Kaldırma, daha erken değil v1.0.0'da gerçekleşir; çünkü bir YAML alanını
+> kaldırmak sürümleme politikasına göre bir MAJOR değişikliktir — bkz.
+> [`docs/standards/release.md`](../standards/release.md#what-constitutes-breaking)
+> (İngilizce).
 
 #### GPU Maliyet Tahmini
 

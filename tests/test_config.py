@@ -2,13 +2,17 @@
 
 import logging
 import os
+import re
 import warnings
 
 import pytest
 import yaml
+from packaging.version import Version
 from pydantic import ValidationError
 
+from forgelm import __version__
 from forgelm.config import (
+    DEPRECATION_REMOVAL_VERSION,
     BenchmarkConfig,
     ConfigError,
     EvaluationConfig,
@@ -926,24 +930,92 @@ class TestEvalStepsSaveStepsWarning:
 # --- Finding 5: deprecation removal-version strings are not retroactively false ---
 
 
-class TestDeprecationRemovalVersion:
-    def test_use_dora_warning_states_future_removal_version(self):
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            LoraConfigModel(use_dora=True)
-        messages = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert messages, "expected a DeprecationWarning for use_dora"
-        assert all("v0.9.0" not in m for m in messages)
-        assert any("v1.0.0" in m for m in messages)
+def _promised_removal_versions(messages: list[str]) -> list[str]:
+    """Extract every ``vN.N.N`` token appearing in the given warning messages."""
+    return [m for message in messages for m in re.findall(r"\bv\d+\.\d+\.\d+\b", message)]
 
-    def test_sample_packing_warning_states_future_removal_version(self):
+
+class TestDeprecationRemovalVersion:
+    """The removal promise must stay a *promise*, not a literal that happens to
+    read correctly today.
+
+    The earlier version of this class string-matched ``"v1.0.0" in message``,
+    which passes unchanged on the day v1.0.0 actually ships with the deprecated
+    fields still present — exactly the rot it was meant to catch (the target had
+    already slipped v0.9.0 -> v0.10.0 -> v1.0.0). These tests instead parse the
+    version out of the message and assert the *contract*: the promised version
+    is the single source of truth (``DEPRECATION_REMOVAL_VERSION``) and is
+    strictly ahead of the version the operator is running. ``tools/
+    check_deprecation_targets.py`` enforces the same invariant repo-wide.
+    """
+
+    def _deprecation_messages(self, factory) -> list[str]:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            TrainingConfig(sample_packing=True)
+            obj = factory()
         messages = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
+        return obj, messages
+
+    def test_use_dora_warning_promises_a_version_still_in_the_future(self):
+        lc, messages = self._deprecation_messages(lambda: LoraConfigModel(use_dora=True))
+        assert messages, "expected a DeprecationWarning for use_dora"
+        promised = _promised_removal_versions(messages)
+        assert promised, f"no removal version named in {messages!r}"
+        for version in promised:
+            assert version == DEPRECATION_REMOVAL_VERSION, (
+                f"message names {version} but forgelm.config.DEPRECATION_REMOVAL_VERSION "
+                f"is {DEPRECATION_REMOVAL_VERSION} — build the message from the constant."
+            )
+            assert Version(version.lstrip("v")) > Version(__version__), (
+                f"the use_dora deprecation promises removal in {version}, but the running "
+                f"version is already {__version__} — the promise is retroactively false. "
+                "Land the removal or retarget DEPRECATION_REMOVAL_VERSION (a YAML-field "
+                "removal is MAJOR — docs/standards/release.md)."
+            )
+        # The alias must keep working for the whole deprecation window.
+        assert lc.method == "dora"
+
+    def test_sample_packing_warning_promises_a_version_still_in_the_future(self):
+        tc, messages = self._deprecation_messages(lambda: TrainingConfig(sample_packing=True))
         assert messages, "expected a DeprecationWarning for sample_packing"
-        assert all("v0.9.0" not in m for m in messages)
-        assert any("v1.0.0" in m for m in messages)
+        promised = _promised_removal_versions(messages)
+        assert promised, f"no removal version named in {messages!r}"
+        for version in promised:
+            assert version == DEPRECATION_REMOVAL_VERSION, (
+                f"message names {version} but forgelm.config.DEPRECATION_REMOVAL_VERSION "
+                f"is {DEPRECATION_REMOVAL_VERSION} — build the message from the constant."
+            )
+            assert Version(version.lstrip("v")) > Version(__version__), (
+                f"the sample_packing deprecation promises removal in {version}, but the "
+                f"running version is already {__version__} — the promise is retroactively "
+                "false. Land the removal or retarget DEPRECATION_REMOVAL_VERSION."
+            )
+        # The alias must keep forwarding for the whole deprecation window.
+        assert tc.packing is True
+
+    def test_use_rslora_warning_promises_a_version_still_in_the_future(self):
+        lc, messages = self._deprecation_messages(lambda: LoraConfigModel(use_rslora=True))
+        assert messages, "expected a DeprecationWarning for use_rslora"
+        promised = _promised_removal_versions(messages)
+        assert promised, f"no removal version named in {messages!r}"
+        for version in promised:
+            assert version == DEPRECATION_REMOVAL_VERSION
+            assert Version(version.lstrip("v")) > Version(__version__)
+        assert lc.method == "rslora"
+
+    def test_canonical_target_is_ahead_of_the_shipping_version(self):
+        """The constant itself — checked once, independently of any message."""
+        assert Version(DEPRECATION_REMOVAL_VERSION.lstrip("v")) > Version(__version__)
+
+    def test_removal_messages_use_future_tense(self):
+        """A message that says a field 'is removed' in a version that has not
+        shipped reads as a statement of present fact. All runtime deprecation
+        strings are normalised to 'will be removed in <version>'."""
+        _, dora = self._deprecation_messages(lambda: LoraConfigModel(use_dora=True))
+        _, packing = self._deprecation_messages(lambda: TrainingConfig(sample_packing=True))
+        for message in dora + packing:
+            assert "will be removed in" in message, f"not future tense: {message!r}"
+            assert "is removed in" not in message, f"present-tense removal claim: {message!r}"
 
 
 # --- Findings 4/6/7: config_template completeness + no deprecated-flag demos ---
@@ -957,7 +1029,8 @@ class TestTemplateCompleteness:
 
     def test_template_has_no_deprecated_peft_flags(self):
         """Finding 4: the PEFT example must not demonstrate the deprecated
-        use_dora / use_rslora booleans (removed in v1.0.0)."""
+        use_dora / use_rslora booleans (scheduled for removal — the target
+        lives in forgelm.config.DEPRECATION_REMOVAL_VERSION)."""
         text = self._template_text()
         assert "use_dora:" not in text
         assert "use_rslora:" not in text

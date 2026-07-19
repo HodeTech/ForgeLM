@@ -164,10 +164,11 @@ Default workflow for a non-trivial change:
      python3 tools/check_usermanual_self_contained.py --strict && \
      python3 tools/check_notebook_pins.py --strict && \
      python3 tools/check_usermanual_schema_drift.py --strict && \
+     python3 tools/check_deprecation_targets.py --strict && \
      python3 tools/update_site_version.py --check
    ```
 
-   All sixteen must pass (the usermanual-schema-drift guard —
+   All seventeen must pass (the usermanual-schema-drift guard —
    `check_usermanual_schema_drift.py --strict` — validates that every
    fenced YAML key under `docs/usermanuals/` resolves against the real
    `ForgeConfig` schema, catching fabricated-field examples that would
@@ -212,7 +213,17 @@ Default workflow for a non-trivial change:
    (v0.7.0 / F-P8-C-09) verifies that every `*.ipynb` in the repo
    pins its kernel and package versions so that example notebooks
    remain reproducible; it was wired into CI at the v0.7.0 pin bump
-   but was absent from the local gauntlet until this update.
+   but was absent from the local gauntlet until this update.  The
+   deprecation-target guard (post-v0.9.0 Opus review) reads
+   `forgelm/config.py`'s `DEPRECATION_REMOVAL_VERSION` constant as the
+   single source of truth for when `lora.use_dora` / `lora.use_rslora` /
+   `training.sample_packing` disappear, then fails on any claim in
+   `forgelm/`, `config_template.yaml`, `docs/` or `tests/` that names a
+   different version — and on a target the shipping `pyproject.toml`
+   version has already reached, since removing a YAML field is MAJOR
+   (`docs/standards/release.md`) and a due promise is a false one. The
+   literal was previously duplicated across ~20 sites and rotted twice
+   (v0.9.0 → v0.10.0 → v1.0.0), each retarget leaving stragglers behind.
 
 ## Etiquette when communicating with the user
 

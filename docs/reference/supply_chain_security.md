@@ -105,6 +105,10 @@ Operators install the same tooling locally:
 
 ```bash
 pip install forgelm[security]
+# setuptools is what pip-audit scans; upgrade it ahead of the runtime floor
+# to pick up the fix for PYSEC-2026-3447 (see CHANGELOG.md) — otherwise
+# the scan reports a HIGH finding for the environment's own setuptools.
+pip install --upgrade "setuptools>=83.0.0"
 pip-audit --strict --format json --output /tmp/pip-audit.json
 python3 tools/check_pip_audit.py /tmp/pip-audit.json
 ```

@@ -4,6 +4,15 @@ Pins the F-PR29-A7-11 post-flip policy: UNKNOWN severity now fails (was
 silent advisory).  pip-audit's JSON shape omits OSV severity for almost
 every real finding, so failing closed forces operator triage rather than
 relying on missing severity to skip the gate.
+
+Also pins the fix/no-fix split within the UNKNOWN bucket (follow-up to
+the setuptools PYSEC-2026-3447 nightly fire drill, where a MEDIUM-tier
+local advisory with no published fix stayed red for days with no
+actionable triage path beyond a suppression entry): a fixable UNKNOWN
+finding's ``::error::`` names the fix version; a no-fix UNKNOWN finding's
+``::error::`` points at the ``tools/pip_audit_ignores.yaml`` suppression
+workflow. Both sub-buckets still fail the gate — the split changes the
+message, never the pass/fail outcome.
 """
 
 from __future__ import annotations
@@ -106,7 +115,9 @@ def test_unknown_severity_fails_after_a7_11_flip(tool, tmp_path, capsys):
 
     pip-audit's JSON omits OSV severity for almost every vuln, so the
     previous warn-only branch converted real findings into noise the
-    operator never saw.  Failing closed forces explicit triage.
+    operator never saw.  Failing closed forces explicit triage.  This
+    fixture has no ``fix_versions``, so it lands in the no-fix sub-bucket
+    (see ``TestUnknownFixNoFixSplit`` below for the fixable branch).
     """
     p = _write_audit(
         tmp_path,
@@ -131,6 +142,8 @@ def test_unknown_severity_fails_after_a7_11_flip(tool, tmp_path, capsys):
     assert "::error::pip-audit" in captured.out
     assert "GHSA-fake-fake-fake" in captured.out
     assert "without parseable" in captured.out
+    # No-fix branch must point at the documented suppression workflow.
+    assert "tools/pip_audit_ignores.yaml" in captured.out
 
 
 def test_missing_file_fails_with_error(tool, tmp_path, capsys):
@@ -170,6 +183,127 @@ def test_high_takes_precedence_over_unknown(tool, tmp_path, capsys):
     assert tool.main([str(_TOOL_PATH), str(p)]) == 1
     captured = capsys.readouterr()
     assert "high/critical" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# UNKNOWN-severity fix/no-fix split.
+#
+# Follow-up to the setuptools PYSEC-2026-3447 nightly fire drill: the gate
+# used to fail closed on every UNKNOWN finding with one generic message,
+# giving a no-fix MEDIUM-tier advisory no triage path other than guessing
+# at a suppression entry. The split below refines the *message* only —
+# both sub-buckets must still fail the gate (F-PR29-A7-11 stands).
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_with_fix_available_names_the_fix_version(tool, tmp_path, capsys):
+    """An UNKNOWN finding WITH fix_versions still fails, but the
+    ::error:: names the fix version so the operator's next step is
+    "upgrade" rather than a bare severity-unknown notice."""
+    p = _write_audit(
+        tmp_path,
+        {
+            "dependencies": [
+                {
+                    "name": "synthetic-pkg",
+                    "version": "1.0.0",
+                    "vulns": [
+                        {
+                            "id": "GHSA-fixable-0001",
+                            # No severity field -> UNKNOWN; fix_versions present -> fixable sub-bucket.
+                            "fix_versions": ["1.2.3"],
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    assert tool.main([str(_TOOL_PATH), str(p)]) == 1
+    captured = capsys.readouterr()
+    assert "::error::pip-audit" in captured.out
+    assert "GHSA-fixable-0001" in captured.out
+    assert "1.2.3" in captured.out
+    assert "WITH a published fix" in captured.out
+    assert "upgrade" in captured.out.lower()
+    # The fixable branch must not point at the suppression workflow — an
+    # available upgrade is the actionable path, not risk acceptance.
+    assert "tools/pip_audit_ignores.yaml" not in captured.out
+
+
+def test_unknown_without_fix_directs_to_suppression_workflow(tool, tmp_path, capsys):
+    """An UNKNOWN finding with no fix_versions still fails, but the
+    ::error:: directs the operator to the documented suppression
+    workflow instead of leaving the gate red with no actionable path."""
+    p = _write_audit(
+        tmp_path,
+        {
+            "dependencies": [
+                {
+                    "name": "synthetic-pkg",
+                    "version": "1.0.0",
+                    "vulns": [
+                        {
+                            "id": "GHSA-nofix-0001",
+                            # No severity, no fix_versions -> no-fix sub-bucket.
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    assert tool.main([str(_TOOL_PATH), str(p)]) == 1
+    captured = capsys.readouterr()
+    assert "::error::pip-audit" in captured.out
+    assert "GHSA-nofix-0001" in captured.out
+    assert "no published fix" in captured.out
+    assert "tools/pip_audit_ignores.yaml" in captured.out
+    assert "id/package/reason/threat_model/verified_at/reevaluate_after" in captured.out
+
+
+@pytest.mark.parametrize(
+    "vuln_extra",
+    [
+        pytest.param({"fix_versions": ["9.9.9"]}, id="fix-available"),
+        pytest.param({}, id="no-fix"),
+    ],
+)
+def test_unknown_neither_fix_subbucket_becomes_a_pass(tool, tmp_path, vuln_extra):
+    """Regression guard for the fix/no-fix split: no finding may become a
+    silent pass, regardless of which sub-bucket it lands in. The split
+    is a message refinement, never a severity weakening."""
+    vuln = {"id": "GHSA-regress-0001", "description": "synthetic", **vuln_extra}
+    p = _write_audit(
+        tmp_path,
+        {"dependencies": [{"name": "synthetic-pkg", "version": "1.0.0", "vulns": [vuln]}]},
+    )
+    assert tool.main([str(_TOOL_PATH), str(p)]) == 1
+
+
+def test_unknown_mixed_fixable_and_no_fix_both_reported(tool, tmp_path, capsys):
+    """Both sub-buckets can co-occur in one report; both messages surface."""
+    p = _write_audit(
+        tmp_path,
+        {
+            "dependencies": [
+                {
+                    "name": "pkg-fixable",
+                    "version": "1.0.0",
+                    "vulns": [{"id": "GHSA-mix-fixable", "fix_versions": ["2.0.0"]}],
+                },
+                {
+                    "name": "pkg-nofix",
+                    "version": "1.0.0",
+                    "vulns": [{"id": "GHSA-mix-nofix"}],
+                },
+            ]
+        },
+    )
+    assert tool.main([str(_TOOL_PATH), str(p)]) == 1
+    captured = capsys.readouterr()
+    assert "GHSA-mix-fixable" in captured.out
+    assert "GHSA-mix-nofix" in captured.out
+    assert "WITH a published fix" in captured.out
+    assert "no published fix" in captured.out
 
 
 # ---------------------------------------------------------------------------

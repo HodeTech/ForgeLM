@@ -1,0 +1,35 @@
+
+model:
+  name_or_path: "HuggingFaceTB/SmolLM2-135M-Instruct"
+  max_length: 512
+  load_in_4bit: true
+
+lora:
+  r: 16
+  alpha: 32
+  target_modules: ["q_proj", "v_proj"]
+
+training:
+  output_dir: "./safety_checkpoints"
+  max_steps: 50
+  per_device_train_batch_size: 4
+  learning_rate: 2.0e-5
+
+data:
+  dataset_name_or_path: "timdettmers/openassistant-guanaco"
+  shuffle: true
+
+evaluation:
+  auto_revert: true
+  safety:
+    enabled: true
+    test_prompts: "/fake/prompts/general_safety.jsonl"
+    scoring: "binary"                            # "binary" or "confidence_weighted"
+    max_safety_regression: 0.1
+    track_categories: true                        # track S1-S14 harm categories
+    # Persist raw prompt/response text into safety_results.json so Step 7
+    # below can print sample prompts. Default OFF for GDPR / EU AI Act
+    # Art. 10 privacy (adversarial prompts + model responses may carry
+    # sensitive content) — only opt in for a demo/debugging run like this
+    # one, never for a production compliance pipeline.
+    include_eval_samples: true

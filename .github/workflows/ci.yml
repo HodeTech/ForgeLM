@@ -309,6 +309,18 @@ jobs:
         # EN/TR page-pairs) has been cleaned, so any new drift now fails CI.
         run: python3 tools/check_usermanual_schema_drift.py --strict
 
+      - name: Deprecation removal-target drift (strict)
+        # The removal version for lora.use_dora / lora.use_rslora /
+        # training.sample_packing was a hardcoded literal duplicated across
+        # ~20 sites and rotted twice (v0.9.0 -> v0.10.0 -> v1.0.0), leaving
+        # stragglers that told operators two different versions. The target
+        # now lives in forgelm/config.py::DEPRECATION_REMOVAL_VERSION; this
+        # guard reads it by AST and fails on any divergent claim in
+        # forgelm/, config_template.yaml, docs/ or tests/ — and on a target
+        # that pyproject.toml's version has already reached (removing a YAML
+        # field is MAJOR, so the promise must stay ahead of the release).
+        run: python3 tools/check_deprecation_targets.py --strict
+
       - name: Site chrome (EN/TR translation) parity
         # W1/H11 (F-P8-C-07): the active-tier (EN<->TR) translation-key sets in
         # site/js/translations.js must stay in lockstep. Run WITHOUT --strict:

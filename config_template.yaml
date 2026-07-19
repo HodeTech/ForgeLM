@@ -71,7 +71,7 @@ data:
 
 # Advanced PEFT method (default: "lora").  Pick ONE canonical `method:` value —
 # `dora`/`pissa`/`rslora` are selected via `method:`, not via the deprecated
-# `use_dora`/`use_rslora` booleans (those are removed in v0.10.0).
+# `use_dora`/`use_rslora` booleans (those will be removed in v1.0.0).
 # lora:
 #   method: "pissa"   # "lora", "dora", "pissa", "rslora"
 # For rank-stabilized LoRA (recommended for high ranks, r>64):

@@ -16,6 +16,7 @@ catches the same class of regression end-to-end.
 from __future__ import annotations
 
 import importlib.resources as ir
+import re
 from pathlib import Path
 
 import pytest
@@ -149,4 +150,71 @@ def test_merging_extra_is_a_noop() -> None:
     extras = _load_optional_dependencies()
     assert extras.get("merging", None) == [], (
         f"the 'merging' extra should be an empty no-op; got {extras.get('merging')!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# [build-system].requires setuptools security floor (PYSEC-2026-3447).
+#
+# The nightly supply-chain gate (tools/check_pip_audit.py, run via
+# .github/workflows/nightly.yml) failed closed for days starting 2026-07-15
+# on setuptools PYSEC-2026-3447, fixed in setuptools 83.0.0. The fix raised
+# [build-system].requires' setuptools floor to ">=83.0.0" so a build-from-
+# source can never provision a vulnerable build toolchain. Nothing besides
+# this test stops a routine hygiene PR from silently lowering that floor
+# again — machine-check it so the regression fails CI immediately instead
+# of waiting for the nightly to go red.
+# ---------------------------------------------------------------------------
+
+_SETUPTOOLS_LOWER_BOUND_RE = re.compile(r"^setuptools\b.*?>=\s*([0-9]+(?:\.[0-9]+)*)", re.IGNORECASE)
+
+# The PYSEC-2026-3447 fix floor. Do not lower without re-verifying the
+# advisory is resolved by an earlier setuptools release.
+_SETUPTOOLS_SECURITY_FLOOR = (83, 0, 0)
+
+
+def _load_build_system_requires() -> list:
+    try:
+        import tomllib  # type: ignore[import-not-found]
+    except ModuleNotFoundError:  # pragma: no cover — Python 3.10 fallback
+        try:
+            import tomli as tomllib  # type: ignore[import-not-found, no-redef]
+        except ModuleNotFoundError:
+            pytest.skip("Neither tomllib (3.11+) nor tomli is available; build-system requires assertion skipped.")
+    pyproject_path = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    with pyproject_path.open("rb") as fh:
+        pyproject = tomllib.load(fh)
+    return pyproject.get("build-system", {}).get("requires", [])
+
+
+def test_setuptools_security_floor_meets_pysec_2026_3447() -> None:
+    """[build-system].requires must pin setuptools>=83.0.0 (PYSEC-2026-3447).
+
+    setuptools 83.0.0 is the first release carrying the fix for
+    PYSEC-2026-3447 — the CVE that took ForgeLM's nightly pip-audit gate
+    red for days (2026-07-15 onward) until the floor was raised. This is a
+    security floor, not a feature floor: a hygiene PR that bumps or
+    reformats [build-system].requires must not silently drop below it.
+    """
+    requires = _load_build_system_requires()
+    setuptools_reqs = [r for r in requires if re.match(r"^setuptools\b", r, re.IGNORECASE)]
+    assert setuptools_reqs, (
+        "[build-system].requires has no 'setuptools' entry; PYSEC-2026-3447 "
+        "(fixed in setuptools 83.0.0) requires an explicit lower-bound pin."
+    )
+    assert len(setuptools_reqs) == 1, (
+        f"expected exactly one setuptools requirement in [build-system].requires, found {setuptools_reqs!r}"
+    )
+    spec = setuptools_reqs[0]
+    match = _SETUPTOOLS_LOWER_BOUND_RE.match(spec)
+    assert match is not None, (
+        f"[build-system].requires setuptools entry {spec!r} has no '>=' lower bound; "
+        "PYSEC-2026-3447 (fixed in setuptools 83.0.0) requires an explicit floor, "
+        "not just an upper bound or an unpinned dependency."
+    )
+    lower_bound = tuple(int(part) for part in match.group(1).split("."))
+    assert lower_bound >= _SETUPTOOLS_SECURITY_FLOOR, (
+        f"[build-system].requires setuptools lower bound is {spec!r} (parsed as {lower_bound}), "
+        f"which is below the PYSEC-2026-3447 fix floor of setuptools>={'.'.join(map(str, _SETUPTOOLS_SECURITY_FLOOR))}. "
+        "Do not lower this floor without re-verifying the advisory is resolved by an earlier release."
     )

@@ -52,6 +52,10 @@ See `config_template.yaml` for a complete annotated example.
 | `task_type` | string | `"CAUSAL_LM"` | Task type for PEFT |
 
 > `use_dora` and `use_rslora` are mutually exclusive, and each conflicts with an explicitly-set `method` that names a different PEFT method (e.g. `use_dora: true` with `method: "rslora"`) — either combination raises `ConfigError` (exit 1) at config-load time. Set `method` directly instead of the deprecated boolean flags.
+>
+> Removal lands in v1.0.0, not sooner, because removing a YAML field is a
+> MAJOR change under the versioning policy — see
+> [`docs/standards/release.md`](../standards/release.md#what-constitutes-breaking).
 
 ---
 
@@ -122,6 +126,10 @@ across retries. Each retry attempt is logged to the audit trail.
 | `neftune_noise_alpha` | float | `null` | NEFTune noise injection alpha (e.g., `5.0`) |
 | `sliding_window_attention` | int | `null` | Sliding window attention size in tokens |
 | `sample_packing` | bool | `false` | **Deprecated** alias for `packing` (TRL exposes a single packing knob). Setting `true` forwards to `packing: true` with a `DeprecationWarning`; removed in v1.0.0. Use `packing` instead. |
+
+> Removal lands in v1.0.0, not sooner, because removing a YAML field is a
+> MAJOR change under the versioning policy — see
+> [`docs/standards/release.md`](../standards/release.md#what-constitutes-breaking).
 
 #### GPU Cost Estimation
 

@@ -256,7 +256,7 @@ This is intentional: silent typos (like `lerning_rate` instead of `learning_rate
 
 ### Deprecated LoRA Method Syntax
 
-The boolean flags `lora.use_dora` and `lora.use_rslora` are deprecated. Use `lora.method` instead:
+The boolean flags `lora.use_dora` and `lora.use_rslora` are deprecated — they will be removed in v1.0.0. Use `lora.method` instead:
 
 ```yaml
 # New (recommended)
