@@ -50,8 +50,9 @@ Edit the code, then run the full validation gauntlet (every guard CI also
 enforces — passing locally means CI will too):
 
 ```bash
-ruff format . && ruff check . && pytest tests/ && \
-  forgelm --config config_template.yaml --dry-run && \
+python3 tools/check_import_origin.py --strict && \
+  ruff format . && ruff check . && pytest tests/ && \
+  python3 -m forgelm --config config_template.yaml --dry-run && \
   python3 tools/check_bilingual_parity.py --strict && \
   python3 tools/check_anchor_resolution.py --strict && \
   python3 tools/check_cli_help_consistency.py --strict && \
@@ -69,7 +70,18 @@ ruff format . && ruff check . && pytest tests/ && \
   python3 tools/update_site_version.py --check
 ```
 
-All nineteen must pass. The first four are the historical "self-review"
+**Do not "simplify" `python3 -m forgelm` back to `forgelm`.** A console
+script's `sys.path[0]` is its own `bin/` directory, never the cwd, so
+`forgelm …` imports whatever is installed in site-packages; a stale
+non-editable install made that step validate a weeks-old package while
+reporting success on an unrelated working tree. `-m` puts the cwd first on
+`sys.path`, so it runs the checkout. The import-origin guard leads the
+chain for the same reason and must stay first: it asserts the premise
+every later step depends on — that the `forgelm` being imported is the one
+you just edited — and `-m` alone does not cover the `tools/check_*.py`
+guards that import `forgelm` with `sys.path[0] == tools/`.
+
+All twenty must pass. The first four are the historical "self-review"
 command from [`docs/standards/code-review.md`](docs/standards/code-review.md).
 The rest are doc/schema/audit-log guards that landed across Waves 3-5 and
 later review cycles and run on every PR via `.github/workflows/`; running

@@ -93,7 +93,7 @@ Açıkça kapsam dışı — şimdi ve uzun vadede:
 |---|---|---|---|---|
 | Güvenlik değerlendirmesi (entegre) | ✅ Llama Guard S1-S14 | ❌ | ❌ | ❌ |
 | EU AI Act uyumluluğu | ✅ Mad. 9-17 + Ek IV | ❌ | ❌ | ❌ |
-| CI/CD-native çıkış kodları | ✅ 0/1/2/3/4/5 | Kısmi | ❌ | Kısmi |
+| CI/CD-native çıkış kodları | ✅ 0/1/2/3/4/5/6 | Kısmi | ❌ | Kısmi |
 | Web UI | ❌ (kasıtlı) | ✅ | ✅ Studio | ❌ |
 | Hız optimizasyonu | Standart | Standart | ✅ 2-5x | Standart |
 | Config-tabanlı YAML | ✅ Tam | Kısmi | ❌ | ✅ |

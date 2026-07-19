@@ -701,7 +701,7 @@ class TestAnnexIVSetSerialisation:
         opaque string "{'q_proj', 'k_proj', 'v_proj'}" (PYTHONHASHSEED order)
         while compute_annex_iv_manifest_hash normalised it to ["k_proj",
         "q_proj", "v_proj"] — a false-tampering verdict on every verify run."""
-        from forgelm.cli.subcommands._verify_annex_iv import verify_annex_iv_artifact
+        from forgelm.verify import verify_annex_iv_artifact
 
         out = str(tmp_path / "compliance")
         export_compliance_artifacts(self._manifest_with_set_field(), out)

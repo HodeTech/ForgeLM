@@ -28,6 +28,12 @@ Environment check. See [Doctor command](#/getting-started/first-run).
   "success": true,
   "checks": [
     {
+      "name": "forgelm.install",
+      "status": "pass",
+      "detail": "ForgeLM 0.9.0 running from /opt/venv/lib/python3.11/site-packages/forgelm (inside site-packages).",
+      "extras": {"version": "0.9.0", "location": "/opt/venv/lib/python3.11/site-packages/forgelm", "in_site_packages": true}
+    },
+    {
       "name": "python.version",
       "status": "pass",
       "detail": "Python 3.11.7 (CPython).",
@@ -41,8 +47,8 @@ Environment check. See [Doctor command](#/getting-started/first-run).
 | Key | Type | Notes |
 |---|---|---|
 | `success` | bool | `true` when no probe `fail` AND no probe crash; `false` otherwise. |
-| `checks` | list[object] | One entry per probe in execution order. Probe names are stable (e.g. `python.version`, `torch.cuda`, `numpy.torch_abi`, `gpu.inventory`, `extras.qlora`, `hf_hub.reachable`, `hf_hub.offline_cache`, `disk.workspace`, `operator.identity`, `pypdf_normalise.turkish`). In `--offline` mode `hf_hub.offline_cache` replaces `hf_hub.reachable`. |
-| `checks[].name` | str | Probe name. Stable across versions; new probes append rather than rename. |
+| `checks` | list[object] | One entry per probe in execution order. Probe names are stable (e.g. `forgelm.install`, `python.version`, `torch.cuda`, `numpy.torch_abi`, `gpu.inventory`, `extras.qlora`, `hf_hub.reachable`, `hf_hub.offline_cache`, `disk.workspace`, `operator.identity`, `pypdf_normalise.turkish`). In `--offline` mode `hf_hub.offline_cache` replaces `hf_hub.reachable`. |
+| `checks[].name` | str | Probe name. Stable across versions; **"append" describes the vocabulary of names, not execution position** — new probes are never renamed once shipped, but they are inserted wherever their content is most useful to read alongside (e.g. `forgelm.install` was inserted as the first row, not appended at the end, because every other line of a report is ambiguous until the reader knows which copy of ForgeLM produced it). Consumers must not assume a fixed index for any probe. |
 | `checks[].status` | str | One of `pass`, `warn`, `fail`. A probe that raised surfaces as `status: "fail"` with `extras.crashed: true`; the crash is also counted in `summary.crashed`. |
 | `checks[].detail` | str | Operator-facing one-line description of the result. |
 | `checks[].extras` | object | Probe-specific structured data. Per-probe keys are documented in `_doctor.py` docstrings; consumers should treat unknown keys as forward-compatible. |

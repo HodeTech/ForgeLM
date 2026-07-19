@@ -124,11 +124,27 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
+      # Asserts the premise every step below rests on: the `forgelm` these
+      # commands import is the checkout, not a shadowing site-packages copy.
+      # A non-editable install once made the dry-run step validate a
+      # weeks-old package and report success on an unrelated working tree.
+      # Ephemeral runners + `pip install -e` make that unlikely here; the
+      # guard is what keeps it from silently becoming likely again if an
+      # install step is ever reworked.
+      - name: Import-origin guard
+        run: python3 tools/check_import_origin.py --strict
+
       - name: CLI smoke checks
         run: |
           forgelm --version
           forgelm --config config_template.yaml --dry-run
           forgelm --config config_template.yaml --dry-run --output-format json
+          # Both entry points are public surface and must stay in lockstep:
+          # the console script above is what PyPI users get, `python -m` is
+          # what the contributor gauntlet runs (see CONTRIBUTING.md).
+          python -m forgelm --version
+          python -m forgelm --config config_template.yaml --dry-run
+          python -m forgelm --config config_template.yaml --dry-run --output-format json
 
       - name: Config template validation
         run: |

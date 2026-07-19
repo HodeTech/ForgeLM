@@ -25,10 +25,13 @@ Implementation: [`forgelm/cli/subcommands/_doctor.py`](../../forgelm/cli/subcomm
 
 | Probe `name` | Status policy | What it checks |
 |---|---|---|
+| `forgelm.install` | `pass` | Which ForgeLM actually ran: resolved package directory, version, and whether it sits inside site-packages. Runs first so a pasted bug report leads with the code under discussion. |
 | `python.version` | `fail` <3.10, `warn` 3.10.x, `pass` >=3.11 | Pin to the supported window. |
 | `torch.installed` / `torch.cuda` | `fail` if torch missing; `warn` if CPU-only; `pass` if CUDA visible | torch + CUDA availability. |
+| `numpy.torch_abi` | `fail` on an ABI mismatch, `pass` otherwise (including when torch is absent, where the check is skipped) | Whether the installed torch and numpy are ABI-compatible. |
 | `gpu.inventory` | `pass` with per-device VRAM, `warn` if no CUDA | Visible GPUs and per-device VRAM in GiB. |
-| `extras.<name>` | `pass` if importable, `warn` with install hint otherwise | One row per optional extra: `qlora`, `unsloth`, `distributed`, `eval`, `tracking`, `merging`, `export`, `ingestion`, `ingestion-pii-ml`, `ingestion-scale`. |
+| `extras.<name>` | `pass` if importable, `warn` with install hint otherwise | One row per optional extra: `qlora`, `unsloth`, `distributed`, `eval`, `tracking`, `export`, `ingestion`, `ingestion-pii-ml`, `ingestion-scale`. The `merging` extra deliberately has **no** row — model merging is implemented natively on core deps, so that extra is a no-op. |
+| `pypdf_normalise.turkish` | `pass` if the normalisation behaves, `warn` otherwise | Font-fallback normalisation for Turkish text during PDF ingestion; sits next to the `extras.ingestion` row so the two can be read together. |
 | `hf_hub.reachable` (online) | `pass` 2xx/3xx, `warn` transport error, `fail` SSRF policy reject | HEAD `${HF_ENDPOINT}/api/models` with 5s timeout via `forgelm._http.safe_get`. |
 | `hf_hub.offline_cache` (`--offline`) | `pass` files visible, `warn` empty / partially unreadable, `fail` no files visible AND walk errors | Bounded scan (depth 4, 5000-file cap) of the resolved Hub cache. |
 | `disk.workspace` | `fail` <10 GiB, `warn` <50 GiB, `pass` otherwise | `shutil.disk_usage(".")`. |

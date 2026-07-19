@@ -44,24 +44,32 @@ The exhaustive extras catalogue lives at [Installation manual page](../usermanua
 $ forgelm doctor
 forgelm doctor - environment check
 
-  [+ pass] python.version          Python 3.11.4 (CPython).
-  [+ pass] torch.cuda              torch 2.4.0 with CUDA 12.4.
-  [+ pass] gpu.inventory           1 GPU(s) - GPU0: NVIDIA RTX 4090 (24.0 GiB).
-  [+ pass] extras.qlora            Installed (module bitsandbytes, purpose: 4-bit / 8-bit QLoRA training).
-  [! warn] extras.tracking         Optional extra missing - install with: pip install 'forgelm[tracking]' (purpose: Weights & Biases experiment tracking).
-  [+ pass] hf_hub.reachable        HuggingFace Hub reachable at https://huggingface.co (HTTP 200).
-  [+ pass] disk.workspace          Workspace /home/me/forgelm - 387.0 GiB free of 500.0 GiB.
-  [! warn] operator.identity       FORGELM_OPERATOR not set; audit events will fall back to 'me@workstation'.
+  [+ pass] forgelm.install          ForgeLM 0.9.0 running from /home/me/.venv/lib/python3.11/site-packages/forgelm (inside site-packages).
+  [+ pass] python.version           Python 3.11.4 (CPython).
+  [+ pass] torch.cuda               torch 2.4.0 with CUDA 12.4.
+  [+ pass] numpy.torch_abi          torch 2.4.0 + numpy 1.26.4 are ABI-compatible.
+  [+ pass] gpu.inventory            1 GPU(s) — GPU0: NVIDIA RTX 4090 (24.0 GiB).
+  [+ pass] extras.qlora             Discoverable, not import-tested (module bitsandbytes, purpose: 4-bit / 8-bit QLoRA training).
+  [! warn] extras.tracking          Optional extra missing — install with: pip install 'forgelm[tracking]' (purpose: Weights & Biases experiment tracking).
+  [+ pass] pypdf_normalise.turkish  Turkish glyph profile loaded: 5 single-char + 1 multi-char substitutions. Active profile: 'none'.
+  [+ pass] hf_hub.reachable         HuggingFace Hub reachable at https://huggingface.co (HTTP 200).
+  [+ pass] disk.workspace           Workspace /home/me/forgelm — 387.0 GiB free of 500.0 GiB.
+  [! warn] operator.identity        FORGELM_OPERATOR not set; audit events will fall back to 'me@workstation'. Pin FORGELM_OPERATOR=<id> for CI / pipeline runs so the audit log identifies a stable identity.
 
-Summary: 6 pass, 2 warn, 0 fail.
+Summary: 9 pass, 2 warn, 0 fail.
 ```
+
+> Some `extras.*` rows are omitted above for brevity — every extra in `pyproject.toml`'s `[project.optional-dependencies]` gets its own row (nine as of this writing); run `forgelm doctor` locally to see the full list for your install.
 
 **What each probe means:**
 
+- `forgelm.install` — always `pass`; records which ForgeLM actually loaded (resolved package location, version, and whether it sits inside `site-packages`) so a bug report identifies exactly which code ran. First row deliberately — every other line is ambiguous until you know this.
 - `python.version` — `fail` <3.10, `warn` 3.10.x, `pass` >=3.11.
 - `torch.cuda` — `fail` if torch missing; `warn` if CPU-only (CPU runs are *supported* but slow); `pass` with CUDA visible.
+- `numpy.torch_abi` — `fail` on the known torch<2.3 + numpy>=2 binary-ABI mismatch (`_ARRAY_API not found`); `pass` otherwise, including when either torch or numpy is absent (skipped, not penalized).
 - `gpu.inventory` — per-device VRAM in GiB; needed to size LoRA rank / batch.
-- `extras.<name>` — one row per installed (or missing) optional extra. The `warn` line carries the exact `pip install 'forgelm[<name>]'` hint, so install hints are always actionable.
+- `extras.<name>` — one row per installed (or missing) optional extra. The `warn` line carries the exact `pip install 'forgelm[<name>]'` hint, so install hints are always actionable. A `pass` means the module is discoverable, not that it necessarily imports cleanly.
+- `pypdf_normalise.turkish` — `fail` if the Turkish glyph-normalisation table fails to load or produces no substitutions on its canonical fixture; `pass` otherwise.
 - `hf_hub.reachable` — HEAD on `${HF_ENDPOINT}/api/models`. Catches captive portals, corp proxies, blocked egress before training discovers them.
 - `disk.workspace` — `fail` <10 GiB, `warn` <50 GiB, `pass` otherwise.
 - `operator.identity` — `pass` if `FORGELM_OPERATOR` is set, `warn` with the `getpass.getuser()@hostname` fallback, `fail` if neither resolves (unless `FORGELM_ALLOW_ANONYMOUS_OPERATOR=1` opt-in is set).

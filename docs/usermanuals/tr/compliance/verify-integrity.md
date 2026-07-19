@@ -30,7 +30,7 @@ sequenceDiagram
         Verify->>Verify: sha256 yeniden hesapla, manifest ile karşılaştır
     end
     Verify->>Verify: changed / removed / added sınıflandır
-    Verify-->>CI: çıkış 0 (hepsi eşleşti) / 1 (uyuşmazlık veya girdi hatası) / 2 (runtime I/O hatası)
+    Verify-->>CI: çıkış 0 (hepsi eşleşti) / 1 (girdi hatası, hiçbir şey karşılaştırılmadı) / 2 (runtime I/O hatası) / 6 (uyuşmazlık — karşılaştırıldı ve uyuşmadı)
 ```
 
 ## Hızlı başlangıç
@@ -63,7 +63,7 @@ $ forgelm verify-integrity ./checkpoints/final_model --output-format json
 
 ### Bir uyuşmazlığı okumak
 
-Bir artefakt artık manifest ile eşleşmediğinde, diff listeleri dolar ve komut `1` ile çıkar:
+Bir artefakt artık manifest ile eşleşmediğinde, diff listeleri dolar ve komut `6` ile çıkar — manifest ayrıştırıldı ve yürüyüş çalıştı, dolayısıyla bu bir bütünlük kararıdır, config hatası değil:
 
 ```json
 {
@@ -87,10 +87,13 @@ Bir artefakt artık manifest ile eşleşmediğinde, diff listeleri dolar ve komu
 | Kod | Anlamı |
 |---|---|
 | `0` | Her kayıtlı artefakt mevcut ve değişmemiş, fazladan dosya yok. |
-| `1` | Bütünlük uyuşmazlığı (changed / removed / added dosya) **veya** operatör / girdi hatası — eksik yol, yolun dizin yerine dosya olması, manifest bulunamadı, malformed JSON, list olmayan `artifacts` ya da model dizininden kaçan bir manifest girdi yolu. |
+| `1` | Operatör / girdi hatası — eksik yol, yolun dizin yerine dosya olması, manifest bulunamadı, malformed JSON, list olmayan `artifacts` ya da model dizininden kaçan bir manifest girdi yolu. Bunların her biri herhangi bir artefakt hash'lenmeden döner, dolayısıyla hiçbir şey karşılaştırılmadı. |
 | `2` | Erişilebilir bir yolda gerçek runtime I/O hatası (okuma hatası, yürüyüş sırasında izin reddi). |
+| `6` | Bütünlük uyuşmazlığı — manifest ayrıştırıldı ve yürüyüş çalıştı, ama manifest üretildikten sonra en az bir dosya değişmiş, kaldırılmış veya eklenmiş. |
 
 Runtime-hatası zarfı (çıkış `2`) yalnızca `{"success": false, "error": "…"}` döndürür — önce `success` üzerinden dallanın, ardından `valid` ve diff listelerini inceleyin.
+
+**Bilinçli karar:** model dizininden kaçan bir yola sahip manifest girdisi, bir saldırı şekli olsa bile `6`'da değil `1`'de kalır — doğrulayıcı hiçbir şey okumadan *önce* ağaç-dışı bir yolu hash'lemeyi reddeder, dolayısıyla hiçbir şey karşılaştırılmadı.
 
 ## Sık yapılan hatalar
 

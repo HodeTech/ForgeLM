@@ -8,6 +8,38 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Added
 
+- **`python -m forgelm`** (`forgelm/__main__.py`) — behaviour and exit codes
+  byte-identical to the `forgelm` console script. The contributor gauntlet now
+  uses this form, and it is not a stylistic preference: a console script's
+  `sys.path[0]` is its own `bin/` directory, so `forgelm --config … --dry-run`
+  validates whatever is installed in site-packages rather than the working
+  tree. A stale non-editable install made that step report success against a
+  package weeks older than the checkout.
+- **`tools/check_import_origin.py`** — fails when `import forgelm` resolves
+  outside the checkout, catching a stale or shadowing install before it can
+  produce a false-green gauntlet run. It leads the gauntlet rather than
+  joining the end of it: several other guards import `forgelm` themselves and
+  run with `sys.path[0]` set to `tools/`, so they inherited the same blind
+  spot — one of them validates documentation examples against the schema and
+  would have reported OK while reading a stale one.
+- **`forgelm doctor` now reports `forgelm.install`** — version, resolved
+  package directory, and whether it sits inside site-packages — as the first
+  row, so a pasted bug report identifies which code actually ran.
+- **`EXIT_INTEGRITY_FAILURE = 6`** — a new public CLI exit code for the four
+  `verify-*` subcommands (`verify-audit`, `verify-annex-iv`, `verify-gguf`,
+  `verify-integrity`). Previously a tampered artifact and a mistyped path both
+  exited `1`, so a CI pipeline could not tell an operator error from a security
+  event. The line: `6` means the verifier read the target artefact and it
+  failed its integrity check — a broken audit-log hash chain, an Annex IV
+  manifest hash mismatch, a GGUF metadata/SHA-256 sidecar mismatch, or model
+  files that no longer match `model_integrity.json`; `1` still means the
+  verifier never got far enough to compare anything (missing path, malformed
+  input, unreadable artefact). Two deliberate exceptions stay on `1` even
+  though they look tamper-adjacent: a `verify-gguf` magic-header mismatch (the
+  file isn't a GGUF at all — a file-type verdict, not a tamper verdict) and a
+  `verify-integrity` manifest entry whose path escapes the model directory
+  (the verifier refuses to hash an out-of-tree path before reading anything,
+  so nothing was compared) (`forgelm/cli/_exit_codes.py`, `forgelm/verify.py`).
 - **Generation-based Llama-Guard safety scoring — the default classifier now
   works out of the box.** The shipped default `meta-llama/Llama-Guard-3-8B` is a
   generative checkpoint that cannot be scored through the `text-classification`
@@ -231,9 +263,25 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Changed
 
+- **`verify-audit` / `verify-annex-iv` / `verify-gguf` / `verify-integrity` now
+  exit `6`, not `1`, when the target artefact was read and failed its
+  integrity check** (broken audit-log hash chain, Annex IV manifest hash
+  mismatch, GGUF metadata/SHA-256 sidecar mismatch, or model files that no
+  longer match `model_integrity.json`). **Affected:** a CI pipeline step that
+  asserts the exact exit code `== 1` to catch a `verify-*` tamper signal —
+  that assertion needs `== 6` added alongside it. **Not affected:** a pipeline
+  that only branches on `!= 0`, or that runs `verify-*` under `set -e` /
+  `&&` chains — both `1` and `6` remain non-zero and still fail the step the
+  same way. A caller/input error on the same four subcommands (bad path,
+  malformed JSON, magic-header mismatch on `verify-gguf`) is unaffected and
+  still exits `1` (`forgelm/cli/subcommands/_verify_audit.py`,
+  `forgelm/cli/subcommands/_verify_annex_iv.py`,
+  `forgelm/cli/subcommands/_verify_gguf.py`,
+  `forgelm/cli/subcommands/_verify_integrity.py`).
 - **`rope_scaling` is validated at config load.** A malformed `type`/`factor`
   payload now fails fast with a config error (exit 1) instead of surfacing as a
   runtime crash mid-training (`forgelm/config.py`).
+
 ### Documentation
 
 - **The canonical Configuration Reference user manual (EN + TR) no longer

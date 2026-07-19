@@ -12,7 +12,7 @@ ForgeLM **eşit derecede first-class iki giriş noktası** yayınlar: shell pipe
 
 **CLI**'yı seçin:
 
-- Bir Bash / GitHub Actions / GitLab CI pipeline yayınlıyorsanız. Exit-code kontratı (0/1/2/3/4/5) entegrasyon yüzeyidir.
+- Bir Bash / GitHub Actions / GitLab CI pipeline yayınlıyorsanız. Exit-code kontratı (0/1/2/3/4/5/6) entegrasyon yüzeyidir.
 - ForgeLM'in stdout'a kutudan çıkar çıkmaz yaydığı yapılandırılmış logging + JSON envelope'larını istiyorsanız.
 - Aşama başına bir process'in operasyonel birim olduğu altyapıda (çoğu CI runner, çoğu Argo pipeline) çalışıyorsanız.
 

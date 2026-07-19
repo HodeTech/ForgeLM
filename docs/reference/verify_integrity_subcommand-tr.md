@@ -3,7 +3,7 @@
 > **Hedef kitle:** Eğitilmiş bir model dizininin, eğitim sırasında kaydedilen SHA-256 manifestiyle hâlâ eşleştiğini doğrulayan uyumluluk operatörleri ve CI kapıları (AB YZ Yasası Madde 15).
 > **Ayna:** [verify_integrity_subcommand.md](verify_integrity_subcommand.md)
 
-`verify-integrity` alt komutu, Madde 15 `model_integrity.json` manifestinin tüketici karşılığıdır. Uyumluluk export'u, model dizinindeki her dosyanın SHA-256 özetini yazar; `verify-integrity` bu manifesti geri okur, her dosyanın SHA-256'sını yeniden hesaplar ve manifest üretildikten sonra **değiştirilen**, **silinen** veya **eklenen** her bir yapıtı raporlar. CLI, kütüphane giriş noktası `forgelm.cli.subcommands._verify_integrity.verify_integrity`'ye devreder ve yapılandırılmış bir `VerifyIntegrityResult` döndürür.
+`verify-integrity` alt komutu, Madde 15 `model_integrity.json` manifestinin tüketici karşılığıdır. Uyumluluk export'u, model dizinindeki her dosyanın SHA-256 özetini yazar; `verify-integrity` bu manifesti geri okur, her dosyanın SHA-256'sını yeniden hesaplar ve manifest üretildikten sonra **değiştirilen**, **silinen** veya **eklenen** her bir yapıtı raporlar. CLI, kütüphane giriş noktası `forgelm.verify.verify_integrity`'ye devreder (paket kökünde `forgelm.verify_integrity` olarak da erişilebilir) ve yapılandırılmış bir `VerifyIntegrityResult` döndürür.
 
 ## Söz dizimi
 
@@ -29,18 +29,20 @@ forgelm verify-integrity [--output-format {text,json}]
 | Kod | Anlamı |
 |---|---|
 | `0` | Kaydedilmiş her yapıt mevcut ve SHA-256'sı değişmemiş, dizinde beklenmeyen fazladan dosya yok. |
-| `1` | Çağıran / girdi hatası (yol yok, `model_integrity.json` bulunamadı veya normal dosya değil, bozuk JSON) VEYA bir bütünlük uyuşmazlığı: manifest üretildikten sonra en az bir dosya değiştirilmiş, silinmiş veya eklenmiş. Model manifestiyle eşleşmiyor. |
+| `1` | Çağıran / girdi hatası: yol yok, `model_integrity.json` bulunamadı veya normal dosya değil, bozuk JSON, geçerli UTF-8 değil, `artifacts` bir liste değil, VEYA bir manifest girdisinin `file` değeri string değil ya da yolu model dizininin dışına çıkıyor. Bunların her biri herhangi bir yapıt hash'lenmeden döner — manifest kullanılamadı, yani hiçbir şey karşılaştırılmadı. |
 | `2` | Erişilebilir bir yolda gerçek çalışma-zamanı G/Ç hatası — okuma hataları, gezinme sırasında izin reddi vb. Yol erişilebilirdi ancak doğrulama sırasında okunamaz hâle geldi. |
+| `6` | Bütünlük arızası: manifest ayrıştırıldı ve gezinme çalıştı, ancak en az bir yapıt değişmiş, silinmiş veya eklenmiş olarak döndü. Dağıtılan ağırlıklar, onaylanan ağırlıklar değil. |
 
-Kodlar `forgelm/cli/subcommands/_verify_integrity.py::_run_verify_integrity_cmd` tarafından emit edilir. Açık-sözleşme semantiği `docs/standards/error-handling.md` içinde sabitlenmiştir.
+Kodlar `forgelm/cli/subcommands/_verify_integrity.py::_run_verify_integrity_cmd` tarafından emit edilir; bu, yapısal (asla string-eşleşmeli değil) predicate `forgelm.verify.is_model_integrity_failure` üzerinden yönlenir. **Bilinçli karar:** model dizininin dışına çıkan bir yola sahip manifest girdisi, saldırı şekli olsa bile `6`'da değil `1`'de kalır — doğrulayıcı hiçbir şey okumadan *önce* ağaç-dışı bir yolu hash'lemeyi reddeder, yani hiçbir şey karşılaştırılmadı; rapor "bunu hash'lemeyi reddettim"dir, "ağırlıklarınız değişti" değil. Açık-sözleşme semantiği `docs/standards/error-handling.md` içinde sabitlenmiştir.
 
 ## Neler denetlenir
 
 | Denetim | Hata durumu |
 |---|---|
-| **Kaydedilmiş yapıt mevcut** | `model_integrity.json` içinde listelenen ancak diskte artık bulunmayan dosya → `removed`, çıkış `1`. |
-| **Kaydedilmiş yapıt değişmemiş** | Yeniden hesaplanan SHA-256'sı manifestten farklı olan dosya → `changed`, çıkış `1`. |
-| **Fazladan dosya yok** | Diskte olup manifeste bulunmayan dosya → `added`, çıkış `1`. Manifest dosyasının kendisi (`model_integrity.json`) bu gezinmeden hariç tutulur çünkü model yapıtlarından sonra yazılır. |
+| **Manifest kullanılabilir** | `artifacts` bir liste değil, bir girdinin `file`'ı string değil veya bir girdinin yolu model dizininin dışına çıkıyor → çıkış `1`. Bu başarısız olduğunda aşağıdaki hiçbir satır çalışmaz. |
+| **Kaydedilmiş yapıt mevcut** | `model_integrity.json` içinde listelenen ancak diskte artık bulunmayan dosya → `removed`, çıkış `6`. |
+| **Kaydedilmiş yapıt değişmemiş** | Yeniden hesaplanan SHA-256'sı manifestten farklı olan dosya → `changed`, çıkış `6`. |
+| **Fazladan dosya yok** | Diskte olup manifeste bulunmayan dosya → `added`, çıkış `6`. Manifest dosyasının kendisi (`model_integrity.json`) bu gezinmeden hariç tutulur çünkü model yapıtlarından sonra yazılır. |
 
 ## Emit edilen audit event'leri
 
@@ -81,7 +83,7 @@ FAIL: checkpoints/run/final_model
   Model artifacts do not match model_integrity.json: 1 changed.
     changed: model.safetensors
 $ echo $?
-1
+6
 ```
 
 ### Hata: eksik manifest
@@ -98,4 +100,4 @@ $ echo $?
 - [`audit_event_catalog-tr.md`](audit_event_catalog-tr.md) — kanonik olay sözcük dağarcığı.
 - [`verify_gguf_subcommand.md`](verify_gguf_subcommand-tr.md) — export edilen GGUF dosyaları için eşlik eden doğrulayıcı.
 - [`verify_annex_iv_subcommand.md`](verify_annex_iv_subcommand-tr.md) — Annex IV teknik-dokümantasyon yapıtı için eşlik eden doğrulayıcı.
-- `forgelm.cli.subcommands._verify_integrity.verify_integrity` — entegratörlerin CLI'den geçmeden doğrudan çağırdığı kütüphane giriş noktası.
+- `forgelm.verify.verify_integrity` (`forgelm.verify_integrity` olarak da) — entegratörlerin CLI'den geçmeden doğrudan çağırdığı kütüphane giriş noktası.

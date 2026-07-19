@@ -3,7 +3,7 @@
 > **Audience:** Compliance operators and CI gates verifying Annex IV technical-documentation artifacts before submission.
 > **Mirror:** [verify_annex_iv_subcommand-tr.md](verify_annex_iv_subcommand-tr.md)
 
-The `verify-annex-iv` subcommand reads an Annex IV technical-documentation JSON file, validates the nine required field categories per EU AI Act Annex IV §1-9, and recomputes the manifest hash to detect post-generation tampering. The CLI delegates to the library entry point `forgelm.cli.subcommands._verify_annex_iv.verify_annex_iv_artifact` and shares the canonicalisation routine `forgelm.compliance.compute_annex_iv_manifest_hash` with the writer in `forgelm.compliance.build_annex_iv_artifact` — so a legitimate artefact can never fail its own verifier on a writer/verifier byte drift.
+The `verify-annex-iv` subcommand reads an Annex IV technical-documentation JSON file, validates the nine required field categories per EU AI Act Annex IV §1-9, and recomputes the manifest hash to detect post-generation tampering. The CLI delegates to the library entry point `forgelm.verify.verify_annex_iv_artifact` (also exposed at the package root as `forgelm.verify_annex_iv_artifact`) and shares the canonicalisation routine `forgelm.compliance.compute_annex_iv_manifest_hash` with the writer in `forgelm.compliance.build_annex_iv_artifact` — so a legitimate artefact can never fail its own verifier on a writer/verifier byte drift.
 
 ## Synopsis
 
@@ -29,10 +29,11 @@ forgelm verify-annex-iv [--output-format {text,json}]
 | Code | Meaning |
 |---|---|
 | `0` | Every required Annex IV §1-9 field is populated AND (when present) the `metadata.manifest_hash` matches the recomputed hash. |
-| `1` | Caller / input error or validation failure (`valid=False`): file not found / not a regular file; required field missing / empty; malformed JSON; root is not a JSON object; manifest hash mismatch. Operator-actionable: the artifact is not Annex IV compliant as-is. |
+| `1` | Caller / input error: file not found / not a regular file; malformed JSON; not valid UTF-8; root is not a JSON object; OR a validation failure — a required field is missing / empty (the artifact was never fully populated). Operator-actionable: the artifact is not Annex IV compliant as-is, and no manifest-hash comparison was ever performed. |
 | `2` | Genuine runtime I/O failure on an existing file — read errors, permission denied mid-read, etc. The path was accessible to `os.path.isfile` but became unreadable during verification. |
+| `6` | Integrity failure: every required §1-9 field is populated, the artifact carries a `metadata.manifest_hash`, and the recomputed hash disagrees with it. The document was edited after generation. |
 
-The codes are emitted by `forgelm/cli/subcommands/_verify_annex_iv.py::_run_verify_annex_iv_cmd`. Public-contract semantics are pinned in `docs/standards/error-handling.md`.
+The codes are emitted by `forgelm/cli/subcommands/_verify_annex_iv.py::_run_verify_annex_iv_cmd`, which routes on the structural (never string-matched) predicate `forgelm.verify.is_annex_iv_integrity_failure` — required-field gaps are always `1`, a manifest-hash disagreement on an otherwise-complete artefact is always `6`, keyed off the result's typed fields so a reworded `reason` string can never flip the exit code. Public-contract semantics are pinned in `docs/standards/error-handling.md`.
 
 ## Required Annex IV fields
 
@@ -99,7 +100,7 @@ $ forgelm verify-annex-iv checkpoints/run/compliance/annex_iv.json
 FAIL: checkpoints/run/compliance/annex_iv.json
   Manifest hash mismatch — artifact may have been modified after generation.
 $ echo $?
-1
+6
 ```
 
 ### Failure: malformed JSON

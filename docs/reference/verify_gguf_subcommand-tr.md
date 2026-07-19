@@ -3,7 +3,7 @@
 > **Hedef kitle:** `llama.cpp`, Ollama, vLLM ya da LM Studio üzerinden servis etmeden önce export edilmiş GGUF model dosyalarını doğrulayan deployment operatörleri ve CI kapıları.
 > **Ayna:** [verify_gguf_subcommand.md](verify_gguf_subcommand.md)
 
-`verify-gguf` alt-komutu bir GGUF model dosyası üzerinde üç katmanlı bütünlük kontrolü yapar: 4-baytlık `GGUF` magic header'ını doğrular, isteğe bağlı `gguf` Python paketi yüklüyse meta veri bloğunu ayrıştırır ve mevcutsa `<path>.sha256` sidecar'ına karşı SHA-256 karşılaştırması yapar. CLI, kütüphane giriş noktası `forgelm.cli.subcommands._verify_gguf.verify_gguf`'a delegasyon yapar ve yapılandırılmış bir `VerifyGgufResult` döndürür.
+`verify-gguf` alt-komutu bir GGUF model dosyası üzerinde üç katmanlı bütünlük kontrolü yapar: 4-baytlık `GGUF` magic header'ını doğrular, isteğe bağlı `gguf` Python paketi yüklüyse meta veri bloğunu ayrıştırır ve mevcutsa `<path>.sha256` sidecar'ına karşı SHA-256 karşılaştırması yapar. CLI, kütüphane giriş noktası `forgelm.verify.verify_gguf`'a delegasyon yapar (paket kökünde `forgelm.verify_gguf` olarak da erişilebilir) ve yapılandırılmış bir `VerifyGgufResult` döndürür.
 
 ## Söz dizimi
 
@@ -29,18 +29,19 @@ forgelm verify-gguf [--output-format {text,json}]
 | Kod | Anlam |
 |---|---|
 | `0` | Magic header `GGUF` VE (`gguf` yüklüyse) meta veri bloğu ayrıştırılıyor VE (sidecar mevcutsa) SHA-256 eşleşiyor. |
-| `1` | Çağıran/girdi hatası: yol eksik, normal bir dosya değil veya magic uyuşmuyor; meta veri bozulması (`gguf` okuyucu ayrıştırma sırasında istisna fırlattı); bozuk sidecar (hex değil / yanlış uzunluk); SHA-256 uyuşmazlığı. Artefakt servis edilmek için güvenli değil. |
+| `1` | Çağıran/girdi hatası: yol eksik veya normal bir dosya değil; magic uyuşmuyor (dosya hiç GGUF değil — bu bir tahrifat kararı değil, dosya-tipi kararıdır); bozuk sidecar (hex değil / yanlış uzunluk). Hiçbir şey karşılaştırılmadı; yolu ya da sidecar'ı düzeltin. |
 | `2` | Mevcut bir dosyada gerçek runtime I/O hatası — okuma hatası, ayrıştırma sırasında izin reddi vb. Yol `os.path.isfile`'a erişilebilirdi ama doğrulama sırasında okunamaz hâle geldi. |
+| `6` | Bütünlük arızası: dosya *gerçekten* bir GGUF (magic OK) ve bütünlük kontrolünü geçemedi — ayrıştırılamayan bir meta veri bloğu (kesilmiş / bozuk akış) veya uyuşmayan iyi-biçimli bir digest'e sahip SHA-256 sidecar (export sonrası değiştirilmiş). Artefakt servis edilmek için güvenli değil. |
 
-Kodlar `forgelm/cli/subcommands/_verify_gguf.py::_run_verify_gguf_cmd` tarafından emit edilir. Kamuya açık sözleşme semantiği `docs/standards/error-handling.md`'de sabitlenmiştir.
+Kodlar `forgelm/cli/subcommands/_verify_gguf.py::_run_verify_gguf_cmd` tarafından emit edilir; bu, yapısal (asla string-eşleşmeli değil) predicate `forgelm.verify.is_gguf_integrity_failure` üzerinden yönlenir. Kamuya açık sözleşme semantiği `docs/standards/error-handling.md`'de sabitlenmiştir.
 
 ## Üç katman
 
 | Katman | Gerekli mi? | Hata modu |
 |---|---|---|
-| **Magic header** | Her zaman. İlk 4 bayt `b"GGUF"` olmalı. | Aksi → çıkış `1` (dosya GGUF değil ya da indirme bozuk). |
-| **Meta veri bloğu** | İsteğe bağlı `gguf` paketi yüklüyse. Üst kaynak okuyucu ile meta veri + tensor tanımlarını ayrıştırır. | Okuyucu ayrıştırma sırasında istisna fırlatır → çıkış `1` (yazıcı yarıda çöktü ya da dosya kesildi). Paket yoksa → kontrol atlanır (magic + sidecar kontrolleri yük taşır). |
-| **SHA-256 sidecar** | `<path>.sha256` mevcutsa. Dosyanın SHA-256'sını yeniden hesaplar ve sidecar'ın ilk boşluk-ayrılı token'ı ile karşılaştırır (sha256sum formatı `<hex> *<filename>` desteklenir). | Uyuşmazlık → çıkış `1`. Sidecar mevcut ama içeriği 64 karakterlik hex digest değilse → çıkış `1` (bozuk-sidecar maskelenmesine karşı kapalı başarısızlık). Sidecar yoksa → kontrol sessizce atlanır. |
+| **Magic header** | Her zaman. İlk 4 bayt `b"GGUF"` olmalı. | Aksi → çıkış `1` (dosya GGUF değil ya da indirme bozuk — tahrifat değil dosya-tipi kararı, en yaygın kapı tetiklemesi olsa bile girdi-hatası kodunda kalır). |
+| **Meta veri bloğu** | İsteğe bağlı `gguf` paketi yüklüyse. Üst kaynak okuyucu ile meta veri + tensor tanımlarını ayrıştırır. | Okuyucu ayrıştırma sırasında istisna fırlatır → çıkış `6` (dosya *gerçekten* bir GGUF ama meta veri bloğu yapısal olarak bozuk — yazıcı yarıda çöktü ya da dosya kesildi). Paket yoksa → kontrol atlanır (magic + sidecar kontrolleri yük taşır). |
+| **SHA-256 sidecar** | `<path>.sha256` mevcutsa. Dosyanın SHA-256'sını yeniden hesaplar ve sidecar'ın ilk boşluk-ayrılı token'ı ile karşılaştırır (sha256sum formatı `<hex> *<filename>` desteklenir). | İyi-biçimli ama uyuşmayan digest → çıkış `6` (dosya export sonrası değişmiş). Sidecar mevcut ama içeriği 64 karakterlik hex digest değilse → çıkış `1` (bozuk-sidecar maskelenmesine karşı kapalı başarısızlık — hiçbir şey karşılaştırılmadı). Sidecar yoksa → kontrol sessizce atlanır. |
 
 Exporter sidecar'ı varsayılan olarak yazar (bkz. [`docs/usermanuals/tr/deployment/gguf-export.md`](../usermanuals/tr/deployment/gguf-export.md)); GGUF dosyalarını üçüncü taraflardan alan operatörler sidecar'ı da talep etmelidir.
 
@@ -105,7 +106,7 @@ $ forgelm verify-gguf checkpoints/run/exports/model-q4_k_m.gguf
 FAIL: checkpoints/run/exports/model-q4_k_m.gguf
   SHA-256 sidecar mismatch — file modified after export.  Expected a4c1f2cb1d0a8e91…, got 91e2bf03c4a1c1ab….
 $ echo $?
-1
+6
 ```
 
 ### Hata: bozuk sidecar
@@ -141,4 +142,4 @@ Meta veri katmanını geri eklemek için isteğe bağlı extra'yı yükleyin: `p
 - [`verify_audit.md`](verify_audit-tr.md) — `audit_log.jsonl` için kardeş doğrulayıcı.
 - [`verify_annex_iv_subcommand.md`](verify_annex_iv_subcommand-tr.md) — Annex IV teknik dokümantasyon artifact'ı için kardeş doğrulayıcı.
 - [GGUF Export kullanım kılavuzu sayfası](../usermanuals/tr/deployment/gguf-export.md) — bu doğrulayıcının tükettiği sidecar'ı yazan üretim tarafına dair operatör-odaklı kılavuz.
-- `forgelm.cli.subcommands._verify_gguf.verify_gguf` — entegratörlerin CLI'dan geçmeden doğrudan çağırdığı kütüphane giriş noktası.
+- `forgelm.verify.verify_gguf` (`forgelm.verify_gguf` olarak da) — entegratörlerin CLI'dan geçmeden doğrudan çağırdığı kütüphane giriş noktası.

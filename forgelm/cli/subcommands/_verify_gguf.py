@@ -1,10 +1,15 @@
 """``forgelm verify-gguf`` — GGUF integrity check.
 
 Phase 36 closure of GH-009.  The deployment-integrity counterpart to
-``verify-annex-iv``: takes a path to a GGUF model file, validates the
+``verify-annex-iv``: :func:`forgelm.verify.verify_gguf` validates the
 4-byte magic header, optionally parses the metadata block (when the
 ``gguf`` Python package is installed), and checks a SHA-256 manifest
 sidecar (``<model>.gguf.sha256``) when present.
+
+This module is the CLI seam only — argument handling, I/O-error → exit-code
+mapping, and the text / JSON output envelope.  The verifier itself lives in
+:mod:`forgelm.verify` so library consumers reaching ``forgelm.verify_gguf``
+never import the CLI layer.
 
 Exit codes (per ``docs/standards/error-handling.md`` and the public
 contract in ``docs/reference/verify_gguf_subcommand.md``):
@@ -12,47 +17,36 @@ contract in ``docs/reference/verify_gguf_subcommand.md``):
 - 0 — ``EXIT_SUCCESS``: magic OK, metadata parses, SHA-256 matches
   sidecar (when present).
 - 1 — ``EXIT_CONFIG_ERROR``: caller / input error (missing path, not
-  a regular file, magic mismatch, metadata corruption, malformed
-  sidecar, non-UTF-8 sidecar, SHA-256 mismatch).  Artifact is not safe
-  to serve.
+  a regular file, magic mismatch — the file is not a GGUF at all —,
+  malformed sidecar, non-UTF-8 sidecar).  Nothing was compared; the
+  operator has to fix the command or the sidecar.
 - 2 — ``EXIT_TRAINING_ERROR``: genuine runtime I/O failure on a
   reachable path (read error, permission denied mid-read, etc.).
+- 6 — ``EXIT_INTEGRITY_FAILURE``: the file *is* a GGUF and it failed its
+  integrity check — SHA-256 sidecar mismatch (modified after export) or a
+  metadata block that could not be parsed (truncated / corrupted stream).
+  Artifact is not safe to serve.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import re
 import sys
-from typing import Any, Dict, NoReturn
+from typing import NoReturn
 
-from .._exit_codes import EXIT_CONFIG_ERROR, EXIT_SUCCESS, EXIT_TRAINING_ERROR
+from ...verify import (
+    VerifyGgufResult,  # noqa: F401 — re-exported for the forgelm.cli facade
+    is_gguf_integrity_failure,
+    verify_gguf,  # noqa: F401 — re-exported for the forgelm.cli facade
+)
+from .._exit_codes import (
+    EXIT_CONFIG_ERROR,
+    EXIT_INTEGRITY_FAILURE,
+    EXIT_SUCCESS,
+    EXIT_TRAINING_ERROR,
+)
 from .._logging import logger
-
-_GGUF_MAGIC = b"GGUF"
-_SIDECAR_SUFFIX = ".sha256"
-
-# A SHA-256 sidecar must contain a 64-character hex digest.  Anything
-# else (empty file, "TODO" placeholder, truncated paste, wrong-algorithm
-# digest) is malformed; verify_gguf fails closed rather than silently
-# accepting an unverifiable artefact.
-_SHA256_HEX_RE = re.compile(r"^[0-9a-fA-F]{64}$")
-
-
-class VerifyGgufResult:
-    """Structured GGUF verification result."""
-
-    __slots__ = ("valid", "reason", "checks")
-
-    def __init__(self, *, valid: bool, reason: str = "", checks: Dict[str, Any] | None = None) -> None:
-        self.valid = valid
-        self.reason = reason
-        self.checks = dict(checks or {})
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {"valid": self.valid, "reason": self.reason, "checks": dict(self.checks)}
 
 
 def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoReturn:
@@ -63,139 +57,6 @@ def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoRe
     else:
         logger.error(msg)
     sys.exit(exit_code)
-
-
-def verify_gguf(path: str) -> VerifyGgufResult:
-    """Library entry: verify a GGUF file's integrity.
-
-    Three-layer check:
-
-    1. **Magic header** — first 4 bytes must equal ``b"GGUF"``.  Anything
-       else means the file is not a GGUF (operator likely passed the
-       wrong path or a corrupted download).
-    2. **Metadata block** (optional, when the ``gguf`` package is
-       installed): parse the metadata + tensor descriptors via the
-       upstream reader; mismatch means the writer crashed mid-stream
-       or the file was truncated.
-    3. **SHA-256 sidecar** (optional, when ``<path>.sha256`` exists):
-       recompute the file hash and compare to the sidecar's contents.
-       The forgelm exporter writes this sidecar by default; mismatch
-       means the file was modified after export.
-
-    Returns the structured result; raises :class:`OSError` for I/O
-    failures so the dispatcher can surface them as ``EXIT_TRAINING_ERROR``.
-    """
-    checks: Dict[str, Any] = {
-        "magic_ok": False,
-        "metadata_parsed": False,
-        "sidecar_present": False,
-        "sidecar_match": None,
-    }
-    with open(path, "rb") as fh:
-        head = fh.read(len(_GGUF_MAGIC))
-    if head != _GGUF_MAGIC:
-        return VerifyGgufResult(
-            valid=False,
-            reason=f"Magic header mismatch: expected {_GGUF_MAGIC!r}, got {head!r}.  Not a GGUF file or corrupted.",
-            checks=checks,
-        )
-    checks["magic_ok"] = True
-
-    metadata_check = _maybe_parse_metadata(path)
-    checks["metadata_parsed"] = metadata_check["parsed"]
-    if metadata_check.get("error"):
-        # Metadata corruption is a real integrity problem.
-        return VerifyGgufResult(
-            valid=False,
-            reason=f"GGUF metadata block could not be parsed: {metadata_check['error']}",
-            checks=checks,
-        )
-    if metadata_check.get("tensor_count") is not None:
-        checks["tensor_count"] = metadata_check["tensor_count"]
-
-    # SHA-256 sidecar (optional, but fail-closed on malformed contents).
-    sidecar_path = path + _SIDECAR_SUFFIX
-    if os.path.isfile(sidecar_path):
-        checks["sidecar_present"] = True
-        actual = _file_sha256(path)
-        with open(sidecar_path, "r", encoding="utf-8") as fh:
-            expected_text = fh.read().strip()
-        # Sidecars are typically `<hex> *<filename>` (sha256sum format)
-        # OR plain `<hex>`.  Take the first whitespace-separated token.
-        expected = expected_text.split()[0] if expected_text else ""
-        checks["sha256_actual"] = actual
-        checks["sha256_expected"] = expected
-        if not _SHA256_HEX_RE.match(expected):
-            # Empty / non-hex / wrong-length sidecar.  Fail closed:
-            # ignoring it would let a malformed sidecar masquerade as
-            # "verified".  A genuinely-absent sidecar is the operator's
-            # explicit choice (no file → no check); a *present but
-            # malformed* sidecar is operator error we must surface.
-            checks["sidecar_match"] = False
-            return VerifyGgufResult(
-                valid=False,
-                reason=(
-                    "Malformed SHA-256 sidecar: expected a 64-character hex digest, "
-                    f"got {expected_text[:64]!r}.  Regenerate the sidecar (e.g. "
-                    "`sha256sum model.gguf > model.gguf.sha256`) or remove it to "
-                    "skip the check."
-                ),
-                checks=checks,
-            )
-        if actual != expected:
-            checks["sidecar_match"] = False
-            return VerifyGgufResult(
-                valid=False,
-                reason=f"SHA-256 sidecar mismatch — file modified after export.  Expected {expected[:16]}…, got {actual[:16]}….",
-                checks=checks,
-            )
-        checks["sidecar_match"] = True
-
-    return VerifyGgufResult(
-        valid=True,
-        reason="GGUF magic OK"
-        + (", metadata parsed" if checks["metadata_parsed"] else "")
-        + (", SHA-256 sidecar match" if checks["sidecar_match"] else ""),
-        checks=checks,
-    )
-
-
-def _maybe_parse_metadata(path: str) -> Dict[str, Any]:
-    """Best-effort GGUF metadata parse via the optional ``gguf`` package.
-
-    Returns ``{"parsed": bool, "error": str|None, "tensor_count": int|None}``.
-
-    **Optional-dependency policy** (per ``CLAUDE.md`` and
-    ``docs/standards/coding.md``): ``gguf`` is *not* a core ForgeLM
-    dependency — operators using `verify-gguf` to spot-check exported
-    artefacts on a minimal install legitimately do not have it.
-    Absent ``gguf`` package = ``parsed=False``, ``error=None`` and the
-    caller treats this as "metadata check skipped" (the magic-header
-    + SHA-256-sidecar checks are the load-bearing integrity surface).
-    Raising ``ImportError`` here would break the subcommand for the
-    optional-extra-not-installed path and contradict the project
-    standard.  Genuine corruption (file present but reader crashes)
-    surfaces as a real ``error`` string and the caller fails closed.
-    """
-    try:
-        from gguf import GGUFReader  # type: ignore[import-untyped]
-    except ImportError:
-        return {"parsed": False, "error": None, "tensor_count": None}
-    try:
-        reader = GGUFReader(path, "r")
-        tensor_count = len(getattr(reader, "tensors", []) or [])
-        return {"parsed": True, "error": None, "tensor_count": tensor_count}
-    except Exception as exc:  # noqa: BLE001 — gguf has no clean exception hierarchy (struct.error, IndexError, ValueError, AttributeError, OSError). Catching BaseException would swallow KeyboardInterrupt/SystemExit, which we want to propagate. Acceptable per error-handling.md best-effort carve-out: verifier reports failure-path, never silent. # NOSONAR
-        return {"parsed": False, "error": f"{exc.__class__.__name__}: {exc}", "tensor_count": None}
-
-
-def _file_sha256(path: str) -> str:
-    """Stream the file through SHA-256; never loads the whole file."""
-    h = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _run_verify_gguf_cmd(args, output_format: str) -> None:
@@ -256,7 +117,12 @@ def _run_verify_gguf_cmd(args, output_format: str) -> None:
         print(f"  {result.reason}")
         for k, v in result.checks.items():
             print(f"    {k}: {v}")
-    sys.exit(EXIT_SUCCESS if result.valid else EXIT_CONFIG_ERROR)
+    if result.valid:
+        sys.exit(EXIT_SUCCESS)
+    # A checksum mismatch / corrupt metadata block on a real GGUF is a
+    # tampering signal (6); a wrong-file or malformed-sidecar verdict is
+    # operator-actionable input (1).
+    sys.exit(EXIT_INTEGRITY_FAILURE if is_gguf_integrity_failure(result) else EXIT_CONFIG_ERROR)
 
 
 __all__ = [

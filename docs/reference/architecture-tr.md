@@ -10,7 +10,7 @@ forgelm --config job.yaml
     ├── cli/                → CLI paketi (Faz 15 split)
     │   ├── _parser.py          → 19 subcommand + global flag
     │   ├── _dispatch.py        → Mod yönlendirici
-    │   ├── _exit_codes.py      → 0/1/2/3/4/5 sözleşmesi
+    │   ├── _exit_codes.py      → 0/1/2/3/4/5/6 sözleşmesi
     │   └── subcommands/        → Subcommand-başına handler'lar (19 subcommand)
     │       ├── ingest, audit, chat, export, deploy, doctor,
     │       │   cache-models, cache-tasks, purge, reverse-pii,
@@ -31,6 +31,7 @@ forgelm --config job.yaml
     │   ├── judge.py            → LLM-Hakim puanlama
     │   ├── model_card.py       → HF model kartı üretimi
     │   ├── compliance.py       → EU AI Act denetim belgeleri + audit log
+    │   ├── verify.py           → Annex IV / GGUF / model-bütünlük doğrulama
     │   └── webhook.py          → Slack/Teams bildirimleri
     ├── merging.py          → TIES/DARE/SLERP model birleştirme
     ├── synthetic.py        → Sentetik veri üretimi
@@ -46,7 +47,7 @@ ForgeLM/
 │   ├── cli/                  # CLI alt-paketi (Faz 15 split)
 │   │   ├── _parser.py            # 19 subcommand + global flag
 │   │   ├── _dispatch.py          # Mod yönlendirici
-│   │   ├── _exit_codes.py        # Public 0/1/2/3/4/5 sözleşmesi
+│   │   ├── _exit_codes.py        # Public 0/1/2/3/4/5/6 sözleşmesi
 │   │   └── subcommands/          # Per-subcommand handler modülleri
 │   │       └── _audit, _ingest, _chat, _export, _deploy, _doctor,
 │   │           _cache, _purge, _reverse_pii, _approve, _approvals,
@@ -71,6 +72,7 @@ ForgeLM/
 │   ├── safety.py             # Güvenlik değerlendirme (Llama Guard, S1-S14)
 │   ├── judge.py              # LLM-Hakim (API + yerel)
 │   ├── compliance.py         # EU AI Act uyumluluk + AuditLogger + kaynak takibi
+│   ├── verify.py            # Annex IV / GGUF / model-bütünlük doğrulama primitifleri
 │   ├── model_card.py         # HF uyumlu model kartı üretimi
 │   ├── merging.py            # Model birleştirme (TIES/DARE/SLERP/linear)
 │   ├── synthetic.py          # Sentetik veri üretimi (öğretmen→öğrenci)
@@ -102,7 +104,7 @@ ForgeLM/
 ## Bileşen Detayları
 
 ### `cli/`
-Orkestratör (Faz 15 split). `_parser.py` 19 subcommand'ı (`audit`, `approve`, `approvals`, `reject`, `cache-models`, `cache-tasks`, `chat`, `deploy`, `doctor`, `export`, `ingest`, `purge`, `quickstart`, `reverse-pii`, `safety-eval`, `verify-annex-iv`, `verify-audit`, `verify-gguf`, `verify-integrity`) artı eski training-mode flag setini kaydeder. `_dispatch.py` `subcommands/` altındaki uygun handler'a yönlendirir. `_exit_codes.py` public 0/1/2/3/4/5 sözleşmesini tanımlar (5 = sihirbaz iptal edildi).
+Orkestratör (Faz 15 split). `_parser.py` 19 subcommand'ı (`audit`, `approve`, `approvals`, `reject`, `cache-models`, `cache-tasks`, `chat`, `deploy`, `doctor`, `export`, `ingest`, `purge`, `quickstart`, `reverse-pii`, `safety-eval`, `verify-annex-iv`, `verify-audit`, `verify-gguf`, `verify-integrity`) artı eski training-mode flag setini kaydeder. `_dispatch.py` `subcommands/` altındaki uygun handler'a yönlendirir. `_exit_codes.py` public 0/1/2/3/4/5/6 sözleşmesini tanımlar (5 = sihirbaz iptal edildi, 6 = bütünlük arızası — yalnızca `verify-*` subcommand'ları, okunan bir artefakt hash/zincir kontrolünde başarısız olduğunda). Doğrulama primitiflerinin kendisi `cli/` altında değil `forgelm/verify.py`'de yaşar; bu, `docs/standards/architecture.md`'nin "CLI ince bir kabuktur" kuralına uygun olarak CLI subcommand modüllerini ince dispatcher olarak tutar.
 
 ### `config.py`
 23 Pydantic v2 modeli: ModelConfig, LoraConfigModel, TrainingConfig, DataConfig, DataGovernanceConfig, EvaluationConfig, SafetyConfig, BenchmarkConfig, JudgeConfig, WebhookConfig, DistributedConfig, MergeConfig, ComplianceMetadataConfig, RetentionConfig, RiskAssessmentConfig, MonitoringConfig, MoeConfig, MultimodalConfig, AuthConfig, SyntheticConfig, PipelineStage, PipelineConfig + üst-düzey ForgeConfig. Çapraz alan doğrulaması içerir.
@@ -136,6 +138,15 @@ EU AI Act uyumluluk motoru — Madde 9-17:
 - `generate_model_integrity()`: SHA-256 checksum'lar (Madde 15)
 - `generate_deployer_instructions()`: Dağıtıcı talimatları (Madde 13)
 - `export_evidence_bundle()`: Denetçiler için ZIP arşivi
+
+### `verify.py`
+`compliance.py`'nin yazıcılarının tüketici karşılığı — `compliance.py`'nin ürettiği artefaktları yeniden hash'ler ve yeniden doğrular:
+- `verify_annex_iv_artifact()`: bir Annex IV JSON paketi için alan bütünlüğü + manifest-hash tahrifat kontrolü
+- `verify_gguf()`: export edilen bir GGUF dosyası için magic header + opsiyonel metadata parse + SHA-256 sidecar kontrolü
+- `verify_integrity()`: bir model dizinini `model_integrity.json`'a karşı yeniden dolaşır, değişen/silinen/eklenen artefaktları raporlar
+- `is_annex_iv_integrity_failure()` / `is_gguf_integrity_failure()` / `is_model_integrity_failure()`: `verify-*` CLI subcommand'larının `EXIT_CONFIG_ERROR` (1, hiçbir şey karşılaştırılmadı) ile `EXIT_INTEGRITY_FAILURE` (6, karşılaştırıldı ve uyuşmadı) arasında yönlendirmek için kullandığı yapısal (asla string-eşleşmeli değil) predicate'ler
+
+`verify_audit_log` bilerek buraya taşınmadı, `compliance.py`'de kaldı — `AuditLogger.log_event`'in kanonikalleştirmesini bayt-bayt yansıtmak zorunda, ve bir yazıcıyı kendi doğrulayıcısından ayırmak bu modülün docstring'inin uyardığı tam da o sapma riskidir.
 
 ### `model_card.py`
 HuggingFace-uyumlu README.md üretir: YAML front-matter, eğitim parametreleri tablosu, metrikler, benchmark sonuçları, config snippet ve kullanım örneği.  Auth token'ları export edilen config'ten dışlar.

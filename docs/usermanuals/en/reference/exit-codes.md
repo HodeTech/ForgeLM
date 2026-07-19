@@ -17,8 +17,11 @@ ForgeLM's exit codes are a public contract. CI/CD pipelines, schedulers, and das
 | **3** | `EXIT_EVAL_FAILURE` | A benchmark/safety/judge gate failed **and** the model was auto-reverted (requires `evaluation.auto_revert: true`). With `auto_revert: false` a failed gate does not produce exit 3 — the run exits 0 with the failure recorded in the JSON gate blocks. | Investigate; do NOT promote |
 | **4** | `EXIT_AWAITING_APPROVAL` | `evaluation.require_human_approval: true` blocking. | Hold pipeline; trigger reviewer |
 | **5** | `EXIT_WIZARD_CANCELLED` | `forgelm --wizard` exited without producing a YAML — Ctrl-C, non-tty stdin refusal, or operator declined to save. Distinct from `EXIT_SUCCESS` so CI can tell "wizard finished" from "wizard never wrote anything". | Treat as no-op; surface message; do NOT continue with stale config |
+| **6** | `EXIT_INTEGRITY_FAILURE` | `verify-audit` / `verify-annex-iv` / `verify-gguf` / `verify-integrity` read the target artefact successfully and its **integrity check failed** — a broken audit-log hash chain, an Annex IV manifest hash mismatch, a GGUF metadata/SHA-256 sidecar mismatch, or model files that no longer match `model_integrity.json`. Scoped to the four `verify-*` subcommands only; no other command emits it. | Treat as a security event, not a config fix — page whoever owns the artefact, do not retry |
 
-These six integers are the entire public contract — see [`forgelm/cli/_exit_codes.py`](https://github.com/HodeTech/ForgeLM/blob/main/forgelm/cli/_exit_codes.py) for the canonical definition. Any other non-zero value (including signal-derived 128+N codes) is clamped to `EXIT_TRAINING_ERROR` (2) before the process exits.
+These seven integers are the entire public contract — see [`forgelm/cli/_exit_codes.py`](https://github.com/HodeTech/ForgeLM/blob/main/forgelm/cli/_exit_codes.py) for the canonical definition. Any other non-zero value (including signal-derived 128+N codes) is clamped to `EXIT_TRAINING_ERROR` (2) before the process exits.
+
+**Reading `verify-*` exit codes: 1 vs. 6.** For the four `verify-*` subcommands specifically, `EXIT_CONFIG_ERROR` (1) and `EXIT_INTEGRITY_FAILURE` (6) split on one question: did the verifier get far enough to compare anything? A missing file, a malformed manifest, or a magic-header mismatch (the file isn't a GGUF at all) means the verifier never compared — exit 1. A recomputed hash, chain link, or manifest entry that disagrees with what was recorded means the verifier compared and the artefact failed — exit 6. Two cases are deliberately on the 1 side even though they look tamper-adjacent: a GGUF magic-header mismatch (file-type verdict, not a tamper verdict) and a `verify-integrity` manifest entry whose path escapes the model directory (the verifier refuses to hash an out-of-tree path before reading anything, so nothing was compared). See each verifier's own exit-code table (linked from [CLI Reference](#/reference/cli)) for the full per-code breakdown.
 
 ## Mapping to CI patterns
 
@@ -82,7 +85,9 @@ stage('Train') {
 | `${HF_TOKEN}` set in YAML but env var missing | 1 |
 | `--config` points to non-existent file | 1 |
 | Final loss is NaN / OOM / I/O failure mid-training | 2 |
-| `forgelm verify-audit` chain break or HMAC mismatch | 1 (during the v0.5.5 cycle EXIT_CONFIG_ERROR covers both option errors and integrity failures; see the in-manual [Verify Audit](#/compliance/verify-audit) page for the v0.6.x deprecation note) |
+| `forgelm verify-audit` chain break or HMAC mismatch | 6 (the log was read and the chain doesn't verify — an option error, e.g. `--require-hmac` without a secret, or a missing log file, stays 1; see the in-manual [Verify Audit](#/compliance/verify-audit) page) |
+| `forgelm verify-gguf` / `verify-annex-iv` / `verify-integrity` — artefact read, hash/manifest disagrees | 6 |
+| `forgelm verify-*` — path missing, unreadable, or malformed input | 1 |
 | DPO run, Llama Guard S5 regressed beyond tolerance | 3 with `evaluation.auto_revert: true`; 0 (recorded in JSON gate blocks) with the shipped default `false` |
 | Benchmark hellaswag dropped below floor | 3 with `evaluation.auto_revert: true`; 0 (recorded in JSON gate blocks) with the shipped default `false` |
 | `evaluation.require_human_approval: true` and no approval signed | 4 |
@@ -113,7 +118,9 @@ There is no "partial success" exit code by design — turn on `auto_revert` if y
 
 ## Compatibility guarantee
 
-Exit codes 0-5 are stable across versions. New codes may be added (6, 7, ...) but existing ones won't change semantics. CI pipelines pinned to the contract above will continue working across ForgeLM upgrades.
+Exit codes 0-6 are stable across versions. New codes may be added (7, 8, ...) but existing ones won't change semantics. CI pipelines pinned to the contract above will continue working across ForgeLM upgrades.
+
+`EXIT_INTEGRITY_FAILURE` (6) is additive, not a semantics change: it narrows a subset of cases that previously exited 1 on the four `verify-*` subcommands only. A pipeline that asserted `exit code == 1` to catch a `verify-*` integrity failure needs updating to check `== 6` as well; a pipeline that only branches on `!= 0`, or that runs `verify-*` under `set -e`, is unaffected — both 1 and 6 remain non-zero and still fail the step.
 
 ## See also
 

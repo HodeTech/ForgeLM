@@ -33,6 +33,154 @@ _FakeDiskUsage = namedtuple("_FakeDiskUsage", ["total", "used", "free"])
 # ---------------------------------------------------------------------------
 
 
+class TestForgelmInstallCheck:
+    """``forgelm.install`` is the FIRST row in the check plan (see
+    ``_build_check_plan``) — every other line of a bug report is
+    ambiguous until the reader knows which copy of ForgeLM ran. It is
+    always ``pass``; the probe *records* the install location rather
+    than grading it. Because it now runs before every other probe, a
+    crash here would poison the entire report, so "never raises" is
+    tested explicitly below rather than assumed.
+    """
+
+    def test_shape_matches_checks_contract(self) -> None:
+        """Pins the documented ``checks[]`` shape: name/status/detail/extras,
+        with the three extras keys the json-output.md contract promises."""
+        from forgelm.cli.subcommands._doctor import _check_forgelm_install
+
+        result = _check_forgelm_install()
+        assert result.name == "forgelm.install"
+        assert result.status == "pass"
+        assert isinstance(result.detail, str) and result.detail
+        assert set(result.extras) == {"version", "location", "in_site_packages"}
+        assert isinstance(result.extras["in_site_packages"], bool)
+
+    def test_in_site_packages_true(self, monkeypatch) -> None:
+        """A location under sysconfig's purelib/platlib must resolve True —
+        the normal operator ``pip install forgelm`` case."""
+        import sysconfig
+
+        import forgelm
+        from forgelm.cli.subcommands._doctor import _check_forgelm_install
+
+        fake_purelib = "/opt/venv/lib/python3.11/site-packages"
+        monkeypatch.setattr(forgelm, "__file__", fake_purelib + "/forgelm/__init__.py")
+        monkeypatch.setattr(sysconfig, "get_paths", lambda: {"purelib": fake_purelib, "platlib": fake_purelib})
+        result = _check_forgelm_install()
+        assert result.extras["in_site_packages"] is True
+        assert "inside site-packages" in result.detail
+        assert result.status == "pass"
+
+    def test_in_site_packages_false(self, monkeypatch) -> None:
+        """A source-tree / editable-install location must resolve False —
+        this distinction is the entire point of the probe (it exists
+        because the contributor gauntlet was found validating a stale
+        non-editable install instead of the working tree)."""
+        import sysconfig
+
+        import forgelm
+        from forgelm.cli.subcommands._doctor import _check_forgelm_install
+
+        monkeypatch.setattr(forgelm, "__file__", "/work/checkout/forgelm/__init__.py")
+        monkeypatch.setattr(
+            sysconfig,
+            "get_paths",
+            lambda: {
+                "purelib": "/opt/venv/lib/python3.11/site-packages",
+                "platlib": "/opt/venv/lib/python3.11/site-packages",
+            },
+        )
+        result = _check_forgelm_install()
+        assert result.extras["in_site_packages"] is False
+        assert "outside site-packages" in result.detail
+        assert result.status == "pass"
+
+    def test_platlib_only_still_resolves_true(self, monkeypatch) -> None:
+        """A platlib-only match (compiled-extension layout diverges from
+        purelib on some platforms) must still count as in_site_packages —
+        the probe checks both, not just purelib."""
+        import sysconfig
+
+        import forgelm
+        from forgelm.cli.subcommands._doctor import _check_forgelm_install
+
+        platlib = "/opt/venv/lib/python3.11/site-packages-platform"
+        monkeypatch.setattr(forgelm, "__file__", platlib + "/forgelm/__init__.py")
+        monkeypatch.setattr(sysconfig, "get_paths", lambda: {"purelib": "/somewhere/else", "platlib": platlib})
+        result = _check_forgelm_install()
+        assert result.extras["in_site_packages"] is True
+
+    def test_version_and_location_reflect_imported_module_not_a_guess(self, monkeypatch) -> None:
+        """version/location must be read off the already-imported ``forgelm``
+        module object, never re-derived via ``importlib.metadata`` — a
+        stray ``forgelm.egg-info`` in cwd would shadow the real dist-info
+        and answer for a distribution that is not the one running.
+        Proven by poisoning ``importlib.metadata.version`` with a wrong
+        answer and confirming it never leaks into the result."""
+        import importlib.metadata
+
+        import forgelm
+        from forgelm.cli.subcommands._doctor import _check_forgelm_install
+
+        sentinel_version = "999.888.777-devpin"
+        monkeypatch.setattr(forgelm, "__version__", sentinel_version)
+        monkeypatch.setattr(forgelm, "__file__", "/work/checkout/forgelm/__init__.py")
+        monkeypatch.setattr(importlib.metadata, "version", lambda *_a, **_k: "0.0.1-WRONG-DISTRIBUTION")
+
+        result = _check_forgelm_install()
+        assert result.extras["version"] == sentinel_version
+        assert sentinel_version in result.detail
+        assert "0.0.1-WRONG-DISTRIBUTION" not in result.detail
+        assert result.extras["location"] == "/work/checkout/forgelm"
+
+    def test_missing_version_attr_falls_back_to_unknown(self, monkeypatch) -> None:
+        import forgelm
+        from forgelm.cli.subcommands._doctor import _check_forgelm_install
+
+        monkeypatch.delattr(forgelm, "__version__", raising=False)
+        result = _check_forgelm_install()
+        assert result.extras["version"] == "unknown"
+        assert result.status == "pass"
+
+    def test_namespace_package_no_file_does_not_raise(self, monkeypatch) -> None:
+        """A namespace package has no single ``__file__``; the probe must
+        record that rather than raising from ``os.path.dirname(None)``."""
+        import forgelm
+        from forgelm.cli.subcommands._doctor import _check_forgelm_install
+
+        monkeypatch.setattr(forgelm, "__file__", None)
+        result = _check_forgelm_install()
+        assert result.status == "pass"
+        assert result.extras["location"] is None
+        assert result.extras["in_site_packages"] is None
+
+    def test_probe_never_raises_when_sysconfig_paths_lack_lib_keys(self, monkeypatch) -> None:
+        """Regression pin: ``sysconfig.get_paths()`` returning a dict with
+        neither ``purelib`` nor ``platlib`` (exotic build layouts) must
+        not raise — ``in_site_packages`` gracefully resolves to False."""
+        import sysconfig
+
+        from forgelm.cli.subcommands._doctor import _check_forgelm_install
+
+        monkeypatch.setattr(sysconfig, "get_paths", lambda: {})
+        result = _check_forgelm_install()  # must not raise
+        assert result.status == "pass"
+        assert result.extras["in_site_packages"] is False
+
+    def test_wired_first_in_real_run_all_checks_and_does_not_crash(self) -> None:
+        """End-to-end, unmocked: the real probe runs first in the real
+        plan and never surfaces ``extras.crashed`` — a crash here would
+        poison the entire doctor report because it is the very first row."""
+        from forgelm.cli.subcommands._doctor import _run_all_checks
+
+        results = _run_all_checks(offline=True)
+        assert results, "doctor plan must not be empty"
+        first = results[0]
+        assert first.name == "forgelm.install"
+        assert first.extras.get("crashed") is not True
+        assert first.status == "pass"
+
+
 class TestPythonVersionCheck:
     def test_python_310_warns(self) -> None:
         from forgelm.cli.subcommands._doctor import _check_python_version
@@ -342,6 +490,19 @@ class TestDoctorDocProbeList:
             doc = repo_root / "docs" / "usermanuals" / lang / "reference" / "json-output.md"
             text = doc.read_text(encoding="utf-8")
             assert "pypdf_normalise.turkish" in text, f"{lang} json-output.md omits pypdf_normalise.turkish"
+
+    def test_json_output_doc_lists_forgelm_install_probe(self) -> None:
+        """The forgelm.install probe (now the FIRST row of every plan) must
+        appear in the json-output.md probe-name list (EN + TR) — the doc
+        promises "new probes append rather than rename" and this is the
+        additive case that promise covers."""
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent
+        for lang in ("en", "tr"):
+            doc = repo_root / "docs" / "usermanuals" / lang / "reference" / "json-output.md"
+            text = doc.read_text(encoding="utf-8")
+            assert "forgelm.install" in text, f"{lang} json-output.md omits forgelm.install"
 
 
 class TestHfHubReachableCheck:
@@ -831,6 +992,16 @@ class TestCheckPlan:
         for extra, _module, _purpose in _OPTIONAL_EXTRAS:
             assert f"extras.{extra}" in names
 
+    def test_forgelm_install_is_first_in_both_modes(self) -> None:
+        """``forgelm.install`` is deliberately first: every other line of a
+        bug report is ambiguous until the reader knows which copy of
+        ForgeLM ran. Pinned in both --offline and online plans."""
+        from forgelm.cli.subcommands._doctor import _build_check_plan
+
+        for offline in (True, False):
+            plan = _build_check_plan(offline=offline)
+            assert plan[0][0] == "forgelm.install", f"offline={offline}"
+
 
 # ---------------------------------------------------------------------------
 # Top-level dispatcher
@@ -1140,6 +1311,7 @@ class TestFacadeReExports:
             "_render_json",
             "_render_text",
             "_resolve_exit_code",
+            "_check_forgelm_install",
             "_check_python_version",
             "_check_torch_cuda",
             "_check_operator_identity",

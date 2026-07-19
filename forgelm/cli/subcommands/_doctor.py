@@ -68,6 +68,7 @@ _STATUS_FAIL = "fail"
 # so renaming a probe (e.g. ``operator.identity`` → ``audit.operator``) is
 # a single-line edit and downstream JSON consumers can grep for these
 # constants rather than scattered string literals.  Wave 2a Round-2 nit.
+_PROBE_FORGELM_INSTALL = "forgelm.install"
 _PROBE_PYTHON_VERSION = "python.version"
 _PROBE_TORCH_INSTALLED = "torch.installed"
 _PROBE_TORCH_CUDA = "torch.cuda"
@@ -136,6 +137,73 @@ class _CheckResult:
 # ---------------------------------------------------------------------------
 # Individual checks
 # ---------------------------------------------------------------------------
+
+
+def _check_forgelm_install() -> _CheckResult:
+    """Report *which* ForgeLM this process is actually running.
+
+    Doctor's job is to predict what training will see, and the first
+    thing training sees is the package itself.  A console script's
+    ``sys.path[0]`` is its own ``bin`` directory, so an operator can
+    easily be running a ``site-packages`` copy that is nothing like the
+    source tree they are looking at — the failure mode is silent, and it
+    makes a bug report unactionable because the maintainer cannot tell
+    which code produced the traceback.  Reporting the resolved package
+    directory alongside the version turns "it fails on 0.9.0" into a
+    fact rather than an assumption.
+
+    Both facts are read from the **imported module** rather than from
+    distribution metadata.  ``importlib.metadata`` resolves by scanning
+    ``sys.path`` in order, so a leftover ``forgelm.egg-info`` in the cwd
+    shadows the real ``dist-info`` and answers for a distribution that is
+    not the one running — reporting an authoritative-sounding install
+    kind derived from the wrong metadata directory would be worse than
+    reporting nothing.  ``forgelm.__file__`` cannot lie: it is where the
+    interpreter actually loaded the code from.
+
+    ``in_site_packages`` is likewise observed, not inferred: the resolved
+    path is tested against ``sysconfig``'s ``purelib`` / ``platlib``.
+    False means the operator is running a source tree (a checkout, or an
+    editable install pointing at one) — the fact worth knowing when a
+    traceback does not match the released source.
+
+    Always ``pass`` — every location here is legitimate (site-packages is
+    the normal operator case, a source tree the normal contributor case).
+    The probe exists to *record* which one is active, not to grade it.
+    """
+    import sysconfig
+
+    import forgelm
+
+    version = getattr(forgelm, "__version__", "unknown")
+    if not forgelm.__file__:
+        # Namespace-package shape: no single file backs the module.
+        return _CheckResult(
+            name=_PROBE_FORGELM_INSTALL,
+            status=_STATUS_PASS,
+            detail=f"ForgeLM {version} — package location unresolvable (namespace package?).",
+            extras={"version": version, "location": None, "in_site_packages": None},
+        )
+
+    location = os.path.dirname(os.path.realpath(forgelm.__file__))
+    lib_dirs = [
+        os.path.realpath(path)
+        for path in (sysconfig.get_paths().get("purelib"), sysconfig.get_paths().get("platlib"))
+        if path
+    ]
+    in_site_packages = any(location == lib or location.startswith(lib + os.sep) for lib in lib_dirs)
+    where = "inside site-packages" if in_site_packages else "outside site-packages (source tree or editable install)"
+
+    return _CheckResult(
+        name=_PROBE_FORGELM_INSTALL,
+        status=_STATUS_PASS,
+        detail=f"ForgeLM {version} running from {location} ({where}).",
+        extras={
+            "version": version,
+            "location": location,
+            "in_site_packages": in_site_packages,
+        },
+    )
 
 
 def _check_python_version() -> _CheckResult:
@@ -928,6 +996,9 @@ def _build_check_plan(*, offline: bool) -> List[Tuple[str, Callable[[], _CheckRe
     each ``_CheckResult`` carries its own ``name`` for the renderer.
     """
     plan: List[Tuple[str, Callable[[], _CheckResult]]] = [
+        # First row deliberately: every other line of a bug report is
+        # ambiguous until the reader knows which copy of ForgeLM ran.
+        (_PROBE_FORGELM_INSTALL, _check_forgelm_install),
         (_PROBE_PYTHON_VERSION, _check_python_version),
         (_PROBE_TORCH_CUDA, _check_torch_cuda),
         (_PROBE_NUMPY_TORCH_ABI, _check_numpy_torch_abi),
@@ -1135,6 +1206,7 @@ def _run_doctor_cmd(args, output_format: str) -> None:
 # Re-exports for tests / monkeypatch — kept stable.
 __all__ = [
     "_CheckResult",
+    "_check_forgelm_install",
     "_check_python_version",
     "_check_torch_cuda",
     "_check_numpy_torch_abi",

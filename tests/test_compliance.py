@@ -1344,11 +1344,10 @@ class TestVerifyAuditLog:
         opening the log.
 
         F-PR29-A2-01 absorption: option errors map to ``EXIT_CONFIG_ERROR``
-        (= 1, the public 0/1/2/3/4 contract's "operator-actionable failure"
-        slot), not ``EXIT_TRAINING_ERROR`` (= 2). Both option errors and
-        chain-integrity failures share the numeric 1 because both are
-        operator-actionable; a dedicated ``EXIT_INTEGRITY_FAILURE``
-        constant is deferred to v0.6.x to avoid expanding the public surface.
+        (= 1, the "operator-actionable failure" slot), not
+        ``EXIT_TRAINING_ERROR`` (= 2).  Note this stays 1 now that
+        ``EXIT_INTEGRITY_FAILURE`` (= 6) exists: a malformed invocation is
+        not a tampering signal, and the verifier never opened the log.
         """
         from forgelm.cli import _run_verify_audit_cmd
 

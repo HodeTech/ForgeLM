@@ -28,6 +28,12 @@ Ortam kontrolü. Bkz. [Doctor komutu](#/getting-started/first-run).
   "success": true,
   "checks": [
     {
+      "name": "forgelm.install",
+      "status": "pass",
+      "detail": "ForgeLM 0.9.0 running from /opt/venv/lib/python3.11/site-packages/forgelm (inside site-packages).",
+      "extras": {"version": "0.9.0", "location": "/opt/venv/lib/python3.11/site-packages/forgelm", "in_site_packages": true}
+    },
+    {
       "name": "python.version",
       "status": "pass",
       "detail": "Python 3.11.7 (CPython).",
@@ -41,8 +47,8 @@ Ortam kontrolü. Bkz. [Doctor komutu](#/getting-started/first-run).
 | Anahtar | Tip | Notlar |
 |---|---|---|
 | `success` | bool | Hiçbir probe `fail` değilse VE hiçbir probe crash etmediyse `true`; aksi halde `false`. |
-| `checks` | list[object] | Çalıştırma sırasıyla probe başına bir entry. Probe adları stabildir (örn. `python.version`, `torch.cuda`, `numpy.torch_abi`, `gpu.inventory`, `extras.qlora`, `hf_hub.reachable`, `hf_hub.offline_cache`, `disk.workspace`, `operator.identity`, `pypdf_normalise.turkish`). `--offline` modunda `hf_hub.offline_cache`, `hf_hub.reachable` yerine geçer. |
-| `checks[].name` | str | Probe adı. Sürümler arası stabil; yeni probe'lar yeniden adlandırma yerine eklenir. |
+| `checks` | list[object] | Çalıştırma sırasıyla probe başına bir entry. Probe adları stabildir (örn. `forgelm.install`, `python.version`, `torch.cuda`, `numpy.torch_abi`, `gpu.inventory`, `extras.qlora`, `hf_hub.reachable`, `hf_hub.offline_cache`, `disk.workspace`, `operator.identity`, `pypdf_normalise.turkish`). `--offline` modunda `hf_hub.offline_cache`, `hf_hub.reachable` yerine geçer. |
+| `checks[].name` | str | Probe adı. Sürümler arası stabil; **"eklenir" (append) burada isim dağarcığını tanımlar, çalıştırma sırasını değil** — yeni probe'lar bir kez yayınlandıktan sonra asla yeniden adlandırılmaz, ama içeriklerinin okunması en faydalı olacağı yere eklenirler (örn. `forgelm.install`, listenin sonuna değil ilk satıra eklendi — çünkü bir raporun her satırı, okuyucu hangi ForgeLM kopyasının üretildiğini bilene kadar belirsizdir). Tüketiciler herhangi bir probe için sabit bir index varsaymamalıdır. |
 | `checks[].status` | str | `pass`, `warn`, `fail`'tan biri. Raise eden bir probe `status: "fail"` ve `extras.crashed: true` ile görünür; crash ayrıca `summary.crashed` içinde sayılır. |
 | `checks[].detail` | str | Sonuç için operatör-yüzlü tek satırlık açıklama. |
 | `checks[].extras` | object | Probe-spesifik yapısal veri. Per-probe anahtarlar `_doctor.py` docstring'lerinde belgelidir; tüketiciler bilinmeyen anahtarları forward-compatible olarak ele almalıdır. |

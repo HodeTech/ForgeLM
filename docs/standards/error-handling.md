@@ -14,22 +14,31 @@ EXIT_TRAINING_ERROR = 2
 EXIT_EVAL_FAILURE = 3
 EXIT_AWAITING_APPROVAL = 4
 EXIT_WIZARD_CANCELLED = 5
+EXIT_INTEGRITY_FAILURE = 6
 ```
 
 | Code | When | Who reads it |
 |---|---|---|
 | **0** | Training completed. With `auto_revert: true` (the compliance default for high-risk tiers) this also means every gate passed; with the **shipped default** `auto_revert: false` a failed benchmark/safety/judge gate is *recorded* (`benchmark`/`safety`/`judge` block in the JSON, `*_passed: false`) but does **not** change the exit code — parse those blocks, don't trust exit 0 alone | CI/CD success |
-| **1** | Config validation failed (YAML schema, Pydantic error) | CI/CD "fail fast"; user fixes YAML |
-| **2** | Training crashed or failed mid-run (OOM, CUDA error, unhandled exception) | CI/CD retry logic |
+| **1** | Config validation failed (YAML schema, Pydantic error). Also used by the `verify-*` subcommands for an operator-actionable input error — the artefact could not be read at all, so nothing was ever compared | CI/CD "fail fast"; user fixes YAML or the verifier's target path |
+| **2** | Training crashed or failed mid-run (OOM, CUDA error, unhandled exception). Also the `verify-*` subcommands' code for a genuine runtime I/O failure on a reachable path (permission denied mid-read, disk error) | CI/CD retry logic |
 | **3** | Training completed but eval/safety/benchmark threshold failed, and auto-revert happened | CI/CD decision: do not deploy |
 | **4** | Training + evals passed, but `require_human_approval: true` — staged, awaiting human sign-off | CI/CD pauses pipeline |
 | **5** | Wizard cancelled before producing a config (operator decline, non-tty stdin refusal, Ctrl-C through prompts) | CI/CD distinguishes "wizard finished with a config" from "wizard never saved anything" |
+| **6** | `verify-audit` / `verify-annex-iv` / `verify-gguf` / `verify-integrity` read an artefact successfully and its **integrity check failed** — a broken audit-log hash chain, an Annex IV manifest hash mismatch, a GGUF metadata/SHA-256 sidecar mismatch, or model files that no longer match `model_integrity.json`. Split out of `EXIT_CONFIG_ERROR` (1) in the `forgelm/verify.py` verification-toolbelt closure because the two are different incidents with different owners: a mistyped path is an operator typo (1 — fix the command), whereas a hash that no longer matches is a security event (6 — page whoever owns the artefact). Both used to exit 1 | CI/CD: treat as "do not promote", route to whoever owns the artefact, not the pipeline author |
+
+**The line between 1 and 6 for `verify-*` subcommands:** 6 means the verifier compared something and it did not match; 1 means the verifier never got to compare anything (bad path, malformed input, unreadable artefact). Two deliberate judgement calls that stay on 1 even though they look tamper-adjacent:
+
+- **`verify-gguf` magic-header mismatch.** A file whose first four bytes aren't `b"GGUF"` is not a GGUF at all — that is a file-type verdict (operator passed the wrong path), not a tamper verdict. Only a magic-OK file that then fails its metadata parse or SHA-256 sidecar check routes to 6.
+- **`verify-integrity` manifest entry whose path escapes the model directory.** The verifier refuses to hash an out-of-tree path before it reads anything, so nothing was compared — the same "never got to compare" reasoning as a missing manifest, even though an escaping entry is the shape of an attack.
+
+The per-verifier classification is structural, not string-matched: each of `forgelm/verify.py`'s `is_*_integrity_failure` predicates reads the result's typed fields (never the human-readable `reason` prose) so a reworded operator message can never silently flip the exit code.
 
 **Rules:**
 
 1. Never use numbers outside this set. If you invent a new failure class, add it here with a name and update this table first.
 2. Every `sys.exit(N)` must use a named constant. `sys.exit(1)` literal is a review red flag.
-3. Exit codes are part of the public contract. Changing the meaning of a code is a breaking change — bump major version.
+3. Exit codes are part of the public contract. Changing the meaning of a code is a breaking change — bump major version; adding a new code is additive per [release.md](release.md)'s "What constitutes breaking" table. When a new code narrows an *existing* one — as `EXIT_INTEGRITY_FAILURE` (6) narrowed the `verify-*` subcommands' use of `EXIT_CONFIG_ERROR` (1) — a caller that asserted the old code on the now-moved cases sees a real behaviour change even though no code changed meaning; the CHANGELOG entry must name that caller explicitly (see `CHANGELOG.md`'s `[Unreleased]` `Added`/`Changed` pair for the worked example).
 4. Always log before exiting (see [logging-observability.md](logging-observability.md)).
 
 ## Exception types

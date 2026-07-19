@@ -30,7 +30,7 @@ sequenceDiagram
         Verify->>Verify: recompute sha256, compare to manifest
     end
     Verify->>Verify: classify changed / removed / added
-    Verify-->>CI: exit 0 (all match) / 1 (mismatch or input error) / 2 (runtime I/O failure)
+    Verify-->>CI: exit 0 (all match) / 1 (input error, nothing compared) / 2 (runtime I/O failure) / 6 (mismatch — compared and disagreed)
 ```
 
 ## Quick start
@@ -63,7 +63,7 @@ $ forgelm verify-integrity ./checkpoints/final_model --output-format json
 
 ### Reading a mismatch
 
-When an artifact no longer matches the manifest, the diff lists are populated and the command exits `1`:
+When an artifact no longer matches the manifest, the diff lists are populated and the command exits `6` — the manifest parsed and the walk ran, so this is an integrity verdict, not a config error:
 
 ```json
 {
@@ -87,10 +87,13 @@ When an artifact no longer matches the manifest, the diff lists are populated an
 | Code | Meaning |
 |---|---|
 | `0` | Every recorded artifact is present and unchanged, and no extra files exist. |
-| `1` | Integrity mismatch (changed / removed / added file) **or** operator / input error — missing path, path is a file not a directory, manifest not found, malformed JSON, non-list `artifacts`, or a manifest entry path that escapes the model directory. |
+| `1` | Operator / input error — missing path, path is a file not a directory, manifest not found, malformed JSON, non-list `artifacts`, or a manifest entry path that escapes the model directory. Each of these returns before any artifact is hashed, so nothing was ever compared. |
 | `2` | Genuine runtime I/O failure on a reachable path (read error, permission denied mid-walk). |
+| `6` | Integrity mismatch — the manifest parsed and the walk ran, but at least one file was changed, removed, or added since the manifest was generated. |
 
 The runtime-error envelope (exit `2`) emits only `{"success": false, "error": "…"}` — branch on `success` first, then inspect `valid` and the diff lists.
+
+**Judgement call:** a manifest entry whose path escapes the model directory stays on `1`, not `6`, even though it's the shape of an attack — the verifier refuses to hash an out-of-tree path *before* reading anything, so nothing was compared.
 
 ## Common pitfalls
 

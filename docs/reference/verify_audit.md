@@ -20,7 +20,7 @@ forgelm verify-audit [--hmac-secret-env VAR] [--require-hmac]
 | Flag | Default | Description |
 |---|---|---|
 | `--hmac-secret-env VAR` | `FORGELM_AUDIT_SECRET` | Name of the environment variable that holds the HMAC secret used at log-write time. When the variable is set, per-line `_hmac` tags are validated; when unset, only the SHA-256 chain is checked. |
-| `--require-hmac` | `False` | Strict mode. Exit `1` if the configured env var is unset, and exit `1` if any line lacks an `_hmac` field. Use this in regulated CI pipelines where every entry must be HMAC-authenticated. (See "Exit codes" below — `EXIT_CONFIG_ERROR=1` currently covers both option errors and integrity failures; a dedicated `EXIT_INTEGRITY_FAILURE` constant is deferred to the post-v0.7.0 backlog.) |
+| `--require-hmac` | `False` | Strict mode. Exit `1` if the configured env var is unset (a pre-flight option error — the verifier never ran). Exit `6` if any line lacks an `_hmac` field (the log was read and failed strict-mode verification — a chain-integrity failure). Use this in regulated CI pipelines where every entry must be HMAC-authenticated. |
 | `-q`, `--quiet` | _off_ | Suppress INFO logs. |
 | `--log-level {DEBUG,INFO,WARNING,ERROR}` | `INFO` | Set logging verbosity. |
 | `-h`, `--help` | — | Show argparse help and exit. |
@@ -30,11 +30,11 @@ forgelm verify-audit [--hmac-secret-env VAR] [--require-hmac]
 | Code | Meaning |
 |---|---|
 | `0` | `EXIT_SUCCESS` — the SHA-256 chain (and HMAC tags, when verified) is intact end-to-end. |
-| `1` | `EXIT_CONFIG_ERROR` — covers **both** option/usage errors (missing log file, `--require-hmac` set with the env var unset, JSON decode error on a malformed line) **and** integrity failures (chain break, HMAC mismatch, manifest mismatch, missing `_hmac` line under `--require-hmac`). |
+| `1` | `EXIT_CONFIG_ERROR` — option/usage error: `--require-hmac` set with the configured env var unset, or the log path does not exist / is a directory / is unreadable for a caller-input reason. The verification never ran, so there is no integrity verdict. |
+| `2` | `EXIT_TRAINING_ERROR` — the log exists but could not be read (permission denied, mid-read I/O failure). Retryable. |
+| `6` | `EXIT_INTEGRITY_FAILURE` — the log was read and the chain does not verify: chain break, HMAC mismatch, genesis-manifest mismatch, an undecodable line, non-UTF-8 bytes inside the log, or (under `--require-hmac`) a line missing its `_hmac` field. This is the tampering signal, and it is the reason the code exists — previously a broken hash chain and a mistyped path both exited `1`, so a CI pipeline could not tell a security event from an operator typo. |
 
-> **Future deprecation note.** A dedicated `EXIT_VALIDATION_ERROR` / `EXIT_INTEGRITY_FAILURE` constant is on the post-v0.7.0 backlog. Until then, treat any non-zero exit from `verify-audit` as "do not promote this build" in CI gates — the dispatcher does not currently distinguish option errors from integrity failures by code. The `_verify_audit.py` docstring (`_run_verify_audit_cmd` docstring) holds the authoritative contract.
-
-The codes are emitted by the dispatcher at `_run_verify_audit_cmd` (`forgelm/cli/subcommands/_verify_audit.py`).
+The codes are emitted by the dispatcher at `_run_verify_audit_cmd` (`forgelm/cli/subcommands/_verify_audit.py`), which probes the file first (`_probe_log_readable`) so a *read* failure routes to 1 or 2 before the verifier runs — every `valid=False` the library entry point returns after that probe succeeds is therefore a genuine integrity verdict (6). `forgelm.compliance.verify_audit_log` itself never raises for chain-level failures; it always returns a `VerifyResult(valid=False, reason=...)`, and only raises `OSError` for a file that becomes unreadable mid-verification.
 
 ## Audit events emitted
 
@@ -94,7 +94,7 @@ OK: 412 entries verified (HMAC validated)
 $ forgelm verify-audit checkpoints/run/compliance/audit_log.jsonl
 FAIL at line 53: prev_hash mismatch — chain break suggests entry was inserted, removed, or reordered
 $ echo $?
-1
+6
 ```
 
 ## See also

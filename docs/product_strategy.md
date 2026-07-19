@@ -93,7 +93,7 @@ Explicitly out of scope — now and long-term:
 |---|---|---|---|---|
 | Safety eval (integrated) | ✅ Llama Guard S1-S14 | ❌ | ❌ | ❌ |
 | EU AI Act compliance | ✅ Art. 9-17 + Annex IV | ❌ | ❌ | ❌ |
-| CI/CD-native exit codes | ✅ 0/1/2/3/4/5 | Partial | ❌ | Partial |
+| CI/CD-native exit codes | ✅ 0/1/2/3/4/5/6 | Partial | ❌ | Partial |
 | Web UI | ❌ (by design) | ✅ | ✅ Studio | ❌ |
 | Speed optimization | Standard | Standard | ✅ 2-5x | Standard |
 | Config-driven YAML | ✅ Full | Partial | ❌ | ✅ |

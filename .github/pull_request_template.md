@@ -25,7 +25,10 @@
 - [ ] `ruff check .` passes
 - [ ] `ruff format --check .` passes
 - [ ] New tests added for changed code
-- [ ] `forgelm --config config_template.yaml --dry-run` works
+- [ ] `python -m forgelm --config config_template.yaml --dry-run` works
+      (the `python -m` form is deliberate: a console script's `sys.path[0]` is
+      its own `bin/` directory, so plain `forgelm …` validates whatever is
+      installed in site-packages rather than your working tree)
 
 ## Checklist
 

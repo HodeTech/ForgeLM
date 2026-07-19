@@ -76,6 +76,10 @@ jobs:
           forgelm --version
           forgelm --config config_template.yaml --dry-run
           forgelm --config config_template.yaml --dry-run --output-format json
+          # `python -m` is the form the contributor gauntlet runs; keep it
+          # covered against upstream dep drift alongside the console script.
+          python -m forgelm --version
+          python -m forgelm --config config_template.yaml --dry-run
 
       - name: Quickstart templates smoke test
         run: |
@@ -180,6 +184,12 @@ jobs:
           # sys.path — any template asset must come from the wheel's
           # site-packages copy, not from the checkout.
           cd /tmp
+
+          # `python -m forgelm` must work from the installed wheel too —
+          # this is what proves forgelm/__main__.py is actually packaged
+          # rather than merely present in the source tree.
+          echo "=== python -m forgelm --version (from the wheel) ==="
+          /tmp/wheel-test/bin/python -m forgelm --version
 
           echo "=== forgelm quickstart --list ==="
           /tmp/wheel-test/bin/forgelm quickstart --list | tee /tmp/qs-list.txt

@@ -3,7 +3,7 @@
 > **Hedef kitle:** Sunumdan önce Annex IV teknik dokümantasyon artifact'larını doğrulayan uyumluluk operatörleri ve CI kapıları.
 > **Ayna:** [verify_annex_iv_subcommand.md](verify_annex_iv_subcommand.md)
 
-`verify-annex-iv` alt-komutu bir Annex IV teknik dokümantasyon JSON dosyasını okur, EU AI Act Annex IV §1-9 başına dokuz zorunlu alan kategorisini doğrular ve üretimden sonra tahrifat olup olmadığını tespit etmek için manifest hash'ini yeniden hesaplar. CLI, kütüphane giriş noktası `forgelm.cli.subcommands._verify_annex_iv.verify_annex_iv_artifact`'a delegasyon yapar ve `forgelm.compliance.build_annex_iv_artifact` içindeki yazıcı ile aynı kanonikalleştirme rutinini (`forgelm.compliance.compute_annex_iv_manifest_hash`) kullanır — böylece geçerli bir artefakt yazıcı/doğrulayıcı bayt sapması nedeniyle kendi doğrulayıcısında asla başarısız olamaz.
+`verify-annex-iv` alt-komutu bir Annex IV teknik dokümantasyon JSON dosyasını okur, EU AI Act Annex IV §1-9 başına dokuz zorunlu alan kategorisini doğrular ve üretimden sonra tahrifat olup olmadığını tespit etmek için manifest hash'ini yeniden hesaplar. CLI, kütüphane giriş noktası `forgelm.verify.verify_annex_iv_artifact`'a delegasyon yapar (paket kökünde `forgelm.verify_annex_iv_artifact` olarak da erişilebilir) ve `forgelm.compliance.build_annex_iv_artifact` içindeki yazıcı ile aynı kanonikalleştirme rutinini (`forgelm.compliance.compute_annex_iv_manifest_hash`) kullanır — böylece geçerli bir artefakt yazıcı/doğrulayıcı bayt sapması nedeniyle kendi doğrulayıcısında asla başarısız olamaz.
 
 ## Söz dizimi
 
@@ -29,10 +29,11 @@ forgelm verify-annex-iv [--output-format {text,json}]
 | Kod | Anlam |
 |---|---|
 | `0` | Tüm gerekli Annex IV §1-9 alanları doldurulmuş VE (mevcutsa) `metadata.manifest_hash` yeniden hesaplanan hash ile eşleşiyor. |
-| `1` | Çağıran/girdi hatası veya doğrulama başarısız (`valid=False`): dosya bulunamadı / normal dosya değil; gerekli alan eksik / boş; bozuk JSON; kök bir JSON nesnesi değil; manifest hash uyuşmazlığı. Operatör eylemli: artefakt mevcut hâliyle Annex IV uyumlu değil. |
+| `1` | Çağıran/girdi hatası: dosya bulunamadı / normal dosya değil; bozuk JSON; geçerli UTF-8 değil; kök bir JSON nesnesi değil; VEYA doğrulama başarısız — gerekli bir alan eksik / boş (artefakt hiç tam doldurulmamış). Operatör eylemli: artefakt mevcut hâliyle Annex IV uyumlu değil, ve hiçbir manifest-hash karşılaştırması hiç yapılmadı. |
 | `2` | Mevcut bir dosyada gerçek runtime I/O hatası — okuma hatası, ayrıştırma sırasında izin reddi vb. Yol `os.path.isfile`'a erişilebilirdi ama doğrulama sırasında okunamaz hâle geldi. |
+| `6` | Bütünlük arızası: tüm gerekli §1-9 alanları doldurulmuş, artefakt bir `metadata.manifest_hash` taşıyor ve yeniden hesaplanan hash onunla uyuşmuyor. Belge üretimden sonra düzenlenmiş. |
 
-Kodlar `forgelm/cli/subcommands/_verify_annex_iv.py::_run_verify_annex_iv_cmd` tarafından emit edilir. Kamuya açık sözleşme semantiği `docs/standards/error-handling.md`'de sabitlenmiştir.
+Kodlar `forgelm/cli/subcommands/_verify_annex_iv.py::_run_verify_annex_iv_cmd` tarafından emit edilir; bu, yapısal (asla string-eşleşmeli değil) predicate `forgelm.verify.is_annex_iv_integrity_failure` üzerinden yönlenir — gerekli-alan eksikleri her zaman `1`'dir, aksi hâlde tam bir artefaktta manifest-hash uyuşmazlığı her zaman `6`'dır; sonucun tipli alanlarına göre karar verilir, böylece yeniden yazılmış bir `reason` string'i exit kodunu asla çeviremez. Kamuya açık sözleşme semantiği `docs/standards/error-handling.md`'de sabitlenmiştir.
 
 ## Zorunlu Annex IV alanları
 
@@ -99,7 +100,7 @@ $ forgelm verify-annex-iv checkpoints/run/compliance/annex_iv.json
 FAIL: checkpoints/run/compliance/annex_iv.json
   Manifest hash mismatch — artifact may have been modified after generation.
 $ echo $?
-1
+6
 ```
 
 ### Hata: bozuk JSON

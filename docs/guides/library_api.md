@@ -12,7 +12,7 @@ ForgeLM ships **two equally first-class entry points**: the `forgelm` console sc
 
 Choose the **CLI** when:
 
-- You're shipping a Bash / GitHub Actions / GitLab CI pipeline. The exit-code contract (0/1/2/3/4/5) is the integration surface.
+- You're shipping a Bash / GitHub Actions / GitLab CI pipeline. The exit-code contract (0/1/2/3/4/5/6) is the integration surface.
 - You want the structured logging + JSON envelopes ForgeLM emits to stdout out of the box.
 - You're running on infrastructure where one process per stage is the operational unit (most CI runners, most Argo pipelines).
 

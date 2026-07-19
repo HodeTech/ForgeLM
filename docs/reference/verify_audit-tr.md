@@ -20,7 +20,7 @@ forgelm verify-audit [--hmac-secret-env VAR] [--require-hmac]
 | Bayrak | Varsayılan | Açıklama |
 |---|---|---|
 | `--hmac-secret-env VAR` | `FORGELM_AUDIT_SECRET` | Log yazımı sırasında kullanılan HMAC sırrını taşıyan ortam değişkeninin adı. Değişken set edildiğinde satır başına `_hmac` etiketleri doğrulanır; aksi halde sadece SHA-256 zinciri kontrol edilir. |
-| `--require-hmac` | `False` | Sıkı mod. Yapılandırılmış env var set değilse `1`, herhangi bir satırda `_hmac` alanı eksikse yine `1` ile çıkar. Her kaydın HMAC ile imzalı olması gereken regüle CI pipeline'larında kullanın. (Aşağıdaki "Çıkış kodları" tablosuna bakın — `EXIT_CONFIG_ERROR=1` şu an hem seçenek hatalarını hem de bütünlük arızalarını kapsıyor; ayrı bir `EXIT_INTEGRITY_FAILURE` sabiti v0.7.0 sonrası backlog'a ertelendi.) |
+| `--require-hmac` | `False` | Sıkı mod. Yapılandırılmış env var set değilse `1` ile çıkar (bir pre-flight seçenek hatası — doğrulayıcı hiç çalışmadı). Herhangi bir satırda `_hmac` alanı eksikse `6` ile çıkar (log okundu ve sıkı-mod doğrulamasını geçemedi — bir zincir-bütünlüğü arızası). Her kaydın HMAC ile imzalı olması gereken regüle CI pipeline'larında kullanın. |
 | `-q`, `--quiet` | _kapalı_ | INFO loglarını bastırır. |
 | `--log-level {DEBUG,INFO,WARNING,ERROR}` | `INFO` | Log ayrıntı seviyesi. |
 | `-h`, `--help` | — | Argparse yardımını gösterir ve çıkar. |
@@ -30,11 +30,11 @@ forgelm verify-audit [--hmac-secret-env VAR] [--require-hmac]
 | Kod | Anlam |
 |---|---|
 | `0` | `EXIT_SUCCESS` — SHA-256 zinciri (ve doğrulandığında HMAC etiketleri) uçtan uca bütün. |
-| `1` | `EXIT_CONFIG_ERROR` — **hem** seçenek/kullanım hatalarını (eksik log dosyası, `--require-hmac` setken env var unset, hatalı satırda JSON decode hatası) **hem** de bütünlük arızalarını (zincir kopması, HMAC uyuşmazlığı, manifest uyuşmazlığı, `--require-hmac` altında eksik `_hmac` satırı) kapsar. |
+| `1` | `EXIT_CONFIG_ERROR` — seçenek/kullanım hatası: `--require-hmac` setken yapılandırılmış env var unset, veya log yolu yok / bir dizin / çağıran-girdisi nedeniyle okunamıyor. Doğrulama hiç çalışmadı, dolayısıyla bir bütünlük kararı yok. |
+| `2` | `EXIT_TRAINING_ERROR` — log var ama okunamadı (izin reddi, okuma-ortası G/Ç hatası). Tekrar denenebilir. |
+| `6` | `EXIT_INTEGRITY_FAILURE` — log okundu ve zincir doğrulanmıyor: zincir kopması, HMAC uyuşmazlığı, genesis-manifest uyuşmazlığı, çözülemeyen bir satır, log içinde geçerli-olmayan UTF-8 baytları, veya (`--require-hmac` altında) `_hmac` alanı eksik bir satır. Bu tahrifat sinyalidir ve kodun var olma nedenidir — önceden kırık bir hash zinciri ile yanlış yazılmış bir yol ikisi de `1` ile çıkardı, bu yüzden bir CI pipeline'ı bir güvenlik olayını operatör yazım hatasından ayırt edemezdi. |
 
-> **Gelecek deprecation notu.** Ayrı bir `EXIT_VALIDATION_ERROR` / `EXIT_INTEGRITY_FAILURE` sabiti v0.7.0 sonrası backlog'unda. O zamana kadar CI kapılarında `verify-audit`'ten gelen herhangi bir non-zero exit'i "bu yapımı promote etme" olarak kabul edin — dispatcher şu an seçenek hatalarını bütünlük arızalarından kod ile ayırt etmiyor. Yetkili sözleşme `_verify_audit.py` docstring'inde (`_run_verify_audit_cmd` docstring).
-
-Kodlar dispatcher tarafından `_run_verify_audit_cmd` (`forgelm/cli/subcommands/_verify_audit.py`) satırlarından emit edilir.
+Kodlar dispatcher tarafından `_run_verify_audit_cmd` (`forgelm/cli/subcommands/_verify_audit.py`) satırlarından emit edilir; bu, dosyayı önce prob'lar (`_probe_log_readable`) — böylece bir *okuma* hatası doğrulayıcı çalışmadan önce 1 veya 2'ye yönlenir; bu prob başarılı olduktan sonra kütüphane giriş noktasının döndürdüğü her `valid=False` gerçek bir bütünlük kararıdır (6). `forgelm.compliance.verify_audit_log`'un kendisi zincir-seviyesi arızalar için asla exception fırlatmaz; her zaman bir `VerifyResult(valid=False, reason=...)` döndürür ve yalnızca doğrulama sırasında okunamaz hâle gelen bir dosya için `OSError` fırlatır.
 
 ## Emit edilen audit event'leri
 
@@ -94,7 +94,7 @@ OK: 412 entries verified (HMAC validated)
 $ forgelm verify-audit checkpoints/run/compliance/audit_log.jsonl
 FAIL at line 53: prev_hash mismatch — chain break suggests entry was inserted, removed, or reordered
 $ echo $?
-1
+6
 ```
 
 ## Bkz.

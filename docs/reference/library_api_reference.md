@@ -86,6 +86,8 @@ Tables grouped by concern. Every cell is a real attribute on the live `forgelm` 
 
 ### Verification toolbelt (Phase 36)
 
+Implemented in `forgelm/verify.py` (moved out of the `forgelm/cli/subcommands/_verify_*` modules that originally housed them — the CLI subcommands are now thin wrappers around this module). The import paths below are unchanged either way; `forgelm.verify_annex_iv_artifact` resolves the same symbol before and after the move, so this was an internal refactor, not an API change. Library callers who want the same 1-vs-6 exit-code classification the `verify-*` CLI subcommands use can import the paired `is_annex_iv_integrity_failure` / `is_gguf_integrity_failure` / `is_model_integrity_failure` predicates from `forgelm.verify` directly — they are internal (not in `forgelm.__all__`) but stable enough in practice that the CLI itself depends on them for the split documented in [`error-handling.md`](../standards/error-handling.md#exit-codes).
+
 | Symbol | Tier | Signature | Description |
 |---|---|---|---|
 | `forgelm.verify_annex_iv_artifact` | Stable | `verify_annex_iv_artifact(path: str) -> VerifyAnnexIVResult` | Validate an Annex IV technical-documentation bundle (manifest + model card + audit log + governance report). |

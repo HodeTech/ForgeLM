@@ -10,7 +10,7 @@ forgelm --config job.yaml
     ├── cli/                → CLI package (Phase 15 split)
     │   ├── _parser.py          → 19 subcommands + global flags
     │   ├── _dispatch.py        → Mode dispatcher
-    │   ├── _exit_codes.py      → 0/1/2/3/4/5 contract
+    │   ├── _exit_codes.py      → 0/1/2/3/4/5/6 contract
     │   └── subcommands/        → Per-subcommand handlers (19 subcommands)
     │       ├── ingest, audit, chat, export, deploy, doctor,
     │       │   cache-models, cache-tasks, purge, reverse-pii,
@@ -31,6 +31,7 @@ forgelm --config job.yaml
     │   ├── judge.py            → LLM-as-Judge scoring
     │   ├── model_card.py       → Auto-generate HF model card
     │   ├── compliance.py       → EU AI Act audit artifacts
+    │   ├── verify.py           → Annex IV / GGUF / model-integrity verification
     │   └── webhook.py          → Slack/Teams notifications
     ├── merging.py          → TIES/DARE/SLERP model merge
     ├── synthetic.py        → Synthetic data generation
@@ -46,7 +47,7 @@ ForgeLM/
 │   ├── cli/                # CLI sub-package (Phase 15 split)
 │   │   ├── _parser.py          # 19 subcommands + global flags
 │   │   ├── _dispatch.py        # Mode dispatcher
-│   │   ├── _exit_codes.py      # Public 0/1/2/3/4/5 contract
+│   │   ├── _exit_codes.py      # Public 0/1/2/3/4/5/6 contract
 │   │   └── subcommands/        # Per-subcommand handler modules
 │   │       └── _audit, _ingest, _chat, _export, _deploy, _doctor,
 │   │           _cache, _purge, _reverse_pii, _approve, _approvals,
@@ -71,6 +72,7 @@ ForgeLM/
 │   ├── safety.py           # Post-training safety evaluation (Llama Guard)
 │   ├── judge.py            # LLM-as-Judge (API + local)
 │   ├── compliance.py       # EU AI Act compliance + audit log + provenance
+│   ├── verify.py           # Annex IV / GGUF / model-integrity verification primitives
 │   ├── model_card.py       # HF-compatible model card generation
 │   ├── merging.py          # Model merging (TIES/DARE/SLERP/linear)
 │   ├── synthetic.py        # Synthetic data generation (teacher→student)
@@ -103,7 +105,7 @@ ForgeLM/
 ## Component Details
 
 ### `cli/`
-The orchestrator (Phase 15 split). `_parser.py` registers 19 subcommands (`audit`, `approve`, `approvals`, `reject`, `cache-models`, `cache-tasks`, `chat`, `deploy`, `doctor`, `export`, `ingest`, `purge`, `quickstart`, `reverse-pii`, `safety-eval`, `verify-annex-iv`, `verify-audit`, `verify-gguf`, `verify-integrity`) plus the legacy training-mode flag set. `_dispatch.py` routes to the appropriate handler in `subcommands/`. `_exit_codes.py` defines the public 0/1/2/3/4/5 contract (5 = wizard cancelled).
+The orchestrator (Phase 15 split). `_parser.py` registers 19 subcommands (`audit`, `approve`, `approvals`, `reject`, `cache-models`, `cache-tasks`, `chat`, `deploy`, `doctor`, `export`, `ingest`, `purge`, `quickstart`, `reverse-pii`, `safety-eval`, `verify-annex-iv`, `verify-audit`, `verify-gguf`, `verify-integrity`) plus the legacy training-mode flag set. `_dispatch.py` routes to the appropriate handler in `subcommands/`. `_exit_codes.py` defines the public 0/1/2/3/4/5/6 contract (5 = wizard cancelled, 6 = integrity failure — the `verify-*` subcommands only, when a read artefact fails its hash/chain check). The verification primitives themselves live in `forgelm/verify.py`, not under `cli/`, keeping the CLI subcommand modules thin dispatchers per `docs/standards/architecture.md`'s "CLI is a thin shim" rule.
 
 ### `config.py`
 23 Pydantic v2 models providing strict validation for all YAML configuration. Includes cross-field validation (e.g., high-risk classification enforces safety evaluation). Config models cover: model, LoRA, training, data, evaluation, safety, benchmark, judge, webhook, distributed, merge, compliance, retention, risk assessment, monitoring, MoE, multimodal, data governance, and synthetic-data generation.
@@ -138,6 +140,15 @@ EU AI Act compliance engine covering Articles 9-17:
 - `generate_deployer_instructions()`: Art. 13 deployer document
 - `export_compliance_artifacts()`: All artifacts to directory
 - `export_evidence_bundle()`: ZIP archive for auditors
+
+### `verify.py`
+Consuming counterpart to `compliance.py`'s writers — re-hashes and re-validates the artifacts `compliance.py` produces:
+- `verify_annex_iv_artifact()`: field completeness + manifest-hash tamper check for an Annex IV JSON bundle
+- `verify_gguf()`: magic header + optional metadata parse + SHA-256 sidecar check for an exported GGUF file
+- `verify_integrity()`: re-walks a model directory against `model_integrity.json`, reporting changed/removed/added artifacts
+- `is_annex_iv_integrity_failure()` / `is_gguf_integrity_failure()` / `is_model_integrity_failure()`: structural (never string-matched) predicates the `verify-*` CLI subcommands use to route between `EXIT_CONFIG_ERROR` (1, nothing was compared) and `EXIT_INTEGRITY_FAILURE` (6, compared and disagreed)
+
+`verify_audit_log` deliberately stays in `compliance.py` rather than moving here — it must mirror `AuditLogger.log_event`'s canonicalisation byte-for-byte, and separating a writer from its verifier is the drift hazard this module's docstring warns against.
 
 ### `model_card.py`
 Generates HuggingFace-compatible README.md with YAML front matter, training parameters table, metrics, benchmark results, config snippet, and usage example. Excludes auth tokens from exported config.

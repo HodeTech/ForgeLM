@@ -2,11 +2,16 @@
 
 The consuming counterpart to :func:`forgelm.compliance.generate_model_integrity`.
 That writer computes a SHA-256 manifest (``model_integrity.json``) over every
-file in a trained model directory; this command reads the manifest back, re-walks
-the directory, recomputes each file's SHA-256, and reports any file that was
-**added**, **removed**, or **changed** since the manifest was written.  Without
-it the Art. 15 section header ("Model Integrity *Verification*") over-claimed —
-only the generate side shipped (F-P4-OPUS-14).
+file in a trained model directory; :func:`forgelm.verify.verify_integrity` reads
+the manifest back, re-walks the directory, recomputes each file's SHA-256, and
+reports any file that was **added**, **removed**, or **changed** since the
+manifest was written.  Without it the Art. 15 section header ("Model Integrity
+*Verification*") over-claimed — only the generate side shipped (F-P4-OPUS-14).
+
+This module is the CLI seam only: argument handling, I/O-error → exit-code
+mapping, and the text / JSON output envelope.  The verifier itself lives in
+:mod:`forgelm.verify` so library consumers reaching ``forgelm.verify_integrity``
+never import the CLI layer.
 
 Exit codes (per ``docs/standards/error-handling.md`` and the public contract
 in ``docs/reference/verify_integrity_subcommand.md``):
@@ -16,11 +21,14 @@ in ``docs/reference/verify_integrity_subcommand.md``):
 - 1 — ``EXIT_CONFIG_ERROR``: caller / input error (missing path, the path is a
   file rather than a model directory, manifest not found / not a regular file,
   malformed JSON, invalid UTF-8 encoding, a non-list ``artifacts`` container, a
-  manifest entry whose path is non-string or escapes the model directory) OR an
-  integrity mismatch (changed / removed / added file).  The
-  artifacts do not match the manifest.
+  manifest entry whose path is non-string or escapes the model directory).  The
+  manifest could not be used, so no artifact was ever compared.
 - 2 — ``EXIT_TRAINING_ERROR``: genuine runtime I/O failure on a reachable path
   (read error, permission denied mid-walk, etc.).
+- 6 — ``EXIT_INTEGRITY_FAILURE``: the manifest parsed and the walk ran, but at
+  least one artifact was changed / removed / added.  The deployed weights are
+  not the weights that were signed off — a security event, distinct from the
+  operator-actionable input errors on 1.
 """
 
 from __future__ import annotations
@@ -28,49 +36,22 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import Any, Dict, List, NoReturn
+from typing import NoReturn
 
-from .._exit_codes import EXIT_CONFIG_ERROR, EXIT_SUCCESS, EXIT_TRAINING_ERROR
+from ...verify import (
+    VerifyIntegrityResult,  # noqa: F401 — re-exported for the forgelm.cli facade
+    is_model_integrity_failure,
+    verify_integrity,  # noqa: F401 — re-exported for the forgelm.cli facade
+)
+from .._exit_codes import (
+    EXIT_CONFIG_ERROR,
+    EXIT_INTEGRITY_FAILURE,
+    EXIT_SUCCESS,
+    EXIT_TRAINING_ERROR,
+)
 from .._logging import logger
 
 _MANIFEST_NAME = "model_integrity.json"
-
-
-class VerifyIntegrityResult:
-    """Structured result of a model-integrity verification.
-
-    Mirrors the sibling verify-* result shapes so integrators get a
-    uniform surface across the verification toolbelt.
-    """
-
-    __slots__ = ("valid", "reason", "changed", "removed", "added", "verified_count")
-
-    def __init__(
-        self,
-        *,
-        valid: bool,
-        reason: str = "",
-        changed: List[str] | None = None,
-        removed: List[str] | None = None,
-        added: List[str] | None = None,
-        verified_count: int = 0,
-    ) -> None:
-        self.valid = valid
-        self.reason = reason
-        self.changed = list(changed or [])
-        self.removed = list(removed or [])
-        self.added = list(added or [])
-        self.verified_count = verified_count
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "valid": self.valid,
-            "reason": self.reason,
-            "changed": list(self.changed),
-            "removed": list(self.removed),
-            "added": list(self.added),
-            "verified_count": self.verified_count,
-        }
 
 
 def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoReturn:
@@ -81,123 +62,6 @@ def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoRe
     else:
         logger.error(msg)
     sys.exit(exit_code)
-
-
-def verify_integrity(model_dir: str) -> VerifyIntegrityResult:
-    """Library entry: verify a model directory against its integrity manifest.
-
-    Reads ``<model_dir>/model_integrity.json`` (produced by
-    :func:`forgelm.compliance.generate_model_integrity`), recomputes the
-    SHA-256 of every recorded artifact, and walks the directory to detect
-    files that exist on disk but are absent from the manifest.
-
-    The manifest itself (``model_integrity.json``) is excluded from the
-    walk — it is generated after the model artifacts and is not one of
-    the recorded hashes, so it would otherwise always surface as an
-    "added" file.
-
-    Returns the structured result; raises :class:`FileNotFoundError` when
-    the manifest is missing, :class:`json.JSONDecodeError` when it is
-    malformed, and :class:`OSError` for genuine I/O failures while
-    re-hashing — the dispatcher maps each to its documented exit code.
-    """
-    from forgelm.compliance import hash_file
-
-    manifest_path = os.path.join(model_dir, _MANIFEST_NAME)
-    with open(manifest_path, "r", encoding="utf-8") as fh:
-        manifest = json.load(fh)
-
-    recorded = manifest.get("artifacts", []) if isinstance(manifest, dict) else []
-    # A non-list ``artifacts`` container (null, a string, a mapping) is a
-    # malformed manifest, not an empty one — silently coercing it to ``[]``
-    # would report "All 0 artifacts present" and exit 0.  Refuse up front so
-    # the dispatcher maps it to EXIT_CONFIG_ERROR, the same as a bad entry.
-    if not isinstance(recorded, list):
-        return VerifyIntegrityResult(
-            valid=False,
-            reason=f"Manifest 'artifacts' is not a list: {type(recorded).__name__}.",
-        )
-    # Normalise recorded paths to forward slashes so a Windows-generated
-    # manifest ("subdir\\file") compares equal to the verifier's on-disk
-    # relpath ("subdir/file") and does not false-positive as added/missing.
-    recorded_rel = {
-        entry["file"].replace("\\", "/")
-        for entry in recorded
-        if isinstance(entry, dict) and isinstance(entry.get("file"), str)
-    }
-
-    base = os.path.realpath(model_dir)
-
-    changed: List[str] = []
-    removed: List[str] = []
-    verified = 0
-    for entry in recorded:
-        if not isinstance(entry, dict):
-            continue
-        rel_path = entry.get("file")
-        # A non-string ``file`` (or a recorded path whose realpath escapes
-        # model_dir, e.g. "../secret") is a malformed/hostile manifest, not
-        # a recoverable mismatch — refuse rather than hashing an arbitrary
-        # out-of-tree file or crashing in os.path.join with a TypeError.
-        if not isinstance(rel_path, str):
-            return VerifyIntegrityResult(
-                valid=False,
-                reason=f"Manifest entry has a non-string 'file' value: {rel_path!r}.",
-            )
-        abs_path = os.path.join(model_dir, rel_path.replace("\\", "/"))
-        real = os.path.realpath(abs_path)
-        try:
-            contained = os.path.commonpath([real, base]) == base
-        except ValueError:
-            # Different drives (Windows) → no shared prefix; treat as escaping.
-            contained = False
-        if not contained:
-            return VerifyIntegrityResult(
-                valid=False,
-                reason=f"Manifest entry path escapes the model directory: {rel_path!r}.",
-            )
-        if not os.path.isfile(abs_path):
-            removed.append(rel_path)
-            continue
-        actual = hash_file(abs_path, rel_path)
-        if actual["sha256"] != entry.get("sha256"):
-            changed.append(rel_path)
-        else:
-            verified += 1
-
-    # Files on disk not recorded in the manifest = added since generation.
-    added: List[str] = []
-    for root, _dirs, files in os.walk(model_dir):
-        for filename in files:
-            abs_path = os.path.join(root, filename)
-            rel_path = os.path.relpath(abs_path, model_dir).replace(os.sep, "/")
-            if rel_path == _MANIFEST_NAME:
-                continue
-            if rel_path not in recorded_rel:
-                added.append(rel_path)
-
-    if changed or removed or added:
-        parts = []
-        if changed:
-            parts.append(f"{len(changed)} changed")
-        if removed:
-            parts.append(f"{len(removed)} removed")
-        if added:
-            parts.append(f"{len(added)} added")
-        return VerifyIntegrityResult(
-            valid=False,
-            reason="Model artifacts do not match model_integrity.json: " + ", ".join(parts) + ".",
-            changed=sorted(changed),
-            removed=sorted(removed),
-            added=sorted(added),
-            verified_count=verified,
-        )
-
-    return VerifyIntegrityResult(
-        valid=True,
-        reason=f"All {verified} recorded artifact(s) present and unchanged.",
-        verified_count=verified,
-    )
 
 
 def _run_verify_integrity_cmd(args, output_format: str) -> None:
@@ -279,7 +143,11 @@ def _run_verify_integrity_cmd(args, output_format: str) -> None:
             print(f"    removed: {rel}")
         for rel in result.added:
             print(f"    added:   {rel}")
-    sys.exit(EXIT_SUCCESS if result.valid else EXIT_CONFIG_ERROR)
+    if result.valid:
+        sys.exit(EXIT_SUCCESS)
+    # Artifacts that disagree with a usable manifest are a tampering
+    # signal (6); an unusable manifest is operator-actionable input (1).
+    sys.exit(EXIT_INTEGRITY_FAILURE if is_model_integrity_failure(result) else EXIT_CONFIG_ERROR)
 
 
 __all__ = [

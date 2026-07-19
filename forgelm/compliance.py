@@ -47,6 +47,16 @@ _WEBHOOK_PERSIST_FIELDS = tuple(name for name in WebhookConfig.model_fields if n
 # The CLI matches this exact prefix; keep the two in lockstep (F-P4-OPUS-25).
 PIPELINE_MANIFEST_IO_ERROR_PREFIX = "IO_ERROR::"
 
+# Sibling routing token for the *pre-flight input* failures — a manifest
+# file that is absent, or present but unparseable as JSON.  Neither says
+# anything about the pipeline's chain integrity: the verifier never got to
+# look at a payload.  Tagging them lets the CLI keep those on
+# ``EXIT_CONFIG_ERROR`` (1) while every remaining violation — structural,
+# chain-integrity, missing per-stage evidence — routes to
+# ``EXIT_INTEGRITY_FAILURE`` (6).  Same discipline as the IO token above:
+# match the prefix, never the free text.
+PIPELINE_MANIFEST_INPUT_ERROR_PREFIX = "INPUT_ERROR::"
+
 # Recommended minimum length for ``FORGELM_AUDIT_SECRET``.  Shorter secrets are
 # accepted (no hard-fail) but trigger a one-time weak-secret WARNING because the
 # audit HMAC key's entropy is bounded by the secret's (F-P5-OPUS-13).
@@ -2263,10 +2273,18 @@ def verify_pipeline_manifest_at_path(pipeline_dir: str) -> List[str]:
     checks (per-stage ``training_manifest`` file existence).  Pre-flight
     failures (missing manifest file, malformed JSON) surface as a single-
     entry violation list so the CLI's exit-code mapping is uniform.
+
+    Violation strings may carry a leading routing token —
+    :data:`PIPELINE_MANIFEST_IO_ERROR_PREFIX` for an OSError-shaped read
+    failure, :data:`PIPELINE_MANIFEST_INPUT_ERROR_PREFIX` for a missing or
+    unparseable manifest.  Untagged violations are integrity findings
+    (structural, chain, missing per-stage evidence).  Callers that display
+    violations must strip the tokens; callers that route on them must match
+    the exact prefix rather than any free-text substring (F-P4-OPUS-25).
     """
     manifest_path = os.path.join(pipeline_dir, "compliance", "pipeline_manifest.json")
     if not os.path.isfile(manifest_path):
-        return [f"pipeline_manifest.json not found at {manifest_path}"]
+        return [f"{PIPELINE_MANIFEST_INPUT_ERROR_PREFIX}pipeline_manifest.json not found at {manifest_path}"]
     # Phase 14 post-release review: separate the two failure modes via
     # distinct sentinel prefixes so the CLI can map them to the right
     # exit code (mirrors the single-artifact verifier in
@@ -2278,7 +2296,7 @@ def verify_pipeline_manifest_at_path(pipeline_dir: str) -> List[str]:
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
     except json.JSONDecodeError as e:
-        return [f"pipeline_manifest.json invalid JSON: {e}"]
+        return [f"{PIPELINE_MANIFEST_INPUT_ERROR_PREFIX}pipeline_manifest.json invalid JSON: {e}"]
     except OSError as e:
         return [f"{PIPELINE_MANIFEST_IO_ERROR_PREFIX}pipeline_manifest.json unreadable: {e}"]
 

@@ -17,8 +17,11 @@ ForgeLM'in exit kodları kamuya açık bir kontrattır. CI/CD hatları, schedule
 | **3** | `EXIT_EVAL_FAILURE` | Bir benchmark/güvenlik/judge kapısı geçemedi **ve** model otomatik geri alındı (`evaluation.auto_revert: true` gerektirir). `auto_revert: false` ile başarısız bir kapı exit 3 üretmez — koşu, JSON kapı bloklarına kaydedilen başarısızlıkla 0 çıkar. | İncele; terfi ETTİRME |
 | **4** | `EXIT_AWAITING_APPROVAL` | `evaluation.require_human_approval: true` engelliyor. | Hattı tut; reviewer'ı tetikle |
 | **5** | `EXIT_WIZARD_CANCELLED` | `forgelm --wizard` YAML üretmeden çıktı — Ctrl-C, non-tty stdin reddi veya operatör kaydetmeyi reddetti. `EXIT_SUCCESS`'tan ayrı ki CI "wizard tamamlandı" ile "wizard hiçbir şey yazmadı" arasını ayırt edebilsin. | No-op olarak kabul et; mesajı yüzeyle; eski config ile DEVAM ETME |
+| **6** | `EXIT_INTEGRITY_FAILURE` | `verify-audit` / `verify-annex-iv` / `verify-gguf` / `verify-integrity` hedef artefaktı başarıyla okudu ve **bütünlük kontrolü başarısız oldu** — kırık bir audit-log hash zinciri, bir Annex IV manifest hash uyuşmazlığı, bir GGUF metadata/SHA-256 sidecar uyuşmazlığı veya `model_integrity.json` ile artık eşleşmeyen model dosyaları. Yalnızca dört `verify-*` subcommand'ına özgü; başka hiçbir komut bunu üretmez. | Config düzeltmesi değil, güvenlik olayı olarak ele al — artefaktın sahibini uyar, tekrar deneme |
 
-Bu altı tam sayı tüm kamuya açık kontratı oluşturur — kanonik tanım için bkz. [`forgelm/cli/_exit_codes.py`](https://github.com/HodeTech/ForgeLM/blob/main/forgelm/cli/_exit_codes.py). Diğer her sıfır olmayan değer (sinyal kaynaklı 128+N kodları dahil) süreç çıkmadan önce `EXIT_TRAINING_ERROR` (2) değerine sıkıştırılır.
+Bu yedi tam sayı tüm kamuya açık kontratı oluşturur — kanonik tanım için bkz. [`forgelm/cli/_exit_codes.py`](https://github.com/HodeTech/ForgeLM/blob/main/forgelm/cli/_exit_codes.py). Diğer her sıfır olmayan değer (sinyal kaynaklı 128+N kodları dahil) süreç çıkmadan önce `EXIT_TRAINING_ERROR` (2) değerine sıkıştırılır.
+
+**`verify-*` exit kodlarını okumak: 1'e karşı 6.** Dört `verify-*` subcommand'ı özelinde, `EXIT_CONFIG_ERROR` (1) ile `EXIT_INTEGRITY_FAILURE` (6) tek bir soruda ayrışır: doğrulayıcı bir şeyi karşılaştıracak kadar ileri gitti mi? Eksik bir dosya, bozuk bir manifest veya bir magic-header uyuşmazlığı (dosya hiç GGUF değil) doğrulayıcının hiçbir şey karşılaştıramadığı anlamına gelir — exit 1. Yeniden hesaplanan bir hash, zincir bağlantısı veya kayıtlıyla uyuşmayan bir manifest girdisi, doğrulayıcının karşılaştırdığı ve artefaktın başarısız olduğu anlamına gelir — exit 6. İki durum, tahrifat gibi görünse de bilerek 1 tarafında bırakılmıştır: bir GGUF magic-header uyuşmazlığı (tahrifat değil dosya-tipi kararı) ve model dizininin dışına çıkan bir yola sahip `verify-integrity` manifest girdisi (doğrulayıcı hiçbir şey okumadan önce ağaç-dışı bir yolu hash'lemeyi reddeder, yani hiçbir şey karşılaştırılmamıştır). Kod başına tam döküm için her doğrulayıcının kendi exit-kod tablosuna bakın ([CLI Referansı](#/reference/cli)'ndan bağlantılı).
 
 ## CI pattern'lerine eşleme
 
@@ -82,7 +85,9 @@ stage('Train') {
 | YAML'da `${HF_TOKEN}` ama env var yok | 1 |
 | `--config` var olmayan dosyaya işaret ediyor | 1 |
 | Eğitim ortasında final loss NaN / OOM / I/O hatası | 2 |
-| `forgelm verify-audit` zincir kopması veya HMAC uyuşmazlığı | 1 (v0.5.5 döngüsünde EXIT_CONFIG_ERROR hem opsiyon hatalarını hem bütünlük arızalarını kapsar; v0.6.x deprecation notu için bkz. manuel içindeki [Audit Log Doğrulama](#/compliance/verify-audit) sayfası) |
+| `forgelm verify-audit` zincir kopması veya HMAC uyuşmazlığı | 6 (log okundu ve zincir doğrulanmadı — `--require-hmac` secret olmadan gibi bir opsiyon hatası veya eksik log dosyası 1'de kalır; bkz. manuel içindeki [Audit Log Doğrulama](#/compliance/verify-audit) sayfası) |
+| `forgelm verify-gguf` / `verify-annex-iv` / `verify-integrity` — artefakt okundu, hash/manifest uyuşmuyor | 6 |
+| `forgelm verify-*` — yol eksik, okunamıyor veya girdi bozuk | 1 |
 | DPO koşusu, Llama Guard S5 toleransı aştı | `evaluation.auto_revert: true` ile 3; shipped default `false` ile 0 (JSON gate bloklarında kaydedilir) |
 | Benchmark hellaswag floor altına düştü | `evaluation.auto_revert: true` ile 3; shipped default `false` ile 0 (JSON gate bloklarında kaydedilir) |
 | `evaluation.require_human_approval: true` ve onay imzalanmamış | 4 |
@@ -113,7 +118,9 @@ Tasarım gereği "kısmi başarı" exit kodu yok — başarısız bir kapının 
 
 ## Uyumluluk garantisi
 
-Exit kodları 0-5 sürümler arası kararlıdır. Yeni kodlar eklenebilir (6, 7, …) ama mevcutların semantiği değişmez. Yukarıdaki kontrata pinli CI hatları ForgeLM yükseltmelerinde çalışmaya devam eder.
+Exit kodları 0-6 sürümler arası kararlıdır. Yeni kodlar eklenebilir (7, 8, …) ama mevcutların semantiği değişmez. Yukarıdaki kontrata pinli CI hatları ForgeLM yükseltmelerinde çalışmaya devam eder.
+
+`EXIT_INTEGRITY_FAILURE` (6) semantik değişikliği değil, katkısaldır: yalnızca dört `verify-*` subcommand'ında önceden 1 ile çıkan durumların bir alt kümesini daraltır. Bir `verify-*` bütünlük arızasını yakalamak için `exit code == 1` doğrulayan bir hat, `== 6`'yı da kontrol edecek şekilde güncellenmelidir; yalnızca `!= 0`'a dallanan veya `verify-*`'ı `set -e` altında çalıştıran bir hat etkilenmez — 1 ve 6 ikisi de sıfır olmayan kalır ve step'i başarısız kılmaya devam eder.
 
 ## Bkz.
 

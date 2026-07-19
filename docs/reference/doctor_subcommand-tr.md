@@ -25,10 +25,13 @@ Uygulama: [`forgelm/cli/subcommands/_doctor.py`](../../forgelm/cli/subcommands/_
 
 | Probe `name` | Status politikası | Ne kontrol eder |
 |---|---|---|
+| `forgelm.install` | `pass` | Hangi ForgeLM'in gerçekten çalıştığı: çözümlenen paket dizini, sürüm ve paketin site-packages içinde olup olmadığı. İlk sırada çalışır; böylece yapıştırılan bir hata raporu, konuşulan kodu en başta belirtir. |
 | `python.version` | `fail` <3.10, `warn` 3.10.x, `pass` >=3.11 | Desteklenen Python aralığı. |
 | `torch.installed` / `torch.cuda` | torch eksikse `fail`; sadece CPU ise `warn`; CUDA varsa `pass` | torch + CUDA bulunabilirliği. |
+| `numpy.torch_abi` | ABI uyuşmazlığında `fail`, aksi halde `pass` (torch yoksa kontrol atlanır ve `pass` döner) | Kurulu torch ile numpy'ın ABI uyumu. |
 | `gpu.inventory` | Cihaz başına VRAM ile `pass`, CUDA yoksa `warn` | Görünen GPU'lar ve VRAM (GiB). |
-| `extras.<ad>` | İçe aktarılabiliyorsa `pass`, yoksa kurulum ipucuyla `warn` | Her opsiyonel extra için bir satır: `qlora`, `unsloth`, `distributed`, `eval`, `tracking`, `merging`, `export`, `ingestion`, `ingestion-pii-ml`, `ingestion-scale`. |
+| `extras.<ad>` | İçe aktarılabiliyorsa `pass`, yoksa kurulum ipucuyla `warn` | Her opsiyonel extra için bir satır: `qlora`, `unsloth`, `distributed`, `eval`, `tracking`, `export`, `ingestion`, `ingestion-pii-ml`, `ingestion-scale`. `merging` extra'sının satırı bilerek **yoktur** — model birleştirme çekirdek bağımlılıklarla native olarak uygulandığından o extra bir no-op'tur. |
+| `pypdf_normalise.turkish` | Normalizasyon beklendiği gibi çalışıyorsa `pass`, aksi halde `warn` | PDF alımında Türkçe metin için font-fallback normalizasyonu; `extras.ingestion` satırının yanında durur, ikisi birlikte okunsun diye. |
 | `hf_hub.reachable` (online) | 2xx/3xx `pass`, transport hatası `warn`, SSRF politika reddi `fail` | `forgelm._http.safe_get` ile 5 sn timeout HEAD `${HF_ENDPOINT}/api/models`. |
 | `hf_hub.offline_cache` (`--offline`) | Dosya görünürse `pass`, boş/kısmen okunamıyorsa `warn`, hiç dosya yok ve walk hatası varsa `fail` | Resolved Hub cache'in sınırlandırılmış taraması (derinlik 4, 5000 dosya tavanı). |
 | `disk.workspace` | <10 GiB `fail`, <50 GiB `warn`, aksi `pass` | `shutil.disk_usage(".")`. |

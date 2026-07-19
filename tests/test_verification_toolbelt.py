@@ -81,7 +81,7 @@ class TestVerifyAnnexIv:
         assert "risk_management" in payload["missing_fields"]
 
     def test_empty_required_field_treated_as_missing(self, tmp_path: Path) -> None:
-        from forgelm.cli.subcommands._verify_annex_iv import verify_annex_iv_artifact
+        from forgelm.verify import verify_annex_iv_artifact
 
         artifact = _full_annex_iv_artifact()
         artifact["intended_purpose"] = ""  # operator left placeholder
@@ -93,10 +93,7 @@ class TestVerifyAnnexIv:
         assert "intended_purpose" in result.missing_fields
 
     def test_manifest_hash_match_passes(self, tmp_path: Path) -> None:
-        from forgelm.cli.subcommands._verify_annex_iv import (
-            _compute_manifest_hash,
-            verify_annex_iv_artifact,
-        )
+        from forgelm.verify import _compute_manifest_hash, verify_annex_iv_artifact
 
         artifact = _full_annex_iv_artifact()
         # Two-step: compute over the artifact-without-hash, then write
@@ -110,7 +107,14 @@ class TestVerifyAnnexIv:
         assert result.valid is True
         assert result.manifest_hash_actual == result.manifest_hash_expected
 
-    def test_manifest_hash_mismatch_fails(self, tmp_path: Path, capsys) -> None:
+    def test_manifest_hash_mismatch_exits_integrity_failure(self, tmp_path: Path, capsys) -> None:
+        """A recomputed manifest hash that disagrees with the recorded one is
+        tampering, not operator input → exit 6.
+
+        This asserted exit 1 before ``EXIT_INTEGRITY_FAILURE`` existed, which
+        is exactly the defect: a *modified compliance artefact* and a *typo in
+        the path* were indistinguishable to a CI pipeline."""
+        from forgelm.cli._exit_codes import EXIT_INTEGRITY_FAILURE
         from forgelm.cli.subcommands._verify_annex_iv import _run_verify_annex_iv_cmd
 
         artifact = _full_annex_iv_artifact()
@@ -121,7 +125,7 @@ class TestVerifyAnnexIv:
         args = _build_args(path=str(path))
         with pytest.raises(SystemExit) as ei:
             _run_verify_annex_iv_cmd(args, output_format="json")
-        assert ei.value.code == 1
+        assert ei.value.code == EXIT_INTEGRITY_FAILURE
         payload = json.loads(capsys.readouterr().out)
         assert payload["valid"] is False
         assert "manifest hash" in payload["reason"].lower()
@@ -179,8 +183,8 @@ class TestVerifyAnnexIv:
         """F-W2B-01 + F-W2B-05 regression: a freshly-generated Annex IV
         artefact must pass its own verifier (writer + verifier shape +
         manifest hash all line up byte-for-byte)."""
-        from forgelm.cli.subcommands._verify_annex_iv import verify_annex_iv_artifact
         from forgelm.compliance import build_annex_iv_artifact
+        from forgelm.verify import verify_annex_iv_artifact
 
         # Synthetic manifest mirroring what generate_training_manifest
         # would produce against a real ForgeConfig.  Only the keys the
@@ -222,8 +226,8 @@ class TestVerifyAnnexIv:
         Mutate one field after writing; assert verifier rejects."""
         import json as _json
 
-        from forgelm.cli.subcommands._verify_annex_iv import verify_annex_iv_artifact
         from forgelm.compliance import build_annex_iv_artifact
+        from forgelm.verify import verify_annex_iv_artifact
 
         manifest = {
             "forgelm_version": "0.5.5+test",
@@ -264,9 +268,9 @@ def _make_minimal_gguf(path: Path, *, magic: bytes = b"GGUF", payload_size: int 
     header but the rest is zero-padded.  When the optional ``gguf``
     package is installed in the test env, ``GGUFReader`` would refuse
     to parse the metadata block; success-path tests therefore patch
-    :func:`forgelm.cli.subcommands._verify_gguf._maybe_parse_metadata`
-    to return a benign "parsed=False" result via the
-    :func:`_stub_metadata_parse` helper below.
+    :func:`forgelm.verify._maybe_parse_metadata` to return a benign
+    "parsed=False" result via the :func:`_stub_metadata_parse` helper
+    below.
     """
     path.write_bytes(magic + b"\x00" * payload_size)
 
@@ -280,11 +284,15 @@ def _stub_metadata_parse(monkeypatch) -> None:
     ``gguf`` extra is installed.  Production code path is covered
     elsewhere (the ``corrupted_magic_fails`` test still exercises the
     real magic-header check).
+
+    Patches ``forgelm.verify`` (where ``verify_gguf`` now resolves the
+    helper from) rather than the CLI subcommand module, which only
+    re-exports the public entry point.
     """
-    from forgelm.cli.subcommands import _verify_gguf
+    from forgelm import verify as _verify_mod
 
     monkeypatch.setattr(
-        _verify_gguf,
+        _verify_mod,
         "_maybe_parse_metadata",
         lambda _path: {"parsed": False, "error": None, "tensor_count": None},
     )
@@ -341,8 +349,14 @@ class TestVerifyGguf:
         assert payload["checks"]["sidecar_present"] is True
         assert payload["checks"]["sidecar_match"] is True
 
-    def test_sha256_sidecar_mismatch_fails_with_exit_one(self, tmp_path: Path, capsys, monkeypatch) -> None:
+    def test_sha256_sidecar_mismatch_exits_integrity_failure(self, tmp_path: Path, capsys, monkeypatch) -> None:
+        """A well-formed sidecar digest that does not match the file means the
+        GGUF was modified after export → exit 6.
+
+        Asserted exit 1 before ``EXIT_INTEGRITY_FAILURE`` existed, conflating
+        "this artefact was tampered with" with "you typed the wrong path"."""
         _stub_metadata_parse(monkeypatch)
+        from forgelm.cli._exit_codes import EXIT_INTEGRITY_FAILURE
         from forgelm.cli.subcommands._verify_gguf import _run_verify_gguf_cmd
 
         path = tmp_path / "model.gguf"
@@ -352,7 +366,7 @@ class TestVerifyGguf:
         args = _build_args(path=str(path))
         with pytest.raises(SystemExit) as ei:
             _run_verify_gguf_cmd(args, output_format="json")
-        assert ei.value.code == 1
+        assert ei.value.code == EXIT_INTEGRITY_FAILURE
         payload = json.loads(capsys.readouterr().out)
         assert payload["valid"] is False
         assert "sha-256" in payload["reason"].lower() or "sha256" in payload["reason"].lower()
@@ -659,8 +673,8 @@ class TestAnnexIvTamperingAcrossAllFields:
         ],
     )
     def test_writer_verifier_rejects_tampering_in_any_field(self, tmp_path: Path, field_to_tamper: str) -> None:
-        from forgelm.cli.subcommands._verify_annex_iv import verify_annex_iv_artifact
         from forgelm.compliance import build_annex_iv_artifact
+        from forgelm.verify import verify_annex_iv_artifact
 
         artifact = build_annex_iv_artifact(_round_trip_manifest_for_tampering())
         assert artifact is not None, "writer must produce an artifact for the test fixture"
@@ -753,7 +767,7 @@ class TestAnnexIvSystemIdentificationCompleteness:
     (F-P4-OPUS-17)."""
 
     def test_blank_provider_and_system_name_rejected(self, tmp_path: Path) -> None:
-        from forgelm.cli.subcommands._verify_annex_iv import verify_annex_iv_artifact
+        from forgelm.verify import verify_annex_iv_artifact
 
         artifact = _full_annex_iv_artifact()
         # Top-level fields stay populated; only the §1 identity sub-fields
@@ -791,7 +805,7 @@ class TestAnnexIvSystemIdentificationCompleteness:
         check but cannot carry the §1 identity sub-fields, so the old
         ``isinstance(dict)`` guard silently skipped the identity gate.  It
         must be rejected as missing instead."""
-        from forgelm.cli.subcommands._verify_annex_iv import verify_annex_iv_artifact
+        from forgelm.verify import verify_annex_iv_artifact
 
         artifact = _full_annex_iv_artifact()
         artifact["system_identification"] = bad_value
@@ -822,7 +836,7 @@ def _write_model_with_integrity(model_dir: Path) -> dict:
 
 class TestVerifyIntegrity:
     def test_unmodified_model_passes(self, tmp_path: Path) -> None:
-        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+        from forgelm.verify import verify_integrity
 
         model_dir = tmp_path / "final_model"
         _write_model_with_integrity(model_dir)
@@ -830,7 +844,14 @@ class TestVerifyIntegrity:
         assert result.valid is True
         assert result.verified_count == 2
 
-    def test_changed_artifact_byte_detected_and_exits_one(self, tmp_path: Path, capsys) -> None:
+    def test_changed_artifact_byte_detected_and_exits_integrity_failure(self, tmp_path: Path, capsys) -> None:
+        """A recorded artifact whose bytes changed after the manifest was
+        written → exit 6.
+
+        Asserted exit 1 before ``EXIT_INTEGRITY_FAILURE`` existed: swapped
+        model weights and a mistyped directory produced the same exit code,
+        so no CI gate could page on the former."""
+        from forgelm.cli._exit_codes import EXIT_INTEGRITY_FAILURE
         from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
 
         model_dir = tmp_path / "final_model"
@@ -841,13 +862,13 @@ class TestVerifyIntegrity:
         args = _build_args(path=str(model_dir))
         with pytest.raises(SystemExit) as ei:
             _run_verify_integrity_cmd(args, output_format="json")
-        assert ei.value.code == 1
+        assert ei.value.code == EXIT_INTEGRITY_FAILURE
         payload = json.loads(capsys.readouterr().out)
         assert payload["valid"] is False
         assert "model.safetensors" in payload["changed"]
 
     def test_added_file_detected(self, tmp_path: Path) -> None:
-        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+        from forgelm.verify import verify_integrity
 
         model_dir = tmp_path / "final_model"
         _write_model_with_integrity(model_dir)
@@ -858,7 +879,7 @@ class TestVerifyIntegrity:
         assert "rogue.bin" in result.added
 
     def test_removed_artifact_detected(self, tmp_path: Path) -> None:
-        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+        from forgelm.verify import verify_integrity
 
         model_dir = tmp_path / "final_model"
         _write_model_with_integrity(model_dir)
@@ -902,7 +923,7 @@ class TestVerifyIntegrity:
         assert payload["success"] is False
 
     def test_non_string_file_entry_rejected(self, tmp_path: Path) -> None:
-        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+        from forgelm.verify import verify_integrity
 
         model_dir = tmp_path / "final_model"
         model_dir.mkdir()
@@ -919,7 +940,7 @@ class TestVerifyIntegrity:
         crash the recorded-entry comprehension with a TypeError — bypassing the
         exit-code contract.  It must be refused as a malformed manifest, not
         silently treated as zero artifacts (which would pass with exit 0)."""
-        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+        from forgelm.verify import verify_integrity
 
         model_dir = tmp_path / "final_model"
         model_dir.mkdir()
@@ -949,7 +970,7 @@ class TestVerifyIntegrity:
     def test_path_traversal_entry_rejected(self, tmp_path: Path) -> None:
         """A manifest entry whose path escapes the model dir (``../secret``)
         must be refused rather than hashing an arbitrary out-of-tree file."""
-        from forgelm.cli.subcommands._verify_integrity import verify_integrity
+        from forgelm.verify import verify_integrity
 
         secret = tmp_path / "secret.txt"
         secret.write_text("top-secret")
@@ -966,8 +987,8 @@ class TestVerifyIntegrity:
         """A manifest generated on Windows records ``subdir\\file``; verifying
         it on a POSIX host must not false-positive the file as removed/added
         — both sides normalise separators to forward slashes."""
-        from forgelm.cli.subcommands._verify_integrity import verify_integrity
         from forgelm.compliance import hash_file
+        from forgelm.verify import verify_integrity
 
         model_dir = tmp_path / "final_model"
         sub = model_dir / "weights"
@@ -1175,10 +1196,16 @@ class TestVerifyAuditJsonOutput:
         payload = json.loads(capsys.readouterr().out)
         assert payload["hmac_verified"] is True
 
-    def test_tampered_chain_reports_errors_list_and_config_error_exit(
+    def test_tampered_chain_reports_errors_list_and_integrity_failure_exit(
         self, tmp_path: Path, capsys, monkeypatch
     ) -> None:
-        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        """A broken SHA-256 hash chain → exit 6.
+
+        Asserted ``EXIT_CONFIG_ERROR`` before ``EXIT_INTEGRITY_FAILURE``
+        existed.  The audit log is an EU AI Act Art. 12 append-only record;
+        a chain break is the single strongest tampering signal ForgeLM emits,
+        and it shared an exit code with "the path you gave me is wrong"."""
+        from forgelm.cli._exit_codes import EXIT_INTEGRITY_FAILURE
         from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
 
         monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
@@ -1197,7 +1224,7 @@ class TestVerifyAuditJsonOutput:
             output_format="json",
         )
         exit_code = _run_verify_audit_cmd(args)
-        assert exit_code == EXIT_CONFIG_ERROR
+        assert exit_code == EXIT_INTEGRITY_FAILURE
 
         payload = json.loads(capsys.readouterr().out)
         assert payload["success"] is False
@@ -1376,3 +1403,547 @@ class TestVerifyIntegrityUtf8Corruption:
         with pytest.raises(SystemExit) as ei:
             _run_verify_integrity_cmd(args, output_format="text")
         assert ei.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# EXIT_INTEGRITY_FAILURE (6) — "a tampered artifact and a mistyped path are
+# not the same incident".
+# ---------------------------------------------------------------------------
+
+
+class TestExitIntegrityFailureContract:
+    """The constant itself is part of the public CLI surface."""
+
+    def test_value_is_six(self) -> None:
+        from forgelm.cli._exit_codes import EXIT_INTEGRITY_FAILURE
+
+        assert EXIT_INTEGRITY_FAILURE == 6
+
+    def test_listed_in_public_exit_codes(self) -> None:
+        """Membership is load-bearing: ``_clamp_exit_code`` coerces anything
+        outside ``_PUBLIC_EXIT_CODES`` to ``EXIT_TRAINING_ERROR``, so dropping
+        the row would silently rewrite every 6 into a 2 at the dispatch seam."""
+        from forgelm.cli._exit_codes import _PUBLIC_EXIT_CODES, EXIT_INTEGRITY_FAILURE
+
+        assert EXIT_INTEGRITY_FAILURE in _PUBLIC_EXIT_CODES
+
+    def test_clamp_passes_six_through_unchanged(self) -> None:
+        from forgelm.cli._exit_codes import (
+            EXIT_INTEGRITY_FAILURE,
+            EXIT_TRAINING_ERROR,
+            _clamp_exit_code,
+        )
+
+        assert _clamp_exit_code(EXIT_INTEGRITY_FAILURE) == EXIT_INTEGRITY_FAILURE
+        assert _clamp_exit_code(EXIT_INTEGRITY_FAILURE) != EXIT_TRAINING_ERROR
+
+    def test_clamp_still_coerces_non_public_codes(self) -> None:
+        """Widening the contract to 6 must not accidentally let 130 through."""
+        from forgelm.cli._exit_codes import EXIT_TRAINING_ERROR, _clamp_exit_code
+
+        assert _clamp_exit_code(130) == EXIT_TRAINING_ERROR
+        assert _clamp_exit_code(7) == EXIT_TRAINING_ERROR
+
+    def test_cli_facade_re_exports_the_constant(self) -> None:
+        import forgelm.cli as _cli
+
+        assert _cli.EXIT_INTEGRITY_FAILURE == 6
+        assert "EXIT_INTEGRITY_FAILURE" in _cli.__all__
+
+
+class TestIntegrityFailurePredicates:
+    """The three ``is_*_integrity_failure`` predicates own the 1-vs-6 split.
+
+    They are asserted directly (not only through the dispatchers) because they
+    are the single point where a future regression could re-merge the two
+    incident classes, and because each reads *structured* result fields — a
+    reworded ``reason`` string must never move an artefact between exit codes.
+    """
+
+    def test_annex_iv_hash_mismatch_is_integrity_failure(self) -> None:
+        from forgelm.verify import VerifyAnnexIVResult, is_annex_iv_integrity_failure
+
+        result = VerifyAnnexIVResult(
+            valid=False,
+            reason="Manifest hash mismatch",
+            manifest_hash_actual="a" * 64,
+            manifest_hash_expected="b" * 64,
+        )
+        assert is_annex_iv_integrity_failure(result) is True
+
+    def test_annex_iv_missing_fields_is_not_integrity_failure(self) -> None:
+        """An artefact the operator never finished populating is an input
+        error — nothing was tampered with."""
+        from forgelm.verify import VerifyAnnexIVResult, is_annex_iv_integrity_failure
+
+        result = VerifyAnnexIVResult(valid=False, reason="Missing", missing_fields=["risk_management"])
+        assert is_annex_iv_integrity_failure(result) is False
+
+    def test_annex_iv_valid_result_is_not_integrity_failure(self) -> None:
+        from forgelm.verify import VerifyAnnexIVResult, is_annex_iv_integrity_failure
+
+        result = VerifyAnnexIVResult(
+            valid=True,
+            manifest_hash_actual="a" * 64,
+            manifest_hash_expected="a" * 64,
+        )
+        assert is_annex_iv_integrity_failure(result) is False
+
+    def test_annex_iv_non_object_root_is_not_integrity_failure(self) -> None:
+        """A JSON root that is a list/string never carried a hash to compare."""
+        from forgelm.verify import VerifyAnnexIVResult, is_annex_iv_integrity_failure
+
+        result = VerifyAnnexIVResult(valid=False, reason="Artifact root is list, expected JSON object.")
+        assert is_annex_iv_integrity_failure(result) is False
+
+    @pytest.mark.parametrize(
+        "checks,expected",
+        [
+            # Not a GGUF at all → operator pointed at the wrong file.
+            ({"magic_ok": False}, False),
+            # Real GGUF, metadata block unparseable → corrupted stream.
+            ({"magic_ok": True, "sidecar_present": False}, True),
+            # Sidecar present but not a hex digest → unusable sidecar.
+            ({"magic_ok": True, "sidecar_present": True, "sha256_expected": "TODO"}, False),
+            ({"magic_ok": True, "sidecar_present": True, "sha256_expected": ""}, False),
+            # Well-formed digest that did not match → modified after export.
+            ({"magic_ok": True, "sidecar_present": True, "sha256_expected": "a" * 64}, True),
+        ],
+    )
+    def test_gguf_predicate_walks_the_three_layers(self, checks: dict, expected: bool) -> None:
+        from forgelm.verify import VerifyGgufResult, is_gguf_integrity_failure
+
+        assert is_gguf_integrity_failure(VerifyGgufResult(valid=False, checks=checks)) is expected
+
+    def test_gguf_valid_result_is_not_integrity_failure(self) -> None:
+        from forgelm.verify import VerifyGgufResult, is_gguf_integrity_failure
+
+        result = VerifyGgufResult(valid=True, checks={"magic_ok": True, "sidecar_match": True})
+        assert is_gguf_integrity_failure(result) is False
+
+    @pytest.mark.parametrize(
+        "kwargs,expected",
+        [
+            ({"changed": ["model.safetensors"]}, True),
+            ({"removed": ["config.json"]}, True),
+            ({"added": ["rogue.bin"]}, True),
+            # Manifest unusable → no artifact was ever compared.
+            ({}, False),
+        ],
+    )
+    def test_model_integrity_predicate(self, kwargs: dict, expected: bool) -> None:
+        from forgelm.verify import VerifyIntegrityResult, is_model_integrity_failure
+
+        result = VerifyIntegrityResult(valid=False, reason="…", **kwargs)
+        assert is_model_integrity_failure(result) is expected
+
+    def test_model_integrity_valid_result_is_not_integrity_failure(self) -> None:
+        from forgelm.verify import VerifyIntegrityResult, is_model_integrity_failure
+
+        assert is_model_integrity_failure(VerifyIntegrityResult(valid=True, verified_count=2)) is False
+
+
+class TestTamperVsTypoAreDistinguishable:
+    """One pair per ``verify-*`` subcommand: the tampered artifact and the
+    mistyped path must produce *different* exit codes.
+
+    Asserting the inequality alongside the absolute values is deliberate — it
+    is the property the whole change exists to provide, and it fails loudly if
+    someone routes 6 back to 1.
+    """
+
+    def test_verify_annex_iv(self, tmp_path: Path) -> None:
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR, EXIT_INTEGRITY_FAILURE
+        from forgelm.cli.subcommands._verify_annex_iv import _run_verify_annex_iv_cmd
+
+        tampered = tmp_path / "annex_iv.json"
+        artifact = _full_annex_iv_artifact()
+        artifact["metadata"] = {"manifest_hash": "0" * 64}
+        tampered.write_text(json.dumps(artifact))
+
+        with pytest.raises(SystemExit) as tamper:
+            _run_verify_annex_iv_cmd(_build_args(path=str(tampered)), output_format="json")
+        with pytest.raises(SystemExit) as typo:
+            _run_verify_annex_iv_cmd(_build_args(path=str(tmp_path / "typo.json")), output_format="json")
+
+        assert tamper.value.code == EXIT_INTEGRITY_FAILURE
+        assert typo.value.code == EXIT_CONFIG_ERROR
+        assert tamper.value.code != typo.value.code
+
+    def test_verify_annex_iv_pipeline_mode(self, tmp_path: Path) -> None:
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR, EXIT_INTEGRITY_FAILURE
+        from forgelm.cli.subcommands._verify_annex_iv import _run_verify_annex_iv_cmd
+
+        run_dir = tmp_path / "run"
+        (run_dir / "compliance").mkdir(parents=True)
+        # A manifest that parses but whose stage chain was rewritten.
+        (run_dir / "compliance" / "pipeline_manifest.json").write_text(
+            json.dumps(
+                {
+                    "forgelm_version": "0.9.0",
+                    "pipeline_run_id": "pl_x",
+                    "pipeline_config_hash": "sha256:abc",
+                    "started_at": "2026-06-15T12:00:00+00:00",
+                    "final_status": "completed",
+                    "stages": [
+                        {
+                            "name": "s0",
+                            "index": 0,
+                            "trainer_type": "sft",
+                            "status": "completed",
+                            "input_source": "root",
+                            "output_model": "./s0/out",
+                        },
+                        {
+                            "name": "s1",
+                            "index": 1,
+                            "trainer_type": "dpo",
+                            "status": "completed",
+                            "input_source": "chain",
+                            "input_model": "tampered/path",
+                            "output_model": "./s1/out",
+                        },
+                    ],
+                }
+            )
+        )
+
+        with pytest.raises(SystemExit) as tamper:
+            _run_verify_annex_iv_cmd(_build_args(path=str(run_dir), pipeline=True), output_format="json")
+        with pytest.raises(SystemExit) as typo:
+            _run_verify_annex_iv_cmd(
+                _build_args(path=str(tmp_path / "no-such-run"), pipeline=True), output_format="json"
+            )
+
+        assert tamper.value.code == EXIT_INTEGRITY_FAILURE
+        assert typo.value.code == EXIT_CONFIG_ERROR
+        assert tamper.value.code != typo.value.code
+
+    def test_verify_gguf(self, tmp_path: Path, monkeypatch) -> None:
+        _stub_metadata_parse(monkeypatch)
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR, EXIT_INTEGRITY_FAILURE
+        from forgelm.cli.subcommands._verify_gguf import _run_verify_gguf_cmd
+
+        model = tmp_path / "model.gguf"
+        _make_minimal_gguf(model)
+        (tmp_path / "model.gguf.sha256").write_text("0" * 64 + "  model.gguf\n")
+
+        with pytest.raises(SystemExit) as tamper:
+            _run_verify_gguf_cmd(_build_args(path=str(model)), output_format="json")
+        with pytest.raises(SystemExit) as typo:
+            _run_verify_gguf_cmd(_build_args(path=str(tmp_path / "typo.gguf")), output_format="json")
+
+        assert tamper.value.code == EXIT_INTEGRITY_FAILURE
+        assert typo.value.code == EXIT_CONFIG_ERROR
+        assert tamper.value.code != typo.value.code
+
+    def test_verify_integrity(self, tmp_path: Path) -> None:
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR, EXIT_INTEGRITY_FAILURE
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+
+        model_dir = tmp_path / "final_model"
+        _write_model_with_integrity(model_dir)
+        (model_dir / "model.safetensors").write_bytes(b"weights-TAMPERED")
+
+        with pytest.raises(SystemExit) as tamper:
+            _run_verify_integrity_cmd(_build_args(path=str(model_dir)), output_format="json")
+        with pytest.raises(SystemExit) as typo:
+            _run_verify_integrity_cmd(_build_args(path=str(tmp_path / "typo")), output_format="json")
+
+        assert tamper.value.code == EXIT_INTEGRITY_FAILURE
+        assert typo.value.code == EXIT_CONFIG_ERROR
+        assert tamper.value.code != typo.value.code
+
+    def test_verify_audit(self, tmp_path: Path, monkeypatch) -> None:
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR, EXIT_INTEGRITY_FAILURE
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+        from forgelm.compliance import AuditLogger
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        audit_logger = AuditLogger(str(tmp_path))
+        audit_logger.log_event("test.event.0")
+        audit_logger.log_event("test.event.1")
+        log_path = tmp_path / "audit_log.jsonl"
+
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+        entry = json.loads(lines[1])
+        entry["prev_hash"] = "0" * 64  # break the chain
+        lines[1] = json.dumps(entry)
+        log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        def _args(path):
+            return _build_args(
+                log_path=str(path),
+                hmac_secret_env="FORGELM_AUDIT_SECRET",
+                require_hmac=False,
+                output_format="json",
+            )
+
+        tamper_code = _run_verify_audit_cmd(_args(log_path))
+        typo_code = _run_verify_audit_cmd(_args(tmp_path / "typo.jsonl"))
+
+        assert tamper_code == EXIT_INTEGRITY_FAILURE
+        assert typo_code == EXIT_CONFIG_ERROR
+        assert tamper_code != typo_code
+
+
+class TestExitOneStaysOneForGenuineInputErrors:
+    """The other half of the split: exits that were 1 *for the right reason*
+    must not be swept up into 6 by an over-broad classifier."""
+
+    def test_annex_iv_missing_required_field_stays_config_error(self, tmp_path: Path) -> None:
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._verify_annex_iv import _run_verify_annex_iv_cmd
+
+        artifact = _full_annex_iv_artifact()
+        del artifact["risk_management"]
+        path = tmp_path / "annex_iv.json"
+        path.write_text(json.dumps(artifact))
+
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_annex_iv_cmd(_build_args(path=str(path)), output_format="json")
+        assert ei.value.code == EXIT_CONFIG_ERROR
+
+    def test_gguf_wrong_magic_stays_config_error(self, tmp_path: Path) -> None:
+        """A file that is not a GGUF is a wrong-path verdict, not a tamper
+        verdict — there is no artefact of ours to have been modified."""
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._verify_gguf import _run_verify_gguf_cmd
+
+        path = tmp_path / "model.gguf"
+        _make_minimal_gguf(path, magic=b"NOPE")
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_gguf_cmd(_build_args(path=str(path)), output_format="json")
+        assert ei.value.code == EXIT_CONFIG_ERROR
+
+    def test_gguf_malformed_sidecar_stays_config_error(self, tmp_path: Path, monkeypatch) -> None:
+        """A ``TODO`` placeholder sidecar means nothing was compared."""
+        _stub_metadata_parse(monkeypatch)
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._verify_gguf import _run_verify_gguf_cmd
+
+        path = tmp_path / "model.gguf"
+        _make_minimal_gguf(path)
+        (tmp_path / "model.gguf.sha256").write_text("TODO\n")
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_gguf_cmd(_build_args(path=str(path)), output_format="json")
+        assert ei.value.code == EXIT_CONFIG_ERROR
+
+    def test_gguf_corrupt_metadata_block_is_integrity_failure(self, tmp_path: Path, monkeypatch) -> None:
+        """Magic passed, so the file *is* a GGUF; an unparseable metadata
+        block is a corrupted/truncated artefact → 6."""
+        from forgelm import verify as _verify_mod
+        from forgelm.cli._exit_codes import EXIT_INTEGRITY_FAILURE
+        from forgelm.cli.subcommands._verify_gguf import _run_verify_gguf_cmd
+
+        monkeypatch.setattr(
+            _verify_mod,
+            "_maybe_parse_metadata",
+            lambda _p: {"parsed": False, "error": "struct.error: unpack requires 8 bytes", "tensor_count": None},
+        )
+        path = tmp_path / "model.gguf"
+        _make_minimal_gguf(path)
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_gguf_cmd(_build_args(path=str(path)), output_format="json")
+        assert ei.value.code == EXIT_INTEGRITY_FAILURE
+
+    @pytest.mark.parametrize(
+        "manifest",
+        [
+            {"artifacts": None},
+            {"artifacts": [{"file": 123, "sha256": "deadbeef"}]},
+            {"artifacts": [{"file": "../escape.txt", "sha256": "deadbeef"}]},
+        ],
+    )
+    def test_integrity_unusable_manifest_stays_config_error(self, tmp_path: Path, manifest: dict) -> None:
+        """A manifest the verifier cannot use (non-list container, non-string
+        entry, entry escaping the model dir) returns before any artifact is
+        hashed.  There is no artifact-level verdict, so reporting 6 would tell
+        CI the weights were tampered with when they were never examined."""
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        (model_dir / "model_integrity.json").write_text(json.dumps(manifest))
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_integrity_cmd(_build_args(path=str(model_dir)), output_format="json")
+        assert ei.value.code == EXIT_CONFIG_ERROR
+
+    def test_verify_audit_require_hmac_without_secret_stays_config_error(self, tmp_path: Path, monkeypatch) -> None:
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+        from forgelm.compliance import AuditLogger
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        AuditLogger(str(tmp_path)).log_event("e0")
+        args = _build_args(
+            log_path=str(tmp_path / "audit_log.jsonl"),
+            hmac_secret_env="FORGELM_AUDIT_SECRET",
+            require_hmac=True,
+            output_format="json",
+        )
+        assert _run_verify_audit_cmd(args) == EXIT_CONFIG_ERROR
+
+    def test_verify_audit_unreadable_log_maps_to_training_error(self, tmp_path: Path, monkeypatch) -> None:
+        """Permission denied on an existing log is a retryable infrastructure
+        problem (2), not a tampering signal (6) and not a typo (1)."""
+        from forgelm.cli._exit_codes import EXIT_TRAINING_ERROR
+        from forgelm.cli.subcommands import _verify_audit as _mod
+
+        log_path = tmp_path / "audit_log.jsonl"
+        log_path.write_text("{}\n", encoding="utf-8")
+
+        def _denied(*_args, **_kwargs):
+            raise PermissionError("denied")
+
+        # Shadow the builtin in the module's own namespace so the probe's
+        # ``open`` call raises deterministically on every platform / uid.
+        monkeypatch.setattr(_mod, "open", _denied, raising=False)
+
+        args = _build_args(
+            log_path=str(log_path),
+            hmac_secret_env="FORGELM_AUDIT_SECRET",
+            require_hmac=False,
+            output_format="json",
+        )
+        assert _mod._run_verify_audit_cmd(args) == EXIT_TRAINING_ERROR
+
+    def test_verify_audit_non_utf8_log_is_integrity_failure(self, tmp_path: Path, monkeypatch) -> None:
+        """Non-UTF-8 bytes inside an append-only Art. 12 record are corruption
+        of the log itself — the file opened fine, so this is 6, not 1."""
+        from forgelm.cli._exit_codes import EXIT_INTEGRITY_FAILURE
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        log_path = tmp_path / "audit_log.jsonl"
+        log_path.write_bytes(b'{"event": "a"}\n\xff\xfe not utf-8\n')
+
+        args = _build_args(
+            log_path=str(log_path),
+            hmac_secret_env="FORGELM_AUDIT_SECRET",
+            require_hmac=False,
+            output_format="json",
+        )
+        assert _run_verify_audit_cmd(args) == EXIT_INTEGRITY_FAILURE
+
+
+# ---------------------------------------------------------------------------
+# forgelm/verify.py extraction — the stable symbols must keep working from
+# ``forgelm`` directly, and must no longer live behind the CLI package.
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyModuleExtraction:
+    _SYMBOLS = (
+        "verify_annex_iv_artifact",
+        "VerifyAnnexIVResult",
+        "verify_gguf",
+        "VerifyGgufResult",
+        "verify_integrity",
+        "VerifyIntegrityResult",
+    )
+
+    @pytest.mark.parametrize("name", _SYMBOLS)
+    def test_symbol_importable_from_package_root(self, name: str) -> None:
+        import forgelm
+
+        assert hasattr(forgelm, name), f"forgelm.{name} must resolve via the lazy facade"
+        assert name in forgelm.__all__
+
+    @pytest.mark.parametrize("name", _SYMBOLS)
+    def test_facade_resolves_to_forgelm_verify(self, name: str) -> None:
+        """Identity, not just presence: the facade must hand back the object
+        defined in ``forgelm.verify``, so a stale lazy-import row pointing at
+        the old ``cli.subcommands`` module fails here."""
+        import forgelm
+        import forgelm.verify as _verify_mod
+
+        assert getattr(forgelm, name) is getattr(_verify_mod, name)
+
+    @pytest.mark.parametrize("name", _SYMBOLS)
+    def test_lazy_symbol_table_points_at_forgelm_verify(self, name: str) -> None:
+        import forgelm
+
+        module_path, attr = forgelm._LAZY_SYMBOLS[name]
+        assert module_path == "forgelm.verify"
+        assert attr == name
+
+    @pytest.mark.parametrize("name", _SYMBOLS)
+    def test_cli_subcommand_modules_still_re_export_the_same_objects(self, name: str) -> None:
+        """The CLI subcommands are thin wrappers now, but their historic
+        attribute surface (which ``forgelm.cli`` re-exports and existing tests
+        import) must still resolve — and to the *same* object."""
+        import forgelm.verify as _verify_mod
+        from forgelm import cli as _cli
+
+        assert getattr(_cli, name) is getattr(_verify_mod, name)
+
+    def test_verify_integrity_behaves_identically_through_the_facade(self, tmp_path: Path) -> None:
+        """Behavioural equivalence, not just import equivalence."""
+        import forgelm
+
+        model_dir = tmp_path / "final_model"
+        _write_model_with_integrity(model_dir)
+
+        ok = forgelm.verify_integrity(str(model_dir))
+        assert ok.valid is True
+        assert ok.verified_count == 2
+        assert isinstance(ok, forgelm.VerifyIntegrityResult)
+
+        (model_dir / "model.safetensors").write_bytes(b"weights-TAMPERED")
+        tampered = forgelm.verify_integrity(str(model_dir))
+        assert tampered.valid is False
+        assert "model.safetensors" in tampered.changed
+
+    def test_verify_gguf_behaves_identically_through_the_facade(self, tmp_path: Path, monkeypatch) -> None:
+        _stub_metadata_parse(monkeypatch)
+        import forgelm
+
+        path = tmp_path / "model.gguf"
+        _make_minimal_gguf(path)
+        result = forgelm.verify_gguf(str(path))
+        assert result.valid is True
+        assert result.checks["magic_ok"] is True
+        assert isinstance(result, forgelm.VerifyGgufResult)
+
+    def test_verify_annex_iv_behaves_identically_through_the_facade(self, tmp_path: Path) -> None:
+        import forgelm
+
+        path = tmp_path / "annex_iv.json"
+        path.write_text(json.dumps(_full_annex_iv_artifact()))
+        result = forgelm.verify_annex_iv_artifact(str(path))
+        assert result.valid is True
+        assert result.missing_fields == []
+        assert isinstance(result, forgelm.VerifyAnnexIVResult)
+
+    def test_verify_audit_log_deliberately_stayed_in_compliance(self) -> None:
+        """Documented decision, pinned so a later "tidy-up" cannot move it
+        without someone re-reading the rationale in ``forgelm/verify.py``'s
+        module docstring: the audit-log verifier must sit next to
+        ``AuditLogger``, whose on-disk canonicalisation it mirrors byte-for-byte.
+        """
+        import forgelm
+
+        assert forgelm._LAZY_SYMBOLS["verify_audit_log"] == ("forgelm.compliance", "verify_audit_log")
+        assert forgelm._LAZY_SYMBOLS["VerifyResult"] == ("forgelm.compliance", "VerifyResult")
+
+    def test_verify_module_stays_under_the_architecture_ceiling(self) -> None:
+        """architecture.md sets a ~1000 code-line sub-package-split trigger.
+        The extraction landed well under it; pin that so future growth in the
+        verification toolbelt is a deliberate decision rather than a drift."""
+        from pathlib import Path as _Path
+
+        source = _Path(forgelm_verify_path())
+        loc = sum(
+            1
+            for line in source.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        )
+        assert loc < 1000, f"forgelm/verify.py is {loc} code lines — split it or update architecture.md"
+
+
+def forgelm_verify_path() -> str:
+    import forgelm.verify as _verify_mod
+
+    return _verify_mod.__file__ or ""

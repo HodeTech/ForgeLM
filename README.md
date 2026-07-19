@@ -42,7 +42,7 @@ See the [Quick Start Guide](docs/guides/quickstart.md) for the full walkthrough.
 - **Config-driven.** Behaviour is set in validated YAML — reproducible across notebooks, terminals, and CI runs with no hidden env-var flags.
 - **Full alignment stack.** Every modern post-training method in one tool, one schema.
 - **Safety and compliance are first-class.** Not an afterthought, not a separate product.
-- **CI/CD-native.** Stable exit codes (`0/1/2/3/4/5`), JSON output, append-only audit log, deterministic dry-runs.
+- **CI/CD-native.** Stable exit codes (`0/1/2/3/4/5/6`), JSON output, append-only audit log, deterministic dry-runs.
 - **Bring-your-own-data.** PDF / DOCX / EPUB / Markdown → SFT-ready JSONL with a single command.
 - **Open source.** Apache-2.0, no telemetry, no required cloud service.
 

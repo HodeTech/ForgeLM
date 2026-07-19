@@ -148,3 +148,34 @@ def test_cli_does_not_eagerly_load_ingestion():
         timeout=30,
     )
     assert result.returncode == 0, f"forgelm.cli eagerly loaded forgelm.ingestion: stderr={result.stderr.decode()!r}"
+
+
+def test_stable_verify_symbols_resolve_without_importing_the_cli():
+    """``forgelm.verify_integrity`` and friends are **stable-tier** library
+    symbols, so resolving one must not drag the CLI layer into a library
+    consumer's import graph.
+
+    This is the concrete payoff of moving the three verifiers out of
+    ``forgelm/cli/subcommands/_verify_*.py`` into ``forgelm/verify.py``:
+    before the move, every one of these attribute accesses imported
+    ``forgelm.cli`` (and therefore argparse wiring plus ~20 sibling
+    subcommand modules) as a side effect.
+    """
+    code = (
+        "import forgelm; "
+        "forgelm.verify_integrity; forgelm.verify_gguf; forgelm.verify_annex_iv_artifact; "
+        "forgelm.VerifyIntegrityResult; forgelm.VerifyGgufResult; forgelm.VerifyAnnexIVResult; "
+        "import sys; "
+        "leaked = [m for m in sys.modules if m == 'forgelm.cli' or m.startswith('forgelm.cli.')]; "
+        "print(leaked); "
+        "sys.exit(0 if not leaked else 1)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, (
+        "resolving a stable verify-* symbol pulled the CLI package in: "
+        f"stdout={result.stdout.decode()!r} stderr={result.stderr.decode()!r}"
+    )

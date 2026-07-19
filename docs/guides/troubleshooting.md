@@ -393,6 +393,7 @@ docker run --gpus all --shm-size=16g ...
 | `3` | Evaluation failure | Model quality below threshold — adjust thresholds or improve data |
 | `4` | Awaiting approval | Human review required — run `forgelm approvals --show <run_id> --output-dir <dir>` to inspect the staging directory, then `forgelm approve <run_id> --output-dir <dir>` to promote or `forgelm reject <run_id> --output-dir <dir>` to discard. The staging path is `<output_dir>/final_model.staging.<run_id>/`. |
 | `5` | Wizard cancelled | The wizard was cancelled (Ctrl-C or explicit cancel) — no config written; re-run `--wizard` or use `forgelm quickstart <template>` for non-interactive use. |
+| `6` | Integrity failure | `verify-audit` / `verify-annex-iv` / `verify-gguf` / `verify-integrity` only — the artefact was read and its hash/chain/manifest check failed. Treat as a security event: page whoever owns the artefact, don't retry. A bad path or malformed input on the same subcommands still exits `1`. |
 
 ---
 

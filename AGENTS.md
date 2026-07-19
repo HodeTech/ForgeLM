@@ -151,8 +151,9 @@ Default workflow for a non-trivial change:
 6. **Verify before opening PR.** Run the self-review command:
 
    ```bash
-   ruff format . && ruff check . && pytest tests/ && \
-     forgelm --config config_template.yaml --dry-run && \
+   python3 tools/check_import_origin.py --strict && \
+     ruff format . && ruff check . && pytest tests/ && \
+     python3 -m forgelm --config config_template.yaml --dry-run && \
      python3 tools/check_bilingual_parity.py --strict && \
      python3 tools/check_anchor_resolution.py --strict && \
      python3 tools/check_cli_help_consistency.py --strict && \
@@ -170,7 +171,19 @@ Default workflow for a non-trivial change:
      python3 tools/update_site_version.py --check
    ```
 
-   All nineteen must pass (the usermanual-schema-drift guard —
+   **Do not "simplify" `python3 -m forgelm` back to `forgelm`.** A
+   console script's `sys.path[0]` is its own `bin/` directory, never the
+   cwd, so `forgelm …` imports whatever is installed in site-packages; a
+   stale non-editable install made that step validate a weeks-old
+   package while reporting success on an unrelated working tree. `-m`
+   puts the cwd first on `sys.path`, so it runs the checkout. The
+   import-origin guard leads the chain for the same reason and must stay
+   first: it asserts the premise every later step depends on — that the
+   `forgelm` being imported is the one you just edited — and `-m` alone
+   does not cover the `tools/check_*.py` guards that import `forgelm`
+   with `sys.path[0] == tools/`.
+
+   All twenty must pass (the usermanual-schema-drift guard —
    `check_usermanual_schema_drift.py --strict` — validates that every
    fenced YAML key under `docs/usermanuals/` resolves against the real
    `ForgeConfig` schema, catching fabricated-field examples that would

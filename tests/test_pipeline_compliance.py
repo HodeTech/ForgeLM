@@ -544,11 +544,13 @@ class TestVerifyPipelineManifestAtPath:
 
 
 class TestVerifyAnnexIvPipelineModeExitCodes:
-    """Phase 14 review-response regression: ``forgelm verify-annex-iv
-    --pipeline <dir>`` must map I/O failures to ``EXIT_TRAINING_ERROR``
-    (2) and operator-input errors (``not found``, structural / chain-
-    integrity violations) to ``EXIT_CONFIG_ERROR`` (1).  Mirrors the
-    single-artefact path's exit-code policy."""
+    """Phase 14 review-response regression, extended with the
+    ``EXIT_INTEGRITY_FAILURE`` split: ``forgelm verify-annex-iv --pipeline
+    <dir>`` must map I/O failures to ``EXIT_TRAINING_ERROR`` (2),
+    operator-input errors (``not found``, ``invalid JSON``) to
+    ``EXIT_CONFIG_ERROR`` (1), and structural / chain-integrity violations
+    on a manifest that *did* parse to ``EXIT_INTEGRITY_FAILURE`` (6).
+    Mirrors the single-artefact path's exit-code policy."""
 
     def _run(self, tmp_path, args_overrides: dict) -> int:
         """Invoke ``_run_pipeline_mode`` and capture the ``SystemExit`` code.
@@ -573,11 +575,15 @@ class TestVerifyAnnexIvPipelineModeExitCodes:
 
     def test_missing_manifest_exits_config_error(self, tmp_path, capsys):
         """``not found`` is operator-actionable input → exit 1."""
+        from forgelm.compliance import PIPELINE_MANIFEST_INPUT_ERROR_PREFIX
+
         code = self._run(tmp_path, {})
         assert code == 1  # EXIT_CONFIG_ERROR
         captured = capsys.readouterr().out
         assert "FAIL: pipeline manifest" in captured
         assert "not found" in captured
+        # The routing token is internal — it must never reach the operator.
+        assert PIPELINE_MANIFEST_INPUT_ERROR_PREFIX not in captured
 
     def test_invalid_json_manifest_exits_config_error(self, tmp_path, capsys):
         """Reachable file that fails to parse as JSON → exit 1
@@ -590,15 +596,25 @@ class TestVerifyAnnexIvPipelineModeExitCodes:
         production-time I/O failure."""
         manifest_dir = tmp_path / "compliance"
         manifest_dir.mkdir()
+        from forgelm.compliance import PIPELINE_MANIFEST_INPUT_ERROR_PREFIX
+
         (manifest_dir / "pipeline_manifest.json").write_text("{not valid json")
         code = self._run(tmp_path, {})
         assert code == 1  # EXIT_CONFIG_ERROR
         captured = capsys.readouterr().out
         assert "invalid JSON" in captured
+        assert PIPELINE_MANIFEST_INPUT_ERROR_PREFIX not in captured
 
-    def test_chain_integrity_violation_exits_config_error(self, tmp_path, capsys):
-        """Structural / chain violations on a readable manifest →
-        exit 1 (operator-fixable config error)."""
+    def test_chain_integrity_violation_exits_integrity_failure(self, tmp_path, capsys):
+        """Structural / chain violations on a manifest that parsed →
+        exit 6 (``EXIT_INTEGRITY_FAILURE``).
+
+        This test asserted exit 1 before ``EXIT_INTEGRITY_FAILURE`` existed,
+        which encoded the defect: a pipeline manifest whose stage chain was
+        rewritten (``input_model`` no longer matching the prior stage's
+        ``output_model`` — literally the fixture's ``tampered/different/path``)
+        exited the same 1 as a mistyped directory, so CI could not tell a
+        rewritten compliance record from an operator typo."""
         import json as _json
 
         manifest_dir = tmp_path / "compliance"
@@ -631,7 +647,7 @@ class TestVerifyAnnexIvPipelineModeExitCodes:
         }
         (manifest_dir / "pipeline_manifest.json").write_text(_json.dumps(bad_chain_manifest))
         code = self._run(tmp_path, {})
-        assert code == 1  # EXIT_CONFIG_ERROR
+        assert code == 6  # EXIT_INTEGRITY_FAILURE
         captured = capsys.readouterr().out
         assert "chain_integrity_violation" in captured
 
@@ -654,14 +670,18 @@ class TestVerifyAnnexIvPipelineModeExitCodes:
     def test_violation_containing_word_unreadable_does_not_map_to_exit_2(self, tmp_path, monkeypatch, capsys):
         """F-P4-OPUS-25 guard: a structural violation whose free text merely
         CONTAINS the substring ``unreadable`` (without the routing prefix) must
-        stay EXIT_CONFIG_ERROR (1) — the exit-code contract no longer couples to
-        a stray word."""
+        NOT be routed as an I/O failure — the exit-code contract couples to the
+        stable prefix, never to a stray word.
+
+        Now that the integrity split exists, an untagged structural violation
+        lands on ``EXIT_INTEGRITY_FAILURE`` (6); the point of the guard is
+        unchanged — it must never be 2."""
         monkeypatch.setattr(
             "forgelm.compliance.verify_pipeline_manifest_at_path",
             lambda _p: ["Stage 'unreadable-by-design': input_model does not chain from prior output"],
         )
         code = self._run(tmp_path, {})
-        assert code == 1  # EXIT_CONFIG_ERROR, NOT 2
+        assert code == 6  # EXIT_INTEGRITY_FAILURE, NOT 2
 
 
 class TestVerifyOnPartialFilterRun:

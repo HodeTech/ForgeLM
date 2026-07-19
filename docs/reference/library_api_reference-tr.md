@@ -86,6 +86,8 @@ Best-effort. Şekil, major artış olmadan minor sürümde değişebilir. Çağr
 
 ### Doğrulama toolbelt'i (Faz 36)
 
+`forgelm/verify.py` içinde uygulanır (bunları başlangıçta barındıran `forgelm/cli/subcommands/_verify_*` modüllerinden taşındı — CLI subcommand'ları artık bu modül etrafında ince wrapper'lardır). Aşağıdaki import path'leri her iki durumda da değişmez; `forgelm.verify_annex_iv_artifact` taşınmadan önce ve sonra aynı sembolü çözer, dolayısıyla bu bir API değişikliği değil, dahili bir refactor'dü. `verify-*` CLI subcommand'larının kullandığı aynı 1'e-karşı-6 exit-kod sınıflandırmasını isteyen kütüphane çağıranları, `is_annex_iv_integrity_failure` / `is_gguf_integrity_failure` / `is_model_integrity_failure` eşlik eden predicate'lerini doğrudan `forgelm.verify`'den import edebilir — bunlar internal'dır (`forgelm.__all__` içinde değil) ama CLI'nin kendisinin [`error-handling.md`](../standards/error-handling.md#exit-codes)'de belgelenen ayrım için onlara bağımlı olacak kadar pratikte kararlıdır.
+
 | Sembol | Katman | İmza | Açıklama |
 |---|---|---|---|
 | `forgelm.verify_annex_iv_artifact` | Stable | `verify_annex_iv_artifact(path: str) -> VerifyAnnexIVResult` | Bir Annex IV technical-documentation bundle'ını (manifest + model card + audit log + governance report) doğrular. |

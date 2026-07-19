@@ -10,7 +10,7 @@ description: Validate the SHA-256 hash chain (and optional HMAC tags) of an audi
 ## When to use it
 
 - **Before submitting an audit bundle to a regulator or auditor.** A clean `verify-audit` exit is the minimum proof-of-integrity you should send.
-- **In CI/CD release gates.** Run after every training pipeline; fail the release on exit `1`.
+- **In CI/CD release gates.** Run after every training pipeline; fail the release on exit `6` (chain/HMAC tamper — the log was read and it doesn't verify) or `1` (option/usage error — the verifier never ran).
 - **After moving the log between machines.** Any byte-level corruption in transit shows up as a chain break.
 - **As part of a periodic compliance sweep.** A nightly cron over historical logs surfaces silent tampering early.
 
@@ -34,7 +34,7 @@ sequenceDiagram
         end
     end
     Verify->>Manifest: load + cross-check first entry hash
-    Verify-->>CI: exit 0 (clean) / 1 (operator-actionable failure)
+    Verify-->>CI: exit 0 (clean) / 1 (option error, never ran) / 2 (I/O failure) / 6 (chain or HMAC integrity failure)
 ```
 
 ## Quick start
@@ -66,8 +66,8 @@ $ FORGELM_AUDIT_SECRET="$(cat /run/secrets/audit-secret)" \
 
 Strict mode flips two safety nets:
 
-- If the configured env var is unset, exit `1` (operator-actionable pre-flight error). Catches the operator who forgot to load the secret before running the pipeline.
-- If any line lacks an `_hmac` field, exit `1` (chain failure). Catches mixed-mode logs where HMAC was disabled mid-run.
+- If the configured env var is unset, exit `1` (operator-actionable pre-flight error — the verifier never ran). Catches the operator who forgot to load the secret before running the pipeline.
+- If any line lacks an `_hmac` field, exit `6` (the log was read and failed strict-mode chain verification). Catches mixed-mode logs where HMAC was disabled mid-run.
 
 ### Naming a non-default secret variable
 
@@ -95,14 +95,16 @@ A bare reason without a line number means the failure happened before the chain 
 FAIL: manifest present but unreadable at 'checkpoints/run/audit_log.jsonl.manifest.json': …
 ```
 
-Either way, exit code is `1`. Investigate before treating the log as evidence.
+Either way, the log file itself was found and read — so this is an integrity verdict, and the exit code is `6`, not `1`. Investigate before treating the log as evidence. `1` is reserved for the case where the verifier never got as far as reading the log at all (missing path, `--require-hmac` without a secret).
 
 ### Exit-code summary
 
 | Code | Meaning |
 |---|---|
 | `0` | Chain (and HMAC tags, when verified) intact end-to-end. |
-| `1` | Operator-actionable failure: tamper / corruption detected, option error (`--require-hmac` without secret), or file not found / unreadable. |
+| `1` | Option/usage error, or the log could not be located: `--require-hmac` without a secret, or the log path is missing / a directory. The verifier never ran, so there is no integrity verdict. |
+| `2` | Genuine runtime I/O failure on a reachable log (permission denied, mid-read error). Retryable. |
+| `6` | Tamper / corruption detected: chain break, HMAC mismatch, genesis-manifest mismatch, undecodable line, or non-UTF-8 bytes — the log was read and it doesn't verify. |
 
 ## Common pitfalls
 
@@ -119,7 +121,7 @@ Either way, exit code is `1`. Investigate before treating the log as evidence.
 :::
 
 :::tip
-**Pin the verifier in CI before any submission step.** Wire `forgelm verify-audit --require-hmac` as a hard gate after every training run. Exit `1` (tamper, or the pre-flight case where the operator secret is missing) should fail the release.
+**Pin the verifier in CI before any submission step.** Wire `forgelm verify-audit --require-hmac` as a hard gate after every training run. Exit `6` (tamper) or `1` (the pre-flight case where the operator secret is missing) should both fail the release.
 :::
 
 ## See also

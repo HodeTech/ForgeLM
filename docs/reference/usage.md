@@ -267,6 +267,7 @@ forgelm --config my_config.yaml --compliance-export ./audit/
 | `3` | Evaluation failure | Model below threshold — adjust data or thresholds |
 | `4` | Awaiting approval | Human review required (`require_human_approval: true`) |
 | `5` | Wizard cancelled | `forgelm --wizard` exited without producing a YAML (Ctrl-C, non-tty refusal, decline-to-save) — distinct from `0` so CI can tell "wizard finished" from "wizard never wrote anything" |
+| `6` | Integrity failure | `verify-audit` / `verify-annex-iv` / `verify-gguf` / `verify-integrity` only: the target artefact was read successfully and its hash/chain/manifest check failed — a security event, not an operator typo. A caller/input error on the same subcommands (bad path, malformed input) still exits `1` |
 
 ## Training Output
 

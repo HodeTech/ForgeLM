@@ -104,20 +104,26 @@ $ export HF_DATASETS_OFFLINE=1
 $ forgelm doctor --offline
 forgelm doctor - environment check
 
-  [+ pass] python.version          Python 3.11.4 (CPython).
-  [+ pass] torch.cuda              torch 2.4.0 with CUDA 12.4.
-  [+ pass] gpu.inventory           1 GPU(s) - GPU0: NVIDIA A100 (80.0 GiB).
-  [+ pass] extras.qlora            Installed (module bitsandbytes, ...).
-  [+ pass] extras.eval             Installed (module lm_eval, ...).
-  [+ pass] hf_hub.offline_cache    HF cache at .../airgap-bundle/hub: 27.7 GiB across 142 file(s). HF_HUB_OFFLINE=1.
-  [+ pass] disk.workspace          Workspace /opt/airgap - 412.0 GiB free of 500.0 GiB.
-  [+ pass] operator.identity       FORGELM_OPERATOR set to 'airgap-prod'; audit events will carry this identity.
+  [+ pass] forgelm.install          ForgeLM 0.9.0 running from /opt/airgap-venv/lib/python3.11/site-packages/forgelm (inside site-packages).
+  [+ pass] python.version           Python 3.11.4 (CPython).
+  [+ pass] torch.cuda               torch 2.4.0 with CUDA 12.4.
+  [+ pass] numpy.torch_abi          torch 2.4.0 + numpy 1.26.4 are ABI-compatible.
+  [+ pass] gpu.inventory            1 GPU(s) — GPU0: NVIDIA A100 (80.0 GiB).
+  [+ pass] extras.qlora             Discoverable, not import-tested (module bitsandbytes, purpose: 4-bit / 8-bit QLoRA training).
+  [+ pass] extras.eval              Discoverable, not import-tested (module lm_eval, purpose: lm-evaluation-harness benchmark scoring).
+  [+ pass] pypdf_normalise.turkish  Turkish glyph profile loaded: 5 single-char + 1 multi-char substitutions. Active profile: 'none'.
+  [+ pass] hf_hub.offline_cache     HF cache at .../airgap-bundle/hub: 27.7 GiB across 142 file(s). HF_HUB_OFFLINE=1.
+  [+ pass] disk.workspace           Workspace /opt/airgap — 412.0 GiB free of 500.0 GiB.
+  [+ pass] operator.identity        FORGELM_OPERATOR set to 'airgap-prod'; audit events will carry this identity.
 
-Summary: 8 pass, 0 warn, 0 fail.
+Summary: 11 pass, 0 warn, 0 fail.
 ```
+
+> Yukarıda bazı `extras.*` satırları kısalık için atlandı; `pyproject.toml`'daki `[project.optional-dependencies]` içindeki her extra kendi satırını alır (bu yazı itibarıyla dokuz tane).
 
 Anahtar kontroller:
 
+- `forgelm.install` her zaman ilk sıradadır: hangi ForgeLM binary'sinin gerçekten çalıştığını kaydeder (çözülen konum, sürüm, `site-packages` içinde/dışında) — böylece air-gap host'undan gelen bir bug raporu hangi build'in onu ürettiği konusunda belirsiz olmaz.
 - `hf_hub.offline_cache` probe'u, `--offline` geçirildiğinde VEYA `HF_HUB_OFFLINE`/`TRANSFORMERS_OFFLINE`/`HF_DATASETS_OFFLINE` ortamda set edildiğinde `hf_hub.reachable`'in yerine geçer. ForgeLM üçüne de saygı duyar.
 - Cache taraması sınırlandırılmıştır: derinlik 4, dosya sayısı 5000. Kesilmiş tarama, `extras` içinde `walk_truncated=true` raporlar; böylece kısmi-tarama sonuçları açıkça belirtilir (sessiz değil).
 - Okunamaz cache root (chmod kırık, mount kopuk) `warn` yerine `fail` raporlar; böylece yanlış yapılandırılmış target host eğitim başlamadan yakalanır.

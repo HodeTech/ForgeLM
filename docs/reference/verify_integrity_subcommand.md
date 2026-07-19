@@ -3,7 +3,7 @@
 > **Audience:** Compliance operators and CI gates verifying that a trained model directory still matches the SHA-256 manifest recorded at training time (EU AI Act Article 15).
 > **Mirror:** [verify_integrity_subcommand-tr.md](verify_integrity_subcommand-tr.md)
 
-The `verify-integrity` subcommand is the consuming counterpart to the Article 15 `model_integrity.json` manifest. The compliance export writes a SHA-256 hash of every file in the model directory; `verify-integrity` reads that manifest back, recomputes each file's SHA-256, and reports any artifact that was **changed**, **removed**, or **added** since the manifest was generated. The CLI delegates to the library entry point `forgelm.cli.subcommands._verify_integrity.verify_integrity` and returns a structured `VerifyIntegrityResult`.
+The `verify-integrity` subcommand is the consuming counterpart to the Article 15 `model_integrity.json` manifest. The compliance export writes a SHA-256 hash of every file in the model directory; `verify-integrity` reads that manifest back, recomputes each file's SHA-256, and reports any artifact that was **changed**, **removed**, or **added** since the manifest was generated. The CLI delegates to the library entry point `forgelm.verify.verify_integrity` (also exposed at the package root as `forgelm.verify_integrity`) and returns a structured `VerifyIntegrityResult`.
 
 ## Synopsis
 
@@ -29,18 +29,20 @@ forgelm verify-integrity [--output-format {text,json}]
 | Code | Meaning |
 |---|---|
 | `0` | Every recorded artifact is present and its SHA-256 is unchanged, and no unexpected extra files exist in the directory. |
-| `1` | Caller / input error (path missing, `model_integrity.json` not found or not a regular file, malformed JSON) OR an integrity mismatch: at least one file was changed, removed, or added since the manifest was generated. The model does not match its manifest. |
+| `1` | Caller / input error: path missing, `model_integrity.json` not found or not a regular file, malformed JSON, not valid UTF-8, a non-list `artifacts` container, OR a manifest entry whose `file` value is non-string or whose path escapes the model directory. Each of these returns before any artifact is hashed — the manifest could not be used, so nothing was ever compared. |
 | `2` | Genuine runtime I/O failure on a reachable path — read errors, permission denied mid-walk, etc. The path was accessible but became unreadable during verification. |
+| `6` | Integrity failure: the manifest parsed and the walk ran, but at least one artifact came back changed, removed, or added. The deployed weights are not the weights that were signed off. |
 
-The codes are emitted by `forgelm/cli/subcommands/_verify_integrity.py::_run_verify_integrity_cmd`. Public-contract semantics are pinned in `docs/standards/error-handling.md`.
+The codes are emitted by `forgelm/cli/subcommands/_verify_integrity.py::_run_verify_integrity_cmd`, which routes on the structural (never string-matched) predicate `forgelm.verify.is_model_integrity_failure`. **Judgement call:** a manifest entry whose path escapes the model directory stays on `1`, not `6`, even though an escaping entry is the shape of an attack — the verifier refuses to hash an out-of-tree path *before* reading anything, so nothing was compared; the report is "I refused to hash this", not "your weights changed". Public-contract semantics are pinned in `docs/standards/error-handling.md`.
 
 ## What is checked
 
 | Check | Failure mode |
 |---|---|
-| **Recorded artifact present** | A file listed in `model_integrity.json` that no longer exists on disk → `removed`, exit `1`. |
-| **Recorded artifact unchanged** | A file whose recomputed SHA-256 differs from the manifest → `changed`, exit `1`. |
-| **No extra files** | A file on disk that is not in the manifest → `added`, exit `1`. The manifest itself (`model_integrity.json`) is excluded from this walk because it is written after the model artifacts. |
+| **Manifest is usable** | `artifacts` is not a list, an entry's `file` is not a string, or an entry's path escapes the model directory → exit `1`. Nothing below this row runs when this fails. |
+| **Recorded artifact present** | A file listed in `model_integrity.json` that no longer exists on disk → `removed`, exit `6`. |
+| **Recorded artifact unchanged** | A file whose recomputed SHA-256 differs from the manifest → `changed`, exit `6`. |
+| **No extra files** | A file on disk that is not in the manifest → `added`, exit `6`. The manifest itself (`model_integrity.json`) is excluded from this walk because it is written after the model artifacts. |
 
 ## Audit events emitted
 
@@ -81,7 +83,7 @@ FAIL: checkpoints/run/final_model
   Model artifacts do not match model_integrity.json: 1 changed.
     changed: model.safetensors
 $ echo $?
-1
+6
 ```
 
 ### Failure: missing manifest
@@ -98,4 +100,4 @@ $ echo $?
 - [`audit_event_catalog.md`](audit_event_catalog.md) — canonical event vocabulary.
 - [`verify_gguf_subcommand.md`](verify_gguf_subcommand.md) — companion verifier for exported GGUF files.
 - [`verify_annex_iv_subcommand.md`](verify_annex_iv_subcommand.md) — companion verifier for the Annex IV technical-documentation artifact.
-- `forgelm.cli.subcommands._verify_integrity.verify_integrity` — the library entry point integrators call directly without going through the CLI.
+- `forgelm.verify.verify_integrity` (also `forgelm.verify_integrity`) — the library entry point integrators call directly without going through the CLI.

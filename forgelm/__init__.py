@@ -183,9 +183,12 @@ _STABILITY_TIERS: _MappingProxyType[str, str] = _MappingProxyType(
 # duplicate-literal check stays green.
 _M_DATA_AUDIT = "forgelm.data_audit"
 _M_COMPLIANCE = "forgelm.compliance"
-_M_VERIFY_ANNEX_IV = "forgelm.cli.subcommands._verify_annex_iv"
-_M_VERIFY_GGUF = "forgelm.cli.subcommands._verify_gguf"
-_M_VERIFY_INTEGRITY = "forgelm.cli.subcommands._verify_integrity"
+# The three artefact verifiers moved out of ``forgelm.cli.subcommands.
+# _verify_*`` and into a single library module: resolving a *stable*
+# public symbol must not drag the CLI layer into a library consumer's
+# import graph, and ``architecture.md`` §5 keeps CLI modules to argument
+# parsing + dispatch.  The CLI subcommands now import from here.
+_M_VERIFY = "forgelm.verify"
 _M_UTILS = "forgelm.utils"
 _M_BENCHMARK = "forgelm.benchmark"
 
@@ -215,12 +218,12 @@ _LAZY_SYMBOLS: _MappingProxyType[str, tuple[str, str]] = _MappingProxyType(
         "AuditLogger": (_M_COMPLIANCE, "AuditLogger"),
         "verify_audit_log": (_M_COMPLIANCE, "verify_audit_log"),
         "VerifyResult": (_M_COMPLIANCE, "VerifyResult"),
-        "verify_annex_iv_artifact": (_M_VERIFY_ANNEX_IV, "verify_annex_iv_artifact"),
-        "VerifyAnnexIVResult": (_M_VERIFY_ANNEX_IV, "VerifyAnnexIVResult"),
-        "verify_gguf": (_M_VERIFY_GGUF, "verify_gguf"),
-        "VerifyGgufResult": (_M_VERIFY_GGUF, "VerifyGgufResult"),
-        "verify_integrity": (_M_VERIFY_INTEGRITY, "verify_integrity"),
-        "VerifyIntegrityResult": (_M_VERIFY_INTEGRITY, "VerifyIntegrityResult"),
+        "verify_annex_iv_artifact": (_M_VERIFY, "verify_annex_iv_artifact"),
+        "VerifyAnnexIVResult": (_M_VERIFY, "VerifyAnnexIVResult"),
+        "verify_gguf": (_M_VERIFY, "verify_gguf"),
+        "VerifyGgufResult": (_M_VERIFY, "VerifyGgufResult"),
+        "verify_integrity": (_M_VERIFY, "verify_integrity"),
+        "VerifyIntegrityResult": (_M_VERIFY, "VerifyIntegrityResult"),
         "WebhookNotifier": ("forgelm.webhook", "WebhookNotifier"),
         "setup_authentication": (_M_UTILS, "setup_authentication"),
         "manage_checkpoints": (_M_UTILS, "manage_checkpoints"),
@@ -240,15 +243,6 @@ _LAZY_SYMBOLS: _MappingProxyType[str, tuple[str, str]] = _MappingProxyType(
 # runtime via ``__getattr__``.
 if _TYPE_CHECKING:  # pragma: no cover — type-only imports
     from .benchmark import BenchmarkResult, run_benchmark  # noqa: F401
-    from .cli.subcommands._verify_annex_iv import (  # noqa: F401
-        VerifyAnnexIVResult,
-        verify_annex_iv_artifact,
-    )
-    from .cli.subcommands._verify_gguf import VerifyGgufResult, verify_gguf  # noqa: F401
-    from .cli.subcommands._verify_integrity import (  # noqa: F401
-        VerifyIntegrityResult,
-        verify_integrity,
-    )
     from .compliance import AuditLogger, VerifyResult, verify_audit_log  # noqa: F401
     from .data import prepare_dataset  # noqa: F401
     from .data_audit import (  # noqa: F401
@@ -266,6 +260,14 @@ if _TYPE_CHECKING:  # pragma: no cover — type-only imports
     from .synthetic import SyntheticDataGenerator  # noqa: F401
     from .trainer import ForgeTrainer  # noqa: F401
     from .utils import manage_checkpoints, setup_authentication  # noqa: F401
+    from .verify import (  # noqa: F401
+        VerifyAnnexIVResult,
+        VerifyGgufResult,
+        VerifyIntegrityResult,
+        verify_annex_iv_artifact,
+        verify_gguf,
+        verify_integrity,
+    )
     from .webhook import WebhookNotifier  # noqa: F401
 
 

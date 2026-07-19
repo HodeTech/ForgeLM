@@ -55,6 +55,7 @@ from ._exit_codes import (
     EXIT_AWAITING_APPROVAL,
     EXIT_CONFIG_ERROR,
     EXIT_EVAL_FAILURE,
+    EXIT_INTEGRITY_FAILURE,
     EXIT_SUCCESS,
     EXIT_TRAINING_ERROR,
     EXIT_WIZARD_CANCELLED,
@@ -170,6 +171,7 @@ from .subcommands._deploy import _run_deploy_cmd  # noqa: F401 — re-export for
 # Doctor subcommand (Phase 34 environment diagnostics).
 from .subcommands._doctor import (
     _check_disk_space,  # noqa: F401 — re-export for tests
+    _check_forgelm_install,  # noqa: F401 — re-export for tests
     _check_gpu_inventory,  # noqa: F401 — re-export for tests
     _check_hf_cache_offline,  # noqa: F401 — re-export for tests
     _check_hf_hub_reachable,  # noqa: F401 — re-export for tests
@@ -261,6 +263,7 @@ __all__ = [
     "EXIT_EVAL_FAILURE",
     "EXIT_AWAITING_APPROVAL",
     "EXIT_WIZARD_CANCELLED",
+    "EXIT_INTEGRITY_FAILURE",
     # Public entry points
     "parse_args",
     "main",
