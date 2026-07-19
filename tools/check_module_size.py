@@ -10,32 +10,64 @@ many concerns and should be split into a sub-package
 
 This guard catches **future drift** without forcing an immediate
 refactor of the modules that already sit over the ceiling, recorded
-in :data:`_GRANDFATHERED_OVER_CEILING`.
+in :data:`_DEFERRED_SPLITS`.
 
-Grandfather policy
-~~~~~~~~~~~~~~~~~~
+Deferral policy — a budget, not a due date
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The initial seven entries (Wave 2-9, PR #29 HEAD audit) are tracked
-for a v0.6.x sub-package split (see
-``docs/roadmap/risks-and-decisions.md``).
+Until 2026-07-20 every deferred module carried the label *"defer to
+v0.6.x split"*.  That label was written honestly at v0.5.5 and was
+still being printed at v0.9.1 — three minor releases after the named
+cycle closed, with no module having been split and every one of them
+larger than when it was grandfathered.  It is the third instance of
+one rot pattern in this cycle (see ``docs/roadmap/risks-and-decisions.md``,
+2026-07-20 entry): **a deferral recorded as a version literal makes a
+prediction, and a prediction nobody re-reads decays into a false
+statement.**
 
-New entries added after PR #29 are admitted **only** when the
-sub-package split is non-trivial enough to materially risk
-behavioural regression at the release-prep stage — i.e. the kind of
-split that needs its own PR / Wave with isolated tests rather than
-being bundled into a feature PR.  Every new entry MUST carry:
+The replacement records something that cannot go stale, because it
+asserts nothing about the future: each entry pins the module's
+**measured LOC at the moment it was deferred** as a budget.  The
+guard then enforces a *ratchet* — a deferred module may stay over
+the ceiling, but it may not **grow**.  Splitting is still the goal;
+holding the line is the enforceable part.
 
-* an inline comment naming the **phase** + **release cycle** in
-  which the split lands;
-* a follow-up tracking artefact (roadmap entry, issue, or
-  ``risks-and-decisions.md`` row) so the deferred work can't get
-  lost.
+Consequently:
 
-The current addition beyond the original seven is
-``forgelm/cli/_pipeline.py`` (Phase 14, v0.7.0; split tracked for
-v0.7.x alongside the Phase 15 audit-package split pattern).  See
-that file's inline comment in :data:`_GRANDFATHERED_OVER_CEILING`
-below for the tracking pointer.
+* There is no version literal in this file to retarget, and no
+  "planned for vX.Y" comment that a future reader has to
+  cross-check against the shipped version.
+* A deferred module that grows past its budget FAILS the guard in
+  every mode (see "Thresholds" below).  Previously it could drift
+  from 1038 to 2000 LOC emitting nothing but a WARN.
+* Every entry carries a prose ``reason`` naming the concerns that
+  the split would separate, so the backlog is actionable by
+  someone who did not write it.
+
+The ordered backlog, the honest assessment of *when* (or whether)
+each split lands, and the cost estimates live in
+``docs/roadmap/risks-and-decisions.md`` — deliberately in the
+roadmap rather than here, so the record survives a rewrite of this
+tool.  This module is the enforcement; that section is the plan.
+
+Admitting a NEW entry
+~~~~~~~~~~~~~~~~~~~~~
+Only when the split is non-trivial enough to materially risk
+behavioural regression if bundled into a feature PR.  Every new
+entry MUST carry a ``reason`` and a ``risks-and-decisions.md`` row.
+
+Raising a budget (the escape hatch)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Sometimes a deferred module legitimately must grow before it can be
+split — a security fix in ``compliance.py`` should not be blocked on
+a day-long refactor.  The escape hatch is therefore deliberately
+**explicit rather than implicit**: raise the ``budget`` literal in
+this file, in the same PR, with the reason appended to the entry's
+``budget_history``.  That makes every grant of extra headroom a
+reviewed line in a diff with a stated justification, instead of the
+silent 1038 → 2147 drift that the old WARN-only policy permitted.
+Lowering a budget after a trim needs no ceremony — the guard
+suggests it.
 
 LOC metric
 ----------
@@ -59,18 +91,33 @@ Thresholds
 * **Warn at ``> 1000``** — non-fatal in default mode.  The guard
   prints a one-line warning per offender; CI may surface this as a
   soft signal.
-* **Fail at ``> 1500``** — fatal (exit 1) for non-grandfathered
-  modules.  A 50% over-ceiling module is an architectural emergency.
+* **Fail at ``> 1500``** — fatal (exit 1) for non-deferred modules.
+  A 50% over-ceiling module is an architectural emergency.
 * ``--strict`` mode promotes the warn threshold to a fatal one for
-  non-grandfathered modules.  Grandfathered modules continue to emit
-  WARN (with the "v0.6.x defer" hint) regardless of mode.
+  non-deferred modules.
+* **Deferred modules: fatal on growth past their recorded budget**,
+  in every mode.  Staying over the ceiling is the granted
+  concession; growing is not.  Below budget they emit a WARN
+  carrying the split plan, so the debt stays visible.
+
+Stale entries
+-------------
+An entry whose module has fallen back under the ceiling (with a
+hysteresis margin, so a module oscillating around 1000 LOC does not
+flap the build) is reported as stale and is fatal under ``--strict``:
+the deferral has been paid off and the entry should be deleted, at
+which point the module is held to the normal ceiling like any other.
+An entry pointing at a path that no longer exists is fatal in every
+mode — that is the signal a split landed (or a file moved) without
+this list being updated.
 
 Exit codes (per the ``tools/`` contract — NOT the public 0/1/2/3/4
 surface that ``forgelm/`` honours):
 
-* ``0`` — no NEW drift; every over-threshold module is grandfathered.
-* ``1`` — at least one NEW over-threshold module (or ``--strict``
-  applied to a NEW over-warn module), or invalid arguments.
+* ``0`` — no NEW drift, and no deferred module over its budget.
+* ``1`` — at least one NEW over-threshold module, a deferred module
+  that grew past its budget, a dangling entry, a stale entry under
+  ``--strict``, or invalid arguments.
 
 Usage::
 
@@ -90,44 +137,122 @@ from typing import Optional, Sequence
 _WARN_THRESHOLD = 1000
 _FAIL_THRESHOLD = 1500
 
-# Modules that already exceeded the architecture-doc ceiling at PR #29
-# HEAD (v0.5.5-prerelease cleanup).  Splits are deferred to v0.6.x —
-# the guard's job is to prevent NEW drift, not force their refactor
-# today.  When a grandfathered module is split (or trimmed below
-# threshold), remove its entry here in the same PR that lands the
-# split.
+# Hysteresis margin for stale-entry detection.  A deferred module is
+# only called "paid off" once it is 10% below the ceiling, so a module
+# hovering at 995-1005 LOC does not alternate between "over ceiling"
+# and "stale entry" on consecutive commits.
+_STALE_MARGIN = 0.10
+_STALE_THRESHOLD = int(_WARN_THRESHOLD * (1 - _STALE_MARGIN))  # 900
+
+
+@dataclass(frozen=True)
+class _DeferredSplit:
+    """One module allowed to stay over the ceiling, with a growth budget.
+
+    ``budget`` is the module's measured LOC at the moment of deferral
+    (or at the last explicitly-reviewed raise).  Exceeding it is fatal;
+    see the module docstring, "Raising a budget (the escape hatch)".
+
+    ``reason`` names the concerns a split would separate — it is what
+    makes this list an actionable backlog rather than an exemption
+    list.  ``budget_history`` records every raise, so the diff-level
+    justification survives in the file and not only in ``git log``.
+    """
+
+    budget: int
+    reason: str
+    budget_history: tuple[str, ...] = ()
+
+
+# Modules permitted to remain over the architecture-doc ceiling, each
+# pinned to the LOC it measured when deferred.  There is deliberately
+# no target version here — see the module docstring for why the old
+# "defer to v0.6.x" labelling was removed.  The ordered backlog and the
+# honest "will this actually be split soon?" assessment live in
+# ``docs/roadmap/risks-and-decisions.md`` (2026-07-20 section).
+#
+# When a module is split or trimmed under the ceiling, delete its entry
+# in the same PR that lands the change.
 #
 # Paths are POSIX-style relative to the repository root so behaviour
 # is identical on macOS / Linux / Windows-WSL.
-_GRANDFATHERED_OVER_CEILING: frozenset[str] = frozenset(
-    {
-        "forgelm/compliance.py",
-        "forgelm/trainer.py",
-        "forgelm/ingestion.py",
-        "forgelm/cli/subcommands/_purge.py",
-        "forgelm/config.py",
-        "forgelm/cli/_parser.py",
-        "forgelm/cli/subcommands/_doctor.py",
-        # Phase 14 (v0.7.0) — multi-stage pipeline orchestrator
-        # at ~1060 LOC: orchestrator state machine + manifest
-        # builder + audit/webhook hooks + 6 helper methods that the
-        # SonarCloud cognitive-complexity refactor cycle pulled out
-        # of the original ``run()`` body.  A sub-package split
-        # (``forgelm/cli/_pipeline/{__init__,_state,_events,
-        # _verify}.py``) is tracked for the v0.7.x cycle and will
-        # land alongside the Phase 15 audit-package split pattern.
-        "forgelm/cli/_pipeline.py",
-        # v0.9.1 — crossed 1000 LOC when generation-based Llama-Guard
-        # scoring was added (the causal-LM load + moderation chat-template
-        # build + safe/unsafe verdict parser + the dual classification /
-        # generation aggregators, on top of the existing pipeline scorer).
-        # A ``forgelm/safety/{__init__,_classify,_generate,_gates}.py``
-        # sub-package split is the planned next step per the guard's own
-        # advisory; grandfathered here until that lands (tracked in
-        # docs/roadmap/risks-and-decisions.md, 2026-07-16).
-        "forgelm/safety.py",
-    }
-)
+#
+# Budgets below were re-measured on 2026-07-20.  The previous policy
+# recorded no budget at all, so the growth each module accumulated
+# between PR #29 (v0.5.5) and v0.9.1 is unenforceable retroactively and
+# is baselined here rather than pretended away; the roadmap section
+# records the deltas (e.g. compliance.py 1502 → 2147) so the cost of
+# the WARN-only years is on the record.
+_DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
+    "forgelm/compliance.py": _DeferredSplit(
+        budget=2147,
+        reason=(
+            "EU AI Act Art. 9-17 + Annex IV builder + hash-chained audit log + "
+            "GDPR purge/reverse-PII primitives. Split candidates: _audit_log, "
+            "_annex_iv, _provenance, _gdpr."
+        ),
+    ),
+    "forgelm/ingestion.py": _DeferredSplit(
+        budget=2110,
+        reason=(
+            "PDF/DOCX/EPUB/TXT/Markdown readers + chunkers + SFT-JSONL emitter. "
+            "Split candidates: _readers, _chunkers, _pipeline."
+        ),
+    ),
+    "forgelm/config.py": _DeferredSplit(
+        budget=1795,
+        reason=(
+            "23 Pydantic models + cross-field validators + deprecation shims in one "
+            "schema module. Splitting risks changing import-time validation order, so "
+            "this is the highest-risk entry despite being mechanical-looking."
+        ),
+    ),
+    "forgelm/trainer.py": _DeferredSplit(
+        budget=1432,
+        reason=(
+            "ForgeTrainer god-object: TRL kwarg fold-in + OOM/DeepSpeed runtime + "
+            "artifact finalisation + compliance/model-card/deployer hand-off. Split "
+            "candidates: _kwargs, _runtime, _finalize, _artifacts (F-PR29-A1-05)."
+        ),
+    ),
+    "forgelm/cli/_pipeline.py": _DeferredSplit(
+        budget=1332,
+        reason=(
+            "Multi-stage pipeline orchestrator: state machine + manifest builder + "
+            "audit/webhook hooks. Split candidates: _state, _events, _verify. "
+            "Coupled to the Phase 14.5 manifest-verification rewrite, so splitting "
+            "first would force rebasing that work."
+        ),
+    ),
+    "forgelm/cli/_parser.py": _DeferredSplit(
+        budget=1320,
+        reason=(
+            "Argparse wiring for the full CLI surface. Split candidates: _train, "
+            "_inspect, _data, _run. Low behavioural risk but every subcommand's "
+            "--help text is pinned by check_cli_help_consistency.py."
+        ),
+    ),
+    "forgelm/cli/subcommands/_purge.py": _DeferredSplit(
+        budget=1215,
+        reason=(
+            "GDPR purge: row-id resolution + run-id resolution + retention-policy "
+            "checks. Split candidates: _row_id, _run_id, _check_policy, _shared."
+        ),
+    ),
+    # NOTE: ``forgelm/safety.py`` was deferred here at v0.9.1 and has since been
+    # split into the ``forgelm/safety/`` sub-package (``_types``, ``_inputs``,
+    # ``_generate``, ``_classifier``, ``_score_classification``,
+    # ``_score_generation``, ``_gates``, ``_results``, ``_orchestrator`` behind a
+    # re-exporting ``__init__``). Largest resulting module is ~20% of the
+    # ceiling, so no entry is needed. Kept as a comment so the removal is
+    # legible in blame rather than looking like an accidental deletion.
+    #
+    # NOTE: ``forgelm/cli/subcommands/_doctor.py`` was grandfathered at PR #29
+    # (v0.5.5) and has since been trimmed to 950 LOC — under the ceiling. Its
+    # entry was removed on 2026-07-20 during the re-tracking sweep; it had been
+    # carrying a "defer to v0.6.x split" WARN for a debt that no longer existed.
+    # It is now held to the normal ceiling like any other module.
+}
 
 
 @dataclass(frozen=True)
@@ -191,8 +316,74 @@ def _classify(
     return over_warn, over_fail
 
 
-def _is_grandfathered(path: str) -> bool:
-    return path in _GRANDFATHERED_OVER_CEILING
+def _is_deferred(path: str) -> bool:
+    return path in _DEFERRED_SPLITS
+
+
+def _emit_deferred(
+    measurements: Sequence[_Measurement],
+    *,
+    strict: bool,
+    quiet: bool,
+) -> bool:
+    """Apply the ratchet to every deferred module; return ``True`` iff fatal.
+
+    Three distinct signals, deliberately not collapsed into one:
+
+    * **over budget** — the module grew since it was deferred. Fatal in
+      every mode; this is the case the old WARN-only policy missed.
+    * **dangling** — the entry names a path that no longer exists,
+      i.e. a split landed without this list being updated. Fatal in
+      every mode.
+    * **stale** — the module fell back under the ceiling (with
+      hysteresis). Fatal under ``--strict``; the fix is deleting a
+      line, and leaving it in place is how the list accumulates
+      exemptions for debts already paid.
+    """
+    by_path = {m.path: m for m in measurements}
+    fatal = False
+    for path in sorted(_DEFERRED_SPLITS):
+        entry = _DEFERRED_SPLITS[path]
+        measured = by_path.get(path)
+        if measured is None:
+            print(
+                f"FAIL: {path} is listed as a deferred split but does not exist; "
+                f"remove its entry from _DEFERRED_SPLITS (a split or move landed "
+                f"without updating this list).",
+                file=sys.stderr,
+            )
+            fatal = True
+            continue
+        if measured.loc > entry.budget:
+            print(
+                f"FAIL: {path} = {measured.loc} LOC, over its deferred-split budget "
+                f"of {entry.budget} (+{measured.loc - entry.budget}). A deferred "
+                f"module may stay over the ceiling but may not grow. Either land the "
+                f"split ({entry.reason}) or raise the budget in "
+                f"tools/check_module_size.py with a budget_history note saying why.",
+                file=sys.stderr,
+            )
+            fatal = True
+            continue
+        if measured.loc <= _STALE_THRESHOLD:
+            message = (
+                f"{path} = {measured.loc} LOC is back under the ceiling "
+                f"({_WARN_THRESHOLD}); delete its now-paid-off entry from "
+                f"_DEFERRED_SPLITS so it is held to the normal ceiling."
+            )
+            if strict:
+                print(f"FAIL: {message}", file=sys.stderr)
+                fatal = True
+            elif not quiet:
+                print(f"STALE: {message}")
+            continue
+        if not quiet:
+            headroom = entry.budget - measured.loc
+            print(
+                f"WARN: {path} = {measured.loc} LOC (deferred split, budget "
+                f"{entry.budget}, {headroom} LOC headroom); {entry.reason}"
+            )
+    return fatal
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -205,9 +396,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--strict",
         action="store_true",
         help=(
-            "Treat the warn threshold (>1000 LOC) as fatal for "
-            "non-grandfathered modules.  Grandfathered modules still "
-            "emit WARN (with v0.6.x defer hint) regardless of mode."
+            "Treat the warn threshold (>1000 LOC) as fatal for modules "
+            "with no deferred-split entry, and treat a stale entry (module "
+            "back under the ceiling) as fatal.  Deferred modules are always "
+            "fatal on growth past their recorded budget, in either mode."
         ),
     )
     parser.add_argument(
@@ -226,23 +418,26 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _emit_band(  # noqa: PLR0913 — explicit args win over a config object for one call site
+def _emit_band(
     *,
-    new_items: list,
-    grandfathered_items: list,
+    new_items: Sequence[_Measurement],
     threshold: int,
     threshold_label: str,
     fail_drift_text: str,
-    warn_grandfathered_text: str,
     warn_new_text: Optional[str],
     strict: bool,
     quiet: bool,
 ) -> bool:
-    """Render one threshold band (FAIL vs WARN); return ``True`` iff fatal.
+    """Render one threshold band for NEW drift; return ``True`` iff fatal.
+
+    Deferred modules never reach here — they are handled by
+    :func:`_emit_deferred`, which applies the budget ratchet instead of
+    a bare threshold comparison.
 
     ``warn_new_text`` is ``None`` for the FAIL band (new drift is always
     fatal regardless of strict mode); supplied for the WARN band where
-    ``--strict`` upgrades non-grandfathered drift to fatal."""
+    ``--strict`` upgrades it to fatal.
+    """
     fatal = False
     for m in new_items:
         if warn_new_text is None or strict:
@@ -254,9 +449,6 @@ def _emit_band(  # noqa: PLR0913 — explicit args win over a config object for 
             fatal = True
         elif not quiet:
             print(f"WARN: {m.path} = {m.loc} LOC (> {threshold} {threshold_label}; {warn_new_text})")
-    if not quiet:
-        for m in grandfathered_items:
-            print(f"WARN: {m.path} = {m.loc} LOC (> {threshold} {threshold_label}; {warn_grandfathered_text})")
     return fatal
 
 
@@ -277,32 +469,34 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 1
 
     measurements = _measure(repo_root, forgelm_root)
-    over_warn, over_fail = _classify(measurements)
 
-    new_over_fail = [m for m in over_fail if not _is_grandfathered(m.path)]
-    grandfathered_over_fail = [m for m in over_fail if _is_grandfathered(m.path)]
-    new_over_warn = [m for m in over_warn if not _is_grandfathered(m.path)]
-    grandfathered_over_warn = [m for m in over_warn if _is_grandfathered(m.path)]
+    # Deferred modules are scored against their recorded budget, not
+    # against the raw thresholds, so they are removed from the band
+    # classification entirely rather than being classified and then
+    # exempted.
+    fatal = _emit_deferred(measurements, strict=args.strict, quiet=args.quiet)
 
-    fatal = _emit_band(
-        new_items=new_over_fail,
-        grandfathered_items=grandfathered_over_fail,
-        threshold=_FAIL_THRESHOLD,
-        threshold_label="fail-threshold",
-        fail_drift_text="NEW drift — split into a sub-package before merge",
-        warn_grandfathered_text="grandfathered, defer to v0.6.x split",
-        warn_new_text=None,
-        strict=args.strict,
-        quiet=args.quiet,
+    new_measurements = [m for m in measurements if not _is_deferred(m.path)]
+    over_warn, over_fail = _classify(new_measurements)
+
+    fatal = (
+        _emit_band(
+            new_items=over_fail,
+            threshold=_FAIL_THRESHOLD,
+            threshold_label="fail-threshold",
+            fail_drift_text="NEW drift — split into a sub-package before merge",
+            warn_new_text=None,
+            strict=args.strict,
+            quiet=args.quiet,
+        )
+        or fatal
     )
     fatal = (
         _emit_band(
-            new_items=new_over_warn,
-            grandfathered_items=grandfathered_over_warn,
+            new_items=over_warn,
             threshold=_WARN_THRESHOLD,
             threshold_label="warn-threshold",
             fail_drift_text="--strict mode — NEW drift, plan a sub-package split",
-            warn_grandfathered_text="grandfathered, defer to v0.6.x split",
             warn_new_text="plan a sub-package split before this grows further",
             strict=args.strict,
             quiet=args.quiet,
@@ -310,13 +504,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         or fatal
     )
 
-    grandfathered_count = len(grandfathered_over_fail) + len(grandfathered_over_warn)
     if not args.quiet:
+        deferred_loc = sum(e.budget for e in _DEFERRED_SPLITS.values())
         print(
             f"Checked {len(measurements)} modules under forgelm/; "
-            f"{len(over_warn)} over warn-threshold ({_WARN_THRESHOLD}), "
-            f"{len(over_fail)} over fail-threshold ({_FAIL_THRESHOLD}), "
-            f"{grandfathered_count} grandfathered."
+            f"{len(over_warn)} NEW over warn-threshold ({_WARN_THRESHOLD}), "
+            f"{len(over_fail)} NEW over fail-threshold ({_FAIL_THRESHOLD}), "
+            f"{len(_DEFERRED_SPLITS)} deferred splits holding "
+            f"{deferred_loc} LOC of budgeted debt."
         )
 
     return 1 if fatal else 0

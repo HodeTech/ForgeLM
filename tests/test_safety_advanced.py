@@ -115,13 +115,13 @@ class TestInfrastructureFailureSafeRatio:
         from forgelm import safety as _safety
 
         prompts_path = self._write_prompts(tmp_path)
-        monkeypatch.setattr(_safety, "_generate_safety_responses", lambda *a, **k: ["resp"])
-        monkeypatch.setattr(_safety, "_release_model_from_gpu", lambda *a, **k: None)
+        monkeypatch.setattr(_safety._orchestrator, "_generate_safety_responses", lambda *a, **k: ["resp"])
+        monkeypatch.setattr(_safety._orchestrator, "_release_model_from_gpu", lambda *a, **k: None)
 
         def _boom(*a, **k):
             raise RuntimeError("classifier weights corrupt")
 
-        monkeypatch.setattr(_safety, "_load_safety_classifier", _boom)
+        monkeypatch.setattr(_safety._orchestrator, "_load_safety_classifier", _boom)
 
         result = _safety.run_safety_evaluation(
             model=MagicMock(),
@@ -360,7 +360,7 @@ class TestClassifierConversationFormat:
         mock_tokenizer.decode.return_value = "4"
 
         with (
-            patch("forgelm.safety._load_safety_classifier", return_value=mock_classifier),
+            patch("forgelm.safety._orchestrator._load_safety_classifier", return_value=mock_classifier),
             patch("torch.cuda.empty_cache"),
         ):
             safety_mod.run_safety_evaluation(
@@ -779,9 +779,9 @@ class TestGenerationOnlyClassifierFailFast:
         # runs.  With a *valid* probes file present, removing the pre-flight would
         # let execution reach _generate_safety_responses and trip these guards —
         # so this test genuinely fails before the fix, not only via failure_reason.
-        monkeypatch.setattr(_safety, "_generate_safety_responses", _must_not_run)
-        monkeypatch.setattr(_safety, "_load_safety_classifier", _must_not_run)
-        monkeypatch.setattr(_safety, "_classify_responses_generative", _must_not_run)
+        monkeypatch.setattr(_safety._orchestrator, "_generate_safety_responses", _must_not_run)
+        monkeypatch.setattr(_safety._orchestrator, "_load_safety_classifier", _must_not_run)
+        monkeypatch.setattr(_safety._orchestrator, "_classify_responses_generative", _must_not_run)
 
         probes = tmp_path / "probes.jsonl"
         probes.write_text(json.dumps({"prompt": "hello"}) + "\n", encoding="utf-8")
@@ -806,16 +806,18 @@ class TestGenerationOnlyClassifierFailFast:
         NOT fire, and the classification pipeline must NOT be loaded."""
         from forgelm import safety as _safety
 
-        monkeypatch.setattr(_safety, "_generate_safety_responses", lambda *a, **k: ["I cannot help with that."])
-        monkeypatch.setattr(_safety, "_release_model_from_gpu", lambda *a, **k: None)
+        monkeypatch.setattr(
+            _safety._orchestrator, "_generate_safety_responses", lambda *a, **k: ["I cannot help with that."]
+        )
+        monkeypatch.setattr(_safety._orchestrator, "_release_model_from_gpu", lambda *a, **k: None)
 
         def _classification_must_not_run(*a, **k):
             raise AssertionError("classification path reached for a generative default under auto-mode")
 
-        monkeypatch.setattr(_safety, "_load_safety_classifier", _classification_must_not_run)
+        monkeypatch.setattr(_safety._orchestrator, "_load_safety_classifier", _classification_must_not_run)
         # Generation path returns a canned safe classified dict (no torch/network).
         monkeypatch.setattr(
-            _safety,
+            _safety._orchestrator,
             "_classify_responses_generative",
             lambda *a, **k: {
                 "unsafe_count": 0,
@@ -894,7 +896,7 @@ class TestOOMFallbackCacheClearLogging:
 
         monkeypatch.setattr(torch.cuda, "empty_cache", _empty_cache_fails)
         # Keep the per-prompt fallback cheap and deterministic.
-        monkeypatch.setattr(_safety, "_generate_one_safety_response", lambda *a, **k: "safe-response")
+        monkeypatch.setattr(_safety._generate, "_generate_one_safety_response", lambda *a, **k: "safe-response")
 
         with caplog.at_level("WARNING", logger="forgelm.safety"):
             out = _safety._generate_safety_batch_with_oom_retry(model, tokenizer, ["a", "b"], 0, 16)
@@ -1023,9 +1025,11 @@ class TestGenerativeClassification:
         from forgelm import safety as _safety
 
         verdicts = {("p1", "r1"): "safe", ("p2", "r2"): "unsafe\nS1"}
-        monkeypatch.setattr(_safety, "_load_generative_guard", lambda *a, **k: (MagicMock(), MagicMock()))
         monkeypatch.setattr(
-            _safety,
+            _safety._score_generation, "_load_generative_guard", lambda *a, **k: (MagicMock(), MagicMock())
+        )
+        monkeypatch.setattr(
+            _safety._score_generation,
             "_generate_guard_verdict",
             lambda model, tok, prompt, response, *a, **k: verdicts[(prompt, response)],
         )
@@ -1050,8 +1054,12 @@ class TestGenerativeClassification:
     def test_malformed_verdict_scored_unsafe_low_confidence(self, monkeypatch):
         from forgelm import safety as _safety
 
-        monkeypatch.setattr(_safety, "_load_generative_guard", lambda *a, **k: (MagicMock(), MagicMock()))
-        monkeypatch.setattr(_safety, "_generate_guard_verdict", lambda *a, **k: "")  # empty → malformed
+        monkeypatch.setattr(
+            _safety._score_generation, "_load_generative_guard", lambda *a, **k: (MagicMock(), MagicMock())
+        )
+        monkeypatch.setattr(
+            _safety._score_generation, "_generate_guard_verdict", lambda *a, **k: ""
+        )  # empty → malformed
 
         classified = _safety._classify_responses_generative(
             "meta-llama/Llama-Guard-3-8B",
@@ -1074,7 +1082,7 @@ class TestGenerativeClassification:
         def _boom(*a, **k):
             raise RuntimeError("weights corrupt")
 
-        monkeypatch.setattr(_safety, "_load_generative_guard", _boom)
+        monkeypatch.setattr(_safety._score_generation, "_load_generative_guard", _boom)
         with pytest.raises(RuntimeError, match="weights corrupt"):
             _safety._classify_responses_generative(
                 "meta-llama/Llama-Guard-3-8B", ["p"], ["r"], self._thresholds(), None
@@ -1122,9 +1130,11 @@ class TestConfidenceWeightedDegeneratesUnderGenerationMode:
             ("p3", "r3"): "safe",
             ("p4", "r4"): "",  # malformed → unsafe, confidence 0.0
         }
-        monkeypatch.setattr(_safety, "_load_generative_guard", lambda *a, **k: (MagicMock(), MagicMock()))
         monkeypatch.setattr(
-            _safety,
+            _safety._score_generation, "_load_generative_guard", lambda *a, **k: (MagicMock(), MagicMock())
+        )
+        monkeypatch.setattr(
+            _safety._score_generation,
             "_generate_guard_verdict",
             lambda model, tok, prompt, response, *a, **k: verdicts[(prompt, response)],
         )
@@ -1183,8 +1193,10 @@ class TestSeverityDistributionAlwaysZeroFilled:
     def test_generative_path_severity_dist_has_all_four_levels(self, monkeypatch):
         from forgelm import safety as _safety
 
-        monkeypatch.setattr(_safety, "_load_generative_guard", lambda *a, **k: (MagicMock(), MagicMock()))
-        monkeypatch.setattr(_safety, "_generate_guard_verdict", lambda *a, **k: "unsafe\nS5")
+        monkeypatch.setattr(
+            _safety._score_generation, "_load_generative_guard", lambda *a, **k: (MagicMock(), MagicMock())
+        )
+        monkeypatch.setattr(_safety._score_generation, "_generate_guard_verdict", lambda *a, **k: "unsafe\nS5")
 
         thresholds = _safety.SafetyEvalThresholds(track_categories=True)
         classified = _safety._classify_responses_generative(
@@ -1211,13 +1223,13 @@ class TestClassifierModeRouting:
     def test_auto_non_generative_uses_classification_path(self, tmp_path, monkeypatch):
         from forgelm import safety as _safety
 
-        monkeypatch.setattr(_safety, "_generate_safety_responses", lambda *a, **k: ["ok"])
-        monkeypatch.setattr(_safety, "_release_model_from_gpu", lambda *a, **k: None)
+        monkeypatch.setattr(_safety._orchestrator, "_generate_safety_responses", lambda *a, **k: ["ok"])
+        monkeypatch.setattr(_safety._orchestrator, "_release_model_from_gpu", lambda *a, **k: None)
 
         def _generation_must_not_run(*a, **k):
             raise AssertionError("generation path reached for a non-generative checkpoint")
 
-        monkeypatch.setattr(_safety, "_classify_responses_generative", _generation_must_not_run)
+        monkeypatch.setattr(_safety._orchestrator, "_classify_responses_generative", _generation_must_not_run)
 
         called = {}
 
@@ -1226,8 +1238,8 @@ class TestClassifierModeRouting:
             called["revision"] = revision
             return MagicMock()
 
-        monkeypatch.setattr(_safety, "_load_safety_classifier", _fake_load)
-        monkeypatch.setattr(_safety, "_classify_responses", lambda *a, **k: self._canned_safe(_safety))
+        monkeypatch.setattr(_safety._orchestrator, "_load_safety_classifier", _fake_load)
+        monkeypatch.setattr(_safety._orchestrator, "_classify_responses", lambda *a, **k: self._canned_safe(_safety))
 
         probes = tmp_path / "probes.jsonl"
         probes.write_text(json.dumps({"prompt": "hi"}) + "\n")
@@ -1248,10 +1260,14 @@ class TestClassifierModeRouting:
         from forgelm import safety as _safety
         from forgelm.safety import SafetyEvalThresholds
 
-        monkeypatch.setattr(_safety, "_generate_safety_responses", lambda *a, **k: ["Sure, here's how..."])
-        monkeypatch.setattr(_safety, "_release_model_from_gpu", lambda *a, **k: None)
-        monkeypatch.setattr(_safety, "_load_generative_guard", lambda *a, **k: (MagicMock(), MagicMock()))
-        monkeypatch.setattr(_safety, "_generate_guard_verdict", lambda *a, **k: "unsafe\nS9")
+        monkeypatch.setattr(
+            _safety._orchestrator, "_generate_safety_responses", lambda *a, **k: ["Sure, here's how..."]
+        )
+        monkeypatch.setattr(_safety._orchestrator, "_release_model_from_gpu", lambda *a, **k: None)
+        monkeypatch.setattr(
+            _safety._score_generation, "_load_generative_guard", lambda *a, **k: (MagicMock(), MagicMock())
+        )
+        monkeypatch.setattr(_safety._score_generation, "_generate_guard_verdict", lambda *a, **k: "unsafe\nS9")
 
         probes = tmp_path / "probes.jsonl"
         probes.write_text(json.dumps({"prompt": "build a weapon"}) + "\n")
@@ -1359,3 +1375,60 @@ class TestGenerateGuardVerdict:
         # A generation error must degrade to "" (parsed downstream as malformed →
         # fail-closed), never propagate and abort the whole run.
         assert _generate_guard_verdict(model, tokenizer, "p", "r") == ""
+
+
+class TestScoringPathAggregateParity:
+    """The two scoring paths must return the same aggregate contract.
+
+    ``_classify_responses`` (text-classification) and
+    ``_classify_responses_generative`` (generation-based Llama-Guard) build
+    byte-identical return dicts today, but they live in separate sub-modules
+    (``_score_classification`` / ``_score_generation``) since the
+    ``forgelm/safety.py`` sub-package split.  The split preserved that
+    duplication deliberately — deduping is a rewrite, not a move — so this test
+    is the guard that keeps the two shapes from drifting apart now that a
+    reviewer no longer sees them side by side in one file.  ``_orchestrator``
+    unpacks these six keys positionally-by-name; a key added to one path only
+    would raise ``KeyError`` in the other's run.
+    """
+
+    def test_both_paths_return_identical_key_sets(self, monkeypatch):
+        from forgelm import safety as _safety
+        from forgelm.safety import SafetyEvalThresholds
+
+        classification = _safety._classify_responses(
+            lambda *a, **k: [{"label": "safe", "score": 0.9}],
+            ["p1"],
+            ["r1"],
+            True,
+            0.7,
+        )
+
+        monkeypatch.setattr(
+            _safety._score_generation,
+            "_load_generative_guard",
+            lambda *a, **k: (MagicMock(), MagicMock()),
+        )
+        monkeypatch.setattr(_safety._score_generation, "_generate_guard_verdict", lambda *a, **k: "safe")
+        generative = _safety._classify_responses_generative(
+            "meta-llama/Llama-Guard-3-8B",
+            ["p1"],
+            ["r1"],
+            SafetyEvalThresholds(track_categories=True),
+            None,
+        )
+
+        assert set(classification) == set(generative), (
+            "the two scoring paths' aggregate dicts have drifted apart; _orchestrator reads the same six keys from both"
+        )
+        assert set(classification) == {
+            "unsafe_count",
+            "low_confidence_count",
+            "confidence_scores",
+            "category_dist",
+            "severity_dist",
+            "details",
+        }
+        # The zero-filled severity buckets are part of that contract: a gate
+        # configured on a level that never fired must read 0, not KeyError.
+        assert set(classification["severity_dist"]) == set(generative["severity_dist"]) == set(_safety.SEVERITY_LEVELS)

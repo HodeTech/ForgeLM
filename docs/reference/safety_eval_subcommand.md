@@ -13,7 +13,7 @@ forgelm safety-eval --model PATH (--probes JSONL | --default-probes)
                     [-q] [--log-level {DEBUG,INFO,WARNING,ERROR}]
 ```
 
-Implementation: [`forgelm/cli/subcommands/_safety_eval.py`](../../forgelm/cli/subcommands/_safety_eval.py). Wraps the library function [`forgelm.safety.run_safety_evaluation`](../../forgelm/safety.py).
+Implementation: [`forgelm/cli/subcommands/_safety_eval.py`](../../forgelm/cli/subcommands/_safety_eval.py). Wraps the library function [`forgelm.safety.run_safety_evaluation`](../../forgelm/safety/__init__.py).
 
 ## Flags
 
@@ -54,7 +54,7 @@ Defined in [`forgelm/cli/_exit_codes.py`](../../forgelm/cli/_exit_codes.py): `EX
 
 ## Audit events emitted
 
-`forgelm safety-eval` does **not** emit a dedicated `safety_eval.requested/completed/failed` event family — the standalone subcommand reuses the library function [`forgelm.safety.run_safety_evaluation`](../../forgelm/safety.py), which emits at most one event:
+`forgelm safety-eval` does **not** emit a dedicated `safety_eval.requested/completed/failed` event family — the standalone subcommand reuses the library function [`forgelm.safety.run_safety_evaluation`](../../forgelm/safety/__init__.py), which emits at most one event:
 
 | Event | When emitted | Payload | Article |
 |---|---|---|---|

@@ -68,6 +68,8 @@ graph TB
     CLI --> SYNTH
 ```
 
+## Module-size ceiling
+
 Single-file modules are the default — most concerns fit in one file under
 `forgelm/`. **The ~1000-line ceiling is the trigger for a sub-package split:**
 once a module crosses that line count and has cohesive subsections, it
@@ -77,18 +79,48 @@ graduates to a `module_name/` sub-package, **keeping the public API at
 Enforced by [`tools/check_module_size.py --strict`](../../tools/check_module_size.py)
 (CI step "Module-size ceiling guard" in `.github/workflows/ci.yml`'s `validate` job):
 it fails on any `forgelm/` module that newly crosses the ceiling, while a
-`_GRANDFATHERED_OVER_CEILING` allowlist tracks modules that were already over
-the line when the guard landed (see the tool's own docstring for the grandfather
-policy and the v0.6.x split roadmap). A module can only join the allowlist with
-an inline comment naming the phase/release cycle of its planned split and a
-tracking artefact — it is not a way to permanently exempt a module from this rule.
+`_DEFERRED_SPLITS` list tracks modules that were already over the line when the
+guard landed.
 
-Two such splits are permanent today (Phase 12.6 closure cycle, Wave 1):
+### Deferred splits carry a budget, not a target version
+
+A deferred entry pins the module's **measured LOC at deferral time**. The guard
+then enforces a ratchet: a deferred module may stay over the ceiling, but
+**growing past its budget is fatal in every mode**. Splitting remains the goal;
+holding the line is the enforceable part.
+
+Deferrals deliberately name **no target version**. Until 2026-07-20 every entry
+read "defer to v0.6.x split" — accurate when written at v0.5.5, still printing
+at v0.9.1rc1, by which point every deferred module had grown and two of the
+eight entries were simply wrong. A version literal makes a prediction, and a
+prediction nobody re-reads decays into a false statement; a budget asserts
+nothing about the future and cannot rot the same way. Do not "fix" a deferral by
+naming a newer version — see
+[`docs/roadmap/risks-and-decisions.md`](../roadmap/risks-and-decisions.md)
+(2026-07-20 section) for the ordered backlog, the rationale per module, and the
+plain statement of which splits are *not* currently scheduled.
+
+Rules for the list:
+
+- **Joining** requires a prose `reason` naming the concerns a split would
+  separate, plus a `risks-and-decisions.md` row. It is not a permanent exemption.
+- **Raising a budget** is the explicit escape hatch — a security fix should not
+  be blocked on a day-long refactor. Edit the literal in the same PR and append
+  the justification to that entry's `budget_history`, so extra headroom is
+  always a reviewed line in a diff rather than silent drift.
+- **Leaving** happens the moment the module is split or trimmed under the
+  ceiling: delete the entry in the same PR. The guard reports a dangling entry
+  (path gone) as fatal and a stale entry (module back under the ceiling) as
+  fatal under `--strict`.
+
+Three such splits are permanent today (Phase 12.6 closure cycle Wave 1, plus
+`forgelm/safety/` at v0.9.1):
 
 | Sub-package | Pre-split source | Reason | Public surface |
 |---|---|---|---|
 | `forgelm/cli/` | legacy `cli.py` (~1756 lines) | Argparse wiring + ~17 subcommand modules grew far past the ceiling; each subcommand needed its own test boundary. | `forgelm.cli.main()` (entry point), `forgelm.cli._exit_codes` (public exit-code constants), per-subcommand modules (`_audit`, `_ingest`, `_doctor`, `_cache`, `_purge`, `_reverse_pii`, `_safety_eval`, `_verify_audit`, `_verify_annex_iv`, `_verify_gguf`, `_approve`, `_approvals`, ...) |
 | `forgelm/data_audit/` | legacy `data_audit.py` (~3098 lines) | Aggregator, simhash, MinHash, regex-PII, ML-NER PII, secrets, quality, croissant, summary, streaming reader — 10 cohesive concerns under one orchestrator. | `forgelm.data_audit.run_audit()`, `forgelm.data_audit.AuditReport`, `forgelm.data_audit.SECRET_TYPES`, `forgelm.data_audit.summarize_report()` (re-exported via the package `__init__.py`) |
+| `forgelm/safety/` | legacy `safety.py` (1038 LOC) | Generation-based Llama-Guard scoring pushed the module over the ceiling: input prep, classifier load, generation, two scoring aggregators, gate evaluation and result assembly are separable concerns. | `forgelm.safety.run_safety_evaluation()`, `forgelm.safety.SafetyEvalThresholds` (public library surface per `forgelm/__init__.py`'s `__all__`), re-exported via the package `__init__.py` |
 
 Future splits follow the same rule: when crossing ~1000 lines, design the
 sub-package boundary first (one design doc under `docs/design/`), execute

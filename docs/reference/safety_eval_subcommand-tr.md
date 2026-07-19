@@ -13,7 +13,7 @@ forgelm safety-eval --model PATH (--probes JSONL | --default-probes)
                     [-q] [--log-level {DEBUG,INFO,WARNING,ERROR}]
 ```
 
-Uygulama: [`forgelm/cli/subcommands/_safety_eval.py`](../../forgelm/cli/subcommands/_safety_eval.py). Kütüphane fonksiyonu [`forgelm.safety.run_safety_evaluation`](../../forgelm/safety.py)'i sarar.
+Uygulama: [`forgelm/cli/subcommands/_safety_eval.py`](../../forgelm/cli/subcommands/_safety_eval.py). Kütüphane fonksiyonu [`forgelm.safety.run_safety_evaluation`](../../forgelm/safety/__init__.py)'i sarar.
 
 ## Flags
 
@@ -54,7 +54,7 @@ Classifier aynı loader'ı izler. **Kutudan çıkan varsayılan `meta-llama/Llam
 
 ## Üretilen audit event'leri
 
-`forgelm safety-eval`, özel bir `safety_eval.requested/completed/failed` event ailesi üretmez — bağımsız subcommand, kütüphane fonksiyonu [`forgelm.safety.run_safety_evaluation`](../../forgelm/safety.py)'i yeniden kullanır ve en fazla bir event üretir:
+`forgelm safety-eval`, özel bir `safety_eval.requested/completed/failed` event ailesi üretmez — bağımsız subcommand, kütüphane fonksiyonu [`forgelm.safety.run_safety_evaluation`](../../forgelm/safety/__init__.py)'i yeniden kullanır ve en fazla bir event üretir:
 
 | Event | Ne zaman üretilir | Payload | Madde |
 |---|---|---|---|

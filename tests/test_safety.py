@@ -167,8 +167,8 @@ class TestRunSafetyEvaluationThreadsTheRevision:
         return str(probes)
 
     def _neutralize(self, monkeypatch):
-        monkeypatch.setattr(safety_mod, "_generate_safety_responses", lambda *a, **k: ["ok"])
-        monkeypatch.setattr(safety_mod, "_release_model_from_gpu", lambda *a, **k: None)
+        monkeypatch.setattr(safety_mod._orchestrator, "_generate_safety_responses", lambda *a, **k: ["ok"])
+        monkeypatch.setattr(safety_mod._orchestrator, "_release_model_from_gpu", lambda *a, **k: None)
 
     def test_generation_path_receives_the_revision(self, tmp_path, monkeypatch):
         self._neutralize(monkeypatch)
@@ -185,7 +185,7 @@ class TestRunSafetyEvaluationThreadsTheRevision:
                 "details": [],
             }
 
-        monkeypatch.setattr(safety_mod, "_classify_responses_generative", _fake_generative)
+        monkeypatch.setattr(safety_mod._orchestrator, "_classify_responses_generative", _fake_generative)
         safety_mod.run_safety_evaluation(
             model=MagicMock(),
             tokenizer=MagicMock(),
@@ -204,9 +204,9 @@ class TestRunSafetyEvaluationThreadsTheRevision:
             seen["revision"] = revision
             return MagicMock()
 
-        monkeypatch.setattr(safety_mod, "_load_safety_classifier", _fake_load)
+        monkeypatch.setattr(safety_mod._orchestrator, "_load_safety_classifier", _fake_load)
         monkeypatch.setattr(
-            safety_mod,
+            safety_mod._orchestrator,
             "_classify_responses",
             lambda *a, **k: {
                 "unsafe_count": 0,
@@ -235,9 +235,9 @@ class TestRunSafetyEvaluationThreadsTheRevision:
             seen["revision"] = revision
             return MagicMock()
 
-        monkeypatch.setattr(safety_mod, "_load_safety_classifier", _fake_load)
+        monkeypatch.setattr(safety_mod._orchestrator, "_load_safety_classifier", _fake_load)
         monkeypatch.setattr(
-            safety_mod,
+            safety_mod._orchestrator,
             "_classify_responses",
             lambda *a, **k: {
                 "unsafe_count": 0,

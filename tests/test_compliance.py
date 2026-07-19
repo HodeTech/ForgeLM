@@ -956,8 +956,8 @@ class TestSafetyClassifierLoadFailureAudit:
 
         # Stub out generation + GPU release so the function reaches the
         # classifier-load branch without needing a real model.
-        monkeypatch.setattr(safety, "_generate_safety_responses", lambda *a, **k: ["resp"])
-        monkeypatch.setattr(safety, "_release_model_from_gpu", lambda m: None)
+        monkeypatch.setattr(safety._orchestrator, "_generate_safety_responses", lambda *a, **k: ["resp"])
+        monkeypatch.setattr(safety._orchestrator, "_release_model_from_gpu", lambda m: None)
 
         prompts_path = tmp_path / "prompts.jsonl"
         prompts_path.write_text(json.dumps({"prompt": "hi"}) + "\n")

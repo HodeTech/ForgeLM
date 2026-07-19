@@ -136,11 +136,11 @@ class TestSafetyClassifierRevisionReachesTheLoad:
             return m
 
         with (
-            patch("forgelm.safety._generate_safety_responses", return_value=["a response"]),
-            patch("forgelm.safety._release_model_from_gpu"),
+            patch("forgelm.safety._orchestrator._generate_safety_responses", return_value=["a response"]),
+            patch("forgelm.safety._orchestrator._release_model_from_gpu"),
             # Downstream of the load under test; stubbed only so the mocked
             # guard produces a JSON-serialisable verdict for the results file.
-            patch("forgelm.safety._generate_guard_verdict", return_value="safe"),
+            patch("forgelm.safety._score_generation._generate_guard_verdict", return_value="safe"),
             patch("torch.cuda.is_available", return_value=False),
             patch("transformers.AutoTokenizer.from_pretrained", side_effect=_tok),
             patch("transformers.AutoModelForCausalLM.from_pretrained", side_effect=_model),

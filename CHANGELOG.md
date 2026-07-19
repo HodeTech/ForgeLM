@@ -508,6 +508,38 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Changed
 
+- **`forgelm/safety.py` split into the `forgelm/safety/` sub-package.** The
+  module reached 1038 LOC — past the ~1000-LOC sub-package trigger in
+  [`docs/standards/architecture.md`](docs/standards/architecture.md) — once
+  generation-based Llama-Guard scoring landed. It is now `_types`, `_inputs`,
+  `_generate`, `_classifier`, `_score_classification`, `_score_generation`,
+  `_gates`, `_results` and `_orchestrator` behind a re-exporting `__init__`,
+  following the existing `forgelm/cli/`, `forgelm/data_audit/` and
+  `forgelm/wizard/` precedent. **This is a move, not a rewrite: no behaviour
+  changed.** `run_safety_evaluation` and `SafetyEvalThresholds` keep their
+  public import paths, so `from forgelm.safety import ...` and
+  `from forgelm import ...` are both unaffected.
+
+- **Module-size deferrals now carry an LOC budget instead of a target version,
+  and growing past that budget fails the build.** Every entry in
+  `tools/check_module_size.py` was labelled *"defer to v0.6.x split"* — accurate
+  when written at v0.5.5, still being printed at v0.9.1, three minor releases
+  after that cycle closed. Because the label was advisory, deferred modules were
+  free to grow while the guard emitted an unchanged WARN; `forgelm/compliance.py`
+  went from ~1500 to 2147 LOC over that span. Each of the seven remaining
+  deferrals is now pinned to its measured LOC, and exceeding it is fatal in
+  every mode. Deferrals name no version at all — a budget makes no prediction
+  and so cannot go stale. Raising a budget is the explicit escape hatch: edit
+  the literal in the same PR and record why in the entry's `budget_history`, so
+  extra headroom is always a reviewed diff line. The guard also now reports a
+  dangling entry (path no longer exists) as fatal, and a stale entry (module
+  back under the ceiling, with hysteresis so it cannot flap) as fatal under
+  `--strict`. `forgelm/cli/subcommands/_doctor.py` left the list on measurement
+  — at 950 LOC it had been under the ceiling for some time while still being
+  reported as debt. The ordered backlog, the per-module rationale, and a plain
+  statement that these seven splits are **not currently scheduled** are recorded
+  in [`docs/roadmap/risks-and-decisions.md`](docs/roadmap/risks-and-decisions.md).
+
 - **`compute_config_hash` values shift for every existing config**, purely
   because the five new `revision` fields now exist with `None` defaults and are
   therefore part of the canonical serialisation. No behaviour changed and no
