@@ -22,6 +22,14 @@ The load-bearing test in the unit layer is
 :meth:`TestNormalise.test_substitution_cannot_swallow_a_content_difference`: an
 allowlist that absorbed real wording differences would turn the whole guard into
 decoration.
+
+:meth:`TestNormalise.test_swapped_agent_name_within_one_file_is_the_accepted_hole`
+pins a *known, documented* gap rather than a bug: the module docstring's
+"accepted cost" section states plainly that a swapped pair of agent mentions
+within one file is invisible to this guard, and this test is the mechanism
+that keeps that admission honest — if it ever starts failing, the docstring
+is now overstating the hole and must be tightened to match, not the other
+way around.
 """
 
 from __future__ import annotations
@@ -72,9 +80,13 @@ class TestSubstitutionTable:
         canonicals = [s.canonical for s in tool.SUBSTITUTIONS]
         assert len(set(canonicals)) == len(canonicals)
 
-    def test_canonical_tokens_cannot_occur_in_real_markdown(self, tool):
+    def test_canonical_tokens_are_nul_delimited(self, tool):
         # NUL-delimited so no authored SKILL.md can spell one by accident and
-        # forge a match between two genuinely different files.
+        # forge a match between two genuinely different files. This only
+        # checks the tokens' *shape*; it says nothing about whether any real
+        # file actually contains one -- see
+        # ``test_canonical_tokens_cannot_occur_in_real_markdown`` below for
+        # the test that scans the live corpus and earns that name.
         for substitution in tool.SUBSTITUTIONS:
             assert substitution.canonical.startswith("\x00")
             assert substitution.canonical.endswith("\x00")
@@ -128,6 +140,36 @@ class TestNormalise:
     def test_unknown_tree_is_a_programming_error(self, tool):
         with pytest.raises(ValueError, match="tree must be"):
             tool.normalise("text", tree="gemini")
+
+    def test_swapped_agent_name_within_one_file_is_the_accepted_hole(self, tool):
+        # Pins the module docstring's "accepted cost" claim at its true width:
+        # NOT just "a whole copy consistently uses the other tree's spelling"
+        # (the old, narrower framing) but ANY per-occurrence choice of which
+        # allowlisted spelling appears where. A single swapped pair of agent
+        # mentions inside an otherwise-correct file is invisible, because
+        # normalise() has no notion of position -- only of the token sequence
+        # left after collapsing. Real content here assigns the draft/review
+        # split to opposite harnesses between the two copies; the guard
+        # cannot see that. If this test ever starts asserting inequality, the
+        # hole has closed and the docstring must be tightened to match -- not
+        # the other way around.
+        claude_text = "Ask Claude to draft the plan, then have Codex review it before merging."
+        agents_text = "Ask Codex to draft the plan, then have Claude review it before merging."
+        assert tool.normalise(claude_text, tree="claude") == tool.normalise(agents_text, tree="agents")
+
+    def test_longer_spelling_within_a_rule_is_tried_first(self, tool, monkeypatch):
+        # normalise() sorts each rule's two spellings by length (longest
+        # first) specifically so a shorter spelling cannot shadow a longer
+        # one that contains it. None of the three shipped rules actually
+        # overlap this way today (see the SUBSTITUTIONS live-usage comment),
+        # so this constructs a synthetic rule where the claude spelling is a
+        # strict prefix of the agents spelling and proves the ordering
+        # matters: if the sort were removed (spellings tried in declaration
+        # order: "ab" then "abc"), replacing "ab" first would leave a
+        # dangling "c" instead of fully consuming "abc".
+        overlapping_rule = tool.Substitution(canonical="\x00OVERLAP\x00", claude="ab", agents="abc")
+        monkeypatch.setattr(tool, "SUBSTITUTIONS", (overlapping_rule,))
+        assert tool.normalise("abc", tree="agents") == "\x00OVERLAP\x00"
 
 
 class _FakeTree:
@@ -232,6 +274,18 @@ class TestCompareFile:
         diff = tool.compare_file(claude, agents)
         assert diff is not None and "binary content differs" in diff[0]
 
+    def test_pre_existing_canonical_token_is_rejected_defensively(self, tool, tmp_path):
+        # The match/no-match decision assumes no real file already spells out
+        # a reserved placeholder verbatim. That assumption is checked, not
+        # just trusted: a file that already contains one raises instead of
+        # silently feeding into normalise() and potentially forging a match.
+        claude = tmp_path / "c.md"
+        agents = tmp_path / "a.md"
+        claude.write_text(f"normal text {tool.SUBSTITUTIONS[0].canonical} more text\n", encoding="utf-8")
+        agents.write_text("normal text more text\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="reserved token"):
+            tool.compare_file(claude, agents)
+
 
 class TestEnforcement:
     """Every failure branch: exit 1 under ``--strict``, exit 0 advisory."""
@@ -253,6 +307,19 @@ class TestEnforcement:
         tree.write(
             claude=_GREEN_SKILL + "\nAsk Claude to read .claude/skills/demo/SKILL.md.\n",
             agents=_GREEN_SKILL + "\nAsk Codex to read .agents/skills/demo/SKILL.md.\n",
+        )
+        assert tool.main(["--strict"]) == 0
+
+    def test_allowlisted_agent_doc_difference_passes(self, tool, tree, capsys):
+        # AGENT_DOC (CLAUDE.md <-> AGENTS.md) is currently unused by any real
+        # skill file -- see the SUBSTITUTIONS live-usage comment in the tool
+        # -- so unlike SKILL_ROOT and AGENT_NAME above it had no exercise
+        # through the full main() pipeline. This closes that gap: without
+        # this row in the allowlist, the two lines below would report as
+        # drift.
+        tree.write(
+            claude=_GREEN_SKILL + "\nRead CLAUDE.md before starting.\n",
+            agents=_GREEN_SKILL + "\nRead AGENTS.md before starting.\n",
         )
         assert tool.main(["--strict"]) == 0
 
@@ -324,6 +391,26 @@ class TestRealRepo:
         claude = {p.name for p in tool.CLAUDE_SKILLS_ROOT.iterdir() if p.is_dir()}
         agents = {p.name for p in tool.AGENTS_SKILLS_ROOT.iterdir() if p.is_dir()}
         assert claude == agents
+
+    def test_canonical_tokens_cannot_occur_in_real_markdown(self, tool):
+        # This is the test that earns the name: it actually scans both live
+        # skill trees for the reserved NUL-delimited placeholder bytes,
+        # rather than only asserting the tokens' shape (see
+        # ``TestSubstitutionTable.test_canonical_tokens_are_nul_delimited``
+        # for that narrower check). If this ever fails, a real file spells
+        # out a reserved token and ``compare_file`` will now raise on it
+        # (``_reject_pre_existing_canonical_tokens``) rather than silently
+        # risking a forged match/mismatch.
+        for root in (tool.CLAUDE_SKILLS_ROOT, tool.AGENTS_SKILLS_ROOT):
+            for path in root.rglob("*"):
+                if not path.is_file():
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    continue  # binary content; canonical tokens are text-only
+                for substitution in tool.SUBSTITUTIONS:
+                    assert substitution.canonical not in text, (path, substitution.canonical)
 
     def test_guard_wired_into_ci(self):
         # Assert the exact invocation, not just the filename: a step that runs

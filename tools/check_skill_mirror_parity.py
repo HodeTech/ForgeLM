@@ -50,13 +50,48 @@ roots is the pattern this repo already reaches for (see
 ``tools/check_release_record_sync.py``'s ``SKILL_REFERENCE``), the
 normalisation has to tolerate it.
 
-The accepted cost: a copy that uses the *other* tree's spelling throughout —
-``.agents/skills/review-pr/SKILL.md`` saying "Claude as reviewer" — normalises
-to the same token and passes.  That is a cosmetic inversion in text addressed
-to a specific harness, not the structural drift this guard exists to catch,
-and it is bounded by the three rules above: substitution can only ever collapse
-those spellings, never a difference in wording, ordering, or content.
-``tests/test_check_skill_mirror_parity.py`` pins that claim.
+The accepted cost, stated completely: :func:`normalise` replaces *every*
+occurrence of *every* allowlisted spelling with the same canonical token,
+independent of which tree the text came from and independent of how many
+times, in what order, or in what combination the two spellings of a rule
+appear.  Two files compare equal once every occurrence — not just "the whole
+file, consistently" — has been collapsed away.  That means the hole is wider
+than "a copy that uses the *other* tree's spelling throughout": it does not
+take a whole-file inversion to slip through.  A *single* swapped pair of
+mentions inside an otherwise-correct file is equally invisible, because
+substitution has no notion of position — only of which token ends up at each
+position after collapsing:
+
+    .claude/skills/x/SKILL.md:  "Ask Claude to draft the plan, then have
+                                  Codex review it before merging."
+    .agents/skills/x/SKILL.md:  "Ask Codex to draft the plan, then have
+                                  Claude review it before merging."
+
+Both lines normalise to the identical placeholder sequence and the guard
+reports no difference — yet the two copies now assign the draft/review split
+to opposite harnesses, which is exactly the kind of instructional content
+this guard exists to protect.  This is more common than a full-file spelling
+inversion (a single copy-paste slip is a far more ordinary editing mistake
+than rewriting an entire document in the wrong harness's voice) and more
+damaging (it encodes a real behavioural difference, not a cosmetic one).
+
+This cannot be tightened without reintroducing the false positive that
+directional rewriting was rejected for (see above): normalisation is
+context-free — it has no way to tell "the mirror under ``.claude/`` or
+``.agents/``" (a neutral sentence naming both roots on purpose, which must
+collapse identically on both sides) apart from "ask X to draft, Y to review"
+where swapping X and Y changes what the sentence means.  Both are, textually,
+just two allowlisted tokens appearing in a row.  Telling them apart requires
+understanding what the sentence *means*, which is out of scope for a
+mechanical text-diff guard; a guard that tried would be trading one silent
+failure mode for another (rejecting legitimate agent-neutral prose).  So the
+hole is accepted, stated at its true width above rather than the narrower
+"throughout" framing, and pinned by
+``TestNormalise::test_swapped_agent_name_within_one_file_is_the_accepted_hole``
+in ``tests/test_check_skill_mirror_parity.py`` — if that test ever starts
+failing, the hole has *closed* (tighten the docstring, don't "fix" the test),
+and if a change makes today's swap example insufficient to demonstrate it,
+the hole has *widened* and needs new prose here before anything else.
 
 Exit codes (per the ``tools/`` contract — NOT the public 0/1/2/3/4/5 surface
 that ``forgelm/`` honours):
@@ -69,6 +104,12 @@ that ``forgelm/`` honours):
   entirely**: that is a broken invocation rather than drift to iterate on
   locally, and a guard that cannot read its inputs must never report success.
   Matches ``tools/check_release_record_sync.py``.
+- **Uncaught** ``ValueError`` (Python's default non-zero exit, not a value in
+  the list above) if a file already contains one of the reserved canonical
+  placeholders — see :func:`_reject_pre_existing_canonical_tokens`.  Not a
+  drift finding to report and continue past: the guard's own match/no-match
+  logic can no longer be trusted for that file, so it stops instead of
+  guessing.
 
 CI wiring: runs in ``.github/workflows/ci.yml``'s ``validate`` job with
 ``--strict``, and is listed in the ``CLAUDE.md`` / ``AGENTS.md`` /
@@ -122,6 +163,25 @@ class Substitution:
 #: match part of it.  (``Claude`` is capitalised differently from ``CLAUDE``, so
 #: the two do not actually collide today; the ordering keeps that a property of
 #: the table rather than a coincidence of casing.)
+#:
+#: Live-usage honesty check, current as of this writing: ``AGENT_NAME`` is the
+#: only row exercised by real content today — exactly once, at
+#: ``review-pr/SKILL.md``'s "including Claude as reviewer" line.  Neither
+#: ``.claude/``/``.agents/`` (``SKILL_ROOT``) nor ``CLAUDE.md``/``AGENTS.md``
+#: (``AGENT_DOC``) appears anywhere in either skill tree; a skill that never
+#: hardcodes a path to another skill or to the root instructions file has no
+#: use for them yet.  They stay in the table anyway: the three rows are a
+#: closed, exhaustive enumeration of the only two structural facts that can
+#: ever differ between a ``.claude/``-checkout and an ``.agents/``-checkout of
+#: this repo (which directory the skill lives under, which file the root
+#: instructions live in) plus the agent name — not speculative feature creep,
+#: and the same "cite the skill under ``.claude/`` or ``.agents/``" phrasing
+#: already appears outside the skill trees (``check_release_record_sync.py``'s
+#: ``SKILL_REFERENCE``), so a skill reaching for it is a when, not an if.
+#: Because "kept for later" rows are otherwise untested dead weight,
+#: ``tests/test_check_skill_mirror_parity.py`` exercises ``SKILL_ROOT`` and
+#: ``AGENT_DOC`` through the full ``main()`` pipeline (not just
+#: :func:`normalise` in isolation) the same way ``AGENT_NAME`` already is.
 SUBSTITUTIONS: Tuple[Substitution, ...] = (
     # Directory paths.  A ``.claude/``-rooted path is dead text in a checkout
     # driven from ``.agents/`` and vice versa, so each copy names its own root.
@@ -233,6 +293,27 @@ def list_files(directory: Path) -> List[str]:
     return sorted(path.relative_to(directory).as_posix() for path in directory.rglob("*") if path.is_file())
 
 
+def _reject_pre_existing_canonical_tokens(text: str, path: Path) -> None:
+    """Raise if ``text`` already spells out one of :data:`SUBSTITUTIONS`'s
+    reserved canonical placeholders verbatim.
+
+    The match/no-match decision in :func:`compare_file` is "do the two
+    normalised strings compare equal" — so a canonical token's job is to be a
+    marker that a real skill file could never contain by accident.  No skill
+    file does today (``tests/test_check_skill_mirror_parity.py`` scans both
+    live trees to keep that true), but that fact is an empirical property of
+    the current corpus, not a guarantee — a guard that silently trusted the
+    assumption instead of checking it would defeat itself exactly the way it
+    exists to catch drift: quietly, with a passing exit code.
+    """
+    for substitution in SUBSTITUTIONS:
+        if substitution.canonical in text:
+            raise ValueError(
+                f"{_rel(path)} already contains the reserved token {substitution.canonical!r}. "
+                "This guard cannot compare the file safely: remove the literal control bytes."
+            )
+
+
 def compare_file(claude_path: Path, agents_path: Path) -> Optional[Tuple[str, ...]]:
     """Return a unified diff of the two copies, or ``None`` when they match.
 
@@ -240,6 +321,11 @@ def compare_file(claude_path: Path, agents_path: Path) -> Optional[Tuple[str, ..
     (no skill ships one today, but nothing forbids it) falls back to a raw byte
     comparison — substitution is meaningless there, and silently skipping the
     file would be a hole in the guard.
+
+    Raises:
+        ValueError: if either file already contains one of the reserved
+            canonical placeholders before substitution runs — see
+            :func:`_reject_pre_existing_canonical_tokens`.
     """
     claude_bytes = claude_path.read_bytes()
     agents_bytes = agents_path.read_bytes()
@@ -250,6 +336,9 @@ def compare_file(claude_path: Path, agents_path: Path) -> Optional[Tuple[str, ..
         if claude_bytes == agents_bytes:
             return None
         return (f"binary content differs ({len(claude_bytes)} vs {len(agents_bytes)} bytes)",)
+
+    _reject_pre_existing_canonical_tokens(claude_text, claude_path)
+    _reject_pre_existing_canonical_tokens(agents_text, agents_path)
 
     claude_norm = normalise(claude_text, tree="claude")
     agents_norm = normalise(agents_text, tree="agents")

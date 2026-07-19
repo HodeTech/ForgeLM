@@ -35,8 +35,15 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   and the `**Released:**` headline in `docs/roadmap.md` **and** the
   `**Yayınlandı:**` headline in its Turkish mirror must both name the newest one.
   Release dates are cross-checked between the two files, and headings inside
-  fenced code blocks are ignored so a sample snippet cannot satisfy a real
-  release. The release ritual's "update the roadmap" step had been skipped for
+  fenced code blocks or HTML comments are ignored so a sample snippet cannot
+  satisfy a real release. The guard is fail-closed by construction: a heading
+  that was plainly meant to be a release but does not parse (a missing space
+  after `##`, an indented or wrong-depth heading, a unicode-dash date, a
+  heading swallowed by an unbalanced fence) is reported by file and line
+  rather than silently dropped, and parsing zero releases out of a CHANGELOG
+  is treated as a broken invocation rather than a clean tree — because a guard
+  that reports success on input it could not read is the failure it exists to
+  prevent. The release ritual's "update the roadmap" step had been skipped for
   two consecutive releases — `v0.8.0` and `v0.9.0` shipped while the roadmap
   still announced `v0.7.0` as current, and the Turkish mirror had drifted four
   minors behind — so it is now checked rather than trusted. The step also moved
@@ -356,11 +363,16 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   > in place because released entries are not rewritten. The field was actually
   > deprecated in **v0.5.5**, whose entry reads "Removal scheduled for v0.7.0" —
   > the *scheduled-removal* version was misread as the *deprecation* version.
-  > The real warning window was three minors (v0.5.5 → v0.8.0), not one. The
-  > same misreading applies to the `--data-audit PATH` alias in the bullet
-  > below: it was deprecated in **v0.5.0** ("Removal targeted no earlier than
-  > v0.7.0"), a four-minor window. Neither correction changes what v0.8.0
-  > shipped — only the history it cites.
+  > Counting only true MINOR (Y-digit) releases per
+  > `docs/standards/release.md`'s Versioning table — a patch tag such as
+  > v0.5.5 anchors to its v0.5 minor line and adds no separate hop — the real
+  > warning window was three minors (v0.5.5 → v0.6.0 → v0.7.0 → v0.8.0), not
+  > one. The same misreading applies to the `--data-audit PATH` alias in the
+  > bullet below: it was deprecated in **v0.5.0** ("Removal targeted no
+  > earlier than v0.7.0"), also a three-minor window (v0.5.0 → v0.6.0 →
+  > v0.7.0 → v0.8.0) under the same count, since both fields' deprecations
+  > anchor within the same v0.5 minor line. Neither correction changes what
+  > v0.8.0 shipped — only the history it cites.
 - **`forgelm --data-audit PATH`** CLI flag (deprecated in v0.7.0) is removed.
   Use the first-class `forgelm audit PATH` subcommand — identical behaviour and
   output. `argparse` now rejects the flag (exit 2).

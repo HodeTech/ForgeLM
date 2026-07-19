@@ -322,14 +322,18 @@ jobs:
         run: python3 tools/check_deprecation_targets.py --strict
 
       - name: Release-record sync (CHANGELOG -> roadmap)
-        # The cut-release skill's post-release step ("Close the phase") asks
-        # for a docs/roadmap/releases.md section and a refreshed
-        # docs/roadmap.md '**Released:**' headline. Nothing verified it, and it
-        # was skipped for two consecutive releases (v0.8.0, v0.9.0) — the
-        # public roadmap announced v0.7.0 while PyPI had v0.9.0. This guard
-        # cross-checks every released CHANGELOG heading against releases.md
-        # (a '(Planned)' section does not count) and pins the headline to the
-        # newest released version.
+        # The cut-release skill's pre-release step 4.5 ("Write the release
+        # record — before the tag") asks for a docs/roadmap/releases.md
+        # section and a refreshed docs/roadmap.md '**Released:**' headline.
+        # Nothing verified it, and while it still lived in the post-release
+        # "Close the phase" step it was skipped for two consecutive releases
+        # (v0.8.0, v0.9.0) — the public roadmap announced v0.7.0 while PyPI
+        # had v0.9.0. This guard cross-checks every released CHANGELOG heading
+        # against releases.md (a '(Planned)' section does not count) and pins
+        # the headline to the newest released version. It also refuses to
+        # report success on input it could not parse: a near-miss heading
+        # (##[9.9.0]), a fence that swallows one, or a changelog that yields
+        # zero releases all fail rather than going quietly green.
         run: python3 tools/check_release_record_sync.py --strict
 
       - name: Skill mirror parity (.claude/skills <-> .agents/skills)

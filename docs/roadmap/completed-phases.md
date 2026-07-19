@@ -1522,9 +1522,12 @@ module is never imported on the single-stage path.  `git diff` on
   pipeline-only-flag rejection on non-pipeline configs (post-release
   HIGH 5), reference docs + roadmap state cleanup.
 - **PR #54 release-prep + post-release review**: 10 of 14 findings
-  applied (3 blockers + 5 HIGH + 2 MEDIUM), 4 deferred to v0.7.x
-  follow-up (canonical manifest hash, per-stage manifest deep
-  parse, webhook event vocabulary docs, `_send` allowlist).
+  applied (3 blockers + 5 HIGH + 2 MEDIUM), 4 deferred at the time
+  to what was then the next open cycle, `v0.7.x`, as follow-up
+  (canonical manifest hash, per-stage manifest deep parse, webhook
+  event vocabulary docs, `_send` allowlist). That cycle closed with
+  both v0.8.0 and v0.9.0 shipping without them; Phase 14.5 now
+  targets `v0.9.x` instead.
 
 ### Cross-references
 
@@ -1532,7 +1535,7 @@ module is never imported on the single-stage path.  `git diff` on
 - [`../usermanuals/en/training/pipelines.md`](../usermanuals/en/training/pipelines.md) ([Türkçe](../usermanuals/tr/training/pipelines.md)) — sidebar user manual page
 - [`../reference/configuration.md`](../reference/configuration.md#pipeline-optional--multi-stage-training-chains-phase-14) ([Türkçe](../reference/configuration-tr.md#pipeline-isteğe-bağlı--çok-aşamalı-eğitim-zincirleri-faz-14)) — schema
 - [`../reference/usage.md`](../reference/usage.md) ([Türkçe](../reference/usage-tr.md)) — CLI surface
-- [`phase-14-5-pipeline-hardening.md`](phase-14-5-pipeline-hardening.md) — Phase 14.5 follow-up (v0.7.x review-deferred items: manifest hash, per-stage deep parse, webhook vocab, `_send` allowlist)
+- [`phase-14-5-pipeline-hardening.md`](phase-14-5-pipeline-hardening.md) — Phase 14.5 follow-up (v0.7.0 review-deferred items: manifest hash, per-stage deep parse, webhook vocab, `_send` allowlist; originally targeted `v0.7.x`, now targets `v0.9.x` — see that file for current status)
 - [`../../CHANGELOG.md`](../../CHANGELOG.md) `[0.7.0]` — full shipped-task list
 - PR #53 — Phase 14 implementation + 5 review-absorption rounds
 - PR #54 — v0.7.0 release prep + post-release review (10 findings)

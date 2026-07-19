@@ -22,6 +22,16 @@ Three layers:
 * **Live repo** (:class:`TestRealRepo`) — the invariant CI actually relies on,
   ``main(["--strict", "--quiet"]) == 0``, mirroring
   ``tests/test_check_deprecation_targets.py``.
+
+A fourth concern cuts across all three: the guard's own **fail-open** surface.
+A review round drove ``##[9.9.0] — 2026-07-19`` (no space), an indented heading
+and a fence-swallowed heading through it; all three exited 0 with ``OK:``,
+because a heading that does not match the grammar simply is not a release. The
+success line even read ``OK: 0 released version(s) …``. The parse floor, the
+near-miss detector, fence-span accounting and HTML-comment masking each get
+enforcement coverage below, and :meth:`TestEnforcement._fails` now asserts
+advisory stdout instead of discarding it — the old helper let a mutation that
+silenced every non-strict diagnostic survive.
 """
 
 from __future__ import annotations
@@ -50,6 +60,15 @@ def tool():
     return _load_tool()
 
 
+# The four-file corpus a green run reads.  Defined here rather than beside
+# ``TestEnforcement`` because the unit-level parse-floor tests take one of them
+# as a default argument, which is evaluated at class-definition time.
+_GREEN_CHANGELOG = "# Changelog\n\n## [Unreleased]\n\n## [0.9.0] — 2026-07-05\n\n### Added\n- a thing\n"
+_GREEN_RELEASES = '# Releases\n\n## v0.9.0 — "Shipped" (2026-07-05)\n\n**Status:** Released.\n'
+_GREEN_ROADMAP = "# Roadmap\n\n**Released:** `v0.9.0` — shipped 2026-07-05.\n"
+_GREEN_ROADMAP_TR = "# Yol Haritası\n\n**Yayınlandı:** `v0.9.0` — 2026-07-05'te yayınlandı.\n"
+
+
 class TestParseVersionToken:
     @pytest.mark.parametrize("token", ["v0.9.0", "V0.9.0", "0.9.0"])
     def test_prefix_is_optional_and_case_insensitive(self, tool, token):
@@ -67,27 +86,219 @@ class TestParseVersionToken:
         assert tool.parse_version_token(token) is None
 
 
-class TestScanFences:
+class TestScanLines:
     def test_lines_inside_and_including_a_fence_are_masked(self, tool):
-        scan = tool.scan_fences(["before", "```bash", "inside", "```", "after"])
+        scan = tool.scan_lines(["before", "```bash", "inside", "```", "after"])
         assert scan.mask == (False, True, True, True, False)
-        assert scan.unterminated_line is None
+        assert scan.unterminated_fence is None
 
     def test_tilde_fences_count_too(self, tool):
         # CommonMark §4.5 allows `~~~` as well as backticks.
-        scan = tool.scan_fences(["~~~", "inside", "~~~", "after"])
+        scan = tool.scan_lines(["~~~", "inside", "~~~", "after"])
         assert scan.mask == (True, True, True, False)
 
     def test_indented_fence_still_toggles(self, tool):
-        scan = tool.scan_fences(["  ```", "inside", "  ```"])
+        scan = tool.scan_lines(["  ```", "inside", "  ```"])
         assert scan.mask == (True, True, True)
 
     def test_unterminated_fence_is_reported_with_its_line(self, tool):
         # An open fence masks the whole remainder of the file, which would
         # silently disable enforcement — the caller has to be able to fail on it.
-        scan = tool.scan_fences(["intro", "```", "swallowed"])
-        assert scan.unterminated_line == 2
+        scan = tool.scan_lines(["intro", "```", "swallowed"])
+        assert scan.unterminated_fence == 2
         assert scan.mask == (False, True, True)
+
+    def test_a_different_marker_does_not_close_a_fence(self, tool):
+        # CommonMark §4.5: the closer repeats the opener's character. The old
+        # walker toggled on any marker, so `~~~` silently closed a ``` block.
+        scan = tool.scan_lines(["```", "inside", "~~~", "still inside"])
+        assert scan.unterminated_fence == 1
+        assert scan.mask == (True, True, True, True)
+
+    def test_a_shorter_run_does_not_close_a_longer_fence(self, tool):
+        scan = tool.scan_lines(["````", "inside", "```", "still inside", "````"])
+        assert scan.unterminated_fence is None
+        assert scan.spans[0].closer == 5
+        assert scan.spans[0].interior_markers == (3,)
+
+    def test_an_info_string_line_is_content_not_a_closer(self, tool):
+        # THE structural case: a marker the author meant as the *opener* of the
+        # next block used to close the previous one, masking everything between
+        # while leaving the file looking balanced.
+        scan = tool.scan_lines(["```yaml", "key: value", "```bash", "echo hi", "```"])
+        (span,) = scan.spans
+        assert (span.opener, span.closer) == (1, 5)
+        assert span.interior_markers == (3,)
+
+    def test_html_comments_are_stripped_from_content(self, tool):
+        scan = tool.scan_lines(["before <!-- hidden --> after"])
+        assert scan.content == ("before  after",)
+        assert scan.mask == (False,)
+
+    def test_multi_line_html_comment_is_stripped(self, tool):
+        scan = tool.scan_lines(["<!--", "## [9.9.0] — 2026-07-19", "-->", "real"])
+        assert scan.content == ("", "", "", "real")
+        assert scan.unterminated_comment is None
+
+    def test_unterminated_html_comment_is_reported(self, tool):
+        # Same fail-open shape as an unterminated fence: everything after is
+        # invisible to every parser in this file.
+        scan = tool.scan_lines(["intro", "<!-- oops", "swallowed"])
+        assert scan.unterminated_comment == 2
+
+    def test_a_comment_marker_inside_a_fence_is_inert(self, tool):
+        scan = tool.scan_lines(["```", "<!--", "```", "after"])
+        assert scan.unterminated_comment is None
+        assert scan.content[3] == "after"
+
+    def test_raw_lines_survive_masking(self, tool):
+        # The fence reports have to be able to show what was masked.
+        scan = tool.scan_lines(["```", "## [9.9.0] — 2026-07-19", "```"])
+        assert scan.raw[1] == "## [9.9.0] — 2026-07-19"
+        assert scan.content[1] == ""
+
+
+class TestDiagnoseHeading:
+    """The near-miss classifier: which lines *meant* to be version headings."""
+
+    @pytest.mark.parametrize(
+        "raw,fragment",
+        [
+            ("##[9.9.0] — 2026-07-19", "no space"),
+            ("  ## [9.9.0] — 2026-07-19", "indented by 2"),
+            ("\t## [9.9.0] — 2026-07-19", "indented by 1"),
+            ("### [9.9.0] — 2026-07-19", "depth is '###'"),
+            ("# [9.9.0] — 2026-07-19", "depth is '#'"),
+            ("## 9.9.0 — 2026-07-19", "not wrapped in ASCII"),
+            ("## [9.9.0] — 2026-07-19", "U+00A0"),
+            ("## ［9.9.0］ — 2026-07-19", "not wrapped in ASCII"),
+        ],
+    )
+    def test_near_misses_are_diagnosed(self, tool, raw, fragment):
+        reasons = tool._diagnose_heading(raw, "changelog")
+        assert reasons, raw
+        assert any(fragment in reason for reason in reasons), reasons
+
+    def test_trailing_whitespace_is_named_alongside_the_real_defect(self, tool):
+        reasons = tool._diagnose_heading("##[9.9.0] — 2026-07-19   ", "changelog")
+        assert "trailing whitespace" in reasons
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "## [9.9.0] — 2026-07-19",  # the correct form
+            "## [Unreleased]",
+            "### Added",
+            "### Phase 12.5 — Data Curation Polish",  # real heading; `12.5` is a Version
+            "#### Article 14 staging directory",
+            "Just prose about 9.9.0.",
+            "####### not a heading at all",
+            "##",
+        ],
+    )
+    def test_legitimate_lines_are_not_near_misses(self, tool, raw):
+        assert tool._diagnose_heading(raw, "changelog") == ()
+
+    def test_the_releases_dialect_accepts_a_bare_version(self, tool):
+        # `## v0.9.0 — "Title"` is the releases.md form; brackets are not required.
+        assert tool._diagnose_heading('## v0.9.0 — "Shipped"', "releases") == ()
+        assert tool._diagnose_heading('##v0.9.0 — "Shipped"', "releases")
+
+    def test_near_miss_scan_skips_fenced_samples(self, tool):
+        scan = tool.scan_lines(["```text", "##[9.9.0] — 2026-07-19", "```"])
+        assert tool.find_near_miss_headings(scan, "changelog") == []
+
+    def test_near_miss_scan_reports_line_and_raw(self, tool):
+        scan = tool.scan_lines(["# Changelog", "", "##[9.9.0] — 2026-07-19"])
+        (miss,) = tool.find_near_miss_headings(scan, "changelog")
+        assert (miss.line, miss.raw) == (3, "##[9.9.0] — 2026-07-19")
+
+
+class TestFindSwallowedHeadings:
+    def test_a_balanced_sample_fence_is_not_structural(self, tool):
+        scan = tool.scan_lines(["```text", "## [9.9.9] — 2099-01-01", "```"])
+        (swallowed,) = tool.find_swallowed_headings(scan, "changelog")
+        assert swallowed.structural is False
+        assert swallowed.line == 2
+
+    def test_an_interior_marker_makes_the_span_structural(self, tool):
+        scan = tool.scan_lines(["```yaml", "## [9.9.0] — 2026-07-19", "```bash", "echo", "```"])
+        (swallowed,) = tool.find_swallowed_headings(scan, "changelog")
+        assert swallowed.structural is True
+        assert swallowed.span.interior_markers == (3,)
+
+    def test_a_near_miss_inside_a_fence_counts_as_swallowed(self, tool):
+        scan = tool.scan_lines(["```yaml", "##[9.9.0] — 2026-07-19", "```bash", "echo", "```"])
+        (swallowed,) = tool.find_swallowed_headings(scan, "changelog")
+        assert swallowed.structural is True
+
+    def test_a_fence_with_no_heading_reports_nothing(self, tool):
+        scan = tool.scan_lines(["```yaml", "key: value", "```bash", "echo", "```"])
+        assert tool.find_swallowed_headings(scan, "changelog") == []
+
+    @pytest.mark.parametrize("heading", ["## Installation", "## [Unreleased]", "### Added"])
+    def test_a_fenced_non_version_heading_is_not_swallowed(self, tool, heading):
+        # The releases.md grammar accepts any `## word`; a fenced `## Installation`
+        # is not a release that went missing.
+        scan = tool.scan_lines(["```text", heading, "```"])
+        assert tool.find_swallowed_headings(scan, "releases") == []
+        assert tool.find_swallowed_headings(scan, "changelog") == []
+
+    def test_an_unterminated_span_is_scanned_to_eof(self, tool):
+        scan = tool.scan_lines(["```", "## [9.9.0] — 2026-07-19", "still open"])
+        (swallowed,) = tool.find_swallowed_headings(scan, "changelog")
+        assert swallowed.span.closer is None
+
+
+class TestMalformedDate:
+    @pytest.mark.parametrize("token", ["2026–07–05", "2026‐07‐05", "2026−07−05", "2026/07/05"])
+    def test_unreadable_dates_are_named_not_treated_as_absent(self, tool, token):
+        # A skipped cross-check must never be buyable with a smart-quote dash.
+        assert tool.malformed_date(f"## [0.9.0] — {token}") == token
+        assert tool.extract_date(f"## [0.9.0] — {token}") is None
+
+    def test_a_good_date_is_silent(self, tool):
+        assert tool.malformed_date("## [0.9.0] — 2026-07-05") is None
+
+    def test_a_dateless_heading_is_silent(self, tool):
+        assert tool.malformed_date('## v0.5.0 — "Document Ingestion"') is None
+
+    def test_a_later_odd_token_does_not_condemn_a_good_first_date(self, tool):
+        # `extract_date`'s contract is "first date on the line"; only the first
+        # one being unreadable is a defect.
+        assert tool.malformed_date("## [0.9.0] — 2026-07-05 (was 2026/07/01)") is None
+
+    def test_a_four_digit_version_is_not_mistaken_for_a_date(self, tool):
+        # `.` is deliberately not a date separator: `1234.56.78` is a version.
+        assert tool.malformed_date("## [1234.56.78] — 2026-07-05") is None
+
+
+class TestFindParseFloorFailures:
+    def _floor(self, tool, changelog, releases_text=_GREEN_RELEASES):
+        scan = tool.scan_lines(changelog.splitlines())
+        return tool.find_parse_floor_failures(
+            scan,
+            tool.parse_changelog_releases(changelog),
+            tool.parse_release_entries(releases_text),
+        )
+
+    def test_a_healthy_pair_has_no_floor_failure(self, tool):
+        assert self._floor(tool, "# Changelog\n\n## [0.9.0] — 2026-07-05\n\n- x\n") == []
+
+    def test_an_empty_changelog_trips_both_probes(self, tool):
+        assert len(self._floor(tool, "")) == 2
+
+    def test_prose_with_no_level_two_heading_trips_the_shape_probe(self, tool):
+        reasons = self._floor(tool, "not a changelog at all\njust prose\n")
+        assert any("does not look like a CHANGELOG" in reason for reason in reasons)
+
+    def test_unreleased_only_still_trips_the_zero_release_probe(self, tool):
+        reasons = self._floor(tool, "# Changelog\n\n## [Unreleased]\n\n- pending\n")
+        assert reasons == ["no released version was parsed from it (only '[Unreleased]', or none at all)"]
+
+    def test_an_empty_releases_file_trips_its_own_probe(self, tool):
+        reasons = self._floor(tool, "# Changelog\n\n## [0.9.0] — 2026-07-05\n\n- x\n", "# Releases\n\nnothing.\n")
+        assert any("no level-2 section was parsed" in reason for reason in reasons)
 
 
 class TestExtractDate:
@@ -438,11 +649,6 @@ class TestHeadlineSources:
 # Enforcement: main() against a temporary tree.
 # --------------------------------------------------------------------------
 
-_GREEN_CHANGELOG = "# Changelog\n\n## [Unreleased]\n\n## [0.9.0] — 2026-07-05\n\n### Added\n- a thing\n"
-_GREEN_RELEASES = '# Releases\n\n## v0.9.0 — "Shipped" (2026-07-05)\n\n**Status:** Released.\n'
-_GREEN_ROADMAP = "# Roadmap\n\n**Released:** `v0.9.0` — shipped 2026-07-05.\n"
-_GREEN_ROADMAP_TR = "# Yol Haritası\n\n**Yayınlandı:** `v0.9.0` — 2026-07-05'te yayınlandı.\n"
-
 
 class _FakeTree:
     """The guard's four inputs, redirected onto ``tmp_path``.
@@ -486,14 +692,40 @@ class TestEnforcement:
     """
 
     def _fails(self, tool, capsys, fragment):
-        """Assert strict exits 1, advisory exits 0, and the report says why."""
+        """Assert strict exits 1, advisory exits 0, and *both* report why.
+
+        Advisory stdout is asserted, not discarded.  The earlier helper threw it
+        away with a bare ``capsys.readouterr()``, so nothing pinned the "report
+        to stdout but exit 0" half of the advisory contract: a mutation that
+        silenced every diagnostic unless ``--strict`` was passed survived the
+        whole suite.
+        """
         strict = tool.main(["--strict"])
-        out = capsys.readouterr().out
+        strict_out = capsys.readouterr().out
         advisory = tool.main([])
-        capsys.readouterr()
-        assert (strict, advisory) == (1, 0), out
-        assert fragment in out, out
-        return out
+        advisory_out = capsys.readouterr().out
+        assert (strict, advisory) == (1, 0), strict_out
+        assert fragment in strict_out, strict_out
+        # Advisory mode diagnoses identically; it only declines to fail on it.
+        assert fragment in advisory_out, advisory_out
+        assert "FAIL:" in advisory_out, advisory_out
+        assert strict_out == advisory_out, (strict_out, advisory_out)
+        return strict_out
+
+    def _always_fails(self, tool, capsys, fragment):
+        """Assert a branch that exits 1 with *and* without ``--strict``.
+
+        The parse floor and the missing-input branch share this contract: input
+        the guard cannot read is a broken invocation, not drift to iterate on.
+        """
+        strict = tool.main(["--strict"])
+        strict_err = capsys.readouterr().err
+        advisory = tool.main([])
+        advisory_err = capsys.readouterr().err
+        assert (strict, advisory) == (1, 1), strict_err
+        assert fragment in strict_err, strict_err
+        assert fragment in advisory_err, advisory_err
+        return strict_err
 
     def test_green_tree_passes(self, tool, tree, capsys):
         assert tool.main(["--strict"]) == 0
@@ -513,7 +745,14 @@ class TestEnforcement:
         self._fails(tool, capsys, "have no entry in")
 
     def test_fenced_section_does_not_rescue_an_unrecorded_release(self, tool, tree, capsys):
-        tree.write(releases='# Releases\n\n```text\n## v0.9.0 — "Shipped" (2026-07-05)\n\nnotes\n```\n')
+        # A real entry keeps the parse floor satisfied, so this exercises the
+        # unrecorded-release branch rather than the broken-input branch.
+        tree.write(
+            releases=(
+                '# Releases\n\n## v0.7.0 — "Old" (2026-05-15)\n\n**Status:** Released.\n\n'
+                '```text\n## v0.9.0 — "Shipped" (2026-07-05)\n\nnotes\n```\n'
+            )
+        )
         self._fails(tool, capsys, "have no entry in")
 
     def test_stale_english_headline_fails(self, tool, tree, capsys):
@@ -555,9 +794,12 @@ class TestEnforcement:
         out = self._fails(tool, capsys, "not readable as a version")
         assert "banana" in out
 
-    def test_changelog_with_no_release_at_all_fails(self, tool, tree, capsys):
-        tree.write(changelog="# Changelog\n\n## [Unreleased]\n\n### Added\n- a thing\n")
-        self._fails(tool, capsys, "declares no released version at all")
+    def test_changelog_with_only_unreadable_headings_fails(self, tool, tree, capsys):
+        # `[banana]` parses as a heading but not as a version, so the floor is
+        # met (a release *was* parsed) and the newest-release branch is the one
+        # that has to catch it.
+        tree.write(changelog="# Changelog\n\n## [banana] — 2026-07-05\n\n- a thing\n")
+        self._fails(tool, capsys, "declares no readable released version")
 
     def test_date_mismatch_fails(self, tool, tree, capsys):
         tree.write(releases='# Releases\n\n## v0.9.0 — "Shipped" (2026-07-06)\n\n**Status:** Released.\n')
@@ -608,9 +850,33 @@ class TestEnforcement:
         assert tool.main([]) == 1
         assert "not found" in capsys.readouterr().err
 
-    def test_quiet_suppresses_the_success_summary_only(self, tool, tree, capsys):
+    def test_quiet_suppresses_the_success_summary(self, tool, tree, capsys):
         assert tool.main(["--strict", "--quiet"]) == 0
         assert capsys.readouterr().out == ""
+
+    def test_quiet_does_not_suppress_failures(self, tool, tree, capsys):
+        # `--quiet` means "only tell me what I have to act on", which is what the
+        # help text now says. A --quiet that hid drift would be its own
+        # fail-open, and the sibling guards pin the same contract.
+        tree.write(releases='# Releases\n\n## v0.7.0 — "Old" (2026-05-15)\n\n**Status:** Released.\n')
+        assert tool.main(["--strict", "--quiet"]) == 1
+        out = capsys.readouterr().out
+        assert "FAIL:" in out and "have no entry in" in out
+
+    def test_quiet_still_prints_actionable_notes(self, tool, tree, capsys):
+        # The unreadable-heading advisory is something to fix; only the frozen
+        # historical date pairs are informational enough to suppress.
+        tree.write(releases=_GREEN_RELEASES + "\n## Appendix — extra notes\n\nbody\n")
+        assert tool.main(["--strict", "--quiet"]) == 0
+        assert "Appendix" in capsys.readouterr().out
+
+    def test_quiet_help_text_matches_the_behaviour(self, tool):
+        # The finding: the help said "Suppress success summary" while the flag
+        # also gated the per-mismatch NOTE lines.
+        # Read the declared help string, not `format_help()` — argparse rewraps.
+        (action,) = [a for a in tool._build_arg_parser()._actions if a.dest == "quiet"]
+        assert "informational" in action.help
+        assert "Failures and actionable notes always print" in action.help
 
     def test_remediation_names_the_cut_release_skill_agent_neutrally(self, tool, tree, capsys):
         # The operator-facing message is the whole point of the guard failing.
@@ -621,13 +887,126 @@ class TestEnforcement:
         assert "skills/cut-release/SKILL.md" in out
         assert ".claude/" in out and ".agents/" in out
 
+    def test_remediation_points_at_the_step_that_actually_holds_it(self, tool, tree, capsys):
+        # Commit 1072820 moved the release record out of the post-release
+        # "Close the phase" step into pre-release step 4.5, precisely so this
+        # guard can gate it before the tag exists. A pointer at the old section
+        # sends a releaser to text that says the record does not belong there.
+        tree.write(releases='# Releases\n\n## v0.7.0 — "Old" (2026-05-15)\n\n**Status:** Released.\n')
+        out = self._fails(tool, capsys, "step 4.5")
+        assert "Close the phase" not in out
+
     def test_report_paths_survive_an_out_of_tree_corpus(self, tool, tree, capsys):
         # `Path.relative_to` raises for a path outside the repo; a guard that
         # crashes formatting its own failure is worse than one printing an
         # absolute path.
-        tree.write(releases="# Releases\n\nnothing here.\n")
+        tree.write(releases='# Releases\n\n## v0.7.0 — "Old" (2026-05-15)\n\n**Status:** Released.\n')
         out = self._fails(tool, capsys, "have no entry in")
         assert str(tree.releases) in out
+
+    # ---------------------------------------------------------------- floors
+    # A guard that parses zero releases and prints `OK: 0 released version(s)`
+    # is fail-open by construction — the same defect class as a pip-audit run
+    # going green because every severity bucket came back empty.
+
+    @pytest.mark.parametrize(
+        "changelog",
+        [
+            "",
+            "not a changelog at all\njust prose\n",
+            "# Changelog\n\n## [Unreleased]\n\n### Added\n- a thing\n",
+        ],
+        ids=["empty", "garbage", "unreleased-only"],
+    )
+    def test_parse_floor_fails_regardless_of_strict(self, tool, tree, capsys, changelog):
+        tree.write(changelog=changelog)
+        self._always_fails(tool, capsys, "did not parse as a CHANGELOG")
+
+    def test_parse_floor_fires_when_releases_md_yields_nothing(self, tool, tree, capsys):
+        tree.write(releases="# Releases\n\nnothing here at all.\n")
+        self._always_fails(tool, capsys, "no level-2 section was parsed")
+
+    def test_the_floor_still_prints_the_diagnosis_that_explains_it(self, tool, tree, capsys):
+        # The whole point: "0 releases" must never be reported without saying
+        # which line the parser walked past.
+        tree.write(changelog="# Changelog\n\n##[9.9.0] — 2026-07-19\n\n- unrecorded\n")
+        assert tool.main([]) == 1
+        captured = capsys.readouterr()
+        assert "did not parse as a CHANGELOG" in captured.err
+        assert "##[9.9.0]" in captured.out
+
+    # ------------------------------------------------------------ near misses
+
+    def test_the_reported_repro_now_fails(self, tool, tree, capsys):
+        # THE regression case. `##[9.9.0] — 2026-07-19` produced no release at
+        # all, so the guard printed `OK:` and exited 0 while an unrecorded
+        # release sat in the file — exactly the incident the guard exists for.
+        tree.write(changelog=_GREEN_CHANGELOG + "\n##[9.9.0] — 2026-07-19\n\n### Added\n- unrecorded\n")
+        out = self._fails(tool, capsys, "look like a version heading but did not parse")
+        assert "##[9.9.0] — 2026-07-19" in out
+        assert "no space between '##' and the version" in out
+        assert "## [X.Y.Z] — YYYY-MM-DD" in out
+
+    @pytest.mark.parametrize(
+        "heading",
+        ["  ## [9.9.0] — 2026-07-19", "### [9.9.0] — 2026-07-19", "## 9.9.0 — 2026-07-19"],
+        ids=["indented", "wrong-depth", "bracketless"],
+    )
+    def test_near_miss_shapes_fail(self, tool, tree, capsys, heading):
+        tree.write(changelog=_GREEN_CHANGELOG + f"\n{heading}\n\n- unrecorded\n")
+        self._fails(tool, capsys, "look like a version heading but did not parse")
+
+    def test_a_near_miss_in_releases_md_fails_too(self, tool, tree, capsys):
+        # A dropped `releases.md` heading merges two sections, so a body-less
+        # record can inherit its neighbour's body and pass as written up.
+        tree.write(releases=_GREEN_RELEASES + '\n##v1.0.0 — "Next" (2026-08-01)\n\nnotes\n')
+        self._fails(tool, capsys, "look like a version heading but did not parse")
+
+    # ----------------------------------------------------------------- fences
+
+    def test_structurally_broken_fence_that_swallows_a_heading_fails(self, tool, tree, capsys):
+        # An unclosed fence re-closed by an unrelated later one: balanced on its
+        # face, and everything between is silently masked.
+        tree.write(
+            changelog=_GREEN_CHANGELOG + "\n```yaml\nkey: value\n\n## [9.9.0] — 2026-07-19\n\n```bash\necho\n```\n"
+        )
+        out = self._fails(tool, capsys, "swallowed by the fence")
+        assert "did not close it" in out
+
+    def test_a_deliberate_sample_fence_is_noted_not_fatal(self, tool, tree, capsys):
+        # A ```text block showing the heading format is legitimate documentation.
+        tree.write(changelog=_GREEN_CHANGELOG + "\n```text\n## [9.9.9] — 2099-01-01\n```\n")
+        assert tool.main(["--strict"]) == 0
+        out = capsys.readouterr().out
+        assert "NOTE:" in out and "swallowed by the fence" in out
+
+    def test_unterminated_html_comment_fails(self, tool, tree, capsys):
+        tree.write(changelog=_GREEN_CHANGELOG + "\n<!-- never closed\n")
+        self._fails(tool, capsys, "opens an HTML comment that is never closed")
+
+    # ------------------------------------------------------------- HTML comments
+
+    def test_a_commented_out_headline_is_not_a_duplicate(self, tool, tree, capsys):
+        # Confirmed false positive: the guard failed a genuinely correct roadmap.
+        tree.write(roadmap="# Roadmap\n\n<!--\n**Released:** `v0.1.0` — old draft.\n-->\n\n" + _GREEN_ROADMAP)
+        assert tool.main(["--strict"]) == 0, capsys.readouterr().out
+
+    def test_a_commented_out_record_does_not_satisfy_a_release(self, tool, tree, capsys):
+        # The dangerous direction: an invisible section silently counting as one.
+        tree.write(
+            releases=(
+                '# Releases\n\n## v0.7.0 — "Old" (2026-05-15)\n\n**Status:** Released.\n\n'
+                '<!--\n## v0.9.0 — "Shipped" (2026-07-05)\n\n**Status:** Released.\n-->\n'
+            )
+        )
+        self._fails(tool, capsys, "have no entry in")
+
+    # ------------------------------------------------------------------ dates
+
+    def test_an_unreadable_date_fails_instead_of_skipping_the_cross_check(self, tool, tree, capsys):
+        tree.write(changelog="# Changelog\n\n## [0.9.0] — 2026–07–05\n\n### Added\n- a thing\n")
+        out = self._fails(tool, capsys, "carry a date that is not 'YYYY-MM-DD'")
+        assert "unreadable date token" in out
 
 
 class TestRealRepo:
@@ -691,3 +1070,22 @@ class TestRealRepo:
         # Both skill mirrors, because the guard's own remediation text names both.
         skill = (_REPO_ROOT / mirror / "skills" / "cut-release" / "SKILL.md").read_text(encoding="utf-8")
         assert "check_release_record_sync" in skill
+
+    @pytest.mark.parametrize("mirror", [".claude", ".agents"])
+    def test_the_skill_reference_resolves_to_a_real_section(self, mirror, tool):
+        # SKILL_REFERENCE is the operator's next click. It named the
+        # post-release "Close the phase" step for a while after commit 1072820
+        # moved the record to pre-release step 4.5 — a pointer that contradicts
+        # the skill it points at.
+        skill = (_REPO_ROOT / mirror / "skills" / "cut-release" / "SKILL.md").read_text(encoding="utf-8")
+        assert "### 4.5. Write the release record — before the tag" in skill
+        assert "step 4.5" in tool.SKILL_REFERENCE
+        assert "Close the phase" not in tool.SKILL_REFERENCE
+
+    def test_ci_comment_does_not_cite_the_old_step(self):
+        # The same stale sentence was duplicated as an inline comment above the
+        # CI step, where nothing but a reader would ever catch it.
+        ci = (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        step = ci.split("Release-record sync (CHANGELOG -> roadmap)")[1].split("- name:")[0]
+        assert "step 4.5" in step
+        assert 'post-release step ("Close the phase") asks' not in step
