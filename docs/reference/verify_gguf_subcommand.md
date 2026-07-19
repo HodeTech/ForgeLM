@@ -29,9 +29,9 @@ forgelm verify-gguf [--output-format {text,json}]
 | Code | Meaning |
 |---|---|
 | `0` | Magic header is `GGUF` AND (when `gguf` is installed) metadata block parses AND (when sidecar present) SHA-256 matches. |
-| `1` | Caller / input error: path is missing or is not a regular file; the magic mismatches (the file is not a GGUF at all — a file-type verdict, not a tamper verdict); malformed sidecar (non-hex / wrong length). Nothing was compared; fix the path or the sidecar. |
+| `1` | Caller / input error: path is missing or is not a regular file; the magic mismatches (the file is not a GGUF at all — a file-type verdict, not a tamper verdict); malformed sidecar (non-hex / wrong length). Also a metadata block that could not be parsed on a file whose SHA-256 sidecar **matches**: the checksum proves the bytes are exactly what the exporter wrote, so the parse failure is a `gguf` library-version problem, not a tamper event. Either nothing was compared, or what was compared came out clean; the operator fixes their own side. |
 | `2` | Genuine runtime I/O failure on an existing file — read errors, permission denied mid-read, etc. The path was accessible to `os.path.isfile` but became unreadable during verification. |
-| `6` | Integrity failure: the file *is* a GGUF (magic OK) and it failed its integrity check — metadata block that could not be parsed (truncated / corrupted stream) or a SHA-256 sidecar with a well-formed digest that does not match (modified after export). The artifact is not safe to serve. |
+| `6` | Integrity failure: the file *is* a GGUF (magic OK) and it failed its integrity check — a SHA-256 sidecar with a well-formed digest that does not match (modified after export), or a metadata block that could not be parsed with **no matching sidecar** to rule out corruption (truncated / corrupted stream). The artifact is not safe to serve. |
 
 The codes are emitted by `forgelm/cli/subcommands/_verify_gguf.py::_run_verify_gguf_cmd`, which routes on the structural (never string-matched) predicate `forgelm.verify.is_gguf_integrity_failure`. Public-contract semantics are pinned in `docs/standards/error-handling.md`.
 
@@ -40,7 +40,7 @@ The codes are emitted by `forgelm/cli/subcommands/_verify_gguf.py::_run_verify_g
 | Layer | Required? | Failure mode |
 |---|---|---|
 | **Magic header** | Always. First 4 bytes must equal `b"GGUF"`. | Anything else → exit `1` (file is not GGUF or download corrupted — a file-type verdict, not a tamper verdict, so it stays on the input-error code even though it's the most common gate trip). |
-| **Metadata block** | When the optional `gguf` package is installed. Parses the metadata + tensor descriptors via the upstream reader. | Reader raises mid-parse → exit `6` (the file *is* a GGUF whose metadata block is structurally broken — writer crashed mid-stream or file truncated). Package absent → check is skipped (the magic + sidecar checks remain load-bearing). |
+| **Metadata block** | When the optional `gguf` package is installed. Parses the metadata + tensor descriptors via the upstream reader. | Reader raises mid-parse → the exit code depends on what the sidecar can prove, because the parse error alone cannot tell a corrupted file apart from a `gguf` package too old for this file's format revision. **No sidecar** → exit `6` (nothing available to rule out corruption; treat the file as truncated / damaged). **Matching sidecar** → exit `1` (the file is byte-identical to what was exported — upgrade `gguf` and re-run; do not page the artifact owner). **Mismatching sidecar** → exit `6`, reported as the sidecar mismatch (the checksum is the stronger evidence and dominates). Package absent → check is skipped (the magic + sidecar checks remain load-bearing). |
 | **SHA-256 sidecar** | When `<path>.sha256` exists. Recomputes file SHA-256 and compares against the sidecar's first whitespace-separated token (sha256sum format `<hex> *<filename>` is supported). | Well-formed digest that disagrees → exit `6` (file changed after export). Sidecar present but contents are not a 64-character hex digest → exit `1` (fail closed against malformed-sidecar masquerade — nothing was compared). Sidecar absent → check is skipped silently. |
 
 The exporter writes the sidecar by default (see [`docs/usermanuals/en/deployment/gguf-export.md`](../usermanuals/en/deployment/gguf-export.md)); operators receiving GGUF files from third parties should request the sidecar alongside.
@@ -118,6 +118,27 @@ FAIL: checkpoints/run/exports/model-q4_k_m.gguf
 $ echo $?
 1
 ```
+
+### Metadata parse failure, sidecar matches (library-version problem, not tampering)
+
+The metadata parse deliberately does **not** short-circuit the sidecar comparison: the sidecar is the stronger evidence, and it can settle the corruption-vs-parser-incompatibility ambiguity the parse error leaves open. When it proves the bytes are exactly what was exported, the verdict downgrades to `1`:
+
+```shell
+$ forgelm verify-gguf checkpoints/run/exports/model-q4_k_m.gguf
+FAIL: checkpoints/run/exports/model-q4_k_m.gguf
+  GGUF metadata block could not be parsed: ValueError: Sorry, file appears to be version 4294967295 which we cannot handle.  The SHA-256 sidecar matches, so the file is byte-identical to what was exported — this is almost certainly a `gguf` package version that cannot read this file's format revision, not a corrupted artifact.  Upgrade `gguf` and re-run before treating it as a tampering event.
+    magic_ok: True
+    metadata_parsed: False
+    metadata_error: ValueError: Sorry, file appears to be version 4294967295 which we cannot handle
+    sidecar_present: True
+    sidecar_match: True
+    sha256_actual: a4c1f2…
+    sha256_expected: a4c1f2…
+$ echo $?
+1
+```
+
+With **no** sidecar beside the same file the verdict is `6` instead — nothing is available to rule out corruption, so the artifact must be treated as truncated or damaged. With a **mismatching** sidecar it is also `6`, reported as the sidecar mismatch above rather than as a parse failure.
 
 ### Optional dependency absent
 

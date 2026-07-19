@@ -20,9 +20,16 @@ in ``docs/reference/verify_integrity_subcommand.md``):
   unexpected extra files.
 - 1 — ``EXIT_CONFIG_ERROR``: caller / input error (missing path, the path is a
   file rather than a model directory, manifest not found / not a regular file,
-  malformed JSON, invalid UTF-8 encoding, a non-list ``artifacts`` container, a
+  malformed JSON, invalid UTF-8 encoding, a manifest root that is not a JSON
+  object, a missing ``artifacts`` key, a non-list ``artifacts`` container, an
+  **empty** ``artifacts`` list, a manifest entry that is not an object, or a
   manifest entry whose path is non-string or escapes the model directory).  The
   manifest could not be used, so no artifact was ever compared.
+
+  The empty-``artifacts`` case belongs here rather than on 0: a manifest that
+  records nothing compares nothing, and exit 0 is the code a release gate reads
+  as "the bytes about to ship are the bytes that were signed off".  See
+  :func:`forgelm.verify.is_model_integrity_failure` for the threat model.
 - 2 — ``EXIT_TRAINING_ERROR``: genuine runtime I/O failure on a reachable path
   (read error, permission denied mid-walk, etc.).
 - 6 — ``EXIT_INTEGRITY_FAILURE``: the manifest parsed and the walk ran, but at

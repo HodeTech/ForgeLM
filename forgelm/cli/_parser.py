@@ -881,9 +881,12 @@ def _add_verify_gguf_subcommand(subparsers) -> None:
             "metadata block parse via the optional `gguf` package, and a "
             "SHA-256 comparison against `<path>.sha256` sidecar (when "
             "present).  Exits 0 on valid; 1 when the file is not a GGUF at "
-            "all or the sidecar is not a 64-char hex digest; 6 when a real "
-            "GGUF fails its own integrity check (unparsable metadata block, "
-            "SHA-256 mismatch)."
+            "all, the sidecar is not a 64-char hex digest, or the metadata "
+            "block is unparsable but a matching sidecar proves the bytes are "
+            "exactly what was exported (a `gguf` version problem, not "
+            "tampering); 6 when a real GGUF fails its own integrity check "
+            "(SHA-256 sidecar mismatch, or an unparsable metadata block with "
+            "no matching sidecar to rule out corruption)."
         ),
     )
     p.add_argument("path", help="Path to the GGUF model file.")

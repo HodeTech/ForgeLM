@@ -77,10 +77,30 @@ detection event class.
 
 **Trigger:** `forgelm verify-audit` exits `6` — `EXIT_INTEGRITY_FAILURE`
 (chain hash mismatch, manifest sidecar truncation, HMAC signature
-mismatch). Exit `1` (the verifier never ran: missing log path, or
-`--require-hmac` without the secret) and exit `2` (runtime I/O failure)
-are operator / environment faults, not security incidents — correct them
-and re-run before opening this playbook.
+mismatch, **or a log truncated to zero entries while its genesis manifest
+still pins a first entry**). Exit `2` (runtime I/O failure) is an
+environment fault, not a security incident — correct it and re-run before
+opening this playbook.
+
+Exit `1` is *usually* an operator fault (missing log path, or
+`--require-hmac` without the secret) — with **one exception you must rule
+out before dismissing it.** A log file that exists, holds zero entries,
+and has no `audit_log.jsonl.manifest.json` beside it also exits `1`,
+because with the manifest gone there is no baseline left to compare
+against and the verifier cannot distinguish a wiped log from a mistyped
+path. An attacker who deletes both the log body and its sidecar lands
+exactly there. So on any exit `1`, check whether the path exists and is
+empty:
+
+```shell
+$ test -f "$LOG" && test ! -s "$LOG" && echo "EMPTY LOG — treat as Critical, continue this playbook"
+```
+
+If the log exists and is empty, treat it as a Critical audit-chain
+incident and work this runbook — the absence of a tamper *verdict* is a
+consequence of the evidence having been destroyed, not proof that nothing
+happened. Only a genuinely absent path (`audit log not found`) or a
+missing secret is the benign case.
 
 **Severity:** Critical.
 
@@ -96,22 +116,38 @@ and re-run before opening this playbook.
        integrity proof lives inside each line's `_hmac` and
        `prev_hash` fields plus the genesis manifest.)
 3. [ ] **Identify the last trusted entry** — run
-       `forgelm verify-audit ./outputs/audit_log.jsonl --require-hmac --output-format json 2>&1 | tee verify.log`;
-       the verifier stops at the first failure and reports the
-       offending line number (`first_invalid_index`). **Read the exit
+       `set -o pipefail; forgelm verify-audit ./outputs/audit_log.jsonl --require-hmac --output-format json 2>&1 | tee verify.log`.
+       The `set -o pipefail` is load-bearing, not decoration: without
+       it the shell reports `tee`'s status (`0`) and the integrity
+       verdict this whole step turns on is silently lost. The verifier
+       stops at the first failure and reports the offending 1-based
+       line number inside `errors[0]`, formatted
+       `"line <N>: <reason>"` — the envelope is
+       `{success, valid, entries_count, hmac_verified, errors}` and
+       carries **no** separate line-number field, and `errors` holds
+       at most one entry because the chain walk halts there. Do not
+       read `entries_count` as "entries you may trust": it is the
+       total number of lines the verifier read, reported unchanged on
+       a failure. **Read the exit
        code before you read anything else:** `6` is the integrity
        verdict — the log was read and it does not verify, so this is a
        genuine incident. `1` means the verifier never got as far as
        comparing anything (log path missing, or `--require-hmac` with
        the secret env var unset in this shell) and `2` means a runtime
-       I/O failure; both are your setup, not evidence of tampering —
-       fix and re-run before escalating. If you need the precise
+       I/O failure; `2` is always your setup, and `1` is your setup
+       *unless the log exists and is empty* — re-read the trigger note
+       above before dismissing a `1`. If you need the precise
        boundary, bisect manually with
        `head -n N audit_log.jsonl > tmp.jsonl` and re-run
        `verify-audit` against `tmp.jsonl` until the largest N that
        exits `0` is found — treating any non-zero code as "chain broken
        at N" will converge on the wrong boundary the moment a `1`
-       (unexported secret) enters the loop. Everything up to that line
+       (unexported secret) enters the loop. Start the bisect at **N=1,
+       not N=0**: `head -n 0` writes an empty `tmp.jsonl`, which now
+       exits `1` (empty log, no manifest) rather than `0`, so an N=0
+       probe reports a setup fault rather than the clean floor a
+       bisect expects. If even N=1 fails, the very first entry is
+       already untrusted. Everything up to that line
        is forensically trusted; everything after must be considered
        tainted. Note that the truncated `tmp.jsonl` carries no genesis
        manifest sidecar, so the bisect proves chain continuity only —
@@ -264,3 +300,5 @@ Under Article 73, providers must report serious incidents to market surveillance
 | 1.0 | [DATE] | [AUTHOR] | Initial version |
 | 1.1 | 2026-05-05 | Wave 4 / Faz 23 | Added §4 security-incident playbook (audit-chain integrity, credential leak, supply-chain CVE, webhook compromise, GDPR Art. 15/17 DSARs); ISO 27001:2022 + SOC 2 control mapping in header |
 | 1.2 | 2026-07-19 | `EXIT_INTEGRITY_FAILURE` cycle | §4.1 retargeted onto `EXIT_INTEGRITY_FAILURE` (6): the trigger is now exit `6`, not "non-zero", and the last-trusted-entry bisect distinguishes `6` (integrity verdict) from `1` (verifier never ran) / `2` (I/O failure) so a setup fault cannot be mistaken for a tamper boundary |
+| 1.3 | 2026-07-19 | `EXIT_INTEGRITY_FAILURE` cycle | §4.1 step 3 corrected against the verifier's real JSON envelope: the offending line number is read from `errors[0]` (`"line <N>: <reason>"`), not from a `first_invalid_index` field that the CLI never emits; `entries_count` documented as lines-read, not entries-trusted; `set -o pipefail` added to the `tee` pipeline, which otherwise reported `tee`'s exit `0` and discarded the integrity verdict the step depends on |
+| 1.4 | 2026-07-19 | `EXIT_INTEGRITY_FAILURE` cycle | §4.1 updated for `verify-audit`'s zero-entry log verdict. The trigger now names truncate-to-empty-with-surviving-manifest as an exit `6` case, and — the safety-critical half — exit `1` is no longer described as categorically benign: a log that exists but is empty with no manifest sidecar also exits `1`, which is precisely what deleting both the log body and its baseline looks like, so the responder is given an explicit `test -f && test ! -s` check to run before dismissing a `1`. The last-trusted-entry bisect now starts at N=1, since `head -n 0` produces an empty `tmp.jsonl` that exits `1` rather than supplying the clean floor the bisect assumes |

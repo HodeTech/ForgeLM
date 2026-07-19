@@ -297,9 +297,9 @@ forgelm verify-audit tampered.jsonl
 # FAIL at line 23: chain broken at line 23: prev_hash='...' expected='...'
 ```
 
-Exit codes: `0` valid, `1` invalid chain or HMAC mismatch, `2` file/option error (e.g. `--require-hmac` without a configured secret env var).
+Exit codes: `0` a chain of at least one entry verified end-to-end; `6` the verifier compared something and it did not match (chain break, HMAC mismatch, genesis-manifest mismatch, non-UTF-8 bytes, or a zero-entry log whose genesis manifest pins a first entry) — a security event; `1` nothing could be compared (missing path, `--require-hmac` without a configured secret env var, or a zero-entry log with no genesis manifest); `2` a genuine runtime I/O failure on a reachable log (retryable). See [`verify_audit.md`](../reference/verify_audit.md) for the full table.
 
-The library function `forgelm.compliance.verify_audit_log(path, *, hmac_secret=None, require_hmac=False)` returns a `VerifyResult` dataclass (`valid`, `entries_count`, `first_invalid_index`, `reason`) for programmatic CI/CD integration.
+The library function `forgelm.compliance.verify_audit_log(path, *, hmac_secret=None, require_hmac=False)` returns a `VerifyResult` dataclass (`valid`, `entries_count`, `first_invalid_index`, `reason`) for programmatic CI/CD integration. `valid=True` requires at least one entry: a zero-entry log never verifies, because reporting a pass after comparing nothing is not a verification.
 
 ### compliance_report.json
 

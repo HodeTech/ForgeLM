@@ -762,6 +762,70 @@ class TestAnnexIvHashStableForNonNativeTypes:
 # ---------------------------------------------------------------------------
 
 
+class TestAnnexIvComparisonCountIsNotInputDetermined:
+    """Why ``verify_annex_iv_artifact`` is *not* the fail-open its three
+    siblings were, asserted rather than argued in a comment.
+
+    The fail-open class is "the number of comparisons is determined by the
+    input, that number is zero, and the verifier reports success".  It bit
+    ``verify-integrity`` (``artifacts: []`` → 0 hashes → pass) and
+    ``verify-audit`` (0 lines → 0 chain links → pass).  Annex IV is
+    structurally immune: its checklist is the module-level
+    ``_ANNEX_IV_REQUIRED_FIELDS`` tuple, so every artefact is measured
+    against the same 9 fields plus 3 §1 sub-fields no matter what it
+    contains.  An input cannot shrink the checklist to nothing, and the
+    degenerate roots that would bypass it are rejected up front.
+
+    This test guards that property, so a future refactor that derived the
+    field list from the artefact (``for key in artifact``) would fail here
+    instead of shipping the same bug a fourth time.
+    """
+
+    @pytest.mark.parametrize("root", [{}, [], "", 0, None, {"metadata": {}}, {"artifacts": []}])
+    def test_no_input_shape_passes_with_zero_comparisons(self, tmp_path: Path, root) -> None:
+        from forgelm.verify import verify_annex_iv_artifact
+
+        path = tmp_path / "annex_iv.json"
+        path.write_text(json.dumps(root))
+        result = verify_annex_iv_artifact(str(path))
+        assert result.valid is False, f"{root!r} verified clean"
+
+    def test_checklist_is_static_not_derived_from_the_artifact(self, tmp_path: Path) -> None:
+        """An empty object and a fully-populated-but-blank object are both
+        measured against the *same* checklist length."""
+        from forgelm.verify import _ANNEX_IV_REQUIRED_FIELDS, verify_annex_iv_artifact
+
+        path = tmp_path / "annex_iv.json"
+        path.write_text(json.dumps({}))
+        result = verify_annex_iv_artifact(str(path))
+        # Every catalogued field is reported missing — the checklist did not
+        # shrink to match the (empty) input.
+        assert len(result.missing_fields) == len(_ANNEX_IV_REQUIRED_FIELDS)
+
+    def test_hashless_pass_discloses_the_skipped_check(self, tmp_path: Path) -> None:
+        """The one branch that *does* skip a comparison — an artefact with no
+        ``metadata.manifest_hash``, so tamper detection cannot run — still
+        makes all 12 field comparisons, and says in ``reason`` that the hash
+        check was skipped.
+
+        That disclosure is precisely what the fail-open cases lacked: they
+        reported an unqualified success for work they had not done.  A
+        reduced-strength pass that names its own limitation is a different
+        thing from a vacuous one, so this branch is deliberately left as-is.
+        """
+        from forgelm.verify import verify_annex_iv_artifact
+
+        artifact = _full_annex_iv_artifact()
+        artifact.pop("metadata", None)
+        path = tmp_path / "annex_iv.json"
+        path.write_text(json.dumps(artifact))
+
+        result = verify_annex_iv_artifact(str(path))
+        assert result.valid is True
+        assert "skipped" in result.reason.lower()
+        assert result.manifest_hash_expected == ""
+
+
 class TestAnnexIvSystemIdentificationCompleteness:
     """A ``system_identification`` dict whose identity-critical sub-fields
     (provider_name, system_name, intended_purpose) are blank must be
@@ -968,6 +1032,127 @@ class TestVerifyIntegrity:
         payload = json.loads(capsys.readouterr().out)
         assert payload["valid"] is False
         assert "artifacts" in payload["reason"]
+
+    def test_empty_artifacts_list_rejected(self, tmp_path: Path) -> None:
+        """``{"artifacts": []}`` compares nothing, so it cannot verify anything.
+
+        Pre-fix this returned ``valid=True`` with ``verified_count=0`` and the
+        CLI printed "All 0 recorded artifact(s) present and unchanged" on exit
+        0 — the code a release gate reads as "these are the signed-off bytes".
+        """
+        from forgelm.verify import verify_integrity
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        (model_dir / "model_integrity.json").write_text(json.dumps({"artifacts": []}))
+
+        result = verify_integrity(str(model_dir))
+        assert result.valid is False
+        assert result.verified_count == 0
+        assert "0 artifacts" in result.reason
+        # No artifact-level verdict: nothing was compared, so the diff lists
+        # must stay empty and is_model_integrity_failure must route this to 1.
+        assert result.changed == []
+        assert result.removed == []
+        assert result.added == []
+
+    def test_empty_artifacts_list_exits_config_error(self, tmp_path: Path, capsys) -> None:
+        """The reproduction from the review, end-to-end through the dispatcher."""
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        (model_dir / "model_integrity.json").write_text(json.dumps({"artifacts": []}))
+
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_integrity_cmd(_build_args(path=str(model_dir)), output_format="json")
+        assert ei.value.code == EXIT_CONFIG_ERROR
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert payload["valid"] is False
+
+    def test_empty_manifest_over_populated_dir_is_config_error_not_integrity(self, tmp_path: Path) -> None:
+        """An empty manifest beside real weights must exit 1, never 6.
+
+        The emptiness guard has to fire *before* the on-disk walk: otherwise
+        every file present surfaces as ``added`` and routes to
+        EXIT_INTEGRITY_FAILURE, telling CI the weights were tampered with when
+        the manifest simply covers nothing.
+        """
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        (model_dir / "model.safetensors").write_bytes(b"weights-v1")
+        (model_dir / "model_integrity.json").write_text(json.dumps({"artifacts": []}))
+
+        with pytest.raises(SystemExit) as ei:
+            _run_verify_integrity_cmd(_build_args(path=str(model_dir)), output_format="json")
+        assert ei.value.code == EXIT_CONFIG_ERROR
+
+    def test_generated_manifest_for_absent_dir_does_not_self_verify(self, tmp_path: Path) -> None:
+        """The non-adversarial path that motivates the guard.
+
+        ``generate_model_integrity`` returns ``artifacts: []`` when handed a
+        path that is not a directory (interrupted export, mistyped
+        ``final_path``).  Writing that manifest into a real directory must not
+        then produce a clean verification.
+        """
+        from forgelm.compliance import generate_model_integrity
+        from forgelm.verify import verify_integrity
+
+        integrity = generate_model_integrity(str(tmp_path / "never_written"))
+        assert integrity["artifacts"] == []
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        (model_dir / "model_integrity.json").write_text(json.dumps(integrity))
+
+        assert verify_integrity(str(model_dir)).valid is False
+
+    def test_missing_artifacts_key_rejected(self, tmp_path: Path) -> None:
+        """A missing key is reported differently from an empty list — different
+        cause (not a model_integrity.json vs. a generator that found nothing) —
+        but shares the verdict, because neither can compare anything."""
+        from forgelm.verify import verify_integrity
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        (model_dir / "model_integrity.json").write_text(json.dumps({"verified_at": "2026-01-01"}))
+
+        result = verify_integrity(str(model_dir))
+        assert result.valid is False
+        assert "no 'artifacts' key" in result.reason
+
+    @pytest.mark.parametrize("root", [[], ["model.safetensors"], "manifest", 42])
+    def test_non_object_manifest_root_rejected(self, tmp_path: Path, root) -> None:
+        """A non-object root has no ``artifacts`` key to read; ``.get`` was
+        short-circuited to ``[]``, so a JSON array masquerading as a manifest
+        verified clean on exit 0."""
+        from forgelm.verify import verify_integrity
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        (model_dir / "model_integrity.json").write_text(json.dumps(root))
+
+        result = verify_integrity(str(model_dir))
+        assert result.valid is False
+        assert "root" in result.reason
+
+    def test_non_object_artifact_entry_rejected(self, tmp_path: Path) -> None:
+        """Non-dict entries used to be skipped silently, so a manifest whose
+        every entry was malformed hashed nothing and still exited 0."""
+        from forgelm.verify import verify_integrity
+
+        model_dir = tmp_path / "final_model"
+        model_dir.mkdir()
+        (model_dir / "model_integrity.json").write_text(json.dumps({"artifacts": ["model.safetensors"]}))
+
+        result = verify_integrity(str(model_dir))
+        assert result.valid is False
+        assert "not an object" in result.reason
 
     def test_path_traversal_entry_rejected(self, tmp_path: Path) -> None:
         """A manifest entry whose path escapes the model dir (``../secret``)
@@ -1753,15 +1938,19 @@ class TestExitOneStaysOneForGenuineInputErrors:
         "manifest",
         [
             {"artifacts": None},
+            {"artifacts": []},
+            {"verified_at": "2026-01-01"},
+            {"artifacts": ["model.safetensors"]},
             {"artifacts": [{"file": 123, "sha256": "deadbeef"}]},
             {"artifacts": [{"file": "../escape.txt", "sha256": "deadbeef"}]},
         ],
     )
     def test_integrity_unusable_manifest_stays_config_error(self, tmp_path: Path, manifest: dict) -> None:
-        """A manifest the verifier cannot use (non-list container, non-string
-        entry, entry escaping the model dir) returns before any artifact is
-        hashed.  There is no artifact-level verdict, so reporting 6 would tell
-        CI the weights were tampered with when they were never examined."""
+        """A manifest the verifier cannot use (non-list container, empty
+        container, absent container, non-object entry, non-string entry, entry
+        escaping the model dir) returns before any artifact is hashed.  There
+        is no artifact-level verdict, so reporting 6 would tell CI the weights
+        were tampered with when they were never examined."""
         from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
         from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
 
@@ -2116,6 +2305,66 @@ class TestVerifyAuditExitCodeIsDecidedOnce:
         AuditLogger(str(tmp_path)).log_event("e0")
         args = _audit_args(tmp_path / "audit_log.jsonl", output_format)
         assert _run_verify_audit_cmd(args) == EXIT_SUCCESS
+
+    @pytest.mark.parametrize("output_format", ["text", "json"])
+    def test_empty_log_without_manifest_exits_config_error_not_success(
+        self, tmp_path: Path, monkeypatch, output_format: str
+    ) -> None:
+        """The fifth fail-open: a zero-entry log used to print
+        "OK: 0 entries verified" and exit 0 in both formats.
+
+        Exit 0 is what an operator's CI reads as "the Article 12 audit log
+        is intact", and it was being returned after zero comparisons.  It is
+        now 1 — the same code an absent log returns, because "there is no
+        audit log to verify here" is the same operator situation.
+        """
+        from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        log_path = tmp_path / "audit_log.jsonl"
+        log_path.touch()
+        assert _run_verify_audit_cmd(_audit_args(log_path, output_format)) == EXIT_CONFIG_ERROR
+
+    def test_empty_log_message_names_the_situation(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """Failing is half the fix; the operator has to be told *which* empty
+        they have.  The message must distinguish "truncated with a manifest
+        pinning what is gone" from "blank with nothing to compare against"."""
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        log_path = tmp_path / "audit_log.jsonl"
+        log_path.touch()
+        _run_verify_audit_cmd(_audit_args(log_path, "text"))
+        err = capsys.readouterr().err
+        assert "0 entries" in err
+        assert "manifest" in err
+        # And it must not be mistakable for the success line.
+        assert "OK:" not in err
+
+    def test_truncated_log_with_manifest_still_exits_integrity_failure(self, tmp_path: Path, monkeypatch) -> None:
+        """Non-regression for F-P4-OPUS-01, which the empty-log change had to
+        route around rather than through.
+
+        A manifest pinning a real first entry *is* a baseline, so zero entries
+        against it is a comparison that ran and failed → 6, not the 1 its
+        manifest-less sibling gets.  Both are ``valid=False``; the whole point
+        of the split is that they are not the same event.
+        """
+        from forgelm.cli._exit_codes import EXIT_INTEGRITY_FAILURE
+        from forgelm.cli.subcommands._verify_audit import _run_verify_audit_cmd
+        from forgelm.compliance import AUDIT_FAILURE_INTEGRITY, AuditLogger, _verify_audit_log_classified
+
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        AuditLogger(str(tmp_path)).log_event("e0")
+        log_path = tmp_path / "audit_log.jsonl"
+        assert (tmp_path / "audit_log.jsonl.manifest.json").is_file()
+        with open(log_path, "w", encoding="utf-8"):  # truncate, leave manifest
+            pass
+
+        _result, kind = _verify_audit_log_classified(str(log_path))
+        assert kind == AUDIT_FAILURE_INTEGRITY
+        assert _run_verify_audit_cmd(_audit_args(log_path, "text")) == EXIT_INTEGRITY_FAILURE
 
     def test_the_two_output_formats_cannot_disagree(self, tmp_path: Path, monkeypatch) -> None:
         """The property the duplication violated, asserted directly."""

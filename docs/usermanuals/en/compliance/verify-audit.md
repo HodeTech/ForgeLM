@@ -10,7 +10,7 @@ description: Validate the SHA-256 hash chain (and optional HMAC tags) of an audi
 ## When to use it
 
 - **Before submitting an audit bundle to a regulator or auditor.** A clean `verify-audit` exit is the minimum proof-of-integrity you should send.
-- **In CI/CD release gates.** Run after every training pipeline; fail the release on exit `6` (chain/HMAC tamper — the log was read and it doesn't verify) or `1` (option/usage error — the verifier never ran).
+- **In CI/CD release gates.** Run after every training pipeline; fail the release on exit `6` (chain/HMAC tamper, or a manifest-pinned log truncated to zero entries — the verifier compared something and it doesn't verify) or `1` (nothing could be compared — option/usage error, missing path, or an empty log with no manifest).
 - **After moving the log between machines.** Any byte-level corruption in transit shows up as a chain break.
 - **As part of a periodic compliance sweep.** A nightly cron over historical logs surfaces silent tampering early.
 
@@ -25,17 +25,28 @@ sequenceDiagram
 
     CI->>Verify: verify-audit log_path
     Verify->>Log: stream lines
-    loop per entry
-        Verify->>Verify: recompute sha256(prev_line)
-        Verify->>Verify: compare prev_hash field
-        opt secret in env
-            Verify->>Verify: recompute HMAC(line - _hmac)
-            Verify->>Verify: compare _hmac field
+    alt zero entries
+        Verify->>Manifest: is a genesis manifest present?
+        alt manifest pins a first entry (or is corrupt)
+            Verify-->>CI: exit 6 — truncated to zero entries
+        else no manifest
+            Verify-->>CI: exit 1 — no baseline, nothing could be compared
         end
+    else one or more entries
+        loop per entry
+            Verify->>Verify: recompute sha256(prev_line)
+            Verify->>Verify: compare prev_hash field
+            opt secret in env
+                Verify->>Verify: recompute HMAC(line - _hmac)
+                Verify->>Verify: compare _hmac field
+            end
+        end
+        Verify->>Manifest: load + cross-check first entry hash
+        Verify-->>CI: exit 0 (clean) / 2 (I/O failure) / 6 (chain or HMAC integrity failure)
     end
-    Verify->>Manifest: load + cross-check first entry hash
-    Verify-->>CI: exit 0 (clean) / 1 (option error, never ran) / 2 (I/O failure) / 6 (chain or HMAC integrity failure)
 ```
+
+A log that exists but holds **zero entries** never exits `0`. It is not a legitimate fresh-run state: `AuditLogger` creates its output directory but not the log file, and the file and its genesis manifest are both written by the first event — so a never-used log is *absent* (exit `1`, `audit log not found`), not empty.
 
 ## Quick start
 
@@ -95,7 +106,7 @@ Genesis-manifest failures are attributed to line 1 — the entry the manifest pi
 FAIL at line 1: manifest present but unreadable at 'checkpoints/run/audit_log.jsonl.manifest.json': …
 ```
 
-(A manifest that is *absent* is not a failure: the verifier logs a warning that truncate-and-resume detection is limited to in-chain hash continuity, and continues.)
+(On a log with at least one entry, a manifest that is *absent* is not a failure: the verifier logs a warning that truncate-and-resume detection is limited to in-chain hash continuity, and continues. On a log with **zero** entries the absent manifest is decisive — there is no baseline at all, so the command exits `1`; see the empty-log rows in the summary below.)
 
 A bare reason without any line number means the failure is a property of the file as a whole rather than of one entry — through the CLI the reachable case is a log containing non-UTF-8 bytes:
 
@@ -109,10 +120,12 @@ In every case above the log file itself was found and read — so this is an int
 
 | Code | Meaning |
 |---|---|
-| `0` | Chain (and HMAC tags, when verified) intact end-to-end. |
-| `1` | Option/usage error, or the log could not be located: `--require-hmac` without a secret, or the log path is missing / a directory. The verifier never ran, so there is no integrity verdict. |
+| `0` | At least one entry was read and the chain (plus HMAC tags, when verified) is intact end-to-end. |
+| `1` | Nothing could be compared: `--require-hmac` without a secret; the log path is missing / a directory; or the log exists, holds **zero entries**, and no genesis manifest says what it should have held. No integrity verdict. |
 | `2` | Genuine runtime I/O failure on a reachable log (permission denied, mid-read error). Retryable. |
-| `6` | Tamper / corruption detected: chain break, HMAC mismatch, genesis-manifest mismatch, undecodable line, or non-UTF-8 bytes — the log was read and it doesn't verify. |
+| `6` | Tamper / corruption detected: chain break, HMAC mismatch, genesis-manifest mismatch, undecodable line, non-UTF-8 bytes, or a **zero-entry log whose genesis manifest pins a first entry** (truncated to empty) — the verifier compared something and it did not match. |
+
+The empty-log split is worth reading twice, because both halves are `FAIL` and only one is a security page-out. A zero-entry log with a surviving manifest is a **truncation** (`6`): the manifest is the write-once baseline an attacker cannot forge, it says line 1 existed, and it is gone. A zero-entry log with **no** manifest is an **input error** (`1`): with the baseline itself missing, the verifier genuinely cannot tell a wiped log from a mistyped path, and reporting tampering on a file someone `touch`ed would cry wolf. Either way, the log is not evidence — investigate before submitting it.
 
 ## Common pitfalls
 
@@ -125,7 +138,7 @@ In every case above the log file itself was found and read — so this is an int
 :::
 
 :::warn
-**Treating a missing `<log>.manifest.json` as benign.** The genesis manifest is the truncate-and-resume detector. If it's missing on a long-running deployment, an attacker may have rolled the log back to "just genesis" with no chain break visible. Verify the manifest is present in your post-training artifact bundle.
+**Treating a missing `<log>.manifest.json` as benign.** The genesis manifest is the truncate-and-resume detector. If it's missing on a long-running deployment, an attacker may have rolled the log back to "just genesis" with no chain break visible. Verify the manifest is present in your post-training artifact bundle — and note that losing it *downgrades* the empty-log verdict from `6` to `1`, because the verifier loses the only baseline that could prove truncation. An attacker who deletes both the log and its manifest lands on `1`, indistinguishable from a typo. Bundle and back up the two together.
 :::
 
 :::tip

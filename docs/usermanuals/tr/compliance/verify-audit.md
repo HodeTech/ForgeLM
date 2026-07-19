@@ -10,7 +10,7 @@ description: Bir audit_log.jsonl dosyasının SHA-256 hash zincirini (ve isteğe
 ## Ne zaman kullanılır
 
 - **Düzenleyiciye veya denetçiye bir audit paketi sunmadan önce.** Temiz bir `verify-audit` çıktısı göndermeniz gereken minimum bütünlük kanıtıdır.
-- **CI/CD yayın kapılarında.** Her eğitim pipeline'ından sonra çalıştırın; çıkış `6`'da (zincir/HMAC tahrifatı — log okundu ve doğrulanmadı) veya `1`'de (seçenek/kullanım hatası — doğrulayıcı hiç çalışmadı) yayını başarısız sayın.
+- **CI/CD yayın kapılarında.** Her eğitim pipeline'ından sonra çalıştırın; çıkış `6`'da (zincir/HMAC tahrifatı, ya da manifest'i olan bir log'un sıfır girdiye truncate edilmesi — doğrulayıcı bir şeyi karşılaştırdı ve tutmadı) veya `1`'de (hiçbir şey karşılaştırılamadı — seçenek/kullanım hatası, eksik yol, ya da manifest'siz boş bir log) yayını başarısız sayın.
 - **Log'u makineler arasında taşıdıktan sonra.** Aktarımda oluşan herhangi bir bayt-seviyesi bozulma zincir kopması olarak ortaya çıkar.
 - **Periyodik uyumluluk taramasının parçası olarak.** Geçmiş log'lar üzerinde gece çalışan bir cron, sessiz tahrifatları erken yakalar.
 
@@ -25,17 +25,28 @@ sequenceDiagram
 
     CI->>Verify: verify-audit log_path
     Verify->>Log: satırları akıt
-    loop her girdi
-        Verify->>Verify: sha256(prev_line) yeniden hesapla
-        Verify->>Verify: prev_hash alanını karşılaştır
-        opt ortamda sır
-            Verify->>Verify: HMAC(satır - _hmac) yeniden hesapla
-            Verify->>Verify: _hmac alanını karşılaştır
+    alt sıfır girdi
+        Verify->>Manifest: bir genesis manifest var mı?
+        alt manifest bir ilk girdi sabitliyor (ya da bozuk)
+            Verify-->>CI: çıkış 6 — sıfır girdiye truncate edilmiş
+        else manifest yok
+            Verify-->>CI: çıkış 1 — referans yok, hiçbir şey karşılaştırılamadı
         end
+    else bir veya daha fazla girdi
+        loop her girdi
+            Verify->>Verify: sha256(prev_line) yeniden hesapla
+            Verify->>Verify: prev_hash alanını karşılaştır
+            opt ortamda sır
+                Verify->>Verify: HMAC(satır - _hmac) yeniden hesapla
+                Verify->>Verify: _hmac alanını karşılaştır
+            end
+        end
+        Verify->>Manifest: yükle + ilk girdi hash'iyle çapraz kontrol
+        Verify-->>CI: çıkış 0 (temiz) / 2 (G/Ç hatası) / 6 (zincir veya HMAC bütünlük arızası)
     end
-    Verify->>Manifest: yükle + ilk girdi hash'iyle çapraz kontrol
-    Verify-->>CI: çıkış 0 (temiz) / 1 (seçenek hatası, hiç çalışmadı) / 2 (G/Ç hatası) / 6 (zincir veya HMAC bütünlük arızası)
 ```
+
+Var olan ama **sıfır girdi** tutan bir log asla `0` ile çıkmaz. Bu meşru bir taze-çalıştırma durumu değildir: `AuditLogger` çıktı dizinini oluşturur ama log dosyasını oluşturmaz; dosya ve genesis manifest'i ilk event tarafından birlikte yazılır — yani hiç kullanılmamış bir log *yok*tur (çıkış `1`, `audit log not found`), boş değil.
 
 ## Hızlı başlangıç
 
@@ -95,7 +106,7 @@ Genesis-manifest hataları, manifest'in sabitlediği girdi olan 1. satıra atfed
 FAIL at line 1: manifest present but unreadable at 'checkpoints/run/audit_log.jsonl.manifest.json': …
 ```
 
-(Manifest'in *hiç olmaması* bir hata değildir: doğrulayıcı, truncate-and-resume tespitinin yalnızca zincir-içi hash sürekliliğiyle sınırlı kaldığına dair bir uyarı yazar ve devam eder.)
+(En az bir girdi taşıyan bir log'da manifest'in *hiç olmaması* bir hata değildir: doğrulayıcı, truncate-and-resume tespitinin yalnızca zincir-içi hash sürekliliğiyle sınırlı kaldığına dair bir uyarı yazar ve devam eder. **Sıfır** girdili bir log'da ise eksik manifest belirleyicidir — ortada hiçbir referans yoktur, bu yüzden komut `1` ile çıkar; aşağıdaki özette boş-log satırlarına bakın.)
 
 Hiç satır numarası taşımayan çıplak bir neden, hatanın tek bir girdinin değil dosyanın bütününün bir özelliği olduğunu gösterir — CLI üzerinden erişilebilen durum, UTF-8 olmayan bayt içeren bir log'dur:
 
@@ -109,10 +120,12 @@ Yukarıdaki durumların hepsinde log dosyasının kendisi bulundu ve okundu — 
 
 | Kod | Anlam |
 |---|---|
-| `0` | Zincir (ve doğrulandığında HMAC etiketleri) uçtan uca bütün. |
-| `1` | Seçenek/kullanım hatası, ya da log bulunamadı: sırsız `--require-hmac`, veya log yolu eksik / bir dizin. Doğrulayıcı hiç çalışmadı, dolayısıyla bir bütünlük kararı yok. |
+| `0` | En az bir girdi okundu ve zincir (doğrulandığında HMAC etiketleriyle birlikte) uçtan uca bütün. |
+| `1` | Hiçbir şey karşılaştırılamadı: sırsız `--require-hmac`; log yolu eksik / bir dizin; ya da log var, **sıfır girdi** tutuyor ve ne tutması gerektiğini söyleyen bir genesis manifest yok. Bütünlük kararı yok. |
 | `2` | Erişilebilir bir log üzerinde gerçek çalışma-zamanı G/Ç hatası (izin reddi, okuma-ortası hata). Tekrar denenebilir. |
-| `6` | Tahrifat / bozulma tespiti: zincir kopması, HMAC uyuşmazlığı, genesis-manifest uyuşmazlığı, çözülemeyen satır veya geçerli-olmayan UTF-8 baytları — log okundu ve doğrulanmadı. |
+| `6` | Tahrifat / bozulma tespiti: zincir kopması, HMAC uyuşmazlığı, genesis-manifest uyuşmazlığı, çözülemeyen satır, geçerli-olmayan UTF-8 baytları veya **genesis manifest'i bir ilk girdi sabitleyen sıfır-girdili bir log** (boşa truncate edilmiş) — doğrulayıcı bir şeyi karşılaştırdı ve tutmadı. |
+
+Boş-log ayrımını iki kez okumaya değer, çünkü iki yarısı da `FAIL`'dir ama yalnızca biri güvenlik çağrısıdır. Manifest'i hayatta kalan sıfır-girdili bir log bir **truncate**'tir (`6`): manifest, saldırganın taklit edemeyeceği bir-kez-yazılan referanstır, 1. satırın var olduğunu söyler ve o satır yoktur. **Manifest'i olmayan** sıfır-girdili bir log ise bir **girdi hatası**dır (`1`): referansın kendisi eksikken doğrulayıcı silinmiş bir log ile yanlış yazılmış bir yolu gerçekten ayırt edemez ve birinin `touch`ladığı bir dosya için tahrifat bildirmek boş yere alarm vermek olurdu. Her iki durumda da log kanıt değildir — sunmadan önce inceleyin.
 
 ## Sık hatalar
 
@@ -125,7 +138,7 @@ Yukarıdaki durumların hepsinde log dosyasının kendisi bulundu ve okundu — 
 :::
 
 :::warn
-**Eksik `<log>.manifest.json`'u zararsız saymak.** Genesis manifest, kesme-ve-devam ettirme tespitçisidir. Uzun-süreli bir deployment'ta eksikse, saldırgan log'u zincir kopması görünmeden "yalnız genesis"e geri sarmış olabilir. Eğitim sonrası artifact paketinizde manifest'in mevcut olduğunu doğrulayın.
+**Eksik `<log>.manifest.json`'u zararsız saymak.** Genesis manifest, kesme-ve-devam ettirme tespitçisidir. Uzun-süreli bir deployment'ta eksikse, saldırgan log'u zincir kopması görünmeden "yalnız genesis"e geri sarmış olabilir. Eğitim sonrası artifact paketinizde manifest'in mevcut olduğunu doğrulayın — ve manifest'i kaybetmenin boş-log kararını `6`'dan `1`'e *düşürdüğünü* unutmayın, çünkü doğrulayıcı truncate'i kanıtlayabilecek tek referansı yitirir. Hem log'u hem manifest'ini silen bir saldırgan `1`'e düşer ve bir yazım hatasından ayırt edilemez. İkisini birlikte paketleyin ve birlikte yedekleyin.
 :::
 
 :::tip

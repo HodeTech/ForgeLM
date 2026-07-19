@@ -83,6 +83,7 @@ PIPELINE_MANIFEST_INPUT_ERROR_PREFIX = "INPUT_ERROR::"
 # safer over-reported as tampering than silently downgraded to a typo.
 AUDIT_FAILURE_NOT_FOUND = "not_found"  # no log at that path        → CLI exit 1
 AUDIT_FAILURE_USAGE = "usage"  # impossible option combination      → CLI exit 1
+AUDIT_FAILURE_EMPTY = "empty"  # log exists, holds zero entries     → CLI exit 1
 AUDIT_FAILURE_UNREADABLE = "unreadable"  # exists, read failed      → CLI exit 2
 AUDIT_FAILURE_ENCODING = "encoding"  # log body is not UTF-8        → CLI exit 6
 AUDIT_FAILURE_INTEGRITY = "integrity"  # chain / HMAC / manifest    → CLI exit 6
@@ -2087,6 +2088,78 @@ def _read_audit_log_lines(path: str) -> Tuple[Optional[Tuple[VerifyResult, str]]
     return None, lines
 
 
+def _classify_empty_audit_log(path: str) -> Tuple[VerifyResult, str]:
+    """Verdict for a log file that exists on disk and holds **zero entries**.
+
+    Three situations reach here and they are not the same event, so they do
+    not get the same verdict:
+
+    1. **Genesis manifest pins a real first entry.**  The manifest is the
+       write-once sidecar an attacker cannot forge, and it says line 1
+       existed.  Zero lines now means the log was truncated: a comparison
+       *was* made and it failed → :data:`AUDIT_FAILURE_INTEGRITY`, exit 6.
+       This is ``F-P4-OPUS-01`` and is delegated to
+       :func:`_verify_genesis_manifest` unchanged.
+    2. **Manifest present but unreadable / missing its pinned fields.**
+       Also integrity (exit 6), unchanged: corrupting the sidecar must not
+       be a quieter way to disarm the truncation guard than deleting it.
+    3. **No manifest at all.**  This is the case that had to change.  It
+       used to return ``valid=True, entries_count=0``, so
+       ``forgelm verify-audit`` printed "OK: 0 entries verified" and exited
+       0 — the code an operator's CI reads as "the Article 12 record is
+       intact" — after comparing nothing whatsoever.
+
+    Why case 3 is not a legitimate state.  ``AuditLogger.__init__`` creates
+    the output directory but **not** the log file; the file and its genesis
+    manifest are both written by the first :meth:`AuditLogger.log_event`.
+    So a brand-new, never-written-to log is *absent*, not empty, and
+    already classifies as :data:`AUDIT_FAILURE_NOT_FOUND` (exit 1).  There
+    is no first-run path that produces a zero-byte ``audit_log.jsonl``, and
+    no caller depends on one passing.  An existing empty file is therefore
+    always something else: an external truncation, a rotation that moved
+    the body away, a ``touch``, or a path typo pointing at the wrong file.
+
+    Why exit 1 and not 6.  The project rule is "6 = the verifier compared
+    something and it did not match; 1 = it never got to compare anything",
+    and with no manifest there is no baseline in existence to compare zero
+    entries against.  An attacker deleting the log *and* its sidecar is a
+    real Art. 12 scenario and lands here — but so does a mistyped path, and
+    the verifier genuinely cannot tell them apart, because the one artefact
+    that could tell them apart is the thing that is missing.  Reporting
+    tampering on a file someone ``touch``ed would be the mirror image of
+    ``F-4 / D1-09``, where a character device was reported to CI as
+    tampering.  This also matches the sibling verifier: an artifact-less
+    ``model_integrity.json`` is likewise ``valid=False`` on the *input*
+    side (see :func:`forgelm.verify.is_model_integrity_failure`), for the
+    same reason — nothing was hashed, so there is no integrity verdict to
+    report.  Failing at all is the fix; 1 versus 6 is the honest half of it.
+
+    Note that exit 1 is the code an absent log already returns, which is
+    right: "there is no audit log to verify at this path" is one operator
+    situation whether the file is missing or merely blank, and the two
+    ``reason`` strings say which.
+    """
+    manifest_failure = _verify_genesis_manifest(path, None, None, 0)
+    if manifest_failure is not None:
+        return (manifest_failure, AUDIT_FAILURE_INTEGRITY)
+    return (
+        VerifyResult(
+            valid=False,
+            entries_count=0,
+            first_invalid_index=None,
+            reason=(
+                f"audit log at {path!r} exists but contains 0 entries, and there is no genesis "
+                f"manifest at {path + '.manifest.json'!r} to say what it should contain — nothing "
+                "could be verified. ForgeLM never writes an empty log (the file and its manifest "
+                "are both created by the first event), so this is a truncated, rotated-away or "
+                "wrong-path log, not a fresh one. Restore the log and its manifest from backup, or "
+                "point verify-audit at the correct audit_log.jsonl."
+            ),
+        ),
+        AUDIT_FAILURE_EMPTY,
+    )
+
+
 def _verify_audit_log_classified(
     path: str,
     *,
@@ -2128,6 +2201,13 @@ def _verify_audit_log_classified(
     if classified_failure is not None:
         return classified_failure
 
+    # A zero-entry log classifies itself: it splits between an integrity
+    # verdict (a manifest pinned a first entry that is gone) and an input
+    # verdict (no manifest, so nothing to compare against), and the blanket
+    # AUDIT_FAILURE_INTEGRITY default below cannot express that split.
+    if not lines:
+        return _classify_empty_audit_log(path)
+
     result = _verify_audit_log_chain(path, lines, hmac_secret, require_hmac)
     return (result, None if result.valid else AUDIT_FAILURE_INTEGRITY)
 
@@ -2167,8 +2247,17 @@ def verify_audit_log(
             CLI's ``--require-hmac`` flag for strict enterprise audits.
 
     Returns:
-        :class:`VerifyResult`. ``valid=True`` only when the chain is intact
-        end-to-end (and HMAC tags pass when a secret was supplied / required).
+        :class:`VerifyResult`. ``valid=True`` only when at least one entry
+        was read and the chain is intact end-to-end (and HMAC tags pass
+        when a secret was supplied / required).
+
+        A log holding **zero entries** is ``valid=False``, never a trivial
+        pass: reporting success for zero comparisons is the fail-open this
+        function used to have. See :func:`_classify_empty_audit_log` for
+        why an empty log is never a legitimate first-run state (the file
+        and its genesis manifest are both written by the first event, so a
+        never-used log is absent rather than empty) and for why the
+        no-manifest case is an input error rather than a tamper verdict.
 
     Notes:
         Reads the log line-by-line (streaming) so RAM usage stays
@@ -2197,15 +2286,18 @@ def _verify_audit_log_chain(
     whole branch in one place instead of at each ``return``.
     """
     if not lines:
-        # An empty log is legitimate ONLY when no genesis manifest pins a
-        # non-empty first entry. A manifest present + empty log is the
-        # truncate-to-empty attack the manifest exists to detect, so consult it
-        # before reporting a clean empty chain (previously this early-returned
-        # valid=True unconditionally — F-P4-OPUS-01).
-        manifest_failure = _verify_genesis_manifest(path, None, None, 0)
-        if manifest_failure is not None:
-            return manifest_failure
-        return VerifyResult(valid=True, entries_count=0)
+        # Unreachable via :func:`_verify_audit_log_classified`, which routes
+        # every zero-entry log to :func:`_classify_empty_audit_log` so the
+        # verdict carries its own AUDIT_FAILURE_* token.  Kept as a
+        # fail-closed backstop rather than deleted: the caller tags any
+        # untagged failure from this function AUDIT_FAILURE_INTEGRITY, an
+        # invariant that only holds while this function never returns
+        # valid=True for something it did not walk.
+        return VerifyResult(
+            valid=False,
+            entries_count=0,
+            reason="internal: empty audit log reached the chain walk; classify it via _classify_empty_audit_log",
+        )
 
     chain_result = _verify_chain_walk(lines, hmac_secret, require_hmac)
     if not chain_result.valid:

@@ -415,7 +415,7 @@ docker run --gpus all --shm-size=16g ...
 | `3` | Değerlendirme arızası | Model kalitesi eşiğin altında — eşikleri ayarlayın ya da veriyi iyileştirin |
 | `4` | Onay bekleniyor | İnsan incelemesi gerekli — staging dizinini incelemek için `forgelm approvals --show <run_id> --output-dir <dir>` çalıştırın, sonra promote için `forgelm approve <run_id> --output-dir <dir>` ya da kalıcı reject için `forgelm reject <run_id> --output-dir <dir>`. Staging yolu `<output_dir>/final_model.staging.<run_id>/`'dir. |
 | `5` | Sihirbaz iptal | Sihirbaz iptal edildi (Ctrl-C veya açık iptal) — config yazılmadı; `--wizard` ile yeniden çalıştırın ya da etkileşimsiz kullanım için `forgelm quickstart <template>` kullanın. |
-| `6` | Bütünlük arızası | Yalnızca `verify-audit` / `verify-annex-iv` / `verify-gguf` / `verify-integrity` — artefakt okundu ve hash/zincir/manifest kontrolü başarısız oldu. Güvenlik olayı olarak ele alın: artefaktın sahibini uyarın, tekrar denemeyin. Aynı subcommand'larda bozuk bir yol veya geçersiz girdi hâlâ `1` ile çıkar. |
+| `6` | Bütünlük arızası | Yalnızca `verify-audit` / `verify-annex-iv` / `verify-gguf` / `verify-integrity` — artefakt okundu ve hash/zincir/manifest kontrolü başarısız oldu. Güvenlik olayı olarak ele alın: artefaktın sahibini uyarın, tekrar denemeyin. Aynı subcommand'larda bozuk bir yol veya geçersiz girdi hâlâ `1` ile çıkar. `verify-audit` için sıfır-girdili bir log ikisi arasında bölünür: genesis manifest bir ilk girdi sabitliyorsa `6` (boşa truncate edilmiş), karşılaştırılacak bir manifest kalmamışsa `1` — asla `0` değil. |
 
 ---
 

@@ -30,7 +30,7 @@ forgelm verify-audit [--hmac-secret-env VAR] [--require-hmac]
 | Code | Meaning |
 |---|---|
 | `0` | `EXIT_SUCCESS` — the SHA-256 chain (and HMAC tags, when verified) is intact end-to-end. |
-| `1` | `EXIT_CONFIG_ERROR` — option/usage error: `--require-hmac` set with the configured env var unset, or the log path does not exist / is a directory / is unreadable for a caller-input reason. The verification never ran, so there is no integrity verdict. |
+| `1` | `EXIT_CONFIG_ERROR` — nothing could be compared: `--require-hmac` set with the configured env var unset, the log path does not exist / is a directory / is unreadable for a caller-input reason, or **the log exists but holds zero entries and no genesis manifest pins what it should have held**. There is no integrity verdict. |
 | `2` | `EXIT_TRAINING_ERROR` — the log exists but could not be read (permission denied, mid-read I/O failure). Retryable. |
 | `6` | `EXIT_INTEGRITY_FAILURE` — the log was read and the chain does not verify: chain break, HMAC mismatch, genesis-manifest mismatch, an undecodable line, non-UTF-8 bytes inside the log, or (under `--require-hmac`) a line missing its `_hmac` field. This is the tampering signal, and it is the reason the code exists — previously a broken hash chain and a mistyped path both exited `1`, so a CI pipeline could not tell a security event from an operator typo. |
 
@@ -96,6 +96,36 @@ FAIL at line 53: prev_hash mismatch — chain break suggests entry was inserted,
 $ echo $?
 6
 ```
+
+### Empty log
+
+A log file that exists but holds zero entries never verifies. Which code you get depends on whether a genesis manifest survives to say what the log should have contained.
+
+**No manifest — exit `1`.** Nothing exists to compare zero entries against, so the verifier cannot distinguish a deleted log from a mistyped path:
+
+```shell
+$ forgelm verify-audit checkpoints/run/compliance/audit_log.jsonl
+FAIL: audit log at 'checkpoints/run/compliance/audit_log.jsonl' exists but contains 0 entries,
+and there is no genesis manifest at
+'checkpoints/run/compliance/audit_log.jsonl.manifest.json' to say what it should contain —
+nothing could be verified. …
+$ echo $?
+1
+```
+
+**Manifest pins a first entry — exit `6`.** The manifest *is* a baseline, so a comparison ran and failed; this is the truncate-to-empty signal:
+
+```shell
+$ forgelm verify-audit checkpoints/run/compliance/audit_log.jsonl
+FAIL at line 1: genesis manifest pins a first entry (first_entry_sha256='…', run_id='…')
+but the audit log is empty — log truncated to zero entries
+$ echo $?
+6
+```
+
+A manifest that is present but corrupt, or missing its pinned fields, also exits `6` — corrupting the sidecar must not be a quieter way to disarm the truncation guard than deleting it.
+
+An empty log is never a legitimate fresh-run state. `AuditLogger` creates its output directory but not the log file; the file and its manifest are both written by the first event. A never-used log is therefore **absent** (exit `1`, `audit log not found`), not empty — so an empty one is a truncation, a rotation that moved the body away, a stray `touch`, or a wrong path.
 
 ## See also
 

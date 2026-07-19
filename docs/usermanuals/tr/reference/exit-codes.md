@@ -86,6 +86,7 @@ stage('Train') {
 | `--config` var olmayan dosyaya işaret ediyor | 1 |
 | Eğitim ortasında final loss NaN / OOM / I/O hatası | 2 |
 | `forgelm verify-audit` zincir kopması veya HMAC uyuşmazlığı | 6 (log okundu ve zincir doğrulanmadı — `--require-hmac` secret olmadan gibi bir opsiyon hatası veya eksik log dosyası 1'de kalır; bkz. manuel içindeki [Audit Log Doğrulama](#/compliance/verify-audit) sayfası) |
+| `forgelm verify-audit`, var olan ama **sıfır girdi** tutan bir log üzerinde | Bir genesis manifest ilk girdiyi sabitliyorsa 6 (boşa truncate edilmiş — bir karşılaştırma yapıldı ve başarısız oldu); manifest yoksa 1 (referans yok, hiçbir şey karşılaştırılamadı). Asla 0 değil — boş bir log hiçbir zaman geçerli bir taze-çalıştırma durumu değildir |
 | `forgelm verify-gguf` / `verify-annex-iv` / `verify-integrity` — artefakt okundu, hash/manifest uyuşmuyor | 6 |
 | `forgelm verify-*` — yol eksik, okunamıyor veya girdi bozuk | 1 |
 | DPO koşusu, Llama Guard S5 toleransı aştı | `evaluation.auto_revert: true` ile 3; shipped default `false` ile 0 (JSON gate bloklarında kaydedilir) |

@@ -350,9 +350,13 @@ Audit log chain bütünlüğü kontrolü.
 |---|---|---|
 | `success` | bool | `true` ⟺ `valid: true`. |
 | `valid` | bool | Herhangi bir prev_hash mismatch / monotonicity break / seq gap varsa `false`. |
-| `entries_count` | int | Düzgün-formed audit satır sayısı. |
-| `hmac_verified` | bool \| null | `--hmac-secret` her `hmac` alanıyla eşleşince `true`; mismatch'te `false`; chain'de HMAC alanı yoksa `null`. |
-| `errors` | list[str] | Tespit edilen sorun başına bir insan-okunur satır. |
+| `entries_count` | int | Verifier'ın okuduğu boş-olmayan satır sayısı — doğrulanan girdi sayısı **değil**. Başarısızlıkta bile tüm dosyayı raporlar; "güvenebileceğiniz girdi sayısı" olarak okumayın. |
+| `hmac_verified` | bool \| null | Secret yapılandırılmadıysa `null` (`--hmac-secret-env` verilmemiş veya set edilmemiş bir değişkeni gösteriyor — HMAC hiç değerlendirilmedi); secret verildi ve tüm doğrulama geçtiyse `true`; secret verildi ve doğrulama **herhangi bir nedenle** başarısız olduysa `false` — nedenin HMAC'e özgü olması gerekmez (result nesnesi ikisini ayırmıyor). |
+| `errors` | list[str] | Başarıda boş, aksi hâlde tam olarak **bir** girdi — chain yürüyüşü ilk hatada duruyor. Hata belirli bir girdiye aitse string `line <N>: <reason>` biçimindedir, yani hatalı 1-tabanlı satır numarası `errors[0]` içinden ayrıştırılır; zarfta ayrı bir satır-numarası anahtarı yoktur. Dosyanın bütününe ait hatalar — UTF-8 olmayan byte'lar, ya da genesis manifest'i olmayan boş bir log — çıplak nedeni `line <N>:` öneki **olmadan** taşır; bu yüzden bir parser önekin yokluğuna tahammül etmeli, varlığını varsaymamalıdır. |
+
+**Exit kodu eşlemesi:** `0` = en az bir girdi okundu ve SHA-256 chain (ve secret verildiyse HMAC tag'leri) sağlam; `6` = `EXIT_INTEGRITY_FAILURE` — doğrulayıcı bir şeyi karşılaştırdı ve tutmadı (chain break, HMAC mismatch, genesis-manifest uyuşmazlığı, decode edilemeyen bir satır, log içinde UTF-8 olmayan byte'lar, ya da genesis manifest'i bir ilk girdi sabitleyen sıfır-girdili bir log): bu bir güvenlik olayı, config düzeltmesi değil; `1` = hiçbir şey karşılaştırılamadı (`--require-hmac` verildi ama adı geçen secret env değişkeni set değil; log yolu yok / normal dosya değil; ya da log mevcut, sıfır girdi tutuyor ve ne tutması gerektiğini söyleyen bir genesis manifest yok); `2` = log mevcut ama baştan sona okunamadı (izin reddi, okuma ortasında I/O hatası — yeniden denenebilir).
+
+Dolayısıyla sıfır-girdili bir log asla `success: true` üretmez. Zarf şekli değişmedi — `{success: false, valid: false, entries_count: 0, hmac_verified: null, errors: ["audit log at '…' exists but contains 0 entries, …"]}` — yani `success` üzerinden dallanan bir tüketicinin değişmesi gerekmez; `entries_count == 0`'ı zararsız bir boş log olarak özel-durumlayan bir tüketicinin gerekir.
 
 ## `forgelm approve` / `forgelm reject`
 
@@ -611,7 +615,7 @@ Wave 2b Phase 36 — EU AI Act Annex IV §1-9 artefact bütünlük kontrolü.
 | `manifest_hash_present` | bool | Artefact hash taşımıyorsa `false` (eski export — verifier warning ile geçer). |
 | `reason` | str | `valid: true` ise boş; aksi halde tek-satır failure açıklaması. |
 
-**Exit kodu:** `0` = `valid: true`; `1` = `valid: false` (eksik field veya hash mismatch — auditor-facing rejection); `2` = runtime hatası (file not found, unreadable, malformed JSON).
+**Exit kodu:** `0` = `valid: true`; `1` = `valid: false` çünkü verifier bir hash karşılaştırmasına kadar hiç gelemedi — gerekli §1-9 field'ları eksik ya da hâlâ template placeholder tutuyor veya kök bir JSON nesnesi değil (operatör-aksiyonu: artefact'i doldurun); `6` = `EXIT_INTEGRITY_FAILURE` — gerekli her field doluydu, artefact bir `metadata.manifest_hash` taşıyordu ve yeniden hesaplanan hash onunla uyuşmuyor (belge üretimden sonra düzenlenmiş — güvenlik olayı olarak ele alın); `2` = erişilebilir bir yolda gerçek runtime I/O hatası (izin reddi, okuma ortasında I/O hatası). **Bulunamayan**, normal dosya olmayan, malformed JSON olan veya geçerli UTF-8 olmayan bir dosya `2` değil `1` ile çıkar — bunlar operatör girdi hatalarıdır ve zarf her durumda 2-anahtarlı `{"success": false, "error": "…"}` biçimindedir.
 
 ## `forgelm verify-gguf`
 
@@ -645,7 +649,7 @@ Wave 2b Phase 36 — GGUF model dosyası bütünlük kontrolü.
 | `checks.sidecar_match` | bool \| null | Byte-for-byte eşleşmede `true`; mismatch veya malformed sidecar'da `false`; sidecar yoksa `null`. *Malformed* sidecar (empty / non-hex / yanlış uzunluk) fail-closed olur. |
 | `reason` | str | Tek-satır özet; `valid: false` durumunda failure detayını taşır. |
 
-**Exit kodu:** `0` = `valid: true`; `1` = `valid: false` (magic mismatch, metadata block *bozuk*, SHA-256 mismatch, malformed sidecar); `2` = runtime hatası (file not found, unreadable). Opsiyonel-`gguf`-paketi-eksik yolu `valid: true` + exit `0` olarak kalır (operatörün "metadata check skipped" durumu — magic header + SHA-256 sidecar checks load-bearing integrity yüzeyi olmaya devam eder).
+**Exit kodu:** `0` = `valid: true`; `1` = `valid: false` ama aslında hiçbir şey karşılaştırılmadı — magic-header mismatch (dosya hiç GGUF değil: tamper verdict'i değil, dosya-tipi verdict'i), içeriği 64 karakterlik hex digest olmayan bir sidecar (kullanılamaz, bu yüzden fail-closed) **veya** SHA-256 sidecar'ı *eşleşen* bir dosyada metadata-parse hatası (checksum byte'ların export edilenle birebir aynı olduğunu kanıtladı; muhtemel neden bu dosyanın format revizyonu için fazla eski bir `gguf` paketi, tamper değil); `6` = `EXIT_INTEGRITY_FAILURE` — düzgün-formed bir sidecar digest'inin uyuşmaması (dosya export'tan sonra değişmiş; metadata block da parse edilemese bile checksum uyuşmazlığı baskındır) veya bozulmayı eleyecek kullanılabilir bir sidecar yokken parse edilemeyen metadata block'u; `2` = erişilebilir bir yolda gerçek runtime I/O hatası (izin reddi, okuma ortasında I/O hatası) — sadece **bulunamayan** bir dosya `2` değil `1` ile çıkar. Opsiyonel-`gguf`-paketi-eksik yolu `valid: true` + exit `0` olarak kalır (operatörün "metadata check skipped" durumu — magic header + SHA-256 sidecar checks load-bearing integrity yüzeyi olmaya devam eder).
 
 ## `forgelm verify-integrity`
 
@@ -666,7 +670,7 @@ Wave 2b Phase 36 / Madde 15 — model dizini artefakt bütünlük kontrolü.
 }
 ```
 
-**Uyuşmazlık / operatör-hatası zarfı** (`valid: false`, çıkış 1):
+**Uyuşmazlık zarfı** (`valid: false`, çıkış 6 — manifest parse edildi, yürüyüş çalıştı ve en az bir artefakt uyuşmuyor; kullanılamaz bir manifest aynı zarf şekliyle çıkış 1 verir):
 
 ```json
 {
@@ -701,7 +705,7 @@ Wave 2b Phase 36 / Madde 15 — model dizini artefakt bütünlük kontrolü.
 | `verified_count` | int | Manifest ile başarıyla eşleşen artefakt sayısı. |
 | `path` | str | Doğrulanan model dizininin mutlak yolu. |
 
-**Exit kodu eşlemesi:** `0` = tüm kayıtlı artefaktlar mevcut ve değişmemiş (`valid: true`); `1` = bütünlük uyuşmazlığı (changed / removed / added dosya) **veya** operatör / girdi hatası (eksik yol, yolun dizin yerine dosya olması, manifest bulunamadı, malformed JSON, list olmayan `artifacts`, manifest girdi yolunun model dizininden kaçması); `2` = erişilebilir bir yolda gerçek runtime I/O hatası (okuma hatası, yürüyüş sırasında izin reddi).
+**Exit kodu eşlemesi:** `0` = tüm kayıtlı artefaktlar mevcut ve değişmemiş (`valid: true`); `6` = `EXIT_INTEGRITY_FAILURE` — bütünlük uyuşmazlığı (changed / removed / added dosya): manifest parse edildi, yürüyüş çalıştı ve dağıtılan ağırlıklar onaylanan ağırlıklar değil; `1` = hiçbir şeyin hash'lenmediği operatör / girdi hatası (eksik yol, yolun dizin yerine dosya olması, manifest bulunamadı, malformed JSON, manifest kökünün JSON nesnesi olmaması, `artifacts` anahtarının hiç bulunmaması, list olmayan `artifacts`, **boş** `artifacts` — hiçbir şey kaydetmeyen bir manifest hiçbir şeye tanıklık edemez —, nesne olmayan bir girdi, `file` alanı string olmayan bir girdi veya manifest girdi yolunun model dizininden kaçması: verifier ağaç-dışı bir dosyayı hash'lemeyi reddetti; bu "ağırlıklarınıza hiç bakmadım" verdict'idir, tamper verdict'i değil); `2` = erişilebilir bir yolda gerçek runtime I/O hatası (okuma hatası, yürüyüş sırasında izin reddi).
 
 Runtime-hatası zarfı (`çıkış 2`) yalnızca `{"success": false, "error": "…"}` döndürür — `valid`, `changed`, `removed`, `added` veya `path` anahtarları olmadan. Önce `success` üzerinden dallanın, ardından `valid` ve diff listelerini inceleyin.
 

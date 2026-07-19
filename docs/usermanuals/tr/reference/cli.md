@@ -200,7 +200,7 @@ $ forgelm verify-audit PATH/TO/audit_log.jsonl --hmac-secret-env FORGELM_AUDIT_S
 $ forgelm verify-audit PATH/TO/audit_log.jsonl --require-hmac
 ```
 
-Monoton timestamp'leri, `prev_hash` zincir bütünlüğünü, `seq` boşluk tespitini ve (yapılandırıldığında) HMAC imzalarını doğrular. Geçerli zincirde exit `0`; tahrif tespitinde (zincir kırılması, HMAC uyuşmazlığı, genesis-manifest uyuşmazlığı) structured error envelope ile exit `6`; doğrulayıcı log'u okumaya hiç sıra gelmediğinde (eksik yol, secret olmadan `--require-hmac`) exit `1`; gerçek bir runtime I/O hatasında exit `2`. Bkz. [Audit Log Doğrulama](#/compliance/verify-audit).
+Monoton timestamp'leri, `prev_hash` zincir bütünlüğünü, `seq` boşluk tespitini ve (yapılandırıldığında) HMAC imzalarını doğrular. En az bir girdilik geçerli zincirde exit `0`; tahrif tespitinde (zincir kırılması, HMAC uyuşmazlığı, genesis-manifest uyuşmazlığı, ya da genesis manifest'i bir ilk girdi sabitleyen sıfır-girdili bir log) structured error envelope ile exit `6`; hiçbir şey karşılaştırılamadığında (eksik yol, secret olmadan `--require-hmac`, ya da genesis manifest'i olmayan sıfır-girdili bir log) exit `1`; gerçek bir runtime I/O hatasında exit `2`. Bkz. [Audit Log Doğrulama](#/compliance/verify-audit).
 
 ## Model bütünlüğü doğrula: `forgelm verify-integrity`
 

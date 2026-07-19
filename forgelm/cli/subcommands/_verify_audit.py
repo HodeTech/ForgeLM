@@ -126,8 +126,17 @@ def _exit_code_for_result(result: Any, failure_kind: Optional[str]) -> int:
       ``EXIT_INTEGRITY_FAILURE`` (6)
     - the log exists but could not be read through →
       ``EXIT_TRAINING_ERROR`` (2), retryable
-    - anything else (no log at that path, impossible option combination) →
+    - anything else (no log at that path, a log holding zero entries with
+      no genesis manifest, impossible option combination) →
       ``EXIT_CONFIG_ERROR`` (1)
+
+    ``AUDIT_FAILURE_EMPTY`` needs no branch of its own: it is neither an
+    integrity token nor ``AUDIT_FAILURE_UNREADABLE``, so it falls through
+    to 1 — which is the intended code, and is the same 1 an absent log
+    already returns.  See
+    :func:`forgelm.compliance._classify_empty_audit_log` for why a
+    zero-entry log fails at all, and why it fails as input rather than as
+    tampering.
     """
     from ...compliance import AUDIT_FAILURE_UNREADABLE
 
@@ -190,10 +199,11 @@ def _run_verify_audit_cmd(args) -> int:
 
     - ``EXIT_SUCCESS`` (0) — SHA-256 chain (and HMAC tags, when verified)
       intact.
-    - ``EXIT_CONFIG_ERROR`` (1) — option/usage error: ``--require-hmac``
-      without a secret env var, or a log path that does not exist / is not
-      a regular file (a directory, FIFO or device).  The verification
-      never ran.
+    - ``EXIT_CONFIG_ERROR`` (1) — nothing could be compared: ``--require-hmac``
+      without a secret env var, a log path that does not exist / is not
+      a regular file (a directory, FIFO or device), or a log that exists
+      but holds zero entries with no genesis manifest pinning what it
+      should have held.  The verification never ran.
     - ``EXIT_TRAINING_ERROR`` (2) — the log exists but could not be read
       (permission denied, mid-read I/O failure).  Retryable.
     - ``EXIT_INTEGRITY_FAILURE`` (6) — the log was read and the chain does

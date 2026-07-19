@@ -347,9 +347,13 @@ Audit-log chain integrity check.
 |---|---|---|
 | `success` | bool | `true` ⟺ `valid: true`. |
 | `valid` | bool | `false` if any prev_hash mismatch / monotonicity break / seq gap. |
-| `entries_count` | int | Number of well-formed audit lines. |
-| `hmac_verified` | bool \| null | `true` when `--hmac-secret` matches every `hmac` field; `false` on mismatch; `null` when chain has no HMAC fields. |
-| `errors` | list[str] | One human-readable line per detected problem. |
+| `entries_count` | int | Number of non-blank lines the verifier read — **not** the number of entries that verified. On a failure it still reports the whole file, so do not read it as "entries you may trust". |
+| `hmac_verified` | bool \| null | `null` when no secret was configured (`--hmac-secret-env` unset or naming an unset variable — HMAC was not evaluated at all); `true` when a secret was supplied and the whole verification passed; `false` when a secret was supplied and verification failed **for any reason**, not necessarily an HMAC-specific one (the result object does not separate the two). |
+| `errors` | list[str] | Empty on success, otherwise exactly **one** entry — the chain walk halts at the first failure. Where the failure belongs to a specific entry the string is formatted `line <N>: <reason>`, so the offending 1-based line number is parsed out of `errors[0]`; there is no separate line-number key in the envelope. Failures that are a property of the file as a whole — non-UTF-8 bytes, or an empty log with no genesis manifest — carry the bare reason with **no** `line <N>:` prefix, so a parser must tolerate its absence rather than assume it. |
+
+**Exit code mapping:** `0` = at least one entry was read and the SHA-256 chain (and the HMAC tags, when a secret was supplied) is intact; `6` = `EXIT_INTEGRITY_FAILURE` — the verifier compared something and it did not match (chain break, HMAC mismatch, genesis-manifest mismatch, an undecodable line, non-UTF-8 bytes inside the log, or a zero-entry log whose genesis manifest pins a first entry): a security event, not a config fix; `1` = nothing could be compared (`--require-hmac` with the named secret env var unset; a log path that does not exist / is not a regular file; or a log that exists, holds zero entries, and has no genesis manifest to say what it should have held); `2` = the log exists but could not be read through (permission denied, mid-read I/O failure — retryable).
+
+A zero-entry log therefore never produces `success: true`. The envelope shape is unchanged — `{success: false, valid: false, entries_count: 0, hmac_verified: null, errors: ["audit log at '…' exists but contains 0 entries, …"]}` — so a consumer that branches on `success` needs no change; one that special-cased `entries_count == 0` as a benign empty log does.
 
 ## `forgelm approve` / `forgelm reject`
 
@@ -608,7 +612,7 @@ Wave 2b Phase 36 — EU AI Act Annex IV §1-9 artefact integrity check.
 | `manifest_hash_present` | bool | `false` when the artefact carries no hash (older exports — verifier passes with a warning). |
 | `reason` | str | Empty on `valid: true`; one-line failure description otherwise. |
 
-**Exit code mapping:** `0` = `valid: true`; `1` = `valid: false` (missing fields or hash mismatch — auditor-facing rejection); `2` = runtime error (file not found, unreadable, malformed JSON).
+**Exit code mapping:** `0` = `valid: true`; `1` = `valid: false` because the verifier never got as far as comparing a hash — required §1-9 fields missing or still holding template placeholders, or a root that is not a JSON object (operator-actionable: go and populate the artefact); `6` = `EXIT_INTEGRITY_FAILURE` — every required field was populated, the artefact carried a `metadata.manifest_hash`, and the recomputed hash disagrees with it (the document was edited after generation — treat as a security event); `2` = genuine runtime I/O failure on a reachable path (permission denied, mid-read I/O error). A file that is **not found**, is not a regular file, is malformed JSON, or is not valid UTF-8 exits `1`, not `2` — those are operator input errors, and the envelope is the 2-key `{"success": false, "error": "…"}` form in every case.
 
 ## `forgelm verify-gguf`
 
@@ -642,7 +646,7 @@ Wave 2b Phase 36 — GGUF model file integrity check.
 | `checks.sidecar_match` | bool \| null | `true` on byte-for-byte match; `false` on mismatch or malformed sidecar; `null` when no sidecar. A *malformed* sidecar (empty / non-hex / wrong-length) fails closed. |
 | `reason` | str | One-line summary; carries the failure detail on `valid: false`. |
 
-**Exit code mapping:** `0` = `valid: true`; `1` = `valid: false` (magic mismatch, metadata block *corrupted*, SHA-256 mismatch, malformed sidecar); `2` = runtime error (file not found, unreadable). The optional-`gguf`-package-missing path stays at `valid: true` + exit `0` (operator's "metadata check skipped" — the magic header + SHA-256 sidecar checks remain the load-bearing integrity surface).
+**Exit code mapping:** `0` = `valid: true`; `1` = `valid: false` with nothing actually compared — a magic-header mismatch (the file is not a GGUF at all: a file-type verdict, not a tamper verdict), a sidecar whose contents are not a 64-character hex digest (unusable, so the check fails closed), **or** a metadata-parse failure on a file whose SHA-256 sidecar *matched* (the checksum has proven the bytes are byte-identical to what was exported, so the likely cause is a `gguf` package too old for this file's format revision, not tampering); `6` = `EXIT_INTEGRITY_FAILURE` — a well-formed sidecar digest that disagrees (the file changed after export, and a checksum mismatch dominates even if the metadata block also failed to parse), or a metadata block that could not be parsed with no usable sidecar available to rule out corruption; `2` = genuine runtime I/O failure on a reachable path (permission denied, mid-read I/O error) — a file that is simply **not found** exits `1`, not `2`. The optional-`gguf`-package-missing path stays at `valid: true` + exit `0` (operator's "metadata check skipped" — the magic header + SHA-256 sidecar checks remain the load-bearing integrity surface).
 
 ## `forgelm verify-integrity`
 
@@ -663,7 +667,7 @@ Wave 2b Phase 36 / Art. 15 — model-directory artifact integrity check.
 }
 ```
 
-**Mismatch / operator-error envelope** (`valid: false`, exit 1):
+**Mismatch envelope** (`valid: false`, exit 6 — the manifest parsed, the walk ran, and at least one artifact disagrees; an unusable manifest exits 1 with the same envelope shape):
 
 ```json
 {
@@ -698,7 +702,7 @@ Wave 2b Phase 36 / Art. 15 — model-directory artifact integrity check.
 | `verified_count` | int | Number of artifacts that matched the manifest successfully. |
 | `path` | str | Absolute path to the model directory that was verified. |
 
-**Exit code mapping:** `0` = all recorded artifacts present and unchanged (`valid: true`); `1` = integrity mismatch (changed / removed / added file) **or** operator / input error (missing path, path is a file not a directory, manifest not found, malformed JSON, non-list `artifacts`, manifest entry path escapes the model directory); `2` = genuine runtime I/O failure on a reachable path (read error, permission denied mid-walk).
+**Exit code mapping:** `0` = all recorded artifacts present and unchanged (`valid: true`); `6` = `EXIT_INTEGRITY_FAILURE` — integrity mismatch (changed / removed / added file): the manifest parsed, the walk ran, and the deployed weights are not the weights that were signed off; `1` = operator / input error, where nothing was ever hashed (missing path, path is a file not a directory, manifest not found, malformed JSON, manifest root is not a JSON object, no `artifacts` key, non-list `artifacts`, **empty** `artifacts` — a manifest that records nothing attests to nothing — an entry that is not an object, an entry whose `file` is not a string, or a manifest entry path that escapes the model directory: the verifier refused to hash an out-of-tree file, which is an "I did not examine your weights" verdict, not a tamper verdict); `2` = genuine runtime I/O failure on a reachable path (read error, permission denied mid-walk).
 
 The runtime-error envelope (`exit 2`) emits only `{"success": false, "error": "…"}` — no `valid`, `changed`, `removed`, `added`, or `path` keys. Branch on `success` first, then inspect `valid` and the diff lists.
 

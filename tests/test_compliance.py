@@ -1187,18 +1187,60 @@ class TestVerifyAuditLog:
         assert result.first_invalid_index == 1
         assert "empty" in (result.reason or "").lower()
 
-    def test_verify_audit_empty_log_without_manifest_is_valid(self, tmp_path):
-        """An empty log with NO genesis manifest is a legitimate first-run /
-        no-op state — verification passes with entries_count=0.  Guards the
-        truncate-to-empty fix from over-failing the benign empty case."""
-        from forgelm.compliance import verify_audit_log
+    def test_verify_audit_empty_log_without_manifest_fails_as_input_error(self, tmp_path):
+        """An empty log with NO genesis manifest must FAIL — and must fail as an
+        *input* error (exit 1), not as tampering (exit 6).
+
+        This assertion is the inverse of what it used to be.  The old test
+        called an empty, manifest-less log "a legitimate first-run / no-op
+        state" and asserted ``valid=True``, so ``forgelm verify-audit``
+        printed "OK: 0 entries verified" and exited 0 after comparing
+        nothing — the fifth instance of the fail-open class.  The premise
+        was wrong: ``AuditLogger.__init__`` does not create the log file
+        (see the companion test below), so a genuine first run leaves the
+        path *absent*, which already exits 1.  An empty file is a
+        truncation, a rotation, or a wrong path.
+        """
+        from forgelm.compliance import AUDIT_FAILURE_EMPTY, _verify_audit_log_classified
 
         log_path = str(tmp_path / "audit_log.jsonl")
         with open(log_path, "w", encoding="utf-8"):  # empty, no manifest sidecar
             pass
-        result = verify_audit_log(log_path)
-        assert result.valid is True
+        result, kind = _verify_audit_log_classified(log_path)
+        assert result.valid is False
         assert result.entries_count == 0
+        # Input error, NOT AUDIT_FAILURE_INTEGRITY: with no manifest there is
+        # no baseline to compare zero entries against.
+        assert kind == AUDIT_FAILURE_EMPTY
+        # The message must tell the operator which of the three empty-log
+        # situations they are in.
+        assert "0 entries" in (result.reason or "")
+        assert "manifest" in (result.reason or "")
+
+    def test_fresh_audit_logger_leaves_no_empty_log_behind(self, tmp_path, monkeypatch):
+        """The premise the empty-log verdict rests on: a brand-new
+        ``AuditLogger`` that has never logged creates the *directory* but
+        neither the log file nor its genesis manifest.
+
+        So "empty log" is not a state ForgeLM can reach on a first run, and
+        no caller depends on an empty log verifying clean.  If this ever
+        changes, the empty-log failure above becomes a false positive on
+        every fresh run — which is exactly why it is asserted here rather
+        than left as a comment.
+        """
+        import os
+
+        from forgelm.compliance import AuditLogger
+
+        monkeypatch.setenv("FORGELM_OPERATOR", "empty-log-premise@host")
+        logger = AuditLogger(str(tmp_path / "run"))
+        assert os.path.isdir(tmp_path / "run")
+        assert not os.path.exists(logger.log_path)
+        assert not os.path.exists(logger.log_path + ".manifest.json")
+        # And the first event creates both, so the log is never observed empty.
+        logger.log_event("training.started")
+        assert os.path.getsize(logger.log_path) > 0
+        assert os.path.isfile(logger.log_path + ".manifest.json")
 
     def test_verify_audit_genesis_manifest_mismatch_fails(self, tmp_path, monkeypatch):
         """P4-OPUS-22: an attacker who truncates the log and writes a fresh
@@ -1391,17 +1433,26 @@ class TestVerifyAuditLog:
         assert "not found" in capsys.readouterr().err
 
     def test_verify_audit_empty_log(self, tmp_path):
-        """An empty file is trivially valid — entries_count == 0, no
-        first_invalid_index. Mirrors AuditLogger's genesis convention
-        where an absent/empty file legitimately starts at 'genesis'."""
+        """An empty file is NOT trivially valid.
+
+        Previously asserted ``valid is True`` on the reasoning that
+        "AuditLogger's genesis convention lets an absent/empty file
+        legitimately start at 'genesis'".  That conflates *absent* with
+        *empty*: the writer's genesis convention applies to a path with no
+        file, which the verifier reports as not-found (exit 1).  A file that
+        exists and holds nothing was emptied by something, and answering
+        "OK: 0 entries verified" with exit 0 tells CI the Art. 12 log is
+        intact on the strength of zero comparisons.
+        """
         from forgelm.compliance import verify_audit_log
 
         empty_path = tmp_path / "audit_log.jsonl"
         empty_path.touch()
 
         result = verify_audit_log(str(empty_path))
-        assert result.valid is True
+        assert result.valid is False
         assert result.entries_count == 0
+        # No line to point at — the whole file is the finding.
         assert result.first_invalid_index is None
 
 

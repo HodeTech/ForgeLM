@@ -337,14 +337,23 @@ forgelm verify-audit tampered.jsonl
 # FAIL at line 23: chain broken at line 23: prev_hash='...' expected='...'
 ```
 
-Exit kodları: `0` geçerli, `1` geçersiz zincir veya HMAC uyuşmazlığı,
-`2` dosya/seçenek hatası (örn. yapılandırılmış secret env var olmadan
-`--require-hmac`).
+Exit kodları: `0` en az bir girdilik bir zincir uçtan uca doğrulandı; `6`
+doğrulayıcı bir şeyi karşılaştırdı ve tutmadı (zincir kopması, HMAC
+uyuşmazlığı, genesis-manifest uyuşmazlığı, UTF-8 olmayan baytlar, ya da
+genesis manifest'i bir ilk girdi sabitleyen sıfır-girdili bir log) — bir
+güvenlik olayı; `1` hiçbir şey karşılaştırılamadı (eksik yol,
+yapılandırılmış secret env var olmadan `--require-hmac`, ya da genesis
+manifest'i olmayan sıfır-girdili bir log); `2` erişilebilir bir log
+üzerinde gerçek bir çalışma-zamanı G/Ç hatası (tekrar denenebilir). Tam
+tablo için bkz. [`verify_audit-tr.md`](../reference/verify_audit-tr.md).
 
 Programlanabilir CI/CD entegrasyonu için kütüphane fonksiyonu
 `forgelm.compliance.verify_audit_log(path, *, hmac_secret=None,
 require_hmac=False)`, bir `VerifyResult` dataclass'ı (`valid`,
-`entries_count`, `first_invalid_index`, `reason`) döndürür.
+`entries_count`, `first_invalid_index`, `reason`) döndürür. `valid=True`
+için en az bir girdi gerekir: sıfır-girdili bir log asla doğrulanmaz,
+çünkü hiçbir şey karşılaştırmadan geçer raporlamak bir doğrulama
+değildir.
 
 ### compliance_report.json
 

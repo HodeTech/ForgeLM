@@ -81,7 +81,7 @@ Best-effort. Şekil, major artış olmadan minor sürümde değişebilir. Çağr
 |---|---|---|---|
 | `forgelm.AuditLogger` | Stable | `AuditLogger(output_dir: str, run_id: str \| None = None)` | Append-only Article 12 audit logger. POSIX `fcntl.flock` kullanır; Windows'ta süreçler-arası kilit **yoktur** (advisory flock yardımcısı no-op'tur) — Windows'ta eşzamanlı süreçler arasında bir `output_dir`'i paylaşmayın. Her fork edilmiş alt süreç kendi instance'ını kurmalıdır. |
 | `forgelm.AuditLogger.log_event` | Stable | `log_event(event: str, **fields) -> None` | Yapılandırılmış bir olay ekle. Olay kelime dağarcığı [`audit_event_catalog-tr.md`](audit_event_catalog-tr.md)'da belgelenir. |
-| `forgelm.verify_audit_log` | Stable | `verify_audit_log(path: str, *, hmac_secret: str \| None = None, require_hmac: bool = False) -> VerifyResult` | SHA-256 hash zincirini yürür. Zincir hatalarında `VerifyResult(valid=False, reason=...)` döndürür (exception değil); yalnızca okunamaz dosyalar için `OSError` fırlatır. |
+| `forgelm.verify_audit_log` | Stable | `verify_audit_log(path: str, *, hmac_secret: str \| None = None, require_hmac: bool = False) -> VerifyResult` | SHA-256 hash zincirini yürür. Zincir hatalarında `VerifyResult(valid=False, reason=...)` döndürür (exception değil); yalnızca okunamaz dosyalar için `OSError` fırlatır. `valid=True` için en az bir girdi gerekir — sıfır-girdili bir log her zaman `valid=False`'tur, çünkü hiçbir şey karşılaştırmadan geçer raporlamak bir doğrulama değildir. |
 | `forgelm.VerifyResult` | Stable | `dataclass` | Kanonik alanlar (`forgelm/compliance.py:VerifyResult`): `valid: bool`, `entries_count: int`, `first_invalid_index: Optional[int]`, `reason: Optional[str]`. |
 
 ### Doğrulama toolbelt'i (Faz 36)

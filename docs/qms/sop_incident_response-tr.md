@@ -76,10 +76,30 @@ ikisi de bu SOP'tan akar; ayırt edici tespit olay sınıfıdır.
 
 **Tetik:** `forgelm verify-audit` `6` ile çıkar — `EXIT_INTEGRITY_FAILURE`
 (chain hash mismatch, manifest sidecar truncation, HMAC signature
-mismatch). Exit `1` (verifier hiç çalışmadı: eksik log yolu ya da secret
-olmadan `--require-hmac`) ve exit `2` (runtime I/O hatası) güvenlik olayı
-değil, operatör / ortam hatasıdır — bu playbook'u açmadan önce düzeltip
-yeniden çalıştırın.
+mismatch, **ya da genesis manifest'i hâlâ bir ilk girdi sabitlerken sıfır
+girdiye truncate edilmiş bir log**). Exit `2` (runtime I/O hatası)
+güvenlik olayı değil, ortam hatasıdır — bu playbook'u açmadan önce
+düzeltip yeniden çalıştırın.
+
+Exit `1` *çoğunlukla* bir operatör hatasıdır (eksik log yolu ya da secret
+olmadan `--require-hmac`) — ama **onu görmezden gelmeden önce elemeniz
+gereken tek bir istisna vardır.** Var olan, sıfır girdi tutan ve yanında
+`audit_log.jsonl.manifest.json` bulunmayan bir log dosyası da `1` ile
+çıkar; çünkü manifest gidince karşılaştırılacak hiçbir referans kalmaz ve
+verifier silinmiş bir log ile yanlış yazılmış bir yolu ayırt edemez. Hem
+log gövdesini hem sidecar'ını silen bir saldırgan tam olarak oraya düşer.
+Bu yüzden her exit `1`'de, yolun var olup olmadığını ve boş olup
+olmadığını kontrol edin:
+
+```shell
+$ test -f "$LOG" && test ! -s "$LOG" && echo "EMPTY LOG — Critical say, bu playbook'a devam et"
+```
+
+Log varsa ve boşsa, bunu Critical bir audit-chain olayı olarak ele alın ve
+bu runbook'u işletin — bir tahrifat *verdiktinin* yokluğu, kanıtın imha
+edilmiş olmasının sonucudur; hiçbir şey olmadığının kanıtı değildir.
+Yalnızca gerçekten var olmayan bir yol (`audit log not found`) veya eksik
+bir secret zararsız durumdur.
 
 **Önem:** Critical.
 
@@ -95,22 +115,37 @@ yeniden çalıştırın.
        kanıtı her satırın `_hmac` ve `prev_hash` alanlarında ve
        genesis manifest'te tutulur.)
 3. [ ] **Son güvenilen girişi tanımla** —
-       `forgelm verify-audit ./outputs/audit_log.jsonl --require-hmac --output-format json 2>&1 | tee verify.log`
-       çalıştır; verifier ilk başarısızlıkta durur ve hatalı satır
-       numarasını (`first_invalid_index`) raporlar. **Başka bir şeye
+       `set -o pipefail; forgelm verify-audit ./outputs/audit_log.jsonl --require-hmac --output-format json 2>&1 | tee verify.log`
+       çalıştır. `set -o pipefail` süs değil, taşıyıcıdır: onsuz shell
+       `tee`'nin durumunu (`0`) raporlar ve bu adımın tamamen dayandığı
+       bütünlük verdikti sessizce kaybolur. Verifier ilk başarısızlıkta
+       durur ve hatalı 1-tabanlı satır numarasını `errors[0]` içinde,
+       `"line <N>: <reason>"` biçiminde raporlar — zarf
+       `{success, valid, entries_count, hmac_verified, errors}`'dır ve
+       ayrı bir satır-numarası alanı **taşımaz**; chain yürüyüşü orada
+       durduğu için `errors` en fazla bir girdi tutar. `entries_count`'u
+       "güvenebileceğiniz girdi sayısı" olarak okumayın: verifier'ın
+       okuduğu toplam satır sayısıdır ve başarısızlıkta da değişmeden
+       raporlanır. **Başka bir şeye
        bakmadan önce exit kodunu okuyun:** `6` bütünlük verdiktidir —
        log okundu ve doğrulanmıyor, yani gerçek bir olaydır. `1`
        verifier'ın hiçbir şeyi karşılaştıracak kadar ilerlemediği
        anlamına gelir (log yolu eksik ya da bu shell'de secret env
        var'ı set değilken `--require-hmac`), `2` ise runtime I/O
-       hatasıdır; ikisi de sizin kurulumunuzdur, tahrifat kanıtı
-       değildir — escalate etmeden önce düzeltip yeniden çalıştırın.
+       hatasıdır; `2` her zaman sizin kurulumunuzdur, `1` ise *log var
+       ve boş olmadığı sürece* sizin kurulumunuzdur — bir `1`'i
+       görmezden gelmeden önce yukarıdaki tetik notunu yeniden okuyun.
        Tam sınır gerekiyorsa, `head -n N audit_log.jsonl > tmp.jsonl`
        ile manuel bisect yapın ve `0` ile çıkan en büyük N bulunana
        kadar `verify-audit`'ı `tmp.jsonl`'a karşı yeniden çalıştırın —
        sıfır-olmayan her kodu "zincir N'de kırıldı" saymak, döngüye bir
        `1` (export edilmemiş secret) girdiği anda yanlış sınırda
-       yakınsar. O satıra kadar her şey forensic olarak güvenilirdir;
+       yakınsar. Bisect'e **N=0 ile değil N=1 ile** başlayın: `head -n 0`
+       boş bir `tmp.jsonl` üretir ve bu artık `0` değil `1` ile çıkar
+       (boş log, manifest yok); yani bir N=0 probu, bisect'in beklediği
+       temiz tabanı değil bir kurulum hatası raporlar. N=1 bile
+       başarısız olursa, ilk girdi zaten güvenilmezdir. O satıra kadar
+       her şey forensic olarak güvenilirdir;
        sonrası tainted sayılmalıdır. Kısaltılmış `tmp.jsonl`'ın genesis
        manifest sidecar'ı olmadığına dikkat edin; bu nedenle bisect
        yalnızca zincir sürekliliğini kanıtlar — manifest çapraz
@@ -264,3 +299,5 @@ otoritelerine raporlamalıdır. "Ciddi bir olay" şunları içerir:
 | 1.0 | [DATE] | [AUTHOR] | İlk versiyon |
 | 1.1 | 2026-05-05 | Wave 4 / Faz 23 | §4 güvenlik-olay playbook'u eklendi (audit-chain integrity, credential leak, supply-chain CVE, webhook compromise, GDPR Md. 15/17 DSAR'ları); başlıkta ISO 27001:2022 + SOC 2 kontrol haritalaması |
 | 1.2 | 2026-07-19 | `EXIT_INTEGRITY_FAILURE` döngüsü | §4.1 `EXIT_INTEGRITY_FAILURE` (6) üzerine yeniden hedeflendi: tetik artık "sıfır-olmayan" değil exit `6`; son-güvenilen-giriş bisect'i `6`'yı (bütünlük verdikti) `1`'den (verifier hiç çalışmadı) / `2`'den (I/O hatası) ayırıyor, böylece bir kurulum hatası tahrifat sınırı sanılamıyor |
+| 1.3 | 2026-07-19 | `EXIT_INTEGRITY_FAILURE` döngüsü | §4.1 adım 3, verifier'ın gerçek JSON zarfına göre düzeltildi: hatalı satır numarası CLI'ın hiç üretmediği bir `first_invalid_index` alanından değil `errors[0]`'dan (`"line <N>: <reason>"`) okunuyor; `entries_count`'un okunan-satır sayısı olduğu, güvenilen-giriş sayısı olmadığı belgelendi; `tee` pipeline'ına `set -o pipefail` eklendi — aksi hâlde `tee`'nin exit `0`'ı raporlanıp adımın dayandığı bütünlük verdikti atılıyordu |
+| 1.4 | 2026-07-19 | `EXIT_INTEGRITY_FAILURE` döngüsü | §4.1, `verify-audit`'in sıfır-girdili log verdikti için güncellendi. Tetik artık manifest'i hayatta kalan bir log'un boşa truncate edilmesini bir exit `6` durumu olarak adlandırıyor ve — güvenlik açısından kritik olan yarısı — exit `1` artık kategorik olarak zararsız diye tarif edilmiyor: var olan ama manifest sidecar'ı olmayan boş bir log da `1` ile çıkar ve hem log gövdesini hem referansını silmek tam olarak buna benzer; bu yüzden responder'a bir `1`'i görmezden gelmeden önce çalıştıracağı açık bir `test -f && test ! -s` kontrolü verildi. Son-güvenilen-giriş bisect'i artık N=1'den başlıyor, çünkü `head -n 0` bisect'in varsaydığı temiz tabanı sağlamak yerine `1` ile çıkan boş bir `tmp.jsonl` üretiyor |

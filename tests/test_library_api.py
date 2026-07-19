@@ -16,11 +16,91 @@ Verifies the public Python surface that
 
 from __future__ import annotations
 
+import struct
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# GGUF fixture — a genuinely parseable minimal file
+# ---------------------------------------------------------------------------
+
+
+def _gguf_importable() -> bool:
+    """Whether the optional ``gguf`` package can be imported right now.
+
+    Deliberately a real guarded import rather than
+    ``importlib.util.find_spec``: this mirrors the production probe in
+    ``forgelm.verify._maybe_parse_metadata`` exactly, so it agrees with the
+    branch actually taken.  ``find_spec`` disagrees in two real cases — a
+    package that is installed but whose import raises, and a test that shadows
+    the module with ``sys.modules["gguf"] = None``.  Evaluated on call, not at
+    import time, so it observes any monkeypatching the caller has applied and
+    so that collecting this module never drags ``gguf`` (and its numpy
+    dependency) into the interpreter.
+    """
+    try:
+        import gguf  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+_GGUF_ALIGNMENT = 32
+_GGUF_TYPE_UINT32 = 4
+_GGUF_TYPE_STRING = 8
+_GGML_TYPE_F32 = 0
+
+
+def _gguf_str(value: str) -> bytes:
+    """GGUF string: little-endian uint64 length + UTF-8 bytes."""
+    raw = value.encode("utf-8")
+    return struct.pack("<Q", len(raw)) + raw
+
+
+def _minimal_gguf_bytes() -> bytes:
+    """Build a **real**, spec-conformant GGUF v3 file with one F32 tensor.
+
+    Deliberately not ``b"GGUF" + b"\\x00" * 256``.  That older fixture had a
+    valid magic header and nothing else, which made the verdict depend on the
+    environment: without the optional ``gguf`` package the metadata layer is
+    skipped and the file "verifies", but with ``gguf`` installed
+    ``GGUFReader`` correctly rejects format version 0 and the very same call
+    returns ``valid=False``.  A test that flips with an optional extra passes
+    on one CI image and fails on another, and its green status is evidence of
+    the image rather than of the code.
+
+    Layout (all little-endian, per the GGUF v3 spec):
+
+    ``magic | version | tensor_count | kv_count | KV pairs | tensor info |
+    padding to general.alignment | tensor data``
+    """
+    kvs = (
+        _gguf_str("general.architecture")
+        + struct.pack("<I", _GGUF_TYPE_STRING)
+        + _gguf_str("llama")
+        + _gguf_str("general.alignment")
+        + struct.pack("<I", _GGUF_TYPE_UINT32)
+        + struct.pack("<I", _GGUF_ALIGNMENT)
+    )
+    kv_count = 2
+
+    # One 1-D, 4-element F32 tensor at data offset 0.
+    tensor_info = (
+        _gguf_str("token_embd.weight")
+        + struct.pack("<I", 1)  # n_dims
+        + struct.pack("<Q", 4)  # dims[0]
+        + struct.pack("<I", _GGML_TYPE_F32)
+        + struct.pack("<Q", 0)  # offset into the data section
+    )
+
+    header = b"GGUF" + struct.pack("<I", 3) + struct.pack("<Q", 1) + struct.pack("<Q", kv_count) + kvs + tensor_info
+    padding = b"\x00" * (-len(header) % _GGUF_ALIGNMENT)
+    tensor_data = struct.pack("<4f", 1.0, 2.0, 3.0, 4.0)
+    return header + padding + tensor_data
+
 
 # ---------------------------------------------------------------------------
 # Stable surface
@@ -425,13 +505,57 @@ data:
         result = verify_annex_iv_artifact(str(path))
         assert result.valid is True
 
-    def test_verify_gguf_library_function(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("block_gguf", [False, True], ids=["gguf-as-installed", "gguf-import-blocked"])
+    def test_verify_gguf_library_function(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, block_gguf: bool
+    ) -> None:
+        """``verify_gguf`` must return the same verdict on a genuine GGUF
+        whether or not the optional ``gguf`` package is importable.
+
+        Both states are asserted so neither environment is untested: the
+        ``gguf-import-blocked`` case shadows the module in ``sys.modules`` with
+        ``None`` (the standard in-process way to make ``import gguf`` raise
+        ``ImportError`` without touching the installed environment), covering
+        the minimal-install path that a plain run cannot reach when ``gguf``
+        is present.  ``metadata_parsed`` is asserted separately because it is
+        the one field that legitimately differs — it is the visible marker of
+        which code path ran.
+        """
+        if block_gguf:
+            monkeypatch.setitem(sys.modules, "gguf", None)
+
         from forgelm import verify_gguf
 
         path = tmp_path / "model.gguf"
-        path.write_bytes(b"GGUF" + b"\x00" * 256)
+        path.write_bytes(_minimal_gguf_bytes())
         result = verify_gguf(str(path))
-        assert result.valid is True
+
+        # The verdict is the environment-independent part: a real GGUF passes
+        # in both states.  This is the assertion the old zero-padded fixture
+        # could not make.
+        assert result.valid is True, result.reason
+        assert result.checks["magic_ok"] is True
+        assert result.checks["metadata_error"] is None
+
+        if block_gguf:
+            # Hard expectation, not derived from a probe: with the module
+            # shadowed there is no reader, so the metadata layer MUST report
+            # itself as skipped.  ``verify_gguf`` still has to reach a valid
+            # verdict from the magic-header layer alone.
+            assert result.checks["metadata_parsed"] is False
+            assert "tensor_count" not in result.checks
+        elif _gguf_importable():
+            # gguf is really here, so the metadata layer really ran: it must
+            # have decoded the single tensor descriptor the fixture declares.
+            # Without this the "parsed" flag alone would not prove the reader
+            # examined anything.
+            assert result.checks["metadata_parsed"] is True
+            assert result.checks["tensor_count"] == 1
+        else:
+            # Minimal install: same skipped-layer contract as the blocked case,
+            # reached without any patching.
+            assert result.checks["metadata_parsed"] is False
+            assert "tensor_count" not in result.checks
 
     def test_verify_result_types_resolve_via_top_level_facade(self) -> None:
         """F-P1-FAB-37: the two Stable verification result TYPES must resolve

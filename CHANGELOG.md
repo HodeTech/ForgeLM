@@ -42,12 +42,19 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   manifest hash mismatch, a GGUF metadata/SHA-256 sidecar mismatch, or model
   files that no longer match `model_integrity.json`; `1` still means the
   verifier never got far enough to compare anything (missing path, malformed
-  input, unreadable artefact). Two deliberate exceptions stay on `1` even
+  input, unreadable artefact). Four deliberate exceptions stay on `1` even
   though they look tamper-adjacent: a `verify-gguf` magic-header mismatch (the
-  file isn't a GGUF at all — a file-type verdict, not a tamper verdict) and a
+  file isn't a GGUF at all — a file-type verdict, not a tamper verdict); a
   `verify-integrity` manifest entry whose path escapes the model directory
   (the verifier refuses to hash an out-of-tree path before reading anything,
-  so nothing was compared) (`forgelm/cli/_exit_codes.py`, `forgelm/verify.py`).
+  so nothing was compared); a `verify-gguf` metadata-parse failure on a file
+  whose SHA-256 sidecar matches (the bytes are provably what was exported, so
+  the parse error is a library-version problem, not tampering); and a
+  `verify-audit` zero-entry log with no genesis manifest (it must fail, but
+  with no baseline in existence the verifier cannot tell a wiped log from a
+  mistyped path). The full rationale for each lives in
+  [`docs/standards/error-handling.md`](docs/standards/error-handling.md)
+  (`forgelm/cli/_exit_codes.py`, `forgelm/verify.py`).
 - **Generation-based Llama-Guard safety scoring — the default classifier now
   works out of the box.** The shipped default `meta-llama/Llama-Guard-3-8B` is a
   generative checkpoint that cannot be scored through the `text-classification`
@@ -286,6 +293,40 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   `forgelm/cli/subcommands/_verify_annex_iv.py`,
   `forgelm/cli/subcommands/_verify_gguf.py`,
   `forgelm/cli/subcommands/_verify_integrity.py`).
+- **`forgelm verify-audit` no longer reports success on a log with zero
+  entries.** It previously printed `OK: 0 entries verified` and exited `0` —
+  the code a CI pipeline reads as "the Article 12 record is intact" — after
+  comparing nothing at all. An empty log is never a legitimate fresh-run
+  state: `AuditLogger` creates its output directory but not the log file, and
+  the file and its genesis manifest are both written by the first event, so a
+  never-used log is *absent* (still exit `1`, `audit log not found`), not
+  empty. An existing empty log is therefore a truncation, a rotation that
+  moved the body away, a stray `touch`, or a wrong path. The verdict splits on
+  whether a baseline survived: with **no** genesis manifest the command now
+  exits `1` (nothing existed to compare zero entries against — the verifier
+  cannot distinguish a wiped log from a mistyped path, and crying tamper on a
+  `touch`ed file would be the mirror image of the `verify-gguf` magic-header
+  judgement call); with a manifest that **pins a first entry**, or one that is
+  present but corrupt, it exits `6` as it already did (a baseline existed, so
+  the comparison ran and failed). **Affected:** any caller that treated exit
+  `0` on an empty log as a pass — a CI gate over a log that was rotated or
+  truncated between the training step and the verify step now fails where it
+  used to go green, which is the point; and `forgelm.verify_audit_log()` now
+  returns `valid=False, entries_count=0` there instead of `valid=True`.
+  **Not affected:** every log with at least one entry — clean, tampered, or
+  unreadable — keeps its existing exit code exactly, and `VerifyResult`'s
+  public fields and the JSON envelope shape are both unchanged (`success` is
+  simply `false` where it used to be `true`) (`forgelm/compliance.py`,
+  `forgelm/cli/subcommands/_verify_audit.py`).
+- **`forgelm verify-integrity` no longer reports success on a manifest that
+  attests to nothing.** A `model_integrity.json` whose `artifacts` list is
+  empty, that has no `artifacts` key at all, whose JSON root is not an object,
+  or that contains a non-object artifact entry now exits `1` with a message
+  naming the defect, instead of hashing zero files and reporting a pass. These
+  are input errors rather than integrity failures (`1`, not `6`): nothing was
+  ever hashed, so there is no integrity verdict to report — the same
+  "never got to compare anything" line the other `verify-*` subcommands draw
+  (`forgelm/verify.py`, `forgelm/cli/subcommands/_verify_integrity.py`).
 - **`rope_scaling` is validated at config load.** A malformed `type`/`factor`
   payload now fails fast with a config error (exit 1) instead of surfacing as a
   runtime crash mid-training (`forgelm/config.py`).

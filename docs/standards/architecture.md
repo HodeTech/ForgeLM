@@ -111,6 +111,7 @@ never silent — they ship as a coherent series with regression tests.
 | `safety.py` | Llama Guard, harm categories, auto-revert | Content generation for scoring (helpers only) |
 | `judge.py` | LLM-as-judge evaluation | Safety classification |
 | `compliance.py` | Audit log, manifests, provenance, governance artifacts, GDPR purge / reverse-pii primitives | Runtime policy enforcement |
+| `verify.py` | Artefact verification primitives: Annex IV manifest-hash recomputation, GGUF magic / metadata / SHA-256-sidecar checks, the model-directory integrity walk, and the `is_*_integrity_failure` predicates the four `verify-*` subcommands route exit code `6` on | Audit-log verification (stays beside its writer in `compliance.py`); output formatting and exit-code emission (that's `cli/`) |
 | `webhook.py` | Slack/Teams lifecycle notifications (5-event vocabulary) | Decision-making (just reports) |
 | `model_card.py` | HF-compatible README generation | Running the model |
 | `merging.py` | TIES/DARE/SLERP/linear | Training |

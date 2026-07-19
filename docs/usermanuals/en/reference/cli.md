@@ -200,7 +200,7 @@ $ forgelm verify-audit PATH/TO/audit_log.jsonl --hmac-secret-env FORGELM_AUDIT_S
 $ forgelm verify-audit PATH/TO/audit_log.jsonl --require-hmac
 ```
 
-Validates monotonic timestamps, `prev_hash` chain integrity, `seq` gap detection, and (when configured) HMAC signatures. Exit `0` on a valid chain; exit `6` with a structured error envelope on tamper detection (chain break, HMAC mismatch, genesis-manifest mismatch); exit `1` when the verifier never got to read the log (missing path, `--require-hmac` without a secret); exit `2` on a genuine runtime I/O failure. See [Verify Audit](#/compliance/verify-audit).
+Validates monotonic timestamps, `prev_hash` chain integrity, `seq` gap detection, and (when configured) HMAC signatures. Exit `0` on a valid chain of at least one entry; exit `6` with a structured error envelope on tamper detection (chain break, HMAC mismatch, genesis-manifest mismatch, or a zero-entry log whose genesis manifest pins a first entry); exit `1` when nothing could be compared (missing path, `--require-hmac` without a secret, or a zero-entry log with no genesis manifest); exit `2` on a genuine runtime I/O failure. See [Verify Audit](#/compliance/verify-audit).
 
 ## Verify model integrity: `forgelm verify-integrity`
 

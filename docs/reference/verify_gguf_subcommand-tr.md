@@ -29,9 +29,9 @@ forgelm verify-gguf [--output-format {text,json}]
 | Kod | Anlam |
 |---|---|
 | `0` | Magic header `GGUF` VE (`gguf` yüklüyse) meta veri bloğu ayrıştırılıyor VE (sidecar mevcutsa) SHA-256 eşleşiyor. |
-| `1` | Çağıran/girdi hatası: yol eksik veya normal bir dosya değil; magic uyuşmuyor (dosya hiç GGUF değil — bu bir tahrifat kararı değil, dosya-tipi kararıdır); bozuk sidecar (hex değil / yanlış uzunluk). Hiçbir şey karşılaştırılmadı; yolu ya da sidecar'ı düzeltin. |
+| `1` | Çağıran/girdi hatası: yol eksik veya normal bir dosya değil; magic uyuşmuyor (dosya hiç GGUF değil — bu bir tahrifat kararı değil, dosya-tipi kararıdır); bozuk sidecar (hex değil / yanlış uzunluk). Ayrıca SHA-256 sidecar'ı **eşleşen** bir dosyada ayrıştırılamayan meta veri bloğu: checksum, baytların tam olarak exporter'ın yazdığı şey olduğunu kanıtlar; dolayısıyla ayrıştırma hatası bir tahrifat olayı değil, `gguf` kütüphane-sürümü sorunudur. Ya hiçbir şey karşılaştırılmadı ya da karşılaştırılan şey temiz çıktı; her hâlükârda operatör kendi tarafını düzeltir. |
 | `2` | Mevcut bir dosyada gerçek runtime I/O hatası — okuma hatası, ayrıştırma sırasında izin reddi vb. Yol `os.path.isfile`'a erişilebilirdi ama doğrulama sırasında okunamaz hâle geldi. |
-| `6` | Bütünlük arızası: dosya *gerçekten* bir GGUF (magic OK) ve bütünlük kontrolünü geçemedi — ayrıştırılamayan bir meta veri bloğu (kesilmiş / bozuk akış) veya uyuşmayan iyi-biçimli bir digest'e sahip SHA-256 sidecar (export sonrası değiştirilmiş). Artefakt servis edilmek için güvenli değil. |
+| `6` | Bütünlük arızası: dosya *gerçekten* bir GGUF (magic OK) ve bütünlük kontrolünü geçemedi — uyuşmayan iyi-biçimli bir digest'e sahip SHA-256 sidecar (export sonrası değiştirilmiş) veya bozulmayı eleyecek **eşleşen bir sidecar olmadan** ayrıştırılamayan bir meta veri bloğu (kesilmiş / bozuk akış). Artefakt servis edilmek için güvenli değil. |
 
 Kodlar `forgelm/cli/subcommands/_verify_gguf.py::_run_verify_gguf_cmd` tarafından emit edilir; bu, yapısal (asla string-eşleşmeli değil) predicate `forgelm.verify.is_gguf_integrity_failure` üzerinden yönlenir. Kamuya açık sözleşme semantiği `docs/standards/error-handling.md`'de sabitlenmiştir.
 
@@ -40,7 +40,7 @@ Kodlar `forgelm/cli/subcommands/_verify_gguf.py::_run_verify_gguf_cmd` tarafınd
 | Katman | Gerekli mi? | Hata modu |
 |---|---|---|
 | **Magic header** | Her zaman. İlk 4 bayt `b"GGUF"` olmalı. | Aksi → çıkış `1` (dosya GGUF değil ya da indirme bozuk — tahrifat değil dosya-tipi kararı, en yaygın kapı tetiklemesi olsa bile girdi-hatası kodunda kalır). |
-| **Meta veri bloğu** | İsteğe bağlı `gguf` paketi yüklüyse. Üst kaynak okuyucu ile meta veri + tensor tanımlarını ayrıştırır. | Okuyucu ayrıştırma sırasında istisna fırlatır → çıkış `6` (dosya *gerçekten* bir GGUF ama meta veri bloğu yapısal olarak bozuk — yazıcı yarıda çöktü ya da dosya kesildi). Paket yoksa → kontrol atlanır (magic + sidecar kontrolleri yük taşır). |
+| **Meta veri bloğu** | İsteğe bağlı `gguf` paketi yüklüyse. Üst kaynak okuyucu ile meta veri + tensor tanımlarını ayrıştırır. | Okuyucu ayrıştırma sırasında istisna fırlatır → çıkış kodu sidecar'ın ne kanıtladığına bağlıdır; çünkü ayrıştırma hatası tek başına bozuk bir dosyayı, bu dosyanın format revizyonunu okuyamayacak kadar eski bir `gguf` paketinden ayırt edemez. **Sidecar yok** → çıkış `6` (bozulmayı eleyecek hiçbir şey yok; dosya kesilmiş / hasarlı sayılmalı). **Eşleşen sidecar** → çıkış `1` (dosya export edilenle bayt-bayt aynı — `gguf`'u yükseltip yeniden çalıştırın; artefakt sahibini çağırmayın). **Uyuşmayan sidecar** → çıkış `6`, sidecar uyuşmazlığı olarak raporlanır (checksum daha güçlü kanıttır ve baskın gelir). Paket yoksa → kontrol atlanır (magic + sidecar kontrolleri yük taşır). |
 | **SHA-256 sidecar** | `<path>.sha256` mevcutsa. Dosyanın SHA-256'sını yeniden hesaplar ve sidecar'ın ilk boşluk-ayrılı token'ı ile karşılaştırır (sha256sum formatı `<hex> *<filename>` desteklenir). | İyi-biçimli ama uyuşmayan digest → çıkış `6` (dosya export sonrası değişmiş). Sidecar mevcut ama içeriği 64 karakterlik hex digest değilse → çıkış `1` (bozuk-sidecar maskelenmesine karşı kapalı başarısızlık — hiçbir şey karşılaştırılmadı). Sidecar yoksa → kontrol sessizce atlanır. |
 
 Exporter sidecar'ı varsayılan olarak yazar (bkz. [`docs/usermanuals/tr/deployment/gguf-export.md`](../usermanuals/tr/deployment/gguf-export.md)); GGUF dosyalarını üçüncü taraflardan alan operatörler sidecar'ı da talep etmelidir.
@@ -118,6 +118,27 @@ FAIL: checkpoints/run/exports/model-q4_k_m.gguf
 $ echo $?
 1
 ```
+
+### Meta veri ayrıştırma hatası, sidecar eşleşiyor (tahrifat değil, kütüphane-sürümü sorunu)
+
+Meta veri ayrıştırması sidecar karşılaştırmasını bilerek kısa devre yaptırmaz: sidecar daha güçlü kanıttır ve ayrıştırma hatasının açık bıraktığı "bozulma mı, okuyucu uyumsuzluğu mu" ikilemini çözebilir. Baytların tam olarak export edilen şey olduğunu kanıtladığında karar `1`'e düşer:
+
+```shell
+$ forgelm verify-gguf checkpoints/run/exports/model-q4_k_m.gguf
+FAIL: checkpoints/run/exports/model-q4_k_m.gguf
+  GGUF metadata block could not be parsed: ValueError: Sorry, file appears to be version 4294967295 which we cannot handle.  The SHA-256 sidecar matches, so the file is byte-identical to what was exported — this is almost certainly a `gguf` package version that cannot read this file's format revision, not a corrupted artifact.  Upgrade `gguf` and re-run before treating it as a tampering event.
+    magic_ok: True
+    metadata_parsed: False
+    metadata_error: ValueError: Sorry, file appears to be version 4294967295 which we cannot handle
+    sidecar_present: True
+    sidecar_match: True
+    sha256_actual: a4c1f2…
+    sha256_expected: a4c1f2…
+$ echo $?
+1
+```
+
+Aynı dosyanın yanında **hiç** sidecar yoksa karar bunun yerine `6` olur — bozulmayı eleyecek hiçbir şey bulunmadığından artefakt kesilmiş ya da hasarlı sayılmalıdır. **Uyuşmayan** bir sidecar ile de `6` olur; ancak ayrıştırma hatası olarak değil, yukarıdaki sidecar uyuşmazlığı olarak raporlanır.
 
 ### İsteğe bağlı bağımlılık yok
 

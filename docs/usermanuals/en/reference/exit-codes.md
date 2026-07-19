@@ -86,6 +86,7 @@ stage('Train') {
 | `--config` points to non-existent file | 1 |
 | Final loss is NaN / OOM / I/O failure mid-training | 2 |
 | `forgelm verify-audit` chain break or HMAC mismatch | 6 (the log was read and the chain doesn't verify — an option error, e.g. `--require-hmac` without a secret, or a missing log file, stays 1; see the in-manual [Verify Audit](#/compliance/verify-audit) page) |
+| `forgelm verify-audit` on a log that exists but holds **zero entries** | 6 if a genesis manifest pins a first entry (truncated to empty — a comparison ran and failed); 1 if no manifest exists (no baseline, so nothing could be compared). Never 0 — an empty log is never a valid fresh-run state |
 | `forgelm verify-gguf` / `verify-annex-iv` / `verify-integrity` — artefact read, hash/manifest disagrees | 6 |
 | `forgelm verify-*` — path missing, unreadable, or malformed input | 1 |
 | DPO run, Llama Guard S5 regressed beyond tolerance | 3 with `evaluation.auto_revert: true`; 0 (recorded in JSON gate blocks) with the shipped default `false` |

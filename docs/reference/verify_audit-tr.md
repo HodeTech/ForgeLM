@@ -30,7 +30,7 @@ forgelm verify-audit [--hmac-secret-env VAR] [--require-hmac]
 | Kod | Anlam |
 |---|---|
 | `0` | `EXIT_SUCCESS` — SHA-256 zinciri (ve doğrulandığında HMAC etiketleri) uçtan uca bütün. |
-| `1` | `EXIT_CONFIG_ERROR` — seçenek/kullanım hatası: `--require-hmac` setken yapılandırılmış env var unset, veya log yolu yok / bir dizin / çağıran-girdisi nedeniyle okunamıyor. Doğrulama hiç çalışmadı, dolayısıyla bir bütünlük kararı yok. |
+| `1` | `EXIT_CONFIG_ERROR` — karşılaştırılabilecek hiçbir şey yoktu: `--require-hmac` setken yapılandırılmış env var unset, log yolu yok / bir dizin / çağıran-girdisi nedeniyle okunamıyor, veya **log var ama sıfır kayıt tutuyor ve ne tutması gerektiğini sabitleyen bir genesis manifest yok**. Bir bütünlük kararı yok. |
 | `2` | `EXIT_TRAINING_ERROR` — log var ama okunamadı (izin reddi, okuma-ortası G/Ç hatası). Tekrar denenebilir. |
 | `6` | `EXIT_INTEGRITY_FAILURE` — log okundu ve zincir doğrulanmıyor: zincir kopması, HMAC uyuşmazlığı, genesis-manifest uyuşmazlığı, çözülemeyen bir satır, log içinde geçerli-olmayan UTF-8 baytları, veya (`--require-hmac` altında) `_hmac` alanı eksik bir satır. Bu tahrifat sinyalidir ve kodun var olma nedenidir — önceden kırık bir hash zinciri ile yanlış yazılmış bir yol ikisi de `1` ile çıkardı, bu yüzden bir CI pipeline'ı bir güvenlik olayını operatör yazım hatasından ayırt edemezdi. |
 
@@ -96,6 +96,36 @@ FAIL at line 53: prev_hash mismatch — chain break suggests entry was inserted,
 $ echo $?
 6
 ```
+
+### Boş log
+
+Var olan ama sıfır kayıt tutan bir log dosyası asla doğrulanmaz. Hangi kodu alacağınız, log'un ne içermesi gerektiğini söyleyen bir genesis manifest'in hayatta kalıp kalmadığına bağlıdır.
+
+**Manifest yok — çıkış `1`.** Sıfır kaydı karşılaştıracak hiçbir şey mevcut değildir; bu yüzden doğrulayıcı silinmiş bir log ile yanlış yazılmış bir yolu birbirinden ayıramaz:
+
+```shell
+$ forgelm verify-audit checkpoints/run/compliance/audit_log.jsonl
+FAIL: audit log at 'checkpoints/run/compliance/audit_log.jsonl' exists but contains 0 entries,
+and there is no genesis manifest at
+'checkpoints/run/compliance/audit_log.jsonl.manifest.json' to say what it should contain —
+nothing could be verified. …
+$ echo $?
+1
+```
+
+**Manifest bir ilk kayıt sabitliyor — çıkış `6`.** Manifest bir referans noktasıdır; yani bir karşılaştırma yapıldı ve başarısız oldu. Bu, sıfıra-truncate sinyalidir:
+
+```shell
+$ forgelm verify-audit checkpoints/run/compliance/audit_log.jsonl
+FAIL at line 1: genesis manifest pins a first entry (first_entry_sha256='…', run_id='…')
+but the audit log is empty — log truncated to zero entries
+$ echo $?
+6
+```
+
+Var olan ama bozuk, ya da sabitlenmiş alanları eksik bir manifest de `6` ile çıkar — sidecar'ı bozmak, truncate koruyucusunu etkisizleştirmenin silmekten daha sessiz bir yolu olmamalıdır.
+
+Boş bir log asla meşru bir taze-çalıştırma durumu değildir. `AuditLogger` çıktı dizinini oluşturur ama log dosyasını oluşturmaz; dosya ve manifest'i ilk event tarafından birlikte yazılır. Hiç kullanılmamış bir log bu nedenle **yok**tur (çıkış `1`, `audit log not found`), boş değil — dolayısıyla boş olan bir log truncate edilmiş, gövdesi rotate ile taşınmış, yanlışlıkla `touch`lanmış ya da yanlış bir yoldur.
 
 ## Bkz.
 
