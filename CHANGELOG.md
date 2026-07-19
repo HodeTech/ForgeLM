@@ -30,11 +30,26 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   guard now also covers the user manuals.
 - **A CI guard (`check_release_record_sync.py`) that enforces the post-release
   bookkeeping step.** Every released version in `CHANGELOG.md` must have a
-  matching section in `docs/roadmap/releases.md` (a `(Planned)` section does not
-  count), and `docs/roadmap.md`'s `**Released:**` headline must name the newest
-  one. The release ritual's "update the roadmap" step had been skipped for two
-  consecutive releases — `v0.8.0` and `v0.9.0` shipped while the roadmap still
-  announced `v0.7.0` as current — so it is now checked rather than trusted.
+  matching section in `docs/roadmap/releases.md` — one with an actual body, since
+  a bare heading is not a record and a `(Planned)` section never counts as one —
+  and the `**Released:**` headline in `docs/roadmap.md` **and** the
+  `**Yayınlandı:**` headline in its Turkish mirror must both name the newest one.
+  Release dates are cross-checked between the two files, and headings inside
+  fenced code blocks are ignored so a sample snippet cannot satisfy a real
+  release. The release ritual's "update the roadmap" step had been skipped for
+  two consecutive releases — `v0.8.0` and `v0.9.0` shipped while the roadmap
+  still announced `v0.7.0` as current, and the Turkish mirror had drifted four
+  minors behind — so it is now checked rather than trusted. The step also moved
+  *ahead* of the tag in `docs/standards/release.md` and the `cut-release` skill:
+  written after the tag, the record could only redden the guard on the next PR,
+  by which time PyPI had already shipped with a stale roadmap.
+- **A CI guard (`check_skill_mirror_parity.py`) that keeps `.claude/skills/` and
+  `.agents/skills/` from drifting apart.** Every skill is shipped twice — once
+  for Claude Code, once for the agent-agnostic tree — and each edit has to be
+  applied to both copies by hand. The guard compares them after normalising the
+  three legitimate agent-specific spellings (`.claude/`↔`.agents/`,
+  `CLAUDE.md`↔`AGENTS.md`, `Claude`↔`Codex`) and fails on any other difference,
+  on a skill or file present on only one side, or on a missing `SKILL.md`.
 - **A CI guard (`check_deprecation_targets.py`) that keeps every deprecation
   removal promise honest.** `forgelm/config.py` now carries a single
   `DEPRECATION_REMOVAL_VERSION` constant that every runtime deprecation message
@@ -337,6 +352,15 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 - **`evaluation.staging_ttl_days`** (deprecated in v0.7.0) is removed. Use the
   canonical `retention.staging_ttl_days`; `EvaluationConfig` is `extra="forbid"`,
   so the legacy key now raises a validation error instead of forwarding.
+  > **Errata (2026-07-19):** "deprecated in v0.7.0" above is wrong and is left
+  > in place because released entries are not rewritten. The field was actually
+  > deprecated in **v0.5.5**, whose entry reads "Removal scheduled for v0.7.0" —
+  > the *scheduled-removal* version was misread as the *deprecation* version.
+  > The real warning window was three minors (v0.5.5 → v0.8.0), not one. The
+  > same misreading applies to the `--data-audit PATH` alias in the bullet
+  > below: it was deprecated in **v0.5.0** ("Removal targeted no earlier than
+  > v0.7.0"), a four-minor window. Neither correction changes what v0.8.0
+  > shipped — only the history it cites.
 - **`forgelm --data-audit PATH`** CLI flag (deprecated in v0.7.0) is removed.
   Use the first-class `forgelm audit PATH` subcommand — identical behaviour and
   output. `argparse` now rejects the flag (exit 2).

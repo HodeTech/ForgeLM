@@ -118,6 +118,8 @@ Until all three conditions are met, the row stays — even if the work is "in pr
 
 **Bundled landing.** All four rows ship together as [Phase 14.5 — Pipeline Hardening](phase-14-5-pipeline-hardening.md) on the v0.7.x patch cycle; each row's CHANGELOG bullet references its F-ID per the removal contract above.
 
+> **Addendum — 2026-07-19 (retarget, not a re-decision).** The v0.7.x patch cycle closed and both v0.8.0 and v0.9.0 shipped without these four rows; the bundled-landing target therefore moves to the `v0.9.x` cycle.  The entry above is left as written — this log is append-only, and the 2026-05-15 record of *what was decided then* stays accurate precisely because it is not edited.  Nothing about the classification, severity, or bundling changed; only the version that was named is now behind the mainline.  Canonical target now lives in [phase-14-5-pipeline-hardening.md](phase-14-5-pipeline-hardening.md) "Delivery".
+
 ---
 
 ---

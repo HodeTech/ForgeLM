@@ -332,6 +332,17 @@ jobs:
         # newest released version.
         run: python3 tools/check_release_record_sync.py --strict
 
+      - name: Skill mirror parity (.claude/skills <-> .agents/skills)
+        # The agent skills ship twice — once per harness — and are edited by
+        # hand, so a one-copy edit is silent: the agent reading the un-edited
+        # copy keeps following the old procedure. Nothing compared the trees
+        # until the cut-release ritual reorder had to be applied to two files
+        # in two directories. This guard requires the same skills, the same
+        # files, and identical content once the documented .claude/ <->
+        # .agents/ substitution allowlist (paths, CLAUDE.md/AGENTS.md, agent
+        # name) is applied.
+        run: python3 tools/check_skill_mirror_parity.py --strict
+
       - name: Site chrome (EN/TR translation) parity
         # W1/H11 (F-P8-C-07): the active-tier (EN<->TR) translation-key sets in
         # site/js/translations.js must stay in lockstep. Run WITHOUT --strict:

@@ -266,7 +266,7 @@ v0.7.0 ships [Phase 14 — Multi-Stage Pipeline Chains](completed-phases.md#phas
 
 ### Review-absorption history
 
-PR #53 (Phase 14 implementation) absorbed **5 review rounds**: 3 blocking + 4 significant + 14 nitpicks across dispatch order, force-resume audit event, strict chain integrity, `--input-model` empty-string normalisation, exit-code consistency, `--stage <non-first>` chain integrity, audit-run-id pinning, topology guard unconditional execution, `output_dir` collision in `run()`, pipeline-only-flag rejection on non-pipeline configs, reference docs + roadmap state cleanup.  PR #54 (release prep) absorbed an additional **10 of 14 findings** (3 blockers + 5 HIGH + 2 MEDIUM); the remaining 4 are tracked as [Phase 14.5 — Pipeline Hardening](phase-14-5-pipeline-hardening.md) for the v0.7.x cycle.
+PR #53 (Phase 14 implementation) absorbed **5 review rounds**: 3 blocking + 4 significant + 14 nitpicks across dispatch order, force-resume audit event, strict chain integrity, `--input-model` empty-string normalisation, exit-code consistency, `--stage <non-first>` chain integrity, audit-run-id pinning, topology guard unconditional execution, `output_dir` collision in `run()`, pipeline-only-flag rejection on non-pipeline configs, reference docs + roadmap state cleanup.  PR #54 (release prep) absorbed an additional **10 of 14 findings** (3 blockers + 5 HIGH + 2 MEDIUM); the remaining 4 were tracked at the time as [Phase 14.5 — Pipeline Hardening](phase-14-5-pipeline-hardening.md), targeting what was then the next open cycle, `v0.7.x`.  That cycle closed with both v0.8.0 and v0.9.0 shipping without it; Phase 14.5 now targets the `v0.9.x` cycle instead — see that file for current status.
 
 ### Full changelog
 
@@ -280,7 +280,7 @@ See [CHANGELOG.md `[0.7.0]`](../../CHANGELOG.md#070--2026-05-14) for the complet
 
 ### Summary
 
-v0.8.0 adds standalone model-integrity verification, exposes previously-hardcoded merge and synthetic-data knobs as config fields, hardens two config validators that previously failed silently, and completes the deprecation cadence opened in v0.7.0 by removing `evaluation.staging_ttl_days` and the `--data-audit` CLI flag.
+v0.8.0 adds standalone model-integrity verification, exposes previously-hardcoded merge and synthetic-data knobs as config fields, hardens two config validators that previously failed silently, and completes the deprecation cadence for two long-standing removals — `evaluation.staging_ttl_days` (deprecated v0.5.5) and the `--data-audit` CLI flag (deprecated v0.5.0) — both of which cleared the release standard's one-minor-minimum overlap by a wide margin; see the Removed section below for the exact per-field chain.
 
 ### Highlights
 
@@ -288,12 +288,16 @@ v0.8.0 adds standalone model-integrity verification, exposes previously-hardcode
 - **Config-driven merge hyperparameters** — `merge.ties_trim_fraction`, `merge.dare_drop_rate`, and `merge.dare_seed` expose the TIES/DARE knobs that were previously fixed module constants (defaults unchanged: `0.2`, `0.3`, `42`).
 - **Config-driven synthetic sanity bound** — `synthetic.sanity_failure_rate` (default `0.2`) replaces the hardcoded warn-only failure-rate threshold in `forgelm --generate-data`; independent of `min_success_rate`, which still gates the exit code.
 - **Config validation hardened** — `distributed.strategy` is now a `Literal["deepspeed", "fsdp"]` (an unsupported value such as `horovod` used to validate and then silently run single-GPU). `data.mix_ratio` now rejects non-finite weights (NaN / inf) and must carry exactly one weight per dataset; a length mismatch used to raise no config error and silently fall back to uniform mixing at runtime. Both now fail fast at config time (exit 1).
-- **`training.sample_packing`** becomes a deprecated alias for `training.packing` — it was previously a documented-but-unconsumed no-op field; it now forwards to `packing` with a `DeprecationWarning`. Removal target: `v1.0.0` (removing a YAML field is a MAJOR change — see [docs/standards/release.md](../standards/release.md#deprecation-cadence)).
+
+### Deprecated
+
+- **`training.sample_packing`** becomes a deprecated alias for `training.packing` — it was previously a documented-but-unconsumed no-op field; it now forwards to `packing` with a `DeprecationWarning` so the documented behaviour actually fires. Removal target: `v1.0.0` (removing a YAML field is a MAJOR change — see [docs/standards/release.md](../standards/release.md#deprecation-cadence)).
+- **Target history:** CHANGELOG [`[0.8.0]`](../../CHANGELOG.md#080--2026-06-16) originally announced this removal for **v0.9.0**. That promise could not be kept — removing a YAML field is a MAJOR change per the release standard, and no MINOR release may ship one — so the target drifted forward undocumented (`v0.9.0` → `v0.10.0`) before being formally corrected to the canonical `v1.0.0` stated above. <!-- deprecation-target-ok: names the v0.9.0/v0.10.0 targets v0.8.0-era docs once carried, both superseded by the canonical v1.0.0 in the bullet directly above. -->
 
 ### Removed
 
-- **`evaluation.staging_ttl_days`** (deprecated in v0.7.0) — use the canonical `retention.staging_ttl_days`; `EvaluationConfig` is `extra="forbid"`, so the legacy key now raises a validation error instead of forwarding. <!-- deprecation-target-ok: historical claim about an unrelated YAML field, caught only by line-window proximity to the deprecation bullet above. -->
-- **`forgelm --data-audit PATH`** CLI flag (deprecated in v0.7.0) — use the first-class `forgelm audit PATH` subcommand (identical behaviour and output). `argparse` now rejects the flag (exit 2).
+- **`evaluation.staging_ttl_days`** — deprecated in **v0.5.5**, not v0.7.0 (CHANGELOG [`[0.5.5]`](../../CHANGELOG.md#055--2026-05-10) "### Deprecated": `EvaluationConfig.staging_ttl_days` alias-forwards to `retention.staging_ttl_days`, "Removal scheduled for v0.7.0"). The actual removal landed one minor past that original target — the field stayed present through v0.6.0 and v0.7.0 and is removed only here — a three-minor overlap (v0.5.5 → v0.6.0 → v0.7.0 → v0.8.0), well past the release standard's one-minor minimum. Use the canonical `retention.staging_ttl_days`; `EvaluationConfig` is `extra="forbid"`, so the legacy key now raises a validation error instead of forwarding. **Correction:** CHANGELOG [`[0.8.0]`](../../CHANGELOG.md#080--2026-06-16) line 337 itself reads "(deprecated in v0.7.0)" — that is inaccurate against the [0.5.5] entry cited above. CHANGELOG is append-only and is not edited to fix this here; flagged for a possible separate errata note. <!-- deprecation-target-ok: the v0.5.5/v0.7.0/v0.8.0 tokens on this line describe evaluation.staging_ttl_days's own deprecation chain, an unrelated field — swept into this guard's claim window only because the "### Removed" heading two lines above sits within the 2-line window of the deprecated-packing-alias bullet under "### Deprecated" above, not because this line claims anything about that alias's own removal target. -->
+- **`forgelm --data-audit PATH`** CLI flag — deprecated in **v0.5.0**, not v0.7.0 (CHANGELOG [`[0.5.0]`](../../CHANGELOG.md#050--2026-04-30), Phase 11.5: "the legacy `forgelm --data-audit PATH` flag keeps working as a deprecation alias ... removal targeted no earlier than v0.7.0"). The target was formally pushed from v0.7.0 to v0.8.0 at the v0.7.0 release cut, as this file's own v0.7.0 entry records — a four-minor overlap (v0.5.0 → v0.5.5 → v0.6.0 → v0.7.0 → v0.8.0). Use the first-class `forgelm audit PATH` subcommand (identical behaviour and output). `argparse` now rejects the flag (exit 2).
 - **`cli.legacy_flag_invoked`** audit event — recorded use of the removed `--data-audit` flag; dropped from the audit-event catalog.
 
 ### Fixed
@@ -301,10 +305,14 @@ v0.8.0 adds standalone model-integrity verification, exposes previously-hardcode
 - Eval artefact privacy-redaction (in effect since v0.7.0) is now documented in the CHANGELOG: `safety_results.json` / `judge_results.json` omit raw `prompt` / `response` / judge `reason` text unless the opt-in `include_eval_samples` flags are set.
 - A pipeline config combining `pipeline:` + `retention.staging_ttl_days` + any `evaluation:` block no longer raises a false `ConfigError` on the stage-merge round-trip.
 
+### Security
+
+- **Nightly pip-audit gate — transformers PYSEC-2025-217 / CVE-2025-14929.** Advisory records an X-CLIP checkpoint-conversion deserialization RCE (CVSS AV:L/UI:R — local + user-interaction required); no fixed version existed in the `transformers<5.0.0` range at the time. Codebase check 2026-05-24 found no X-CLIP usage in `forgelm/` and no direct `torch.load` calls; risk accepted in `tools/pip_audit_ignores.yaml`, re-evaluated each release cycle. This suppression became moot once v0.9.0 raised the `transformers` floor past the affected range and removed it.
+
 ### Public surface changes
 
 - New CLI subcommand `forgelm verify-integrity`; new public API `forgelm.verify_integrity()` / `VerifyIntegrityResult`. `__api_version__` bumps `1.0.0 → 1.1.0` (new stable library symbol added to `forgelm.__all__`). `__version__` bumps `0.7.0 → 0.8.0` (MINOR).
-- Schema removal: `evaluation.staging_ttl_days` and `--data-audit PATH` are gone, completing the one-minor warning window opened in v0.7.0.
+- Schema removal: `evaluation.staging_ttl_days` (deprecated v0.5.5) and `--data-audit PATH` (deprecated v0.5.0) are both gone — see the Removed section above for the full per-field chain and dates; neither followed a "one-minor warning window opened in v0.7.0" as an earlier version of this entry claimed.
 
 ### Full changelog
 
@@ -314,7 +322,7 @@ See [CHANGELOG.md `[0.8.0]`](../../CHANGELOG.md#080--2026-06-16) for the complet
 
 ## v0.9.0 — "transformers 5.x Migration & CVE-2026-4372 Fix" (2026-07-05)
 
-**Status:** Released to PyPI 2026-07-05. Minor release on top of v0.8.0. GitHub Release: [v0.9.0](https://github.com/HodeTech/ForgeLM/releases/tag/v0.9.0).
+**Status:** Released to PyPI 2026-07-05. Minor release on top of v0.8.0 — **breaking in effect: drops Intel Mac (x86_64) support** (the `transformers>=5.3.0` floor pulls `torch>=2.4.0`, for which PyPI ships no x86_64-Darwin wheel; Apple Silicon, Linux, and Windows are unaffected). GitHub Release: [v0.9.0](https://github.com/HodeTech/ForgeLM/releases/tag/v0.9.0).
 
 ### Summary
 
@@ -341,9 +349,9 @@ See [CHANGELOG.md `[0.9.0]`](../../CHANGELOG.md#090--2026-07-05) for the complet
 
 ---
 
-## v0.7.x — "Pipeline Hardening" (Planned)
+## v0.9.x — "Pipeline Hardening" (Planned)
 
-**Status:** Planned. Focus: [Phase 14.5](phase-14-5-pipeline-hardening.md).  Four review-deferred items from v0.7.0: canonical pipeline manifest hash + non-chain-field tamper detection, per-stage `training_manifest.json` deep-parse validation, webhook `pipeline.*` event vocabulary documentation, `WebhookNotifier._send(**extra)` explicit allowlist.  Targets the v0.7.x patch cycle (v0.7.1 or split across v0.7.1 / v0.7.2 depending on bandwidth).
+**Status:** Planned. Focus: [Phase 14.5](phase-14-5-pipeline-hardening.md).  Four review-deferred items from v0.7.0: canonical pipeline manifest hash + non-chain-field tamper detection, per-stage `training_manifest.json` deep-parse validation, webhook `pipeline.*` event vocabulary documentation, `WebhookNotifier._send(**extra)` explicit allowlist.  Originally targeted the v0.7.x patch cycle; that cycle closed with v0.8.0 and v0.9.0 shipping without it, so the target now moves to the v0.9.x patch cycle (v0.9.1, or split across v0.9.1 / v0.9.2 depending on bandwidth).
 
 ---
 

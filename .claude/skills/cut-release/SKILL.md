@@ -119,6 +119,29 @@ The canonical bump rule lives at the top of [`forgelm/_version.py`](../../../for
 - [ ] [`README.md`](../../../README.md) feature list still accurate
 - [ ] **Run `python3 tools/update_site_version.py`** so the 15+ version literals across `site/*.html` (JSON-LD `softwareVersion`, hero badge, `pip install` snippets) and `site/js/translations.js` (`home.hero.badge` × 6 locales) re-derive from CHANGELOG's latest released header. The companion `--check` guard runs in the repo gauntlet so the next PR fails if you forget.
 
+### 4.5. Write the release record — before the tag
+
+The public roadmap is a release artifact, not a post-release chore:
+
+- [ ] Add a `## vX.Y.Z — "Title" (YYYY-MM-DD)` section to [`docs/roadmap/releases.md`](../../../docs/roadmap/releases.md). Give it a body — a `**Status:**` line at minimum. A bare heading is not a record, and a `(Planned)` section never counts as one.
+- [ ] Refresh the `**Released:**` headline in [`docs/roadmap.md`](../../../docs/roadmap.md) **and** the `**Yayınlandı:**` headline in its Turkish mirror [`docs/roadmap-tr.md`](../../../docs/roadmap-tr.md).
+- [ ] Date the `releases.md` heading with the same date as the CHANGELOG section from step 2 — the guard cross-checks them.
+- [ ] Verify: `python3 tools/check_release_record_sync.py --strict`
+
+> **Why this step lives here, and must stay here.** These edits used to sit in
+> the post-release "Close the phase" step below. They were skipped for two
+> consecutive releases (v0.8.0 and v0.9.0), leaving the public roadmap
+> announcing v0.7.0 while PyPI already had v0.9.0 — and `docs/roadmap-tr.md`,
+> the copy nobody re-reads, four minors back at v0.5.0.
+> `tools/check_release_record_sync.py --strict` (CI `validate` job) now fails
+> the build on exactly that drift, but a guard cannot rescue a record written
+> after the tag: the tag is what fires `publish.yml`, so a post-tag record only
+> turns the guard red on the *next* PR — by which point the release has already
+> shipped to PyPI alongside a stale roadmap. Written here, the record rides in
+> the same `chore: release` commit as the CHANGELOG section and the version
+> bump, the guard is satisfiable before the tag exists, and a reviewer sees all
+> three edits together. **Do not move this back to post-release.**
+
 ### 5. Local verification
 
 ```bash
@@ -217,20 +240,17 @@ change.
 If this release completes a phase, update [`docs/roadmap.md`](../../../docs/roadmap.md):
 - Move phase from "Planned" row to archived
 - Append detail to [`docs/roadmap/completed-phases.md`](../../../docs/roadmap/completed-phases.md)
-- Update [`docs/roadmap/releases.md`](../../../docs/roadmap/releases.md)
-- Refresh the `**Released:**` headline in [`docs/roadmap.md`](../../../docs/roadmap.md)
 
-> **This step is now enforced, not trusted.** `tools/check_release_record_sync.py`
-> (CI `validate` job, `--strict`) fails the build when a `## [X.Y.Z] — DATE`
-> heading in `CHANGELOG.md` has no matching non-planned section in
-> `docs/roadmap/releases.md`, or when the `**Released:**` headline does not
-> name the newest released version. A `(Planned)` section does not count as a
-> record. The guard exists because this exact step was skipped for two
-> consecutive releases (v0.8.0 and v0.9.0), leaving the public roadmap
-> announcing v0.7.0 while PyPI already had v0.9.0 — it is the last item on the
-> checklist, run after the release feels finished. Run
-> `python3 tools/check_release_record_sync.py --strict` before you consider the
-> release closed.
+> **The release record is *not* part of this step — it belongs to pre-release
+> step 4.5.** The [`docs/roadmap/releases.md`](../../../docs/roadmap/releases.md)
+> section and the `**Released:**` / `**Yayınlandı:**` roadmap headlines were
+> deliberately moved out of here so that
+> `tools/check_release_record_sync.py --strict` can gate them *before* the tag
+> exists rather than reporting the omission on the next PR, after PyPI has
+> shipped. What remains here is phase archiving, which genuinely has no
+> pre-tag deadline. If `python3 tools/check_release_record_sync.py --strict`
+> fails at this point, step 4.5 was skipped: fix it now, and do not "simplify"
+> the checklist by folding it back in.
 
 ## Hotfix release variant
 

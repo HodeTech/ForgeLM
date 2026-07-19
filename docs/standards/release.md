@@ -144,9 +144,25 @@ Done manually by the maintainer (or a bot when automated):
 4. [ ] Bump `version` in `pyproject.toml` (e.g., `0.3.1rc1` → `0.4.0`).
 5. [ ] If breaking changes: update README's "compatibility" section.
 6. [ ] If new config fields: ensure `config_template.yaml` is current + TR mirrors match.
-7. [ ] Commit: `chore: release v0.4.0` — single commit, no squash needed.
-8. [ ] Tag: `git tag -s v0.4.0 -m "v0.4.0 — Post-Training Completion"` (GPG-signed).
-9. [ ] `git push origin main v0.4.0`.
+7. [ ] Write the release record — **before** the tag, not after:
+   - Add a `## vX.Y.Z — "Title" (YYYY-MM-DD)` section to [`docs/roadmap/releases.md`](../roadmap/releases.md). It needs a body (a `**Status:**` line at minimum); a bare heading is not a record and a `(Planned)` section never counts as one.
+   - Refresh the `**Released:**` headline in [`docs/roadmap.md`](../roadmap.md) **and** the `**Yayınlandı:**` headline in its Turkish mirror [`docs/roadmap-tr.md`](../roadmap-tr.md).
+   - Verify with `python3 tools/check_release_record_sync.py --strict`.
+8. [ ] Commit: `chore: release v0.4.0` — single commit, no squash needed.
+9. [ ] Tag: `git tag -s v0.4.0 -m "v0.4.0 — Post-Training Completion"` (GPG-signed).
+10. [ ] `git push origin main v0.4.0`.
+
+**Why step 7 sits before the tag, and must stay there.** It used to be a
+post-release chore, and it was skipped for two consecutive releases (v0.8.0 and
+v0.9.0): `CHANGELOG.md` recorded both as shipped while the public roadmap still
+announced v0.7.0 and `docs/roadmap-tr.md` — the copy nobody re-reads — sat four
+minors back at v0.5.0. `tools/check_release_record_sync.py --strict` now gates
+it in CI, but a guard cannot save a record written after the tag: the tag is
+what triggers `publish.yml`, so by the time the guard turns red on the *next*
+PR, PyPI has already shipped alongside a stale roadmap. Written here, the
+record is part of the same reviewable `chore: release` commit as the CHANGELOG
+section and the version bump, and the guard is satisfiable — and satisfied —
+while the release can still be corrected.
 
 ### Automated (by `publish.yml`)
 

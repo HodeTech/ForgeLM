@@ -1,12 +1,12 @@
 # Phase 14.5: Pipeline Hardening (post-release review deferrals)
 
-> **Status:** Planned for `v0.7.x` cycle.  Originates as the 4 review findings explicitly deferred during the v0.7.0 release cut (see PR #54 + the `risks-and-decisions.md` "2026-05-15 — v0.7.0 release review deferrals" section).  Wave 2 carry-overs from Phase 14 (intra-stage resume, DAG pipelines, parallel exec, wizard pipeline path) are tracked at the bottom as **future phases**, not in-flight Phase 14.5 work.
+> **Status:** Planned for the `v0.9.x` cycle.  Originally targeted at `v0.7.x`; the cycle closed and both v0.8.0 and v0.9.0 shipped without it, so the target moves forward to the next open line rather than naming a version the mainline has already passed.  Originates as the 4 review findings explicitly deferred during the v0.7.0 release cut (see PR #54 + the `risks-and-decisions.md` "2026-05-15 — v0.7.0 release review deferrals" section).  Wave 2 carry-overs from Phase 14 (intra-stage resume, DAG pipelines, parallel exec, wizard pipeline path) are tracked at the bottom as **future phases**, not in-flight Phase 14.5 work.
 >
 > **Note:** This file details a single planned phase.  See [../roadmap.md](../roadmap.md) for the cross-phase summary; the Phase 14 design + shipped scope is archived in [completed-phases.md#phase-14-multi-stage-pipeline-chains-v070](completed-phases.md#phase-14--multi-stage-pipeline-chains-v070).
 
 **Goal:** Close the four pipeline-manifest + webhook hygiene items that v0.7.0 deliberately deferred because each one carried a non-trivial design surface (golden-manifest regeneration, recursive Annex IV verification, webhook schema documentation, structured-payload typing).  Each item is small in code surface but needs careful test-fixture management; bundling them into one focused sub-phase isolates the change so Phase 15-style review absorption can land cleanly.
 
-**Priority:** Medium — none of the four blocks production usage.  The chain-level Annex IV manifest already passes the structural verifier; per-stage manifests retain their existing canonical hashes; webhook receivers tolerate the new event names as plain strings; the `**extra` payload merge is caller-controlled (orchestrator-internal).  Hardening lands on the v0.7.x cycle as bandwidth allows.
+**Priority:** Medium — none of the four blocks production usage.  The chain-level Annex IV manifest already passes the structural verifier; per-stage manifests retain their existing canonical hashes; webhook receivers tolerate the new event names as plain strings; the `**extra` payload merge is caller-controlled (orchestrator-internal).  Hardening lands on the v0.9.x cycle as bandwidth allows.
 
 **Estimated Effort:** Medium (~1-2 weeks across all four tasks + their review absorption).
 
@@ -137,12 +137,12 @@
 
 ## Delivery
 
-- **Target release:** `v0.7.1` (patch) if all 4 tasks ship together within the v0.7.x cycle.  If only Tasks 1 + 2 land, prefer `v0.7.1` patch (manifest hardening) + `v0.7.2` patch (webhook hygiene) split.
+- **Target release:** `v0.9.1` (patch) if all 4 tasks ship together within the v0.9.x cycle.  If only Tasks 1 + 2 land, prefer `v0.9.1` patch (manifest hardening) + `v0.9.2` patch (webhook hygiene) split.
 - **Entry gate:** PR #54 is merged + v0.7.0 PyPI tag verified (already true at the time this file lands).
-- **CHANGELOG plan:** each task lands a one-line bullet under `[Unreleased]` per Keep-a-Changelog convention; at `v0.7.1` tag time the `[Unreleased]` block is renamed to `[0.7.1] — YYYY-MM-DD`.
+- **CHANGELOG plan:** each task lands a one-line bullet under `[Unreleased]` per Keep-a-Changelog convention; at `v0.9.1` tag time the `[Unreleased]` block is renamed to `[0.9.1] — YYYY-MM-DD`.
 - **Wave 2 / future-phase carry-overs** (NOT part of Phase 14.5; tracked here only so the items aren't lost):
   - Intra-stage HF `Trainer.train(resume_from_checkpoint=...)` integration — would let `--resume-from` pick up mid-stage rather than at stage boundaries.  Gated on `Trainer` API stability + concrete operator demand.
-  - DAG pipelines (non-linear stage dependencies) — requires a config-schema redesign (`needs:` / `depends_on:` per stage) and explicit dependency declaration; horizon `v0.8.x` or later.
+  - DAG pipelines (non-linear stage dependencies) — requires a config-schema redesign (`needs:` / `depends_on:` per stage) and explicit dependency declaration; horizon `v1.x` or later.
   - Parallel stage execution (independent branches running concurrently) — gated on the DAG schema; same horizon.
   - `forgelm wizard` pipeline path — gated on operator demand after v0.7.0 ships.  Wizard currently emits single-stage configs only (documented limitation in `docs/guides/pipeline.md`).
 

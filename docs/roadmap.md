@@ -14,21 +14,21 @@
 | ✅ Done | Phase 22 — CLI wizard parity with the in-browser surface | `forgelm --wizard` runs the same 9-step flow as the web wizard (welcome → use-case → model → strategy → trainer → dataset → training-params → compliance → evaluation), with idempotent re-run via `--wizard-start-from <yaml>`, schema-driven defaults SOT, distinct `EXIT_WIZARD_CANCELLED = 5` exit code, state persistence under `$XDG_CACHE_HOME`, and validate-on-exit — bundled into `v0.5.5` (PyPI 2026-05-10) |
 | ✅ Done | Site documentation correction sweep | All visible YAML / artefact-path / CLI / schema claims on `site/*.html` now validate against the live `forgelm/` surface. Hero YAML demo rewritten with real Pydantic field names, compliance artefact tree redrawn against the on-disk layout, ghost YAML keys + CLI flags removed, wording aligned with live behaviour. Six-language i18n (en / tr / de / fr / es / zh) now at full parity (731 keys each) — bundled into `v0.5.5` (PyPI 2026-05-10) |
 | ✅ Done | [Phase 14 — Multi-Stage Pipeline Chains](roadmap/completed-phases.md#phase-14--multi-stage-pipeline-chains-v070) | SFT → DPO → GRPO chained config, pipeline provenance artifacts, 7 new pipeline-scoped audit events, `forgelm verify-annex-iv --pipeline` mode — shipped `v0.7.0` (PyPI 2026-05-15; re-scheduled from v0.6.0 after Phase 15 displaced it via the 2026-05-11 ingestion pilot) |
-| 📋 Planned | [Phase 14.5 — Pipeline Hardening](roadmap/phase-14-5-pipeline-hardening.md) | Four v0.7.0 review-deferred items: canonical pipeline manifest hash + non-chain-field tamper detection, per-stage `training_manifest.json` deep-parse validation, webhook `pipeline.*` event vocabulary documentation, `WebhookNotifier._send(**extra)` explicit allowlist → `v0.7.x` patch cycle |
+| 📋 Planned | [Phase 14.5 — Pipeline Hardening](roadmap/phase-14-5-pipeline-hardening.md) | Four v0.7.0 review-deferred items: canonical pipeline manifest hash + non-chain-field tamper detection, per-stage `training_manifest.json` deep-parse validation, webhook `pipeline.*` event vocabulary documentation, `WebhookNotifier._send(**extra)` explicit allowlist → `v0.9.x` patch cycle |
 | ✅ Done | [Phase 15 — Ingestion Pipeline Reliability](roadmap/completed-phases.md#phase-15--ingestion-pipeline-reliability-v060) | Wave 1 + Wave 2 + 5 review-absorption rounds: window-based multi-line PDF dedup, Turkish glyph normalisation profile (language-hint-coupled default), language-aware Unicode-block sanity check, ingest-time quality pre-signal, default-on audit `--quality-filter`, DOCX explicit header/footer subtraction, EPUB spine + whole-token nav/cover skip, TXT UTF-8 BOM + MD YAML frontmatter strip, notebook playground alignment, plus Wave 2 `--strip-pattern` (ReDoS-guarded), `--page-range`, front-matter heuristic, `--strip-urls`, multi-column warning — shipped `v0.6.0` (PyPI 2026-05-11) |
-| 📋 Planned | [Phase 13 — Pro CLI & Observability Dashboard](roadmap/phase-13-pro-cli.md) | License-gated dashboard, HPO, scheduled jobs, team config store → `v0.6.0-pro` (gated on adoption + ISO/SOC 2 baseline shipped in v0.5.5) |
+| 📋 Planned | [Phase 13 — Pro CLI & Observability Dashboard](roadmap/phase-13-pro-cli.md) | License-gated dashboard, HPO, scheduled jobs, team config store → `v0.6.0-pro` — Pro tier versions independently of the OSS core, so `v0.6.0-pro` is Pro's own v0.6.0, not parity with OSS `v0.6.0` (gated on adoption + ISO/SOC 2 baseline shipped in v0.5.5) |
 
 > **Status legend:** ✅ Released (PyPI) · 🟡 Merged on main, publish pending · 🚧 In review (PR open) · 📋 / ⏳ Planned
 
 **Released:** `v0.9.0` — "transformers 5.x Migration & CVE-2026-4372 Fix" — PyPI 2026-07-05.  Raises the `transformers` floor to `>=5.3.0,<6.0.0` — fixing **CVE-2026-4372**, a critical `from_pretrained` remote-code-execution vulnerability — and cascades the co-dependency floors it requires (`torch`, `huggingface_hub`, `peft`, `accelerate`, `datasets`, `trl`, `requests`).  Drops Intel Mac (x86_64) support — PyPI publishes no `torch>=2.4` wheel for that platform; Apple Silicon, Linux, and Windows are unaffected.  A dependency-migration release — no new roadmap phase.  See [releases.md](roadmap/releases.md#v090--transformers-5x-migration--cve-2026-4372-fix-2026-07-05).
 
-**Previous release:** `v0.8.0` — "Model Integrity Verification & Deprecation Cleanup" — PyPI 2026-06-16.  Adds `forgelm verify-integrity` (re-hashes a trained model directory against its Article 15 `model_integrity.json` manifest) plus config-driven merge (`merge.ties_trim_fraction` / `dare_drop_rate` / `dare_seed`) and synthetic-sanity (`synthetic.sanity_failure_rate`) knobs; hardens `distributed.strategy` / `data.mix_ratio` validation; completes the v0.7.0 deprecation cadence by removing `evaluation.staging_ttl_days` and the `--data-audit` CLI flag.  A maintenance release — no new roadmap phase.  See [releases.md](roadmap/releases.md#v080--model-integrity-verification--deprecation-cleanup-2026-06-16).
+**`v0.8.0`** — "Model Integrity Verification & Deprecation Cleanup" — PyPI 2026-06-16.  Adds `forgelm verify-integrity` (re-hashes a trained model directory against its Article 15 `model_integrity.json` manifest) plus config-driven merge (`merge.ties_trim_fraction` / `dare_drop_rate` / `dare_seed`) and synthetic-sanity (`synthetic.sanity_failure_rate`) knobs; hardens `distributed.strategy` / `data.mix_ratio` validation; completes the v0.7.0 deprecation cadence by removing `evaluation.staging_ttl_days` and the `--data-audit` CLI flag.  A maintenance release — no new roadmap phase.  See [releases.md](roadmap/releases.md#v080--model-integrity-verification--deprecation-cleanup-2026-06-16).
 
-**Previous release:** `v0.7.0` — "Phase 14 Multi-Stage Pipeline Chains" — PyPI 2026-05-15.  Chains 2+ training stages (SFT → DPO → GRPO etc.) into one config-driven run with auto-chained model paths, per-stage gates, crash-safe resume, and a chain-level Annex IV manifest.  Also lands a critical DNS-rebinding TOCTOU SSRF hardening (issue #14).  See [completed-phases.md](roadmap/completed-phases.md#phase-14--multi-stage-pipeline-chains-v070).
+**`v0.7.0`** — "Phase 14 Multi-Stage Pipeline Chains" — PyPI 2026-05-15.  Chains 2+ training stages (SFT → DPO → GRPO etc.) into one config-driven run with auto-chained model paths, per-stage gates, crash-safe resume, and a chain-level Annex IV manifest.  Also lands a critical DNS-rebinding TOCTOU SSRF hardening (issue #14).  See [completed-phases.md](roadmap/completed-phases.md#phase-14--multi-stage-pipeline-chains-v070).
 
-**Previous release:** `v0.6.0` — "Phase 15 Ingestion Pipeline Reliability" (2026-05-11).  Closes the silent-failure gap exposed by the 2026-05-11 pilot across PDF / DOCX / EPUB / TXT / Markdown ingestion plus the playground notebook — Wave 1 + Wave 2 + 5 review-absorption rounds in one release.  See [completed-phases.md](roadmap/completed-phases.md#phase-15--ingestion-pipeline-reliability-v060) for the full list of ingest-time guards (window-based PDF dedup, Turkish glyph normalisation profile, language-aware Unicode-block sanity check, ingest-time quality pre-signal, default-on audit `--quality-filter`, DOCX explicit header/footer subtraction, EPUB spine + whole-token nav/cover skip, TXT UTF-8 BOM + MD YAML frontmatter strip, notebook playground alignment, Wave 2 `--strip-pattern` (ReDoS-guarded) + `--page-range` + front-matter heuristic + `--strip-urls` + multi-column warning).
+**`v0.6.0`** — "Phase 15 Ingestion Pipeline Reliability" (2026-05-11).  Closes the silent-failure gap exposed by the 2026-05-11 pilot across PDF / DOCX / EPUB / TXT / Markdown ingestion plus the playground notebook — Wave 1 + Wave 2 + 5 review-absorption rounds in one release.  See [completed-phases.md](roadmap/completed-phases.md#phase-15--ingestion-pipeline-reliability-v060) for the full list of ingest-time guards (window-based PDF dedup, Turkish glyph normalisation profile, language-aware Unicode-block sanity check, ingest-time quality pre-signal, default-on audit `--quality-filter`, DOCX explicit header/footer subtraction, EPUB spine + whole-token nav/cover skip, TXT UTF-8 BOM + MD YAML frontmatter strip, notebook playground alignment, Wave 2 `--strip-pattern` (ReDoS-guarded) + `--page-range` + front-matter heuristic + `--strip-urls` + multi-column warning).
 
-**Previous release:** `v0.5.0` — "Document Ingestion + Data Curation Pipeline" — PyPI 2026-04-30 (Phases 11 + 11.5 + 12 + 12.5 consolidated).
+**`v0.5.0`** — "Document Ingestion + Data Curation Pipeline" — PyPI 2026-04-30 (Phases 11 + 11.5 + 12 + 12.5 consolidated).
 
 - **Phase 11** — `forgelm ingest` (PDF / DOCX / EPUB / TXT / Markdown → SFT-ready JSONL) + `forgelm audit` (length / language / near-duplicate / cross-split leakage / PII regex with Luhn + TC Kimlik validators) + EU AI Act Article 10 governance integration.
 - **Phase 11.5** — operational polish: LSH-banded near-duplicate detection, streaming JSONL reader, token-aware `--chunk-tokens`, PDF page-level header/footer dedup, `forgelm audit` subcommand, PII severity tiers, atomic audit writes, wizard "ingest first" entry point.
@@ -39,13 +39,13 @@ Originally planned as four sequential PyPI tags (`v0.5.0` / `v0.5.1` / `v0.5.2` 
 
 **Earlier:** `v0.4.5` — Quickstart Layer (2026-04-26); `v0.4.0` — Post-Training Completion (2026-04-26).
 
-**Current state:** 21 phases (1, 2, 2.5, 3, 4, 5, 5.5, 6, 7, 8, 9, 10, 10.5, 11, 11.5, 12, 12.5, 12.6, 14, 15, 22) shipped on PyPI through `v0.7.0`; `v0.8.0` and `v0.9.0` are subsequent maintenance / dependency-migration releases that did not add a new roadmap phase — see [releases.md](roadmap/releases.md) for their full scope.  Phase 13 ships separately as `v0.6.0-pro` once adoption gates are met.
+**Current state:** `v0.9.0` is the latest released version. 21 phases (1, 2, 2.5, 3, 4, 5, 5.5, 6, 7, 8, 9, 10, 10.5, 11, 11.5, 12, 12.5, 12.6, 14, 15, 22) shipped on PyPI through `v0.7.0`; `v0.8.0` and `v0.9.0` are subsequent maintenance / dependency-migration releases that did not add a new roadmap phase — see [releases.md](roadmap/releases.md) for their full scope.  Phase 13 ships separately as `v0.6.0-pro` (Pro tier versions independently of the OSS core) once adoption gates are met.
 
 > **Phase 12.6 task / sub-task dual-axis note:** Phase 12.6 is itself a 38-task closure cycle (Tasks 1-38) tracked at [`roadmap/completed-phases.md`](roadmap/completed-phases.md); per-wave PR descriptions carry the closure-task delta.
 
 ## Quick summary of what's planned
 
-> **Note:** Arrows depict shipping order, not phase numbers (Phase 15 shipped in v0.6.0; Phase 14 shipped in v0.7.0 after Phase 15 displaced it; v0.8.0 and v0.9.0 are maintenance / dependency-migration releases with no new phase; Phase 13 ships later under the Pro tier).
+> **Note:** Arrows depict shipping order, not phase numbers (Phase 15 shipped in v0.6.0; Phase 14 shipped in v0.7.0 after Phase 15 displaced it; v0.8.0 and v0.9.0 are maintenance / dependency-migration releases with no new phase, shown on their own maintenance-release track below rather than as phase output; Phase 13 ships later under the Pro tier).
 
 ```mermaid
 graph LR
@@ -71,10 +71,16 @@ graph LR
     P126 -.-> V25[v0.5.5]
     P15 -.-> V23[v0.6.0 ✅ Released]
     P14 -.-> V27[v0.7.0 ✅ Released]
-    V27 -.-> V28[v0.8.0 ✅ Released]
-    V28 -.-> V29[v0.9.0 ✅ Released]
-    P145 -.-> V275[v0.7.x]
+    P145 -.-> V275[v0.9.x]
     P13 -.-> V3[v0.6.0-pro]
+
+    subgraph MAINT["Maintenance releases (no new phase)"]
+        V28[v0.8.0 ✅ Released]
+        V29[v0.9.0 ✅ Released]
+    end
+
+    V27 ==>|maintenance| V28
+    V28 ==>|maintenance| V29
 
     style P10 fill:#003300,stroke:#00ff88
     style P105 fill:#003300,stroke:#00ff88
@@ -85,6 +91,7 @@ graph LR
     style P15 fill:#004400,stroke:#88ff88
     style P14 fill:#002244,stroke:#00aaff
     style P13 fill:#442200,stroke:#ffaa00
+    style MAINT fill:#222222,stroke:#888888
 ```
 
 ## Guiding principles
@@ -101,9 +108,9 @@ docs/
 ├── roadmap.md                                  # This file — short index
 ├── roadmap-tr.md                               # Turkish mirror
 └── roadmap/
-    ├── completed-phases.md                     # Phase 1-12.6 archive (detailed) — Phase 10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 12.6 absorbed inline (each shipped as v0.4.0 / v0.4.5 / v0.5.0 / v0.5.5)
+    ├── completed-phases.md                     # Phase 1-12.6 + 15 + 14 archive (detailed) — Phase 10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 12.6 / 15 / 14 absorbed inline (shipped as v0.4.0 / v0.4.5 / v0.5.0 / v0.5.5 / v0.6.0 / v0.7.0; 15 precedes 14 in the file, matching shipping order)
     ├── phase-13-pro-cli.md                     # Planned — v0.6.0-pro (gated)
-    ├── phase-14-5-pipeline-hardening.md        # Planned — v0.7.x patch cycle (4 review-deferred items from Phase 14)
+    ├── phase-14-5-pipeline-hardening.md        # Planned — v0.9.x patch cycle (4 review-deferred items from Phase 14)
     ├── releases.md                             # v0.3.0 → v0.9.0 release notes
     └── risks-and-decisions.md                  # Risk matrix, opportunities, competitive positioning, decision log
 ```
