@@ -80,7 +80,7 @@ Find the module that will read the field:
 - Training-loop flags → [forgelm/trainer.py](../../../forgelm/trainer.py)
 - Model-loading flags → [forgelm/model.py](../../../forgelm/model.py)
 - Data flags → [forgelm/data.py](../../../forgelm/data.py)
-- Safety flags → [forgelm/safety.py](../../../forgelm/safety.py)
+- Safety flags → [forgelm/safety/_orchestrator.py](../../../forgelm/safety/_orchestrator.py)
 
 Access via `config.training.new_flag` — never import from environment or global state.
 

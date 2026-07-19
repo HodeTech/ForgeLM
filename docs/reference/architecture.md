@@ -27,7 +27,7 @@ forgelm --config job.yaml
     │   │   _croissant, _summary, _splits
     ├── trainer.py          → Train (6 trainer types via TRL)
     │   ├── benchmark.py        → lm-eval-harness evaluation
-    │   ├── safety.py           → Llama Guard safety check
+    │   ├── safety/            → Llama Guard safety check (sub-package)
     │   ├── judge.py            → LLM-as-Judge scoring
     │   ├── model_card.py       → Auto-generate HF model card
     │   ├── compliance.py       → EU AI Act audit artifacts
@@ -42,7 +42,7 @@ forgelm --config job.yaml
 
 ```
 ForgeLM/
-├── forgelm/                # Core Python package (~22 single-file modules + 2 sub-packages)
+├── forgelm/                # Core Python package (~21 single-file modules + 4 sub-packages)
 │   ├── __init__.py         # Lazy imports for fast CLI startup
 │   ├── cli/                # CLI sub-package (Phase 15 split)
 │   │   ├── _parser.py          # 19 subcommands + global flags
@@ -69,7 +69,10 @@ ForgeLM/
 │   ├── deploy.py           # Deployment config generator (Ollama/vLLM/TGI/HF Endpoints)
 │   ├── results.py          # TrainResult dataclass (no heavy deps)
 │   ├── benchmark.py        # lm-evaluation-harness integration
-│   ├── safety.py           # Post-training safety evaluation (Llama Guard)
+│   ├── safety/             # Safety sub-package (post-v0.9.1 split)
+│   │   └── _types, _inputs, _generate, _classifier,
+│   │       _score_classification, _score_generation, _gates,
+│   │       _results, _orchestrator
 │   ├── judge.py            # LLM-as-Judge (API + local)
 │   ├── compliance.py       # EU AI Act compliance + audit log + provenance
 │   ├── verify.py           # Annex IV / GGUF / model-integrity verification primitives
@@ -125,7 +128,7 @@ Lightweight `TrainResult` dataclass — importable without torch/transformers. C
 ### `benchmark.py`
 Wraps EleutherAI `lm-evaluation-harness`. Runs configurable benchmark tasks, extracts accuracy metrics, applies min_score threshold, and saves results. Optional dependency: `pip install forgelm[eval]`.
 
-### `safety.py`
+### `safety/`
 Runs a configurable safety classifier (Llama Guard, ShieldGemma) on adversarial test prompts. Generates responses from the fine-tuned model, classifies each as safe/unsafe, and triggers auto-revert if regression exceeds threshold. Errors are treated as unsafe (fail-safe principle).
 
 ### `judge.py`

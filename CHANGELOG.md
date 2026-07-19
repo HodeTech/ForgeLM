@@ -246,6 +246,33 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   the same removal date rot twice (`v0.9.0` → `v0.10.0` → `v1.0.0`); it is now
   mechanically impossible to reintroduce silently.
 
+- **New CI guard: `tools/check_source_path_refs.py` — prose may not name a
+  source file that does not exist.** The `forgelm/safety.py` →
+  `forgelm/safety/` split moved the file cleanly (an AST symbol diff and a
+  4,100-input differential fuzz proved the runtime behaviour identical) and
+  shipped **39 dangling `forgelm/safety.py` references across 16 files** in the
+  very commit whose purpose was moving that file. Nothing noticed, because
+  nothing could see them: `check_anchor_resolution.py` validates
+  `[text](href)` links under `docs/` only, while the dead references lived in
+  backticked inline paths, `.claude/skills/` and `.agents/skills/` checklists,
+  `site/*.html` copy, notebook JSON, and `CLAUDE.md`'s repository-structure
+  tree. The guard resolves every `forgelm/`, `tools/` and `tests/` path named
+  in prose against the filesystem, across `docs/`, `site/`, `notebooks/`, both
+  skill trees, `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md` and `README.md`.
+  Scope was chosen by measurement, not taste: matching every top-level
+  directory produced 266 findings on a clean tree, skipping fenced blocks cut
+  that to 118, and restricting the roots to the three real source trees cut it
+  to 14 — every one a genuine defect or a documented exemption. Four
+  false-positive controls keep it quiet enough to survive: fenced blocks are
+  skipped (a fence showing the reader's own layout is illustrative by
+  construction), `docs/roadmap/` and `docs/design/` are excluded wholesale
+  (release records and unbuilt proposals — retargeting them would falsify the
+  record), Markdown link hrefs are stripped so a broken link is reported by
+  exactly one guard rather than two, and individual legitimate lines live in an
+  `_EXEMPT` table that requires a written justification per entry. Wired
+  `--strict` into `ci.yml` and the self-review gauntlet in `CLAUDE.md`,
+  `AGENTS.md` and `CONTRIBUTING.md` (now twenty-two commands).
+
 ### Fixed
 
 - **Hub metadata lookups had no timeout at all and could hang a run
@@ -615,6 +642,20 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   runtime crash mid-training (`forgelm/config.py`).
 
 ### Documentation
+
+- **Stale `forgelm/safety.py` pointers swept from every prose surface.** The
+  sub-package split left the old path cited across the doc, site, notebook and
+  agent-skill surfaces no guard was watching. Each reference was judged
+  individually rather than rewritten in bulk: a *pointer* (prose telling a
+  reader where something lives today) was retargeted at the specific submodule
+  that now owns it — `_gates.py`, `_orchestrator.py`, `_score_generation.py`
+  and siblings, not vaguely at the package — while a *record* of the past (the
+  CHANGELOG split announcement, the dated `risks-and-decisions.md`
+  grandfather-then-split pair, the `_DEFERRED_SPLITS` removal note) was left
+  exactly as written, because editing it would rewrite history. 17 files
+  changed across `docs/guides/`, `docs/reference/`, `docs/standards/`,
+  `docs/usermanuals/{en,tr}/`, `notebooks/`, `site/` and both skill trees, with
+  the EN and TR mirrors kept structurally aligned.
 
 - **The canonical Configuration Reference user manual (EN + TR) no longer
   documents a fabricated schema.** The `training`, `data`, `synthetic`,

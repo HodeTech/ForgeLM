@@ -27,7 +27,7 @@ forgelm --config job.yaml
     │   │   _croissant, _summary, _splits
     ├── trainer.py          → Eğitim (TRL üzerinden 6 trainer tipi)
     │   ├── benchmark.py        → lm-eval-harness değerlendirme
-    │   ├── safety.py           → Güvenlik kontrolü (confidence, S1-S14, ciddiyet)
+    │   ├── safety/            → Güvenlik kontrolü (alt-paket; confidence, S1-S14, ciddiyet)
     │   ├── judge.py            → LLM-Hakim puanlama
     │   ├── model_card.py       → HF model kartı üretimi
     │   ├── compliance.py       → EU AI Act denetim belgeleri + audit log
@@ -42,7 +42,7 @@ forgelm --config job.yaml
 
 ```
 ForgeLM/
-├── forgelm/                  # Çekirdek Python paketi (~22 tek-dosya modül + 2 alt-paket)
+├── forgelm/                  # Çekirdek Python paketi (~21 tek-dosya modül + 4 alt-paket)
 │   ├── __init__.py           # Hızlı CLI başlatma için lazy import
 │   ├── cli/                  # CLI alt-paketi (Faz 15 split)
 │   │   ├── _parser.py            # 19 subcommand + global flag
@@ -69,7 +69,10 @@ ForgeLM/
 │   ├── deploy.py             # Dağıtım config üreteci (Ollama/vLLM/TGI/HF Endpoints)
 │   ├── results.py            # TrainResult dataclass
 │   ├── benchmark.py          # lm-evaluation-harness entegrasyonu
-│   ├── safety.py             # Güvenlik değerlendirme (Llama Guard, S1-S14)
+│   ├── safety/               # Güvenlik alt-paketi (v0.9.1 sonrası split)
+│   │   └── _types, _inputs, _generate, _classifier,
+│   │       _score_classification, _score_generation, _gates,
+│   │       _results, _orchestrator
 │   ├── judge.py              # LLM-Hakim (API + yerel)
 │   ├── compliance.py         # EU AI Act uyumluluk + AuditLogger + kaynak takibi
 │   ├── verify.py             # Annex IV / GGUF / model-bütünlük doğrulama primitifleri
@@ -124,7 +127,7 @@ Hafif `TrainResult` dataclass — torch/transformers olmadan import edilebilir. 
 ### `benchmark.py`
 EleutherAI `lm-evaluation-harness`'i sarar. Yapılandırılabilir benchmark görevleri çalıştırır, accuracy metriklerini çıkarır, `min_score` eşiğini uygular ve sonuçları kaydeder. Opsiyonel bağımlılık: `pip install forgelm[eval]`.
 
-### `safety.py`
+### `safety/`
 İki puanlama modu: binary (güvenli/güvensiz oranı) ve confidence-weighted (sınıflandırıcı güven skoru). 3 katmanlı güvenlik kapısı: binary oran → confidence skoru → ciddiyet eşiği. Llama Guard S1-S14 zarar kategorileri, ciddiyet seviyeleri (kritik/yüksek/orta/düşük), düşük güven uyarıları, çalışmalar arası trend takibi (safety_trend.jsonl).
 
 ### `judge.py`

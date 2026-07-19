@@ -251,7 +251,7 @@ Example:
 
 ## Auto-revert
 
-When evaluation gates fail after training (`safety.py`, `benchmark.py`), `trainer.py` deletes the trained artifacts and exits with `EXIT_EVAL_FAILURE` (3). This is a feature, not an error:
+When evaluation gates fail after training (`safety/`, `benchmark.py`), `trainer.py` deletes the trained artifacts and exits with `EXIT_EVAL_FAILURE` (3). This is a feature, not an error:
 
 - The audit log entry explaining **why** the model was reverted must be written before cleanup.
 - The model card must **not** be generated for reverted runs.

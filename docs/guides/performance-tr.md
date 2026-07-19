@@ -39,7 +39,7 @@ Yeni bir modül eklerken kendinizi dosyanın üstünde `import torch` yazmaya ç
 
 Llama Guard safety değerlendiricisi `evaluation.safety.test_prompts` içindeki her test prompt için classification üretir. Generation, pad-longest kullanılarak `evaluation.safety.batch_size` prompt'u bir seferde batch'lenir (böylece bir batch'teki kısa prompt'lar uzun olanların arkasında stall olmaz).
 
-Canlı imza: `forgelm/safety.py::_generate_safety_responses` ve `run_safety_evaluation`.
+Canlı imzalar: `forgelm/safety/_generate.py::_generate_safety_responses` ve `forgelm/safety/_orchestrator.py::run_safety_evaluation`.
 
 ```yaml
 evaluation:
@@ -77,7 +77,7 @@ Yukarıdaki sayılar açıklayıcıdır — Llama Guard 3 8B üzerinde gömülü
 Library API sınır kontrolü pozitif olmayan tamsayıları açıkça reddeder:
 
 ```python
-# forgelm/safety.py
+# forgelm/safety/_inputs.py::_validate_batch_size
 if not isinstance(batch_size, int) or batch_size < 1:
     raise ValueError(f"batch_size must be a positive integer (got {batch_size!r})")
 ```

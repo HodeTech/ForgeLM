@@ -68,6 +68,7 @@ python3 tools/check_import_origin.py --strict && \
   python3 tools/check_deprecation_targets.py --strict && \
   python3 tools/check_release_record_sync.py --strict && \
   python3 tools/check_skill_mirror_parity.py --strict && \
+  python3 tools/check_source_path_refs.py --strict && \
   python3 tools/update_site_version.py --check
 ```
 
@@ -82,7 +83,7 @@ every later step depends on — that the `forgelm` being imported is the one
 you just edited — and `-m` alone does not cover the `tools/check_*.py`
 guards that import `forgelm` with `sys.path[0] == tools/`.
 
-All twenty-one must pass. The first four are the historical "self-review"
+All twenty-two must pass. The first four are the historical "self-review"
 command from [`docs/standards/code-review.md`](docs/standards/code-review.md).
 The rest are doc/schema/audit-log guards that landed across Waves 3-5 and
 later review cycles and run on every PR via `.github/workflows/`; running
@@ -98,9 +99,10 @@ Push your branch and open a Pull Request against `main`.
 
 ### Project Structure
 
-ForgeLM is a single-package layout: a mix of single-file modules and two
-focused sub-packages (`forgelm/cli/` post-Phase-15 split and
-`forgelm/data_audit/` post-Phase-14 split) under `forgelm/`, ~70 test files
+ForgeLM is a single-package layout: a mix of single-file modules and four
+focused sub-packages (`forgelm/cli/` post-Phase-15 split,
+`forgelm/data_audit/` post-Phase-14 split, `forgelm/wizard/` from Phase 22
+and `forgelm/safety/` from the post-v0.9.1 split) under `forgelm/`, ~70 test files
 under `tests/` (collected-test count grows over time — run
 `pytest --collect-only -q` for current), plus `configs/`, `docs/`, `tools/`
 (CI guards), and `notebooks/`. For the authoritative module-by-module map

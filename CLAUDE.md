@@ -46,7 +46,7 @@ Each skill's `SKILL.md` has the full checklist. Follow it; don't skip steps to s
 
 ```text
 ForgeLM/
-├── forgelm/                 # Source code: ~22 single-file modules + 3 sub-packages
+├── forgelm/                 # Source code: ~21 single-file modules + 4 sub-packages
 │   ├── cli/                 # CLI package (Phase 15 split): _parser, _dispatch,
 │   │                        # _exit_codes, subcommands/{ingest, audit, chat,
 │   │                        # export, deploy, quickstart, doctor, cache,
@@ -64,7 +64,10 @@ ForgeLM/
 │   ├── model.py             # HF + PEFT model loading
 │   ├── data.py              # Dataset loading + format detection
 │   ├── ingestion.py         # Raw docs → SFT JSONL (`forgelm ingest`)
-│   ├── safety.py            # Llama Guard + harm categories + auto-revert
+│   ├── safety/              # Safety package (post-v0.9.1 split): _types,
+│   │                        # _inputs, _generate, _classifier,
+│   │                        # _score_classification, _score_generation,
+│   │                        # _gates, _results, _orchestrator
 │   ├── compliance.py        # EU AI Act Articles 9-17 + Annex IV + GDPR purge / reverse-pii primitives
 │   ├── webhook.py           # Slack/Teams notifications (5-event vocabulary)
 │   ├── grpo_rewards.py      # Built-in GRPO format/length shaping reward fallback
@@ -169,6 +172,7 @@ Default workflow for a non-trivial change:
      python3 tools/check_deprecation_targets.py --strict && \
      python3 tools/check_release_record_sync.py --strict && \
      python3 tools/check_skill_mirror_parity.py --strict && \
+     python3 tools/check_source_path_refs.py --strict && \
      python3 tools/update_site_version.py --check
    ```
 
@@ -184,7 +188,7 @@ Default workflow for a non-trivial change:
    does not cover the `tools/check_*.py` guards that import `forgelm`
    with `sys.path[0] == tools/`.
 
-   All twenty-one must pass (the usermanual-schema-drift guard —
+   All twenty-two must pass (the usermanual-schema-drift guard —
    `check_usermanual_schema_drift.py --strict` — validates that every
    fenced YAML key under `docs/usermanuals/` resolves against the real
    `ForgeConfig` schema, catching fabricated-field examples that would
@@ -272,6 +276,24 @@ Default workflow for a non-trivial change:
    two harnesses and edited by hand — nothing compared them until the
    cut-release reorder above had to be written twice, and a one-copy edit
    leaves half of all agent runs following the superseded procedure.
+   The source-path-reference guard (post-v0.9.1 `safety/` split) fails
+   when prose names a `forgelm/`, `tools/` or `tests/` path that does not
+   exist on disk. The `forgelm/safety.py` → `forgelm/safety/` split moved
+   the file cleanly and shipped **39 dangling references across 16 files**
+   in the very commit whose purpose was moving it. Nothing noticed,
+   because nothing could see them: `check_anchor_resolution.py` validates
+   `[text](href)` links under `docs/` only, while the dead references were
+   backticked inline paths, `.claude/`/`.agents/` skill checklists,
+   `site/*.html` copy, notebook JSON, and the repository-structure tree in
+   this file. Scope was set by measurement, not taste — matching every
+   top-level directory yielded 266 findings on a clean tree, so the guard
+   is restricted to the three real source trees (14 findings, all genuine)
+   and skips fenced blocks, `docs/roadmap/` and `docs/design/` (records and
+   unbuilt proposals), and Markdown link hrefs (the anchor guard's job, so
+   a broken link is reported once, never twice). When a reference must keep
+   a path that no longer exists — a statement about the past, or a file the
+   reader is being told to create — add it to `_EXEMPT` with a written
+   justification rather than weakening the pattern.
 
 ## Etiquette when communicating with the user
 

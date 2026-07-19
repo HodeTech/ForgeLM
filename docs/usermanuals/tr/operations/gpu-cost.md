@@ -19,7 +19,7 @@ ForgeLM, üzerinde koştuğunuz GPU'yu tespit eder, profilini (bellek, compute, 
 
 Başlangıçta `forgelm` şunları okur:
 - Donanım tanımlama için `nvidia-smi --query-gpu=name,memory.total,...`.
-- `forgelm/gpu_profiles.yaml`'dan eşleşen profil.
+- `forgelm/trainer.py` içindeki yerleşik GPU fiyat tablosundan eşleşen saatlik ücret.
 
 Desteklenen GPU'lar:
 

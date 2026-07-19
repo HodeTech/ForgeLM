@@ -19,7 +19,7 @@ ForgeLM detects the GPU you're running on, looks up its profile (memory, compute
 
 On startup, `forgelm` reads:
 - `nvidia-smi --query-gpu=name,memory.total,...` for hardware identification.
-- The matching profile from `forgelm/gpu_profiles.yaml`.
+- The matching hourly rate from the built-in GPU price table in `forgelm/trainer.py`.
 
 Supported GPUs include:
 

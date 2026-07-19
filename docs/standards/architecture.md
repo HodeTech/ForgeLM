@@ -35,7 +35,7 @@ graph TB
 
     subgraph Quality["Evaluation + safety"]
         BENCH[benchmark.py]
-        SAFETY[safety.py]
+        SAFETY[safety/ sub-package]
         JUDGE[judge.py]
     end
 
@@ -139,8 +139,8 @@ never silent — they ship as a coherent series with regression tests.
 | `trainer.py` | Orchestrating SFT/DPO/…/GRPO runs | Model loading (delegates to `model.py`) |
 | `model.py` | `AutoModelForCausalLM`/PEFT setup | Dataset formatting |
 | `data.py` | Dataset load + format detection | Training loops |
-| `benchmark.py` | lm-eval-harness wrapping | Safety scoring (that's `safety.py`) |
-| `safety.py` | Llama Guard, harm categories, auto-revert | Content generation for scoring (helpers only) |
+| `benchmark.py` | lm-eval-harness wrapping | Safety scoring (that's `safety/`) |
+| `safety/` (package) | Llama Guard, harm categories, auto-revert — sub-package with `_types`, `_inputs`, `_generate`, `_classifier`, `_score_classification`, `_score_generation`, `_gates`, `_results`, `_orchestrator` modules | Content generation for scoring (helpers only) |
 | `judge.py` | LLM-as-judge evaluation | Safety classification |
 | `compliance.py` | Audit log, manifests, provenance, governance artifacts, GDPR purge / reverse-pii primitives | Runtime policy enforcement |
 | `verify.py` | Artefact verification primitives: Annex IV manifest-hash recomputation, GGUF magic / metadata / SHA-256-sidecar checks, the model-directory integrity walk, and the `is_*_integrity_failure` predicates the four `verify-*` subcommands route exit code `6` on | Audit-log verification (stays beside its writer in `compliance.py`); output formatting and exit-code emission (that's `cli/`) |
@@ -287,8 +287,9 @@ contributor who reaches for `requests.get` directly — including via an
 aliased import — fails CI immediately and is redirected to `safe_get`. If
 `_http.py` itself needs to expand (e.g., add `safe_get` because no helper
 covers an outbound HEAD probe yet — Phase 34's doctor surfaced this gap),
-the addition lands inside `_http.py` and gets a corresponding test in
-`tests/test_http.py`.
+the addition lands inside `_http.py` and gets a corresponding test beside the
+existing HTTP coverage in `tests/test_http_dns_rebinding.py` and
+`tests/test_check_http_discipline.py`.
 
 **Deliberate exceptions:** `forgelm/compliance.py:1146-1182` (audit-log HMAC verifier) does its own JSONL line-byte parsing because it must hash raw bytes — but it does not perform outbound HTTP.  No HTTP-discipline carve-outs exist today; if one is ever needed (e.g., a cloud provider's SDK that wraps its own HTTP), document it inline + add a `# noqa: forgelm-http-discipline` style marker.
 

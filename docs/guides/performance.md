@@ -39,7 +39,7 @@ When adding a new module, if you find yourself reaching for `import torch` at th
 
 The Llama Guard safety evaluator generates classifications for every test prompt in `evaluation.safety.test_prompts`. Generation is batched at `evaluation.safety.batch_size` prompts at a time using pad-longest (so short prompts in a batch don't stall behind long ones).
 
-Live signature: `forgelm/safety.py::_generate_safety_responses` and `run_safety_evaluation`.
+Live signatures: `forgelm/safety/_generate.py::_generate_safety_responses` and `forgelm/safety/_orchestrator.py::run_safety_evaluation`.
 
 ```yaml
 evaluation:
@@ -77,7 +77,7 @@ The numbers above are illustrative — measured on Llama Guard 3 8B with the bun
 The library API boundary check rejects non-positive integers explicitly:
 
 ```python
-# forgelm/safety.py
+# forgelm/safety/_inputs.py::_validate_batch_size
 if not isinstance(batch_size, int) or batch_size < 1:
     raise ValueError(f"batch_size must be a positive integer (got {batch_size!r})")
 ```

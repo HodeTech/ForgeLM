@@ -98,7 +98,7 @@ Run `git diff --unified=0 origin/main..HEAD -- '*.py' | grep -E '^\+.*re\.(compi
 - [ ] No single-char character classes `[ ]`, `[\.]`, `[\\]` (Sonar `python:S6328`); use the bare character.
 - [ ] Quantifiers bounded where the spec allows it (`{1,6}` for ATX heading depth, not `+`).
 - [ ] **No two unbounded `*` / `+` / `*?` / `+?` competing for the same character class.** This is the #1 ReDoS shape we keep hitting (`[ \t]+(.+?)[ \t]*$` → 100ms at n=2000). Anchor on `\S` at body boundaries: `[ \t]+(\S(?:[^\n]*\S)?)[ \t]*$`.
-- [ ] No `.*?` + back-reference + `re.DOTALL` (Sonar `python:S5852`); replace with a state machine — see [`forgelm/data_audit.py::_strip_code_fences`](../../../forgelm/data_audit.py) and [`forgelm/ingestion.py::_markdown_sections`](../../../forgelm/ingestion.py).
+- [ ] No `.*?` + back-reference + `re.DOTALL` (Sonar `python:S5852`); replace with a state machine — see [`forgelm/data_audit/_quality.py::_strip_code_fences`](../../../forgelm/data_audit/_quality.py) and [`forgelm/ingestion.py::_markdown_sections`](../../../forgelm/ingestion.py).
 - [ ] `\s` under `re.MULTILINE` → prefer `[ \t]` (no newline ambiguity).
 - [ ] Operator-controlled input → 10K-char pathological-input wall-clock benchmark stays ≤ 10ms.
 - [ ] Test fixtures with credential-shaped strings built from inert fragments (see `FAKE_AWS_KEY` / `FAKE_GH_TOKEN` in `tests/test_data_audit_phase12.py`).

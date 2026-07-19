@@ -106,7 +106,7 @@ Trigger: any new or modified `re.compile` / `re.match` / `re.sub` / `re.findall`
 - No `[A-Za-z0-9_]` (use `\w`); no single-char classes `[ ]` / `[\.]`.
 - Quantifiers bounded where the spec allows it (`{1,6}` not `+`).
 - No two competing unbounded `*` / `+` / `*?` / `+?` over the same character class.
-- No `.*?` + back-reference + `re.DOTALL` (replace with a state machine — see `forgelm/data_audit.py::_strip_code_fences`).
+- No `.*?` + back-reference + `re.DOTALL` (replace with a state machine — see `forgelm/data_audit/_quality.py::_strip_code_fences`).
 - `\s` is `[ \t\n\r\f\v]` — under `re.MULTILINE`, prefer `[ \t]` to keep newlines out of the way.
 - Operator-controlled input → 10K-char pathological-input wall-clock benchmark must stay ≤ 10ms.
 - Test fixtures with credential-shaped strings built from inert fragments (see `tests/test_data_audit_phase12.py::FAKE_AWS_KEY`).

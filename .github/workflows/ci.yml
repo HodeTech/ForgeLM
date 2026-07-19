@@ -377,6 +377,24 @@ jobs:
         # name) is applied.
         run: python3 tools/check_skill_mirror_parity.py --strict
 
+      - name: Dead source-path references in prose (strict)
+        # The forgelm/safety.py -> forgelm/safety/ split moved the file
+        # cleanly (AST symbol diff + 4,100-input differential fuzz) and then
+        # shipped 39 dangling forgelm/safety.py references across 16 files —
+        # in the very commit whose purpose was moving that file. Nothing
+        # noticed because nothing could see them: check_anchor_resolution.py
+        # validates [text](href) links under docs/ only, while the dead refs
+        # lived in backticked inline paths, .claude//.agents/ skill
+        # checklists, site/*.html copy, notebook JSON and CLAUDE.md's
+        # repository-structure tree. This guard resolves every forgelm/,
+        # tools/ and tests/ path named in prose against the filesystem.
+        # Scope was set by measurement: all top-level dirs gave 266 findings
+        # on a clean tree, the three source trees give 14 (all genuine). It
+        # skips fenced blocks, docs/roadmap/ and docs/design/ (records and
+        # unbuilt proposals), and Markdown link hrefs — so a broken link is
+        # reported by exactly one guard, never both.
+        run: python3 tools/check_source_path_refs.py --strict
+
       - name: Site chrome (EN/TR translation) parity
         # W1/H11 (F-P8-C-07): the active-tier (EN<->TR) translation-key sets in
         # site/js/translations.js must stay in lockstep. Run WITHOUT --strict:
