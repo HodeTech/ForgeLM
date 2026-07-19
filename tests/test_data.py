@@ -90,6 +90,17 @@ class TestProcessUserAssistantFormat:
         with pytest.raises(ValueError, match="row at index 1"):
             data_mod._process_user_assistant_format(examples, clean_text=True, add_eos=False, eos_token="")
 
+    def test_mismatched_column_lengths_raises_actionable_error(self):
+        # Regression: zip(..., strict=True) used to raise its generic
+        # "zip() argument N is longer/shorter than argument M" message from
+        # inside the `for` statement's implicit next() call — outside the
+        # try/except that wraps every other malformed-row shape in this
+        # function. A length mismatch must now surface the module's own
+        # actionable message instead.
+        examples = {"User": ["hi", "there"], "Assistant": ["yo"]}
+        with pytest.raises(ValueError, match="mismatched lengths"):
+            data_mod._process_user_assistant_format(examples, clean_text=True, add_eos=False, eos_token="")
+
 
 class TestValidateTrainerColumns:
     def test_dpo_missing_chosen_rejected_raises(self):
@@ -179,3 +190,89 @@ class TestEnsureValidationSplit:
             out = data_mod._ensure_validation_split(self._dd(1))
         assert "validation" not in out
         assert any("cannot create a validation split" in r.message for r in caplog.records)
+
+    def test_native_test_split_is_popped_not_aliased(self):
+        # Regression: aliasing (dataset["validation"] = dataset["test"])
+        # without removing "test" left the DatasetDict with three keys
+        # (train/test/validation), causing every downstream per-split loop
+        # (_shuffle_and_passthrough, _format_sft_dataset) to process the
+        # same rows twice. The native "test" split must be popped, not
+        # merely referenced under a second key.
+        from datasets import Dataset, DatasetDict
+
+        ds = DatasetDict(
+            {
+                "train": Dataset.from_list([{"text": f"r{i}"} for i in range(5)]),
+                "test": Dataset.from_list([{"text": "t0"}, {"text": "t1"}]),
+            }
+        )
+        out = data_mod._ensure_validation_split(ds)
+        assert set(out.keys()) == {"train", "validation"}
+        assert len(out["validation"]) == 2
+
+
+class TestLoadSingleDataset:
+    """_load_single_dataset had zero test coverage before this suite —
+    the extension-whitelist gate must fail fast, before ever reaching HF
+    ``load_dataset``, so an unsupported local extension can't be
+    misinterpreted as a Hub dataset id (triggering a surprise network call
+    in an otherwise fully local/offline run)."""
+
+    def test_no_extension_raises_actionable_error(self, tmp_path):
+        path = tmp_path / "dataset"
+        path.write_text("{}")
+        with pytest.raises(ValueError, match="no file extension found"):
+            data_mod._load_single_dataset(str(path))
+
+    def test_unsupported_extension_raises_before_load_dataset(self, tmp_path, monkeypatch):
+        import datasets
+
+        called = False
+
+        def _fail_if_called(*args, **kwargs):
+            nonlocal called
+            called = True
+            raise AssertionError("load_dataset must not be called for an unsupported extension")
+
+        monkeypatch.setattr(datasets, "load_dataset", _fail_if_called)
+
+        path = tmp_path / "dataset.txt"
+        path.write_text("hello")
+        with pytest.raises(ValueError, match=r"unsupported extension '\.txt'"):
+            data_mod._load_single_dataset(str(path))
+        assert not called
+
+    def test_unsupported_extension_message_lists_supported_formats(self, tmp_path):
+        path = tmp_path / "dataset.tsv"
+        path.write_text("a\tb")
+        with pytest.raises(ValueError, match=r"\.json, \.jsonl, \.csv, or \.parquet"):
+            data_mod._load_single_dataset(str(path))
+
+    @pytest.mark.parametrize(
+        "suffix,expected_builder",
+        [
+            (".json", "json"),
+            (".jsonl", "json"),
+            (".csv", "csv"),
+            (".parquet", "parquet"),
+        ],
+    )
+    def test_supported_extension_dispatches_to_correct_builder(self, tmp_path, monkeypatch, suffix, expected_builder):
+        import datasets
+
+        seen = {}
+
+        def _fake_load_dataset(builder, data_files=None):
+            seen["builder"] = builder
+            seen["data_files"] = data_files
+            return "sentinel-dataset"
+
+        monkeypatch.setattr(datasets, "load_dataset", _fake_load_dataset)
+
+        path = tmp_path / f"dataset{suffix}"
+        path.write_text("placeholder")
+        result = data_mod._load_single_dataset(str(path))
+
+        assert result == "sentinel-dataset"
+        assert seen["builder"] == expected_builder
+        assert seen["data_files"] == str(path)

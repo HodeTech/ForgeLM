@@ -278,6 +278,66 @@ class TestWebhookNotifier:
         assert not any("Unexpected" in r.message for r in caplog.records)
         assert all(r.exc_info is None for r in transport_recs)  # no traceback attached
 
+    @patch("forgelm._http.requests.Session.post")
+    def test_missing_requests_toolbelt_does_not_crash_run(self, mock_post, monkeypatch, caplog):
+        """A missing ``requests-toolbelt`` at runtime must not crash the run.
+
+        ``_http._pinned_session('https')`` raises a bare ``ImportError`` (NOT a
+        ``requests.RequestException``) when the HTTPS IP-pinning adapter is
+        unavailable — a broken ``--no-deps`` / vendored / frozen venv.  Pre-fix
+        that ImportError propagated straight out of ``notify_*`` and would crash
+        an otherwise-successful training run at the final notification step,
+        violating the module's "notify_* is never allowed to fail the run"
+        contract.  ``_post_payload`` must now catch it and swallow with the same
+        non-fatal WARNING semantics as the transport branches.
+        """
+        import logging
+
+        from forgelm import _http
+
+        # Simulate the broken-venv state: the HTTPS IP-pinning adapter sentinel
+        # is None, so ``_pinned_session('https')`` raises ImportError before any
+        # ``Session.post`` is attempted.
+        monkeypatch.setattr(_http, "_PortStrippingSSLAdapter", None)
+
+        config = _make_config({"url": "https://example.com/hook"})
+        notifier = WebhookNotifier(config)
+
+        with caplog.at_level(logging.WARNING, logger="forgelm.webhook"):
+            notifier.notify_start(run_name="test_run")  # must NOT raise ImportError
+
+        mock_post.assert_not_called()  # never reached the network layer
+        assert any("dependency unavailable" in r.message for r in caplog.records), (
+            "the ImportError must be logged as a non-fatal dependency-unavailable warning"
+        )
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_mixed_case_http_scheme_still_warns_unencrypted(self, mock_post, caplog):
+        """A mixed-case ``HTTP://`` URL must still trigger the plaintext warning.
+
+        ``urlparse`` lower-cases the scheme, so ``HTTP://`` routes through the
+        exact same cleartext delivery path downstream — but the operator-facing
+        'unencrypted' warning used a case-sensitive ``startswith('http://')``
+        prefix and silently skipped it, reducing visibility into an unencrypted
+        delivery.  The parsed lower-cased scheme check must fire it.
+        """
+        import logging
+
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_post.return_value = mock_response
+
+        config = _make_config({"url": "HTTP://hooks.internal/abc"})  # NOSONAR python:S5332
+        notifier = WebhookNotifier(config)
+
+        with caplog.at_level(logging.WARNING, logger="forgelm.webhook"):
+            notifier.notify_start(run_name="test_run")
+
+        assert any("unencrypted" in r.message.lower() for r in caplog.records), (
+            "mixed-case HTTP:// must still trigger the plaintext-delivery warning"
+        )
+        mock_post.assert_called_once()  # cleartext delivery still attempted by default
+
 
 class TestMaskUrl:
     """F-P5-OPUS-06 / F-P5-OPUS-11 regression: ``WebhookNotifier._mask`` must

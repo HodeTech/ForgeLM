@@ -935,6 +935,107 @@ class TestWebhookSSRFPreflight:
         section = wizard._parse_webhook_value("env:SLACK_WEBHOOK_URL")
         assert section == {"url_env": "SLACK_WEBHOOK_URL"}
 
+    def test_dns_preflight_bounds_a_genuinely_slow_resolver(self, monkeypatch):
+        # LOW finding (fix regression test): the original fix scoped a
+        # socket.setdefaulttimeout around the preflight call, but CPython's
+        # socket.getaddrinfo is a blocking libc call that does NOT consult
+        # the socket default timeout — setdefaulttimeout never bounded it.
+        # The prior test only asserted the timeout value was set/restored
+        # by monkeypatching `_is_private_destination` entirely out, so it
+        # passed despite the defect. This test instead makes the real
+        # socket-layer call itself slow (socket.getaddrinfo, not
+        # `_is_private_destination`) and proves the wrapper returns well
+        # before the resolver would — the fix now bounds the hang with a
+        # joined worker thread instead.
+        import socket
+        import time
+
+        from forgelm.wizard import _collectors
+
+        # Shrink the bound for test speed; the mechanism under test (thread
+        # + join(timeout)) is identical regardless of the bound's value.
+        monkeypatch.setattr(_collectors, "_WEBHOOK_DNS_PREFLIGHT_TIMEOUT_SECONDS", 0.3)
+
+        resolver_delay_seconds = 3.0
+
+        def _slow_getaddrinfo(host, *args, **kwargs):
+            time.sleep(resolver_delay_seconds)
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+        monkeypatch.setattr(socket, "getaddrinfo", _slow_getaddrinfo)
+
+        start = time.monotonic()
+        result = _collectors._webhook_preflight_is_private("example.com")
+        elapsed = time.monotonic() - start
+
+        assert elapsed < resolver_delay_seconds, (
+            f"preflight blocked for {elapsed:.2f}s (resolver takes "
+            f"{resolver_delay_seconds}s) — the worker-thread join timeout did not "
+            "bound the genuinely slow resolver"
+        )
+        assert result is False, "a resolver that cannot complete in time must degrade to 'skip preflight'"
+
+    def test_dns_preflight_timeout_degrades_to_skip_not_crash(self, monkeypatch):
+        # A resolver timeout must not crash the wizard or block the URL —
+        # it degrades to "could not determine, don't reject"; runtime
+        # `_http.safe_post` still enforces SSRF rules at training time.
+        import forgelm._http as _http_mod
+
+        def _raise_timeout(host):
+            raise TimeoutError("simulated resolver timeout")
+
+        monkeypatch.setattr(_http_mod, "_is_private_destination", _raise_timeout)
+        result = wizard._parse_webhook_value("https://example.com/hook")
+        assert result == {"url": "https://example.com/hook"}
+
+
+class TestParseEnvRef:
+    """LOW finding: the env:VAR_NAME parsing regex was duplicated between
+    the webhook and monitoring collectors. _parse_env_ref centralises it;
+    both call sites keep their own error-handling policy (webhook raises
+    to force a re-prompt, monitoring catches and warns)."""
+
+    def test_non_env_prefix_returns_none(self):
+        from forgelm.wizard._collectors import _parse_env_ref
+
+        assert _parse_env_ref("https://example.com/hook") is None
+
+    def test_valid_var_name_returned(self):
+        from forgelm.wizard._collectors import _parse_env_ref
+
+        assert _parse_env_ref("env:SLACK_WEBHOOK_URL") == "SLACK_WEBHOOK_URL"
+
+    def test_empty_var_name_raises(self):
+        from forgelm.wizard._collectors import _parse_env_ref
+
+        with pytest.raises(ValueError, match="non-empty variable name"):
+            _parse_env_ref("env:")
+
+    def test_lowercase_var_name_raises(self):
+        from forgelm.wizard._collectors import _parse_env_ref
+
+        with pytest.raises(ValueError, match="POSIX environment-variable name"):
+            _parse_env_ref("env:lowercase_var")
+
+    def test_monitoring_collector_reuses_shared_helper(self, capsys):
+        # _collect_monitoring's soft-fail policy (warn + drop the field,
+        # not raise) must still hold with the shared helper.
+        with patch(
+            "builtins.input",
+            side_effect=_input_returning(
+                "y",  # configure post-market monitoring
+                "env:not valid",  # malformed env ref
+                "1",  # metrics_export = none
+                "n",  # alert_on_drift
+                "24",  # check_interval_hours
+            ),
+        ):
+            monitoring = wizard._collect_monitoring()
+        assert "endpoint_env" not in monitoring
+        assert "endpoint" not in monitoring
+        out = capsys.readouterr().out
+        assert "not a valid env-var reference" in out
+
 
 class TestUniqueFilenamePrompt:
     """B2 — overwrite confirmation + auto-suffix on existing files."""
@@ -1776,6 +1877,56 @@ class TestPRDA2EvaluationHonorsExisting:
         # explicit-disable contract: a "no" must override the loaded
         # state, leaving auto_revert disabled (False) on the rebuild.
         assert state.config["evaluation"].get("auto_revert") is False
+
+
+class TestStrictTierSafetyDeclineNotice:
+    """MEDIUM finding: an explicit 'no' to safety-eval under a strict risk
+    tier is silently re-enabled by the end-of-step
+    _apply_strict_tier_coercion call with no in-context notice — the
+    operator's decline is discarded without any feedback at the moment
+    it happens."""
+
+    def test_decline_under_strict_tier_prints_reenable_notice(self, isolated_state_dir, capsys):
+        state = wizard._WizardState()
+        state.config["compliance"] = {"risk_classification": "high-risk"}
+        with patch(
+            "builtins.input",
+            side_effect=_input_returning(
+                "n",  # decline auto-revert
+                "n",  # decline safety eval (default is Y/n under strict tier)
+                "n",  # decline benchmark
+                "n",  # decline judge
+                "n",  # decline webhook
+                "n",  # decline synthetic
+            ),
+        ):
+            wizard._orchestrator._step_evaluation(state)
+        out = capsys.readouterr().out
+        assert "cannot be disabled" in out
+        # F-compliance-110 still wins — the block is force-re-enabled —
+        # but now the operator saw why at the moment it happened.
+        assert state.config["evaluation"]["safety"]["enabled"] is True
+
+    def test_decline_under_minimal_risk_prints_no_notice(self, isolated_state_dir, capsys):
+        # Non-strict tiers never coerce safety back on — no notice should
+        # fire since nothing is being silently overridden.
+        state = wizard._WizardState()
+        state.config["compliance"] = {"risk_classification": "minimal-risk"}
+        with patch(
+            "builtins.input",
+            side_effect=_input_returning(
+                "n",  # decline auto-revert
+                "n",  # decline safety eval
+                "n",  # decline benchmark
+                "n",  # decline judge
+                "n",  # decline webhook
+                "n",  # decline synthetic
+            ),
+        ):
+            wizard._orchestrator._step_evaluation(state)
+        out = capsys.readouterr().out
+        assert "cannot be disabled" not in out
+        assert "safety" not in state.config.get("evaluation", {})
 
 
 class TestPRDA3UseCaseSkipsWhenExisting:

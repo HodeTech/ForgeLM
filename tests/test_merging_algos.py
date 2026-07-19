@@ -124,8 +124,14 @@ class TestTiesZeroVote:
         d1 = torch.tensor([3.0])
         d2 = torch.tensor([-3.0])
         result = _ties_merge_tensor([d1, d2], weights=[0.5, 0.5], trim_fraction=0.0)
-        # elected_sign=+1, so the value with sign matching +1 is d1[0]=3.0, weighted by 0.5
+        # elected_sign=+1; only d1 agrees. The paper's disjoint merge averages
+        # over the sign-agreeing subset (renormalized to weight 1.0), so the
+        # magnitude is the full 3.0 — NOT the attenuated 0.5*3.0=1.5 that a
+        # plain masked weighted SUM (no renormalization) would produce.
         assert result[0] >= 0, "Zero-vote should resolve to positive sign (+1)"
+        assert result[0] == pytest.approx(3.0), (
+            "disjoint merge must renormalize by the agreeing weight sum, not shrink the magnitude"
+        )
 
 
 class TestLinearMergeZeroWeight:
@@ -330,6 +336,77 @@ class TestTiesDareMergeZeroWeightGuard:
         assert result is base
 
 
+class TestTiesDareMergeNegativeWeightWarning:
+    """MergeConfig does not constrain merge.models[].weight to be
+    non-negative. A negative weight can make the per-key
+    ``agree_weight_sum`` in ``_ties_merge_tensor`` negative-but-nonzero at a
+    sign-agreeing position, silently skipping the disjoint-merge
+    renormalization instead of raising. ``_ties_dare_merge`` must at least
+    warn when it sees a negative weight, so the risk is not silent."""
+
+    def _make_fake_peft(self, monkeypatch, task_vector):
+        import sys
+        import types
+        from unittest.mock import MagicMock
+
+        fake_peft = types.ModuleType("peft")
+
+        class _FakePeft:
+            def __init__(self, base, path):
+                pass
+
+            def merge_and_unload(self):
+                m = MagicMock()
+                m.state_dict.return_value = task_vector
+                return m
+
+        fake_peft.PeftModel = MagicMock(side_effect=lambda base, path: _FakePeft(base, path))
+        monkeypatch.setitem(sys.modules, "peft", fake_peft)
+
+    def test_negative_weight_logs_warning(self, monkeypatch, caplog):
+        from unittest.mock import MagicMock
+
+        base_w = torch.tensor([1.0, 2.0])
+        tv = {"layer.weight": torch.tensor([1.5, 2.5])}
+
+        base = MagicMock()
+        base.state_dict.return_value = {"layer.weight": base_w.clone()}
+        base.load_state_dict = MagicMock()
+
+        self._make_fake_peft(monkeypatch, tv)
+
+        from forgelm.merging import _ties_dare_merge
+
+        # Non-cancelling sum (2.0 total) so the zero-weight guard does not
+        # fire and the negative-weight path is exercised end to end.
+        adapters = [{"path": "a", "weight": 3.0}, {"path": "b", "weight": -1.0}]
+        with caplog.at_level("WARNING", logger="forgelm.merging"):
+            result = _ties_dare_merge(base, adapters, method="ties")
+
+        assert result is base
+        assert any("negative" in record.message for record in caplog.records)
+
+    def test_all_non_negative_weights_do_not_warn(self, monkeypatch, caplog):
+        from unittest.mock import MagicMock
+
+        base_w = torch.tensor([1.0, 2.0])
+        tv = {"layer.weight": torch.tensor([1.5, 2.5])}
+
+        base = MagicMock()
+        base.state_dict.return_value = {"layer.weight": base_w.clone()}
+        base.load_state_dict = MagicMock()
+
+        self._make_fake_peft(monkeypatch, tv)
+
+        from forgelm.merging import _ties_dare_merge
+
+        adapters = [{"path": "a", "weight": 0.6}, {"path": "b", "weight": 0.4}]
+        with caplog.at_level("WARNING", logger="forgelm.merging"):
+            _ties_dare_merge(base, adapters, method="ties")
+
+        assert not any("negative" in record.message for record in caplog.records)
+
+
 class TestTiesDareMergePerKeyWeightRenorm:
     """F-L-17: when a key is absent from some adapters, zip(deltas, weights)
     silently truncated to the shorter list, underweighting the surviving
@@ -434,3 +511,187 @@ class TestSlerpAntiParallelGuard:
         v1 = torch.tensor([0.0, 1.0])
         _, used_linear = self._make_slerp_call(v0, v1, t=0.5)
         assert not used_linear, "F-L-18: orthogonal vectors should use SLERP, not linear fallback"
+
+
+class TestTiesDisjointMergeRenormalization:
+    """The TIES 'Merge' step is the paper's disjoint merge: average only the
+    sign-agreeing models, renormalizing by their weight sum.  Without the
+    renormalization the merged magnitude is attenuated whenever fewer than all
+    adapters agree with the elected sign — silently shrinking the merge."""
+
+    def test_partial_agreement_renormalizes_to_average(self):
+        # One position, three adapters: +4 (w=0.5), +2 (w=0.25), -6 (w=0.25).
+        # Sign votes: +1 +1 -1 = +1 → elected +1.  Agreeing subset: the two
+        # positive adapters, weights 0.5 and 0.25 (sum 0.75).  Disjoint-merge
+        # average = (4*0.5 + 2*0.25) / 0.75 = 2.5 / 0.75 = 3.3333...
+        d1 = torch.tensor([4.0])
+        d2 = torch.tensor([2.0])
+        d3 = torch.tensor([-6.0])
+        result = _ties_merge_tensor([d1, d2, d3], weights=[0.5, 0.25, 0.25], trim_fraction=0.0)
+        assert result[0] == pytest.approx(2.5 / 0.75)
+
+    def test_full_agreement_is_plain_weighted_average(self):
+        # All adapters agree (both positive) → renorm denominator equals the
+        # full weight sum (1.0), so the result is the plain weighted average.
+        d1 = torch.tensor([2.0])
+        d2 = torch.tensor([4.0])
+        result = _ties_merge_tensor([d1, d2], weights=[0.5, 0.5], trim_fraction=0.0)
+        assert result[0] == pytest.approx(3.0)  # (2*0.5 + 4*0.5) / 1.0
+
+    def test_all_zero_deltas_stay_zero(self):
+        # No adapter has a sign at any position → agree_weight_sum is 0 →
+        # the guarded division must leave the result at 0 (no NaN/Inf).
+        d1 = torch.zeros(3)
+        d2 = torch.zeros(3)
+        result = _ties_merge_tensor([d1, d2], weights=[0.5, 0.5], trim_fraction=0.0)
+        assert torch.allclose(result, torch.zeros(3))
+        assert torch.isfinite(result).all()
+
+
+class TestDareSeedStableAcrossProcesses:
+    """F-H (reproducibility): the DARE per-key seed must derive from a
+    process-stable hash, not CPython's PYTHONHASHSEED-randomized ``hash(str)``,
+    so two separate merges with the same ``dare_seed`` are byte-identical."""
+
+    @staticmethod
+    def _run(code: str, hashseed: str) -> str:
+        import os
+        import subprocess
+        import sys
+
+        env = dict(os.environ, PYTHONHASHSEED=hashseed)
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert proc.returncode == 0, proc.stderr
+        return proc.stdout.strip()
+
+    def test_stable_key_hash_is_deterministic_across_pythonhashseed(self):
+        """The shipped _stable_key_hash must return the same value in fresh
+        interpreters started with different PYTHONHASHSEED values."""
+        code = (
+            "from forgelm.merging import _stable_key_hash;"
+            "print(_stable_key_hash('model.layers.0.self_attn.q_proj.weight'))"
+        )
+        v0 = self._run(code, "0")
+        v1 = self._run(code, "1")
+        v2 = self._run(code, "123456")
+        assert v0 == v1 == v2, "DARE per-key hash must not depend on PYTHONHASHSEED"
+
+    def test_builtin_str_hash_is_randomized(self):
+        """Sanity/justification: the old ``hash(key)`` derivation is randomized
+        across processes — exactly the reproducibility bug _stable_key_hash fixes."""
+        code = "print(hash('model.layers.0.self_attn.q_proj.weight'))"
+        values = {self._run(code, "1"), self._run(code, "2"), self._run(code, "3")}
+        assert len(values) > 1, "builtin hash(str) should vary across PYTHONHASHSEED"
+
+
+class TestSlerpMergeExercisesRealFunction:
+    """ROUTED (tests-standalone): _slerp_merge's body — including the F-L-18
+    near-parallel/anti-parallel guard — was never executed; the prior test
+    re-implemented the omega math inline.  These stub peft (mirroring
+    TestTiesDareMergeZeroWeightGuard) so the SHIPPED _slerp_merge runs
+    end-to-end, and drive the merge_peft_adapters 'slerp' dispatch branch."""
+
+    @staticmethod
+    def _install_fake_peft(monkeypatch, state_a, state_b):
+        import sys
+        import types
+        from unittest.mock import MagicMock
+
+        fake_peft = types.ModuleType("peft")
+        states = iter([state_a, state_b])
+
+        class _FakeAdapter:
+            def merge_and_unload(self):
+                m = MagicMock()
+                m.state_dict.return_value = next(states)
+                return m
+
+        fake_peft.PeftModel = MagicMock()
+        fake_peft.PeftModel.from_pretrained = MagicMock(side_effect=lambda base, path: _FakeAdapter())
+        monkeypatch.setitem(sys.modules, "peft", fake_peft)
+
+    @staticmethod
+    def _fake_base(keys):
+        from unittest.mock import MagicMock
+
+        base = MagicMock()
+        base.state_dict.return_value = {k: torch.zeros_like(v) for k, v in keys.items()}
+        base.load_state_dict = MagicMock()
+        return base
+
+    def _merged_state(self, base):
+        # _slerp_merge's final call is load_state_dict(merged_state, strict=False).
+        return base.load_state_dict.call_args_list[-1].args[0]
+
+    def test_anti_parallel_takes_linear_fallback(self, monkeypatch):
+        """v1 = -v0 (anti-parallel, sin(omega)≈0) must fall back to linear
+        interpolation and produce a finite result — exercising the real guard."""
+        from forgelm.merging import _slerp_merge
+
+        state_a = {"weight": torch.ones(4)}
+        state_b = {"weight": -torch.ones(4)}
+        self._install_fake_peft(monkeypatch, state_a, state_b)
+        base = self._fake_base(state_a)
+
+        adapters = [{"path": "a", "weight": 1.0}, {"path": "b", "weight": 1.0}]
+        out = _slerp_merge(base, adapters)
+        assert out is base
+        merged = self._merged_state(base)["weight"]
+        # t = 0.5 → linear fallback gives 0.5*1 + 0.5*(-1) = 0 for every element.
+        assert torch.isfinite(merged).all(), "anti-parallel SLERP must not yield NaN/Inf"
+        assert torch.allclose(merged, torch.zeros(4), atol=1e-5)
+
+    def test_orthogonal_uses_true_slerp(self, monkeypatch):
+        """Orthogonal unit vectors at t=0.5 → SLERP gives sin(π/4)≈0.7071 on
+        each axis (NOT the linear 0.5), proving the SLERP branch executed."""
+        from forgelm.merging import _slerp_merge
+
+        state_a = {"weight": torch.tensor([1.0, 0.0])}
+        state_b = {"weight": torch.tensor([0.0, 1.0])}
+        self._install_fake_peft(monkeypatch, state_a, state_b)
+        base = self._fake_base(state_a)
+
+        adapters = [{"path": "a", "weight": 1.0}, {"path": "b", "weight": 1.0}]
+        _slerp_merge(base, adapters)
+        merged = self._merged_state(base)["weight"]
+        assert merged[0] == pytest.approx(0.7071, abs=1e-3)
+        assert merged[1] == pytest.approx(0.7071, abs=1e-3)
+
+    def test_merge_peft_adapters_dispatches_slerp(self, monkeypatch, tmp_path):
+        """The `elif method == "slerp"` dispatch branch in merge_peft_adapters
+        was never covered — drive it with transformers stubbed out."""
+        import sys
+        import types
+        from unittest.mock import MagicMock
+
+        fake_tf = types.ModuleType("transformers")
+        fake_tf.AutoModelForCausalLM = MagicMock()
+        fake_tf.AutoModelForCausalLM.from_pretrained = MagicMock(return_value=MagicMock())
+        fake_tf.AutoTokenizer = MagicMock()
+        fake_tf.AutoTokenizer.from_pretrained = MagicMock(return_value=MagicMock())
+        monkeypatch.setitem(sys.modules, "transformers", fake_tf)
+
+        import forgelm.merging as merging
+
+        captured = {}
+
+        def _fake_slerp(base_model, adapters):
+            captured["adapters"] = adapters
+            return base_model
+
+        monkeypatch.setattr(merging, "_slerp_merge", _fake_slerp)
+
+        result = merging.merge_peft_adapters(
+            base_model_path="org/base",
+            adapters=[{"path": "a", "weight": 1.0}, {"path": "b", "weight": 1.0}],
+            method="slerp",
+            output_dir=str(tmp_path / "out"),
+        )
+        assert captured.get("adapters") is not None, "method='slerp' must dispatch to _slerp_merge"
+        assert result.success is True
+        assert result.method == "slerp"

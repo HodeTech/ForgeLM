@@ -15,7 +15,9 @@ contract to *content* by checking, for every bilingual EN/TR pair:
    surfaces here.
 
 The pair registry is reused from ``tools/check_bilingual_parity.py``
-(``_PAIRS``).
+(``_all_pairs()`` — the hand-registered ``_PAIRS`` plus the
+auto-discovered ``docs/usermanuals/en/**/*.md`` <-> ``tr/**`` pairs, so
+this guard scans the same set the sibling heading-spine guard does).
 
 Exit codes (per ``tools/`` contract — NOT the public 0/1/2/3/4 surface
 that ``forgelm/`` honours):
@@ -51,12 +53,16 @@ except ImportError as exc:  # pragma: no cover
     sys.exit(0)
 
 # Reuse the canonical pair registry from the sibling guard so a single
-# source-of-truth governs which pairs are checked.
+# source-of-truth governs which pairs are checked. ``_all_pairs()`` merges
+# the hand-registered ``_PAIRS`` with the auto-discovered user-manual
+# pairs — using the raw ``_PAIRS`` here would silently skip all 67
+# docs/usermanuals/ pages (see docs/standards/localization.md "Structural
+# mirror rule").
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from check_bilingual_parity import _PAIRS  # type: ignore
+    from check_bilingual_parity import _all_pairs  # type: ignore
 except ImportError as exc:  # pragma: no cover
-    print(f"check_bilingual_code_blocks: cannot import _PAIRS ({exc}).", file=sys.stderr)
+    print(f"check_bilingual_code_blocks: cannot import _all_pairs ({exc}).", file=sys.stderr)
     sys.exit(1)
 
 
@@ -179,8 +185,9 @@ def main(argv=None) -> int:
     parser.add_argument("--quiet", action="store_true", help="Suppress success summary.")
     args = parser.parse_args(argv)
 
+    pairs = _all_pairs(REPO_ROOT)
     failures: List[Tuple[Path, Path, List[str]]] = []
-    for en_rel, tr_rel in _PAIRS:
+    for en_rel, tr_rel in pairs:
         en_path = REPO_ROOT / en_rel
         tr_path = REPO_ROOT / tr_rel
         if not (en_path.exists() and tr_path.exists()):
@@ -203,7 +210,7 @@ def main(argv=None) -> int:
 
     if not args.quiet:
         print(
-            f"OK: all {len(_PAIRS)} bilingual pair(s) have matching fenced-block "
+            f"OK: all {len(pairs)} bilingual pair(s) have matching fenced-block "
             f"counts AND matching YAML-key sets per block."
         )
     return 0

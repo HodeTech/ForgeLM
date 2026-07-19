@@ -82,7 +82,7 @@ def _run_benchmark_only(config: ForgeConfig, model_path: str, output_format: str
         adapter=adapter_path,
         backend=config.model.backend,
         load_in_4bit=config.model.load_in_4bit,
-        trust_remote_code=getattr(config.model, "trust_remote_code", False),
+        trust_remote_code=config.model.trust_remote_code,
     )
 
     output_dir = bench_cfg.output_dir or os.path.join(os.path.dirname(model_path), "benchmark")

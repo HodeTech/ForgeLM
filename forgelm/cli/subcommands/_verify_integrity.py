@@ -15,9 +15,9 @@ in ``docs/reference/verify_integrity_subcommand.md``):
   unexpected extra files.
 - 1 — ``EXIT_CONFIG_ERROR``: caller / input error (missing path, the path is a
   file rather than a model directory, manifest not found / not a regular file,
-  malformed JSON, a non-list ``artifacts`` container, a manifest entry whose
-  path is non-string or escapes the model directory) OR an integrity mismatch
-  (changed / removed / added file).  The
+  malformed JSON, invalid UTF-8 encoding, a non-list ``artifacts`` container, a
+  manifest entry whose path is non-string or escapes the model directory) OR an
+  integrity mismatch (changed / removed / added file).  The
   artifacts do not match the manifest.
 - 2 — ``EXIT_TRAINING_ERROR``: genuine runtime I/O failure on a reachable path
   (read error, permission denied mid-walk, etc.).
@@ -224,6 +224,19 @@ def _run_verify_integrity_cmd(args, output_format: str) -> None:
         _output_error_and_exit(
             output_format,
             f"Integrity manifest at {os.path.join(path, _MANIFEST_NAME)!r} is not valid JSON: {exc.msg} (line {exc.lineno}).",
+            EXIT_CONFIG_ERROR,
+        )
+    except UnicodeDecodeError as exc:
+        # A non-UTF-8 model_integrity.json (disk corruption, an
+        # interrupted write, or a binary file pointed at by mistake).
+        # UnicodeDecodeError is a ValueError subclass, not an OSError
+        # subclass, so without this branch it escaped the except chain
+        # and crashed with a raw traceback and no JSON envelope.  Caller-
+        # input error → exit 1, mirroring the malformed-JSON branch above
+        # and the same fix in _verify_annex_iv.py / _verify_gguf.py.
+        _output_error_and_exit(
+            output_format,
+            f"Integrity manifest at {os.path.join(path, _MANIFEST_NAME)!r} is not valid UTF-8: {exc}.",
             EXIT_CONFIG_ERROR,
         )
     except IsADirectoryError as exc:

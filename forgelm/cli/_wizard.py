@@ -53,15 +53,39 @@ def _maybe_run_wizard(args) -> None:
             )
         )
         sys.exit(EXIT_WIZARD_CANCELLED)
-    from ..wizard import run_wizard_full
-
     # ``--wizard-start-from`` (E3 / PR-D) preloads the wizard with an
     # existing YAML so the operator can iterate on a prior config
     # without losing answers.  ``getattr`` for back-compat: callers
     # constructing argparse Namespaces by hand might not include the
     # field on legacy code paths.
     start_from = getattr(args, "wizard_start_from", None)
-    outcome = run_wizard_full(start_from=start_from)
+
+    # Symmetric no-op guard (mirrors the --wizard-start-from-without-wizard
+    # warning above): --config is ignored in wizard mode because the wizard
+    # generates its own YAML into ``args.config``.  Warn the operator who also
+    # passed --config, unless they used --wizard-start-from (the supported way
+    # to seed the wizard from an existing file) — otherwise the discard is
+    # silent.
+    if getattr(args, "config", None) and not start_from:
+        print(
+            "  ⚠ --config is ignored in --wizard mode; the wizard generates its own YAML.  "
+            "Use --wizard-start-from <path> to seed the wizard from an existing config.",
+            file=sys.stdout,
+        )
+
+    from ..wizard import run_wizard_full
+
+    try:
+        outcome = run_wizard_full(start_from=start_from)
+    except KeyboardInterrupt:
+        # Ctrl-C through the interactive prompts is a clean cancel, not a
+        # crash.  The wizard's step-driver catches SIGINT during the step
+        # machine, but the save-filename and "Start training now?" prompts
+        # sit outside that guard; catching here maps their SIGINT to the
+        # wizard-cancelled contract code (5) instead of letting main()'s
+        # top-level handler coerce it to EXIT_TRAINING_ERROR (2).
+        print("\n  Wizard cancelled.", file=sys.stderr)
+        sys.exit(EXIT_WIZARD_CANCELLED)
     if outcome.cancelled:
         sys.exit(EXIT_WIZARD_CANCELLED)
     # YAML was produced — either start training now or exit cleanly so

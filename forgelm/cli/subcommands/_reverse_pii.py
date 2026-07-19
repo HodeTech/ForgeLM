@@ -72,10 +72,10 @@ _EVT_ACCESS_REQUEST_QUERY = "data.access_request_query"
 # itself leak unbounded surrounding context.
 _SNIPPET_MAX_CHARS = 160
 
-# Bound the audit event's ``error_message`` field so a future refactor
-# cannot accidentally leak operator-controlled raw data through
-# ``str(exc)`` (e.g. ``raise OSError(f"row {line!r} malformed")``).
-_AUDIT_ERROR_MESSAGE_MAX = 200
+# The audit event's ``error_message`` field is masked + length-bounded
+# via the shared ``_purge._sanitise_audit_error_message`` helper (see
+# ``_emit_audit_event``), so raw corpus bytes echoed by a mid-scan
+# exception never land in the append-only chain (F-P5-OPUS finding 6).
 
 # Custom-regex ReDoS guard: per-file scan budget in seconds.  POSIX
 # only (SIGALRM); on Windows the guard is a no-op and operators are
@@ -500,14 +500,6 @@ def _hash_for_audit(query: str, salt: bytes) -> str:
     return hashlib.sha256(salt + query.encode("utf-8")).hexdigest()
 
 
-def _bound_audit_error_message(message: str) -> str:
-    """Cap ``error_message`` so a future refactor cannot leak operator
-    data through ``str(exc)`` (F-W3-09)."""
-    if len(message) <= _AUDIT_ERROR_MESSAGE_MAX:
-        return message
-    return message[:_AUDIT_ERROR_MESSAGE_MAX] + "…[truncated]"
-
-
 def _resolve_audit_dir(output_dir: str, audit_dir_override: Optional[str]) -> str:
     """Return the audit-log root for this invocation.
 
@@ -610,7 +602,17 @@ def _emit_audit_event(
     if error_class is not None:
         payload["error_class"] = error_class
     if error_message is not None:
-        payload["error_message"] = _bound_audit_error_message(error_message)
+        # Route through the SAME secret-mask → PII-mask → length-bound
+        # pipeline purge uses (F-P5-OPUS finding 6).  A mid-scan
+        # ``OSError`` / ``UnicodeDecodeError`` message can echo raw corpus
+        # bytes (e.g. the offending line's context or byte position), so
+        # a length bound alone would let PII land permanently in the
+        # append-only chain — the exact "residual leak" this subcommand
+        # is designed to prevent.  Late import mirrors the salt-helper
+        # imports below and avoids any load-time coupling.
+        from ._purge import _sanitise_audit_error_message
+
+        payload["error_message"] = _sanitise_audit_error_message(error_message)
     audit.log_event(_EVT_ACCESS_REQUEST_QUERY, **payload)
 
 
@@ -792,6 +794,18 @@ def _run_reverse_pii_cmd(args, output_format: str) -> None:
 def _emit_reverse_pii_result(payload: Dict[str, Any], output_format: str) -> None:
     """Render the result envelope as JSON or human text."""
     if output_format == "json":
+        if payload["match_count"] > 0:
+            # Parity with the text branch's raw-content caution (finding
+            # 3).  JSON mode is exactly what CI/CD redirects to a
+            # persistent artifact, and the ``matches[].snippet`` values
+            # carry raw corpus content (PII).  Emit to stderr via the
+            # logger so the JSON stream on stdout stays uncorrupted
+            # (error-handling.md: logs to stderr, consumers read stdout).
+            logger.warning(
+                "reverse-pii: JSON output contains %d match snippet(s) with raw corpus "
+                "content (PII).  Do not redirect this output to a persistent log.",
+                payload["match_count"],
+            )
         print(json.dumps(payload, indent=2, default=str))
         return
     match_count = payload["match_count"]

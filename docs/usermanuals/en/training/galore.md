@@ -29,8 +29,8 @@ model:
 training:
   trainer_type: "sft"
   learning_rate: 1.0e-5                # full-FT learning rate, not LoRA
-  optimizer: "galore_adamw_8bit"
   galore_enabled: true
+  galore_optim: "galore_adamw_8bit"    # GaLore optimiser variant
   galore_rank: 256                     # higher than LoRA default (128) — projection rank
   galore_update_proj_gap: 200          # re-project every N steps
   galore_scale: 0.25
@@ -45,6 +45,7 @@ Note: when `training.galore_enabled: true`, ForgeLM automatically uses the GaLor
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `training.galore_enabled` | bool | `false` | Master switch. |
+| `training.galore_optim` | string | `"galore_adamw"` | GaLore optimiser variant: `galore_adamw`, `galore_adamw_8bit`, `galore_adafactor`, or their `_layerwise` counterparts. `_8bit` halves optimiser-state VRAM; `_layerwise` recomputes per-layer for a lower peak. |
 | `training.galore_rank` | int | `128` | Gradient projection rank. Higher = closer to full-FT, more memory. |
 | `training.galore_update_proj_gap` | int | `200` | Steps between re-projections. Lower = adapt to changing gradients faster. |
 | `training.galore_scale` | float | `0.25` | Scaling on the projected gradients. |

@@ -722,6 +722,18 @@ def _step_evaluation(state: _WizardState) -> None:
         # loaded safety block so the rebuild reflects the current
         # answer rather than silently re-enabling on a deepcopy.
         evaluation.pop("safety", None)
+        if risk in _STRICT_RISK_TIERS:
+            # The unconditional ``_apply_strict_tier_coercion`` call at
+            # the end of this step (below) re-enables safety again for
+            # strict tiers — the operator's "no" above is overridden a
+            # few lines later with no other in-context feedback, since
+            # ``_apply_strict_tier_coercion``'s own banner only prints
+            # once per wizard run.  Surface that now, at the moment the
+            # decline is about to be discarded, rather than leaving the
+            # operator to discover it only on the pre-flight checklist.
+            _print(
+                "  ⚠ Safety evaluation cannot be disabled for high-risk / unacceptable tier (Article 9); re-enabling."
+            )
     # ``_collect_benchmark`` / ``_collect_judge`` accept the loaded
     # block via *existing* so a rerun with a populated benchmark / judge
     # config defaults the gate prompt to "yes" (bare Enter keeps it).

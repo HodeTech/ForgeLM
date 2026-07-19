@@ -95,7 +95,7 @@ def _offer_ingest_for_directory(directory: Path) -> Optional[str]:
 
     pii_mask = _prompt_yes_no(
         "Mask detected PII (emails, phones, IDs) before writing? Recommended for shared corpora.",
-        default=False,
+        default=True,
     )
 
     try:
@@ -235,7 +235,10 @@ def _prompt_dataset_path_with_ingest_offer(question: str) -> str:
         if _HF_HUB_ID_RE.match(raw):
             _print(f"  Treating '{raw}' as an HF Hub dataset ID (no local validation).")
             return raw
-        _print(f"  '{raw}' is not a local file/directory and is not a valid HF Hub ID (expected '<org>/<name>').")
+        _print(
+            f"  '{raw}' is not a local file/directory and is not a valid HF Hub ID "
+            "(expected '<org>/<name>' or a canonical no-namespace dataset name like 'squad')."
+        )
 
 
 def _validate_local_jsonl(raw_path: str):
@@ -355,6 +358,15 @@ def _maybe_run_quickstart_template() -> Optional[str]:
         )
     except (FileNotFoundError, ValueError) as e:
         _print(f"  Quickstart failed: {e}. Falling back to the full wizard.")
+        return None
+    except OSError as e:
+        # ``forgelm.quickstart._resolve_dataset`` raises ``FileExistsError``
+        # by design when the per-run scratch dataset path already exists
+        # (an ``OSError`` subclass distinct from ``FileNotFoundError``);
+        # other filesystem failures (disk full, permissions) during the
+        # seed-dataset copy land here too.  Mirrors the catch-tier pattern
+        # in ``_offer_ingest_for_directory`` above.
+        _print(f"  Quickstart failed due to filesystem error: {e}. Falling back to the full wizard.")
         return None
 
     _print(f"\n  Quickstart config generated at: {result.config_path}")

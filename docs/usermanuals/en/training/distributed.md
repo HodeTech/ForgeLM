@@ -66,10 +66,13 @@ ZeRO-2 shards the optimiser state (the heaviest VRAM component for adaptive opti
 ```yaml
 distributed:
   strategy: "deepspeed"
-  zero_stage: 2
+  deepspeed_config: "zero2"             # preset name (or a filesystem path to a DeepSpeed JSON)
+
+training:
   gradient_accumulation_steps: 4
-  cpu_offload: false
 ```
+
+`DistributedConfig` has no `zero_stage` or `cpu_offload` field — ZeRO's stage (and any CPU/NVMe offload) is selected through `deepspeed_config`, and `gradient_accumulation_steps` is a `training:` field, not `distributed:`.
 
 Launch:
 
@@ -86,11 +89,13 @@ ZeRO-3 additionally shards gradients and parameters across GPUs. Each GPU holds 
 ```yaml
 distributed:
   strategy: "deepspeed"
-  zero_stage: 3
+  deepspeed_config: "zero3_offload"     # "zero3" (no offload) | "zero3_offload" (CPU offload) | path to a custom DeepSpeed JSON for NVMe
+
+training:
   gradient_accumulation_steps: 8
-  cpu_offload: false                    # set true to fit 70B on 8x24 GB
-  nvme_offload_path: null               # set for ZeRO-Infinity to NVMe
 ```
+
+The `zero3_offload` preset fits 70B on 8×24 GB by offloading optimiser state and parameters to CPU. ZeRO-Infinity's NVMe offload isn't a built-in preset — point `deepspeed_config` at a custom DeepSpeed JSON with `offload_param`/`offload_optimizer` set to `device: nvme` for that case.
 
 | Model | GPUs | ZeRO-3 + offload? |
 |---|---|---|
@@ -106,10 +111,13 @@ FSDP shards similarly to ZeRO-3 but uses PyTorch's native FullyShardedDataParall
 ```yaml
 distributed:
   strategy: "fsdp"
-  fsdp_state_dict_type: "FULL_STATE_DICT"
-  fsdp_auto_wrap_policy: "TRANSFORMER_BASED_WRAP"
-  fsdp_offload_params: false
+  fsdp_strategy: "full_shard"             # full_shard | shard_grad_op | no_shard | hybrid_shard
+  fsdp_auto_wrap: true                    # auto-wrap transformer layers (recommended)
+  fsdp_offload: false                     # offload parameters to CPU between forward/backward
+  fsdp_state_dict_type: "FULL_STATE_DICT" # FULL_STATE_DICT | SHARDED_STATE_DICT
 ```
+
+`DistributedConfig` has no `fsdp_auto_wrap_policy` or `fsdp_offload_params` field — auto-wrap is the plain boolean `fsdp_auto_wrap`, and CPU offload is `fsdp_offload` (no `_params` suffix).
 
 ## Gradient accumulation
 
@@ -126,11 +134,11 @@ training:
 ## Common pitfalls
 
 :::warn
-**ZeRO-3 + LoRA loading fails.** ZeRO-3 requires special handling for parameters that aren't trained. Set `lora.modules_to_save` carefully and use `accelerate launch` (not raw `python -m`).
+**ZeRO-3 initialisation order.** ZeRO-3 requires special handling for parameters that aren't trained on every rank — always launch through `accelerate launch` (not a raw `python -m forgelm`) so DeepSpeed's parameter-partitioning wrapper initialises before the model loads.
 :::
 
 :::warn
-**Mixing DeepSpeed and FSDP configs.** Pick one. The schema rejects setting both `distributed.zero_stage` and `distributed.fsdp_*` at the same time.
+**Mixing DeepSpeed and FSDP fields.** `distributed.strategy` selects exactly one backend (`deepspeed` or `fsdp`) — only the fields for the active strategy are consulted. There is no `distributed.zero_stage` field; DeepSpeed's ZeRO stage is chosen through `deepspeed_config` (a preset name or a path to a DeepSpeed JSON).
 :::
 
 :::warn

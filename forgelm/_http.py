@@ -24,8 +24,11 @@ Policy summary (each enforced before the network call):
   the caller passes ``allow_insecure_http=True`` (only the operator-blessed
   webhook path uses this; judge / synthetic always require TLS).
 * **SSRF** — RFC1918, loopback, link-local (incl. cloud IMDS at
-  ``169.254.169.254``), reserved, and multicast destinations are blocked
-  unless ``allow_private=True``. Hostnames are pre-resolved via
+  ``169.254.169.254``), RFC 6598 Shared Address Space / Carrier-Grade-NAT
+  (``100.64.0.0/10`` — incl. Alibaba Cloud ECS IMDS at ``100.100.100.200``,
+  which the stdlib ``ipaddress`` predicates do *not* flag as private or
+  reserved), reserved, and multicast destinations are blocked unless
+  ``allow_private=True``. Hostnames are pre-resolved via
   ``socket.getaddrinfo`` so a DNS name pointing at a private IP also trips.
 * **Timeout floor** — defaults to 10s; callers can pass ``min_timeout`` to
   lower the floor (the webhook path uses 1s to preserve historical
@@ -44,6 +47,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import math
 import re
 import socket
 from typing import Any, Dict, MutableMapping, Optional, Tuple
@@ -130,6 +134,37 @@ class HttpSafetyError(Exception):
 
 _MASK_HEADER_NAMES = frozenset({"authorization", "x-api-key", "proxy-authorization"})
 
+# RFC 6598 Shared Address Space (Carrier-Grade-NAT).  The stdlib
+# ``ipaddress`` predicates do NOT classify this /10 as private, reserved,
+# link-local, or multicast, yet it is where cloud providers park internal
+# metadata endpoints — Alibaba Cloud ECS's IMDS listens at 100.100.100.200,
+# squarely inside this block — so it MUST be blocked explicitly alongside
+# the ranges the stdlib predicates already cover.
+_CGNAT_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
+
+
+def _is_cgnat_shared_address(ip: ipaddress._BaseAddress) -> bool:
+    """Return ``True`` when *ip* falls in RFC 6598 Shared Address Space.
+
+    Handles the IPv4-mapped IPv6 form (``::ffff:100.100.100.200``) by
+    testing the embedded IPv4 address.  ``in`` against a
+    differently-versioned (pure-IPv6) address safely returns ``False``.
+
+    In the real request path (:func:`_is_blocked_ip`, which ``or``-chains
+    ``ip.is_private`` before this helper), an IPv4-mapped IPv6 CGNAT literal
+    is already caught upstream — the stdlib's private-network classification
+    covers the entire ``::ffff:0:0/96`` mapped range unconditionally, so
+    ``ip.is_private`` short-circuits before this function is ever reached
+    for a mapped literal. The ``ipv4_mapped`` handling here is
+    defense-in-depth: it protects direct callers of this helper (as the
+    unit tests exercise) and keeps the result correct if
+    ``_is_blocked_ip``'s ``or``-chain order is ever changed — it is not
+    the primary mechanism preventing the bypass in the current request
+    path.
+    """
+    candidate = getattr(ip, "ipv4_mapped", None) or ip
+    return candidate in _CGNAT_SHARED_ADDRESS_SPACE
+
 
 def _is_blocked_ip(ip: ipaddress._BaseAddress) -> bool:
     """Single source of truth for the SSRF private-range policy.
@@ -137,12 +172,21 @@ def _is_blocked_ip(ip: ipaddress._BaseAddress) -> bool:
     Encapsulates the set of address kinds that ForgeLM's SSRF guard
     refuses to send outbound payloads to: RFC1918 private space, the
     loopback range, link-local (incl. cloud IMDS at 169.254.169.254),
-    the IETF reserved buckets, and multicast.  Used by both
-    :func:`_is_private_destination` (legacy yes/no predicate) and
-    :func:`_resolve_safe_destination` (DNS-rebinding-safe resolver) so
-    the policy cannot drift between the two call sites.
+    RFC 6598 Shared Address Space / CGNAT (100.64.0.0/10, incl. Alibaba
+    Cloud ECS IMDS at 100.100.100.200), the IETF reserved buckets, and
+    multicast.  Used by both :func:`_is_private_destination` (legacy
+    yes/no predicate) and :func:`_resolve_safe_destination`
+    (DNS-rebinding-safe resolver) so the policy cannot drift between the
+    two call sites.
     """
-    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or _is_cgnat_shared_address(ip)
+    )
 
 
 def _is_private_destination(host: str) -> bool:
@@ -496,8 +540,11 @@ def safe_post(
     # hang the trainer on a dead endpoint.  Validated BEFORE the SSRF
     # resolve so a local policy error (timeout=0, sub-floor value) is
     # rejected without a DNS round-trip; this also keeps unit tests
-    # that exercise the timeout-floor branch hermetic.
-    if not isinstance(timeout, (int, float)) or timeout < min_timeout:
+    # that exercise the timeout-floor branch hermetic.  ``math.isfinite``
+    # rejects NaN and ±Infinity: NaN defeats every ``<`` comparison (all
+    # False) and Infinity reproduces the same "block forever" hang as
+    # timeout=0, so both must be refused alongside the lower-bound check.
+    if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout < min_timeout:
         raise HttpSafetyError(f"Timeout below {min_timeout}s floor: timeout={timeout!r}")
 
     # SSRF guard — issue #14: resolve once to a public IP literal so the
@@ -641,8 +688,9 @@ def safe_get(
     # so a misconfigured caller is rejected without a DNS round-trip;
     # keeps unit tests for these branches hermetic.
 
-    # Timeout floor.
-    if not isinstance(timeout, (int, float)) or timeout < min_timeout:
+    # Timeout floor.  ``math.isfinite`` rejects NaN / ±Infinity — see the
+    # matching guard in ``safe_post`` for the "block forever" rationale.
+    if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout < min_timeout:
         raise HttpSafetyError(f"Timeout below {min_timeout}s floor: timeout={timeout!r}")
 
     # Method policy — only GET / HEAD allowed (read-side helper).

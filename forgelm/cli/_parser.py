@@ -128,6 +128,7 @@ def _add_deploy_subcommand(subparsers) -> None:
         "--vendor",
         type=str,
         default="aws",
+        choices=["aws", "azure", "gcp"],
         help="Cloud vendor for HF Endpoints config (default: aws).",
     )
     _add_common_subparser_flags(p, include_output_format=True)
@@ -304,6 +305,19 @@ def _add_ingest_subcommand(subparsers) -> None:
         default=None,
         metavar="MODEL_NAME",
         help="HuggingFace model name passed to AutoTokenizer.from_pretrained when --chunk-tokens is set.",
+    )
+    p.add_argument(
+        "--input-encoding",
+        type=str,
+        default=None,
+        metavar="CODEC",
+        help=(
+            "Source codec for decoding TXT / Markdown inputs. Default None auto-detects "
+            "via utf-8-sig with a BOM-strip + errors='replace' fallback. Set a legacy codec "
+            "(e.g. cp1254 / cp1252 / latin-1) to correctly decode corpora exported from older "
+            "Windows tooling instead of silently replacing every non-ASCII byte with U+FFFD. "
+            "Applies to TXT / MD only; PDF / DOCX / EPUB carry their own encoding metadata."
+        ),
     )
     # ---- Phase 15 flags (Wave 1) -----------------------------------------
     p.add_argument(
@@ -674,7 +688,12 @@ def _add_verify_audit_subcommand(subparsers) -> None:
             "where every entry must be HMAC-authenticated."
         ),
     )
-    _add_common_subparser_flags(p, include_output_format=False)
+    # ``--output-format json`` emits the {success, valid, entries_count,
+    # hmac_verified, errors} envelope that _run_verify_audit_cmd already
+    # builds — matching the verify-annex-iv / verify-gguf / verify-integrity
+    # siblings so the flag works post-subcommand, not only when placed before
+    # the subcommand name.
+    _add_common_subparser_flags(p, include_output_format=True)
 
 
 def _add_approve_subcommand(subparsers) -> None:
@@ -771,18 +790,18 @@ def _add_verify_annex_iv_subcommand(subparsers) -> None:
         "path",
         help=(
             "Path to the Annex IV JSON artifact (typically "
-            "``compliance/annex_iv_<run>.json``).  When ``--pipeline`` is set, "
+            "`compliance/annex_iv_<run>.json`).  When `--pipeline` is set, "
             "this is interpreted as a pipeline run directory containing "
-            "``compliance/pipeline_manifest.json`` instead."
+            "`compliance/pipeline_manifest.json` instead."
         ),
     )
     p.add_argument(
         "--pipeline",
         action="store_true",
         help=(
-            "Phase 14: interpret ``path`` as a pipeline run directory and "
-            "validate the chain-level ``pipeline_manifest.json`` (chain "
-            "integrity, stage-index ordering, ``stopped_at`` coherence, "
+            "Phase 14: interpret `path` as a pipeline run directory and "
+            "validate the chain-level `pipeline_manifest.json` (chain "
+            "integrity, stage-index ordering, `stopped_at` coherence, "
             "per-stage training_manifest existence)."
         ),
     )
@@ -828,7 +847,7 @@ def _add_safety_eval_subcommand(subparsers) -> None:
     probes_group.add_argument(
         "--default-probes",
         action="store_true",
-        help="Use the bundled 50-prompt probe set covering ~14 harm categories.",
+        help="Use the bundled 51-prompt probe set covering 18 harm categories.",
     )
     p.add_argument(
         "--output-dir",
@@ -1183,7 +1202,7 @@ def _add_reject_subcommand(subparsers) -> None:
     _add_common_subparser_flags(p, include_output_format=True)
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="ForgeLM: Language Model Fine-Tuning Toolkit",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1250,10 +1269,17 @@ def parse_args():
         ),
     )
     parser.add_argument("--version", action="version", version=f"ForgeLM {_get_version()}")
-    parser.add_argument(
+    # Non-training modes are mutually exclusive.  Each one ``sys.exit()``s in
+    # its own branch of ``_maybe_run_no_train_mode`` (an ordered if-chain), so
+    # passing two at once would silently run only the first and drop the rest
+    # with a 0 exit code — the "no silent failures" principle forbids that.
+    # Grouping them makes argparse reject the combination at parse time with an
+    # actionable "not allowed with" error instead.
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--dry-run", action="store_true", help="Validate configuration and check model/dataset access without training."
     )
-    parser.add_argument(
+    mode_group.add_argument(
         "--fit-check",
         action="store_true",
         help=(
@@ -1274,14 +1300,14 @@ def parse_args():
         action="store_true",
         help="Air-gapped mode: disable all HF Hub network calls. Models and datasets must be available locally.",
     )
-    parser.add_argument(
+    mode_group.add_argument(
         "--benchmark-only",
         type=str,
         default=None,
         metavar="MODEL_PATH",
         help="Run benchmark evaluation on an existing model without training. Requires evaluation.benchmark config.",
     )
-    parser.add_argument(
+    mode_group.add_argument(
         "--merge", action="store_true", help="Run model merging from the merge section of your config. No training."
     )
     # Phase 14 — multi-stage pipeline chains.  Active only when the
@@ -1328,7 +1354,7 @@ def parse_args():
         help=(
             "Multi-stage pipelines only: when used with --stage, replaces the "
             "auto-chained input model with this path.  The audit-log entry "
-            "records ``input_source: cli_override`` so reviewers see the chain "
+            "records `input_source: cli_override` so reviewers see the chain "
             "was broken intentionally."
         ),
     )
@@ -1339,12 +1365,12 @@ def parse_args():
         choices=["text", "json"],
         help="Output format for results (default: text). JSON mode outputs machine-readable results to stdout.",
     )
-    parser.add_argument(
+    mode_group.add_argument(
         "--generate-data",
         action="store_true",
         help="Generate synthetic training data using teacher model. No training.",
     )
-    parser.add_argument(
+    mode_group.add_argument(
         "--compliance-export",
         type=str,
         default=None,

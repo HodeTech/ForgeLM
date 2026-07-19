@@ -232,11 +232,17 @@ def _detect_hardware() -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-# HF Hub dataset IDs look like ``<org>/<name>`` — exactly one slash, with
-# the allowed character set used by the Hub.  We accept these BYOD
-# inputs without touching the local filesystem; the trainer resolves
-# them at runtime.  See ``forgelm/wizard/_byod.py`` for the consumer.
-_HF_HUB_ID_RE = re.compile(r"^[\w.-]{1,96}/[\w.-]{1,96}$", flags=re.ASCII)
+# HF Hub dataset IDs usually look like ``<org>/<name>`` (one slash), but
+# the Hub also still serves legacy canonical datasets with no namespace
+# at all (e.g. ``squad``, ``glue``, ``imdb``) — the optional ``<org>/``
+# group accepts both shapes.  Bounded quantifiers ({1,96} on each
+# segment) keep this ReDoS-safe regardless (see docs/standards/regex.md
+# rule 3): no unbounded repetition, and the literal ``/`` separator
+# leaves nothing for the two ``[\w.-]`` runs to backtrack against each
+# other over.  We accept these BYOD inputs without touching the local
+# filesystem; the trainer resolves them at runtime.  See
+# ``forgelm/wizard/_byod.py`` for the consumer.
+_HF_HUB_ID_RE = re.compile(r"^(?:[\w.-]{1,96}/)?[\w.-]{1,96}$", flags=re.ASCII)
 
 
 # ``sys.platform`` is read by the welcome step's backend hint; expose

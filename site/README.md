@@ -18,19 +18,26 @@ Then visit <http://localhost:8080/>.
 
 ```
 site/
-├── index.html         # landing — hero, pipeline, features, YAML demo, CTA
-├── features.html      # full feature matrix (Training / Eval / Data / Enterprise)
-├── compliance.html    # EU AI Act Article 9-17 + Annex IV mapping
-├── quickstart.html    # 5-step developer onboarding
-├── contact.html       # Formspree-backed contact form + channels
-├── privacy.html       # privacy policy (EN + TR)
-├── terms.html         # terms of use (EN + TR)
+├── index.html          # landing — hero, pipeline, features, YAML demo, CTA
+├── features.html       # full feature matrix (Training / Eval / Data / Enterprise)
+├── compliance.html     # EU AI Act Article 9-17 + Annex IV mapping
+├── quickstart.html     # 5-step developer onboarding
+├── guide.html           # user-manual SPA viewer (hash-router over docs/usermanuals/{en,tr})
+├── contact.html        # Formspree-backed contact form + channels
+├── privacy.html        # privacy policy (EN + TR)
+├── terms.html          # terms of use (EN + TR)
 ├── css/
-│   └── style.css      # design tokens, components — dark-first, light variant
+│   └── style.css       # design tokens, components — dark-first, light variant
 ├── js/
-│   ├── i18n.js        # EN/TR language switcher (localStorage-backed)
-│   └── main.js        # nav, theme toggle, copy buttons, form, terminal animation
-└── assets/            # (empty — drop OG images / favicons here later)
+│   ├── _shared.js          # small cross-page helpers shared by guide.js / wizard.js / i18n.js
+│   ├── guide.js             # user-manual SPA router + renderer for guide.html
+│   ├── i18n.js              # EN/TR site-chrome language switcher (localStorage-backed)
+│   ├── main.js              # nav, theme toggle, copy buttons, form, terminal animation
+│   ├── translations.js      # 6-locale (EN/TR/DE/FR/ES/ZH) site chrome copy registry
+│   ├── wizard.js             # in-browser YAML config wizard, mirrors `forgelm --wizard`
+│   └── wizard_defaults.js   # schema-derived wizard defaults — generated, see file header
+└── assets/             # does not exist yet in this checkout — see "Domain / og-image /
+                         # favicon" below; site/*.html already reference paths under it
 ```
 
 ## Design
@@ -67,16 +74,16 @@ grep -rl "HodeTech/ForgeLM" site/ | xargs sed -i '' 's|HodeTech/ForgeLM|YOUR_ORG
 
 ### 3. Domain / og-image / favicon
 
-All pages already have canonical, og:image, og:url, og:locale, and favicon tags in place — they use the placeholder `YOUR_DOMAIN`. Once you have a domain, run:
+All pages already have canonical, og:image, og:url, og:locale, and favicon tags in place, hardcoded to the live production domain `https://forgelm.dev` (no placeholder — there is nothing to search-and-replace here). If you fork the site under a different domain, run:
 
 ```bash
-grep -rl "YOUR_DOMAIN" site/ | xargs sed -i '' 's|https://YOUR_DOMAIN|https://your-actual-domain.com|g'
+grep -rl "forgelm.dev" site/ | xargs sed -i '' 's|https://forgelm.dev|https://your-actual-domain.com|g'
 ```
 
-Then:
+**Known gap (tracked, not yet closed):** every `site/*.html` page links `favicon.ico`, `apple-touch-icon.png`, and `https://forgelm.dev/assets/og.png` — none of these files exist in this checkout, and `site/assets/` is not created yet. This means the live site currently serves no browser-tab favicon, no iOS home-screen icon, and no social-share preview image; it is not merely an unconfigured fork placeholder. Closing it requires real design assets (not something a docs edit can produce):
 
-- Drop a 1200×630 PNG at `site/assets/og.png` for social previews.
-- Drop `favicon.ico` and `apple-touch-icon.png` at `site/favicon.ico` and `site/apple-touch-icon.png`.
+- A 1200×630 PNG at `site/assets/og.png` for social previews.
+- `favicon.ico` and `apple-touch-icon.png` at `site/favicon.ico` and `site/apple-touch-icon.png`.
 
 ## Deployment
 

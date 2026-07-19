@@ -72,24 +72,22 @@ Air-gap'te sentetik veri üretimi gerekirse yerel teacher kullanın:
 ```yaml
 synthetic:
   enabled: true
-  teacher:
-    provider: "local"
-    model: "Qwen/Qwen2.5-72B-Instruct"  # cache'lenmiş olmalı
-    load_in_4bit: true
+  teacher_model: "Qwen/Qwen2.5-72B-Instruct"  # HF Hub id — cache'lenmiş olmalı
+  teacher_backend: "local"                    # "api" değil — network çağrısı yok
 ```
 
-OpenAI / Anthropic sağlayıcıları `--offline`'da başarısız olur.
+Nested `synthetic.teacher:` alt-bloğu (`provider` / `model` / `load_in_4bit`) yoktur — `teacher_model` ve `teacher_backend` `synthetic:` üzerinde düz alanlardır. API-destekli bir teacher (`teacher_backend: "api"`, örn. OpenAI / Anthropic) `--offline`'da başarısız olur.
 
 ## Yerel LLM-as-judge
 
 ```yaml
 evaluation:
-  judge:
+  llm_judge:
     enabled: true
-    judge_model:
-      provider: "local"
-      model: "Qwen/Qwen2.5-72B-Instruct"
+    judge_model: "Qwen/Qwen2.5-72B-Instruct"  # düz string — yerel model yolu veya HF Hub id
 ```
+
+`judge_model` nested bir `{provider, model}` objesi değil, düz bir string alandır — `judge_api_key_env` ayarlanmamış (varsayılan) bir yerel HF yolu/id yerel bir judge'a çözümlenir.
 
 72B yerel judge `gpt-4o-mini`'den yavaş ama kalite tipik kullanım için karşılaştırılabilir. Bkz. [LLM-as-Judge](#/evaluation/judge).
 
@@ -101,13 +99,7 @@ evaluation:
 $ forgelm cache-tasks --tasks hellaswag,arc_easy,truthfulqa,mmlu
 ```
 
-ForgeLM'i cache kullanacak şekilde konfigüre edin:
-
-```yaml
-evaluation:
-  benchmark:
-    tasks_dir: "${HF_HOME}/lm-evaluation-harness/"
-```
+Cache'i işaret edecek bir `evaluation.benchmark.tasks_dir` (veya başka bir) YAML alanı yoktur — `forgelm cache-tasks`, `lm-evaluation-harness`'ın altındaki `datasets` kütüphanesinin eval zamanında okuduğu aynı `HF_DATASETS_CACHE` (yoksa `HF_HOME/datasets`'e düşer) environment variable'ını kullanır. `--benchmark-only` çalıştırmadan önce yukarıdaki ["Air-gap host üzerinde"](#air-gap-host-üzerinde) bölümündeki environment variable'ları (`HF_HOME`, `HF_DATASETS_OFFLINE=1`) ayarlayın; cache otomatik olarak kullanılır — config bloğuna gerek yoktur.
 
 ## Air-gap modu doğrulama
 

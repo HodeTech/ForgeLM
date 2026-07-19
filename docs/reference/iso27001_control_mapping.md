@@ -107,7 +107,7 @@ completeness so the deployer's SoA is auditable end-to-end.
 | A.8.6 Capacity management | FL-helps | `forgelm doctor` resource report; `resource_usage` manifest block |
 | A.8.7 Protection against malware | OOS | — |
 | A.8.8 Management of technical vulnerabilities | FL-helps | SBOM; `pip-audit` nightly; `bandit` CI |
-| A.8.9 Configuration management | FL | YAML validated via Pydantic (`extra="forbid"` on every config block); `forgelm --dry-run` resolves and validates without training; pinned model + adapter SHAs in `pipeline.training_started` audit events |
+| A.8.9 Configuration management | FL | YAML validated via Pydantic (`extra="forbid"` on every config block); `forgelm --dry-run` resolves and validates without training; per-run `config_hash` (see `compute_config_hash`) bound into `training_manifest.yaml`, the `human_approval.required` audit event, and the JSON output envelope; output artifact SHA-256 hashes in `model_integrity.json` (`model.integrity_verified` audit event) |
 | A.8.10 Information deletion | FL | `forgelm purge` Article 17; salted-hash audit; `data.erasure_warning_memorisation` |
 | A.8.11 Data masking | FL | `forgelm audit` regex + Presidio ML-NER |
 | A.8.12 Data leakage prevention | FL | `forgelm reverse-pii` plaintext residual scan |
@@ -130,7 +130,7 @@ completeness so the deployer's SoA is auditable end-to-end.
 | A.8.29 Security testing in development and acceptance | FL-helps | `pytest` ~1493 tests; `bandit` static analysis |
 | A.8.30 Outsourced development | OOS | — |
 | A.8.31 Separation of development, test and production environments | FL-helps | `forgelm --dry-run`; staging dir |
-| A.8.32 Change management | FL | `human_approval.required/granted/rejected` audit chain; staging snapshot retained until promotion; `pipeline.training_started` records the run-pinned model and adapter revisions for diff |
+| A.8.32 Change management | FL | `human_approval.required/granted/rejected` audit chain; staging snapshot retained until promotion; SHA-256 artifact hashes in `model_integrity.json` (`model.integrity_verified` audit event) let `forgelm verify-integrity` diff a promoted model against its recorded manifest — note ForgeLM does not pin an upstream base-model Hub revision SHA today, only the config identity (`config_hash`) and the output artifacts |
 | A.8.33 Test information | FL-helps | `forgelm audit` flags PII / secrets in test sets too |
 | A.8.34 Protection of information systems during audit testing | OOS | — |
 

@@ -1,150 +1,97 @@
 ---
 title: Trend İzleme
-description: Eval sonuçlarını koşular arası karşılaştırın — eşikleri aşmadan önce yavaş drift'leri yakalayın.
+description: Eşikleri aşmadan önce yavaş drift'leri yakalamak için güvenlik puanlarını koşular arası karşılaştırın.
 ---
 
 # Trend İzleme
 
-Koşu başı eşikler regresyonları yakalar; trend izleme drift'i yakalar. Beş koşudur sürekli yükselen kategori, bir kerelik sıçramadan farklı (ve genelde daha önemli) bir sinyaldir. ForgeLM eval sonuçlarını proje başına geçmiş dosyasında saklar ve her koşuda trend raporlar.
+Koşu başı eşikler regresyonları yakalar; trend izleme drift'i yakalar. Beş koşudur düşen bir güvenlik puanı, bir kerelik düşüşten farklı (ve genelde daha önemli) bir sinyaldir. ForgeLM'in bugünkü trend izlemesi bilinçli olarak küçük: her güvenlik değerlendirmesi bir JSON Lines geçmiş dosyasına tek satır ekler ve bu geçmişi bir drift sinyaline dönüştürmek size kalır (bir `jq` sorgusu, bir notebook veya bir Grafana/Datadog dashboard'u). Config-driven bir istatistiksel drift dedektörü ve `evaluation.trend:` config bloğu yoktur — `evaluation` şemasında `trend` alanı yoktur.
 
 ## Hızlı örnek
 
-Aynı projenin birkaç koşusundan sonra audit raporuna trend bölümü dahil olur:
+`evaluation.safety.enabled: true` her çalıştığında (eğitim sırasında veya özel `forgelm safety-eval` subcommand'ı ile), ForgeLM `safety_results.json`'un yanına `safety_trend.jsonl`'a bir satır ekler:
 
 ```json
-{
-  "trend": {
-    "lookback_runs": 10,
-    "benchmark": {
-      "hellaswag": {"trend": "stable", "delta_per_run": 0.001},
-      "truthfulqa": {"trend": "drifting_down", "delta_per_run": -0.012, "concern": "medium"}
-    },
-    "safety": {
-      "S5": {"trend": "drifting_up", "delta_per_run": 0.04, "concern": "high"},
-      "S10": {"trend": "stable", "delta_per_run": 0.001}
-    }
-  }
-}
+{"timestamp": "2026-04-29T14:33:04Z", "safety_score": 0.94, "safe_ratio": 0.96, "passed": true}
+{"timestamp": "2026-05-03T09:12:47Z", "safety_score": 0.91, "safe_ratio": 0.93, "passed": true}
+{"timestamp": "2026-05-10T16:45:02Z", "safety_score": 0.85, "safe_ratio": 0.88, "passed": false}
 ```
 
-`concern` seviyeleri:
+Koşu başına bir satır, dört alan: `timestamp`, `safety_score`, `safe_ratio`, `passed`. Görev-kategorisi başına (`S5`, `S10`, ...) trend yoktur ve benchmark trend'i de yoktur — `forgelm/benchmark.py` hiç trend dosyası yazmaz; yalnızca güvenlik yolu yazar.
 
-| Seviye | Tetikleyici |
-|---|---|
-| `none` | Lookback penceresinde drift yok. |
-| `low` | İstatistiksel drift var ama küçük. |
-| `medium` | Sabit drift; mevcut hızla ~10 koşuda eşiğe çarpacak. |
-| `high` | Sabit drift; ~3 koşuda eşiğe çarpacak. |
-| `critical` | Eşiğe yakın VE drift devam ediyor. |
+## Drift'i kendiniz hesaplama
 
-## Drift nasıl hesaplanır
+ForgeLM bu dosya üzerinde sizin için regresyon veya anlamlılık testi çalıştırmaz. `jq` ile drift'i yakalamanın basit, dürüst bir yolu:
 
-Her metrik (benchmark görevi veya güvenlik kategorisi) için:
+```shell
+$ jq -s '
+    map(.safety_score) as $s |
+    ($s | add / length) as $avg |
+    {runs: ($s | length), average: $avg, latest: $s[-1], delta: ($s[-1] - $avg)}
+  ' ./checkpoints/safety/safety_trend.jsonl
+```
 
-1. Proje geçmişinden son N koşuyu çek.
-2. Puanı koşu indeksine karşı doğrusal regresle.
-3. Slope'u t-testle sıfıra karşı test et.
-4. Slope anlamlı *ve* büyüklüğü gürültü tabanının üstündeyse drift raporla.
-
-`lookback_runs` varsayılan 10 — eğitim sıklığınıza göre ayarlayın.
+`delta` birkaç kontrol boyunca sürekli negatifse, `safety_score` düşüş eğilimindedir — bugün ForgeLM'de hiçbir şey bunun üzerine otomatik geri almasa da, bunu bir `min_safety_score` regresyonu gibi ele alın. Daha titiz bir şey için (doğrusal fit, p-değerleri, kategori başına kırılım), JSONL'ı pandas'a veya bir dashboard aracına aktarın — ForgeLM'in buradaki işi temiz veri üretmektir, onu analiz etmek değil.
 
 ## Konfigürasyon
 
+Açılacak bir şey yok. Trend loglaması bir güvenlik değerlendirmesinin koşulsuz yan etkisidir — `evaluation.safety.enabled: true` her çalıştığında (eğitim zamanında veya `forgelm safety-eval` ile), trend satırı otomatik olarak eklenir:
+
 ```yaml
 evaluation:
-  trend:
+  safety:
     enabled: true
-    history_file: "./.forgelm/eval-history.jsonl"
-    lookback_runs: 10
-    drift_p_threshold: 0.05             # istatistiksel anlamlılık
-    fail_on_concern: "high"             # drift 'high' olursa exit 3
 ```
 
-`fail_on_concern: high` trend izlemeyi "tavsiye"den "gating"e yükseltir — CI'nız sadece koşu başı regresyonlarda değil, soruna doğru giden drift'lerde de başarısız olur.
+Ayarlanacak bir `lookback_runs`, `drift_p_threshold` veya `fail_on_concern` anahtarı yoktur — bu alanların hiçbiri `SafetyConfig` üzerinde veya `ForgeConfig`'in başka bir yerinde mevcut değildir.
 
 ## Geçmiş dosyası nerede
 
-Varsayılan `.forgelm/eval-history.jsonl`, proje kök dizininde. Her koşu bir satır ekler:
+`safety_trend.jsonl`, güvenlik-değerlendirme çıktısının geri kalanıyla aynı dizinde, `safety_results.json`'un yanına yazılır:
 
-```json
-{"ts": "2026-04-29T14:33:04Z", "run_id": "abc123", "config_hash": "deadbeef", "benchmark": {...}, "safety": {...}}
-```
+- Eğitim-zamanı güvenlik kapısı: `<training.output_dir>/safety/safety_trend.jsonl` (varsayılan `./checkpoints/safety/safety_trend.jsonl`).
+- Bağımsız `forgelm safety-eval --output-dir DIR`: `DIR/safety_trend.jsonl`.
 
-Bu dosyayı commit edin. Küçüktür (koşu başına bir satır, JSON) ve CI koşuları ile katkıda bulunanlar arası trend izlemenin tek yoludur.
+Varsayılan `training.output_dir` genelde koşu başına farklı (ve genelde gitignore'lu) olduğundan, geçmiş yalnızca aynı çıktı dizinini paylaşan koşular arasında birikir. Koşu başına tek satır yerine uzun soluklu bir trend çizgisi istiyorsanız, birden çok koşuyu aynı `training.output_dir`'e yönlendirin veya her kaydedilmiş checkpoint için sonradan `forgelm safety-eval --output-dir <paylaşılan-dizin>` çalıştırın.
 
 ## Görselleştirme
 
-ForgeLM bir CLI raporu yayınlar. Özel `forgelm trend` subcommand'ı v0.6.0+ Pro CLI seviyesi için planlanmıştır ([GitHub'daki Phase 13 yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)) — bugün aynı veri JSONL'dan `jq` ile sorgulanabilir. Bugünkü çalışan akış:
+ForgeLM bugün bir `forgelm trend` CLI raporu yayınlamıyor. Koşular-arası karşılaştırma — güvenlik trend'i dahil — Pro CLI gözlemlenebilirlik dashboard'unun kapsamında (traction'a bağlı; bkz. [GitHub'daki Faz 13 yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)), ücretsiz katman CLI subcommand'ı değil. O yayınlanana kadar, JSONL'a karşı `jq` çalışan akıştır:
 
 ```shell
-# Son 20 S5 (iftira) skoru:
-$ jq -r 'select(.safety.S5 != null) | "\(.ts) \(.safety.S5)"' \
-    .forgelm/eval-history.jsonl | tail -20
+$ jq -r '"\(.timestamp) \(.safety_score)"' ./checkpoints/safety/safety_trend.jsonl | tail -20
 ```
 
-Görselleştirme için JSONL Grafana / Datadog'a kolay yüklenir
-("Dashboard için" altta).
-
-Özel `forgelm trend` subcommand'ı v0.6.0+ ship edince şöyle
-görünecek — pseudo-output, BUGÜN runnable DEĞİL:
-
-```text
-# planlanan-v0.6.0+ pseudo-output (bugün runnable değil):
-$ forgelm trend --metric "safety.S5" --lookback 20
-
-S5 (iftira) — son 20 koşu:
-
-  0.42 ┤                                                ╭────●
-  0.30 ┤                                          ╭─────╯
-  0.18 ┤                              ╭───────────╯
-  0.06 ┤   ●─────●─────●─────●────────╯
-       └─┴───────────────────────────────────────────────────┘
-         1  3  5  7  9  11 13 15 17 19  20
-
-Doğrusal fit: slope=+0.018/koşu, p=0.001 — yukarı drift (high concern)
-```
-
-Dashboard için JSONL Grafana veya Datadog'a kolay yüklenir:
+Dashboard'lar için JSONL doğrudan Grafana veya Datadog'a yüklenir:
 
 ```shell
-$ jq '.benchmark.truthfulqa, .ts' .forgelm/eval-history.jsonl > truthfulqa-trend.csv
+$ jq -c '.' ./checkpoints/safety/safety_trend.jsonl > safety-trend.ndjson
 ```
 
 ## Koşu tanımlama
 
-Her koşunun `run_id` (UUID) ve `config_hash` (YAML config'in hash'i) vardır. Koşuları karşılaştırırken benzer-için-benzer karşılaştırın — hyperparam değişikliği, regresyon olmadan baseline'ı kaydırabilir.
-
-Geçmişi filtrele. Bugünkü çalışan akış `jq` kullanır:
+`safety_trend.jsonl` satırları yalnızca `timestamp`, `safety_score`, `safe_ratio` ve `passed` taşır — karşı join yapılacak bir `run_id` veya `config_hash` alanı yoktur. Bir trend satırını belirli bir eğitim koşusuyla ilişkilendirmeniz gerekiyorsa, yerleşik bir join anahtarı beklemek yerine `timestamp`'i kendi koşu logunuzla (veya o koşu için `audit_log.jsonl`'un `training_started` / `training_completed` olaylarıyla) çapraz referanslayın.
 
 ```shell
-$ jq 'select(.config_hash == "deadbeef") | .benchmark.hellaswag' \
-    .forgelm/eval-history.jsonl | tail -30
-```
-
-Özel `forgelm trend` subcommand'ı (planlanan v0.6.0+ Pro CLI formu, bugün runnable değil):
-
-```text
-$ forgelm trend --metric "benchmark.hellaswag" \
-    --filter "config_hash=deadbeef" \
-    --lookback 30
+$ jq -r 'select(.passed == false) | .timestamp' ./checkpoints/safety/safety_trend.jsonl
 ```
 
 ## Sık hatalar
 
 :::warn
-**Config-değişen koşularla config-sabit koşuları karıştırmak.** Farklı config'li koşular arasında hesaplanan trend anlamsızdır. Benzer-için-benzer için `--filter config_hash` kullanın.
+**Otomatik drift uyarıları beklemek.** ForgeLM'de hiçbir şey `safety_trend.jsonl`'ı izlemez ve çoklu-koşu trend'i yüzünden bir koşuyu başarısız kılmaz — yalnızca mevcut koşunun `evaluation.safety.max_safety_regression` / `min_safety_score` kapıları exit kodunu belirler. Trend analizi bugün tavsiye niteliğinde ve manuel.
 :::
 
 :::warn
-**Çok kısa lookback.** `lookback_runs: 3` ile her rastgele dalgalanma drift gibi görünür. Kararlı sinyal için 10+'da kalın.
+**Farklı `training.output_dir` değerlerini karşılaştırmak.** Her koşu yeni bir dizine yazarsa, `safety_trend.jsonl` dizin başına bir satırdan fazla birikmez. Gerçek bir trend elde etmek için dizini yeniden kullanın (veya birden çok `safety_trend.jsonl` dosyasını kendiniz birleştirin).
 :::
 
 :::tip
-**Geçmişi açıklayın.** Bilerek bir şey değiştirdiğinizde (yeni dataset, yeni hyperparam) `.forgelm/eval-history.jsonl`'a baseline'ların neden kayabileceğini açıklayan bir not commit edin. Gelecekteki kendiniz şimdiki kendinize teşekkür edecek.
+**Trend dosyasının yanında kendi koşu loginuzu tutun.** `run_id`/`config_hash` join anahtarı olmadığından, `timestamp`'i config/koşu ile eşleyen hafif bir dış log (spreadsheet, CI artifact'ı veya `audit_log.jsonl`) trend verisini kullanışlı kılan şeydir.
 :::
 
 ## Bkz.
 
-- [Benchmark Entegrasyonu](#/evaluation/benchmarks) — veriyi üretir.
-- [Llama Guard Güvenliği](#/evaluation/safety) — güvenlik puanlarını üretir.
-- [Otomatik Geri Alma](#/evaluation/auto-revert) — koşu başı odaklı kardeş kapı.
+- [Llama Guard Güvenliği](#/evaluation/safety) — bu sayfanın izlediği `safety_score` / `safe_ratio`'yu üretir.
+- [Otomatik Geri Alma](#/evaluation/auto-revert) — koşu başı kapı; trend izleme tavsiye niteliğinde, gating değil.
+- [Benchmark Entegrasyonu](#/evaluation/benchmarks) — kendi trend dosyası olmayan ayrı bir kapı.

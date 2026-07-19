@@ -51,10 +51,11 @@ class DeployResult:
     content: Optional[str] = None  # The generated config text
     error: Optional[str] = None
     # Distinguishes a caller-input error (unsupported target, model_path is
-    # not a directory) from a runtime failure (filesystem write error,
-    # template render crash).  The CLI dispatcher routes ``"input"`` to
-    # EXIT_CONFIG_ERROR (1) and ``"runtime"`` to EXIT_TRAINING_ERROR (2),
-    # matching the public exit-code contract.  ``None`` on success.
+    # not a directory) from a runtime failure (filesystem write error —
+    # disk full, permission denied, read-only mount).  The CLI dispatcher
+    # routes ``"input"`` to EXIT_CONFIG_ERROR (1) and ``"runtime"`` to
+    # EXIT_TRAINING_ERROR (2), matching the public exit-code contract.
+    # ``None`` on success.
     error_kind: Optional[Literal["input", "runtime"]] = None
 
 
@@ -312,6 +313,18 @@ def generate_deploy_config(
         logger.info("Deploy config written to %s", output_path)
         return DeployResult(success=True, target=target, output_path=output_path, content=content)
 
-    except Exception as e:  # noqa: BLE001 — best-effort: deploy-config generators cross filesystem writes (OSError), template rendering (KeyError/ValueError), and target-specific YAML/JSON serialisation; surfacing every variant as a structured DeployResult is the documented public contract.  # NOSONAR
-        logger.exception("Failed to generate deploy config for target '%s'", target)
+    except OSError as e:
+        # The filesystem write (``os.makedirs`` / ``open`` / ``f.write``) is
+        # the only genuinely-external, non-bug failure in this function's
+        # primary job — disk full, permission denied, read-only mount.  Convert
+        # it to a domain ``DeployResult`` so the CLI dispatcher can map
+        # ``error_kind="runtime"`` to EXIT_TRAINING_ERROR: the raise-vs-return
+        # boundary (config.py / trainer.py raise; deploy.py returns a Result the
+        # dispatcher routes to an exit code), NOT the best-effort
+        # secondary-side-effect carve-out — there is no outer handler here that
+        # owns a primary failure.  Serialization / template-rendering bugs
+        # (KeyError, TypeError from a typo in a per-target generator) are
+        # deliberately left to propagate so they surface as loud test failures
+        # instead of a silent ``success=False``.
+        logger.exception("Failed to write deploy config for target '%s'", target)
         return DeployResult(success=False, target=target, error=str(e), error_kind="runtime")

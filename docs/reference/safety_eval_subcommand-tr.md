@@ -20,7 +20,7 @@ Uygulama: [`forgelm/cli/subcommands/_safety_eval.py`](../../forgelm/cli/subcomma
 | Flag | Tip | Varsayılan | Açıklama |
 |---|---|---|---|
 | `--model PATH` | string (zorunlu) | — | HuggingFace Hub ID, yerel checkpoint dizini veya `.gguf` yolu. "Desteklenen model formatları" bölümüne bakın. |
-| `--classifier PATH` | string | `meta-llama/Llama-Guard-3-8B` | Harm classifier — Hub ID veya yerel yol. |
+| `--classifier PATH` | string | `meta-llama/Llama-Guard-3-8B` | Harm classifier — Hub ID veya yerel yol. **Varsayılan kutudan çıkar çıkmaz çalışır**: generation tabanlı Llama-Guard puanlamasıyla değerlendirilir (aşağıdaki "Desteklenen model formatları" bölümüne bakın). Eğitilmiş bir `safe`/`unsafe` sequence-classification head'i taşıyan özel bir checkpoint ise `text-classification` pipeline'ı üzerinden puanlanır. |
 | `--probes JSONL` | path | — | JSONL probe dosyası (her satır `{"prompt": ..., "category": ...}`). `--default-probes` ile karşılıklı dışlayıcı. |
 | `--default-probes` | bool | `false` | Bundled probe seti'ni kullan (`forgelm/safety_prompts/default_probes.jsonl`) — 18 harm kategorisini kapsayan 51 prompt (`benign-control`, `animal-cruelty`, `biosecurity`, `controlled-substances`, `credentials`, `csam`, `cybersecurity`, `extremism`, `fraud`, `harassment`, `hate-speech`, `jailbreak`, `malware`, `medical-misinfo`, `privacy-violence`, `self-harm`, `sexual-content`, `weapons-violence`). `--probes` ile karşılıklı dışlayıcı. |
 | `--output-dir DIR` | path | cwd | Prompt-başına sonuçların + audit log'un yazılacağı yer. |
@@ -39,7 +39,7 @@ Uygulama: [`forgelm/cli/subcommands/_safety_eval.py`](../../forgelm/cli/subcomma
 | Yerel checkpoint dizini (`./final_model/`) | Destekleniyor | Aynı |
 | `.gguf` dosyası | `EXIT_CONFIG_ERROR` ile **reddedilir** | GGUF safety-eval, Phase 36+ uzantısı için planlandı. GGUF'u HF checkpoint'e geri çevirin (veya export-öncesi HF modele safety-eval çalıştırın) ve yeniden deneyin. |
 
-Classifier aynı loader'ı izler; varsayılan `meta-llama/Llama-Guard-3-8B`, meta-llama lisansına gated bir HF token gerektirir.
+Classifier aynı loader'ı izler. **Kutudan çıkan varsayılan `meta-llama/Llama-Guard-3-8B` generation tabanlı Llama-Guard puanlamasıyla çalışır**: bu, verdictini generated text olarak (`safe` / `unsafe\nS<code>`) üreten generative bir `LlamaForCausalLM` checkpoint'idir; ForgeLM onu `AutoModelForCausalLM` ile yükler, moderation prompt'unu tokenizer'ın Llama-Guard chat template'i üzerinden kurar ve verdicti ayrıştırır — herhangi bir `S1`–`S14` kodunu harm-kategori / ciddiyet dökümüne eşler. Bu yönlendirme, eğitim-config yolunda [`evaluation.safety.classifier_mode`](configuration-tr.md#evaluationsafety-isteğe-bağlı) tarafından sürülür; bağımsız subcommand her zaman `auto` kullanır — generative bir Llama-Guard checkpoint'i için generation, eğitilmiş bir `safe`/`unsafe` head'i taşıyan özel bir checkpoint için `text-classification` pipeline'ı seçilir. Generative bir Llama-Guard checkpoint'i üzerinde pipeline'ı zorlamak (config `classifier_mode: classification`), herhangi bir indirme veya generation gerçekleşmeden önce eyleme geçirilebilir bir `RuntimeError` ile hızlıca reddedilir — generative bir checkpoint'in eğitilmiş bir classification head'i yoktur, dolayısıyla pipeline onu asla puanlayamaz.
 
 ## Çıkış kodları
 
@@ -72,14 +72,14 @@ Eğitim-zamanı pre-flight gate'i, trainer'ın kendi audit zinciri üzerinden da
   "probes": "/path/to/default_probes.jsonl",
   "output_dir": "./safety-eval-output",
   "passed": true,
-  "safety_score": 0.97,
+  "safety_score": 0.96,
   "safe_ratio": 0.96,
-  "category_distribution": {"S1": 0, "S2": 1, "S5": 2, "S10": 0},
+  "category_distribution": {"non_violent_crimes": 1, "defamation": 1},
   "failure_reason": null
 }
 ```
 
-`success`, `passed` `true` ise `true`'dur. `failure_reason` yalnızca geçmeyen sonuçlarda doludur ve gate'in *neden* reddettiğini açıklar (örn. `regression_blocked_categories=['S5']`).
+`success`, `passed` `true` ise `true`'dur. Bağımsız subcommand bir `--scoring` flag'i sunmaz — `SafetyEvalThresholds` burada her zaman `scoring="binary"` varsayılanına döner, ki bu altında `_resolve_safety_score` (`forgelm/safety.py`) `safe_ratio`'yu değiştirmeden döndürür; dolayısıyla `safety_score` ve `safe_ratio` bu envelope'da her zaman sayısal olarak özdeştir. `category_distribution` anahtarları `HARM_CATEGORIES`'ten eşlenen harm-category isimleridir (örn. `S5` için `defamation`), ham S-kodları değil; ve yalnızca gerçekten oluşan kategoriler mevcuttur — hiç ateşlenmeyen kategoriler için sıfır-doldurulmuş bir entry yoktur. `failure_reason` yalnızca geçmeyen sonuçlarda doludur ve gate'in *neden* reddettiğini açıklar — `_evaluate_safety_gates` (`forgelm/safety.py`) tarafından üretilen üç sabit formattan biridir; birden fazla gate başarısız olduğunda ` | ` ile birleştirilir: `"Unsafe ratio (8.00%) exceeds threshold (5.00%)"`, `"Confidence-weighted safety score (0.6200) below threshold (0.7000)"` veya `"Severity 'critical' count (2/40 = 5.00%) exceeds threshold (0.00%)"`. Bu mesajın `confidence_weighted` varyantı yalnızca kütüphane API'si / eğitim-config yolundan (`evaluation.safety.scoring`) erişilebilir — bu skorlama modunun varsayılan `classifier_mode: generation` sınıflandırıcısı altında neden `binary`'ye sayısal olarak eşdeğer olduğu için bkz. [Generation modunda confidence skorlaması](../usermanuals/tr/evaluation/safety.md#generation-modunda-confidence-skorlaması).
 
 ## Çıktı artefaktları
 
@@ -103,12 +103,11 @@ $ forgelm safety-eval \
     --default-probes \
     --output-dir ./safety-baseline-qwen-7b
 PASS: safety-eval against Qwen/Qwen2.5-7B-Instruct
-  safety_score = 0.97
+  safety_score = 0.96
   safe_ratio   = 0.96
   category_distribution:
-    S1: 0
-    S2: 1
-    S5: 2
+    defamation: 1
+    non_violent_crimes: 1
 ```
 
 ### Fine-tune edilmiş domain modeli için özel probe seti

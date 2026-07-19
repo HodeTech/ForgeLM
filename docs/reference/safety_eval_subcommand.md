@@ -20,7 +20,7 @@ Implementation: [`forgelm/cli/subcommands/_safety_eval.py`](../../forgelm/cli/su
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--model PATH` | string (required) | — | HuggingFace Hub ID, local checkpoint dir, or `.gguf` path. See "Supported model formats" below. |
-| `--classifier PATH` | string | `meta-llama/Llama-Guard-3-8B` | Harm classifier — Hub ID or local path. |
+| `--classifier PATH` | string | `meta-llama/Llama-Guard-3-8B` | Harm classifier — Hub ID or local path. **The default works out of the box**: it is scored via generation-based Llama-Guard scoring (see "Supported model formats" below). A custom checkpoint with a trained `safe`/`unsafe` sequence-classification head is scored through the `text-classification` pipeline instead. |
 | `--probes JSONL` | path | — | JSONL probe file (each line `{"prompt": ..., "category": ...}`). Mutually exclusive with `--default-probes`. |
 | `--default-probes` | bool | `false` | Use the bundled probe set (`forgelm/safety_prompts/default_probes.jsonl`) — 51 prompts spanning 18 harm categories (`benign-control`, `animal-cruelty`, `biosecurity`, `controlled-substances`, `credentials`, `csam`, `cybersecurity`, `extremism`, `fraud`, `harassment`, `hate-speech`, `jailbreak`, `malware`, `medical-misinfo`, `privacy-violence`, `self-harm`, `sexual-content`, `weapons-violence`). Mutually exclusive with `--probes`. |
 | `--output-dir DIR` | path | cwd | Where per-prompt results + audit log are written. |
@@ -39,7 +39,7 @@ Exactly one of `--probes` or `--default-probes` is required; supplying both is a
 | Local checkpoint directory (`./final_model/`) | Supported | Same |
 | `.gguf` file | **Refused** with `EXIT_CONFIG_ERROR` | GGUF safety-eval is planned for a Phase 36+ extension. Convert the GGUF back to a HF checkpoint (or run safety-eval against the pre-export HF model) and retry. |
 
-The classifier follows the same loader; the default `meta-llama/Llama-Guard-3-8B` requires an HF token gated to the meta-llama license.
+The classifier follows the same loader. **The shipped default `meta-llama/Llama-Guard-3-8B` works out of the box** via generation-based Llama-Guard scoring: it is a generative `LlamaForCausalLM` checkpoint that emits its verdict as generated text (`safe` / `unsafe\nS<code>`), and ForgeLM loads it with `AutoModelForCausalLM`, builds the moderation prompt through the tokenizer's Llama-Guard chat template, and parses the verdict — mapping any `S1`–`S14` codes to the harm-category / severity breakdown. This routing is driven by [`evaluation.safety.classifier_mode`](configuration.md#evaluationsafety-optional) in the training-config path; the standalone subcommand always uses `auto`, which selects generation for a generative Llama-Guard checkpoint and the `text-classification` pipeline for a custom checkpoint that carries a trained `safe`/`unsafe` head. Forcing the pipeline on a generative Llama-Guard checkpoint (config `classifier_mode: classification`) is refused fast with an actionable `RuntimeError` before any download or generation happens — a generative checkpoint has no trained classification head, so the pipeline could never score it.
 
 ## Exit codes
 
@@ -72,14 +72,14 @@ The training-time pre-flight gate emits richer events through the trainer's own 
   "probes": "/path/to/default_probes.jsonl",
   "output_dir": "./safety-eval-output",
   "passed": true,
-  "safety_score": 0.97,
+  "safety_score": 0.96,
   "safe_ratio": 0.96,
-  "category_distribution": {"S1": 0, "S2": 1, "S5": 2, "S10": 0},
+  "category_distribution": {"non_violent_crimes": 1, "defamation": 1},
   "failure_reason": null
 }
 ```
 
-`success` is `true` iff `passed` is `true`. `failure_reason` is populated only on a non-passing result and explains *why* the gate refused (e.g. `regression_blocked_categories=['S5']`).
+`success` is `true` iff `passed` is `true`. The standalone subcommand does not expose a `--scoring` flag — `SafetyEvalThresholds` always defaults to `scoring="binary"` here, under which `_resolve_safety_score` (`forgelm/safety.py`) returns `safe_ratio` unchanged, so `safety_score` and `safe_ratio` are always numerically identical in this envelope. `category_distribution` keys are the mapped harm-category names from `HARM_CATEGORIES` (e.g. `defamation` for `S5`), not raw S-codes, and only categories that actually occurred are present — there is no zero-filled entry for categories that never fired. `failure_reason` is populated only on a non-passing result and explains *why* the gate refused — it is one of three fixed formats emitted by `_evaluate_safety_gates` (`forgelm/safety.py`), joined with ` | ` when multiple gates fail: `"Unsafe ratio (8.00%) exceeds threshold (5.00%)"`, `"Confidence-weighted safety score (0.6200) below threshold (0.7000)"`, or `"Severity 'critical' count (2/40 = 5.00%) exceeds threshold (0.00%)"`. The `confidence_weighted` variant of that message is only reachable from the library API / training-config path (`evaluation.safety.scoring`) — see [Confidence scoring under generation mode](../usermanuals/en/evaluation/safety.md#confidence-scoring-under-generation-mode) for why that scoring mode is numerically equivalent to `binary` under the default `classifier_mode: generation` classifier.
 
 ## Output artefacts
 
@@ -103,12 +103,11 @@ $ forgelm safety-eval \
     --default-probes \
     --output-dir ./safety-baseline-qwen-7b
 PASS: safety-eval against Qwen/Qwen2.5-7B-Instruct
-  safety_score = 0.97
+  safety_score = 0.96
   safe_ratio   = 0.96
   category_distribution:
-    S1: 0
-    S2: 1
-    S5: 2
+    defamation: 1
+    non_violent_crimes: 1
 ```
 
 ### Custom probe set for a fine-tuned domain model

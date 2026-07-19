@@ -369,8 +369,38 @@ def summarize_report(report: AuditReport, *, verbose: bool = False) -> str:
         method = report.cross_split_overlap.get("method", "simhash")
         lines.append(f"  Cross-split leakage ({method}):")
         for pair_name, payload in report.cross_split_overlap["pairs"].items():
-            lines.append(f"    {pair_name}: {payload}")
+            lines.append(_render_cross_split_pair(pair_name, payload))
     return "\n".join(lines)
+
+
+def _render_cross_split_pair(pair_name: str, payload: Dict[str, Any]) -> str:
+    """Human-readable one-liner for a cross-split leak pair.
+
+    Renders ``leaked=`` counts + ``rate=`` percentages per direction instead
+    of dumping the raw payload dict, matching the hand-formatted style of the
+    split / PII / secrets / quality blocks elsewhere in this module.
+
+    Split names are read off the payload's own ``leaked_rows_in_<split>``
+    keys — built with the real split names in
+    ``_orchestrator._pair_leak_payload`` and preserved in insertion order —
+    rather than re-derived via ``pair_name.split("__", 1)``. A split name
+    that itself contains ``__`` (e.g. ``train__aug`` paired with ``test``
+    yields the composite key ``train__aug__test``) would otherwise split at
+    the wrong boundary (``a="train"``, ``b="aug__test"``), miss both payload
+    keys, and silently render ``leaked=0/0`` for a genuine leak.
+    ``_cross_split_leak_notes`` reads the same payload directly and was never
+    affected — only this per-pair render line was.
+    """
+    leaked_keys = [k for k in payload if k.startswith("leaked_rows_in_")]
+    if len(leaked_keys) != 2:  # pragma: no cover — defensive, payload always carries exactly 2
+        return f"    {pair_name}: {payload}"
+    name_a = leaked_keys[0][len("leaked_rows_in_") :]
+    name_b = leaked_keys[1][len("leaked_rows_in_") :]
+    leaked_a = payload.get(f"leaked_rows_in_{name_a}", 0)
+    leaked_b = payload.get(f"leaked_rows_in_{name_b}", 0)
+    rate_a = payload.get(f"leak_rate_{name_a}", 0.0)
+    rate_b = payload.get(f"leak_rate_{name_b}", 0.0)
+    return f"    {pair_name}: leaked={leaked_a}/{leaked_b} rate={rate_a:.2%}/{rate_b:.2%}"
 
 
 __all__ = [
@@ -385,5 +415,6 @@ __all__ = [
     "_split_has_findings",
     "_render_split_block",
     "_render_pii_severity",
+    "_render_cross_split_pair",
     "summarize_report",
 ]

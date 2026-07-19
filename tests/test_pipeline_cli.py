@@ -11,6 +11,7 @@ this file pins the *boundary* between argparse and the orchestrator.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import types
 from unittest.mock import MagicMock
@@ -388,3 +389,93 @@ class TestTopLevelDispatchOrdering:
             assert exc_info.value.code == EXIT_CONFIG_ERROR, (
                 f"flag {flag!r} should exit EXIT_CONFIG_ERROR on a non-pipeline config; got exit={exc_info.value.code}"
             )
+
+    def test_pipeline_only_flags_rejected_emits_json_envelope(self, tmp_path, monkeypatch, capsys):
+        """HIGH finding 1 (cli-pipeline wave 2): with ``--output-format
+        json``, the pipeline-only-flag rejection must still emit the
+        2-key ``{"success": false, "error": ...}`` stdout envelope —
+        matching every other error path in ``_main_inner`` (see
+        ``_load_config_or_exit`` / the ``--config is required`` branch).
+        Pre-fix this branch only called ``logger.error`` + ``sys.exit``,
+        leaving stdout empty on a non-zero exit and breaking any
+        consumer that unconditionally parses stdout as JSON."""
+        import sys
+
+        import yaml
+
+        from forgelm.cli import _dispatch
+
+        # Single-stage config — no pipeline: block.
+        yaml_path = tmp_path / "single.yaml"
+        yaml_path.write_text(
+            yaml.safe_dump(
+                {
+                    "model": {"name_or_path": "org/base"},
+                    "lora": {"r": 8},
+                    "training": {"trainer_type": "sft", "output_dir": str(tmp_path / "out")},
+                    "data": {"dataset_name_or_path": "org/data"},
+                }
+            )
+        )
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["forgelm", "--config", str(yaml_path), "--stage", "dpo_stage", "--output-format", "json"],
+        )
+        with pytest.raises(SystemExit) as exc_info:
+            _dispatch.main()
+        assert exc_info.value.code == EXIT_CONFIG_ERROR
+
+        captured = capsys.readouterr()
+        envelope = json.loads(captured.out)
+        assert envelope["success"] is False
+        assert "--stage" in envelope["error"]
+        assert "pipeline:" in envelope["error"]
+
+    def test_dispatch_pipeline_mode_yaml_reread_oserror_emits_json_envelope(self, tmp_path, capsys):
+        """LOW finding 4 (cli-pipeline wave 2): ``_dispatch_pipeline_mode``
+        re-reads ``args.config`` in binary mode (separately from the
+        earlier ``load_config()`` parse) purely to hash the raw bytes for
+        audit purposes. If that re-read fails with ``OSError``, JSON mode
+        must still emit the ``{"success": false, "error": ...}`` envelope
+        instead of leaving stdout empty on a non-zero exit — the same
+        contract violation as finding 1, via a narrower (TOCTOU-style)
+        trigger window. Opening a directory in ``"rb"`` mode raises
+        ``IsADirectoryError`` (an ``OSError`` subclass) without needing to
+        race a real file deletion."""
+        from forgelm.cli._dispatch import _dispatch_pipeline_mode
+
+        cfg = _three_stage_cfg(tmp_path)
+        bad_config_path = tmp_path / "config_is_actually_a_directory"
+        bad_config_path.mkdir()
+        args = _ns(config=str(bad_config_path))
+
+        with pytest.raises(SystemExit) as exc_info:
+            _dispatch_pipeline_mode(cfg, args, True)
+        assert exc_info.value.code == EXIT_CONFIG_ERROR
+
+        captured = capsys.readouterr()
+        envelope = json.loads(captured.out)
+        assert envelope["success"] is False
+        assert "error" in envelope
+
+    def test_dispatch_pipeline_mode_yaml_reread_oserror_text_mode_no_stdout(self, tmp_path, capsys):
+        """Companion to the JSON-mode test above: in text mode (the
+        default), the same failure must NOT print anything to stdout —
+        the envelope is JSON-mode-only, matching ``_load_config_or_exit``
+        and the ``--config is required`` branch a few lines above this
+        one in ``_main_inner``."""
+        from forgelm.cli._dispatch import _dispatch_pipeline_mode
+
+        cfg = _three_stage_cfg(tmp_path)
+        bad_config_path = tmp_path / "config_is_actually_a_directory"
+        bad_config_path.mkdir()
+        args = _ns(config=str(bad_config_path))
+
+        with pytest.raises(SystemExit) as exc_info:
+            _dispatch_pipeline_mode(cfg, args, False)
+        assert exc_info.value.code == EXIT_CONFIG_ERROR
+
+        captured = capsys.readouterr()
+        assert captured.out == ""

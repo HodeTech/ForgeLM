@@ -34,7 +34,7 @@ The hash chain advances after the line lands on disk (`flush` + `fsync`), so an 
 | `safety.evaluation_completed`    | Safety evaluation finished (Llama Guard / ShieldGemma run).            | `passed`, `safe_ratio`, `total_count`, `safety_score`, `categories` | 15 |
 | `judge.evaluation_completed`     | LLM-as-judge scoring finished.                                          | `passed`, `average_score`                            | 15 |
 | `evaluation.loss_gate_completed` | Loss/eval-loss auto-revert gate decided (pass or fail) against the configured thresholds. | `passed`, `eval_loss`, `max_acceptable_loss`, `baseline_loss` | 15 |
-| `pipeline.completed`       | End-to-end CLI run (training + evaluation + export) returned exit code 0. | `success`, `metrics_summary`                                                              | 12      |
+| `pipeline.completed`       | End-to-end CLI run (training + evaluation + export) returned exit code 0. Also emitted by the multi-stage pipeline orchestrator (`_finalise_pipeline`) with a **structurally different payload** — a parser must not assume `success` is always present. | single-stage: `success`, `metrics_summary`; multi-stage orchestrator: `pipeline_run_id`, `final_status`, `stopped_at` (no `success` key) | 12      |
 | `pipeline.failed`          | Pipeline aborted with an error before completion.                         | `error`                                                                                  | 12      |
 | `pipeline.started`         | Multi-stage pipeline orchestrator began a fresh run (not a `--resume-from`). | `pipeline_run_id`, `config_hash`, `stage_count`, `stage_names`                          | 12      |
 | `pipeline.force_resume`    | `--resume-from` proceeded past a stored config-hash mismatch because `--force-resume` was set. | `pipeline_run_id`, `old_config_hash`, `new_config_hash`               | 12      |
@@ -48,7 +48,7 @@ The hash chain advances after the line lands on disk (`flush` + `fsync`), so an 
 
 | Event                        | When emitted                                                                                            | Payload                                              | Article |
 |------------------------------|---------------------------------------------------------------------------------------------------------|------------------------------------------------------|---------|
-| `human_approval.required`    | A gate marked `requires_human_approval: true` paused the pipeline awaiting an operator decision.        | `gate`, `reason`, `metrics`, `staging_path`, `run_id`                      | 14      |
+| `human_approval.required`    | A gate marked `requires_human_approval: true` paused the pipeline awaiting an operator decision.        | `gate`, `reason`, `metrics`, `staging_path`, `run_id`, `config_hash`                      | 14      |
 | `human_approval.granted`     | Operator approved the paused gate via `forgelm approve`.                                                | `gate`, `approver`, `comment`, `run_id`, `promote_strategy`                | 14      |
 | `human_approval.rejected`    | Operator rejected the paused gate via `forgelm reject`.                                                 | `gate`, `approver`, `comment`, `run_id`, `staging_path`                    | 14      |
 
@@ -100,8 +100,7 @@ The hash chain advances after the line lands on disk (`flush` + `fsync`), so an 
 
 ### CLI / migration
 
-| Event                       | When emitted                                                                                       | Payload                          | Article |
-|-----------------------------|----------------------------------------------------------------------------------------------------|----------------------------------|---------|
+_Reserved namespace — `cli` is a recognized event-namespace prefix (see "Adding a new event" below) but no code in `forgelm/` currently emits a `cli.*` event. No rows populate this section yet._
 
 ### Audit-system events (meta)
 
@@ -195,8 +194,10 @@ Slack-compatible block — other receivers may ignore it.
 3. **No model weights.** `approval.required` carries the staging
    filesystem path only. Weights stay on disk; the operator already
    controls that directory.
-4. **No webhook URL leakage.** URLs are masked in logs (`scheme://host/<first-segment>/...`)
-   and the response body is suppressed on non-2xx.
+4. **No webhook URL leakage.** URLs are masked in logs to `scheme://host`
+   (userinfo, path, and query stripped entirely — see `_mask_netloc` in
+   [`forgelm/_http.py`](../../forgelm/_http.py)) and the response body is
+   suppressed on non-2xx.
 5. **SSRF guard.** Private / loopback / link-local destinations are
    refused unless `webhook.allow_private_destinations=true`.
 

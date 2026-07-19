@@ -543,6 +543,29 @@ class TestLoadModel:
                 load_in_8bit=False,
             )
 
+    def test_unsloth_adapter_rejected_before_expensive_load(self, monkeypatch):
+        """F3 regression: the adapter-incompatibility check must fire BEFORE
+        the ``unsloth`` import + ``FastLanguageModel.from_pretrained`` (a
+        multi-GB load), so an operator passing --adapter to the unsloth backend
+        gets an immediate rejection rather than paying the full load cost.
+
+        With ``unsloth`` stubbed to None (so the import would raise
+        ImportError), a ValueError proves the adapter check ran *first* — if the
+        check were still after the import, this would raise ImportError instead.
+        """
+        monkeypatch.setitem(sys.modules, "unsloth", None)
+
+        from forgelm.inference import _load_unsloth
+
+        with pytest.raises(ValueError, match="does not support loading a separate adapter"):
+            _load_unsloth(
+                "org/model",
+                adapter="./my_adapter",
+                trust_remote_code=False,
+                load_in_4bit=False,
+                load_in_8bit=False,
+            )
+
 
 # ---------------------------------------------------------------------------
 # Tests for generate (mocked)

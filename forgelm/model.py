@@ -71,6 +71,11 @@ def _load_unsloth(config: Any) -> Tuple[Any, Any]:
         max_seq_length=config.model.max_length,
         dtype=None,  # Auto detection
         load_in_4bit=config.model.load_in_4bit,
+        # Forward the resolved flag so `model.trust_remote_code: true` is honoured
+        # on the unsloth path too; the sibling inference._load_unsloth does the
+        # same. Omitting it silently loaded with Unsloth's default (False),
+        # failing custom-architecture repos that the operator explicitly trusted.
+        trust_remote_code=getattr(config.model, "trust_remote_code", False),
     )
 
     use_dora, use_rslora, peft_method = _resolve_peft_flags(config)

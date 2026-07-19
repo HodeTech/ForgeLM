@@ -18,7 +18,7 @@ See `config_template.yaml` for a complete annotated example.
 | `offline` | bool | `false` | Air-gapped mode: no HF Hub calls. Models/datasets must be local |
 | `bnb_4bit_use_double_quant` | bool | `true` | Double quantization for extra VRAM savings |
 | `bnb_4bit_quant_type` | string | `"nf4"` | Quantization type (`"nf4"` or `"fp4"`) |
-| `bnb_4bit_compute_dtype` | string | `"auto"` | Compute dtype: `"auto"`, `"bfloat16"`, `"float16"`, `"float32"` |
+| `bnb_4bit_compute_dtype` | string | `"auto"` | Compute dtype: `"auto"`, `"bfloat16"`, `"float16"`, `"float32"` (each of the last three also accepts the short alias `"bf16"`, `"fp16"`, `"fp32"`) |
 
 #### `model.moe` (Optional — MoE models)
 
@@ -46,10 +46,12 @@ See `config_template.yaml` for a complete annotated example.
 | `dropout` | float | `0.1` | Dropout probability |
 | `bias` | string | `"none"` | `"none"`, `"all"`, or `"lora_only"` |
 | `method` | string | `"lora"` | PEFT method: `"lora"`, `"dora"`, `"pissa"`, `"rslora"` |
-| `use_dora` | bool | `false` | Enable DoRA (Weight-Decomposed LoRA) |
-| `use_rslora` | bool | `false` | Rank-stabilized LoRA (recommended for r>64) |
+| `use_dora` | bool | `false` | **Deprecated** boolean shortcut for `method: "dora"`; removed in v0.10.0. Setting `true` forwards to `method: "dora"` with a `DeprecationWarning`. Use `method` instead. |
+| `use_rslora` | bool | `false` | **Deprecated** boolean shortcut for `method: "rslora"` (recommended for r>64); removed in v0.10.0. Setting `true` forwards to `method: "rslora"` with a `DeprecationWarning`. Use `method` instead. |
 | `target_modules` | list | `["q_proj", "v_proj"]` | Model modules to apply LoRA |
 | `task_type` | string | `"CAUSAL_LM"` | Task type for PEFT |
+
+> `use_dora` and `use_rslora` are mutually exclusive, and each conflicts with an explicitly-set `method` that names a different PEFT method (e.g. `use_dora: true` with `method: "rslora"`) — either combination raises `ConfigError` (exit 1) at config-load time. Set `method` directly instead of the deprecated boolean flags.
 
 ---
 
@@ -193,7 +195,8 @@ across retries. Each retry attempt is logged to the audit trail.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable safety classifier evaluation |
-| `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Safety classifier model |
+| `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Safety classifier model. The shipped default works out of the box: under `classifier_mode: auto` it is scored via generation-based Llama-Guard scoring |
+| `classifier_mode` | string | `"auto"` | How the classifier is scored: `auto` (generation for a known generative Llama-Guard checkpoint, `text-classification` otherwise), `classification` (force the pipeline — needs a trained `safe`/`unsafe` head), or `generation` (force generation-based Llama-Guard scoring) |
 | `test_prompts` | string | `"safety_prompts.jsonl"` | Adversarial test prompts file. Built-in sets in `configs/safety_prompts/` |
 | `max_safety_regression` | float | `0.05` | Max allowed unsafe ratio (binary gate) |
 | `scoring` | string | `"binary"` | Scoring mode: `"binary"` or `"confidence_weighted"` |
@@ -297,6 +300,8 @@ silently extend the retention horizon by re-using a stale workspace.
 | `dare_drop_rate` | float | `0.3` | DARE: probability (0.0–1.0) each delta is randomly dropped before rescaling. Only consulted when `method` is `dare`. |
 | `dare_seed` | int | `42` | DARE: RNG seed for the random drop mask, so a merge is reproducible run-to-run. |
 
+> `enabled: true` requires at least two entries in `models`, each with a `path` key — a merge with fewer than two source models (or an entry missing `path`) is rejected at config-load time.
+
 > **TIES/DARE default hyperparameters are intentionally conservative.** ForgeLM's
 > native `ties` merge trims the bottom **20%** of weights by magnitude (keeps
 > the top 80%); the `dare` merge uses `drop_rate=0.3` with a fixed seed. These
@@ -321,6 +326,8 @@ silently extend the retention horizon by re-using a stale workspace.
 | `system_version` | string | `""` | Version identifier |
 | `risk_classification` | string | `"minimal-risk"` | One of the 5 EU AI Act `RiskTier` values: `"unknown"` (pre-classification placeholder), `"minimal-risk"`, `"limited-risk"`, `"high-risk"` (Article 6 — full Annex IV documentation), `"unacceptable"` (Article 5 prohibited practice — emits a startup banner). |
 
+> **Hard gate:** setting `risk_classification` (or the sibling `risk_assessment.risk_category` below) to `"high-risk"` or `"unacceptable"` **requires** [`evaluation.safety.enabled: true`](#evaluationsafety-optional). Omitting it raises `ConfigError` (exit 1) at config-load / `--dry-run` time — EU AI Act Article 9 risk-management evidence cannot be derived from a disabled safety eval.
+
 ---
 
 ## `risk_assessment` (Optional — EU AI Act Art. 9)
@@ -332,6 +339,8 @@ silently extend the retention horizon by re-using a stale workspace.
 | `risk_category` | string | `"minimal-risk"` | Same 5 `RiskTier` values as `compliance.risk_classification`: `"unknown"`, `"minimal-risk"`, `"limited-risk"`, `"high-risk"`, `"unacceptable"`. Drives auto-revert thresholds and Annex IV gating. |
 | `mitigation_measures` | list | `[]` | Risk mitigation measures |
 | `vulnerable_groups_considered` | bool | `false` | Impact on vulnerable groups assessed |
+
+> **Hard gate:** same as [`compliance.risk_classification`](#compliance-optional--eu-ai-act-art-11--annex-iv) above — setting `risk_category` to `"high-risk"` or `"unacceptable"` requires `evaluation.safety.enabled: true`, or config-load raises `ConfigError` (exit 1). The gate ORs across both fields: either one in a strict tier triggers it.
 
 ---
 
@@ -397,7 +406,7 @@ A `PipelineStage` is a per-stage override layered onto the root config.  Section
 |-------|------|---------|-------------|
 | `name` | string | — (required) | Stage identifier matching `^[a-z0-9_]{1,32}$`.  Unique within the pipeline.  Used as the identifier in `--stage <name>`, `--resume-from <name>`, audit-log payloads, and per-stage manifest entries. |
 | `model` | `Optional[ModelConfig]` | `null` | Per-stage override of the root `model:` block.  When `null`, auto-chains from the previous stage's `final_model` (or root for stage 0).  When set, disables the auto-chain for that stage (operator escape hatch). |
-| `lora` | `Optional[LoraConfig]` | `null` | Per-stage LoRA config.  Inherits root wholesale when `null`. |
+| `lora` | `Optional[LoraConfigModel]` | `null` | Per-stage LoRA config.  Inherits root wholesale when `null`. |
 | `training` | `Optional[TrainingConfig]` | `null` | Per-stage training config.  Inherits root wholesale when `null`.  **When supplied, `trainer_type` MUST be set explicitly** — every stage records its alignment paradigm in the manifest for audit clarity. |
 | `data` | `Optional[DataConfig]` | `null` | Per-stage data config.  Inherits root wholesale when `null`; per-stage override is the norm because each stage typically consumes a different dataset (SFT/DPO/preference/etc.). |
 | `evaluation` | `Optional[EvaluationConfig]` | `null` | Per-stage gates (loss thresholds, `auto_revert`, safety, judge, human-approval).  Each stage may independently configure its gate. |

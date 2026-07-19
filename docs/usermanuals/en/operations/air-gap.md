@@ -72,24 +72,22 @@ If you need synthetic data generation in air-gap, use a local teacher:
 ```yaml
 synthetic:
   enabled: true
-  teacher:
-    provider: "local"
-    model: "Qwen/Qwen2.5-72B-Instruct"  # must be cached
-    load_in_4bit: true
+  teacher_model: "Qwen/Qwen2.5-72B-Instruct"  # HF Hub id — must be cached
+  teacher_backend: "local"                    # not "api" — no network call
 ```
 
-OpenAI / Anthropic providers fail on `--offline`.
+There is no nested `synthetic.teacher:` sub-block (`provider` / `model` / `load_in_4bit`) — `teacher_model` and `teacher_backend` are flat fields on `synthetic:`. An API-backed teacher (`teacher_backend: "api"`, e.g. OpenAI / Anthropic) fails on `--offline`.
 
 ## Local LLM-as-judge
 
 ```yaml
 evaluation:
-  judge:
+  llm_judge:
     enabled: true
-    judge_model:
-      provider: "local"
-      model: "Qwen/Qwen2.5-72B-Instruct"
+    judge_model: "Qwen/Qwen2.5-72B-Instruct"  # plain string — local model path or HF Hub id
 ```
+
+`judge_model` is a plain string field, not a nested `{provider, model}` object — a local HF path/id with no `judge_api_key_env` set (the default) resolves to a local judge.
 
 A 72B local judge is slower than `gpt-4o-mini` but the quality is comparable for typical use cases. See [LLM-as-Judge](#/evaluation/judge).
 
@@ -101,13 +99,7 @@ A 72B local judge is slower than `gpt-4o-mini` but the quality is comparable for
 $ forgelm cache-tasks --tasks hellaswag,arc_easy,truthfulqa,mmlu
 ```
 
-Configure ForgeLM to use the cache:
-
-```yaml
-evaluation:
-  benchmark:
-    tasks_dir: "${HF_HOME}/lm-evaluation-harness/"
-```
+There is no `evaluation.benchmark.tasks_dir` (or any other) YAML field to point at the cache — `forgelm cache-tasks` resolves the same `HF_DATASETS_CACHE` (falling back to `HF_HOME/datasets`) environment variable that `lm-evaluation-harness`'s underlying `datasets` library reads at eval time. Set the environment variables from ["On the air-gapped host"](#on-the-air-gapped-host) above (`HF_HOME`, `HF_DATASETS_OFFLINE=1`) before running `--benchmark-only` and the cache is picked up automatically — no config block needed.
 
 ## Verifying air-gap mode
 

@@ -574,6 +574,63 @@ class TestLazySymbolParity:
 
 
 # ---------------------------------------------------------------------------
+# Registry immutability — no module-level mutable state (architecture.md §4)
+# ---------------------------------------------------------------------------
+
+
+class TestRegistryImmutability:
+    """``_STABILITY_TIERS`` and ``_LAZY_SYMBOLS`` are load-bearing for the
+    public-surface contract (they drive ``__getattr__`` resolution and the
+    tier/doc-parity tests above). Before this fix they were plain ``dict``
+    objects: any code running in the same interpreter — a test that does
+    ``forgelm._LAZY_SYMBOLS['X'] = (...)`` instead of ``monkeypatch.setattr``,
+    or a misbehaving notebook cell — would permanently corrupt the registry
+    for the rest of the process, since module-level singletons persist
+    across subsequent ``import forgelm`` calls in the same interpreter.
+    Both are wrapped in ``types.MappingProxyType`` so mutation raises
+    ``TypeError`` immediately at the mutation site instead of silently
+    succeeding.
+    """
+
+    def test_stability_tiers_is_a_mapping_proxy(self) -> None:
+        import types
+
+        import forgelm
+
+        assert isinstance(forgelm._STABILITY_TIERS, types.MappingProxyType)
+
+    def test_lazy_symbols_is_a_mapping_proxy(self) -> None:
+        import types
+
+        import forgelm
+
+        assert isinstance(forgelm._LAZY_SYMBOLS, types.MappingProxyType)
+
+    def test_stability_tiers_item_assignment_raises(self) -> None:
+        import forgelm
+
+        with pytest.raises(TypeError):
+            forgelm._STABILITY_TIERS["new_symbol"] = "stable"
+
+    def test_lazy_symbols_item_assignment_raises(self) -> None:
+        import forgelm
+
+        with pytest.raises(TypeError):
+            forgelm._LAZY_SYMBOLS["new_symbol"] = ("forgelm.utils", "setup_authentication")
+
+    def test_registries_remain_usable_as_read_only_mappings(self) -> None:
+        """The proxy wrap must not break the read-only access patterns the
+        rest of the module (``__getattr__``) and the parity tests above
+        depend on: ``.get()``, ``in``, iteration, and set() conversion."""
+        import forgelm
+
+        assert forgelm._LAZY_SYMBOLS.get("ForgeTrainer") == ("forgelm.trainer", "ForgeTrainer")
+        assert forgelm._LAZY_SYMBOLS.get("does-not-exist") is None
+        assert "ForgeTrainer" in forgelm._LAZY_SYMBOLS
+        assert set(forgelm._STABILITY_TIERS) == set(forgelm.__all__)
+
+
+# ---------------------------------------------------------------------------
 # Stable-symbol signature snapshot (F-P1-FAB-26)
 # ---------------------------------------------------------------------------
 

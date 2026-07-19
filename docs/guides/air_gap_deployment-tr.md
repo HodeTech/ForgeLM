@@ -227,4 +227,4 @@ Genellikle, evet. Cache subcommand'ları HF artefaktlarını ele alır; Python w
 - [Başlangıç](getting-started-tr.md) — air-gap varyantı bu rehber olan onboarding walkthrough.
 - [`docs/reference/audit_event_catalog-tr.md`](../reference/audit_event_catalog-tr.md) §Air-gap ön-cache — tam event vocabulary'si.
 - [`docs/qms/access_control-tr.md`](../qms/access_control-tr.md) — staging host'lar için önerilen `FORGELM_OPERATOR` namespace şeması.
-- [Enterprise deployment](enterprise_deployment.md) — sertleştirilmiş deployment'lar için komşu operatör playbook.
+- [Enterprise deployment (İngilizce)](enterprise_deployment.md) — sertleştirilmiş deployment'lar için komşu operatör playbook.

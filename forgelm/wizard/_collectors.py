@@ -88,6 +88,43 @@ def _default_safety_probes_path() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Shared ``env:VAR_NAME`` reference parsing — the webhook URL prompt and
+# the monitoring-endpoint prompt both accept this indirection syntax.
+# Centralised here so the accepted env-var-name shape (POSIX: uppercase
+# letters / digits / underscores, must start with a letter) only needs
+# updating in one place.
+# ---------------------------------------------------------------------------
+
+
+_ENV_VAR_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$", flags=re.ASCII)
+
+
+def _parse_env_ref(raw: str) -> Optional[str]:
+    """Parse an ``env:VAR_NAME`` reference; return the variable name.
+
+    Returns ``None`` when *raw* does not start with the ``env:`` prefix
+    at all — callers treat that as "not an env reference, handle as a
+    literal value instead".  Raises :class:`ValueError` when the prefix
+    is present but the variable name is missing or not a valid POSIX
+    environment-variable name; callers that want a soft-fail (warn and
+    drop the field, e.g. :func:`_collect_monitoring`) should catch it,
+    while callers that want a hard re-prompt (e.g.
+    :func:`_parse_webhook_value`) let it propagate.
+    """
+    if not raw.lower().startswith("env:"):
+        return None
+    var_name = raw[4:].strip()
+    if not var_name:
+        raise ValueError("`env:` prefix needs a non-empty variable name (e.g. `env:SLACK_WEBHOOK_URL`).")
+    if not _ENV_VAR_NAME_RE.match(var_name):
+        raise ValueError(
+            f"`env:{var_name}` is not a POSIX environment-variable name "
+            "(uppercase letters / digits / underscores, must start with a letter)."
+        )
+    return var_name
+
+
+# ---------------------------------------------------------------------------
 # Webhook URL parsing — Phase 22 / G15.  Single-prompt syntax mirrors
 # the web wizard's ``env:VAR_NAME`` prefix sugar.
 # ---------------------------------------------------------------------------
@@ -111,15 +148,7 @@ def _parse_webhook_value(raw: str) -> Optional[Dict[str, str]]:
     if not raw:
         return None
     if raw.lower().startswith("env:"):
-        var_name = raw[4:].strip()
-        if not var_name:
-            raise ValueError("`env:` prefix needs a non-empty variable name (e.g. `env:SLACK_WEBHOOK_URL`).")
-        if not re.match(r"^[A-Z][A-Z0-9_]*$", var_name):
-            raise ValueError(
-                f"`env:{var_name}` is not a POSIX environment-variable name "
-                "(uppercase letters / digits / underscores, must start with a letter)."
-            )
-        return {"url_env": var_name}
+        return {"url_env": _parse_env_ref(raw)}
     parsed = urlparse(raw)
     if not parsed.scheme or not parsed.netloc:
         raise ValueError(f"`{raw}` is not a valid URL or env-var reference (use `https://…` or `env:VAR_NAME`).")
@@ -145,18 +174,67 @@ def _parse_webhook_value(raw: str) -> Optional[Dict[str, str]]:
     # buys "wrong URL caught at config time", not "guaranteed-public
     # destination at training time".
     host = (parsed.hostname or "").strip()
-    if host:
-        try:
-            from .._http import _is_private_destination
-        except ImportError:  # pragma: no cover — _http always present
-            _is_private_destination = None
-        if _is_private_destination is not None and _is_private_destination(host):
-            raise ValueError(
-                f"Webhook URL `{raw}` resolves to a private / loopback / link-local "
-                f"destination (`{host}`).  Use `env:VAR_NAME` for production hooks "
-                "or set `webhook.allow_private=true` in the YAML if this is intentional."
-            )
+    if host and _webhook_preflight_is_private(host):
+        raise ValueError(
+            f"Webhook URL `{raw}` resolves to a private / loopback / link-local "
+            f"destination (`{host}`).  Use `env:VAR_NAME` for production hooks "
+            "or set `webhook.allow_private=true` in the YAML if this is intentional."
+        )
     return {"url": raw}
+
+
+_WEBHOOK_DNS_PREFLIGHT_TIMEOUT_SECONDS = 3.0
+
+
+def _webhook_preflight_is_private(host: str) -> bool:
+    """Bounded-timeout wrapper around ``_http._is_private_destination``.
+
+    ``_is_private_destination`` performs a real ``socket.getaddrinfo`` DNS
+    lookup with no timeout of its own, which can hang this interactive
+    prompt for the OS resolver's default timeout (tens of seconds) on a
+    sandboxed CI runner, an air-gapped machine, or a network with a
+    slow/unreachable resolver.  ``socket.setdefaulttimeout`` does NOT bound
+    this: CPython's ``getaddrinfo`` is a blocking libc call that only
+    consults the socket default timeout for socket-object operations
+    (``connect``/``recv``), never for name resolution — so that approach
+    was previously a no-op against the exact hang it claimed to bound.
+
+    Instead, run the lookup in a daemon worker thread and join with a
+    ``_WEBHOOK_DNS_PREFLIGHT_TIMEOUT_SECONDS`` bound. If the thread has not
+    finished by then, the resolver is treated as unbounded-slow and the
+    preflight is skipped — ``_http.safe_post`` still enforces the real SSRF
+    check at training time — instead of blocking the wizard. The worker
+    thread is daemonized so an actually-hung resolver cannot keep the
+    process alive; its (possibly late) result is simply discarded. Returns
+    ``False`` (don't block) whenever the check itself cannot complete,
+    whether because ``forgelm._http`` is unavailable, the resolver raised,
+    or the timeout was hit.
+    """
+    import threading
+
+    try:
+        from .._http import _is_private_destination
+    except ImportError:  # pragma: no cover — _http always present
+        return False
+
+    outcome: Dict[str, Any] = {}
+
+    def _resolve() -> None:
+        try:
+            outcome["result"] = _is_private_destination(host)
+        except OSError as exc:
+            # ``_is_private_destination`` already narrows
+            # ``socket.gaierror`` internally; anything else surfacing here
+            # (e.g. a socket-layer timeout) is "could not determine", not
+            # "reject".
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=_resolve, daemon=True)
+    worker.start()
+    worker.join(_WEBHOOK_DNS_PREFLIGHT_TIMEOUT_SECONDS)
+    if worker.is_alive() or "error" in outcome:
+        return False
+    return bool(outcome.get("result", False))
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +449,93 @@ def _collect_trainer_hyperparameters(
 _ROPE_SCALING_TYPES: Tuple[str, ...] = ("linear", "dynamic", "yarn", "longrope")
 
 
+def _rope_scaling_is_valid(candidate: Dict[str, Any]) -> bool:
+    """Return True when *candidate* passes ``ForgeConfig``'s rope_scaling validator.
+
+    Runs the block through the real ``TrainingConfig`` field validator so
+    the wizard's "keep existing" branch can never honour a shape that
+    ``ForgeConfig`` will later reject — and never reject one it accepts.
+    This mirrors the validator's per-type branching (scalar ``factor`` for
+    ``linear`` / ``dynamic`` / ``yarn``; non-empty ``short_factor`` /
+    ``long_factor`` lists for ``longrope``) and the ``rope_type`` alias
+    without duplicating that logic here.
+    """
+    from pydantic import ValidationError
+
+    from ..config import TrainingConfig
+
+    try:
+        TrainingConfig(rope_scaling=candidate)
+    except ValidationError:
+        return False
+    return True
+
+
+def _describe_rope_scaling(block: Dict[str, Any]) -> str:
+    """Render a one-line human summary of an existing rope_scaling block."""
+    rope_type = block.get("type", block.get("rope_type", "?"))
+    if rope_type == "longrope":
+        short = block.get("short_factor")
+        long = block.get("long_factor")
+        short_len = len(short) if isinstance(short, list) else "?"
+        long_len = len(long) if isinstance(long, list) else "?"
+        return f"type={rope_type}, short_factor[{short_len}], long_factor[{long_len}]"
+    return f"type={rope_type}, factor={block.get('factor', '?')}"
+
+
+def _prompt_factor_list(question: str, default: list) -> list:
+    """Prompt for a non-empty comma-separated list of numbers, re-asking until valid.
+
+    Backs the LongRoPE ``short_factor`` / ``long_factor`` prompts, whose
+    ``ForgeConfig`` validator requires non-empty numeric lists.  Funnels
+    through :func:`_prompt` so navigation tokens (``back`` / ``reset`` /
+    ``cancel``) still fire; a bare Enter keeps *default*.
+    """
+    default_csv = ", ".join(repr(value) for value in default)
+    while True:
+        raw = _prompt(f"{question} (comma-separated numbers)", default_csv)
+        items = [item.strip() for item in raw.split(",") if item.strip()]
+        if not items:
+            _print("    At least one numeric factor is required.")
+            continue
+        try:
+            return [float(item) for item in items]
+        except ValueError:
+            _print("    All entries must be numbers (e.g. `1.0, 1.2, 1.5`).")
+
+
+def _collect_longrope_factors(max_length: int, base_context: int) -> Dict[str, Any]:
+    """Collect a LongRoPE ``rope_scaling`` block (short_factor / long_factor).
+
+    LongRoPE is parameterised by per-dimension ``short_factor`` /
+    ``long_factor`` lists (one entry per ``head_dim / 2``), not a scalar
+    ``factor`` — this is exactly what ``ForgeConfig``'s ``rope_scaling``
+    validator requires for ``rope_type='longrope'``.  The values are
+    model-specific (copied from the model's ``config.json``; e.g. Phi-3
+    ships them), so the wizard cannot compute them from ``max_length``
+    alone; it prompts for both lists with non-empty placeholder defaults
+    the operator is told to replace, and always returns a block that
+    round-trips through ``ForgeConfig``.
+    """
+    fallback_factor = round(max_length / base_context, 4)
+    _print(
+        "  Note: LongRoPE uses per-dimension short_factor / long_factor lists "
+        "(one entry per head_dim/2), not a scalar factor.  These values are "
+        "model-specific — copy them from your model's config.json (e.g. Phi-3 "
+        "ships them under `rope_scaling`).  The defaults below are non-empty "
+        "placeholders; replace them with your model's factors before training."
+    )
+    short_factor = _prompt_factor_list(
+        "short_factor — per-dimension factors for the short-context regime",
+        [1.0],
+    )
+    long_factor = _prompt_factor_list(
+        "long_factor — per-dimension factors for the extended-context regime",
+        [fallback_factor],
+    )
+    return {"type": "longrope", "short_factor": short_factor, "long_factor": long_factor}
+
+
 def _collect_rope_scaling(
     max_length: int,
     *,
@@ -382,18 +547,34 @@ def _collect_rope_scaling(
     previously-tuned ``rope_scaling`` block verbatim.  When the loaded
     YAML carries one, the helper asks "Keep existing RoPE scaling?"
     (default yes) and returns the stored dict on accept; on decline,
-    or when there is no prior block, the standard prompt flow runs.
+    or when there is no prior block, the standard prompt flow runs and
+    the scaling parameters are always recomputed fresh from
+    ``max_length`` — reusing a stale ``existing`` block after an explicit
+    decline would silently ignore the operator's answer.
+
+    The "keep existing" branch validates the whole block through
+    ``ForgeConfig``'s own ``rope_scaling`` field validator
+    (:func:`_rope_scaling_is_valid`) before returning it verbatim, so a
+    valid ``longrope`` block (``short_factor`` / ``long_factor`` lists,
+    ``factor`` optional) is honoured while a corrupted / hand-edited one
+    degrades to a fresh recompute.  ``ForgeConfig`` normally guarantees
+    this shape for anything loaded via ``--wizard-start-from``, but a
+    resumed ``wizard_state.yaml`` snapshot (``_load_wizard_state``) is not
+    schema-validated, so the check must run here too.
     """
     if max_length <= 4096:
         return None
+    base_context = 4096
     if existing:
-        _print(f"\n  Existing RoPE scaling: type={existing.get('type', '?')}, factor={existing.get('factor', '?')}")
+        _print(f"\n  Existing RoPE scaling: {_describe_rope_scaling(existing)}")
         if _prompt_yes_no("  Keep existing RoPE scaling?", default=True):
-            return dict(existing)
+            if _rope_scaling_is_valid(existing):
+                return dict(existing)
+            _print("  ⚠ Existing RoPE scaling is invalid — recomputing instead of keeping it.")
     _print(f"\n  Long context detected ({max_length} tokens).")
     if not _prompt_yes_no("Enable RoPE scaling for extended context?", default=True):
         return None
-    existing_type = existing.get("type") if existing else None
+    existing_type = existing.get("type", existing.get("rope_type")) if existing else None
     type_default = _ROPE_SCALING_TYPES.index(existing_type) + 1 if existing_type in _ROPE_SCALING_TYPES else 1
     rope_type = _prompt_choice(
         "RoPE scaling type:",
@@ -404,17 +585,21 @@ def _collect_rope_scaling(
             "longrope (newest — 32K+ context, requires LongRoPE-aware model)",
         ],
         default=type_default,
-    )
-    base_context = 4096
-    rope_factor = (
-        float(existing["factor"]) if existing and existing.get("factor") is not None else max_length / base_context
-    )
+    ).split(" ")[0]
+    # Reaching this point means either there was no existing block, or
+    # the operator explicitly declined to keep it (or it failed
+    # validation above) — always recompute fresh from max_length rather
+    # than falling back to a stale/unvalidated existing block, which
+    # would silently override the operator's decline.
+    if rope_type == "longrope":
+        return _collect_longrope_factors(max_length, base_context)
+    rope_factor = max_length / base_context
     _print(
         f"  Note: RoPE factor {rope_factor:.1f}x computed assuming base context of "
         f"{base_context} tokens.  Adjust manually if your model has a different "
         f"original context length (e.g., Llama 3.1 = 131072, Mistral v0.3 = 32768)."
     )
-    return {"type": rope_type.split(" ")[0], "factor": rope_factor}
+    return {"type": rope_type, "factor": rope_factor}
 
 
 def _collect_neftune_alpha() -> Optional[float]:
@@ -723,10 +908,9 @@ def _collect_monitoring() -> Optional[Dict[str, Any]]:
     # operator typed.
     endpoint_stripped = endpoint_raw.strip()
     if endpoint_stripped.lower().startswith("env:"):
-        var_name = endpoint_stripped[4:].strip()
-        if var_name and re.match(r"^[A-Z][A-Z0-9_]*$", var_name):
-            monitoring["endpoint_env"] = var_name
-        else:
+        try:
+            monitoring["endpoint_env"] = _parse_env_ref(endpoint_stripped)
+        except ValueError:
             _print(f"  '{endpoint_stripped}' is not a valid env-var reference — monitoring endpoint left unset.")
     elif endpoint_stripped:
         monitoring["endpoint"] = endpoint_stripped

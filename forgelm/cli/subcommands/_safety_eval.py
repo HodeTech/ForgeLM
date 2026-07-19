@@ -189,6 +189,12 @@ def _run_safety_eval_cmd(args, output_format: str) -> None:
             EXIT_CONFIG_ERROR,
         )
 
+    # The default guard ``meta-llama/Llama-Guard-3-8B`` is a generative
+    # Llama-Guard checkpoint; run_safety_evaluation's default classifier_mode
+    # ("auto") scores it via generation-based Llama-Guard scoring, so the
+    # standalone default now works out of the box (a custom --classifier with a
+    # trained safe/unsafe head is still scored through the text-classification
+    # pipeline under auto-mode).
     classifier_path = getattr(args, "classifier", None) or "meta-llama/Llama-Guard-3-8B"
     probes_path = _resolve_probes_path(args, output_format)
     output_dir = getattr(args, "output_dir", None) or os.getcwd()
@@ -203,7 +209,7 @@ def _run_safety_eval_cmd(args, output_format: str) -> None:
             EXIT_TRAINING_ERROR,
         )
 
-    # Wire an AuditLogger so the documented Article-15
+    # Wire an AuditLogger so the documented Article 15
     # ``audit.classifier_load_failed`` record actually fires on this surface
     # (F-P3-FABLE-12): without it run_safety_evaluation's emission guard
     # (`if audit_logger is not None`) always skipped and no audit log was ever

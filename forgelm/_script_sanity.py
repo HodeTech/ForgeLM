@@ -52,6 +52,22 @@ from ._pypdf_normalise import emitted_codepoints
 
 logger = logging.getLogger("forgelm.ingestion.script_sanity")
 
+# True Private-Use-Area ranges (BMP + the two supplementary planes) — code
+# points Unicode guarantees will never be assigned a standard character, so
+# any appearance is by construction an application-specific "custom glyph".
+_PUA_RANGES: Tuple[Tuple[int, int], ...] = (
+    (0xE000, 0xF8FF),  # BMP Private Use Area
+    (0xF0000, 0xFFFFD),  # Supplementary Private Use Area-A
+    (0x100000, 0x10FFFD),  # Supplementary Private Use Area-B
+)
+
+# Mandaic block — narrow, explicitly-justified addition (not a blanket
+# "anything past U+0800" catch-all, which used to misclassify legitimate
+# Devanagari/Thai/Georgian/Hangul/Hiragana/Katakana/CJK text as a "custom
+# glyph"). The 2026-05-11 audit's corrupted bullet artefact was U+085F,
+# inside this block.
+_MANDAIC_RANGE: Tuple[int, int] = (0x0840, 0x085F)
+
 DEFAULT_THRESHOLD: float = 0.015
 """Calibrated 1.5 % ratio — fires on the audit's two failure modes
 (front-matter font corruption ≈ 7 %, bullet-glyph chapter ≈ 3 %) while
@@ -310,11 +326,16 @@ def _classify_cause(top_offenders: Tuple[Tuple[str, int], ...]) -> str:
       normaliser table loaded, then re-ingest".
     * **Mojibake** — replacement characters (U+FFFD) dominating. Often
       means the source file was read with the wrong encoding.
-    * **Custom bullet / private use** — code points in PUA blocks
-      (U+E000..U+F8FF) or in Mandaic / non-Latin scripts not
-      registered for this language. Operators see "custom-glyph
+    * **Custom bullet / private use** — code points in true PUA blocks
+      (:data:`_PUA_RANGES`) or the Mandaic block (:data:`_MANDAIC_RANGE`,
+      the audit's U+085F bullet artefact). Operators see "custom-glyph
       bullet detected — consider a normalisation profile or
-      pre-process the source".
+      pre-process the source". Deliberately narrow: it must NOT fire on
+      legitimate non-Latin scripts (Devanagari, Thai, Georgian, Hangul,
+      Hiragana/Katakana, CJK Unified Ideographs, ...) that a document
+      quoting or embedding foreign-script text can legitimately contain —
+      those are "different script", not "corrupted glyph", and get no
+      cause hint here (the ratio itself still flags them as out-of-script).
 
     Returns an empty string when no heuristic fires; the warning still
     emits but without a cause guess.
@@ -330,8 +351,12 @@ def _classify_cause(top_offenders: Tuple[Tuple[str, int], ...]) -> str:
     latin1_extras = sum(1 for g in head if 0x80 <= ord(g) <= 0xFF)
     if latin1_extras >= 2:
         return "pypdf font fallback (Latin-1 substitutes)"
-    pua_or_extra = sum(1 for g in head if 0xE000 <= ord(g) <= 0xF8FF or ord(g) >= 0x0800)
-    if pua_or_extra:
+    pua_or_mandaic = sum(
+        1
+        for g in head
+        if any(low <= ord(g) <= high for low, high in _PUA_RANGES) or _MANDAIC_RANGE[0] <= ord(g) <= _MANDAIC_RANGE[1]
+    )
+    if pua_or_mandaic:
         return "custom glyph / private-use block"
     return ""
 

@@ -80,6 +80,51 @@ class TestCheckScriptSanity:
         assert report.triggered
         assert "font fallback" in report.cause_hint.lower()
 
+    def test_cause_hint_does_not_mislabel_legitimate_cjk_as_custom_glyph(self):
+        # Regression: the old heuristic's `ord(g) >= 0x0800` disjunct was a
+        # blanket catch-all covering Devanagari, Thai, Georgian, Hangul,
+        # Hiragana/Katakana, and all CJK Unified Ideographs — not just the
+        # Mandaic bullet artefact it was added for. Ordinary embedded
+        # Chinese text (a common, legitimate case: English docs quoting
+        # Chinese) must not be mislabelled "custom glyph / private-use
+        # block" — it's a different script, not corrupted data.
+        text = "This document quotes a Chinese phrase: " + "中文引用内容 " * 30
+        report = check_script_sanity(
+            text,
+            language_hint="en",
+            file_path="cjk.txt",
+            threshold=0.01,
+            profile="none",
+        )
+        assert report.triggered  # still correctly flagged as out-of-script
+        assert report.cause_hint != "custom glyph / private-use block"
+
+    def test_cause_hint_still_identifies_mandaic_bullet_artefact(self):
+        # The narrowed heuristic must still catch the audit's original
+        # U+085F Mandaic-block bullet-glyph corruption.
+        text = "Body text " * 100 + chr(0x085F) * 50
+        report = check_script_sanity(
+            text,
+            language_hint="tr",
+            file_path="mandaic.pdf",
+            threshold=0.01,
+            profile="none",
+        )
+        assert report.triggered
+        assert report.cause_hint == "custom glyph / private-use block"
+
+    def test_cause_hint_still_identifies_true_pua_block(self):
+        text = "Body text " * 100 + chr(0xE000) * 50
+        report = check_script_sanity(
+            text,
+            language_hint="en",
+            file_path="pua.txt",
+            threshold=0.01,
+            profile="none",
+        )
+        assert report.triggered
+        assert report.cause_hint == "custom glyph / private-use block"
+
     def test_cause_hint_identifies_mojibake(self):
         text = "Body text " * 100 + "�" * 100
         report = check_script_sanity(

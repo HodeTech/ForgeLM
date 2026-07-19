@@ -104,7 +104,7 @@ Gerçek `WebhookConfig` (bkz. `forgelm/config.py::WebhookConfig`):
 | `notify_on_success` | `true` | `training.success`, `approval.required` VE başarılı bir `pipeline.completed`'ı gate'ler. |
 | `notify_on_failure` | `true` | `training.failure`, `training.reverted`, `pipeline.stage_reverted` VE başarısız bir `pipeline.completed`'ı gate'ler. |
 | `timeout` | `10` | HTTP timeout saniye; ≥ 1s'e clamp'lenir. |
-| `allow_private_destinations` | `false` | RFC 1918 / loopback / link-local hedefler için opt-in (in-cluster Slack proxy, on-prem Teams gateway). Varsayılan reddeder — SSRF guard. |
+| `allow_private_destinations` | `false` | RFC 1918 / loopback / link-local / RFC 6598 CGNAT (`100.64.0.0/10`) hedefler için opt-in (in-cluster Slack proxy, on-prem Teams gateway). Varsayılan reddeder — SSRF guard. |
 | `require_https` | `false` | TLS-only zorlama. `true`, plaintext bir `http://` URL'ini reddeder (SSRF guard raise eder; POST atlanır), warn-then-send yerine. Varsayılan `false`, warn-then-send davranışını korur. |
 | `tls_ca_bundle` | `null` | Özel CA bundle yolu (kurumsal MITM CA). Set edilmediğinde `certifi`'nin bundled store'u kullanılır. |
 
@@ -117,7 +117,7 @@ payload zaten curated), ve routing hepsi ForgeLM'in dışında yaşar.
 
 - **TLS şiddetle önerilir.** ForgeLM hem HTTPS hem HTTP webhook URL'lerine izin verir — HTTP hedefleri `Webhook URL uses HTTP (not HTTPS). Data will be sent unencrypted.` uyarısı loglar ama varsayılan olarak reddedilmez (bkz. `forgelm/webhook.py` `_send`). Regüle bir ortamda `webhook.require_https: true` ile plaintext bir `http://` URL'ini hard failure yapın (teslimat reddedilir, gönderilmez). Üretimde `https://` URL'leri pinleyin.
 - **Curated payload.** ForgeLM webhook payload'larına asla raw eğitim verisi, tam config'ler veya unredacted PII koymaz. Notifier sabit-şekilli bir JSON sarar; `webhook.redact` toggle'ı yoktur çünkü kullanıcı-kontrollü redakte edilecek bir şey yok.
-- **SSRF guard.** ForgeLM iç IP'lere (RFC 1918, loopback, link-local, 169.254.x) işaret eden webhook URL'lerini engeller; `webhook.allow_private_destinations: true` ile açıkça opt-in olmadıkça. Yanlış konfigüre koşuların iç ağınızı sondalamasını önler.
+- **SSRF guard.** ForgeLM iç IP'lere işaret eden webhook URL'lerini engeller — RFC 1918, loopback, link-local (bulut IMDS `169.254.169.254` dahil), RFC 6598 Shared Address Space / Carrier-Grade-NAT (`100.64.0.0/10`; bu blok, Alibaba Cloud ECS'in IMDS'ini de kapsar — `100.100.100.200` — stdlib `ipaddress` predicate'leri bu bloğu kendiliğinden private veya reserved olarak işaretlemez), ayrıca reserved ve multicast hedefler — `webhook.allow_private_destinations: true` ile açıkça opt-in olmadıkça. Yanlış konfigüre koşuların iç ağınızı sondalamasını veya payload'ı bir bulut metadata servisine sızdırmasını önler.
 - **HMAC body imzalama yok.** ForgeLM webhook gövdelerini imzalamaz — hedef-tarafı authenticity TLS + `url_env` üzerinden URL gizliliği artı alıcı sistemin bearer-token / signed-request kontrollerine (Slack signing secret, Teams connector token) düşer.
 
 ## Sık hatalar

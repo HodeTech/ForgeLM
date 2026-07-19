@@ -186,7 +186,6 @@ shipped or have been renamed. Use the canonical names instead:
 | Old (won't validate) | New |
 |---|---|
 | `model.use_unsloth: true` | `model.backend: "unsloth"` |
-| `model.load_in_4bit: true` | (removed — use `lora.method: "qlora"` for the QLoRA path) |
 | `training.trainer: "..."` | `training.trainer_type: "..."` |
 | `training.epochs: N` | `training.num_train_epochs: N` |
 | `training.batch_size: N` | `training.per_device_train_batch_size: N` |
@@ -201,6 +200,12 @@ shipped or have been renamed. Use the canonical names instead:
 | `evaluation.auto_revert: { enabled: true }` | `evaluation.auto_revert: true` (boolean) |
 | `safety.model: "..."` | `safety.classifier: "..."` |
 | `safety.block_categories: [list]` | `safety.track_categories: true` + `safety.severity_thresholds: {dict}` |
+
+`model.load_in_4bit` is **not** in this table — it is a live `ModelConfig`
+field (default `true`) and remains the QLoRA toggle. `LoraConfigModel.method`
+has no `"qlora"` literal; it accepts `lora`, `dora`, `pissa`, or `rslora`
+only. QLoRA is `model.load_in_4bit: true` combined with any LoRA `method:` —
+see [LoRA, QLoRA, DoRA](#/training/lora).
 
 ## See also
 

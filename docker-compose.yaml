@@ -1,15 +1,19 @@
 # ==============================================================================
 # ForgeLM Docker Compose
 #
+# Place your config file(s) under ./configs/ on the host — the `train`
+# service mounts that whole directory read-only at /workspace/configs
+# (see the `volumes:` block below), so --config must point inside it.
+#
 # Usage:
 #   Training:
-#     docker compose run --rm train --config /workspace/config.yaml
+#     docker compose run --rm train --config /workspace/configs/my_config.yaml
 #
 #   Dry-run:
-#     docker compose run --rm train --config /workspace/config.yaml --dry-run
+#     docker compose run --rm train --config /workspace/configs/my_config.yaml --dry-run
 #
 #   Benchmark only:
-#     docker compose run --rm train --config /workspace/config.yaml \
+#     docker compose run --rm train --config /workspace/configs/my_config.yaml \
 #       --benchmark-only /workspace/output/final_model
 #
 #   Wizard (generate config):
@@ -44,7 +48,12 @@ services:
     entrypoint: ["forgelm"]
 
   tensorboard:
-    image: tensorflow/tensorflow:latest
+    # Pinned (not :latest) for reproducibility, matching the project's other
+    # supply-chain pins (publish.yml's pinned-by-SHA action, pyproject.toml's
+    # bounded dependency ranges). 2.15.0 tracks the `tensorboard>=2.15.0,<3.0.0`
+    # floor declared in pyproject.toml's [project].dependencies — bump both
+    # together when the floor moves.
+    image: tensorflow/tensorflow:2.15.0
     ports:
       - "6006:6006"
     volumes:

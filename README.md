@@ -100,15 +100,15 @@ Full details: [Safety & Compliance Guide](docs/guides/safety_compliance.md) · [
 
 | Topic | English | Türkçe |
 |---|---|---|
-| Quick Start | [quickstart.md](docs/guides/quickstart.md) | — |
+| Quick Start | [quickstart.md](docs/guides/quickstart.md) | [quickstart-tr.md](docs/guides/quickstart-tr.md) |
 | Document Ingestion | [ingestion.md](docs/guides/ingestion.md) | [ingestion-tr.md](docs/guides/ingestion-tr.md) |
 | Dataset Audit | [data_audit.md](docs/guides/data_audit.md) | [data_audit-tr.md](docs/guides/data_audit-tr.md) |
-| Alignment (DPO / SimPO / KTO / GRPO) | [alignment.md](docs/guides/alignment.md) | — |
+| Alignment (DPO / SimPO / KTO / GRPO) | [alignment.md](docs/guides/alignment.md) | [alignment-tr.md](docs/guides/alignment-tr.md) |
 | Multi-Stage Pipelines | [pipeline.md](docs/guides/pipeline.md) | [pipeline-tr.md](docs/guides/pipeline-tr.md) |
 | CI/CD Integration | [cicd_pipeline.md](docs/guides/cicd_pipeline.md) | [cicd_pipeline-tr.md](docs/guides/cicd_pipeline-tr.md) |
 | Enterprise Deployment | [enterprise_deployment.md](docs/guides/enterprise_deployment.md) | — |
-| Safety & Compliance | [safety_compliance.md](docs/guides/safety_compliance.md) | — |
-| Troubleshooting & FAQ | [troubleshooting.md](docs/guides/troubleshooting.md) | — |
+| Safety & Compliance | [safety_compliance.md](docs/guides/safety_compliance.md) | [safety_compliance-tr.md](docs/guides/safety_compliance-tr.md) |
+| Troubleshooting & FAQ | [troubleshooting.md](docs/guides/troubleshooting.md) | [troubleshooting-tr.md](docs/guides/troubleshooting-tr.md) |
 | **Architecture Reference** | [architecture.md](docs/reference/architecture.md) | [architecture-tr.md](docs/reference/architecture-tr.md) |
 | **Configuration Reference** | [configuration.md](docs/reference/configuration.md) | [configuration-tr.md](docs/reference/configuration-tr.md) |
 | **Product Strategy & Roadmap** | [product_strategy.md](docs/product_strategy.md) · [roadmap.md](docs/roadmap.md) | [product_strategy-tr.md](docs/product_strategy-tr.md) · [roadmap-tr.md](docs/roadmap-tr.md) |
@@ -180,4 +180,4 @@ Contributions are welcome — start with [CONTRIBUTING.md](CONTRIBUTING.md) and 
 
 Licensed under the [Apache License 2.0](LICENSE).
 
-[^1]: `qlora` and `unsloth` extras depend on Linux-only upstream wheels; on macOS and Windows the install succeeds but those backends are skipped via a `sys_platform == 'linux'` marker. All other extras are cross-platform.
+[^1]: `qlora` and `unsloth` extras depend on Linux-only upstream wheels; on macOS and Windows the install succeeds but those backends are skipped via a `sys_platform == 'linux'` marker. `export` similarly skips `llama-cpp-python` on Windows via a `sys_platform != 'win32'` marker (Linux and macOS only). All other extras are cross-platform.

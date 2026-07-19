@@ -343,11 +343,10 @@ def _build_argparser() -> argparse.ArgumentParser:
         "--strict",
         action="store_true",
         help=(
-            "Strict mode: exit 1 on any broken link.  Default is "
-            "advisory: report broken links to stdout but exit 0 so the "
-            "tool can land before the docs tree is clean.  CI gate "
-            "wire-up uses --strict once Faz 30 broken-link cleanup is "
-            "complete."
+            "Strict mode: exit 1 on any broken link.  Default (no "
+            "flag) is advisory: report broken links to stdout but "
+            "exit 0 — useful for local iteration.  CI (ci.yml "
+            "validate job) already invokes this tool with --strict."
         ),
     )
     parser.add_argument(

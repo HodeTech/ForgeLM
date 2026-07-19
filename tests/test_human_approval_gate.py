@@ -457,6 +457,25 @@ class TestForgelmApprove:
             _run_approve_cmd(args, output_format="text")
         assert ei.value.code == 1
 
+    def test_approve_with_nonexistent_output_dir_does_not_create_it(self, tmp_path: Path) -> None:
+        """Regression: approve against a bogus/mistyped --output-dir must fail
+        via the missing-audit-log guard, not materialise the directory and a
+        `.approval.lock` file for a run that never happened."""
+        output_dir = tmp_path / "does_not_exist"
+        assert not output_dir.exists()
+
+        from forgelm.cli import _run_approve_cmd
+
+        args = MagicMock()
+        args.run_id = "fg-anything000000"
+        args.output_dir = str(output_dir)
+        args.comment = None
+
+        with pytest.raises(SystemExit) as ei:
+            _run_approve_cmd(args, output_format="text")
+        assert ei.value.code == 1
+        assert not output_dir.exists(), "approve must not materialise output_dir for a non-existent run"
+
     def test_approve_concurrent_second_call_fails(self, tmp_path: Path, monkeypatch) -> None:
         """Second approve on the same staging dir hits the missing-staging guard."""
         run_id = "fg-concurrentrace"
@@ -505,6 +524,72 @@ class TestForgelmApprove:
 
         kwargs = notifier.notify_success.call_args.kwargs
         assert kwargs["metrics"] == {"eval_loss": 0.42, "accuracy": 0.95}
+
+    def test_approve_audit_logger_keyerror_exits_config_error(self, tmp_path: Path, monkeypatch) -> None:
+        """Finding 1 (defence-in-depth): a bare ``KeyError`` from AuditLogger
+        construction — the arbitrary-numeric-UID container whose UID has no
+        ``/etc/passwd`` entry — must exit ``EXIT_CONFIG_ERROR`` (1) via the CLI
+        seam rather than crash the Article 14 gate with a raw traceback, even if
+        the constructor's own conversion ever regresses.  The model must NOT be
+        promoted (construction is validated before the rename)."""
+        run_id = "fg-keyerr000appr"
+        output_dir = self._seed_run(tmp_path, run_id)
+        monkeypatch.setenv("FORGELM_OPERATOR", "alice")
+
+        from forgelm.cli import _run_approve_cmd
+        from forgelm.compliance import AuditLogger
+
+        def _boom_init(self, output_dir, run_id=None):  # noqa: ANN001
+            raise KeyError("getpwuid(): uid not found: 1000")
+
+        monkeypatch.setattr(AuditLogger, "__init__", _boom_init)
+
+        args = MagicMock()
+        args.run_id = run_id
+        args.output_dir = str(output_dir)
+        args.comment = None
+
+        with pytest.raises(SystemExit) as ei:
+            _run_approve_cmd(args, output_format="text")
+        assert ei.value.code == 1  # EXIT_CONFIG_ERROR, not a raw KeyError traceback
+        assert (output_dir / "final_model.staging").is_dir(), "staging must be untouched — construction precedes rename"
+        assert not (output_dir / "final_model").exists()
+
+    def test_approve_getpass_keyerror_container_exits_config_error(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """Finding 1 (end-to-end): in an arbitrary-numeric-UID container
+        ``getpass.getuser()`` raises ``KeyError`` (UID absent from
+        ``/etc/passwd``).  AuditLogger.__init__ now catches it and converts to
+        ConfigError, which the approve dispatcher surfaces as
+        ``EXIT_CONFIG_ERROR`` (1) with the operator-identity guidance — never a
+        crash, never a silent promotion."""
+        run_id = "fg-getpasskeyap1"
+        output_dir = self._seed_run(tmp_path, run_id)
+
+        import getpass
+
+        monkeypatch.delenv("FORGELM_OPERATOR", raising=False)
+        monkeypatch.delenv("FORGELM_ALLOW_ANONYMOUS_OPERATOR", raising=False)
+
+        def _boom():
+            raise KeyError("getpwuid(): uid not found: 1000")
+
+        monkeypatch.setattr(getpass, "getuser", _boom)
+
+        from forgelm.cli import _run_approve_cmd
+
+        args = MagicMock()
+        args.run_id = run_id
+        args.output_dir = str(output_dir)
+        args.comment = None
+
+        with pytest.raises(SystemExit) as ei:
+            _run_approve_cmd(args, output_format="json")
+        assert ei.value.code == 1  # EXIT_CONFIG_ERROR
+        assert (output_dir / "final_model.staging").is_dir()
+        assert not (output_dir / "final_model").exists()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert "FORGELM_OPERATOR" in payload["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -608,6 +693,55 @@ class TestForgelmReject:
         with pytest.raises(SystemExit) as ei:
             _run_reject_cmd(args, output_format="text")
         assert ei.value.code == 1
+
+    def test_reject_with_nonexistent_output_dir_does_not_create_it(self, tmp_path: Path) -> None:
+        """Reject twin of the approve regression: a bogus/mistyped
+        --output-dir must fail via the missing-audit-log guard, not
+        materialise the directory and a `.approval.lock` file."""
+        output_dir = tmp_path / "does_not_exist_reject"
+        assert not output_dir.exists()
+
+        from forgelm.cli import _run_reject_cmd
+
+        args = MagicMock()
+        args.run_id = "fg-anything000000"
+        args.output_dir = str(output_dir)
+        args.comment = None
+
+        with pytest.raises(SystemExit) as ei:
+            _run_reject_cmd(args, output_format="text")
+        assert ei.value.code == 1
+        assert not output_dir.exists(), "reject must not materialise output_dir for a non-existent run"
+
+    def test_reject_audit_logger_keyerror_exits_config_error(self, tmp_path: Path, monkeypatch) -> None:
+        """Finding 1 (defence-in-depth, reject twin): a bare ``KeyError`` from
+        AuditLogger construction must exit ``EXIT_CONFIG_ERROR`` (1) rather than
+        crash, with the staging directory left intact."""
+        run_id = "fg-keyerr000rejc"
+        output_dir = self._seed_run(tmp_path, run_id)
+        monkeypatch.setenv("FORGELM_OPERATOR", "bob")
+
+        from forgelm.cli import _run_reject_cmd
+        from forgelm.compliance import AuditLogger
+
+        def _boom_init(self, output_dir, run_id=None):  # noqa: ANN001
+            raise KeyError("getpwuid(): uid not found: 1000")
+
+        monkeypatch.setattr(AuditLogger, "__init__", _boom_init)
+
+        args = MagicMock()
+        args.run_id = run_id
+        args.output_dir = str(output_dir)
+        args.comment = None
+
+        with pytest.raises(SystemExit) as ei:
+            _run_reject_cmd(args, output_format="text")
+        assert ei.value.code == 1  # EXIT_CONFIG_ERROR, not a raw KeyError traceback
+        assert (output_dir / "final_model.staging").is_dir(), "staging must be preserved on a failed reject"
+
+        events = _read_audit_events(output_dir / "audit_log.jsonl")
+        rejected = [e for e in events if e["event"] == "human_approval.rejected"]
+        assert rejected == [], "no rejection event may be written when construction fails"
 
 
 # ---------------------------------------------------------------------------
@@ -833,3 +967,192 @@ class TestApproverIdentityPolicy:
         result = _approve._resolve_approver_identity()
         assert result == "anonymous@sandbox-host", f"With opt-in flag we expect 'anonymous@<hostname>', got {result!r}"
         assert result != "anonymous", "The bare 'anonymous' literal is the pre-fix behaviour and must not return"
+
+
+# ---------------------------------------------------------------------------
+# CLI-level: approve/reject decision serialization (TOCTOU close, Finding 2)
+# ---------------------------------------------------------------------------
+
+
+class TestApprovalDecisionSerialization:
+    """The decision-guard read → terminal-write window must be serialized by an
+    exclusive lock so two processes racing approve-vs-reject on the same run_id
+    can never both commit a terminal decision."""
+
+    def _seed_run(self, tmp_path: Path, run_id: str) -> Path:
+        output_dir = tmp_path / "serialize_run"
+        output_dir.mkdir()
+        staging_dir = output_dir / "final_model.staging"
+        staging_dir.mkdir()
+        (staging_dir / "adapter_config.json").write_text('{"r": 8}', encoding="utf-8")
+        _write_required_event(output_dir / "audit_log.jsonl", run_id, str(staging_dir))
+        return output_dir
+
+    def test_granted_write_happens_while_approval_lock_held(self, tmp_path: Path, monkeypatch) -> None:
+        """Deterministic proof that the ``human_approval.granted`` write occurs
+        while ``<output_dir>/.approval.lock`` is held: a non-blocking probe from
+        a second fd must fail to acquire the lock at write time.  Pre-fix (no
+        lock) the probe would succeed — the exact TOCTOU window this closes."""
+        fcntl = pytest.importorskip("fcntl")
+        run_id = "fg-lockheld00001"
+        output_dir = self._seed_run(tmp_path, run_id)
+        monkeypatch.setenv("FORGELM_OPERATOR", "alice")
+
+        from forgelm.cli import _run_approve_cmd
+        from forgelm.compliance import AuditLogger
+
+        observed: dict[str, str] = {}
+        real_log_event = AuditLogger.log_event
+
+        def _probing_log_event(self, event, **details):  # noqa: ANN001
+            lock_path = os.path.join(str(output_dir), ".approval.lock")
+            with open(lock_path, "a+b") as probe:
+                try:
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    observed[event] = "acquired"  # lock NOT held → window open (bug)
+                    fcntl.flock(probe, fcntl.LOCK_UN)
+                except OSError:
+                    observed[event] = "blocked"  # lock held → window closed (correct)
+            return real_log_event(self, event, **details)
+
+        monkeypatch.setattr(AuditLogger, "log_event", _probing_log_event)
+
+        args = MagicMock()
+        args.run_id = run_id
+        args.output_dir = str(output_dir)
+        args.comment = None
+
+        with patch("forgelm.cli._build_approval_notifier", return_value=MagicMock()):
+            _run_approve_cmd(args, output_format="text")
+
+        assert observed.get("human_approval.granted") == "blocked", (
+            "the granted write must occur while .approval.lock is held (TOCTOU close)"
+        )
+        # Sanity: promotion + event still succeeded through the wrapper.
+        assert (output_dir / "final_model").is_dir()
+        events = _read_audit_events(output_dir / "audit_log.jsonl")
+        assert sum(e["event"] == "human_approval.granted" for e in events) == 1
+
+    def test_concurrent_approve_reject_single_terminal_decision(self, tmp_path: Path, monkeypatch) -> None:
+        """Two real threads racing approve vs reject on the same run_id must
+        leave EXACTLY ONE terminal decision: the lock makes them mutually
+        exclusive, and the loser re-reads the committed decision and refuses
+        with EXIT_CONFIG_ERROR (1)."""
+        import threading
+
+        run_id = "fg-racer0000abc"
+        output_dir = self._seed_run(tmp_path, run_id)
+        monkeypatch.setenv("FORGELM_OPERATOR", "alice")
+
+        from forgelm.cli import _run_approve_cmd, _run_reject_cmd
+
+        def _mk_args():
+            a = MagicMock()
+            a.run_id = run_id
+            a.output_dir = str(output_dir)
+            a.comment = None
+            return a
+
+        start = threading.Barrier(2)
+        codes: dict[str, object] = {}
+
+        def _worker(name, fn):
+            start.wait()
+            try:
+                fn(_mk_args(), output_format="text")
+                codes[name] = 0
+            except SystemExit as exc:
+                codes[name] = exc.code
+
+        with patch("forgelm.cli._build_approval_notifier", return_value=MagicMock()):
+            t_app = threading.Thread(target=_worker, args=("approve", _run_approve_cmd))
+            t_rej = threading.Thread(target=_worker, args=("reject", _run_reject_cmd))
+            t_app.start()
+            t_rej.start()
+            t_app.join(timeout=30)
+            t_rej.join(timeout=30)
+
+        assert not t_app.is_alive() and not t_rej.is_alive(), "threads must not deadlock on the approval lock"
+
+        events = _read_audit_events(output_dir / "audit_log.jsonl")
+        terminal = [e["event"] for e in events if e["event"] in ("human_approval.granted", "human_approval.rejected")]
+        assert len(terminal) == 1, f"expected exactly one terminal decision, got {terminal!r}"
+        # Exactly one worker won (exit 0); the other refused with EXIT_CONFIG_ERROR (1).
+        assert sorted(codes.values()) == [0, 1], f"expected one winner (0) + one refusal (1), got {codes!r}"
+
+
+# ---------------------------------------------------------------------------
+# CLI-level: operator vs approver field relationship on a real granted event
+# (Finding 3 — the docstring documents a deliberate divergence)
+# ---------------------------------------------------------------------------
+
+
+class TestGrantedOperatorApproverFields:
+    def _seed_run(self, tmp_path: Path, run_id: str) -> Path:
+        output_dir = tmp_path / "op_approver_run"
+        output_dir.mkdir()
+        staging_dir = output_dir / "final_model.staging"
+        staging_dir.mkdir()
+        (staging_dir / "adapter_config.json").write_text('{"r": 8}', encoding="utf-8")
+        _write_required_event(output_dir / "audit_log.jsonl", run_id, str(staging_dir))
+        return output_dir
+
+    def test_operator_and_approver_collapse_when_env_set(self, tmp_path: Path, monkeypatch) -> None:
+        """FORGELM_OPERATOR set → the granted event's ``operator`` (AuditLogger)
+        and ``approver`` (_resolve_approver_identity) both pin to that value."""
+        run_id = "fg-opapprv0env01"
+        output_dir = self._seed_run(tmp_path, run_id)
+        monkeypatch.setenv("FORGELM_OPERATOR", "ci-bot")
+
+        from forgelm.cli import _run_approve_cmd
+
+        args = MagicMock()
+        args.run_id = run_id
+        args.output_dir = str(output_dir)
+        args.comment = None
+
+        with patch("forgelm.cli._build_approval_notifier", return_value=MagicMock()):
+            _run_approve_cmd(args, output_format="text")
+
+        granted = [
+            e for e in _read_audit_events(output_dir / "audit_log.jsonl") if e["event"] == "human_approval.granted"
+        ]
+        assert len(granted) == 1
+        assert granted[0]["operator"] == "ci-bot"
+        assert granted[0]["approver"] == "ci-bot"
+        assert granted[0]["operator"] == granted[0]["approver"]
+
+    def test_operator_carries_host_while_approver_is_bare_when_env_unset(self, tmp_path: Path, monkeypatch) -> None:
+        """FORGELM_OPERATOR unset, getpass succeeds → ``operator`` is
+        ``<user>@<hostname>`` (AuditLogger) while ``approver`` is the bare
+        ``<user>`` (_resolve_approver_identity).  This deliberate format
+        divergence is what the docstring now documents; pin it so a silent
+        "make them identical" change trips here (Finding 3)."""
+        import getpass
+        import socket
+
+        run_id = "fg-opapprv0unset"
+        output_dir = self._seed_run(tmp_path, run_id)
+        monkeypatch.delenv("FORGELM_OPERATOR", raising=False)
+        monkeypatch.delenv("FORGELM_ALLOW_ANONYMOUS_OPERATOR", raising=False)
+        monkeypatch.setattr(getpass, "getuser", lambda: "alice")
+
+        from forgelm.cli import _run_approve_cmd
+
+        args = MagicMock()
+        args.run_id = run_id
+        args.output_dir = str(output_dir)
+        args.comment = None
+
+        with patch("forgelm.cli._build_approval_notifier", return_value=MagicMock()):
+            _run_approve_cmd(args, output_format="text")
+
+        granted = [
+            e for e in _read_audit_events(output_dir / "audit_log.jsonl") if e["event"] == "human_approval.granted"
+        ]
+        assert len(granted) == 1
+        expected_host = socket.gethostname() or "unknown-host"
+        assert granted[0]["operator"] == f"alice@{expected_host}"
+        assert granted[0]["approver"] == "alice"
+        assert granted[0]["operator"] != granted[0]["approver"], "the format divergence is deliberate (see docstring)"
+        assert granted[0]["operator"].startswith(granted[0]["approver"] + "@")

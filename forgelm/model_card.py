@@ -48,6 +48,33 @@ def _neutralize_md_inline(text: Any) -> str:
     return "".join(ch for ch in s if ch not in _MD_INJECTION_CHARS).strip()
 
 
+def _codefence_for(content: str) -> str:
+    """Return a backtick fence guaranteed to safely wrap *content*.
+
+    Per CommonMark, a fenced code block cannot be closed by a backtick run
+    shorter than its own fence. Sizing the fence one backtick longer than the
+    longest backtick run in *content* makes it impossible for an
+    operator-supplied free-text config field (``risk_assessment.intended_use``,
+    ``compliance.known_limitations``, ``data.governance.known_biases`` ...) to
+    break out of the ``config`` YAML block, regardless of nesting depth or
+    PyYAML's indentation behaviour. Minimum length is the conventional 3.
+
+    This makes the fence-containment property an explicit, testable invariant
+    rather than an emergent consequence of every free-text field happening to
+    be nested (which a future top-level field or a lenient downstream Markdown
+    parser could silently break).
+    """
+    longest = 0
+    run = 0
+    for ch in content:
+        if ch == "`":
+            run += 1
+            longest = max(longest, run)
+        else:
+            run = 0
+    return "`" * max(3, longest + 1)
+
+
 def _redact_secrets(value: Any) -> Any:
     """Recursively redact any dict value whose key signals a secret.
 
@@ -113,9 +140,7 @@ Fine-tuned with [ForgeLM](https://github.com/HodeTech/ForgeLM) — config-driven
 
 This model was trained using the following ForgeLM YAML configuration:
 
-```yaml
-{config_yaml}
-```
+{config_block}
 
 ## Usage
 
@@ -249,6 +274,13 @@ def generate_model_card(
     config_dict = _redact_secrets(config_dict)
     config_yaml = yaml.dump(config_dict, default_flow_style=False, sort_keys=False)
 
+    # Wrap the dump in a dynamically-sized fence so an operator-controlled
+    # free-text field carrying its own backtick run cannot close the block
+    # early and inject Markdown (headers, links) into a card frequently
+    # published to a public HF Hub repo. See ``_codefence_for``.
+    fence = _codefence_for(config_yaml)
+    config_block = f"{fence}yaml\n{config_yaml.rstrip()}\n{fence}"
+
     # Operator-controlled free-text fields are neutralised before interpolation
     # so a crafted model/dataset name or path cannot inject links, break the
     # tables, or escape the YAML front-matter (parity with the deployer
@@ -277,7 +309,7 @@ def generate_model_card(
         metrics_table=metrics_table,
         benchmark_section=benchmark_section,
         safety_section=safety_section,
-        config_yaml=config_yaml,
+        config_block=config_block,
         model_path=model_path,
         version=__version__,
         extra_tags=extra_tags_str,
@@ -285,7 +317,7 @@ def generate_model_card(
 
     card_path = os.path.join(final_path, "README.md")
     os.makedirs(final_path, exist_ok=True)
-    with open(card_path, "w") as f:
+    with open(card_path, "w", encoding="utf-8") as f:
         f.write(card)
 
     logger.info("Model card saved to %s", card_path)

@@ -313,6 +313,12 @@ Document ingestion stdout envelope. Phase 15 added additive fields under
 }
 ```
 
+On a multi-file batch, the top-level `frontmatter_pages_dropped` integer is
+a true sum across every file, while `notes_structured.frontmatter_pages_dropped`
+is a distinct-index sample (which page positions were dropped, not how many
+times) — it can legitimately be shorter than the top-level total and that
+is not a bug.
+
 The Phase 15 additive fields are documented at
 [Document Ingestion](#/data/ingestion). Pre-Phase-15 consumers reading
 `output_path` / `chunk_count` / `notes` keep working unchanged.

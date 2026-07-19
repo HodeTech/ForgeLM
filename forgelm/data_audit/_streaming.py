@@ -41,20 +41,6 @@ def _detect_language(text: str) -> str:
         return "unknown"
 
 
-def _length_stats(lengths: List[int]) -> Dict[str, float]:
-    if not lengths:
-        return {}
-    sorted_lens = sorted(lengths)
-    n = len(sorted_lens)
-    return {
-        "min": sorted_lens[0],
-        "max": sorted_lens[-1],
-        "mean": round(sum(sorted_lens) / n, 1),
-        "p50": sorted_lens[n // 2],
-        "p95": sorted_lens[min(n - 1, int(n * 0.95))],
-    }
-
-
 # ---------------------------------------------------------------------------
 # Streaming length digest — bounded memory for large corpora (C.2)
 # ---------------------------------------------------------------------------
@@ -159,6 +145,21 @@ def _extract_text_payload(row: Dict[str, Any]) -> str:
                 parts.append(m["content"])
         if parts:
             return "\n".join(parts)
+    # Half-present instruction pairs, last resort: a row carrying only ONE
+    # half of a recognised pair (partial export, interrupted synthetic
+    # generation leaving ``output`` unset, a prompt-only corpus) would
+    # otherwise extract to ``""`` — silently counted as ``null_or_empty`` and
+    # never scanned for PII/secrets/quality, exactly the shape most likely to
+    # carry unreviewed PII. ``instruction`` / ``output`` / ``User`` /
+    # ``Assistant`` / ``response`` have no entry in ``_TEXT_COLUMNS``, so scan
+    # them in isolation here rather than dropping the row. Kept AFTER the
+    # canonical single-column fallback so a row that also has a
+    # ``text``/``content``/``completion`` column still prefers that column.
+    for user_key, asst_key in _INSTRUCTION_PAIRS:
+        for key in (user_key, asst_key):
+            val = row.get(key)
+            if isinstance(val, str) and val.strip():
+                return val
     return ""
 
 
@@ -224,8 +225,11 @@ tests / quickstart audits stay quiet but real corpora surface signal."""
 
 _LANG_SAMPLE_SIZE: int = 200
 """How many text-bearing payloads we sample for language detection. Bounded
-so a 100 K-row corpus does not pay 100 K langdetect calls — the top-3
-distribution is well-approximated by the first ~200 detections."""
+so a 100 K-row corpus does not pay 100 K langdetect calls. The sample is a
+uniform reservoir (Algorithm R, see ``_record_text_metrics``), not a
+head-of-stream take, so the top-3 distribution is representative even when
+the corpus is a concatenation of per-language source blocks rather than an
+i.i.d.-shuffled stream."""
 
 
 def _compute_top_languages(sample: List[str]) -> List[Dict[str, Any]]:
@@ -243,7 +247,6 @@ def _compute_top_languages(sample: List[str]) -> List[Dict[str, Any]]:
 
 __all__ = [
     "_detect_language",
-    "_length_stats",
     "_LENGTH_RESERVOIR_SIZE",
     "_LengthDigest",
     "_extract_text_payload",

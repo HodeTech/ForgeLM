@@ -29,8 +29,8 @@ model:
 training:
   trainer_type: "sft"
   learning_rate: 1.0e-5                # full-FT learning rate, LoRA'nınki değil
-  optimizer: "galore_adamw_8bit"
   galore_enabled: true
+  galore_optim: "galore_adamw_8bit"    # GaLore optimizer varyantı
   galore_rank: 256                     # LoRA varsayılanından yüksek (128) — projeksiyon rank'i
   galore_update_proj_gap: 200          # her N adımda bir yeniden projekte et
   galore_scale: 0.25
@@ -45,6 +45,7 @@ training:
 | Parametre | Tip | Vars. | Açıklama |
 |---|---|---|---|
 | `training.galore_enabled` | bool | `false` | Ana anahtar. |
+| `training.galore_optim` | string | `"galore_adamw"` | GaLore optimizer varyantı: `galore_adamw`, `galore_adamw_8bit`, `galore_adafactor` veya bunların `_layerwise` karşılıkları. `_8bit` optimizer-state VRAM'ini yarıya indirir; `_layerwise` katman başına yeniden hesaplayarak peak'i düşürür. |
 | `training.galore_rank` | int | `128` | Gradient projeksiyon rank'i. Yüksek = full-FT'ye yakın, daha çok bellek. |
 | `training.galore_update_proj_gap` | int | `200` | Yeniden projeksiyon adım aralığı. Düşük = değişen gradient'lere hızlı uyum. |
 | `training.galore_scale` | float | `0.25` | Projekte edilmiş gradient'lerin ölçeği. |

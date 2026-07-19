@@ -1,150 +1,97 @@
 ---
 title: Trend Tracking
-description: Compare evaluation results across runs to spot slow drifts before they cross thresholds.
+description: Compare safety scores across runs to spot slow drifts before they cross thresholds.
 ---
 
 # Trend Tracking
 
-Per-run thresholds catch regressions; trend tracking catches drift. A category that's been creeping up over five runs is a different (and often more important) signal than a one-off spike. ForgeLM stores eval results in a per-project history file and reports trends every time you run.
+Per-run thresholds catch regressions; trend tracking catches drift. A safety score that's been creeping down over five runs is a different (and often more important) signal than a one-off dip. ForgeLM's trend tracking today is deliberately small: every safety evaluation appends one row to a JSON Lines history file, and it is up to you (a `jq` query, a notebook, or a Grafana/Datadog dashboard) to turn that history into a drift signal. There is no config-driven statistical drift detector and no `evaluation.trend:` config block — `evaluation` has no `trend` field on the schema.
 
 ## Quick example
 
-After several runs of the same project, the audit report includes a trend section:
+Every time `evaluation.safety.enabled: true` runs (during training or via the standalone `forgelm safety-eval` subcommand), ForgeLM appends one line to `safety_trend.jsonl` next to `safety_results.json`:
 
 ```json
-{
-  "trend": {
-    "lookback_runs": 10,
-    "benchmark": {
-      "hellaswag": {"trend": "stable", "delta_per_run": 0.001},
-      "truthfulqa": {"trend": "drifting_down", "delta_per_run": -0.012, "concern": "medium"}
-    },
-    "safety": {
-      "S5": {"trend": "drifting_up", "delta_per_run": 0.04, "concern": "high"},
-      "S10": {"trend": "stable", "delta_per_run": 0.001}
-    }
-  }
-}
+{"timestamp": "2026-04-29T14:33:04Z", "safety_score": 0.94, "safe_ratio": 0.96, "passed": true}
+{"timestamp": "2026-05-03T09:12:47Z", "safety_score": 0.91, "safe_ratio": 0.93, "passed": true}
+{"timestamp": "2026-05-10T16:45:02Z", "safety_score": 0.85, "safe_ratio": 0.88, "passed": false}
 ```
 
-The `concern` levels:
+Four fields, one line per run: `timestamp`, `safety_score`, `safe_ratio`, `passed`. There is no per-harm-category (`S5`, `S10`, ...) trend and no benchmark trend — `forgelm/benchmark.py` does not write a trend file at all; only the safety path does.
 
-| Level | Trigger |
-|---|---|
-| `none` | No drift detected over lookback window. |
-| `low` | Drift trend statistically present but small. |
-| `medium` | Steady drift; will hit threshold within ~10 runs at current rate. |
-| `high` | Steady drift; will hit threshold within ~3 runs. |
-| `critical` | Already at or near threshold AND drifting. |
+## Computing drift yourself
 
-## How drift is computed
+ForgeLM does not run a regression or significance test on this file for you. A simple, honest way to spot drift with `jq`:
 
-For each metric (benchmark task or safety category):
+```shell
+$ jq -s '
+    map(.safety_score) as $s |
+    ($s | add / length) as $avg |
+    {runs: ($s | length), average: $avg, latest: $s[-1], delta: ($s[-1] - $avg)}
+  ' ./checkpoints/safety/safety_trend.jsonl
+```
 
-1. Pull the last N runs from the project history.
-2. Linear-regress the score on run index.
-3. Test slope against zero with a t-test.
-4. If slope is significant *and* its magnitude is over the noise floor, report drift.
-
-`lookback_runs` defaults to 10 — adjust based on how often you train.
+If `delta` is consistently negative across several checks, `safety_score` is trending down — treat it the same way you'd treat a `min_safety_score` regression, even though nothing in ForgeLM will auto-revert on it today. For anything more rigorous (linear fit, p-values, per-category breakdowns), export the JSONL into pandas or a dashboard tool — ForgeLM's job here is producing clean data, not analysing it.
 
 ## Configuration
 
+There is nothing to turn on. Trend logging is an unconditional side effect of a safety evaluation — whenever `evaluation.safety.enabled: true` runs (training-time or `forgelm safety-eval`), the trend row is appended automatically:
+
 ```yaml
 evaluation:
-  trend:
+  safety:
     enabled: true
-    history_file: "./.forgelm/eval-history.jsonl"
-    lookback_runs: 10
-    drift_p_threshold: 0.05             # statistical significance
-    fail_on_concern: "high"             # exit 3 if any drift hits 'high'
 ```
 
-`fail_on_concern: high` upgrades trend tracking from "advisory" to "gating" — your CI will fail not just on per-run regressions but also on drifts headed for trouble.
+There is no `lookback_runs`, `drift_p_threshold`, or `fail_on_concern` knob to set — none of those fields exist on `SafetyConfig` or anywhere else in `ForgeConfig`.
 
 ## Where the history file lives
 
-By default, `.forgelm/eval-history.jsonl` in the project root. Each run appends one row:
+`safety_trend.jsonl` is written next to `safety_results.json`, in the same directory as the rest of the safety-evaluation output:
 
-```json
-{"ts": "2026-04-29T14:33:04Z", "run_id": "abc123", "config_hash": "deadbeef", "benchmark": {...}, "safety": {...}}
-```
+- Training-time safety gate: `<training.output_dir>/safety/safety_trend.jsonl` (default `./checkpoints/safety/safety_trend.jsonl`).
+- Standalone `forgelm safety-eval --output-dir DIR`: `DIR/safety_trend.jsonl`.
 
-Commit this file. It's small (one row per run, JSON), and it's the only way to track trends across CI runs and contributors.
+Because the default `training.output_dir` is typically per-run (and often gitignored), history only accumulates across runs that share the same output directory. Point multiple runs at the same `training.output_dir`, or run `forgelm safety-eval --output-dir <shared-dir>` against each saved checkpoint after the fact, if you want a long-running trend line instead of one row per run.
 
 ## Visualisation
 
-ForgeLM ships a CLI report. The dedicated `forgelm trend` subcommand is planned for v0.6.0+ Pro CLI tier (see the [Phase 13 roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)) — today the same data is queryable directly from the JSONL with `jq`. Today's working flow:
+ForgeLM does not ship a `forgelm trend` CLI report today. Cross-run comparison — including safety trend — is scoped as part of the Pro CLI observability dashboard (traction-gated; see the [Phase 13 roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)), not a free-tier CLI subcommand. Until it ships, `jq` against the JSONL is the working flow:
 
 ```shell
-# Last 20 S5 (defamation) scores from the trend log:
-$ jq -r 'select(.safety.S5 != null) | "\(.ts) \(.safety.S5)"' \
-    .forgelm/eval-history.jsonl | tail -20
+$ jq -r '"\(.timestamp) \(.safety_score)"' ./checkpoints/safety/safety_trend.jsonl | tail -20
 ```
 
-For visualisation, the JSONL is easy to load into Grafana / Datadog
-(see "For dashboards" below).
-
-The dedicated `forgelm trend` subcommand will look like this when it
-ships in v0.6.0+ — pseudo-output, NOT runnable today:
-
-```text
-# planned-v0.6.0+ pseudo-output (not runnable today):
-$ forgelm trend --metric "safety.S5" --lookback 20
-
-S5 (defamation) — last 20 runs:
-
-  0.42 ┤                                                ╭────●
-  0.30 ┤                                          ╭─────╯
-  0.18 ┤                              ╭───────────╯
-  0.06 ┤   ●─────●─────●─────●────────╯
-       └─┴───────────────────────────────────────────────────┘
-         1  3  5  7  9  11 13 15 17 19  20
-
-Linear fit: slope=+0.018/run, p=0.001 — drifting up (high concern)
-```
-
-For dashboards, the JSONL is easy to load into Grafana or Datadog:
+For dashboards, the JSONL loads directly into Grafana or Datadog:
 
 ```shell
-$ jq '.benchmark.truthfulqa, .ts' .forgelm/eval-history.jsonl > truthfulqa-trend.csv
+$ jq -c '.' ./checkpoints/safety/safety_trend.jsonl > safety-trend.ndjson
 ```
 
 ## Run identification
 
-Each run has a `run_id` (UUID) and a `config_hash` (hash of the YAML config). When you compare runs, compare like-for-like — a hyperparameter change can shift baselines without that being a regression.
-
-Filter the history. Today's working flow uses `jq`:
+`safety_trend.jsonl` rows carry only `timestamp`, `safety_score`, `safe_ratio`, and `passed` — there is no `run_id` or `config_hash` field to join against. If you need to correlate a trend row with a specific training run, cross-reference the `timestamp` against your own run log (or `audit_log.jsonl`'s `training_started` / `training_completed` events for that run) rather than expecting a built-in join key.
 
 ```shell
-$ jq 'select(.config_hash == "deadbeef") | .benchmark.hellaswag' \
-    .forgelm/eval-history.jsonl | tail -30
-```
-
-The dedicated `forgelm trend` subcommand (planned v0.6.0+ Pro CLI form, not runnable today):
-
-```text
-$ forgelm trend --metric "benchmark.hellaswag" \
-    --filter "config_hash=deadbeef" \
-    --lookback 30
+$ jq -r 'select(.passed == false) | .timestamp' ./checkpoints/safety/safety_trend.jsonl
 ```
 
 ## Common pitfalls
 
 :::warn
-**Mixing config-changed runs with config-stable runs.** A trend computed across runs with different configs is meaningless. Use `--filter config_hash` for like-for-like.
+**Expecting automatic drift alerts.** Nothing in ForgeLM watches `safety_trend.jsonl` and fails a run because of a multi-run trend — only the current run's `evaluation.safety.max_safety_regression` / `min_safety_score` gates the exit code. Trend analysis is advisory and manual today.
 :::
 
 :::warn
-**Lookback too short.** With `lookback_runs: 3`, every random fluctuation looks like drift. Stay at 10+ for stable signal.
+**Comparing across different `training.output_dir` values.** If every run writes to a fresh directory, `safety_trend.jsonl` never accumulates more than one row per directory. Reuse the directory (or aggregate multiple `safety_trend.jsonl` files yourself) to get a real trend.
 :::
 
 :::tip
-**Annotate the history.** When you intentionally change something (new dataset, new hyperparameters), commit a note to `.forgelm/eval-history.jsonl` explaining why baselines might shift. Future you will thank past you.
+**Keep your own run log alongside the trend file.** Since there's no `run_id`/`config_hash` join key, a lightweight external log (spreadsheet, CI artifact, or `audit_log.jsonl`) that maps `timestamp` → config/run is what makes the trend data actionable.
 :::
 
 ## See also
 
-- [Benchmark Integration](#/evaluation/benchmarks) — produces the data.
-- [Llama Guard Safety](#/evaluation/safety) — produces safety scores.
-- [Auto-Revert](#/evaluation/auto-revert) — sister gate with per-run focus.
+- [Llama Guard Safety](#/evaluation/safety) — produces the `safety_score` / `safe_ratio` this page tracks.
+- [Auto-Revert](#/evaluation/auto-revert) — the per-run gate; trend tracking is advisory, not gating.
+- [Benchmark Integration](#/evaluation/benchmarks) — a separate gate with no trend file of its own.

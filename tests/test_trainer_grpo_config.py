@@ -162,6 +162,47 @@ def test_grpo_config_disables_eval_when_validation_split_present(tmp_path):
     assert "greater_is_better" not in captured_kwargs
 
 
+def test_grpo_pipeline_skips_post_train_evaluate(tmp_path):
+    """Regression for the GRPO post-train crash: ``_run_training_pipeline`` must
+    NOT call ``self.trainer.evaluate()`` for GRPO, even when a validation split
+    is present (the default path, auto-created by ``_ensure_validation_split``).
+
+    ``_build_grpo_trainer`` builds the GRPOTrainer with no eval_dataset, so
+    inherited ``transformers.Trainer.get_eval_dataloader`` raises
+    ``ValueError: Trainer: evaluation requires an eval_dataset.`` on any
+    ``evaluate()`` call. Before the fix the pipeline invoked ``evaluate()``
+    unconditionally, turning a successful GRPO run into an exit-2 failure.
+    """
+    from forgelm.trainer import ForgeTrainer
+
+    config = _make_grpo_config(tmp_path)
+
+    trainer = ForgeTrainer.__new__(ForgeTrainer)
+    trainer.config = config
+    # Validation split present — the default pipeline path that triggered the bug.
+    trainer.dataset = {"train": list(range(10)), "validation": list(range(4))}
+    trainer.checkpoint_dir = str(tmp_path)
+    trainer.run_name = "grpo_post_train_eval_test"
+    trainer.notifier = MagicMock()
+    trainer.audit = MagicMock()
+
+    # The GRPOTrainer has no eval_dataset — evaluate() must never be reached.
+    trainer.trainer = MagicMock()
+    trainer.trainer.evaluate = MagicMock(side_effect=ValueError("Trainer: evaluation requires an eval_dataset."))
+
+    # Isolate the post-train evaluate gate: stub the surrounding pipeline stages
+    # and short-circuit right after it via execute_evaluation_checks -> False.
+    trainer._measure_baseline_loss = MagicMock()
+    trainer._run_with_oom_recovery = MagicMock(return_value=MagicMock(metrics={}))
+    trainer.save_final_model = MagicMock()
+    trainer.execute_evaluation_checks = MagicMock(return_value=False)
+
+    result = trainer._run_training_pipeline(None)
+
+    trainer.trainer.evaluate.assert_not_called()
+    assert result.reverted is True  # short-circuited via the stubbed gate
+
+
 def test_legacy_field_name_still_accepted(tmp_path):
     """Existing YAML configs using the legacy ``grpo_max_new_tokens`` key must
     still load — Pydantic alias keeps the old field name working."""

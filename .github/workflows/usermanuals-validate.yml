@@ -22,9 +22,15 @@ on:
 env:
   FORGELM_OPERATOR: ci-smoke
 
+# No workflow-level permissions; the job declares the minimum it needs
+# (checkout-only read access), per Sonar githubactions:S8233 / S8264 —
+# matches the pattern in nightly.yml / publish.yml / site-deploy.yml.
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
 

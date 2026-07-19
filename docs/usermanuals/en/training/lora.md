@@ -59,14 +59,19 @@ lora:
   r: 16                                  # rank — 8/16/32 typical
   alpha: 32                              # scaling — usually 2× rank
   dropout: 0.05
-  use_dora: false                        # set true for DoRA
+  method: "lora"                         # lora | dora | pissa | rslora
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
-  modules_to_save: []                    # extra modules trained at full precision
 
 training:
   trainer_type: "sft"
   learning_rate: 2.0e-4                  # LoRA tolerates higher LR than full FT
 ```
+
+## PEFT method selection
+
+`lora.method` is the current selector for which PEFT variant to use: `lora` (standard), `dora` (weight-decomposed, see below), `pissa` (LoRA initialised from the principal singular components — faster convergence on small datasets), or `rslora` (rank-stabilised scaling — more stable once `r ≥ 64`).
+
+`use_dora` and `use_rslora` are deprecated boolean shortcuts for `method: "dora"` / `method: "rslora"` — still accepted, but scheduled for removal in **v0.10.0**. Setting a deprecated flag against a contradicting explicit `method:` (e.g. `use_dora: true` with `method: "rslora"`) is a config error, and setting `use_dora: true` and `use_rslora: true` together is also rejected — pick one path. PiSSA has no boolean alias; select it only with `method: "pissa"`.
 
 ## Choosing rank `r`
 
@@ -106,7 +111,7 @@ DoRA decomposes each weight into a magnitude vector and a direction matrix, trai
 lora:
   r: 16
   alpha: 32
-  use_dora: true
+  method: "dora"
 ```
 
 Trade-off: ~5-10% slower training and ~10% more VRAM than plain LoRA. Use DoRA when:
@@ -116,15 +121,11 @@ Trade-off: ~5-10% slower training and ~10% more VRAM than plain LoRA. Use DoRA w
 ## Common pitfalls
 
 :::warn
-**Setting `r` too high.** Rank 128 LoRA is roughly equivalent in compute and quality to a partial full fine-tune — and usually worse than picking a smaller model and doing full FT. If `r > 64` keeps coming up, reconsider the approach.
+**Setting `r` too high.** Rank 128 LoRA is roughly equivalent in compute and quality to a partial full fine-tune — and usually worse than picking a smaller model and doing full FT. `r > 64` without `method: "rslora"` logs a stability warning; if you're pushing rank that high, switch to `method: "rslora"` or reconsider the approach.
 :::
 
 :::warn
-**Forgetting `modules_to_save` for embedding changes.** If you add new tokens to the tokeniser, the embedding and lm_head need full-precision training:
-```yaml
-lora:
-  modules_to_save: ["embed_tokens", "lm_head"]
-```
+**`modules_to_save` is not a ForgeLM field.** Native PEFT exposes `modules_to_save` to train modules (e.g. `embed_tokens` / `lm_head`) at full precision alongside the LoRA adapter, but `LoraConfigModel` doesn't surface it — `extra="forbid"` rejects it at `--dry-run`. If you add new tokens to the tokeniser, you can still LoRA-adapt the embedding by listing its name in `target_modules` (e.g. `["q_proj", "v_proj", "embed_tokens"]`), but that's a low-rank update, not full-precision training.
 :::
 
 :::warn

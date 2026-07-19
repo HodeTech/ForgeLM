@@ -268,8 +268,10 @@ For a deployer auditor walking access-control evidence:
       `.forgelm_audit_salt` `0600`.
 - [ ] No `FORGELM_OPERATOR=root` / `=admin` / `=unknown` events in
       the chain.
-- [ ] Webhook URLs and HMAC keys are env-resolved (`url_env`,
-      `secret_env`); no plaintext URL in any committed YAML.
+- [ ] Webhook URLs are env-resolved (`url_env`); no plaintext URL in
+      any committed YAML. (ForgeLM does not HMAC-sign webhook bodies,
+      so there is no `secret_env` field — destination-side controls
+      are the receiving system's responsibility.)
 
 ## 9. Review
 

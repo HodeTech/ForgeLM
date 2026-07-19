@@ -14,9 +14,13 @@ Implements the operator-facing surface specified in
 
 Audit-event vocabulary (six new events per design §5.1):
 
-- ``data.erasure_requested`` — emitted FIRST, before any deletion;
-  carries the hashed ``target_id`` so a forensic reviewer sees the
-  intent even if the deletion itself fails.
+- ``data.erasure_requested`` — emitted FIRST, before any deletion, so
+  a forensic reviewer sees the intent even if the deletion itself
+  fails.  ``target_id`` is scope-dependent: in row-scoped erasure it is
+  the SHA-256 hash of the (potentially PII) row id (design §5.4); in
+  run-scoped erasure it is the plain ``run_id`` — an operational
+  identifier the trainer minted, not derived from any subject input,
+  so it stays in the clear and needs no hashing (design §5.3).
 - ``data.erasure_completed`` — emitted LAST after the disk operation
   succeeded; carries ``bytes_freed`` + ``files_modified`` + (corpus
   mode) ``pre_erasure_line_number``.
@@ -89,8 +93,9 @@ _ROW_ID_KEYS: Tuple[str, ...] = ("id", "row_id")
 _VALID_RUN_KINDS: Tuple[str, ...] = ("staging", "artefacts")
 
 # Cap for the ``error_message`` field persisted into the append-only audit
-# chain.  Mirrors ``reverse_pii._AUDIT_ERROR_MESSAGE_MAX`` so the two GDPR
-# subcommands bound the field identically (F-P5-OPUS-07).
+# chain.  ``reverse-pii`` imports :func:`_sanitise_audit_error_message`
+# below rather than duplicating the mask/bound logic, so both GDPR
+# subcommands mask + bound the field identically (F-P5-OPUS-07).
 _AUDIT_ERROR_MESSAGE_MAX = 200
 
 
@@ -99,24 +104,25 @@ def _sanitise_audit_error_message(message: str) -> str:
 
     ``data.erasure_failed`` carries ``error_message=str(exc)`` for an
     ``OSError`` raised mid-erasure.  A Python exception string can embed
-    secret-bearing header values or, worse, corpus row content (emails /
-    phone numbers / names) when a downstream library quotes the offending
-    line — which would land that PII in the append-only audit log
-    permanently (CLAUDE.md principle 5).  ``docs/design/gdpr_erasure.md``
-    §6 mandates this field be routed through
-    :func:`forgelm._http._mask_secrets_in_text` and then the
-    :mod:`forgelm.data_audit._pii_regex` mask helpers; reverse-pii already
-    length-bounds its sibling field.  This helper applies all three passes
-    (secret mask → PII regex mask → length bound) so the load-bearing
-    privacy mandate and the length-bound precedent are met together
-    (F-P5-OPUS-07).
+    corpus row content (emails / phone numbers) when a downstream
+    library quotes the offending line — which would land that PII in
+    the append-only audit log permanently (CLAUDE.md principle 5).
+    This helper runs the message through
+    :func:`forgelm._http._mask_secrets_in_text` (a no-op on this path:
+    called with ``headers=None`` per design §5.4, since purge has no
+    outbound HTTP headers to strip) and then
+    :mod:`forgelm.data_audit._pii_regex`'s regex catalogue (email /
+    phone / IBAN / card / national-id — not free-form names) before
+    bounding the result to :data:`_AUDIT_ERROR_MESSAGE_MAX` chars. The
+    length bound is the residual backstop for anything the regex
+    catalogue does not shape-match (F-P5-OPUS-07).
     """
     from forgelm._http import _mask_secrets_in_text
     from forgelm.data_audit._pii_regex import mask_pii
 
     # ``_mask_secrets_in_text`` needs a header map to know which values to
     # strip; the purge path has no outbound headers, so pass ``None`` (it
-    # short-circuits to a no-op) per design §6's explicit note.
+    # short-circuits to a no-op) per design §5.4's explicit note.
     masked = _mask_secrets_in_text(message, None)
     masked = mask_pii(masked)
     if len(masked) <= _AUDIT_ERROR_MESSAGE_MAX:
@@ -297,8 +303,10 @@ def _atomic_rewrite_dropping_lines(corpus_path: str, line_numbers_to_drop: List[
     post-erasure file, never a partial state.  Returns the byte count
     freed.
 
-    Raises :class:`OSError` on any I/O failure; the caller is responsible
-    for emitting ``data.erasure_failed`` and surfacing
+    Raises :class:`OSError` on any I/O failure and
+    :class:`UnicodeDecodeError` when the corpus carries non-UTF-8 bytes
+    (legacy encodings, web-scraped mixed content); the caller is
+    responsible for emitting ``data.erasure_failed`` and surfacing
     ``EXIT_TRAINING_ERROR``.
     """
     drop_set = set(line_numbers_to_drop)
@@ -343,8 +351,13 @@ def _atomic_rewrite_dropping_lines(corpus_path: str, line_numbers_to_drop: List[
                 os.fsync(dir_fd)
             finally:
                 os.close(dir_fd)
-    except OSError:
-        # Best-effort cleanup of the temp file if the swap failed.
+    except (OSError, UnicodeDecodeError):
+        # Best-effort cleanup of the temp file if the swap failed or the
+        # source corpus turned out to carry non-UTF-8 bytes mid-read.
+        # ``UnicodeDecodeError`` is a ``ValueError`` subclass (NOT an
+        # ``OSError``), so it must be named explicitly here or the temp
+        # file would be orphaned.  Mirrors ``_reverse_pii._scan_file``'s
+        # ``(OSError, UnicodeDecodeError)`` handling.
         if os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
@@ -358,9 +371,17 @@ def _atomic_rewrite_dropping_lines(corpus_path: str, line_numbers_to_drop: List[
 def _detect_warning_conditions(
     output_dir: str,
     config_loaded: Optional[Any],
-) -> Tuple[List[str], Dict[str, Any]]:
-    """Return ``(warning_event_names, extra_fields_per_event)`` for the
-    warning events that should fire alongside ``data.erasure_completed``.
+) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
+    """Return ``(warning_event_names, extras_by_event)`` for the warning
+    events that should fire alongside ``data.erasure_completed``.
+
+    ``extras_by_event`` is keyed by event name so each warning event's
+    payload carries ONLY the fields the audit-event catalog scopes to
+    it: a shared mutable dict would leak e.g. ``synthetic_files`` into a
+    ``data.erasure_warning_memorisation`` entry when both warnings fire
+    in the same run, breaking per-event payload-shape validation a
+    downstream compliance parser may build against the catalog
+    (Art. 17 table).
 
     Per design §5.1:
 
@@ -375,22 +396,22 @@ def _detect_warning_conditions(
       have received notices).
     """
     warnings: List[str] = []
-    extras: Dict[str, Any] = {}
+    extras: Dict[str, Dict[str, Any]] = {}
 
     final_model_dir = os.path.join(output_dir, "final_model")
     if os.path.isdir(final_model_dir):
         warnings.append(_EVT_WARN_MEMORISATION)
-        extras["affected_run_ids"] = _scan_run_ids_with_final_model(output_dir)
+        extras[_EVT_WARN_MEMORISATION] = {"affected_run_ids": _scan_run_ids_with_final_model(output_dir)}
 
     synthetic_files = sorted(str(p) for p in Path(output_dir).glob("synthetic_data*.jsonl") if p.is_file())
     if synthetic_files:
         warnings.append(_EVT_WARN_SYNTHETIC_DATA)
-        extras["synthetic_files"] = synthetic_files
+        extras[_EVT_WARN_SYNTHETIC_DATA] = {"synthetic_files": synthetic_files}
 
     webhook_targets = _extract_webhook_targets(config_loaded)
     if webhook_targets:
         warnings.append(_EVT_WARN_EXTERNAL_COPIES)
-        extras["webhook_targets"] = webhook_targets
+        extras[_EVT_WARN_EXTERNAL_COPIES] = {"webhook_targets": webhook_targets}
 
     return warnings, extras
 
@@ -619,7 +640,11 @@ def _perform_row_erasure_and_audit(
     """
     try:
         bytes_freed = _atomic_rewrite_dropping_lines(args.corpus, line_numbers)
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
+        # ``UnicodeDecodeError`` (a ``ValueError`` subclass, not an
+        # ``OSError``) fires when the corpus carries non-UTF-8 bytes; it
+        # must close the chain with ``data.erasure_failed`` — never leave
+        # a dangling ``data.erasure_requested`` (CLAUDE.md principle 5).
         audit.log_event(
             _EVT_ERASURE_FAILED,
             **request_fields,
@@ -633,16 +658,30 @@ def _perform_row_erasure_and_audit(
         )
 
     warning_events, warning_extras = _detect_warning_conditions(output_dir, config_loaded)
+    # Computed once and reused for both the completed event and every
+    # warning event below, so the catalog contract (each
+    # ``erasure_warning_*`` payload is "All `completed` fields + <scoped
+    # field>", per docs/reference/audit_event_catalog.md) cannot drift: a
+    # future field added to (or renamed in) ``data.erasure_completed`` only
+    # needs to change in one place.
+    completed_fields: Dict[str, Any] = {
+        "bytes_freed": bytes_freed,
+        "files_modified": [os.path.abspath(args.corpus)],
+        "pre_erasure_line_number": pre_first_line,
+        "match_count": len(matches),
+    }
     audit.log_event(
         _EVT_ERASURE_COMPLETED,
         **request_fields,
-        bytes_freed=bytes_freed,
-        files_modified=[os.path.abspath(args.corpus)],
-        pre_erasure_line_number=pre_first_line,
-        match_count=len(matches),
+        **completed_fields,
     )
     for event_name in warning_events:
-        audit.log_event(event_name, **request_fields, **warning_extras)
+        audit.log_event(
+            event_name,
+            **request_fields,
+            **completed_fields,
+            **warning_extras.get(event_name, {}),
+        )
 
     _emit_purge_success(
         output_format,
@@ -661,7 +700,17 @@ def _perform_row_erasure_and_audit(
 
 
 def _run_purge_row_id(args, output_format: str) -> None:
-    """Handle ``forgelm purge --row-id <id> --corpus <path>``."""
+    """Handle ``forgelm purge --row-id <id> --corpus <path>``.
+
+    ``--dry-run`` does NOT touch the corpus, but it DOES create
+    ``output_dir`` and the persistent ``.forgelm_audit_salt`` file (mode
+    0600) and writes the ``data.erasure_requested`` +
+    ``data.erasure_completed`` (``dry_run=True``) intent record into
+    ``output_dir/audit_log.jsonl``.  These are intentional dry-run side
+    effects: the audit chain must record the previewed erasure with its
+    hashed ``target_id``, which requires the persistent salt and the
+    output directory (design §5.4; F-P5-OPUS finding 7).
+    """
     _validate_row_id_args(args, output_format)
     output_dir = args.output_dir or os.path.dirname(os.path.abspath(args.corpus)) or "."
     os.makedirs(output_dir, exist_ok=True)
@@ -701,7 +750,29 @@ def _run_purge_row_id(args, output_format: str) -> None:
     }
     audit.log_event(_EVT_ERASURE_REQUESTED, **request_fields)
 
-    matches = _find_matching_rows(args.corpus, args.row_id)
+    try:
+        matches = _find_matching_rows(args.corpus, args.row_id)
+    except (OSError, UnicodeDecodeError) as exc:
+        # ``_find_matching_rows`` reads the whole corpus with
+        # ``encoding='utf-8'``; a non-UTF-8 corpus raises
+        # ``UnicodeDecodeError`` (a ``ValueError`` subclass, NOT an
+        # ``OSError``).  Without this catch the exception would escape
+        # uncaught AFTER ``data.erasure_requested`` was already logged,
+        # leaving a dangling audit chain with no ``data.erasure_failed``
+        # closer — an Art. 12 record-keeping integrity break.  Mirror
+        # ``_reverse_pii._scan_file``'s ``(OSError, UnicodeDecodeError)``
+        # discipline: close the chain, then exit with the documented code.
+        audit.log_event(
+            _EVT_ERASURE_FAILED,
+            **request_fields,
+            error_class=exc.__class__.__name__,
+            error_message=_sanitise_audit_error_message(str(exc)),
+        )
+        _output_error_and_exit(
+            output_format,
+            f"Could not read corpus {args.corpus!r}: {exc}.  Corpus left unchanged.",
+            EXIT_TRAINING_ERROR,
+        )
     _validate_match_count_or_fail(
         matches,
         request_fields=request_fields,
@@ -1340,8 +1411,10 @@ def _maybe_load_config(config_path: Optional[str], *, strict: bool = False):
     ``strict=False`` (default) is the best-effort mode used by the
     row-id / run-id erasure paths: those subcommands work without a
     config (the corpus-row erasure is intentionally config-agnostic),
-    so a missing / unreadable / invalid YAML degrades silently to
-    ``None``.
+    so a missing / unreadable / invalid YAML falls back to ``None``.
+    When *config_path* was explicitly supplied the fallback is logged
+    at ``WARNING`` (not silent) so an operator relying on it for
+    external-copies detection sees that the load failed.
 
     ``strict=True`` is used by ``--check-policy`` where the operator
     is *explicitly* asking for a retention-policy report against the
@@ -1368,7 +1441,17 @@ def _maybe_load_config(config_path: Optional[str], *, strict: bool = False):
         if strict:
             raise
         # Best-effort fallback: row-id / run-id paths run config-free.
-        logger.debug("purge: could not load config %s: %s", config_path, exc)
+        # WARNING, not DEBUG: an operator who explicitly passed --config
+        # (e.g. to surface the external-copies webhook warning) must see
+        # that the config load failed — DEBUG is invisible under the
+        # INFO default AND the WARNING-forced JSON mode, making a failed
+        # load indistinguishable from "no webhook configured" (a false
+        # compliance signal).
+        logger.warning(
+            "purge: --config %r could not be loaded (%s); external-copies warning detection is disabled for this run.",
+            config_path,
+            exc,
+        )
         return None
 
 

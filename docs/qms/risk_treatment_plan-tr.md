@@ -127,7 +127,7 @@ ekler.
 |---|---|
 | Açıklama | Adversary AWS instance credential'ları exfiltre etmek için `webhook.url_env=http://internal-metadata-server/...` yapılandırır |
 | L × I (inherent) | Low × Med = LOW |
-| Treatment | `safe_post` (Phase 7) — HTTPS-only, SSRF guard RFC 1918 / 169.254.x / loopback / link-local reddeder, no redirect-following, error log'larda masked auth header'lar; webhook URL `url_env`'den gelmeli, asla inline değil |
+| Treatment | `safe_post` (Phase 7) — HTTPS-only, SSRF guard RFC 1918 / loopback / link-local (169.254.169.254'teki cloud IMDS dahil) / RFC 6598 Shared Address Space (`100.64.0.0/10`, Alibaba Cloud IMDS `100.100.100.200` dahil) / reserved / multicast reddeder, no redirect-following, error log'larda masked auth header'lar; webhook URL `url_env`'den gelmeli, asla inline değil |
 | Residual L × I | Low × Low = LOW |
 | Sahip | Güvenlik |
 | Review cadence | Config review başına |

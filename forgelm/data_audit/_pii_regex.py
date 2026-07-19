@@ -37,14 +37,38 @@ from typing import Any, Dict
 _PII_PATTERNS: Dict[str, re.Pattern] = {
     # ASCII class: RFC 5321 constrains email local-part and domain to US-ASCII
     "email": re.compile(r"\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}\b"),
-    "iban": re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"),
+    # IBAN: 2-letter country + 2 check digits + 11-30 alphanumerics. The body
+    # allows an optional single space before each character so the ISO 13616
+    # print grouping ("TR46 0006 1001 5478 …") — how IBANs actually appear on
+    # invoices / statements / email — is detected, not only the compact form.
+    # ``(?: ?[A-Z0-9])`` (no single-char class per regex.md rule 2); the space
+    # and the alphanumeric are disjoint so the two never compete, and the
+    # {11,30} bound (regex.md rule 3) keeps backtracking bounded — linearity
+    # verified at tests/test_data_audit.py::TestPiiRegexLinearity. The
+    # optional space makes this shape alone span all-caps prose word
+    # boundaries (e.g. "US20 MEN WENT TO THE STORE..."); _validate_match
+    # closes that gap with an ISO 7064 mod-97 checksum (see _is_valid_iban)
+    # rather than tightening the shape, so both the compact and any spacing
+    # of the print form are still detected. The 2 check digits use ASCII
+    # ``[0-9]`` (not bare ``\d``) to match the ASCII-only ``[A-Z0-9]`` body —
+    # unlike tr_id/phone/credit_card (which deliberately use Unicode-aware
+    # ``\d`` per the module-level note above), an IBAN's alphanumeric body
+    # can never contain non-ASCII digit forms, so the check digits shouldn't
+    # either; a single structured identifier should have one script grammar
+    # throughout.
+    "iban": re.compile(r"\b[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]){11,30}\b"),
     # Credit cards captured first within the digit-run categories, then
     # Luhn-validated (see _is_credit_card). Greedy ``*`` instead of ``*?``:
     # both match the same set of strings here (``\b`` end-anchor forces a
     # full match) but the greedy form avoids unnecessary engine backtracking.
     "credit_card": re.compile(r"\b(?:\d[ -]*){13,19}\b"),
     "us_ssn": re.compile(r"\b(?!000|666|9\d{2})\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b"),
-    "fr_ssn": re.compile(r"\b[12]\d{2}(0[1-9]|1[0-2])(2[AB]|\d{2})\d{3}\d{3}(\d{2})?\b"),
+    # Non-capturing groups (?:...) throughout: capturing groups make
+    # ``pattern.findall`` return a tuple of only the captured spans instead of
+    # the full match, which would corrupt ``detect_pii``'s payload (and any
+    # future checksum validation) for this one pattern. Every other entry in
+    # this dict is group-free for the same reason.
+    "fr_ssn": re.compile(r"\b[12]\d{2}(?:0[1-9]|1[0-2])(?:2[AB]|\d{2})\d{3}\d{3}(?:\d{2})?\b"),
     "tr_id": re.compile(r"\b\d{11}\b"),  # TR national ID is 11 digits, see _is_tr_id
     # German Personalausweis serial: leading letter, then 7-8 digits, then
     # optional alphanumeric check char. Tighter than the previous
@@ -57,6 +81,10 @@ _PII_PATTERNS: Dict[str, re.Pattern] = {
     # don't trip false positives. Use ingestion --pii-mask to redact at write
     # time; keep audit's recall slightly lower than the other categories to
     # avoid audit fatigue.
+    # Every quantifier is bounded and each optional ``[\s.-]?`` sits over a
+    # character class disjoint from the adjacent ``\d`` run, so no two
+    # quantifiers compete for the same characters (regex.md rule 4). ReDoS
+    # linearity verified at tests/test_data_audit.py::TestPiiRegexLinearity.
     "phone": re.compile(
         r"(?<!\w)"
         r"(?:"
@@ -84,6 +112,25 @@ def _is_credit_card(candidate: str) -> bool:
     return total % 10 == 0
 
 
+def _is_valid_iban(candidate: str) -> bool:
+    """Validate an IBAN via the ISO 7064 mod-97 checksum (ISO 13616 Annex A).
+
+    Move the leading 4 characters (country code + check digits) to the end,
+    map each letter to its base-36 value (A=10 .. Z=35), and require the
+    resulting integer to be congruent to 1 mod 97. Real IBANs satisfy this by
+    construction; all-caps prose spanning the spaced ``iban`` pattern's shape
+    (e.g. "US20 MEN WENT TO THE STORE...") essentially never does, so this
+    closes the false-positive gap the permissive spaced regex opens without
+    narrowing which spacing/grouping of a real IBAN is recognised.
+    """
+    compact = candidate.replace(" ", "")
+    if not 15 <= len(compact) <= 34:
+        return False
+    rearranged = compact[4:] + compact[:4]
+    digits = "".join(str(int(ch, 36)) if ch.isalpha() else ch for ch in rearranged)
+    return int(digits) % 97 == 1
+
+
 def _is_tr_id(candidate: str) -> bool:
     """Validate TR national ID (TC Kimlik No) by its checksum rules."""
     if len(candidate) != 11 or not candidate.isdigit():
@@ -101,6 +148,8 @@ def _is_tr_id(candidate: str) -> bool:
 def _validate_match(pii_type: str, match: str) -> bool:
     if pii_type == "credit_card":
         return _is_credit_card(match)
+    if pii_type == "iban":
+        return _is_valid_iban(match)
     if pii_type == "tr_id":
         return _is_tr_id(match)
     return True
@@ -115,10 +164,10 @@ def detect_pii(text: Any) -> Dict[str, int]:
     callers see no behavioural difference; static-checker friction goes
     away.
 
-    Validation: credit cards run through Luhn; TR national IDs run through
-    the TC Kimlik No checksum. Other categories use regex shape only — false
-    positives are intentional (the audit is meant to over-report and let the
-    operator decide).
+    Validation: credit cards run through Luhn; IBANs run through the ISO 7064
+    mod-97 checksum; TR national IDs run through the TC Kimlik No checksum.
+    Other categories use regex shape only — false positives are intentional
+    (the audit is meant to over-report and let the operator decide).
     """
     counts: Dict[str, int] = {}
     if not text or not isinstance(text, str):
@@ -183,6 +232,7 @@ __all__ = [
     "_PII_PATTERNS",
     "_is_credit_card",
     "_is_tr_id",
+    "_is_valid_iban",
     "_validate_match",
     "detect_pii",
     "mask_pii",

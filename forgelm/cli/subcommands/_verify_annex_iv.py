@@ -13,8 +13,9 @@ Exit codes (per ``docs/standards/error-handling.md``):
 
 - 0 — every required field present + manifest hash matches.
 - 1 — operator-actionable: required field missing/empty, manifest hash
-  mismatch, file not found / not a regular file, or malformed JSON
-  (the artifact is not Annex IV compliant or not loadable as-is).
+  mismatch, file not found / not a regular file, malformed JSON, or
+  invalid UTF-8 encoding (the artifact is not Annex IV compliant or not
+  loadable as-is).
 - 2 — genuine runtime I/O failure on an existing, reachable file.
 """
 
@@ -96,9 +97,17 @@ class VerifyAnnexIVResult:
 
 
 def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoReturn:
-    """Mirror the family helper from sibling subcommand modules."""
+    """Mirror the family helper from sibling subcommand modules.
+
+    ``indent=2`` matches the sibling ``_verify_integrity.py`` /
+    ``_verify_gguf.py`` copies of this helper (and this module's own
+    success-path ``_print_artefact_result`` / ``_run_pipeline_mode``) so
+    this subcommand emits one consistent JSON shape on every branch
+    (Wave 2 review finding: the error envelope was the one branch left
+    unindented).
+    """
     if output_format == "json":
-        print(json.dumps({"success": False, "error": msg}))
+        print(json.dumps({"success": False, "error": msg}, indent=2))
     else:
         logger.error(msg)
     sys.exit(exit_code)
@@ -322,11 +331,22 @@ def _verify_artefact_and_handle_io_errors(path: str, output_format: str) -> "Ver
 
     Exit-code mapping (per ``docs/reference/verify_annex_iv_subcommand.md``):
 
-    - ``FileNotFoundError`` / ``IsADirectoryError`` / ``JSONDecodeError`` →
-      ``EXIT_CONFIG_ERROR (1)`` (operator-actionable input error).
+    - ``FileNotFoundError`` / ``IsADirectoryError`` / ``JSONDecodeError`` /
+      ``UnicodeDecodeError`` → ``EXIT_CONFIG_ERROR (1)`` (operator-
+      actionable input error — a corrupted, truncated, or non-JSON binary
+      file is not fixable by retrying the same read).
     - ``OSError`` (catch-all, must follow ``FileNotFoundError`` because
       Python's OSError hierarchy makes it a subclass) →
       ``EXIT_TRAINING_ERROR (2)`` (genuine runtime I/O failure).
+
+    ``UnicodeDecodeError`` is a :class:`ValueError` subclass, not an
+    :class:`OSError` subclass, so it needs its own branch — without it, a
+    target file with invalid UTF-8 bytes (disk corruption, an interrupted
+    write, or an operator pointing the tool at a binary file) propagated
+    uncaught out of :func:`verify_annex_iv_artifact`, crashing with a raw
+    traceback instead of the documented envelope (mirrors the fix applied
+    to ``forgelm.compliance._read_audit_log_lines`` for the same failure
+    mode on the audit-log side).
     """
     try:
         return verify_annex_iv_artifact(path)
@@ -340,6 +360,12 @@ def _verify_artefact_and_handle_io_errors(path: str, output_format: str) -> "Ver
         _output_error_and_exit(
             output_format,
             f"Annex IV artifact at {path!r} is not valid JSON: {exc.msg} (line {exc.lineno}).",
+            EXIT_CONFIG_ERROR,
+        )
+    except UnicodeDecodeError as exc:
+        _output_error_and_exit(
+            output_format,
+            f"Annex IV artifact at {path!r} is not valid UTF-8: {exc}.",
             EXIT_CONFIG_ERROR,
         )
     except OSError as exc:

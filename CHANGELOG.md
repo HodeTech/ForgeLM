@@ -6,6 +6,222 @@ All notable changes to ForgeLM are documented here.
 
 _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
+### Added
+
+- **Generation-based Llama-Guard safety scoring — the default classifier now
+  works out of the box.** The shipped default `meta-llama/Llama-Guard-3-8B` is a
+  generative checkpoint that cannot be scored through the `text-classification`
+  pipeline; ForgeLM now loads it as a causal LM, moderates each prompt/response
+  pair via the Llama-Guard chat template, and parses the `safe` / `unsafe\nS<n>`
+  verdict (fail-closed on malformed output) into the same safety report. A new
+  `evaluation.safety.classifier_mode` field (`auto` | `classification` |
+  `generation`, default `auto`) selects the path — `auto` routes a known
+  generative Llama-Guard checkpoint to generation scoring and everything else to
+  the classification pipeline. The prior fail-fast now fires only for the genuine
+  misconfiguration (`classification` mode + a generative checkpoint)
+  (`forgelm/safety.py`, `forgelm/config.py`).
+- **`ingest --input-encoding`** to read source documents in a non-UTF-8 legacy
+  encoding, and **`verify-audit … --output-format json`** now works when the flag
+  follows the subcommand (matching the other `verify-*` commands).
+- **A CI guard (`check_usermanual_schema_drift.py`) that validates every fenced
+  YAML key in `docs/usermanuals/` against the real `ForgeConfig` schema**, so a
+  user-manual example that uses a nonexistent field is caught in CI instead of
+  by a reader's `--dry-run` failure. The widened `check_bilingual_code_blocks`
+  guard now also covers the user manuals.
+
+### Fixed
+
+- **GRPO training no longer crashes at post-train evaluation.** `ForgeTrainer`
+  called `self.trainer.evaluate()` (and measured a baseline loss) on a
+  `GRPOTrainer` that is intentionally built with no `eval_dataset`, so every GRPO
+  run with a validation split — the default, including the bundled `grpo-math`
+  quickstart — aborted with `EXIT_TRAINING_ERROR`. Both call sites are now gated
+  on `trainer_type == "grpo"`, matching the rationale already applied in the GRPO
+  branch of the training-args builder (`forgelm/trainer.py`).
+- **GDPR `purge --row-id` survives a non-UTF-8 corpus.** A corpus containing
+  invalid UTF-8 bytes previously raised an uncaught `UnicodeDecodeError` *after*
+  the `data.erasure_requested` audit event was written, leaving a dangling audit
+  chain with no closing record. The read/rewrite paths now catch
+  `(OSError, UnicodeDecodeError)` uniformly, emit `data.erasure_failed` with a
+  sanitised message, clean up the temp file, and exit with the documented
+  training-error code — the append-only chain always closes (EU AI Act Art. 12).
+- **Reverse-PII audit `error_message` is now PII/secret-masked** and the raw-PII
+  persistence warning is emitted in JSON output mode too, matching text mode.
+- **Unsloth model loading forwards `trust_remote_code`**, and the GRPO
+  classifier reward model loads at the resolved bf16/fp16 compute dtype instead
+  of fp32 (`forgelm/model.py`, `forgelm/trainer.py`).
+- **`AuditLogger` no longer crashes when the OS user has no passwd entry.** The
+  operator-identity fallback caught only `OSError`; `getpass.getuser()` raises
+  `KeyError` in a container with no `/etc/passwd` entry (and `ImportError` on
+  Windows without `pwd`). Both are now handled, falling through to the
+  anonymous-opt-in policy instead of aborting (`forgelm/compliance.py`).
+- **The audit genesis manifest is written atomically and verified fail-closed.**
+  A corrupt/unreadable genesis manifest was previously tolerated at write time,
+  silently defeating the tamper-evident chain; it now raises (gated by the same
+  `FORGELM_ALLOW_AUDIT_REROOT=1` opt-in as the absent-log path) and the manifest
+  write is `tmp + fsync + os.replace` atomic (`forgelm/compliance.py`).
+- **A non-numeric LLM-judge score no longer crashes the whole evaluation.** A
+  valid-JSON verdict like `{"score": "8/10"}` now degrades to the documented
+  `None` sentinel with a warning instead of raising (`forgelm/judge.py`).
+- **`fit-check` VRAM estimates read the checkpoint's declared dtype.** The
+  quant-scheme fallback assumed bf16 for non-4bit runs; it now honours the
+  model's native dtype (bf16/fp16/fp32) so a bf16 checkpoint is no longer
+  double-counted and an fp32 checkpoint no longer produces a false "fits"
+  (`forgelm/fit_check.py`).
+- **DARE adapter merges are reproducible run-to-run.** The per-key drop mask
+  seed used Python's process-randomized `hash()`; it now uses a stable
+  `hashlib`-based hash (`forgelm/merging.py`).
+- **TIES disjoint-merge renormalizes by the sign-agreeing weight sum**, so
+  merged weights are a proper average instead of being silently shrunk toward
+  zero (`forgelm/merging.py`).
+- **Data-audit quality score no longer undercounts.** `overall_quality_score`
+  was silently wrong on a multi-split corpus containing a zero-flag split;
+  evaluated-sample counts now always reach the denominator. Single-half
+  instruction/response pairs are now scanned for PII/secrets, and the IBAN
+  detector matches the ISO 13616 spaced print form (`forgelm/data_audit/`).
+- **`forgelm ingest` no longer leaves a torn output file on a multi-file abort.**
+  The JSONL is streamed to a temp file and atomically promoted onto `--output`
+  only after the whole corpus succeeds; a mid-run failure cleans up and exits
+  with the training-error code. The `frontmatter_pages_dropped` metric no longer
+  undercounts across a multi-file PDF corpus (`forgelm/ingestion.py`).
+- **The human-approval gate is concurrency-safe and container-safe.**
+  `approve`/`reject` now serialise their read-check-write under a file lock (no
+  approve-vs-reject race), and an `AuditLogger` identity failure exits with the
+  documented config-error code instead of an uncaught traceback
+  (`forgelm/cli/subcommands/_approve.py`).
+- **Pipeline errors honour the JSON output contract.** Rejecting a pipeline-only
+  flag on a single-stage config, and a config re-read failure, now emit the
+  structured JSON error envelope instead of bare text; stale per-stage metrics
+  no longer survive a crashed resume attempt into the Annex IV manifest
+  (`forgelm/cli/_pipeline.py`, `forgelm/cli/_dispatch.py`).
+- **The audit/verification toolbelt no longer crashes on a corrupt log.**
+  `iter_audit_events` and the `verify-annex-iv` / `verify-gguf` /
+  `verify-integrity` commands surface a controlled integrity error on a
+  non-UTF-8 artefact instead of an uncaught traceback, and `verify-audit`
+  supports JSON output (`forgelm/cli/subcommands/`).
+- **Webhook delivery keeps its fire-and-forget contract.** A missing optional
+  dependency, a non-`RequestException` transport error, and a mixed-case
+  `HTTP://` URL are all handled without failing an otherwise-successful run;
+  `deploy` narrowed its exception handling so serialization bugs surface instead
+  of being masked (`forgelm/webhook.py`, `forgelm/deploy.py`).
+- **`cache-models` reports the real on-disk size.** The size walk skipped the
+  HF snapshot symlinks instead of following them into the blob store, so every
+  cached model showed a near-zero size on POSIX; it now resolves and
+  de-duplicates blob targets (`forgelm/cli/subcommands/_cache.py`).
+- **GGUF export surfaces the K-quant two-step as structured data.** When a
+  requested K-quant (e.g. `q4_k_m`) is produced as `f16` pending a manual
+  `llama-quantize` step, the result now carries `requested_quant`,
+  `manual_step_required`, and `followup_command` (also in the `--output-format
+  json` envelope) instead of only a log line; the output parent directory is
+  created if missing and the converter timeout is configurable
+  (`forgelm/export.py`, `forgelm/cli/subcommands/_export.py`).
+- **The config wizard is more robust.** `_save_config_to_file` now catches
+  `yaml.YAMLError`/serialization errors (not only `OSError`); a declined
+  `rope_scaling` prompt recomputes the factor fresh instead of reusing a stale
+  one; a strict-tier safety-eval override prints an in-context Article 9 notice;
+  and the HF-Hub id / webhook-preflight paths are hardened (`forgelm/wizard/`).
+- **Mutually-exclusive non-training mode flags.** Passing two of
+  `--dry-run/--fit-check/--benchmark-only/--merge/--generate-data/--compliance-export`
+  is now rejected by argparse instead of silently running only the first;
+  `Ctrl-C` during the interactive wizard exits with the wizard-cancelled code (5)
+  instead of a traceback (`forgelm/cli/`).
+- **An unsupported dataset file extension fails fast.** `data.dataset_name_or_path`
+  pointing at, e.g., a `.txt` file now raises an actionable config error listing
+  the supported formats instead of deferring to an opaque `load_dataset` error
+  (and, offline, a network lookup). A native `test` split is moved (not aliased)
+  to `validation`, avoiding a redundant tokenize pass; synthetic generation
+  flushes incrementally so a mid-run crash keeps completed rows
+  (`forgelm/data.py`, `forgelm/synthetic.py`).
+- **Archive helpers clean up on failure and pin encodings.** `manage_checkpoints`
+  now catches `tarfile.TarError` (not only `OSError`) so a partial archive is
+  removed, writes a `sha256sum`-compatible sidecar, and the HF-token file is read
+  as UTF-8; the public registries are now immutable mappings (`forgelm/utils.py`,
+  `forgelm/__init__.py`).
+- **CI hardening.** Every CI job now declares least-privilege
+  `permissions: contents: read`; the Docker Compose example config path matches
+  the real mount and the TensorBoard image is pinned; the MinHash-LSH dedup
+  backend is exercised against the real `datasketch` library in CI
+  (`.github/workflows/`, `docker-compose.yaml`).
+
+### Security
+
+- **Un-loadable default safety classifier now fails fast and is audited.** The
+  shipped default `meta-llama/Llama-Guard-3-8B` is a generative checkpoint with
+  no trained sequence-classification head and can never score through the
+  `text-classification` pipeline. It is now refused at evaluation start with an
+  actionable error (instead of crashing deep in the stack after a multi-GB
+  download), and the rejection is recorded as an `audit.classifier_load_failed`
+  Article 15 event on both the fail-fast and load-failure paths (`forgelm/safety.py`).
+- **`auth.hf_token` and `synthetic.api_key` are now redacted from root-level
+  config dumps and hashes.** The per-field redaction was dead code once nested
+  under `ForgeConfig` (Pydantic v2 does not invoke a nested model's
+  `model_dump()` override), so a root `model_dump()` / `model_dump_json()` — and
+  `compute_config_hash` — leaked the raw secret into serialised manifests. Root
+  `ForgeConfig` `model_dump()` and `model_dump_json()` overrides now mask both
+  paths while keeping attribute access as plain strings for internal consumers
+  (`forgelm/config.py`).
+- **ReDoS hardening in the OpenSSH/PGP private-key secret detectors.** The
+  unbounded `.*?` key-body match under `DOTALL` is now length-bounded, removing
+  a quadratic blow-up on operator-controlled corpus lines (`forgelm/data_audit/_secrets.py`).
+- **The SSRF guard now blocks RFC 6598 Shared Address Space (100.64.0.0/10).**
+  That range was neither private nor reserved to Python's `ipaddress`, so a
+  config-controlled URL (`webhook.url`, `judge.judge_api_base`,
+  `synthetic.api_base`) could reach a cloud metadata endpoint inside it —
+  notably Alibaba Cloud's IMDS at `100.100.100.200`. The single `_is_blocked_ip`
+  chokepoint now rejects it (including IPv4-mapped IPv6), and non-finite
+  (`nan`/`inf`) request timeouts are rejected (`forgelm/_http.py`).
+
+### Changed
+
+- **`rope_scaling` is validated at config load.** A malformed `type`/`factor`
+  payload now fails fast with a config error (exit 1) instead of surfacing as a
+  runtime crash mid-training (`forgelm/config.py`).
+- **Deprecation removal target corrected to `v0.10.0`.** The
+  `use_dora`/`use_rslora`/`sample_packing` deprecation warnings claimed removal
+  in `v0.9.0`, which already shipped without removing them (`forgelm/config.py`).
+
+### Documentation
+
+- **The canonical Configuration Reference user manual (EN + TR) no longer
+  documents a fabricated schema.** The `training`, `data`, `synthetic`,
+  `compliance`, `evaluation`/`llm_judge`, `model`, `lora`, and `distributed`
+  blocks now match the real `ForgeConfig` field names exactly (copy-pasting an
+  example previously failed `forgelm --dry-run`); fictional `${...}`
+  interpolation syntax was removed. Several sibling user-manual pages
+  (`concepts/data-formats`, `reference/cli`, `evaluation/safety`,
+  `deployment/gguf-export`, `operations/air-gap`, `getting-started/project-layout`)
+  were corrected against the source of truth as well.
+- **Compliance-mapping docs no longer cite a nonexistent audit event as
+  evidence.** The ISO 27001 / SOC 2 control mappings and the deployer guide
+  cited a fabricated `pipeline.training_started` event; they now reference real
+  emitted evidence (`config_hash` in the training manifest / `human_approval.*`
+  chain, and `model_integrity.json` SHA-256 artifact hashes). A design doc's
+  claim that ForgeLM HMAC-signs webhook payloads (it does not), a phantom
+  `webhook.secret_env` field, and a Statement-of-Applicability tally that did
+  not reconcile were also corrected.
+- **User-manual schema drift swept.** The `model`, `lora`, and `distributed`
+  YAML blocks across `reference/configuration`, `reference/yaml-templates`,
+  `training/lora`, and `training/distributed` (EN + TR) now match the real
+  `ForgeConfig` fields; the SSRF blocklist docs list RFC 6598 CGNAT; the
+  `reference/configuration` and `reference/safety_eval_subcommand` pages
+  document the real audit-event payloads and the safety-classifier requirement.
+- **All remaining fabricated user-manual config keys corrected.** The new
+  schema-drift guard's 38-instance backlog (worst: `deployment/model-merging`'s
+  `merge.algorithm/base_model/parameters/output` → real `MergeConfig`
+  `method/models/output_dir/…`; plus `evaluation.trend`, `evaluation.max_length`,
+  `synthetic.teacher.*`, `training.optimizer`, `model.name`, …) is cleared across
+  8 EN/TR page-pairs, and the guard is now enforced with `--strict` in CI and the
+  local gauntlet.
+- **Top-level docs corrected.** README's documentation table no longer hides
+  fully-translated Turkish guides; `CLAUDE.md`/`AGENTS.md` no longer carry
+  clickable links into a gitignored internal-only working-memory tree and now
+  show the `wizard/` sub-package;
+  `CONTRIBUTING.md`'s self-review gauntlet matches the canonical one; `site/README`
+  reflects the real site structure. The standards rulebook's CI-guard claims were
+  reconciled against the actual `.github/workflows/` + `tools/`, and the example
+  notebooks were reconciled against the current output schemas (notably
+  `safety_evaluation.ipynb`'s results cell).
+
 ## [0.9.0] — 2026-07-05
 
 ### Changed

@@ -18,7 +18,7 @@ Tam açıklamalı örnek için `config_template.yaml` dosyasına bakın.
 | `offline` | bool | `false` | İzole mod: HF Hub çağrısı yok. Modeller/veri setleri yerel olmalı |
 | `bnb_4bit_use_double_quant` | bool | `true` | Ekstra VRAM tasarrufu için çift kuantizasyon |
 | `bnb_4bit_quant_type` | string | `"nf4"` | Kuantizasyon tipi (`"nf4"` veya `"fp4"`) |
-| `bnb_4bit_compute_dtype` | string | `"auto"` | Hesaplama dtype'ı: `"auto"`, `"bfloat16"`, `"float16"`, `"float32"` |
+| `bnb_4bit_compute_dtype` | string | `"auto"` | Hesaplama dtype'ı: `"auto"`, `"bfloat16"`, `"float16"`, `"float32"` (son üçü kısa takma adları da kabul eder: `"bf16"`, `"fp16"`, `"fp32"`) |
 
 #### `model.moe` (İsteğe bağlı — MoE modeller)
 
@@ -46,10 +46,12 @@ Tam açıklamalı örnek için `config_template.yaml` dosyasına bakın.
 | `dropout` | float | `0.1` | Dropout olasılığı |
 | `bias` | string | `"none"` | `"none"`, `"all"` veya `"lora_only"` |
 | `method` | string | `"lora"` | PEFT yöntemi: `"lora"`, `"dora"`, `"pissa"`, `"rslora"` |
-| `use_dora` | bool | `false` | DoRA (Ağırlık-Ayrıştırılmış LoRA) |
-| `use_rslora` | bool | `false` | Rank-stabilize LoRA (r>64 için önerilir) |
+| `use_dora` | bool | `false` | **Kullanımdan kaldırıldı** — `method: "dora"` için takma ad; v0.10.0'da kaldırılır. `true` ayarlamak `DeprecationWarning` ile `method: "dora"`'ya yönlendirir. Bunun yerine `method` kullanın. |
+| `use_rslora` | bool | `false` | **Kullanımdan kaldırıldı** — `method: "rslora"` için takma ad (r>64 için önerilir); v0.10.0'da kaldırılır. `true` ayarlamak `DeprecationWarning` ile `method: "rslora"`'ya yönlendirir. Bunun yerine `method` kullanın. |
 | `target_modules` | list | `["q_proj", "v_proj"]` | LoRA uygulanacak modüller |
 | `task_type` | string | `"CAUSAL_LM"` | PEFT için görev tipi |
+
+> `use_dora` ve `use_rslora` birbirini dışlar; her biri, farklı bir PEFT yöntemi belirten açıkça set edilmiş bir `method` ile de çelişir (ör. `method: "rslora"` iken `use_dora: true`) — her iki durum da config-load zamanında `ConfigError` (çıkış kodu 1) fırlatır. Kullanımdan kaldırılan boolean bayraklar yerine doğrudan `method` ayarlayın.
 
 ---
 
@@ -145,7 +147,10 @@ training:
 |------|-----|-----------|----------|
 | `dataset_name_or_path` | string | *zorunlu* | HF veri seti ID veya yerel JSONL |
 | `extra_datasets` | list | `null` | Karıştırılacak ek veri setleri |
-| `mix_ratio` | list | `null` | Veri seti başına ağırlık |
+| `mix_ratio` | list | `null` | Veri seti başına ağırlık (ör. `[0.7, 0.3]`) |
+| `shuffle` | bool | `true` | Eğitim verisini karıştır |
+| `clean_text` | bool | `true` | Fazladan boşlukları temizle |
+| `add_eos` | bool | `true` | Dizilere EOS token'ı ekle |
 
 #### `data.governance` (İsteğe bağlı — EU AI Act Madde 10)
 
@@ -165,6 +170,7 @@ training:
 |------|-----|-----------|----------|
 | `auto_revert` | bool | `false` | Değerlendirme başarısız olursa modeli sil |
 | `max_acceptable_loss` | float | `null` | eval_loss üst sınırı |
+| `baseline_loss` | float | `null` | `null` ise otomatik hesaplanır |
 | `require_human_approval` | bool | `false` | İnsan incelemesi için duraklat (çıkış kodu 4) |
 
 #### `evaluation.benchmark` (İsteğe bağlı)
@@ -173,6 +179,9 @@ training:
 |------|-----|-----------|----------|
 | `enabled` | bool | `false` | lm-eval-harness benchmark'ları |
 | `tasks` | list | `[]` | Görev isimleri (ör. `["arc_easy", "hellaswag"]`) |
+| `num_fewshot` | int | `null` | Few-shot örnek sayısı (görev varsayılanı) |
+| `batch_size` | string | `"auto"` | Değerlendirme batch boyutu |
+| `limit` | int | `null` | Görev başına örnek sayısı (hızlı kontroller için) |
 | `output_dir` | string | `null` | Benchmark sonuç JSON'unun yazılacağı yer. `null` = training `output_dir`. |
 | `min_score` | float | `null` | Minimum ortalama doğruluk |
 
@@ -183,7 +192,8 @@ training:
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
 | `enabled` | bool | `false` | Güvenlik sınıflandırıcı değerlendirmesi |
-| `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Güvenlik sınıflandırıcı modeli |
+| `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Güvenlik sınıflandırıcı modeli. Varsayılan kutudan çıkar çıkmaz çalışır: `classifier_mode: auto` altında generation tabanlı Llama-Guard puanlamasıyla değerlendirilir |
+| `classifier_mode` | string | `"auto"` | Sınıflandırıcının nasıl puanlanacağı: `auto` (bilinen bir generative Llama-Guard checkpoint'i için generation, diğerleri için `text-classification`), `classification` (pipeline'ı zorlar — eğitilmiş `safe`/`unsafe` başlığı gerektirir) veya `generation` (generation tabanlı Llama-Guard puanlamasını zorlar) |
 | `test_prompts` | string | `"safety_prompts.jsonl"` | Adversarial test prompt dosyası. Yerleşik: `configs/safety_prompts/` |
 | `max_safety_regression` | float | `0.05` | Maksimum güvensiz oran (binary kapı) |
 | `scoring` | string | `"binary"` | Puanlama modu: `"binary"` veya `"confidence_weighted"` |
@@ -260,6 +270,8 @@ uzatmasını engeller.
 | `system_version` | string | `""` | Sürüm tanımlayıcısı |
 | `risk_classification` | string | `"minimal-risk"` | 5 EU AI Act `RiskTier` değerinden biri: `"unknown"` (sınıflandırma öncesi yer tutucu), `"minimal-risk"`, `"limited-risk"`, `"high-risk"` (Madde 6 — tam Annex IV dokümantasyonu), `"unacceptable"` (Madde 5 yasaklı uygulama — başlangıçta uyarı bandı yayınlar). |
 
+> **Sıkı kapı:** `risk_classification`'ı (veya aşağıdaki kardeş alan `risk_assessment.risk_category`'yi) `"high-risk"` veya `"unacceptable"` olarak ayarlamak [`evaluation.safety.enabled: true`](#evaluationsafety-isteğe-bağlı) **gerektirir**. Atlanırsa config-load / `--dry-run` zamanında `ConfigError` (çıkış kodu 1) fırlatılır — EU AI Act Madde 9 risk-yönetimi kanıtı devre dışı bir safety eval'dan türetilemez.
+
 ## `risk_assessment` (İsteğe bağlı — EU AI Act Madde 9)
 
 | Alan | Tip | Varsayılan | Açıklama |
@@ -269,6 +281,8 @@ uzatmasını engeller.
 | `risk_category` | string | `"minimal-risk"` | `compliance.risk_classification` ile aynı 5 `RiskTier` değeri: `"unknown"`, `"minimal-risk"`, `"limited-risk"`, `"high-risk"`, `"unacceptable"`. Auto-revert eşiklerini ve Annex IV kapısını etkiler. |
 | `mitigation_measures` | list | `[]` | Risk azaltma önlemleri |
 | `vulnerable_groups_considered` | bool | `false` | Savunmasız gruplar üzerindeki etki değerlendirildi |
+
+> **Sıkı kapı:** yukarıdaki [`compliance.risk_classification`](#compliance-isteğe-bağlı--eu-ai-act-madde-11--annex-iv) ile aynı — `risk_category`'i `"high-risk"` veya `"unacceptable"` olarak ayarlamak `evaluation.safety.enabled: true` gerektirir, aksi halde config-load `ConfigError` (çıkış kodu 1) fırlatır. Kapı her iki alan üzerinden OR'lanır: ikisinden biri sıkı bir tier'daysa kapı tetiklenir.
 
 ## `monitoring` (İsteğe bağlı — EU AI Act Madde 12+17)
 
@@ -343,6 +357,8 @@ uzatmasını engeller.
 | `dare_drop_rate` | float | `0.3` | DARE: yeniden ölçeklemeden önce her delta'nın rastgele düşürülme olasılığı (0.0–1.0). Yalnızca `method` `dare` olduğunda kullanılır. |
 | `dare_seed` | int | `42` | DARE: rastgele düşürme maskesi için RNG seed'i; bir birleştirme çalıştırmadan çalıştırmaya tekrarlanabilir olur. |
 
+> `enabled: true`, `models` içinde her biri bir `path` anahtarı taşıyan en az iki girdi gerektirir — ikiden az kaynak model (veya `path` eksik bir girdi) içeren bir birleştirme config-load zamanında reddedilir.
+
 > **TIES/DARE varsayılan hiperparametreleri kasıtlı olarak korumacıdır.**
 > ForgeLM'in yerel `ties` birleştirmesi, ağırlıkların büyüklüğe göre alttaki
 > **%20**'sini kırpar (üstteki %80'i tutar); `dare` birleştirmesi sabit bir
@@ -379,7 +395,7 @@ uzatmasını engeller.
 |------|-----|-----------|----------|
 | `name` | string | — (zorunlu) | `^[a-z0-9_]{1,32}$` deseniyle eşleşen aşama tanımlayıcısı.  Pipeline içinde benzersiz.  `--stage <ad>`, `--resume-from <ad>`, audit-log payload'larında ve aşama bazında manifest girdilerinde kullanılır. |
 | `model` | `Optional[ModelConfig]` | `null` | Root `model:` bloğunun aşama bazında override'ı.  `null` iken önceki aşamanın `final_model`'ından otomatik zincirlenir (aşama 0 için root).  Set edildiğinde o aşama için otomatik zincirleme devre dışı (operatör kaçış kapısı). |
-| `lora` | `Optional[LoraConfig]` | `null` | Aşama bazında LoRA config.  `null` ise root'tan toptan miras alınır. |
+| `lora` | `Optional[LoraConfigModel]` | `null` | Aşama bazında LoRA config.  `null` ise root'tan toptan miras alınır. |
 | `training` | `Optional[TrainingConfig]` | `null` | Aşama bazında training config.  `null` ise root'tan toptan miras alınır.  **Verildiğinde `trainer_type` AÇIKÇA SET EDİLMEK ZORUNDA** — her aşama hangi hizalama paradigmasını koştuğunu manifestte audit-clarity için kaydeder. |
 | `data` | `Optional[DataConfig]` | `null` | Aşama bazında data config.  `null` ise root'tan toptan miras alınır; aşama bazında override norm — her aşama tipik olarak farklı bir dataset tüketir (SFT/DPO/preference/vb.). |
 | `evaluation` | `Optional[EvaluationConfig]` | `null` | Aşama bazında kapılar (loss eşikleri, `auto_revert`, safety, judge, human-approval).  Her aşama kendi kapısını bağımsız konfigüre edebilir. |

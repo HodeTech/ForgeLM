@@ -107,6 +107,7 @@ $ forgelm ingest INPUT_PATH \
     [--strategy {sliding,paragraph,markdown}] \
     [--chunk-size N] [--overlap N] \
     [--chunk-tokens N] [--overlap-tokens N] [--tokenizer MODEL_NAME] \
+    [--input-encoding CODEC] \
     [--pii-mask] [--secrets-mask] [--all-mask] \
     [--language-hint LANG] [--script-sanity-threshold X] \
     [--normalise-profile {turkish,none} | --no-normalise-unicode] \
@@ -127,6 +128,16 @@ parsing the text summary. Phase 15 (v0.6.0) added the
 `--epub-no-skip-frontmatter`, `--keep-md-frontmatter`, `--strip-pattern`,
 `--strip-pattern-no-timeout`, `--page-range`, `--keep-frontmatter`, and
 `--strip-urls` flags. See [Document Ingestion](#/data/ingestion).
+
+`--input-encoding CODEC` pins the source codec for `.txt` / `.md` input
+only — PDF / DOCX / EPUB carry their own encoding metadata and ignore
+this flag. Default (unset) auto-detects via `utf-8-sig` with a
+BOM-strip + `errors="replace"` fallback, unchanged from the prior
+behaviour. Pass a legacy codec name (e.g. `cp1254`, `cp1252`,
+`latin-1`) to decode older Windows-exported corpora correctly instead
+of replacing every non-ASCII byte with `U+FFFD`. An unrecognised codec
+name is rejected up front, before any file is read, with a config
+error (`1`).
 
 ## Chat: `forgelm chat`
 
@@ -212,17 +223,19 @@ ForgeLM picks up credentials from environment variables. Never put them in YAML.
 | W&B | `WANDB_API_KEY` | Experiment tracking |
 | Cohere | `COHERE_API_KEY` | (synthetic data) |
 
-YAML interpolation:
+ForgeLM's YAML loader is plain `yaml.safe_load` — there is no `${VAR}` shell-style interpolation. Two different patterns cover the credentials above:
+
+- **HF token:** don't set anything under `auth:` — export `HF_TOKEN` (or the legacy `HUGGINGFACE_TOKEN`) in the shell and both `huggingface_hub`'s own auto-pickup and ForgeLM's login step find it.
+- **Synthetic-data teacher API key:** name the env var in `synthetic.api_key_env` (a field on `SyntheticConfig`, not a nested `teacher:` object — the teacher model itself is `synthetic.teacher_model`):
 
 ```yaml
-auth:
-  hf_token: "${HF_TOKEN}"
 synthetic:
-  teacher:
-    api_key: "${OPENAI_API_KEY}"
+  teacher_model: "gpt-4o"
+  teacher_backend: "api"
+  api_key_env: "OPENAI_API_KEY"      # names the env var; the key itself never touches YAML
 ```
 
-If the env var isn't set, ForgeLM fails at config load with a clear error — better than crashing 6 hours into training because of a missing token.
+There is no config-time check that the named env var actually resolves — an unset `api_key_env` sends the request with no `Authorization` header, and the teacher API rejects it (typically HTTP 401) on the first call. Export the env var before running `--generate-data` so that failure surfaces immediately rather than mid-run.
 
 ## Exit codes
 
@@ -286,19 +299,15 @@ $ forgelm approve RUN_ID --comment "Reviewed."       # promote staging
 
 ### "Train, export GGUF, deploy to Ollama"
 
-```yaml
-# configs/run.yaml
-output:
-  gguf:
-    enabled: true
-deployment:
-  target: ollama
-```
+There is no `output:` or `deployment:` top-level YAML key — `ForgeConfig` rejects unknown keys (`extra="forbid"`), so a config carrying either fails `--dry-run` immediately. Export and deploy are separate CLI steps run *after* training completes, not config-driven pipeline stages:
 
 ```shell
-$ forgelm --config configs/run.yaml
-# Training, export, and deploy config generation all happen.
+$ forgelm --config configs/run.yaml                                    # 1. train (writes ./checkpoints/final_model)
+$ forgelm export ./checkpoints/final_model --output model.gguf --quant q4_k_m   # 2. export to GGUF
+$ forgelm deploy ./checkpoints/final_model --target ollama --output ./Modelfile # 3. generate the Ollama Modelfile
 ```
+
+See [Export: `forgelm export`](#export-forgelm-export) and [Deploy: `forgelm deploy`](#deploy-forgelm-deploy) above, and the [Configuration Reference `deployment:`](#/reference/configuration) section for the full explanation of why there is no YAML-driven deploy step.
 
 ## See also
 

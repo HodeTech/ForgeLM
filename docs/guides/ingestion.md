@@ -228,6 +228,7 @@ forgelm quickstart domain-expert --dataset data/policies.jsonl
 forgelm ingest INPUT_PATH \
   --output FILE \
   [--chunk-size N | --chunk-tokens N --tokenizer MODEL_NAME] \
+  [--input-encoding CODEC] \
   [--overlap N] \
   [--overlap-tokens N] \
   [--strategy {sliding,paragraph,markdown}] \
@@ -372,6 +373,31 @@ additionally detect `^---\n…\n---\n` YAML frontmatter and strip it
 by default — opt-in retention via `--keep-md-frontmatter` when you
 *want* to train on the metadata block.
 
+### Source-codec override — `--input-encoding CODEC`
+
+The auto-detected `utf-8-sig` default above covers modern corpora, but
+legacy exports from older Windows tooling are frequently not UTF-8 at
+all. Pass `--input-encoding CODEC` to pin the real source codec
+instead of losing every non-ASCII character to the `errors="replace"`
+fallback:
+
+```bash
+forgelm ingest ./legacy_docs/ --output data/legacy.jsonl \
+  --input-encoding cp1254
+```
+
+Applies to `.txt` / `.md` input only — PDF, DOCX, and EPUB extractors
+read their own embedded encoding metadata and ignore this flag. The
+codec *name* is validated up front, before any file is read: an
+unrecognised name (anything Python's `codecs.lookup()` rejects) aborts
+the whole run with `EXIT_CONFIG_ERROR` (`1`) and a message listing
+example valid codecs (`utf-8`, `cp1254`, `cp1252`, `latin-1`), instead
+of silently reaching the per-file decode step and dropping every
+TXT/MD file from the output. A syntactically valid but factually wrong
+codec (e.g. `cp1252` on a `cp1254` file) is not rejected — it decodes
+with `errors="replace"` and surfaces as the usual binary-contamination
+warning, not a config error.
+
 ### Operator strip-patterns — `--strip-pattern REGEX` (Phase 15 Wave 2 Task 11)
 
 Escape hatch for known boilerplate the dedup heuristic misses (variable
@@ -419,7 +445,12 @@ masthead / index / glossary boilerplate.
 Opt out with `--keep-frontmatter` to restore the pre-Phase-15 "keep
 everything" behaviour. The structured-notes payload reports
 `frontmatter_pages_dropped` so an audit downstream can spot-check the
-operation.
+operation. On a multi-file batch, the top-level `frontmatter_pages_dropped`
+integer is a true sum across every file, while the nested
+`notes_structured.frontmatter_pages_dropped` list is a distinct-index
+sample (which page positions were dropped, not how many times) — it can
+legitimately be shorter than the top-level total when multiple files drop
+the same indices, and that is not a bug.
 
 > **Calibration caveat (round-5 independent review).** The heuristic
 > is calibrated for the audit's pilot Turkish-textbook ToC shape:
@@ -557,7 +588,7 @@ assistants, code-with-data prompts.
   flattened in all cases (no extraction-time table parser is wired up
   for PDFs).
 - **Metadata:** title / author / page numbers are dropped — only body text reaches the JSONL.
-- **Encoding:** non-UTF-8 input is read with `errors="replace"`; binary noise becomes Unicode replacement characters.
+- **Encoding:** TXT / MD input auto-detects as `utf-8-sig` by default; non-UTF-8 bytes fall back to `errors="replace"` (binary noise becomes Unicode replacement characters) unless `--input-encoding CODEC` pins the real source codec. PDF / DOCX / EPUB carry their own encoding metadata and are unaffected by this flag.
 - **Semantic chunking:** raises `NotImplementedError` until embedding support lands in a follow-up phase.
 
 ---

@@ -662,14 +662,14 @@ class TestGateApplication:
 class TestBaselineLossCapture:
     """F-P2-FAB-17: _measure_baseline_loss gating + happy / fallback / missing paths."""
 
-    def _make_trainer(self, *, auto_revert=True, baseline_loss=None, validation=True):
+    def _make_trainer(self, *, auto_revert=True, baseline_loss=None, validation=True, trainer_type="sft"):
         from forgelm.config import ForgeConfig
         from forgelm.trainer import ForgeTrainer
 
         config = ForgeConfig(
             model={"name_or_path": "org/model"},
             lora={},
-            training={"output_dir": "/tmp/test_baseline"},
+            training={"output_dir": "/tmp/test_baseline", "trainer_type": trainer_type},
             data={"dataset_name_or_path": "org/dataset"},
             evaluation={"auto_revert": auto_revert, "baseline_loss": baseline_loss},
         )
@@ -733,6 +733,93 @@ class TestBaselineLossCapture:
         # Fallback evaluate() (with adapters) supplied the baseline.
         assert trainer.config.evaluation.baseline_loss == pytest.approx(0.8)
 
+    def test_baseline_skipped_for_grpo_even_with_validation_split(self):
+        """GRPO builds its trainer with no eval_dataset, so calling
+        ``self.trainer.evaluate()`` for a baseline would raise ValueError. The
+        baseline measurement must be skipped entirely for GRPO — even on the
+        default path where a validation split exists and auto_revert is on."""
+        trainer = self._make_trainer(trainer_type="grpo")
+        trainer.trainer.model = MagicMock(spec=[])
+        trainer.trainer.evaluate = MagicMock(side_effect=ValueError("Trainer: evaluation requires an eval_dataset."))
+        metrics: dict[str, float] = {}
+        trainer._measure_baseline_loss(metrics)
+        trainer.trainer.evaluate.assert_not_called()
+        assert trainer.config.evaluation.baseline_loss is None
+        assert "baseline_eval_loss" not in metrics
+
+
+@pytest.mark.skipif(not torch_available, reason="torch not installed")
+class TestClassifierRewardDtype:
+    """The GRPO classifier reward model loads at a resolved compute dtype
+    (bf16 if supported, else fp16) ONLY on a CUDA host, so it does not OOM
+    beside a 4-bit policy model. On a CPU-only host it must fall back to
+    float32 (the checkpoint default): `_resolve_bnb_compute_dtype("auto")`
+    still resolves to float16 with no CUDA device, and `device_map="auto"`
+    places the model on CPU — an fp16 matmul on CPU is not implemented by
+    PyTorch (`addmm_impl_cpu_` RuntimeError), which crashed the CPU-only
+    GRPO reward path before this fix."""
+
+    def test_reward_model_loaded_with_resolved_dtype_on_cuda(self):
+        import torch
+
+        from forgelm.trainer import ForgeTrainer
+
+        captured: dict = {}
+
+        def fake_model_from_pretrained(_path, **kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        # `_resolve_bnb_compute_dtype` itself queries
+        # `torch.cuda.is_bf16_supported()`, which on a real CUDA-less test
+        # runner would try to touch an actual device once `is_available()`
+        # is patched True. Stub the resolver directly (like the export.py
+        # dispatcher tests stub `forgelm.export.export_model`) so this test
+        # only exercises the CUDA-vs-CPU branch under test, not torch's own
+        # device-query internals.
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("forgelm.model._resolve_bnb_compute_dtype", return_value=torch.bfloat16) as resolve_mock,
+            patch(
+                "transformers.AutoModelForSequenceClassification.from_pretrained",
+                side_effect=fake_model_from_pretrained,
+            ),
+            patch("transformers.AutoTokenizer.from_pretrained", return_value=MagicMock()),
+        ):
+            ForgeTrainer._build_classifier_reward("org/reward")
+
+        resolve_mock.assert_called_once_with("auto")
+        assert captured.get("dtype") == torch.bfloat16, (
+            f"reward-model dtype on a CUDA host must be the resolved compute dtype; got {captured.get('dtype')!r}"
+        )
+
+    def test_reward_model_falls_back_to_float32_without_cuda(self):
+        """Regression: forcing the resolved bf16/fp16 dtype unconditionally
+        crashes the CPU-only reward path; a CPU-only host must get float32."""
+        import torch
+
+        from forgelm.trainer import ForgeTrainer
+
+        captured: dict = {}
+
+        def fake_model_from_pretrained(_path, **kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            patch(
+                "transformers.AutoModelForSequenceClassification.from_pretrained",
+                side_effect=fake_model_from_pretrained,
+            ),
+            patch("transformers.AutoTokenizer.from_pretrained", return_value=MagicMock()),
+        ):
+            ForgeTrainer._build_classifier_reward("org/reward")
+
+        assert captured.get("dtype") == torch.float32, (
+            f"reward-model dtype on a CPU-only host must fall back to float32; got {captured.get('dtype')!r}"
+        )
+
 
 class TestSaveFinalModelFallback:
     """F-P2-FAB-39: save_final_model's narrow-tuple fallbacks (direct-save →
@@ -785,3 +872,63 @@ class TestSaveFinalModelFallback:
         trainer.trainer.model.save_pretrained = MagicMock()
         trainer.save_final_model(str(tmp_path / "final_ok"))
         trainer.trainer.save_model.assert_not_called()
+
+
+@pytest.mark.skipif(not torch_available, reason="torch not installed")
+class TestSafetyClassifierModeThreading:
+    """``evaluation.safety.classifier_mode`` must reach ``run_safety_evaluation``.
+
+    Regression coverage for a kwarg-forwarding fix in
+    ``ForgeTrainer._run_safety_if_configured``
+    (``classifier_mode=getattr(safety_cfg, "classifier_mode", "auto")``) that
+    previously had no test — a future refactor of the kwargs dict could
+    silently drop the forwarded value without any test catching it.
+    """
+
+    def _make_trainer(self, tmp_path, classifier_mode):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model"},
+            lora={},
+            training={"output_dir": str(tmp_path)},
+            data={"dataset_name_or_path": "org/dataset"},
+            evaluation={
+                "safety": {
+                    "enabled": True,
+                    "classifier_mode": classifier_mode,
+                },
+            },
+        )
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.checkpoint_dir = str(tmp_path)
+            trainer.tokenizer = MagicMock()
+            trainer.trainer = MagicMock()
+            trainer.audit = MagicMock()
+        return trainer
+
+    @pytest.mark.parametrize("classifier_mode", ["classification", "generation"])
+    def test_classifier_mode_passed_through_to_run_safety_evaluation(self, tmp_path, classifier_mode):
+        trainer = self._make_trainer(tmp_path, classifier_mode=classifier_mode)
+
+        with patch("forgelm.safety.run_safety_evaluation") as mock_run:
+            mock_run.return_value = MagicMock()
+            trainer._run_safety_if_configured()
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["classifier_mode"] == classifier_mode
+
+    def test_classifier_mode_defaults_to_auto_when_unset(self, tmp_path):
+        """The `auto` default (config default) still threads through, not just
+        the non-default override — guards against a fix that only forwards
+        the value when explicitly set."""
+        trainer = self._make_trainer(tmp_path, classifier_mode="auto")
+
+        with patch("forgelm.safety.run_safety_evaluation") as mock_run:
+            mock_run.return_value = MagicMock()
+            trainer._run_safety_if_configured()
+
+        assert mock_run.call_args.kwargs["classifier_mode"] == "auto"

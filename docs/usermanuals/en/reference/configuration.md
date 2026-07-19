@@ -38,18 +38,15 @@ model:
   name_or_path: "Qwen/Qwen2.5-7B-Instruct"   # HF id or local path (required)
   trust_remote_code: false                    # only set true if you trust the model's repo
   max_length: 4096                            # context for training
-  load_in_4bit: false                         # QLoRA toggle
-  load_in_8bit: false
+  load_in_4bit: false                         # QLoRA toggle (NF4/FP4 only — no separate 8-bit toggle)
+  backend: "transformers"                     # transformers | unsloth (Linux + CUDA only, 2-5× speedup)
   bnb_4bit_quant_type: "nf4"                  # nf4 | fp4
-  bnb_4bit_compute_dtype: "bfloat16"          # bfloat16 | float16 | float32
-  use_unsloth: false                          # 2-5× speedup on supported models
-  attention_implementation: "auto"            # auto | flash_attention_2 | sdpa | eager
-  rope_scaling:                               # see [Long-Context](#/training/long-context)
-    type: "linear"                            # linear | dynamic | yarn | longrope
-    factor: 4.0
-  sliding_window: null                        # int — sliding window for long context
-  torch_dtype: "auto"                         # auto-pick based on quantisation
+  bnb_4bit_compute_dtype: "bfloat16"          # auto | bfloat16 | float16 | float32 (bf16/fp16/fp32 aliases accepted)
+  bnb_4bit_use_double_quant: true             # bitsandbytes double-quantisation (small extra VRAM win)
+  offline: false                              # air-gapped mode: refuse HF Hub network calls
 ```
+
+`ModelConfig` has no `load_in_8bit`, `use_unsloth`, `attention_implementation`, or `torch_dtype` field — `extra="forbid"` rejects all four at `--dry-run`. There is no separate 8-bit toggle (`load_in_4bit` is the only quantisation switch); the Unsloth backend is selected with `backend: "unsloth"`, not a boolean flag; ForgeLM has no attention-implementation selector; and compute dtype is set via `bnb_4bit_compute_dtype`, not a standalone `torch_dtype` field. `rope_scaling` and the sliding-window override are `TrainingConfig` fields (`training.rope_scaling`, `training.sliding_window_attention`), not `ModelConfig` fields — see [`training:`](#training) below and [Long-Context Fine-Tuning](#/training/long-context) for the concept.
 
 ## `lora:`
 
@@ -58,106 +55,114 @@ lora:
   r: 16                                       # rank — see [LoRA](#/training/lora)
   alpha: 32
   dropout: 0.05
+  bias: "none"                                # none | all | lora_only
+  method: "lora"                              # lora | dora | pissa | rslora
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
-  modules_to_save: []                         # full-precision modules (e.g. embeddings)
-  use_dora: false                             # DoRA variant
-  use_pissa: false                            # PiSSA initialisation
-  use_rslora: false                           # rsLoRA scaling
+  use_dora: false                             # deprecated boolean shortcut for method: "dora"; removed in v0.10.0
+  use_rslora: false                           # deprecated boolean shortcut for method: "rslora"; removed in v0.10.0
 ```
+
+`LoraConfigModel` has no `modules_to_save` or `use_pissa` field — `extra="forbid"` rejects both at `--dry-run`. PiSSA initialisation is selected with `method: "pissa"` (there is no boolean toggle); `use_dora` / `use_rslora` are deprecated boolean shortcuts for `method: "dora"` / `method: "rslora"`, scheduled for removal in v0.10.0 — setting both at once, or setting one against a contradictory explicit `method:`, is a config error.
 
 ## `data:`
 
 ```yaml
 data:
-  - path: "data/train.jsonl"                  # required
-    format: "messages"                        # auto-detected if omitted
-    weight: 1.0                               # mixing weight; sum across all datasets
-    split: "train"                            # train | val | test
-    streaming: false
+  dataset_name_or_path: "data/train.jsonl"    # HF Hub id, local JSONL path, or dir of JSONL (required)
+  extra_datasets:                             # additional datasets to mix in alongside the primary
+    - "org/extra_dataset"
+  mix_ratio: [0.8, 0.2]                       # one weight per dataset (primary + extras); uniform if omitted
+  shuffle: true                               # shuffle the merged corpus before splitting train/validation
+  clean_text: true                            # strip excess whitespace + control characters
+  add_eos: true                               # append EOS token so generation knows where to stop
+  governance:                                 # Article 10 data-governance metadata (optional)
+    collection_method: ""
+    annotation_process: ""
+    known_biases: ""
+    personal_data_included: false
+    dpia_completed: false
 ```
 
-Multiple datasets allowed. Format options: `instructions`, `messages`, `preference`, `binary`, `reward`. See [Dataset Formats](#/concepts/data-formats).
+`data:` is a **single object**, not a list — there is exactly one primary dataset (`dataset_name_or_path`), and any additional datasets are mixed in via `extra_datasets` + `mix_ratio` (one weight per dataset, primary first). Format is auto-detected per file; supported shapes are `instructions`, `messages`, `preference`, `binary`, `reward` — see [Dataset Formats](#/concepts/data-formats).
 
 ## `training:`
 
 ```yaml
 training:
-  trainer: "sft"                              # sft | dpo | simpo | kto | orpo | grpo
-  epochs: 3
-  max_steps: -1                               # -1 means use epochs
-  batch_size: 4
-  gradient_accumulation_steps: 1
-  learning_rate: 2.0e-4
-  scheduler: "cosine"                         # cosine | linear | constant | warmup_cosine
-  warmup_ratio: 0.03
-  weight_decay: 0.0
-  optimizer: "adamw_8bit"                     # adamw | adamw_8bit | galore_adamw_8bit
-  seed: 42
-  packing: false
-  neftune_noise_alpha: null                   # float — embedding noise regularisation
-  loss_on_completions_only: true              # SFT-specific
-  log_grad_norm: false
-  report_to: ["tensorboard"]                  # see [Experiment Tracking](#/operations/experiment-tracking)
-  run_name: null                              # auto-generated from config hash
-  tags: []
-  notes: null
+  output_dir: "./checkpoints"                 # checkpoints + audit log + compliance bundle land here
+  final_model_dir: "final_model"              # subdirectory of output_dir for the promoted model
+  merge_adapters: false                       # merge LoRA adapters into the base model when SFT finishes
+  trainer_type: "sft"                         # sft | dpo | simpo | kto | orpo | grpo
+  max_steps: -1                               # -1 = use num_train_epochs; a positive value overrides epochs
+  num_train_epochs: 3
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 2
+  learning_rate: 2.0e-5
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  eval_steps: 200
+  save_steps: 200
+  save_total_limit: 3
+  early_stopping_patience: 3                  # stop after N evals with no validation-loss improvement
+  packing: false                              # sequence packing (SFT)
+  rope_scaling: null                          # dict — long-context RoPE scaling, e.g. {type: "yarn", factor: 4.0}; see [Long-Context](#/training/long-context)
+  sliding_window_attention: null              # int — override the model's sliding-window size (e.g. 4096 for Mistral); null = model default
+  neftune_noise_alpha: null                   # float — embedding-noise regularisation (e.g. 5.0)
+  report_to: "tensorboard"                    # tensorboard | wandb | mlflow | none
+  run_name: null                              # auto-generated when null
 
-  # Trainer-specific blocks
-  dpo: { beta: 0.1, loss_type: "sigmoid", reference_free: false }
-  simpo: { beta: 2.0, gamma: 1.0, length_normalize: true }
-  kto: { beta: 0.1, desirable_weight: 1.0, undesirable_weight: 1.0 }
-  orpo: { beta: 0.1, sft_weight: 1.0 }
-  grpo:
-    group_size: 8
-    beta: 0.04
-    reward_function: "my_module.score"
-    format_reward: 0.2
-    answer_pattern: null
-    temperature: 0.9
+  # Alignment-method parameters — flat fields on `training:`, not nested
+  # per-trainer sub-blocks. Only the fields matching `trainer_type` are read.
+  dpo_beta: 0.1                               # DPO temperature
+  simpo_gamma: 0.5                            # SimPO margin term
+  simpo_beta: 2.0                             # SimPO scaling
+  kto_beta: 0.1                               # KTO loss parameter
+  orpo_beta: 0.1                              # ORPO odds-ratio weight
+  grpo_num_generations: 4                     # GRPO: responses generated per prompt
+  grpo_max_completion_length: 512             # GRPO: max tokens per completion (legacy alias `grpo_max_new_tokens` accepted)
+  grpo_reward_model: null                     # GRPO: HF path for reward scoring; null = built-in format/length shaping
 ```
+
+There is no nested `training.dpo:` / `training.simpo:` / `training.kto:` / `training.orpo:` / `training.grpo:` sub-block — `TrainingConfig` rejects unknown keys (`extra="forbid"`), so a nested block fails `--dry-run` with a config error. Every alignment-method parameter, `rope_scaling` / `sliding_window_attention` (shown above — these are `TrainingConfig` fields, not `ModelConfig` fields, see the [`model:`](#model) note above), and NEFTune are flat fields directly on `training:`. The GaLore `galore_*` optimizer knobs, `oom_recovery` / `oom_recovery_min_batch_size`, the deprecated `sample_packing` alias for `packing`, and `gpu_cost_per_hour` are also flat `training:` fields, not shown in the abbreviated example above — see [GaLore](#/training/galore) and [YAML Templates](#/reference/yaml-templates) for full per-trainer worked examples.
 
 ## `evaluation:`
 
 ```yaml
 evaluation:
-  enabled: true
-  max_length: null                            # null = same as training
+  auto_revert: false                          # restore the pre-training model on quality regression
+  max_acceptable_loss: null                   # float — hard cap on validation loss; requires auto_revert: true
+  baseline_loss: null                         # float — auto-computed when a validation split exists
+  require_human_approval: false               # Article 14: pause the pipeline for human review (exit 4)
   benchmark:
     enabled: false
-    tasks: []
-    min_score: null  # scalar float floor across averaged tasks (replaces removed per-task floors dict)
-    num_fewshot: 0
-    batch_size: 8
-    limit: null
+    tasks: []                                 # e.g. ["arc_easy", "hellaswag", "mmlu"]; required when enabled
+    num_fewshot: null                         # null = task's documented default
+    batch_size: "auto"                        # "auto" or an integer string
+    limit: null                               # cap samples per task for quick checks
+    output_dir: null                          # null = the training output_dir
+    min_score: null                           # scalar float floor across averaged tasks
   safety:
     enabled: false
-    model: "meta-llama/Llama-Guard-3-8B"
-    block_categories: []
-    test_prompts: null                        # null = built-in default probes
-    severity_threshold: "medium"              # low | medium | high | critical
-    regression_tolerance: 0.05
-    baseline: null
-  judge:
+    classifier: "meta-llama/Llama-Guard-3-8B"  # default works out of the box via generation-based scoring
+    classifier_mode: "auto"                   # auto | classification | generation — see [Llama Guard Safety](#/evaluation/safety)
+    test_prompts: "safety_prompts.jsonl"
+    max_safety_regression: 0.05               # absolute post-training unsafe-ratio ceiling — see [Llama Guard Safety](#/evaluation/safety)
+    scoring: "binary"                         # binary | confidence_weighted
+    min_safety_score: null                    # used only when scoring: confidence_weighted
+    min_classifier_confidence: 0.7
+    track_categories: false
+    severity_thresholds: null                 # dict, e.g. {critical: 0, high: 0.01, medium: 0.05}
+    batch_size: 8
+    include_eval_samples: false                # persist raw prompt/response text; off by default (privacy)
+  llm_judge:
     enabled: false
-    mode: "pairwise"                          # pairwise | single-rubric | elo
-    judge_model:
-      provider: "openai"
-      model: "gpt-4o-mini"
-    baseline_model: null
-    test_prompts: null
-    num_samples: 200
-    rubric: "default"
-    self_consistency: 1
-    swap_positions: true
-    budget_usd: null
-  trend:
-    enabled: false
-    history_file: ".forgelm/eval-history.jsonl"
-    lookback_runs: 10
-    drift_p_threshold: 0.05
-    fail_on_concern: "high"
-  auto_revert: false  # boolean; set true to enable EU AI Act high-risk regression gate
-  guards: {}                                  # custom callable guards
+    judge_model: "gpt-4o"                     # plain string — API model name or local model path
+    judge_api_key_env: null                   # env var carrying the judge API key; null = local judge model
+    judge_api_base: null                      # override the judge API base URL
+    eval_dataset: "eval_prompts.jsonl"
+    min_score: 5.0                            # 1.0-10.0 scale
+    batch_size: 8
+    include_eval_samples: false                # persist raw prompt/response/reason text; off by default (privacy)
 ```
 
 ## `synthetic:`
@@ -165,93 +170,78 @@ evaluation:
 ```yaml
 synthetic:
   enabled: false
-  teacher:
-    provider: "openai"                        # openai | anthropic | local | vllm
-    model: "gpt-4o"
-    api_key: "${OPENAI_API_KEY}"
-  seed_prompts: "data/seeds.jsonl"
-  output: "data/synthetic.jsonl"
-  num_samples: 1000
+  teacher_model: "gpt-4o"                     # HF Hub id or API model name (e.g. gpt-4, meta-llama/Llama-3-70B)
+  teacher_backend: "api"                      # api | local | file
+  api_base: "https://api.openai.com/v1"       # API endpoint; consulted for teacher_backend: "api"
+  api_key_env: "OPENAI_API_KEY"               # env var carrying the API key — prefer over inline api_key
+  api_delay: 0.5                              # seconds between API calls (rate limiting)
+  api_timeout: 60                             # per-call timeout in seconds
+  seed_file: "data/seeds.jsonl"               # one prompt per line, or JSONL — alternative to seed_prompts
+  seed_prompts: []                            # inline seed prompts (alternative to seed_file)
+  system_prompt: ""                           # prepended on every teacher call
+  max_new_tokens: 1024
   temperature: 0.7
-  prompt_template: "default"
-  budget_usd: null
-  rate_limit:
-    requests_per_minute: 100
-    burst: 10
+  output_file: "synthetic_data.jsonl"
+  output_format: "messages"                   # messages | instruction | chatml | prompt_response
+  min_success_rate: 0.0                       # min fraction of seeds that must yield a usable example
+  sanity_failure_rate: 0.2                    # failure rate above which a WARNING is logged (warn-only)
 ```
+
+There is no nested `synthetic.teacher:` sub-block and no `rate_limit:` block — `teacher_model`, `teacher_backend`, `api_base`, `api_delay`, and `api_timeout` are flat fields on `synthetic:` directly. Prefer `api_key_env` (an environment-variable name) over the inline `api_key` field to avoid committing secrets. ForgeLM's YAML loader has no `${VAR}` interpolation mechanism anywhere — `*_env` fields name an environment variable that is read directly via `os.environ`, never substituted into a string.
 
 ## `merge:`
 
 ```yaml
 merge:
   enabled: false
-  algorithm: "ties"                           # linear | slerp | ties | dare | dare_ties
-  base_model: null                            # required when enabled
-  models:
-    - path: "./checkpoints/v1"
-      weight: 0.5
-  parameters:
-    threshold: 0.7                            # TIES
-    density: 0.7                              # DARE
-    t: 0.5                                    # SLERP
-  output:
-    dir: "./checkpoints/merged"
-    model_card: true
+  method: "ties"                              # ties | dare | slerp | linear
+  models:                                     # at least two entries required when enabled
+    - path: "./checkpoints/run1/final_model"
+      weight: 0.7
+    - path: "./checkpoints/run2/final_model"
+      weight: 0.3
+  output_dir: "./merged_model"
+  ties_trim_fraction: 0.2                     # TIES: fraction of smallest deltas trimmed (0.0-1.0); only used when method: ties
+  dare_drop_rate: 0.3                         # DARE: probability each delta is dropped (0.0-1.0); only used when method: dare
+  dare_seed: 42                               # DARE: RNG seed for the random drop mask
 ```
+
+The merge field is `method` (not `algorithm`), and there is no `dare_ties` choice, no `base_model` field, no nested `parameters:` block (`threshold` / `density` / `t`), and no nested `output:` block — the output path is the flat `output_dir` field, with no separate `model_card` toggle.
 
 ## `distributed:`
 
 ```yaml
 distributed:
-  strategy: "single"                          # single | deepspeed | fsdp
-  zero_stage: null                            # 2 | 3 (when strategy=deepspeed)
-  cpu_offload: false
-  nvme_offload_path: null
-  fsdp_state_dict_type: "FULL_STATE_DICT"
-  fsdp_auto_wrap_policy: "TRANSFORMER_BASED_WRAP"
-  fsdp_offload_params: false
-  gradient_accumulation_steps: 1
+  strategy: null                              # null (single-GPU, no distributed wrapping) | deepspeed | fsdp
+  deepspeed_config: null                      # path to a DeepSpeed JSON, or preset name: zero2 | zero3 | zero3_offload
+  fsdp_strategy: "full_shard"                 # full_shard | shard_grad_op | no_shard | hybrid_shard
+  fsdp_auto_wrap: true                        # auto-wrap transformer layers (recommended)
+  fsdp_offload: false                         # offload FSDP parameters to CPU between forward/backward
+  fsdp_backward_prefetch: "backward_pre"      # backward_pre | backward_post
+  fsdp_state_dict_type: "FULL_STATE_DICT"     # FULL_STATE_DICT | SHARDED_STATE_DICT
 ```
+
+`DistributedConfig` has no `zero_stage`, `cpu_offload`, `nvme_offload_path`, `fsdp_auto_wrap_policy`, or `fsdp_offload_params` field, and `strategy: "single"` does not validate — `extra="forbid"` rejects the phantom fields, and `strategy` is a `Literal["deepspeed", "fsdp"]` that otherwise only accepts `null` (the default; no distributed wrapping). DeepSpeed's ZeRO stage and CPU/NVMe offload are selected together through `deepspeed_config` — either a filesystem path to a DeepSpeed JSON, or one of the built-in preset names `zero2`, `zero3`, `zero3_offload` — not through separate `zero_stage` / `cpu_offload` / `nvme_offload_path` fields. FSDP's auto-wrap and parameter-offload toggles are the plain booleans `fsdp_auto_wrap` and `fsdp_offload`, not a wrap-policy string or a `_params`-suffixed field. `gradient_accumulation_steps` is a `training:` field (see [`training:`](#training) above), not a `distributed:` field — it is not duplicated here.
 
 ## `compliance:`
 
 ```yaml
 compliance:
-  annex_iv: false
-  data_audit_artifact: null
-  human_approval: false
-  intended_purpose: null                      # required if annex_iv: true
-  risk_classification: null                   # required if annex_iv: true
-  deployment_geographies: []
-  responsible_party: null
-  version: null
-  standards: []
-  notes: null
-  risk_assessment:
-    foreseeable_misuse: []
-    mitigations: []
-    residual_risks: []
-  data_protection:
-    framework: null                           # GDPR | KVKK | both
-    lawful_basis: null
-    purpose: null
-    data_controller: null
-    international_transfers:
-      enabled: false
-      safeguards: null
-  audit_log:
-    enabled: false
-    path: "${output.dir}/artifacts/audit_log.jsonl"
-    forward_to: []
-  approval:
-    request_webhook: null
-    signature_method: "cli"
-    timeout_hours: 48
-    require_role: null
-    quorum: 1
-  post_market_plan: null
-  license: "Apache-2.0"
+  provider_name: ""                           # Annex IV §1: legal-entity name of the system provider
+  provider_contact: ""                        # Annex IV §1: provider's regulatory point of contact
+  system_name: ""                             # Annex IV §1: human-readable system name
+  intended_purpose: ""                        # Annex IV §1: declared intended purpose (free-text)
+  known_limitations: ""                       # Annex IV §3: documented system limitations
+  system_version: ""                          # Annex IV §1: operator-supplied version string
+  risk_classification: "minimal-risk"         # unknown | minimal-risk | limited-risk | high-risk | unacceptable
 ```
+
+`ComplianceMetadataConfig` has exactly these **seven flat fields**. There is no `annex_iv`, `data_audit_artifact`, `human_approval`, `deployment_geographies`, `responsible_party`, `version`, `standards`, `notes`, nor nested `risk_assessment:` / `data_protection:` / `audit_log:` / `approval:` / `post_market_plan` / `license` sub-fields under `compliance:` — `extra="forbid"` rejects all of them at `--dry-run`. Concretely:
+
+- The Annex IV bundle is generated automatically once `compliance:` is present and `risk_classification` resolves to `high-risk` or `unacceptable` — there is no separate `annex_iv: true` toggle.
+- Human-approval gating is `evaluation.require_human_approval: true` (see [`evaluation:`](#evaluation) above), not `compliance.human_approval`.
+- Article 9 risk data (foreseeable misuse, mitigation measures) lives on the separate top-level [`risk_assessment:`](#risk_assessment) block below, not nested under `compliance:`.
+- The append-only audit log always writes to `<training.output_dir>/audit_log.jsonl` — there is no `compliance.audit_log.path` override, and no `${output.dir}`-style interpolation anywhere in ForgeLM's YAML loader.
 
 ## `webhook:`
 
@@ -309,19 +299,19 @@ pipeline:
   output_dir: "./pipeline_run"               # pipeline-level output directory
   stages:                                     # ordered list of training stages (min 1)
     - name: "sft"
-      training: { trainer: "sft", epochs: 3 }
+      training: { trainer_type: "sft", num_train_epochs: 3 }
     - name: "dpo"
-      training: { trainer: "dpo", epochs: 1 }
+      training: { trainer_type: "dpo", num_train_epochs: 1, dpo_beta: 0.1 }
 ```
 
 ## `auth:`
 
 ```yaml
 auth:
-  hf_token: null                              # ${HF_TOKEN} via env (preferred)
-  openai_api_key: null
-  anthropic_api_key: null
+  hf_token: null                              # HuggingFace Hub token; auto-redacted from logs/manifests
 ```
+
+`AuthConfig` has exactly one field, `hf_token` — there is no `openai_api_key` or `anthropic_api_key` field (synthetic-data / judge API keys are configured separately via `synthetic.api_key_env` / `evaluation.llm_judge.judge_api_key_env`). When `auth.hf_token` is left `null`, ForgeLM falls back to the `HUGGINGFACE_TOKEN` environment variable automatically — there is no `${VAR}` interpolation syntax in ForgeLM's YAML loader.
 
 ## `deployment:`
 

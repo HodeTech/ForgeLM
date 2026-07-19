@@ -217,3 +217,71 @@ class TestGenerateModelCard:
         assert out["evaluation"]["judge_api_key_env"] == "OPENAI_API_KEY"  # env-name, not a secret
         assert out["nested"][0]["password"] == "***REDACTED***"
         assert out["nested"][1]["note"] == "keep"
+
+    def test_readme_written_with_utf8_encoding(self, tmp_path, monkeypatch):
+        """The model card README must be opened with ``encoding='utf-8'`` so a
+        non-ASCII operator field cannot crash the write on a non-UTF-8-default
+        host. Fails on the old default-encoding ``open(...,"w")``."""
+        import builtins
+
+        from forgelm.model_card import generate_model_card
+
+        recorded = {}
+        real_open = builtins.open
+
+        def _spy_open(file, mode="r", *args, **kwargs):
+            if str(file).endswith("README.md") and "w" in mode:
+                recorded["encoding"] = kwargs.get("encoding")
+            return real_open(file, mode, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", _spy_open)
+        config = ForgeConfig(**_card_config(data={"dataset_name_or_path": "veri/çğşöü"}))
+        generate_model_card(config=config, metrics={"eval_loss": 0.5}, final_path=str(tmp_path / "m"))
+
+        assert recorded.get("encoding") == "utf-8"
+
+
+class TestConfigYamlFenceContainment:
+    """The config-dump YAML block must contain operator-controlled free-text
+    fields regardless of nesting depth — an explicit, tested invariant rather
+    than an emergent consequence of PyYAML's indentation."""
+
+    def test_codefence_for_outgrows_longest_backtick_run(self):
+        from forgelm.model_card import _codefence_for
+
+        assert _codefence_for("no backticks here") == "```"  # minimum fence
+        assert _codefence_for("a ``` b") == "````"  # 3-run -> 4-backtick fence
+        assert _codefence_for("x ````` y") == "``````"  # 5-run -> 6-backtick fence
+
+    def test_freetext_field_cannot_break_out_of_code_fence(self, tmp_path):
+        """A crafted ``risk_assessment.intended_use`` carrying its own ```` ``` ````
+        run must stay trapped inside the config fence. Fails on the old fixed
+        3-backtick fence (3 > 3 is False), passes once the fence dynamically
+        outgrows the payload's backtick run."""
+        from forgelm.model_card import generate_model_card
+
+        payload = "see docs\n```\n## Injected Heading\n```yaml\nmalicious: true"
+        config = ForgeConfig(**_card_config(risk_assessment={"intended_use": payload}))
+        card_path = generate_model_card(config=config, metrics={"eval_loss": 0.5}, final_path=str(tmp_path / "m"))
+        lines = open(card_path, encoding="utf-8").read().splitlines()
+
+        # Opening fence: a run of >=3 backticks immediately followed by "yaml".
+        open_idx = next(i for i, ln in enumerate(lines) if ln.startswith("```") and ln.lstrip("`") == "yaml")
+        fence = lines[open_idx][: len(lines[open_idx]) - len("yaml")]
+        close_idx = next(i for i in range(open_idx + 1, len(lines)) if lines[i] == fence)
+        body = lines[open_idx + 1 : close_idx]
+
+        def _longest_backtick_run(text):
+            longest = run = 0
+            for ch in text:
+                run = run + 1 if ch == "`" else 0
+                longest = max(longest, run)
+            return longest
+
+        # The injected heading is trapped inside the fenced block ...
+        assert any("## Injected Heading" in ln for ln in body)
+        outside = lines[:open_idx] + lines[close_idx + 1 :]
+        assert not any(ln.strip() == "## Injected Heading" for ln in outside)
+        # ... because the outer fence is strictly longer than any backtick run it
+        # wraps (3 > 3 would be False on the old fixed-3-backtick fence).
+        assert len(fence) > _longest_backtick_run("\n".join(body))

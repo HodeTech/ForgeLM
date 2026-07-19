@@ -81,24 +81,16 @@ class SyntheticDataGenerator:
         result.successful += 1
         return self._format_entry(prompt, response)
 
-    def _write_output(self, output_file: str, generated: List[dict], result: SyntheticResult) -> None:
-        """Write the JSONL output and log summary stats."""
-        if not generated:
-            logger.warning("No data generated. Output file not created.")
-            return
-        os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
-        with open(output_file, "w", encoding="utf-8") as f:
-            for entry in generated:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        logger.info(
-            "Synthetic data saved: %s (%d entries, %.1f%% success rate)",
-            output_file,
-            len(generated),
-            result.success_rate * 100,
-        )
-
     def generate(self, output_path: Optional[str] = None) -> SyntheticResult:
         """Generate synthetic data and save to JSONL.
+
+        Entries are flushed to disk as soon as each prompt succeeds, rather
+        than buffered in memory and written once at the end. A large,
+        expensive ``teacher_backend="api"`` run (thousands of prompts,
+        ``api_delay``-throttled against a paid model) can otherwise lose
+        every already-paid-for generation to a crash, network partition, or
+        manual interrupt near the end of the run; incremental flushing means
+        everything generated before the interruption survives on disk.
 
         Args:
             output_path: Override output file path. If None, uses config value.
@@ -123,19 +115,37 @@ class SyntheticDataGenerator:
 
         rate_limit = self.synth_cfg.teacher_backend == "api" and self.synth_cfg.api_delay > 0
         start_time = time.time()
-        generated: List[dict] = []
-
         last_idx = len(prompts) - 1
-        for i, prompt in enumerate(prompts):
-            entry = self._generate_one(prompt, i, result)
-            if entry is not None:
-                generated.append(entry)
-            # Skip the trailing sleep — there's no next request to throttle
-            if rate_limit and i < last_idx:
-                time.sleep(self.synth_cfg.api_delay)
+        handle = None
+        try:
+            for i, prompt in enumerate(prompts):
+                entry = self._generate_one(prompt, i, result)
+                if entry is not None:
+                    if handle is None:
+                        # Lazily create the file (and parent dirs) on the
+                        # first success only, so a zero-yield run leaves no
+                        # output file — same observable contract as before.
+                        os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
+                        handle = open(output_file, "w", encoding="utf-8")
+                    handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                    handle.flush()
+                # Skip the trailing sleep — there's no next request to throttle
+                if rate_limit and i < last_idx:
+                    time.sleep(self.synth_cfg.api_delay)
+        finally:
+            if handle is not None:
+                handle.close()
 
         result.duration_seconds = time.time() - start_time
-        self._write_output(output_file, generated, result)
+        if result.successful:
+            logger.info(
+                "Synthetic data saved: %s (%d entries, %.1f%% success rate)",
+                output_file,
+                result.successful,
+                result.success_rate * 100,
+            )
+        else:
+            logger.warning("No data generated. Output file not created.")
         return result
 
     def _load_seed_prompts(self) -> List[str]:

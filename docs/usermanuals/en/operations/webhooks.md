@@ -102,7 +102,7 @@ Real `WebhookConfig` (see `forgelm/config.py::WebhookConfig`):
 | `notify_on_success` | `true` | Gates `training.success`, `approval.required`, AND a successful `pipeline.completed`. |
 | `notify_on_failure` | `true` | Gates `training.failure`, `training.reverted`, `pipeline.stage_reverted`, AND a failing `pipeline.completed`. |
 | `timeout` | `10` | HTTP timeout in seconds; clamped to ≥ 1s. |
-| `allow_private_destinations` | `false` | Opt-in for RFC 1918 / loopback / link-local destinations (in-cluster Slack proxy, on-prem Teams gateway). Defaults reject — SSRF guard. |
+| `allow_private_destinations` | `false` | Opt-in for RFC 1918 / loopback / link-local / RFC 6598 CGNAT (`100.64.0.0/10`) destinations (in-cluster Slack proxy, on-prem Teams gateway). Defaults reject — SSRF guard. |
 | `require_https` | `false` | TLS-only enforcement. `true` refuses a plaintext `http://` URL (the SSRF guard raises; the POST is skipped) instead of warning-and-sending. Default `false` preserves warn-then-send. |
 | `tls_ca_bundle` | `null` | Path to a custom CA bundle (corporate MITM CA). When unset, `certifi`'s bundled store is used. |
 
@@ -116,7 +116,7 @@ live outside ForgeLM.
 
 - **TLS strongly recommended.** ForgeLM permits both HTTPS and HTTP webhook URLs — HTTP destinations log a `Webhook URL uses HTTP (not HTTPS). Data will be sent unencrypted.` warning but are not rejected by default (see `forgelm/webhook.py` `_send`). On a regulated estate set `webhook.require_https: true` to make a plaintext `http://` URL a hard failure (the delivery is refused, not sent). Pin `https://` URLs in production.
 - **Curated payload.** ForgeLM never includes raw training data, full configs, or unredacted PII in webhook payloads. The notifier wraps a fixed-shape JSON; there is no `webhook.redact` toggle because there's nothing user-controllable to redact.
-- **Server-Side Request Forgery (SSRF) guard.** ForgeLM blocks webhook URLs pointing at internal IPs (RFC 1918, loopback, link-local, 169.254.x) unless you explicitly opt-in with `webhook.allow_private_destinations: true`. This prevents misconfigured runs from probing your internal network.
+- **Server-Side Request Forgery (SSRF) guard.** ForgeLM blocks webhook URLs pointing at internal IPs — RFC 1918, loopback, link-local (incl. cloud IMDS at `169.254.169.254`), RFC 6598 Shared Address Space / Carrier-Grade-NAT (`100.64.0.0/10`, which also covers Alibaba Cloud ECS's IMDS at `100.100.100.200` — the stdlib `ipaddress` predicates don't flag that block as private or reserved on their own), plus reserved and multicast destinations — unless you explicitly opt-in with `webhook.allow_private_destinations: true`. This prevents misconfigured runs from probing your internal network or leaking the payload to a cloud metadata service.
 - **No HMAC body signing.** ForgeLM does not sign webhook bodies — destination-side authenticity falls to TLS + URL secrecy via `url_env` plus the receiving system's bearer-token / signed-request controls (Slack signing secret, Teams connector token).
 
 ## Common pitfalls

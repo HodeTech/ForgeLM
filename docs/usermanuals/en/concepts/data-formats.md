@@ -117,28 +117,25 @@ In your YAML:
 
 ```yaml
 training:
-  trainer: "grpo"
-  grpo:
-    reward_function: "my_reward.reward"
+  trainer_type: "grpo"
+  grpo_reward_model: "my_reward.reward"
 ```
 
-See [GRPO](#/training/grpo) for the built-in format/length shaping rewards.
+There is no nested `training.grpo:` sub-block — `grpo_reward_model` (and the other `grpo_*` knobs) are flat fields directly on `training:`. See [GRPO](#/training/grpo) for the built-in format/length shaping rewards.
 
 ## Multi-dataset mixing
 
-You can train on a mix of datasets with custom proportions:
+You can train on a mix of datasets with custom proportions via `data.extra_datasets` + `data.mix_ratio` — there is no top-level `datasets:` list:
 
 ```yaml
-datasets:
-  - path: "data/policies.jsonl"
-    format: "messages"
-    weight: 0.7
-  - path: "data/general-qa.jsonl"
-    format: "instructions"
-    weight: 0.3
+data:
+  dataset_name_or_path: "data/policies.jsonl"     # primary dataset
+  extra_datasets:
+    - "data/general-qa.jsonl"
+  mix_ratio: [0.7, 0.3]                           # one weight per dataset, primary first
 ```
 
-Weights sum to 1.0; each batch is sampled according to those probabilities.
+Weights are per-dataset (not required to sum to 1.0 — they're normalised internally); each batch is sampled according to those proportions. See the [Configuration Reference `data:`](#/reference/configuration) section for the full field list.
 
 ## Auto-detection
 
@@ -153,7 +150,7 @@ If you don't specify `format:`, ForgeLM inspects the first non-empty row:
 | `prompt` only | `reward` |
 
 :::warn
-Auto-detection happens once per file. If your JSONL mixes formats (some `instructions` rows alongside `preference` rows), the loader will misroute the second-format rows. Use separate files and reference both via `datasets:`.
+Auto-detection happens once per file. If your JSONL mixes formats (some `instructions` rows alongside `preference` rows), the loader will misroute the second-format rows. Use separate files and reference both via `data.dataset_name_or_path` + `data.extra_datasets`.
 :::
 
 ## Validating your data

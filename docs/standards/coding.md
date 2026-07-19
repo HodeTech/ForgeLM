@@ -100,12 +100,25 @@ Every YAML-backed config section is a `BaseModel` subclass in [`forgelm/config.p
 - Defaults must be safe for "omit from YAML" case.
 - Use `field_validator` for cross-field checks; prefer `model_validator(mode='after')` for whole-model invariants.
 - Do **not** silently coerce invalid values. Raise `ValueError` with actionable message (see [error-handling.md](error-handling.md)).
+- **Every `Field(...)` declaration must carry a `description=`.** The hand-maintained
+  operator-facing reference ([`docs/reference/configuration.md`](../reference/configuration.md)
+  + its TR mirror) is written from these strings, so an undocumented field means the
+  reference silently falls behind the schema. Enforced by
+  [`tools/check_field_descriptions.py --strict`](../../tools/check_field_descriptions.py)
+  (Phase 16), wired into `.github/workflows/ci.yml`'s `lint` job as the "Pydantic
+  description= guard" step — CI fails on any `Field(...)` missing one.
 
 ```python
 class TrainingConfig(BaseModel):
-    trainer_type: Literal["sft", "dpo", "simpo", "kto", "orpo", "grpo"] = "sft"
-    num_train_epochs: float = 1.0
-    per_device_train_batch_size: int = 1
+    trainer_type: Literal["sft", "orpo", "dpo", "simpo", "kto", "grpo"] = Field(
+        default="sft",
+        description="Alignment paradigm: `sft` (supervised), `orpo`, `dpo`, `simpo`, `kto`, or `grpo`.",
+    )
+    num_train_epochs: int = Field(
+        default=3,
+        ge=1,
+        description="Number of training epochs (only consulted when `max_steps == -1`).",
+    )
     ...
 ```
 

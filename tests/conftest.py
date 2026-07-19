@@ -1,6 +1,8 @@
 """Shared test fixtures and utilities for ForgeLM tests."""
 
+import ipaddress
 import os
+import socket
 
 import pytest
 
@@ -24,6 +26,101 @@ def _factory_fixture():
     from tests._helpers.factories import minimal_config as _factory
 
     return _factory
+
+
+def pytest_configure(config):
+    """Register custom markers so ``--strict-markers`` runs don't warn."""
+    config.addinivalue_line(
+        "markers",
+        "allow_network: opt a test out of the no-network guard (loopback is always allowed).",
+    )
+    config.addinivalue_line(
+        "markers",
+        "real_fingerprint: run the real HF-Hub dataset-fingerprint helpers "
+        "(network dependency stubbed inside the test) instead of the default no-op stubs.",
+    )
+
+
+# Only true loopback targets are exempt. ``0.0.0.0`` is deliberately NOT
+# allowed: it is the unspecified/wildcard address, not loopback, and letting it
+# through would widen the guard for no test that needs it.
+_NETWORK_ALLOWED_HOSTS = frozenset({"localhost"})
+
+
+def _is_loopback_address(address):
+    """True for loopback / local socket targets the no-network guard permits."""
+    host = address[0] if isinstance(address, (tuple, list)) and address else address
+    if not isinstance(host, str):
+        return False
+    if host in _NETWORK_ALLOWED_HOSTS:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+@pytest.fixture(autouse=True)
+def _block_network(request, monkeypatch):
+    """Fail fast if a unit test opens a real (non-loopback) network connection.
+
+    ForgeLM's unit suite must never touch the network (``testing.md``: no
+    network, no GPU). This guard patches the socket connect paths so an
+    accidental real call — to the HF Hub, a webhook endpoint, or a judge API —
+    surfaces as an immediate, clear error instead of a slow, flaky, or
+    offline-only failure. Loopback (127.0.0.0/8, ``::1``, ``localhost``) and
+    ``AF_UNIX`` sockets stay allowed so tests that spin up a local server keep
+    working; mark a test ``@pytest.mark.allow_network`` to opt out entirely.
+
+    Scope: this patches ``socket.socket.connect``/``connect_ex`` — the TCP
+    connect surface that ``requests``/``urllib3``/``httpx`` use. It is not a
+    full egress sandbox: bare DNS resolution (``getaddrinfo``), raw UDP, and
+    subprocess network calls are not intercepted. It is a fail-fast tripwire
+    for the common accidental-HTTP-call case, not a security boundary.
+    """
+    if request.node.get_closest_marker("allow_network"):
+        return
+
+    real_connect = socket.socket.connect
+    real_connect_ex = socket.socket.connect_ex
+
+    def _guarded(real):
+        def _inner(self, address, *args, **kwargs):
+            if getattr(self, "family", None) == getattr(socket, "AF_UNIX", object()):
+                return real(self, address, *args, **kwargs)
+            if _is_loopback_address(address):
+                return real(self, address, *args, **kwargs)
+            raise RuntimeError(
+                f"Blocked a real network connection to {address!r} from a unit test "
+                f"({request.node.nodeid}). Mock the network call, or mark the test "
+                "@pytest.mark.allow_network if a live connection is genuinely required."
+            )
+
+        return _inner
+
+    monkeypatch.setattr(socket.socket, "connect", _guarded(real_connect))
+    monkeypatch.setattr(socket.socket, "connect_ex", _guarded(real_connect_ex))
+
+
+@pytest.fixture(autouse=True)
+def _stub_hf_dataset_fingerprint(request, monkeypatch):
+    """Keep dataset fingerprinting offline by default.
+
+    ``compute_dataset_fingerprint`` treats any non-file path as a Hugging Face
+    Hub id and calls ``load_dataset_builder`` / ``HfApi().dataset_info`` on it —
+    real network I/O. The shared ``minimal_config`` factory uses a hub-style
+    ``org/dataset`` id, so every test that generates a training manifest would
+    otherwise reach out to the Hub (slow, flaky, offline-failing — and now
+    blocked by ``_block_network``). Stub the two Hub-fingerprint helpers to
+    no-ops by default; mark a test ``@pytest.mark.real_fingerprint`` to exercise
+    the real code path (with its network dependency stubbed inside the test).
+    """
+    if request.node.get_closest_marker("real_fingerprint"):
+        return
+    import forgelm.compliance as _compliance
+
+    monkeypatch.setattr(_compliance, "_fingerprint_hf_metadata", lambda dataset_path, fingerprint: None)
+    monkeypatch.setattr(_compliance, "_fingerprint_hf_revision", lambda dataset_path, fingerprint: None)
 
 
 @pytest.fixture(autouse=True)

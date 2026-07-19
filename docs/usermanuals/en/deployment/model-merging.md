@@ -29,10 +29,12 @@ Merging trades a bit of each specialist's quality for breadth. Always re-evaluat
 ## Quick example: TIES
 
 ```yaml
+model:
+  name_or_path: "Qwen/Qwen2.5-7B-Instruct"   # base model every adapter was trained on
+
 merge:
   enabled: true
-  algorithm: "ties"
-  base_model: "Qwen/Qwen2.5-7B-Instruct"
+  method: "ties"
   models:
     - path: "./checkpoints/customer-support"
       weight: 0.5
@@ -40,33 +42,29 @@ merge:
       weight: 0.3
     - path: "./checkpoints/math-reasoning"
       weight: 0.2
-  parameters:
-    threshold: 0.7                      # TIES-specific: top-K% of deltas to keep
-  output:
-    dir: "./checkpoints/merged"
-    model_card: true
+  ties_trim_fraction: 0.3              # trims the bottom 30% of deltas by magnitude, keeps the top ~70%
+  output_dir: "./checkpoints/merged"
 ```
 
 ```shell
 $ forgelm --merge --config configs/merge.yaml
-✓ loaded 3 adapters
-✓ TIES merge: kept top 70% of deltas, resolved 1247 sign conflicts
-✓ wrote ./checkpoints/merged
-✓ generated model card
+INFO Running TIES merge on 3 adapters...
+INFO Model merge completed: 3 models merged with 'ties' → ./checkpoints/merged
 ```
 
 ## Quick example: Linear
 
 ```yaml
+model:
+  name_or_path: "Qwen/Qwen2.5-7B-Instruct"
+
 merge:
   enabled: true
-  algorithm: "linear"
-  base_model: "Qwen/Qwen2.5-7B-Instruct"
+  method: "linear"
   models:
     - { path: "./checkpoints/v1", weight: 0.5 }
     - { path: "./checkpoints/v2", weight: 0.5 }
-  output:
-    dir: "./checkpoints/v1-v2-blend"
+  output_dir: "./checkpoints/v1-v2-blend"
 ```
 
 Linear is the simplest — just averages weights. Always works as a starting point; might not be optimal.
@@ -75,33 +73,28 @@ Linear is the simplest — just averages weights. Always works as a starting poi
 
 | Algorithm | Key parameters |
 |---|---|
-| `linear` | `weights:` per model |
-| `slerp` | `t:` interpolation factor (0.0 = first adapter, 1.0 = second) |
-| `ties` | `threshold:` (top-K% of deltas to keep, 0.6-0.8 typical), `density:` (alternative formulation) |
-| `dare` | `density:` (fraction to keep, 0.5-0.9), `epsilon:` (rescaling) |
-| `dare_ties` | Both DARE and TIES parameters |
+| `linear` | Per-model `weight` in `merge.models` (auto-normalised to sum to 1.0). |
+| `slerp` | No separate factor — the interpolation weight is derived from the two entries' relative `weight` in `merge.models`. Requires exactly two entries. |
+| `ties` | `merge.ties_trim_fraction` — fraction of smallest-magnitude deltas trimmed per model before the sign vote (default `0.2`, i.e. keep the top ~80%). |
+| `dare` | `merge.dare_drop_rate` — probability each delta is randomly dropped before rescaling (default `0.3`). `merge.dare_seed` — RNG seed so a DARE merge is reproducible run-to-run (default `42`). |
 
 ## Evaluating after merging
 
-Always re-evaluate the merged model — it's a different model than any of the inputs.
+Always re-evaluate the merged model — it's a different model than any of the inputs. `merge` and `evaluation` are separate top-level config blocks; after `forgelm --merge` finishes, point a second config's `model.name_or_path` at the merged output directory and run the benchmark gate against it directly with `--benchmark-only` (no training). `--benchmark-only` only reads `evaluation.benchmark` — it never invokes the safety classifier, so an `evaluation.safety` block in the same config is silently ignored on this code path. Run the two gates as two separate commands:
 
 ```yaml
-merge:
-  enabled: true
-  algorithm: "ties"
-  ...
-  evaluation:
-    benchmark:
-      tasks: ["hellaswag", "humaneval", "gsm8k"]    # mix of skills from each specialist
-      floors:
-        hellaswag: 0.55
-        humaneval: 0.40
-        gsm8k: 0.50
-    safety:
-      enabled: true
+evaluation:
+  benchmark:
+    tasks: ["hellaswag", "humaneval", "gsm8k"]    # mix of skills from each specialist
+    min_score: 0.5
 ```
 
-If the merged model regresses on any task, fall back to one of the specialists or try a different algorithm.
+```shell
+$ forgelm --benchmark-only ./checkpoints/merged --config configs/eval.yaml
+$ forgelm safety-eval --model ./checkpoints/merged --default-probes --output-dir ./checkpoints/merged/safety
+```
+
+The standalone `safety-eval` subcommand is documented in [Llama Guard Safety](#/evaluation/safety). If the merged model regresses on any task or safety category, fall back to one of the specialists or try a different algorithm.
 
 ## Diagnosing merge failures
 
@@ -109,30 +102,27 @@ Symptoms of a bad merge:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Coherent but generic outputs | Linear merge averaged out specialisations | Try TIES with `threshold: 0.7` |
+| Coherent but generic outputs | Linear merge averaged out specialisations | Switch `merge.method` to `ties` with `ties_trim_fraction: 0.3` |
 | Garbled outputs | Adapter base mismatch | Check all adapters use the same base model |
-| Random low scores on every task | DARE density too low | Raise `density:` to 0.9 |
-| One specialist dominates | Linear weight too high for that adapter | Rebalance weights |
+| Random low scores on every task | `dare_drop_rate` too high (too many deltas dropped) | Lower `merge.dare_drop_rate` (try 0.1-0.3) |
+| One specialist dominates | One `weight` too high relative to the rest | Rebalance the `weight` values in `merge.models` |
 
 ## Configuration
 
 ```yaml
+model:
+  name_or_path: "Qwen/Qwen2.5-7B-Instruct"
+
 merge:
   enabled: true
-  algorithm: "ties"
-  base_model: "Qwen/Qwen2.5-7B-Instruct"
+  method: "ties"
   models:
     - path: "./checkpoints/v1"
       weight: 0.4
     - path: "./checkpoints/v2"
       weight: 0.6
-  parameters:
-    threshold: 0.7
-    normalize: true                     # normalise weights to sum to 1.0
-  output:
-    dir: "./checkpoints/merged"
-    model_card: true
-    save_format: "safetensors"          # or pytorch
+  ties_trim_fraction: 0.3              # weights are auto-normalised to sum to 1.0
+  output_dir: "./checkpoints/merged"
 ```
 
 ## Programmatic merging
@@ -140,16 +130,16 @@ merge:
 For automation pipelines:
 
 ```python
-from forgelm.merging import merge_adapters
+from forgelm.merging import merge_peft_adapters
 
-merge_adapters(
-    base="Qwen/Qwen2.5-7B-Instruct",
+result = merge_peft_adapters(
+    base_model_path="Qwen/Qwen2.5-7B-Instruct",
     adapters=[
-        ("./checkpoints/v1", 0.5),
-        ("./checkpoints/v2", 0.5),
+        {"path": "./checkpoints/v1", "weight": 0.5},
+        {"path": "./checkpoints/v2", "weight": 0.5},
     ],
-    algorithm="ties",
-    threshold=0.7,
+    method="ties",
+    ties_trim_fraction=0.3,
     output_dir="./checkpoints/merged",
 )
 ```

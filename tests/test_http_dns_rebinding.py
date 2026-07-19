@@ -88,6 +88,149 @@ class TestResolveSafeDestination:
         assert "Private" in err
 
 
+class TestCgnatSharedAddressSpaceBlocked:
+    """RFC 6598 Shared Address Space (Carrier-Grade-NAT, ``100.64.0.0/10``)
+    must be blocked by the SSRF guard.
+
+    Python's ``ipaddress`` stdlib does NOT classify this /10 as private,
+    reserved, link-local, or multicast — yet Alibaba Cloud ECS parks its
+    instance metadata service (IMDS) at ``100.100.100.200``, squarely
+    inside the block.  Without an explicit CGNAT predicate the guard would
+    treat that IMDS-class target as a public destination and pin the
+    request straight to it, leaking the payload + any bearer token.  This
+    mirrors the existing 169.254.169.254 (AWS IMDS) coverage for the
+    Alibaba endpoint.
+    """
+
+    # Alibaba Cloud ECS metadata endpoint — SSRF guard fixture, not a live target.
+    _ALIBABA_IMDS = "100.100.100.200"  # NOSONAR CGNAT / Alibaba IMDS — guard fixture
+
+    def test_stdlib_predicates_do_not_flag_cgnat_but_forgelm_does(self):
+        """Empirically pin the root cause: every stdlib predicate returns
+        False for the Alibaba IMDS IP, so ForgeLM's explicit CGNAT check is
+        the only thing standing between the guard and the metadata service.
+        """
+        import ipaddress
+
+        from forgelm import _http
+
+        ip = ipaddress.ip_address(self._ALIBABA_IMDS)
+        # The five stdlib predicates the guard historically relied on are
+        # ALL False here — this is exactly why the finding was reachable.
+        assert not ip.is_private
+        assert not ip.is_loopback
+        assert not ip.is_link_local
+        assert not ip.is_reserved
+        assert not ip.is_multicast
+        # ForgeLM's explicit RFC 6598 predicate must catch it, and so must
+        # the aggregate ``_is_blocked_ip`` chokepoint used by both call sites.
+        assert _http._is_cgnat_shared_address(ip)
+        assert _http._is_blocked_ip(ip)
+
+    def test_cgnat_range_boundaries(self):
+        """The /10 boundaries must be exact — block 100.64.0.0 through
+        100.127.255.255, but never over-block the adjacent public IPs.
+        """
+        import ipaddress
+
+        from forgelm import _http
+
+        for blocked in ("100.64.0.0", "100.127.255.255", self._ALIBABA_IMDS):
+            assert _http._is_cgnat_shared_address(ipaddress.ip_address(blocked)), blocked
+        for public in ("100.63.255.255", "100.128.0.1"):
+            assert not _http._is_cgnat_shared_address(ipaddress.ip_address(public)), public
+
+    def test_ipv4_mapped_ipv6_cgnat_blocked(self):
+        """The CGNAT target expressed as an IPv4-mapped IPv6 literal
+        (``::ffff:100.100.100.200``) must not slip past the check.
+        """
+        import ipaddress
+
+        from forgelm import _http
+
+        mapped = ipaddress.ip_address(f"::ffff:{self._ALIBABA_IMDS}")
+        assert _http._is_cgnat_shared_address(mapped)
+        assert _http._is_blocked_ip(mapped)
+
+    def test_pure_ipv6_does_not_raise_on_cgnat_check(self):
+        """A pure (non-mapped) IPv6 address tested against the IPv4-only
+        CGNAT network must return False, not raise a version-mismatch error.
+        """
+        import ipaddress
+
+        from forgelm import _http
+
+        assert not _http._is_cgnat_shared_address(ipaddress.ip_address("2606:4700:4700::1111"))
+
+    def test_resolver_blocks_cgnat_ip_literal(self):
+        from forgelm import _http
+
+        ip, err = _http._resolve_safe_destination(self._ALIBABA_IMDS)
+        assert ip is None
+        assert "Private" in err
+
+    def test_resolver_blocks_hostname_resolving_to_cgnat(self):
+        """A hostname whose DNS answer lands in CGNAT space is blocked on
+        the resolve path, closing the DNS-based reach to the IMDS."""
+        from forgelm import _http
+
+        with patch.object(
+            _http.socket,
+            "getaddrinfo",
+            return_value=[(0, 0, 0, "", (self._ALIBABA_IMDS, 0))],
+        ):
+            ip, err = _http._resolve_safe_destination("metadata.attacker.example.com")
+        assert ip is None
+        assert "Private" in err
+
+    def test_safe_post_raises_on_alibaba_imds(self):
+        """End-to-end mirror of the 169.254.169.254 SSRF block: a POST to
+        the Alibaba IMDS literal must be refused by policy, not sent."""
+        from forgelm._http import HttpSafetyError, safe_post
+
+        with pytest.raises(HttpSafetyError, match="Private/loopback/IMDS"):
+            safe_post(
+                f"https://{self._ALIBABA_IMDS}/latest/meta-data/",  # NOSONAR — SSRF guard fixture
+                json={},
+                timeout=10.0,
+            )
+
+
+class TestTimeoutFloorRejectsNonFinite:
+    """LOW finding: the timeout floor check must reject NaN and ±Infinity.
+
+    ``float('nan') < min_timeout`` is always False and ``float('inf')`` is
+    never below a finite floor, so both slipped past the ``timeout <
+    min_timeout`` guard — reproducing the same "block forever" hang the
+    floor exists to prevent (Infinity), or raising an unhandled
+    ValueError/OverflowError at the socket layer (NaN).  ``math.isfinite``
+    now rejects both in ``safe_post`` and ``safe_get``.
+    """
+
+    def test_math_module_confirms_non_finite_defeat_the_comparison(self):
+        """Empirically pin the root cause the fix relies on."""
+        import math
+
+        assert (float("nan") < 10.0) is False
+        assert (float("inf") < 10.0) is False
+        assert not math.isfinite(float("nan"))
+        assert not math.isfinite(float("inf"))
+
+    @pytest.mark.parametrize("bad_timeout", [float("inf"), float("nan"), float("-inf")])
+    def test_safe_post_rejects_non_finite_timeout(self, bad_timeout):
+        from forgelm._http import HttpSafetyError, safe_post
+
+        with pytest.raises(HttpSafetyError, match="Timeout"):
+            safe_post("https://example.com/hook", json={}, timeout=bad_timeout, min_timeout=1.0)
+
+    @pytest.mark.parametrize("bad_timeout", [float("inf"), float("nan"), float("-inf")])
+    def test_safe_get_rejects_non_finite_timeout(self, bad_timeout):
+        from forgelm._http import HttpSafetyError, safe_get
+
+        with pytest.raises(HttpSafetyError, match="Timeout"):
+            safe_get("https://example.com/probe", timeout=bad_timeout, min_timeout=1.0)
+
+
 class TestDnsRebindingClosed:
     """Behavioural test: a TOCTOU-style rebinding cannot leak the payload.
 

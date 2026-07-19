@@ -144,6 +144,18 @@ ForgeLM-spesifik kontrol envanteriyle ilgilidir.
 
 ## 3. Kapsama özeti
 
+**Terminoloji.** Aşağıdaki tema-başına tally, çapraz referans verilen
+design doc'un §3'ündeki aynı üç-katmanlı şemayı kullanır: **`FL`**
+(*ForgeLM-supported* — ForgeLM doğrudan audit kanıtı üretir),
+**`FL-helps`** (*operatör sorumluluğu, ForgeLM yardımcı olur* —
+ForgeLM operatörün başka kaynaklarla birleştirdiği kısmi kanıt sağlar)
+ve **`OOS`** (*Out of scope* — yalnız operatör-tarafı, ForgeLM hiçbir
+katkı sağlamaz). `OOS`, her temaya yayılmış kontrol-başına bir
+sayımdır ve tablonun "Excluded (ForgeLM scope)" sütunundan farklıdır
+— o sütun yalnız ForgeLM'in envanterinin bütünüyle hariç tuttuğu
+tüm tema'ları sayar (bugün itibariyle yalnız A.7 Physical, 14
+kontrol) — iki sayının (14 ve 34) farklı olmasının nedeni budur.
+
 | Tema | Toplam | Applicable | Excluded (ForgeLM scope) | FL-supported | FL-helps |
 |---|---|---|---|---|---|
 | A.5 Organisational | 37 | 37 | 0 | 3 | 24 |
@@ -153,11 +165,11 @@ ForgeLM-spesifik kontrol envanteriyle ilgilidir.
 | **Toplam** | **93** | **93 (operatör ISMS)** | **14 (ForgeLM-spesifik)** | **11** | **48** |
 
 Yukarıdaki §2.1–§2.4 (SoA matrisi) row-by-row yeniden sayım. Tema
-başına tally — A.5: 3 / 24 / 10 OOS; A.6: 0 / 5 / 3 OOS; A.7: 0 /
-0 / 14 OOS; A.8: 8 / 19 / 7 OOS — toplam 11 `FL` + 48 `FL-helps`
-+ 34 OOS = 93. Design doc'un §3 "Coverage tally" paragrafıyla
-(`docs/design/iso27001_soc2_alignment.md`)
-çapraz kontrol; ikisi eşleşmek zorunda.
+başına `FL`/`FL-helps`/`OOS` tally — A.5: 3 / 24 / 10 OOS; A.6: 0 /
+5 / 3 OOS; A.7: 0 / 0 / 14 OOS; A.8: 8 / 19 / 7 OOS — toplam 11 `FL`
++ 48 `FL-helps` + 34 `OOS` = 93. Design doc'un §3 "Coverage tally"
+paragrafıyla (`docs/design/iso27001_soc2_alignment.md`) çapraz
+kontrol; ikisi eşleşmek zorunda.
 
 ## 4. İnceleme
 

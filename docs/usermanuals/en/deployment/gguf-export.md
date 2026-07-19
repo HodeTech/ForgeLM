@@ -34,18 +34,7 @@ The output is a single `.gguf` file plus a `.sha256` manifest.
 
 `q4_k_m` is the sweet spot — fits easily on consumer hardware, minimal quality loss versus full precision.
 
-## Configuration
-
-```yaml
-output:
-  gguf:
-    enabled: true                       # auto-export after training
-    quant_levels: ["q4_k_m", "q5_k_m"] # export multiple levels in one go
-    output_dir: "${output.dir}/gguf/"
-    manifest: true
-```
-
-When `enabled: true`, ForgeLM exports automatically as part of `forgelm` runs that pass eval. When false (default), use `forgelm export` ad hoc.
+GGUF export is always a separate, explicit `forgelm export` invocation — there is no config-driven auto-export toggle. `forgelm/config.py` has no `output:` block and no `gguf` field anywhere in the schema, so a training YAML cannot trigger export as a side effect of a passing eval gate; run `forgelm export` yourself once training finishes.
 
 ## Multi-quant export
 
@@ -151,5 +140,5 @@ For HuggingFace Hub upload, ForgeLM's model card includes a "Use with Ollama" sn
 ## See also
 
 - [Deploy Targets](#/deployment/deploy-targets) — non-GGUF deployment options.
-- [Configuration Reference](#/reference/configuration) — `output.gguf` block.
+- [CLI Reference](#/reference/cli) — the full `forgelm export` flag surface.
 - [Model Merging](#/deployment/model-merging) — combining adapters before export.

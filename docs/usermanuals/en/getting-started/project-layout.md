@@ -36,7 +36,7 @@ my-finetune/
 |---|---|---|
 | `forgelm ingest` | `--output` (typically `data/*.jsonl`) | Raw docs → SFT-ready JSONL. |
 | `forgelm audit` | `--output` (typically `audit/`) | PII / leakage / quality report. |
-| `forgelm --config X.yaml` | `output.dir` from YAML | Full training artifacts. |
+| `forgelm --config X.yaml` | `training.output_dir` from YAML | Full training artifacts. |
 | `forgelm export` | `--output` (path to `.gguf`) | Quantised single-file model. |
 | `forgelm deploy` | `--output` (Modelfile, K8s manifest, etc.) | Deployment scaffolds. |
 | `forgelm chat` | nothing (interactive) | Streams to terminal. |
@@ -79,9 +79,9 @@ ForgeLM uses these path conventions — change them with command-line flags but 
 |---|---|---|
 | Config file | `configs/<name>.yaml` | `--config PATH` |
 | Audit output | `./audit/` | `forgelm audit --output PATH` |
-| Training output | `./checkpoints/<name>/` | `output.dir:` in YAML |
+| Training output | `./checkpoints/<name>/` | `training.output_dir:` in YAML |
 | HuggingFace cache | `~/.cache/huggingface/` | `HF_HOME` env var (canonical; ForgeLM does not introduce its own cache-dir override) |
-| HuggingFace token | env `HF_TOKEN` | `auth.hf_token:` in YAML |
+| HuggingFace token | env `HUGGINGFACE_TOKEN` | `auth.hf_token:` in YAML |
 
 ## Multi-config workflows
 

@@ -67,6 +67,18 @@ class ExportResult:
     # FORGELM_GGUF_CONVERTER) → EXIT_CONFIG_ERROR; "runtime" for converter /
     # merge / infra failures → EXIT_TRAINING_ERROR.  Ignored when success.
     error_kind: Optional[Literal["config", "runtime"]] = "runtime"
+    # Structured substitution signal.  ``quant`` reports the quant of the file
+    # actually written; ``requested_quant`` reports what the operator asked for.
+    # They differ when a K-quant is requested: convert_hf_to_gguf.py only emits
+    # f16/q8_0 directly, so K-quants are produced as an intermediate f16 GGUF
+    # that needs a manual ``llama-quantize`` step.  Automated consumers compare
+    # ``requested_quant`` against ``quant`` (or read ``manual_step_required``) to
+    # detect the substitution without scraping the warning out of the log stream.
+    requested_quant: Optional[str] = None
+    manual_step_required: bool = False
+    # The exact ``llama-quantize`` command that finishes the requested K-quant,
+    # or None when no follow-up is needed.
+    followup_command: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -298,9 +310,9 @@ def _build_converter_command(
     return cmd
 
 
-def _run_converter(cmd: List[str], fmt: str, actual_quant: str) -> Optional[ExportResult]:
+def _run_converter(cmd: List[str], fmt: str, actual_quant: str, timeout_seconds: int) -> Optional[ExportResult]:
     """Run the converter and return an ExportResult on failure (None on success)."""
-    logger.info("Running GGUF conversion: %s", " ".join(cmd))
+    logger.info("Running GGUF conversion (timeout %ds): %s", timeout_seconds, " ".join(cmd))
     # Bandit B603 / ruff S603: cmd[0] is sys.executable (absolute), cmd[1] comes
     # from _find_converter_script (resolved against an installed package or an
     # FORGELM_GGUF_CONVERTER env-var the user supplied), and the remaining
@@ -312,14 +324,18 @@ def _run_converter(cmd: List[str], fmt: str, actual_quant: str) -> Optional[Expo
             capture_output=True,
             text=True,
             check=False,
-            timeout=3600,
+            timeout=timeout_seconds,
         )
     except subprocess.TimeoutExpired:
         return ExportResult(
             success=False,
             format=fmt,
             quant=actual_quant,
-            error="GGUF conversion timed out after 3600 seconds.",
+            error=(
+                f"GGUF conversion timed out after {timeout_seconds} seconds. "
+                "Large models on a CPU-bound converter can exceed the default; "
+                "pass a larger timeout_seconds to export_model()."
+            ),
             error_kind="runtime",
         )
     except Exception as e:  # noqa: BLE001 — best-effort: subprocess.run for the GGUF converter (llama.cpp / convert-hf-to-gguf.py) crosses OSError (binary missing) and the converter's own deep-stack errors; ExportResult(success=False) is the documented public contract for the export pipeline.  # NOSONAR
@@ -363,6 +379,7 @@ def export_model(
     adapter: Optional[str] = None,
     update_integrity: bool = True,
     extra_args: Optional[List[str]] = None,
+    timeout_seconds: int = 3600,
 ) -> ExportResult:
     """Export a HuggingFace model to GGUF format.
 
@@ -380,6 +397,9 @@ def export_model(
         update_integrity: When ``True``, appends the exported artifact's
             SHA-256 to ``model_integrity.json`` in the model directory.
         extra_args: Additional CLI arguments forwarded to the converter script.
+        timeout_seconds: Wall-clock budget for the converter subprocess
+            (default 3600).  70B-class models converted to f16 on a CPU-bound
+            converter can exceed one hour; raise this for large models.
 
     Returns:
         :class:`ExportResult` with SHA-256, file size, and output path.
@@ -413,10 +433,17 @@ def export_model(
             return ExportResult(success=False, format=fmt, quant=quant, error=f"Adapter merge failed: {e}")
 
     actual_quant, actual_output_path = _resolve_kquant_path(quant, output_path)
+
+    # Ensure the output file's parent directory exists before spawning the
+    # converter; otherwise a not-yet-created ``./exports/`` surfaces as an
+    # opaque converter-stderr failure instead of a clear ForgeLM error.
+    output_parent = os.path.dirname(os.path.abspath(actual_output_path)) or "."
+    os.makedirs(output_parent, exist_ok=True)
+
     cmd = _build_converter_command(converter, source_path, actual_output_path, quant, extra_args)
 
     try:
-        failure = _run_converter(cmd, fmt, actual_quant)
+        failure = _run_converter(cmd, fmt, actual_quant, timeout_seconds)
         if failure is not None:
             return failure
     finally:
@@ -434,6 +461,15 @@ def export_model(
     digest = _sha256_file(actual_output_path)
     size_bytes = os.path.getsize(actual_output_path)
 
+    # Structured substitution signal: a K-quant request is served as an
+    # intermediate f16 GGUF and needs a manual llama-quantize follow-up.  Expose
+    # the requested quant + the exact follow-up command so JSON/CI consumers can
+    # detect they did not get the artifact they asked for without scraping logs.
+    manual_step_required = quant in _K_QUANTS
+    followup_command = (
+        f"llama-quantize {actual_output_path} {output_path} {quant.upper()}" if manual_step_required else None
+    )
+
     result = ExportResult(
         success=True,
         output_path=actual_output_path,
@@ -441,6 +477,9 @@ def export_model(
         quant=actual_quant,
         sha256=digest,
         size_bytes=size_bytes,
+        requested_quant=quant,
+        manual_step_required=manual_step_required,
+        followup_command=followup_command,
     )
 
     logger.info(

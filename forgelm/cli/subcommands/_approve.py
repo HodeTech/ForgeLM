@@ -9,11 +9,12 @@ splitting cohesive helpers across files.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
 import types
-from typing import Any, Dict, NoReturn, Optional
+from typing import Any, Dict, Iterator, NoReturn, Optional
 
 import yaml
 
@@ -21,6 +22,72 @@ from .._exit_codes import EXIT_CONFIG_ERROR, EXIT_TRAINING_ERROR
 from .._logging import logger
 
 _STAGING_SUFFIX = ".staging"
+
+# flock is Unix-only; on Windows the approval lock degrades to a no-op, mirroring
+# the audit-log flock discipline in forgelm/compliance.py. Do not share an
+# output_dir across concurrent processes on Windows; use a distinct output_dir
+# per run.
+try:
+    import fcntl as _fcntl
+
+    def _flock_ex(fh) -> None:
+        _fcntl.flock(fh, _fcntl.LOCK_EX)
+
+    def _flock_un(fh) -> None:
+        _fcntl.flock(fh, _fcntl.LOCK_UN)
+
+except ImportError:  # pragma: no cover — Windows path
+
+    def _flock_ex(fh) -> None:  # type: ignore[misc]
+        pass
+
+    def _flock_un(fh) -> None:  # type: ignore[misc]
+        pass
+
+
+_APPROVAL_LOCK_NAME = ".approval.lock"
+
+
+@contextlib.contextmanager
+def _approval_decision_lock(output_dir: str) -> Iterator[None]:
+    """Serialise the approve/reject decision-guard read → terminal-write window.
+
+    ``AuditLogger.log_event``'s own flock only guards the single append; it does
+    not span the read-check-write critical section where the dispatchers first
+    confirm no terminal decision exists (``_find_human_approval_decision_event``)
+    and then, several I/O steps later, append the terminal ``human_approval.*``
+    event. Two processes racing on the same ``run_id`` (two reviewers, or a
+    retried CI script overlapping a human decision) could otherwise both pass the
+    "no decision yet" check before either writes, then both append — leaving two
+    contradictory terminal decisions for one run.
+
+    An exclusive ``flock`` on ``<output_dir>/.approval.lock`` held for the whole
+    window makes ``{approve, reject}`` mutually exclusive per ``run_id``: the
+    loser blocks until the winner commits, then re-reads the log, sees the
+    committed decision, and refuses.
+
+    ``output_dir`` must already exist for a real run (training created it
+    when it wrote ``audit_log.jsonl``); this helper does NOT create it. A
+    decision (``forgelm approve``/``reject``) against a non-existent or
+    mistyped ``--output-dir`` must fail via the downstream missing-audit-log
+    / missing-required-event guard, not materialise a directory + lock file
+    for a run that never happened. When ``output_dir`` is absent, lock
+    acquisition is skipped entirely — there is nothing to serialise against
+    for a directory that does not exist.
+    """
+    if not os.path.isdir(output_dir):
+        yield
+        return
+    lock_path = os.path.join(output_dir, _APPROVAL_LOCK_NAME)
+    # "a+b": create-if-absent without truncating; the file is a pure lock token,
+    # never read or written.
+    with open(lock_path, "a+b") as lock_fh:
+        _flock_ex(lock_fh)
+        try:
+            yield
+        finally:
+            _flock_un(lock_fh)
+
 
 # Audit event vocabulary for the human-approval gate.  Centralised so a future
 # rename or typo cannot drift across the registry, the emitter call sites, and
@@ -52,11 +119,22 @@ def _staging_path_inside_output_dir(staging_path: str, output_dir: str) -> bool:
 
 
 def _resolve_approver_identity() -> str:
-    """Resolve the operator identity for an approve/reject audit entry.
+    """Resolve the human-approver identity for an approve/reject audit entry.
 
-    Mirrors :class:`forgelm.compliance.AuditLogger`'s operator resolution so
-    a `human_approval.granted` / `human_approval.rejected` event identifies
-    the human exactly the way pre-existing pipeline events do:
+    Follows the same *policy* as :class:`forgelm.compliance.AuditLogger`'s
+    operator resolution (env override → OS username → gated anonymous
+    fallback), but the resolved string is deliberately NOT byte-identical to
+    ``AuditLogger.operator`` on every branch:
+
+    - ``FORGELM_OPERATOR`` set: both collapse to that exact value.
+    - ``FORGELM_OPERATOR`` unset, ``getpass`` succeeds: this returns the bare
+      ``getpass.getuser()`` (e.g. ``"alice"``) whereas ``AuditLogger.operator``
+      appends the host (``"alice@<hostname>"``). The divergence is intentional
+      — an emitted ``human_approval.*`` event then carries both the pipeline
+      identity (``operator``) and the human who signed off (``approver``); see
+      the call-site note in :func:`_run_approve_cmd`.
+
+    Resolution order:
 
     1. ``FORGELM_OPERATOR`` env var (highest priority — explicit operator
        identification, used in CI/CD and shared workstation setups).
@@ -256,6 +334,45 @@ def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoRe
     sys.exit(exit_code)
 
 
+def _construct_audit_logger_or_exit(output_dir: str, run_id: str, output_format: str):
+    """Build the run's :class:`~forgelm.compliance.AuditLogger`, converting an
+    operator-identity failure into a clean ``EXIT_CONFIG_ERROR`` instead of a
+    raw traceback at the Article 14 decision point.
+
+    ``AuditLogger.__init__`` resolves the operator via ``getpass.getuser()`` and
+    raises :class:`~forgelm.config.ConfigError` when no identity is available
+    (it now catches the getpass/pwd ``KeyError`` internally — the
+    arbitrary-numeric-UID container with no ``/etc/passwd`` entry — and converts
+    it). ``KeyError`` is caught here as well as defence-in-depth: this CLI seam
+    owns the ``EXIT_CONFIG_ERROR`` (1) exit-code contract for the approval gate
+    and must not silently depend on ``AuditLogger``'s internal exception policy;
+    a bare ``KeyError`` on any future identity path must still exit on-contract,
+    never crash. The try body is a single call, so the only realistic ``KeyError``
+    source is operator-identity resolution — the catch stays narrow.
+    """
+    from ...compliance import AuditLogger
+    from ...config import ConfigError
+
+    try:
+        return AuditLogger(output_dir, run_id=run_id)
+    except ConfigError as exc:
+        # ConfigError already carries the full FORGELM_OPERATOR / anonymous
+        # guidance (including the converted getpass/pwd KeyError case).
+        _output_error_and_exit(output_format, str(exc), EXIT_CONFIG_ERROR)
+    except KeyError as exc:
+        # ``str(KeyError)`` is just the missing key, so synthesise the same
+        # operator guidance rather than surface an opaque message.
+        _output_error_and_exit(
+            output_format,
+            f"Operator identity for the audit log could not be resolved "
+            f"(getpass/pwd lookup failed: {exc!r}). Set FORGELM_OPERATOR=<id> "
+            "for CI/CD pipelines, or FORGELM_ALLOW_ANONYMOUS_OPERATOR=1 to opt "
+            "in to anonymous audit entries (not recommended for EU AI Act "
+            "Article 12 record-keeping).",
+            EXIT_CONFIG_ERROR,
+        )
+
+
 def _assert_audit_log_readable_or_exit(audit_log_path: str, output_format: str) -> None:
     """Wave 2a Round-5 (F-R5-01) readability gate shared across the
     approve / reject / approvals family.
@@ -403,106 +520,113 @@ def _run_approve_cmd(args, output_format: str) -> None:
     audit_log_path = os.path.join(output_dir, "audit_log.jsonl")
 
     _assert_audit_log_readable_or_exit(audit_log_path, output_format)
-    # Strict-mode parsing (Wave 2a Round-2 hardening): a corrupted decision
-    # record that gets silently skipped looks identical to "no approval yet",
-    # which would let an operator double-grant. ``_read_required_event_for_approve``
-    # converts AuditLogParseError into an actionable EXIT_CONFIG_ERROR so
-    # the operator fixes the log first.
-    required_event = _read_required_event_for_approve(audit_log_path, run_id, output_format)
 
-    staging_path = required_event.get("staging_path") or os.path.join(output_dir, f"final_model{_STAGING_SUFFIX}")
-    # Defence-in-depth: refuse a staging_path that escapes output_dir (a
-    # tampered audit log without HMAC signing could otherwise plant an
-    # absolute path or ``..`` traversal).
-    if not _staging_path_inside_output_dir(staging_path, output_dir):
-        _output_error_and_exit(
-            output_format,
-            f"Refusing to act on staging_path {staging_path!r}: it resolves outside output_dir {output_dir!r}.",
-            EXIT_CONFIG_ERROR,
-        )
-    # Derive final_path by stripping the staging suffix (and any runtime suffix
-    # appended after it, such as ".<run_id>") from staging_path. rfind locates
-    # the last occurrence of _STAGING_SUFFIX so "final_model.staging.abc123"
-    # correctly yields "final_model" regardless of any trailing run_id segment.
-    _idx = staging_path.rfind(_STAGING_SUFFIX)
-    final_path = staging_path[:_idx] if _idx != -1 else staging_path
+    # Serialise the whole decision-guard read → terminal-write window against a
+    # concurrent approve/reject on the same run_id.  Without this lock two
+    # processes can both pass the "no terminal decision yet" check before either
+    # writes, then both append — leaving two contradictory decisions for one run
+    # (an approve promoting+deleting staging while a reject records a rejection
+    # against the now-missing staging_path).  Holding the lock from the read
+    # below through the human_approval.granted write makes {approve, reject}
+    # mutually exclusive: the loser blocks, re-reads, and refuses on the
+    # committed decision.
+    with _approval_decision_lock(output_dir):
+        # Strict-mode parsing (Wave 2a Round-2 hardening): a corrupted decision
+        # record that gets silently skipped looks identical to "no approval yet",
+        # which would let an operator double-grant. ``_read_required_event_for_approve``
+        # converts AuditLogParseError into an actionable EXIT_CONFIG_ERROR so
+        # the operator fixes the log first.
+        required_event = _read_required_event_for_approve(audit_log_path, run_id, output_format)
 
-    # Path-existence guards: lexists/islink instead of isdir alone so a broken
-    # symlink (target deleted but link kept) surfaces a sensible message rather
-    # than the misleading "not found" string.  Mirrors the final_path guard
-    # below for consistency.
-    if not (os.path.isdir(staging_path) or os.path.islink(staging_path)):
-        _output_error_and_exit(
-            output_format,
-            f"Staging directory not found at {staging_path!r}. "
-            "Either the run did not exit with code 4, or it was already approved/cleaned up.",
-            EXIT_CONFIG_ERROR,
-        )
+        staging_path = required_event.get("staging_path") or os.path.join(output_dir, f"final_model{_STAGING_SUFFIX}")
+        # Defence-in-depth: refuse a staging_path that escapes output_dir (a
+        # tampered audit log without HMAC signing could otherwise plant an
+        # absolute path or ``..`` traversal).
+        if not _staging_path_inside_output_dir(staging_path, output_dir):
+            _output_error_and_exit(
+                output_format,
+                f"Refusing to act on staging_path {staging_path!r}: it resolves outside output_dir {output_dir!r}.",
+                EXIT_CONFIG_ERROR,
+            )
+        # Derive final_path by stripping the staging suffix (and any runtime suffix
+        # appended after it, such as ".<run_id>") from staging_path. rfind locates
+        # the last occurrence of _STAGING_SUFFIX so "final_model.staging.abc123"
+        # correctly yields "final_model" regardless of any trailing run_id segment.
+        _idx = staging_path.rfind(_STAGING_SUFFIX)
+        final_path = staging_path[:_idx] if _idx != -1 else staging_path
 
-    if os.path.lexists(final_path):
-        _output_error_and_exit(
-            output_format,
-            f"Cannot promote: final directory already exists at {final_path!r}. Move or delete it first.",
-            EXIT_CONFIG_ERROR,
-        )
+        # Path-existence guards: lexists/islink instead of isdir alone so a broken
+        # symlink (target deleted but link kept) surfaces a sensible message rather
+        # than the misleading "not found" string.  Mirrors the final_path guard
+        # below for consistency.
+        if not (os.path.isdir(staging_path) or os.path.islink(staging_path)):
+            _output_error_and_exit(
+                output_format,
+                f"Staging directory not found at {staging_path!r}. "
+                "Either the run did not exit with code 4, or it was already approved/cleaned up.",
+                EXIT_CONFIG_ERROR,
+            )
 
-    from ...compliance import AuditLogger
-    from ...config import ConfigError
+        if os.path.lexists(final_path):
+            _output_error_and_exit(
+                output_format,
+                f"Cannot promote: final directory already exists at {final_path!r}. Move or delete it first.",
+                EXIT_CONFIG_ERROR,
+            )
 
-    # Construct the audit logger BEFORE the atomic rename.  If we promoted
-    # first and ``AuditLogger.__init__`` then raised (e.g. CI/container env
-    # with no resolvable operator identity), the model would already be on
-    # disk at ``final_path`` with no corresponding ``human_approval.granted``
-    # event — an audit gap that breaks Article 12 record-keeping.  Validating
-    # operator identity up front means the gate either succeeds with both
-    # promotion and audit, or fails with neither.
-    try:
-        audit = AuditLogger(output_dir, run_id=run_id)
-    except ConfigError as exc:
-        _output_error_and_exit(output_format, str(exc), EXIT_CONFIG_ERROR)
+        # Construct the audit logger BEFORE the atomic rename.  If we promoted
+        # first and ``AuditLogger.__init__`` then raised (e.g. CI/container env
+        # with no resolvable operator identity), the model would already be on
+        # disk at ``final_path`` with no corresponding ``human_approval.granted``
+        # event — an audit gap that breaks Article 12 record-keeping.  Validating
+        # operator identity up front means the gate either succeeds with both
+        # promotion and audit, or fails with neither.  The helper converts a
+        # ConfigError / KeyError operator-identity failure into a clean
+        # EXIT_CONFIG_ERROR rather than a raw traceback.
+        audit = _construct_audit_logger_or_exit(output_dir, run_id, output_format)
 
-    try:
-        promote_strategy = _cli_facade._atomic_rename_or_move(staging_path, final_path)
-    except OSError as exc:
-        _output_error_and_exit(
-            output_format,
-            f"Failed to promote {staging_path!r} → {final_path!r}: {exc}",
-            EXIT_TRAINING_ERROR,
-        )
+        try:
+            promote_strategy = _cli_facade._atomic_rename_or_move(staging_path, final_path)
+        except OSError as exc:
+            _output_error_and_exit(
+                output_format,
+                f"Failed to promote {staging_path!r} → {final_path!r}: {exc}",
+                EXIT_TRAINING_ERROR,
+            )
 
-    # ``approver`` records the human who ran ``forgelm approve``; this is a
-    # complement to ``audit.operator`` (the FORGELM_OPERATOR-pinned identity
-    # carried on every event for HMAC scope and chain attribution).  When
-    # FORGELM_OPERATOR is set both fields collapse to the same value; on a
-    # shared workstation they intentionally diverge so the audit answers
-    # "which pipeline ran this" *and* "which human approved it".
-    approver = _cli_facade._resolve_approver_identity()
-    # The rename above already promoted the model to ``final_path`` and the
-    # staging dir is consumed, so this write cannot be retried (the
-    # ``os.path.lexists(final_path)`` guard would block a re-run).  An
-    # unwrapped OSError here (ENOSPC, read-only remount in the window)
-    # would leave the model promoted with NO ``human_approval.granted``
-    # event — a permanent Article 12 audit gap surfaced only as a raw
-    # traceback + non-contract exit code.  Surface it loudly through the
-    # named exit code with an operator-actionable message that names the
-    # gap (F-P4-OPUS-18).
-    try:
-        audit.log_event(
-            _EVT_HUMAN_APPROVAL_GRANTED,
-            gate="final_model",
-            run_id=run_id,
-            approver=approver,
-            comment=args.comment or "",
-            promote_strategy=promote_strategy,
-        )
-    except OSError as exc:
-        _output_error_and_exit(
-            output_format,
-            f"Model promoted to {final_path!r} but the human_approval.granted audit event "
-            f"could not be written ({exc}). AUDIT GAP — record a manual `correction` entry "
-            "per docs/standards/logging-observability.md before relying on this run.",
-            EXIT_TRAINING_ERROR,
-        )
+        # ``approver`` records the human who ran ``forgelm approve``; this is a
+        # complement to ``audit.operator`` (the FORGELM_OPERATOR-pinned identity
+        # carried on every event for HMAC scope and chain attribution).  When
+        # FORGELM_OPERATOR is set both fields collapse to the same value; on a
+        # shared workstation they intentionally diverge so the audit answers
+        # "which pipeline ran this" *and* "which human approved it".
+        approver = _cli_facade._resolve_approver_identity()
+        # The rename above already promoted the model to ``final_path`` and the
+        # staging dir is consumed, so this write cannot be retried (the
+        # ``os.path.lexists(final_path)`` guard would block a re-run).  An
+        # unwrapped OSError here (ENOSPC, read-only remount in the window)
+        # would leave the model promoted with NO ``human_approval.granted``
+        # event — a permanent Article 12 audit gap surfaced only as a raw
+        # traceback + non-contract exit code.  Surface it loudly through the
+        # named exit code with an operator-actionable message that names the
+        # gap (F-P4-OPUS-18).
+        try:
+            audit.log_event(
+                _EVT_HUMAN_APPROVAL_GRANTED,
+                gate="final_model",
+                run_id=run_id,
+                approver=approver,
+                comment=args.comment or "",
+                promote_strategy=promote_strategy,
+            )
+        except OSError as exc:
+            _output_error_and_exit(
+                output_format,
+                f"Model promoted to {final_path!r} but the human_approval.granted audit event "
+                f"could not be written ({exc}). AUDIT GAP — record a manual `correction` entry "
+                "per docs/standards/logging-observability.md before relying on this run.",
+                EXIT_TRAINING_ERROR,
+            )
 
     metrics = _cli_facade._load_metrics_from_manifest(output_dir)
     notifier = _cli_facade._build_approval_notifier(output_dir)
@@ -543,63 +667,65 @@ def _run_reject_cmd(args, output_format: str) -> None:
     audit_log_path = os.path.join(output_dir, "audit_log.jsonl")
 
     _assert_audit_log_readable_or_exit(audit_log_path, output_format)
-    # Strict-mode parsing: surface audit-log corruption to the operator
-    # rather than skip the line and produce a misleading "no decision yet"
-    # result.  See _read_required_event_for_reject for the same hardening
-    # pattern as approve.
-    required_event = _read_required_event_for_reject(audit_log_path, run_id, output_format)
 
-    staging_path = required_event.get("staging_path") or os.path.join(output_dir, f"final_model{_STAGING_SUFFIX}")
+    # Serialise the decision-guard read → terminal-write window against a
+    # concurrent approve/reject on the same run_id.  See _run_approve_cmd for the
+    # full TOCTOU rationale; the shared lock guarantees a concurrent approve that
+    # promotes+deletes the staging dir cannot interleave with this rejection —
+    # the loser re-reads the committed decision and refuses.
+    with _approval_decision_lock(output_dir):
+        # Strict-mode parsing: surface audit-log corruption to the operator
+        # rather than skip the line and produce a misleading "no decision yet"
+        # result.  See _read_required_event_for_reject for the same hardening
+        # pattern as approve.
+        required_event = _read_required_event_for_reject(audit_log_path, run_id, output_format)
 
-    # Same defence-in-depth check as the approve handler: refuse a
-    # staging_path that escapes output_dir.
-    if not _staging_path_inside_output_dir(staging_path, output_dir):
-        _output_error_and_exit(
-            output_format,
-            f"Refusing to act on staging_path {staging_path!r}: it resolves outside output_dir {output_dir!r}.",
-            EXIT_CONFIG_ERROR,
-        )
+        staging_path = required_event.get("staging_path") or os.path.join(output_dir, f"final_model{_STAGING_SUFFIX}")
 
-    # See approve handler for the islink rationale (broken-symlink edge case).
-    if not (os.path.isdir(staging_path) or os.path.islink(staging_path)):
-        _output_error_and_exit(
-            output_format,
-            f"Staging directory not found at {staging_path!r}. Nothing to reject.",
-            EXIT_CONFIG_ERROR,
-        )
+        # Same defence-in-depth check as the approve handler: refuse a
+        # staging_path that escapes output_dir.
+        if not _staging_path_inside_output_dir(staging_path, output_dir):
+            _output_error_and_exit(
+                output_format,
+                f"Refusing to act on staging_path {staging_path!r}: it resolves outside output_dir {output_dir!r}.",
+                EXIT_CONFIG_ERROR,
+            )
 
-    from ...compliance import AuditLogger
-    from ...config import ConfigError
+        # See approve handler for the islink rationale (broken-symlink edge case).
+        if not (os.path.isdir(staging_path) or os.path.islink(staging_path)):
+            _output_error_and_exit(
+                output_format,
+                f"Staging directory not found at {staging_path!r}. Nothing to reject.",
+                EXIT_CONFIG_ERROR,
+            )
 
-    # See approve handler — same operator-identity ConfigError contract.
-    try:
-        audit = AuditLogger(output_dir, run_id=run_id)
-    except ConfigError as exc:
-        _output_error_and_exit(output_format, str(exc), EXIT_CONFIG_ERROR)
-    approver = _cli_facade._resolve_approver_identity()
-    # Mirror the approve handler's audit-write guard.  Unlike approve, no model
-    # has been promoted here — the staging dir is preserved — so an OSError
-    # (ENOSPC, read-only remount) means the decision was simply never recorded
-    # and can be retried after repairing storage.  Surface it through the named
-    # exit code BEFORE the webhook so a failed decision write never reaches
-    # notify_failure with a rejection that was never durably recorded.
-    try:
-        audit.log_event(
-            _EVT_HUMAN_APPROVAL_REJECTED,
-            gate="final_model",
-            run_id=run_id,
-            approver=approver,
-            comment=args.comment or "",
-            staging_path=staging_path,
-        )
-    except OSError as exc:
-        _output_error_and_exit(
-            output_format,
-            f"Could not write the human_approval.rejected audit event ({exc}). "
-            "Refusing to record a decision without a durable audit entry; "
-            "repair storage and retry.",
-            EXIT_TRAINING_ERROR,
-        )
+        # See approve handler — same operator-identity ConfigError / KeyError
+        # contract (clean EXIT_CONFIG_ERROR instead of a raw traceback).
+        audit = _construct_audit_logger_or_exit(output_dir, run_id, output_format)
+        approver = _cli_facade._resolve_approver_identity()
+        # Mirror the approve handler's audit-write guard.  Unlike approve, no model
+        # has been promoted here — the staging dir is preserved — so an OSError
+        # (ENOSPC, read-only remount) means the decision was simply never recorded
+        # and can be retried after repairing storage.  Surface it through the named
+        # exit code BEFORE the webhook so a failed decision write never reaches
+        # notify_failure with a rejection that was never durably recorded.
+        try:
+            audit.log_event(
+                _EVT_HUMAN_APPROVAL_REJECTED,
+                gate="final_model",
+                run_id=run_id,
+                approver=approver,
+                comment=args.comment or "",
+                staging_path=staging_path,
+            )
+        except OSError as exc:
+            _output_error_and_exit(
+                output_format,
+                f"Could not write the human_approval.rejected audit event ({exc}). "
+                "Refusing to record a decision without a durable audit entry; "
+                "repair storage and retry.",
+                EXIT_TRAINING_ERROR,
+            )
 
     notifier = _cli_facade._build_approval_notifier(output_dir)
     run_name = os.path.basename(os.path.normpath(output_dir)) or "rejected"

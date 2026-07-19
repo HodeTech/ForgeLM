@@ -120,18 +120,19 @@ def iter_audit_events(
 
     Two modes:
 
-    - ``strict=False`` (default): skips blank lines, malformed JSON, and
-      non-dict roots silently.  Emits a single ``logger.warning`` at the
-      end summarising the skip count (so callers learn about corruption
-      without paying per-line log cost).  Use this for enumeration paths
-      where partial corruption should not bail (e.g.
-      ``forgelm approvals --pending``).
+    - ``strict=False`` (default): skips blank lines, malformed JSON,
+      non-UTF-8 bytes, and non-dict roots silently.  Emits a single
+      ``logger.warning`` at the end summarising the skip count (so
+      callers learn about corruption without paying per-line log cost).
+      Use this for enumeration paths where partial corruption should not
+      bail (e.g. ``forgelm approvals --pending``).
     - ``strict=True``: raises :class:`AuditLogParseError` on the first
-      malformed entry.  Use this for paths where silently skipping a
-      corrupted record could cause a wrong verdict (e.g. approve / reject
-      decision guards: a corrupted ``human_approval.granted`` line that
-      gets skipped looks identical to "no approval yet" and would
-      double-grant on the operator's next attempt).
+      malformed entry (including a non-UTF-8 line).  Use this for paths
+      where silently skipping a corrupted record could cause a wrong
+      verdict (e.g. approve / reject decision guards: a corrupted
+      ``human_approval.granted`` line that gets skipped looks identical
+      to "no approval yet" and would double-grant on the operator's next
+      attempt).
 
     Returns nothing (no events yielded, no warning, no raise) when:
     - the file does not exist (a freshly-bootstrapped output dir
@@ -139,19 +140,42 @@ def iter_audit_events(
     - the file cannot be opened (OSError logged at ERROR level so
       operators see why nothing came through).
 
+    The file is opened in binary mode and each line is decoded
+    individually — not opened in text mode with ``encoding="utf-8"`` —
+    so that a single non-UTF-8 line (a partial multi-byte sequence from a
+    crash mid-write, or bit-flip corruption) is a per-line, recoverable
+    failure rather than a fatal ``UnicodeDecodeError`` raised out of the
+    generator.  Text-mode iteration cannot offer this: once
+    ``TextIOWrapper``'s incremental decoder faults on a chunk, its
+    internal buffer position is left past the point where a corrected
+    per-line resume is possible, silently losing whatever lines followed
+    the bad one.  Binary iteration splits purely on the ``b"\\n"`` byte,
+    so a decode failure on one line never disturbs the next.
+
     The caller is responsible for closing nothing — this generator owns
     the file handle via ``with`` and releases it on iterator exhaustion.
     """
     if not os.path.isfile(audit_log_path):
         return
     try:
-        fh = open(audit_log_path, "r", encoding="utf-8")
+        fh = open(audit_log_path, "rb")
     except OSError:
         logger.exception("Cannot open audit log %s", audit_log_path)
         return
     skipped_lines = 0
     with fh:
-        for line_number, raw in enumerate(fh, start=1):
+        for line_number, raw_bytes in enumerate(fh, start=1):
+            try:
+                raw = raw_bytes.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                if strict:
+                    raise AuditLogParseError(
+                        audit_log_path,
+                        line_number,
+                        f"invalid UTF-8 encoding ({exc})",
+                    ) from exc
+                skipped_lines += 1
+                continue
             line = raw.strip()
             if not line:
                 continue

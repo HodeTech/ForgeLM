@@ -417,8 +417,14 @@ class TestAuditLoggerGenesisManifest:
         With the opt-in env set, the write-time guard still logs the integrity
         ERROR but permits the new genesis entry instead of raising
         (F-P4-OPUS-21 opt-in path, mirroring FORGELM_ALLOW_ANONYMOUS_OPERATOR).
+
+        The re-root must also REGENERATE the genesis manifest so the fresh
+        chain verifies cleanly — pre-fix the stale manifest was left in place
+        and ``verify_audit_log`` stayed permanently ``valid=False`` with
+        "manifest mismatch" (the reroot escape hatch never re-established a
+        valid genesis root).
         """
-        from forgelm.compliance import AuditLogger
+        from forgelm.compliance import AuditLogger, verify_audit_log
 
         log_path = tmp_path / "audit_log.jsonl"
 
@@ -429,6 +435,191 @@ class TestAuditLoggerGenesisManifest:
         # Must NOT raise — the deliberate re-root is permitted.
         AuditLogger(str(tmp_path)).log_event("second.event")
         assert log_path.read_text(encoding="utf-8").strip(), "opt-in re-root should have appended a fresh genesis entry"
+
+        # The fresh chain must be verifiable end-to-end: the manifest now
+        # pins the new genesis entry rather than the truncated-away one.
+        result = verify_audit_log(str(log_path))
+        assert result.valid is True, f"re-rooted chain must verify clean; got reason: {result.reason!r}"
+
+    def test_genesis_manifest_written_atomically(self, tmp_path, monkeypatch):
+        """The genesis manifest must be promoted via tmp+os.replace, not a plain
+        ``open(...,"w")`` — a crash mid-write must never leave a truncated
+        manifest that disarms the write-time re-root guard (parity with
+        export_pipeline_manifest's atomic discipline)."""
+        from forgelm import compliance
+
+        replace_calls = []
+        real_replace = os.replace
+
+        def _spy_replace(src, dst):
+            replace_calls.append((str(src), str(dst)))
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(compliance.os, "replace", _spy_replace)
+
+        compliance.AuditLogger(str(tmp_path)).log_event("first.event")
+
+        manifest_path = str(tmp_path / "audit_log.jsonl.manifest.json")
+        # Promoted from a .tmp sibling via os.replace (atomic write).
+        assert any(dst == manifest_path and src == manifest_path + ".tmp" for src, dst in replace_calls), (
+            "genesis manifest was not written via tmp + os.replace"
+        )
+        # The published manifest is complete/valid and no partial .tmp lingers.
+        assert os.path.isfile(manifest_path)
+        assert not os.path.exists(manifest_path + ".tmp")
+        with open(manifest_path, encoding="utf-8") as fh:
+            assert "first_entry_sha256" in json.load(fh)
+
+    def test_genesis_manifest_fsyncs_parent_directory(self, tmp_path, monkeypatch):
+        """LOW fix: the genesis-manifest rename must fsync the parent
+        directory fd (not just the tmp file's data blocks) so the rename's
+        directory-entry write-back is durable — mirrors
+        ``_purge.py::_atomic_rewrite_dropping_lines``'s dir-fsync
+        discipline.  Without this, a crash between the ``os.replace`` and
+        the directory metadata flush can silently drop the manifest,
+        permanently disarming truncation-detection for that log with no
+        error on the next run."""
+        if not hasattr(os, "O_DIRECTORY"):
+            pytest.skip("O_DIRECTORY is POSIX-only")
+
+        from forgelm import compliance
+
+        fsync_calls: list[int] = []
+        real_fsync = os.fsync
+
+        def _spy_fsync(fd: int) -> None:
+            fsync_calls.append(fd)
+            real_fsync(fd)
+
+        monkeypatch.setattr(compliance.os, "fsync", _spy_fsync)
+
+        opened_dir_fds: list[int] = []
+        real_open = os.open
+
+        def _spy_open(path, flags, *args, **kwargs):
+            fd = real_open(path, flags, *args, **kwargs)
+            if flags & os.O_DIRECTORY:
+                opened_dir_fds.append(fd)
+            return fd
+
+        monkeypatch.setattr(compliance.os, "open", _spy_open)
+
+        compliance.AuditLogger(str(tmp_path)).log_event("first.event")
+
+        assert opened_dir_fds, "parent directory was never opened with O_DIRECTORY for fsync"
+        assert any(fd in fsync_calls for fd in opened_dir_fds), (
+            f"os.fsync was not called on the parent-directory fd; fsync targets={fsync_calls}, "
+            f"dir_fds={opened_dir_fds}.  The genesis-manifest rename is not durable."
+        )
+
+    def test_genesis_manifest_dir_fsync_failure_reports_distinct_message(self, tmp_path, monkeypatch, caplog):
+        """LOW fix: an OSError from the post-replace parent-directory fsync must
+        NOT be misreported as a failed manifest write.  The manifest file is
+        already atomically in place (fsync + os.replace); only the
+        directory-entry durability fsync failed, so the WARNING must say so
+        distinctly rather than claim the write itself failed — an operator
+        reading "Could not write genesis manifest" during an audit would
+        wrongly conclude the pin is missing/corrupt when it is present and
+        valid."""
+        if not hasattr(os, "O_DIRECTORY"):
+            pytest.skip("O_DIRECTORY is POSIX-only")
+
+        from forgelm import compliance
+
+        real_open = os.open
+        dir_fds: list[int] = []
+
+        def _spy_open(path, flags, *args, **kwargs):
+            fd = real_open(path, flags, *args, **kwargs)
+            if flags & os.O_DIRECTORY:
+                dir_fds.append(fd)
+            return fd
+
+        real_fsync = os.fsync
+
+        def _spy_fsync(fd):
+            # Fail ONLY on the parent-directory fd, after os.replace has
+            # already published the manifest — the LOW-fix scenario.
+            if fd in dir_fds:
+                raise OSError("injected parent-directory fsync failure")
+            return real_fsync(fd)
+
+        monkeypatch.setattr(compliance.os, "open", _spy_open)
+        monkeypatch.setattr(compliance.os, "fsync", _spy_fsync)
+
+        with caplog.at_level("WARNING", logger="forgelm.compliance"):
+            compliance.AuditLogger(str(tmp_path)).log_event("first.event")
+
+        manifest_path = tmp_path / "audit_log.jsonl.manifest.json"
+        # The manifest is present, valid, and no partial .tmp lingers despite
+        # the injected dir-fsync failure.
+        assert manifest_path.is_file()
+        assert not (tmp_path / "audit_log.jsonl.manifest.json.tmp").exists()
+        with open(manifest_path, encoding="utf-8") as fh:
+            assert "first_entry_sha256" in json.load(fh)
+
+        messages = [rec.message for rec in caplog.records]
+        assert any("parent-directory fsync failed" in m for m in messages), (
+            f"dir-fsync failure did not emit its distinct WARNING; messages={messages}"
+        )
+        assert not any("Could not write genesis manifest" in m for m in messages), (
+            "dir-fsync failure was misreported as a failed manifest write"
+        )
+
+    def test_corrupt_manifest_fails_closed(self, tmp_path, caplog, monkeypatch):
+        """A present-but-unreadable manifest must fail closed at write time, not
+        warn-and-continue. Corrupting the manifest (instead of deleting the log)
+        must not silently disarm the truncation guard."""
+        from forgelm.compliance import AuditLogger, ConfigError
+
+        monkeypatch.delenv("FORGELM_ALLOW_AUDIT_REROOT", raising=False)
+        log_path = tmp_path / "audit_log.jsonl"
+        manifest_path = tmp_path / "audit_log.jsonl.manifest.json"
+
+        AuditLogger(str(tmp_path)).log_event("first.event")
+        assert manifest_path.is_file()
+
+        # Truncate the log to empty (so the next write re-roots) and corrupt the
+        # manifest so it can no longer be read to detect the re-root.
+        log_path.write_text("", encoding="utf-8")
+        manifest_path.write_text("{ this is not valid json", encoding="utf-8")
+
+        with caplog.at_level("ERROR", logger="forgelm.compliance"):
+            with pytest.raises(ConfigError, match="unreadable"):
+                AuditLogger(str(tmp_path)).log_event("second.event")
+
+        assert any("AUDIT INTEGRITY" in rec.message for rec in caplog.records), (
+            "corrupt-manifest path did not log an AUDIT INTEGRITY error"
+        )
+
+    def test_corrupt_manifest_reroot_optin_allows_fresh_chain(self, tmp_path, monkeypatch):
+        """FORGELM_ALLOW_AUDIT_REROOT=1 lets a deliberate operator start fresh
+        even when the manifest is corrupt — the ERROR still fires but the write
+        proceeds (parity with the absent/empty-log opt-in path).
+
+        The corrupt manifest must be REPLACED with a valid pin for the fresh
+        chain so ``verify_audit_log`` succeeds afterward — pre-fix the corrupt
+        manifest was left on disk and verification stayed permanently
+        ``valid=False`` with "manifest present but unreadable"."""
+        from forgelm.compliance import AuditLogger, verify_audit_log
+
+        log_path = tmp_path / "audit_log.jsonl"
+        manifest_path = tmp_path / "audit_log.jsonl.manifest.json"
+
+        AuditLogger(str(tmp_path)).log_event("first.event")
+        log_path.write_text("", encoding="utf-8")
+        manifest_path.write_text("{ this is not valid json", encoding="utf-8")
+
+        monkeypatch.setenv("FORGELM_ALLOW_AUDIT_REROOT", "1")
+        AuditLogger(str(tmp_path)).log_event("second.event")  # must NOT raise
+        assert log_path.read_text(encoding="utf-8").strip(), "opt-in re-root should have appended a fresh entry"
+
+        # The corrupt manifest is now a valid JSON pin over the fresh chain's
+        # genesis entry, so verification passes.
+        result = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert "first_entry_sha256" in result, "corrupt manifest was not regenerated on re-root"
+        verify = verify_audit_log(str(log_path))
+        assert verify.valid is True, f"re-rooted chain must verify clean; got reason: {verify.reason!r}"
 
     def test_audit_envelope_has_no_seq_field(self, tmp_path):
         """F-P4-OPUS-28: the user manual documented a ``seq`` field and a ``ts``
@@ -607,6 +798,52 @@ class TestAuditLoggerOperatorIdentity:
         log = compliance.AuditLogger(str(tmp_path))
         assert log.operator == "anonymous@sandbox-host"
 
+    def test_operator_raises_on_keyerror_no_flag(self, tmp_path, monkeypatch):
+        """Containerised no-passwd-entry case: ``getpass.getuser()`` raises
+        ``KeyError`` (arbitrary numeric UID with no /etc/passwd entry — the
+        ``docker run --user 12345`` / OpenShift random-UID scenario this
+        fallback claims to handle). Without the opt-in this must surface as the
+        actionable ConfigError, not crash the run with a raw KeyError."""
+        from forgelm import compliance
+
+        monkeypatch.delenv("FORGELM_OPERATOR", raising=False)
+        monkeypatch.delenv("FORGELM_ALLOW_ANONYMOUS_OPERATOR", raising=False)
+
+        def _boom():
+            raise KeyError("getpwuid(): uid not found: 12345")
+
+        monkeypatch.setattr(compliance.getpass, "getuser", _boom)
+        with pytest.raises(compliance.ConfigError, match="Operator identity unavailable"):
+            compliance.AuditLogger(str(tmp_path))
+
+    def test_operator_anonymous_on_keyerror_with_flag(self, tmp_path, monkeypatch):
+        """The same missing-passwd-entry KeyError, with the anonymous opt-in set,
+        degrades to ``anonymous@host`` instead of propagating."""
+        from forgelm import compliance
+
+        monkeypatch.delenv("FORGELM_OPERATOR", raising=False)
+        monkeypatch.setenv("FORGELM_ALLOW_ANONYMOUS_OPERATOR", "1")
+        monkeypatch.setattr(compliance.getpass, "getuser", lambda: _raise(KeyError("getpwuid(): uid not found: 12345")))
+        monkeypatch.setattr(compliance.socket, "gethostname", lambda: "pod-xyz")
+
+        log = compliance.AuditLogger(str(tmp_path))
+        assert log.operator == "anonymous@pod-xyz"
+
+    def test_operator_handles_importerror_windows_no_pwd(self, tmp_path, monkeypatch):
+        """Windows without USERNAME: ``getpass.getuser()`` raises
+        ``ModuleNotFoundError`` (an ImportError subclass) because there is no
+        ``pwd`` module. With the anonymous opt-in this degrades gracefully
+        rather than propagating an uncaught import failure."""
+        from forgelm import compliance
+
+        monkeypatch.delenv("FORGELM_OPERATOR", raising=False)
+        monkeypatch.setenv("FORGELM_ALLOW_ANONYMOUS_OPERATOR", "1")
+        monkeypatch.setattr(compliance.getpass, "getuser", lambda: _raise(ModuleNotFoundError("No module named 'pwd'")))
+        monkeypatch.setattr(compliance.socket, "gethostname", lambda: "win-host")
+
+        log = compliance.AuditLogger(str(tmp_path))
+        assert log.operator == "anonymous@win-host"
+
     def test_no_unknown_fallback_in_default_path(self, tmp_path, monkeypatch):
         """Belt-and-braces: the literal string 'unknown' must never become
         the operator when the resolution chain succeeds."""
@@ -629,15 +866,72 @@ class TestAuditLoggerFsync:
 
         log = AuditLogger(str(tmp_path))
 
+        # The first event also fsyncs the atomically-written genesis manifest;
+        # measure a steady-state event so this asserts exactly the audit-line
+        # fsync (the genesis-manifest fsync is covered by its own test).
+        log.log_event("genesis.event")
+
         with mock.patch("forgelm.compliance.os.fsync") as mock_fsync:
             log.log_event("test.event", key="value")
 
         assert mock_fsync.called, "log_event() must invoke os.fsync after flushing the audit line"
-        # Called exactly once per event (not per flush call elsewhere in the
-        # process); the file descriptor argument is an int from f.fileno().
+        # Called exactly once per steady-state event (not per flush call
+        # elsewhere); the file descriptor argument is an int from f.fileno().
         assert mock_fsync.call_count == 1
         (fileno_arg,), _ = mock_fsync.call_args
         assert isinstance(fileno_arg, int)
+
+
+class TestComplianceArtifactEncoding:
+    """Compliance-artifact and deployer-instruction text writes must pin
+    ``encoding='utf-8'`` so a non-ASCII operator-supplied field cannot crash
+    export (or produce mojibake) on a host whose default text encoding is not
+    UTF-8 (slim CI images with no LANG, pre-PEP-686 Windows)."""
+
+    def test_export_artifacts_opened_with_utf8(self, tmp_path, monkeypatch, minimal_config):
+        import builtins
+
+        from forgelm.compliance import export_compliance_artifacts
+
+        cfg = ForgeConfig(**minimal_config(data={"dataset_name_or_path": "veri/çğşöü"}))
+        manifest = generate_training_manifest(cfg, metrics={"eval_loss": 0.5})
+
+        recorded = {}
+        real_open = builtins.open
+
+        def _spy_open(file, mode="r", *args, **kwargs):
+            name = os.path.basename(str(file))
+            if "w" in mode and name.endswith((".json", ".yaml", ".md")):
+                recorded[name] = kwargs.get("encoding")
+            return real_open(file, mode, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", _spy_open)
+        export_compliance_artifacts(manifest, str(tmp_path))
+
+        assert recorded, "no compliance artifact writes were observed"
+        for name, encoding in recorded.items():
+            assert encoding == "utf-8", f"{name} was opened without encoding='utf-8'"
+
+    def test_deployer_instructions_opened_with_utf8(self, tmp_path, monkeypatch, minimal_config):
+        import builtins
+
+        from forgelm.compliance import generate_deployer_instructions
+
+        cfg = ForgeConfig(**minimal_config())
+
+        recorded = {}
+        real_open = builtins.open
+
+        def _spy_open(file, mode="r", *args, **kwargs):
+            name = os.path.basename(str(file))
+            if "w" in mode and name == "deployer_instructions.md":
+                recorded[name] = kwargs.get("encoding")
+            return real_open(file, mode, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", _spy_open)
+        generate_deployer_instructions(cfg, metrics={"eval_loss": 0.5}, final_path=str(tmp_path / "m"))
+
+        assert recorded.get("deployer_instructions.md") == "utf-8"
 
 
 class TestSafetyClassifierLoadFailureAudit:
@@ -669,10 +963,14 @@ class TestSafetyClassifierLoadFailureAudit:
         prompts_path.write_text(json.dumps({"prompt": "hi"}) + "\n")
 
         audit = AuditLogger(str(tmp_path))
+        # Use a NON-generative classifier name so the run reaches the pipeline
+        # load (this test's intent: a genuine pipeline-load failure surfaces as
+        # an audit event). The generative default is instead intercepted by the
+        # fail-fast pre-flight, covered by its own test below.
         result = safety.run_safety_evaluation(
             model=mock.Mock(),
             tokenizer=mock.Mock(),
-            classifier_path="meta-llama/Llama-Guard-3-8B",
+            classifier_path="acme/custom-harm-classifier",
             test_prompts_path=str(prompts_path),
             audit_logger=audit,
         )
@@ -684,13 +982,47 @@ class TestSafetyClassifierLoadFailureAudit:
         events = [entry["event"] for entry in lines]
         assert "audit.classifier_load_failed" in events
         load_failed = next(e for e in lines if e["event"] == "audit.classifier_load_failed")
-        assert load_failed["classifier"] == "meta-llama/Llama-Guard-3-8B"
+        assert load_failed["classifier"] == "acme/custom-harm-classifier"
         assert "classifier checkpoint corrupt" in load_failed["reason"]
+
+    def test_classification_mode_generative_rejection_emits_audit_event(self, tmp_path):
+        """Forcing classifier_mode='classification' on the generative default is a
+        genuine misconfiguration: the fail-fast pre-flight rejects it and must
+        still land an Article 12 audit event — the pre-flight short-circuits
+        before the classifier-load path's own emission (F-compliance-120).  Under
+        the default classifier_mode='auto' the same checkpoint is instead scored
+        via generation (covered in test_safety_advanced.py)."""
+        import json
+
+        from forgelm import safety
+        from forgelm.compliance import AuditLogger
+
+        prompts_path = tmp_path / "prompts.jsonl"
+        prompts_path.write_text(json.dumps({"prompt": "hi"}) + "\n")
+
+        audit = AuditLogger(str(tmp_path))
+        result = safety.run_safety_evaluation(
+            model=mock.Mock(),
+            tokenizer=mock.Mock(),
+            classifier_path="meta-llama/Llama-Guard-3-8B",
+            test_prompts_path=str(prompts_path),
+            audit_logger=audit,
+            classifier_mode="classification",
+        )
+
+        assert result.passed is False
+        assert result.evaluation_completed is False
+        with open(audit.log_path, "r", encoding="utf-8") as fh:
+            lines = [json.loads(line) for line in fh if line.strip()]
+        load_failed = next(e for e in lines if e["event"] == "audit.classifier_load_failed")
+        assert load_failed["classifier"] == "meta-llama/Llama-Guard-3-8B"
+        assert "generative" in load_failed["reason"].lower()
 
 
 class TestHFRevisionPin:
     """F-compliance-117: dataset fingerprint pins HF Hub revision SHA."""
 
+    @pytest.mark.real_fingerprint
     def test_hf_revision_pinned_in_fingerprint(self, monkeypatch):
         # Simulate ``huggingface_hub.HfApi().dataset_info`` returning a
         # commit-pinned info object. We patch the import target so the
@@ -875,18 +1207,28 @@ class TestVerifyAuditLog:
         from forgelm.compliance import AuditLogger, verify_audit_log
 
         log_path = self._build_log(tmp_path, events=3)
-        assert os.path.isfile(log_path + ".manifest.json")
+        manifest_path = log_path + ".manifest.json"
+        assert os.path.isfile(manifest_path)
+        # Snapshot the write-once manifest that pins the original chain's
+        # genesis entry.  An attacker can rewrite the JSONL body but cannot
+        # forge this sidecar.
+        with open(manifest_path, encoding="utf-8") as fh:
+            original_manifest = fh.read()
 
         # Wipe the body but keep the (write-once) manifest, then write a brand
         # new valid chain — a re-root tamper. The write-time guard
-        # (F-P4-OPUS-21) now refuses this by default; force the re-root via the
-        # opt-in env to reach the verify-time mismatch detector under test.
+        # (F-P4-OPUS-21) refuses this by default; force the re-root via the
+        # opt-in env (which now regenerates the manifest for the fresh chain),
+        # then restore the ORIGINAL pin so line 1's hash no longer matches it —
+        # exactly the situation the verify-time mismatch detector must catch.
         monkeypatch.setenv("FORGELM_ALLOW_AUDIT_REROOT", "1")
         with open(log_path, "w", encoding="utf-8"):
             pass
         logger2 = AuditLogger(str(tmp_path))
         logger2.log_event("rewritten.genesis", forged=True)
         logger2.log_event("rewritten.second")
+        with open(manifest_path, "w", encoding="utf-8") as fh:
+            fh.write(original_manifest)
 
         result = verify_audit_log(log_path)
         assert result.valid is False

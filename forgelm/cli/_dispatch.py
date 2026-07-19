@@ -169,7 +169,7 @@ def main():
         sys.exit(EXIT_TRAINING_ERROR)
 
 
-def _dispatch_pipeline_mode(config, args) -> None:
+def _dispatch_pipeline_mode(config, args, json_output: bool) -> None:
     """Handle a config that carries a ``pipeline:`` block.
 
     Pulled out of ``_main_inner`` for Sonar python:S3776 cognitive-
@@ -186,6 +186,13 @@ def _dispatch_pipeline_mode(config, args) -> None:
     the orchestrator would never reach the multi-stage validation path
     and the documented ``--dry-run`` per-stage error-collection
     contract would be silently violated.
+
+    ``json_output`` (already computed by the caller from
+    ``--output-format``) gates whether the re-read failure below emits
+    the 2-key ``{"success": false, "error": ...}`` stdout envelope —
+    matching every other config-error path in this module (see
+    ``_load_config_or_exit``) instead of leaving stdout empty on a
+    JSON-mode run.
     """
     from ._pipeline import run_pipeline_from_args
 
@@ -193,7 +200,11 @@ def _dispatch_pipeline_mode(config, args) -> None:
         with open(args.config, "rb") as f:
             pipeline_yaml_bytes = f.read()
     except OSError as e:
-        logger.error("Failed to re-read pipeline YAML for hashing: %s", e)
+        msg = f"Failed to re-read pipeline YAML for hashing: {e}"
+        if json_output:
+            print(json.dumps({"success": False, "error": msg}))
+        else:
+            logger.error(msg)
         sys.exit(EXIT_CONFIG_ERROR)
 
     sys.exit(_clamp_exit_code(run_pipeline_from_args(config, pipeline_yaml_bytes, args)))
@@ -232,7 +243,7 @@ def _main_inner() -> None:
     _apply_offline_flag(config, args.offline)
 
     if config.pipeline is not None:
-        _dispatch_pipeline_mode(config, args)
+        _dispatch_pipeline_mode(config, args, json_output)
 
     # Phase 14 post-release review: pipeline-only flags must not
     # silently route through the single-stage training path.  Pre-fix,
@@ -247,12 +258,19 @@ def _main_inner() -> None:
     )
     for attr, flag_name in _PIPELINE_ONLY_FLAGS:
         if getattr(args, attr, None):
-            logger.error(
-                "`%s` requires a config with a `pipeline:` block — this is a "
+            msg = (
+                f"`{flag_name}` requires a config with a `pipeline:` block — this is a "
                 "multi-stage orchestrator flag.  Either add `pipeline:` to "
-                "the YAML or remove the flag.",
-                flag_name,
+                "the YAML or remove the flag."
             )
+            # Envelope contract (error-handling.md): once the dispatcher is
+            # running (args parsed, config loaded — both already true here),
+            # every error path must honour ``--output-format json`` rather
+            # than leaving stdout empty on a non-zero exit.
+            if json_output:
+                print(json.dumps({"success": False, "error": msg}))
+            else:
+                logger.error(msg)
             sys.exit(EXIT_CONFIG_ERROR)
 
     # Single-stage path — unchanged from v0.6.0.
