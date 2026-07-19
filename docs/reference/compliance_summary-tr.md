@@ -48,7 +48,7 @@ Düzenleyicinin sorduğu vs ForgeLM'in cevapladığı:
 |---|---|
 | Risk sınıflandırma + yönetişim | `compliance.risk_classification` 5-tier; F-compliance-110 strict gate |
 | QMS süreçleri + kayıtları | `docs/qms/` 9 SOP (5 Wave 0 + 4 Wave 4); audit chain |
-| Veri kaynağı | `data_provenance.json`; `compute_dataset_fingerprint` (SHA-256 + size + mtime); HF-revision pin |
+| Veri kaynağı | `data_provenance.json`; `compute_dataset_fingerprint` (SHA-256 + size + mtime); `hf_revision_source` ile derecelendirilmiş dataset Hub commit SHA'sı |
 | Teknik dokümantasyon | `annex_iv_metadata.json`; Annex IV §§1-9 kanonik düzen |
 | Uygunluk kanıtı | `compliance_report.json`; `model_card.md`; `model_integrity.json` |
 | İzleme + post-market gözetim | Webhook lifecycle (`notify_*`); `safety_trend.jsonl` cross-run trend |
@@ -87,8 +87,63 @@ Düzenleyicinin sorduğu vs ForgeLM'in cevapladığı:
 - Implementasyon: `forgelm.compliance` corpus-başına fingerprint hesaplar
   (`_fingerprint_local_file`, `_fingerprint_hf_revision`) ve
   `data_provenance.json` yazar; `export_compliance_artifacts` paketi
-  ZIP'ler.
+  ZIP'ler.  Hub dataset'leri `forgelm.data._resolve_hub_dataset_revision`
+  tarafından çözülen bir commit'te yüklenir ve `_fingerprint_hf_revision`
+  `hf_revision_source: loaded` olarak ayrı bir sorguyu değil, tam olarak o
+  SHA'yı kaydeder.
 - CLI: `forgelm --config job.yaml --compliance-export ./out/`.
+
+### Annex IV paketi provenance alanları
+
+Paket, bir koşumun *hangi upstream artefaktları* kullandığını kaydeder ve
+— denetçi için asıl önemli kısım budur — *her kaydın ne kadar güçlü
+kanıtlandığını* da kaydeder. Bir SHA'yı asla yanındaki dereceyi okumadan
+okumayın.
+
+**Dataset**, `data_provenance.json` içinde ve `compliance_report.json`'un
+`data_provenance` bloğunda:
+
+| Anahtar | Anlamı |
+|---|---|
+| `hf_revision` | Dataset deposunun Hub commit SHA'sı. Hiçbiri bilinmiyorsa yoktur. |
+| `hf_revision_source` | `loaded` — ForgeLM commit'i çözdü, tam olarak o SHA'yı `load_dataset(..., revision=...)`'a geçirdi ve yükleme başarılı oldu. **Bir denetçinin, modeli eğiten korpusun kanıtı sayabileceği tek değer budur.** `unverified` — bu süreçteki hiçbir yükleme dataset'i sabitlemedi; SHA, manifest-üretim zamanında yapılan, deponun varsayılan-dal başına ait bir Hub sorgusudur (`forgelm compliance-only` bunu üretir). `unresolved` — hiçbir SHA belirlenemedi; `hf_revision` yoktur. |
+| `hf_revision_reason` | Yalnızca `hf_revision_source` `unresolved` iken bulunur; nedenini belirten serbest metin (≤200 karakter) — offline mod, `huggingface_hub` yok, Hub erişilemez, gated depo veya SHA dönmedi. |
+
+**Temel model**, `compliance_report.json` içinde
+`model_lineage.base_model_revision` altında:
+
+| Anahtar | Anlamı |
+|---|---|
+| `repo_id` | `model.name_or_path` aynen. |
+| `revision_requested` | `model.revision` aynen veya `null`. Çözülen SHA'nın yanında tutulur, böylece `main` veya `v1.0` gibi sembolik bir pin, bir commit yerine geçmek yerine açıkça hareketli bir ref olarak görünür. |
+| `revision_resolved` | Teyit edilmiş 40-hex commit SHA'sı veya `null`. **Buradaki bir değer, o koşumdaki temel-model yüklemesinin ona sabitlendiği anlamına her zaman gelir.** Asla istenen dizenin geri yansıtılması değildir ve asla bağımsız bir Hub sorgusundan gelen bir SHA değildir. |
+| `resolution_source` | `local_path` (diskteki bir dizin — Hub commit'i yok); `resolved` (pin istenmedi, Hub SHA'yı teyit etti); `pinned_resolved` (pin istendi ve teyit edildi); `cache` (SHA yerel commit-adresli HF önbelleğinden okundu); `pinned_unverified` (pin istendi, hiçbir şey teyit etmedi); `unresolved` (hiçbir şey belirlenemedi). |
+| `revision_pinned` | `revision=` parametresine verilen tam dize. Bir SHA teyit edildiğinde `revision_resolved`'a eşittir; operatör hiçbir şeyin teyit edemediği bir ref'i sabitlediğinde `revision_requested`'a eşittir; yükleme sabitlenmemişse `null`'dur. |
+| `reason` | **Yalnızca** o süreçte hiç temel-model yüklemesi olmadığında bulunur ve bunu sözle belirtir. `forgelm compliance-only` kanonik örnektir: modeli hiç yüklemeden paket yazar ve SHA uydurmak yerine bu neden ile `resolution_source: unresolved` raporlar. |
+
+Manifest üretimi temel model için **kendi başına hiçbir Hub sorgusu
+yapmaz** — bu tasarım gereğidir ve yeniden eklenirse düşen bir testle
+korunur. Provenance yalnızca yükleme döndükten sonra yazılır; hata
+fırlatan bir yükleme geriye hiçbir iddia bırakmaz.
+
+Açıkça belirtilecek üç sınır:
+
+- **Güvenlik sınıflandırıcısı, LLM judge ve GRPO ödül modelinin
+  provenance bloğu yoktur** ve `*_revision` config alanları henüz hiçbir
+  yükleyiciye iletilmez. Bir sınıflandırıcı ince-ayarlanmış modele hiçbir
+  ağırlık katmaz, dolayısıyla zaten `model_lineage`'e ait olmazdı; bu
+  roller için ayrı bloklar uygulanmamıştır.
+- **Sentetik teacher** `synthetic.teacher_revision` ile sabitlenir ve
+  çözülen commit süreç içinde kaydedilir, ancak henüz hiçbir manifest
+  bloğu bunu yayımlamaz.
+- Düzleştirilmiş **`training_manifest.yaml`** yan dosyası bunların
+  hiçbirini taşımaz. O bir operatör özetidir (`base_model`,
+  `adapter_method`, `trainer_type`, `dataset`, `epochs`, `final_metrics`)
+  ve içinde hiç `model_lineage` veya `data_provenance` bloğu yoktur —
+  provenance için `compliance_report.json`'u okuyun.
+
+Tam alan semantiği ve config yüzeyi:
+[`configuration-tr.md`](configuration-tr.md#hub-revision-pinleme).
 
 ### Audit chain (Madde 12)
 

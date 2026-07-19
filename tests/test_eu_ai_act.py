@@ -656,6 +656,60 @@ class TestManifestAnnexIV:
         assert with_run["run_id"] == "fg-test123"
 
 
+@pytest.mark.real_fingerprint
+class TestManifestDatasetRevisionProvenance:
+    """Art. 10: the manifest must say how strongly its corpus SHA is evidenced.
+
+    The manifest previously carried a bare ``hf_revision`` obtained from an
+    ``HfApi().dataset_info`` call made at manifest time, with no link to the
+    ``load_dataset`` that produced the training corpus. A reviewer could not
+    tell a verified pin from the repo's current default-branch head.
+    """
+
+    @staticmethod
+    def _stub_metadata(monkeypatch):
+        from forgelm import compliance
+
+        monkeypatch.setattr(compliance, "_fingerprint_hf_metadata", lambda dataset_path, fingerprint: None)
+
+    def test_loaded_revision_reaches_the_manifest_labelled(self, minimal_config, monkeypatch):
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        self._stub_metadata(monkeypatch)
+        config = ForgeConfig(**minimal_config())
+        sha = "1" * 40
+        monkeypatch.setattr(
+            data_mod,
+            "_RESOLVED_DATASET_REVISIONS",
+            {config.data.dataset_name_or_path: sha},
+        )
+
+        fp = generate_training_manifest(config, {})["data_provenance"]["fingerprint"]
+        assert fp["hf_revision"] == sha
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_LOADED
+
+    def test_unloaded_corpus_is_never_claimed_as_verified(self, minimal_config, monkeypatch):
+        import huggingface_hub
+
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        self._stub_metadata(monkeypatch)
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {})
+
+        class _Api:
+            def dataset_info(self, dataset_id):
+                raise OSError("hub unreachable")
+
+        monkeypatch.setattr(huggingface_hub, "HfApi", _Api)
+
+        config = ForgeConfig(**minimal_config())
+        fp = generate_training_manifest(config, {})["data_provenance"]["fingerprint"]
+        assert "hf_revision" not in fp
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_UNRESOLVED
+
+
 # ---------------------------------------------------------------------------
 # G05 regression tests
 # ---------------------------------------------------------------------------

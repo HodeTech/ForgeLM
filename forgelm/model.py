@@ -1,6 +1,8 @@
+import inspect
 import logging
+import os
 import re
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 # NOTE: Heavy ML imports (torch, transformers AutoModelForCausalLM/AutoTokenizer/
 # BitsAndBytesConfig, peft helpers) are deferred to function bodies so
@@ -15,6 +17,146 @@ logger = logging.getLogger("forgelm.model")
 # DeepSeek-V3 exposes ``n_routed_experts``. Gating only on ``num_local_experts``
 # silently no-ops the entire moe block for Qwen3/DeepSeek (F-P3-FABLE-07).
 _MOE_EXPERT_COUNT_ATTRS = ("num_local_experts", "num_experts", "n_routed_experts")
+
+
+# ---------------------------------------------------------------------------
+# Hub revision pinning + provenance recording (Art. 11 / Annex IV, model side)
+# ---------------------------------------------------------------------------
+#
+# The contract this section exists to keep: **never record a commit SHA that
+# came from anywhere other than the load that actually happened.**  A missing
+# pin is honest; a wrong pin is not.  Every helper below therefore resolves a
+# SHA *first*, hands that exact SHA to ``from_pretrained(..., revision=...)``,
+# and only registers it as provenance *after* the load returns.  The dataset
+# side of the same contract lives in ``forgelm.data`` — see
+# ``_RESOLVED_DATASET_REVISIONS`` there.
+
+# Roles a pinned model load can play.  The role is part of the registry key so
+# two roles that happen to name the same repo (Llama-Guard as both safety
+# classifier and LLM judge) cannot overwrite each other's provenance when only
+# one of them was pinned.
+ROLE_BASE_MODEL = "base_model"  # the weights that are fine-tuned; the only role model_lineage reads
+ROLE_FIT_CHECK = "fit_check"  # AutoConfig probe for the VRAM estimate — no weights loaded
+ROLE_SAFETY_CLASSIFIER = "safety_classifier"  # harm classifier behind the auto-revert gate
+ROLE_TEACHER_MODEL = "teacher_model"  # local teacher whose generations become training data
+
+# Provenance for model loads this process pinned *and* completed, keyed by
+# ``(role, repo_id)``.  The ONLY sanctioned source for the model-revision keys
+# of an Annex IV training manifest.  Entries are written after the load
+# returns, never before, so a failed load leaves no claim behind.
+_RESOLVED_MODEL_REVISIONS: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+# Env vars that force HF into offline mode.  Read from the environment rather
+# than ``huggingface_hub.constants`` because ``forgelm.cli._config_load`` sets
+# them at CLI start-up from ``model.offline``, which can happen after
+# ``huggingface_hub`` has already imported and frozen its constants.  Mirrors
+# ``forgelm.data._hf_offline_mode``.
+_HF_OFFLINE_ENV_VARS = ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE")
+_FALSEY_ENV_VALUES = frozenset({"", "0", "false", "no", "off"})
+
+
+def _hf_offline_mode() -> bool:
+    """True when the environment forbids outbound Hugging Face Hub traffic."""
+    return any(os.environ.get(var, "").strip().lower() not in _FALSEY_ENV_VALUES for var in _HF_OFFLINE_ENV_VARS)
+
+
+def prepare_revision_pin(
+    repo_id: str,
+    *,
+    role: str,
+    requested: Optional[str] = None,
+    offline: bool = False,
+) -> Tuple[Optional[str], Dict[str, Any]]:
+    """Resolve ``repo_id``'s commit and return what the caller must pin the load to.
+
+    Returns ``(pin, record)``.  **The caller must pass ``pin`` straight into
+    the load** as ``from_pretrained(..., revision=pin)`` and then hand
+    ``record`` to :func:`record_loaded_revision` once — and only once — the
+    load has returned successfully.  Resolving here and loading unpinned
+    reproduces the exact defect this module was written to remove: a SHA
+    obtained by an independent Hub query, written down as though the load had
+    used it.
+
+    ``pin`` is the resolved 40-hex commit SHA when one could be confirmed,
+    otherwise the operator's ``requested`` literal verbatim (so an explicit
+    pin is always honoured by the load even when nothing could confirm it),
+    otherwise ``None`` (today's unpinned behaviour, unchanged).
+
+    ``record`` is :func:`forgelm.compliance.resolve_model_revision`'s dict plus
+    two keys: ``role``, and ``revision_pinned`` — the exact string handed to
+    ``revision=``, which may be a moving ref.  ``revision_resolved`` stays
+    what the resolver returned: a confirmed SHA or ``None``, never the
+    requested literal echoed back.
+
+    Best-effort throughout; never raises.  A provenance helper that can abort
+    a fourteen-hour training run is the worse trade.
+
+    Import-direction note: ``resolve_model_revision`` lives in
+    ``compliance`` and is imported lazily inside the function body, so no
+    import-time cycle exists and ``import forgelm.model`` stays cheap.  The
+    alternative — duplicating ~90 lines of Hub-resolution logic here — would
+    put two versions of the honesty rules in the tree, which is the more
+    expensive mistake.
+    """
+    from .compliance import resolve_model_revision
+
+    record = resolve_model_revision(repo_id, requested=requested, offline=offline or _hf_offline_mode())
+    record["role"] = role
+
+    resolved = record.get("revision_resolved")
+    pin = resolved if resolved else requested
+    record["revision_pinned"] = pin
+
+    source = record.get("resolution_source")
+    if resolved:
+        logger.info("Pinning %s '%s' to Hub commit %s (%s).", role, repo_id, resolved, source)
+    elif requested:
+        logger.warning(
+            "%s '%s' is pinned to %r but no commit SHA could be confirmed for it (%s).  The load "
+            "will use the requested ref as-is; the Annex IV manifest will record that no SHA was "
+            "verified rather than assert one.",
+            role,
+            repo_id,
+            requested,
+            source,
+        )
+    elif source != "local_path":
+        logger.warning(
+            "%s '%s' is loading UNPINNED (%s) — the repo's default branch can move, so this run "
+            "is not byte-reproducible from the config alone.  Set the matching revision field to pin it.",
+            role,
+            repo_id,
+            source,
+        )
+    return pin, record
+
+
+def record_loaded_revision(record: Dict[str, Any]) -> None:
+    """Register a completed, pinned load as provenance.
+
+    Call this **after** the load returns, never before.  Records a load that
+    never happened is the same class of lie as recording a SHA the load never
+    used.
+    """
+    repo_id = record.get("repo_id")
+    role = record.get("role")
+    if not repo_id or not role:
+        return
+    _RESOLVED_MODEL_REVISIONS[(role, repo_id)] = dict(record)
+
+
+def get_loaded_model_revision(repo_id: str, role: str = ROLE_BASE_MODEL) -> Optional[Dict[str, Any]]:
+    """Return the provenance record for a completed, pinned load in this process.
+
+    ``None`` means no load in this process recorded a revision for that
+    ``(role, repo_id)`` — the path is local, resolution was unavailable
+    (offline, no ``huggingface_hub``, Hub unreachable), or nothing has been
+    loaded yet (``forgelm compliance-only`` writes a manifest without ever
+    loading the model).  Callers must treat ``None`` as "unknown" and must
+    not substitute any other value for it.
+    """
+    record = _RESOLVED_MODEL_REVISIONS.get((role, repo_id))
+    return dict(record) if record is not None else None
 
 
 def _resolve_expert_count(model_config: Any) -> Optional[int]:
@@ -57,14 +199,73 @@ def _resolve_bnb_compute_dtype(dtype_str: str):
     raise ValueError(f"Unsupported bnb_4bit_compute_dtype: {dtype_str!r}")
 
 
+def _unsloth_accepts_revision(loader: Any) -> bool:
+    """True only when the *installed* unsloth exposes an explicit ``revision`` parameter.
+
+    unsloth is an optional extra and is not installed in every checkout, so
+    whether ``FastLanguageModel.from_pretrained`` forwards ``revision`` to its
+    internal ``AutoConfig`` / model / tokenizer loads cannot be settled at
+    authoring time — it is settled here, against whatever version the operator
+    actually has.
+
+    A bare ``**kwargs`` deliberately does **not** count as support: a kwarg
+    that is accepted and then dropped is indistinguishable from one that is
+    honoured, and the whole point of this feature is that a config claiming a
+    pin must never be silently wrong.  Only a named parameter counts.
+    """
+    try:
+        parameters = inspect.signature(loader.from_pretrained).parameters
+    except (TypeError, ValueError) as e:  # unsigned C callable / builtin
+        logger.debug("Could not introspect FastLanguageModel.from_pretrained: %s", e)
+        return False
+    return any(name == "revision" and p.kind is not inspect.Parameter.VAR_KEYWORD for name, p in parameters.items())
+
+
 def _load_unsloth(config: Any) -> Tuple[Any, Any]:
-    """Load the model + tokenizer + LoRA via the Unsloth backend."""
+    """Load the model + tokenizer + LoRA via the Unsloth backend.
+
+    Revision pinning on this backend is conditional on the installed unsloth
+    exposing a ``revision`` parameter (see :func:`_unsloth_accepts_revision`).
+    When it does not and the config asks for a pin, the load fails closed
+    rather than proceeding unpinned: an operator who wrote ``model.revision``
+    and got a default-branch checkout would carry a manifest asserting a
+    reproducibility property the run does not have.
+    """
     try:
         from unsloth import FastLanguageModel
     except ImportError as e:
         raise ImportError(
             "unsloth backend requires the 'unsloth' extra. Install with: pip install 'forgelm[unsloth]'"
         ) from e
+
+    requested = getattr(config.model, "revision", None)
+    supports_revision = _unsloth_accepts_revision(FastLanguageModel)
+    if not supports_revision:
+        if requested is not None:
+            raise RuntimeError(
+                "model.revision is set but the installed unsloth's "
+                "FastLanguageModel.from_pretrained has no 'revision' parameter, so the pin "
+                "cannot be honoured. Upgrade unsloth, or set model.backend: transformers "
+                "(which pins the base model, tokenizer and processor loads), or remove "
+                "model.revision to load the default branch knowingly."
+            )
+        logger.warning(
+            "The installed unsloth does not accept a 'revision' argument — this base-model load "
+            "is UNPINNED and no model revision will be recorded in the Annex IV manifest. "
+            "model.backend: transformers supports pinning."
+        )
+
+    pin: Optional[str] = None
+    record: Dict[str, Any] = {}
+    extra_kwargs: Dict[str, Any] = {}
+    if supports_revision:
+        pin, record = prepare_revision_pin(
+            config.model.name_or_path,
+            role=ROLE_BASE_MODEL,
+            requested=requested,
+            offline=getattr(config.model, "offline", False),
+        )
+        extra_kwargs["revision"] = pin
 
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=config.model.name_or_path,
@@ -76,7 +277,11 @@ def _load_unsloth(config: Any) -> Tuple[Any, Any]:
         # same. Omitting it silently loaded with Unsloth's default (False),
         # failing custom-architecture repos that the operator explicitly trusted.
         trust_remote_code=getattr(config.model, "trust_remote_code", False),
+        **extra_kwargs,
     )
+    if supports_revision:
+        # After the load, never before — see record_loaded_revision.
+        record_loaded_revision(record)
 
     use_dora, use_rslora, peft_method = _resolve_peft_flags(config)
     if peft_method == "pissa":
@@ -108,18 +313,29 @@ def _load_unsloth(config: Any) -> Tuple[Any, Any]:
     return model, tokenizer
 
 
-def _load_tokenizer(config: Any, trust_remote_code: bool) -> Any:
-    """Load AutoTokenizer (or AutoProcessor for VLMs) and ensure pad_token is set."""
+def _load_tokenizer(config: Any, trust_remote_code: bool, revision: Optional[str] = None) -> Any:
+    """Load AutoTokenizer (or AutoProcessor for VLMs) and ensure pad_token is set.
+
+    ``revision`` is the same pin the weights are loaded at.  Pinning the
+    weights but not the tokenizer would let a tokenizer from a moved default
+    branch diverge from the checkpoint while the manifest reports a pin — a
+    config-claimed guarantee that is only three-quarters true, which is worse
+    than no claim at all.
+    """
     mm_cfg = getattr(config.model, "multimodal", None)
     if mm_cfg and mm_cfg.enabled:
         logger.info("Multimodal VLM mode enabled — loading with AutoProcessor.")
         from transformers import AutoProcessor
 
-        tokenizer = AutoProcessor.from_pretrained(config.model.name_or_path, trust_remote_code=trust_remote_code)
+        tokenizer = AutoProcessor.from_pretrained(
+            config.model.name_or_path, trust_remote_code=trust_remote_code, revision=revision
+        )
     else:
         from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained(config.model.name_or_path, trust_remote_code=trust_remote_code)
+        tokenizer = AutoTokenizer.from_pretrained(
+            config.model.name_or_path, trust_remote_code=trust_remote_code, revision=revision
+        )
 
     # AutoProcessor (VLM) wraps the text tokenizer under ``.tokenizer`` and does
     # not itself expose pad_token/pad_token_id; operate on the inner tokenizer so
@@ -148,14 +364,19 @@ def _device_map_for(config: Any, is_distributed: bool):
     return None  # CPU-only
 
 
-def _build_model_kwargs(config: Any, trust_remote_code: bool) -> dict:
-    """Assemble from_pretrained kwargs (device_map, BnB, RoPE, sliding window)."""
+def _build_model_kwargs(config: Any, trust_remote_code: bool, revision: Optional[str] = None) -> dict:
+    """Assemble from_pretrained kwargs (device_map, BnB, RoPE, sliding window, revision).
+
+    ``revision`` covers both weight-loading call sites (``AutoModelForCausalLM``
+    and the VLM ``AutoModelForImageTextToText``) in one place, so neither can
+    drift out of sync with the tokenizer pin.
+    """
     import torch
 
     dist_cfg = getattr(config, "distributed", None)
     is_distributed = bool(dist_cfg and dist_cfg.strategy)
 
-    kwargs: dict = {"trust_remote_code": trust_remote_code}
+    kwargs: dict = {"trust_remote_code": trust_remote_code, "revision": revision}
     device_map = _device_map_for(config, is_distributed)
     if device_map is not None:
         kwargs["device_map"] = device_map
@@ -283,8 +504,18 @@ def get_model_and_tokenizer(config: Any) -> Tuple[Any, Any]:
     if config.model.backend.lower() == "unsloth":
         return _load_unsloth(config)
 
-    tokenizer = _load_tokenizer(config, trust_remote_code)
-    model_kwargs = _build_model_kwargs(config, trust_remote_code)
+    # Resolve first, pin the loads to what was resolved, record only after they
+    # succeed.  All three loads below (tokenizer/processor + weights) share one
+    # pin so the manifest cannot claim a pin that only part of the model got.
+    pin, revision_record = prepare_revision_pin(
+        config.model.name_or_path,
+        role=ROLE_BASE_MODEL,
+        requested=getattr(config.model, "revision", None),
+        offline=getattr(config.model, "offline", False),
+    )
+
+    tokenizer = _load_tokenizer(config, trust_remote_code, revision=pin)
+    model_kwargs = _build_model_kwargs(config, trust_remote_code, revision=pin)
 
     # Most VLM architectures are registered under AutoModelForImageTextToText,
     # not AutoModelForCausalLM — loading them via the causal-LM class fails with
@@ -296,6 +527,10 @@ def get_model_and_tokenizer(config: Any) -> Tuple[Any, Any]:
         model = AutoModelForImageTextToText.from_pretrained(config.model.name_or_path, **model_kwargs)
     else:
         model = AutoModelForCausalLM.from_pretrained(config.model.name_or_path, **model_kwargs)
+
+    # Both the tokenizer and the weights are now loaded at ``pin``; only now is
+    # the revision a fact about this run rather than an intention.
+    record_loaded_revision(revision_record)
 
     # Sync pad_token_id to model config to suppress generation warnings. A VLM
     # AutoProcessor exposes pad_token_id only on its inner ``.tokenizer``.

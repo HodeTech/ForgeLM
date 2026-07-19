@@ -22,7 +22,7 @@ Derin rehber her birini tam `jq` / CLI komutu + döndürdüğü artefakt ile yan
 
 1. "Son 90 gündeki her model promotion için audit trail'i göster" → `forgelm verify-audit` + `jq 'select(.event == "human_approval.granted")'`.
 2. "Bana change-control kanıtını göster — bu modeli kim onayladı?" → `training.started` + `human_approval.granted` olaylarını çapraz referans alın; iki farklı operator ID, görev ayrılığını (segregation of duties) kanıtlar (ISO A.5.3, SOC 2 CC1.5).
-3. "Veri lineage'ını göster" → `data_provenance.json`; `sha256` + `hf_revision` corpus'u pinler.
+3. "Veri lineage'ını göster" → `data_provenance.json`; `sha256` + `hf_revision` corpus'u pinler — ancak yalnızca `hf_revision_source` `loaded` olduğunda. `unverified`, SHA'nın paket yazılırken yapılan ve yüklemeyle hiçbir bağı olmayan bir Hub sorgusu olduğu anlamına gelir; `unresolved` ise hiçbir SHA alınmadığı ve hiçbir iddiada bulunulmadığı anlamına gelir.
 4. "Tedarik zincirini göster" → `gh release download v0.7.0 --pattern 'sbom-*'`; CycloneDX 1.5 JSON.
 5. "Erişim kontrollerini göster" → IdP audit log + `FORGELM_OPERATOR` çapraz referansı.
 6. "Şifreleme duruşunu göster" → operatör-tarafı substrate (KMS audit log + `data_governance_report.json`).

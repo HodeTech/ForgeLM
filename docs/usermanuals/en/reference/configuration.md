@@ -44,7 +44,10 @@ model:
   bnb_4bit_compute_dtype: "bfloat16"          # auto | bfloat16 | float16 | float32 (bf16/fp16/fp32 aliases accepted)
   bnb_4bit_use_double_quant: true             # bitsandbytes double-quantisation (small extra VRAM win)
   offline: false                              # air-gapped mode: refuse HF Hub network calls
+  revision: "0e9e39f249a16976918f6564b8830bc894c89659"  # pin base model + tokenizer to a Hub commit
 ```
+
+`revision` accepts a 40-hex Hub commit SHA (the only value that actually pins) or a branch/tag such as `main` — a ref is accepted but ForgeLM warns, because upstream can repoint it. It pins the tokenizer, the VLM processor, the weights, and the `--fit-check` config probe at the same commit, and the resolved SHA is recorded in the Annex IV bundle. Setting it against a local directory warns and does nothing: a path on disk has no Hub commit. Four sibling pin fields exist — `synthetic.teacher_revision` (honoured), plus `evaluation.safety.classifier_revision`, `evaluation.llm_judge.judge_model_revision` and `training.grpo_reward_model_revision`, which are validated but **not yet forwarded to any loader**, so setting them changes no load today.
 
 `ModelConfig` has no `load_in_8bit`, `use_unsloth`, `attention_implementation`, or `torch_dtype` field — `extra="forbid"` rejects all four at `--dry-run`. There is no separate 8-bit toggle (`load_in_4bit` is the only quantisation switch); the Unsloth backend is selected with `backend: "unsloth"`, not a boolean flag; ForgeLM has no attention-implementation selector; and compute dtype is set via `bnb_4bit_compute_dtype`, not a standalone `torch_dtype` field. `rope_scaling` and the sliding-window override are `TrainingConfig` fields (`training.rope_scaling`, `training.sliding_window_attention`), not `ModelConfig` fields — see [`training:`](#training) below and [Long-Context Fine-Tuning](#/training/long-context) for the concept.
 
@@ -188,6 +191,8 @@ synthetic:
 ```
 
 There is no nested `synthetic.teacher:` sub-block and no `rate_limit:` block — `teacher_model`, `teacher_backend`, `api_base`, `api_delay`, and `api_timeout` are flat fields on `synthetic:` directly. Prefer `api_key_env` (an environment-variable name) over the inline `api_key` field to avoid committing secrets. ForgeLM's YAML loader has no `${VAR}` interpolation mechanism anywhere — `*_env` fields name an environment variable that is read directly via `os.environ`, never substituted into a string.
+
+Under `teacher_backend: "local"` you may also set `teacher_revision` to pin the teacher checkpoint to a Hub commit SHA or ref; the teacher's generations become training data, so an unpinned teacher is a data-provenance gap. It is rejected outright with `teacher_backend: "api"` or `"file"`, which never load from the Hub.
 
 ## `merge:`
 

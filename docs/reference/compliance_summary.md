@@ -49,7 +49,7 @@ What the regulator asks vs. how ForgeLM answers:
 |---|---|
 | Risk classification + governance | `compliance.risk_classification` 5-tier; F-compliance-110 strict gate |
 | QMS processes + records | `docs/qms/` 9 SOPs (5 Wave 0 + 4 Wave 4); audit chain |
-| Data provenance | `data_provenance.json`; `compute_dataset_fingerprint` (SHA-256 + size + mtime); HF-revision pin |
+| Data provenance | `data_provenance.json`; `compute_dataset_fingerprint` (SHA-256 + size + mtime); dataset Hub commit SHA graded by `hf_revision_source` |
 | Technical documentation | `annex_iv_metadata.json`; Annex IV §§1-9 canonical layout |
 | Conformity evidence | `compliance_report.json`; `model_card.md`; `model_integrity.json` |
 | Monitoring + post-market surveillance | Webhook lifecycle (`notify_*`); `safety_trend.jsonl` cross-run trend |
@@ -88,8 +88,62 @@ What the regulator asks vs. how ForgeLM answers:
 - Implementation: `forgelm.compliance` computes per-corpus
   fingerprints (`_fingerprint_local_file`, `_fingerprint_hf_revision`)
   and writes `data_provenance.json`; `export_compliance_artifacts`
-  ZIPs the bundle.
+  ZIPs the bundle.  Hub datasets are loaded at a resolved commit by
+  `forgelm.data._resolve_hub_dataset_revision`, and it is that SHA —
+  not a separate lookup — that `_fingerprint_hf_revision` records as
+  `hf_revision_source: loaded`.
 - CLI: `forgelm --config job.yaml --compliance-export ./out/`.
+
+### Annex IV bundle provenance fields
+
+The bundle records *which upstream artefacts* a run used, and — this is
+the part that matters to an auditor — *how strongly each record is
+evidenced*. Never read a SHA without reading the grade beside it.
+
+**Dataset**, in `data_provenance.json` and the `data_provenance` block of
+`compliance_report.json`:
+
+| Key | Meaning |
+|---|---|
+| `hf_revision` | The dataset repo's Hub commit SHA. Absent when none is known. |
+| `hf_revision_source` | `loaded` — ForgeLM resolved the commit, passed that exact SHA to `load_dataset(..., revision=...)`, and the load succeeded. **The only value an auditor may treat as proof of the corpus that trained the model.** `unverified` — no load in this process pinned the dataset, so the SHA is a Hub lookup of the repo's default-branch head made at manifest-generation time (this is what `forgelm compliance-only` produces). `unresolved` — no SHA could be established; `hf_revision` is absent. |
+| `hf_revision_reason` | Present only when `hf_revision_source` is `unresolved`; free text (≤200 chars) stating why — offline mode, `huggingface_hub` missing, Hub unreachable, gated repo, or no SHA returned. |
+
+**Base model**, in `compliance_report.json` under
+`model_lineage.base_model_revision`:
+
+| Key | Meaning |
+|---|---|
+| `repo_id` | `model.name_or_path` verbatim. |
+| `revision_requested` | `model.revision` verbatim, or `null`. Kept beside the resolved SHA so a symbolic pin such as `main` or `v1.0` shows plainly as a moving ref rather than passing for a commit. |
+| `revision_resolved` | A confirmed 40-hex commit SHA, or `null`. **A value here always means the base-model load in that run was pinned to it.** It is never the requested string echoed back, and never a SHA from an independent Hub query. |
+| `resolution_source` | `local_path` (a directory on disk — no Hub commit exists); `resolved` (no pin asked for, the Hub confirmed the SHA); `pinned_resolved` (pin asked for and confirmed); `cache` (SHA read from the local commit-addressed HF cache); `pinned_unverified` (pin asked for, nothing confirmed it); `unresolved` (nothing determined). |
+| `revision_pinned` | The exact string handed to `revision=`. Equals `revision_resolved` when a SHA was confirmed; equals `revision_requested` when the operator pinned a ref nothing could confirm; `null` when the load was unpinned. |
+| `reason` | Present **only** when no base-model load happened in that process at all, stating so in words. `forgelm compliance-only` is the canonical case: it writes a bundle without ever loading the model and reports `resolution_source: unresolved` with this reason rather than inventing a SHA. |
+
+Manifest generation performs **no Hub lookup of its own** for the base
+model — by design, and covered by a test that fails if one is
+reintroduced. Provenance is written only after the load returns; a load
+that raises leaves no claim behind.
+
+Three limits to state plainly:
+
+- The **safety classifier, LLM judge and GRPO reward model have no
+  provenance block** and their `*_revision` config fields are not yet
+  forwarded to any loader. A classifier contributed no weights to the
+  fine-tuned model, so it would not belong in `model_lineage` regardless;
+  the dedicated blocks for these roles are not implemented.
+- The **synthetic teacher** is pinned by `synthetic.teacher_revision` and
+  the resolved commit is registered in-process, but no manifest block
+  publishes it yet.
+- The flattened **`training_manifest.yaml`** sidecar carries none of
+  this. It is an operator summary (`base_model`, `adapter_method`,
+  `trainer_type`, `dataset`, `epochs`, `final_metrics`) with no
+  `model_lineage` or `data_provenance` block at all — read
+  `compliance_report.json` for provenance.
+
+Full field semantics and the config surface:
+[`configuration.md`](configuration.md#hub-revision-pinning).
 
 ### Audit chain (Article 12)
 

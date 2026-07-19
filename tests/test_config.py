@@ -1094,3 +1094,210 @@ class TestTemplateCompleteness:
 
     def test_template_documents_require_human_approval(self):
         assert "require_human_approval:" in self._template_text()
+
+
+# --- Revision pins: model / classifier / judge / teacher / GRPO reward model ---
+
+# A syntactically valid 40-hex commit SHA, built from fragments so repo-wide
+# secret scanners do not read a bare 40-hex literal as a credential
+# (docs/standards/regex.md "Test fixture hygiene").
+FAKE_SHA40: str = "0e9e39f2" + "49a16976" + "918f6564" + "b8830bc8" + "94c89659"
+
+
+class TestRevisionFieldDefaults:
+    """Every pin is opt-in and absent unless the operator wrote it."""
+
+    def test_all_five_default_to_none(self):
+        cfg = ForgeConfig(**minimal_config())
+        assert cfg.model.revision is None
+        assert cfg.training.grpo_reward_model_revision is None
+        assert SafetyConfig().classifier_revision is None
+        assert JudgeConfig().judge_model_revision is None
+        assert SyntheticConfig().teacher_revision is None
+
+    def test_defaults_survive_model_dump(self):
+        """A falsy-but-set default (e.g. "") would flow into from_pretrained as a
+        real revision argument; None is the only value that means "unset"."""
+        dumped = ForgeConfig(**minimal_config()).model_dump()
+        assert dumped["model"]["revision"] is None
+        assert dumped["training"]["grpo_reward_model_revision"] is None
+
+    def test_sha_round_trips_verbatim(self):
+        """The literal is never normalised — the manifest records what was asked for."""
+        mixed_case = FAKE_SHA40[:8].upper() + FAKE_SHA40[8:]
+        cfg = ForgeConfig(**minimal_config(model={"name_or_path": "org/model", "revision": mixed_case}))
+        assert cfg.model.revision == mixed_case
+        assert cfg.model_dump()["model"]["revision"] == mixed_case
+
+    def test_all_five_accept_a_sha(self):
+        cfg = ForgeConfig(
+            **minimal_config(
+                model={"name_or_path": "org/model", "revision": FAKE_SHA40},
+                training={"grpo_reward_model": "org/reward", "grpo_reward_model_revision": FAKE_SHA40},
+                evaluation={
+                    "safety": {"classifier_revision": FAKE_SHA40},
+                    "llm_judge": {"judge_model": "/models/local-judge", "judge_model_revision": FAKE_SHA40},
+                },
+                synthetic={"teacher_backend": "local", "teacher_revision": FAKE_SHA40},
+            )
+        )
+        assert cfg.model.revision == FAKE_SHA40
+        assert cfg.training.grpo_reward_model_revision == FAKE_SHA40
+        assert cfg.evaluation.safety.classifier_revision == FAKE_SHA40
+        assert cfg.evaluation.llm_judge.judge_model_revision == FAKE_SHA40
+        assert cfg.synthetic.teacher_revision == FAKE_SHA40
+
+
+class TestRevisionLiteralValidation:
+    """Structural defects raise; a valid-but-symbolic ref does not."""
+
+    @pytest.mark.parametrize(
+        "bad,expected",
+        [
+            ("", "empty string"),
+            ("  ", "whitespace"),
+            (f" {FAKE_SHA40}", "whitespace"),
+            (f"{FAKE_SHA40} ", "whitespace"),
+            ("main branch", "whitespace"),
+            (f"{FAKE_SHA40}\n", "whitespace"),
+            ("main\x00evil", "control character"),
+            ("-rf", "starts with"),
+            ("a" * 256, "characters long"),
+        ],
+    )
+    def test_malformed_literal_rejected(self, bad, expected):
+        with pytest.raises(ValidationError, match=expected):
+            ForgeConfig(**minimal_config(model={"name_or_path": "org/model", "revision": bad}))
+
+    def test_max_length_boundary_accepted(self):
+        """255 is the last accepted length; 256 is the first rejected one."""
+        cfg = ModelConfig(name_or_path="org/model", revision="a" * 255)
+        assert cfg.revision == "a" * 255
+
+    @pytest.mark.parametrize(
+        "field_path,build",
+        [
+            ("model.revision", lambda v: ModelConfig(name_or_path="org/model", revision=v)),
+            (
+                "training.grpo_reward_model_revision",
+                lambda v: TrainingConfig(grpo_reward_model="org/reward", grpo_reward_model_revision=v),
+            ),
+            ("evaluation.safety.classifier_revision", lambda v: SafetyConfig(classifier_revision=v)),
+            (
+                "evaluation.llm_judge.judge_model_revision",
+                lambda v: JudgeConfig(judge_model="/models/local", judge_model_revision=v),
+            ),
+            (
+                "synthetic.teacher_revision",
+                lambda v: SyntheticConfig(teacher_backend="local", teacher_revision=v),
+            ),
+        ],
+    )
+    def test_every_field_runs_the_shared_validator(self, field_path, build):
+        """All five fields reject the same malformed literal, each naming its own path."""
+        with pytest.raises(ValidationError, match="starts with"):
+            build("-rf")
+        assert build(FAKE_SHA40) is not None
+
+
+class TestRevisionTagTrap:
+    """A branch/tag is accepted but must be named out loud as not-a-pin."""
+
+    @pytest.mark.parametrize("moving_ref", ["main", "v1.0", "refs/pr/7", "abc123", FAKE_SHA40[:39]])
+    def test_moving_ref_warns(self, caplog, moving_ref):
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            cfg = ModelConfig(name_or_path="org/model", revision=moving_ref)
+        assert cfg.revision == moving_ref
+        assert any("is a moving ref, not a pin" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.parametrize("sha", [FAKE_SHA40, FAKE_SHA40.upper()])
+    def test_sha_does_not_warn(self, caplog, sha):
+        """An uppercase transcription is the same commit upstream; warning on it
+        would train operators to ignore the warning that matters."""
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            ModelConfig(name_or_path="org/model", revision=sha)
+        assert not any("moving ref" in r.getMessage() for r in caplog.records)
+
+    def test_warning_names_the_field_path(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            SafetyConfig(classifier_revision="main")
+        rendered = [r.getMessage() for r in caplog.records]
+        assert any("evaluation.safety.classifier_revision" in message for message in rendered)
+
+
+class TestRevisionAgainstLocalPath:
+    """A pin on a local directory is inert — warn, do not raise."""
+
+    def test_local_dir_warns_but_validates(self, caplog, tmp_path):
+        """Raising here would make one YAML pass on a CI runner without the
+        directory and fail on the training host that has it."""
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            cfg = ModelConfig(name_or_path=str(tmp_path), revision=FAKE_SHA40)
+        assert cfg.revision == FAKE_SHA40
+        rendered = [r.getMessage() for r in caplog.records]
+        assert any("is a local directory" in message for message in rendered)
+
+    def test_absent_path_does_not_warn(self, caplog, tmp_path):
+        """A Hub repo ID (and a path that does not exist yet) is the normal case."""
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            ModelConfig(name_or_path=str(tmp_path / "not-created"), revision=FAKE_SHA40)
+        assert not any("is a local directory" in r.getMessage() for r in caplog.records)
+
+    def test_local_dir_without_pin_is_silent(self, caplog, tmp_path):
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            ModelConfig(name_or_path=str(tmp_path))
+        assert not any("is a local directory" in r.getMessage() for r in caplog.records)
+
+
+class TestRevisionTargetValidation:
+    """A pin whose repo is never loaded is a dead config, not a pin."""
+
+    @pytest.mark.parametrize("backend", ["api", "file"])
+    def test_teacher_revision_rejects_non_local_backend(self, backend):
+        with pytest.raises(ValidationError, match="never loads teacher_model from the Hub"):
+            SyntheticConfig(teacher_backend=backend, teacher_revision=FAKE_SHA40)
+
+    def test_teacher_revision_accepts_local_backend(self):
+        cfg = SyntheticConfig(teacher_backend="local", teacher_revision=FAKE_SHA40)
+        assert cfg.teacher_revision == FAKE_SHA40
+
+    def test_judge_revision_rejects_api_judge(self):
+        with pytest.raises(ValidationError, match="never loads judge_model from the Hub"):
+            JudgeConfig(judge_model="gpt-4o", judge_api_key_env="OPENAI_API_KEY", judge_model_revision=FAKE_SHA40)
+
+    def test_judge_revision_accepts_local_judge(self):
+        cfg = JudgeConfig(judge_model="/models/local-judge", judge_model_revision=FAKE_SHA40)
+        assert cfg.judge_model_revision == FAKE_SHA40
+
+    def test_grpo_reward_revision_requires_a_reward_model(self):
+        with pytest.raises(ValidationError, match="names no repository"):
+            TrainingConfig(grpo_reward_model_revision=FAKE_SHA40)
+
+    def test_grpo_reward_revision_accepts_a_reward_model(self):
+        cfg = TrainingConfig(grpo_reward_model="org/reward", grpo_reward_model_revision=FAKE_SHA40)
+        assert cfg.grpo_reward_model_revision == FAKE_SHA40
+
+    def test_target_validators_fire_through_the_root_config(self):
+        """These are exit-1 config errors, so they must surface from ForgeConfig
+        (which is what --dry-run validates), not only from the sub-model."""
+        with pytest.raises(ValidationError, match="never loads teacher_model from the Hub"):
+            ForgeConfig(**minimal_config(synthetic={"teacher_revision": FAKE_SHA40}))
+
+
+class TestRevisionTemplateDocumentation:
+    def _template_text(self) -> str:
+        return (Path(__file__).resolve().parents[1] / "config_template.yaml").read_text(encoding="utf-8")
+
+    def test_template_documents_every_pin_commented(self):
+        """All five ship commented: a live SHA in the template would rot, and the
+        CI dry-run must not depend on Hub state."""
+        text = self._template_text()
+        for field in (
+            "revision:",
+            "grpo_reward_model_revision:",
+            "classifier_revision:",
+            "judge_model_revision:",
+            "teacher_revision:",
+        ):
+            line = next(line for line in text.splitlines() if field in line)
+            assert line.lstrip().startswith("#"), f"{field} must ship commented in config_template.yaml"

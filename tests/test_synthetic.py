@@ -572,3 +572,150 @@ class TestNoTrackingIDsInSource:
             f"comments, violating coding.md §Comments: {matches!r}.  "
             f"Strip the ID prefix and keep only the explanatory rationale."
         )
+
+
+# ---------------------------------------------------------------------------
+# Revision pinning for the local teacher model
+# ---------------------------------------------------------------------------
+
+
+class TestLocalTeacherRevisionPin:
+    """``synthetic.teacher_revision`` reaches both teacher loads.
+
+    The teacher's generations *become* the training corpus, so an unpinned
+    teacher is an Article 10 data-provenance gap, not merely a reproducibility
+    inconvenience.
+    """
+
+    _SHA = "0" * 39 + "a"
+
+    @pytest.fixture(autouse=True)
+    def _clean_registry(self):
+        from forgelm import model as model_mod
+
+        model_mod._RESOLVED_MODEL_REVISIONS.clear()
+        yield
+        model_mod._RESOLVED_MODEL_REVISIONS.clear()
+
+    @pytest.fixture
+    def stub_resolver(self, monkeypatch):
+        def _install(**overrides):
+            from forgelm import compliance as compliance_mod
+
+            seen = {}
+
+            def _fake(repo_id, *, requested=None, offline=False):
+                seen["requested"] = requested
+                seen["offline"] = offline
+                record = {
+                    "repo_id": repo_id,
+                    "revision_requested": requested,
+                    "revision_resolved": None,
+                    "resolution_source": "unresolved",
+                }
+                record.update(overrides)
+                return record
+
+            monkeypatch.setattr(compliance_mod, "resolve_model_revision", _fake)
+            return seen
+
+        return _install
+
+    def _generator(self, minimal_config, **synth_overrides):
+        synthetic = {
+            "enabled": True,
+            "teacher_backend": "local",
+            "teacher_model": "org/teacher",
+            "seed_prompts": ["hello"],
+        }
+        synthetic.update(synth_overrides)
+        cfg = ForgeConfig(**minimal_config(synthetic=synthetic))
+        return SyntheticDataGenerator(cfg)
+
+    def _fake_transformers(self, captured, fail_model=False):
+        def _tok(path, **kwargs):
+            captured["tokenizer"] = kwargs.get("revision")
+            return MagicMock()
+
+        def _model(path, **kwargs):
+            captured["model"] = kwargs.get("revision")
+            if fail_model:
+                raise OSError("hub down")
+            return MagicMock()
+
+        stub = MagicMock()
+        stub.AutoTokenizer.from_pretrained = _tok
+        stub.AutoModelForCausalLM.from_pretrained = _model
+        return stub
+
+    def test_resolved_sha_reaches_both_loads(self, minimal_config, stub_resolver):
+        stub_resolver(revision_resolved=self._SHA, resolution_source="pinned_resolved")
+        captured = {}
+        gen = self._generator(minimal_config, teacher_revision=self._SHA)
+        with patch("torch.cuda.is_available", return_value=False):
+            with patch.dict("sys.modules", {"transformers": self._fake_transformers(captured)}):
+                gen._load_local_teacher()
+        assert captured["tokenizer"] == self._SHA
+        assert captured["model"] == self._SHA
+
+    def test_configured_revision_is_what_gets_resolved(self, minimal_config, stub_resolver):
+        seen = stub_resolver(revision_resolved=self._SHA, resolution_source="pinned_resolved")
+        gen = self._generator(minimal_config, teacher_revision="v2")
+        with patch("torch.cuda.is_available", return_value=False):
+            with patch.dict("sys.modules", {"transformers": self._fake_transformers({})}):
+                gen._load_local_teacher()
+        assert seen["requested"] == "v2"
+
+    def test_unpinned_teacher_load_is_unchanged(self, minimal_config, stub_resolver):
+        stub_resolver(resolution_source="unresolved")
+        captured = {}
+        gen = self._generator(minimal_config)
+        with patch("torch.cuda.is_available", return_value=False):
+            with patch.dict("sys.modules", {"transformers": self._fake_transformers(captured)}):
+                gen._load_local_teacher()
+        assert captured["tokenizer"] is None
+        assert captured["model"] is None
+
+    def test_recorded_under_the_teacher_role_only(self, minimal_config, stub_resolver):
+        from forgelm import model as model_mod
+
+        stub_resolver(revision_resolved=self._SHA, resolution_source="pinned_resolved")
+        gen = self._generator(minimal_config, teacher_revision=self._SHA)
+        with patch("torch.cuda.is_available", return_value=False):
+            with patch.dict("sys.modules", {"transformers": self._fake_transformers({})}):
+                gen._load_local_teacher()
+        assert (
+            model_mod.get_loaded_model_revision("org/teacher", model_mod.ROLE_TEACHER_MODEL)["revision_resolved"]
+            == self._SHA
+        )
+        assert model_mod.get_loaded_model_revision("org/teacher") is None
+
+    def test_nothing_recorded_when_the_load_fails(self, minimal_config, stub_resolver):
+        from forgelm import model as model_mod
+
+        stub_resolver(revision_resolved=self._SHA, resolution_source="pinned_resolved")
+        gen = self._generator(minimal_config, teacher_revision=self._SHA)
+        with patch("torch.cuda.is_available", return_value=False):
+            with patch.dict("sys.modules", {"transformers": self._fake_transformers({}, fail_model=True)}):
+                with pytest.raises(OSError):
+                    gen._load_local_teacher()
+        assert model_mod.get_loaded_model_revision("org/teacher", model_mod.ROLE_TEACHER_MODEL) is None
+
+    def test_model_offline_flag_reaches_the_resolver(self, minimal_config, stub_resolver):
+        seen = stub_resolver(resolution_source="unresolved")
+        cfg = ForgeConfig(
+            **minimal_config(
+                model={"name_or_path": "org/model", "offline": True},
+                synthetic={
+                    "enabled": True,
+                    "teacher_backend": "local",
+                    "teacher_model": "org/teacher",
+                    "seed_prompts": ["hello"],
+                },
+            )
+        )
+        gen = SyntheticDataGenerator(cfg)
+        with patch("torch.cuda.is_available", return_value=False):
+            with patch.dict("sys.modules", {"transformers": self._fake_transformers({})}):
+                gen._load_local_teacher()
+        assert seen["offline"] is True

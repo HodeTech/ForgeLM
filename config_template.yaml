@@ -7,6 +7,11 @@ model:
   backend: "transformers" # Can be "transformers" or "unsloth"
   trust_remote_code: false # Security: set true only for models that require custom code
   # offline: false  # Air-gapped mode: no HF Hub calls, models/datasets must be local
+  # Reproducibility: pin the base model + tokenizer to an HF Hub commit.
+  # A 40-hex commit SHA is the only value that actually pins; a branch or tag
+  # ("main", "v1.0") is accepted but can be repointed upstream, and ForgeLM
+  # warns when you use one.  Omit for the repo's default branch at load time.
+  # revision: "0e9e39f249a16976918f6564b8830bc894c89659"
   # Optional advanced bitsandbytes knobs (Transformers backend + 4bit):
   # bnb_4bit_use_double_quant: true
   # bnb_4bit_quant_type: "nf4"
@@ -48,6 +53,7 @@ training:
   # grpo_num_generations: 4 # GRPO: responses per prompt
   # grpo_max_completion_length: 512  # legacy alias `grpo_max_new_tokens` still accepted
   # grpo_reward_model: "org/reward-model"  # GRPO: reward model for scoring
+  # grpo_reward_model_revision: "b7c2a1f..."  # pin it — the reward model is in the loss
   # report_to: "tensorboard"  # "tensorboard", "wandb", "mlflow", or "none"
   # run_name: "my_experiment"  # W&B/MLflow run name; auto-generated if omitted
   # gpu_cost_per_hour: 3.50    # $/hour for GPU; omit to auto-detect from known GPUs
@@ -98,6 +104,7 @@ data:
 #   enabled: true
 #   teacher_model: "gpt-4"                 # API model name or HF model path
 #   teacher_backend: "api"                 # "api", "local", "file"
+#   teacher_revision: "6f6073b4..."        # local backend only: pin the teacher checkpoint
 #   api_base: "https://api.openai.com/v1"  # OpenAI-compatible endpoint
 #   api_key_env: "OPENAI_API_KEY"          # env var for API key
 #   seed_file: "prompts.txt"              # one prompt per line, or JSONL
@@ -185,6 +192,7 @@ data:
 #   safety:
 #     enabled: true
 #     classifier: "meta-llama/Llama-Guard-3-8B"  # default guard; scored via generation (see classifier_mode)
+#     # classifier_revision: "7327bd9f..."  # pin the guard: an upstream re-tune moves the auto-revert line
 #     # classifier_mode: "auto"   # "auto" (default): generation for a generative Llama-Guard, else text-classification;
 #     #                           # "classification" forces the pipeline (needs a trained safe/unsafe head);
 #     #                           # "generation" forces generation-based Llama-Guard scoring
@@ -203,6 +211,7 @@ data:
 #     enabled: true
 #     judge_model: "gpt-4o"
 #     judge_api_key_env: "OPENAI_API_KEY"
+#     # judge_model_revision: "a09a3540..."  # local judge only; rejected alongside judge_api_key_env
 #     eval_dataset: "eval_prompts.jsonl"
 #     min_score: 7.0
 

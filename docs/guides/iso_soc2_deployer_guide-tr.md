@@ -29,7 +29,8 @@ ForgeLM kanıtına sahip:
    alanı). Her model promotion çift kontrollü ve forensic olarak
    attribute edilmiştir.
 3. **Data lineage** — `data_provenance.json` (SHA-256 fingerprint +
-   size + mtime + HF Hub revision pin); `data_governance_report.json`
+   size + mtime + `hf_revision_source` ile derecelendirilmiş dataset HF
+   Hub commit SHA'sı); `data_governance_report.json`
    (collection_method, annotation_process, known_biases,
    personal_data_included, dpia_completed).
 4. **Supply chain** — yayın etiketi başına yayın matrisinin her (OS
@@ -110,15 +111,24 @@ Her `human_approval.granted` girişi şunları taşır:
 - `prev_hash` + `_hmac` — zincir bütünlüğü.
 - Eğitim-koşumu kimliği — `config_hash`, temel model adı + adapter
   yöntemi (`model_lineage`) ve dataset fingerprint (`data_provenance`)
-  — koşumun `training_manifest.yaml` dosyasında yaşar; `config_hash`
+  — koşumun `compliance_report.json` dosyasında yaşar (yanındaki
+  `training_manifest.yaml` yan dosyası düzleştirilmiş bir operatör
+  özetidir ve bu üç bloğun hiçbirini taşımaz); `config_hash`
   ayrıca önceki `human_approval.required` audit event'ine de
   damgalanır, böylece denetçi `run_id` üzerinden o event'e (veya
-  manifest'e) pivot eder ve `git log` içindeki YAML ile diff alır.
-  (Not: ForgeLM temel modeli adıyla kaydeder ve *dataset*'in HF Hub
-  commit SHA'sını pin'ler, ancak upstream temel-model Hub revision
-  SHA'sını pin'le**mez**; terfi edilen artefaktlar
-  `model_integrity.json` / `model.integrity_verified` event'i
-  üzerinden hash ile doğrulanır. `forgelm approvals`, `config_hash`'i
+  rapora) pivot eder ve `git log` içindeki YAML ile diff alır.
+  (Not: ForgeLM temel modeli adıyla kaydeder ve `model.revision`
+  ayarlandığında — ya da o olmadan commit çözülebildiğinde — temel-model
+  yüklemesini sabitler ve o commit'i `model_lineage.base_model_revision`
+  altına kaydeder. `revision_resolved`'ı yalnızca null değilken yeniden
+  üretilebilirlik kanıtı sayın; yanındaki `revision_requested` değeri,
+  operatörün `main` gibi hareketli bir ref'i sabitlediğini açıkça
+  gösterir. Güvenlik sınıflandırıcısı, LLM judge, GRPO ödül modeli ve
+  merge kaynak modelleri **hâlâ sabitlenmemiş olarak yüklenir** —
+  bunların `*_revision` config alanları kabul edilir ve doğrulanır, ancak
+  henüz hiçbir yükleyiciye iletilmez. Terfi edilen artefaktlar
+  `model_integrity.json` / `model.integrity_verified` event'i üzerinden
+  hash ile doğrulanmaya devam eder. `forgelm approvals`, `config_hash`'i
   `human_approval.required` event'inden okur ve hiçbir mevcut
   producer'ın emit etmediği legacy `config_fingerprint` anahtarına
   fallback yapar. Bkz. `docs/reference/approvals_subcommand.md`.)
@@ -151,6 +161,7 @@ cat ./outputs/data_provenance.json
 # {
 #   "dataset_id": "Acme/customer-support-v3",
 #   "hf_revision": "9c7c8f3...",
+#   "hf_revision_source": "loaded",
 #   "sha256": "ab12...",
 #   "size_bytes": 14982011,
 #   "modified": "2026-05-01T08:14:33Z",
@@ -158,11 +169,27 @@ cat ./outputs/data_provenance.json
 # }
 ```
 
-`sha256` + `hf_revision` birlikte korpusu deterministik olarak
+`sha256` + `hf_revision` birlikte korpusu **yalnızca
+`hf_revision_source` değeri `loaded` olduğunda** deterministik olarak
 pin'ler (yerel dosyalar ek olarak `size_bytes` + `modified` alanları
 taşır; alan adları `forgelm.compliance._fingerprint_local_file`'dan
 gelir). Aynı girdi üzerinde `forgelm audit data/*.jsonl` çalıştıran
 bir denetçi aynı fingerprint'i görmek zorundadır.
+
+`hf_revision`'ı okumadan önce `hf_revision_source`'u okuyun:
+
+| `hf_revision_source` | Ne anlama gelir | Kanıt olarak kullanılabilir mi? |
+|---|---|---|
+| `loaded` | ForgeLM deponun commit'ini çözdü, tam olarak o SHA'yı `load_dataset(..., revision=...)`'a geçirdi ve yükleme başarılı oldu. `hf_revision` okunan korpustur. | **Evet** |
+| `unverified` | Bu süreçteki hiçbir yükleme dataset'i sabitlemedi. `hf_revision`, manifest yazılırken yapılan, deponun güncel varsayılan-dal başına ait bir Hub sorgusudur. Bir ipucu, kanıt değil. `forgelm compliance-only` her zaman bunu üretir, çünkü korpusu hiç okumadan paket yazar. | **Hayır** |
+| `unresolved` | Hiçbir SHA belirlenemedi. `hf_revision` **yoktur** ve `hf_revision_reason` nedenini belirtir (offline mod, `huggingface_hub` kurulu değil, Hub erişilemez, gated depo, SHA dönmedi). ForgeLM asla SHA uydurmaz. | **Hayır — ve hiçbir iddia da yok** |
+
+**Bu sürümden önce üretilen manifest'ler `hf_revision`'ı `hf_revision_source`
+anahtarı olmadan taşır.** O SHA'lar, yüklemeyle hiçbir bağı olmadan
+manifest-üretim zamanında yapılan bağımsız bir Hub sorgusundan alınmıştı;
+dolayısıyla etiketsiz olsalar da yukarıdaki anlamda `unverified`'dırlar.
+Eski bir paketteki çıplak bir `hf_revision`'ı, modeli hangi korpusun
+eğittiğinin kanıtı saymayın.
 
 ### S4: "Supply chain göster"
 

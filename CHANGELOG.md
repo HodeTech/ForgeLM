@@ -8,6 +8,80 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Added
 
+- **Hub revision pinning — five optional config fields, two of them wired.**
+  `model.revision`, `synthetic.teacher_revision`,
+  `evaluation.safety.classifier_revision`,
+  `evaluation.llm_judge.judge_model_revision` and
+  `training.grpo_reward_model_revision` each accept a 40-hex HF Hub commit SHA
+  (either case) or a branch/tag/ref, stored verbatim — ForgeLM never normalises
+  or case-folds the value. All are `Optional[str] = None`, all opt-in; omitting
+  them changes nothing.
+  **Honoured in this release:** `model.revision` pins every load of the base
+  repo at the *same* commit — `AutoTokenizer`, the `AutoProcessor` VLM path,
+  `AutoModelForCausalLM` / `AutoModelForImageTextToText`, and the `AutoConfig`
+  probe behind `--fit-check` — so the tokenizer can never drift from the weights
+  it is recorded beside. `synthetic.teacher_revision` pins the local teacher's
+  tokenizer and weights under `teacher_backend: local`.
+  **Accepted and validated but NOT yet forwarded to any loader:**
+  `evaluation.safety.classifier_revision`,
+  `evaluation.llm_judge.judge_model_revision` and
+  `training.grpo_reward_model_revision`. Setting them today changes no load.
+  This is documented as a gap in
+  [`docs/reference/configuration.md`](docs/reference/configuration.md#hub-revision-pinning)
+  rather than left to be discovered; do not treat them as reproducibility
+  evidence until that table says otherwise.
+  Rejected at validation (exit `1`, fires under `--dry-run`, no network): an
+  empty / whitespace-bearing / control-character / leading-dash / >255-char
+  literal; `judge_model_revision` with `judge_api_key_env`; `teacher_revision`
+  with `teacher_backend` of `api` or `file`; `grpo_reward_model_revision`
+  without `grpo_reward_model`. Warned but accepted: a non-40-hex ref (a branch
+  or tag is accepted and **does not pin** — upstream can repoint it), and
+  `model.revision` set against an existing local directory (warned rather than
+  raised, because the check's verdict would otherwise depend on whether that
+  directory exists on the validating machine). `config_template.yaml` ships all
+  five commented out, so no live SHA rots and the CI dry-run stays independent
+  of Hub state (`forgelm/config.py`, `forgelm/model.py`, `forgelm/fit_check.py`,
+  `forgelm/synthetic.py`, `forgelm/safety.py`).
+- **Base-model provenance in the Annex IV bundle.** `compliance_report.json`'s
+  `model_lineage` block gains `base_model_revision` — `repo_id`,
+  `revision_requested` (the operator's literal, so a symbolic `main` shows
+  plainly as a moving ref), `revision_resolved` (a confirmed 40-hex SHA or
+  `null`), `resolution_source` (`local_path` / `resolved` / `pinned_resolved` /
+  `cache` / `pinned_unverified` / `unresolved`), `revision_pinned` (the exact
+  string handed to `revision=`), and `reason` (present only when no base-model
+  load happened at all — the `forgelm compliance-only` case). **A non-null
+  `revision_resolved` always means the load in that process was pinned to it:**
+  manifest generation performs no Hub lookup of its own, provenance is written
+  only after the load returns, and a load that raises leaves no claim behind.
+  Existing `model_lineage` keys are unchanged and the addition is additive. Note
+  that the flattened `training_manifest.yaml` sidecar carries no `model_lineage`
+  block at all — it is an operator summary; read `compliance_report.json` for
+  provenance (`forgelm/compliance.py`).
+- **`forgelm.compliance.resolve_model_revision(repo_id, *, requested=None,
+  offline=False)`** — returns `{"repo_id", "revision_requested",
+  "revision_resolved", "resolution_source"}` for a model repo. Never raises.
+  `revision_resolved` is a validated 40-character commit SHA or `None`; a
+  requested pin is never echoed into it, so a value there always means something
+  confirmed it. With `offline=True` it short-circuits before any Hub client is
+  imported and consults only the commit-addressed local cache. **Callers must
+  pass `revision_resolved` into the load itself** — a SHA obtained here and then
+  not used to pin the load must not be recorded as provenance
+  (`forgelm/compliance.py`).
+- **Per-load revision logging.** One line per pinnable load: `INFO` when a
+  commit was confirmed (role, repo, SHA); `WARNING` when a pin was configured
+  but no SHA could be confirmed, stating that the load will use the requested
+  ref as-is and that the manifest will record that nothing was verified rather
+  than assert a SHA; `WARNING` when a Hub repo loads **unpinned**, naming the
+  repo and the config field that would pin it. Local paths are never warned
+  about — a directory has no Hub commit, and warning on it would train operators
+  to ignore the warning that matters (`forgelm/model.py`).
+- **The generated model card reproduces the pin.** When the base-model SHA is
+  known the usage snippet emits
+  `AutoModelForCausalLM.from_pretrained("org/model", revision="<sha>")`; when it
+  is not, the kwarg is omitted entirely — never `revision="None"`. A card shipped
+  inside an Annex IV bundle that tells a downstream reader to load an unpinned
+  repo undercuts the reproducibility claim the surrounding bundle makes
+  (`forgelm/model_card.py`).
 - **`python -m forgelm`** (`forgelm/__main__.py`) — behaviour and exit codes
   byte-identical to the `forgelm` console script. The contributor gauntlet now
   uses this form, and it is not a stylistic preference: a console script's
@@ -116,6 +190,34 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Fixed
 
+- **The Annex IV dataset revision SHA was decoupled from the load that
+  produced it, and could name a corpus the run never read.**
+  `compliance._fingerprint_hf_revision` obtained `hf_revision` by calling
+  `HfApi().dataset_info(path)` at manifest-generation time, with no coupling of
+  any kind to `data._load_single_dataset`'s `load_dataset(path)`. What it
+  recorded was the repo's **default-branch head when the manifest was written**,
+  not the commit that was trained on — while its own docstring called that SHA
+  "the only stable identifier that lets Article 10 reviewers reproduce the exact
+  corpus", and the ISO/SOC 2 mapping pages cited it as input-traceability
+  evidence. Whenever the upstream repo moved between the load and the manifest —
+  precisely the case provenance exists to detect — the artefact asserted a
+  falsehood with full confidence. A missing pin is honest; a wrong pin is not.
+  ForgeLM now resolves a Hub dataset's commit SHA *first*, passes that exact SHA
+  to `load_dataset(..., revision=...)`, and records it only after the load
+  returns. The fingerprint gains `hf_revision_source` — `loaded` (the SHA the
+  load was pinned to; **the only value an auditor may treat as evidence**),
+  `unverified` (a manifest-time Hub lookup tied to no load — what
+  `forgelm compliance-only` produces, since it writes a bundle without reading
+  the corpus), or `unresolved` (no SHA obtained; `hf_revision` is **absent** and
+  `hf_revision_reason` states why). `hf_revision` keeps its name, type and
+  absent-when-unknown semantics, so tooling that reads only that key is
+  unaffected — but it should now check `hf_revision_source == "loaded"` first.
+  **Operators holding bundles produced before this release:** those manifests
+  carry a bare, unlabelled `hf_revision` obtained the old way. Treat it as
+  `unverified`. Nothing back-fills a SHA that was never captured, and the
+  append-only principle forbids rewriting an existing manifest, so this fix
+  makes future runs auditable — not past ones (`forgelm/compliance.py`,
+  `forgelm/data.py`).
 - **GRPO training no longer crashes at post-train evaluation.** `ForgeTrainer`
   called `self.trainer.evaluate()` (and measured a baseline loss) on a
   `GRPOTrainer` that is intentionally built with no `eval_dataset`, so every GRPO
@@ -278,6 +380,27 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Changed
 
+- **`compute_config_hash` values shift for every existing config**, purely
+  because the five new `revision` fields now exist with `None` defaults and are
+  therefore part of the canonical serialisation. No behaviour changed and no
+  YAML needs editing — but an auditor diffing a pre- and post-upgrade
+  `config_hash` of what is byte-identical YAML will see a mismatch and file a
+  finding unless they know why. This is stated here so that conversation starts
+  from the answer.
+- **Hub loads for models and datasets now emit a `WARNING` when they are
+  unpinned.** Existing configs are unaffected functionally, but a run that
+  previously logged nothing now names each Hub repo loading from a movable
+  default branch. Set the matching `revision` field to silence it — this is the
+  intended remedy, not log noise to filter.
+- **Known remaining gaps in revision pinning**, stated so a reviewer does not
+  have to discover them: `forgelm cache-models` has no `--revision` flag, so an
+  air-gapped staging run fetches the default branch and a pinned run on the
+  disconnected host will miss its snapshot; `--dry-run` reports no pin status
+  and (by its documented contract) never checks that pins are fetchable, so a
+  pipeline running `--dry-run` but not `forgelm doctor` can get a green
+  validation followed by a load-time failure; merge-source models
+  (`merge.models[]`) cannot be pinned; and `export` / `inference` / `merging`
+  are unpinned by design because they load local artefacts this run produced.
 - **`verify-audit` / `verify-annex-iv` / `verify-gguf` / `verify-integrity` now
   exit `6`, not `1`, when the target artefact was read and failed its
   integrity check** (broken audit-log hash chain, Annex IV manifest hash

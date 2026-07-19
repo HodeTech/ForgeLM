@@ -2,6 +2,7 @@ import json
 import logging
 import math
 import os
+import re
 import warnings
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -29,6 +30,89 @@ logger = logging.getLogger("forgelm.config")
 # Without the marker, a future edit that moves a field name within the
 # guard's line window would turn this comment into a CI failure.)
 DEPRECATION_REMOVAL_VERSION = "v1.0.0"
+
+# The one regex the revision-pin feature owes docs/standards/regex.md.
+#
+# Anchored, fixed-width `{40}`, single character class, no alternation and no
+# unbounded quantifier — trivially linear, with nothing for an engine to
+# backtrack through (rules 3, 4 and 7).  Both cases are accepted: a SHA copied
+# out of a Hub URL is conventionally lowercase, but an uppercase transcription
+# resolves to the identical commit upstream and must not be mis-reported to the
+# operator as a moving ref.  Malformed-literal checks are plain `str`
+# predicates in `_validate_revision_literal`, deliberately not a second pattern.
+_SHA40_REVISION = re.compile(r"^[0-9a-fA-F]{40}$")
+
+# Upper bound on a revision literal.  Git itself caps no ref length, but every
+# filesystem the HF Hub cache is written to caps a single path component at
+# 255 bytes, so a longer literal cannot name a snapshot that could be staged.
+_REVISION_MAX_LENGTH = 255
+
+
+def _validate_revision_literal(value: Optional[str], field_path: str) -> Optional[str]:
+    """Reject malformed revision literals; warn on refs that do not actually pin.
+
+    Shared by every ``revision`` field in this schema.  Structural defects
+    raise, because a typo'd pin must never reach a loader.  A well-formed but
+    *symbolic* ref (``main``, ``v1.0``, ``refs/pr/7``) only warns: operators
+    legitimately evaluate branches and PR refs, and refusing them outright
+    needs an enforcement policy this layer deliberately does not own.
+
+    Args:
+        value: Raw literal from YAML, or ``None`` when the field is unset.
+        field_path: Dotted YAML path, quoted verbatim in the message so the
+            operator can find the offending line without guessing.
+
+    Returns:
+        The literal unchanged.  It is never normalised or case-folded — the
+        Annex IV manifest records what the operator asked for verbatim beside
+        the SHA that actually resolved, and a silently rewritten request makes
+        that pair a weaker record than it looks.
+
+    Raises:
+        ValueError: The literal cannot name an HF Hub revision.
+    """
+    if value is None:
+        return None
+    if not value:
+        raise ValueError(
+            f"{field_path} is set to an empty string, which names no revision.  "
+            "Omit the field entirely to load the repo's default branch."
+        )
+    if any(character.isspace() for character in value):
+        raise ValueError(
+            f"{field_path}={value!r} contains whitespace.  A revision is a 40-hex commit SHA, "
+            "a branch, or a tag — none of which may contain spaces."
+        )
+    # The value is withheld from the next two messages on purpose: echoing a
+    # control-character or multi-kilobyte literal into a log line hands the
+    # config author control of the log format (logging-observability.md).
+    if any(character < " " or character == "\x7f" for character in value):
+        raise ValueError(
+            f"{field_path} contains a control character.  A revision is a 40-hex commit SHA, a branch, or a tag."
+        )
+    if value.startswith("-"):
+        raise ValueError(
+            f"{field_path} starts with '-', which no HF Hub revision does and which downstream "
+            "tooling reads as a command-line flag.  Check for a stray dash or a mangled paste."
+        )
+    if len(value) > _REVISION_MAX_LENGTH:
+        raise ValueError(
+            f"{field_path} is {len(value)} characters long; an HF Hub revision is at most "
+            f"{_REVISION_MAX_LENGTH}.  Check for a mangled paste."
+        )
+    if not _SHA40_REVISION.match(value):
+        # The tag trap: the Hub accepts this and the operator believes they are
+        # pinned, but a branch or tag can be repointed upstream at any time.
+        logger.warning(
+            "%s=%r is a moving ref, not a pin: the branch or tag it names can be repointed "
+            "upstream at any time, so two runs of the same config can load different bytes.  "
+            "It is recorded verbatim in the Annex IV manifest beside the commit SHA that actually "
+            "resolved, so the artefact stays honest either way — but use the 40-hex commit SHA if "
+            "the run needs to be reproducible.",
+            field_path,
+            value,
+        )
+    return value
 
 
 class MoeConfig(BaseModel):
@@ -139,6 +223,14 @@ class ModelConfig(BaseModel):
         default=False,
         description="Air-gapped mode: refuse HF Hub network calls.  Models/datasets/extras must be available locally.",
     )
+    revision: Optional[str] = Field(
+        default=None,
+        description=(
+            "Pin the base model + tokenizer to an HF Hub commit SHA (40-hex, recommended) or branch/tag.  "
+            "Unset = the repo's default branch at load time; the SHA actually loaded is recorded in the "
+            "Annex IV manifest either way.  Ignored, with a warning, when `name_or_path` is a local directory."
+        ),
+    )
     moe: Optional[MoeConfig] = Field(
         default=None, description="MoE-specific settings (only consulted on MoE checkpoints)."
     )
@@ -157,6 +249,37 @@ class ModelConfig(BaseModel):
         default="auto",
         description="bitsandbytes 4-bit compute dtype: `auto` | `bfloat16` | `float16` | `float32` (each accepts the short `bf16`/`fp16`/`fp32` alias).  `float32` negates most VRAM savings.",
     )
+
+    @field_validator("revision")
+    @classmethod
+    def _validate_revision(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_revision_literal(v, "model.revision")
+
+    @model_validator(mode="after")
+    def _warn_revision_on_local_path(self):
+        """Warn when a pin is set against a local directory, which cannot honour it.
+
+        A local directory has no Hub commit to resolve against, so the pin is
+        inert and `model_integrity.json` is the identity that applies instead.
+
+        This warns rather than raises because ``os.path.isdir`` is true only
+        where the directory already exists: raising would make one YAML file
+        pass validation on a CI runner that has no such directory and fail on
+        the training host that does.  A validation gate whose verdict depends
+        on the filesystem it runs on is worse than a loud warning.  Load time
+        is where the loader holds the real path and can fail closed without
+        that asymmetry.
+        """
+        if self.revision is not None and os.path.isdir(self.name_or_path):
+            logger.warning(
+                "model.revision=%r is set but model.name_or_path=%r is a local directory.  "
+                "A local path carries no HF Hub commit, so the pin cannot be honoured and the "
+                "loaded bytes are whatever is on disk.  Remove model.revision, or point "
+                "name_or_path at a Hub repo ID.",
+                self.revision,
+                self.name_or_path,
+            )
+        return self
 
     @model_validator(mode="after")
     def _warn_float32_qlora(self):
@@ -360,6 +483,13 @@ class TrainingConfig(BaseModel):
             "reward is appended for additive scoring — TRL sums multiple reward funcs."
         ),
     )
+    grpo_reward_model_revision: Optional[str] = Field(
+        default=None,
+        description=(
+            "Pin the GRPO reward model to an HF Hub commit SHA or ref.  The reward model is in the "
+            "loss, so an unpinned one makes the training signal irreproducible."
+        ),
+    )
     galore_enabled: bool = Field(
         default=False, description="GaLore: enable optimizer-level memory optimisation (alternative to LoRA)."
     )
@@ -435,6 +565,29 @@ class TrainingConfig(BaseModel):
         ge=0,
         description="USD per hour for the training GPU.  None = auto-detect from known GPUs (used by the cost-estimation report).",
     )
+
+    @field_validator("grpo_reward_model_revision")
+    @classmethod
+    def _validate_grpo_reward_model_revision(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_revision_literal(v, "training.grpo_reward_model_revision")
+
+    @model_validator(mode="after")
+    def _validate_grpo_reward_revision_target(self):
+        """Reject a reward-model pin that names no reward model.
+
+        With ``grpo_reward_model`` unset the trainer wires the built-in
+        ``combined_format_length_reward`` fallback and never loads a repo, so
+        the pin is discarded in silence — the same dead-config fail-open the
+        judge and teacher pins are validated against.
+        """
+        if self.grpo_reward_model_revision is not None and not self.grpo_reward_model:
+            raise ValueError(
+                "training.grpo_reward_model_revision is set but training.grpo_reward_model is not, "
+                "so the pin names no repository: the trainer falls back to the built-in "
+                "format/length shaping reward and the pin is silently discarded.  "
+                "Set training.grpo_reward_model, or remove the pin."
+            )
+        return self
 
     @field_validator("rope_scaling")
     @classmethod
@@ -725,6 +878,13 @@ class SafetyConfig(BaseModel):
             "Llama-Guard scoring (parse the generated `safe`/`unsafe`+S-code verdict)."
         ),
     )
+    classifier_revision: Optional[str] = Field(
+        default=None,
+        description=(
+            "Pin the harm classifier to an HF Hub commit SHA or ref.  An upstream classifier "
+            "re-tune silently moves the auto-revert pass/fail line with no config diff."
+        ),
+    )
     test_prompts: str = Field(
         default="safety_prompts.jsonl", description="Path to JSONL file with adversarial test prompts."
     )
@@ -775,6 +935,11 @@ class SafetyConfig(BaseModel):
             "for debugging."
         ),
     )
+
+    @field_validator("classifier_revision")
+    @classmethod
+    def _validate_classifier_revision(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_revision_literal(v, "evaluation.safety.classifier_revision")
 
     @model_validator(mode="after")
     def _validate_safety_gates(self):
@@ -870,6 +1035,13 @@ class JudgeConfig(BaseModel):
     judge_api_base: Optional[str] = Field(
         default=None, description="Override the judge API base URL (Azure OpenAI, self-hosted vLLM, etc.)."
     )
+    judge_model_revision: Optional[str] = Field(
+        default=None,
+        description=(
+            "Pin a *local* judge model to an HF Hub commit SHA or ref.  Ignored — and rejected at "
+            "validation — when `judge_api_key_env` is set (API judge)."
+        ),
+    )
     eval_dataset: str = Field(default="eval_prompts.jsonl", description="JSONL file of evaluation prompts to score.")
     min_score: float = Field(
         default=5.0,
@@ -891,6 +1063,29 @@ class JudgeConfig(BaseModel):
             "Opt in for debugging."
         ),
     )
+
+    @field_validator("judge_model_revision")
+    @classmethod
+    def _validate_judge_model_revision(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_revision_literal(v, "evaluation.llm_judge.judge_model_revision")
+
+    @model_validator(mode="after")
+    def _validate_judge_revision_target(self):
+        """Reject a judge pin on the API path, which never loads a local model.
+
+        ``judge_api_key_env`` selects the remote-endpoint judge; the pin would
+        apply to a ``from_pretrained`` call that does not happen, leaving the
+        operator believing the gate's scorer is pinned when it is a vendor
+        model that can change under them without notice.
+        """
+        if self.judge_model_revision is not None and self.judge_api_key_env is not None:
+            raise ValueError(
+                "evaluation.llm_judge.judge_model_revision pins a locally-loaded judge model, but "
+                f"judge_api_key_env={self.judge_api_key_env!r} selects the API judge, which never "
+                "loads judge_model from the Hub.  Remove judge_model_revision, or unset "
+                "judge_api_key_env to run a local judge."
+            )
+        return self
 
     @model_validator(mode="after")
     def _warn_extreme_min_score(self):
@@ -1057,6 +1252,12 @@ class SyntheticConfig(BaseModel):
         default="api",
         description="Teacher backend: `api` (OpenAI/Anthropic), `local` (HF), `file` (read pre-generated JSONL).",
     )
+    teacher_revision: Optional[str] = Field(
+        default=None,
+        description=(
+            "Pin the local teacher model to an HF Hub commit SHA or ref.  Only valid with `teacher_backend: local`."
+        ),
+    )
     api_base: str = Field(default="", description="API endpoint (e.g. `https://api.openai.com/v1`).")
     api_key: Optional[str] = Field(
         default=None, description="API key.  Prefer `api_key_env` to avoid committing secrets."
@@ -1109,6 +1310,30 @@ class SyntheticConfig(BaseModel):
             "which gates the exit code. Default `0.2` warns when more than 20% of prompts fail."
         ),
     )
+
+    @field_validator("teacher_revision")
+    @classmethod
+    def _validate_teacher_revision(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_revision_literal(v, "synthetic.teacher_revision")
+
+    @model_validator(mode="after")
+    def _validate_teacher_revision_backend(self):
+        """Reject a teacher pin on a backend that never loads a Hub model.
+
+        Checked unconditionally (unlike ``_validate_synthetic_payload``, which
+        early-returns when the block is disabled): ``teacher_backend`` defaults
+        to ``api``, so an operator who adds ``teacher_revision`` and forgets
+        ``teacher_backend: local`` would otherwise get a pin that is discarded
+        the moment the block is enabled.
+        """
+        if self.teacher_revision is not None and self.teacher_backend != "local":
+            raise ValueError(
+                "synthetic.teacher_revision pins a locally-loaded teacher model, but "
+                f"teacher_backend={self.teacher_backend!r} never loads teacher_model from the Hub "
+                "(`api` calls a remote endpoint, `file` reads pre-generated JSONL).  "
+                "Remove synthetic.teacher_revision, or set synthetic.teacher_backend: local."
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_synthetic_payload(self):

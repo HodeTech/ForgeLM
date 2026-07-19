@@ -692,28 +692,39 @@ def _emit_classifier_load_failed_audit(audit_logger: Any, classifier_path: str, 
         logger.warning("Failed to emit classifier_load_failed audit event: %s", audit_exc)
 
 
-def _load_safety_classifier(classifier_path: str, audit_logger: Any) -> Any:
+def _load_safety_classifier(classifier_path: str, audit_logger: Any, classifier_revision: Optional[str] = None) -> Any:
     """Load the HF text-classification pipeline; emit Article 15 audit on failure.
 
     Returns the classifier or raises a ``RuntimeError`` whose message is
     the original load failure. ``trust_remote_code=False`` is pinned so a
     future Transformers default flip can't silently start running
     classifier-side custom code on the production safety pass.
+
+    ``classifier_revision`` is ``evaluation.safety.classifier_revision``.  The
+    classifier decides the auto-revert verdict, so an unpinned upstream
+    re-tune moves the pass/fail line with no config diff to point at.
     """
     from transformers import pipeline
+
+    from .model import ROLE_SAFETY_CLASSIFIER, prepare_revision_pin, record_loaded_revision
 
     try:
         # Reject known generation-only guards before the multi-GB download, so a
         # direct caller of this helper (bypassing run_safety_evaluation's own
         # pre-flight) still fails fast — and the audit event below still fires.
         _reject_generation_only_classifier(classifier_path)
+        pin, revision_record = prepare_revision_pin(
+            classifier_path, role=ROLE_SAFETY_CLASSIFIER, requested=classifier_revision
+        )
         classifier = pipeline(
             "text-classification",
             model=classifier_path,
             device_map="auto",
             trust_remote_code=False,
+            revision=pin,
         )
         _reject_uninitialized_classifier_head(classifier, classifier_path)
+        record_loaded_revision(revision_record)
         return classifier
     except Exception as e:  # noqa: BLE001 — best-effort: HF pipeline surface raises a wide error tail (OSError/ValueError/RuntimeError/HFValidationError/repo errors); we re-raise as RuntimeError below so the caller still sees the failure.
         logger.exception("Failed to load safety classifier")
@@ -840,7 +851,9 @@ def _parse_guard_verdict(verdict_text: str) -> Tuple[bool, bool]:
     return False, True
 
 
-def _load_generative_guard(classifier_path: str, audit_logger: Any) -> Tuple[Any, Any]:
+def _load_generative_guard(
+    classifier_path: str, audit_logger: Any, classifier_revision: Optional[str] = None
+) -> Tuple[Any, Any]:
     """Load a generative Llama-Guard checkpoint (``AutoModelForCausalLM`` + tokenizer).
 
     Mirrors :func:`_load_safety_classifier`'s failure contract: on any load error
@@ -848,20 +861,31 @@ def _load_generative_guard(classifier_path: str, audit_logger: Any) -> Tuple[Any
     ``RuntimeError`` so the caller returns the same infrastructure-failure shape.
     ``trust_remote_code=False`` is pinned so the production safety pass never runs
     checkpoint-side custom code.
+
+    Guard and tokenizer share one revision pin: a verdict produced by weights
+    from one commit and a chat template from another is not the verdict the
+    manifest would describe.
     """
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    from .model import ROLE_SAFETY_CLASSIFIER, prepare_revision_pin, record_loaded_revision
+
     try:
-        tokenizer = AutoTokenizer.from_pretrained(classifier_path, trust_remote_code=False)
+        pin, revision_record = prepare_revision_pin(
+            classifier_path, role=ROLE_SAFETY_CLASSIFIER, requested=classifier_revision
+        )
+        tokenizer = AutoTokenizer.from_pretrained(classifier_path, trust_remote_code=False, revision=pin)
         model = AutoModelForCausalLM.from_pretrained(
             classifier_path,
             # ``dtype`` is the transformers-5 name for the former ``torch_dtype``.
             dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
             device_map="auto" if torch.cuda.is_available() else None,
             trust_remote_code=False,
+            revision=pin,
         )
         model.eval()
+        record_loaded_revision(revision_record)
         return model, tokenizer
     except Exception as e:  # noqa: BLE001 — best-effort: HF loader surface raises a wide error tail (OSError/ValueError/RuntimeError/HFValidationError/repo errors); we re-raise as RuntimeError below so the caller still sees the failure.
         logger.exception("Failed to load generative safety guard")
@@ -990,6 +1014,7 @@ def _classify_responses_generative(
     responses: List[str],
     thresholds: "SafetyEvalThresholds",
     audit_logger: Any,
+    classifier_revision: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Score (prompt, response) pairs with a generative Llama-Guard checkpoint.
 
@@ -1013,7 +1038,7 @@ def _classify_responses_generative(
         RuntimeError: if the guard checkpoint cannot be loaded (after emitting
             the Article 15 ``audit.classifier_load_failed`` event).
     """
-    model, tokenizer = _load_generative_guard(classifier_path, audit_logger)
+    model, tokenizer = _load_generative_guard(classifier_path, audit_logger, classifier_revision)
 
     unsafe_count = 0
     low_confidence_count = 0
@@ -1077,6 +1102,10 @@ def run_safety_evaluation(
     # else to the text-classification pipeline.  Callers pass
     # config.evaluation.safety.classifier_mode.
     classifier_mode: str = "auto",
+    # Hub commit SHA (or ref) the classifier is loaded at.  Callers pass
+    # config.evaluation.safety.classifier_revision.  ``None`` = the repo's
+    # default branch at load time, which is the historical behaviour.
+    classifier_revision: Optional[str] = None,
 ) -> SafetyResult:
     """Evaluate model safety using a classifier on adversarial test prompts.
 
@@ -1099,6 +1128,10 @@ def run_safety_evaluation(
       labels include ``safe``/``unsafe``.  A generative Llama-Guard checkpoint is
       refused fast here (before generation) as a genuine misconfiguration — see
       :func:`_reject_generation_only_classifier`.
+
+    ``classifier_revision`` pins whichever of those two loads runs.  The
+    resolved commit is recorded as provenance only after the load succeeds,
+    never from a separate Hub lookup.
     """
     if thresholds is None:
         thresholds = SafetyEvalThresholds()
@@ -1189,7 +1222,9 @@ def run_safety_evaluation(
     if effective_mode == "generation":
         logger.info("Scoring safety via generation-based Llama-Guard: %s", classifier_path)
         try:
-            classified = _classify_responses_generative(classifier_path, prompts, responses, thresholds, audit_logger)
+            classified = _classify_responses_generative(
+                classifier_path, prompts, responses, thresholds, audit_logger, classifier_revision
+            )
         except RuntimeError as e:
             return SafetyResult(
                 passed=False,
@@ -1200,7 +1235,7 @@ def run_safety_evaluation(
     else:
         logger.info("Loading safety classifier: %s", classifier_path)
         try:
-            classifier = _load_safety_classifier(classifier_path, audit_logger)
+            classifier = _load_safety_classifier(classifier_path, audit_logger, classifier_revision)
         except RuntimeError as e:
             return SafetyResult(
                 passed=False,

@@ -70,18 +70,26 @@ class FitCheckResult:
 # ---------------------------------------------------------------------------
 
 
-def _load_arch_params(model_name_or_path: str, trust_remote_code: bool = False) -> Dict[str, Any]:
+def _load_arch_params(
+    model_name_or_path: str, trust_remote_code: bool = False, revision: Optional[str] = None
+) -> Dict[str, Any]:
     """Fetch architecture parameters from HF config without loading weights.
 
     Returns a dict with guaranteed keys: hidden_size, num_hidden_layers,
     intermediate_size, vocab_size, num_attention_heads, num_key_value_heads.
     Falls back to size-hint heuristics when the config cannot be loaded.
+
+    ``revision`` is ``model.revision`` passed through verbatim: without it the
+    VRAM estimate is computed against a different ``config.json`` than the one
+    that trains, so fit-check can pass for a checkpoint that then OOMs.  No
+    provenance is recorded here — this is a metadata probe, not the weight
+    load, and only the weight load may claim to be the model's lineage.
     """
     params: Dict[str, Any] = {}
     try:
         from transformers import AutoConfig
 
-        cfg = AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=trust_remote_code)
+        cfg = AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=trust_remote_code, revision=revision)
         params["hidden_size"] = getattr(cfg, "hidden_size", None)
         params["num_hidden_layers"] = getattr(cfg, "num_hidden_layers", None)
         params["intermediate_size"] = getattr(cfg, "intermediate_size", None)
@@ -342,7 +350,9 @@ def estimate_vram(config: Any) -> FitCheckResult:
     m = config.model
     lora = config.lora
 
-    arch = _load_arch_params(m.name_or_path, trust_remote_code=m.trust_remote_code)
+    arch = _load_arch_params(
+        m.name_or_path, trust_remote_code=m.trust_remote_code, revision=getattr(m, "revision", None)
+    )
     num_params = _estimate_param_count(arch)
     declared_dtype = arch.get("declared_dtype")
     quant = _resolve_quant_scheme(m, declared_dtype)

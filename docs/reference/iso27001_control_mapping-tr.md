@@ -39,7 +39,7 @@
 | A.5.16 Kimlik yönetimi | FL-helps | `FORGELM_OPERATOR` env contract |
 | A.5.17 Kimlik doğrulama bilgileri | FL-helps | `safe_post` auth header'ları masklar; `_mask` token'ları gizler |
 | A.5.18 Erişim hakları | FL-helps | `human_approval` gate |
-| A.5.19 Tedarikçi ilişkilerinde bilgi güvenliği | FL-helps | `_fingerprint_hf_revision`; SBOM her bağımlılığı listeler |
+| A.5.19 Tedarikçi ilişkilerinde bilgi güvenliği | FL-helps | Dataset Hub commit SHA'sı (`_fingerprint_hf_revision`, `loaded` / `unverified` / `unresolved` olarak derecelendirilir); temel-model pin'i `model.revision` → `model_lineage.base_model_revision`; SBOM her bağımlılığı listeler.  Sınıflandırıcı / judge / ödül-modeli / merge-kaynağı yüklemeleri sabitlenmemiş kalır |
 | A.5.20 Tedarikçi anlaşmalarında bilgi güvenliği | OOS | — |
 | A.5.21 ICT tedarik zincirinde bilgi güvenliği yönetimi | FL-helps | SBOM (CycloneDX 1.5); `pip-audit` nightly |
 | A.5.22 Tedarikçi hizmetlerinin izlenmesi, gözden geçirilmesi ve değişim yönetimi | OOS | — |
@@ -101,7 +101,7 @@ SoA'sının uçtan uca auditable olması için tamlık adına listelenmiştir.
 | A.8.1 Kullanıcı uç cihazları | FL-helps | `forgelm doctor` env özeti |
 | A.8.2 Ayrıcalıklı erişim hakları | FL-helps | Operator attribution; approval-gate operator separation |
 | A.8.3 Bilgi erişim kısıtlaması | FL | Salted identifier hashing; `forgelm reverse-pii` Madde 15 |
-| A.8.4 Kaynak koduna erişim | FL-helps | `model.trust_remote_code=False` default; `_fingerprint_hf_revision` |
+| A.8.4 Kaynak koduna erişim | FL-helps | `model.trust_remote_code=False` default; `model.revision` temel-model deposunu sabitler ve bu, `trust_remote_code: true` ile çalıştırılacak depo-içi kodu sınırlar.  `_fingerprint_hf_revision` yalnızca **dataset** deposunu kapsar ve çalıştırılabilir kod hakkında kanıt değildir |
 | A.8.5 Güvenli kimlik doğrulama | FL-helps | `safe_post` non-HTTPS'de auth header reddeder |
 | A.8.6 Kapasite yönetimi | FL-helps | `forgelm doctor` resource report; `resource_usage` manifest block |
 | A.8.7 Kötü amaçlı yazılıma karşı koruma | OOS | — |
@@ -129,7 +129,7 @@ SoA'sının uçtan uca auditable olması için tamlık adına listelenmiştir.
 | A.8.29 Geliştirme ve kabul aşamasında güvenlik testi | FL-helps | `pytest` ~1493 test; `bandit` static analysis |
 | A.8.30 Dış kaynaklı geliştirme | OOS | — |
 | A.8.31 Geliştirme, test ve üretim ortamlarının ayrılması | FL-helps | `forgelm --dry-run`; staging dir |
-| A.8.32 Değişim yönetimi | FL | `human_approval.required/granted/rejected` audit zinciri; promotion'a kadar staging snapshot saklanır; `model_integrity.json`'daki (`model.integrity_verified` audit event) SHA-256 artefakt hash'leri `forgelm verify-integrity`'nin terfi edilmiş bir modeli kayıtlı manifest'ine karşı diff'lemesini sağlar — not: ForgeLM bugün upstream temel-model Hub revision SHA'sını pin'lemez, yalnızca config kimliğini (`config_hash`) ve çıktı artefaktlarını pin'ler |
+| A.8.32 Değişim yönetimi | FL | `human_approval.required/granted/rejected` audit zinciri; promotion'a kadar staging snapshot saklanır; `model_integrity.json`'daki (`model.integrity_verified` audit event) SHA-256 artefakt hash'leri `forgelm verify-integrity`'nin terfi edilmiş bir modeli kayıtlı manifest'ine karşı diff'lemesini sağlar — ve `model.revision` artık upstream temel-model Hub revision'ını sabitler; bu, `compliance_report.json`'daki `model_lineage.base_model_revision` içinde kaydedilir (`revision_resolved` null değilse o koşumdaki yükleme ona sabitlenmiştir).  Sınıflandırıcı, judge, GRPO ödül modeli ve merge kaynakları hâlâ sabitlenmemiştir |
 | A.8.33 Test bilgisi | FL-helps | `forgelm audit` test setlerinde de PII / secrets'i flag eder |
 | A.8.34 Denetim testi sırasında bilgi sistemlerinin korunması | OOS | — |
 

@@ -168,7 +168,7 @@ Each row classifies coverage as one of:
 | A.5.16 Identity management | FL-helps | `FORGELM_OPERATOR` env contract; `getpass.getuser()` fallback | Configure CI runner to set FORGELM_OPERATOR from CI metadata | Identity directory deployer-side |
 | A.5.17 Authentication information | FL-helps | `safe_post` rejects auth headers in non-HTTPS requests; `_mask` hides tokens in error logs | Vault-store webhook secrets, HF tokens, model-registry credentials | KMS deployer-side |
 | A.5.18 Access rights | FL-helps | `human_approval` gate gives a recordable "deny" path | Manage reviewer-list per `evaluation.require_human_approval` | RBAC deployer-side |
-| A.5.19 Information security in supplier relationships | FL-helps | `_fingerprint_hf_revision` pins HF Hub commit SHA; SBOM lists every transitive dep | Vendor risk assessments for HF, base-model providers | Vendor questionnaires deployer-side |
+| A.5.19 Information security in supplier relationships | FL-helps | `_fingerprint_hf_revision` records the **dataset** repo's Hub commit SHA, labelled `loaded` (the SHA `load_dataset` was pinned to) or `unverified` (a lookup not tied to any load); `model.revision` pins the **base model** and `model_lineage.base_model_revision` records what the load used; SBOM lists every transitive dep. **Residual risk:** the safety classifier, LLM judge, GRPO reward model and merge sources are still loaded unpinned — see `docs/reference/configuration.md` "Hub revision pinning" | Vendor risk assessments for HF, base-model providers | Vendor questionnaires deployer-side |
 | A.5.20 Addressing information security within supplier agreements | OOS | — | Supplier MSA security clauses | Out of scope |
 | A.5.21 Managing information security in the ICT supply chain | FL-helps | SBOM (CycloneDX 1.5 per OS/py-version) attached to every release; `pip-audit` (Faz 23) | Track upstream CVE advisories; subscribe to GitHub Dependabot for forgelm itself | Org-wide supply-chain program deployer-side |
 | A.5.22 Monitoring, review and change management of supplier services | OOS | — | Supplier annual review | Out of scope |
@@ -232,7 +232,7 @@ ForgeLM contributes nothing here.
 | A.8.1 User endpoint devices | FL-helps | `forgelm doctor` — Python / CUDA / GPU / extras / HF auth / disk / `FORGELM_OPERATOR` checks | Endpoint hardening (disk encryption, MDM) |
 | A.8.2 Privileged access rights | FL-helps | Operator attribution on every audit entry; approval gate requires explicit non-trainer operator | RBAC at IdP layer |
 | A.8.3 Information access restriction | FL | Salted identifier hashing in audit events; `forgelm reverse-pii` exposes Article 15 access path; `data_audit_report.json` PII registry | Subject access request workflow |
-| A.8.4 Access to source code | FL-helps | `model.trust_remote_code` defaults `False`; `_fingerprint_hf_revision` pins commit SHA | VCS access control |
+| A.8.4 Access to source code | FL-helps | `model.trust_remote_code` defaults `False`. **`model.revision` pins the base-model repo, which is what bounds the repo-bundled code `trust_remote_code: true` would execute** — a run with `trust_remote_code: true` and no `model.revision` executes whatever code the upstream default branch carries at load time. `_fingerprint_hf_revision` is evidence about the **dataset** repo only and says nothing about executable code. Classifier / judge / reward-model loads are not pinned (they run with `trust_remote_code=False`) | VCS access control; require `model.revision` wherever `trust_remote_code: true` is approved |
 | A.8.5 Secure authentication | FL-helps | `safe_post` rejects auth headers on non-HTTPS; webhook secret discipline | MFA + token rotation |
 | A.8.6 Capacity management | FL-helps | `forgelm doctor` reports VRAM / CPU / RAM; `resource_usage` block in manifest | Quota / autoscaling |
 | A.8.7 Protection against malware | OOS | — | Antivirus on training hosts |
@@ -321,7 +321,7 @@ categories are scoped per-engagement.
 | CC7.5   | Identifies, develops corrective actions| `human_approval.rejected` event; `sop_change_management.md`     | CAPA cadence |
 | CC8.1   | Authorises changes                     | `forgelm approve` Article 14 gate; staging dir                  | Change Advisory Board |
 | CC9.1   | Identifies, manages risks              | `risk_assessment` config + safety eval; `risk_treatment_plan.md` (Faz 23) | Risk register |
-| CC9.2   | Manages vendor + business-partner risk | SBOM; HF Hub revision pin; license extraction                    | Vendor-risk programme |
+| CC9.2   | Manages vendor + business-partner risk | SBOM; dataset Hub commit SHA (`_fingerprint_hf_revision`, labelled `loaded` / `unverified` / `unresolved`); base-model pin (`model.revision` → `model_lineage.base_model_revision`); license extraction.  **Not covered:** safety classifier, LLM judge, GRPO reward model, merge sources | Vendor-risk programme |
 
 ### 4.2 Availability (A1.x)
 
@@ -340,7 +340,7 @@ ForgeLM is a single-node CLI; availability is dominantly deployer-side.
 | PI1.1 Quality of inputs | `compute_dataset_fingerprint` (SHA-256 + size + mtime); `data_governance_report` (collection_method, annotation_process, known_biases, personal_data_included, dpia_completed) |
 | PI1.2 System processing | `forgelm verify-audit` validates HMAC chain end-to-end; `data_audit_report.json` flags PII / secrets / dedup before training |
 | PI1.3 Outputs are accurate | `model_integrity.json` SHA-256 checksums per artefact; `model_card.md` with HF YAML front-matter |
-| PI1.4 Inputs traceable | `_describe_adapter_method` canonicalisation; `pipeline.config_hash`; HF-revision pin |
+| PI1.4 Inputs traceable | `_describe_adapter_method` canonicalisation; `pipeline.config_hash`; dataset Hub commit SHA — trustworthy as input traceability only when `hf_revision_source: loaded`, since `unverified` is a manifest-time lookup with no coupling to the load |
 | PI1.5 Outputs traceable | Annex IV bundle co-locates manifest + report + audit + integrity in one ZIP |
 
 ### 4.4 Confidentiality (C1.x)
@@ -659,7 +659,9 @@ A.6.8, A.8.15, A.8.16.
    - "Show me the change controls" → CI logs + `human_approval.granted`
      events + `config_hash` (per-run manifest sidecar field).
    - "Show me the data lineage" → `data_provenance.json`,
-     `compute_dataset_fingerprint`, HF Hub revision pin.
+     `compute_dataset_fingerprint`, and the dataset Hub commit SHA —
+     check `hf_revision_source: loaded` before treating the SHA as
+     evidence of the corpus that trained the model.
    - "Show me the supply chain" → SBOM artefacts on every release tag.
    - "Show me the access controls" → `FORGELM_OPERATOR` rotation log
      + IdP MFA records.

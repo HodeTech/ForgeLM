@@ -46,7 +46,7 @@ operatör-tarafı eylem.
 | A.5.16 Kimlik yönetimi | YES | `FORGELM_OPERATOR` env contract | CI runner identity'yi yapılandır |
 | A.5.17 Kimlik doğrulama bilgileri | YES | `safe_post` auth header'larını masklar; `_mask` token'ları gizler | Vault-store webhook secret'ları, HF token'ları |
 | A.5.18 Erişim hakları | YES | `human_approval` gate | IdP'de RBAC |
-| A.5.19 Tedarikçi ilişkilerinde bilgi güvenliği | YES | `_fingerprint_hf_revision`; SBOM | Vendor risk programı |
+| A.5.19 Tedarikçi ilişkilerinde bilgi güvenliği | YES | Dataset Hub commit SHA'sı (`_fingerprint_hf_revision`, `loaded` / `unverified` / `unresolved` olarak derecelendirilir); temel-model pin'i `model.revision`; SBOM.  Sınıflandırıcı / judge / ödül-modeli / merge-kaynağı yüklemeleri sabitlenmemiş | Vendor risk programı |
 | A.5.20 Tedarikçi anlaşmalarında bilgi güvenliği | YES | Standart tedarikçi MSA güvenlik clause'ları | Benimse |
 | A.5.21 ICT tedarik zincirinde bilgi güvenliği yönetimi | YES | SBOM (Wave 2 dönemi); `pip-audit` nightly (Wave 4) | CVE izleme |
 | A.5.22 Tedarikçi hizmetlerinin izlenmesi, gözden geçirilmesi ve değişim yönetimi | YES | Vendor yıllık review | Benimse |
@@ -110,7 +110,7 @@ ForgeLM-spesifik kontrol envanteriyle ilgilidir.
 | A.8.1 Kullanıcı uç cihazları | YES | `forgelm doctor` — Python / CUDA / GPU / extras / HF auth / disk / `FORGELM_OPERATOR` checks | Endpoint hardening |
 | A.8.2 Ayrıcalıklı erişim hakları | YES | Operatör attribution; approval gate non-trainer operator | IdP'de RBAC |
 | A.8.3 Bilgi erişim kısıtlaması | YES | Salted identifier hashing; `forgelm reverse-pii` Md. 15 | DSAR workflow |
-| A.8.4 Kaynak koduna erişim | YES | `model.trust_remote_code=False` default; `_fingerprint_hf_revision` commit SHA pin'ler | VCS erişim kontrolü |
+| A.8.4 Kaynak koduna erişim | YES | `model.trust_remote_code=False` default; `model.revision` temel-model deposunu sabitler ve `trust_remote_code: true` ile çalıştırılacak depo-içi kodu sınırlar.  `_fingerprint_hf_revision` yalnızca **dataset** deposunu kapsar | VCS erişim kontrolü; `trust_remote_code: true` onaylanan her yerde `model.revision` zorunlu tutun |
 | A.8.5 Güvenli kimlik doğrulama | YES | `safe_post` non-HTTPS'de auth header reddeder; webhook secret discipline | MFA + token rotasyonu |
 | A.8.6 Kapasite yönetimi | YES | `forgelm doctor` resource report; `resource_usage` manifest block | Quota / autoscaling |
 | A.8.7 Kötü amaçlı yazılıma karşı koruma | YES | Eğitim host'larında antivirus | Benimse |

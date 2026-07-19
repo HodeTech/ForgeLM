@@ -1221,8 +1221,9 @@ class TestClassifierModeRouting:
 
         called = {}
 
-        def _fake_load(path, audit):
+        def _fake_load(path, audit, revision=None):
             called["path"] = path
+            called["revision"] = revision
             return MagicMock()
 
         monkeypatch.setattr(_safety, "_load_safety_classifier", _fake_load)

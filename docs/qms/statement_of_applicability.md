@@ -45,7 +45,7 @@ contribution → deployer-side action.
 | A.5.16 Identity management | YES | `FORGELM_OPERATOR` env contract | Configure CI runner identity |
 | A.5.17 Authentication information | YES | `safe_post` masks auth headers; `_mask` hides tokens | Vault-store webhook secrets, HF tokens |
 | A.5.18 Access rights | YES | `human_approval` gate | RBAC at IdP |
-| A.5.19 Information security in supplier relationships | YES | `_fingerprint_hf_revision`; SBOM | Vendor risk programme |
+| A.5.19 Information security in supplier relationships | YES | Dataset Hub commit SHA (`_fingerprint_hf_revision`, graded `loaded` / `unverified` / `unresolved`); base-model pin `model.revision`; SBOM.  Classifier / judge / reward-model / merge-source loads unpinned | Vendor risk programme |
 | A.5.20 Addressing information security within supplier agreements | YES | Standard supplier MSA security clauses | Adopt |
 | A.5.21 Managing information security in the ICT supply chain | YES | SBOM (Wave 2 era); `pip-audit` nightly (Wave 4) | CVE monitoring |
 | A.5.22 Monitoring, review and change management of supplier services | YES | Vendor annual review | Adopt |
@@ -109,7 +109,7 @@ ForgeLM-specific control inventory.
 | A.8.1 User endpoint devices | YES | `forgelm doctor` — Python / CUDA / GPU / extras / HF auth / disk / `FORGELM_OPERATOR` checks | Endpoint hardening |
 | A.8.2 Privileged access rights | YES | Operator attribution; approval gate non-trainer operator | RBAC at IdP |
 | A.8.3 Information access restriction | YES | Salted identifier hashing; `forgelm reverse-pii` Article 15 | DSAR workflow |
-| A.8.4 Access to source code | YES | `model.trust_remote_code=False` default; `_fingerprint_hf_revision` pins commit SHA | VCS access control |
+| A.8.4 Access to source code | YES | `model.trust_remote_code=False` default; `model.revision` pins the base-model repo, bounding the repo-bundled code `trust_remote_code: true` would run.  `_fingerprint_hf_revision` covers the **dataset** repo only | VCS access control; require `model.revision` wherever `trust_remote_code: true` is approved |
 | A.8.5 Secure authentication | YES | `safe_post` rejects auth headers on non-HTTPS; webhook secret discipline | MFA + token rotation |
 | A.8.6 Capacity management | YES | `forgelm doctor` resource report; `resource_usage` manifest block | Quota / autoscaling |
 | A.8.7 Protection against malware | YES | Antivirus on training hosts | Adopt |

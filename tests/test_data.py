@@ -276,3 +276,195 @@ class TestLoadSingleDataset:
         assert result == "sentinel-dataset"
         assert seen["builder"] == expected_builder
         assert seen["data_files"] == str(path)
+
+
+_FAKE_SHA = "a" * 39 + "b"  # 40 lowercase-hex chars
+
+
+@pytest.fixture
+def _clean_revision_registry(monkeypatch):
+    """Isolate the process-global resolved-revision registry per test."""
+    monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {})
+    for var in data_mod._HF_OFFLINE_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    return data_mod._RESOLVED_DATASET_REVISIONS
+
+
+class TestCommitShaPredicate:
+    @pytest.mark.parametrize("good", [_FAKE_SHA, "0" * 40, "0123456789abcdef" * 2 + "01234567"])
+    def test_accepts_canonical_sha(self, good):
+        assert data_mod._is_commit_sha(good)
+
+    @pytest.mark.parametrize(
+        "bad",
+        [None, "", "main", "v1.0", "A" * 40, "a" * 39, "a" * 41, "refs/pr/3", b"a" * 40],
+    )
+    def test_rejects_everything_else(self, bad):
+        # A branch/tag/uppercase/short value must never be recorded where an
+        # auditor reads a commit SHA.
+        assert not data_mod._is_commit_sha(bad)
+
+
+class TestHubDatasetIdPredicate:
+    @pytest.mark.parametrize("hub_id", ["org/dataset", "squad"])
+    def test_plain_repo_ids(self, hub_id):
+        assert data_mod._looks_like_hub_dataset_id(hub_id)
+
+    @pytest.mark.parametrize(
+        "not_hub",
+        ["", "./local/dir", "/abs/path", "~/data", "hf://datasets/org/name", "a/b/c"],
+    )
+    def test_rejects_paths_and_urls(self, not_hub):
+        assert not data_mod._looks_like_hub_dataset_id(not_hub)
+
+    def test_rejects_existing_local_directory(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "corpus").mkdir()
+        assert not data_mod._looks_like_hub_dataset_id("corpus")
+
+
+class TestOfflineModeDetection:
+    def test_false_when_unset(self, _clean_revision_registry):
+        assert data_mod._hf_offline_mode() is False
+
+    @pytest.mark.parametrize("value", ["", "0", "false", "no", "off", "  OFF  "])
+    def test_falsey_values_are_not_offline(self, _clean_revision_registry, monkeypatch, value):
+        monkeypatch.setenv("HF_HUB_OFFLINE", value)
+        assert data_mod._hf_offline_mode() is False
+
+    @pytest.mark.parametrize("var", ["HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE"])
+    def test_either_var_forces_offline(self, _clean_revision_registry, monkeypatch, var):
+        monkeypatch.setenv(var, "1")
+        assert data_mod._hf_offline_mode() is True
+
+
+class TestResolveHubDatasetRevision:
+    """The resolve half of resolve-then-pin: it must never invent a SHA, and
+    must not reach the network when the run is air-gapped."""
+
+    def test_offline_short_circuits_without_touching_hf_api(self, _clean_revision_registry, monkeypatch):
+        import huggingface_hub
+
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+
+        # A *raising* sentinel would be useless here: the resolver's
+        # best-effort `except Exception` would swallow it and the test would
+        # pass even with the offline guard deleted. Record the call instead.
+        calls = []
+        monkeypatch.setattr(huggingface_hub, "HfApi", lambda *a, **k: calls.append(1))
+
+        assert data_mod._resolve_hub_dataset_revision("org/dataset") is None
+        assert calls == []
+
+    def test_returns_sha_from_dataset_info(self, _clean_revision_registry, monkeypatch):
+        import huggingface_hub
+
+        class _Api:
+            def dataset_info(self, path):
+                assert path == "org/dataset"
+                return type("Info", (), {"sha": _FAKE_SHA})()
+
+        monkeypatch.setattr(huggingface_hub, "HfApi", _Api)
+        assert data_mod._resolve_hub_dataset_revision("org/dataset") == _FAKE_SHA
+
+    @pytest.mark.parametrize("sha", [None, "", "main", "short"])
+    def test_non_sha_answer_is_discarded(self, _clean_revision_registry, monkeypatch, sha):
+        import huggingface_hub
+
+        class _Api:
+            def dataset_info(self, path):
+                return type("Info", (), {"sha": sha})()
+
+        monkeypatch.setattr(huggingface_hub, "HfApi", _Api)
+        assert data_mod._resolve_hub_dataset_revision("org/dataset") is None
+
+    def test_transport_failure_is_best_effort(self, _clean_revision_registry, monkeypatch):
+        import huggingface_hub
+
+        class _Api:
+            def dataset_info(self, path):
+                raise OSError("hub down")
+
+        monkeypatch.setattr(huggingface_hub, "HfApi", _Api)
+        assert data_mod._resolve_hub_dataset_revision("org/dataset") is None
+
+
+class TestLoadSingleDatasetPinsRevision:
+    """``load_dataset`` must be pinned to the SHA that gets recorded, so the
+    Annex IV manifest can never name a corpus that was not read."""
+
+    @staticmethod
+    def _patch_load(monkeypatch, seen):
+        import datasets
+
+        def _fake_load_dataset(path, revision=None, **kwargs):
+            seen.append({"path": path, "revision": revision})
+            return "sentinel-dataset"
+
+        monkeypatch.setattr(datasets, "load_dataset", _fake_load_dataset)
+
+    def test_resolved_sha_is_passed_to_load_and_then_recorded(self, _clean_revision_registry, monkeypatch):
+        seen = []
+        self._patch_load(monkeypatch, seen)
+        monkeypatch.setattr(data_mod, "_resolve_hub_dataset_revision", lambda path: _FAKE_SHA)
+
+        assert data_mod._load_single_dataset("org/dataset") == "sentinel-dataset"
+        assert seen == [{"path": "org/dataset", "revision": _FAKE_SHA}]
+        assert data_mod.get_loaded_dataset_revision("org/dataset") == _FAKE_SHA
+
+    def test_unresolvable_revision_loads_unpinned_and_records_nothing(self, _clean_revision_registry, monkeypatch):
+        seen = []
+        self._patch_load(monkeypatch, seen)
+        monkeypatch.setattr(data_mod, "_resolve_hub_dataset_revision", lambda path: None)
+
+        assert data_mod._load_single_dataset("org/dataset") == "sentinel-dataset"
+        assert seen == [{"path": "org/dataset", "revision": None}]
+        assert data_mod.get_loaded_dataset_revision("org/dataset") is None
+
+    def test_failed_pinned_load_records_no_revision(self, _clean_revision_registry, monkeypatch):
+        import datasets
+
+        def _fake_load_dataset(path, revision=None, **kwargs):
+            raise OSError("gated repo")
+
+        monkeypatch.setattr(datasets, "load_dataset", _fake_load_dataset)
+        monkeypatch.setattr(data_mod, "_resolve_hub_dataset_revision", lambda path: _FAKE_SHA)
+
+        with pytest.raises(OSError):
+            data_mod._load_single_dataset("org/dataset")
+        assert data_mod.get_loaded_dataset_revision("org/dataset") is None
+
+    def test_local_file_load_is_never_pinned_or_recorded(self, _clean_revision_registry, monkeypatch, tmp_path):
+        seen = []
+        import datasets
+
+        def _fake_load_dataset(builder, data_files=None, revision=None):
+            seen.append({"builder": builder, "revision": revision})
+            return "sentinel-dataset"
+
+        monkeypatch.setattr(datasets, "load_dataset", _fake_load_dataset)
+
+        def _must_not_resolve(path):
+            raise AssertionError("a local file has no Hub revision to resolve")
+
+        monkeypatch.setattr(data_mod, "_resolve_hub_dataset_revision", _must_not_resolve)
+
+        path = tmp_path / "corpus.jsonl"
+        path.write_text("{}")
+        assert data_mod._load_single_dataset(str(path)) == "sentinel-dataset"
+        assert seen == [{"builder": "json", "revision": None}]
+        assert data_mod.get_loaded_dataset_revision(str(path)) is None
+
+    def test_local_directory_load_is_never_pinned(self, _clean_revision_registry, monkeypatch, tmp_path):
+        seen = []
+        self._patch_load(monkeypatch, seen)
+
+        def _must_not_resolve(path):
+            raise AssertionError("a local directory has no Hub revision to resolve")
+
+        monkeypatch.setattr(data_mod, "_resolve_hub_dataset_revision", _must_not_resolve)
+
+        d = tmp_path / "corpus_dir"
+        d.mkdir()
+        assert data_mod._load_single_dataset(str(d)) == "sentinel-dataset"
+        assert seen == [{"path": str(d), "revision": None}]

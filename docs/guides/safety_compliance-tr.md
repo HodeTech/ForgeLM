@@ -363,6 +363,13 @@ değildir.
   "generated_at": "2026-03-23T14:30:00+00:00",
   "model_lineage": {
     "base_model": "meta-llama/Llama-3.1-8B-Instruct",
+    "base_model_revision": {
+      "repo_id": "meta-llama/Llama-3.1-8B-Instruct",
+      "revision_requested": null,
+      "revision_resolved": "0e9e39f249a16976918f6564b8830bc894c89659",
+      "resolution_source": "resolved",
+      "revision_pinned": "0e9e39f249a16976918f6564b8830bc894c89659"
+    },
     "backend": "transformers",
     "adapter_method": "QLoRA (4-bit NF4) + DoRA + r=16",
     "quantization": "4-bit NF4",

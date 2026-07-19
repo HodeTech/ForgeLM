@@ -534,3 +534,81 @@ class TestEstimateVramReadsCheckpointDtype:
         assert r_bf16.breakdown["quant_scheme"] == "bf16"
         assert r_fp32.breakdown["quant_scheme"] == "fp32"
         assert r_fp32.breakdown["base_model_gb"] == pytest.approx(2 * r_bf16.breakdown["base_model_gb"], rel=0.01)
+
+
+# ---------------------------------------------------------------------------
+# Revision pinning for the AutoConfig probe
+# ---------------------------------------------------------------------------
+
+
+class TestFitCheckRevisionPin:
+    """``model.revision`` reaches the ``AutoConfig`` probe.
+
+    Without it the VRAM estimate is computed against a different ``config.json``
+    than the one that trains, so fit-check can pass for a checkpoint that then
+    OOMs — and nothing else in the suite would notice.
+    """
+
+    _SHA = "0" * 39 + "a"
+
+    def _capturing_transformers(self, captured):
+        from types import SimpleNamespace
+
+        def _from_pretrained(path, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                hidden_size=4096,
+                num_hidden_layers=32,
+                intermediate_size=11008,
+                vocab_size=32000,
+                num_attention_heads=32,
+                num_key_value_heads=8,
+            )
+
+        stub = MagicMock()
+        stub.AutoConfig.from_pretrained = _from_pretrained
+        return stub
+
+    def test_revision_reaches_autoconfig(self):
+        captured = {}
+        with patch.dict(sys.modules, {"transformers": self._capturing_transformers(captured)}):
+            from forgelm.fit_check import _load_arch_params
+
+            _load_arch_params("org/model", revision=self._SHA)
+        assert captured["revision"] == self._SHA
+
+    def test_default_is_unpinned(self):
+        captured = {}
+        with patch.dict(sys.modules, {"transformers": self._capturing_transformers(captured)}):
+            from forgelm.fit_check import _load_arch_params
+
+            _load_arch_params("org/model")
+        assert captured["revision"] is None
+
+    def test_estimate_vram_forwards_the_configured_revision(self, minimal_config):
+        captured = {}
+        cfg = ForgeConfig(**minimal_config(model={"name_or_path": "org/model", "revision": self._SHA}))
+        with patch.dict(
+            sys.modules,
+            {"torch": _make_torch_no_cuda(), "transformers": self._capturing_transformers(captured)},
+        ):
+            from forgelm.fit_check import estimate_vram
+
+            estimate_vram(cfg)
+        assert captured["revision"] == self._SHA
+
+    def test_fit_check_records_no_model_provenance(self, minimal_config):
+        # A metadata probe is not the weight load.  Only the weight load may
+        # claim to be the model's lineage.
+        from forgelm import model as model_mod
+
+        model_mod._RESOLVED_MODEL_REVISIONS.clear()
+        cfg = ForgeConfig(**minimal_config(model={"name_or_path": "org/model", "revision": self._SHA}))
+        with patch.dict(
+            sys.modules,
+            {"torch": _make_torch_no_cuda(), "transformers": self._capturing_transformers({})},
+        ):
+            from forgelm.fit_check import estimate_vram
+
+            estimate_vram(cfg)
+        assert model_mod.get_loaded_model_revision("org/model") is None

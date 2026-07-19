@@ -28,7 +28,8 @@ direct ForgeLM evidence:
    events + `config_hash` (per-run manifest sidecar field) stamped per run. Every
    model promotion is dual-controlled and forensically attributed.
 3. **Data lineage** — `data_provenance.json` (SHA-256 fingerprint +
-   size + mtime + HF Hub revision pin); `data_governance_report.json`
+   size + mtime + the dataset's HF Hub commit SHA, graded by
+   `hf_revision_source`); `data_governance_report.json`
    (collection_method, annotation_process, known_biases,
    personal_data_included, dpia_completed).
 4. **Supply chain** — CycloneDX 1.5 SBOM emitted per release tag for
@@ -110,15 +111,24 @@ Each `human_approval.granted` entry carries:
 - `prev_hash` + `_hmac` — chain integrity.
 - The training-run identity — `config_hash`, the base model name +
   adapter method (`model_lineage`), and the dataset fingerprint
-  (`data_provenance`) — lives in the run's `training_manifest.yaml`;
+  (`data_provenance`) — lives in the run's `compliance_report.json`
+  (the `training_manifest.yaml` sidecar beside it is a flattened
+  operator summary and carries none of those three blocks);
   `config_hash` is additionally stamped on the earlier
   `human_approval.required` audit event, so an auditor pivots by
-  `run_id` to that event (or the manifest) and diffs the YAML in `git
-  log`. (Note: ForgeLM records the base model by name and pins the
-  *dataset*'s HF Hub commit SHA, but does **not** pin an upstream
-  base-model Hub revision SHA; the promoted artefacts are hash-verified
-  through `model_integrity.json` / the `model.integrity_verified`
-  event instead. `forgelm approvals` reads `config_hash` from the
+  `run_id` to that event (or the report) and diffs the YAML in `git
+  log`. (Note: ForgeLM records the base model by name and, when
+  `model.revision` is set — or when the commit can be resolved without
+  one — pins the base-model load and records that commit under
+  `model_lineage.base_model_revision`. Treat `revision_resolved` as
+  reproducibility evidence only when it is non-null; the
+  `revision_requested` value beside it shows plainly when the operator
+  pinned a moving ref such as `main`. The safety classifier, LLM judge,
+  GRPO reward model and merge-source models are **still loaded
+  unpinned** — their `*_revision` config fields are accepted and
+  validated but not yet forwarded to any loader. The promoted artefacts
+  remain hash-verified through `model_integrity.json` / the
+  `model.integrity_verified` event. `forgelm approvals` reads `config_hash` from the
   `human_approval.required` event and falls back to a legacy
   `config_fingerprint` key that no current producer emits. See
   `docs/reference/approvals_subcommand.md`.)
@@ -151,6 +161,7 @@ cat ./outputs/data_provenance.json
 # {
 #   "dataset_id": "Acme/customer-support-v3",
 #   "hf_revision": "9c7c8f3...",
+#   "hf_revision_source": "loaded",
 #   "sha256": "ab12...",
 #   "size_bytes": 14982011,
 #   "modified": "2026-05-01T08:14:33Z",
@@ -158,11 +169,27 @@ cat ./outputs/data_provenance.json
 # }
 ```
 
-The `sha256` + `hf_revision` together pin the corpus deterministically
-(local files also carry `size_bytes` + `modified`; the field shape
-comes from `forgelm.compliance._fingerprint_local_file`). An auditor
-running `forgelm audit data/*.jsonl` on the same input must see the
-same fingerprint.
+`sha256` + `hf_revision` together pin the corpus deterministically
+**only when `hf_revision_source` reads `loaded`** (local files also
+carry `size_bytes` + `modified`; the field shape comes from
+`forgelm.compliance._fingerprint_local_file`). An auditor running
+`forgelm audit data/*.jsonl` on the same input must see the same
+fingerprint.
+
+Read `hf_revision_source` before you read `hf_revision`:
+
+| `hf_revision_source` | What it means | Usable as evidence? |
+|---|---|---|
+| `loaded` | ForgeLM resolved the repo's commit, passed that exact SHA to `load_dataset(..., revision=...)`, and the load succeeded. `hf_revision` is the corpus that was read. | **Yes** |
+| `unverified` | No load in this process pinned the dataset. `hf_revision` is a Hub lookup of the repo's current default-branch head, made when the manifest was written. A breadcrumb, not proof. `forgelm compliance-only` always produces this, because it writes a bundle without ever reading the corpus. | **No** |
+| `unresolved` | No SHA could be established. `hf_revision` is **absent** and `hf_revision_reason` states why (offline mode, `huggingface_hub` not installed, Hub unreachable, gated repo, no SHA returned). ForgeLM never invents a SHA. | **No — and nothing is claimed** |
+
+**Manifests produced before this release carry `hf_revision` with no
+`hf_revision_source` key.** Those SHAs were obtained by an independent
+Hub lookup at manifest-generation time with no coupling to the load, so
+they are `unverified` in the sense above even though they are unlabelled.
+Do not treat a bare `hf_revision` from an older bundle as proof of which
+corpus trained the model.
 
 ### Q4: "Show me the supply chain"
 

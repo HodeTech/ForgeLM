@@ -276,23 +276,39 @@ class SyntheticDataGenerator:
         return response.strip()
 
     def _load_local_teacher(self):
-        """Lazy-load the local teacher model."""
+        """Lazy-load the local teacher model.
+
+        Pinned via ``synthetic.teacher_revision``: the teacher's generations
+        *become* the training corpus, so an unpinned teacher is an Article 10
+        data-provenance gap, not merely a reproducibility inconvenience.  The
+        resolved commit is recorded only after both loads succeed.
+        """
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
+        from .model import ROLE_TEACHER_MODEL, prepare_revision_pin, record_loaded_revision
+
         logger.info("Loading local teacher model: %s", self.synth_cfg.teacher_model)
+        pin, revision_record = prepare_revision_pin(
+            self.synth_cfg.teacher_model,
+            role=ROLE_TEACHER_MODEL,
+            requested=getattr(self.synth_cfg, "teacher_revision", None),
+            offline=getattr(getattr(self.config, "model", None), "offline", False),
+        )
         # ``trust_remote_code=False`` is the secure default (Phase 7 acceptance):
         # synthetic-data generation must never execute repo-bundled code from
         # an arbitrary teacher checkpoint.  Operators that genuinely need a
         # custom architecture should fork and pre-convert.
-        tokenizer = AutoTokenizer.from_pretrained(self.synth_cfg.teacher_model, trust_remote_code=False)
+        tokenizer = AutoTokenizer.from_pretrained(self.synth_cfg.teacher_model, trust_remote_code=False, revision=pin)
         model = AutoModelForCausalLM.from_pretrained(
             self.synth_cfg.teacher_model,
             # ``dtype`` is the transformers-5 name for the former ``torch_dtype``.
             dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
             device_map="auto" if torch.cuda.is_available() else None,
             trust_remote_code=False,
+            revision=pin,
         )
+        record_loaded_revision(revision_record)
         self._teacher = (model, tokenizer)
 
     def _load_file_responses(self) -> dict:

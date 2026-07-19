@@ -148,7 +148,7 @@ This model was trained using the following ForgeLM YAML configuration:
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-base_model = AutoModelForCausalLM.from_pretrained("{base_model}")
+base_model = AutoModelForCausalLM.from_pretrained("{base_model}"{base_model_revision_arg})
 model = PeftModel.from_pretrained(base_model, "{model_path}")
 tokenizer = AutoTokenizer.from_pretrained("{model_path}")
 ```
@@ -238,6 +238,29 @@ def _build_extra_tags(config: Any, trainer_type: str, safety_cfg: Any) -> str:
     return "\n".join(tags)
 
 
+def _base_model_revision_arg(config: Any) -> str:
+    """Render the ``revision=`` argument for the card's usage snippet.
+
+    Returns ``', revision="<sha>"'`` when a base-model load in *this* process
+    was pinned to a confirmed commit, otherwise ``""``.
+
+    Why this is not cosmetic: a card shipped inside an Annex IV bundle that
+    tells a downstream reader to ``from_pretrained("org/model")`` with no
+    revision hands them the repo's default branch — which is exactly the
+    reproducibility property the surrounding bundle claims to establish.  When
+    the SHA is unknown the kwarg is omitted entirely rather than emitted as
+    ``revision="None"``, because a broken snippet teaches the reader nothing
+    and a fabricated one teaches them something false.
+    """
+    from .model import get_loaded_model_revision
+
+    record = get_loaded_model_revision(config.model.name_or_path)
+    sha = (record or {}).get("revision_resolved")
+    if not sha:
+        return ""
+    return f', revision="{_neutralize_md_inline(sha)}"'
+
+
 def generate_model_card(
     config: Any,
     metrics: Dict[str, float],
@@ -311,6 +334,7 @@ def generate_model_card(
         safety_section=safety_section,
         config_block=config_block,
         model_path=model_path,
+        base_model_revision_arg=_base_model_revision_arg(config),
         version=__version__,
         extra_tags=extra_tags_str,
     )

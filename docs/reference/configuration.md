@@ -16,6 +16,7 @@ See `config_template.yaml` for a complete annotated example.
 | `backend` | string | `"transformers"` | `"transformers"` or `"unsloth"` (2-5x faster, Linux only) |
 | `trust_remote_code` | bool | `false` | Allow custom code from model repos. **Security risk** — only enable for models that require it |
 | `offline` | bool | `false` | Air-gapped mode: no HF Hub calls. Models/datasets must be local |
+| `revision` | string | `null` | Pin the base model + tokenizer to an HF Hub commit SHA (40-hex) or a branch/tag. **Honoured today.** See [Hub revision pinning](#hub-revision-pinning) |
 | `bnb_4bit_use_double_quant` | bool | `true` | Double quantization for extra VRAM savings |
 | `bnb_4bit_quant_type` | string | `"nf4"` | Quantization type (`"nf4"` or `"fp4"`) |
 | `bnb_4bit_compute_dtype` | string | `"auto"` | Compute dtype: `"auto"`, `"bfloat16"`, `"float16"`, `"float32"` (each of the last three also accepts the short alias `"bf16"`, `"fp16"`, `"fp32"`) |
@@ -149,6 +150,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `grpo_num_generations` | int | `4` | GRPO: responses per prompt |
 | `grpo_max_completion_length` | int | `512` | GRPO: max tokens per completion (legacy alias `grpo_max_new_tokens` accepted) |
 | `grpo_reward_model` | string | `null` | GRPO: reward model path (HF or local) |
+| `grpo_reward_model_revision` | string | `null` | Pin the GRPO reward model to an HF Hub commit SHA or ref. Rejected without `grpo_reward_model`. **Validated but not yet honoured by the trainer** — see [Hub revision pinning](#hub-revision-pinning) |
 
 ---
 
@@ -205,6 +207,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `enabled` | bool | `false` | Enable safety classifier evaluation |
 | `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Safety classifier model. The shipped default works out of the box: under `classifier_mode: auto` it is scored via generation-based Llama-Guard scoring |
 | `classifier_mode` | string | `"auto"` | How the classifier is scored: `auto` (generation for a known generative Llama-Guard checkpoint, `text-classification` otherwise), `classification` (force the pipeline — needs a trained `safe`/`unsafe` head), or `generation` (force generation-based Llama-Guard scoring) |
+| `classifier_revision` | string | `null` | Pin the harm classifier to an HF Hub commit SHA or ref. **Validated but not yet honoured** — neither the training-loop gate nor `forgelm safety-eval` forwards it yet. See [Hub revision pinning](#hub-revision-pinning) |
 | `test_prompts` | string | `"safety_prompts.jsonl"` | Adversarial test prompts file. Built-in sets in `configs/safety_prompts/` |
 | `max_safety_regression` | float | `0.05` | Max allowed unsafe ratio (binary gate) |
 | `scoring` | string | `"binary"` | Scoring mode: `"binary"` or `"confidence_weighted"` |
@@ -223,6 +226,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `judge_model` | string | `"gpt-4o"` | Judge model (API or local path) |
 | `judge_api_key_env` | string | `null` | Env var name for API key (null = local) |
 | `judge_api_base` | string | `null` | Override the judge API base URL (Azure OpenAI, self-hosted vLLM, OpenAI-compatible gateway, e.g. `https://api.together.xyz/v1`). When unset, the SDK default endpoint is used. |
+| `judge_model_revision` | string | `null` | Pin a **local** judge model to an HF Hub commit SHA or ref. Rejected alongside `judge_api_key_env` (the API judge loads nothing). **Validated but not yet honoured by the judge loader** — see [Hub revision pinning](#hub-revision-pinning) |
 | `eval_dataset` | string | `"eval_prompts.jsonl"` | Evaluation prompts file |
 | `min_score` | float | `5.0` | Minimum average score (1-10) |
 | `batch_size` | int | `8` | Number of (prompt, completion) pairs scored per LLM-judge round. `1` disables batching. |
@@ -372,6 +376,7 @@ silently extend the retention horizon by re-using a stale workspace.
 | `enabled` | bool | `false` | Enable teacher → student synthetic-data generation. |
 | `teacher_model` | string | `""` | HF Hub ID or API model name (e.g. `gpt-4o`, `meta-llama/Llama-3-70B`). |
 | `teacher_backend` | string | `"api"` | One of `"api"` (OpenAI/Anthropic-compatible), `"local"` (HF in-process), `"file"` (read pre-generated JSONL). |
+| `teacher_revision` | string | `null` | Pin the local teacher model to an HF Hub commit SHA or ref. Only valid with `teacher_backend: local` — rejected otherwise. **Honoured today.** See [Hub revision pinning](#hub-revision-pinning). |
 | `api_base` | string | `""` | API endpoint, e.g. `https://api.openai.com/v1` or self-hosted vLLM gateway. |
 | `api_key` | `Optional[str]` | `null` | Inline API key. Prefer `api_key_env` to avoid committing secrets — when set inline, the value is `***REDACTED***` in serialized config. |
 | `api_key_env` | `Optional[str]` | `null` | Env var name carrying the API key (e.g. `OPENAI_API_KEY`). |
@@ -463,3 +468,122 @@ forgelm verify-annex-iv --pipeline <pipeline.output_dir>
 ```
 
 Validates the chain-level manifest's structural fields, chain-integrity (every stage with `input_source: chain` matches its immediate predecessor's `output_model`), per-stage `training_manifest.json` existence, and `stopped_at` / running-status consistency.  Exit `0` on clean manifest, `1` on config / chain violation, `2` on runtime I/O failure.
+
+---
+
+## Hub revision pinning
+
+Five optional fields pin a Hugging Face Hub repo to a specific commit so a run
+can be reproduced byte-for-byte, and so the Annex IV bundle can say *which*
+upstream artefact was used rather than only naming the repo.
+
+| Field | Pins | Honoured today? |
+|-------|------|-----------------|
+| `model.revision` | Base model + tokenizer (and the VLM processor, and the `--fit-check` config probe) | **Yes** |
+| `synthetic.teacher_revision` | Local teacher model + its tokenizer (`teacher_backend: local`) | **Yes** |
+| `evaluation.safety.classifier_revision` | Harm classifier | **Not yet** — accepted and validated, but no caller forwards it |
+| `evaluation.llm_judge.judge_model_revision` | Local judge model | **Not yet** — accepted and validated, but no caller forwards it |
+| `training.grpo_reward_model_revision` | GRPO reward model | **Not yet** — accepted and validated, but no caller forwards it |
+
+The three "not yet" fields are a documented gap, not a silent one: they pass
+validation and are recorded in your YAML, but the corresponding load still uses
+the repo's default branch. Do not treat them as reproducibility evidence until
+this table says otherwise.
+
+### What counts as a pin
+
+A **40-hex commit SHA** is the only value that actually pins. Upper- and
+lower-case are both accepted and the value is stored verbatim — ForgeLM never
+normalises or case-folds it.
+
+A **branch, tag, or ref** (`main`, `v1.0`, `refs/pr/7`) is accepted, but it is
+not a pin: upstream can repoint it at any time, so two runs of the same YAML can
+load different bytes. ForgeLM logs a `WARNING` saying exactly that, and records
+the ref verbatim in the provenance block beside whatever commit it resolved to,
+so the artefact stays honest even when the config is not. There is no
+enforcement flag in this release.
+
+### Rejected at validation (exit `1`, fires under `--dry-run`, no network)
+
+- A revision literal that is empty, contains whitespace, contains a control
+  character, starts with `-`, or exceeds 255 characters.
+- `evaluation.llm_judge.judge_model_revision` together with `judge_api_key_env`
+  — the API judge never loads a local model.
+- `synthetic.teacher_revision` with `teacher_backend` of `api` or `file` — only
+  `local` loads from the Hub.
+- `training.grpo_reward_model_revision` without `training.grpo_reward_model` —
+  the pin names no repository, and the trainer would fall back to the built-in
+  format/length shaping reward.
+
+### Warned, not rejected
+
+- A non-40-hex revision (see "What counts as a pin" above).
+- `model.revision` set while `model.name_or_path` is an **existing local
+  directory**. A path on disk carries no Hub commit, so the pin cannot be
+  honoured and the loaded bytes are whatever is on disk. This warns rather than
+  fails because the check depends on whether that directory exists on the
+  machine running validation — raising would make one YAML pass in CI and fail
+  on the training host. `model_integrity.json` plus `forgelm verify-integrity`
+  remain the identity story for local weights.
+
+### How the pin is chosen
+
+Before each pinnable load ForgeLM resolves the repo's commit, then pins the load
+to what it resolved. What reaches `revision=` is:
+
+1. A confirmed 40-hex commit SHA, when one could be resolved — including when
+   the configured value was a branch or tag, in which case the load is pinned to
+   the specific commit that ref pointed at.
+2. Otherwise the configured value verbatim, so an explicit pin is always
+   honoured even when nothing could confirm it.
+3. Otherwise nothing — the historical unpinned behaviour, unchanged.
+
+Resolution is best-effort and never fails a run. `model.offline: true` (or
+`HF_HUB_OFFLINE` / `HF_DATASETS_OFFLINE`) short-circuits before any Hub client is
+imported: no network attempt is made, and the commit-addressed local cache
+answers instead. A local directory is never resolved and never pinned.
+
+### The `unsloth` backend
+
+`model.backend: unsloth` is an optional extra, so whether
+`FastLanguageModel.from_pretrained` accepts a `revision` argument is decided at
+runtime by inspecting its signature. A bare `**kwargs` deliberately does *not*
+count — a kwarg that is accepted and then dropped is indistinguishable from one
+that is honoured.
+
+- Named `revision` parameter present → the pin is applied and recorded exactly
+  as on the transformers backend.
+- Absent **and** `model.revision` is set → the run fails with a `RuntimeError`
+  before any weights load (CLI exit `2`). The message names three remedies:
+  upgrade unsloth, switch to `model.backend: transformers`, or remove
+  `model.revision` to load the default branch knowingly. It fails rather than
+  proceeding because an operator holding a manifest that asserts a pin the run
+  never applied is worse off than one with no pin at all.
+- Absent and no pin set → the load proceeds as before, with a `WARNING` that it
+  is unpinned and that no model revision will be recorded.
+
+### Where the record lands
+
+The resolved base-model revision is written to the `model_lineage` block of
+**`compliance_report.json`**, and dataset revisions to
+**`data_provenance.json`** — both inside the Annex IV bundle. Note that the
+flattened `training_manifest.yaml` sidecar carries neither: it is a summary
+projection (`base_model`, `adapter_method`, `trainer_type`, `dataset`, `epochs`,
+`final_metrics`) and has no `model_lineage` or `data_provenance` block at all.
+See [`compliance_summary.md`](compliance_summary.md#annex-iv-bundle-provenance-fields)
+for the field-by-field meaning of every `resolution_source` value.
+
+### Known gaps in this release
+
+- `--dry-run` does not report pin status; an operator learns which repos are
+  unpinned from load-time warnings, i.e. after the run starts. `--dry-run` also
+  deliberately never verifies that pins are *fetchable* — its contract is
+  validation without heavy dependencies or Hub reachability. A pipeline that runs
+  `--dry-run` but not `forgelm doctor` can get a green validation followed by a
+  load-time failure on an unfetchable pin.
+- `forgelm cache-models` has no `--revision` flag, so an air-gapped workflow
+  stages the repo's default branch. A pinned run on the disconnected host will
+  then miss its snapshot.
+- `export`, `inference` and `merging` are unpinned by design: they load local
+  artefacts this run produced, and a directory has no Hub commit.
+- Merge-source models (`merge.models[]`) cannot be pinned.

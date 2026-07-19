@@ -1061,6 +1061,331 @@ class TestHFRevisionPin:
         assert fp["source"] == "huggingface_hub"
         assert fp["dataset_id"] == "HuggingFaceH4/ultrachat_200k"
         assert fp["hf_revision"] == _FakeInfo.sha
+        # No load in this process pinned the corpus, so the SHA above is a
+        # manifest-time Hub lookup and MUST be labelled as such.
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_UNVERIFIED
+
+
+@pytest.mark.real_fingerprint
+class TestDatasetRevisionProvenance:
+    """The recorded dataset SHA must never outrun its evidence.
+
+    Before this, ``_fingerprint_hf_revision`` queried ``HfApi().dataset_info``
+    with zero coupling to ``forgelm.data``'s ``load_dataset`` and wrote the
+    answer into ``hf_revision`` as though it were the corpus that trained the
+    model.  These tests lock the three provenance strengths apart.
+    """
+
+    _SHA = "c" * 40
+
+    @staticmethod
+    def _stub_hf_api(monkeypatch, *, sha=None, raises=None):
+        import huggingface_hub
+
+        class _Api:
+            def dataset_info(self, dataset_id):
+                if raises is not None:
+                    raise raises
+                return type("Info", (), {"sha": sha})()
+
+        monkeypatch.setattr(huggingface_hub, "HfApi", _Api)
+
+    def test_loaded_revision_wins_and_makes_no_hub_call(self, monkeypatch):
+        import huggingface_hub
+
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {"org/ds": self._SHA})
+
+        def _boom(*args, **kwargs):
+            raise AssertionError(
+                "a SHA the load was pinned to must never be second-guessed by an independent Hub query"
+            )
+
+        monkeypatch.setattr(huggingface_hub, "HfApi", _boom)
+
+        fp = {}
+        compliance._fingerprint_hf_revision("org/ds", fp)
+
+        assert fp["hf_revision"] == self._SHA
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_LOADED
+        assert "hf_revision_reason" not in fp
+
+    def test_uncoupled_hub_lookup_is_labelled_unverified(self, monkeypatch):
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {})
+        self._stub_hf_api(monkeypatch, sha=self._SHA)
+
+        fp = {}
+        compliance._fingerprint_hf_revision("org/ds", fp)
+
+        assert fp["hf_revision"] == self._SHA
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_UNVERIFIED
+
+    def test_registry_lookup_is_keyed_on_the_configured_path(self, monkeypatch):
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {"other/ds": self._SHA})
+        self._stub_hf_api(monkeypatch, sha="d" * 40)
+
+        fp = {}
+        compliance._fingerprint_hf_revision("org/ds", fp)
+
+        # A SHA recorded for a *different* dataset must not be borrowed.
+        assert fp["hf_revision"] == "d" * 40
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_UNVERIFIED
+
+    def test_hub_failure_records_a_stated_gap_not_a_sha(self, monkeypatch):
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {})
+        self._stub_hf_api(monkeypatch, raises=OSError("hub unreachable"))
+
+        fp = {}
+        compliance._fingerprint_hf_revision("org/ds", fp)
+
+        assert "hf_revision" not in fp
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_UNRESOLVED
+        assert "OSError" in fp["hf_revision_reason"]
+
+    def test_empty_sha_records_a_stated_gap(self, monkeypatch):
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {})
+        self._stub_hf_api(monkeypatch, sha=None)
+
+        fp = {}
+        compliance._fingerprint_hf_revision("org/ds", fp)
+
+        assert "hf_revision" not in fp
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_UNRESOLVED
+
+    def test_missing_huggingface_hub_records_a_stated_gap(self, monkeypatch):
+        import builtins
+
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {})
+        real_import = builtins.__import__
+
+        def _no_hub(name, *args, **kwargs):
+            if name == "huggingface_hub":
+                raise ImportError("no module named huggingface_hub")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_hub)
+
+        fp = {}
+        compliance._fingerprint_hf_revision("org/ds", fp)
+
+        assert "hf_revision" not in fp
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_UNRESOLVED
+        assert "huggingface_hub" in fp["hf_revision_reason"]
+
+    def test_reason_is_truncated(self, monkeypatch):
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {})
+        self._stub_hf_api(monkeypatch, raises=OSError("x" * 5000))
+
+        fp = {}
+        compliance._fingerprint_hf_revision("org/ds", fp)
+
+        assert len(fp["hf_revision_reason"]) == compliance._REVISION_REASON_MAX_CHARS
+
+
+class TestResolveModelRevision:
+    """Branch table of :func:`forgelm.compliance.resolve_model_revision`."""
+
+    _SHA = "e" * 40
+    _CACHE_SHA = "f" * 40
+
+    @staticmethod
+    def _stub_hub(monkeypatch, *, sha=None, raises=None):
+        import huggingface_hub
+
+        class _Api:
+            def model_info(self, repo_id, revision=None):
+                if raises is not None:
+                    raise raises
+                return type("Info", (), {"sha": sha})()
+
+        monkeypatch.setattr(huggingface_hub, "HfApi", _Api)
+
+    @staticmethod
+    def _forbid_network(monkeypatch):
+        """Record Hub-client instantiations instead of raising on them.
+
+        A raising sentinel is worthless against this code: both Hub helpers
+        wrap their call in a best-effort ``except Exception``, which swallows
+        ``AssertionError`` and lets the test pass even with the offline guard
+        deleted. Returning a list the caller asserts empty is the only
+        assertion that actually detects a network attempt.
+        """
+        calls = []
+        monkeypatch.setattr("huggingface_hub.HfApi", lambda *a, **k: calls.append(1))
+        return calls
+
+    @staticmethod
+    def _stub_cache(monkeypatch, sha, cache_dir):
+        import huggingface_hub
+
+        def _try(repo_id, filename, revision=None, **kwargs):
+            if sha is None:
+                return None
+            path = cache_dir / "snapshots" / sha / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{}")
+            return str(path)
+
+        monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache", _try)
+
+    def test_local_directory_has_no_hub_identity(self, tmp_path, monkeypatch):
+        from forgelm import compliance
+
+        calls = self._forbid_network(monkeypatch)
+        rec = compliance.resolve_model_revision(str(tmp_path))
+        assert calls == []
+        assert rec == {
+            "repo_id": str(tmp_path),
+            "revision_requested": None,
+            "revision_resolved": None,
+            "resolution_source": compliance.MODEL_REVISION_LOCAL_PATH,
+        }
+
+    def test_empty_repo_id_is_unresolved(self):
+        from forgelm import compliance
+
+        rec = compliance.resolve_model_revision("")
+        assert rec["resolution_source"] == compliance.MODEL_REVISION_UNRESOLVED
+        assert rec["revision_resolved"] is None
+
+    def test_unpinned_hub_lookup_is_resolved(self, monkeypatch):
+        from forgelm import compliance
+
+        self._stub_hub(monkeypatch, sha=self._SHA)
+        rec = compliance.resolve_model_revision("org/model")
+
+        assert rec["revision_resolved"] == self._SHA
+        assert rec["revision_requested"] is None
+        assert rec["resolution_source"] == compliance.MODEL_REVISION_RESOLVED
+
+    def test_pinned_hub_lookup_is_pinned_resolved(self, monkeypatch):
+        from forgelm import compliance
+
+        self._stub_hub(monkeypatch, sha=self._SHA)
+        rec = compliance.resolve_model_revision("org/model", requested="main")
+
+        assert rec["revision_resolved"] == self._SHA
+        assert rec["revision_requested"] == "main"
+        assert rec["resolution_source"] == compliance.MODEL_REVISION_PINNED_RESOLVED
+
+    def test_hub_failure_falls_back_to_cache(self, monkeypatch, tmp_path):
+        from forgelm import compliance
+
+        self._stub_hub(monkeypatch, raises=OSError("hub down"))
+        self._stub_cache(monkeypatch, self._CACHE_SHA, tmp_path)
+
+        rec = compliance.resolve_model_revision("org/model")
+        assert rec["revision_resolved"] == self._CACHE_SHA
+        assert rec["resolution_source"] == compliance.MODEL_REVISION_CACHE
+
+    def test_pin_with_no_evidence_is_pinned_unverified_and_never_echoed(self, monkeypatch, tmp_path):
+        from forgelm import compliance
+
+        self._stub_hub(monkeypatch, raises=OSError("hub down"))
+        self._stub_cache(monkeypatch, None, tmp_path)
+
+        rec = compliance.resolve_model_revision("org/model", requested="b" * 40)
+        assert rec["revision_requested"] == "b" * 40
+        # The operator's assertion is NOT evidence — it must not be copied
+        # into the field a verifier reads as a confirmed commit.
+        assert rec["revision_resolved"] is None
+        assert rec["resolution_source"] == compliance.MODEL_REVISION_PINNED_UNVERIFIED
+
+    def test_no_pin_no_evidence_is_unresolved(self, monkeypatch, tmp_path):
+        from forgelm import compliance
+
+        self._stub_hub(monkeypatch, raises=OSError("hub down"))
+        self._stub_cache(monkeypatch, None, tmp_path)
+
+        rec = compliance.resolve_model_revision("org/model")
+        assert rec["revision_resolved"] is None
+        assert rec["resolution_source"] == compliance.MODEL_REVISION_UNRESOLVED
+
+    @pytest.mark.parametrize("bogus", ["main", "", "z" * 40, "a" * 39])
+    def test_non_sha_hub_answer_never_reaches_the_record(self, monkeypatch, tmp_path, bogus):
+        from forgelm import compliance
+
+        self._stub_hub(monkeypatch, sha=bogus)
+        self._stub_cache(monkeypatch, None, tmp_path)
+
+        rec = compliance.resolve_model_revision("org/model")
+        assert rec["revision_resolved"] is None
+        assert rec["resolution_source"] == compliance.MODEL_REVISION_UNRESOLVED
+
+    def test_offline_cache_hit_makes_no_network_call(self, monkeypatch, tmp_path):
+        from forgelm import compliance
+
+        calls = self._forbid_network(monkeypatch)
+        self._stub_cache(monkeypatch, self._CACHE_SHA, tmp_path)
+
+        rec = compliance.resolve_model_revision("org/model", requested="b" * 40, offline=True)
+        assert rec["revision_resolved"] == self._CACHE_SHA
+        assert rec["resolution_source"] == compliance.MODEL_REVISION_CACHE
+        assert calls == []
+
+    def test_offline_cache_miss_with_pin_is_pinned_unverified(self, monkeypatch, tmp_path):
+        from forgelm import compliance
+
+        calls = self._forbid_network(monkeypatch)
+        self._stub_cache(monkeypatch, None, tmp_path)
+
+        rec = compliance.resolve_model_revision("org/model", requested="b" * 40, offline=True)
+        assert rec["revision_resolved"] is None
+        assert rec["resolution_source"] == compliance.MODEL_REVISION_PINNED_UNVERIFIED
+        assert calls == []
+
+    def test_offline_cache_miss_without_pin_is_unresolved(self, monkeypatch, tmp_path):
+        from forgelm import compliance
+
+        calls = self._forbid_network(monkeypatch)
+        self._stub_cache(monkeypatch, None, tmp_path)
+        rec = compliance.resolve_model_revision("org/model", offline=True)
+        assert rec["resolution_source"] == compliance.MODEL_REVISION_UNRESOLVED
+        assert calls == []
+
+    def test_cache_probe_error_is_best_effort(self, monkeypatch):
+        from forgelm import compliance
+
+        def _raise(*args, **kwargs):
+            raise OSError("unreadable cache")
+
+        monkeypatch.setattr("huggingface_hub.try_to_load_from_cache", _raise)
+        rec = compliance.resolve_model_revision("org/model", offline=True)
+        assert rec["resolution_source"] == compliance.MODEL_REVISION_UNRESOLVED
+
+    def test_cache_path_that_is_not_a_sha_is_rejected(self, monkeypatch, tmp_path):
+        from forgelm import compliance
+
+        def _try(repo_id, filename, revision=None, **kwargs):
+            path = tmp_path / "snapshots" / "main" / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{}")
+            return str(path)
+
+        monkeypatch.setattr("huggingface_hub.try_to_load_from_cache", _try)
+        rec = compliance.resolve_model_revision("org/model", offline=True)
+        assert rec["revision_resolved"] is None
+        assert rec["resolution_source"] == compliance.MODEL_REVISION_UNRESOLVED
 
 
 # ---------------------------------------------------------------------------
@@ -1601,3 +1926,148 @@ class TestComputeConfigHashDocstring:
         h2 = compute_config_hash(cfg2)
 
         assert h1 != h2, "different webhook.url values must produce different config hashes"
+
+
+# ---------------------------------------------------------------------------
+# model_lineage.base_model_revision (Annex IV, model side)
+# ---------------------------------------------------------------------------
+
+
+class TestBaseModelRevisionBlock:
+    """``model_lineage.base_model_revision`` reports only what a load established.
+
+    The block must never contain a SHA obtained by an independent Hub query.
+    That is the defect ``_fingerprint_hf_revision`` was fixed for on the
+    dataset side, and reintroducing it here would put a confident falsehood in
+    an Annex IV artefact.
+    """
+
+    _SHA = "0" * 39 + "a"
+
+    @pytest.fixture(autouse=True)
+    def _clean_registry(self):
+        from forgelm import model as model_mod
+
+        model_mod._RESOLVED_MODEL_REVISIONS.clear()
+        yield
+        model_mod._RESOLVED_MODEL_REVISIONS.clear()
+
+    def _cfg(self, minimal_config, **model_overrides):
+        model = {"name_or_path": "org/model"}
+        model.update(model_overrides)
+        return ForgeConfig(**minimal_config(model=model))
+
+    def test_no_load_records_unresolved_with_a_stated_reason(self, minimal_config):
+        # ``forgelm compliance-only`` writes a manifest without ever loading
+        # the model.  Saying so is auditable; guessing is not.
+        cfg = self._cfg(minimal_config)
+        manifest = generate_training_manifest(cfg, metrics={})
+        block = manifest["model_lineage"]["base_model_revision"]
+        assert block["revision_resolved"] is None
+        assert block["revision_pinned"] is None
+        assert block["resolution_source"] == "unresolved"
+        assert "no base-model load" in block["reason"]
+
+    def test_no_load_still_reports_the_requested_pin(self, minimal_config):
+        cfg = self._cfg(minimal_config, revision=self._SHA)
+        block = generate_training_manifest(cfg, metrics={})["model_lineage"]["base_model_revision"]
+        assert block["revision_requested"] == self._SHA
+        assert block["revision_resolved"] is None
+
+    def test_completed_load_is_reported_as_resolved(self, minimal_config):
+        from forgelm import model as model_mod
+
+        model_mod.record_loaded_revision(
+            {
+                "repo_id": "org/model",
+                "role": model_mod.ROLE_BASE_MODEL,
+                "revision_requested": None,
+                "revision_resolved": self._SHA,
+                "resolution_source": "resolved",
+                "revision_pinned": self._SHA,
+            }
+        )
+        cfg = self._cfg(minimal_config)
+        block = generate_training_manifest(cfg, metrics={})["model_lineage"]["base_model_revision"]
+        assert block["revision_resolved"] == self._SHA
+        assert block["revision_pinned"] == self._SHA
+        assert block["resolution_source"] == "resolved"
+        assert "reason" not in block
+
+    def test_moving_ref_shows_beside_the_sha_it_resolved_to(self, minimal_config):
+        # A ``revision: main`` pin is accepted but does not pin.  Keeping the
+        # requested literal beside the resolved SHA is what keeps the artefact
+        # honest when the config was not.
+        from forgelm import model as model_mod
+
+        model_mod.record_loaded_revision(
+            {
+                "repo_id": "org/model",
+                "role": model_mod.ROLE_BASE_MODEL,
+                "revision_requested": "main",
+                "revision_resolved": self._SHA,
+                "resolution_source": "pinned_resolved",
+                "revision_pinned": self._SHA,
+            }
+        )
+        cfg = self._cfg(minimal_config, revision="main")
+        block = generate_training_manifest(cfg, metrics={})["model_lineage"]["base_model_revision"]
+        assert block["revision_requested"] == "main"
+        assert block["revision_resolved"] == self._SHA
+
+    def test_unverified_pin_records_the_ref_but_no_sha(self, minimal_config):
+        from forgelm import model as model_mod
+
+        model_mod.record_loaded_revision(
+            {
+                "repo_id": "org/model",
+                "role": model_mod.ROLE_BASE_MODEL,
+                "revision_requested": "refs/pr/7",
+                "revision_resolved": None,
+                "resolution_source": "pinned_unverified",
+                "revision_pinned": "refs/pr/7",
+            }
+        )
+        cfg = self._cfg(minimal_config, revision="refs/pr/7")
+        block = generate_training_manifest(cfg, metrics={})["model_lineage"]["base_model_revision"]
+        assert block["revision_resolved"] is None
+        assert block["revision_pinned"] == "refs/pr/7"
+        assert block["resolution_source"] == "pinned_unverified"
+
+    def test_a_classifier_load_never_becomes_model_lineage(self, minimal_config):
+        # Same repo, different role: filing the safety classifier under
+        # model_lineage would misrepresent the model's composition.
+        from forgelm import model as model_mod
+
+        model_mod.record_loaded_revision(
+            {
+                "repo_id": "org/model",
+                "role": model_mod.ROLE_SAFETY_CLASSIFIER,
+                "revision_resolved": self._SHA,
+                "resolution_source": "resolved",
+                "revision_pinned": self._SHA,
+            }
+        )
+        cfg = self._cfg(minimal_config)
+        block = generate_training_manifest(cfg, metrics={})["model_lineage"]["base_model_revision"]
+        assert block["revision_resolved"] is None
+
+    def test_manifest_generation_makes_no_hub_query(self, minimal_config, monkeypatch):
+        # The regression this guards is invisible otherwise: substituting a
+        # fresh ``HfApi`` lookup for the load's own SHA still produces a
+        # plausible-looking manifest.
+        import forgelm.compliance as compliance_mod
+
+        def _forbidden(*a, **k):
+            raise AssertionError("manifest generation must not query the Hub for a model revision")
+
+        monkeypatch.setattr(compliance_mod, "_query_hub_model_revision", _forbidden)
+        monkeypatch.setattr(compliance_mod, "resolve_model_revision", _forbidden)
+        cfg = self._cfg(minimal_config, revision=self._SHA)
+        generate_training_manifest(cfg, metrics={})
+
+    def test_existing_lineage_keys_are_unchanged(self, minimal_config):
+        cfg = self._cfg(minimal_config)
+        lineage = generate_training_manifest(cfg, metrics={})["model_lineage"]
+        assert lineage["base_model"] == "org/model"
+        assert "backend" in lineage and "adapter_method" in lineage

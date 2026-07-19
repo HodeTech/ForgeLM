@@ -44,7 +44,10 @@ model:
   bnb_4bit_compute_dtype: "bfloat16"          # auto | bfloat16 | float16 | float32 (bf16/fp16/fp32 takma adları kabul edilir)
   bnb_4bit_use_double_quant: true             # bitsandbytes double-quantisation (küçük ekstra VRAM kazancı)
   offline: false                              # air-gapped mod: HF Hub ağ çağrılarını reddet
+  revision: "0e9e39f249a16976918f6564b8830bc894c89659"  # temel modeli + tokenizer'ı bir Hub commit'ine sabitle
 ```
+
+`revision`, 40-hex bir Hub commit SHA'sını (gerçekten sabitleyen tek değer) veya `main` gibi bir branch/tag'i kabul eder — bir ref kabul edilir ama ForgeLM uyarır, çünkü upstream onu başka yere işaretleyebilir. Tokenizer'ı, VLM processor'ını, ağırlıkları ve `--fit-check` config problamasını aynı commit'e sabitler ve çözülen SHA Annex IV paketine kaydedilir. Yerel bir dizine karşı ayarlandığında uyarır ve hiçbir şey yapmaz: diskteki bir yolun Hub commit'i yoktur. Dört kardeş pin alanı vardır — `synthetic.teacher_revision` (uygulanıyor), ayrıca `evaluation.safety.classifier_revision`, `evaluation.llm_judge.judge_model_revision` ve `training.grpo_reward_model_revision`; bunlar doğrulanır ama **henüz hiçbir yükleyiciye iletilmez**, dolayısıyla bugün ayarlamak hiçbir yüklemeyi değiştirmez.
 
 `ModelConfig`'te `load_in_8bit`, `use_unsloth`, `attention_implementation` veya `torch_dtype` alanı yoktur — `extra="forbid"` dördünü de `--dry-run`'da reddeder. Ayrı bir 8-bit toggle'ı yoktur (`load_in_4bit` tek quantisation anahtarıdır); Unsloth backend'i bir boolean bayrak değil `backend: "unsloth"` ile seçilir; ForgeLM'de attention-implementation seçici yoktur; ve compute dtype ayrı bir `torch_dtype` alanı değil `bnb_4bit_compute_dtype` ile ayarlanır. `rope_scaling` ve sliding-window override'ı `ModelConfig` değil `TrainingConfig` alanlarıdır (`training.rope_scaling`, `training.sliding_window_attention`) — kavram için aşağıdaki [`training:`](#training) bölümüne ve [Uzun Context Fine-Tuning](#/training/long-context) sayfasına bakın.
 
@@ -189,6 +192,8 @@ synthetic:
 ```
 
 Nested `synthetic.teacher:` alt-bloğu ve `rate_limit:` bloğu yoktur — `teacher_model`, `teacher_backend`, `api_base`, `api_delay`, `api_timeout` doğrudan `synthetic:` üzerinde düz alanlardır. Secret'ları commit etmemek için inline `api_key` alanı yerine `api_key_env` (bir ortam-değişkeni adı) tercih edin. ForgeLM'in YAML loader'ında hiçbir yerde `${VAR}` interpolasyon mekanizması yoktur — `*_env` alanları doğrudan `os.environ` ile okunan bir ortam değişkeni adlandırır, bir string içine substitüe edilmez.
+
+`teacher_backend: "local"` altında ayrıca `teacher_revision` ayarlayarak teacher checkpoint'ini bir Hub commit SHA'sına veya ref'ine sabitleyebilirsiniz; teacher'ın ürettikleri eğitim verisi hâline gelir, dolayısıyla sabitlenmemiş bir teacher bir veri-kökeni boşluğudur. `teacher_backend: "api"` veya `"file"` ile — ki bunlar Hub'dan hiç yüklemez — doğrudan reddedilir.
 
 ## `merge:`
 

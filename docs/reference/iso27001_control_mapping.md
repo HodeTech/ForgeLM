@@ -40,7 +40,7 @@
 | A.5.16 Identity management | FL-helps | `FORGELM_OPERATOR` env contract |
 | A.5.17 Authentication information | FL-helps | `safe_post` masks auth headers; `_mask` hides tokens |
 | A.5.18 Access rights | FL-helps | `human_approval` gate |
-| A.5.19 Information security in supplier relationships | FL-helps | `_fingerprint_hf_revision`; SBOM lists every dep |
+| A.5.19 Information security in supplier relationships | FL-helps | Dataset Hub commit SHA (`_fingerprint_hf_revision`, graded `loaded` / `unverified` / `unresolved`); base-model pin `model.revision` → `model_lineage.base_model_revision`; SBOM lists every dep.  Classifier / judge / reward-model / merge-source loads remain unpinned |
 | A.5.20 Addressing information security within supplier agreements | OOS | — |
 | A.5.21 Managing information security in the ICT supply chain | FL-helps | SBOM (CycloneDX 1.5); `pip-audit` nightly |
 | A.5.22 Monitoring, review and change management of supplier services | OOS | — |
@@ -102,7 +102,7 @@ completeness so the deployer's SoA is auditable end-to-end.
 | A.8.1 User endpoint devices | FL-helps | `forgelm doctor` env summary |
 | A.8.2 Privileged access rights | FL-helps | Operator attribution; approval-gate operator separation |
 | A.8.3 Information access restriction | FL | Salted identifier hashing; `forgelm reverse-pii` Article 15 |
-| A.8.4 Access to source code | FL-helps | `model.trust_remote_code=False` default; `_fingerprint_hf_revision` |
+| A.8.4 Access to source code | FL-helps | `model.trust_remote_code=False` default; `model.revision` pins the base-model repo, which bounds the repo-bundled code `trust_remote_code: true` would run.  `_fingerprint_hf_revision` covers the **dataset** repo only and is not evidence about executable code |
 | A.8.5 Secure authentication | FL-helps | `safe_post` rejects auth headers on non-HTTPS |
 | A.8.6 Capacity management | FL-helps | `forgelm doctor` resource report; `resource_usage` manifest block |
 | A.8.7 Protection against malware | OOS | — |
@@ -130,7 +130,7 @@ completeness so the deployer's SoA is auditable end-to-end.
 | A.8.29 Security testing in development and acceptance | FL-helps | `pytest` ~1493 tests; `bandit` static analysis |
 | A.8.30 Outsourced development | OOS | — |
 | A.8.31 Separation of development, test and production environments | FL-helps | `forgelm --dry-run`; staging dir |
-| A.8.32 Change management | FL | `human_approval.required/granted/rejected` audit chain; staging snapshot retained until promotion; SHA-256 artifact hashes in `model_integrity.json` (`model.integrity_verified` audit event) let `forgelm verify-integrity` diff a promoted model against its recorded manifest — note ForgeLM does not pin an upstream base-model Hub revision SHA today, only the config identity (`config_hash`) and the output artifacts |
+| A.8.32 Change management | FL | `human_approval.required/granted/rejected` audit chain; staging snapshot retained until promotion; SHA-256 artifact hashes in `model_integrity.json` (`model.integrity_verified` audit event) let `forgelm verify-integrity` diff a promoted model against its recorded manifest — and `model.revision` now pins the upstream base-model Hub revision, recorded in `compliance_report.json`'s `model_lineage.base_model_revision` (`revision_resolved` non-null = the load in that run was pinned to it).  Classifier, judge, GRPO reward model and merge sources are still unpinned |
 | A.8.33 Test information | FL-helps | `forgelm audit` flags PII / secrets in test sets too |
 | A.8.34 Protection of information systems during audit testing | OOS | — |
 

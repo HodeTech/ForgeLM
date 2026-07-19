@@ -103,8 +103,137 @@ _SUPPORTED_DATASET_EXTENSIONS: Dict[str, str] = {
 }
 
 
+# Hub commit SHAs that a *completed* ``load_dataset`` call in this process was
+# explicitly pinned to, keyed by the dataset path exactly as it appears in the
+# config.  This is the ONLY sanctioned source for the ``hf_revision`` field of
+# an Annex IV training manifest: ``forgelm.compliance._fingerprint_hf_revision``
+# reads it so the recorded SHA is provably the corpus that was trained on,
+# rather than whatever the repo's default branch happened to point at when the
+# manifest was written.  Entries are written *after* the load returns, never
+# before, so a failed load leaves no claim behind.
+_RESOLVED_DATASET_REVISIONS: Dict[str, str] = {}
+
+# Env vars that force HF into offline mode.  Read from the environment (not
+# from ``huggingface_hub.constants``) because ``forgelm.cli._config_load``
+# sets them at CLI start-up from ``model.offline``, which can happen after
+# ``huggingface_hub`` has already been imported and frozen its constants.
+_HF_OFFLINE_ENV_VARS = ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE")
+_FALSEY_ENV_VALUES = frozenset({"", "0", "false", "no", "off"})
+
+
+def _hf_offline_mode() -> bool:
+    """True when the environment forbids outbound Hugging Face Hub traffic."""
+    return any(os.environ.get(var, "").strip().lower() not in _FALSEY_ENV_VALUES for var in _HF_OFFLINE_ENV_VARS)
+
+
+def _is_commit_sha(value: Any) -> bool:
+    """True only for a canonical 40-character lowercase-hex Hub commit SHA.
+
+    Deliberately a ``str`` predicate rather than a compiled pattern: a fixed
+    40-char hex test needs no regex, so this adds nothing for
+    ``docs/standards/regex.md`` to police.  Anything that is not a real
+    commit SHA — a branch name, a tag, ``"main"``, an empty string — must
+    never reach a provenance record as if it were one.
+
+    Intentionally duplicated as ``forgelm.compliance._is_commit_sha``.
+    ``compliance`` already imports ``data`` (to read the resolved-revision
+    registry), so sharing it would either invert the module dependency
+    direction from ``architecture.md``'s graph or need a third module —
+    which is what the accepted plan's ``forgelm/_hub_revision.py`` would
+    have been.  Three lines of fixed-width hex test is the cheaper trade;
+    keep the two in lockstep if either changes.
+    """
+    return isinstance(value, str) and len(value) == 40 and all(c in "0123456789abcdef" for c in value)
+
+
+def _looks_like_hub_dataset_id(path: str) -> bool:
+    """True when ``path`` is a plain Hub repo id (``name`` or ``org/name``).
+
+    Mirrors the predicate ``datasets.load.dataset_module_factory`` uses to
+    decide that a string is a Hub id: relative, at most one ``/``, no URL
+    scheme, and not something that exists on the local filesystem.  Kept
+    conservative on purpose — a false negative only costs us a revision
+    record, whereas a false positive would send a local directory path to
+    ``HfApi``.
+    """
+    return bool(
+        path
+        and not os.path.exists(path)
+        and "://" not in path
+        and not path.startswith(("/", "~", "."))
+        and path.count("/") <= 1
+    )
+
+
+def _resolve_hub_dataset_revision(path: str) -> Optional[str]:
+    """Resolve ``path``'s current Hub commit SHA *before* it is loaded.
+
+    The caller must pass the returned SHA straight into ``load_dataset`` as
+    ``revision=``.  That ordering — resolve, then pin the load to what was
+    resolved — is what makes the recorded revision truthful: the SHA is not
+    an independent guess about what the load *probably* used, it is the SHA
+    the load was told to use.
+
+    Why this is necessary at all: ``datasets`` 5.x resolves the commit hash
+    internally (``load.py`` ``dataset_module_factory``) and hands it to the
+    builder as part of ``base_path``, but the builder is discarded and the
+    ``Dataset`` / ``DatasetDict`` that ``load_dataset`` returns exposes no
+    commit hash anywhere on its public surface.  ``DatasetInfo`` has only
+    ``download_checksums``, which is not populated unless
+    ``DownloadManager.record_checksums`` is enabled (it defaults to
+    ``False``).  So the resolved revision genuinely cannot be read back off
+    the loaded object, and pinning the load forward is the only honest way
+    to know it.
+
+    Best-effort throughout: every failure returns ``None``, the caller then
+    loads exactly as it did before this function existed, and the manifest
+    records the absence rather than a SHA nobody verified.  Offline mode
+    short-circuits before any import so an air-gapped run makes no attempt
+    at network I/O.
+    """
+    if _hf_offline_mode():
+        logger.debug("Dataset revision resolution skipped for '%s' — offline mode.", path)
+        return None
+
+    try:
+        from huggingface_hub import HfApi
+    except ImportError as e:
+        logger.debug("Dataset revision resolution skipped for '%s' — huggingface_hub not installed: %s", path, e)
+        return None
+
+    try:
+        sha = getattr(HfApi().dataset_info(path), "sha", None)
+    except Exception as e:  # noqa: BLE001 — best-effort revision resolution; the HF Hub client surface raises a wide error tail (HfHubHTTPError, RepositoryNotFoundError, RevisionNotFoundError, GatedRepoError, plus the transport OSError/ValueError family) and enumerating it would couple data.py to huggingface_hub internals. The load below proceeds unpinned either way, so this never fails a run.
+        logger.debug("Dataset revision resolution failed for '%s': %s", path, e)
+        return None
+
+    if not _is_commit_sha(sha):
+        logger.debug("HF Hub returned no usable commit SHA for dataset '%s' (got %r).", path, sha)
+        return None
+    return sha
+
+
+def get_loaded_dataset_revision(path: str) -> Optional[str]:
+    """Return the Hub commit SHA a completed load in this process was pinned to.
+
+    ``None`` means no ``load_dataset`` call in this process pinned ``path``
+    to a verified commit — the dataset is local, the resolution was skipped
+    (offline, no ``huggingface_hub``), the Hub was unreachable, or nothing
+    has been loaded yet (e.g. ``forgelm compliance-only``, which writes a
+    manifest without ever touching the corpus).  Callers must treat ``None``
+    as "unknown" and must not substitute any other value for it.
+    """
+    return _RESOLVED_DATASET_REVISIONS.get(path)
+
+
 def _load_single_dataset(path: str):
-    """Load a single dataset from a local file or HF Hub."""
+    """Load a single dataset from a local file or HF Hub.
+
+    Hub loads are pinned to a freshly resolved commit SHA where possible so
+    the Annex IV manifest can record the corpus that was actually read; see
+    :func:`_resolve_hub_dataset_revision`.  When resolution is unavailable
+    the call falls back to the historical unpinned form.
+    """
     from datasets import load_dataset
 
     if os.path.isfile(path):
@@ -118,6 +247,20 @@ def _load_single_dataset(path: str):
                 "Rename the file with a supported extension: .json, .jsonl, .csv, or .parquet."
             )
         return load_dataset(builder, data_files=path)
+
+    if _looks_like_hub_dataset_id(path):
+        revision = _resolve_hub_dataset_revision(path)
+        if revision is not None:
+            # A failure here is NOT swallowed into an unpinned retry: the SHA
+            # came from the Hub moments ago, so an error means a real problem
+            # (gated repo, transport failure) and a silent unpinned re-load
+            # would be exactly the "loaded something else, recorded this"
+            # defect this pinning exists to remove.
+            dataset = load_dataset(path, revision=revision)
+            _RESOLVED_DATASET_REVISIONS[path] = revision
+            logger.info("Loaded dataset '%s' pinned to Hub revision %s.", path, revision)
+            return dataset
+
     return load_dataset(path)
 
 

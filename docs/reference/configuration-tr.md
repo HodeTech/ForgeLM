@@ -16,6 +16,7 @@ Tam açıklamalı örnek için `config_template.yaml` dosyasına bakın.
 | `backend` | string | `"transformers"` | `"transformers"` veya `"unsloth"` (2-5x hızlı, Linux) |
 | `trust_remote_code` | bool | `false` | Model depolarından özel kod çalıştırma. **Güvenlik riski** |
 | `offline` | bool | `false` | İzole mod: HF Hub çağrısı yok. Modeller/veri setleri yerel olmalı |
+| `revision` | string | `null` | Temel modeli + tokenizer'ı bir HF Hub commit SHA'sına (40-hex) veya branch/tag'e sabitle. **Bugün uygulanıyor.** Bkz. [Hub revision pinleme](#hub-revision-pinleme) |
 | `bnb_4bit_use_double_quant` | bool | `true` | Ekstra VRAM tasarrufu için çift kuantizasyon |
 | `bnb_4bit_quant_type` | string | `"nf4"` | Kuantizasyon tipi (`"nf4"` veya `"fp4"`) |
 | `bnb_4bit_compute_dtype` | string | `"auto"` | Hesaplama dtype'ı: `"auto"`, `"bfloat16"`, `"float16"`, `"float32"` (son üçü kısa takma adları da kabul eder: `"bf16"`, `"fp16"`, `"fp32"`) |
@@ -148,6 +149,7 @@ training:
 | `grpo_num_generations` | int | `4` | GRPO: prompt başına yanıt |
 | `grpo_max_completion_length` | int | `512` | GRPO: completion başına maksimum token (eski takma ad `grpo_max_new_tokens` kabul edilir) |
 | `grpo_reward_model` | string | `null` | GRPO: ödül modeli yolu (HF veya yerel) |
+| `grpo_reward_model_revision` | string | `null` | GRPO ödül modelini bir HF Hub commit SHA'sına veya ref'ine sabitle. `grpo_reward_model` olmadan reddedilir. **Doğrulanır ama trainer tarafından henüz uygulanmaz** — bkz. [Hub revision pinleme](#hub-revision-pinleme) |
 
 ---
 
@@ -204,6 +206,7 @@ training:
 | `enabled` | bool | `false` | Güvenlik sınıflandırıcı değerlendirmesi |
 | `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Güvenlik sınıflandırıcı modeli. Varsayılan kutudan çıkar çıkmaz çalışır: `classifier_mode: auto` altında generation tabanlı Llama-Guard puanlamasıyla değerlendirilir |
 | `classifier_mode` | string | `"auto"` | Sınıflandırıcının nasıl puanlanacağı: `auto` (bilinen bir generative Llama-Guard checkpoint'i için generation, diğerleri için `text-classification`), `classification` (pipeline'ı zorlar — eğitilmiş `safe`/`unsafe` başlığı gerektirir) veya `generation` (generation tabanlı Llama-Guard puanlamasını zorlar) |
+| `classifier_revision` | string | `null` | Zarar sınıflandırıcısını bir HF Hub commit SHA'sına veya ref'ine sabitle. **Doğrulanır ama henüz uygulanmaz** — ne eğitim döngüsü kapısı ne de `forgelm safety-eval` bunu iletir. Bkz. [Hub revision pinleme](#hub-revision-pinleme) |
 | `test_prompts` | string | `"safety_prompts.jsonl"` | Adversarial test prompt dosyası. Yerleşik: `configs/safety_prompts/` |
 | `max_safety_regression` | float | `0.05` | Maksimum güvensiz oran (binary kapı) |
 | `scoring` | string | `"binary"` | Puanlama modu: `"binary"` veya `"confidence_weighted"` |
@@ -222,6 +225,7 @@ training:
 | `judge_model` | string | `"gpt-4o"` | Hakim modeli (API veya yerel) |
 | `judge_api_key_env` | string | `null` | API anahtarı için ortam değişkeni adı (null = yerel hakim) |
 | `judge_api_base` | string | `null` | Hakim API base URL'sini geçersiz kıl (Azure OpenAI, kendi barındırılan vLLM, OpenAI-uyumlu gateway, ör. `https://api.together.xyz/v1`). Tanımlı değilse SDK'nın varsayılan endpoint'i kullanılır. |
+| `judge_model_revision` | string | `null` | **Yerel** judge modelini bir HF Hub commit SHA'sına veya ref'ine sabitle. `judge_api_key_env` ile birlikte reddedilir (API judge hiçbir şey yüklemez). **Doğrulanır ama judge yükleyicisi tarafından henüz uygulanmaz** — bkz. [Hub revision pinleme](#hub-revision-pinleme) |
 | `eval_dataset` | string | `"eval_prompts.jsonl"` | Değerlendirme prompt dosyası |
 | `min_score` | float | `5.0` | Minimum ortalama puan (1-10) |
 | `batch_size` | int | `8` | LLM-hakim turunda puanlanan (prompt, completion) çift sayısı. `1` batching'i devre dışı bırakır. |
@@ -324,6 +328,7 @@ uzatmasını engeller.
 | `enabled` | bool | `false` | Öğretmen → öğrenci sentetik veri üretimini etkinleştir. |
 | `teacher_model` | string | `""` | HF Hub ID veya API model adı (ör. `gpt-4o`, `meta-llama/Llama-3-70B`). |
 | `teacher_backend` | string | `"api"` | Şunlardan biri: `"api"` (OpenAI/Anthropic-uyumlu), `"local"` (HF in-process), `"file"` (önceden üretilmiş JSONL'i oku). |
+| `teacher_revision` | string | `null` | Yerel teacher modelini bir HF Hub commit SHA'sına veya ref'ine sabitle. Yalnızca `teacher_backend: local` ile geçerli — aksi halde reddedilir. **Bugün uygulanıyor.** Bkz. [Hub revision pinleme](#hub-revision-pinleme). |
 | `api_base` | string | `""` | API endpoint, ör. `https://api.openai.com/v1` veya self-hosted vLLM gateway. |
 | `api_key` | `Optional[str]` | `null` | Inline API anahtarı. Secret'ları commit'lememek için `api_key_env`'i tercih edin — inline set edildiğinde, serialize edilmiş config'te değer `***REDACTED***` olur. |
 | `api_key_env` | `Optional[str]` | `null` | API anahtarını taşıyan env var adı (ör. `OPENAI_API_KEY`). |
@@ -454,3 +459,124 @@ forgelm verify-annex-iv --pipeline <pipeline.output_dir>
 ```
 
 Zincir seviyesi manifestin yapısal alanlarını, zincir bütünlüğünü (her `input_source: chain` aşaması kendi önceki aşamasının `output_model`'ına eşleşir), aşama bazında `training_manifest.json` varlığını ve `stopped_at` / running-status tutarlılığını doğrular.  Temiz manifest için `0`, config / zincir ihlali için `1`, runtime I/O hatası için `2` ile çıkar.
+
+---
+
+## Hub revision pinleme
+
+Beş isteğe bağlı alan, bir Hugging Face Hub deposunu belirli bir commit'e
+sabitler: böylece bir koşum bayt-bayt yeniden üretilebilir ve Annex IV paketi
+yalnızca deponun adını vermek yerine *hangi* upstream artefaktın kullanıldığını
+söyleyebilir.
+
+| Alan | Neyi sabitler | Bugün uygulanıyor mu? |
+|------|---------------|-----------------------|
+| `model.revision` | Temel model + tokenizer (ve VLM processor'ı, ve `--fit-check` config problaması) | **Evet** |
+| `synthetic.teacher_revision` | Yerel teacher modeli + tokenizer'ı (`teacher_backend: local`) | **Evet** |
+| `evaluation.safety.classifier_revision` | Zarar sınıflandırıcısı | **Henüz değil** — kabul edilir ve doğrulanır, ama hiçbir çağıran iletmez |
+| `evaluation.llm_judge.judge_model_revision` | Yerel judge modeli | **Henüz değil** — kabul edilir ve doğrulanır, ama hiçbir çağıran iletmez |
+| `training.grpo_reward_model_revision` | GRPO ödül modeli | **Henüz değil** — kabul edilir ve doğrulanır, ama hiçbir çağıran iletmez |
+
+"Henüz değil" olan üç alan sessiz değil, belgelenmiş bir boşluktur: doğrulamadan
+geçer ve YAML'ınızda kayıtlıdır, ancak ilgili yükleme hâlâ deponun varsayılan
+dalını kullanır. Bu tablo aksini söyleyene kadar onları yeniden üretilebilirlik
+kanıtı saymayın.
+
+### Neyin pin sayıldığı
+
+Gerçekten sabitleyen tek değer **40-hex commit SHA**'sıdır. Büyük ve küçük harf
+ikisi de kabul edilir ve değer aynen saklanır — ForgeLM onu asla normalleştirmez
+veya harf katlaması yapmaz.
+
+Bir **branch, tag veya ref** (`main`, `v1.0`, `refs/pr/7`) kabul edilir, ama bir
+pin değildir: upstream onu istediği zaman başka bir yere işaretleyebilir, yani
+aynı YAML'ın iki koşumu farklı baytlar yükleyebilir. ForgeLM tam olarak bunu
+söyleyen bir `WARNING` yazar ve ref'i çözüldüğü commit'in yanına aynen provenance
+bloğuna kaydeder — böylece config dürüst olmasa bile artefakt dürüst kalır. Bu
+sürümde bir zorlama bayrağı yoktur.
+
+### Doğrulamada reddedilenler (exit `1`, `--dry-run` altında tetiklenir, ağ yok)
+
+- Boş olan, boşluk içeren, kontrol karakteri içeren, `-` ile başlayan veya 255
+  karakteri aşan bir revision literali.
+- `evaluation.llm_judge.judge_model_revision` ile `judge_api_key_env` birlikte —
+  API judge hiçbir zaman yerel model yüklemez.
+- `synthetic.teacher_revision` ile `teacher_backend` değeri `api` veya `file` —
+  yalnızca `local` Hub'dan yükler.
+- `training.grpo_reward_model` olmadan `training.grpo_reward_model_revision` —
+  pin hiçbir depoyu adlandırmaz ve trainer yerleşik format/uzunluk şekillendirme
+  ödülüne geri düşer.
+
+### Uyarılır, reddedilmez
+
+- 40-hex olmayan bir revision (yukarıdaki "Neyin pin sayıldığı"na bakın).
+- `model.name_or_path` **var olan bir yerel dizin** iken `model.revision`'ın
+  ayarlanmış olması. Diskteki bir yol hiçbir Hub commit'i taşımaz, dolayısıyla
+  pin uygulanamaz ve yüklenen baytlar diskte ne varsa odur. Bu, hata vermek
+  yerine uyarır çünkü kontrol, doğrulamayı çalıştıran makinede o dizinin var olup
+  olmadığına bağlıdır — hata vermek aynı YAML'ın CI'da geçip eğitim ana
+  makinesinde patlamasına yol açardı. Yerel ağırlıklar için kimlik hikâyesi
+  `model_integrity.json` ve `forgelm verify-integrity` olarak kalır.
+
+### Pin nasıl seçilir
+
+Sabitlenebilir her yüklemeden önce ForgeLM deponun commit'ini çözer, sonra
+yüklemeyi çözdüğü şeye sabitler. `revision=` parametresine ulaşan değer:
+
+1. Çözülebildiyse teyit edilmiş bir 40-hex commit SHA'sı — yapılandırılan değer
+   bir branch veya tag olduğunda da geçerlidir; bu durumda yükleme, o ref'in
+   işaret ettiği belirli commit'e sabitlenir.
+2. Aksi halde yapılandırılan değer aynen, böylece açık bir pin hiçbir şey onu
+   teyit edemese bile her zaman dikkate alınır.
+3. Aksi halde hiçbir şey — tarihsel sabitlenmemiş davranış, değişmeden.
+
+Çözümleme best-effort'tur ve bir koşumu asla düşürmez. `model.offline: true` (veya
+`HF_HUB_OFFLINE` / `HF_DATASETS_OFFLINE`) herhangi bir Hub istemcisi import
+edilmeden önce kısa devre yapar: hiçbir ağ denemesi olmaz ve commit-adresli yerel
+önbellek yanıt verir. Yerel bir dizin asla çözülmez ve asla sabitlenmez.
+
+### `unsloth` backend'i
+
+`model.backend: unsloth` isteğe bağlı bir extra'dır, dolayısıyla
+`FastLanguageModel.from_pretrained`'in bir `revision` argümanı kabul edip
+etmediği, imzası incelenerek çalışma zamanında belirlenir. Çıplak bir `**kwargs`
+bilerek sayılmaz — kabul edilip sonra atılan bir kwarg, dikkate alınandan ayırt
+edilemez.
+
+- Adlandırılmış `revision` parametresi var → pin, transformers backend'indeki
+  gibi uygulanır ve kaydedilir.
+- Yok **ve** `model.revision` ayarlanmış → koşum, hiçbir ağırlık yüklenmeden bir
+  `RuntimeError` ile düşer (CLI exit `2`). Mesaj üç çareyi adlandırır: unsloth'u
+  yükselt, `model.backend: transformers`'a geç veya varsayılan dalı bilerek
+  yüklemek için `model.revision`'ı kaldır. Devam etmek yerine düşer, çünkü
+  koşumun hiç uygulamadığı bir pin'i iddia eden bir manifest taşıyan operatör,
+  hiç pin'i olmayandan daha kötü durumdadır.
+- Yok ve pin de ayarlanmamış → yükleme eskisi gibi ilerler; sabitlenmemiş olduğu
+  ve hiçbir model revision'ının kaydedilmeyeceği bir `WARNING` ile.
+
+### Kayıt nereye düşer
+
+Çözülen temel-model revision'ı, Annex IV paketindeki
+**`compliance_report.json`**'un `model_lineage` bloğuna; dataset revision'ları ise
+**`data_provenance.json`**'a yazılır. Düzleştirilmiş `training_manifest.yaml`
+yan dosyasının ikisini de taşımadığına dikkat edin: o bir özet izdüşümüdür
+(`base_model`, `adapter_method`, `trainer_type`, `dataset`, `epochs`,
+`final_metrics`) ve içinde hiç `model_lineage` veya `data_provenance` bloğu
+yoktur. Her `resolution_source` değerinin alan-alan anlamı için bkz.
+[`compliance_summary-tr.md`](compliance_summary-tr.md#annex-iv-paketi-provenance-alanları).
+
+### Bu sürümdeki bilinen boşluklar
+
+- `--dry-run` pin durumunu raporlamaz; operatör hangi depoların sabitlenmemiş
+  olduğunu yükleme-zamanı uyarılarından, yani koşum başladıktan sonra öğrenir.
+  `--dry-run` ayrıca pin'lerin *çekilebilir* olduğunu bilerek hiç doğrulamaz —
+  sözleşmesi, ağır bağımlılıklar veya Hub erişilebilirliği olmadan doğrulamadır.
+  `--dry-run` çalıştırıp `forgelm doctor` çalıştırmayan bir pipeline, yeşil bir
+  doğrulamanın ardından çekilemeyen bir pin üzerinde yükleme-zamanı hatası
+  alabilir.
+- `forgelm cache-models`'ın `--revision` bayrağı yoktur, dolayısıyla izole
+  (air-gapped) bir akış deponun varsayılan dalını hazırlar. Bağlantısız ana
+  makinedeki sabitlenmiş bir koşum o zaman snapshot'ını bulamaz.
+- `export`, `inference` ve `merging` tasarım gereği sabitlenmemiştir: bu koşumun
+  ürettiği yerel artefaktları yüklerler ve bir dizinin Hub commit'i yoktur.
+- Merge kaynak modelleri (`merge.models[]`) sabitlenemez.

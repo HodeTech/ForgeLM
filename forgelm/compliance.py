@@ -821,15 +821,64 @@ def _fingerprint_hf_metadata(dataset_path: str, fingerprint: Dict[str, Any]) -> 
         logger.debug("HF Hub metadata fetch skipped for '%s': %s", dataset_path, e)
 
 
+# Provenance strength of a recorded dataset revision.  Written to the
+# fingerprint's ``hf_revision_source`` key so an Article 10 reviewer can tell
+# a verified pin from a best-effort one WITHOUT re-deriving anything.  The
+# distinction is the whole point: a missing pin is honest, a wrong pin is not,
+# and an unlabelled pin is indistinguishable from a wrong one.
+REVISION_SOURCE_LOADED = "loaded"  # the SHA the ``load_dataset`` call was pinned to
+REVISION_SOURCE_UNVERIFIED = "unverified"  # a Hub lookup at manifest time; NOT tied to any load
+REVISION_SOURCE_UNRESOLVED = "unresolved"  # no SHA obtained at all; ``hf_revision`` is absent
+
+# Cap on the free-text ``hf_revision_reason``.  Hub transport errors can carry
+# multi-kilobyte HTML bodies, and the manifest is a human-read artefact.
+_REVISION_REASON_MAX_CHARS = 200
+
+
 def _fingerprint_hf_revision(dataset_path: str, fingerprint: Dict[str, Any]) -> None:
-    """Closure plan Faz 3 (F-compliance-117): pin the Hub commit SHA.
+    """Record the corpus' Hub commit SHA *and* how strongly it is evidenced.
 
-    The only stable identifier that lets Article 10 reviewers reproduce
-    the exact corpus the model was trained on. ``HfApi.dataset_info`` is
-    part of the always-installed ``huggingface_hub`` (pulled in by
-    ``datasets``).
+    Article 10 asks a reviewer to be able to reproduce the corpus the model
+    was trained on.  A commit SHA is the identifier that allows that — but
+    only if it is the SHA that was actually loaded.
 
-    Two-layer error handling so the failure mode is informative:
+    **This function used to state a SHA it had never verified.**  It called
+    ``HfApi().dataset_info(path)`` with no revision and no coupling of any
+    kind to ``forgelm.data._load_single_dataset``'s ``load_dataset(path)``,
+    so what it recorded was the repo's *default branch head at manifest
+    time*.  Whenever the upstream repo had moved between the load and the
+    manifest — precisely the situation provenance exists to detect — the
+    manifest asserted a corpus that was never read.  Two sources are now
+    distinguished explicitly, and the recorded value is never presented as
+    more than it is:
+
+    ``hf_revision_source: "loaded"``
+        ``forgelm.data`` resolved the SHA, passed it to ``load_dataset`` as
+        ``revision=``, and the load succeeded.  ``hf_revision`` is then the
+        corpus that was read.  This is the only value an auditor may treat
+        as evidence.
+
+    ``hf_revision_source: "unverified"``
+        No load in this process pinned the dataset, so the SHA below comes
+        from a Hub lookup made right here, right now.  It is the repo's
+        current default-branch head — a useful breadcrumb, **not** proof of
+        what was trained on.  This is the pre-existing behaviour, preserved
+        for the genuinely uncoupled callers (``forgelm compliance-only``
+        generates a manifest without ever loading the corpus) and now
+        labelled for what it is.
+
+    ``hf_revision_source: "unresolved"``
+        Nothing could be determined — offline, no ``huggingface_hub``, Hub
+        unreachable, gated repo.  ``hf_revision`` is **absent**;
+        ``hf_revision_reason`` says why.  A stated gap is auditable; a
+        fabricated SHA is not.
+
+    Backward compatibility: ``hf_revision`` keeps its name and its type, and
+    is still absent when no SHA is known.  Consumers that read only that key
+    behave exactly as before; the new sibling keys are purely additive.
+
+    Two-layer error handling, unchanged in shape so the failure mode stays
+    informative:
 
     1. Module import is guarded separately — if ``huggingface_hub`` is
        missing it's an environment issue, not a transient API hiccup.
@@ -841,19 +890,52 @@ def _fingerprint_hf_revision(dataset_path: str, fingerprint: Dict[str, Any]) -> 
        couples ``compliance.py`` to ``huggingface_hub`` internals;
        failing best-effort is the documented contract.
     """
+    from .data import get_loaded_dataset_revision
+
+    loaded_revision = get_loaded_dataset_revision(dataset_path)
+    if loaded_revision:
+        fingerprint["hf_revision"] = loaded_revision
+        fingerprint["hf_revision_source"] = REVISION_SOURCE_LOADED
+        return
+
     try:
         from huggingface_hub import HfApi
     except ImportError as e:
         logger.debug("HF Hub revision pin skipped for '%s' — huggingface_hub not installed: %s", dataset_path, e)
+        _mark_revision_unresolved(fingerprint, "huggingface_hub is not installed")
         return
 
     try:
         info = HfApi().dataset_info(dataset_path)
         revision_sha = getattr(info, "sha", None)
-        if revision_sha:
-            fingerprint["hf_revision"] = revision_sha
     except Exception as e:  # noqa: BLE001 — best-effort revision pin; HF Hub surface raises a wide error tail
         logger.debug("HF Hub revision pin skipped for '%s': %s", dataset_path, e)
+        _mark_revision_unresolved(fingerprint, f"{type(e).__name__}: {e}")
+        return
+
+    if revision_sha:
+        fingerprint["hf_revision"] = revision_sha
+        fingerprint["hf_revision_source"] = REVISION_SOURCE_UNVERIFIED
+        logger.debug(
+            "Dataset '%s' revision %s recorded as UNVERIFIED — no load in this process pinned it.",
+            dataset_path,
+            revision_sha,
+        )
+    else:
+        _mark_revision_unresolved(fingerprint, "HF Hub returned no commit SHA for this dataset")
+
+
+def _mark_revision_unresolved(fingerprint: Dict[str, Any], reason: str) -> None:
+    """Record that no dataset revision could be established, and why.
+
+    Deliberately writes a *marker* rather than leaving the fingerprint
+    silent: "we looked and could not tell" and "we never looked" are
+    different statements to an auditor, and only the first one is
+    something the artefact can honestly make.  ``hf_revision`` is never
+    written on this path.
+    """
+    fingerprint["hf_revision_source"] = REVISION_SOURCE_UNRESOLVED
+    fingerprint["hf_revision_reason"] = reason[:_REVISION_REASON_MAX_CHARS]
 
 
 def compute_dataset_fingerprint(dataset_path: str) -> Dict[str, Any]:
@@ -898,6 +980,193 @@ def compute_dataset_fingerprint(dataset_path: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Model-revision resolution (Art. 10/11 provenance, model side)
+# ---------------------------------------------------------------------------
+
+# ``resolution_source`` vocabulary for :func:`resolve_model_revision`.  Every
+# value answers one question — *how much does this record actually prove?* —
+# and they are mutually exclusive by construction.
+MODEL_REVISION_LOCAL_PATH = "local_path"  # repo_id is a directory on disk; no Hub identity exists
+MODEL_REVISION_RESOLVED = "resolved"  # no pin asked for; SHA came from a live Hub lookup
+MODEL_REVISION_PINNED_RESOLVED = "pinned_resolved"  # pin asked for and the Hub confirmed what it points at
+MODEL_REVISION_PINNED_UNVERIFIED = "pinned_unverified"  # pin asked for, nothing could confirm it
+MODEL_REVISION_CACHE = "cache"  # SHA read from the local, commit-addressed HF cache
+MODEL_REVISION_UNRESOLVED = "unresolved"  # no pin asked for and nothing could be determined
+
+# Files probed when reading a commit SHA back out of the local Hub cache.
+# Any one of them is enough — the snapshot *directory* is named after the
+# commit, so the file is only a handle onto the directory.  Ordered by how
+# reliably a model repo has them.
+_CACHE_PROBE_FILENAMES = ("config.json", "tokenizer_config.json", "README.md")
+
+
+def _is_commit_sha(value: Any) -> bool:
+    """True only for a canonical 40-character lowercase-hex Hub commit SHA.
+
+    A ``str`` predicate rather than a compiled pattern on purpose: a
+    fixed-width hex test needs no regex, so this owes
+    ``docs/standards/regex.md`` nothing.  Its job is to keep a branch name,
+    a tag, or ``"main"`` from ever landing in a field an auditor reads as a
+    commit.
+
+    Intentionally duplicated as ``forgelm.data._is_commit_sha`` — see that
+    docstring for why the shared home was not taken.  Keep the two in
+    lockstep if either changes.
+    """
+    return isinstance(value, str) and len(value) == 40 and all(c in "0123456789abcdef" for c in value)
+
+
+def _cached_snapshot_revision(repo_id: str, requested: Optional[str]) -> Optional[str]:
+    """Read a commit SHA out of the local Hub cache. Never touches the network.
+
+    ``huggingface_hub.try_to_load_from_cache`` is public API and resolves a
+    ref (including ``None`` → ``main``) purely from on-disk metadata, so it
+    is safe on the offline path.  It returns a path inside
+    ``…/snapshots/<commit>/``; the commit is therefore the parent directory
+    name, and the cache is content-addressed by it, so no re-hashing is
+    needed to trust it.
+    """
+    try:
+        from huggingface_hub import try_to_load_from_cache
+    except ImportError as e:
+        logger.debug("Cache revision lookup skipped for '%s' — huggingface_hub not installed: %s", repo_id, e)
+        return None
+
+    for filename in _CACHE_PROBE_FILENAMES:
+        try:
+            hit = try_to_load_from_cache(repo_id, filename, revision=requested)
+        except Exception as e:  # noqa: BLE001 — best-effort cache probe; huggingface_hub raises a wide tail here (HFValidationError on a malformed repo id, OSError on an unreadable cache dir) and a provenance helper must never fail the run that calls it.
+            logger.debug("Cache revision lookup failed for '%s': %s", repo_id, e)
+            return None
+        if isinstance(hit, str):
+            sha = os.path.basename(os.path.dirname(hit))
+            if _is_commit_sha(sha):
+                return sha
+    return None
+
+
+def _query_hub_model_revision(repo_id: str, requested: Optional[str]) -> Optional[str]:
+    """Ask the Hub what ``requested`` (or the default branch) points at.
+
+    Best-effort: any failure returns ``None`` so the caller falls through to
+    the cache branch and ultimately to an honest ``unresolved`` /
+    ``pinned_unverified`` record.
+    """
+    try:
+        from huggingface_hub import HfApi
+    except ImportError as e:
+        logger.debug("Hub revision lookup skipped for '%s' — huggingface_hub not installed: %s", repo_id, e)
+        return None
+
+    try:
+        sha = getattr(HfApi().model_info(repo_id, revision=requested), "sha", None)
+    except Exception as e:  # noqa: BLE001 — best-effort revision lookup; the HF Hub client surface raises a wide error tail (HfHubHTTPError, RepositoryNotFoundError, RevisionNotFoundError, GatedRepoError, plus the transport OSError/ValueError family) and enumerating it would couple compliance.py to huggingface_hub internals.
+        logger.debug("Hub revision lookup failed for '%s' (revision=%r): %s", repo_id, requested, e)
+        return None
+
+    if not _is_commit_sha(sha):
+        logger.debug("HF Hub returned no usable commit SHA for model '%s' (got %r).", repo_id, sha)
+        return None
+    return sha
+
+
+def resolve_model_revision(
+    repo_id: str,
+    *,
+    requested: Optional[str] = None,
+    offline: bool = False,
+) -> Dict[str, Any]:
+    """Resolve which commit of ``repo_id`` a load should be pinned to.
+
+    Returns ``{"repo_id", "revision_requested", "revision_resolved",
+    "resolution_source"}``.
+
+    **Contract for callers — this is the load-bearing part.**  The returned
+    ``revision_resolved`` is safe to record in an Annex IV manifest *only if
+    the caller passes it straight into the load* (``from_pretrained(...,
+    revision=revision_resolved)``).  Resolve, then pin the load to what was
+    resolved.  Calling this and then loading without the pin reproduces the
+    exact defect this module was fixed for: an independently-queried SHA
+    that the load may never have used, written down as though it had.  If a
+    caller cannot pin, it must record ``revision_resolved: None`` — never
+    the value it got here.
+
+    ``revision_resolved`` is either a 40-hex commit SHA or ``None``.  It is
+    never the ``requested`` string echoed back: an operator's assertion that
+    a ref exists is not evidence that it does, and a verifier reading only
+    that key must not be able to confuse the two.  The ``requested`` value
+    is preserved separately in ``revision_requested``, which is what keeps
+    the record honest when the config was not — a symbolic ``"main"`` shows
+    plainly as a moving ref beside the SHA it happened to resolve to.
+
+    Branch table:
+
+    ===================================  ==================  =========================
+    Situation                            ``revision_resolved``  ``resolution_source``
+    ===================================  ==================  =========================
+    ``repo_id`` is a local directory     ``None``            ``local_path``
+    offline, cache hit                   cache SHA           ``cache``
+    offline, cache miss, pin requested   ``None``            ``pinned_unverified``
+    offline, cache miss, no pin          ``None``            ``unresolved``
+    online, no pin, Hub answers          Hub SHA             ``resolved``
+    online, pin, Hub confirms it         Hub SHA             ``pinned_resolved``
+    online, Hub unreachable, cache hit   cache SHA           ``cache``
+    online, Hub unreachable, pin, no cache  ``None``         ``pinned_unverified``
+    online, Hub unreachable, no pin, no cache  ``None``      ``unresolved``
+    ===================================  ==================  =========================
+
+    ``offline=True`` short-circuits **before any Hub client is imported**, so
+    an air-gapped run makes no network attempt at all; the local cache is
+    commit-addressed, which is why it can still answer the question.
+
+    Never raises.  A provenance helper that can abort a fourteen-hour
+    training run is a worse trade than a manifest that says "unknown".
+    """
+    record: Dict[str, Any] = {
+        "repo_id": repo_id,
+        "revision_requested": requested,
+        "revision_resolved": None,
+        "resolution_source": MODEL_REVISION_UNRESOLVED,
+    }
+
+    if not repo_id:
+        return record
+
+    # A directory on disk has no Hub commit. ``model_integrity.json`` is the
+    # identity artefact for local weights; synthesising a pseudo-SHA here
+    # (e.g. by hashing the directory) would put a 64-hex digest where a
+    # 40-hex commit belongs and mislead the reader it is meant to serve.
+    if os.path.isdir(repo_id):
+        record["resolution_source"] = MODEL_REVISION_LOCAL_PATH
+        return record
+
+    if offline:
+        cached = _cached_snapshot_revision(repo_id, requested)
+        if cached:
+            record["revision_resolved"] = cached
+            record["resolution_source"] = MODEL_REVISION_CACHE
+        elif requested:
+            record["resolution_source"] = MODEL_REVISION_PINNED_UNVERIFIED
+        return record
+
+    hub_sha = _query_hub_model_revision(repo_id, requested)
+    if hub_sha:
+        record["revision_resolved"] = hub_sha
+        record["resolution_source"] = MODEL_REVISION_PINNED_RESOLVED if requested else MODEL_REVISION_RESOLVED
+        return record
+
+    cached = _cached_snapshot_revision(repo_id, requested)
+    if cached:
+        record["revision_resolved"] = cached
+        record["resolution_source"] = MODEL_REVISION_CACHE
+        return record
+
+    if requested:
+        record["resolution_source"] = MODEL_REVISION_PINNED_UNVERIFIED
+    return record
+
+
+# ---------------------------------------------------------------------------
 # Art. 11 + Annex IV: Training Manifest & Technical Documentation
 # ---------------------------------------------------------------------------
 
@@ -938,6 +1207,73 @@ def compute_config_hash(config: Any) -> str:
     return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+# Stated when the manifest is written by a process that never loaded the base
+# model — ``forgelm compliance-only`` is the canonical case.  A fixed literal,
+# so no truncation cap is needed (unlike the dataset side's operator/transport-
+# supplied ``hf_revision_reason``).
+_NO_MODEL_LOAD_REASON = "no base-model load in this process recorded a revision for this repo"
+
+
+def _base_model_revision_block(config: Any) -> Dict[str, Any]:
+    """Build ``model_lineage.base_model_revision`` from the load that happened.
+
+    The source of truth is ``forgelm.model``'s resolved-revision registry,
+    which is written only *after* a pinned ``from_pretrained`` returns.  This
+    function deliberately performs **no Hub lookup of its own**: an
+    independently-queried SHA can name a commit the run never read, and
+    writing that into an Annex IV artefact is a confident falsehood — strictly
+    worse than the honest gap of saying nothing.  That defect is exactly what
+    ``_fingerprint_hf_revision`` was fixed for on the dataset side; it is not
+    reintroduced here.
+
+    Keys:
+
+    ``repo_id``
+        ``model.name_or_path`` verbatim.
+    ``revision_requested``
+        ``model.revision`` verbatim, or ``None``.  Kept beside the resolved
+        SHA so a symbolic pin (``"main"``, a tag) shows plainly as a moving
+        ref rather than passing for a commit.
+    ``revision_resolved``
+        A confirmed 40-hex commit SHA, or ``None``.  A value here always
+        means the load in this process was pinned to it.
+    ``resolution_source``
+        ``local_path`` / ``resolved`` / ``pinned_resolved`` / ``cache`` /
+        ``pinned_unverified`` / ``unresolved`` — see
+        :func:`resolve_model_revision`.
+    ``revision_pinned``
+        The exact string handed to ``revision=``.  Equals
+        ``revision_resolved`` when a SHA was confirmed; equals
+        ``revision_requested`` when the operator pinned a ref nothing could
+        confirm; ``None`` when the load was unpinned.
+    ``reason``
+        Present only when no load recorded anything, saying so in words.
+    """
+    from .model import get_loaded_model_revision
+
+    repo_id = config.model.name_or_path
+    requested = getattr(config.model, "revision", None)
+
+    record = get_loaded_model_revision(repo_id)
+    if record is None:
+        return {
+            "repo_id": repo_id,
+            "revision_requested": requested,
+            "revision_resolved": None,
+            "resolution_source": MODEL_REVISION_UNRESOLVED,
+            "revision_pinned": None,
+            "reason": _NO_MODEL_LOAD_REASON,
+        }
+
+    return {
+        "repo_id": record.get("repo_id", repo_id),
+        "revision_requested": record.get("revision_requested"),
+        "revision_resolved": record.get("revision_resolved"),
+        "resolution_source": record.get("resolution_source", MODEL_REVISION_UNRESOLVED),
+        "revision_pinned": record.get("revision_pinned"),
+    }
+
+
 def generate_training_manifest(
     config: Any,
     metrics: Dict[str, float],
@@ -959,6 +1295,7 @@ def generate_training_manifest(
         "config_hash": compute_config_hash(config),
         "model_lineage": {
             "base_model": config.model.name_or_path,
+            "base_model_revision": _base_model_revision_block(config),
             "backend": config.model.backend,
             "adapter_method": _describe_adapter_method(config),
             "quantization": "4-bit NF4" if config.model.load_in_4bit else "none",

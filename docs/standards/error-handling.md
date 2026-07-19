@@ -196,11 +196,18 @@ except (OSError, TypeError, ValueError) as e:
 ```python
 try:
     info = HfApi().dataset_info(dataset_path)
-    if info.sha:
-        fingerprint["hf_revision"] = info.sha
 except Exception as e:  # noqa: BLE001 — best-effort revision pin; HF Hub surface raises a wide error tail (HfHubHTTPError, RepositoryNotFoundError, RevisionNotFoundError, OSError, ValueError) and enumerating them couples this module to huggingface_hub internals.
-    logger.warning("HF Hub revision pin skipped for '%s': %s", dataset_path, e)
+    logger.debug("HF Hub revision pin skipped for '%s': %s", dataset_path, e)
+    _mark_revision_unresolved(fingerprint, f"{type(e).__name__}: {e}")
+    return
 ```
+
+Note what the failure path writes, not just that it is caught: it records
+a *marker* saying the lookup was attempted and failed. "We looked and
+could not tell" and "we never looked" are different statements to an
+auditor, and best-effort code that leaves the artefact silent makes them
+indistinguishable. Best-effort means the run continues, not that the
+record is allowed to be vague.
 
 **Bad — silent swallow with no rationale:**
 
