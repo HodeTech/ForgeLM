@@ -46,7 +46,7 @@ operatör-tarafı eylem.
 | A.5.16 Kimlik yönetimi | YES | `FORGELM_OPERATOR` env contract | CI runner identity'yi yapılandır |
 | A.5.17 Kimlik doğrulama bilgileri | YES | `safe_post` auth header'larını masklar; `_mask` token'ları gizler | Vault-store webhook secret'ları, HF token'ları |
 | A.5.18 Erişim hakları | YES | `human_approval` gate | IdP'de RBAC |
-| A.5.19 Tedarikçi ilişkilerinde bilgi güvenliği | YES | Dataset Hub commit SHA'sı (`_fingerprint_hf_revision`, `loaded` / `unverified` / `unresolved` olarak derecelendirilir); temel-model pin'i `model.revision`; SBOM.  Sınıflandırıcı / judge / ödül-modeli / merge-kaynağı yüklemeleri sabitlenmemiş | Vendor risk programı |
+| A.5.19 Tedarikçi ilişkilerinde bilgi güvenliği | YES | Dataset Hub commit SHA'sı (`_fingerprint_hf_revision`, `loaded` / `unverified` / `local_path` / `unresolved` olarak derecelendirilir); temel-model pin'i `model.revision`; SBOM.  Judge ve GRPO ödül-modeli yüklemeleri sabitlenir ama hiçbir artefakta kaydedilmez; sınıflandırıcı / merge-kaynağı yüklemeleri sabitlenmemiş | Vendor risk programı |
 | A.5.20 Tedarikçi anlaşmalarında bilgi güvenliği | YES | Standart tedarikçi MSA güvenlik clause'ları | Benimse |
 | A.5.21 ICT tedarik zincirinde bilgi güvenliği yönetimi | YES | SBOM (Wave 2 dönemi); `pip-audit` nightly (Wave 4) | CVE izleme |
 | A.5.22 Tedarikçi hizmetlerinin izlenmesi, gözden geçirilmesi ve değişim yönetimi | YES | Vendor yıllık review | Benimse |

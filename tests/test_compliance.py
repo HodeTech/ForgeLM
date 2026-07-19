@@ -1078,6 +1078,17 @@ class TestDatasetRevisionProvenance:
 
     _SHA = "c" * 40
 
+    @pytest.fixture(autouse=True)
+    def _online_env(self, monkeypatch):
+        """These tests assert what an *online* run records.
+
+        Without this, a developer machine (or CI job) that exports any of the
+        HF offline vars would silently take the new offline short-circuit and
+        every Hub-branch assertion below would be testing something else.
+        """
+        for var in ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE"):
+            monkeypatch.delenv(var, raising=False)
+
     @staticmethod
     def _stub_hf_api(monkeypatch, *, sha=None, raises=None):
         import huggingface_hub
@@ -1098,16 +1109,24 @@ class TestDatasetRevisionProvenance:
 
         monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {"org/ds": self._SHA})
 
-        def _boom(*args, **kwargs):
-            raise AssertionError(
-                "a SHA the load was pinned to must never be second-guessed by an independent Hub query"
-            )
+        # A RECORDER, not a raising sentinel.  ``_fingerprint_hf_revision``
+        # wraps the Hub call in a broad ``except Exception``, so a sentinel
+        # that raises ``AssertionError`` to prove "this was not called" gets
+        # swallowed by the code under test and the assertion passes whether
+        # or not the call happened — the test asserted nothing.  Counting
+        # calls cannot be swallowed.
+        calls = []
 
-        monkeypatch.setattr(huggingface_hub, "HfApi", _boom)
+        def _recording_api(*args, **kwargs):
+            calls.append((args, kwargs))
+            raise OSError("must not be reached")
+
+        monkeypatch.setattr(huggingface_hub, "HfApi", _recording_api)
 
         fp = {}
         compliance._fingerprint_hf_revision("org/ds", fp)
 
+        assert calls == [], "a SHA the load was pinned to must never be second-guessed by an independent Hub query"
         assert fp["hf_revision"] == self._SHA
         assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_LOADED
         assert "hf_revision_reason" not in fp
@@ -1200,6 +1219,351 @@ class TestDatasetRevisionProvenance:
         compliance._fingerprint_hf_revision("org/ds", fp)
 
         assert len(fp["hf_revision_reason"]) == compliance._REVISION_REASON_MAX_CHARS
+
+    # --- a moving ref must never reach ``hf_revision`` (item 2) ---
+
+    @pytest.mark.parametrize(
+        "returned",
+        ["main", "v1.0", "C" * 40, "c" * 39, "c" * 41, "refs/pr/3", 12345, b"c" * 40],
+    )
+    def test_non_commit_answers_are_refused_not_recorded(self, monkeypatch, returned):
+        """The ``unverified`` branch was the one place in either module that
+        wrote ``hf_revision`` without the ``_is_commit_sha`` gate, so a Hub
+        client answering with a symbolic ref put the literal string ``main``
+        into a field an auditor reads as a commit. ``resolve_model_revision``
+        has never echoed a requested ref into ``revision_resolved``; the
+        dataset side must match."""
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {})
+        self._stub_hf_api(monkeypatch, sha=returned)
+
+        fp = {}
+        compliance._fingerprint_hf_revision("org/ds", fp)
+
+        assert "hf_revision" not in fp
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_UNRESOLVED
+        # The rejected value is quoted, so the discrepancy is visible rather
+        # than silently dropped.
+        assert repr(returned) in fp["hf_revision_reason"]
+
+    def test_a_real_sha_still_lands_in_the_unverified_branch(self, monkeypatch):
+        """Guards the gate from being tightened into uselessness."""
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {})
+        self._stub_hf_api(monkeypatch, sha="0123456789abcdef" + "0" * 24)
+
+        fp = {}
+        compliance._fingerprint_hf_revision("org/ds", fp)
+
+        assert fp["hf_revision"] == "0123456789abcdef" + "0" * 24
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_UNVERIFIED
+        assert "hf_revision_reason" not in fp
+
+
+@pytest.mark.real_fingerprint
+class TestDatasetFingerprintRouting:
+    """``compute_dataset_fingerprint`` must classify a corpus the way the
+    loader does, and must never describe local files as a failed Hub lookup.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _online_env(self, monkeypatch):
+        for var in ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE"):
+            monkeypatch.delenv(var, raising=False)
+
+    @staticmethod
+    def _recording_hub(monkeypatch):
+        """Record every Hub-client construction; never raise.
+
+        ``_fingerprint_hf_revision`` catches ``Exception`` broadly, so a
+        sentinel that raises to prove "the Hub was not consulted" is
+        swallowed by the code under test and proves nothing.
+        """
+        import huggingface_hub
+
+        calls = []
+
+        class _Api:
+            def __init__(self, *a, **k):
+                calls.append("HfApi")
+
+            def dataset_info(self, dataset_id):
+                calls.append(("dataset_info", dataset_id))
+                return type("Info", (), {"sha": "a" * 40})()
+
+        monkeypatch.setattr(huggingface_hub, "HfApi", _Api)
+        return calls
+
+    def test_local_directory_is_local_path_not_a_failed_lookup(self, monkeypatch, tmp_path):
+        """A directory of JSONL files is a documented, supported value of
+        ``data.dataset_name_or_path``. It used to be routed into the Hub
+        branch and recorded as ``unresolved`` with a Hub-validation error as
+        its reason — the manifest said "we asked the Hub and could not tell"
+        about files that have no Hub identity at all."""
+        from forgelm import compliance
+
+        calls = self._recording_hub(monkeypatch)
+        corpus = tmp_path / "corpus_dir"
+        corpus.mkdir()
+        (corpus / "a.jsonl").write_text('{"text": "x"}\n')
+
+        fp = compliance.compute_dataset_fingerprint(str(corpus))
+
+        assert fp["source"] == "local_directory"
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_LOCAL_PATH
+        assert "hf_revision" not in fp
+        assert "hf_revision_reason" not in fp
+        assert "dataset_id" not in fp
+        assert calls == [], "a local directory has no Hub identity to look up"
+
+    def test_local_directory_symlink_records_the_resolved_target(self, tmp_path):
+        from forgelm import compliance
+
+        real = tmp_path / "real_dir"
+        real.mkdir()
+        link = tmp_path / "link_dir"
+        link.symlink_to(real, target_is_directory=True)
+
+        fp = compliance.compute_dataset_fingerprint(str(link))
+
+        assert fp["resolved_path"] == os.path.realpath(str(real))
+
+    def test_local_file_is_labelled_local_path(self, monkeypatch, tmp_path):
+        from forgelm import compliance
+
+        calls = self._recording_hub(monkeypatch)
+        f = tmp_path / "corpus.jsonl"
+        f.write_text('{"text": "x"}\n')
+
+        fp = compliance.compute_dataset_fingerprint(str(f))
+
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_LOCAL_PATH
+        assert "sha256" in fp  # the local content hash is still the evidence
+        assert "hf_revision" not in fp
+        assert calls == []
+
+    def test_hub_id_still_takes_the_hub_branch(self, monkeypatch):
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {})
+        monkeypatch.setattr(compliance, "_fingerprint_hf_metadata", lambda p, fp: None)
+        calls = self._recording_hub(monkeypatch)
+
+        fp = compliance.compute_dataset_fingerprint("org/dataset")
+
+        assert fp["source"] == "huggingface_hub"
+        assert fp["dataset_id"] == "org/dataset"
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_UNVERIFIED
+        assert ("dataset_info", "org/dataset") in calls
+
+    def test_unusable_path_is_not_sent_to_the_hub(self, monkeypatch, tmp_path):
+        """A typo'd local path is neither on disk nor a Hub id. Asking the Hub
+        about ``/home/me/typo.jsonl`` can only fail, and recording that
+        failure as a Hub lookup misdescribes what happened."""
+        from forgelm import compliance
+
+        calls = self._recording_hub(monkeypatch)
+
+        fp = compliance.compute_dataset_fingerprint(str(tmp_path / "does_not_exist.jsonl"))
+
+        assert fp["source"] == "unknown"
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_UNRESOLVED
+        assert "neither a local file" in fp["hf_revision_reason"]
+        assert "hf_revision" not in fp
+        assert calls == []
+
+
+@pytest.mark.real_fingerprint
+class TestDatasetFingerprintOfflineIsExplicit:
+    """Offline correctness must not depend on an env var an earlier caller
+    may or may not have exported.
+
+    ``forgelm.cli._config_load._apply_offline_flag`` does export all three
+    ``HF_*_OFFLINE`` vars at CLI start-up, so a normal ``forgelm`` run was
+    protected — by accident of ordering, not by design. A library consumer
+    (a supported entry point) who sets ``model.offline: true`` and calls
+    compliance directly got outbound connection attempts instead.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _online_env(self, monkeypatch):
+        for var in ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE"):
+            monkeypatch.delenv(var, raising=False)
+
+    @pytest.fixture
+    def connect_attempts(self, monkeypatch):
+        """A socket tripwire that RECORDS instead of raising.
+
+        The autouse ``_block_network`` guard in conftest raises, which the
+        broad ``except Exception`` in the code under test swallows — so a
+        leak would look exactly like a clean run. Recording the address makes
+        the leak visible no matter what catches the exception afterwards.
+        The connection is still never established.
+        """
+        import socket
+
+        attempts = []
+
+        def _recording_connect(self, address, *a, **k):
+            attempts.append(address)
+            # ``ConnectionRefusedError`` rather than a bare ``OSError``: it is
+            # what a real blocked connection raises, and it is inside every
+            # ``except`` clause on these paths, so the tripwire measures the
+            # attempt without changing which branch the code then takes.
+            raise ConnectionRefusedError("connection recorded and refused by the test tripwire")
+
+        monkeypatch.setattr(socket.socket, "connect", _recording_connect)
+        monkeypatch.setattr(socket.socket, "connect_ex", _recording_connect)
+        return attempts
+
+    @staticmethod
+    def _hub_that_dials(monkeypatch):
+        """A Hub stub that actually opens a socket, so the tripwire has
+        something to catch. Proves the tripwire is armed (positive control)
+        without depending on real ``huggingface_hub`` retry behaviour."""
+        import huggingface_hub
+
+        class _Api:
+            def dataset_info(self, dataset_id):
+                import socket
+
+                socket.socket().connect(("hub.invalid.example", 443))
+                raise AssertionError("unreachable — connect always raises")
+
+        monkeypatch.setattr(huggingface_hub, "HfApi", _Api)
+
+    def test_tripwire_is_armed(self, monkeypatch, connect_attempts):
+        """Positive control. Without this, every assertion below would pass
+        just as happily against a tripwire that records nothing."""
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {})
+        self._hub_that_dials(monkeypatch)
+
+        fp = {}
+        compliance._fingerprint_hf_revision("org/ds", fp)
+
+        assert connect_attempts == [("hub.invalid.example", 443)]
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_UNRESOLVED
+
+    def test_explicit_offline_argument_makes_no_connect_attempt(self, monkeypatch, connect_attempts):
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {})
+        self._hub_that_dials(monkeypatch)
+
+        fp = {}
+        compliance._fingerprint_hf_revision("org/ds", fp, offline=True)
+
+        assert connect_attempts == []
+        assert "hf_revision" not in fp
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_UNRESOLVED
+        assert fp["hf_revision_reason"] == compliance._OFFLINE_REVISION_REASON
+
+    def test_ambient_env_still_works_as_a_fallback(self, monkeypatch, connect_attempts):
+        """The explicit argument supplements the env check, it does not
+        replace it — the CLI path must keep working unchanged."""
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {})
+        self._hub_that_dials(monkeypatch)
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+
+        fp = {}
+        compliance._fingerprint_hf_revision("org/ds", fp)
+
+        assert connect_attempts == []
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_UNRESOLVED
+
+    def test_transformers_offline_is_honoured(self, monkeypatch, connect_attempts):
+        """``TRANSFORMERS_OFFLINE`` was ignored by ``_hf_offline_mode``.
+
+        All three vars express one operator intent — this process must not
+        reach the network. Reading it costs at most a missing pin, which is
+        honest; ignoring it costs an outbound request from a run the operator
+        believed was air-gapped.
+        """
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {})
+        self._hub_that_dials(monkeypatch)
+        monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+
+        fp = {}
+        compliance._fingerprint_hf_revision("org/ds", fp)
+
+        assert connect_attempts == []
+
+    def test_offline_gates_the_metadata_fetch_too(self, monkeypatch, connect_attempts):
+        """``_fingerprint_hf_metadata`` (``datasets.load_dataset_builder``) is
+        a second outbound path that had no offline guard of its own — it
+        merely survived an air-gapped run by catching ``ConnectionError``,
+        after making the attempt."""
+        import sys
+        import types
+
+        from forgelm import compliance
+        from forgelm import data as data_mod
+
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {})
+        self._hub_that_dials(monkeypatch)
+
+        fake_datasets = types.ModuleType("datasets")
+
+        def _dialling_builder(path):
+            import socket
+
+            socket.socket().connect(("datasets-server.invalid.example", 443))
+            raise AssertionError("unreachable")
+
+        fake_datasets.load_dataset_builder = _dialling_builder
+        monkeypatch.setitem(sys.modules, "datasets", fake_datasets)
+
+        # Positive control first: online, both outbound paths are exercised.
+        online = compliance.compute_dataset_fingerprint("org/dataset")
+        assert ("datasets-server.invalid.example", 443) in connect_attempts
+        assert online["hf_revision_source"] == compliance.REVISION_SOURCE_UNRESOLVED
+
+        connect_attempts.clear()
+        fp = compliance.compute_dataset_fingerprint("org/dataset", offline=True)
+
+        assert connect_attempts == []
+        assert fp["source"] == "huggingface_hub"
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_UNRESOLVED
+        assert fp["hf_revision_reason"] == compliance._OFFLINE_REVISION_REASON
+
+    def test_manifest_generation_threads_model_offline_into_the_fingerprint(
+        self, minimal_config, monkeypatch, connect_attempts
+    ):
+        """End-to-end: ``model.offline: true`` in config, no env var set, no
+        CLI involved — the manifest must still make no outbound attempt."""
+        from forgelm import data as data_mod
+        from forgelm.compliance import generate_training_manifest
+        from forgelm.config import ForgeConfig
+
+        monkeypatch.setattr(data_mod, "_RESOLVED_DATASET_REVISIONS", {})
+        self._hub_that_dials(monkeypatch)
+
+        raw = minimal_config()
+        raw["model"]["offline"] = True
+        raw["data"]["dataset_name_or_path"] = "org/dataset"
+        cfg = ForgeConfig(**raw)
+
+        manifest = generate_training_manifest(cfg, metrics={})
+
+        assert connect_attempts == []
+        fp = manifest["data_provenance"]["fingerprint"]
+        assert fp["hf_revision_source"] == "unresolved"
+        assert fp["hf_revision_reason"] == "offline mode — no Hub lookup was attempted"
 
 
 class TestResolveModelRevision:
@@ -2058,13 +2422,19 @@ class TestBaseModelRevisionBlock:
         # plausible-looking manifest.
         import forgelm.compliance as compliance_mod
 
+        # Recorded rather than raised, so the assertion survives any future
+        # broad ``except`` between here and the call site.
+        queries = []
+
         def _forbidden(*a, **k):
-            raise AssertionError("manifest generation must not query the Hub for a model revision")
+            queries.append((a, k))
+            return None
 
         monkeypatch.setattr(compliance_mod, "_query_hub_model_revision", _forbidden)
         monkeypatch.setattr(compliance_mod, "resolve_model_revision", _forbidden)
         cfg = self._cfg(minimal_config, revision=self._SHA)
         generate_training_manifest(cfg, metrics={})
+        assert queries == [], "manifest generation must not query the Hub for a model revision"
 
     def test_existing_lineage_keys_are_unchanged(self, minimal_config):
         cfg = self._cfg(minimal_config)

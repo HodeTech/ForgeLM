@@ -8,7 +8,7 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Added
 
-- **Hub revision pinning — five optional config fields, two of them wired.**
+- **Hub revision pinning — five optional config fields, four of them wired.**
   `model.revision`, `synthetic.teacher_revision`,
   `evaluation.safety.classifier_revision`,
   `evaluation.llm_judge.judge_model_revision` and
@@ -22,14 +22,35 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   probe behind `--fit-check` — so the tokenizer can never drift from the weights
   it is recorded beside. `synthetic.teacher_revision` pins the local teacher's
   tokenizer and weights under `teacher_backend: local`.
+  `evaluation.llm_judge.judge_model_revision` pins the **local** judge's
+  tokenizer and weights (an API judge is loaded by the provider, not the Hub —
+  the schema rejects the field alongside `judge_api_key_env`), and
+  `training.grpo_reward_model_revision` pins the GRPO reward tokenizer and
+  sequence-classification model (rejected without `grpo_reward_model`). For
+  every honoured field the value is resolved to a commit SHA first and that
+  exact SHA is passed as `revision=` to **every** `from_pretrained` for the
+  repo, so tokenizer and model can never come from different commits. When no
+  SHA can be confirmed — offline, no `huggingface_hub`, an unreachable or gated
+  repo — the operator's literal is still passed verbatim, so the pin is never
+  silently dropped, and a `WARNING` says no SHA was verified. Leaving a field
+  unset is unchanged behaviour and warns that the load is unpinned.
+  These two are not cosmetic: the reward model **is** the objective GRPO
+  optimises against, so an unpinned upstream re-tune changes what the run was
+  trained to do; the judge's score feeds the auto-revert `min_score` gate, so an
+  unpinned judge lets two runs of identical YAML promote and block the same
+  model.
   **Accepted and validated but NOT yet forwarded to any loader:**
-  `evaluation.safety.classifier_revision`,
-  `evaluation.llm_judge.judge_model_revision` and
-  `training.grpo_reward_model_revision`. Setting them today changes no load.
-  This is documented as a gap in
+  `evaluation.safety.classifier_revision` — setting it today changes no load,
+  because neither the training-loop safety gate nor `forgelm safety-eval`
+  forwards it. This is documented as a gap in
   [`docs/reference/configuration.md`](docs/reference/configuration.md#hub-revision-pinning)
-  rather than left to be discovered; do not treat them as reproducibility
+  rather than left to be discovered; do not treat it as reproducibility
   evidence until that table says otherwise.
+  **No pin except the base model's reaches a compliance artefact.** The Annex IV
+  manifest, `compliance_report.json` and the generated model card carry
+  `model_lineage.base_model_revision` only. Setting `judge_model_revision` or
+  `grpo_reward_model_revision` makes the run reproducible; it adds no judge or
+  reward-model commit to any generated artefact.
   Rejected at validation (exit `1`, fires under `--dry-run`, no network): an
   empty / whitespace-bearing / control-character / leading-dash / >255-char
   literal; `judge_model_revision` with `judge_api_key_env`; `teacher_revision`
@@ -204,20 +225,68 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   falsehood with full confidence. A missing pin is honest; a wrong pin is not.
   ForgeLM now resolves a Hub dataset's commit SHA *first*, passes that exact SHA
   to `load_dataset(..., revision=...)`, and records it only after the load
-  returns. The fingerprint gains `hf_revision_source` — `loaded` (the SHA the
-  load was pinned to; **the only value an auditor may treat as evidence**),
-  `unverified` (a manifest-time Hub lookup tied to no load — what
-  `forgelm compliance-only` produces, since it writes a bundle without reading
-  the corpus), or `unresolved` (no SHA obtained; `hf_revision` is **absent** and
-  `hf_revision_reason` states why). `hf_revision` keeps its name, type and
+  returns. The fingerprint gains `hf_revision_source`, now written on **every**
+  dataset fingerprint (previously only on the Hub branch, so its absence was
+  ambiguous between an old artefact and a local corpus). Four mutually exclusive
+  values: `loaded` (the SHA the load was pinned to; **the only value an auditor
+  may treat as evidence of what was trained on**), `unverified` (a manifest-time
+  Hub lookup tied to no load — what `forgelm compliance-only` produces, since it
+  writes a bundle without reading the corpus; a lead, not proof, and it names a
+  commit the run never read if upstream moved in between), `local_path` (the
+  corpus is files on disk, so no Hub commit exists and none was sought — no
+  reason is written because nothing failed; for a local *file* the evidence is
+  the `sha256` content hash, for a local *directory* there is no content hash
+  and the record identifies the path only), and `unresolved` (a lookup was
+  attempted or refused; `hf_revision` is **absent** and `hf_revision_reason`
+  states why, truncated to 200 chars). `loaded` is evidence, `unverified` is a
+  lead, `local_path` and `unresolved` are honest gaps — and a gap is never
+  grounds to infer a revision. `hf_revision` keeps its name, type and
   absent-when-unknown semantics, so tooling that reads only that key is
   unaffected — but it should now check `hf_revision_source == "loaded"` first.
+  `hf_revision` **never** holds a branch name, tag or moving ref: the
+  `unverified` branch previously skipped the commit-shape check, so a Hub client
+  answering with a symbolic ref could put the literal `"main"` into a field
+  auditors read as a commit. A non-commit answer is now refused and recorded as
+  `unresolved` with the rejected value quoted in the reason.
   **Operators holding bundles produced before this release:** those manifests
   carry a bare, unlabelled `hf_revision` obtained the old way. Treat it as
   `unverified`. Nothing back-fills a SHA that was never captured, and the
   append-only principle forbids rewriting an existing manifest, so this fix
   makes future runs auditable — not past ones (`forgelm/compliance.py`,
   `forgelm/data.py`).
+- **A local-directory corpus is no longer fingerprinted as a Hub dataset.**
+  `compute_dataset_fingerprint` had two branches — "is a file" and "everything
+  else is the Hub" — so a directory of JSONL files (a documented
+  `data.dataset_name_or_path` form) and a typo'd path were both labelled
+  `source: huggingface_hub` with a `dataset_id`, sent to the Hub, and written
+  down as a failed *lookup* rather than as files with no Hub identity. Routing
+  is now explicit: a local file (unchanged — no `source` key, `sha256` content
+  hash), `source: local_directory` for a directory (no `dataset_id`, and
+  `resolved_path` when the path is a symlink), `source: huggingface_hub` for a
+  Hub-id-shaped path, and `source: unknown` for a path that is neither on disk
+  nor Hub-id-shaped — recorded as `unresolved` with that stated as the reason
+  and no Hub request made on its behalf. Downstream consumers that assumed "not
+  a file ⇒ Hub" need updating (`forgelm/compliance.py`).
+- **`model.offline: true` now suppresses Hub traffic on the data and provenance
+  path by argument passing rather than environment side-effect.**
+  `compute_dataset_fingerprint`, `_fingerprint_hf_revision`,
+  `_resolve_hub_dataset_revision`, `_load_single_dataset` and
+  `_merge_extra_datasets` each take an `offline` flag, and `prepare_dataset` /
+  `generate_training_manifest` derive it from the config. Previously the only
+  protection was the CLI exporting `HF_HUB_OFFLINE` at start-up, so a library
+  consumer who set `model.offline: true` and called into these modules directly
+  got outbound connection attempts and no warning. The dataset-metadata fetch
+  (`version`, `description`, `download_size_bytes`) is now skipped in offline
+  mode as well, so those keys are absent from an air-gapped manifest rather than
+  absent only after a failed network attempt — attempting is the thing an
+  air-gapped deployment is asking us not to do. The CLI's env-var export is
+  unchanged and still works as a fallback, and `TRANSFORMERS_OFFLINE` is now
+  honoured by `forgelm.data` alongside `HF_HUB_OFFLINE` and
+  `HF_DATASETS_OFFLINE` (`forgelm/data.py`, `forgelm/compliance.py`).
+- **`mix_ratio` length is validated before any dataset is loaded** rather than
+  after. Same `ValueError`, same message, strictly earlier — the count is known
+  from the arguments alone, so downloading the datasets a mixture rejects was
+  pure waste (`forgelm/data.py`).
 - **GRPO training no longer crashes at post-train evaluation.** `ForgeTrainer`
   called `self.trainer.evaluate()` (and measured a baseline loss) on a
   `GRPOTrainer` that is intentionally built with no `eval_dataset`, so every GRPO

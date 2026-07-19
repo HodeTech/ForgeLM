@@ -13,7 +13,7 @@ Four pillars an ISO / SOC 2 auditor cares about most have direct ForgeLM evidenc
 
 1. **Audit trail** — `audit_log.jsonl` per training run, append-only with HMAC + SHA-256 hash chain + genesis manifest sidecar. `forgelm verify-audit` validates the chain end-to-end.
 2. **Change control** — Article 14 staging gate (`forgelm approve` / `reject`) + `human_approval.required/granted/rejected` audit events + `config_hash` (per-run manifest sidecar field) stamped per run.
-3. **Data lineage** — `data_provenance.json` + `data_governance_report.json` together pin corpus + governance posture deterministically.
+3. **Data lineage** — `data_provenance.json` (SHA-256 fingerprint + size + mtime, plus the dataset's HF Hub commit SHA **graded by `hf_revision_source`**) + `data_governance_report.json` (collection_method, annotation_process, known_biases, personal_data_included, dpia_completed). Read the grade before the SHA: only `hf_revision_source: loaded` is evidence of the corpus that trained the model.
 4. **Supply chain** — CycloneDX 1.5 SBOM emitted per release, `pip-audit` nightly, `bandit` CI for static + dynamic security scanning.
 
 ## The eight audit-floor questions

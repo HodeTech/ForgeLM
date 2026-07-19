@@ -36,7 +36,7 @@ kategoriler engagement-bazında scoplanır.
 | CC3.1 | Uygun hedefler belirler | `compliance.intended_purpose`; risk classification |
 | CC3.2 | Riskleri tanımlar ve analiz eder | `risk_assessment` Pydantic block; safety eval; `risk_treatment_plan.md` |
 | CC3.3 | Sahtekarlık risklerini değerlendirir | Audit log tamper-evidence; HMAC chain; manifest sidecar |
-| CC3.4 | Değişimleri tanımlar ve değerlendirir | `human_approval.required/granted/rejected` audit zinciri; koşum başına `config_hash` (`compliance_report.json`'a, `human_approval.required` event'ine ve JSON zarfına damgalanır); diff için `model_integrity.json` / `model.integrity_verified` SHA-256 artefakt hash'leri; `model.revision` upstream temel modeli sabitler ve `model_lineage.base_model_revision` yüklemenin kullandığı commit'i kaydeder (sınıflandırıcı / judge / ödül-modeli / merge-kaynağı yüklemeleri sabitlenmemiş kalır) |
+| CC3.4 | Değişimleri tanımlar ve değerlendirir | `human_approval.required/granted/rejected` audit zinciri; koşum başına `config_hash` (`compliance_report.json`'a, `human_approval.required` event'ine ve JSON zarfına damgalanır); diff için `model_integrity.json` / `model.integrity_verified` SHA-256 artefakt hash'leri; `model.revision` upstream temel modeli sabitler ve `model_lineage.base_model_revision` yüklemenin kullandığı commit'i kaydeder (judge ve GRPO ödül modeli kendi `*_revision` alanlarıyla sabitlenir, ancak hiçbir pin bir artefakta kaydedilmez; sınıflandırıcı ve merge-kaynağı yüklemeleri sabitlenmemiş kalır) |
 | CC4.1 | Değerlendirmeleri seçer, geliştirir, gerçekleştirir | `forgelm verify-audit`; `forgelm safety-eval` |
 | CC4.2 | İç kontrol eksikliklerini iletir | `pipeline.failed`/`reverted`/`erasure_failed` olayları |
 | CC5.1 | Kontrol aktivitelerini seçer, geliştirir | F-compliance-110 strict gate; auto-revert; staging |
@@ -57,7 +57,7 @@ kategoriler engagement-bazında scoplanır.
 | CC7.5 | Düzeltici eylemleri tanımlar, geliştirir | `human_approval.rejected`; `sop_change_management.md` |
 | CC8.1 | Değişimleri yetkilendirir | `forgelm approve` Madde 14 gate; staging dir |
 | CC9.1 | Riskleri tanımlar, yönetir | `risk_assessment` config + safety eval; `risk_treatment_plan.md` |
-| CC9.2 | Tedarikçi + iş ortağı riskini yönetir | SBOM; `loaded` / `unverified` / `unresolved` olarak derecelendirilen dataset Hub commit SHA'sı; temel-model pin'i (`model.revision` → `model_lineage.base_model_revision`); lisans çıkarımı.  **Kapsanmayan:** güvenlik sınıflandırıcısı, LLM judge, GRPO ödül modeli, merge kaynakları |
+| CC9.2 | Tedarikçi + iş ortağı riskini yönetir | SBOM; `loaded` / `unverified` / `local_path` / `unresolved` olarak derecelendirilen dataset Hub commit SHA'sı; temel-model pin'i (`model.revision` → `model_lineage.base_model_revision`); lisans çıkarımı.  **Sabitlenen ama hiçbir artefakta kaydedilmeyen:** LLM judge, GRPO ödül modeli.  **Kapsanmayan:** güvenlik sınıflandırıcısı, merge kaynakları |
 
 ## Availability (A1.x)
 

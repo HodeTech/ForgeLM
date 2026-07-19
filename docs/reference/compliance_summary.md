@@ -105,9 +105,47 @@ evidenced*. Never read a SHA without reading the grade beside it.
 
 | Key | Meaning |
 |---|---|
-| `hf_revision` | The dataset repo's Hub commit SHA. Absent when none is known. |
-| `hf_revision_source` | `loaded` — ForgeLM resolved the commit, passed that exact SHA to `load_dataset(..., revision=...)`, and the load succeeded. **The only value an auditor may treat as proof of the corpus that trained the model.** `unverified` — no load in this process pinned the dataset, so the SHA is a Hub lookup of the repo's default-branch head made at manifest-generation time (this is what `forgelm compliance-only` produces). `unresolved` — no SHA could be established; `hf_revision` is absent. |
-| `hf_revision_reason` | Present only when `hf_revision_source` is `unresolved`; free text (≤200 chars) stating why — offline mode, `huggingface_hub` missing, Hub unreachable, gated repo, or no SHA returned. |
+| `hf_revision` | The dataset repo's Hub commit SHA. Absent when none is known. **Never a branch name, tag or moving ref** — a 40-character lowercase-hex commit SHA or nothing at all. |
+| `hf_revision_source` | The grade. Present on **every** dataset fingerprint, one of four mutually exclusive values — see the table below. |
+| `hf_revision_reason` | Present only when `hf_revision_source` is `unresolved`; free text (≤200 chars) stating why. |
+| `source` | `huggingface_hub` for a Hub-id-shaped path; `local_directory` for a directory corpus; `unknown` for a path that is neither on disk nor Hub-id-shaped. A local **file** writes no `source` key at all. |
+| `dataset_id` | The Hub repo id. Written only under `source: huggingface_hub` — a directory corpus has no Hub identity and no longer carries this key. |
+| `resolved_path` | The symlink target, when the local file or directory path was a symlink. |
+
+`hf_revision_source` values:
+
+| Value | What `hf_revision` holds | What an auditor may conclude |
+|---|---|---|
+| `loaded` | A 40-hex commit SHA. | **Evidence.** `forgelm.data` resolved the SHA, passed it to `load_dataset(..., revision=...)`, and the load returned. **The only value an auditor may treat as evidence of what was trained on.** No `hf_revision_reason` is written. |
+| `unverified` | A 40-hex commit SHA, shape-checked. | **A lead, not proof.** No load in this process pinned this dataset; the SHA came from a Hub lookup at manifest time — the canonical case is `forgelm compliance-only`, which writes a manifest without ever reading the corpus. Read it as "the repo's default-branch head when the manifest was written". If the upstream repo moved between the load and the manifest, this value names a commit the run never read. |
+| `local_path` | Absent. | **An honest gap.** The corpus is files on disk, so no Hub commit exists and none was sought; no `hf_revision_reason` is written because nothing failed. Set for both a local file and a local directory. For a local **file** the evidence is the `sha256` content hash; for a local **directory there is no content hash** — the record identifies the path only. Mirrors `local_path` in the model-side `resolution_source` vocabulary. |
+| `unresolved` | Absent — never fabricated. | **An honest gap.** A lookup was attempted and failed, or was refused. `hf_revision_reason` states why. |
+
+The rule: `loaded` is evidence; `unverified` is a lead; `local_path` and
+`unresolved` are honest gaps — and a gap is never grounds to infer a revision.
+
+Reasons an auditor will see under `unresolved`:
+
+| `hf_revision_reason` | Meaning |
+|---|---|
+| `offline mode — no Hub lookup was attempted` | The run was air-gapped (`model.offline: true`, or `HF_HUB_OFFLINE` / `HF_DATASETS_OFFLINE` / `TRANSFORMERS_OFFLINE`). Nothing was asked. |
+| `huggingface_hub is not installed` | No Hub client available in the environment. |
+| `<ExcType>: <message>` | The lookup was made and raised — Hub unreachable, gated repo, transport error. |
+| `HF Hub returned no commit SHA for this dataset` | The lookup succeeded but carried no SHA. |
+| `HF Hub returned a non-commit revision for this dataset: <repr>` | The Hub answered with something that is not a 40-hex lowercase commit — e.g. `'main'` — and it was **refused** rather than recorded. A moving ref in a field auditors read as a commit is exactly the failure this vocabulary exists to prevent. |
+| `path is neither a local file or directory nor a Hugging Face Hub dataset id` | A typo'd or otherwise unusable path. No Hub request was made on its behalf. |
+
+**Consumers that assumed "not a file ⇒ Hub" need updating.** Before this
+release every non-file path — directories and typos included — was labelled
+`source: huggingface_hub` with a `dataset_id`, and `hf_revision_source` was
+written only on the Hub branch, so its absence was ambiguous between "an old
+artefact" and "a local corpus".
+
+**Offline behaviour.** `model.offline: true` now suppresses all Hub traffic on
+the data and provenance path by argument passing rather than environment
+side-effect, so a library consumer gets the same protection as a CLI user. In
+offline mode the dataset-metadata fetch is skipped too, so `version`,
+`description` and `download_size_bytes` are absent from an air-gapped manifest.
 
 **Base model**, in `compliance_report.json` under
 `model_lineage.base_model_revision`:
@@ -128,11 +166,18 @@ that raises leaves no claim behind.
 
 Three limits to state plainly:
 
-- The **safety classifier, LLM judge and GRPO reward model have no
-  provenance block** and their `*_revision` config fields are not yet
-  forwarded to any loader. A classifier contributed no weights to the
-  fine-tuned model, so it would not belong in `model_lineage` regardless;
-  the dedicated blocks for these roles are not implemented.
+- The **LLM judge and GRPO reward model are pinned** by
+  `evaluation.llm_judge.judge_model_revision` and
+  `training.grpo_reward_model_revision`, but **neither pin appears in any
+  artefact** — not the Annex IV manifest, not `compliance_report.json`, not
+  the model card. Those carry `model_lineage.base_model_revision` only.
+  Setting the fields makes the run reproducible; it adds no judge or
+  reward-model commit to a generated compliance artefact. The **safety
+  classifier** has the same artefact limitation *and* a second one:
+  `evaluation.safety.classifier_revision` reaches no loader, so the
+  classifier is not pinned either. None of these three contributed weights
+  to the fine-tuned model, so they would not belong in `model_lineage`
+  regardless; the dedicated blocks for these roles are not implemented.
 - The **synthetic teacher** is pinned by `synthetic.teacher_revision` and
   the resolved commit is registered in-process, but no manifest block
   publishes it yet.

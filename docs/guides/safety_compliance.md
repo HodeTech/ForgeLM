@@ -335,7 +335,8 @@ The library function `forgelm.compliance.verify_audit_log(path, *, hmac_secret=N
     "fingerprint": {
       "sha256": "a1b2c3d4...",
       "size_bytes": 15728640,
-      "modified": "2026-03-20T10:00:00+00:00"
+      "modified": "2026-03-20T10:00:00+00:00",
+      "hf_revision_source": "local_path"
     }
   },
   "evaluation_results": {

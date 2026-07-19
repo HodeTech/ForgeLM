@@ -36,7 +36,7 @@ categories are scoped per-engagement.
 | CC3.1 | Specifies suitable objectives | `compliance.intended_purpose`; risk classification |
 | CC3.2 | Identifies and analyses risks | `risk_assessment` Pydantic block; safety eval; `risk_treatment_plan.md` |
 | CC3.3 | Considers fraud risks | Audit log tamper-evidence; HMAC chain; manifest sidecar |
-| CC3.4 | Identifies and assesses changes | `human_approval.required/granted/rejected` audit chain; per-run `config_hash` (stamped into `compliance_report.json`, the `human_approval.required` event, and the JSON envelope); `model_integrity.json` / `model.integrity_verified` SHA-256 artifact hashes for diff; `model.revision` pins the upstream base model and `model_lineage.base_model_revision` records the commit the load used (classifier / judge / reward-model / merge-source loads remain unpinned) |
+| CC3.4 | Identifies and assesses changes | `human_approval.required/granted/rejected` audit chain; per-run `config_hash` (stamped into `compliance_report.json`, the `human_approval.required` event, and the JSON envelope); `model_integrity.json` / `model.integrity_verified` SHA-256 artifact hashes for diff; `model.revision` pins the upstream base model and `model_lineage.base_model_revision` records the commit the load used (the judge and GRPO reward model are pinned by their `*_revision` fields, though neither pin is recorded in any artefact; classifier and merge-source loads remain unpinned) |
 | CC4.1 | Selects, develops, performs evaluations | `forgelm verify-audit`; `forgelm safety-eval` |
 | CC4.2 | Communicates internal-control deficiencies | `pipeline.failed`/`reverted`/`erasure_failed` events |
 | CC5.1 | Selects, develops control activities | F-compliance-110 strict gate; auto-revert; staging |
@@ -57,7 +57,7 @@ categories are scoped per-engagement.
 | CC7.5 | Identifies, develops corrective actions | `human_approval.rejected`; `sop_change_management.md` |
 | CC8.1 | Authorises changes | `forgelm approve` Article 14 gate; staging dir |
 | CC9.1 | Identifies, manages risks | `risk_assessment` config + safety eval; `risk_treatment_plan.md` |
-| CC9.2 | Manages vendor + business-partner risk | SBOM; dataset Hub commit SHA graded `loaded` / `unverified` / `unresolved`; base-model pin (`model.revision` → `model_lineage.base_model_revision`); license extraction.  **Not covered:** safety classifier, LLM judge, GRPO reward model, merge sources |
+| CC9.2 | Manages vendor + business-partner risk | SBOM; dataset Hub commit SHA graded `loaded` / `unverified` / `local_path` / `unresolved`; base-model pin (`model.revision` → `model_lineage.base_model_revision`); license extraction.  **Pinned but recorded in no artefact:** LLM judge, GRPO reward model.  **Not covered:** safety classifier, merge sources |
 
 ## Availability (A1.x)
 

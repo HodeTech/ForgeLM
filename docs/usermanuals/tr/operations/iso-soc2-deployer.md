@@ -13,7 +13,7 @@ ISO / SOC 2 denetçisinin en çok önem verdiği dört sütun, doğrudan ForgeLM
 
 1. **Denetim izi** — eğitim çalışması başına `audit_log.jsonl`, HMAC + SHA-256 hash chain + genesis manifest sidecar ile append-only. `forgelm verify-audit` zinciri uçtan uca doğrular.
 2. **Değişiklik kontrolü** — Article 14 staging gate'i (`forgelm approve` / `reject`) + `human_approval.required/granted/rejected` audit olayları + run başına damgalanmış `config_hash` (per-run manifest sidecar field).
-3. **Veri lineage** — `data_provenance.json` + `data_governance_report.json` birlikte corpus + yönetişim duruşunu deterministik olarak pinler.
+3. **Veri lineage** — `data_provenance.json` (SHA-256 fingerprint + size + mtime, ayrıca **`hf_revision_source` ile derecelendirilmiş** dataset HF Hub commit SHA'sı) + `data_governance_report.json` (collection_method, annotation_process, known_biases, personal_data_included, dpia_completed). Dereceyi SHA'dan önce okuyun: modeli eğiten korpusun kanıtı yalnızca `hf_revision_source: loaded`'dır.
 4. **Tedarik zinciri** — sürüm başına yayınlanan CycloneDX 1.5 SBOM, gecelik `pip-audit`, statik + dinamik güvenlik tarama için CI'da `bandit`.
 
 ## Sekiz denetim katı sorusu

@@ -843,7 +843,9 @@ class TestNonNumericJudgeScore:
         eval_file = tmp_path / "eval.jsonl"
         eval_file.write_text('{"prompt": "Hello?"}\n')
 
-        monkeypatch.setattr(judge, "_load_local_judge", lambda m: (MagicMock(), MagicMock()))
+        # Accepts the revision pin `run_judge_evaluation` now forwards; this
+        # test is about score parsing, not the load, so the pin is ignored.
+        monkeypatch.setattr(judge, "_load_local_judge", lambda m, revision=None: (MagicMock(), MagicMock()))
         monkeypatch.setattr(judge, "_generate_responses_batched", lambda *a, **k: ["resp"])
         monkeypatch.setattr(judge, "_call_local_judge", lambda *a, **k: {"score": "8/10", "reason": "x"})
 

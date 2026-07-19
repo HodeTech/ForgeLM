@@ -26,6 +26,14 @@ _EVT_REVERT_TRIGGERED = "model.reverted"
 # ``*.evaluation_completed`` events.
 _EVT_LOSS_GATE_COMPLETED = "evaluation.loss_gate_completed"
 
+# Role the GRPO reward-model load plays in the ``(role, repo_id)`` revision
+# registry in ``forgelm.model``.  Kept here rather than beside
+# ``ROLE_BASE_MODEL`` / ``ROLE_SAFETY_CLASSIFIER`` in ``forgelm/model.py`` only
+# because this change was scoped out of that file; the role block there is the
+# natural home and this constant should move there when the two files can be
+# touched together.  The value is the registry key and must stay stable.
+ROLE_GRPO_REWARD_MODEL = "grpo_reward_model"
+
 
 # ---------------------------------------------------------------------------
 # Built-in GRPO math reward — used when grpo_reward_model is not set but the
@@ -950,7 +958,13 @@ class ForgeTrainer:
         reward_model_path = getattr(self.config.training, "grpo_reward_model", None)
         if reward_model_path:
             logger.info("GRPO reward source: classifier model %s", reward_model_path)
-            return [self._build_classifier_reward(reward_model_path)]
+            return [
+                self._build_classifier_reward(
+                    reward_model_path,
+                    getattr(self.config.training, "grpo_reward_model_revision", None),
+                    offline=getattr(getattr(self.config, "model", None), "offline", False),
+                )
+            ]
 
         from .grpo_rewards import combined_format_length_reward
 
@@ -972,20 +986,44 @@ class ForgeTrainer:
         return reward_funcs
 
     @staticmethod
-    def _build_classifier_reward(reward_model_path: str):
-        """Wrap an HF sequence-classification model as a TRL reward callable."""
+    def _build_classifier_reward(
+        reward_model_path: str,
+        reward_model_revision: Optional[str] = None,
+        *,
+        offline: bool = False,
+    ):
+        """Wrap an HF sequence-classification model as a TRL reward callable.
+
+        ``reward_model_revision`` is ``training.grpo_reward_model_revision``.
+        The reward model *is* the objective GRPO optimises against, so an
+        unpinned upstream re-tune changes what the run was trained to do with
+        no config diff to point at — a stronger reproducibility claim than the
+        base-model pin, not a weaker one.
+
+        Model and tokenizer share one pin: scoring completions with weights
+        from one commit under a tokenizer from another silently shifts the
+        reward scale. Provenance is registered only after both loads return.
+        """
         import torch as _rw_torch
         from transformers import AutoModelForSequenceClassification
         from transformers import AutoTokenizer as _AutoTok
 
-        from .model import _resolve_bnb_compute_dtype
+        from .model import _resolve_bnb_compute_dtype, prepare_revision_pin
+        from .model import record_loaded_revision as _record_revision
+
+        _rw_pin, _rw_revision_record = prepare_revision_pin(
+            reward_model_path,
+            role=ROLE_GRPO_REWARD_MODEL,
+            requested=reward_model_revision,
+            offline=offline,
+        )
 
         # `trust_remote_code=False` is the secure default — a reward model
         # downloaded from the Hub should never execute arbitrary repo code
         # at load time. Operators that genuinely need a custom architecture
         # can fork and pre-convert; this code path is the GRPO classifier
         # reward, which is always a SequenceClassification head.
-        _rw_tok = _AutoTok.from_pretrained(reward_model_path, trust_remote_code=False)
+        _rw_tok = _AutoTok.from_pretrained(reward_model_path, trust_remote_code=False, revision=_rw_pin)
         # Load the reward classifier at the same compute dtype the rest of the
         # pipeline resolves (bf16 if supported, else fp16) rather than the
         # checkpoint default (typically fp32). A full-precision reward model
@@ -1003,7 +1041,9 @@ class ForgeTrainer:
             device_map="auto",
             trust_remote_code=False,
             dtype=_rw_dtype,
+            revision=_rw_pin,
         )
+        _record_revision(_rw_revision_record)
 
         def _reward_fn(completions, **kwargs):
             import torch as _t
@@ -1803,6 +1843,7 @@ class ForgeTrainer:
             api_base=getattr(judge_cfg, "judge_api_base", None),
             batch_size=judge_cfg.batch_size,
             include_samples=getattr(judge_cfg, "include_eval_samples", False),
+            judge_model_revision=getattr(judge_cfg, "judge_model_revision", None),
         )
 
     def _export_compliance_if_needed(self, metrics: Dict[str, float], result: TrainResult) -> None:

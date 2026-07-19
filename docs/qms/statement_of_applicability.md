@@ -45,7 +45,7 @@ contribution → deployer-side action.
 | A.5.16 Identity management | YES | `FORGELM_OPERATOR` env contract | Configure CI runner identity |
 | A.5.17 Authentication information | YES | `safe_post` masks auth headers; `_mask` hides tokens | Vault-store webhook secrets, HF tokens |
 | A.5.18 Access rights | YES | `human_approval` gate | RBAC at IdP |
-| A.5.19 Information security in supplier relationships | YES | Dataset Hub commit SHA (`_fingerprint_hf_revision`, graded `loaded` / `unverified` / `unresolved`); base-model pin `model.revision`; SBOM.  Classifier / judge / reward-model / merge-source loads unpinned | Vendor risk programme |
+| A.5.19 Information security in supplier relationships | YES | Dataset Hub commit SHA (`_fingerprint_hf_revision`, graded `loaded` / `unverified` / `local_path` / `unresolved`); base-model pin `model.revision`; SBOM.  Judge and GRPO reward-model loads are pinned but recorded in no artefact; classifier / merge-source loads unpinned | Vendor risk programme |
 | A.5.20 Addressing information security within supplier agreements | YES | Standard supplier MSA security clauses | Adopt |
 | A.5.21 Managing information security in the ICT supply chain | YES | SBOM (Wave 2 era); `pip-audit` nightly (Wave 4) | CVE monitoring |
 | A.5.22 Monitoring, review and change management of supplier services | YES | Vendor annual review | Adopt |

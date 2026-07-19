@@ -14,6 +14,19 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("forgelm.judge")
 
+# Role this module's pinned model loads play in the revision registry keyed by
+# ``(role, repo_id)`` in ``forgelm.model``.  Kept here rather than beside
+# ``ROLE_BASE_MODEL`` / ``ROLE_SAFETY_CLASSIFIER`` in ``forgelm/model.py`` only
+# because this change was scoped out of that file; the role block there is the
+# natural home and this constant should move there when the two files can be
+# touched together.  The value is the registry key and must stay stable.
+#
+# A distinct role matters concretely: the same repo (Llama-Guard is the usual
+# case) can be both the safety classifier and the local judge in one run, and
+# only one of the two loads may have been pinned.  Sharing a role would let the
+# unpinned load's record overwrite the pinned one's.
+ROLE_LLM_JUDGE = "llm_judge"
+
 DEFAULT_RUBRIC = """Score the following AI assistant response on a scale of 1-10.
 
 Criteria:
@@ -334,17 +347,33 @@ def _load_eval_prompts(path: str) -> List[str]:
     return prompts
 
 
-def _load_local_judge(judge_model: str) -> Tuple[Any, Any]:
-    """Load a local judge model + tokenizer pair."""
+def _load_local_judge(judge_model: str, judge_model_revision: Optional[str] = None) -> Tuple[Any, Any]:
+    """Load a local judge model + tokenizer pair.
+
+    ``judge_model_revision`` is ``evaluation.llm_judge.judge_model_revision``.
+    The judge produces the score the auto-revert gate compares against
+    ``min_score``, so an unpinned upstream re-tune moves the pass/fail line
+    with no config diff to point at — the same exposure the safety classifier
+    pin closes.
+
+    Model and tokenizer share one pin: a score produced by weights from one
+    commit and a chat template from another is not the score the manifest
+    would describe.  The resolved commit is registered as provenance only
+    after *both* loads return, so a failed load leaves no claim behind.
+    """
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    from .model import prepare_revision_pin, record_loaded_revision
+
     logger.info("Loading local judge model: %s", judge_model)
+    pin, revision_record = prepare_revision_pin(judge_model, role=ROLE_LLM_JUDGE, requested=judge_model_revision)
     # ``trust_remote_code=False`` is the secure default (Phase 7 acceptance): a
     # judge model is consulted by the auto-revert gate, so loading must not
     # execute arbitrary repo code at load time.  Operators with a custom
     # architecture should fork and pre-convert.
-    tok = AutoTokenizer.from_pretrained(judge_model, trust_remote_code=False)
-    mdl = AutoModelForCausalLM.from_pretrained(judge_model, device_map="auto", trust_remote_code=False)
+    tok = AutoTokenizer.from_pretrained(judge_model, trust_remote_code=False, revision=pin)
+    mdl = AutoModelForCausalLM.from_pretrained(judge_model, device_map="auto", trust_remote_code=False, revision=pin)
+    record_loaded_revision(revision_record)
     return mdl, tok
 
 
@@ -526,6 +555,7 @@ def run_judge_evaluation(
     # Phase 4 (closure F-performance-102) — batched fine-tuned-model generation
     batch_size: int = 8,
     include_samples: bool = False,
+    judge_model_revision: Optional[str] = None,
 ) -> JudgeResult:
     """Evaluate fine-tuned model outputs using an LLM judge.
 
@@ -539,6 +569,11 @@ def run_judge_evaluation(
         min_score: Minimum average score to pass (1-10 scale).
         max_new_tokens: Max tokens for response generation.
         output_dir: Directory to save judge results.
+        judge_model_revision: Hub commit/tag/branch to pin the *local* judge
+            load to. Ignored when ``judge_api_key`` is set, because an API
+            judge is loaded by the provider, not from the Hub — the schema
+            rejects that combination up front
+            (``JudgeConfig`` cross-field validator).
 
     Returns:
         JudgeResult with scores and pass/fail status.
@@ -573,7 +608,7 @@ def run_judge_evaluation(
     local_judge_tokenizer = None
     if not is_api_judge:
         try:
-            local_judge_model, local_judge_tokenizer = _load_local_judge(judge_model)
+            local_judge_model, local_judge_tokenizer = _load_local_judge(judge_model, judge_model_revision)
         except Exception as e:  # noqa: BLE001 — best-effort: HF AutoModel/AutoTokenizer load surface raises a wide error tail (OSError for filesystem/repo, ValueError for config drift, RuntimeError for dtype/device, ImportError for missing extras, HuggingFace-specific repo errors). The JudgeResult(passed=False) return is the documented hard-failure surface so the caller can react.  # NOSONAR
             logger.exception("Failed to load local judge model")
             return JudgeResult(passed=False, failure_reason=f"Judge model load failed: {e}")

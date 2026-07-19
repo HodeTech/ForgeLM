@@ -785,6 +785,9 @@ class TestClassifierRewardDtype:
                 side_effect=fake_model_from_pretrained,
             ),
             patch("transformers.AutoTokenizer.from_pretrained", return_value=MagicMock()),
+            # The reward load now resolves a revision first; stub the resolver
+            # so this dtype test cannot reach the Hub.
+            patch("forgelm.compliance.resolve_model_revision", return_value={"repo_id": "org/reward"}),
         ):
             ForgeTrainer._build_classifier_reward("org/reward")
 
@@ -813,6 +816,9 @@ class TestClassifierRewardDtype:
                 side_effect=fake_model_from_pretrained,
             ),
             patch("transformers.AutoTokenizer.from_pretrained", return_value=MagicMock()),
+            # The reward load now resolves a revision first; stub the resolver
+            # so this dtype test cannot reach the Hub.
+            patch("forgelm.compliance.resolve_model_revision", return_value={"repo_id": "org/reward"}),
         ):
             ForgeTrainer._build_classifier_reward("org/reward")
 
@@ -932,3 +938,166 @@ class TestSafetyClassifierModeThreading:
             trainer._run_safety_if_configured()
 
         assert mock_run.call_args.kwargs["classifier_mode"] == "auto"
+
+
+@pytest.mark.skipif(not torch_available, reason="torch not installed")
+class TestGrpoRewardModelRevisionPin:
+    """``training.grpo_reward_model_revision`` must reach the reward-model load.
+
+    The reward model *is* the objective GRPO optimises against, so an
+    unpinned upstream re-tune changes what the run was trained to do with no
+    config diff to point at.  The field validated, cross-field-checked and
+    documented but reached no loader until this wiring landed.
+
+    No network, no GPU: the revision resolver is stubbed and both
+    transformers entry points are mocked.
+    """
+
+    SHA = "0" * 39 + "c"
+
+    @pytest.fixture(autouse=True)
+    def _clean_registry(self):
+        from forgelm import model as model_mod
+
+        model_mod._RESOLVED_MODEL_REVISIONS.clear()
+        yield
+        model_mod._RESOLVED_MODEL_REVISIONS.clear()
+
+    @pytest.fixture
+    def stub_resolver(self, monkeypatch):
+        def _install(**overrides):
+            from forgelm import compliance as compliance_mod
+
+            seen = {}
+
+            def _fake(repo_id, *, requested=None, offline=False):
+                seen["requested"] = requested
+                seen["offline"] = offline
+                record = {
+                    "repo_id": repo_id,
+                    "revision_requested": requested,
+                    "revision_resolved": None,
+                    "resolution_source": "unresolved",
+                }
+                record.update(overrides)
+                return record
+
+            monkeypatch.setattr(compliance_mod, "resolve_model_revision", _fake)
+            return seen
+
+        return _install
+
+    def _patched_loads(self, captured, fail_model=False):
+        def _tok(_path, **kwargs):
+            captured["tokenizer"] = kwargs.get("revision")
+            return MagicMock()
+
+        def _model(_path, **kwargs):
+            captured["model"] = kwargs.get("revision")
+            if fail_model:
+                raise OSError("hub down")
+            return MagicMock()
+
+        return (
+            patch("torch.cuda.is_available", return_value=False),
+            patch("transformers.AutoTokenizer.from_pretrained", side_effect=_tok),
+            patch("transformers.AutoModelForSequenceClassification.from_pretrained", side_effect=_model),
+        )
+
+    def test_resolved_sha_reaches_both_loads(self, stub_resolver):
+        from forgelm.trainer import ForgeTrainer
+
+        stub_resolver(revision_resolved=self.SHA, resolution_source="pinned_resolved")
+        captured: dict = {}
+        tok_patch, model_patch, cuda_patch = self._patched_loads(captured)
+        with tok_patch, model_patch, cuda_patch:
+            ForgeTrainer._build_classifier_reward("org/reward", self.SHA)
+        assert captured["tokenizer"] == self.SHA
+        assert captured["model"] == self.SHA
+
+    def test_unconfirmed_pin_is_still_honoured_by_the_load(self, stub_resolver):
+        """No SHA could be confirmed, but the operator's literal must still
+        reach ``revision=`` — otherwise the load silently ignores the pin."""
+        from forgelm.trainer import ForgeTrainer
+
+        stub_resolver(resolution_source="pinned_unverified")
+        captured: dict = {}
+        tok_patch, model_patch, cuda_patch = self._patched_loads(captured)
+        with tok_patch, model_patch, cuda_patch:
+            ForgeTrainer._build_classifier_reward("org/reward", "v1.0")
+        assert captured["tokenizer"] == "v1.0"
+        assert captured["model"] == "v1.0"
+
+    def test_unpinned_load_is_unchanged(self, stub_resolver):
+        from forgelm.trainer import ForgeTrainer
+
+        stub_resolver(resolution_source="unresolved")
+        captured: dict = {}
+        tok_patch, model_patch, cuda_patch = self._patched_loads(captured)
+        with tok_patch, model_patch, cuda_patch:
+            ForgeTrainer._build_classifier_reward("org/reward")
+        assert captured["tokenizer"] is None
+        assert captured["model"] is None
+
+    def test_successful_load_is_recorded_under_the_reward_role(self, stub_resolver):
+        from forgelm import model as model_mod
+        from forgelm.trainer import ROLE_GRPO_REWARD_MODEL, ForgeTrainer
+
+        stub_resolver(revision_resolved=self.SHA, resolution_source="pinned_resolved")
+        tok_patch, model_patch, cuda_patch = self._patched_loads({})
+        with tok_patch, model_patch, cuda_patch:
+            ForgeTrainer._build_classifier_reward("org/reward", self.SHA)
+        record = model_mod.get_loaded_model_revision("org/reward", ROLE_GRPO_REWARD_MODEL)
+        assert record["revision_resolved"] == self.SHA
+        # Never under base_model: the reward model contributed no weights to
+        # the fine-tuned model and must not appear in its lineage.
+        assert model_mod.get_loaded_model_revision("org/reward") is None
+
+    def test_nothing_recorded_when_the_load_fails(self, stub_resolver):
+        from forgelm import model as model_mod
+        from forgelm.trainer import ROLE_GRPO_REWARD_MODEL, ForgeTrainer
+
+        stub_resolver(revision_resolved=self.SHA, resolution_source="pinned_resolved")
+        tok_patch, model_patch, cuda_patch = self._patched_loads({}, fail_model=True)
+        with tok_patch, model_patch, cuda_patch:
+            with pytest.raises(OSError):
+                ForgeTrainer._build_classifier_reward("org/reward", self.SHA)
+        assert model_mod.get_loaded_model_revision("org/reward", ROLE_GRPO_REWARD_MODEL) is None
+
+    def _grpo_trainer(self, tmp_path, revision, offline=False):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model", "offline": offline},
+            lora={},
+            training={
+                "output_dir": str(tmp_path),
+                "grpo_reward_model": "org/reward",
+                "grpo_reward_model_revision": revision,
+            },
+            data={"dataset_name_or_path": "org/dataset"},
+        )
+        trainer = ForgeTrainer.__new__(ForgeTrainer)
+        trainer.config = config
+        return trainer
+
+    def test_config_revision_reaches_the_builder(self, tmp_path, stub_resolver):
+        """The config → builder hop is where the field was previously dropped;
+        asserting only on ``_build_classifier_reward`` would not catch it."""
+        seen = stub_resolver(resolution_source="unresolved")
+        trainer = self._grpo_trainer(tmp_path, self.SHA)
+        captured: dict = {}
+        tok_patch, model_patch, cuda_patch = self._patched_loads(captured)
+        with tok_patch, model_patch, cuda_patch:
+            funcs = trainer._resolve_grpo_reward_funcs()
+        assert len(funcs) == 1
+        assert seen["requested"] == self.SHA
+
+    def test_model_offline_flag_reaches_the_resolver(self, tmp_path, stub_resolver):
+        seen = stub_resolver(resolution_source="unresolved")
+        trainer = self._grpo_trainer(tmp_path, self.SHA, offline=True)
+        tok_patch, model_patch, cuda_patch = self._patched_loads({})
+        with tok_patch, model_patch, cuda_patch:
+            trainer._resolve_grpo_reward_funcs()
+        assert seen["offline"] is True

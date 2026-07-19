@@ -149,7 +149,7 @@ training:
 | `grpo_num_generations` | int | `4` | GRPO: prompt başına yanıt |
 | `grpo_max_completion_length` | int | `512` | GRPO: completion başına maksimum token (eski takma ad `grpo_max_new_tokens` kabul edilir) |
 | `grpo_reward_model` | string | `null` | GRPO: ödül modeli yolu (HF veya yerel) |
-| `grpo_reward_model_revision` | string | `null` | GRPO ödül modelini bir HF Hub commit SHA'sına veya ref'ine sabitle. `grpo_reward_model` olmadan reddedilir. **Doğrulanır ama trainer tarafından henüz uygulanmaz** — bkz. [Hub revision pinleme](#hub-revision-pinleme) |
+| `grpo_reward_model_revision` | string | `null` | GRPO ödül modelini bir HF Hub commit SHA'sına veya ref'ine sabitle. `grpo_reward_model` olmadan reddedilir. **Bugün uygulanıyor** — ödül tokenizer'ını ve sequence-classification modelini aynı commit'e sabitler. Bkz. [Hub revision pinleme](#hub-revision-pinleme) |
 
 ---
 
@@ -225,7 +225,7 @@ training:
 | `judge_model` | string | `"gpt-4o"` | Hakim modeli (API veya yerel) |
 | `judge_api_key_env` | string | `null` | API anahtarı için ortam değişkeni adı (null = yerel hakim) |
 | `judge_api_base` | string | `null` | Hakim API base URL'sini geçersiz kıl (Azure OpenAI, kendi barındırılan vLLM, OpenAI-uyumlu gateway, ör. `https://api.together.xyz/v1`). Tanımlı değilse SDK'nın varsayılan endpoint'i kullanılır. |
-| `judge_model_revision` | string | `null` | **Yerel** judge modelini bir HF Hub commit SHA'sına veya ref'ine sabitle. `judge_api_key_env` ile birlikte reddedilir (API judge hiçbir şey yüklemez). **Doğrulanır ama judge yükleyicisi tarafından henüz uygulanmaz** — bkz. [Hub revision pinleme](#hub-revision-pinleme) |
+| `judge_model_revision` | string | `null` | **Yerel** judge modelini bir HF Hub commit SHA'sına veya ref'ine sabitle. `judge_api_key_env` ile birlikte reddedilir (API judge hiçbir şey yüklemez). **Bugün uygulanıyor** — judge tokenizer'ını ve ağırlıklarını aynı commit'e sabitler. Bkz. [Hub revision pinleme](#hub-revision-pinleme) |
 | `eval_dataset` | string | `"eval_prompts.jsonl"` | Değerlendirme prompt dosyası |
 | `min_score` | float | `5.0` | Minimum ortalama puan (1-10) |
 | `batch_size` | int | `8` | LLM-hakim turunda puanlanan (prompt, completion) çift sayısı. `1` batching'i devre dışı bırakır. |
@@ -473,14 +473,39 @@ söyleyebilir.
 |------|---------------|-----------------------|
 | `model.revision` | Temel model + tokenizer (ve VLM processor'ı, ve `--fit-check` config problaması) | **Evet** |
 | `synthetic.teacher_revision` | Yerel teacher modeli + tokenizer'ı (`teacher_backend: local`) | **Evet** |
+| `evaluation.llm_judge.judge_model_revision` | Yerel judge modeli + tokenizer'ı | **Evet** |
+| `training.grpo_reward_model_revision` | GRPO ödül modeli + tokenizer'ı | **Evet** |
 | `evaluation.safety.classifier_revision` | Zarar sınıflandırıcısı | **Henüz değil** — kabul edilir ve doğrulanır, ama hiçbir çağıran iletmez |
-| `evaluation.llm_judge.judge_model_revision` | Yerel judge modeli | **Henüz değil** — kabul edilir ve doğrulanır, ama hiçbir çağıran iletmez |
-| `training.grpo_reward_model_revision` | GRPO ödül modeli | **Henüz değil** — kabul edilir ve doğrulanır, ama hiçbir çağıran iletmez |
 
-"Henüz değil" olan üç alan sessiz değil, belgelenmiş bir boşluktur: doğrulamadan
-geçer ve YAML'ınızda kayıtlıdır, ancak ilgili yükleme hâlâ deponun varsayılan
-dalını kullanır. Bu tablo aksini söyleyene kadar onları yeniden üretilebilirlik
-kanıtı saymayın.
+`evaluation.safety.classifier_revision` sessiz değil, belgelenmiş bir boşluktur:
+doğrulamadan geçer ve YAML'ınızda kayıtlıdır, ancak ne eğitim döngüsü güvenlik
+kapısı ne de `forgelm safety-eval` onu iletir, dolayısıyla sınıflandırıcı
+yüklemesi hâlâ deponun varsayılan dalını kullanır. Bu tablo aksini söyleyene
+kadar onu yeniden üretilebilirlik kanıtı saymayın.
+
+Uygulanan her alan için değer önce bir commit SHA'sına çözülür ve tam olarak o
+SHA, o depo için **her** `from_pretrained` çağrısına `revision=` olarak geçilir
+— tokenizer ve model dâhil — böylece ikisi asla farklı commit'lerden gelemez.
+
+`judge_model_revision` yalnızca **yerel** judge'ı sabitler; şema onu
+`judge_api_key_env` ile birlikte reddeder, çünkü bir API judge'ı Hub'dan değil
+sağlayıcı tarafından yüklenir. `grpo_reward_model_revision` GRPO ödül
+tokenizer'ını ve sequence-classification modelini sabitler ve şema onu
+`grpo_reward_model` olmadan reddeder.
+
+Bir SHA teyit edilemediğinde — offline, `huggingface_hub` yok, erişilemez veya
+gated bir depo — operatörün literali (bir tag, bir branch, kısa bir SHA) yine de
+`revision=`'a aynen geçilir, yani pin asla sessizce düşürülmez ve hiçbir SHA'nın
+doğrulanmadığını söyleyen bir `WARNING` yazılır. Her iki alanı da ayarlamamak
+değişmemiş davranıştır ve yüklemenin sabitlenmemiş olduğunu, koşumun yalnızca
+config'ten bayt-bayt yeniden üretilemeyeceğini söyleyen bir `WARNING` yazar.
+
+Bu ikisinin düzenlilikten öte neden önemli olduğu: ödül modeli GRPO'nun karşısına
+optimize ettiği **hedefin ta kendisidir**, dolayısıyla sabitlenmemiş bir upstream
+yeniden-ayarı koşumun neyi öğrenmek üzere eğitildiğini değiştirir — temel-model
+pin'inden daha zayıf değil, daha güçlü bir iddiadır. Judge'ın skoru ise
+auto-revert `min_score` kapısını besler; sabitlenmemiş bir judge, aynı YAML'ın
+iki koşumunun aynı modeli biri promote edip diğeri bloke etmesi demektir.
 
 ### Neyin pin sayıldığı
 
@@ -563,7 +588,17 @@ yan dosyasının ikisini de taşımadığına dikkat edin: o bir özet izdüşü
 (`base_model`, `adapter_method`, `trainer_type`, `dataset`, `epochs`,
 `final_metrics`) ve içinde hiç `model_lineage` veya `data_provenance` bloğu
 yoktur. Her `resolution_source` değerinin alan-alan anlamı için bkz.
-[`compliance_summary-tr.md`](compliance_summary-tr.md#annex-iv-paketi-provenance-alanları).
+[`compliance_summary-tr.md`](compliance_summary-tr.md#annex-iv-paketi-provenance-alanları)
+— her `resolution_source` ve `hf_revision_source` değeri için.
+
+**Yalnızca temel model ve dataset'ler bir artefakta ulaşır.** Judge'ın, GRPO
+ödül modelinin, güvenlik sınıflandırıcısının ve sentetik teacher'ın hiçbir yerde
+provenance bloğu yoktur: ne Annex IV manifest'inde, ne
+`compliance_report.json`'da, ne de üretilen model card'da. `judge_model_revision`
+veya `grpo_reward_model_revision` ayarlamak koşumu yeniden üretilebilir kılar;
+üretilen herhangi bir uyum artefaktına judge veya ödül-modeli commit'i
+**eklemez**. O commit'in bir denetim paketinde bulunması gerekiyorsa, YAML'dan
+bağımsız olarak kayda geçirin.
 
 ### Bu sürümdeki bilinen boşluklar
 
@@ -580,3 +615,9 @@ yoktur. Her `resolution_source` değerinin alan-alan anlamı için bkz.
 - `export`, `inference` ve `merging` tasarım gereği sabitlenmemiştir: bu koşumun
   ürettiği yerel artefaktları yüklerler ve bir dizinin Hub commit'i yoktur.
 - Merge kaynak modelleri (`merge.models[]`) sabitlenemez.
+- `evaluation.safety.classifier_revision` kabul edilir ve doğrulanır ama hiçbir
+  yükleyiciye ulaşmaz, dolayısıyla zarar sınıflandırıcısı varsayılan dalından
+  yüklenir.
+- Hiçbir artefakt judge, ödül-modeli, sınıflandırıcı veya teacher commit'ini
+  kaydetmez — yalnızca `model_lineage.base_model_revision` ve dataset
+  fingerprint'leri kaydedilir.

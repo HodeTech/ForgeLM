@@ -171,6 +171,94 @@ class TestMergeExtraDatasets:
         merged = data_mod._merge_extra_datasets(primary, extra_paths=[], mix_ratio=None)
         assert len(merged["train"]) == 3
 
+    def test_mix_ratio_is_rejected_before_anything_is_downloaded(self, monkeypatch):
+        """The count is known from the arguments alone (1 primary + N extras),
+        so downloading the corpora and *then* rejecting the mixture is pure
+        waste — and on a Hub corpus it is a multi-GB round trip."""
+        loaded = []
+        monkeypatch.setattr(data_mod, "_load_single_dataset", lambda p, **k: loaded.append(p))
+
+        with pytest.raises(ValueError, match="does not match dataset count"):
+            data_mod._merge_extra_datasets(self._dd(4), extra_paths=["org/extra"], mix_ratio=[1.0])
+        assert loaded == []
+
+    def test_offline_is_threaded_to_every_extra_load(self, monkeypatch):
+        """A partial air-gap is not an air-gap: an extra corpus is no less
+        capable of dialling the Hub than the primary one."""
+        seen = []
+
+        def _stub(path, *, offline=False):
+            seen.append((path, offline))
+            return self._dd(1)
+
+        monkeypatch.setattr(data_mod, "_load_single_dataset", _stub)
+        data_mod._merge_extra_datasets(self._dd(2), extra_paths=["org/a", "org/b"], mix_ratio=None, offline=True)
+        assert seen == [("org/a", True), ("org/b", True)]
+
+    def test_offline_defaults_to_false(self, monkeypatch):
+        seen = []
+
+        def _stub(path, *, offline=False):
+            seen.append((path, offline))
+            return self._dd(1)
+
+        monkeypatch.setattr(data_mod, "_load_single_dataset", _stub)
+        data_mod._merge_extra_datasets(self._dd(2), extra_paths=["org/a"], mix_ratio=None)
+        assert seen == [("org/a", False)]
+
+
+class TestPrepareDatasetThreadsOffline:
+    """``model.offline`` must reach the loader as an argument.
+
+    Before this, the only thing standing between an air-gapped run and an
+    outbound Hub request was ``forgelm.cli._config_load._apply_offline_flag``
+    exporting ``HF_HUB_OFFLINE`` earlier in the process. That covers the CLI
+    and not a library consumer, who is a supported caller.
+    """
+
+    class _Stop(Exception):
+        """Ends ``prepare_dataset`` at the load, before tokenization."""
+
+    def _run(self, monkeypatch, minimal_config, *, offline):
+        from forgelm.config import ForgeConfig
+
+        seen = {}
+
+        def _stub(path, *, offline=False):
+            seen["path"], seen["offline"] = path, offline
+            raise self._Stop
+
+        monkeypatch.setattr(data_mod, "_load_single_dataset", _stub)
+        raw = minimal_config()
+        raw["model"]["offline"] = offline
+        raw["data"]["dataset_name_or_path"] = "org/dataset"
+        with pytest.raises(self._Stop):
+            data_mod.prepare_dataset(ForgeConfig(**raw), tokenizer=None)
+        return seen
+
+    def test_offline_config_reaches_the_loader(self, monkeypatch, minimal_config):
+        assert self._run(monkeypatch, minimal_config, offline=True) == {"path": "org/dataset", "offline": True}
+
+    def test_online_config_reaches_the_loader(self, monkeypatch, minimal_config):
+        assert self._run(monkeypatch, minimal_config, offline=False) == {"path": "org/dataset", "offline": False}
+
+
+class TestLoadSingleDatasetForwardsOffline:
+    def test_offline_is_forwarded_to_the_resolver(self, monkeypatch, tmp_path):
+        seen = []
+        import datasets
+
+        monkeypatch.setattr(datasets, "load_dataset", lambda *a, **k: "sentinel-dataset")
+        monkeypatch.setattr(
+            data_mod,
+            "_resolve_hub_dataset_revision",
+            lambda path, **kw: seen.append(kw.get("offline")),
+        )
+
+        data_mod._load_single_dataset("org/dataset", offline=True)
+        data_mod._load_single_dataset("org/dataset", offline=False)
+        assert seen == [True, False]
+
 
 class TestEnsureValidationSplit:
     def _dd(self, n):
@@ -325,6 +413,8 @@ class TestHubDatasetIdPredicate:
 
 class TestOfflineModeDetection:
     def test_false_when_unset(self, _clean_revision_registry):
+        # ``_clean_revision_registry`` delenvs every var in
+        # ``_HF_OFFLINE_ENV_VARS``, so this stays honest as the tuple grows.
         assert data_mod._hf_offline_mode() is False
 
     @pytest.mark.parametrize("value", ["", "0", "false", "no", "off", "  OFF  "])
@@ -332,10 +422,35 @@ class TestOfflineModeDetection:
         monkeypatch.setenv("HF_HUB_OFFLINE", value)
         assert data_mod._hf_offline_mode() is False
 
-    @pytest.mark.parametrize("var", ["HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE"])
-    def test_either_var_forces_offline(self, _clean_revision_registry, monkeypatch, var):
+    @pytest.mark.parametrize("var", ["HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE"])
+    def test_any_var_forces_offline(self, _clean_revision_registry, monkeypatch, var):
+        """``TRANSFORMERS_OFFLINE`` was previously ignored here. All three
+        express the same operator intent — do not reach the network — and
+        reading one of them too broadly costs at most a missing revision pin,
+        which is an honest record. Reading one too narrowly costs an outbound
+        request from a run the operator believed was air-gapped."""
         monkeypatch.setenv(var, "1")
         assert data_mod._hf_offline_mode() is True
+
+
+class TestConfigOffline:
+    """``model.offline`` must travel as an argument, not as an assumption
+    about what some earlier caller exported into the environment."""
+
+    def test_reads_the_flag(self):
+        cfg = type("C", (), {"model": type("M", (), {"offline": True})()})()
+        assert data_mod.config_offline(cfg) is True
+
+    @pytest.mark.parametrize(
+        "cfg",
+        [
+            type("C", (), {"model": type("M", (), {"offline": False})()})(),
+            type("C", (), {"model": type("M", (), {})()})(),  # duck-typed config, no field
+            type("C", (), {})(),  # no model block at all
+        ],
+    )
+    def test_defaults_to_online_and_never_raises(self, cfg):
+        assert data_mod.config_offline(cfg) is False
 
 
 class TestResolveHubDatasetRevision:
@@ -355,6 +470,37 @@ class TestResolveHubDatasetRevision:
 
         assert data_mod._resolve_hub_dataset_revision("org/dataset") is None
         assert calls == []
+
+    def test_explicit_offline_argument_short_circuits_without_any_env_var(self, _clean_revision_registry, monkeypatch):
+        """The env check alone made offline-correctness depend on
+        ``forgelm.cli._config_load._apply_offline_flag`` having run first.
+        That holds for a CLI run and not for a library consumer, who is a
+        supported caller and got outbound connection attempts instead."""
+        import huggingface_hub
+
+        for var in data_mod._HF_OFFLINE_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+
+        calls = []
+        monkeypatch.setattr(huggingface_hub, "HfApi", lambda *a, **k: calls.append(1))
+
+        assert data_mod._resolve_hub_dataset_revision("org/dataset", offline=True) is None
+        assert calls == []
+
+    def test_offline_false_with_clean_env_still_queries(self, _clean_revision_registry, monkeypatch):
+        """Mutation guard: the short-circuit must be conditional, not
+        unconditional."""
+        import huggingface_hub
+
+        for var in data_mod._HF_OFFLINE_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+
+        class _Api:
+            def dataset_info(self, path):
+                return type("Info", (), {"sha": _FAKE_SHA})()
+
+        monkeypatch.setattr(huggingface_hub, "HfApi", _Api)
+        assert data_mod._resolve_hub_dataset_revision("org/dataset", offline=False) == _FAKE_SHA
 
     def test_returns_sha_from_dataset_info(self, _clean_revision_registry, monkeypatch):
         import huggingface_hub
@@ -406,7 +552,7 @@ class TestLoadSingleDatasetPinsRevision:
     def test_resolved_sha_is_passed_to_load_and_then_recorded(self, _clean_revision_registry, monkeypatch):
         seen = []
         self._patch_load(monkeypatch, seen)
-        monkeypatch.setattr(data_mod, "_resolve_hub_dataset_revision", lambda path: _FAKE_SHA)
+        monkeypatch.setattr(data_mod, "_resolve_hub_dataset_revision", lambda path, **_kw: _FAKE_SHA)
 
         assert data_mod._load_single_dataset("org/dataset") == "sentinel-dataset"
         assert seen == [{"path": "org/dataset", "revision": _FAKE_SHA}]
@@ -415,7 +561,7 @@ class TestLoadSingleDatasetPinsRevision:
     def test_unresolvable_revision_loads_unpinned_and_records_nothing(self, _clean_revision_registry, monkeypatch):
         seen = []
         self._patch_load(monkeypatch, seen)
-        monkeypatch.setattr(data_mod, "_resolve_hub_dataset_revision", lambda path: None)
+        monkeypatch.setattr(data_mod, "_resolve_hub_dataset_revision", lambda path, **_kw: None)
 
         assert data_mod._load_single_dataset("org/dataset") == "sentinel-dataset"
         assert seen == [{"path": "org/dataset", "revision": None}]
@@ -428,7 +574,7 @@ class TestLoadSingleDatasetPinsRevision:
             raise OSError("gated repo")
 
         monkeypatch.setattr(datasets, "load_dataset", _fake_load_dataset)
-        monkeypatch.setattr(data_mod, "_resolve_hub_dataset_revision", lambda path: _FAKE_SHA)
+        monkeypatch.setattr(data_mod, "_resolve_hub_dataset_revision", lambda path, **_kw: _FAKE_SHA)
 
         with pytest.raises(OSError):
             data_mod._load_single_dataset("org/dataset")
@@ -444,14 +590,16 @@ class TestLoadSingleDatasetPinsRevision:
 
         monkeypatch.setattr(datasets, "load_dataset", _fake_load_dataset)
 
-        def _must_not_resolve(path):
-            raise AssertionError("a local file has no Hub revision to resolve")
-
-        monkeypatch.setattr(data_mod, "_resolve_hub_dataset_revision", _must_not_resolve)
+        # Recorded, not raised: a sentinel that proves a negative by raising
+        # is only as good as the absence of a broad ``except`` on the path,
+        # which is not a property a test should depend on.
+        resolved = []
+        monkeypatch.setattr(data_mod, "_resolve_hub_dataset_revision", lambda path, **_kw: resolved.append(path))
 
         path = tmp_path / "corpus.jsonl"
         path.write_text("{}")
         assert data_mod._load_single_dataset(str(path)) == "sentinel-dataset"
+        assert resolved == [], "a local file has no Hub revision to resolve"
         assert seen == [{"builder": "json", "revision": None}]
         assert data_mod.get_loaded_dataset_revision(str(path)) is None
 
@@ -459,12 +607,11 @@ class TestLoadSingleDatasetPinsRevision:
         seen = []
         self._patch_load(monkeypatch, seen)
 
-        def _must_not_resolve(path):
-            raise AssertionError("a local directory has no Hub revision to resolve")
-
-        monkeypatch.setattr(data_mod, "_resolve_hub_dataset_revision", _must_not_resolve)
+        resolved = []
+        monkeypatch.setattr(data_mod, "_resolve_hub_dataset_revision", lambda path, **_kw: resolved.append(path))
 
         d = tmp_path / "corpus_dir"
         d.mkdir()
         assert data_mod._load_single_dataset(str(d)) == "sentinel-dataset"
         assert seen == [{"path": str(d), "revision": None}]
+        assert resolved == [], "a local directory has no Hub revision to resolve"

@@ -105,9 +105,48 @@ okumayın.
 
 | Anahtar | Anlamı |
 |---|---|
-| `hf_revision` | Dataset deposunun Hub commit SHA'sı. Hiçbiri bilinmiyorsa yoktur. |
-| `hf_revision_source` | `loaded` — ForgeLM commit'i çözdü, tam olarak o SHA'yı `load_dataset(..., revision=...)`'a geçirdi ve yükleme başarılı oldu. **Bir denetçinin, modeli eğiten korpusun kanıtı sayabileceği tek değer budur.** `unverified` — bu süreçteki hiçbir yükleme dataset'i sabitlemedi; SHA, manifest-üretim zamanında yapılan, deponun varsayılan-dal başına ait bir Hub sorgusudur (`forgelm compliance-only` bunu üretir). `unresolved` — hiçbir SHA belirlenemedi; `hf_revision` yoktur. |
-| `hf_revision_reason` | Yalnızca `hf_revision_source` `unresolved` iken bulunur; nedenini belirten serbest metin (≤200 karakter) — offline mod, `huggingface_hub` yok, Hub erişilemez, gated depo veya SHA dönmedi. |
+| `hf_revision` | Dataset deposunun Hub commit SHA'sı. Hiçbiri bilinmiyorsa yoktur. **Asla bir branch adı, tag veya hareketli ref değildir** — ya 40 karakterlik küçük-harf hex commit SHA'sı ya da hiçbir şey. |
+| `hf_revision_source` | Derece. **Her** dataset fingerprint'inde bulunur; birbirini dışlayan dört değerden biri — aşağıdaki tabloya bakın. |
+| `hf_revision_reason` | Yalnızca `hf_revision_source` `unresolved` iken bulunur; nedenini belirten serbest metin (≤200 karakter). |
+| `source` | Hub-id şeklindeki bir yol için `huggingface_hub`; dizin korpusu için `local_directory`; ne diskte olan ne de Hub-id şeklinde olan bir yol için `unknown`. Yerel bir **dosya** hiç `source` anahtarı yazmaz. |
+| `dataset_id` | Hub depo kimliği. Yalnızca `source: huggingface_hub` altında yazılır — bir dizin korpusunun Hub kimliği yoktur ve artık bu anahtarı taşımaz. |
+| `resolved_path` | Yerel dosya veya dizin yolu bir symlink olduğunda, symlink hedefi. |
+
+`hf_revision_source` değerleri:
+
+| Değer | `hf_revision` ne tutar | Denetçi ne sonuç çıkarabilir |
+|---|---|---|
+| `loaded` | 40-hex commit SHA'sı. | **Kanıt.** `forgelm.data` SHA'yı çözdü, `load_dataset(..., revision=...)`'a geçirdi ve yükleme döndü. **Bir denetçinin neyin üzerinde eğitildiğinin kanıtı sayabileceği tek değer budur.** `hf_revision_reason` yazılmaz. |
+| `unverified` | Şekli doğrulanmış 40-hex commit SHA'sı. | **İpucu, kanıt değil.** Bu süreçteki hiçbir yükleme bu dataset'i sabitlemedi; SHA manifest zamanındaki bir Hub sorgusundan geldi — kanonik örnek, korpusu hiç okumadan manifest yazan `forgelm compliance-only`'dir. "Manifest yazıldığında deponun varsayılan-dal başı" olarak okuyun. Upstream depo, yükleme ile manifest arasında hareket ettiyse bu değer, koşumun hiç okumadığı bir commit'i adlandırır. |
+| `local_path` | Yoktur. | **Dürüst bir boşluk.** Korpus diskteki dosyalardır, dolayısıyla bir Hub commit'i yoktur ve aranmamıştır; hiçbir şey başarısız olmadığı için `hf_revision_reason` yazılmaz. Hem yerel dosya hem yerel dizin için ayarlanır. Yerel bir **dosya** için kanıt `sha256` içerik hash'idir; yerel bir **dizin için içerik hash'i yoktur** — kayıt yalnızca yolu tanımlar. Model tarafındaki `resolution_source` sözlüğündeki `local_path`'i yansıtır. |
+| `unresolved` | Yoktur — asla uydurulmaz. | **Dürüst bir boşluk.** Bir sorgu denendi ve başarısız oldu ya da reddedildi. `hf_revision_reason` nedenini belirtir. |
+
+Kural: `loaded` kanıttır; `unverified` bir ipucudur; `local_path` ve
+`unresolved` dürüst boşluklardır — ve bir boşluk asla bir revision çıkarımı
+yapmak için gerekçe değildir.
+
+`unresolved` altında bir denetçinin göreceği nedenler:
+
+| `hf_revision_reason` | Anlamı |
+|---|---|
+| `offline mode — no Hub lookup was attempted` | Koşum izole (air-gapped) idi (`model.offline: true` veya `HF_HUB_OFFLINE` / `HF_DATASETS_OFFLINE` / `TRANSFORMERS_OFFLINE`). Hiçbir şey sorulmadı. |
+| `huggingface_hub is not installed` | Ortamda Hub istemcisi yok. |
+| `<ExcType>: <message>` | Sorgu yapıldı ve hata fırlattı — Hub erişilemez, gated depo, transport hatası. |
+| `HF Hub returned no commit SHA for this dataset` | Sorgu başarılı oldu ama hiç SHA taşımadı. |
+| `HF Hub returned a non-commit revision for this dataset: <repr>` | Hub, 40-hex küçük-harf commit olmayan bir şeyle yanıt verdi — örn. `'main'` — ve bu kaydedilmek yerine **reddedildi**. Denetçilerin commit olarak okuduğu bir alandaki hareketli bir ref, tam olarak bu sözlüğün önlemek için var olduğu hatadır. |
+| `path is neither a local file or directory nor a Hugging Face Hub dataset id` | Yanlış yazılmış veya başka türlü kullanılamaz bir yol. Onun adına hiçbir Hub isteği yapılmadı. |
+
+**"Dosya değilse Hub'dır" varsayan tüketicilerin güncellenmesi gerekir.** Bu
+sürümden önce dosya olmayan her yol — dizinler ve yazım hataları dâhil — bir
+`dataset_id` ile `source: huggingface_hub` olarak etiketleniyordu ve
+`hf_revision_source` yalnızca Hub dalında yazılıyordu, dolayısıyla yokluğu "eski
+bir artefakt" ile "yerel bir korpus" arasında belirsizdi.
+
+**Offline davranışı.** `model.offline: true` artık veri ve provenance yolundaki
+tüm Hub trafiğini ortam yan-etkisiyle değil argüman geçirerek bastırır, yani bir
+kütüphane tüketicisi CLI kullanıcısıyla aynı korumayı alır. Offline modda
+dataset-metadata çekimi de atlanır, dolayısıyla `version`, `description` ve
+`download_size_bytes` izole bir manifest'te bulunmaz.
 
 **Temel model**, `compliance_report.json` içinde
 `model_lineage.base_model_revision` altında:
@@ -128,11 +167,19 @@ fırlatan bir yükleme geriye hiçbir iddia bırakmaz.
 
 Açıkça belirtilecek üç sınır:
 
-- **Güvenlik sınıflandırıcısı, LLM judge ve GRPO ödül modelinin
-  provenance bloğu yoktur** ve `*_revision` config alanları henüz hiçbir
-  yükleyiciye iletilmez. Bir sınıflandırıcı ince-ayarlanmış modele hiçbir
-  ağırlık katmaz, dolayısıyla zaten `model_lineage`'e ait olmazdı; bu
-  roller için ayrı bloklar uygulanmamıştır.
+- **LLM judge ve GRPO ödül modeli**,
+  `evaluation.llm_judge.judge_model_revision` ve
+  `training.grpo_reward_model_revision` ile **sabitlenir**, ancak **hiçbir
+  pin hiçbir artefaktta görünmez** — ne Annex IV manifest'inde, ne
+  `compliance_report.json`'da, ne model card'da. Bunlar yalnızca
+  `model_lineage.base_model_revision` taşır. Alanları ayarlamak koşumu
+  yeniden üretilebilir kılar; üretilen bir uyum artefaktına judge veya
+  ödül-modeli commit'i eklemez. **Güvenlik sınıflandırıcısı** aynı artefakt
+  sınırına *ve* ikinci bir sınıra sahiptir:
+  `evaluation.safety.classifier_revision` hiçbir yükleyiciye ulaşmaz,
+  dolayısıyla sınıflandırıcı da sabitlenmez. Bu üçü de ince-ayarlanmış
+  modele hiçbir ağırlık katmaz, dolayısıyla zaten `model_lineage`'e ait
+  olmazdı; bu roller için ayrı bloklar uygulanmamıştır.
 - **Sentetik teacher** `synthetic.teacher_revision` ile sabitlenir ve
   çözülen commit süreç içinde kaydedilir, ancak henüz hiçbir manifest
   bloğu bunu yayımlamaz.

@@ -828,14 +828,28 @@ def _fingerprint_hf_metadata(dataset_path: str, fingerprint: Dict[str, Any]) -> 
 # and an unlabelled pin is indistinguishable from a wrong one.
 REVISION_SOURCE_LOADED = "loaded"  # the SHA the ``load_dataset`` call was pinned to
 REVISION_SOURCE_UNVERIFIED = "unverified"  # a Hub lookup at manifest time; NOT tied to any load
-REVISION_SOURCE_UNRESOLVED = "unresolved"  # no SHA obtained at all; ``hf_revision`` is absent
+REVISION_SOURCE_UNRESOLVED = "unresolved"  # a lookup was attempted or refused; ``hf_revision`` is absent
+# The corpus is files on disk, so no Hub commit exists to record and none was
+# ever sought.  Mirrors ``MODEL_REVISION_LOCAL_PATH`` on the model side.  Before
+# this value existed, a local *directory* corpus — an explicitly supported form
+# of ``data.dataset_name_or_path`` — was routed into the Hub branch and came out
+# labelled ``unresolved`` with a Hub-validation error as its reason, i.e. the
+# manifest said "we asked the Hub and could not tell" about files that have no
+# Hub identity at all.  "There is nothing to resolve" and "resolution failed"
+# are different findings and an auditor must not have to guess which one a
+# record means.
+REVISION_SOURCE_LOCAL_PATH = "local_path"
 
 # Cap on the free-text ``hf_revision_reason``.  Hub transport errors can carry
 # multi-kilobyte HTML bodies, and the manifest is a human-read artefact.
 _REVISION_REASON_MAX_CHARS = 200
 
+# Stated when an air-gapped run declines to look a revision up.  "We were told
+# not to ask" is a different, and better, record than "we asked and it failed".
+_OFFLINE_REVISION_REASON = "offline mode — no Hub lookup was attempted"
 
-def _fingerprint_hf_revision(dataset_path: str, fingerprint: Dict[str, Any]) -> None:
+
+def _fingerprint_hf_revision(dataset_path: str, fingerprint: Dict[str, Any], *, offline: bool = False) -> None:
     """Record the corpus' Hub commit SHA *and* how strongly it is evidenced.
 
     Article 10 asks a reviewer to be able to reproduce the corpus the model
@@ -865,17 +879,38 @@ def _fingerprint_hf_revision(dataset_path: str, fingerprint: Dict[str, Any]) -> 
         what was trained on.  This is the pre-existing behaviour, preserved
         for the genuinely uncoupled callers (``forgelm compliance-only``
         generates a manifest without ever loading the corpus) and now
-        labelled for what it is.
+        labelled for what it is.  The value is still a *verified 40-hex
+        commit*: what is unverified is the link to a load, never the shape
+        of the identifier.
 
     ``hf_revision_source: "unresolved"``
         Nothing could be determined — offline, no ``huggingface_hub``, Hub
-        unreachable, gated repo.  ``hf_revision`` is **absent**;
-        ``hf_revision_reason`` says why.  A stated gap is auditable; a
-        fabricated SHA is not.
+        unreachable, gated repo, or an answer that was not a commit SHA.
+        ``hf_revision`` is **absent**; ``hf_revision_reason`` says why.  A
+        stated gap is auditable; a fabricated SHA is not.
+
+    ``hf_revision`` is written **only** when it passes :func:`_is_commit_sha`.
+    The ``unverified`` branch used to be the one place in either module that
+    skipped that check, so a Hub client returning a symbolic ref put the
+    literal string ``"main"`` into a field an auditor reads as a commit —
+    a moving ref masquerading as a pin, which is the failure mode this whole
+    vocabulary exists to prevent.  The model side has never echoed a
+    requested ref into ``revision_resolved`` (see
+    :func:`resolve_model_revision`); the dataset side now matches it.  A
+    non-SHA answer is recorded as ``unresolved`` with the rejected value
+    quoted in the reason, so the discrepancy is visible rather than silently
+    dropped.
 
     Backward compatibility: ``hf_revision`` keeps its name and its type, and
     is still absent when no SHA is known.  Consumers that read only that key
     behave exactly as before; the new sibling keys are purely additive.
+
+    ``offline`` (from ``model.offline``) short-circuits before any Hub client
+    is imported.  It is OR-ed with ``forgelm.data._hf_offline_mode()`` rather
+    than replacing it: the CLI still exports the ``HF_*_OFFLINE`` env vars,
+    but a library consumer who only sets ``model.offline: true`` in config is
+    now equally protected instead of depending on an env var some earlier
+    caller might have exported.
 
     Two-layer error handling, unchanged in shape so the failure mode stays
     informative:
@@ -890,12 +925,16 @@ def _fingerprint_hf_revision(dataset_path: str, fingerprint: Dict[str, Any]) -> 
        couples ``compliance.py`` to ``huggingface_hub`` internals;
        failing best-effort is the documented contract.
     """
-    from .data import get_loaded_dataset_revision
+    from .data import _hf_offline_mode, get_loaded_dataset_revision
 
     loaded_revision = get_loaded_dataset_revision(dataset_path)
     if loaded_revision:
         fingerprint["hf_revision"] = loaded_revision
         fingerprint["hf_revision_source"] = REVISION_SOURCE_LOADED
+        return
+
+    if offline or _hf_offline_mode():
+        _mark_revision_unresolved(fingerprint, _OFFLINE_REVISION_REASON)
         return
 
     try:
@@ -913,13 +952,18 @@ def _fingerprint_hf_revision(dataset_path: str, fingerprint: Dict[str, Any]) -> 
         _mark_revision_unresolved(fingerprint, f"{type(e).__name__}: {e}")
         return
 
-    if revision_sha:
+    if _is_commit_sha(revision_sha):
         fingerprint["hf_revision"] = revision_sha
         fingerprint["hf_revision_source"] = REVISION_SOURCE_UNVERIFIED
         logger.debug(
             "Dataset '%s' revision %s recorded as UNVERIFIED — no load in this process pinned it.",
             dataset_path,
             revision_sha,
+        )
+    elif revision_sha:
+        logger.debug("HF Hub returned a non-commit revision for dataset '%s' (got %r).", dataset_path, revision_sha)
+        _mark_revision_unresolved(
+            fingerprint, f"HF Hub returned a non-commit revision for this dataset: {revision_sha!r}"
         )
     else:
         _mark_revision_unresolved(fingerprint, "HF Hub returned no commit SHA for this dataset")
@@ -938,7 +982,7 @@ def _mark_revision_unresolved(fingerprint: Dict[str, Any], reason: str) -> None:
     fingerprint["hf_revision_reason"] = reason[:_REVISION_REASON_MAX_CHARS]
 
 
-def compute_dataset_fingerprint(dataset_path: str) -> Dict[str, Any]:
+def compute_dataset_fingerprint(dataset_path: str, *, offline: bool = False) -> Dict[str, Any]:
     """Compute a fingerprint for a dataset file or directory.
 
     The previous version was decorated with ``@lru_cache(maxsize=32)`` keyed
@@ -962,7 +1006,42 @@ def compute_dataset_fingerprint(dataset_path: str) -> Dict[str, Any]:
     Per-source helpers (``_fingerprint_local_file`` /
     ``_fingerprint_hf_metadata`` / ``_fingerprint_hf_revision``) keep the
     orchestrator linear; this function just routes by source kind.
+
+    **Routing.**  The previous version had two branches — "is a file" and
+    "everything else is the Hub" — which quietly mislabelled the two other
+    shapes ``data.dataset_name_or_path`` accepts:
+
+    ``os.path.isfile``
+        Content-hashed locally.  ``hf_revision_source: "local_path"``.
+    ``os.path.isdir``
+        A directory of JSONL files, documented as supported in
+        :class:`~forgelm.config.DataConfig`.  ``source: "local_directory"``,
+        ``hf_revision_source: "local_path"``.  It used to be sent to the Hub
+        branch, where it necessarily failed and was written down as a failed
+        *lookup* rather than as local files with no Hub identity.
+    Hub-id shaped (``name`` / ``org/name``)
+        ``source: "huggingface_hub"``; metadata + revision as before.  The
+        predicate is ``forgelm.data._looks_like_hub_dataset_id`` — the same
+        one the loader uses to decide whether to pin, so the manifest
+        classifies the corpus exactly as the load did.
+    anything else
+        A typo'd or otherwise unusable path: not on disk, not a Hub id.
+        Recorded as ``unresolved`` with that stated as the reason, and no
+        Hub request is made on its behalf.
+
+    ``offline`` (from ``model.offline``, OR-ed with the ambient
+    ``HF_*_OFFLINE`` env check) gates the whole Hub branch here, not just the
+    revision lookup: ``_fingerprint_hf_metadata`` calls
+    ``datasets.load_dataset_builder``, which is a second outbound path that
+    had no offline guard of its own.  It merely *survived* an air-gapped run
+    by catching ``ConnectionError`` — after making the attempt.  Attempting
+    is the thing an air-gapped deployment is asking us not to do.
+    :func:`_fingerprint_hf_revision` repeats the check internally for callers
+    that invoke it directly; the two are consistent and the inner one is a
+    no-op when reached from here.
     """
+    from .data import _hf_offline_mode, _looks_like_hub_dataset_id
+
     fingerprint = {
         "path": dataset_path,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -970,11 +1049,27 @@ def compute_dataset_fingerprint(dataset_path: str) -> Dict[str, Any]:
 
     if os.path.isfile(dataset_path):
         _fingerprint_local_file(dataset_path, fingerprint)
-    else:
+        fingerprint["hf_revision_source"] = REVISION_SOURCE_LOCAL_PATH
+    elif os.path.isdir(dataset_path):
+        fingerprint["source"] = "local_directory"
+        resolved = os.path.realpath(dataset_path)
+        if resolved != dataset_path:
+            fingerprint["resolved_path"] = resolved
+        fingerprint["hf_revision_source"] = REVISION_SOURCE_LOCAL_PATH
+    elif _looks_like_hub_dataset_id(dataset_path):
         fingerprint["source"] = "huggingface_hub"
         fingerprint["dataset_id"] = dataset_path
-        _fingerprint_hf_metadata(dataset_path, fingerprint)
-        _fingerprint_hf_revision(dataset_path, fingerprint)
+        if offline or _hf_offline_mode():
+            _mark_revision_unresolved(fingerprint, _OFFLINE_REVISION_REASON)
+        else:
+            _fingerprint_hf_metadata(dataset_path, fingerprint)
+            _fingerprint_hf_revision(dataset_path, fingerprint)
+    else:
+        fingerprint["source"] = "unknown"
+        _mark_revision_unresolved(
+            fingerprint,
+            "path is neither a local file or directory nor a Hugging Face Hub dataset id",
+        )
 
     return fingerprint
 
@@ -1289,6 +1384,13 @@ def generate_training_manifest(
     specific run + the config that produced it, so a post-training config
     edit before export is detectable (F-P4-OPUS-13 / XP-11).
     """
+    # ``model.offline`` travels into the fingerprints as an argument so a
+    # manifest generated by a library consumer in an air-gapped deployment
+    # makes no Hub request either, without depending on the CLI having
+    # exported HF_HUB_OFFLINE first.
+    from .data import config_offline
+
+    _offline = config_offline(config)
     manifest = {
         "forgelm_version": _get_version(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -1316,7 +1418,7 @@ def generate_training_manifest(
         },
         "data_provenance": {
             "primary_dataset": config.data.dataset_name_or_path,
-            "fingerprint": compute_dataset_fingerprint(config.data.dataset_name_or_path),
+            "fingerprint": compute_dataset_fingerprint(config.data.dataset_name_or_path, offline=_offline),
             "shuffle": config.data.shuffle,
             "clean_text": config.data.clean_text,
         },
@@ -1353,7 +1455,7 @@ def generate_training_manifest(
     extra_datasets = getattr(config.data, "extra_datasets", None)
     if extra_datasets:
         manifest["data_provenance"]["extra_datasets"] = [
-            {"path": p, "fingerprint": compute_dataset_fingerprint(p)} for p in extra_datasets
+            {"path": p, "fingerprint": compute_dataset_fingerprint(p, offline=_offline)} for p in extra_datasets
         ]
 
     # Monitoring config

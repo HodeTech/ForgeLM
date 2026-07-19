@@ -117,13 +117,43 @@ _RESOLVED_DATASET_REVISIONS: Dict[str, str] = {}
 # from ``huggingface_hub.constants``) because ``forgelm.cli._config_load``
 # sets them at CLI start-up from ``model.offline``, which can happen after
 # ``huggingface_hub`` has already been imported and frozen its constants.
-_HF_OFFLINE_ENV_VARS = ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE")
+#
+# ``TRANSFORMERS_OFFLINE`` is honoured alongside the two Hub/datasets vars even
+# though nothing here loads ``transformers``: all three express one operator
+# intent — *this process must not reach the network* — and the cost of reading
+# it too broadly is at worst a missing revision pin, which is honest.  The cost
+# of reading it too narrowly is an outbound request from a run the operator
+# believed was air-gapped.  ``forgelm.model._HF_OFFLINE_ENV_VARS`` is a sibling
+# copy of this tuple and still omits ``TRANSFORMERS_OFFLINE``; the divergence is
+# safe in this direction (the dataset path is now strictly more conservative
+# than the model path, never less) but the two should be reunited when
+# ``model.py`` is next touched.
+_HF_OFFLINE_ENV_VARS = ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE")
 _FALSEY_ENV_VALUES = frozenset({"", "0", "false", "no", "off"})
 
 
 def _hf_offline_mode() -> bool:
-    """True when the environment forbids outbound Hugging Face Hub traffic."""
+    """True when the environment forbids outbound Hugging Face Hub traffic.
+
+    This is the *ambient* signal only.  It is a fallback, never the primary
+    input: every caller that can be told the operator's intent directly takes
+    an explicit ``offline`` argument and ORs it with this.  Relying on the
+    environment alone made offline-correctness depend on some earlier caller
+    having exported a variable — true for ``forgelm`` CLI runs (see
+    ``forgelm.cli._config_load._apply_offline_flag``) and false for anyone
+    using this package as a library, which is a supported entry point.
+    """
     return any(os.environ.get(var, "").strip().lower() not in _FALSEY_ENV_VALUES for var in _HF_OFFLINE_ENV_VARS)
+
+
+def config_offline(config: Any) -> bool:
+    """Read the operator's ``model.offline`` intent off a validated config.
+
+    Tolerates hand-rolled/partial config objects (``getattr`` chain) because
+    the provenance path must never be the thing that raises on a caller who
+    supplied a duck-typed config.
+    """
+    return bool(getattr(getattr(config, "model", None), "offline", False))
 
 
 def _is_commit_sha(value: Any) -> bool:
@@ -165,7 +195,7 @@ def _looks_like_hub_dataset_id(path: str) -> bool:
     )
 
 
-def _resolve_hub_dataset_revision(path: str) -> Optional[str]:
+def _resolve_hub_dataset_revision(path: str, *, offline: bool = False) -> Optional[str]:
     """Resolve ``path``'s current Hub commit SHA *before* it is loaded.
 
     The caller must pass the returned SHA straight into ``load_dataset`` as
@@ -187,11 +217,19 @@ def _resolve_hub_dataset_revision(path: str) -> Optional[str]:
 
     Best-effort throughout: every failure returns ``None``, the caller then
     loads exactly as it did before this function existed, and the manifest
-    records the absence rather than a SHA nobody verified.  Offline mode
-    short-circuits before any import so an air-gapped run makes no attempt
-    at network I/O.
+    records the absence rather than a SHA nobody verified.
+
+    ``offline=True`` short-circuits **before any import**, so an air-gapped
+    run makes no attempt at network I/O.  Pass it explicitly from
+    ``model.offline`` (:func:`config_offline`); the ambient
+    :func:`_hf_offline_mode` env check is OR-ed in as a fallback but must not
+    be relied on as the only guard.  Before this argument existed the sole
+    protection was ``forgelm.cli._config_load._apply_offline_flag`` exporting
+    ``HF_HUB_OFFLINE`` early in a CLI run — so a library consumer who set
+    ``model.offline: true`` and called into this module directly got twelve
+    outbound connection attempts and no warning.
     """
-    if _hf_offline_mode():
+    if offline or _hf_offline_mode():
         logger.debug("Dataset revision resolution skipped for '%s' — offline mode.", path)
         return None
 
@@ -226,13 +264,18 @@ def get_loaded_dataset_revision(path: str) -> Optional[str]:
     return _RESOLVED_DATASET_REVISIONS.get(path)
 
 
-def _load_single_dataset(path: str):
+def _load_single_dataset(path: str, *, offline: bool = False):
     """Load a single dataset from a local file or HF Hub.
 
     Hub loads are pinned to a freshly resolved commit SHA where possible so
     the Annex IV manifest can record the corpus that was actually read; see
     :func:`_resolve_hub_dataset_revision`.  When resolution is unavailable
     the call falls back to the historical unpinned form.
+
+    ``offline`` carries ``model.offline`` down from the caller so the
+    revision resolution never reaches the network in an air-gapped run even
+    when no ``HF_*_OFFLINE`` env var was exported.  It governs *our* lookup
+    only; ``datasets.load_dataset`` reads the env vars itself.
     """
     from datasets import load_dataset
 
@@ -249,7 +292,7 @@ def _load_single_dataset(path: str):
         return load_dataset(builder, data_files=path)
 
     if _looks_like_hub_dataset_id(path):
-        revision = _resolve_hub_dataset_revision(path)
+        revision = _resolve_hub_dataset_revision(path, offline=offline)
         if revision is not None:
             # A failure here is NOT swallowed into an unpinned retry: the SHA
             # came from the Hub moments ago, so an error means a real problem
@@ -436,23 +479,33 @@ def _apply_mix_ratio(all_train: list, mix_ratio: list) -> list:
     return sampled
 
 
-def _merge_extra_datasets(primary_dataset, extra_paths: list, mix_ratio: Optional[list]):
-    """Concatenate primary + extra dataset training splits, optionally weighted."""
+def _merge_extra_datasets(primary_dataset, extra_paths: list, mix_ratio: Optional[list], *, offline: bool = False):
+    """Concatenate primary + extra dataset training splits, optionally weighted.
+
+    ``offline`` is threaded to each extra load for the same reason as the
+    primary (see :func:`_load_single_dataset`): an extra corpus is no less
+    capable of dialling the Hub than the primary one, and a partial
+    air-gap is not an air-gap.
+    """
     from datasets import DatasetDict, concatenate_datasets
+
+    # Validated *before* anything is loaded.  The count is known from the
+    # arguments alone (1 primary + N extras), and rejecting the mixture after
+    # downloading the datasets it rejects is pure waste.
+    if mix_ratio and len(mix_ratio) != len(extra_paths) + 1:
+        # DataConfig._validate_mix_ratio_length guarantees this at config
+        # time; reaching here means a non-config caller passed a mismatch.
+        # Raise loudly rather than silently re-weighting to a mixture the
+        # caller never asked for.
+        raise ValueError(f"mix_ratio length ({len(mix_ratio)}) does not match dataset count ({len(extra_paths) + 1}).")
 
     all_train = [primary_dataset["train"]]
     for i, extra_path in enumerate(extra_paths):
         logger.info("Loading extra dataset [%d]: %s", i + 1, extra_path)
-        extra_ds = _load_single_dataset(extra_path)
+        extra_ds = _load_single_dataset(extra_path, offline=offline)
         all_train.append(extra_ds["train"])
 
     if mix_ratio:
-        if len(mix_ratio) != len(all_train):
-            # DataConfig._validate_mix_ratio_length guarantees this at config
-            # time; reaching here means a non-config caller passed a mismatch.
-            # Raise loudly rather than silently re-weighting to a mixture the
-            # caller never asked for.
-            raise ValueError(f"mix_ratio length ({len(mix_ratio)}) does not match dataset count ({len(all_train)}).")
         all_train = _apply_mix_ratio(all_train, mix_ratio)
 
     merged_train = concatenate_datasets(all_train)
@@ -608,7 +661,11 @@ def _format_sft_dataset(dataset, processor, shuffle: bool) -> Dict[str, Any]:
 def prepare_dataset(config: Any, tokenizer: PreTrainedTokenizer) -> Dict[str, Any]:
     """Loads and tokenizes the dataset based on ForgeConfig."""
     logger.info("Loading dataset from %s...", config.data.dataset_name_or_path)
-    primary_dataset = _load_single_dataset(config.data.dataset_name_or_path)
+    # The operator's air-gap intent travels as an argument from here down, so
+    # it does not depend on an env var some earlier caller may or may not have
+    # exported (see ``_hf_offline_mode``).
+    offline = config_offline(config)
+    primary_dataset = _load_single_dataset(config.data.dataset_name_or_path, offline=offline)
     dataset = primary_dataset
 
     extra_datasets = getattr(config.data, "extra_datasets", None)
@@ -617,6 +674,7 @@ def prepare_dataset(config: Any, tokenizer: PreTrainedTokenizer) -> Dict[str, An
             primary_dataset,
             extra_datasets,
             getattr(config.data, "mix_ratio", None),
+            offline=offline,
         )
 
     dataset = _ensure_validation_split(dataset)

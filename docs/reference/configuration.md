@@ -150,7 +150,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `grpo_num_generations` | int | `4` | GRPO: responses per prompt |
 | `grpo_max_completion_length` | int | `512` | GRPO: max tokens per completion (legacy alias `grpo_max_new_tokens` accepted) |
 | `grpo_reward_model` | string | `null` | GRPO: reward model path (HF or local) |
-| `grpo_reward_model_revision` | string | `null` | Pin the GRPO reward model to an HF Hub commit SHA or ref. Rejected without `grpo_reward_model`. **Validated but not yet honoured by the trainer** — see [Hub revision pinning](#hub-revision-pinning) |
+| `grpo_reward_model_revision` | string | `null` | Pin the GRPO reward model to an HF Hub commit SHA or ref. Rejected without `grpo_reward_model`. **Honoured today** — pins the reward tokenizer and the sequence-classification model at the same commit. See [Hub revision pinning](#hub-revision-pinning) |
 
 ---
 
@@ -226,7 +226,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `judge_model` | string | `"gpt-4o"` | Judge model (API or local path) |
 | `judge_api_key_env` | string | `null` | Env var name for API key (null = local) |
 | `judge_api_base` | string | `null` | Override the judge API base URL (Azure OpenAI, self-hosted vLLM, OpenAI-compatible gateway, e.g. `https://api.together.xyz/v1`). When unset, the SDK default endpoint is used. |
-| `judge_model_revision` | string | `null` | Pin a **local** judge model to an HF Hub commit SHA or ref. Rejected alongside `judge_api_key_env` (the API judge loads nothing). **Validated but not yet honoured by the judge loader** — see [Hub revision pinning](#hub-revision-pinning) |
+| `judge_model_revision` | string | `null` | Pin a **local** judge model to an HF Hub commit SHA or ref. Rejected alongside `judge_api_key_env` (the API judge loads nothing). **Honoured today** — pins the judge tokenizer and weights at the same commit. See [Hub revision pinning](#hub-revision-pinning) |
 | `eval_dataset` | string | `"eval_prompts.jsonl"` | Evaluation prompts file |
 | `min_score` | float | `5.0` | Minimum average score (1-10) |
 | `batch_size` | int | `8` | Number of (prompt, completion) pairs scored per LLM-judge round. `1` disables batching. |
@@ -481,14 +481,38 @@ upstream artefact was used rather than only naming the repo.
 |-------|------|-----------------|
 | `model.revision` | Base model + tokenizer (and the VLM processor, and the `--fit-check` config probe) | **Yes** |
 | `synthetic.teacher_revision` | Local teacher model + its tokenizer (`teacher_backend: local`) | **Yes** |
+| `evaluation.llm_judge.judge_model_revision` | Local judge model + its tokenizer | **Yes** |
+| `training.grpo_reward_model_revision` | GRPO reward model + its tokenizer | **Yes** |
 | `evaluation.safety.classifier_revision` | Harm classifier | **Not yet** — accepted and validated, but no caller forwards it |
-| `evaluation.llm_judge.judge_model_revision` | Local judge model | **Not yet** — accepted and validated, but no caller forwards it |
-| `training.grpo_reward_model_revision` | GRPO reward model | **Not yet** — accepted and validated, but no caller forwards it |
 
-The three "not yet" fields are a documented gap, not a silent one: they pass
-validation and are recorded in your YAML, but the corresponding load still uses
-the repo's default branch. Do not treat them as reproducibility evidence until
-this table says otherwise.
+`evaluation.safety.classifier_revision` is a documented gap, not a silent one:
+it passes validation and is recorded in your YAML, but neither the training-loop
+safety gate nor `forgelm safety-eval` forwards it, so the classifier load still
+uses the repo's default branch. Do not treat it as reproducibility evidence
+until this table says otherwise.
+
+For each honoured field the value is resolved to a commit SHA first, and that
+exact SHA is passed as `revision=` to **every** `from_pretrained` for that repo
+— tokenizer and model alike — so the two can never come from different commits.
+
+`judge_model_revision` pins the **local** judge only; the schema rejects it
+alongside `judge_api_key_env`, because an API judge is loaded by the provider,
+not from the Hub. `grpo_reward_model_revision` pins the GRPO reward tokenizer
+and sequence-classification model, and the schema rejects it without
+`grpo_reward_model`.
+
+When a SHA cannot be confirmed — offline, no `huggingface_hub`, an unreachable
+or gated repo — the operator's literal (a tag, a branch, a short SHA) is still
+passed to `revision=` verbatim, so the pin is never silently dropped, and a
+`WARNING` says that no SHA was verified. Leaving either field unset is unchanged
+behaviour and logs a `WARNING` that the load is unpinned and that the run is not
+byte-reproducible from the config alone.
+
+Why these two matter beyond tidiness: the reward model **is** the objective GRPO
+optimises against, so an unpinned upstream re-tune changes what the run was
+trained to do — a stronger claim than the base-model pin, not a weaker one. The
+judge's score feeds the auto-revert `min_score` gate, so an unpinned judge means
+two runs of identical YAML can promote and block the same model.
 
 ### What counts as a pin
 
@@ -571,7 +595,16 @@ flattened `training_manifest.yaml` sidecar carries neither: it is a summary
 projection (`base_model`, `adapter_method`, `trainer_type`, `dataset`, `epochs`,
 `final_metrics`) and has no `model_lineage` or `data_provenance` block at all.
 See [`compliance_summary.md`](compliance_summary.md#annex-iv-bundle-provenance-fields)
-for the field-by-field meaning of every `resolution_source` value.
+for the field-by-field meaning of every `resolution_source` and
+`hf_revision_source` value.
+
+**Only the base model and the datasets reach an artefact.** The judge, the GRPO
+reward model, the safety classifier and the synthetic teacher have no provenance
+block anywhere: not in the Annex IV manifest, not in `compliance_report.json`,
+not in the generated model card. Setting `judge_model_revision` or
+`grpo_reward_model_revision` makes the run reproducible; it does **not** add a
+judge or reward-model commit to any generated compliance artefact. If you need
+that commit in an audit package, record it out-of-band from the YAML.
 
 ### Known gaps in this release
 
@@ -587,3 +620,7 @@ for the field-by-field meaning of every `resolution_source` value.
 - `export`, `inference` and `merging` are unpinned by design: they load local
   artefacts this run produced, and a directory has no Hub commit.
 - Merge-source models (`merge.models[]`) cannot be pinned.
+- `evaluation.safety.classifier_revision` is accepted and validated but reaches
+  no loader, so the harm classifier loads from its default branch.
+- No artefact records the judge, reward-model, classifier or teacher commit —
+  only `model_lineage.base_model_revision` and the dataset fingerprints.
