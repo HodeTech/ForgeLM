@@ -378,7 +378,7 @@ class TestCacheTasks:
         payload = json.loads(capsys.readouterr().out)
         assert "bogus_task" in payload["error"]
 
-    def test_cache_tasks_text_summary_no_bare_none_for_missing_dataset(self, capsys) -> None:
+    def test_cache_tasks_text_summary_no_bare_none_for_missing_dataset(self, capsys, tmp_path) -> None:
         """F8: a task with no downloadable dataset returns
         ``{'cached': False, 'error': None}``. The text renderer must not print
         the bare literal ``warn (None)`` (``dict.get(key, default)`` only
@@ -387,7 +387,7 @@ class TestCacheTasks:
 
         payload = {
             "tasks": [{"name": "weird_task", "cached": False, "error": None}],
-            "cache_dir": "/tmp/cache",
+            "cache_dir": str(tmp_path / "cache"),
         }
         _emit_cache_success("text", payload, kind="tasks")
 
@@ -395,14 +395,14 @@ class TestCacheTasks:
         assert "warn (None)" not in out
         assert "no downloadable dataset attribute" in out
 
-    def test_cache_tasks_text_summary_surfaces_real_error(self, capsys) -> None:
+    def test_cache_tasks_text_summary_surfaces_real_error(self, capsys, tmp_path) -> None:
         """When a real per-task error IS recorded it must be shown verbatim,
         not replaced by the no-dataset fallback message."""
         from forgelm.cli.subcommands._cache import _emit_cache_success
 
         payload = {
             "tasks": [{"name": "boom_task", "cached": False, "error": "RuntimeError: decode failed"}],
-            "cache_dir": "/tmp/cache",
+            "cache_dir": str(tmp_path / "cache"),
         }
         _emit_cache_success("text", payload, kind="tasks")
 

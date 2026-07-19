@@ -41,7 +41,10 @@ def pytest_configure(config):
     )
 
 
-_NETWORK_ALLOWED_HOSTS = frozenset({"localhost", "0.0.0.0"})
+# Only true loopback targets are exempt. ``0.0.0.0`` is deliberately NOT
+# allowed: it is the unspecified/wildcard address, not loopback, and letting it
+# through would widen the guard for no test that needs it.
+_NETWORK_ALLOWED_HOSTS = frozenset({"localhost"})
 
 
 def _is_loopback_address(address):

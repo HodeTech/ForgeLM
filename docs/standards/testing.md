@@ -92,7 +92,7 @@ every test in the suite, no opt-in required.
 - **`_block_network`** monkeypatches `socket.socket.connect` /
   `connect_ex` — the TCP-connect surface `requests`/`urllib3`/`httpx`
   all funnel through. A real connection attempt to anything other than
-  a loopback address (`127.0.0.0/8`, `::1`, `localhost`, `0.0.0.0`) or
+  a loopback address (`127.0.0.0/8`, `::1`, `localhost`) or
   an `AF_UNIX` socket raises `RuntimeError` immediately, naming the
   offending address and the failing test's node ID. It is a fail-fast
   tripwire, not a full egress sandbox: bare DNS resolution
