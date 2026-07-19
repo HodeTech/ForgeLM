@@ -882,7 +882,10 @@ class SafetyConfig(BaseModel):
         default=None,
         description=(
             "Pin the harm classifier to an HF Hub commit SHA or ref.  An upstream classifier "
-            "re-tune silently moves the auto-revert pass/fail line with no config diff."
+            "re-tune silently moves the auto-revert pass/fail line with no config diff.  "
+            "Applies to the training-time safety gate only, and the resolved commit is "
+            "recorded under `model_lineage.component_revisions`; standalone `forgelm "
+            "safety-eval` takes no config and loads its classifier unpinned."
         ),
     )
     test_prompts: str = Field(

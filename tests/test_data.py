@@ -496,7 +496,7 @@ class TestResolveHubDatasetRevision:
             monkeypatch.delenv(var, raising=False)
 
         class _Api:
-            def dataset_info(self, path):
+            def dataset_info(self, path, timeout=None):
                 return type("Info", (), {"sha": _FAKE_SHA})()
 
         monkeypatch.setattr(huggingface_hub, "HfApi", _Api)
@@ -505,20 +505,29 @@ class TestResolveHubDatasetRevision:
     def test_returns_sha_from_dataset_info(self, _clean_revision_registry, monkeypatch):
         import huggingface_hub
 
+        # The stub RECORDS rather than asserts: ``_resolve_hub_dataset_revision``
+        # wraps the call in a broad ``except`` that swallows ``AssertionError``
+        # just like any other exception, so an in-stub assert would turn a real
+        # failure into a silent ``None`` and the test would still pass on the
+        # outer assertion being ``is None``.  Assert outside the stub.
+        seen = {}
+
         class _Api:
-            def dataset_info(self, path):
-                assert path == "org/dataset"
+            def dataset_info(self, path, timeout=None):
+                seen["path"] = path
+                seen["timeout"] = timeout
                 return type("Info", (), {"sha": _FAKE_SHA})()
 
         monkeypatch.setattr(huggingface_hub, "HfApi", _Api)
         assert data_mod._resolve_hub_dataset_revision("org/dataset") == _FAKE_SHA
+        assert seen["path"] == "org/dataset"
 
     @pytest.mark.parametrize("sha", [None, "", "main", "short"])
     def test_non_sha_answer_is_discarded(self, _clean_revision_registry, monkeypatch, sha):
         import huggingface_hub
 
         class _Api:
-            def dataset_info(self, path):
+            def dataset_info(self, path, timeout=None):
                 return type("Info", (), {"sha": sha})()
 
         monkeypatch.setattr(huggingface_hub, "HfApi", _Api)
@@ -528,7 +537,7 @@ class TestResolveHubDatasetRevision:
         import huggingface_hub
 
         class _Api:
-            def dataset_info(self, path):
+            def dataset_info(self, path, timeout=None):
                 raise OSError("hub down")
 
         monkeypatch.setattr(huggingface_hub, "HfApi", _Api)

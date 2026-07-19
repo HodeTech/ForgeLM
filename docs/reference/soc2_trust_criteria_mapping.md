@@ -36,7 +36,7 @@ categories are scoped per-engagement.
 | CC3.1 | Specifies suitable objectives | `compliance.intended_purpose`; risk classification |
 | CC3.2 | Identifies and analyses risks | `risk_assessment` Pydantic block; safety eval; `risk_treatment_plan.md` |
 | CC3.3 | Considers fraud risks | Audit log tamper-evidence; HMAC chain; manifest sidecar |
-| CC3.4 | Identifies and assesses changes | `human_approval.required/granted/rejected` audit chain; per-run `config_hash` (stamped into `compliance_report.json`, the `human_approval.required` event, and the JSON envelope); `model_integrity.json` / `model.integrity_verified` SHA-256 artifact hashes for diff; `model.revision` pins the upstream base model and `model_lineage.base_model_revision` records the commit the load used (the judge and GRPO reward model are pinned by their `*_revision` fields, though neither pin is recorded in any artefact; classifier and merge-source loads remain unpinned) |
+| CC3.4 | Identifies and assesses changes | `human_approval.required/granted/rejected` audit chain; per-run `config_hash` (stamped into `compliance_report.json`, the `human_approval.required` event, and the JSON envelope); `model_integrity.json` / `model.integrity_verified` SHA-256 artifact hashes for diff; `model.revision` pins the upstream base model and `model_lineage.base_model_revision` records the commit the load used (the safety classifier, judge, GRPO reward model and teacher are pinned by their `*_revision` fields and each resolved commit is recorded under `model_lineage.component_revisions`; merge-source loads remain unpinned) |
 | CC4.1 | Selects, develops, performs evaluations | `forgelm verify-audit`; `forgelm safety-eval` |
 | CC4.2 | Communicates internal-control deficiencies | `pipeline.failed`/`reverted`/`erasure_failed` events |
 | CC5.1 | Selects, develops control activities | F-compliance-110 strict gate; auto-revert; staging |
@@ -57,7 +57,7 @@ categories are scoped per-engagement.
 | CC7.5 | Identifies, develops corrective actions | `human_approval.rejected`; `sop_change_management.md` |
 | CC8.1 | Authorises changes | `forgelm approve` Article 14 gate; staging dir |
 | CC9.1 | Identifies, manages risks | `risk_assessment` config + safety eval; `risk_treatment_plan.md` |
-| CC9.2 | Manages vendor + business-partner risk | SBOM; dataset Hub commit SHA graded `loaded` / `unverified` / `local_path` / `unresolved`; base-model pin (`model.revision` → `model_lineage.base_model_revision`); license extraction.  **Pinned but recorded in no artefact:** LLM judge, GRPO reward model.  **Not covered:** safety classifier, merge sources |
+| CC9.2 | Manages vendor + business-partner risk | SBOM; dataset Hub commit SHA graded `loaded` / `unverified` / `local_path` / `unresolved`; base-model pin (`model.revision` → `model_lineage.base_model_revision`); license extraction.  **Pinned and recorded** under `model_lineage.component_revisions`: safety classifier, LLM judge, GRPO reward model, synthetic teacher.  **Not covered:** merge sources, and `forgelm safety-eval` (takes no `--config`) |
 
 ## Availability (A1.x)
 
@@ -79,7 +79,7 @@ Strong ForgeLM contribution.
 | PI1.1 Quality of inputs | `compute_dataset_fingerprint`; `data_governance_report` |
 | PI1.2 System processing | `forgelm verify-audit`; `data_audit_report.json` |
 | PI1.3 Outputs are accurate | `model_integrity.json` SHA-256 checksums; `model_card.md` |
-| PI1.4 Inputs traceable | `compute_dataset_fingerprint` (dataset SHA-256 fingerprint) + `_fingerprint_hf_revision` (dataset HF Hub commit SHA) recorded in `data_provenance.json` and the `data_provenance` block of `compliance_report.json`.  **The SHA is evidence of the corpus that trained the model only when `hf_revision_source: loaded`;** `unverified` is a manifest-time Hub lookup with no coupling to the load, and `unresolved` means no SHA was obtained.  `_describe_adapter_method` + `config_hash` + `base_model_revision` in `model_lineage` |
+| PI1.4 Inputs traceable | `compute_dataset_fingerprint` (dataset SHA-256 fingerprint) + `_fingerprint_hf_revision` (dataset HF Hub commit SHA) recorded in `data_provenance.json` and the `data_provenance` block of `compliance_report.json`.  **The SHA is evidence of the corpus that trained the model only when `hf_revision_source: loaded`;** `unverified` is a manifest-time Hub lookup with no coupling to the load, and `unresolved` means no SHA was obtained.  `_describe_adapter_method` + `config_hash` + `base_model_revision` + `component_revisions` in `model_lineage` |
 | PI1.5 Outputs traceable | Annex IV bundle co-locates manifest + report + audit + integrity |
 
 ## Confidentiality (C1.x)

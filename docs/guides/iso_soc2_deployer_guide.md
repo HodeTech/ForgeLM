@@ -124,9 +124,13 @@ Each `human_approval.granted` entry carries:
   reproducibility evidence only when it is non-null; the
   `revision_requested` value beside it shows plainly when the operator
   pinned a moving ref such as `main`. The safety classifier, LLM judge,
-  GRPO reward model and merge-source models are **still loaded
-  unpinned** — their `*_revision` config fields are accepted and
-  validated but not yet forwarded to any loader. The promoted artefacts
+  GRPO reward model and synthetic teacher are **pinned by their
+  `*_revision` config fields**, and each resolved commit is recorded
+  under `model_lineage.component_revisions` beside the base model's own
+  block. Merge-source models remain unpinned, and standalone `forgelm
+  safety-eval` takes no config so its classifier load is unpinned —
+  only the training-time safety gate honours
+  `evaluation.safety.classifier_revision`. The promoted artefacts
   remain hash-verified through `model_integrity.json` / the
   `model.integrity_verified` event. `forgelm approvals` reads `config_hash` from the
   `human_approval.required` event and falls back to a legacy

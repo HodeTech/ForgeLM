@@ -165,29 +165,63 @@ yapmaz** — bu tasarım gereğidir ve yeniden eklenirse düşen bir testle
 korunur. Provenance yalnızca yükleme döndükten sonra yazılır; hata
 fırlatan bir yükleme geriye hiçbir iddia bırakmaz.
 
+**Sabitlenmiş diğer her rol**, `compliance_report.json` içinde
+`model_lineage.component_revisions` altında — `base_model_revision`'ın
+(değişmemiş ve hâlâ mevcut) kardeşi olan bir **liste**; `(role, repo_id)`'ye
+göre sıralanır, böylece aynı modelleri farklı sırayla yükleyen koşumlar arasında
+artefakt bayt düzeyinde kararlıdır:
+
+| Anahtar | Anlamı |
+|---|---|
+| `role` | Asla değişmeyen altı sözleşme değerinden biri: `base_model`, `safety_classifier`, `llm_judge`, `grpo_reward_model`, `teacher_model`, `fit_check`. |
+| `repo_id` | Yüklemenin adlandırdığı depo. Bir rol benzersiz değildir — iki rol meşru olarak aynı depoyu adlandırabilir (Llama-Guard hem sınıflandırıcı hem judge olarak) ve GRPO ikinci bir ödül modeline karşı yeniden koşturulabilir. |
+| `revision_requested` | Operatörün literali veya `null`. |
+| `revision_resolved` | Teyit edilmiş 40-hex commit SHA'sı veya `null`. **Asla istenen dizenin geri yansıtılması değildir.** |
+| `resolution_source` | `base_model_revision` ile aynı sözlük: `local_path`, `resolved`, `pinned_resolved`, `cache`, `pinned_unverified`, `unresolved`. |
+| `revision_pinned` | `revision=` parametresine verilen tam dize; bu **hareketli bir ref olabilir**. |
+
+Hangi config alanı hangi rolü üretir: `model.revision` → `base_model` (bu rol
+ayrıca kendi `base_model_revision` bloğunu da korur; aynı registry girdisinden
+gelir, dolayısıyla ikisi asla çelişemez);
+`evaluation.safety.classifier_revision` → `safety_classifier`;
+`evaluation.llm_judge.judge_model_revision` → `llm_judge`;
+`training.grpo_reward_model_revision` → `grpo_reward_model`;
+`synthetic.teacher_revision` → `teacher_model`.
+
+Bir denetçinin yapmaması gereken iki okuma:
+
+- **`component_revisions: []`, "hiçbir pin yapılandırılmadı" anlamına
+  gelmez.** O süreçte hiçbir sabitlenmiş yüklemenin tamamlanmadığı anlamına
+  gelir — `forgelm compliance-only`, tamamı yerel yollardan oluşan bir config
+  veya herhangi bir yüklemeden önce yazılmış bir manifest.
+- **Null bir `revision_resolved`, koşumun sabitlenmemiş olduğu anlamına
+  gelmez.** Hiçbir SHA'nın teyit edilemediği anlamına gelir; koşum yine de bir
+  ref'e sabitlenmiş olabilir ve `revision_pinned` bunu aynen kaydeder.
+
 Açıkça belirtilecek üç sınır:
 
-- **LLM judge ve GRPO ödül modeli**,
-  `evaluation.llm_judge.judge_model_revision` ve
-  `training.grpo_reward_model_revision` ile **sabitlenir**, ancak **hiçbir
-  pin hiçbir artefaktta görünmez** — ne Annex IV manifest'inde, ne
-  `compliance_report.json`'da, ne model card'da. Bunlar yalnızca
-  `model_lineage.base_model_revision` taşır. Alanları ayarlamak koşumu
-  yeniden üretilebilir kılar; üretilen bir uyum artefaktına judge veya
-  ödül-modeli commit'i eklemez. **Güvenlik sınıflandırıcısı** aynı artefakt
-  sınırına *ve* ikinci bir sınıra sahiptir:
-  `evaluation.safety.classifier_revision` hiçbir yükleyiciye ulaşmaz,
-  dolayısıyla sınıflandırıcı da sabitlenmez. Bu üçü de ince-ayarlanmış
-  modele hiçbir ağırlık katmaz, dolayısıyla zaten `model_lineage`'e ait
-  olmazdı; bu roller için ayrı bloklar uygulanmamıştır.
-- **Sentetik teacher** `synthetic.teacher_revision` ile sabitlenir ve
-  çözülen commit süreç içinde kaydedilir, ancak henüz hiçbir manifest
-  bloğu bunu yayımlamaz.
+- **Güvenlik sınıflandırıcısı** pin'i yalnızca eğitim zamanı kapısı için
+  geçerlidir. Bağımsız `forgelm safety-eval` hiçbir `--config` almaz ve
+  `--classifier-revision` bayrağı yoktur, dolayısıyla sınıflandırıcı yüklemesi
+  sabitlenmemiştir ve depoyu adlandıran bir UNPINNED uyarısı yazar. O alt
+  komuttan gelen bir karar sabitlenmiş kanıt değildir.
+- **`fit_check` rolü ayrılmıştır ama hiçbir zaman yayılmaz.**
+  `model.revision`, VRAM-tahmini `AutoConfig` problamasına *iletilir*,
+  dolayısıyla o yükleme sabitlenmiştir, ama problama hiçbir provenance
+  kaydetmez ve hiçbir zaman bir `fit_check` girdisi görünmez.
 - Düzleştirilmiş **`training_manifest.yaml`** yan dosyası bunların
   hiçbirini taşımaz. O bir operatör özetidir (`base_model`,
   `adapter_method`, `trainer_type`, `dataset`, `epochs`, `final_metrics`)
   ve içinde hiç `model_lineage` veya `data_provenance` bloğu yoktur —
   provenance için `compliance_report.json`'u okuyun.
+
+**Geriye dönük uyumluluk.** `component_revisions` tamamen eklemelidir.
+`forgelm verify-annex-iv` üst düzey Annex IV bölümlerine bakar ve
+`model_lineage`'i incelemez, dolayısıyla bu sürümden önce yazılmış artefaktlar
+geçerli kalır ve sonrasında yazılanlar aynı şekilde doğrulanır. Yeni üretilen
+bir artefakt, aynı koşumun değişiklik öncesi bir yapısının üreteceğinden
+doğal olarak farklı bir `manifest_hash` taşır; arşivlenmiş bir artefakt kendi
+iç tutarlı hash'ini korur.
 
 Tam alan semantiği ve config yüzeyi:
 [`configuration-tr.md`](configuration-tr.md#hub-revision-pinleme).

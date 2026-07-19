@@ -316,6 +316,24 @@ The library function `forgelm.compliance.verify_audit_log(path, *, hmac_secret=N
       "resolution_source": "resolved",
       "revision_pinned": "0e9e39f249a16976918f6564b8830bc894c89659"
     },
+    "component_revisions": [
+      {
+        "role": "base_model",
+        "repo_id": "meta-llama/Llama-3.1-8B-Instruct",
+        "revision_requested": null,
+        "revision_resolved": "0e9e39f249a16976918f6564b8830bc894c89659",
+        "resolution_source": "resolved",
+        "revision_pinned": "0e9e39f249a16976918f6564b8830bc894c89659"
+      },
+      {
+        "role": "safety_classifier",
+        "repo_id": "meta-llama/Llama-Guard-3-8B",
+        "revision_requested": "7327bd9f4f7a1f1b0b0b6d0a0f2f6d3c8a1e5b90",
+        "revision_resolved": "7327bd9f4f7a1f1b0b0b6d0a0f2f6d3c8a1e5b90",
+        "resolution_source": "pinned_resolved",
+        "revision_pinned": "7327bd9f4f7a1f1b0b0b6d0a0f2f6d3c8a1e5b90"
+      }
+    ],
     "backend": "transformers",
     "adapter_method": "QLoRA (4-bit NF4) + DoRA + r=16",
     "quantization": "4-bit NF4",

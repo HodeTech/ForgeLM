@@ -207,7 +207,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `enabled` | bool | `false` | Enable safety classifier evaluation |
 | `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Safety classifier model. The shipped default works out of the box: under `classifier_mode: auto` it is scored via generation-based Llama-Guard scoring |
 | `classifier_mode` | string | `"auto"` | How the classifier is scored: `auto` (generation for a known generative Llama-Guard checkpoint, `text-classification` otherwise), `classification` (force the pipeline — needs a trained `safe`/`unsafe` head), or `generation` (force generation-based Llama-Guard scoring) |
-| `classifier_revision` | string | `null` | Pin the harm classifier to an HF Hub commit SHA or ref. **Validated but not yet honoured** — neither the training-loop gate nor `forgelm safety-eval` forwards it yet. See [Hub revision pinning](#hub-revision-pinning) |
+| `classifier_revision` | string | `null` | Pin the harm classifier to an HF Hub commit SHA or ref. **Honoured today by the training-loop safety gate** — pins the classifier tokenizer and weights at the same commit. Standalone `forgelm safety-eval` takes no config and still loads its classifier unpinned. See [Hub revision pinning](#hub-revision-pinning) |
 | `test_prompts` | string | `"safety_prompts.jsonl"` | Adversarial test prompts file. Built-in sets in `configs/safety_prompts/` |
 | `max_safety_regression` | float | `0.05` | Max allowed unsafe ratio (binary gate) |
 | `scoring` | string | `"binary"` | Scoring mode: `"binary"` or `"confidence_weighted"` |
@@ -483,13 +483,18 @@ upstream artefact was used rather than only naming the repo.
 | `synthetic.teacher_revision` | Local teacher model + its tokenizer (`teacher_backend: local`) | **Yes** |
 | `evaluation.llm_judge.judge_model_revision` | Local judge model + its tokenizer | **Yes** |
 | `training.grpo_reward_model_revision` | GRPO reward model + its tokenizer | **Yes** |
-| `evaluation.safety.classifier_revision` | Harm classifier | **Not yet** — accepted and validated, but no caller forwards it |
+| `evaluation.safety.classifier_revision` | Harm classifier | **Yes**, in the training-loop safety gate — see the scope note below |
 
-`evaluation.safety.classifier_revision` is a documented gap, not a silent one:
-it passes validation and is recorded in your YAML, but neither the training-loop
-safety gate nor `forgelm safety-eval` forwards it, so the classifier load still
-uses the repo's default branch. Do not treat it as reproducibility evidence
-until this table says otherwise.
+`evaluation.safety.classifier_revision` reached no loader until this release: it
+passed validation and sat in your YAML while the harm classifier behind the
+auto-revert gate loaded off a moving default branch regardless. The
+training-loop gate now honours it and records the resolved commit under
+`model_lineage.component_revisions`.
+
+One scope limit remains. Standalone `forgelm safety-eval` takes no `--config`
+and has no `--classifier-revision` flag, so its classifier load is unpinned and
+logs an UNPINNED warning naming the repo. A safety verdict produced by that
+subcommand is not pinned evidence; one produced by the training-time gate is.
 
 For each honoured field the value is resolved to a commit SHA first, and that
 exact SHA is passed as `revision=` to **every** `from_pretrained` for that repo
@@ -563,9 +568,18 @@ to what it resolved. What reaches `revision=` is:
 3. Otherwise nothing — the historical unpinned behaviour, unchanged.
 
 Resolution is best-effort and never fails a run. `model.offline: true` (or
-`HF_HUB_OFFLINE` / `HF_DATASETS_OFFLINE`) short-circuits before any Hub client is
-imported: no network attempt is made, and the commit-addressed local cache
-answers instead. A local directory is never resolved and never pinned.
+`HF_HUB_OFFLINE` / `HF_DATASETS_OFFLINE` / `TRANSFORMERS_OFFLINE`)
+short-circuits before any Hub client is imported: no network attempt is made,
+and the commit-addressed local cache answers instead. All three env vars now
+suppress model-revision lookups as well as dataset lookups; `TRANSFORMERS_OFFLINE`
+previously suppressed only the dataset side. A local directory is never resolved
+and never pinned.
+
+Every Hub metadata lookup is bounded at **10 seconds**. These calls previously
+had no timeout at all, so a firewall that drops packets silently could hang a
+run indefinitely before training started — including on a fully-cached machine
+where the load itself needed no network. On timeout the run continues and the
+provenance record degrades to `unresolved`; it never fails the run.
 
 ### The `unsloth` backend
 
@@ -589,7 +603,10 @@ that is honoured.
 ### Where the record lands
 
 The resolved base-model revision is written to the `model_lineage` block of
-**`compliance_report.json`**, and dataset revisions to
+**`compliance_report.json`** — under `base_model_revision`, and again as a
+`base_model` entry in the sibling `component_revisions` list that also carries
+the safety classifier, LLM judge, GRPO reward model and synthetic teacher — and
+dataset revisions to
 **`data_provenance.json`** — both inside the Annex IV bundle. Note that the
 flattened `training_manifest.yaml` sidecar carries neither: it is a summary
 projection (`base_model`, `adapter_method`, `trainer_type`, `dataset`, `epochs`,
@@ -598,13 +615,24 @@ See [`compliance_summary.md`](compliance_summary.md#annex-iv-bundle-provenance-f
 for the field-by-field meaning of every `resolution_source` and
 `hf_revision_source` value.
 
-**Only the base model and the datasets reach an artefact.** The judge, the GRPO
-reward model, the safety classifier and the synthetic teacher have no provenance
-block anywhere: not in the Annex IV manifest, not in `compliance_report.json`,
-not in the generated model card. Setting `judge_model_revision` or
-`grpo_reward_model_revision` makes the run reproducible; it does **not** add a
-judge or reward-model commit to any generated compliance artefact. If you need
-that commit in an audit package, record it out-of-band from the YAML.
+**Every pinned load reaches an artefact.** Alongside
+`model_lineage.base_model_revision` — unchanged, and still the base model's
+dedicated block — the manifest carries `model_lineage.component_revisions`, a
+list with one entry per completed pinned load in that process. Six role names
+are contract and never change: `base_model`, `safety_classifier`, `llm_judge`,
+`grpo_reward_model`, `teacher_model`, `fit_check`. The base model appears in
+both places, from one registry entry, so the two can never disagree.
+
+Two things the list does **not** say. `component_revisions: []` means no pinned
+load completed in this process — `forgelm compliance-only`, an all-local-path
+config, or a manifest written before any load — and is *not* a statement that no
+pins were configured. A null `revision_resolved` means no SHA could be
+confirmed; the run may still have been pinned to a ref, which `revision_pinned`
+records verbatim.
+
+`fit_check` is reserved, not yet emitted: `model.revision` *is* forwarded to the
+VRAM-estimate `AutoConfig` probe, so that load is pinned, but the probe
+registers no provenance and no `fit_check` entry ever appears.
 
 ### Known gaps in this release
 
@@ -620,7 +648,9 @@ that commit in an audit package, record it out-of-band from the YAML.
 - `export`, `inference` and `merging` are unpinned by design: they load local
   artefacts this run produced, and a directory has no Hub commit.
 - Merge-source models (`merge.models[]`) cannot be pinned.
-- `evaluation.safety.classifier_revision` is accepted and validated but reaches
-  no loader, so the harm classifier loads from its default branch.
-- No artefact records the judge, reward-model, classifier or teacher commit —
-  only `model_lineage.base_model_revision` and the dataset fingerprints.
+- `forgelm safety-eval` takes no `--config` and has no `--classifier-revision`
+  flag, so its classifier load is unpinned regardless of
+  `evaluation.safety.classifier_revision` and logs an UNPINNED warning naming
+  the repo. Only the training-time safety gate honours that field.
+- The `fit_check` role is reserved but never emitted — the VRAM probe is pinned
+  by `model.revision` yet registers no provenance.

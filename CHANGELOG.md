@@ -8,7 +8,7 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Added
 
-- **Hub revision pinning — five optional config fields, four of them wired.**
+- **Hub revision pinning — five optional config fields, all five wired.**
   `model.revision`, `synthetic.teacher_revision`,
   `evaluation.safety.classifier_revision`,
   `evaluation.llm_judge.judge_model_revision` and
@@ -39,18 +39,22 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   trained to do; the judge's score feeds the auto-revert `min_score` gate, so an
   unpinned judge lets two runs of identical YAML promote and block the same
   model.
-  **Accepted and validated but NOT yet forwarded to any loader:**
-  `evaluation.safety.classifier_revision` — setting it today changes no load,
-  because neither the training-loop safety gate nor `forgelm safety-eval`
-  forwards it. This is documented as a gap in
-  [`docs/reference/configuration.md`](docs/reference/configuration.md#hub-revision-pinning)
-  rather than left to be discovered; do not treat it as reproducibility
-  evidence until that table says otherwise.
-  **No pin except the base model's reaches a compliance artefact.** The Annex IV
-  manifest, `compliance_report.json` and the generated model card carry
-  `model_lineage.base_model_revision` only. Setting `judge_model_revision` or
-  `grpo_reward_model_revision` makes the run reproducible; it adds no judge or
-  reward-model commit to any generated artefact.
+  `evaluation.safety.classifier_revision` also pins the harm classifier behind
+  the auto-revert gate. **Scope limit:** the training-time safety gate only.
+  Standalone `forgelm safety-eval` takes no `--config` and has no
+  `--classifier-revision` flag, so its classifier load is unpinned and logs an
+  UNPINNED warning naming the repo; a verdict from that subcommand is not
+  pinned evidence.
+  **Three of these five shipped dead earlier in this same dev cycle.**
+  `judge_model_revision`, `grpo_reward_model_revision` and
+  `classifier_revision` were each accepted, validated, cross-field-checked and
+  documented while reaching no loader at all. An operator who set one believed
+  their judge scores, reward model or safety verdicts were reproducible when
+  they were not — the same confident falsehood this work exists to remove, in a
+  new place. The first two were wired in a follow-up commit; `classifier_revision`
+  was missed a second time because its load site *did* pass `revision=` while
+  neither caller — the training path nor the CLI path — passed the field down to
+  it. Verifying a load site is not verifying the caller chain.
   Rejected at validation (exit `1`, fires under `--dry-run`, no network): an
   empty / whitespace-bearing / control-character / leading-dash / >255-char
   literal; `judge_model_revision` with `judge_api_key_env`; `teacher_revision`
@@ -78,6 +82,36 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   that the flattened `training_manifest.yaml` sidecar carries no `model_lineage`
   block at all — it is an operator summary; read `compliance_report.json` for
   provenance (`forgelm/compliance.py`).
+- **Every pinned role reaches the Annex IV bundle —
+  `model_lineage.component_revisions`.** A **list** sibling to
+  `base_model_revision` (which is unchanged and still present), one entry per
+  completed pinned load in the process, sorted by `(role, repo_id)` so the
+  artefact is byte-stable across runs that load the same models in a different
+  order. Each entry carries `role`, `repo_id`, `revision_requested`,
+  `revision_resolved` (a confirmed 40-hex SHA or `null` — never the requested
+  string echoed back), `resolution_source` and `revision_pinned` (the exact
+  string handed to `revision=`, which may be a moving ref). Six role names are
+  artefact contract and never change: `base_model`, `safety_classifier`,
+  `llm_judge`, `grpo_reward_model`, `teacher_model`, `fit_check`. Until this
+  block existed, four roles resolved a revision, pinned their load to it,
+  recorded it — and had it dropped on the floor, because the registry's only
+  reader asked for the base model; that is what made the per-load warning's "the
+  manifest will record …" promise false for four of the six.
+  **Two readings the artefact does not support:** `component_revisions: []`
+  means no pinned load completed in this process (`forgelm compliance-only`, an
+  all-local-path config, a manifest written before any load) and is *not* a
+  statement that no pins were configured; a null `revision_resolved` means no
+  SHA could be confirmed, not that the run was unpinned — `revision_pinned`
+  records the ref verbatim.
+  `fit_check` is reserved but never emitted: `model.revision` *is* forwarded to
+  the VRAM-estimate `AutoConfig` probe, so that load is pinned, but the probe
+  registers no provenance.
+  Purely additive: `forgelm verify-annex-iv` gates on top-level Annex IV
+  sections and does not inspect `model_lineage`, so artefacts written before
+  this release remain valid and artefacts written after verify identically. A
+  newly generated artefact naturally carries a different `manifest_hash` than a
+  pre-change build of the same run would have produced; archived artefacts keep
+  their own self-consistent hash (`forgelm/compliance.py`, `forgelm/model.py`).
 - **`forgelm.compliance.resolve_model_revision(repo_id, *, requested=None,
   offline=False)`** — returns `{"repo_id", "revision_requested",
   "revision_resolved", "resolution_source"}` for a model repo. Never raises.
@@ -91,8 +125,11 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 - **Per-load revision logging.** One line per pinnable load: `INFO` when a
   commit was confirmed (role, repo, SHA); `WARNING` when a pin was configured
   but no SHA could be confirmed, stating that the load will use the requested
-  ref as-is and that the manifest will record that nothing was verified rather
-  than assert a SHA; `WARNING` when a Hub repo loads **unpinned**, naming the
+  ref as-is and naming its destination precisely — "this role's entry under
+  `model_lineage.component_revisions` will record that no SHA was verified
+  rather than assert one", replacing an earlier claim about "the Annex IV
+  manifest" that was true only for the base model; `WARNING` when a Hub repo
+  loads **unpinned**, naming the
   repo and the config field that would pin it. Local paths are never warned
   about — a directory has no Hub commit, and warning on it would train operators
   to ignore the warning that matters (`forgelm/model.py`).
@@ -211,6 +248,28 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Fixed
 
+- **Hub metadata lookups had no timeout at all and could hang a run
+  indefinitely.** `HfApi().model_info()` / `.dataset_info()` default to
+  `timeout=None`, which is not a sensible library default but *no ceiling*: a
+  firewall that drops packets silently, or a hijacked DNS answer, blocked the
+  caller forever. Revision resolution now runs on every online load whether or
+  not a pin is configured, and it runs *before* training starts — including on a
+  fully-cached machine where the load itself would have needed no network — so
+  an unbounded metadata call converted a run that used to work
+  offline-by-accident into one that never began. Every such call is now bounded
+  at **10 seconds** (`forgelm.model.HUB_API_TIMEOUT_SECONDS`). On timeout the
+  run continues and the provenance record degrades to `unresolved`; it never
+  fails the run, because a provenance helper that can abort a fourteen-hour
+  training job is the worse trade (`forgelm/model.py`, `forgelm/compliance.py`,
+  `forgelm/data.py`).
+- **`TRANSFORMERS_OFFLINE` suppressed dataset lookups but not model-revision
+  lookups.** The model side's offline env-var tuple omitted it while the data
+  side included it, from a comment claiming the two were the same list — so an
+  operator who air-gapped a box with `TRANSFORMERS_OFFLINE=1` alone got no
+  dataset lookup (correct) and a full round of model-revision lookups (wrong).
+  All three of `HF_HUB_OFFLINE` / `HF_DATASETS_OFFLINE` / `TRANSFORMERS_OFFLINE`
+  — like `model.offline: true` — now mean no Hub request is attempted on either
+  side (`forgelm/model.py`).
 - **The Annex IV dataset revision SHA was decoupled from the load that
   produced it, and could name a corpus the run never read.**
   `compliance._fingerprint_hf_revision` obtained `hf_revision` by calling

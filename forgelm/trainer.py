@@ -12,6 +12,14 @@ from typing import Any, Dict, Optional
 # torch here costs ~3-5s of CLI startup per invocation. See closure-plan F-performance-101.
 from .config import ConfigError
 from .grpo_rewards import ANSWER_EXTRACT_PATTERN
+
+# Re-export: the GRPO reward-model role constant is declared beside the other
+# five roles in ``forgelm.model`` (one registry, one key space, one file to
+# check before adding a role).  The value is unchanged (``"grpo_reward_model"``)
+# and ``forgelm.trainer.ROLE_GRPO_REWARD_MODEL`` keeps resolving for existing
+# importers.  ``model`` defers its heavy ML imports to function bodies, so this
+# does not make ``import forgelm.trainer`` any more expensive.
+from .model import ROLE_GRPO_REWARD_MODEL
 from .results import TrainResult
 from .webhook import WebhookNotifier
 
@@ -25,14 +33,6 @@ _EVT_REVERT_TRIGGERED = "model.reverted"
 # thresholds it was checked against, mirroring the benchmark/safety/judge
 # ``*.evaluation_completed`` events.
 _EVT_LOSS_GATE_COMPLETED = "evaluation.loss_gate_completed"
-
-# Role the GRPO reward-model load plays in the ``(role, repo_id)`` revision
-# registry in ``forgelm.model``.  Kept here rather than beside
-# ``ROLE_BASE_MODEL`` / ``ROLE_SAFETY_CLASSIFIER`` in ``forgelm/model.py`` only
-# because this change was scoped out of that file; the role block there is the
-# natural home and this constant should move there when the two files can be
-# touched together.  The value is the registry key and must stay stable.
-ROLE_GRPO_REWARD_MODEL = "grpo_reward_model"
 
 
 # ---------------------------------------------------------------------------
@@ -1806,6 +1806,13 @@ class ForgeTrainer:
             audit_logger=self.audit,
             include_samples=getattr(safety_cfg, "include_eval_samples", False),
             classifier_mode=getattr(safety_cfg, "classifier_mode", "auto"),
+            # ``evaluation.safety.classifier_revision`` validated, was
+            # documented, and reached nothing: ``run_safety_evaluation`` has
+            # always accepted the argument and both of its callers omitted it,
+            # so the classifier behind the auto-revert gate loaded off a
+            # moving default branch under a config that said otherwise.  A pin
+            # that silently does nothing is worse than no pin field at all.
+            classifier_revision=getattr(safety_cfg, "classifier_revision", None),
         )
 
     def _run_judge_if_configured(self):

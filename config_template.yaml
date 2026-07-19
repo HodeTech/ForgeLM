@@ -192,7 +192,8 @@ data:
 #   safety:
 #     enabled: true
 #     classifier: "meta-llama/Llama-Guard-3-8B"  # default guard; scored via generation (see classifier_mode)
-#     # classifier_revision: "7327bd9f..."  # pin the guard: an upstream re-tune moves the auto-revert line
+#     # classifier_revision: "7327bd9f..."  # pin the guard: an upstream re-tune moves the auto-revert line.
+#     #                                     # Training-gate only — standalone `forgelm safety-eval` loads unpinned.
 #     # classifier_mode: "auto"   # "auto" (default): generation for a generative Llama-Guard, else text-classification;
 #     #                           # "classification" forces the pipeline (needs a trained safe/unsafe head);
 #     #                           # "generation" forces generation-based Llama-Guard scoring

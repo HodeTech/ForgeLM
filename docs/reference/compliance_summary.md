@@ -164,28 +164,60 @@ model — by design, and covered by a test that fails if one is
 reintroduced. Provenance is written only after the load returns; a load
 that raises leaves no claim behind.
 
+**Every other pinned role**, in `compliance_report.json` under
+`model_lineage.component_revisions` — a **list**, sibling to
+`base_model_revision` (which is unchanged and still present), sorted by
+`(role, repo_id)` so the artefact is byte-stable across runs that load the same
+models in a different order:
+
+| Key | Meaning |
+|---|---|
+| `role` | One of six contract values, which never change: `base_model`, `safety_classifier`, `llm_judge`, `grpo_reward_model`, `teacher_model`, `fit_check`. |
+| `repo_id` | The repo the load named. A role is not unique — two roles may legitimately name the same repo (Llama-Guard as both classifier and judge), and GRPO may be re-run against a second reward model. |
+| `revision_requested` | The operator's literal, or `null`. |
+| `revision_resolved` | A confirmed 40-hex commit SHA, or `null`. **Never the requested string echoed back.** |
+| `resolution_source` | Same vocabulary as `base_model_revision`: `local_path`, `resolved`, `pinned_resolved`, `cache`, `pinned_unverified`, `unresolved`. |
+| `revision_pinned` | The exact string handed to `revision=`, which **may be a moving ref**. |
+
+Which config field produces which role: `model.revision` → `base_model` (which
+also keeps its own `base_model_revision` block, from the same registry entry, so
+the two can never disagree); `evaluation.safety.classifier_revision` →
+`safety_classifier`; `evaluation.llm_judge.judge_model_revision` → `llm_judge`;
+`training.grpo_reward_model_revision` → `grpo_reward_model`;
+`synthetic.teacher_revision` → `teacher_model`.
+
+Two readings an auditor must not make:
+
+- **`component_revisions: []` does not mean "no pins were configured."** It
+  means no pinned load completed in this process — `forgelm compliance-only`, an
+  all-local-path config, or a manifest written before any load.
+- **A null `revision_resolved` does not mean the run was unpinned.** It means no
+  SHA could be confirmed; the run may still have been pinned to a ref, which
+  `revision_pinned` records verbatim.
+
 Three limits to state plainly:
 
-- The **LLM judge and GRPO reward model are pinned** by
-  `evaluation.llm_judge.judge_model_revision` and
-  `training.grpo_reward_model_revision`, but **neither pin appears in any
-  artefact** — not the Annex IV manifest, not `compliance_report.json`, not
-  the model card. Those carry `model_lineage.base_model_revision` only.
-  Setting the fields makes the run reproducible; it adds no judge or
-  reward-model commit to a generated compliance artefact. The **safety
-  classifier** has the same artefact limitation *and* a second one:
-  `evaluation.safety.classifier_revision` reaches no loader, so the
-  classifier is not pinned either. None of these three contributed weights
-  to the fine-tuned model, so they would not belong in `model_lineage`
-  regardless; the dedicated blocks for these roles are not implemented.
-- The **synthetic teacher** is pinned by `synthetic.teacher_revision` and
-  the resolved commit is registered in-process, but no manifest block
-  publishes it yet.
+- The **safety classifier** pin applies to the training-time gate only.
+  Standalone `forgelm safety-eval` takes no `--config` and has no
+  `--classifier-revision` flag, so its classifier load is unpinned and logs an
+  UNPINNED warning naming the repo. A verdict from that subcommand is not
+  pinned evidence.
+- The **`fit_check` role is reserved but never emitted.** `model.revision` *is*
+  forwarded to the VRAM-estimate `AutoConfig` probe, so that load is pinned, but
+  the probe registers no provenance, so no `fit_check` entry ever appears.
 - The flattened **`training_manifest.yaml`** sidecar carries none of
   this. It is an operator summary (`base_model`, `adapter_method`,
   `trainer_type`, `dataset`, `epochs`, `final_metrics`) with no
   `model_lineage` or `data_provenance` block at all — read
   `compliance_report.json` for provenance.
+
+**Backward compatibility.** `component_revisions` is purely additive.
+`forgelm verify-annex-iv` gates on top-level Annex IV sections and does not
+inspect `model_lineage`, so artefacts written before this release remain valid
+and artefacts written after verify identically. A newly generated artefact
+naturally carries a different `manifest_hash` than a pre-change build of the
+same run would have produced; an archived artefact keeps its own self-consistent
+hash.
 
 Full field semantics and the config surface:
 [`configuration.md`](configuration.md#hub-revision-pinning).

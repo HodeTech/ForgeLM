@@ -124,9 +124,13 @@ Her `human_approval.granted` girişi şunları taşır:
   üretilebilirlik kanıtı sayın; yanındaki `revision_requested` değeri,
   operatörün `main` gibi hareketli bir ref'i sabitlediğini açıkça
   gösterir. Güvenlik sınıflandırıcısı, LLM judge, GRPO ödül modeli ve
-  merge kaynak modelleri **hâlâ sabitlenmemiş olarak yüklenir** —
-  bunların `*_revision` config alanları kabul edilir ve doğrulanır, ancak
-  henüz hiçbir yükleyiciye iletilmez. Terfi edilen artefaktlar
+  sentetik teacher **kendi `*_revision` config alanlarıyla sabitlenir**
+  ve çözülen her commit, temel modelin kendi bloğunun yanında
+  `model_lineage.component_revisions` altına kaydedilir. Merge kaynak
+  modelleri sabitlenmemiş kalır ve bağımsız `forgelm safety-eval`
+  hiçbir config almadığı için sınıflandırıcı yüklemesi sabitlenmemiştir
+  — `evaluation.safety.classifier_revision`'ı yalnızca eğitim zamanı
+  güvenlik kapısı uygular. Terfi edilen artefaktlar
   `model_integrity.json` / `model.integrity_verified` event'i üzerinden
   hash ile doğrulanmaya devam eder. `forgelm approvals`, `config_hash`'i
   `human_approval.required` event'inden okur ve hiçbir mevcut

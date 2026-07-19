@@ -206,7 +206,7 @@ training:
 | `enabled` | bool | `false` | Güvenlik sınıflandırıcı değerlendirmesi |
 | `classifier` | string | `"meta-llama/Llama-Guard-3-8B"` | Güvenlik sınıflandırıcı modeli. Varsayılan kutudan çıkar çıkmaz çalışır: `classifier_mode: auto` altında generation tabanlı Llama-Guard puanlamasıyla değerlendirilir |
 | `classifier_mode` | string | `"auto"` | Sınıflandırıcının nasıl puanlanacağı: `auto` (bilinen bir generative Llama-Guard checkpoint'i için generation, diğerleri için `text-classification`), `classification` (pipeline'ı zorlar — eğitilmiş `safe`/`unsafe` başlığı gerektirir) veya `generation` (generation tabanlı Llama-Guard puanlamasını zorlar) |
-| `classifier_revision` | string | `null` | Zarar sınıflandırıcısını bir HF Hub commit SHA'sına veya ref'ine sabitle. **Doğrulanır ama henüz uygulanmaz** — ne eğitim döngüsü kapısı ne de `forgelm safety-eval` bunu iletir. Bkz. [Hub revision pinleme](#hub-revision-pinleme) |
+| `classifier_revision` | string | `null` | Zarar sınıflandırıcısını bir HF Hub commit SHA'sına veya ref'ine sabitle. **Bugün eğitim döngüsü güvenlik kapısında uygulanıyor** — sınıflandırıcı tokenizer'ını ve ağırlıklarını aynı commit'e sabitler. Bağımsız `forgelm safety-eval` hiçbir config almaz ve sınıflandırıcısını hâlâ sabitlenmemiş yükler. Bkz. [Hub revision pinleme](#hub-revision-pinleme) |
 | `test_prompts` | string | `"safety_prompts.jsonl"` | Adversarial test prompt dosyası. Yerleşik: `configs/safety_prompts/` |
 | `max_safety_regression` | float | `0.05` | Maksimum güvensiz oran (binary kapı) |
 | `scoring` | string | `"binary"` | Puanlama modu: `"binary"` veya `"confidence_weighted"` |
@@ -475,13 +475,19 @@ söyleyebilir.
 | `synthetic.teacher_revision` | Yerel teacher modeli + tokenizer'ı (`teacher_backend: local`) | **Evet** |
 | `evaluation.llm_judge.judge_model_revision` | Yerel judge modeli + tokenizer'ı | **Evet** |
 | `training.grpo_reward_model_revision` | GRPO ödül modeli + tokenizer'ı | **Evet** |
-| `evaluation.safety.classifier_revision` | Zarar sınıflandırıcısı | **Henüz değil** — kabul edilir ve doğrulanır, ama hiçbir çağıran iletmez |
+| `evaluation.safety.classifier_revision` | Zarar sınıflandırıcısı | **Evet**, eğitim döngüsü güvenlik kapısında — aşağıdaki kapsam notuna bakın |
 
-`evaluation.safety.classifier_revision` sessiz değil, belgelenmiş bir boşluktur:
-doğrulamadan geçer ve YAML'ınızda kayıtlıdır, ancak ne eğitim döngüsü güvenlik
-kapısı ne de `forgelm safety-eval` onu iletir, dolayısıyla sınıflandırıcı
-yüklemesi hâlâ deponun varsayılan dalını kullanır. Bu tablo aksini söyleyene
-kadar onu yeniden üretilebilirlik kanıtı saymayın.
+`evaluation.safety.classifier_revision` bu sürüme kadar hiçbir yükleyiciye
+ulaşmıyordu: doğrulamadan geçiyor ve YAML'ınızda duruyordu, ama auto-revert
+kapısının arkasındaki zarar sınıflandırıcısı buna bakılmaksızın hareketli bir
+varsayılan daldan yükleniyordu. Eğitim döngüsü kapısı artık bu alanı uygular ve
+çözülen commit'i `model_lineage.component_revisions` altına kaydeder.
+
+Tek bir kapsam sınırı kalır. Bağımsız `forgelm safety-eval` hiçbir `--config`
+almaz ve `--classifier-revision` bayrağı yoktur, dolayısıyla sınıflandırıcı
+yüklemesi sabitlenmemiştir ve depoyu adlandıran bir UNPINNED uyarısı yazar. O
+alt komutun ürettiği bir güvenlik kararı sabitlenmiş kanıt değildir; eğitim
+zamanı kapısının ürettiği kanıttır.
 
 Uygulanan her alan için değer önce bir commit SHA'sına çözülür ve tam olarak o
 SHA, o depo için **her** `from_pretrained` çağrısına `revision=` olarak geçilir
@@ -556,9 +562,19 @@ yüklemeyi çözdüğü şeye sabitler. `revision=` parametresine ulaşan değer
 3. Aksi halde hiçbir şey — tarihsel sabitlenmemiş davranış, değişmeden.
 
 Çözümleme best-effort'tur ve bir koşumu asla düşürmez. `model.offline: true` (veya
-`HF_HUB_OFFLINE` / `HF_DATASETS_OFFLINE`) herhangi bir Hub istemcisi import
-edilmeden önce kısa devre yapar: hiçbir ağ denemesi olmaz ve commit-adresli yerel
-önbellek yanıt verir. Yerel bir dizin asla çözülmez ve asla sabitlenmez.
+`HF_HUB_OFFLINE` / `HF_DATASETS_OFFLINE` / `TRANSFORMERS_OFFLINE`) herhangi bir
+Hub istemcisi import edilmeden önce kısa devre yapar: hiçbir ağ denemesi olmaz ve
+commit-adresli yerel önbellek yanıt verir. Bu üç ortam değişkeni artık dataset
+aramalarının yanı sıra model-revision aramalarını da bastırır;
+`TRANSFORMERS_OFFLINE` daha önce yalnızca dataset tarafını bastırıyordu. Yerel
+bir dizin asla çözülmez ve asla sabitlenmez.
+
+Her Hub metadata araması **10 saniye** ile sınırlandırılmıştır. Bu çağrıların
+daha önce hiç timeout'u yoktu, dolayısıyla paketleri sessizce düşüren bir
+güvenlik duvarı, eğitim başlamadan önce bir koşumu süresiz askıda bırakabilirdi
+— yüklemenin kendisinin hiç ağa ihtiyaç duymadığı, tamamen önbellekli bir
+makinede bile. Timeout durumunda koşum devam eder ve provenance kaydı
+`unresolved`'a düşer; koşumu asla düşürmez.
 
 ### `unsloth` backend'i
 
@@ -582,7 +598,10 @@ edilemez.
 ### Kayıt nereye düşer
 
 Çözülen temel-model revision'ı, Annex IV paketindeki
-**`compliance_report.json`**'un `model_lineage` bloğuna; dataset revision'ları ise
+**`compliance_report.json`**'un `model_lineage` bloğuna — `base_model_revision`
+altına ve ayrıca güvenlik sınıflandırıcısını, LLM judge'ı, GRPO ödül modelini ve
+sentetik teacher'ı da taşıyan kardeş `component_revisions` listesinde bir
+`base_model` girdisi olarak — dataset revision'ları ise
 **`data_provenance.json`**'a yazılır. Düzleştirilmiş `training_manifest.yaml`
 yan dosyasının ikisini de taşımadığına dikkat edin: o bir özet izdüşümüdür
 (`base_model`, `adapter_method`, `trainer_type`, `dataset`, `epochs`,
@@ -591,14 +610,27 @@ yoktur. Her `resolution_source` değerinin alan-alan anlamı için bkz.
 [`compliance_summary-tr.md`](compliance_summary-tr.md#annex-iv-paketi-provenance-alanları)
 — her `resolution_source` ve `hf_revision_source` değeri için.
 
-**Yalnızca temel model ve dataset'ler bir artefakta ulaşır.** Judge'ın, GRPO
-ödül modelinin, güvenlik sınıflandırıcısının ve sentetik teacher'ın hiçbir yerde
-provenance bloğu yoktur: ne Annex IV manifest'inde, ne
-`compliance_report.json`'da, ne de üretilen model card'da. `judge_model_revision`
-veya `grpo_reward_model_revision` ayarlamak koşumu yeniden üretilebilir kılar;
-üretilen herhangi bir uyum artefaktına judge veya ödül-modeli commit'i
-**eklemez**. O commit'in bir denetim paketinde bulunması gerekiyorsa, YAML'dan
-bağımsız olarak kayda geçirin.
+**Sabitlenmiş her yükleme bir artefakta ulaşır.** Manifest,
+`model_lineage.base_model_revision`'ın — değişmemiş ve hâlâ temel modelin
+kendine ait bloğu — yanında, o süreçte tamamlanmış her sabitlenmiş yükleme için
+bir girdi taşıyan `model_lineage.component_revisions` listesini de taşır. Altı
+rol adı sözleşmedir ve asla değişmez: `base_model`, `safety_classifier`,
+`llm_judge`, `grpo_reward_model`, `teacher_model`, `fit_check`. Temel model her
+iki yerde de görünür ve tek bir registry girdisinden gelir, dolayısıyla ikisi
+asla çelişemez.
+
+Listenin **söylemediği** iki şey. `component_revisions: []`, o süreçte hiçbir
+sabitlenmiş yüklemenin tamamlanmadığı anlamına gelir — `forgelm
+compliance-only`, tamamı yerel yollardan oluşan bir config veya herhangi bir
+yüklemeden önce yazılmış bir manifest — ve hiçbir pin'in yapılandırılmadığı
+ifadesi *değildir*. Null bir `revision_resolved`, hiçbir SHA'nın teyit
+edilemediği anlamına gelir; koşum yine de bir ref'e sabitlenmiş olabilir ve
+`revision_pinned` bunu aynen kaydeder.
+
+`fit_check` ayrılmıştır, henüz yayılmaz: `model.revision` VRAM-tahmini
+`AutoConfig` problamasına *iletilir*, dolayısıyla o yükleme sabitlenmiştir, ama
+problama hiçbir provenance kaydetmez ve hiçbir zaman bir `fit_check` girdisi
+görünmez.
 
 ### Bu sürümdeki bilinen boşluklar
 
@@ -615,9 +647,10 @@ bağımsız olarak kayda geçirin.
 - `export`, `inference` ve `merging` tasarım gereği sabitlenmemiştir: bu koşumun
   ürettiği yerel artefaktları yüklerler ve bir dizinin Hub commit'i yoktur.
 - Merge kaynak modelleri (`merge.models[]`) sabitlenemez.
-- `evaluation.safety.classifier_revision` kabul edilir ve doğrulanır ama hiçbir
-  yükleyiciye ulaşmaz, dolayısıyla zarar sınıflandırıcısı varsayılan dalından
-  yüklenir.
-- Hiçbir artefakt judge, ödül-modeli, sınıflandırıcı veya teacher commit'ini
-  kaydetmez — yalnızca `model_lineage.base_model_revision` ve dataset
-  fingerprint'leri kaydedilir.
+- `forgelm safety-eval` hiçbir `--config` almaz ve `--classifier-revision`
+  bayrağı yoktur, dolayısıyla sınıflandırıcı yüklemesi
+  `evaluation.safety.classifier_revision`'dan bağımsız olarak sabitlenmemiştir
+  ve depoyu adlandıran bir UNPINNED uyarısı yazar. O alanı yalnızca eğitim
+  zamanı güvenlik kapısı uygular.
+- `fit_check` rolü ayrılmıştır ama hiçbir zaman yayılmaz — VRAM problaması
+  `model.revision` ile sabitlenir, yine de hiçbir provenance kaydetmez.

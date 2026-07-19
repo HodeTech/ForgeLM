@@ -124,10 +124,10 @@ _RESOLVED_DATASET_REVISIONS: Dict[str, str] = {}
 # it too broadly is at worst a missing revision pin, which is honest.  The cost
 # of reading it too narrowly is an outbound request from a run the operator
 # believed was air-gapped.  ``forgelm.model._HF_OFFLINE_ENV_VARS`` is a sibling
-# copy of this tuple and still omits ``TRANSFORMERS_OFFLINE``; the divergence is
-# safe in this direction (the dataset path is now strictly more conservative
-# than the model path, never less) but the two should be reunited when
-# ``model.py`` is next touched.
+# copy of this tuple and now lists the same three vars; the two diverged for one
+# release (the model path omitted ``TRANSFORMERS_OFFLINE``, so a box air-gapped
+# with that variable alone still made model-revision lookups) and are kept in
+# lockstep by ``tests/test_revision_pin_chains.py``.
 _HF_OFFLINE_ENV_VARS = ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE")
 _FALSEY_ENV_VALUES = frozenset({"", "0", "false", "no", "off"})
 
@@ -239,8 +239,13 @@ def _resolve_hub_dataset_revision(path: str, *, offline: bool = False) -> Option
         logger.debug("Dataset revision resolution skipped for '%s' — huggingface_hub not installed: %s", path, e)
         return None
 
+    # Bounded: HfApi defaults to ``timeout=None`` (no timeout at all), and this
+    # runs before every online dataset load — including a fully-cached one that
+    # would otherwise need no network.  See ``model.HUB_API_TIMEOUT_SECONDS``.
+    from .model import HUB_API_TIMEOUT_SECONDS
+
     try:
-        sha = getattr(HfApi().dataset_info(path), "sha", None)
+        sha = getattr(HfApi().dataset_info(path, timeout=HUB_API_TIMEOUT_SECONDS), "sha", None)
     except Exception as e:  # noqa: BLE001 — best-effort revision resolution; the HF Hub client surface raises a wide error tail (HfHubHTTPError, RepositoryNotFoundError, RevisionNotFoundError, GatedRepoError, plus the transport OSError/ValueError family) and enumerating it would couple data.py to huggingface_hub internals. The load below proceeds unpinned either way, so this never fails a run.
         logger.debug("Dataset revision resolution failed for '%s': %s", path, e)
         return None

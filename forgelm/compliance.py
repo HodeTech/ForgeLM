@@ -944,8 +944,12 @@ def _fingerprint_hf_revision(dataset_path: str, fingerprint: Dict[str, Any], *, 
         _mark_revision_unresolved(fingerprint, "huggingface_hub is not installed")
         return
 
+    # Bounded like every other Hub metadata call in the package — a manifest
+    # export must not hang forever on an unreachable Hub.
+    from .model import HUB_API_TIMEOUT_SECONDS
+
     try:
-        info = HfApi().dataset_info(dataset_path)
+        info = HfApi().dataset_info(dataset_path, timeout=HUB_API_TIMEOUT_SECONDS)
         revision_sha = getattr(info, "sha", None)
     except Exception as e:  # noqa: BLE001 — best-effort revision pin; HF Hub surface raises a wide error tail
         logger.debug("HF Hub revision pin skipped for '%s': %s", dataset_path, e)
@@ -1153,8 +1157,15 @@ def _query_hub_model_revision(repo_id: str, requested: Optional[str]) -> Optiona
         logger.debug("Hub revision lookup skipped for '%s' — huggingface_hub not installed: %s", repo_id, e)
         return None
 
+    # ``timeout=`` is mandatory here, not a nicety: HfApi defaults to no
+    # timeout, and this lookup now runs before every online model load —
+    # including fully-cached ones that would otherwise need no network.  See
+    # ``forgelm.model.HUB_API_TIMEOUT_SECONDS``.
+    from .model import HUB_API_TIMEOUT_SECONDS
+
     try:
-        sha = getattr(HfApi().model_info(repo_id, revision=requested), "sha", None)
+        info = HfApi().model_info(repo_id, revision=requested, timeout=HUB_API_TIMEOUT_SECONDS)
+        sha = getattr(info, "sha", None)
     except Exception as e:  # noqa: BLE001 — best-effort revision lookup; the HF Hub client surface raises a wide error tail (HfHubHTTPError, RepositoryNotFoundError, RevisionNotFoundError, GatedRepoError, plus the transport OSError/ValueError family) and enumerating it would couple compliance.py to huggingface_hub internals.
         logger.debug("Hub revision lookup failed for '%s' (revision=%r): %s", repo_id, requested, e)
         return None
@@ -1369,6 +1380,63 @@ def _base_model_revision_block(config: Any) -> Dict[str, Any]:
     }
 
 
+def _component_revisions_block(_config: Any = None) -> List[Dict[str, Any]]:
+    """Build ``model_lineage.component_revisions`` — provenance for every role.
+
+    ``base_model_revision`` answers "which weights were fine-tuned".  It does
+    not answer "what produced this model", and for an Annex IV reader those
+    are different questions: the GRPO reward model **is** the objective the
+    run optimised against, the LLM judge's score feeds the auto-revert gate
+    that decided whether the checkpoint shipped, the safety classifier
+    produces the harm verdicts behind the same gate, and the teacher model
+    generated the corpus.  An upstream re-tune of any of them changes what
+    the run did, with no config diff to point at.
+
+    Until this block existed those four roles resolved a revision, pinned
+    their load to it, recorded it — and had it dropped on the floor, because
+    the registry's only readers asked for ``ROLE_BASE_MODEL``.  That is what
+    made :func:`forgelm.model.prepare_revision_pin`'s "the manifest will
+    record …" warning a false promise; the fix is to keep the evidence, not
+    to soften the sentence.
+
+    Shape: a **list** of records, each carrying ``role`` alongside the same
+    keys :func:`_base_model_revision_block` emits.  A list rather than a
+    role-keyed dict because a role is not unique — GRPO can be re-run against
+    a second reward model, and two roles legitimately name the same repo
+    (Llama-Guard as both classifier and judge).  A sibling of
+    ``base_model_revision`` rather than a nesting inside it because it is not
+    a property *of* the base model.
+
+    ``base_model`` appears here too when a base-model load happened, so the
+    list is a complete record of this process's pinned loads on its own; it
+    is a copy of the same registry entry ``base_model_revision`` reads, never
+    a second lookup that could disagree with it.
+
+    Empty list = no pinned load completed in this process (``forgelm
+    compliance-only``, an all-local-path config, a run where every load
+    predates this feature).  Empty is honest; it is not the same as "no pins
+    were configured", and nothing downstream may read it as such.
+
+    Additive: readers of older manifests see the key absent, and
+    ``verify_annex_iv_artifact`` requires none of it, so old artefacts stay
+    valid.  ``_config`` is accepted and unused so this stays a drop-in
+    sibling of ``_base_model_revision_block(config)`` at the call site.
+    """
+    from .model import get_all_loaded_model_revisions
+
+    return [
+        {
+            "role": record.get("role"),
+            "repo_id": record.get("repo_id"),
+            "revision_requested": record.get("revision_requested"),
+            "revision_resolved": record.get("revision_resolved"),
+            "resolution_source": record.get("resolution_source", MODEL_REVISION_UNRESOLVED),
+            "revision_pinned": record.get("revision_pinned"),
+        }
+        for record in get_all_loaded_model_revisions()
+    ]
+
+
 def generate_training_manifest(
     config: Any,
     metrics: Dict[str, float],
@@ -1398,6 +1466,7 @@ def generate_training_manifest(
         "model_lineage": {
             "base_model": config.model.name_or_path,
             "base_model_revision": _base_model_revision_block(config),
+            "component_revisions": _component_revisions_block(config),
             "backend": config.model.backend,
             "adapter_method": _describe_adapter_method(config),
             "quantization": "4-bit NF4" if config.model.load_in_4bit else "none",

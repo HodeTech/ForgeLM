@@ -12,20 +12,22 @@ import string
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-logger = logging.getLogger("forgelm.judge")
-
-# Role this module's pinned model loads play in the revision registry keyed by
-# ``(role, repo_id)`` in ``forgelm.model``.  Kept here rather than beside
-# ``ROLE_BASE_MODEL`` / ``ROLE_SAFETY_CLASSIFIER`` in ``forgelm/model.py`` only
-# because this change was scoped out of that file; the role block there is the
-# natural home and this constant should move there when the two files can be
-# touched together.  The value is the registry key and must stay stable.
+# Re-export: the local-judge role constant is declared beside the other five
+# roles in ``forgelm.model`` (one registry, one key space, one file to check
+# before adding a role).  The value is unchanged (``"llm_judge"``) and
+# ``forgelm.judge.ROLE_LLM_JUDGE`` keeps resolving for existing importers.
 #
 # A distinct role matters concretely: the same repo (Llama-Guard is the usual
 # case) can be both the safety classifier and the local judge in one run, and
 # only one of the two loads may have been pinned.  Sharing a role would let the
 # unpinned load's record overwrite the pinned one's.
-ROLE_LLM_JUDGE = "llm_judge"
+#
+# Import-cost note: ``forgelm.model`` defers every heavy ML import to its
+# function bodies, so this keeps ``judge`` stdlib-only at module scope — which
+# ``trainer``'s ImportError handling around ``run_judge_evaluation`` relies on.
+from .model import ROLE_LLM_JUDGE
+
+logger = logging.getLogger("forgelm.judge")
 
 DEFAULT_RUBRIC = """Score the following AI assistant response on a scale of 1-10.
 

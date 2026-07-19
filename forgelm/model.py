@@ -35,10 +35,39 @@ _MOE_EXPERT_COUNT_ATTRS = ("num_local_experts", "num_experts", "n_routed_experts
 # two roles that happen to name the same repo (Llama-Guard as both safety
 # classifier and LLM judge) cannot overwrite each other's provenance when only
 # one of them was pinned.
-ROLE_BASE_MODEL = "base_model"  # the weights that are fine-tuned; the only role model_lineage reads
+#
+# These strings are **registry keys and manifest values**: an auditor reading
+# a two-year-old manifest matches on them, so they are part of the artefact
+# contract and must never be renamed.  All six live here — the judge and the
+# GRPO reward roles used to be declared in ``judge.py`` and ``trainer.py``,
+# which put three files in the business of defining one registry's key space
+# and made "is this role already taken?" a three-file question.
+ROLE_BASE_MODEL = "base_model"  # the weights that are fine-tuned
+# NOTE: ``ROLE_FIT_CHECK`` is currently declared but unused.  ``fit_check.py``
+# forwards ``model.revision`` straight into its ``AutoConfig.from_pretrained``
+# probe, so that load *is* pinned — but it never calls
+# :func:`prepare_revision_pin` / :func:`record_loaded_revision`, so nothing is
+# registered under this role and no ``component_revisions`` entry appears for
+# it.  Reserved, not wired; wiring it is a ``fit_check.py`` change.
 ROLE_FIT_CHECK = "fit_check"  # AutoConfig probe for the VRAM estimate — no weights loaded
 ROLE_SAFETY_CLASSIFIER = "safety_classifier"  # harm classifier behind the auto-revert gate
 ROLE_TEACHER_MODEL = "teacher_model"  # local teacher whose generations become training data
+ROLE_LLM_JUDGE = "llm_judge"  # local judge whose score feeds the auto-revert gate
+ROLE_GRPO_REWARD_MODEL = "grpo_reward_model"  # the objective GRPO optimises against
+
+# Bounded wait for every Hugging Face Hub metadata call this package makes.
+#
+# ``HfApi().model_info()`` / ``.dataset_info()`` default to ``timeout=None``,
+# which is not "the library's sensible default" but *no timeout at all*: a
+# black-holed connection (a DROP-ing corporate firewall, a hijacked DNS
+# answer) hangs the caller forever.  Revision resolution now runs on every
+# online load whether or not a pin is configured, and it runs *before*
+# training starts — including in the fully-cached case, where the load itself
+# would previously have needed no network at all.  So an unbounded metadata
+# call converts a run that used to work offline-by-accident into one that
+# never begins.  Every failure here is best-effort and degrades to
+# ``unresolved``, so a short ceiling costs at most a provenance record.
+HUB_API_TIMEOUT_SECONDS = 10.0
 
 # Provenance for model loads this process pinned *and* completed, keyed by
 # ``(role, repo_id)``.  The ONLY sanctioned source for the model-revision keys
@@ -50,8 +79,12 @@ _RESOLVED_MODEL_REVISIONS: Dict[Tuple[str, str], Dict[str, Any]] = {}
 # than ``huggingface_hub.constants`` because ``forgelm.cli._config_load`` sets
 # them at CLI start-up from ``model.offline``, which can happen after
 # ``huggingface_hub`` has already imported and frozen its constants.  Mirrors
-# ``forgelm.data._hf_offline_mode``.
-_HF_OFFLINE_ENV_VARS = ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE")
+# ``forgelm.data._HF_OFFLINE_ENV_VARS`` — and must keep mirroring it.  This
+# tuple omitted ``TRANSFORMERS_OFFLINE`` while the data side included it, so
+# an operator who air-gapped a box with ``TRANSFORMERS_OFFLINE=1`` alone got
+# no dataset lookup (correct) but a full round of model-revision lookups
+# (wrong), from a comment that claimed the two were the same list.
+_HF_OFFLINE_ENV_VARS = ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE")
 _FALSEY_ENV_VALUES = frozenset({"", "0", "false", "no", "off"})
 
 
@@ -113,8 +146,9 @@ def prepare_revision_pin(
     elif requested:
         logger.warning(
             "%s '%s' is pinned to %r but no commit SHA could be confirmed for it (%s).  The load "
-            "will use the requested ref as-is; the Annex IV manifest will record that no SHA was "
-            "verified rather than assert one.",
+            "will use the requested ref as-is; this role's entry under "
+            "model_lineage.component_revisions will record that no SHA was verified rather than "
+            "assert one.",
             role,
             repo_id,
             requested,
@@ -157,6 +191,28 @@ def get_loaded_model_revision(repo_id: str, role: str = ROLE_BASE_MODEL) -> Opti
     """
     record = _RESOLVED_MODEL_REVISIONS.get((role, repo_id))
     return dict(record) if record is not None else None
+
+
+def get_all_loaded_model_revisions() -> "list[Dict[str, Any]]":
+    """Every completed pinned load this process recorded, across all roles.
+
+    Backs ``model_lineage.component_revisions`` (see
+    :func:`forgelm.compliance._component_revisions_block`).  Until it existed,
+    the only reader of the registry was
+    :func:`forgelm.compliance._base_model_revision_block`, which asks for
+    ``ROLE_BASE_MODEL`` alone — so the safety classifier, the LLM judge, the
+    GRPO reward model and the synthetic-data teacher all resolved a revision,
+    pinned their load to it, recorded it here, and had it discarded.  That is
+    what made :func:`prepare_revision_pin`'s "the manifest will record …"
+    warning false for four of the six roles.
+
+    Sorted by ``(role, repo_id)`` so the manifest is byte-stable across runs
+    that load the same models in a different order — the artefact is hashed
+    and diffed, and dict-insertion order is not a property an auditor should
+    have to reason about.  Copies are returned; mutating them cannot corrupt
+    the registry.
+    """
+    return [dict(record) for _key, record in sorted(_RESOLVED_MODEL_REVISIONS.items())]
 
 
 def _resolve_expert_count(model_config: Any) -> Optional[int]:

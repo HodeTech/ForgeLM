@@ -1036,7 +1036,7 @@ class TestHFRevisionPin:
             sha = "abc123def456" + "0" * 28  # plausible-looking 40-char SHA
 
         class _FakeHfApi:
-            def dataset_info(self, dataset_id):
+            def dataset_info(self, dataset_id, timeout=None):
                 return _FakeInfo()
 
         fake_module = types.ModuleType("huggingface_hub")
@@ -1094,7 +1094,7 @@ class TestDatasetRevisionProvenance:
         import huggingface_hub
 
         class _Api:
-            def dataset_info(self, dataset_id):
+            def dataset_info(self, dataset_id, timeout=None):
                 if raises is not None:
                     raise raises
                 return type("Info", (), {"sha": sha})()
@@ -1291,7 +1291,7 @@ class TestDatasetFingerprintRouting:
             def __init__(self, *a, **k):
                 calls.append("HfApi")
 
-            def dataset_info(self, dataset_id):
+            def dataset_info(self, dataset_id, timeout=None):
                 calls.append(("dataset_info", dataset_id))
                 return type("Info", (), {"sha": "a" * 40})()
 
@@ -1429,7 +1429,7 @@ class TestDatasetFingerprintOfflineIsExplicit:
         import huggingface_hub
 
         class _Api:
-            def dataset_info(self, dataset_id):
+            def dataset_info(self, dataset_id, timeout=None):
                 import socket
 
                 socket.socket().connect(("hub.invalid.example", 443))
@@ -1577,7 +1577,7 @@ class TestResolveModelRevision:
         import huggingface_hub
 
         class _Api:
-            def model_info(self, repo_id, revision=None):
+            def model_info(self, repo_id, revision=None, timeout=None):
                 if raises is not None:
                     raise raises
                 return type("Info", (), {"sha": sha})()

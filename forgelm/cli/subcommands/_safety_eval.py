@@ -224,6 +224,16 @@ def _run_safety_eval_cmd(args, output_format: str) -> None:
 
     model, tokenizer = _load_model_for_safety(model_path, output_format)
 
+    # No ``classifier_revision=`` here, deliberately.  ``run_safety_evaluation``
+    # accepts one and the training path passes
+    # ``evaluation.safety.classifier_revision``, but this standalone surface
+    # takes no ``--config`` and the parser exposes no ``--classifier-revision``
+    # flag, so there is no operator-supplied value to forward.  Passing
+    # ``getattr(args, "classifier_revision", None)`` would read as wired while
+    # being a permanent ``None`` — the same silently-dead-pin defect this round
+    # fixed on the training path.  The classifier therefore loads unpinned and
+    # ``prepare_revision_pin`` logs the UNPINNED warning by name.  Adding the
+    # flag is a parser change and is tracked as follow-up work.
     try:
         result = run_safety_evaluation(
             model=model,
