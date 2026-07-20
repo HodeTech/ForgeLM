@@ -113,7 +113,7 @@ Devam ederse `bf16: false` ve `fp16: false` olduğunu doğrulayın
 
 ### Eğitim çok yavaş
 
-1. **Unsloth kullan** (Linux, 2-5x hızlanma):
+1. **Unsloth kullan** (Linux, desteklenen mimarilerde daha hızlı):
    ```yaml
    model:
      backend: "unsloth"

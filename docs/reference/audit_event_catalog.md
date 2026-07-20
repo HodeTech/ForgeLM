@@ -56,7 +56,7 @@ The hash chain advances after the line lands on disk (`flush` + `fsync`), so an 
 
 | Event                          | When emitted                                                                                              | Payload                                                       | Article |
 |--------------------------------|-----------------------------------------------------------------------------------------------------------|---------------------------------------------------------------|---------|
-| `model.reverted`               | Auto-revert restored a previous checkpoint after a quality regression. _(Faz 8 — webhook-coupled.)_       | `reason` (the gate that fired: `benchmark` / `safety` / `judge` / etc.), `detail` (the human-readable failure reason from the gate) | 15      |
+| `model.reverted`               | Auto-revert fired after a quality regression: the saved model directory is **deleted**. Emitted *before* the deletion so the record survives a failed `rmtree`. _(Phase 8 — webhook-coupled.)_ | `reason` (the gate that fired: `benchmark` / `safety` / `judge` / etc.), `detail` (the human-readable failure reason from the gate) | 15      |
 | `model.integrity_verified`     | Final-model integrity manifest (`model_integrity.json`) was written and re-hashed successfully after training. | `artifacts` (count of files re-hashed)                         | 15      |
 | `audit.classifier_load_failed` | Safety classifier (e.g., Llama Guard) failed to load. The run still records `passed=False`.              | `classifier`, `reason`                                        | 15      |
 

@@ -4,6 +4,50 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **`[tracking-mlflow]` extra.** `training.report_to: "mlflow"` has always been
+  an accepted config value, and the field's own description told operators it
+  needed the `[tracking]` extra — but that extra installs `wandb` only, so a run
+  configured for MLflow died at trainer construction. MLflow now has an extra
+  that installs it. Kept separate from `[tracking]` rather than folded in, so a
+  W&B-only user does not pull MLflow's dependency tree; `[tracking]` keeps its
+  historical name because renaming it would break existing installs.
+- **`tools/check_readme_links.py`** (29th CI guard). `pyproject.toml` ships
+  `README.md` as the PyPI long description with no URL rewriting, so every
+  relative href in it resolves against `pypi.org` and 404s — for exactly the
+  reader who arrived by running `pip install forgelm`. 38 links shipped that
+  way, invisible to CI: `check_anchor_resolution.py` defaults to `--root docs`
+  and never opened the README, and `check_source_path_refs.py` inspects
+  backticked source paths rather than Markdown hrefs. The guard requires
+  absolute `https://` hrefs on the PyPI-rendered surface and asserts that every
+  in-repo target resolves on disk, on `CONTRIBUTING.md` too.
+
+### Fixed
+
+- **Auto-revert was documented as restoring a previous checkpoint in seven
+  places.** It does not restore anything: `_revert_model` calls
+  `shutil.rmtree` on the saved model directory. Corrected in
+  `forgelm/config.py` (the `auto_revert` and `min_average_accuracy` field
+  descriptions, which reach the generated Configuration Reference and
+  `--dry-run` output), the audit-event catalog (EN + TR), and the user manual's
+  configuration and audit-log pages (EN + TR).
+- **The Unsloth "2-5× faster" figure is upstream's, not a ForgeLM
+  measurement.** It appeared across the README, six locales of the marketing
+  site, four user-manual pages and four guides with no benchmark anywhere in
+  the repository. Removed where a bare number was stated as fact, and
+  attributed on the pages that keep it. Competitive-analysis tables, which
+  describe Unsloth's own positioning, are unchanged.
+- **README rewritten against the code.** Fourteen claims did not survive
+  execution — among them a Quick Start `forgelm export` command that exits 2
+  because `--output` is required, auto-revert presented as an unconditional
+  default when `evaluation.auto_revert` is `False`, a Croissant card described
+  as doubling as the Article 10 governance artefact when they are two separate
+  artefacts, an unkeyed SHA-256 manifest sold as "proof-of-integrity", "every
+  CLI surface has a typed entry point" when roughly half raise `AttributeError`,
+  and a `revision`-field list naming the tokenizer (which has no field of its
+  own) instead of the judge model (which does).
+
 ## [0.10.0] — 2026-07-20
 
 _(**This cycle is a MINOR bump, not a patch.**

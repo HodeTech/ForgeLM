@@ -13,7 +13,7 @@ Tam açıklamalı örnek için `config_template.yaml` dosyasına bakın.
 | `name_or_path` | string | *zorunlu* | HuggingFace model ID veya yerel yol |
 | `max_length` | int | `2048` | Maksimum bağlam uzunluğu |
 | `load_in_4bit` | bool | `true` | QLoRA 4-bit NF4 kuantizasyon |
-| `backend` | string | `"transformers"` | `"transformers"` veya `"unsloth"` (2-5x hızlı, Linux) |
+| `backend` | string | `"transformers"` | `"transformers"` veya `"unsloth"` (desteklenen mimarilerde daha hızlı, Linux) |
 | `trust_remote_code` | bool | `false` | Model depolarından özel kod çalıştırma. **Güvenlik riski** |
 | `offline` | bool | `false` | İzole mod: HF Hub çağrısı yok. Modeller/veri setleri yerel olmalı |
 | `revision` | string | `null` | Temel modeli + tokenizer'ı bir HF Hub commit SHA'sına (40-hex) veya branch/tag'e sabitle. **Bugün uygulanıyor.** Bkz. [Hub revision pinleme](#hub-revision-pinleme) |

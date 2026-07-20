@@ -85,11 +85,30 @@ eval = [
 ]
 
 # Experiment tracking — Weights & Biases run logging.
+# Historically named `tracking` when W&B was the only supported backend;
+# kept under that name because renaming it would break every existing
+# `pip install forgelm[tracking]`.  MLflow lives in its own extra below.
 tracking = [
   "wandb>=0.16.0",
 ]
 
+# Experiment tracking via MLflow.  `training.report_to: "mlflow"` is an
+# accepted config value and transformers ships the MLflowCallback, but the
+# callback imports mlflow at runtime — so without this extra a run that asks
+# for mlflow tracking dies at trainer construction.  Split out rather than
+# folded into `tracking` because mlflow pulls a large dependency tree that a
+# W&B-only user should not have to install.
+tracking-mlflow = [
+  "mlflow>=2.9.0",
+]
+
 # Multi-GPU/multi-node training via DeepSpeed (ZeRO-1/2/3).
+# No platform marker is possible in the useful direction: DeepSpeed publishes
+# no Windows wheels, so `pip install forgelm[distributed]` on Windows falls
+# through to a source build that needs MSVC + the CUDA toolkit and typically
+# fails.  Marking it `sys_platform != 'win32'` would make the install silently
+# succeed while omitting DeepSpeed, which then surfaces as an unexplained
+# ImportError at ZeRO init — a worse failure than a loud one at install time.
 distributed = [
   "deepspeed>=0.14.0",
 ]

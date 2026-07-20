@@ -173,6 +173,7 @@ Default workflow for a non-trivial change:
      python3 tools/check_release_record_sync.py --strict && \
      python3 tools/check_skill_mirror_parity.py --strict && \
      python3 tools/check_source_path_refs.py --strict && \
+     python3 tools/check_readme_links.py --strict && \
      python3 tools/update_site_version.py --check
    ```
 
@@ -188,7 +189,7 @@ Default workflow for a non-trivial change:
    does not cover the `tools/check_*.py` guards that import `forgelm`
    with `sys.path[0] == tools/`.
 
-   All twenty-two must pass (the usermanual-schema-drift guard —
+   All twenty-three must pass (the usermanual-schema-drift guard —
    `check_usermanual_schema_drift.py --strict` — validates that every
    fenced YAML key under `docs/usermanuals/` resolves against the real
    `ForgeConfig` schema, catching fabricated-field examples that would
@@ -294,6 +295,27 @@ Default workflow for a non-trivial change:
    a path that no longer exists — a statement about the past, or a file the
    reader is being told to create — add it to `_EXEMPT` with a written
    justification rather than weakening the pattern.
+   The README-link guard (post-v0.10.0 README audit) closes the last
+   uncovered high-traffic surface. `pyproject.toml` sets
+   `readme = "README.md"` with no long-description URL rewriting, so PyPI
+   serves the file verbatim and every *relative* href in it resolves
+   against `pypi.org` — dead for precisely the reader who arrived by
+   running `pip install forgelm`. **38 such links shipped**, and no guard
+   could see them: `check_anchor_resolution.py` defaults to `--root docs`
+   and reports "OK: 259 markdown file(s) under docs/" without ever opening
+   the README, `check_source_path_refs.py` scans the README but only for
+   backticked source paths, and `check_doc_numerical_claims.py` walks
+   `DOCS.rglob("*.md")`. The project's front door sat outside the coverage
+   of every guard that would have kept it honest, which is why it
+   accumulated fourteen false claims while `docs/` stayed comparatively
+   clean. The guard applies the absolute-https rule only to the surface
+   that is actually rendered off GitHub (`README.md`) and the
+   resolve-on-disk rule to every surface it scans — `CONTRIBUTING.md`
+   keeps its relative links, because they are correct there and a guard
+   that fires on correct input gets disabled. Both halves are offline: an
+   in-repo `blob/main/<path>` URL is checked by stripping the prefix, so
+   converting a link to absolute form cannot trade a PyPI 404 for a
+   universal one.
 
 ## Etiquette when communicating with the user
 

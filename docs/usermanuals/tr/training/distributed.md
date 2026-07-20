@@ -35,7 +35,7 @@ flowchart TD
 
 | Backend | Çoklu-GPU? | Çoklu-node? | Notlar |
 |---|---|---|---|
-| **Tek GPU + Unsloth** | Hayır | Hayır | Llama/Qwen/Mistral'da vanilla'dan 2-5× hızlı. Tek GPU'daysanız önce bunu deneyin. |
+| **Tek GPU + Unsloth** | Hayır | Hayır | Llama/Qwen/Mistral'da vanilla'dan hızlı (upstream 2-5× bildiriyor; ForgeLM kendi ölçümünü yayımlamıyor). Tek GPU'daysanız önce bunu deneyin. |
 | **DeepSpeed ZeRO-2** | Evet | Evet | Optimizer state'i sharder. İyi hız, her modelde çalışır. |
 | **DeepSpeed ZeRO-3** | Evet | Evet | Optimizer + gradient + parametre sharder. Çok büyük modeller için şart. |
 | **DeepSpeed ZeRO-3 Offload** | Evet | Evet | CPU/NVMe'ye boşaltır. Devasa modelleri sığdırmak için hızdan ödün verir. |
@@ -43,7 +43,7 @@ flowchart TD
 
 ## Unsloth (tek GPU)
 
-Unsloth, Llama, Qwen, Mistral ve birkaç model için drop-in optimizasyondur. Attention ve MLP katmanlarını Triton'da yeniden yazarak ~2-5× hızlanma sağlar; kalite kaybı yoktur.
+Unsloth, Llama, Qwen, Mistral ve birkaç model için drop-in optimizasyondur. Attention ve MLP katmanlarını Triton'da yeniden yazar. Upstream 2-5× hızlanma ve kalite kaybı olmadığını bildiriyor; ForgeLM bunların ikisini de ölçmüyor, dolayısıyla her ikisi de üreticinin iddiasıdır.
 
 ```yaml
 model:

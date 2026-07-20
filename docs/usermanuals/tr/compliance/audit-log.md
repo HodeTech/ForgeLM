@@ -39,7 +39,7 @@ zincirine (ve genesis-manifest sidecar'ına) dayanır, sıra numaralarına deği
 | `training.started` | Trainer fine-tuning'e başladığında. |
 | `pipeline.completed` | Uçtan-uca CLI çalıştırması exit kod 0 ile bittiğinde. |
 | `pipeline.failed` | Pipeline bir hata ile abort olduğunda. |
-| `model.reverted` | Auto-revert kalite regresyonundan sonra önceki checkpoint'i geri yüklediğinde. |
+| `model.reverted` | Auto-revert kalite regresyonu sonrası devreye girdi ve kaydedilen model dizinini sildi. Hiçbir şey geri yüklenmez. |
 | `human_approval.required` | `evaluation.require_human_approval=true` koşumu operatör kararı için duraklattığında. |
 | `human_approval.granted` | Operatör `forgelm approve` ile duraklatılmış gate'i onayladığında. |
 | `human_approval.rejected` | Operatör `forgelm reject` ile duraklatılmış gate'i reddettiğinde. |

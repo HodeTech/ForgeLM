@@ -56,7 +56,7 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 
 | Event                          | Ne zaman emit edilir                                                                                              | Payload                                                       | Madde |
 |--------------------------------|--------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------|-------|
-| `model.reverted`               | Auto-revert kalite regresyonu sonrası önceki bir checkpoint'i geri yükledi. _(Faz 8 — webhook bağlantılı.)_       | `reason` (tetikleyen kapı: `benchmark` / `safety` / `judge` / vs.), `detail` (kapıdan gelen insan-okunabilir hata sebebi) | 15    |
+| `model.reverted`               | Auto-revert kalite regresyonu sonrası devreye girdi: kaydedilen model dizini **siliniyor**. Olay, silmeden *önce* yazılır; böylece `rmtree` başarısız olsa da kayıt kalır. _(Faz 8 — webhook bağlantılı.)_ | `reason` (tetikleyen kapı: `benchmark` / `safety` / `judge` / vs.), `detail` (kapıdan gelen insan-okunabilir hata sebebi) | 15    |
 | `model.integrity_verified`     | Eğitim sonrası nihai-model bütünlük manifesto'su (`model_integrity.json`) yazıldı ve başarıyla yeniden hash'lendi. | `artifacts` (yeniden-hash'lenen dosya sayısı)                  | 15    |
 | `audit.classifier_load_failed` | Güvenlik sınıflandırıcısı (örn. Llama Guard) yüklenemedi. Koşu yine `passed=False` kaydeder.                       | `classifier`, `reason`                                        | 15    |
 

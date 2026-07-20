@@ -311,6 +311,17 @@ jobs:
         # 62 leaks across 19 files at HEAD were swept to zero in H11.
         run: python3 tools/check_tr_links_prefer_mirror.py --strict
 
+      - name: Top-level README/CONTRIBUTING link check (strict)
+        # pyproject ships README.md as the PyPI long description with no URL
+        # rewriting, so a relative href resolves against pypi.org and 404s for
+        # exactly the reader who arrived via `pip install forgelm`. 38 such
+        # links shipped that way, invisible to CI: check_anchor_resolution
+        # defaults to --root docs and never opens README.md, and
+        # check_source_path_refs inspects backticked source paths, not hrefs.
+        # Also asserts every in-repo target resolves on disk — on CONTRIBUTING
+        # too, which is otherwise unguarded. See tools/check_readme_links.py.
+        run: python3 tools/check_readme_links.py --strict
+
       - name: Library-API doc ↔ __all__ drift check (strict)
         # W1/H11 (F-P8-C-07): forgelm.__all__ must match the symbol roster in
         # docs/reference/library_api_reference.md in both directions. Previously

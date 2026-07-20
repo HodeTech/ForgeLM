@@ -203,7 +203,7 @@ forgelm deploy ./checkpoints/final_model --target vllm --output ./vllm_config.ya
 
 ## Common Config Tweaks
 
-### Use Unsloth for 2-5x faster training (Linux only)
+### Use Unsloth for faster training (Linux only)
 
 ```bash
 pip install -e ".[unsloth]"

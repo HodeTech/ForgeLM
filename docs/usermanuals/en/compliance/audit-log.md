@@ -39,7 +39,7 @@ There is **no** `seq` field. Gap- and deletion-detection rest entirely on the
 | `training.started` | Trainer enters fine-tuning. |
 | `pipeline.completed` | End-to-end CLI run returned exit code 0. |
 | `pipeline.failed` | Pipeline aborted with an error. |
-| `model.reverted` | Auto-revert restored a previous checkpoint after a quality regression. |
+| `model.reverted` | Auto-revert fired after a quality regression and deleted the saved model directory. Nothing is restored. |
 | `human_approval.required` | `evaluation.require_human_approval=true` paused the run for an operator decision. |
 | `human_approval.granted` | Operator approved a paused gate via `forgelm approve`. |
 | `human_approval.rejected` | Operator rejected a paused gate via `forgelm reject`. |

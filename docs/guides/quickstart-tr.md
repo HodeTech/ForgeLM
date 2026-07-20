@@ -216,7 +216,7 @@ forgelm deploy ./checkpoints/final_model --target vllm --output ./vllm_config.ya
 
 ## Sık config ayarlamaları
 
-### 2-5x daha hızlı eğitim için Unsloth kullan (yalnız Linux)
+### Daha hızlı eğitim için Unsloth kullan (yalnız Linux)
 
 ```bash
 pip install -e ".[unsloth]"

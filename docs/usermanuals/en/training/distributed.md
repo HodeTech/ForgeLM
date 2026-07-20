@@ -35,7 +35,7 @@ flowchart TD
 
 | Backend | Multi-GPU? | Multi-node? | Notes |
 |---|---|---|---|
-| **Single GPU + Unsloth** | No | No | 2-5× faster than vanilla on Llama/Qwen/Mistral. Always use this first if you're on one GPU. |
+| **Single GPU + Unsloth** | No | No | Faster than vanilla on Llama/Qwen/Mistral (upstream reports 2-5×; ForgeLM publishes no benchmark of its own). Always use this first if you're on one GPU. |
 | **DeepSpeed ZeRO-2** | Yes | Yes | Shards optimiser state. Good speed, supports any model. |
 | **DeepSpeed ZeRO-3** | Yes | Yes | Shards optimiser + grads + params. Required for very large models. |
 | **DeepSpeed ZeRO-3 Offload** | Yes | Yes | Offloads to CPU/NVMe. Trades speed for fitting huge models. |
@@ -43,7 +43,7 @@ flowchart TD
 
 ## Unsloth (single GPU)
 
-Unsloth is a drop-in optimisation for Llama, Qwen, Mistral, and a few others. It rewrites the attention and MLP layers in Triton for ~2-5× speedup with no quality loss.
+Unsloth is a drop-in optimisation for Llama, Qwen, Mistral, and a few others. It rewrites the attention and MLP layers in Triton. Upstream reports a 2-5× speedup with no quality loss; ForgeLM does not measure either claim, so treat both as the vendor's.
 
 ```yaml
 model:

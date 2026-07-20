@@ -13,7 +13,7 @@ See `config_template.yaml` for a complete annotated example.
 | `name_or_path` | string | *required* | HuggingFace model ID or local path |
 | `max_length` | int | `2048` | Maximum context length |
 | `load_in_4bit` | bool | `true` | Enable QLoRA 4-bit NF4 quantization |
-| `backend` | string | `"transformers"` | `"transformers"` or `"unsloth"` (2-5x faster, Linux only) |
+| `backend` | string | `"transformers"` | `"transformers"` or `"unsloth"` (faster on supported architectures, Linux only) |
 | `trust_remote_code` | bool | `false` | Allow custom code from model repos. **Security risk** — only enable for models that require it |
 | `offline` | bool | `false` | Air-gapped mode: no HF Hub calls. Models/datasets must be local |
 | `revision` | string | `null` | Pin the base model + tokenizer to an HF Hub commit SHA (40-hex) or a branch/tag. **Honoured today.** See [Hub revision pinning](#hub-revision-pinning) |

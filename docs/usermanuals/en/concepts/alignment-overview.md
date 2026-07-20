@@ -110,7 +110,7 @@ Once your model is bigger than a single GPU's memory, ForgeLM supports:
 
 - **DeepSpeed ZeRO-2 / ZeRO-3** — shard optimiser states / gradients / parameters across GPUs.
 - **FSDP** — PyTorch-native fully-sharded data parallelism.
-- **Unsloth** — backend that's 2-5× faster on supported architectures (single-GPU only).
+- **Unsloth** — backend that is faster on supported architectures (single-GPU only).
 
 See [Distributed Training](#/training/distributed).
 

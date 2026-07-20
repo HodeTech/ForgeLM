@@ -557,7 +557,7 @@ class TrainingConfig(BaseModel):
     )
     report_to: Literal["tensorboard", "wandb", "mlflow", "none"] = Field(
         default="tensorboard",
-        description="Experiment-tracking backend.  `wandb` / `mlflow` require the `[tracking]` extra.",
+        description="Experiment-tracking backend.  `wandb` requires the `[tracking]` extra, `mlflow` the `[tracking-mlflow]` extra.",
     )
     run_name: Optional[str] = Field(default=None, description="W&B / MLflow run name.  Auto-generated when None.")
     gpu_cost_per_hour: Optional[float] = Field(
@@ -836,7 +836,7 @@ class BenchmarkConfig(BaseModel):
         default=None,
         ge=0.0,
         le=1.0,
-        description="Minimum average accuracy (0.0–1.0).  When set + auto_revert=True, falling below triggers an auto-revert to the prior model.",
+        description="Minimum average accuracy (0.0–1.0).  When set + auto_revert=True, falling below deletes the saved model directory (nothing is restored).",
     )
 
     @model_validator(mode="after")
@@ -1123,7 +1123,7 @@ class EvaluationConfig(BaseModel):
 
     auto_revert: bool = Field(
         default=False,
-        description="Restore the pre-training model on quality regression (loss / benchmark / safety threshold).",
+        description="Delete the saved model directory on quality regression (loss / benchmark / safety / judge threshold).  Nothing is restored — the trained artefacts are removed and the failure is recorded in the audit log.",
     )
     max_acceptable_loss: Optional[float] = Field(
         default=None,

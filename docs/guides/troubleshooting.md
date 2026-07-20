@@ -110,7 +110,7 @@ If persists, disable mixed precision by ensuring `bf16: false` and `fp16: false`
 
 ### Training is Very Slow
 
-1. **Use Unsloth** (Linux, 2-5x speedup):
+1. **Use Unsloth** (Linux, faster on supported architectures):
    ```yaml
    model:
      backend: "unsloth"

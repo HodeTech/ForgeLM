@@ -39,7 +39,7 @@ model:
   trust_remote_code: false                    # only set true if you trust the model's repo
   max_length: 4096                            # context for training
   load_in_4bit: false                         # QLoRA toggle (NF4/FP4 only — no separate 8-bit toggle)
-  backend: "transformers"                     # transformers | unsloth (Linux + CUDA only, 2-5× speedup)
+  backend: "transformers"                     # transformers | unsloth (Linux + CUDA only, faster on supported archs)
   bnb_4bit_quant_type: "nf4"                  # nf4 | fp4
   bnb_4bit_compute_dtype: "bfloat16"          # auto | bfloat16 | float16 | float32 (bf16/fp16/fp32 aliases accepted)
   bnb_4bit_use_double_quant: true             # bitsandbytes double-quantisation (small extra VRAM win)
@@ -132,7 +132,7 @@ There is no nested `training.dpo:` / `training.simpo:` / `training.kto:` / `trai
 
 ```yaml
 evaluation:
-  auto_revert: false                          # restore the pre-training model on quality regression
+  auto_revert: false                          # DELETE the saved model dir on quality regression (nothing is restored)
   max_acceptable_loss: null                   # float — hard cap on validation loss; requires auto_revert: true
   baseline_loss: null                         # float — auto-computed when a validation split exists
   require_human_approval: false               # Article 14: pause the pipeline for human review (exit 4)

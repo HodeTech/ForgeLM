@@ -39,7 +39,7 @@ model:
   trust_remote_code: false                    # sadece güveniyorsanız true
   max_length: 4096                            # eğitim context'i
   load_in_4bit: false                         # QLoRA toggle (yalnızca NF4/FP4 — ayrı bir 8-bit toggle'ı yok)
-  backend: "transformers"                     # transformers | unsloth (yalnızca Linux + CUDA, 2-5× hız)
+  backend: "transformers"                     # transformers | unsloth (yalnızca Linux + CUDA, desteklenen mimarilerde hızlı)
   bnb_4bit_quant_type: "nf4"                  # nf4 | fp4
   bnb_4bit_compute_dtype: "bfloat16"          # auto | bfloat16 | float16 | float32 (bf16/fp16/fp32 takma adları kabul edilir)
   bnb_4bit_use_double_quant: true             # bitsandbytes double-quantisation (küçük ekstra VRAM kazancı)
@@ -133,7 +133,7 @@ Nested `training.dpo:` / `training.simpo:` / `training.kto:` / `training.orpo:` 
 
 ```yaml
 evaluation:
-  auto_revert: false                          # kalite regresyonunda pre-training modelini geri yükle
+  auto_revert: false                          # kalite regresyonunda kaydedilen model dizinini SİL (hiçbir şey geri yüklenmez)
   max_acceptable_loss: null                   # float — validation loss'a sert tavan; auto_revert: true gerektirir
   baseline_loss: null                         # float — validation split varsa otomatik hesaplanır
   require_human_approval: false               # Madde 14: pipeline'ı insan incelemesi için duraklat (exit 4)

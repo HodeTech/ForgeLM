@@ -110,7 +110,7 @@ Modeliniz tek bir GPU belleğinden büyük olduğunda ForgeLM şunları destekle
 
 - **DeepSpeed ZeRO-2 / ZeRO-3** — optimizer state / gradient / parametreleri GPU'lar arası shard.
 - **FSDP** — PyTorch-yerli tam-shardlı veri paralelizmi.
-- **Unsloth** — desteklenen mimarilerde 2-5× daha hızlı backend (sadece tek GPU).
+- **Unsloth** — desteklenen mimarilerde daha hızlı backend (sadece tek GPU).
 
 Bkz. [Dağıtık Eğitim](#/training/distributed).
 
