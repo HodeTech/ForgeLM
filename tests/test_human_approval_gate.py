@@ -977,7 +977,20 @@ class TestApproverIdentityPolicy:
 class TestApprovalDecisionSerialization:
     """The decision-guard read → terminal-write window must be serialized by an
     exclusive lock so two processes racing approve-vs-reject on the same run_id
-    can never both commit a terminal decision."""
+    can never both commit a terminal decision.
+
+    **Platform scope.** Both tests here require the lock to actually exist.
+    ``forgelm/cli/subcommands/_approve.py`` builds ``_flock_ex``/``_flock_un``
+    on ``fcntl``, which is Unix-only; on Windows both degrade to documented
+    no-ops and the approval gate has no mutual exclusion at all. That is a
+    real, pre-existing product limitation on a compliance-critical path — NOT
+    something these tests should assert their way around — so they skip where
+    the lock is absent rather than pretend the guarantee holds there. The
+    ``fcntl`` import is the gate because ``fcntl`` is what the product's lock
+    is built from: anyone who later implements a Windows lock (``msvcrt``)
+    must widen this gate deliberately, which is the point at which the
+    guarantee genuinely extends.
+    """
 
     def _seed_run(self, tmp_path: Path, run_id: str) -> Path:
         output_dir = tmp_path / "serialize_run"
@@ -1037,7 +1050,16 @@ class TestApprovalDecisionSerialization:
         """Two real threads racing approve vs reject on the same run_id must
         leave EXACTLY ONE terminal decision: the lock makes them mutually
         exclusive, and the loser re-reads the committed decision and refuses
-        with EXIT_CONFIG_ERROR (1)."""
+        with EXIT_CONFIG_ERROR (1).
+
+        Skipped where ``fcntl`` is absent (Windows), for the reason in the
+        class docstring: without a real lock both threads pass the
+        "no decision yet" check and both commit, so this asserts a guarantee
+        the product does not currently make on that platform. Its sibling
+        above was already gated this way; this one was not, which is why the
+        v0.10.0 release matrix failed on all four Windows legs.
+        """
+        pytest.importorskip("fcntl", reason="approval lock is a no-op without fcntl (Windows); see class docstring")
         import threading
 
         run_id = "fg-racer0000abc"

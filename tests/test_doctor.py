@@ -8,6 +8,7 @@ surface), with one CLI subprocess smoke at the bottom.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections import namedtuple
 from unittest.mock import MagicMock, patch
@@ -110,28 +111,50 @@ class TestForgelmInstallCheck:
         result = _check_forgelm_install()
         assert result.extras["in_site_packages"] is True
 
-    def test_version_and_location_reflect_imported_module_not_a_guess(self, monkeypatch) -> None:
+    def test_version_and_location_reflect_imported_module_not_a_guess(self, monkeypatch, tmp_path) -> None:
         """version/location must be read off the already-imported ``forgelm``
         module object, never re-derived via ``importlib.metadata`` — a
         stray ``forgelm.egg-info`` in cwd would shadow the real dist-info
         and answer for a distribution that is not the one running.
         Proven by poisoning ``importlib.metadata.version`` with a wrong
-        answer and confirming it never leaks into the result."""
+        answer and confirming it never leaks into the result.
+
+        ``location`` is pinned to a real decoy directory under ``tmp_path``
+        rather than to a hardcoded ``"/work/checkout/forgelm"`` literal. The
+        literal was a POSIX assumption: the probe calls ``os.path.realpath``,
+        which on Windows absolutises a rootless path against the current
+        drive, so the answer came back ``D:\\work\\checkout\\forgelm`` and the
+        assertion failed on a probe that was behaving correctly. A real
+        directory is platform-native on every runner and — crucially — is a
+        directory the *actual* forgelm package does not live in, so the
+        assertion still proves ``location`` is read off ``forgelm.__file__``
+        rather than re-derived from the running package."""
         import importlib.metadata
 
         import forgelm
         from forgelm.cli.subcommands._doctor import _check_forgelm_install
 
+        decoy_pkg = tmp_path / "work" / "checkout" / "forgelm"
+        decoy_pkg.mkdir(parents=True)
+        real_pkg_dir = os.path.dirname(os.path.realpath(forgelm.__file__))
+
         sentinel_version = "999.888.777-devpin"
         monkeypatch.setattr(forgelm, "__version__", sentinel_version)
-        monkeypatch.setattr(forgelm, "__file__", "/work/checkout/forgelm/__init__.py")
+        monkeypatch.setattr(forgelm, "__file__", str(decoy_pkg / "__init__.py"))
         monkeypatch.setattr(importlib.metadata, "version", lambda *_a, **_k: "0.0.1-WRONG-DISTRIBUTION")
 
         result = _check_forgelm_install()
         assert result.extras["version"] == sentinel_version
         assert sentinel_version in result.detail
         assert "0.0.1-WRONG-DISTRIBUTION" not in result.detail
-        assert result.extras["location"] == "/work/checkout/forgelm"
+        # realpath on both sides: macOS resolves /var -> /private/var, so the
+        # fixture path and the probe's answer must be compared post-resolution.
+        # This is normalisation, not relaxation — it is still an exact
+        # directory-identity check against a decoy the real package is not in.
+        assert result.extras["location"] == os.path.realpath(str(decoy_pkg))
+        assert result.extras["location"] != real_pkg_dir, (
+            "the decoy must not coincide with the real package directory, or the assertion proves nothing"
+        )
 
     def test_missing_version_attr_falls_back_to_unknown(self, monkeypatch) -> None:
         import forgelm

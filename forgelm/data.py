@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import string
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
@@ -176,6 +177,13 @@ def _is_commit_sha(value: Any) -> bool:
     return isinstance(value, str) and len(value) == 40 and all(c in "0123456789abcdef" for c in value)
 
 
+# Character alphabet a Hugging Face Hub repo id may draw from: the Hub's own
+# validator accepts ``[A-Za-z0-9._-]`` per namespace segment, plus the single
+# ``/`` that separates ``org`` from ``name``.  Used as a rejection test, not a
+# validator — see :func:`_looks_like_hub_dataset_id`.
+_HUB_DATASET_ID_CHARS: frozenset = frozenset(string.ascii_letters + string.digits + "-_./")
+
+
 def _looks_like_hub_dataset_id(path: str) -> bool:
     """True when ``path`` is a plain Hub repo id (``name`` or ``org/name``).
 
@@ -185,11 +193,28 @@ def _looks_like_hub_dataset_id(path: str) -> bool:
     conservative on purpose — a false negative only costs us a revision
     record, whereas a false positive would send a local directory path to
     ``HfApi``.
+
+    **Windows.**  The ``startswith`` / ``count("/")`` tests alone are
+    POSIX-shaped and let every Windows path through:
+    ``C:\\Users\\me\\typo.jsonl`` starts with ``C``, not ``/``, and contains
+    zero forward slashes, so a mistyped local corpus was classified as a Hub
+    repo id — its full path, home directory and operator username included,
+    was then sent to ``HfApi`` as a dataset lookup.  That is both a wrong
+    provenance record (local files written down as a failed Hub lookup, see
+    ``compliance.compute_dataset_fingerprint``) and an outbound leak of a
+    local filesystem path from a run that never asked to touch the Hub.
+
+    A Hub repo id is drawn from a narrow alphabet, so the character-set test
+    is the honest guard rather than a growing list of separator special
+    cases: no backslash (never legal in a repo id, always a Windows
+    separator) and no colon (drive letters and URL schemes both die here).
+    Anything outside the alphabet is a false negative, which is the safe
+    direction named above.
     """
     return bool(
         path
         and not os.path.exists(path)
-        and "://" not in path
+        and not (set(path) - _HUB_DATASET_ID_CHARS)
         and not path.startswith(("/", "~", "."))
         and path.count("/") <= 1
     )

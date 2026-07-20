@@ -320,26 +320,70 @@ class TestSecretsPrivateKeyReDoS:
             obs.append((time.perf_counter() - t0) * 1000)
         return statistics.median(obs)
 
+    # Payload lengths, as multiples of the pattern's OWN body bound. Sizes must
+    # be expressed this way, not as fixed character counts: the bound is what
+    # makes the scan linear, and below it the search is still O(len^2) *by
+    # design* — every start position runs to end-of-string because the string
+    # ends before the bound does. Fixed 1K/2K/4K-marker payloads put
+    # ``openssh_private_key`` (8192-char bound) in the linear regime but
+    # ``pgp_private_key`` (65536-char bound) in the quadratic one, so the PGP
+    # case measured the bound's transition and reported it as growth: it ran at
+    # 12.4x against a 12.0x ceiling on macOS CI and failed the release matrix on
+    # a pattern that is provably linear. Starting at 2x the bound puts every
+    # kind past the transition.
+    _SIZE_MULTIPLES = (2, 4, 8)
+
+    # Median-of-3 rather than the median-of-5 used elsewhere: the 8x-bound PGP
+    # payload is 512 KB and a 5th sample buys less than it costs. The
+    # discriminating power here comes from the length of the ladder, not from a
+    # tight tolerance (see the assertion note below).
+    _SAMPLES = 3
+
     @pytest.mark.parametrize(
-        "kind, begin",
+        "kind, begin, bound_attr",
         [
-            ("openssh_private_key", "-----" + "BEGIN " + "RSA PRIVATE KEY" + "-----" + "\n"),
-            ("pgp_private_key", "-----" + "BEGIN " + "PGP PRIVATE KEY BLOCK" + "-----" + "\n"),
+            (
+                "openssh_private_key",
+                "-----" + "BEGIN " + "RSA PRIVATE KEY" + "-----" + "\n",
+                "_PRIVATE_KEY_BODY_MAX_CHARS",
+            ),
+            (
+                "pgp_private_key",
+                "-----" + "BEGIN " + "PGP PRIVATE KEY BLOCK" + "-----" + "\n",
+                "_PGP_PRIVATE_KEY_BODY_MAX_CHARS",
+            ),
         ],
     )
-    def test_unclosed_begin_markers_scale_linearly(self, kind, begin):
-        from forgelm.data_audit._secrets import _SECRET_PATTERNS
+    def test_unclosed_begin_markers_scale_linearly(self, kind, begin, bound_attr):
+        from forgelm.data_audit import _secrets
 
-        pat = _SECRET_PATTERNS[kind]
-        sizes = (1_000, 2_000, 4_000)
-        timings = {n: self._median_ms(pat.search, begin * n) for n in sizes}
-        baseline = max(timings[1_000], 0.001)
-        for n in sizes[1:]:
-            ratio = timings[n] / baseline
-            allowed = (n / 1_000) * self._TOLERANCE
+        pat = _secrets._SECRET_PATTERNS[kind]
+        bound = getattr(_secrets, bound_attr)
+
+        # Marker counts chosen so each payload is >= the target character
+        # length; the ratio maths below uses the achieved lengths, not the
+        # nominal multiples, so integer division cannot skew the result.
+        payloads = {m: begin * (-(-(bound * m) // len(begin))) for m in self._SIZE_MULTIPLES}
+        timings = {m: self._median_ms(pat.search, p, samples=self._SAMPLES) for m, p in payloads.items()}
+        lengths = {m: len(p) for m, p in payloads.items()}
+
+        base_m = self._SIZE_MULTIPLES[0]
+        baseline = max(timings[base_m], 0.001)
+        for m in self._SIZE_MULTIPLES[1:]:
+            ratio = timings[m] / baseline
+            size_ratio = lengths[m] / lengths[base_m]
+            allowed = size_ratio * self._TOLERANCE
+            # Why this still catches a real ReDoS despite the 3x slack: the
+            # unbounded ``.*?`` this test exists to keep out is QUADRATIC, so at
+            # the 8x-bound rung it costs (8/2)^2 = 16x the baseline against a
+            # 4 * 3 = 12x ceiling. The bounded pattern measures ~5x there. The
+            # gap between 5x and 16x is the test's power, and no runner jitter
+            # closes it — the failure that prompted this rewrite was 12.4x vs
+            # 12.0x, a margin that measured the runner rather than the regex.
             assert ratio <= allowed, (
-                f"{kind} grew {ratio:.1f}x from n=1000 to n={n} "
-                f"(allowed {allowed:.1f}x); ReDoS regression. timings_ms={timings}"
+                f"{kind} grew {ratio:.1f}x from {lengths[base_m]} to {lengths[m]} chars "
+                f"({size_ratio:.1f}x the input, allowed {allowed:.1f}x); ReDoS regression. "
+                f"timings_ms={timings} lengths={lengths}"
             )
 
     def test_real_closed_key_still_detected_and_masked(self):

@@ -1377,6 +1377,40 @@ class TestDatasetFingerprintRouting:
         assert "hf_revision" not in fp
         assert calls == []
 
+    @pytest.mark.parametrize(
+        "windows_path",
+        [
+            r"C:\Users\alice\corpus\typo.jsonl",
+            r"data\train.jsonl",
+            r"\\fileserver\share\corpus.jsonl",
+        ],
+    )
+    def test_unusable_windows_path_is_not_sent_to_the_hub(self, monkeypatch, windows_path):
+        """The same guarantee for a Windows-shaped path, on every platform.
+
+        ``forgelm.data._looks_like_hub_dataset_id`` used only POSIX-shaped
+        tests (``startswith("/")``, ``count("/") <= 1``), none of which match a
+        Windows path — so ``C:\\Users\\alice\\corpus\\typo.jsonl`` was routed
+        into the Hub branch. Two consequences, both on the Art. 10/11
+        provenance path: the manifest described local files as a failed *Hub*
+        lookup, and the operator's absolute local path (username and home
+        directory included) was sent outbound to ``HfApi``.
+
+        Passed as literal strings so the routing is pinned regardless of the
+        host OS — the recording Hub stub makes the outbound call observable
+        even though ``_fingerprint_hf_revision`` swallows exceptions.
+        """
+        from forgelm import compliance
+
+        calls = self._recording_hub(monkeypatch)
+
+        fp = compliance.compute_dataset_fingerprint(windows_path)
+
+        assert fp["source"] == "unknown", f"{windows_path!r} routed as {fp['source']!r}"
+        assert fp["hf_revision_source"] == compliance.REVISION_SOURCE_UNRESOLVED
+        assert "dataset_id" not in fp
+        assert calls == [], f"a local path was sent to the Hub: {calls!r}"
+
 
 @pytest.mark.real_fingerprint
 class TestDatasetFingerprintOfflineIsExplicit:

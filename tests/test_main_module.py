@@ -22,9 +22,12 @@ while the suite stayed green.
 
 from __future__ import annotations
 
+import difflib
+import os
 import shutil
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 import pytest
@@ -41,18 +44,41 @@ _MODULE_ENTRY_POINTS = ["forgelm", "forgelm.cli"]
 
 
 def _console_script() -> str | None:
-    """Locate the ``forgelm`` console script, or ``None``.
+    """Locate the ``forgelm`` console script *of the running interpreter*.
 
     ``shutil.which`` alone is not enough: pytest is frequently invoked as
     ``.venv/bin/python -m pytest`` without the venv activated, so the
     venv's ``bin``/``Scripts`` directory is absent from ``PATH`` and the
-    script the *running interpreter* installed would look missing. Check
-    beside ``sys.executable`` first, which is where it actually lives.
+    script the *running interpreter* installed would look missing.
+
+    "Beside ``sys.executable``" is not enough either, and that was a POSIX
+    assumption: it holds on Unix, where console scripts and ``python`` share
+    ``<prefix>/bin``, but never on Windows, where ``python.exe`` sits in
+    ``<prefix>`` and scripts go to ``<prefix>\\Scripts``. So on Windows the
+    intended branch could not fire and every lookup fell through to a bare
+    ``PATH`` search — which resolves *a* ``forgelm.exe``, with nothing tying
+    it to ``sys.executable``. The comparison this module performs is only
+    meaningful between two copies of the same install, so an unverified PATH
+    hit is exactly the wrong answer to fall back to.
+
+    ``sysconfig.get_path("scripts")`` is the portable question. Both the
+    default and the per-user scheme are consulted (a ``pip install --user``
+    puts the script in the latter), and ``PATH`` remains a last resort for
+    layouts neither scheme describes.
     """
-    bindir = Path(sys.executable).parent
-    for candidate in (bindir / "forgelm", bindir / "forgelm.exe"):
-        if candidate.is_file():
-            return str(candidate)
+    script_dirs = [sysconfig.get_path("scripts")]
+    user_scheme = f"{os.name}_user"
+    if user_scheme in sysconfig.get_scheme_names():
+        script_dirs.append(sysconfig.get_path("scripts", user_scheme))
+    # Kept for the (Unix) case where the interpreter is not where its scheme
+    # says it is — a relocated or symlinked venv.
+    script_dirs.append(str(Path(sys.executable).parent))
+
+    for directory in script_dirs:
+        for name in ("forgelm", "forgelm.exe"):
+            candidate = Path(directory) / name
+            if candidate.is_file():
+                return str(candidate)
     return shutil.which("forgelm")
 
 
@@ -136,6 +162,16 @@ class TestProgName:
         compare the working tree against the installed package, and a
         non-editable install (which is what the release matrix has)
         would make this a version-skew test rather than a prog test.
+
+        One launcher-name normalisation is applied before comparing, and
+        only one: an occurrence of ``forgelm.exe`` in the console script's
+        output collapses to ``forgelm``. Windows console scripts are
+        ``.exe`` launchers, so ``prog`` can legitimately carry the suffix
+        depending on how the wrapper rewrites ``sys.argv[0]``; that is a
+        launcher-naming detail, not the divergence this test guards. The
+        substitution is a no-op on POSIX — no ``.exe`` string can appear —
+        so the comparison there stays byte-for-byte, and it cannot mask any
+        other difference, because it rewrites nothing else.
         """
         script = subprocess.run(  # nosec B603 — path resolved locally, fixed argv, shell=False.
             [_console_script(), "--help"],
@@ -146,7 +182,25 @@ class TestProgName:
             timeout=_TIMEOUT_SECONDS,
         )
         assert script.returncode == 0, script.stderr
-        assert _run_module("forgelm", "--help", cwd=str(tmp_path)).stdout == script.stdout
+
+        module = _run_module("forgelm", "--help", cwd=str(tmp_path))
+        assert module.returncode == 0, module.stderr
+
+        expected = script.stdout.replace("forgelm.exe", "forgelm")
+        if module.stdout != expected:
+            # A bare `assert a == b` on two screens of help text is unreadable
+            # in a CI log, and this test can only fail on a platform the author
+            # is not sitting at. Name the difference instead of printing both.
+            diff = "\n".join(
+                difflib.unified_diff(
+                    expected.splitlines(),
+                    module.stdout.splitlines(),
+                    fromfile=f"console script ({_console_script()})",
+                    tofile=f"python -m forgelm ({sys.executable})",
+                    lineterm="",
+                )
+            )
+            raise AssertionError(f"console-script help and module help diverged on {sys.platform}:\n{diff}")
 
 
 class TestExitCodes:

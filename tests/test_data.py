@@ -410,6 +410,32 @@ class TestHubDatasetIdPredicate:
         (tmp_path / "corpus").mkdir()
         assert not data_mod._looks_like_hub_dataset_id("corpus")
 
+    @pytest.mark.parametrize(
+        "windows_path",
+        [
+            r"C:\Users\me\corpus\typo.jsonl",  # absolute, drive letter
+            r"D:\work\checkout\data",  # absolute, other drive
+            r"data\train.jsonl",  # relative, backslash separator
+            r"..\sibling\corpus.jsonl",  # relative parent traversal
+            r"\\fileserver\share\corpus.jsonl",  # UNC share
+            "C:/Users/me/typo.jsonl",  # drive letter, forward slashes
+        ],
+    )
+    def test_rejects_windows_local_paths(self, windows_path):
+        """A Windows path that is not on disk is a mistyped local corpus, not
+        a Hub repo id.
+
+        These are pure string inputs, so the assertion holds on every
+        platform — but the bug it pins only *fired* on Windows, where the
+        POSIX-shaped ``startswith("/")`` / ``count("/")`` tests match nothing:
+        ``C:\\Users\\me\\typo.jsonl`` begins with ``C`` and contains zero
+        forward slashes. Classifying it as a Hub id sent the operator's full
+        local path — username and home directory included — to ``HfApi`` as a
+        dataset lookup, and recorded the corpus in the Art. 10/11 manifest as
+        a failed *Hub* lookup rather than as an unusable local path.
+        """
+        assert not data_mod._looks_like_hub_dataset_id(windows_path)
+
 
 class TestOfflineModeDetection:
     def test_false_when_unset(self, _clean_revision_registry):
