@@ -506,8 +506,11 @@ def _add_audit_subcommand(subparsers) -> None:
             "tiers — feeding the EU AI Act Article 10 governance artifact when run inside a training "
             "output directory. Phase 12 added: --dedup-method minhash for MinHash LSH, --quality-filter "
             "for Gopher/C4-style heuristics, and an always-on secrets scan that surfaces "
-            "credential/key leakage in the audit report. A critical secrets finding exits 3 "
-            "(evaluation-gate failure) so a CI step fails fast; --allow-secrets records without failing."
+            "credential/key leakage in the audit report. Two gates exit 3 (evaluation-gate "
+            "failure) so a CI step fails fast: any critical secrets finding, and critical-tier "
+            "PII (credit card / IBAN — the checksum-validated categories). Shape-matched PII "
+            "(government IDs, email, phone) is reported but never gates. --allow-secrets and "
+            "--allow-pii record without failing, independently of each other."
         ),
     )
     p.add_argument(
@@ -651,6 +654,22 @@ def _add_audit_subcommand(subparsers) -> None:
             "known dummy credentials. Findings are still detected, printed, written to "
             "data_audit_report.json and flagged by a WARNING; only the exit code is suppressed. "
             "The scan itself cannot be disabled."
+        ),
+    )
+    p.add_argument(
+        "--allow-pii",
+        action="store_true",
+        help=(
+            "Exit 0 even when critical-tier PII is found. DEFAULT is to exit 3 (evaluation-gate "
+            "failure) when the scan finds a credit-card number or IBAN — the critical tier of "
+            "PII_SEVERITY, both of which clear a checksum (Luhn / ISO 7064 mod-97), so a hit is a "
+            "real value rather than a lookalike. Government IDs, emails and phone numbers are "
+            "reported but NEVER gate; the tier decides, not the detector, so a checksum-validated "
+            "TC national ID reports without failing because it sits below critical. "
+            "Pass this for the legitimate exceptions — auditing a corpus before masking it with "
+            "`forgelm ingest --pii-mask`, or a fixture set carrying known test card numbers. "
+            "Findings are still detected, printed, written to data_audit_report.json and flagged "
+            "by a WARNING; only the exit code is suppressed. Independent of --allow-secrets."
         ),
     )
     _add_common_subparser_flags(p, include_output_format=True)

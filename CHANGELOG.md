@@ -4,6 +4,37 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
+### Breaking
+
+- **`forgelm audit` now exits `3` when the scan finds critical-tier PII** — a
+  credit-card number or IBAN. Previously it printed the finding and exited
+  `0`, the same dead-gate shape the secrets scan had before v0.10.0: a real,
+  checksum-valid card number in a training corpus was reported to an operator
+  who had wired the step up as a gate, and the step passed.
+  Scope is deliberately narrow. Only the `critical` tier of `PII_SEVERITY`
+  gates, and both families in it clear a checksum (Luhn for cards, ISO 7064
+  mod-97 for IBANs), so a hit is a real value rather than a lookalike.
+  **Government IDs, emails and phone numbers do not gate and are not intended
+  to.** The tier is what gates, not the detector: `tr_id` also clears a
+  checksum but sits at `high`, so it reports without failing. Checksum
+  validation is a precondition for gating, and most sub-critical families are
+  shape-matched and deliberately over-report — a gate that fires on a clean
+  corpus is a gate somebody switches off. A test pins the invariant
+  (`critical ⊆ checksum-validated`), so promoting a shape-matched family to
+  `critical` fails the suite rather than silently arming the gate on a noisy
+  signal.
+  `--allow-pii` records the findings without failing the pipeline, mirroring
+  `--allow-secrets`; the two are independent.
+- **`[distributed]` now carries a `sys_platform != 'win32'` marker.** DeepSpeed
+  publishes no Windows wheels, so the unmarked requirement sent
+  `pip install forgelm[distributed]` into a source build needing MSVC and the
+  CUDA toolkit, which typically failed and took the rest of the install with
+  it. Windows now degrades the way `qlora` and `unsloth` already do: the
+  install succeeds and DeepSpeed is simply absent. Reaching
+  `distributed.strategy: deepspeed` without it now raises a ForgeLM
+  `ImportError` naming the extra and pointing at FSDP, rather than surfacing
+  from inside Transformers.
+
 ### Added
 
 - **`[tracking-mlflow]` extra.** `training.report_to: "mlflow"` has always been

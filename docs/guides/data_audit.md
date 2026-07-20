@@ -151,9 +151,81 @@ The flat `pii_summary` map gives compliance reviewers no guidance on
 ```
 
 The tier table is consensus regulatory weighting (PCI-DSS for financial
-identifiers; GDPR Art. 9 + ENISA for government IDs). Pipelines that
-gate on PII severity should read `pii_severity.worst_tier` and refuse
-to publish on `critical` / `high` without explicit review.
+identifiers; GDPR Art. 9 + ENISA for government IDs). The `critical`
+tier now gates the command itself (next section); pipelines that also
+want to stop at `high` should read `pii_severity.worst_tier` and refuse
+to publish without explicit review.
+
+### PII gate — critical tier only
+
+`forgelm audit` exits **`3`** (evaluation-gate failure — the same code
+the secrets gate uses, and the same one `forgelm safety-eval` uses when
+a threshold is missed) when the scan finds `critical`-tier PII:
+`credit_card` or `iban`. A card or account number in a training corpus
+is memorised by the model and re-emitted at inference time, so an audit
+that reports one and then exits `0` has told the pipeline everything is
+fine.
+
+```text
+[ERROR] PII gate FAILED (critical): 1 critical-tier PII span(s) detected (credit_card=1).
+These clear a checksum, so they are real values rather than lookalikes — a card or account
+number in training data is memorised and re-emitted at inference time. Mask it with
+`forgelm ingest --pii-mask`, or re-run `forgelm audit --allow-pii` to record the findings
+without failing the pipeline. Exiting 3.
+```
+
+**Why only the `critical` tier.** `credit_card` and `iban` clear a
+checksum before they are counted — Luhn for cards, ISO 7064 mod-97 for
+IBANs — so a hit is a real value rather than a lookalike. That is the
+property that makes a hard gate defensible. The sub-critical families
+(`de_id`, `fr_ssn`, `us_ssn`, `email`, `phone`) are matched on regex
+shape alone and *deliberately* over-report, because the audit's job is
+to surface candidates for a human to judge. Gating on a deliberately
+over-reporting signal fails clean corpora — a support-ticket dataset
+full of legitimate example addresses would go red on every run — and
+the first thing an operator does with a gate that cries wolf is switch
+it off, which takes the trustworthy half down with it. Those families
+are still detected, counted, tiered and written to the report; they
+simply do not decide the exit code.
+
+`tr_id` is the one family that clears a checksum (TC Kimlik No) without
+gating: the gate reads the declared tier in `PII_SEVERITY`, where
+`tr_id` sits at `high`. Checksum validation is a *precondition* for
+gating, not a trigger — an invariant pinned by
+`tests/test_audit_pii_gate.py::TestCriticalTierIsChecksumBacked`, so
+promoting a shape-matched family to `critical` fails the suite instead
+of silently arming the gate on a noisy signal.
+
+`--allow-pii` records the findings without failing (exit `0` plus a
+`SUPPRESSED` warning). Detection, the printed summary and the on-disk
+report are unaffected — only the exit code is suppressed. It is a
+command-line flag rather than a config field or an env var so a
+reviewer reading the pipeline diff can see it. It is independent of
+`--allow-secrets`: suppressing one leaves the other armed. Both gates
+report before either exits the process, so a corpus carrying a leaked
+key *and* a real card number surfaces both errors in a single run.
+
+Under `--output-format json` the verdict is a `pii_gate` object beside
+its `secrets_gate` sibling, and `success` is `false` when either gate
+fails:
+
+```json
+{
+  "pii_gate": {
+    "status": "failed",
+    "severity": "critical",
+    "critical_total": 1,
+    "critical_types": {"credit_card": 1},
+    "advisory_total": 3,
+    "advisory_types": {"email": 1, "phone": 1, "us_ssn": 1},
+    "allow_pii": false
+  }
+}
+```
+
+`status` is `"suppressed"` (not `"passed"`) when findings were present
+but `--allow-pii` was passed, so a CI dashboard can tell a clean corpus
+apart from a waived one.
 
 **Pattern precedence is documented.** `_PII_PATTERNS` iteration order
 governs both detection priority and mask precedence — most specific
@@ -483,6 +555,8 @@ forgelm audit PATH \
   [--pii-ml-language LANG] \
   [--croissant] \
   [--workers N] \
+  [--allow-secrets] \
+  [--allow-pii] \
   [--output-format {text,json}] \
   [--quiet | --log-level {DEBUG,INFO,WARNING,ERROR}]
 ```
@@ -500,7 +574,11 @@ default 0.85). `--quality-filter` (Phase 12, **default-ON from v0.6.0
 per Phase 15 Task 5**) runs the heuristic quality scoring;
 `--no-quality-filter` opts out for operators wanting the pre-v0.6.0
 opt-in semantics. The credential/secrets scan is **always on** — there
-is no flag to disable it.
+is no flag to disable it. `--allow-secrets` and `--allow-pii` suppress
+the *exit code* of the two gates (credentials, and critical-tier PII)
+without touching detection or reporting; they are independent of each
+other. See [PII gate — critical tier only](#pii-gate--critical-tier-only)
+above.
 
 > **Note:** This matches the behavior summarised at the top of this guide:
 > `--output-format json` writes a small envelope (success flag, top-level

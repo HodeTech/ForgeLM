@@ -87,7 +87,7 @@ Doğrulandı: `AKIAIOSFODNN7EXAMPLE` içeren bir corpus `3` ile çıkar; aynı c
 **Bu kapı her zaman tetiklenmiyordu.** Yakın zamana kadar `forgelm audit`, `Secrets : CRITICAL — N flagged` yazdırıp `0` ile çıkıyordu; dolayısıyla bu sayfanın eski "non-zero exit verir" vaadine dayanarak kurulan her credential-sızıntı kapısı sessizce ölüydü. Bu sürümden önce böyle bir kapı kurduysanız, bilinen bir dummy credential taşıyan bir corpus'a karşı yeniden koşturun ve artık exit `3` aldığınızı doğrulayın — ayrıca ölü kapıdan geçmiş her corpus'u yeniden denetleyin.
 :::
 
-Kapılayan **tek** bulgu sırlardır. PII, split-arası sızıntı, near-duplicate'ler ve kalite flag'leri ne kadar ciddi olursa olsun `0` ile raporlanır — bunlara JSON zarfı üzerinde `jq` ile kapı koyun. Bkz. [Dataset Audit](#/data/audit) sayfasındaki exit kodu tablosu.
+Kapılayan tek bulgu artık sırlar **değil**: `forgelm audit`, kritik katman PII'de (`credit_card`, `iban` — checksum ile doğrulanan kategoriler) `3` ile çıkan kardeş bir **PII kapısına** sahiptir; kendi `--allow-pii` bayrağıyla bastırılır. İkisi birbirinden bağımsızdır — birini geçmek diğerini kurulu bırakır — ve herhangi biri çıkmadan önce ikisi de raporlar; böylece hem sızmış bir anahtar hem gerçek bir kart numarası taşıyan bir corpus tek koşuda her iki hatayı da gösterir. Kritik-altı PII (ulusal kimlikler, e-posta, telefon), split-arası sızıntı, near-duplicate'ler ve kalite flag'leri ne kadar ciddi olursa olsun hâlâ `0` ile raporlanır — bunlara JSON zarfı üzerinde `jq` ile kapı koyun. Exit kodu tablosu ve PII kapısının dar kapsamının gerekçesi [Veri Seti Denetimi](#/data/audit) sayfasındadır.
 
 ## Programatik API
 

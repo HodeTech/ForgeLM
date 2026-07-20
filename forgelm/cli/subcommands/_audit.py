@@ -26,7 +26,7 @@ from .._exit_codes import EXIT_CONFIG_ERROR, EXIT_EVAL_FAILURE, EXIT_TRAINING_ER
 from .._logging import logger
 
 
-def _exit_on_critical_secrets(verdict: dict, *, allow_secrets: bool) -> None:
+def _exit_on_critical_secrets(verdict: dict, *, allow_secrets: bool, defer_exit: bool = False) -> None:
     """Fail the process when the audit found critical-severity secrets.
 
     Why this gate exists
@@ -66,6 +66,11 @@ def _exit_on_critical_secrets(verdict: dict, *, allow_secrets: bool) -> None:
     not an env var: it has to be typed into the command, where a reviewer
     reading the pipeline diff can see it.  The gate itself stays on by
     default, so silence is never the result of forgetting a flag.
+
+    ``defer_exit=True`` logs the verdict and returns instead of exiting, so
+    the caller can let the sibling PII gate report as well before the
+    process ends.  The exit code is unchanged either way; only who calls
+    :func:`sys.exit` moves.
     """
     if not verdict.get("failed"):
         return
@@ -88,7 +93,64 @@ def _exit_on_critical_secrets(verdict: dict, *, allow_secrets: bool) -> None:
         breakdown,
         EXIT_EVAL_FAILURE,
     )
-    sys.exit(EXIT_EVAL_FAILURE)
+    if not defer_exit:
+        sys.exit(EXIT_EVAL_FAILURE)
+
+
+def _exit_on_critical_pii(verdict: dict, *, allow_pii: bool, defer_exit: bool = False) -> None:
+    """Fail the process when the audit found critical-tier PII.
+
+    The sibling of :func:`_exit_on_critical_secrets`, and it exists for the
+    same reason: the scan already ran and already printed its finding, and a
+    process that reports a credit-card number in the training corpus and
+    then exits ``0`` has told the pipeline everything is fine.  ``3`` is
+    chosen on the identical reasoning — see that function's docstring for
+    why not ``1``, ``2`` or ``6``.
+
+    Scope is deliberately narrower than the secrets gate.  Only the
+    ``critical`` tier of :data:`forgelm.data_audit.PII_SEVERITY`
+    (``credit_card``, ``iban``) can fail a run; government identifiers,
+    emails and phone numbers are reported but never gate.  The rationale
+    lives in :func:`forgelm.data_audit.pii_gate_verdict`.  Note the tier,
+    not the detector, is what gates: ``tr_id`` also clears a checksum but
+    sits at ``high``, so it reports without failing.  Checksum validation
+    is a *precondition* for gating — most sub-critical families are
+    shape-matched and deliberately over-report, and a gate that fires on a
+    clean corpus is a gate somebody turns off.
+
+    ``allow_pii`` is the per-invocation escape hatch, matching
+    ``--allow-secrets``: it belongs on the command line where a reviewer
+    reading the pipeline diff can see it, not in a config file or an env
+    var.  The gate stays on by default, so silence is never the result of
+    forgetting a flag.
+
+    ``defer_exit=True`` logs the verdict and returns instead of exiting —
+    see :func:`_exit_on_critical_secrets` for why both gates report before
+    either ends the process.
+    """
+    if not verdict.get("failed"):
+        return
+    breakdown = ", ".join(f"{kind}={count}" for kind, count in verdict["critical_types"].items())
+    if allow_pii:
+        logger.warning(
+            "PII gate SUPPRESSED by --allow-pii: %d critical-tier PII span(s) found (%s). "
+            "The findings are recorded in the audit report; exiting 0 as requested.",
+            verdict["critical_total"],
+            breakdown,
+        )
+        return
+    logger.error(
+        "PII gate FAILED (critical): %d critical-tier PII span(s) detected (%s). "
+        "These clear a checksum, so they are real values rather than lookalikes — a card "
+        "or account number in training data is memorised and re-emitted at inference time. "
+        "Mask it with `forgelm ingest --pii-mask`, or re-run `forgelm audit --allow-pii` to "
+        "record the findings without failing the pipeline. Exiting %d.",
+        verdict["critical_total"],
+        breakdown,
+        EXIT_EVAL_FAILURE,
+    )
+    if not defer_exit:
+        sys.exit(EXIT_EVAL_FAILURE)
 
 
 def _run_data_audit(
@@ -106,6 +168,7 @@ def _run_data_audit(
     emit_croissant: bool = False,
     workers: int = 1,
     allow_secrets: bool = False,
+    allow_pii: bool = False,
 ) -> None:
     """Phase 11 / 11.5 / 12 dispatch: dataset quality + governance audit.
 
@@ -116,11 +179,15 @@ def _run_data_audit(
     ``allow_secrets=True`` (CLI ``--allow-secrets``) suppresses the
     critical-secrets exit code only; detection, reporting and the on-disk
     report are unaffected.  See :func:`_exit_on_critical_secrets`.
+    ``allow_pii=True`` (CLI ``--allow-pii``) does the same for the
+    critical-tier PII gate.  The two are independent: suppressing one
+    leaves the other armed.
     """
     from ...data_audit import (
         DEFAULT_MINHASH_JACCARD,
         DEFAULT_NEAR_DUP_HAMMING,
         audit_dataset,
+        pii_gate_verdict,
         secrets_gate_verdict,
         summarize_report,
     )
@@ -167,6 +234,9 @@ def _run_data_audit(
     # process exits 3.
     gate = secrets_gate_verdict(report.secrets_summary)
     gate_failed = bool(gate["failed"]) and not allow_secrets
+    pii_gate = pii_gate_verdict(report.pii_summary)
+    pii_gate_failed = bool(pii_gate["failed"]) and not allow_pii
+    any_gate_failed = gate_failed or pii_gate_failed
 
     if output_format == "json":
         # Stdout summary only — full report goes to disk under --output. A
@@ -174,12 +244,13 @@ def _run_data_audit(
         # downstream pipeline logs. Operators that want everything via stdout
         # can read the file path from `report_path` and slurp it.
         summary = {
-            # False when a critical secrets finding gated the run, matching
-            # the non-zero exit. Mirrors `forgelm safety-eval`, which already
-            # sets ``success`` from its gate verdict rather than from "the
-            # command completed". The audit still ran and ``report_path``
-            # still points at a complete report either way.
-            "success": not gate_failed,
+            # False when either gate (critical secrets, critical-tier PII)
+            # gated the run, matching the non-zero exit. Mirrors `forgelm
+            # safety-eval`, which already sets ``success`` from its gate
+            # verdict rather than from "the command completed". The audit
+            # still ran and ``report_path`` still points at a complete
+            # report either way.
+            "success": not any_gate_failed,
             "report_path": str(Path(target) / "data_audit_report.json"),
             "generated_at": report.generated_at,
             "source_input": report.source_input,
@@ -200,6 +271,22 @@ def _run_data_audit(
                 "critical_total": gate["critical_total"],
                 "critical_types": gate["critical_types"],
                 "allow_secrets": allow_secrets,
+            },
+            # Sibling of ``secrets_gate``, same three-valued ``status``.
+            # Only the ``critical`` tier of PII_SEVERITY (credit_card, iban)
+            # can fail; ``advisory_*`` carries the sub-critical counts that
+            # were detected and reported but deliberately do not gate. A
+            # consumer that only reads ``pii_summary`` is unaffected.
+            "pii_gate": {
+                "status": (
+                    "suppressed" if (pii_gate["failed"] and allow_pii) else ("failed" if pii_gate_failed else "passed")
+                ),
+                "severity": pii_gate["severity"],
+                "critical_total": pii_gate["critical_total"],
+                "critical_types": pii_gate["critical_types"],
+                "advisory_total": pii_gate["advisory_total"],
+                "advisory_types": pii_gate["advisory_types"],
+                "allow_pii": allow_pii,
             },
             "quality_summary": report.quality_summary,
             # Pre-Phase-12 envelope key — kept verbatim so any pre-Phase-12
@@ -223,9 +310,18 @@ def _run_data_audit(
         print(summarize_report(report, verbose=verbose))
         print(f"\nReport written to: {Path(target) / 'data_audit_report.json'}")
 
-    # Last — the report is on disk and rendered before the gate fires, so a
+    # Last — the report is on disk and rendered before the gates fire, so a
     # failing run still leaves the operator everything they need to triage.
-    _exit_on_critical_secrets(gate, allow_secrets=allow_secrets)
+    #
+    # Both gates report before either exits.  A corpus carrying a leaked API
+    # key *and* a real card number has two separate things to fix, and an
+    # operator who only learns about the first will scrub it, re-run, and
+    # meet the second — so the diagnostics are emitted unconditionally and
+    # the process exits once, after both have had their say.
+    _exit_on_critical_pii(pii_gate, allow_pii=allow_pii, defer_exit=True)
+    _exit_on_critical_secrets(gate, allow_secrets=allow_secrets, defer_exit=True)
+    if any_gate_failed:
+        sys.exit(EXIT_EVAL_FAILURE)
 
 
 def _run_audit_cmd(args, output_format: str) -> None:
@@ -259,4 +355,5 @@ def _run_audit_cmd(args, output_format: str) -> None:
         emit_croissant=getattr(args, "croissant", False),
         workers=getattr(args, "workers", 1),
         allow_secrets=getattr(args, "allow_secrets", False),
+        allow_pii=getattr(args, "allow_pii", False),
     )

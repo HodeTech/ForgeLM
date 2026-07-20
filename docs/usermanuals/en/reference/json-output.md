@@ -259,7 +259,7 @@ Pre-train data audit. Full report; key fields shown.
 
 ```json
 {
-  "success": true,
+  "success": false,
   "report_path": "/work/audit/data_audit_report.json",
   "generated_at": "2026-07-20T16:13:19.426220+00:00",
   "source_input": "/work/data/train.jsonl",
@@ -273,6 +273,22 @@ Pre-train data audit. Full report; key fields shown.
     "worst_tier": "high"
   },
   "secrets_summary": {"aws_access_key": 1},
+  "secrets_gate": {
+    "status": "failed",
+    "severity": "critical",
+    "critical_total": 1,
+    "critical_types": {"aws_access_key": 1},
+    "allow_secrets": false
+  },
+  "pii_gate": {
+    "status": "passed",
+    "severity": null,
+    "critical_total": 0,
+    "critical_types": {},
+    "advisory_total": 2,
+    "advisory_types": {"email": 1, "us_ssn": 1},
+    "allow_pii": false
+  },
   "quality_summary": {
     "samples_flagged": 3,
     "samples_evaluated": 3,
@@ -289,7 +305,7 @@ Pre-train data audit. Full report; key fields shown.
 
 | Key | Type | Notes |
 |---|---|---|
-| `success` | bool | The audit **ran**. It is not a full verdict about the corpus — see the gate warning below. |
+| `success` | bool | `false` when **either** gate failed (`secrets_gate` or `pii_gate`), `true` otherwise. It is not a full verdict about the corpus — the ungated findings never move it; see the gate warning below. |
 | `report_path` | str | Absolute path of the on-disk `data_audit_report.json`. |
 | `source_input` | str | Absolute path of the audited input. |
 | `total_samples` | int | Rows examined across all splits. |
@@ -297,6 +313,8 @@ Pre-train data audit. Full report; key fields shown.
 | `pii_summary` | object | Flat `{pii_type: count}`, e.g. `{"email": 1}`. **No** `total_findings` / `by_kind` keys. `{}` when clean. |
 | `pii_severity` | object | `total`, `by_tier` (`critical`/`high`/`medium`/`low` counts), `by_type`, and `worst_tier`. **`worst_tier` is the field a CI gate wants** — it is `null` when nothing was flagged. |
 | `secrets_summary` | object | Flat `{pattern_name: count}`, e.g. `{"aws_access_key": 1}`. `{}` when clean. |
+| `secrets_gate` | object | Verdict of the credential gate. `status` ∈ `"passed"` / `"failed"` / `"suppressed"` (`"suppressed"` = findings present but `--allow-secrets` was passed), `severity` (`"critical"` or `null`), `critical_total`, `critical_types` (`{pattern_name: count}`), `allow_secrets`. |
+| `pii_gate` | object | Verdict of the PII gate — the sibling of `secrets_gate`, same three-valued `status` (`"suppressed"` = `--allow-pii` was passed). `severity` (`"critical"` or `null`), `critical_total`, `critical_types`, plus `advisory_total` / `advisory_types` carrying the sub-critical counts that are reported but never gate, and `allow_pii`. Only `credit_card` and `iban` can appear in `critical_types`. |
 | `quality_summary` | object | `samples_flagged`, `samples_evaluated`, `by_check` (`{check_name: count}`), `overall_quality_score`. |
 | `near_duplicate_pairs_per_split` | object | `{split_name: pair_count}`. |
 | `near_duplicate_summary` | object | `method` (`simhash`/`minhash`), `pairs_per_split`, and the threshold field for the chosen method. |
@@ -307,12 +325,14 @@ Pre-train data audit. Full report; key fields shown.
 > **Phase 15 (v0.6.0) note:** `quality_summary` is populated by default from v0.6.0+ because the audit's `--quality-filter` flag was flipped to default-on. Pass `--no-quality-filter` to skip; the field is `{}` in that case.
 
 :::warn
-**Only the secrets scan gates. Everything else is a report.** `forgelm audit` exits `3` when the always-on secrets scan finds credentials (pass `--allow-secrets` to record without failing). But a corpus carrying a plaintext SSN, train/eval leakage, or a wall of low-quality rows and **no** credentials exits `0` — verified: a two-row corpus with a `us_ssn` finding at `worst_tier: "high"` returns `0`.
+**Two scans gate. Everything else is a report.** `forgelm audit` exits `3` when the always-on secrets scan finds credentials (`--allow-secrets` records without failing), and when the PII scan finds `critical`-tier PII — `credit_card` or `iban`, the two categories that clear a checksum (Luhn / ISO 7064 mod-97), so a hit is a real value rather than a lookalike (`--allow-pii` records without failing). The two flags are independent.
 
-So `success: true` plus exit `0` means "the audit completed and found no secrets", not "the corpus is clean". To gate on the other dimensions you must parse this envelope yourself:
+Sub-critical PII does **not** gate: `tr_id` / `de_id` / `fr_ssn` / `us_ssn` (`high`), `email` (`medium`) and `phone` (`low`) are detected, counted, and surfaced under `pii_gate.advisory_types`, but never decide the exit code — most are matched on shape alone and deliberately over-report, and a gate that fires on a clean corpus is one an operator turns off. So a corpus carrying a plaintext SSN, train/eval leakage, or a wall of low-quality rows and **no** credentials or card numbers exits `0` — verified: a two-row corpus with a `us_ssn` finding at `worst_tier: "high"` returns `0`.
+
+So `success: true` plus exit `0` means "the audit completed and neither gate fired", not "the corpus is clean". To gate on the other dimensions you must parse this envelope yourself:
 
 ```shell
-$ forgelm audit data/ --output-format json > audit.json   # exits 3 on secrets
+$ forgelm audit data/ --output-format json > audit.json   # exits 3 on secrets or critical-tier PII
 $ jq -e '(.pii_severity.worst_tier // "none") != "high" and (.cross_split_leakage_pairs | length) == 0' audit.json
 ```
 

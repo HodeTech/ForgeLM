@@ -103,14 +103,17 @@ tracking-mlflow = [
 ]
 
 # Multi-GPU/multi-node training via DeepSpeed (ZeRO-1/2/3).
-# No platform marker is possible in the useful direction: DeepSpeed publishes
-# no Windows wheels, so `pip install forgelm[distributed]` on Windows falls
-# through to a source build that needs MSVC + the CUDA toolkit and typically
-# fails.  Marking it `sys_platform != 'win32'` would make the install silently
-# succeed while omitting DeepSpeed, which then surfaces as an unexplained
-# ImportError at ZeRO init — a worse failure than a loud one at install time.
+# DeepSpeed publishes no Windows wheels, so an unmarked requirement sends
+# `pip install forgelm[distributed]` on Windows into a source build needing
+# MSVC + the CUDA toolkit, which typically fails and takes the whole install
+# down with it — including the parts that would have worked.  The marker makes
+# Windows degrade the way `qlora` and `unsloth` already do: the install
+# succeeds, DeepSpeed is simply absent, and the operator meets the project's
+# standard optional-dependency contract (ImportError with an install hint) only
+# if they actually reach a ZeRO/FSDP path.  Failing the whole install for a
+# backend the user may not use is the worse trade.
 distributed = [
-  "deepspeed>=0.14.0",
+  "deepspeed>=0.14.0; sys_platform != 'win32'",
 ]
 
 # Model merging (TIES / DARE / SLERP / linear) is implemented natively on

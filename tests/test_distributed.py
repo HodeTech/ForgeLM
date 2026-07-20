@@ -235,3 +235,74 @@ class TestDryRunDistributed:
         _run_dry_run(cfg, "json")
         result = json.loads(capsys.readouterr().out)
         assert result["distributed"] is None
+
+
+# --- Missing-DeepSpeed diagnostics ---
+
+
+class TestDeepSpeedAvailabilityCheck:
+    """ForgeLM never imports DeepSpeed itself — it hands ``deepspeed=<config>``
+    to ``TrainingArguments``. Without this check the missing-dependency error
+    surfaces from inside Transformers, naming neither ForgeLM's extra nor the
+    config key that asked for it.
+
+    The check matters more than it used to: the ``distributed`` extra now
+    carries ``sys_platform != 'win32'`` (DeepSpeed publishes no Windows
+    wheels, and an unmarked requirement failed the *whole* install there on a
+    source build), so on Windows ``pip install forgelm[distributed]``
+    succeeds with DeepSpeed absent and this is the first place the operator
+    can learn that.
+    """
+
+    @staticmethod
+    def _without_deepspeed(monkeypatch):
+        import builtins
+
+        real = builtins.__import__
+
+        def fake(name, *args, **kwargs):
+            if name == "deepspeed":
+                raise ImportError("No module named 'deepspeed'")
+            return real(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake)
+
+    def test_raises_import_error_naming_the_extra(self, monkeypatch):
+        from forgelm.trainer import ForgeTrainer
+
+        self._without_deepspeed(monkeypatch)
+        with pytest.raises(ImportError) as exc:
+            ForgeTrainer._check_deepspeed_available()
+        message = str(exc.value)
+        assert "pip install forgelm[distributed]" in message
+        assert "distributed.strategy='deepspeed'" in message
+
+    def test_message_points_windows_users_at_fsdp(self, monkeypatch):
+        """The extra installs nothing on Windows, so 'install it' is not enough."""
+        from forgelm.trainer import ForgeTrainer
+
+        self._without_deepspeed(monkeypatch)
+        with pytest.raises(ImportError) as exc:
+            ForgeTrainer._check_deepspeed_available()
+        assert "fsdp" in str(exc.value).lower()
+
+    def test_passes_when_deepspeed_is_importable(self, monkeypatch):
+        """Must not raise on a machine that has it — a check that always fires
+        is a check that gets deleted."""
+        import sys
+        import types
+
+        from forgelm.trainer import ForgeTrainer
+
+        monkeypatch.setitem(sys.modules, "deepspeed", types.ModuleType("deepspeed"))
+        ForgeTrainer._check_deepspeed_available()  # no raise
+
+    def test_fsdp_strategy_does_not_require_deepspeed(self, monkeypatch, minimal_config):
+        """The check is scoped to the strategy that needs it."""
+        from forgelm.trainer import ForgeTrainer
+
+        self._without_deepspeed(monkeypatch)
+        cfg = ForgeConfig(**minimal_config(distributed={"strategy": "fsdp"}))
+        kwargs: dict = {}
+        ForgeTrainer._apply_distributed_config(object.__new__(ForgeTrainer), kwargs, cfg.distributed)
+        assert "deepspeed" not in kwargs

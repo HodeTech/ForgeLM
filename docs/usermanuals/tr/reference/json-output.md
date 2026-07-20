@@ -259,7 +259,7 @@ Eğitim öncesi veri denetimi. Tam rapor; ana alanlar gösterildi.
 
 ```json
 {
-  "success": true,
+  "success": false,
   "report_path": "/work/audit/data_audit_report.json",
   "generated_at": "2026-07-20T16:13:19.426220+00:00",
   "source_input": "/work/data/train.jsonl",
@@ -273,6 +273,22 @@ Eğitim öncesi veri denetimi. Tam rapor; ana alanlar gösterildi.
     "worst_tier": "high"
   },
   "secrets_summary": {"aws_access_key": 1},
+  "secrets_gate": {
+    "status": "failed",
+    "severity": "critical",
+    "critical_total": 1,
+    "critical_types": {"aws_access_key": 1},
+    "allow_secrets": false
+  },
+  "pii_gate": {
+    "status": "passed",
+    "severity": null,
+    "critical_total": 0,
+    "critical_types": {},
+    "advisory_total": 2,
+    "advisory_types": {"email": 1, "us_ssn": 1},
+    "allow_pii": false
+  },
   "quality_summary": {
     "samples_flagged": 3,
     "samples_evaluated": 3,
@@ -289,7 +305,7 @@ Eğitim öncesi veri denetimi. Tam rapor; ana alanlar gösterildi.
 
 | Anahtar | Tip | Not |
 |---|---|---|
-| `success` | bool | Denetimin **çalıştığını** bildirir. Corpus hakkında eksiksiz bir hüküm değildir — aşağıdaki uyarıya bakın. |
+| `success` | bool | Kapılardan **herhangi biri** başarısız olduğunda (`secrets_gate` ya da `pii_gate`) `false`, aksi halde `true`. Corpus hakkında eksiksiz bir hüküm değildir — kapılamayan bulgular bu alanı hiç oynatmaz; aşağıdaki uyarıya bakın. |
 | `report_path` | str | On-disk `data_audit_report.json`'un mutlak yolu. |
 | `source_input` | str | Denetlenen girdinin mutlak yolu. |
 | `total_samples` | int | Tüm split'ler boyunca incelenen satır sayısı. |
@@ -297,6 +313,8 @@ Eğitim öncesi veri denetimi. Tam rapor; ana alanlar gösterildi.
 | `pii_summary` | object | Düz `{pii_türü: sayı}`, örn. `{"email": 1}`. `total_findings` / `by_kind` anahtarları **yoktur**. Temizken `{}`. |
 | `pii_severity` | object | `total`, `by_tier` (`critical`/`high`/`medium`/`low` sayıları), `by_type` ve `worst_tier`. **CI gate'inin isteyeceği alan `worst_tier`'dır** — hiçbir şey işaretlenmediğinde `null` olur. |
 | `secrets_summary` | object | Düz `{pattern_adı: sayı}`, örn. `{"aws_access_key": 1}`. Temizken `{}`. |
+| `secrets_gate` | object | Credential kapısının hükmü. `status` ∈ `"passed"` / `"failed"` / `"suppressed"` (`"suppressed"` = bulgu var ama `--allow-secrets` geçildi), `severity` (`"critical"` ya da `null`), `critical_total`, `critical_types` (`{pattern_adı: sayı}`), `allow_secrets`. |
+| `pii_gate` | object | PII kapısının hükmü — `secrets_gate`'in kardeşi, aynı üç değerli `status` (`"suppressed"` = `--allow-pii` geçildi). `severity` (`"critical"` ya da `null`), `critical_total`, `critical_types`; ayrıca raporlanan ama asla kapılamayan kritik-altı sayımları taşıyan `advisory_total` / `advisory_types` ve `allow_pii`. `critical_types` içinde yalnızca `credit_card` ve `iban` görünebilir. |
 | `quality_summary` | object | `samples_flagged`, `samples_evaluated`, `by_check` (`{kontrol_adı: sayı}`), `overall_quality_score`. |
 | `near_duplicate_pairs_per_split` | object | `{split_adı: çift_sayısı}`. |
 | `near_duplicate_summary` | object | `method` (`simhash`/`minhash`), `pairs_per_split` ve seçilen metodun eşik alanı. |
@@ -310,12 +328,14 @@ Eğitim öncesi veri denetimi. Tam rapor; ana alanlar gösterildi.
 > olur.
 
 :::warn
-**Yalnızca secret taraması gate uygular. Geri kalan her şey rapordur.** `forgelm audit`, her zaman açık olan secret taraması kimlik bilgisi bulduğunda `3` ile çıkar (başarısız olmadan kaydetmek için `--allow-secrets` geçirin). Ancak düz metin SSN, train/eval sızıntısı ya da bir yığın düşük kaliteli satır taşıyan ve **hiç** kimlik bilgisi içermeyen bir corpus `0` ile çıkar — doğrulandı: `worst_tier: "high"` seviyesinde `us_ssn` bulgusu olan iki satırlık bir corpus `0` döner.
+**İki tarama gate uygular. Geri kalan her şey rapordur.** `forgelm audit`, her zaman açık olan secret taraması kimlik bilgisi bulduğunda (`--allow-secrets` başarısız olmadan kaydeder) ve PII taraması `critical` katman PII bulduğunda `3` ile çıkar — `credit_card` ya da `iban`; bir checksum'dan (Luhn / ISO 7064 mod-97) geçen iki kategori, dolayısıyla eşleşme benzer görünen bir dizi değil gerçek bir değerdir (`--allow-pii` başarısız olmadan kaydeder). İki bayrak birbirinden bağımsızdır.
 
-Yani `success: true` artı exit `0`, "corpus temiz" değil, "denetim tamamlandı ve secret bulunmadı" demektir. Diğer boyutlarda gate uygulamak için bu zarfı kendiniz parse etmelisiniz:
+Kritik-altı PII gate uygula**maz**: `tr_id` / `de_id` / `fr_ssn` / `us_ssn` (`high`), `email` (`medium`) ve `phone` (`low`) tespit edilir, sayılır ve `pii_gate.advisory_types` altında yüzeye çıkar, ama exit kodunu asla belirlemez — çoğu yalnızca şekil üzerinden eşleşir ve kasıtlı olarak fazla raporlar; temiz bir corpus'ta tetiklenen kapıyı ise operatör kapatır. Dolayısıyla düz metin SSN, train/eval sızıntısı ya da bir yığın düşük kaliteli satır taşıyan ve **hiç** kimlik bilgisi ya da kart numarası içermeyen bir corpus `0` ile çıkar — doğrulandı: `worst_tier: "high"` seviyesinde `us_ssn` bulgusu olan iki satırlık bir corpus `0` döner.
+
+Yani `success: true` artı exit `0`, "corpus temiz" değil, "denetim tamamlandı ve hiçbir kapı tetiklenmedi" demektir. Diğer boyutlarda gate uygulamak için bu zarfı kendiniz parse etmelisiniz:
 
 ```shell
-$ forgelm audit data/ --output-format json > audit.json   # secret'larda 3 ile çıkar
+$ forgelm audit data/ --output-format json > audit.json   # secret'larda veya kritik katman PII'de 3 ile çıkar
 $ jq -e '(.pii_severity.worst_tier // "none") != "high" and (.cross_split_leakage_pairs | length) == 0' audit.json
 ```
 

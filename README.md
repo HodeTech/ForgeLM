@@ -129,7 +129,7 @@ CI/CD branches on these. They are a public contract; any other value is clamped 
 
 One command, no model download, no training commitment. It scans a corpus for length and language distribution, near-duplicates (SimHash, optional MinHash LSH), cross-split leakage, quality flags, PII across 8 categories (email, phone, IBAN, credit card, and TR / DE / FR / US-SSN national IDs — with checksum validation on cards (Luhn), IBANs (mod-97) and TR IDs; the rest are shape-matched and deliberately over-report), and a 9-family secrets scan.
 
-**The secrets gate exits 3.** This is the one that stops a build:
+**Two gates exit 3.** These are the ones that stop a build:
 
 ```console
 $ forgelm audit ./corpus.jsonl
@@ -140,7 +140,9 @@ in training data is memorised and re-emitted at inference time. Scrub it with
 record the findings without failing the pipeline. Exiting 3.
 ```
 
-Changed in v0.10.0 — this gate previously never fired. `--allow-secrets` is the documented escape hatch for auditing a corpus before scrubbing it, or for fixtures with known dummy credentials. `--croissant` embeds a Croissant 1.0 dataset card under the `croissant` key of `data_audit_report.json`; that report is inlined into `data_governance_report.json` at compliance-export time. [Dataset Audit Guide](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/data_audit.md)
+The **PII gate** is the second, and it is deliberately narrower: only critical-tier findings — credit-card numbers and IBANs — fail a run. Both clear a checksum, so a hit is a real value rather than a lookalike. Government IDs, emails and phone numbers are reported and never gate: most are shape-matched and deliberately over-report, and a gate that fires on a clean corpus is a gate somebody switches off. The tier decides, not the detector — a TC national ID is checksum-validated too, but sits below critical.
+
+Both gates previously printed their finding and exited `0`. `--allow-secrets` and `--allow-pii` record the findings without failing the pipeline — for auditing a corpus before scrubbing it, or fixtures with known dummy values — and are independent of each other. `--croissant` embeds a Croissant 1.0 dataset card under the `croissant` key of `data_audit_report.json`; that report is inlined into `data_governance_report.json` at compliance-export time. [Dataset Audit Guide](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/data_audit.md)
 
 ---
 
@@ -207,4 +209,4 @@ The first two run on a free Colab T4. The safety notebook needs a gated Llama-Gu
 
 Start with [CONTRIBUTING.md](https://github.com/HodeTech/ForgeLM/blob/main/CONTRIBUTING.md) and the engineering standards in [docs/standards/](https://github.com/HodeTech/ForgeLM/tree/main/docs/standards). Licensed under [Apache 2.0](https://github.com/HodeTech/ForgeLM/blob/main/LICENSE).
 
-[^1]: `qlora` and `unsloth` pin their upstream wheels behind a `sys_platform == 'linux'` marker, so on macOS and Windows the install succeeds and those backends are simply absent. `export` skips `llama-cpp-python` on Windows via a `sys_platform != 'win32'` marker. `distributed` carries **no** marker and DeepSpeed publishes no Windows wheels, so `pip install "forgelm[distributed]"` on Windows attempts a source build and typically fails outright rather than degrading gracefully.
+[^1]: Extras whose upstream wheels do not exist for a platform are marked, so the install succeeds and the backend is simply absent rather than taking the whole install down with a failed source build: `qlora` and `unsloth` are `sys_platform == 'linux'`; `export` (`llama-cpp-python`) and `distributed` (DeepSpeed) are `sys_platform != 'win32'`. Reaching a backend that is absent raises an `ImportError` naming the extra to install. All other extras are cross-platform.

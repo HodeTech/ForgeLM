@@ -11,7 +11,7 @@ locations) which regex inherently misses.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict
+from typing import Any, Callable, Dict, FrozenSet
 
 # ---------------------------------------------------------------------------
 # PII regex — module level so they're compiled once
@@ -145,14 +145,31 @@ def _is_tr_id(candidate: str) -> bool:
     return sum(digits[:10]) % 10 == digits[10]
 
 
+# Categories whose matches clear a checksum before being counted.  Every
+# other family in ``_PII_PATTERNS`` is shape-matched only, and that
+# over-reporting is deliberate (see ``detect_pii``): the audit is meant to
+# surface candidates and let the operator judge them.
+#
+# This mapping is the single source of truth for two things that must never
+# drift apart: which validator ``_validate_match`` dispatches, and which
+# categories ``forgelm.data_audit.pii_gate_verdict`` is allowed to fail a
+# pipeline on.  A gate built on a deliberately over-reporting signal fires on
+# clean corpora and gets switched off, so only checksum-validated families
+# may gate — and adding a validator here opts its family in automatically
+# rather than leaving a second hand-maintained list to rot.
+_PII_VALIDATORS: Dict[str, Callable[[str], bool]] = {
+    "credit_card": _is_credit_card,
+    "iban": _is_valid_iban,
+    "tr_id": _is_tr_id,
+}
+
+#: PII families a positive finding can be trusted on — see ``_PII_VALIDATORS``.
+CHECKSUM_VALIDATED_PII_TYPES: FrozenSet[str] = frozenset(_PII_VALIDATORS)
+
+
 def _validate_match(pii_type: str, match: str) -> bool:
-    if pii_type == "credit_card":
-        return _is_credit_card(match)
-    if pii_type == "iban":
-        return _is_valid_iban(match)
-    if pii_type == "tr_id":
-        return _is_tr_id(match)
-    return True
+    validator = _PII_VALIDATORS.get(pii_type)
+    return validator(match) if validator else True
 
 
 def detect_pii(text: Any) -> Dict[str, int]:

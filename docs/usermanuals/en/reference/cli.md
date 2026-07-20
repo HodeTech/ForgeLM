@@ -97,8 +97,14 @@ $ forgelm audit INPUT_PATH \
     [--croissant] \
     [--pii-ml] [--pii-ml-language LANG] \
     [--workers N] \
+    [--allow-secrets] [--allow-pii] \
     [--output-format {text,json}]
 ```
+
+| Flag | Description |
+|---|---|
+| `--allow-secrets` | Record credential findings without failing (exit `0` with a `SUPPRESSED` warning instead of `3`). |
+| `--allow-pii` | Record critical-tier PII findings (`credit_card`, `iban`) without failing. Independent of `--allow-secrets`. |
 
 `--workers N` parallelises split-level processing; the on-disk JSON is byte-identical across worker counts (modulo the `generated_at` timestamp). The full per-flag table — including the canonical authoritative list synced to `forgelm/cli/_parser.py::_add_audit_subcommand` — lives in [Dataset Audit](#/data/audit). Earlier drafts of this page documented `--strict`, `--skip-pii`, `--skip-secrets`, `--skip-quality`, `--skip-leakage`, `--remove-duplicates`, `--remove-cross-split-overlap`, `--output-clean`, `--show-leakage`, `--minhash-jaccard`, `--minhash-num-perm`, `--dedup-algo`, `--dedup-threshold`, `--sample-rate`, and `--add-row-ids` — none exist in the parser. Use the canonical names above.
 
@@ -333,20 +339,20 @@ $ forgelm --config configs/run.yaml --output-format json | tee run.log
 
 ### "Run audit, then train if clean"
 
-`forgelm audit` gates on **secrets only**: it exits `3` when the always-on credential scan finds something, and `0` otherwise. So `&&` does chain correctly for the credential case:
+`forgelm audit` gates on **two things**: it exits `3` when the always-on credential scan finds something, and when the PII scan finds critical-tier PII (`credit_card` / `iban` — the checksum-validated categories). Otherwise it exits `0`. So `&&` does chain correctly for both cases:
 
 ```shell
-$ forgelm audit data/           # exits 3 if the credential scan finds anything
+$ forgelm audit data/           # exits 3 on a credential or a critical-tier PII finding
 $ forgelm --config configs/run.yaml
 ```
 
 Run them as separate `set -e` steps (or join with `&&`); the training step is skipped when the audit exits `3`.
 
 :::warn
-**PII, leakage and quality do not gate.** A corpus carrying a plaintext SSN at `worst_tier: "high"`, or train/eval overlap, exits `0` as long as it holds no credentials. If your policy covers those, parse the envelope yourself:
+**Sub-critical PII, leakage and quality do not gate.** A corpus carrying a plaintext SSN at `worst_tier: "high"`, or train/eval overlap, exits `0` as long as it holds no credentials and no critical-tier PII. National IDs, emails and phone numbers are matched on shape and deliberately over-report, so gating on them would fail clean corpora — see [Dataset Audit](#/data/audit) for the full reasoning. If your policy covers those, parse the envelope yourself:
 
 ```shell
-$ forgelm audit data/ --output-format json > audit.json   # exits 3 on secrets
+$ forgelm audit data/ --output-format json > audit.json   # exits 3 on secrets or critical PII
 $ jq -e '(.pii_severity.worst_tier // "none") != "high" and (.cross_split_leakage_pairs | length) == 0' audit.json
 $ forgelm --config configs/run.yaml
 ```
@@ -354,7 +360,7 @@ $ forgelm --config configs/run.yaml
 Under `set -e` (or GitHub Actions' default), the failing `jq -e` stops the job before training starts. `pii_severity.worst_tier` is `null` on a clean corpus, so keep the `// "none"` fallback. See [JSON Output Schemas](#/reference/json-output) for the full envelope.
 :::
 
-Pass `--allow-secrets` to record credential findings without failing — for the legitimate case of auditing a corpus you already know contains them.
+Pass `--allow-secrets` to record credential findings without failing — for the legitimate case of auditing a corpus you already know contains them. `--allow-pii` does the same for the PII gate; the two are independent, so passing one leaves the other armed.
 
 ### "Train with human approval gate; promote later"
 

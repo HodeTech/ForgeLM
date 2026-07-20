@@ -41,7 +41,7 @@ Her train satırı için ForgeLM kontrol eder:
 - Val/test'te **kesin eşleşme** (önemli her alan: `prompt`, `chosen`, `response` vb.).
 - Val/test'te **near-duplicate** (Hamming eşiği 3 simhash).
 
-Herhangi bir eşleşme raporlanır. `forgelm audit` sızıntılı bir corpus'ta yine `0` ile çıkar — sızıntı oranına göre gate **yapmaz**. (Kapılayan tek bulgu, `3` ile çıkan tespit edilmiş bir credential'dır; girdi/config ve I/O hataları `1` ve `2` ile çıkar.) Sızıntı bulununca CI'ı başarısız kılmak için JSON raporunu `jq` ile dallandırın (bkz. [Veri Seti Denetimi](#/data/audit)).
+Herhangi bir eşleşme raporlanır. `forgelm audit` sızıntılı bir corpus'ta yine `0` ile çıkar — sızıntı oranına göre gate **yapmaz**. (Kapılayan bulgular, tespit edilmiş bir credential ve kritik katman PII'dir — `credit_card` / `iban` — ikisi de `3` ile çıkar; girdi/config ve I/O hataları `1` ve `2` ile çıkar.) Sızıntı bulununca CI'ı başarısız kılmak için JSON raporunu `jq` ile dallandırın (bkz. [Veri Seti Denetimi](#/data/audit)).
 
 ## Hızlı örnek
 

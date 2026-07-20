@@ -524,9 +524,38 @@ class ForgeTrainer:
             tc.galore_scale,
         )
 
+    @staticmethod
+    def _check_deepspeed_available() -> None:
+        """Fail with an install hint when ``strategy: deepspeed`` has no DeepSpeed.
+
+        ForgeLM never imports DeepSpeed itself — it hands ``deepspeed=<config>``
+        to ``TrainingArguments`` and lets Transformers drive it.  That means the
+        missing-dependency error would otherwise surface from deep inside
+        Transformers, naming neither ForgeLM's extra nor the config key that
+        asked for it.
+
+        The check matters most on Windows, where the ``distributed`` extra
+        carries a ``sys_platform != 'win32'`` marker (DeepSpeed publishes no
+        Windows wheels, and an unmarked requirement would fail the *whole*
+        install on a source build).  ``pip install forgelm[distributed]`` there
+        succeeds with DeepSpeed absent, so this is the first place the operator
+        can learn that — and it must say so in ForgeLM's own voice.
+        """
+        try:
+            import deepspeed  # noqa: F401
+        except ImportError as e:
+            raise ImportError(
+                "distributed.strategy='deepspeed' requires the 'distributed' extra, "
+                "but DeepSpeed is not installed. Install it with: "
+                "pip install forgelm[distributed]\n"
+                "On Windows DeepSpeed publishes no wheels, so that extra installs "
+                "nothing there — use distributed.strategy='fsdp', or run on Linux."
+            ) from e
+
     def _apply_distributed_config(self, kwargs: dict, dist_cfg) -> None:
         """Apply DeepSpeed or FSDP configuration to training kwargs."""
         if dist_cfg.strategy == "deepspeed":
+            self._check_deepspeed_available()
             ds_config = self._resolve_deepspeed_config(dist_cfg.deepspeed_config)
             kwargs["deepspeed"] = ds_config
             logger.info("DeepSpeed enabled with config: %s", dist_cfg.deepspeed_config or "auto")

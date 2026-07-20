@@ -41,7 +41,7 @@ For every train row, ForgeLM checks:
 - **Exact match** in val/test (any field that matters: `prompt`, `chosen`, `response`, etc.).
 - **Near-duplicate** (Hamming threshold 3 simhash) in val/test.
 
-Any match is reported. `forgelm audit` still exits `0` on a leaky corpus — it does **not** gate on a leakage rate. (The only finding that gates is a detected credential, which exits `3`; input/config and I/O errors exit `1` and `2`.) To fail CI when cross-split leakage is found, branch on the JSON report with `jq` (see [Dataset Audit](#/data/audit)).
+Any match is reported. `forgelm audit` still exits `0` on a leaky corpus — it does **not** gate on a leakage rate. (The findings that gate are a detected credential and critical-tier PII — `credit_card` / `iban` — both of which exit `3`; input/config and I/O errors exit `1` and `2`.) To fail CI when cross-split leakage is found, branch on the JSON report with `jq` (see [Dataset Audit](#/data/audit)).
 
 ## Quick example
 

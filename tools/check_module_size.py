@@ -317,12 +317,28 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/trainer.py": _DeferredSplit(
-        budget=1432,
+        budget=1460,
         deferred_at_loc=1432,
         reason=(
             "ForgeTrainer god-object: TRL kwarg fold-in + OOM/DeepSpeed runtime + "
             "artifact finalisation + compliance/model-card/deployer hand-off. Split "
             "candidates: _kwargs, _runtime, _finalize, _artifacts (F-PR29-A1-05)."
+        ),
+        budget_history=(
+            "2026-07-20: 1432 -> 1460 (+28) for _check_deepspeed_available and its "
+            "rationale. The `distributed` extra gained a `sys_platform != 'win32'` "
+            "marker in the same change: DeepSpeed publishes no Windows wheels, so the "
+            "unmarked requirement sent `pip install forgelm[distributed]` there into a "
+            "source build needing MSVC + CUDA that typically failed and took the whole "
+            "install with it. Windows now degrades like `qlora`/`unsloth` — install "
+            "succeeds, DeepSpeed absent — which makes the missing-dependency path "
+            "reachable in normal operation for the first time. ForgeLM never imports "
+            "DeepSpeed itself (it hands `deepspeed=<config>` to TrainingArguments), so "
+            "without this check the operator meets a Transformers-internal ImportError "
+            "naming neither the extra nor `distributed.strategy`. It belongs beside "
+            "_apply_distributed_config, the only caller and the site that decides the "
+            "strategy — the same locality as benchmark.py's _check_lm_eval_available. "
+            "A future _runtime split takes it along with the OOM/DeepSpeed concern.",
         ),
     ),
     "forgelm/cli/_pipeline.py": _DeferredSplit(
@@ -336,7 +352,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/cli/_parser.py": _DeferredSplit(
-        budget=1346,
+        budget=1372,
         deferred_at_loc=1320,
         reason=(
             "Argparse wiring for the full CLI surface. Split candidates: _train, "
@@ -362,6 +378,16 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "exit 3 needs a named per-invocation opt-out for the audit-then-mask and "
             "known-dummy-fixture workflows, and an argparse flag has no other home. "
             "Pays down with the _data split (the audit subparser's owner).",
+            "2026-07-20: 1346 -> 1372 (+26) for `audit --allow-pii` plus the rewrite "
+            "of the audit subparser's description to name both gates. Exactly the "
+            "same shape as the --allow-secrets raise above, one tier down: the scan "
+            "found a Luhn-valid card number in a training corpus, printed it, and "
+            "exited 0. The flag's help carries the boundary an operator has to know "
+            "before wiring CI on it — only the critical tier (credit_card, iban) "
+            "gates, and the tier decides rather than the detector, so a "
+            "checksum-validated TC national ID reports without failing. That "
+            "distinction has nowhere else to live: --help is where someone reads it "
+            "at the moment they need it. Pays down with the same _data split.",
         ),
     ),
     "forgelm/cli/subcommands/_purge.py": _DeferredSplit(

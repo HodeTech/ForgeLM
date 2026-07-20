@@ -55,14 +55,32 @@ Exit codes from `forgelm audit`:
 
 | Exit | Meaning |
 |---|---|
-| `0` | Audit completed and no critical finding gated it. |
+| `0` | Audit completed and no gate failed. |
 | `1` | IO error (the input path does not exist or cannot be read) — the audit never ran. |
 | `2` | Import error (a required optional extra is missing). |
-| `3` | The audit ran, wrote its report, and the **secrets gate failed** — at least one credential was detected. |
+| `3` | The audit ran, wrote its report, and a **gate failed** — a credential was detected (secrets gate) or critical-tier PII was (PII gate). |
 
-**Secrets are the only finding that gates.** A detected credential exits `3` because a credential in training data is memorised by the model and re-emitted at inference time. Everything else — PII, cross-split leakage, near-duplicates, quality flags — is reported at exit `0`, however severe. Verified: a corpus carrying an AWS key exits `3`; a corpus with 95 % train/validation leakage and no credentials exits `0`.
+**Two findings gate: credentials, and critical-tier PII.**
 
-Pass `--allow-secrets` to record credential findings without failing the pipeline (exit `0` with a `SUPPRESSED` warning). Use it for the legitimate exceptions — auditing a corpus *before* scrubbing it with `forgelm ingest --secrets-mask`, or a fixture set carrying known dummy credentials.
+- **Secrets gate.** Any credential found by the always-on secrets scan exits `3` — a credential in training data is memorised by the model and re-emitted at inference time. Pass `--allow-secrets` to record the findings without failing.
+- **PII gate.** A `credit_card` or `iban` finding — the `critical` tier of the severity table — exits `3` for the same reason: a card or account number in the corpus is memorised and re-emitted. Pass `--allow-pii` to record without failing.
+
+The two flags are **independent**: passing one leaves the other armed. Both gates report before either exits, so a corpus failing both shows both errors in one run rather than making you fix, re-run, and discover the second.
+
+Everything else — sub-critical PII, cross-split leakage, near-duplicates, quality flags — is reported at exit `0`, however severe. Verified: a corpus carrying an AWS key exits `3`; a corpus carrying `4111 1111 1111 1111` exits `3`; a corpus with 95 % train/validation leakage and no credentials exits `0`.
+
+### Why the PII gate stops at `critical`
+
+The two `critical` categories clear a checksum before they are counted — Luhn for `credit_card`, ISO 7064 mod-97 for `iban` — so a hit is a real value rather than a lookalike. That is what makes them safe to fail a build on.
+
+The rest are reported but **never gate**: `tr_id`, `de_id`, `fr_ssn`, `us_ssn` (`high`), `email` (`medium`), `phone` (`low`). Most are matched on regex shape alone and *deliberately* over-report, because the audit's job is to surface candidates for a human to judge. A gate built on a deliberately over-reporting signal fails clean corpora — a customer-support dataset legitimately full of example addresses and phone numbers would go red on every run, and the first thing an operator does with a gate that cries wolf is switch it off, taking the trustworthy half down with it.
+
+Two things this does **not** mean:
+
+- **ForgeLM does not ignore SSNs.** A `us_ssn` finding is detected, counted, tiered `high`, written to the report and surfaced under `pii_gate.advisory_types` in the JSON envelope. It just does not decide the exit code. If your policy requires failing on it, gate with `jq` over `pii_severity.worst_tier` (see [What's in the report](#whats-in-the-report) below).
+- **An email will not fail your build.** Neither will a phone number, nor a national ID.
+
+One nuance worth knowing: `tr_id` also clears a checksum (TC Kimlik No), but it sits at `high` in the tier table and therefore does not gate. The gate reads the declared severity tier, not the list of checksum-backed detectors — being checksum-validated is a *precondition* for gating, not a trigger.
 
 To gate CI on any of the non-gating findings, pipe the JSON report through `jq` (see [What's in the report](#whats-in-the-report) below).
 
@@ -70,7 +88,7 @@ To gate CI on any of the non-gating findings, pipe the JSON report through `jq` 
 
 ### PII (personally identifiable information)
 
-Detects emails, phone numbers, credit card numbers (Luhn-validated), IBAN, and national IDs (TR, DE, FR, US-SSN). Tags rows by severity. See [PII Masking](#/data/pii-masking).
+Detects emails, phone numbers, credit card numbers (Luhn-validated), IBAN (mod-97-validated), and national IDs (TR — TC Kimlik checksum; DE, FR, US-SSN — shape only). Tags rows by severity. A `critical`-tier finding gates the run; the rest are reported only — see the exit-code table above. See [PII Masking](#/data/pii-masking).
 
 ### Secrets
 
@@ -122,6 +140,8 @@ Authoritative source: `forgelm/cli/_parser.py::_add_audit_subcommand`.
 | `--pii-ml-language LANG` | spaCy NLP language code for `--pii-ml` (default `en`). Set to e.g. `tr` on a Turkish corpus AND make sure the matching spaCy model is installed. |
 | `--workers N` | Worker processes for the split-level pipeline (default 1, sequential). Set to 2-4 on multi-split corpora for near-linear speedup. The audit JSON is byte-identical across worker counts (determinism contract). |
 | `--output-format {text,json}` | Stdout renderer. The `json` mode prints a machine-readable summary; `text` is the default human-readable form. |
+| `--allow-secrets` | Record credential findings without failing the run (exit `0` with a `SUPPRESSED` warning instead of `3`). The scan itself cannot be disabled. |
+| `--allow-pii` | Record critical-tier PII findings (`credit_card`, `iban`) without failing the run (exit `0` with a `SUPPRESSED` warning instead of `3`). Detection, the printed summary and `data_audit_report.json` are unaffected — only the exit code is suppressed. Independent of `--allow-secrets`. Use it for the legitimate exceptions: auditing a corpus *before* masking it with `forgelm ingest --pii-mask`, or a fixture set carrying known test card numbers. |
 
 > **Removed flags (never shipped).** Earlier drafts of this page documented `--strict`, `--dedup-algo`, `--dedup-threshold`, `--skip-pii`, `--skip-secrets`, `--skip-quality`, `--skip-leakage`, `--sample-rate`, `--remove-duplicates`, `--remove-cross-split-overlap`, `--output-clean`, `--show-leakage`, `--minhash-jaccard`, `--minhash-num-perm`, and `--add-row-ids`. None of these exist in the parser. Use the canonical names above; if you need an audit-as-gate behaviour ("warnings → exit non-zero"), wrap the `--output-format json` envelope with your own `jq`-based gate in CI.
 
@@ -194,7 +214,7 @@ Authoritative source: `forgelm/cli/_parser.py::_add_audit_subcommand`.
 |---|---|
 | `cross_split_overlap` (object with `method` / `hamming_threshold` / `pairs`) | `cross_split_leakage_pairs` (list) |
 | `source_path` **and** `source_input` | `source_input` only |
-| — | `success`, `report_path`, `near_duplicate_pairs_per_split` |
+| — | `success`, `report_path`, `near_duplicate_pairs_per_split`, `secrets_gate`, `pii_gate` |
 
 Both carry `total_samples`, `splits`, `pii_summary`, `pii_severity`, `secrets_summary`, `near_duplicate_summary`, `quality_summary`, `croissant`, `notes` and `generated_at`.
 :::
@@ -215,7 +235,15 @@ CI integrations parse individual counts to gate merges. There is no `--strict` f
 
 Verified against a real envelope: on a clean corpus this gate passes, and it fails on a corpus carrying a leaked AWS key or a high-tier PII type. The earlier form published here (`.cross_split_overlap == 0 and .pii_summary.severity != "high"`) referenced two keys that do not exist in the stdout envelope, so it evaluated `false` on *clean* input and could never go green.
 
-Note that the `secrets_summary` clause above is belt-and-braces: `forgelm audit` already exits `3` on a credential finding, so the step fails before `jq` runs unless you passed `--allow-secrets`. The clause that earns its keep is the leakage and PII pair, which the command itself does not gate on.
+Note that the `secrets_summary` clause above is belt-and-braces: `forgelm audit` already exits `3` on a credential finding, so the step fails before `jq` runs unless you passed `--allow-secrets`. The same is now true of `critical`-tier PII — `jq` never sees a corpus carrying a checksum-valid card number or IBAN unless you passed `--allow-pii`. The clauses that earn their keep are the leakage check and the `worst_tier` check at `high` and below, which the command itself does not gate on.
+
+The stdout envelope also carries a `pii_gate` object (`status`, `severity`, `critical_total`, `critical_types`, `advisory_total`, `advisory_types`, `allow_pii`) next to its `secrets_gate` sibling, and `success` is `false` when *either* gate fails. Gating on the advisory tiers directly is a one-liner:
+
+```shell
+jq -e '.pii_gate.advisory_types | has("us_ssn") | not' audit.json
+```
+
+Full key documentation for both gate objects is in [JSON Output Schemas](#/reference/json-output).
 
 ## Common pitfalls
 

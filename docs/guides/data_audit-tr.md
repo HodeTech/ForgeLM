@@ -162,9 +162,83 @@ kötü?* sorusunda sıfır rehberlik veriyor. Faz 11.5 yanına bir
 
 Tier tablosu konsensüs regülatif ağırlıklandırmadır (finansal
 kimlikler için PCI-DSS; devlet kimlikleri için GDPR Md. 9 + ENISA).
-PII şiddetine kapılayan pipeline'lar `pii_severity.worst_tier`'i
-okumalı ve `critical` / `high`'ta açık bir review olmadan yayınlamayı
-reddetmeli.
+`critical` katman artık komutun kendisini kapılar (sonraki bölüm);
+`high`'ta da durmak isteyen pipeline'lar `pii_severity.worst_tier`'i
+okumalı ve açık bir review olmadan yayınlamayı reddetmelidir.
+
+### PII kapısı — yalnızca kritik katman
+
+`forgelm audit`, tarama `critical` katman PII bulduğunda — `credit_card`
+veya `iban` — **`3`** ile çıkar (evaluation-gate hatası; sır kapısının
+kullandığı kodun ve `forgelm safety-eval`'in bir eşik tutturulamadığında
+kullandığı kodun aynısı). Eğitim corpus'undaki bir kart ya da hesap
+numarası model tarafından ezberlenir ve çıkarım zamanında yeniden
+yayılır; dolayısıyla böyle bir bulguyu raporlayıp `0` ile çıkan bir
+audit, pipeline'a her şeyin yolunda olduğunu söylemiş olur.
+
+```text
+[ERROR] PII gate FAILED (critical): 1 critical-tier PII span(s) detected (credit_card=1).
+These clear a checksum, so they are real values rather than lookalikes — a card or account
+number in training data is memorised and re-emitted at inference time. Mask it with
+`forgelm ingest --pii-mask`, or re-run `forgelm audit --allow-pii` to record the findings
+without failing the pipeline. Exiting 3.
+```
+
+**Neden yalnızca `critical` katman.** `credit_card` ve `iban`
+sayılmadan önce bir checksum'dan geçer — kartlar için Luhn, IBAN'lar
+için ISO 7064 mod-97 — dolayısıyla bir eşleşme benzer görünen bir dizi
+değil, gerçek bir değerdir. Sert bir kapıyı savunulabilir kılan özellik
+budur. Kritik-altı aileler (`de_id`, `fr_ssn`, `us_ssn`, `email`,
+`phone`) yalnızca regex şekliyle eşleşir ve *kasıtlı olarak* fazla
+raporlar; çünkü audit'in işi bir insanın değerlendirmesi için aday
+yüzeye çıkarmaktır. Kasıtlı olarak fazla raporlayan bir sinyale kapı
+koymak temiz corpus'ları düşürür — meşru örnek adreslerle dolu bir
+destek-ticket veri seti her koşuda kırmızıya döner — ve operatörün
+"kurt geldi" diye bağıran bir kapıya yaptığı ilk şey onu kapatmaktır;
+bu da güvenilir yarısını beraberinde götürür. Bu aileler yine tespit
+edilir, sayılır, katmanlanır ve rapora yazılır; yalnızca exit kodunu
+belirlemezler.
+
+`tr_id`, checksum'dan geçtiği hâlde (TC Kimlik No) kapılamayan tek
+ailedir: kapı, `PII_SEVERITY` içinde ilan edilmiş katmanı okur ve
+`tr_id` orada `high` katmanındadır. Checksum doğrulaması kapılamanın
+*ön koşuludur*, tetikleyicisi değil — bu invariant
+`tests/test_audit_pii_gate.py::TestCriticalTierIsChecksumBacked`
+tarafından pinlenir; böylece şekil-eşleşmeli bir aileyi `critical`'a
+yükseltmek, kapıyı sessizce gürültülü bir sinyalin üstüne kurmak
+yerine test suite'ini düşürür.
+
+`--allow-pii` bulguları başarısız olmadan kaydeder (exit `0` artı bir
+`SUPPRESSED` uyarısı). Tespit, yazdırılan özet ve diskteki rapor
+etkilenmez — yalnızca exit kodu bastırılır. Bir config alanı ya da env
+var değil, komut satırı bayrağıdır; böylece pipeline diff'ini okuyan
+bir reviewer onu görebilir. `--allow-secrets`'ten bağımsızdır: birini
+bastırmak diğerini kurulu bırakır. Herhangi biri process'i sonlandırmadan
+önce her iki kapı da raporlar; dolayısıyla hem sızmış bir anahtar hem
+gerçek bir kart numarası taşıyan bir corpus tek koşuda iki hatayı da
+yüzeye çıkarır.
+
+`--output-format json` altında hüküm, `secrets_gate` kardeşinin yanında
+bir `pii_gate` nesnesidir ve kapılardan herhangi biri başarısız
+olduğunda `success` `false` olur:
+
+```json
+{
+  "pii_gate": {
+    "status": "failed",
+    "severity": "critical",
+    "critical_total": 1,
+    "critical_types": {"credit_card": 1},
+    "advisory_total": 3,
+    "advisory_types": {"email": 1, "phone": 1, "us_ssn": 1},
+    "allow_pii": false
+  }
+}
+```
+
+Bulgu varken `--allow-pii` geçildiyse `status` `"passed"` değil
+`"suppressed"` olur; böylece bir CI dashboard'u temiz bir corpus ile
+feragat edilmiş bir corpus'u ayırt edebilir.
 
 ### Near-duplicate tespiti
 
@@ -491,6 +565,8 @@ forgelm audit PATH \
   [--pii-ml-language LANG] \
   [--croissant] \
   [--workers N] \
+  [--allow-secrets] \
+  [--allow-pii] \
   [--output-format {text,json}] \
   [--quiet | --log-level {DEBUG,INFO,WARNING,ERROR}]
 ```
@@ -523,7 +599,11 @@ varsayılan simhash Hamming eşiğini (3, ≈%95 benzerlik) ezer;
 default-AÇIK**) heuristic kalite skorlamasını çalıştırır;
 `--no-quality-filter` v0.6.0 öncesi opt-in semantiklerini isteyen
 operatörler için opt-out sağlar. Credential/secrets taraması **her
-zaman açık** — kapatma flag'i yoktur.
+zaman açık** — kapatma flag'i yoktur. `--allow-secrets` ve
+`--allow-pii` iki kapının (credential'lar ve kritik katman PII)
+*exit kodunu* bastırır; tespit ve raporlamaya dokunmaz ve birbirlerinden
+bağımsızdırlar. Bkz. yukarıdaki
+[PII kapısı — yalnızca kritik katman](#pii-kapısı--yalnızca-kritik-katman).
 
 > **Not:** Bu davranış kılavuzun başındaki özetle eşleşir:
 > `--output-format json` stdout'a küçük bir zarf (success flag, üst

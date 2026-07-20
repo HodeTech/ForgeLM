@@ -87,7 +87,7 @@ Verified: a corpus containing `AKIAIOSFODNN7EXAMPLE` exits `3`; the same corpus 
 **This gate did not always fire.** Until recently `forgelm audit` printed `Secrets : CRITICAL — N flagged` and exited `0`, so any credential-leak gate wired up on the strength of this page's old "exits non-zero" promise was silently dead. If you built one before this release, re-run it against a corpus with a known dummy credential and confirm you now get exit `3` — and re-audit any corpus that passed the dead gate.
 :::
 
-Secrets are the **only** finding that gates. PII, cross-split leakage, near-duplicates and quality flags are all reported at exit `0` however severe — gate on those with `jq` over the JSON envelope. See the exit-code table in [Dataset Audit](#/data/audit).
+Secrets are **not** the only finding that gates any more: `forgelm audit` has a sibling **PII gate** that exits `3` on critical-tier PII (`credit_card`, `iban` — the checksum-validated categories), suppressed by its own `--allow-pii` flag. The two are independent — passing one leaves the other armed — and both report before either exits, so a corpus carrying a leaked key *and* a real card number shows both errors in one run. Sub-critical PII (national IDs, email, phone), cross-split leakage, near-duplicates and quality flags are still reported at exit `0` however severe — gate on those with `jq` over the JSON envelope. The exit-code table and the reasoning for the PII gate's narrow scope are in [Dataset Audit](#/data/audit).
 
 ## Programmatic API
 

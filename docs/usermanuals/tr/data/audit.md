@@ -55,14 +55,32 @@ Report written to: audit/data_audit_report.json
 
 | Exit | Anlam |
 |---|---|
-| `0` | Audit tamamlandı ve kritik bir bulgu onu kapılamadı. |
+| `0` | Audit tamamlandı ve hiçbir kapı başarısız olmadı. |
 | `1` | IO hatası (giriş yolu mevcut değil veya okunamıyor) — audit hiç çalışmadı. |
 | `2` | Import hatası (gerekli bir opsiyonel extra eksik). |
-| `3` | Audit çalıştı, raporunu yazdı ve **sır kapısı başarısız oldu** — en az bir credential tespit edildi. |
+| `3` | Audit çalıştı, raporunu yazdı ve bir **kapı başarısız oldu** — ya bir credential tespit edildi (sır kapısı) ya da kritik katman PII (PII kapısı). |
 
-**Kapılayan tek bulgu sırlardır.** Tespit edilen bir credential `3` ile çıkar; çünkü eğitim verisindeki bir credential model tarafından ezberlenir ve çıkarım zamanında yeniden yayılır. Diğer her şey — PII, split-arası sızıntı, near-duplicate'ler, kalite flag'leri — ne kadar ciddi olursa olsun `0` ile raporlanır. Doğrulandı: AWS anahtarı taşıyan bir corpus `3` ile çıkar; %95 train/validation sızıntısı olan ve credential içermeyen bir corpus `0` ile çıkar.
+**Kapılayan iki bulgu vardır: credential'lar ve kritik katman PII.**
 
-Credential bulgularını pipeline'ı başarısız kılmadan kaydetmek için `--allow-secrets` geçin (bir `SUPPRESSED` uyarısıyla exit `0`). Bunu meşru istisnalar için kullanın — bir corpus'u `forgelm ingest --secrets-mask` ile temizlemeden *önce* denetlemek ya da bilinen dummy credential'lar taşıyan bir fixture seti.
+- **Sır kapısı.** Her zaman açık olan sır taramasının bulduğu her credential `3` ile çıkar — eğitim verisindeki bir credential model tarafından ezberlenir ve çıkarım zamanında yeniden yayılır. Bulguları başarısız olmadan kaydetmek için `--allow-secrets` geçirin.
+- **PII kapısı.** Bir `credit_card` veya `iban` bulgusu — şiddet tablosunun `critical` katmanı — aynı gerekçeyle `3` ile çıkar: corpus'taki bir kart ya da hesap numarası ezberlenir ve yeniden yayılır. Başarısız olmadan kaydetmek için `--allow-pii` geçirin.
+
+İki bayrak **birbirinden bağımsızdır**: birini geçmek diğerini kurulu bırakır. Her iki kapı da herhangi biri çıkmadan önce raporlar; böylece ikisinden birden kalan bir corpus tek koşuda her iki hatayı da gösterir — düzelt, yeniden koştur, ikincisini keşfet döngüsüne girmezsiniz.
+
+Diğer her şey — kritik-altı PII, split-arası sızıntı, near-duplicate'ler, kalite flag'leri — ne kadar ciddi olursa olsun `0` ile raporlanır. Doğrulandı: AWS anahtarı taşıyan bir corpus `3` ile çıkar; `4111 1111 1111 1111` taşıyan bir corpus `3` ile çıkar; %95 train/validation sızıntısı olan ve credential içermeyen bir corpus `0` ile çıkar.
+
+### PII kapısı neden `critical` ile sınırlı
+
+`critical` katmandaki iki kategori sayılmadan önce bir checksum'dan geçer — `credit_card` için Luhn, `iban` için ISO 7064 mod-97 — dolayısıyla bir eşleşme benzer görünen bir dizi değil, gerçek bir değerdir. Bir build'i düşürmeyi güvenli kılan şey budur.
+
+Geri kalanlar raporlanır ama **asla kapılamaz**: `tr_id`, `de_id`, `fr_ssn`, `us_ssn` (`high`), `email` (`medium`), `phone` (`low`). Çoğu yalnızca regex şekliyle eşleşir ve *kasıtlı olarak* fazla raporlar; çünkü audit'in işi bir insanın değerlendirmesi için aday yüzeye çıkarmaktır. Kasıtlı olarak fazla raporlayan bir sinyalin üstüne kurulan kapı temiz corpus'ları düşürür — örnek adres ve telefon numaralarıyla meşru biçimde dolu bir müşteri destek veri seti her koşuda kırmızıya döner ve operatörün "kurt geldi" diye bağıran bir kapıya yaptığı ilk şey onu kapatmaktır; bu da güvenilir yarısını beraberinde götürür.
+
+Bunun **anlamına gelmediği** iki şey:
+
+- **ForgeLM SSN'leri görmezden gelmez.** Bir `us_ssn` bulgusu tespit edilir, sayılır, `high` olarak katmanlanır, rapora yazılır ve JSON zarfında `pii_gate.advisory_types` altında yüzeye çıkar. Yalnızca exit kodunu belirlemez. Politikanız bunun için başarısız olmayı gerektiriyorsa `pii_severity.worst_tier` üzerinde `jq` ile kapı koyun (aşağıdaki [Rapor içeriği](#rapor-içeriği) bölümüne bakın).
+- **Bir e-posta build'inizi düşürmez.** Bir telefon numarası da, bir ulusal kimlik de düşürmez.
+
+Bilinmeye değer bir incelik: `tr_id` de bir checksum'dan geçer (TC Kimlik No), ama şiddet tablosunda `high` katmanında durur ve bu nedenle kapılamaz. Kapı, checksum ile doğrulanan detector listesini değil, ilan edilmiş şiddet katmanını okur — checksum ile doğrulanmış olmak kapılamanın *ön koşuludur*, tetikleyicisi değil.
 
 Kapılamayan bulgulardan herhangi birine göre CI'da kapı koymak için JSON raporunu `jq` ile süzün (aşağıdaki [Rapor içeriği](#rapor-içeriği) bölümüne bakın).
 
@@ -70,7 +88,7 @@ Kapılamayan bulgulardan herhangi birine göre CI'da kapı koymak için JSON rap
 
 ### PII
 
-E-posta, telefon, kredi kartı (Luhn doğrulamalı), IBAN ve ulusal kimlik (TR, DE, FR, US-SSN) tespit eder. Bkz. [PII Maskeleme](#/data/pii-masking).
+E-posta, telefon, kredi kartı (Luhn doğrulamalı), IBAN (mod-97 doğrulamalı) ve ulusal kimlik (TR — TC Kimlik checksum'ı; DE, FR, US-SSN — yalnızca şekil) tespit eder. Satırları şiddete göre etiketler. `critical` katmandaki bir bulgu koşuyu kapılar; geri kalanlar yalnızca raporlanır — yukarıdaki exit kodu tablosuna bakın. Bkz. [PII Maskeleme](#/data/pii-masking).
 
 ### Sırlar
 
@@ -122,6 +140,8 @@ Yetkili kaynak: `forgelm/cli/_parser.py::_add_audit_subcommand`.
 | `--pii-ml-language LANG` | `--pii-ml` için spaCy NLP dili kodu (varsayılan `en`). Türkçe corpus için örn. `tr` set edin VE eşleşen spaCy modelinin kurulu olduğundan emin olun. |
 | `--workers N` | Split-düzeyi pipeline için worker process sayısı (varsayılan 1, sıralı). Multi-split corpus'larda 2-4'e set ederek near-linear hızlanma sağlanır. Audit JSON worker sayısından bağımsız byte-identical (determinism contract). |
 | `--output-format {text,json}` | Stdout renderer. `json` modu makine-okunabilir bir özet, `text` varsayılan insan-okunabilir formdur. |
+| `--allow-secrets` | Credential bulgularını koşuyu başarısız kılmadan kaydeder (`3` yerine bir `SUPPRESSED` uyarısıyla exit `0`). Taramanın kendisi devre dışı bırakılamaz. |
+| `--allow-pii` | Kritik katman PII bulgularını (`credit_card`, `iban`) koşuyu başarısız kılmadan kaydeder (`3` yerine bir `SUPPRESSED` uyarısıyla exit `0`). Tespit, yazdırılan özet ve `data_audit_report.json` etkilenmez — yalnızca exit kodu bastırılır. `--allow-secrets`'ten bağımsızdır. Meşru istisnalar için kullanın: bir corpus'u `forgelm ingest --pii-mask` ile maskelemeden *önce* denetlemek ya da bilinen test kart numaraları taşıyan bir fixture seti. |
 
 > **Kaldırılan flag'lar (hiç ship olmadı).** Bu sayfanın eski sürümleri `--strict`, `--dedup-algo`, `--dedup-threshold`, `--skip-pii`, `--skip-secrets`, `--skip-quality`, `--skip-leakage`, `--sample-rate`, `--remove-duplicates`, `--remove-cross-split-overlap`, `--output-clean`, `--show-leakage`, `--minhash-jaccard`, `--minhash-num-perm` ve `--add-row-ids` flag'larını belgeliyordu. Bunların hiçbiri parser'da yok. Yukarıdaki kanonik adları kullanın; "uyarıları → non-zero exit" gibi audit-as-gate davranışı istiyorsanız `--output-format json` zarfını CI'da kendi `jq` tabanlı gate'inizle sarmalayın.
 
@@ -194,7 +214,7 @@ Yetkili kaynak: `forgelm/cli/_parser.py::_add_audit_subcommand`.
 |---|---|
 | `cross_split_overlap` (`method` / `hamming_threshold` / `pairs` içeren nesne) | `cross_split_leakage_pairs` (liste) |
 | `source_path` **ve** `source_input` | yalnızca `source_input` |
-| — | `success`, `report_path`, `near_duplicate_pairs_per_split` |
+| — | `success`, `report_path`, `near_duplicate_pairs_per_split`, `secrets_gate`, `pii_gate` |
 
 Her ikisi de `total_samples`, `splits`, `pii_summary`, `pii_severity`, `secrets_summary`, `near_duplicate_summary`, `quality_summary`, `croissant`, `notes` ve `generated_at` taşır.
 :::
@@ -214,7 +234,15 @@ CI entegrasyonları bireysel sayıları parse ederek merge'i kontrol eder. `--st
 
 Gerçek bir zarfa karşı doğrulandı: temiz bir corpus'ta bu kapı geçer, sızmış bir AWS anahtarı veya high-tier bir PII türü taşıyan corpus'ta ise başarısız olur. Burada daha önce yayımlanan biçim (`.cross_split_overlap == 0 and .pii_summary.severity != "high"`) stdout zarfında bulunmayan iki anahtara atıfta bulunuyordu; dolayısıyla *temiz* girdide `false` değerlendiriliyor ve asla yeşile dönemiyordu.
 
-Yukarıdaki `secrets_summary` yan tümcesinin bir ek güvence olduğunu unutmayın: `forgelm audit` bir credential bulgusunda zaten `3` ile çıkar; dolayısıyla `--allow-secrets` geçmediyseniz adım `jq` çalışmadan önce başarısız olur. Asıl işe yarayan yan tümce, komutun kendisinin kapılamadığı sızıntı ve PII çiftidir.
+Yukarıdaki `secrets_summary` yan tümcesinin bir ek güvence olduğunu unutmayın: `forgelm audit` bir credential bulgusunda zaten `3` ile çıkar; dolayısıyla `--allow-secrets` geçmediyseniz adım `jq` çalışmadan önce başarısız olur. Aynısı artık `critical` katman PII için de geçerli — `--allow-pii` geçmediğiniz sürece `jq`, checksum'ı geçerli bir kart numarası veya IBAN taşıyan bir corpus'u hiç görmez. Asıl işe yarayan yan tümceler, komutun kendisinin kapılamadığı sızıntı kontrolü ile `high` ve altındaki `worst_tier` kontrolüdür.
+
+stdout zarfı ayrıca `secrets_gate` kardeşinin yanında bir `pii_gate` nesnesi taşır (`status`, `severity`, `critical_total`, `critical_types`, `advisory_total`, `advisory_types`, `allow_pii`) ve `success`, kapılardan *herhangi biri* başarısız olduğunda `false` olur. Advisory katmanlara doğrudan kapı koymak tek satırlıktır:
+
+```shell
+jq -e '.pii_gate.advisory_types | has("us_ssn") | not' audit.json
+```
+
+Her iki kapı nesnesinin tam anahtar dokümantasyonu [JSON Çıktı Şemaları](#/reference/json-output) sayfasındadır.
 
 ## Sık hatalar
 

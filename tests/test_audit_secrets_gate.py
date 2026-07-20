@@ -90,16 +90,24 @@ class TestSecretsGateExitCode:
 
 
 class TestGateIsSecretsOnly:
-    """Blast-radius guard: only critical secrets gate. Nothing else may
-    start failing pipelines that pass today."""
+    """Blast-radius guard: only *critical* findings gate.
 
-    def test_pii_findings_do_not_gate(self, tmp_path):
+    This class originally asserted that secrets were the sole gate and that
+    PII never failed a run.  The critical-tier PII gate (``credit_card`` /
+    ``iban``) deliberately changed that half — see
+    ``tests/test_audit_pii_gate.py`` — so what remains here is the boundary
+    that did *not* move: every sub-critical signal the audit reports must
+    still leave the exit code alone.
+    """
+
+    def test_sub_critical_pii_findings_do_not_gate(self, tmp_path):
+        """Shape-matched PII over-reports by design; it may never fail a run."""
         path = tmp_path / "pii.jsonl"
         _write_jsonl(
             path,
             [
                 {"text": "Contact me at alice@example.com or +1 555 010 1234."},
-                {"text": "My card is 4111 1111 1111 1111 and I live in Ankara."},
+                {"text": "SSN 123-45-6789, national id 12345678901, and I live in Ankara."},
             ],
         )
         _run_data_audit(str(path), str(tmp_path / "audit"), "text")  # no SystemExit

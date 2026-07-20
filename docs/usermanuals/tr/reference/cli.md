@@ -97,8 +97,14 @@ $ forgelm audit INPUT_PATH \
     [--croissant] \
     [--pii-ml] [--pii-ml-language LANG] \
     [--workers N] \
+    [--allow-secrets] [--allow-pii] \
     [--output-format {text,json}]
 ```
+
+| Bayrak | Açıklama |
+|---|---|
+| `--allow-secrets` | Credential bulgularını başarısız olmadan kaydeder (`3` yerine bir `SUPPRESSED` uyarısıyla exit `0`). |
+| `--allow-pii` | Kritik katman PII bulgularını (`credit_card`, `iban`) başarısız olmadan kaydeder. `--allow-secrets`'ten bağımsızdır. |
 
 `--workers N` split düzeyinde paralellik sağlar; on-disk JSON worker sayısından bağımsız olarak byte-identical (sadece `generated_at` zamanı değişir). Tam per-flag tablosu — `forgelm/cli/_parser.py::_add_audit_subcommand`'a senkron yetkili kanonik liste — [Veri Denetimi](#/data/audit) sayfasındadır. Bu sayfanın eski sürümleri `--strict`, `--skip-pii`, `--skip-secrets`, `--skip-quality`, `--skip-leakage`, `--remove-duplicates`, `--remove-cross-split-overlap`, `--output-clean`, `--show-leakage`, `--minhash-jaccard`, `--minhash-num-perm`, `--dedup-algo`, `--dedup-threshold`, `--sample-rate` ve `--add-row-ids` flag'larını belgeliyordu — hiçbiri parser'da yok. Yukarıdaki kanonik adları kullanın.
 
@@ -334,20 +340,20 @@ $ forgelm --config configs/run.yaml --output-format json | tee run.log
 
 ### "Önce audit, temizse eğit"
 
-`forgelm audit` **yalnızca secret'lar üzerinden** gate uygular: her zaman açık olan kimlik-bilgisi taraması bir şey bulduğunda `3`, aksi halde `0` ile çıkar. Dolayısıyla kimlik-bilgisi durumu için `&&` doğru şekilde zincirlenir:
+`forgelm audit` **iki şey üzerinden** gate uygular: her zaman açık olan kimlik-bilgisi taraması bir şey bulduğunda ve PII taraması kritik katman PII (`credit_card` / `iban` — checksum ile doğrulanan kategoriler) bulduğunda `3` ile çıkar. Aksi halde `0` ile çıkar. Dolayısıyla her iki durum için de `&&` doğru şekilde zincirlenir:
 
 ```shell
-$ forgelm audit data/           # kimlik-bilgisi taraması bir şey bulursa 3 ile çıkar
+$ forgelm audit data/           # kimlik-bilgisi veya kritik katman PII bulgusunda 3 ile çıkar
 $ forgelm --config configs/run.yaml
 ```
 
 Bunları ayrı `set -e` adımları olarak çalıştırın (ya da `&&` ile birleştirin); audit `3` ile çıktığında eğitim adımı atlanır.
 
 :::warn
-**PII, sızıntı ve kalite gate uygulamaz.** `worst_tier: "high"` seviyesinde düz metin SSN taşıyan ya da train/eval örtüşmesi olan bir corpus, içinde kimlik bilgisi bulunmadığı sürece `0` ile çıkar. Politikanız bunları da kapsıyorsa zarfı kendiniz parse edin:
+**Kritik-altı PII, sızıntı ve kalite gate uygulamaz.** `worst_tier: "high"` seviyesinde düz metin SSN taşıyan ya da train/eval örtüşmesi olan bir corpus, içinde kimlik bilgisi ve kritik katman PII bulunmadığı sürece `0` ile çıkar. Ulusal kimlikler, e-postalar ve telefon numaraları şekil üzerinden eşleşir ve kasıtlı olarak fazla raporlar; bunlara kapı koymak temiz corpus'ları düşürürdü — tam gerekçe için bkz. [Veri Seti Denetimi](#/data/audit). Politikanız bunları da kapsıyorsa zarfı kendiniz parse edin:
 
 ```shell
-$ forgelm audit data/ --output-format json > audit.json   # secret'larda 3 ile çıkar
+$ forgelm audit data/ --output-format json > audit.json   # secret'larda veya kritik PII'de 3 ile çıkar
 $ jq -e '(.pii_severity.worst_tier // "none") != "high" and (.cross_split_leakage_pairs | length) == 0' audit.json
 $ forgelm --config configs/run.yaml
 ```
@@ -355,7 +361,7 @@ $ forgelm --config configs/run.yaml
 `set -e` altında (ya da GitHub Actions'ın varsayılanında) başarısız olan `jq -e`, eğitim başlamadan işi durdurur. `pii_severity.worst_tier` temiz bir corpus'ta `null` olduğundan `// "none"` yedeğini koruyun. Tam zarf için bkz. [JSON Çıktı Şemaları](#/reference/json-output).
 :::
 
-Kimlik-bilgisi bulgularını başarısız olmadan kaydetmek için `--allow-secrets` geçirin — zaten bunları içerdiğini bildiğiniz bir corpus'u denetlediğiniz meşru durum için.
+Kimlik-bilgisi bulgularını başarısız olmadan kaydetmek için `--allow-secrets` geçirin — zaten bunları içerdiğini bildiğiniz bir corpus'u denetlediğiniz meşru durum için. `--allow-pii` aynı şeyi PII kapısı için yapar; ikisi bağımsızdır, birini geçmek diğerini kurulu bırakır.
 
 ### "İnsan onay gate'iyle eğit; sonra promote et"
 

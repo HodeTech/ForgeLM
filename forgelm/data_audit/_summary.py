@@ -167,6 +167,58 @@ def secrets_gate_verdict(secrets_summary: Dict[str, int]) -> Dict[str, Any]:
     }
 
 
+def pii_gate_verdict(pii_summary: Dict[str, int]) -> Dict[str, Any]:
+    """Classify an audit's PII findings into a pass/fail gate verdict.
+
+    Why this gate is narrower than the secrets one
+    ----------------------------------------------
+    Every family in :data:`forgelm.data_audit.SECRET_TYPES` is critical by
+    construction, so ``secrets_gate_verdict`` fails on any hit.  PII is not
+    like that, and the project already says so: :data:`PII_SEVERITY` ranks
+    the families ``critical`` (``credit_card``, ``iban`` — financial and
+    fully reversible identity theft) down through ``high`` (government
+    identifiers), ``medium`` (email) and ``low`` (phone).  This gate reads
+    that table rather than introducing a second opinion about severity;
+    only the ``critical`` tier decides the exit code.
+
+    That line is not merely cautious, it is the only one a gate can hold.
+    ``detect_pii`` runs the two critical families through a checksum — Luhn
+    for cards, ISO 7064 mod-97 for IBANs — while ``us_ssn``, ``fr_ssn``,
+    ``de_id``, ``email`` and ``phone`` are matched on regex shape alone and
+    *deliberately* over-report, because the audit is meant to surface
+    candidates for a human to judge.  A gate built on a deliberately
+    over-reporting signal fails clean corpora: a customer-support dataset
+    legitimately full of example addresses would go red on every run, and
+    the first thing an operator does with a gate that cries wolf is switch
+    it off — taking the trustworthy half down with it.  The invariant that
+    every ``critical`` family is checksum-backed is pinned by a test
+    against :data:`forgelm.data_audit._pii_regex.CHECKSUM_VALIDATED_PII_TYPES`,
+    so promoting a shape-matched family to ``critical`` fails the suite
+    rather than silently arming the gate on a noisy signal.
+
+    Sub-critical findings are still counted and still reported — they
+    appear in ``advisory_types``, in ``pii_severity`` and in the audit
+    report — they just do not decide the exit code.
+
+    Returns ``{"failed": bool, "severity": "critical"|None,
+    "critical_total": int, "critical_types": {...},
+    "advisory_total": int, "advisory_types": {...}}``.  Pure — callers
+    decide what to do with it; nothing here exits or logs.
+    """
+    present = {kind: count for kind, count in sorted((pii_summary or {}).items()) if count > 0}
+    critical = {k: v for k, v in present.items() if PII_SEVERITY.get(k) == "critical"}
+    advisory = {k: v for k, v in present.items() if PII_SEVERITY.get(k) != "critical"}
+    total = sum(critical.values())
+    return {
+        "failed": total > 0,
+        "severity": "critical" if total else None,
+        "critical_total": total,
+        "critical_types": critical,
+        "advisory_total": sum(advisory.values()),
+        "advisory_types": advisory,
+    }
+
+
 def _quality_summary_notes(quality_summary: Dict[str, Any]) -> List[str]:
     """Operator-actionable note for the heuristic quality filter."""
     if not quality_summary or not quality_summary.get("samples_flagged"):
@@ -439,6 +491,7 @@ __all__ = [
     "_cross_split_leak_notes",
     "_secrets_summary_notes",
     "secrets_gate_verdict",
+    "pii_gate_verdict",
     "_quality_summary_notes",
     "_fold_outcome_into_summary",
     "_build_quality_summary",
