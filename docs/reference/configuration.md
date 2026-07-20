@@ -216,7 +216,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `track_categories` | bool | `false` | Parse Llama Guard S1-S14 harm categories |
 | `severity_thresholds` | dict | `null` | Per-severity limits: `{"critical": 0, "high": 0.01, "medium": 0.05}` |
 | `batch_size` | int | `8` | Batched generation size for safety evaluation. `1` disables batching; raise for throughput on large VRAM, lower to reduce OOM risk on small VRAM. |
-| `include_eval_samples` | bool | `false` | Persist raw `prompt` / `response` strings to `safety_results.json`. **Off by default** for GDPR / EU AI Act Art. 10 privacy — adversarial prompts and responses may surface sensitive content. Opt in only for debugging. |
+| `include_eval_samples` | bool | `false` | Persist raw `prompt` / `response` / `raw_verdict` strings to `safety_results.json`. **Off by default** for GDPR / EU AI Act Art. 10 privacy — adversarial prompts and responses may surface sensitive content, and `raw_verdict` (the guard's own generated text under `classifier_mode: generation`) can echo or continue the probe when the guard is misconfigured. Opt in only for debugging. |
 
 #### `evaluation.llm_judge` (Optional)
 

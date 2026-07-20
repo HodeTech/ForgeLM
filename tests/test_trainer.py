@@ -659,6 +659,189 @@ class TestGateApplication:
 
 
 @pytest.mark.skipif(not torch_available, reason="torch not installed")
+class TestUnscoredVerdictsDoNotDestroyTheModel:
+    """End-to-end: real ``run_safety_evaluation`` → real ``_apply_safety_result``.
+
+    No mocked SafetyResult anywhere in this class.  A hand-built result proves
+    the trainer honours ``evaluation_completed``; it proves nothing about
+    whether the safety package sets it on the run that actually matters, and
+    the seam between the two is exactly where this defect lived: the package
+    reported a plain gate failure for six malformed verdicts, and the trainer
+    dutifully deleted a model nothing had ever measured as unsafe.
+
+    ``_revert_model`` is left unpatched and run against a real directory, so
+    "the model survived" is asserted against the filesystem rather than
+    against a mock's call count.
+    """
+
+    def _trainer(self, tmp_path, auto_revert=True):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model"},
+            lora={},
+            training={"output_dir": str(tmp_path)},
+            data={"dataset_name_or_path": "org/dataset"},
+            evaluation={"auto_revert": auto_revert},
+        )
+        trainer = ForgeTrainer.__new__(ForgeTrainer)
+        trainer.config = config
+        trainer.dataset = {"train": ["x"], "validation": ["y"]}
+        trainer.checkpoint_dir = str(tmp_path)
+        trainer.run_name = "unscored_e2e"
+        trainer.notifier = MagicMock()
+        trainer.audit = MagicMock()
+        return trainer
+
+    def _evaluate(self, tmp_path, monkeypatch, verdicts):
+        """Run the real safety pass over a scripted sequence of guard verdicts."""
+        import json
+
+        from forgelm import safety as _safety
+
+        n = len(verdicts)
+        probes = tmp_path / "probes.jsonl"
+        probes.write_text("".join(json.dumps({"prompt": f"probe {i}"}) + "\n" for i in range(n)))
+        monkeypatch.setattr(_safety._orchestrator, "_generate_safety_responses", lambda *a, **k: ["resp"] * n)
+        monkeypatch.setattr(_safety._orchestrator, "_release_model_from_gpu", lambda *a, **k: None)
+        monkeypatch.setattr(
+            _safety._score_generation, "_load_generative_guard", lambda *a, **k: (MagicMock(), MagicMock())
+        )
+        script = iter(verdicts)
+        monkeypatch.setattr(_safety._score_generation, "_generate_guard_verdict", lambda *a, **k: next(script))
+        return _safety.run_safety_evaluation(
+            model=MagicMock(),
+            tokenizer=MagicMock(),
+            classifier_path="meta-llama/Llama-Guard-3-8B",
+            test_prompts_path=str(probes),
+            output_dir=str(tmp_path / "out"),
+        )
+
+    def _final_model(self, tmp_path):
+        final = tmp_path / "final_model"
+        final.mkdir()
+        (final / "adapter_model.safetensors").write_text("weights")
+        return final
+
+    def test_six_hiccups_in_a_hundred_do_not_delete_the_model(self, tmp_path, monkeypatch):
+        # The reproduction: an ordinary CUDA OOM / off-protocol reply rate of
+        # 6% clears the default max_safety_regression of 0.05 on its own.
+        safety = self._evaluate(tmp_path, monkeypatch, ["safe"] * 94 + [""] * 6)
+        trainer = self._trainer(tmp_path, auto_revert=True)
+        final = self._final_model(tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(final))
+
+        cont = trainer._apply_safety_result(safety, result, {}, str(final))
+
+        assert final.exists(), "a run with no scored-unsafe verdict must not lose its model"
+        assert (final / "adapter_model.safetensors").exists()
+        assert cont is True, "pipeline continues — no usable evidence, not a measured failure"
+        assert result.reverted is False
+        # Failed, and recorded as failed. Withheld revert is not a pass.
+        assert result.safety_passed is False
+        assert result.error and "NOT auto-reverted" in result.error
+
+    def test_genuinely_unsafe_model_is_still_deleted(self, tmp_path, monkeypatch):
+        # The non-negotiable direction. Well-formed unsafe verdicts are a
+        # measurement, and auto-revert must fire on them exactly as before.
+        safety = self._evaluate(tmp_path, monkeypatch, ["unsafe\nS1"] * 40 + ["safe"] * 60)
+        trainer = self._trainer(tmp_path, auto_revert=True)
+        final = self._final_model(tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(final))
+
+        cont = trainer._apply_safety_result(safety, result, {}, str(final))
+
+        assert not final.exists(), "a measured unsafe model must still be reverted"
+        assert cont is False, "halt → exit 3"
+        assert result.reverted is True
+
+    def test_mixed_run_failing_on_scored_evidence_alone_still_reverts(self, tmp_path, monkeypatch):
+        # Unscored rows present, but the scored rows breach the gate without
+        # them. Evidence of harm exists, so revert proceeds.
+        safety = self._evaluate(tmp_path, monkeypatch, ["unsafe\nS1"] * 20 + [""] * 6 + ["safe"] * 74)
+        trainer = self._trainer(tmp_path, auto_revert=True)
+        final = self._final_model(tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(final))
+
+        cont = trainer._apply_safety_result(safety, result, {}, str(final))
+
+        assert not final.exists()
+        assert cont is False
+        assert result.reverted is True
+
+    def test_wholly_non_guard_checkpoint_still_abstains(self, tmp_path, monkeypatch):
+        # The Step-7 case, re-pinned through the trainer rather than a mock.
+        safety = self._evaluate(tmp_path, monkeypatch, ["I'm sorry, I can't help with that."] * 10)
+        trainer = self._trainer(tmp_path, auto_revert=True)
+        final = self._final_model(tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(final))
+
+        cont = trainer._apply_safety_result(safety, result, {}, str(final))
+
+        assert final.exists()
+        assert cont is True
+        assert result.reverted is False
+        assert "could not be performed" in result.error
+
+    def test_kept_model_log_does_not_blame_auto_revert(self, tmp_path, monkeypatch, caplog):
+        # The operator has auto_revert=true. Telling them the model was kept
+        # "because auto_revert=false" is a plain lie about their own config, on
+        # the one path where they most need to trust the log.
+        import logging
+
+        safety = self._evaluate(tmp_path, monkeypatch, ["safe"] * 94 + [""] * 6)
+        trainer = self._trainer(tmp_path, auto_revert=True)
+        final = self._final_model(tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(final))
+
+        with caplog.at_level(logging.WARNING, logger="forgelm.trainer"):
+            trainer._apply_safety_result(safety, result, {}, str(final))
+
+        kept_lines = [r.getMessage() for r in caplog.records if "keeping model" in r.getMessage()]
+        assert kept_lines, "the kept-model line must still be emitted"
+        assert not any("auto_revert=false" in line for line in kept_lines)
+        assert any("no usable evidence" in line for line in kept_lines)
+
+    def test_audit_payload_separates_scored_from_unscored(self, tmp_path, monkeypatch):
+        # EU AI Act Art. 12: the append-only record has to let an auditor tell
+        # a measured safety failure from one the classifier never answered.
+        safety = self._evaluate(tmp_path, monkeypatch, ["unsafe\nS1"] * 20 + [""] * 4 + ["safe"] * 76)
+        trainer = self._trainer(tmp_path, auto_revert=False)
+        final = self._final_model(tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(final))
+
+        trainer._apply_safety_result(safety, result, {}, str(final))
+
+        payload = next(
+            call.kwargs
+            for call in trainer.audit.log_event.call_args_list
+            if call.args and call.args[0] == "safety.evaluation_completed"
+        )
+        assert payload["passed"] is False
+        assert payload["evaluation_completed"] is True  # scored rows fail on their own
+        assert payload["scored_unsafe_count"] == 20
+        assert payload["unscored_count"] == 4
+        assert payload["total_count"] == 100
+
+    def test_audit_payload_marks_the_withheld_run(self, tmp_path, monkeypatch):
+        safety = self._evaluate(tmp_path, monkeypatch, ["safe"] * 94 + [""] * 6)
+        trainer = self._trainer(tmp_path, auto_revert=True)
+        final = self._final_model(tmp_path)
+        result = TrainResult(success=True, metrics={}, final_model_path=str(final))
+
+        trainer._apply_safety_result(safety, result, {}, str(final))
+
+        payload = next(
+            call.kwargs
+            for call in trainer.audit.log_event.call_args_list
+            if call.args and call.args[0] == "safety.evaluation_completed"
+        )
+        assert payload["evaluation_completed"] is False
+        assert payload["scored_unsafe_count"] == 0
+        assert payload["unscored_count"] == 6
+
+
 class TestBaselineLossCapture:
     """F-P2-FAB-17: _measure_baseline_loss gating + happy / fallback / missing paths."""
 

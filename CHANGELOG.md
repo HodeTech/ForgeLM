@@ -340,6 +340,74 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   `chat_template` nor `get_chat_template`, or a `get_chat_template` that fails
   structurally, is treated as undetermined and allowed through, so custom
   tokenizers are not refused on suspicion.
+- **A safety run that could not read its verdicts no longer reports the model
+  as unsafe.** "Unscored" is a probe pair the verifier was asked about and came
+  back with nothing usable on: a malformed generative Llama-Guard verdict (no
+  parsable `safe`/`unsafe` first line — including the empty string a CUDA OOM
+  decodes to), or a crashed `text-classification` pipeline call. Each is still
+  scored unsafe **fail-closed**, which is the right call per pair: a verdict you
+  could not read is not evidence of safety, and softening it would re-open the
+  false PASS an adversarial fine-tune earns by reliably derailing the guard into
+  off-protocol output. What was wrong is that the aggregate merged two different
+  facts. When **at or above half** the probe set is unscored, the run now reports
+  that the evaluation could not be performed rather than that the model failed:
+  `evaluation_completed=False`, which the trainer already declines to
+  auto-revert on and `forgelm safety-eval` already maps to exit `2`. So exit `3`
+  keeps meaning "the gate said no" and `2` now also covers "the verifier never
+  answered". This closed the 100%-unscored case — the misconfiguration that
+  motivates it (`classifier_mode: generation` aimed at a plain chat model) has a
+  chat template, sails past the pre-flight above, and used to land at 100%
+  unsafe and delete a good model naming no cause. The same gate now covers the
+  `classification` path, whose `except` branch carried the identical defect
+  (`forgelm/safety/_gates.py`, `_orchestrator.py`, `_score_generation.py`,
+  `_score_classification.py`).
+- **…and a run with only a handful of unreadable verdicts no longer loses its
+  model either.** The half-the-probe-set rule above left the far more likely
+  case open. `evaluation.safety.max_safety_regression` defaults to **0.05**, so
+  on a 100-probe set **six** malformed verdicts — an ordinary transient CUDA OOM
+  during generation, or occasional off-protocol replies from a genuine guard —
+  cleared the ceiling on their own, failed the run, and with `auto_revert` on
+  deleted the model, under a `failure_reason` reading character-for-character
+  like a real safety failure. Two fixes, neither of which is a new constant:
+  1. **Failing the gate and deleting the model now carry different burdens of
+     proof.** Failing needs *absence of evidence of safety* — an unread verdict
+     supplies none, so the run still fails, always. Deleting needs *presence of
+     evidence of harm* — an unread verdict is not that, and auto-revert is
+     irreversible and runs unattended. When the same gate battery re-run over
+     the run's own counters with every unscored pair treated as safe would have
+     **passed**, the failure is wholly attributable to verdicts nobody could
+     read: the run is failed and `evaluation_completed=False`, so it is kept,
+     not reverted. This is a counterfactual over the run's existing counters,
+     **not** a lowered abstain ratio — a lower ratio only moves the cliff to
+     another arbitrary number and still hands the operator the same unreadable
+     reason on either side of it. A genuinely unsafe model is scored unsafe in
+     *well-formed* verdicts, which are scored, not unscored; its counterfactual
+     re-run drops nothing, still fails, and auto-reverts exactly as before. If
+     the scored rows alone breach any gate, nothing is withheld.
+  2. **The failure reason now decomposes its own unsafe count.** Any
+     `failure_reason` produced with a non-zero unscored count gains a clause
+     naming how many pairs the classifier actually read as unsafe versus how
+     many produced no usable verdict and were counted unsafe fail-closed.
+     Previously six malformed verdicts and six genuinely harmful completions
+     produced the identical sentence, so an operator's first read of a guard
+     hiccup was "my model is unsafe".
+  `SafetyResult` gains `unscored_count` and `scored_unsafe_count`
+  (**additive**; invariant `scored_unsafe_count + unscored_count ==
+  unsafe_count`), and the unscored warning is now logged in **both** scoring
+  modes and on passing runs too — a clean run with a creeping unscored count is
+  the early warning that the guard is degrading, previously visible nowhere.
+  **Artefact impact (both additive; no key renamed or removed).**
+  `safety_results.json` gains `scored_unsafe_count`, `unscored_count` and
+  `evaluation_completed`, so a reader of the artefact alone can tell a gate
+  failure from an unusable evaluation — previously it recorded `passed: false`
+  for both. `safety_trend.jsonl` gains the same three, because a run-over-run
+  slide in `safe_ratio` driven entirely by a rising `unscored_count` reads as a
+  model getting less safe until those columns sit beside it; they are omitted
+  for library callers still using `_append_trend_entry`'s pre-existing
+  four-argument signature. The `safety.evaluation_completed` **audit event
+  payload is unchanged**, so `docs/reference/audit_event_catalog.md` needs no
+  new row (`forgelm/safety/_gates.py`, `_types.py`, `_orchestrator.py`,
+  `_results.py`).
 - **`forgelm verify-annex-iv --pipeline` raised a tamper alarm on every clean
   pipeline run.** If you investigated an integrity failure on a chain you had
   just produced yourself, found the evidence intact, and could not work out what
@@ -820,6 +888,51 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Documentation
 
+- **`docs/reference/safety_eval_subcommand.md` (+ TR) corrected against the
+  gate's new behaviour.** Two claims went stale the moment the unscored
+  attribution landed, both of them the kind a CI author codes against. The
+  exit-code table described `2` as load-time failures only, when any
+  `evaluation_completed=False` result now routes there — including the two
+  abstentions decided *after* scoring; and the JSON-envelope section stated
+  `failure_reason` "is one of three fixed formats", which a prepended
+  abstention reason and an appended decomposition clause both break. The
+  envelope note now tells consumers to branch on `passed` and
+  `evaluation_completed` rather than pattern-match the prose. A new
+  "Unscored probes and the two abstentions" section (+ TR mirror) defines
+  what unscored means, why it is counted unsafe fail-closed, and why neither
+  abstention can ever promote a model.
+- **`evaluation.safety.include_eval_samples` now says what it actually
+  exposes.** All of its documentation surfaces advertised only `prompt` and
+  `response`, silent on `raw_verdict` — the generative guard's own output,
+  truncated to 200 characters — which was added to the same redaction set
+  alongside generation-based scoring and is therefore written to disk by the
+  same switch. That matters because a *misconfigured* guard echoes or continues
+  the adversarial probe rather than answering it, so the field can carry
+  precisely the content the other two exist to strip; an operator turning on a
+  debugging flag has to know that. Corrected in `docs/reference/configuration.md`
+  (+ TR), `docs/usermanuals/{en,tr}/evaluation/safety.md` (prose + parameter
+  table) and `docs/usermanuals/{en,tr}/reference/configuration.md`, and noted
+  against the original redaction entry in `docs/roadmap/releases.md`.
+- **`docs/reference/audit_event_catalog-tr.md` re-synced with the EN sibling.**
+  Structurally mirrored but false in meaning on three counts — the fourth such
+  TR meaning-drift this cycle, and like the previous three the parity guard was
+  green throughout because it compares heading spines, not claims. The TR page
+  still told a Turkish reader that the guard's hardcoded `_EVENT_NAMESPACES`
+  list is what hides `quickstart_audit.jsonl` (that list has been **deleted**;
+  the `event_type` key is now the only thing hiding it), still described `cli`
+  as a namespace the guard recognises, and omitted the entire
+  `safety_trend.jsonl` subsection — the second non-Article-12 log, whose whole
+  point is that it looks like an audit trail and is not one.
+- **Phase 14.5 Task 5's closure is now consistent across all five places that
+  record it.** `docs/roadmap/phase-14-5-pipeline-hardening.md` and
+  `docs/roadmap/risks-and-decisions.md` recorded it **NOT SCHEDULED**; on the
+  same day `docs/roadmap.md`, its TR mirror and `docs/roadmap/releases.md`'s
+  unreleased v0.9.x section all still said it "stays open" / "still open". A
+  reader arriving from the public roadmap was told the opposite of the decision.
+  All five now state the closure and its condition-gated revisit criterion. No
+  guard reconciles a status duplicated across five documents — this is the same
+  hand-maintenance shape `check_deprecation_targets.py` and
+  `check_release_record_sync.py` were each built to close after it rotted twice.
 - **What was investigated and deliberately *not* built is now on the record.**
   Three items were swept as undelivered promises and closed as decisions rather
   than left to rot as open ones; each is written with a revisit condition

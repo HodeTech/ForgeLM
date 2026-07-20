@@ -100,7 +100,7 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 
 ### CLI / göç
 
-_Ayrılmış ad alanı — `cli`, tanınan bir event-namespace önekidir (aşağıdaki "Yeni bir event eklemek" bölümüne bakın), ancak `forgelm/` içindeki hiçbir kod şu anda bir `cli.*` event'i emit etmiyor. Bu bölüme henüz satır eklenmedi._
+_Ayrılmış ad alanı — `cli.*`, gelecekteki CLI/göç event'leri için tutulmaktadır, ancak `forgelm/` içindeki hiçbir kod şu anda böyle bir event emit etmiyor. Bu bölüme henüz satır eklenmedi. Ayrılmayı zorlayan bir mekanizma da yok: katalog guard'ı artık ad alanı beyaz listesi tutmadığından, bir `cli.*` event'i diğer her event ile tamamen aynı şekilde karşılaştırılır._
 
 ### Audit-sistem event'leri (meta)
 
@@ -110,21 +110,27 @@ _Ayrılmış ad alanı — `cli`, tanınan bir event-namespace önekidir (aşağ
 
 ## Yeni bir event eklemek
 
-1. Mevcut isim alanlarını (`training.*`, `compliance.*`, `audit.*`, `human_approval.*`, `model.*`, `cli.*`) takip eden noktalı bir ad seçin.
+1. Noktalı, lower-snake-case bir ad seçin. Mevcut bir ad alanını tercih edin (`pipeline.*`, `training.*`, `evaluation.*`, `benchmark.*`, `safety.*`, `judge.*`, `model.*`, `human_approval.*`, `compliance.*`, `data.*`, `cache.*`, `audit.*`, `approval.*`) ama yeni bir ad alanı da sorun değil — [`tools/check_audit_event_catalog.py`](../../tools/check_audit_event_catalog.py) bir emisyon bağlamındaki her noktalı adı eşleştirir ve yeni ad alanının ona öğretilmesi gerekmez. Guard eskiden hardcoded bir ad alanı listesi tutuyordu; o liste `evaluation.*`'ı karşılaştırmasının **her iki** tarafından da sessizce gizliyordu. Liste silindi.
 2. Yukarıdaki tabloya, payload anahtarları ve desteklediği Madde dahil olmak üzere bir satır ekleyin.
 3. Aynı satırı İngilizce kardeş katalog `audit_event_catalog.md`'ye de ekleyin (EN ↔ TR senkron kalmalı).
 4. `AuditLogger.log_event(event, **payload)` üzerinden emit edin. `audit_log.jsonl`'a doğrudan `json.dump` çağırmayın; hash zinciri kanonik yazıcıya bağımlıdır.
 
 ## Bu kataloğun kapsamadığı log'lar
 
-Ağaçta denetim izine benzeyen ama Madde 12 zincirinin parçası **olmayan** bir JSONL log'u daha var. Kimse yeniden keşfetmek zorunda kalmasın diye buraya kaydediliyor.
+Ağaçta denetim izine benzeyen ama Madde 12 zincirinin parçası **olmayan** iki JSONL log'u daha var. Kimse yeniden keşfetmek zorunda kalmasın diye buraya kaydediliyorlar.
 
-`forgelm quickstart`, [`forgelm/quickstart.py`](../../forgelm/quickstart.py) içindeki tek bir çağrı noktasından `<config-dizini>/quickstart_audit.jsonl` dosyasına tam olarak bir kayıt yazar: `quickstart.model_selection`. Bu bilinçli olarak bir **kolaylık log'udur**: zincirsizdir (`_hmac` yok, önceki-kayıt hash'i yok), koşum bağlamı ve çözülmüş model revizyonu taşımaz, yazımları best-effort'tur ve hata durumunda loglanıp yutulur. Kaydettiği şey için doğru ağırlık budur — hangi template ve VRAM değerinin hangi model seçimini ürettiği; henüz iliştirilecek bir eğitim koşumu yokken. Hiçbir şeye dayanmayan ikinci bir hash-zincirli iz, dürüst tek bir zincir artı açıkça etiketlenmiş bir kolaylık log'undan *daha zayıf* uyumluluk kanıtı olurdu; bu yüzden "yükseltilmemelidir". Madde 12 artefaktı, yukarıda anlatılan `compliance.AuditLogger`'ın `audit_log.jsonl` dosyası olmaya devam eder.
+**1. `quickstart_audit.jsonl`.** `forgelm quickstart`, [`forgelm/quickstart.py`](../../forgelm/quickstart.py) içindeki tek bir çağrı noktasından `<config-dizini>/quickstart_audit.jsonl` dosyasına tam olarak bir kayıt yazar: `quickstart.model_selection`. Bu bilinçli olarak bir **kolaylık log'udur**: zincirsizdir (`_hmac` yok, önceki-kayıt hash'i yok), koşum bağlamı ve çözülmüş model revizyonu taşımaz, yazımları best-effort'tur ve hata durumunda loglanıp yutulur. Kaydettiği şey için doğru ağırlık budur — hangi template ve VRAM değerinin hangi model seçimini ürettiği; henüz iliştirilecek bir eğitim koşumu yokken. Hiçbir şeye dayanmayan ikinci bir hash-zincirli iz, dürüst tek bir zincir artı açıkça etiketlenmiş bir kolaylık log'undan *daha zayıf* uyumluluk kanıtı olurdu; bu yüzden "yükseltilmemelidir". Madde 12 artefaktı, yukarıda anlatılan `compliance.AuditLogger`'ın `audit_log.jsonl` dosyası olmaya devam eder.
 
 Oraya event ekleyecek biri için iki sonuç:
 
-- **Katalog guard'ı o dosyayı göremez.** [`tools/check_audit_event_catalog.py`](../../tools/check_audit_event_catalog.py) onu birbirinden bağımsız iki nedenle kaçırır: `quickstart` onun `_EVENT_NAMESPACES` listesinde yoktur ve anahtar, emisyon regex'inin eşleştirdiği `event` yerine `event_type`'tır. Dosyayı hiç incelememiş olarak yeşil rapor verir. Geçen bir katalog guard'ını `quickstart.py` için kapsam saymayın.
+- **Katalog guard'ı o dosyayı göremez.** [`tools/check_audit_event_catalog.py`](../../tools/check_audit_event_catalog.py) onu kaçırır, çünkü anahtar emisyon regex'inin eşleştirdiği `event` yerine `event_type`'tır. (Eskiden ikinci ve bağımsız bir nedenle daha kaçırıyordu: `quickstart`, hardcoded bir `_EVENT_NAMESPACES` listesinde yoktu. O liste artık yok; guard ad alanı beyaz listesi tutmuyor, dolayısıyla bu dosyayı gizleyen tek şey artık `event_type` anahtarıdır.) Dosyayı hiç incelememiş olarak yeşil rapor verir ve başarı satırı artık bunu açıkça söyler. Geçen bir katalog guard'ını `quickstart.py` için kapsam saymayın.
 - **Sınırı tutan şey bir testtir.** `tests/test_quickstart_compat.py::TestAuditLog`, tam olarak o `event_type` ile tam olarak bir event olduğunu doğrular. Yeni bir event orada düşer — bu da durup onun asıl zincire ait olup olmadığına karar vermek için amaçlanan uyarıdır.
+
+**2. `safety_trend.jsonl`.** [`forgelm/safety/_results.py`](../../forgelm/safety/_results.py) içindeki `_append_trend_entry`, her güvenlik değerlendirmesi için `<output_dir>/safety_trend.jsonl` dosyasına bir satır ekler: `timestamp`, `safety_score`, `safe_ratio`, `passed`; çağıran attribution'ı verdiğinde ayrıca `scored_unsafe_count`, `unscored_count` ve `evaluation_completed` (önceki dört-argümanlı imzayı kullanan kütüphane çağıranlarında bunlar yazılmaz). Bu üçü, unscored ayrıştırmasını koşumlar arasına taşır; bozulmakta olan bir sınıflandırıcının bir trend olarak görünebildiği tek yer de burasıdır — tamamen yükselen bir `unscored_count`'tan kaynaklanan koşum-üstü-koşum `safe_ratio` düşüşü, aksi hâlde modelin giderek güvensizleştiği gibi okunur. Yalnızca-ekleme ve zaman damgalıdır ve bir **kapı kararı** kaydeder; bu yüzden ilk bakışta denetim izi gibi okunur. Değildir: zincirsizdir, `run_id` yoktur, operatör yoktur, HMAC yoktur ve best-effort yazılır (`OSError` / `TypeError` / `ValueError` loglanıp yutulur, böylece bir trend-yazma hatası zaten sonuçlanmış bir güvenlik geçişini iptal edemez).
+
+O bir koşumlar-arası kolaylık görünümüdür, kanıt değildir. Madde 12 için önemli olan her şey zaten zincirin içindedir: kataloglanmış `safety.evaluation_completed` event'i aynı değerlendirme için `passed`, `safe_ratio`, `safety_score`, `total_count` ve `categories` alanlarını, tam koşum bağlamıyla birlikte hash zincirinin içinde taşır. Bir denetçi `audit_log.jsonl`'ı okumalıdır; `safety_trend.jsonl` skorun zaman içindeki grafiğini çizmek içindir.
+
+Katalog guard'ı bu dosyayı da göremez — hiç `event` anahtarı yoktur, dolayısıyla hiçbir emisyon-bağlamı regex'i onu asla eşleştirmeyecektir. `test_quickstart_compat.py`'nin quickstart için yaptığı gibi şeklini sabitleyen bir şey şu anda yok; gelecekte bir değişiklik bu dosyayı uyumluluk için taşıyıcı hâle getirirse, doğru hamle trend log'unu sertleştirmek değil kataloglanmış bir event emit etmektir.
 
 ## Tampering-evidence özeti
 

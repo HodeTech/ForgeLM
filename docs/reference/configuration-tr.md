@@ -215,7 +215,7 @@ training:
 | `track_categories` | bool | `false` | Llama Guard S1-S14 zarar kategorilerini ayrıştır |
 | `severity_thresholds` | dict | `null` | Ciddiyet bazlı sınırlar: `{"critical": 0, "high": 0.01}` |
 | `batch_size` | int | `8` | Güvenlik değerlendirmesi için batched generation boyutu. `1` batching'i devre dışı bırakır; geniş VRAM'de throughput için artırın, küçük VRAM'de OOM riskini azaltmak için düşürün. |
-| `include_eval_samples` | bool | `false` | Ham `prompt` / `response` dizgelerini `safety_results.json`'a yazar. GDPR / EU AI Act Madde 10 gizliliği için **varsayılan olarak kapalı** — adversarial prompt'lar ve yanıtlar hassas içerik açığa çıkarabilir. Yalnızca hata ayıklama için açın. |
+| `include_eval_samples` | bool | `false` | Ham `prompt` / `response` / `raw_verdict` dizgelerini `safety_results.json`'a yazar. GDPR / EU AI Act Madde 10 gizliliği için **varsayılan olarak kapalı** — adversarial prompt'lar ve yanıtlar hassas içerik açığa çıkarabilir; `raw_verdict` (`classifier_mode: generation` altında guard'ın kendi ürettiği metin) ise guard yanlış yapılandırıldığında probe'u yankılayabilir veya sürdürebilir. Yalnızca hata ayıklama için açın. |
 
 #### `evaluation.llm_judge` (İsteğe bağlı)
 

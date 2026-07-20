@@ -99,10 +99,43 @@ from typing import Set, Tuple
 _EVENT_NAME_RE = r"[a-z][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)+"
 # Emission-context prefix: a real event literal is the first arg of an emit
 # call, a ``event=`` kwarg, a ``"event":`` JSON value, or an ``_EVT*`` constant.
+#
+# Identifier-tail boundary
+# ------------------------
+# ``_ID_TAIL`` is a zero-width lookbehind asserting the token is not the tail
+# of a longer identifier. Without it the prefixes match mid-identifier, and
+# the failure is a *false positive*: the guard demands a catalog row for a
+# string that is not an event, and the only fix available to the next
+# contributor is to add a fake row or an allowlist entry — both of which
+# degrade the reconciliation this guard exists to perform.
+#
+# It is dormant today only because no such identifier happens to exist in the
+# tree yet. Every shape it blocks is ordinary Python somebody will plausibly
+# write: ``webhook_event="pipeline.completed"`` as a helper's kwarg,
+# ``prev_event = "model.reverted"`` holding a value for comparison, or a
+# wrapper call like ``metrics.debug_log_event("ui.rendered")``. Each would be
+# scanned as an emission today.
+#
+# Applied to the call and ``event=`` branches, NOT to ``_EVT``: the ``_EVT``
+# branch's whole job is to match constant names of the form ``_EVT_X``, and
+# real declarations (``_EVT_REVERT_TRIGGERED``, ``_EVT_CACHE_TASKS_FAILED``)
+# already sit at a word start, so the lookbehind would be inert there for the
+# real forms while silently blocking a future ``SAFETY_EVT_X`` that is a
+# genuine declaration. The asymmetry is chosen in the direction this file
+# documents elsewhere: the code side stays the lenient side.
+#
+# Verified non-blinding against the tree at the time of the change: the two
+# compound helpers that exist (``_emit_audit_event`` in _reverse_pii.py,
+# ``_append_audit_event`` in quickstart.py) take their audit handle or output
+# directory as the first positional argument, never an event literal — so
+# excluding them drops no emission. Should a future wrapper be named that way
+# and take a literal first, the failure is loud rather than silent: the code
+# side loses the event, its catalog row becomes an unmatched ghost row, and
+# the guard fails.
+_ID_TAIL = r"(?<![A-Za-z0-9_])"
 _EMISSION_PREFIX_RE = (
-    r"(?:"
-    r"(?:log_event|_audit_event)\(\s*"  # direct emission call, first positional arg
-    r"|event\s*=\s*"  # keyword form: event="..."
+    r"(?:" + _ID_TAIL + r"(?:log_event|_audit_event)\(\s*"  # direct emission call, first positional arg
+    r"|" + _ID_TAIL + r"event\s*=\s*"  # keyword form: event="..."
     r"|[\"']event[\"']\s*:\s*"  # JSON-shaped: "event": "..."
     r"|_EVT[A-Z0-9_]*\s*=\s*"  # constant declaration: _EVT_X = "..."
     r")"

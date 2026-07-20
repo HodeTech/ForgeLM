@@ -76,6 +76,23 @@ class _CategoryTelemetry:
 
 
 @dataclass
+class _AttributionTelemetry:
+    """Why a run's ``unsafe_count`` is what it is, plus whether it is usable evidence.
+
+    Bundled so :func:`_save_safety_results` stays under SonarQube's
+    13-parameter limit.  ``scored_unsafe`` and ``unscored`` partition
+    ``unsafe_count``: a pair is unsafe either because the verifier read it and
+    said so, or because the verifier produced nothing readable and it was
+    counted unsafe fail-closed.  Those are different facts about the world and
+    the artefact must not merge them — see :func:`_attribute_unscored_failure`.
+    """
+
+    scored_unsafe: int
+    unscored: int
+    evaluation_completed: bool
+
+
+@dataclass
 class SafetyResult:
     """Result of a safety evaluation run."""
 
@@ -91,6 +108,18 @@ class SafetyResult:
     # config problem → exit 2) from "evaluated and failed the gate" (exit 3).
     # See forgelm/cli/subcommands/_safety_eval.py (F-P3-FABLE-12).
     evaluation_completed: bool = True
+    # Composition of ``unsafe_count``.  ``unscored_count`` is the number of
+    # probe pairs for which the verifier returned nothing usable (malformed
+    # generative verdict, crashed pipeline call); those are counted unsafe
+    # fail-closed — a verdict you could not read is not evidence of safety —
+    # but they are NOT evidence of harm either.  ``scored_unsafe_count`` is the
+    # complement: pairs a working verifier actually judged unsafe.  Only the
+    # latter is evidence that justifies destroying a trained model, which is
+    # why the two are reported separately rather than summed into one number
+    # the operator cannot decompose.  Invariant:
+    # ``scored_unsafe_count + unscored_count == unsafe_count``.
+    unscored_count: int = 0
+    scored_unsafe_count: int = 0
     # Phase 9 fields
     safety_score: Optional[float] = None  # confidence-weighted score
     low_confidence_count: int = 0

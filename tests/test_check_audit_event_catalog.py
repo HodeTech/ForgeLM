@@ -265,3 +265,76 @@ def test_guard_wired_into_gauntlet():
     for doc in ("CLAUDE.md", "AGENTS.md"):
         text = (_PROJECT_ROOT / doc).read_text(encoding="utf-8")
         assert "check_audit_event_catalog.py" in text, f"{doc} gauntlet missing the audit-catalog guard"
+
+
+class TestEmissionContextIdentifierBoundary:
+    """The emission-context prefixes must not match mid-identifier.
+
+    Every prefix was previously unanchored on its left, so an ordinary Python
+    identifier ending in one of them was scanned as an emission. The failure is
+    a false positive — the guard demands a catalog row for a string that is not
+    an event — and the only remedies available to the next contributor are a
+    fake catalog row or an allowlist entry, both of which degrade exactly the
+    reconciliation this guard exists to perform.
+
+    Dormant at the time it was closed: no such identifier existed in the tree
+    yet. Each shape below is ordinary code somebody will plausibly write.
+    """
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            'audit.log_event("model.reverted", detail="x")',
+            'self._audit_event(\n    "safety.evaluation_completed",\n)',
+            'log_event("cache.populate_models_requested")',
+            'event="pipeline.completed"',
+            '"event": "pipeline.failed"',
+            '_EVT_REVERT_TRIGGERED = "model.reverted"',
+        ],
+    )
+    def test_real_emission_shapes_still_match(self, tool, source):
+        assert tool._EVENT_LITERAL_RE.search(source), f"boundary blinded the guard to: {source!r}"
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            'metrics.debug_log_event("ui.rendered")',
+            'obj.my_audit_event("not.anevent")',
+            'webhook_event="pipeline.completed"',
+            'prev_event = "model.reverted"',
+        ],
+    )
+    def test_identifier_tails_are_not_emissions(self, tool, source):
+        assert not tool._EVENT_LITERAL_RE.search(source), f"false positive on: {source!r}"
+
+    def test_event_type_key_is_not_the_event_key(self, tool):
+        """quickstart_audit.jsonl keys on ``event_type`` and is deliberately
+        out of scope; the JSON-shaped branch must not claim it."""
+        assert not tool._EVENT_LITERAL_RE.search('"event_type": "quickstart.model_selection"')
+
+    def test_evt_constant_branch_stays_unanchored(self, tool):
+        """Deliberate asymmetry: the ``_EVT`` branch keeps no left boundary so a
+        future ``SAFETY_EVT_X = "a.b"`` declaration is still seen. The code side
+        is the lenient side; going blind there would produce a ghost catalog row
+        and a loud failure, which is the trade this guard is built around."""
+        assert tool._EVENT_LITERAL_RE.search('SAFETY_EVT_X = "safety.something"')
+
+    def test_scaling_is_linear_on_adversarial_input(self, tool):
+        """ReDoS budget (docs/standards/regex.md): measure the shape of the
+        curve, not a wall-clock cutoff. Near-miss prefixes that never complete
+        a match are the pathological input for this pattern."""
+        import statistics
+        import time
+
+        timings = []
+        for n in (1_000, 5_000, 10_000):
+            payload = ("xx_event  =  " * n) + "x"
+            runs = []
+            for _ in range(5):
+                t0 = time.perf_counter()
+                tool._EVENT_LITERAL_RE.search(payload)
+                runs.append(time.perf_counter() - t0)
+            timings.append(statistics.median(runs))
+        # 10x the input must not cost anywhere near 100x the time.
+        assert timings[2] < timings[0] * 30, f"super-linear scaling: {timings}"
+        assert timings[2] < 1.0, f"10K-char search took {timings[2]:.3f}s"

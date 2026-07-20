@@ -34,6 +34,11 @@ _EVT_REVERT_TRIGGERED = "model.reverted"
 # ``*.evaluation_completed`` events.
 _EVT_LOSS_GATE_COMPLETED = "evaluation.loss_gate_completed"
 
+# ``kept_because`` clause for the safety gate's no-usable-evidence path, where
+# auto-revert is withheld whatever ``evaluation.auto_revert`` is set to — see
+# _apply_safety_result and forgelm/safety/_gates.py::_attribute_unscored_failure.
+_KEPT_NO_SAFETY_EVIDENCE = "the evaluation produced no usable evidence about the model"
+
 
 # ---------------------------------------------------------------------------
 # Built-in GRPO math reward — used when grpo_reward_model is not set but the
@@ -1197,19 +1202,27 @@ class ForgeTrainer:
         metrics["baseline_eval_loss"] = baseline_loss
         logger.info("Baseline eval_loss computed: %.4f", baseline_loss)
 
-    def _log_gate_kept_no_revert(self, gate_name: str, reason: str, train_result: TrainResult) -> None:
-        """WARN that a failed gate is being kept because auto_revert is off.
+    # ``kept_because`` exists because the safety gate can keep a model even with
+    # ``auto_revert=true`` (see _apply_safety_result). Hardcoding
+    # "auto_revert=false" there told operators who had it switched ON something
+    # plainly false about their own config, on the one path where they most need
+    # to trust the log.
+    def _log_gate_kept_no_revert(
+        self, gate_name: str, reason: str, train_result: TrainResult, kept_because: str = "auto_revert=false"
+    ) -> None:
+        """WARN that a failed gate is being kept, naming the reason it was kept.
 
         Without this line the run log shows an ERROR ("BENCHMARK FAILED") then a
         successful exit 0 with nothing connecting them — the operator must
-        reverse-engineer the auto_revert=false rationale from the config
-        One helper keeps the wording identical across the three
-        gates; the failure reason is also recorded on the result.
+        reverse-engineer the rationale from the config. One helper keeps the
+        wording identical across the three gates; the failure reason is also
+        recorded on the result.
         """
         logger.warning(
-            "%s gate failed (%s) but auto_revert=false — keeping model; failure recorded on TrainResult.",
+            "%s gate failed (%s) but %s — keeping model; failure recorded on TrainResult.",
             gate_name,
             reason,
+            kept_because,
         )
         train_result.error = reason
 
@@ -1301,26 +1314,25 @@ class ForgeTrainer:
         metrics["safety/safe_ratio"] = safety_result.safe_ratio
         if safety_result.safety_score is not None:
             metrics["safety/safety_score"] = safety_result.safety_score
-        self.audit.log_event(
-            "safety.evaluation_completed",
-            passed=safety_result.passed,
-            safe_ratio=safety_result.safe_ratio,
-            # total_count makes a vacuous pass (zero probes evaluated)
-            # distinguishable from a real 100%-safe evaluation in the
-            # append-only audit trail.
-            total_count=safety_result.total_count,
-            safety_score=safety_result.safety_score,
-            categories=safety_result.category_distribution,
-        )
+        # Payload shape (including the scored/unscored split) is owned by the
+        # safety package — see forgelm/safety/_results.py::safety_audit_fields.
+        from .safety import safety_audit_fields
+
+        self.audit.log_event("safety.evaluation_completed", **safety_audit_fields(safety_result))
         if safety_result.passed:
             return True
         safety_reason = safety_result.failure_reason or "Safety check failed."
-        # An infrastructure failure (missing probes file, classifier load error)
-        # sets evaluation_completed=False. Do not auto-revert a successfully
-        # trained model because of an infra misconfiguration — the operator must
-        # fix the infrastructure, not lose a trained model.
+        # evaluation_completed=False marks a run that produced no usable
+        # evidence about this model: an infrastructure failure (missing probes
+        # file, classifier load error), or a gate failure the safety package
+        # attributed entirely to probe pairs the classifier never answered.
+        # Failing the run is right — an unread verdict is not evidence of
+        # safety. Deleting the trained model is not: that is irreversible, it
+        # runs unattended, and it needs evidence of harm rather than absence of
+        # evidence of safety. Withheld here regardless of the auto_revert
+        # setting, which is why the kept-model line must not blame auto_revert.
         if not getattr(safety_result, "evaluation_completed", True):
-            self._log_gate_kept_no_revert("safety", safety_reason, train_result)
+            self._log_gate_kept_no_revert("safety", safety_reason, train_result, _KEPT_NO_SAFETY_EVIDENCE)
             return True
         if not (self.config.evaluation and self.config.evaluation.auto_revert):
             self._log_gate_kept_no_revert("safety", safety_reason, train_result)

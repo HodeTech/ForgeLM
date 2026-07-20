@@ -156,7 +156,7 @@ evaluation:
     track_categories: false
     severity_thresholds: null                 # dict, e.g. {critical: 0, high: 0.01, medium: 0.05}
     batch_size: 8
-    include_eval_samples: false                # persist raw prompt/response text; off by default (privacy)
+    include_eval_samples: false                # persist raw prompt/response/raw_verdict text; off by default (privacy)
   llm_judge:
     enabled: false
     judge_model: "gpt-4o"                     # plain string — API model name or local model path

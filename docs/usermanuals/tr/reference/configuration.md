@@ -157,7 +157,7 @@ evaluation:
     track_categories: false
     severity_thresholds: null                 # dict, örn. {critical: 0, high: 0.01, medium: 0.05}
     batch_size: 8
-    include_eval_samples: false                # ham prompt/response metnini sakla; varsayılan kapalı (gizlilik)
+    include_eval_samples: false                # ham prompt/response/raw_verdict metnini sakla; varsayılan kapalı (gizlilik)
   llm_judge:
     enabled: false
     judge_model: "gpt-4o"                     # düz string — API model adı veya yerel model yolu

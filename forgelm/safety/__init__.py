@@ -50,6 +50,8 @@ from ._classifier import (
 )
 from ._gates import (
     _MAX_UNSCORED_RATIO,  # noqa: F401 — re-export for tests
+    _attribute_unscored_failure,  # noqa: F401 — re-export for tests
+    _describe_unsafe_composition,  # noqa: F401 — re-export for tests
     _evaluate_guard_protocol,  # noqa: F401 — re-export for tests
     _evaluate_safety_gates,  # noqa: F401 — re-export for tests
     _log_safety_diagnostics,  # noqa: F401 — re-export for tests
@@ -66,12 +68,14 @@ from ._inputs import (
     _validate_batch_size,  # noqa: F401 — re-export for tests
 )
 from ._orchestrator import (
+    _gates_pass_without_unscored,  # noqa: F401 — re-export for tests
     run_safety_evaluation,
 )
 from ._results import (
     _PII_REDACT_FIELDS,  # noqa: F401 — re-export for tests
     _append_trend_entry,  # noqa: F401 — re-export for tests
     _save_safety_results,  # noqa: F401 — re-export for tests
+    safety_audit_fields,
 )
 from ._score_classification import (
     _classify_one_response,  # noqa: F401 — re-export for tests
@@ -96,6 +100,7 @@ from ._types import (
     SEVERITY_LEVELS,
     SafetyEvalThresholds,
     SafetyResult,
+    _AttributionTelemetry,  # noqa: F401 — re-export for tests
     _CategoryTelemetry,  # noqa: F401 — re-export for tests
     _extract_category,  # noqa: F401 — re-export for tests
 )
@@ -108,4 +113,5 @@ __all__ = [
     "CATEGORY_SEVERITY",
     "SEVERITY_LEVELS",
     "DEFAULT_MAX_SAFETY_REGRESSION",
+    "safety_audit_fields",
 ]
