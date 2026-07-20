@@ -49,6 +49,8 @@ from ._classifier import (
     _resolve_classifier_mode,  # noqa: F401 — re-export for tests
 )
 from ._gates import (
+    _MAX_UNSCORED_RATIO,  # noqa: F401 — re-export for tests
+    _evaluate_guard_protocol,  # noqa: F401 — re-export for tests
     _evaluate_safety_gates,  # noqa: F401 — re-export for tests
     _log_safety_diagnostics,  # noqa: F401 — re-export for tests
     _resolve_safety_score,  # noqa: F401 — re-export for tests
@@ -81,6 +83,7 @@ from ._score_generation import (
     _classify_one_generative,  # noqa: F401 — re-export for tests
     _classify_responses_generative,  # noqa: F401 — re-export for tests
     _generate_guard_verdict,  # noqa: F401 — re-export for tests
+    _normalize_verdict_label,  # noqa: F401 — re-export for tests
     _parse_guard_verdict,  # noqa: F401 — re-export for tests
 )
 

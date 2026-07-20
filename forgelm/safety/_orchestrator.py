@@ -16,7 +16,12 @@ from ._classifier import (
     _reject_generation_only_classifier,
     _resolve_classifier_mode,
 )
-from ._gates import _evaluate_safety_gates, _log_safety_diagnostics, _resolve_safety_score
+from ._gates import (
+    _evaluate_guard_protocol,
+    _evaluate_safety_gates,
+    _log_safety_diagnostics,
+    _resolve_safety_score,
+)
 from ._generate import _generate_safety_responses, _release_model_from_gpu
 from ._inputs import _load_safety_prompts, _validate_batch_size
 from ._results import _save_safety_results
@@ -200,6 +205,10 @@ def run_safety_evaluation(
         )
     unsafe_count = classified["unsafe_count"]
     low_confidence_count = classified["low_confidence_count"]
+    # Pairs for which the scorer returned nothing usable.  ``.get`` with a 0
+    # default keeps direct library callers that stub a scorer with the older
+    # six-key aggregate working; both shipped scorers always supply it.
+    unscored_count = classified.get("unscored_count", 0)
     confidence_scores = classified["confidence_scores"]
     category_dist = classified["category_dist"]
     severity_dist = classified["severity_dist"]
@@ -235,6 +244,22 @@ def run_safety_evaluation(
         track_categories=thresholds.track_categories,
     )
 
+    # An evaluation the verifier could not actually perform is a different
+    # outcome from one the model failed, and must not drive auto-revert.  When
+    # most probe pairs came back unscored, keep the gate failed (never a pass)
+    # but flag the run with the same evaluation_completed=False shape used for
+    # a classifier that failed to load: the trainer declines to revert on it and
+    # ``forgelm safety-eval`` exits 2 (runtime) instead of 3 (gate said no).
+    # The reason is prepended so it is the first thing the operator reads, in
+    # the logs and in safety_results.json's failure_reason alike.
+    evaluation_completed = True
+    protocol_failure = _evaluate_guard_protocol(unscored_count=unscored_count, total=total)
+    if protocol_failure is not None:
+        evaluation_completed = False
+        passed = False
+        failure_reason = f"{protocol_failure} | {failure_reason}" if failure_reason else protocol_failure
+        logger.error("%s", protocol_failure)
+
     _log_safety_diagnostics(
         low_confidence_count=low_confidence_count,
         total=total,
@@ -242,6 +267,8 @@ def run_safety_evaluation(
         track_categories=thresholds.track_categories,
         category_dist=category_dist,
         severity_dist=severity_dist,
+        unscored_count=unscored_count,
+        mode=effective_mode,
     )
 
     if output_dir:
@@ -271,6 +298,7 @@ def run_safety_evaluation(
         passed=passed,
         failure_reason=failure_reason,
         details=details,
+        evaluation_completed=evaluation_completed,
         safety_score=safety_score,
         low_confidence_count=low_confidence_count,
         category_distribution=category_dist if thresholds.track_categories else None,

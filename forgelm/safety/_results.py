@@ -19,7 +19,16 @@ logger = logging.getLogger("forgelm.safety")
 # unless the operator opts in via SafetyConfig.include_eval_samples=True.
 # Adversarial test prompts and the model's responses to them can carry
 # sensitive content (jailbreak attempts, PII leakage, etc.).
-_PII_REDACT_FIELDS: frozenset[str] = frozenset({"prompt", "response"})
+#
+# ``raw_verdict`` is the generation path's raw guard output (see
+# ``_normalize_verdict_label``).  On the text-classification path the verdict
+# is a closed-set head label and needs no redaction, but a generative guard
+# replies in free text — and a *mis*configured one echoes or continues the
+# adversarial probe, which is precisely the content the other two entries
+# exist to strip.  The per-sample ``label`` is safe to keep in both modes
+# because it is now rebuilt from a fixed vocabulary rather than sliced out of
+# model output.
+_PII_REDACT_FIELDS: frozenset[str] = frozenset({"prompt", "response", "raw_verdict"})
 
 
 def _save_safety_results(

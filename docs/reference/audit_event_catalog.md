@@ -100,7 +100,7 @@ The hash chain advances after the line lands on disk (`flush` + `fsync`), so an 
 
 ### CLI / migration
 
-_Reserved namespace — `cli` is a recognized event-namespace prefix (see "Adding a new event" below) but no code in `forgelm/` currently emits a `cli.*` event. No rows populate this section yet._
+_Reserved namespace — `cli.*` is held for future CLI/migration events, but no code in `forgelm/` currently emits one. No rows populate this section yet. Nothing enforces the reservation: since the catalog guard no longer whitelists namespaces, a `cli.*` event would be reconciled exactly like any other._
 
 ### Audit-system events (meta)
 
@@ -110,21 +110,27 @@ _Reserved namespace — `cli` is a recognized event-namespace prefix (see "Addin
 
 ## Adding a new event
 
-1. Pick a dotted name following the existing namespaces (`training.*`, `compliance.*`, `audit.*`, `human_approval.*`, `model.*`, `cli.*`).
+1. Pick a dotted, lower-snake-case name. Prefer an existing namespace (`pipeline.*`, `training.*`, `evaluation.*`, `benchmark.*`, `safety.*`, `judge.*`, `model.*`, `human_approval.*`, `compliance.*`, `data.*`, `cache.*`, `audit.*`, `approval.*`) but a new namespace is fine — [`tools/check_audit_event_catalog.py`](../../tools/check_audit_event_catalog.py) matches any dotted name in an emission context and does not need to be taught about it. It used to keep a hardcoded namespace list, which silently hid `evaluation.*` from **both** sides of its reconciliation; that list has been deleted.
 2. Add a row to the table above, including the payload keys and the Article it supports.
 3. Mirror the row to [audit_event_catalog-tr.md](audit_event_catalog-tr.md).
 4. Emit via `AuditLogger.log_event(event, **payload)`. Never call `json.dump` directly into `audit_log.jsonl`; the hash chain depends on the canonical writer.
 
 ## Logs this catalog does not cover
 
-One other JSONL log in the tree looks like an audit trail and is **not** part of the Article 12 chain. It is recorded here so nobody has to rediscover it.
+Two other JSONL logs in the tree look like audit trails and are **not** part of the Article 12 chain. They are recorded here so nobody has to rediscover them.
 
-`forgelm quickstart` writes `<config-dir>/quickstart_audit.jsonl` containing exactly one entry, `quickstart.model_selection`, from a single call site in [`forgelm/quickstart.py`](../../forgelm/quickstart.py). It is a **convenience log, deliberately**: unchained (no `_hmac`, no previous-entry hash), carrying no run context and no resolved model revision, with best-effort writes that are logged and swallowed on failure. That is the right weight for what it records — which template and VRAM figure produced which model choice, before any training run exists to attach it to. A second hash-chained trail rooted in nothing would be *weaker* compliance evidence than one honest chain plus a clearly-labelled convenience log, so it should not be "upgraded". The Article 12 artefact remains `compliance.AuditLogger`'s `audit_log.jsonl`, described above.
+**1. `quickstart_audit.jsonl`.** `forgelm quickstart` writes `<config-dir>/quickstart_audit.jsonl` containing exactly one entry, `quickstart.model_selection`, from a single call site in [`forgelm/quickstart.py`](../../forgelm/quickstart.py). It is a **convenience log, deliberately**: unchained (no `_hmac`, no previous-entry hash), carrying no run context and no resolved model revision, with best-effort writes that are logged and swallowed on failure. That is the right weight for what it records — which template and VRAM figure produced which model choice, before any training run exists to attach it to. A second hash-chained trail rooted in nothing would be *weaker* compliance evidence than one honest chain plus a clearly-labelled convenience log, so it should not be "upgraded". The Article 12 artefact remains `compliance.AuditLogger`'s `audit_log.jsonl`, described above.
 
 Two consequences for anyone adding an event there:
 
-- **The catalog guard cannot see that file.** [`tools/check_audit_event_catalog.py`](../../tools/check_audit_event_catalog.py) misses it for two independent reasons: `quickstart` is not one of its `_EVENT_NAMESPACES`, and the key is `event_type` rather than the `event` its emission regex matches. It reports green having never examined the file. Do not treat a passing catalog guard as coverage for `quickstart.py`.
+- **The catalog guard cannot see that file.** [`tools/check_audit_event_catalog.py`](../../tools/check_audit_event_catalog.py) misses it because the key is `event_type` rather than the `event` its emission regex matches. (It previously missed it for a second, independent reason — `quickstart` was not in a hardcoded `_EVENT_NAMESPACES` list. That list is gone; the guard no longer whitelists namespaces, so the `event_type` key is now the only thing hiding this file.) It reports green having never examined `quickstart.py`, and its success line now says so explicitly. Do not treat a passing catalog guard as coverage here.
 - **What does hold the line is a test.** `tests/test_quickstart_compat.py::TestAuditLog` asserts exactly one event with exactly that `event_type`. A new event fails there — which is the intended prompt to stop and decide whether it belongs in the real chain instead.
+
+**2. `safety_trend.jsonl`.** `_append_trend_entry` in [`forgelm/safety/_results.py`](../../forgelm/safety/_results.py) appends one line per safety evaluation to `<output_dir>/safety_trend.jsonl`: `timestamp`, `safety_score`, `safe_ratio`, `passed`. It is append-only and timestamped and records a **gate decision**, so it reads like an audit trail at a glance. It is not one: unchained, no `run_id`, no operator, no HMAC, and written best-effort (`OSError` / `TypeError` / `ValueError` are logged and swallowed so a trend-write failure cannot abort a safety pass that already concluded).
+
+It is a cross-run convenience view, not evidence. Everything in it that matters to Article 12 is already in the chain: the catalogued `safety.evaluation_completed` event carries `passed`, `safe_ratio`, `safety_score`, `total_count`, and `categories` for the same evaluation, inside the hash chain with full run context. An auditor should read `audit_log.jsonl`; `safety_trend.jsonl` is for plotting a score over time.
+
+The catalog guard cannot see this file either — it has no `event` key at all, so no emission-context regex will ever match it. Nothing currently pins its shape the way `test_quickstart_compat.py` pins quickstart's; if a future change makes this file load-bearing for compliance, the correct move is to emit a catalogued event rather than to harden the trend log.
 
 ## Tamper-evidence summary
 

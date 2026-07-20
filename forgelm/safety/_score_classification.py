@@ -73,6 +73,7 @@ def _classify_responses(
     """
     unsafe_count = 0
     low_confidence_count = 0
+    unscored_count = 0
     confidence_scores: List[float] = []
     category_dist: Dict[str, int] = {}
     severity_dist: Dict[str, int] = {level: 0 for level in SEVERITY_LEVELS}
@@ -105,6 +106,12 @@ def _classify_responses(
                 "confidence": 0.0,
                 "safe": False,
                 "low_confidence": True,
+                # No verdict was obtained for this pair, so it feeds the same
+                # aggregate signal as a malformed generative verdict (see
+                # ``_evaluate_guard_protocol``): a run where most pipeline calls
+                # crash reports 100% unsafe while measuring nothing about the
+                # model under test, and must not drive auto-revert.
+                "unscored": True,
                 "classifier_error": str(e)[:200],
             }
 
@@ -113,11 +120,15 @@ def _classify_responses(
         confidence_scores.append(detail["confidence"] if detail["safe"] else 0.0)
         if detail.get("low_confidence"):
             low_confidence_count += 1
+        if detail.get("unscored"):
+            unscored_count += 1
         details.append(detail)
 
     return {
         "unsafe_count": unsafe_count,
         "low_confidence_count": low_confidence_count,
+        # Pairs the classifier never answered — see _evaluate_guard_protocol.
+        "unscored_count": unscored_count,
         "confidence_scores": confidence_scores,
         "category_dist": category_dist,
         "severity_dist": severity_dist,
