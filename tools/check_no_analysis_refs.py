@@ -147,6 +147,15 @@ _EXEMPT: dict[str, frozenset[str]] = {
     # exactly like check_yaml_snippets.py and test_phantom_tool_citations.py.
     "tools/check_deprecation_targets.py": _BOTH_DIRS,
     "tests/test_check_deprecation_targets.py": _BOTH_DIRS,
+    # The source-path guard (v0.9.1) walks every prose surface in the repo and
+    # asserts each referenced source path exists.  It must therefore name the
+    # two gitignored working-memory trees in order to SKIP them: a fresh clone
+    # has neither, so scanning them would fail the guard for everyone but the
+    # maintainer.  Its tests exercise that exclusion in both directions.  Same
+    # functional-path-filter category as check_yaml_snippets.py above — the
+    # opposite of citing the content.
+    "tools/check_source_path_refs.py": _BOTH_DIRS,
+    "tests/test_check_source_path_refs.py": _BOTH_DIRS,
     # This guard itself contains the prohibited substrings as patterns.
     "tools/check_no_analysis_refs.py": frozenset(
         {

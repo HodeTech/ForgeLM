@@ -20,16 +20,25 @@ Pinned contracts:
 5. Synthetic NEW drift in a non-deferred file triggers a fatal
    exit (1) in default mode when over the fail-threshold, and in
    strict mode when over the warn-threshold.
-6. **The budget ratchet.** A deferred module that grows past its
+6. **The budget ratchet.** A deferred *file* that grows past its
    recorded budget is fatal in every mode — this is the contract
    that replaced the old "defer to v0.6.x" WARN-only labelling,
    under which a module could drift from 1038 to 2147 LOC emitting
    nothing fatal.  A regression here would silently restore that.
-7. A deferred entry pointing at a missing file is fatal; an entry
+7. **The scope of that ratchet is a file, not a concern.** A new
+   under-ceiling sibling module is NEW drift held to the normal
+   thresholds, never charged against the parent's budget.  Pinned
+   so the guard's documented claim and its enforced invariant stay
+   the same sentence.
+8. **The ``budget_history`` contract.** Raising a budget above the
+   entry's immutable ``deferred_at_loc`` without a written
+   justification is fatal in every mode.
+9. A deferred entry pointing at a missing file is fatal; an entry
    whose module fell back under the ceiling is stale and fatal
-   under ``--strict``.
-8. No deferral in the guard names a target version — the rot
-   pattern this re-tracking removed.
+   under ``--strict``, with the 900-LOC hysteresis boundary pinned
+   on both sides.
+10. No deferral in the guard names a target version — the rot
+    pattern this re-tracking removed.
 """
 
 from __future__ import annotations
@@ -326,12 +335,33 @@ class TestDeferredBudgetRatchet:
         target.write_text("\n".join(["x = 1"] * loc) + "\n", encoding="utf-8")
         return tmp_path
 
-    def _only_entry(self, tool, monkeypatch, rel_path: str, budget: int) -> None:
-        """Narrow _DEFERRED_SPLITS to one synthetic entry for the test."""
+    def _only_entry(
+        self,
+        tool,
+        monkeypatch,
+        rel_path: str,
+        budget: int,
+        *,
+        deferred_at_loc: int | None = None,
+        budget_history: tuple[str, ...] = (),
+    ) -> None:
+        """Narrow _DEFERRED_SPLITS to one synthetic entry for the test.
+
+        ``deferred_at_loc`` defaults to ``budget`` — i.e. "deferred at
+        this size, never raised" — so ratchet tests that do not care
+        about the budget_history contract stay unaffected by it.
+        """
         monkeypatch.setattr(
             tool,
             "_DEFERRED_SPLITS",
-            {rel_path: tool._DeferredSplit(budget=budget, reason="synthetic entry for tests")},
+            {
+                rel_path: tool._DeferredSplit(
+                    budget=budget,
+                    deferred_at_loc=budget if deferred_at_loc is None else deferred_at_loc,
+                    reason="synthetic entry for tests",
+                    budget_history=budget_history,
+                )
+            },
         )
 
     def test_growth_past_budget_is_fatal_in_default_mode(self, tmp_path: Path, monkeypatch, capsys):
@@ -385,13 +415,44 @@ class TestDeferredBudgetRatchet:
         assert tool.main(["--repo-root", str(repo)]) == 0
 
     def test_shrinking_below_budget_reports_headroom(self, tmp_path: Path, monkeypatch, capsys):
+        """Pins ``headroom = budget - loc`` exactly, sign included.
+
+        The assertion is a full-line equality rather than a substring
+        check: ``"150 LOC headroom" in out`` also matches ``"-150 LOC
+        headroom"``, so a sign-flipped ``measured.loc - entry.budget``
+        survived this test until 2026-07-20.  A reversed-operand bug is
+        the most likely mutation of this expression, which made it the
+        one mutant the test most needed to catch.
+        """
         tool = _load_tool()
         rel = "forgelm/deferred_module.py"
         self._only_entry(tool, monkeypatch, rel, budget=1200)
         repo = self._repo_with(tmp_path, rel, loc=1050)
         rc = tool.main(["--repo-root", str(repo)])
         assert rc == 0
-        assert "150 LOC headroom" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        warn_lines = [ln for ln in out.splitlines() if ln.startswith("WARN:")]
+        assert warn_lines == [
+            f"WARN: {rel} = 1050 LOC (deferred split, budget 1200, 150 LOC headroom); synthetic entry for tests"
+        ], out
+
+    @pytest.mark.parametrize(
+        ("loc", "budget", "expected_headroom"),
+        [(1050, 1200, 150), (1100, 1200, 100), (1200, 1200, 0), (1001, 1500, 499)],
+    )
+    def test_headroom_arithmetic_across_several_points(
+        self, tmp_path: Path, monkeypatch, capsys, loc: int, budget: int, expected_headroom: int
+    ):
+        # A single data point can be satisfied by a constant; several
+        # cannot.  Each case also stays above the 900 stale threshold so
+        # the WARN branch (not the STALE branch) is the one exercised.
+        tool = _load_tool()
+        rel = "forgelm/deferred_module.py"
+        self._only_entry(tool, monkeypatch, rel, budget=budget)
+        repo = self._repo_with(tmp_path, rel, loc=loc)
+        assert tool.main(["--repo-root", str(repo)]) == 0
+        out = capsys.readouterr().out
+        assert f"budget {budget}, {expected_headroom} LOC headroom" in out, out
 
     def test_dangling_entry_is_fatal_in_every_mode(self, tmp_path: Path, monkeypatch, capsys):
         # A split landed (or a file moved) without updating the list.
@@ -429,6 +490,37 @@ class TestDeferredBudgetRatchet:
         out = capsys.readouterr().out
         assert "STALE" not in out
 
+    def test_stale_threshold_boundary_is_inclusive(self, tmp_path: Path, monkeypatch, capsys):
+        """900 LOC — exactly ``_STALE_THRESHOLD`` — counts as stale.
+
+        The band was previously probed only at 950 (not stale) and 800
+        (stale), so ``measured.loc <= _STALE_THRESHOLD`` could be
+        mutated to ``<`` and every test still passed.  The boundary is
+        the whole point of a hysteresis constant, so it is pinned on
+        both sides.
+        """
+        tool = _load_tool()
+        rel = "forgelm/deferred_module.py"
+        assert tool._STALE_THRESHOLD == 900
+        self._only_entry(tool, monkeypatch, rel, budget=1200)
+        repo = self._repo_with(tmp_path, rel, loc=tool._STALE_THRESHOLD)
+        assert tool.main(["--repo-root", str(repo)]) == 0
+        assert "STALE" in capsys.readouterr().out
+        assert tool.main(["--repo-root", str(repo), "--strict"]) == 1
+        assert "back under the ceiling" in capsys.readouterr().err
+
+    def test_one_line_above_stale_threshold_is_not_stale(self, tmp_path: Path, monkeypatch, capsys):
+        # The other side of the same boundary: 901 must stay a plain
+        # WARN, so a threshold shifted up by one is caught too.
+        tool = _load_tool()
+        rel = "forgelm/deferred_module.py"
+        self._only_entry(tool, monkeypatch, rel, budget=1200)
+        repo = self._repo_with(tmp_path, rel, loc=tool._STALE_THRESHOLD + 1)
+        assert tool.main(["--repo-root", str(repo), "--strict"]) == 0
+        out = capsys.readouterr().out
+        assert "STALE" not in out
+        assert "299 LOC headroom" in out
+
     def test_deferred_module_is_excluded_from_band_classification(self, tmp_path: Path, monkeypatch, capsys):
         # A deferred module must not also be counted as NEW drift; it is
         # scored against its budget only.
@@ -446,6 +538,142 @@ class TestDeferredBudgetRatchet:
         assert "0 NEW over warn-threshold" in captured.out
         assert "FAIL" not in captured.err
         assert "deferred split, budget 1800" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# §3c — The budget_history contract: a raise must state its reason
+# ---------------------------------------------------------------------------
+
+
+class TestBudgetHistoryEnforcement:
+    """``budget_history`` was documented as required and checked by nothing.
+
+    The module docstring promised that raising a budget "makes every
+    grant of extra headroom a reviewed line in a diff with a stated
+    justification" — but the guard never looked at ``budget_history``,
+    so a bare budget bump passed silently.  A documented requirement
+    that nothing enforces is the exact failure mode this guard's own
+    re-tracking exists to correct, so it is now enforced via the
+    immutable ``deferred_at_loc`` field.
+    """
+
+    def _entry(self, tool, **kwargs):
+        base = {"budget": 1200, "deferred_at_loc": 1200, "reason": "synthetic entry for tests"}
+        base.update(kwargs)
+        return {"forgelm/deferred_module.py": tool._DeferredSplit(**base)}
+
+    def test_unraised_budget_needs_no_history(self):
+        tool = _load_tool()
+        assert tool._validate_entries(self._entry(tool)) is False
+
+    def test_raised_budget_without_history_is_fatal(self, capsys):
+        tool = _load_tool()
+        fatal = tool._validate_entries(self._entry(tool, budget=1300, deferred_at_loc=1200))
+        assert fatal is True
+        err = capsys.readouterr().err
+        assert "empty budget_history" in err
+        assert "1300" in err and "1200" in err
+
+    def test_raised_budget_with_history_passes(self, capsys):
+        tool = _load_tool()
+        entries = self._entry(
+            tool,
+            budget=1300,
+            deferred_at_loc=1200,
+            budget_history=("2026-08-01: +100 for the CVE-2026-1234 input-validation fix.",),
+        )
+        assert tool._validate_entries(entries) is False
+        assert capsys.readouterr().err == ""
+
+    def test_blank_history_note_is_fatal(self, capsys):
+        # An empty string would otherwise satisfy "has a history entry"
+        # while stating no justification at all.
+        tool = _load_tool()
+        fatal = tool._validate_entries(self._entry(tool, budget=1300, deferred_at_loc=1200, budget_history=("   ",)))
+        assert fatal is True
+        assert "blank budget_history note" in capsys.readouterr().err
+
+    def test_lowered_budget_needs_no_history(self, capsys):
+        # Trimming a module and lowering its budget is the good case;
+        # demanding ceremony for it would tax the desired behaviour.
+        tool = _load_tool()
+        assert tool._validate_entries(self._entry(tool, budget=1100, deferred_at_loc=1200)) is False
+        assert capsys.readouterr().err == ""
+
+    def test_unjustified_raise_is_fatal_through_main_in_every_mode(self, tmp_path: Path, monkeypatch, capsys):
+        # End-to-end: the entry is otherwise perfectly healthy — the
+        # module is well under its budget — and the run is still fatal,
+        # including under --quiet.
+        tool = _load_tool()
+        rel = "forgelm/deferred_module.py"
+        monkeypatch.setattr(tool, "_DEFERRED_SPLITS", self._entry(tool, budget=1300, deferred_at_loc=1200))
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("\n".join(["x = 1"] * 1050) + "\n", encoding="utf-8")
+        for extra in ([], ["--strict"], ["--quiet"]):
+            assert tool.main(["--repo-root", str(tmp_path), *extra]) == 1, extra
+            assert "empty budget_history" in capsys.readouterr().err, extra
+
+    def test_head_entries_satisfy_the_contract(self):
+        # The shipped list must itself pass the rule it documents.
+        tool = _load_tool()
+        assert tool._validate_entries(tool._DEFERRED_SPLITS) is False
+
+    def test_head_entries_record_deferral_measurement(self):
+        """``deferred_at_loc`` is a measurement, not a padded allowance.
+
+        None of the seven has been raised yet, so each must still equal
+        its budget; a divergence appearing without a ``budget_history``
+        note is what :func:`_validate_entries` catches.
+        """
+        tool = _load_tool()
+        for path, entry in tool._DEFERRED_SPLITS.items():
+            assert entry.deferred_at_loc > 0, path
+            if not entry.budget_history:
+                assert entry.budget == entry.deferred_at_loc, path
+
+
+# ---------------------------------------------------------------------------
+# §3d — Scope of the ratchet: per FILE, not per concern
+# ---------------------------------------------------------------------------
+
+
+def test_new_sibling_file_is_not_charged_against_a_deferred_budget(tmp_path: Path, monkeypatch, capsys):
+    """Pins the documented limit of the ratchet, so the claim stays true.
+
+    The guard's unit of enforcement is a file; the ``reason`` field's
+    unit of concern is not.  Moving 800 LOC of ``trainer.py`` concern
+    into a new ``_trainer_overflow.py`` sibling is therefore clean —
+    no FAIL, no WARN, "0 NEW over warn-threshold".
+
+    This is deliberate: every ``reason`` names the sibling files a
+    split should produce, so charging new siblings against the parent's
+    budget would penalise the exact refactor the backlog asks for.  The
+    test exists because the docstring used to claim the broader
+    invariant ("a deferred module may not grow") that the guard does
+    not check — if that scope ever does change, this test is the line
+    that has to change with it.
+    """
+    tool = _load_tool()
+    monkeypatch.setattr(
+        tool,
+        "_DEFERRED_SPLITS",
+        {
+            "forgelm/trainer.py": tool._DeferredSplit(
+                budget=1432, deferred_at_loc=1432, reason="synthetic entry for tests"
+            )
+        },
+    )
+    forgelm = tmp_path / "forgelm"
+    forgelm.mkdir()
+    (forgelm / "trainer.py").write_text("\n".join(["x = 1"] * 1432) + "\n", encoding="utf-8")
+    (forgelm / "_trainer_overflow.py").write_text("\n".join(["x = 1"] * 803) + "\n", encoding="utf-8")
+
+    assert tool.main(["--repo-root", str(tmp_path), "--strict"]) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "0 NEW over warn-threshold" in captured.out
+    assert "_trainer_overflow" not in captured.out
 
 
 # ---------------------------------------------------------------------------

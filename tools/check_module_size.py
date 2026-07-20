@@ -28,21 +28,59 @@ statement.**
 The replacement records something that cannot go stale, because it
 asserts nothing about the future: each entry pins the module's
 **measured LOC at the moment it was deferred** as a budget.  The
-guard then enforces a *ratchet* — a deferred module may stay over
-the ceiling, but it may not **grow**.  Splitting is still the goal;
-holding the line is the enforceable part.
+guard then enforces a *ratchet* — the deferred **file** may stay
+over the ceiling, but that file may not grow past its budget.
+Splitting is still the goal; holding the line is the enforceable
+part.
 
 Consequently:
 
 * There is no version literal in this file to retarget, and no
   "planned for vX.Y" comment that a future reader has to
   cross-check against the shipped version.
-* A deferred module that grows past its budget FAILS the guard in
+* A deferred file that grows past its budget FAILS the guard in
   every mode (see "Thresholds" below).  Previously it could drift
   from 1038 to 2000 LOC emitting nothing but a WARN.
 * Every entry carries a prose ``reason`` naming the concerns that
   the split would separate, so the backlog is actionable by
   someone who did not write it.
+
+What the ratchet does and does not enforce
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The unit of enforcement is **a file**, not the concern that file
+owns.  Saying so precisely matters: an earlier wording of this
+docstring promised that "a deferred module may not grow", which is
+true of the file and not of the concern each ``reason`` field
+describes.
+
+Concretely — a reproduction, not a hypothetical: adding a new
+803-LOC sibling module — a ``_trainer_overflow.py`` dropped beside
+the deferred ``forgelm/trainer.py`` — passes ``--strict`` with exit
+0.  No FAIL, no WARN, and the summary still reads "0 NEW over
+warn-threshold",
+because 803 is under the 1000-LOC ceiling every non-deferred module
+is held to.  The concern grew; no file did.
+
+That is the intended behaviour, not a hole left unplugged.  Every
+``reason`` below literally names the sibling files a split should
+produce (``_kwargs``, ``_runtime``, ``_finalize``, ``_artifacts``).
+A guard that charged new sibling files against the parent's budget
+would penalise the exact refactor it is asking for.  The alternative
+— budgeting per *concern* — requires a hand-maintained
+file-to-concern map, which is precisely the rot-prone artefact the
+budget mechanism was introduced to replace.
+
+The enforced invariant, stated exactly:
+
+* No file named in :data:`_DEFERRED_SPLITS` exceeds its recorded
+  budget.
+* No other file under ``forgelm/`` exceeds the warn / fail
+  thresholds.
+
+Total LOC across the tree is **not** bounded by this guard, and a
+concern spread across several under-ceiling files is invisible to
+it.  Noticing that is a code-review responsibility; the guard's job
+is the per-file ceiling.
 
 The ordered backlog, the honest assessment of *when* (or whether)
 each split lands, and the cost estimates live in
@@ -56,8 +94,8 @@ Only when the split is non-trivial enough to materially risk
 behavioural regression if bundled into a feature PR.  Every new
 entry MUST carry a ``reason`` and a ``risks-and-decisions.md`` row.
 
-Raising a budget (the escape hatch)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Raising a budget (the escape hatch), and how it is enforced
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Sometimes a deferred module legitimately must grow before it can be
 split — a security fix in ``compliance.py`` should not be blocked on
 a day-long refactor.  The escape hatch is therefore deliberately
@@ -68,6 +106,24 @@ reviewed line in a diff with a stated justification, instead of the
 silent 1038 → 2147 drift that the old WARN-only policy permitted.
 Lowering a budget after a trim needs no ceremony — the guard
 suggests it.
+
+That ``budget_history`` requirement is **checked, not merely
+asked for**.  Each entry also carries ``deferred_at_loc``: the
+measurement taken when the module was deferred.  Unlike ``budget``
+it is a historical fact and is never edited, which lets the guard
+detect a raise without access to the diff — ``budget >
+deferred_at_loc`` means somebody granted headroom, and
+:func:`_validate_entries` FAILs in every mode when the matching
+``budget_history`` note is missing or blank.  A documented
+requirement that nothing checks is the failure mode this whole
+re-tracking exists to correct; leaving one in the mechanism that
+corrects it would be self-defeating.
+
+The residual gap, stated rather than glossed: an editor could change
+``budget`` and ``deferred_at_loc`` in the same commit and defeat the
+check.  That is two deliberate falsifications of a field documented
+as immutable, in a small tool where a budget literal is a one-line
+diff — not the zero-friction silent drift the old policy allowed.
 
 LOC metric
 ----------
@@ -95,10 +151,13 @@ Thresholds
   A 50% over-ceiling module is an architectural emergency.
 * ``--strict`` mode promotes the warn threshold to a fatal one for
   non-deferred modules.
-* **Deferred modules: fatal on growth past their recorded budget**,
+* **Deferred files: fatal on growth past their recorded budget**,
   in every mode.  Staying over the ceiling is the granted
-  concession; growing is not.  Below budget they emit a WARN
-  carrying the split plan, so the debt stays visible.
+  concession; that file growing is not.  Below budget they emit a
+  WARN carrying the split plan, so the debt stays visible.  A new
+  sibling file is a NEW module and is held to the thresholds above,
+  not to the parent's budget — see "What the ratchet does and does
+  not enforce".
 
 Stale entries
 -------------
@@ -114,10 +173,11 @@ this list being updated.
 Exit codes (per the ``tools/`` contract — NOT the public 0/1/2/3/4
 surface that ``forgelm/`` honours):
 
-* ``0`` — no NEW drift, and no deferred module over its budget.
-* ``1`` — at least one NEW over-threshold module, a deferred module
-  that grew past its budget, a dangling entry, a stale entry under
-  ``--strict``, or invalid arguments.
+* ``0`` — no NEW drift, and no deferred file over its budget.
+* ``1`` — at least one NEW over-threshold module, a deferred file
+  that grew past its budget, an entry whose budget was raised
+  without a ``budget_history`` note, a dangling entry, a stale entry
+  under ``--strict``, or invalid arguments.
 
 Usage::
 
@@ -147,19 +207,31 @@ _STALE_THRESHOLD = int(_WARN_THRESHOLD * (1 - _STALE_MARGIN))  # 900
 
 @dataclass(frozen=True)
 class _DeferredSplit:
-    """One module allowed to stay over the ceiling, with a growth budget.
+    """One *file* allowed to stay over the ceiling, with a growth budget.
 
-    ``budget`` is the module's measured LOC at the moment of deferral
-    (or at the last explicitly-reviewed raise).  Exceeding it is fatal;
-    see the module docstring, "Raising a budget (the escape hatch)".
+    The scope is the single file named by the dict key, not the
+    concern ``reason`` describes: a new sibling module is NEW drift
+    held to the normal ceiling, never charged against this budget.
+    See the module docstring, "What the ratchet does and does not
+    enforce".
+
+    ``budget`` is the file's measured LOC at the moment of deferral
+    (or at the last explicitly-reviewed raise).  Exceeding it is fatal.
+
+    ``deferred_at_loc`` is the measurement taken when the module was
+    deferred.  It is a historical fact, **never edited** — not even
+    when the budget is raised — which is what lets
+    :func:`_validate_entries` recognise a raise without the diff.
 
     ``reason`` names the concerns a split would separate — it is what
     makes this list an actionable backlog rather than an exemption
     list.  ``budget_history`` records every raise, so the diff-level
-    justification survives in the file and not only in ``git log``.
+    justification survives in the file and not only in ``git log``;
+    it is required whenever ``budget > deferred_at_loc``.
     """
 
     budget: int
+    deferred_at_loc: int
     reason: str
     budget_history: tuple[str, ...] = ()
 
@@ -183,9 +255,16 @@ class _DeferredSplit:
 # is baselined here rather than pretended away; the roadmap section
 # records the deltas (e.g. compliance.py 1502 → 2147) so the cost of
 # the WARN-only years is on the record.
+#
+# ``deferred_at_loc`` equals ``budget`` for every entry below because
+# none has been raised yet.  It is NOT a duplicate to keep in sync:
+# ``budget`` is the current allowance and may be edited; ``deferred_at_loc``
+# is the 2026-07-20 measurement and never is.  Their divergence is how
+# _validate_entries() sees a raise without reading the diff.
 _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
     "forgelm/compliance.py": _DeferredSplit(
         budget=2147,
+        deferred_at_loc=2147,
         reason=(
             "EU AI Act Art. 9-17 + Annex IV builder + hash-chained audit log + "
             "GDPR purge/reverse-PII primitives. Split candidates: _audit_log, "
@@ -194,6 +273,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
     ),
     "forgelm/ingestion.py": _DeferredSplit(
         budget=2110,
+        deferred_at_loc=2110,
         reason=(
             "PDF/DOCX/EPUB/TXT/Markdown readers + chunkers + SFT-JSONL emitter. "
             "Split candidates: _readers, _chunkers, _pipeline."
@@ -201,6 +281,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
     ),
     "forgelm/config.py": _DeferredSplit(
         budget=1795,
+        deferred_at_loc=1795,
         reason=(
             "23 Pydantic models + cross-field validators + deprecation shims in one "
             "schema module. Splitting risks changing import-time validation order, so "
@@ -209,6 +290,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
     ),
     "forgelm/trainer.py": _DeferredSplit(
         budget=1432,
+        deferred_at_loc=1432,
         reason=(
             "ForgeTrainer god-object: TRL kwarg fold-in + OOM/DeepSpeed runtime + "
             "artifact finalisation + compliance/model-card/deployer hand-off. Split "
@@ -217,6 +299,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
     ),
     "forgelm/cli/_pipeline.py": _DeferredSplit(
         budget=1332,
+        deferred_at_loc=1332,
         reason=(
             "Multi-stage pipeline orchestrator: state machine + manifest builder + "
             "audit/webhook hooks. Split candidates: _state, _events, _verify. "
@@ -226,6 +309,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
     ),
     "forgelm/cli/_parser.py": _DeferredSplit(
         budget=1320,
+        deferred_at_loc=1320,
         reason=(
             "Argparse wiring for the full CLI surface. Split candidates: _train, "
             "_inspect, _data, _run. Low behavioural risk but every subcommand's "
@@ -234,6 +318,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
     ),
     "forgelm/cli/subcommands/_purge.py": _DeferredSplit(
         budget=1215,
+        deferred_at_loc=1215,
         reason=(
             "GDPR purge: row-id resolution + run-id resolution + retention-policy "
             "checks. Split candidates: _row_id, _run_id, _check_policy, _shared."
@@ -320,6 +405,50 @@ def _is_deferred(path: str) -> bool:
     return path in _DEFERRED_SPLITS
 
 
+def _validate_entries(entries: dict[str, _DeferredSplit]) -> bool:
+    """Check the ``budget_history`` contract; return ``True`` iff fatal.
+
+    Runs before any file is measured, because this is a policy defect
+    in the list itself rather than a size problem in the tree — it is
+    fatal in every mode, including ``--quiet``.
+
+    ``deferred_at_loc`` is the immutable measurement taken at deferral,
+    so ``budget > deferred_at_loc`` is exactly the signal "somebody
+    granted this entry extra headroom".  The module docstring promises
+    that every such grant carries a written justification; this is
+    where that promise is kept rather than merely stated.
+
+    A budget *below* ``deferred_at_loc`` means the module was trimmed
+    and the budget lowered to match — that needs no justification and
+    is deliberately not flagged.
+    """
+    fatal = False
+    for path in sorted(entries):
+        entry = entries[path]
+        notes = [note for note in entry.budget_history if note.strip()]
+        if len(notes) != len(entry.budget_history):
+            print(
+                f"FAIL: {path} has a blank budget_history note. Every entry in "
+                f"budget_history must state why the headroom was granted; an empty "
+                f"string is an unreviewed raise wearing a justification's clothes.",
+                file=sys.stderr,
+            )
+            fatal = True
+        if entry.budget > entry.deferred_at_loc and not notes:
+            print(
+                f"FAIL: {path} has budget {entry.budget} above its deferred_at_loc "
+                f"of {entry.deferred_at_loc} (+{entry.budget - entry.deferred_at_loc}) "
+                f"with an empty budget_history. Raising a budget is the documented "
+                f"escape hatch, but it must be a reviewed line in a diff with a stated "
+                f"reason: append that reason to this entry's budget_history in "
+                f"tools/check_module_size.py. Do not edit deferred_at_loc — it records "
+                f"the measurement at deferral and is what makes the raise visible.",
+                file=sys.stderr,
+            )
+            fatal = True
+    return fatal
+
+
 def _emit_deferred(
     measurements: Sequence[_Measurement],
     *,
@@ -358,7 +487,9 @@ def _emit_deferred(
             print(
                 f"FAIL: {path} = {measured.loc} LOC, over its deferred-split budget "
                 f"of {entry.budget} (+{measured.loc - entry.budget}). A deferred "
-                f"module may stay over the ceiling but may not grow. Either land the "
+                f"file may stay over the ceiling but may not grow past that budget "
+                f"(the ratchet is per-file; a new sibling module is NEW drift held to "
+                f"the normal ceiling, not charged here). Either land the "
                 f"split ({entry.reason}) or raise the budget in "
                 f"tools/check_module_size.py with a budget_history note saying why.",
                 file=sys.stderr,
@@ -468,13 +599,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         return 1
 
+    # The list's own policy contract is checked before any measurement:
+    # a budget raised without a stated justification is a defect in the
+    # deferral record, independent of what the tree currently measures.
+    fatal_entries = _validate_entries(_DEFERRED_SPLITS)
+
     measurements = _measure(repo_root, forgelm_root)
 
     # Deferred modules are scored against their recorded budget, not
     # against the raw thresholds, so they are removed from the band
     # classification entirely rather than being classified and then
     # exempted.
-    fatal = _emit_deferred(measurements, strict=args.strict, quiet=args.quiet)
+    fatal = _emit_deferred(measurements, strict=args.strict, quiet=args.quiet) or fatal_entries
 
     new_measurements = [m for m in measurements if not _is_deferred(m.path)]
     over_warn, over_fail = _classify(new_measurements)

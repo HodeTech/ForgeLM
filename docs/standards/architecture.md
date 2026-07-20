@@ -85,9 +85,22 @@ guard landed.
 ### Deferred splits carry a budget, not a target version
 
 A deferred entry pins the module's **measured LOC at deferral time**. The guard
-then enforces a ratchet: a deferred module may stay over the ceiling, but
-**growing past its budget is fatal in every mode**. Splitting remains the goal;
-holding the line is the enforceable part.
+then enforces a ratchet: a deferred file may stay over the ceiling, but **that
+file growing past its budget is fatal in every mode**. Splitting remains the
+goal; holding the line is the enforceable part.
+
+**The unit of enforcement is a file, not the concern the file owns.** Adding a
+new 803-LOC sibling module — say a `_trainer_overflow.py` dropped beside the
+deferred `forgelm/trainer.py` — passes `--strict` with exit 0. The new file is
+a NEW module held to the normal 1000-LOC ceiling, not charged against
+`trainer.py`'s budget, so the concern grew while no file did.
+That is deliberate: every `reason` field names the sibling files a split should
+produce, so charging siblings against the parent would penalise the exact
+refactor the backlog asks for, and a per-*concern* budget would need a
+hand-maintained file-to-concern map — the rot-prone artefact the budget
+mechanism replaced. Total LOC across the tree is not bounded by this guard;
+noticing a concern smeared across several under-ceiling files is a code-review
+responsibility.
 
 Deferrals deliberately name **no target version**. Until 2026-07-20 every entry
 read "defer to v0.6.x split" — accurate when written at v0.5.5, still printing
@@ -107,7 +120,11 @@ Rules for the list:
 - **Raising a budget** is the explicit escape hatch — a security fix should not
   be blocked on a day-long refactor. Edit the literal in the same PR and append
   the justification to that entry's `budget_history`, so extra headroom is
-  always a reviewed line in a diff rather than silent drift.
+  always a reviewed line in a diff rather than silent drift. This is
+  **enforced**, not just asked for: each entry also carries an immutable
+  `deferred_at_loc`, and a `budget` raised above it with an empty or blank
+  `budget_history` fails the guard in every mode. Lowering a budget after a trim
+  needs no justification.
 - **Leaving** happens the moment the module is split or trimmed under the
   ceiling: delete the entry in the same PR. The guard reports a dangling entry
   (path gone) as fatal and a stale entry (module back under the ceiling) as
