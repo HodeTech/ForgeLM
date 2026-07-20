@@ -68,6 +68,23 @@ PIPELINE_MANIFEST_INPUT_ERROR_PREFIX = "INPUT_ERROR::"
 # compared nothing is the defect class this cycle has closed six times.
 PIPELINE_MANIFEST_UNVERIFIED_PREFIX = "UNVERIFIED::"
 
+# The per-stage Annex IV evidence artefact: written by
+# :func:`export_compliance_artifacts`, recorded as each stage's evidence
+# pointer by ``forgelm/cli/_pipeline.py``, and deep-parsed by
+# :func:`forgelm.verify.verify_pipeline_stage_evidence`.
+#
+# It exists because these sites drifting apart is exactly the defect it fixes:
+# the orchestrator recorded ``training_manifest.json``, a filename no writer
+# here has ever produced, so the pointer dangled on every run and the reader
+# could not distinguish a writer defect from deleted evidence — which inverted
+# the tamper signal (deletion routed *softer* than corruption).
+#
+# ``export_compliance_artifacts`` deliberately keeps its own string literal
+# (tools/check_site_claims.py AST-scrapes that function and cannot see a named
+# constant); the two are pinned together behaviourally instead, by
+# tests/test_pipeline_compliance.py::TestEvidencePointerNamesARealArtefact.
+ANNEX_IV_ARTEFACT_BASENAME = "annex_iv_metadata.json"
+
 # Structural failure taxonomy for the audit-log verifier.
 #
 # ``verify_audit_log`` folds five very different situations into the same
@@ -2176,6 +2193,15 @@ def export_compliance_artifacts(
         # produces a hash the verifier recomputes byte-for-byte.
         annex_artifact = build_annex_iv_artifact(manifest)
         if annex_artifact is not None:
+            # Deliberate string literal, not ANNEX_IV_ARTEFACT_BASENAME:
+            # tools/check_site_claims.py AST-scrapes this function's literals to
+            # cross-check the filenames the marketing site advertises, and a
+            # named constant is invisible to that scrape.  The literal and the
+            # constant are pinned to each other behaviourally by
+            # tests/test_pipeline_compliance.py::TestEvidencePointerNamesARealArtefact,
+            # which runs this exporter and asserts the constant names a file it
+            # actually produced — a stronger tie than sharing a symbol, since it
+            # would also catch the artefact being dropped entirely.
             with open(os.path.join(staging_dir, "annex_iv_metadata.json"), "w", encoding="utf-8") as f:
                 # Must use _manifest_json_default (not default=str) so sets/frozensets
                 # are serialised as sorted lists — matching what compute_annex_iv_manifest_hash
@@ -2850,15 +2876,16 @@ def _verify_audit_log_chain(
 # ties them together at the chain level so auditors can verify both the
 # per-stage evidence AND the chain integrity that connects the records.
 #
-# NOTE: the orchestrator records each stage's evidence pointer as
-# ``<output_dir>/compliance/training_manifest.json``, a filename NO writer
-# in this module has ever produced (``export_compliance_artifacts`` emits
-# ``training_manifest.yaml`` and ``annex_iv_metadata.json``).  The pointer
-# therefore dangles on every real run.  The verifier resolves that legacy
-# basename to its ``annex_iv_metadata.json`` sibling; where no sibling
-# exists it reports UNVERIFIED rather than "evidence missing", because a
-# writer-side defect must not be reported to an operator as tampering.
-# Correcting the pointer itself lives in ``forgelm/cli/_pipeline.py``.
+# NOTE: ``annex_iv_metadata.json`` is the per-stage evidence artefact — it
+# carries the §1-9 canonical layout and the ``metadata.manifest_hash`` stamp
+# the chain verifier deep-parses.  ``training_manifest.yaml`` is a flat
+# human-readable summary with no hash and is not verifiable evidence.
+# The orchestrator records the former as each stage's evidence pointer
+# (``forgelm/cli/_pipeline.py``).  ForgeLM < 0.9.1 recorded
+# ``training_manifest.json``, a filename no writer here has ever produced, so
+# that pointer dangled on every run; the verifier keeps a version-gated
+# compatibility path that resolves the legacy basename to its
+# ``annex_iv_metadata.json`` sibling for archived pre-0.9.1 manifests only.
 #
 # Lives in ``compliance.py`` (alongside the single-stage manifest) so
 # Annex IV schema decisions live in one module.  The orchestrator

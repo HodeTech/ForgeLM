@@ -10,6 +10,7 @@ provenance index.
 from __future__ import annotations
 
 import json
+import os
 
 from forgelm.cli._pipeline import PipelineStageState, PipelineState
 from forgelm.compliance import _verify_manifest_payload, generate_pipeline_manifest
@@ -591,67 +592,267 @@ class TestVerifyPipelineManifestAtPath:
         assert any("stage at index 0 is not an object" in v for v in violations)
         assert any("stage at index 1 is not an object" in v for v in violations)
 
-    def test_completed_stage_with_dangling_legacy_pointer_is_unverified_not_missing(self, tmp_path):
-        """The orchestrator records ``<out>/compliance/training_manifest.json``
-        as each stage's evidence pointer, but no ForgeLM version writes that
-        filename — ``export_compliance_artifacts`` emits
-        ``training_manifest.yaml`` + ``annex_iv_metadata.json``.  The pointer
-        has therefore always dangled on real runs.
-
-        Reporting that as "evidence missing" (exit 6) would accuse a clean run
-        of tampering over a writer-side defect, so the dangling *legacy*
-        basename with no sibling artefact routes to ``UNVERIFIED::`` (exit 1)
-        instead: nothing was compared, and the verifier says so.
-        """
-        from forgelm.compliance import PIPELINE_MANIFEST_UNVERIFIED_PREFIX, verify_pipeline_manifest_at_path
-
+    def _write_manifest(self, tmp_path, state, root=None, version=None):
+        """Persist a chain manifest for *state*, optionally forcing the
+        recorded ``forgelm_version`` (the legacy-fallback discriminator)."""
         manifest_dir = tmp_path / "compliance"
-        manifest_dir.mkdir()
-        state = _three_stage_state()
-        for s in state.stages:
-            s.training_manifest = str(tmp_path / s.name / "compliance" / "training_manifest.json")
-        manifest = generate_pipeline_manifest(state, _root_with_compliance())
+        manifest_dir.mkdir(exist_ok=True)
+        manifest = generate_pipeline_manifest(state, root if root is not None else _root_with_compliance())
+        if version is not None:
+            # Re-stamp: generate_pipeline_manifest hashes the payload, and both
+            # forgelm_version and the annex_iv block are covered by that hash —
+            # which is precisely why an attacker cannot forge either one to
+            # unlock the softer routing without tripping the mismatch check.
+            from forgelm.compliance import compute_annex_iv_manifest_hash
+
+            manifest["forgelm_version"] = version
+            manifest.pop("metadata", None)
+            manifest["metadata"] = {"manifest_hash": compute_annex_iv_manifest_hash(manifest)}
         (manifest_dir / "pipeline_manifest.json").write_text(json.dumps(manifest))
+        return manifest
 
-        violations = verify_pipeline_manifest_at_path(str(tmp_path))
-        assert violations, "a dangling evidence pointer must not verify silently"
-        assert all(v.startswith(PIPELINE_MANIFEST_UNVERIFIED_PREFIX) for v in violations)
-        assert any("no ForgeLM version writes" in v for v in violations)
+    def test_deleted_evidence_is_an_integrity_violation_not_a_soft_unverified(self, tmp_path):
+        """The headline regression: deleting a stage's Annex IV evidence is
+        archetypal Article 12 tampering and must exit 6.
 
-    def test_legacy_pointer_resolves_to_sibling_annex_iv_artifact(self, tmp_path):
-        """When the real artefact sits beside the dangling legacy pointer,
-        the verifier resolves to it and genuinely verifies the stage —
-        turning today's always-broken check into a working one."""
+        It previously exited 1 — *softer* than merely corrupting the same
+        file — because the orchestrator recorded a pointer at
+        ``training_manifest.json``, a filename no writer has ever produced.
+        With the pointer dangling on every run, the reader could not tell a
+        writer defect from a deleted artefact and had to assume the benign
+        one.  The writer now names ``annex_iv_metadata.json``, so absence is
+        unambiguous again.
+        """
         from forgelm.compliance import verify_pipeline_manifest_at_path
 
-        manifest_dir = tmp_path / "compliance"
-        manifest_dir.mkdir()
+        state = _three_stage_state()
+        _attach_stage_evidence(state, tmp_path)
+        self._write_manifest(tmp_path, state)
+        assert verify_pipeline_manifest_at_path(str(tmp_path)) == [], "sanity: intact run verifies clean"
+
+        for stage in state.stages:
+            (tmp_path / stage.name / "compliance" / "annex_iv_metadata.json").unlink()
+
+        violations = verify_pipeline_manifest_at_path(str(tmp_path))
+        assert violations, "deleted evidence must not verify silently"
+        assert all(not v.startswith(("UNVERIFIED::", "IO_ERROR::", "INPUT_ERROR::")) for v in violations)
+        assert any("is missing" in v for v in violations)
+
+    def test_deletion_is_never_softer_than_corruption(self, tmp_path):
+        """Pins the *ordering* the inversion broke, not just each code.
+
+        A weaker assertion on the absolute exit codes would still pass if a
+        future change moved both branches together.
+        """
+        from forgelm.cli.subcommands._verify_annex_iv import _classify_pipeline_violations
+        from forgelm.compliance import verify_pipeline_manifest_at_path
+
+        def _code(mutate):
+            run = tmp_path / mutate.__name__
+            run.mkdir()
+            state = _three_stage_state()
+            _attach_stage_evidence(state, run)
+            self._write_manifest(run, state)
+            mutate(run / state.stages[0].name / "compliance" / "annex_iv_metadata.json")
+            return _classify_pipeline_violations(verify_pipeline_manifest_at_path(str(run)))[0]
+
+        def corrupt(path):
+            path.write_text("{ this is not json")
+
+        def delete(path):
+            path.unlink()
+
+        corrupted, deleted = _code(corrupt), _code(delete)
+        assert corrupted == 6
+        assert deleted == 6
+        assert deleted >= corrupted, f"deletion ({deleted}) must never route softer than corruption ({corrupted})"
+
+    def test_missing_evidence_without_a_compliance_block_is_unverified_not_tampering(self, tmp_path):
+        """S6-D-04: ``build_annex_iv_artifact`` returns ``None`` when the run
+        configured no ``compliance:`` block, so no evidence file exists for an
+        entirely legitimate reason.  Nothing was compared → exit 1, and the
+        message must say *which* situation the operator is in rather than
+        implying a deletion."""
+        from forgelm.compliance import PIPELINE_MANIFEST_UNVERIFIED_PREFIX, verify_pipeline_manifest_at_path
+
+        root = ForgeConfig(
+            model={"name_or_path": "org/base"},
+            lora={"r": 8},
+            training={"trainer_type": "sft"},
+            data={"dataset_name_or_path": "org/data"},
+            pipeline={"stages": [{"name": "sft_stage"}, {"name": "dpo_stage"}, {"name": "grpo_stage"}]},
+        )
+        state = _three_stage_state()
+        for s in state.stages:
+            s.training_manifest = str(tmp_path / s.name / "compliance" / "annex_iv_metadata.json")
+        self._write_manifest(tmp_path, state, root=root)
+
+        violations = verify_pipeline_manifest_at_path(str(tmp_path))
+        assert violations
+        assert all(v.startswith(PIPELINE_MANIFEST_UNVERIFIED_PREFIX) for v in violations)
+        assert any("no 'compliance:' block" in v for v in violations)
+        # It must NOT be phrased as a deletion.
+        assert not any("is missing" in v for v in violations)
+
+    def test_legacy_pointer_resolves_to_sibling_on_a_pre_fix_manifest(self, tmp_path):
+        """The compatibility path, scoped to what it claims to cover: an
+        archived pre-0.9.1 manifest whose dangling ``training_manifest.json``
+        pointer sits beside the real artefact still verifies."""
+        from forgelm.compliance import verify_pipeline_manifest_at_path
+
         state = _three_stage_state()
         for s in state.stages:
             stage_compliance = tmp_path / s.name / "compliance"
             _write_stage_evidence(stage_compliance / "annex_iv_metadata.json")
             s.training_manifest = str(stage_compliance / "training_manifest.json")
-        manifest = generate_pipeline_manifest(state, _root_with_compliance())
-        (manifest_dir / "pipeline_manifest.json").write_text(json.dumps(manifest))
+        self._write_manifest(tmp_path, state, version="0.8.0")
 
         assert verify_pipeline_manifest_at_path(str(tmp_path)) == []
 
-    def test_non_legacy_dangling_pointer_is_an_integrity_violation(self, tmp_path):
-        """A pointer at any *other* basename is not a known writer defect —
-        an absent file there means the evidence the manifest asserts exists
-        does not, which is untagged (exit 6)."""
+    def test_legacy_fallback_does_not_apply_to_a_current_manifest(self, tmp_path):
+        """The fallback must be a compatibility path for *older* ForgeLM
+        versions, not the universal path every current run takes.
+
+        A current manifest naming the legacy basename is not an old artefact —
+        it is a pointer that does not match what this version writes, and its
+        absent target gets the conservative routing (exit 6).
+        """
         from forgelm.compliance import verify_pipeline_manifest_at_path
 
-        manifest_dir = tmp_path / "compliance"
-        manifest_dir.mkdir()
+        state = _three_stage_state()
+        for s in state.stages:
+            stage_compliance = tmp_path / s.name / "compliance"
+            _write_stage_evidence(stage_compliance / "annex_iv_metadata.json")
+            s.training_manifest = str(stage_compliance / "training_manifest.json")
+        self._write_manifest(tmp_path, state, version="0.9.1")
+
+        violations = verify_pipeline_manifest_at_path(str(tmp_path))
+        assert violations, "the legacy fallback must not silently rescue a current manifest"
+        assert all(not v.startswith("UNVERIFIED::") for v in violations)
+
+    def test_unparseable_manifest_version_routes_conservatively(self, tmp_path):
+        """An absent or garbled ``forgelm_version`` must not unlock the softer
+        compatibility path."""
+        from forgelm.compliance import verify_pipeline_manifest_at_path
+
+        for version in ("", "not-a-version", "vNext"):
+            run = tmp_path / f"run_{version or 'empty'}".replace(" ", "_")
+            run.mkdir()
+            state = _three_stage_state()
+            for s in state.stages:
+                stage_compliance = run / s.name / "compliance"
+                _write_stage_evidence(stage_compliance / "annex_iv_metadata.json")
+                s.training_manifest = str(stage_compliance / "training_manifest.json")
+            self._write_manifest(run, state, version=version)
+            violations = verify_pipeline_manifest_at_path(str(run))
+            assert violations, version
+            assert all(not v.startswith("UNVERIFIED::") for v in violations), version
+
+    def test_messages_name_the_file_actually_examined(self, tmp_path):
+        """F3: when the legacy fallback rebinds the path, later messages must
+        interpolate the artefact that was opened — not the original pointer,
+        which names a file the verifier never read."""
+        from forgelm.compliance import verify_pipeline_manifest_at_path
+
+        state = _three_stage_state()
+        for s in state.stages:
+            stage_compliance = tmp_path / s.name / "compliance"
+            stage_compliance.mkdir(parents=True, exist_ok=True)
+            (stage_compliance / "annex_iv_metadata.json").write_text("{ not json")
+            s.training_manifest = str(stage_compliance / "training_manifest.json")
+        self._write_manifest(tmp_path, state, version="0.8.0")
+
+        violations = verify_pipeline_manifest_at_path(str(tmp_path))
+        assert violations
+        assert all("annex_iv_metadata.json" in v for v in violations)
+        assert not any("training_manifest.json" in v for v in violations)
+
+    def test_non_legacy_dangling_pointer_is_an_integrity_violation(self, tmp_path):
+        """A pointer at any *other* basename is not a legacy artefact — an
+        absent file there means the evidence the manifest asserts exists does
+        not, which is untagged (exit 6)."""
+        from forgelm.compliance import verify_pipeline_manifest_at_path
+
         state = _three_stage_state()
         for s in state.stages:
             s.training_manifest = str(tmp_path / s.name / "compliance" / "annex_iv_metadata.json")
-        manifest = generate_pipeline_manifest(state, _root_with_compliance())
-        (manifest_dir / "pipeline_manifest.json").write_text(json.dumps(manifest))
+        self._write_manifest(tmp_path, state)
 
         violations = verify_pipeline_manifest_at_path(str(tmp_path))
         assert any("is missing" in v and not v.startswith("UNVERIFIED::") for v in violations)
+
+
+class TestEvidencePointerNamesARealArtefact:
+    """The writer/reader contract that was missing, and whose absence is why a
+    permanently-dangling evidence pointer shipped.
+
+    Every test around it verified the *reader* against hand-built fixtures, so
+    nothing ever compared what the orchestrator records against what
+    ``export_compliance_artifacts`` actually writes.  The pointer named
+    ``training_manifest.json``; the writer emits ``training_manifest.yaml`` and
+    ``annex_iv_metadata.json``.  Three literals in three modules, no test
+    tying them together.
+    """
+
+    def test_writer_actually_emits_the_artefact_the_pointer_names(self, tmp_path, minimal_config):
+        """The load-bearing one: run the real exporter and assert the basename
+        the orchestrator records is among the files it produced."""
+        from forgelm.compliance import (
+            ANNEX_IV_ARTEFACT_BASENAME,
+            export_compliance_artifacts,
+            generate_training_manifest,
+        )
+
+        cfg = ForgeConfig(
+            **{
+                **minimal_config(),
+                "compliance": {
+                    "provider_name": "Acme Inc",
+                    "provider_contact": "compliance@acme.test",
+                    "system_name": "Acme System",
+                    "intended_purpose": "Customer-service assistant fine-tune",
+                    "system_version": "v1.0",
+                },
+            }
+        )
+        manifest = generate_training_manifest(cfg, metrics={"eval_loss": 0.5})
+        written = export_compliance_artifacts(manifest, str(tmp_path / "compliance"))
+
+        basenames = {os.path.basename(p) for p in written}
+        assert ANNEX_IV_ARTEFACT_BASENAME in basenames, (
+            f"the evidence pointer names {ANNEX_IV_ARTEFACT_BASENAME!r}, "
+            f"but export_compliance_artifacts wrote {sorted(basenames)}"
+        )
+        assert (tmp_path / "compliance" / ANNEX_IV_ARTEFACT_BASENAME).is_file()
+
+    def test_reader_and_writer_agree_on_the_basename(self):
+        """``forgelm.verify`` re-declares the constant (it cannot import it
+        without closing an import cycle); pin the two together."""
+        from forgelm.compliance import ANNEX_IV_ARTEFACT_BASENAME
+        from forgelm.verify import _ANNEX_IV_EVIDENCE_BASENAME
+
+        assert _ANNEX_IV_EVIDENCE_BASENAME == ANNEX_IV_ARTEFACT_BASENAME
+
+    def test_orchestrator_builds_the_pointer_from_the_shared_constant(self):
+        """The orchestrator must not re-introduce a bare literal.
+
+        A source-level assertion because the alternative — standing up a full
+        stage run — would mock away the very line under test.  It fails on the
+        exact regression: a hand-written basename in the evidence-pointer
+        assignment.
+        """
+        import inspect
+
+        from forgelm.cli import _pipeline
+
+        source = inspect.getsource(_pipeline)
+        assert "ANNEX_IV_ARTEFACT_BASENAME" in source, (
+            "the stage evidence pointer must be built from forgelm.compliance.ANNEX_IV_ARTEFACT_BASENAME, not a literal"
+        )
+        assert '"training_manifest.json"' not in source, (
+            "the orchestrator recorded a filename no writer produces; "
+            "that dangling pointer is what inverted the tamper signal"
+        )
 
 
 class TestVerifyAnnexIvPipelineModeExitCodes:

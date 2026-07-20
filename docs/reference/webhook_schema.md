@@ -37,8 +37,8 @@ Exactly **eight webhook events** exist. A receiver must expect no others from a 
 | `training.failure` | Training itself raised — OOM, dataset error, unhandled exception. | `webhook.notify_on_failure` | `failed` | `#ff0000` |
 | `training.reverted` | Training succeeded, then a post-training gate (evaluation, safety, judge, or benchmark) rejected the run and the adapters were deleted. | `webhook.notify_on_failure` | `reverted` | `#ff9900` |
 | `approval.required` | The run succeeded, `evaluation.require_human_approval: true`, and the model is staged for reviewer sign-off (EU AI Act Art. 14). | `webhook.notify_on_success` | `awaiting_approval` | `#f2c744` |
-| `pipeline.started` | A multi-stage pipeline run begins, before any stage executes. | `webhook.notify_on_start` | `started` | `#0052cc` |
-| `pipeline.completed` | A multi-stage pipeline run reaches its terminal state. | `webhook.notify_on_success` when `final_status == "completed"`, otherwise `webhook.notify_on_failure` | equals `final_status` | `#36a64f` on success, `#cc0000` otherwise |
+| `pipeline.started` | A **fresh** multi-stage pipeline run begins, before any stage executes. Not emitted on `--resume-from` — see [When these events do *not* fire](#when-these-events-do-not-fire). | `webhook.notify_on_start` | `started` | `#0052cc` |
+| `pipeline.completed` | A multi-stage pipeline run reaches `completed` or `stopped_at_stage`. **Not** emitted when the run ends `gated_pending_approval` — see [When these events do *not* fire](#when-these-events-do-not-fire). | `webhook.notify_on_success` when `final_status == "completed"`, otherwise `webhook.notify_on_failure` | equals `final_status` | `#36a64f` on success, `#cc0000` otherwise |
 | `pipeline.stage_reverted` | A stage auto-reverts, emitted at that moment rather than at the end of the run. | `webhook.notify_on_failure` | `reverted` | `#ff9900` |
 
 Four points a receiver author usually gets wrong:
@@ -48,7 +48,18 @@ Four points a receiver author usually gets wrong:
 - **`pipeline.*` events are emitted *alongside* the per-stage `training.*` events**, not instead of them. Each stage's `ForgeTrainer` still fires its own lifecycle events, so a pre-existing dashboard filtering on `training.failure` keeps working unchanged when its operator adopts a pipeline config.
 - **`pipeline.completed` collides by name with an audit-log event of the same identifier.** This is a known wire/audit collision. Correlate on the payload field set, never on the name alone.
 
-Webhook events are **not** appended to `audit_log.jsonl` — they ride a best-effort side channel. To correlate a ping with the regulatory record, join on `run_name` plus timestamp.
+Webhook events are **not** appended to `audit_log.jsonl` — they ride a best-effort side channel. To correlate a ping with the regulatory record, join on `run_name` and the `event` name.
+
+**There is no timestamp on the wire.** No payload carries one — not under any key, on any event. Use your receiver's own time of arrival if you need one, and treat it as approximate: delivery is best-effort and unordered, so arrival time is not emission time. The audit log is the timestamped record.
+
+### When these events do *not* fire
+
+`pipeline.started` and `pipeline.completed` read as unconditional bookends, but two deterministic paths in the orchestrator skip them. Together they are exactly the enterprise approval-gate flow, so a receiver that treats a missing `pipeline.completed` as a fault will misreport a correctly-functioning gated pipeline:
+
+- **`pipeline.started` is not emitted on a `--resume-from` run.** The event fires only when `resume_from is None`, so a resumed pipeline runs its remaining stages and can emit `pipeline.completed` with no `pipeline.started` ever having preceded it in that process. Do not pair the two as an open/close bracket.
+- **`pipeline.completed` is not emitted when the run ends `gated_pending_approval`.** The terminal event fires only for `final_status` in `completed` / `stopped_at_stage`. A pipeline halted by a human-approval gate is a coherent terminal state, but it is not one of those two: it emits the `pipeline.stage_gated` **audit** event and stops. The corresponding webhook signal is `approval.required` from the gating stage — that ping, not a `pipeline.completed`, is what tells a receiver the chain is waiting on a reviewer.
+
+Both are consequences of best-effort delivery rule 3 below being a design property rather than a failure mode: **the absence of an event is never evidence that the thing did not happen.**
 
 ### Stability contract
 
@@ -104,7 +115,7 @@ A rogue field degrades the notification; it never cancels it and never raises. T
 
 ## Example payloads
 
-One example per event family. Fields are shown exactly as they appear on the wire, including the always-present nulls.
+Every payload below was **captured from the shipped notifier**, not hand-written: each `notify_*` method was driven with a recording transport substituted at the POST boundary, and the object it assembled is reproduced verbatim — key order, escaping, always-present nulls and all. Regenerate them the same way rather than editing them by hand, or they drift back into being a description of what the payload ought to be.
 
 ### `training.*` family
 
@@ -115,18 +126,23 @@ One example per event family. Fields are shown exactly as they appear on the wir
   "event": "training.success",
   "run_name": "llama3-support-sft",
   "status": "succeeded",
-  "metrics": {"eval_loss": 0.4231, "train_runtime": 1820.5},
+  "metrics": {
+    "eval_loss": 0.4231,
+    "train_runtime": 1820.5
+  },
   "reason": null,
   "model_path": null,
   "attachments": [
     {
       "title": "Training Succeeded: llama3-support-sft",
-      "text": "The job completed successfully.\n\nMetrics:\n• eval_loss: 0.4231",
+      "text": "The job completed successfully.\n\nMetrics:\n• eval_loss: 0.4231\n• train_runtime: 1820.5000",
       "color": "#36a64f"
     }
   ]
 }
 ```
+
+Note the attachment `text`: **every** metric is listed, each formatted to four decimal places, so `train_runtime` renders as `1820.5000` in the prose while `metrics.train_runtime` stays the JSON number `1820.5`. The formatted text is presentation; read `metrics` for values.
 
 `training.reverted` — same envelope, `reason` populated, `metrics` empty:
 
@@ -217,7 +233,26 @@ On the early-stop path the same event arrives with `status` and `final_status` b
 }
 ```
 
-`pipeline.started` carries `stage_count` and nothing else beyond the base envelope.
+`pipeline.started` carries `stage_count` and nothing else beyond the base envelope:
+
+```json
+{
+  "event": "pipeline.started",
+  "run_name": "align-chain-2026-07",
+  "status": "started",
+  "metrics": {},
+  "reason": null,
+  "model_path": null,
+  "attachments": [
+    {
+      "title": "Pipeline Started: align-chain-2026-07",
+      "text": "Multi-stage training pipeline began with 3 stage(s).",
+      "color": "#0052cc"
+    }
+  ],
+  "stage_count": 3
+}
+```
 
 ## Secret redaction
 

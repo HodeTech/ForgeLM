@@ -798,8 +798,51 @@ class TestExtraPayloadAllowlist:
         monkeypatch.setattr(WebhookNotifier, "_send", _recorder)
         return calls
 
+    @staticmethod
+    def _notifier_names():
+        """Every shipped ``notify_*`` method, discovered from the class.
+
+        WH-03: this list used to be eight literal call sites with a
+        ``len(calls) == 8`` assertion, and nothing tied either to
+        :class:`WebhookNotifier`.  A ninth notifier would ship completely
+        untested while the assertion still passed — the allowlist-drift guard
+        below would simply never see its kwargs.  Deriving the roster from the
+        class means a new ``notify_*`` method is exercised the moment it lands,
+        and the count is a consequence rather than a hardcoded promise.
+        """
+        return sorted(name for name in dir(WebhookNotifier) if name.startswith("notify_"))
+
+    @staticmethod
+    def _argument_for(param):
+        """A plausible value for *param*, chosen from its annotation.
+
+        Keeps the generic driver honest without re-encoding each notifier's
+        signature: an unannotated or unrecognised parameter raises rather than
+        being silently skipped, so a new notifier taking an exotic argument
+        fails loudly here instead of quietly dropping out of coverage.
+        """
+        import typing
+
+        annotation = param.annotation
+        # ``Optional[X]`` / ``X | None`` — None is always a legal value.
+        if typing.get_origin(annotation) in (typing.Union, getattr(__import__("types"), "UnionType", None)):
+            if type(None) in typing.get_args(annotation):
+                return None
+        if annotation is str:
+            return f"generic-{param.name}"
+        if annotation is int:
+            return 3
+        if typing.get_origin(annotation) is dict or annotation is dict:
+            return {"loss": 0.5}
+        raise AssertionError(
+            f"webhook test driver has no value for parameter {param.name!r} "
+            f"annotated {annotation!r} — teach _argument_for about it rather than skipping the notifier"
+        )
+
     def _drive_every_notifier(self, monkeypatch):
         """Call every shipped ``notify_*`` method once; return captured kwargs."""
+        import inspect
+
         calls = self._record_send(monkeypatch)
         config = _make_config(
             {
@@ -810,15 +853,18 @@ class TestExtraPayloadAllowlist:
             }
         )
         n = WebhookNotifier(config)
-        n.notify_start(run_name="r")
-        n.notify_success(run_name="r", metrics={"loss": 0.5})
-        n.notify_failure(run_name="r", reason="boom")
-        n.notify_reverted(run_name="r", reason="judge said no")
-        n.notify_awaiting_approval(run_name="r", model_path="/tmp/staging")
-        n.notify_pipeline_started(run_id="r", stage_count=3)
-        n.notify_pipeline_completed(run_id="r", final_status="completed", stopped_at=None)
-        n.notify_pipeline_reverted(run_id="r", stage_name="sft-warmup", reason="revert")
-        assert len(calls) == 8, "a notify_* method did not reach _send"
+
+        names = self._notifier_names()
+        assert names, "no notify_* methods discovered — the driver is not exercising anything"
+        for name in names:
+            method = getattr(n, name)
+            params = list(inspect.signature(method).parameters.values())
+            method(**{p.name: self._argument_for(p) for p in params})
+
+        assert len(calls) == len(names), (
+            f"{len(names) - len(calls)} of {len(names)} notify_* methods did not reach _send: "
+            "a notifier is gated off or swallowing its send"
+        )
         return calls
 
     def test_allowlist_exactly_matches_keys_the_notifiers_pass(self, monkeypatch):

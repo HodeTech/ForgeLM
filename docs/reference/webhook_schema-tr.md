@@ -37,18 +37,29 @@ Tam olarak **sekiz webhook olayı** vardır. Bir alıcı, sevk edilmiş bir Forg
 | `training.failure` | Eğitimin kendisi hata fırlattı — OOM, veri seti hatası, yakalanmayan istisna. | `webhook.notify_on_failure` | `failed` | `#ff0000` |
 | `training.reverted` | Eğitim başarılı oldu, ardından eğitim sonrası bir kapı (değerlendirme, güvenlik, hakem veya benchmark) koşuyu reddetti ve adaptörler silindi. | `webhook.notify_on_failure` | `reverted` | `#ff9900` |
 | `approval.required` | Koşu başarılı oldu, `evaluation.require_human_approval: true` ve model inceleyici onayı için staging'de (EU AI Act Madde 14). | `webhook.notify_on_success` | `awaiting_approval` | `#f2c744` |
-| `pipeline.started` | Çok aşamalı bir pipeline koşusu başlar, herhangi bir aşama çalışmadan önce. | `webhook.notify_on_start` | `started` | `#0052cc` |
-| `pipeline.completed` | Çok aşamalı bir pipeline koşusu terminal durumuna ulaşır. | `final_status == "completed"` ise `webhook.notify_on_success`, aksi hâlde `webhook.notify_on_failure` | `final_status`'a eşittir | başarıda `#36a64f`, aksi hâlde `#cc0000` |
+| `pipeline.started` | **Sıfırdan** başlayan çok aşamalı bir pipeline koşusu başlar, herhangi bir aşama çalışmadan önce. `--resume-from` ile emit edilmez — bkz. [Bu olayların emit edilmediği durumlar](#bu-olayların-emit-edilmediği-durumlar). | `webhook.notify_on_start` | `started` | `#0052cc` |
+| `pipeline.completed` | Çok aşamalı bir pipeline koşusu `completed` ya da `stopped_at_stage` durumuna ulaşır. Koşu `gated_pending_approval` ile bittiğinde **emit edilmez** — bkz. [Bu olayların emit edilmediği durumlar](#bu-olayların-emit-edilmediği-durumlar). | `final_status == "completed"` ise `webhook.notify_on_success`, aksi hâlde `webhook.notify_on_failure` | `final_status`'a eşittir | başarıda `#36a64f`, aksi hâlde `#cc0000` |
 | `pipeline.stage_reverted` | Bir aşama auto-revert olur; koşunun sonunda değil, tam o anda emit edilir. | `webhook.notify_on_failure` | `reverted` | `#ff9900` |
 
 Alıcı yazarlarının genellikle yanlış anladığı dört nokta:
 
-- **`training.success`, her kapının geçildiği anlamına gelmez.** `evaluation.auto_revert: true` ile gelir. Sevk edilen varsayılan `auto_revert: false` ile, bir kapı başarısız olup yalnızca kaydedildiğinde ve model yine de terfi ettiğinde *de* tetiklenir. Dashboard'unuz bu olayı "kalite doğrulandı" olarak yorumluyorsa, olay adı yerine `metrics`'i okuyun.
+- **`training.success`, her kapının geçildiği anlamına gelmez.** `evaluation.auto_revert: true` ile *bu anlama gelir*. Ancak sevk edilen varsayılan `auto_revert: false` ile, bir kapı başarısız olup yalnızca kaydedildiğinde ve model yine de terfi ettiğinde *de* tetiklenir. Dashboard'unuz bu olayı "kalite doğrulandı" olarak yorumluyorsa, olay adı yerine `metrics`'i okuyun.
 - **`approval.required` bir duraklamadır, başarısızlık değil.** `training.failure` üzerinde otomatik çağrı (page) yapan bir alıcı bunun üzerinde çağrı yapmamalıdır. Kasıtlı olarak `notify_on_success` ile kapılanır: başarı bildirimlerini susturmuş bir operatör, onay ping'lerini de istemez.
 - **`pipeline.*` olayları, aşama başına `training.*` olaylarının *yerine* değil, *yanı sıra* emit edilir.** Her aşamanın `ForgeTrainer`'ı kendi yaşam döngüsü olaylarını fırlatmaya devam eder; dolayısıyla `training.failure` üzerinde filtreleyen mevcut bir dashboard, operatörü bir pipeline yapılandırmasına geçtiğinde değişiklik gerektirmeden çalışmayı sürdürür.
 - **`pipeline.completed`, aynı tanımlayıcıya sahip bir denetim günlüğü olayıyla ad çakışması yaşar.** Bu bilinen bir wire/audit çakışmasıdır. Yalnızca ada göre değil, payload alan kümesine göre korele edin.
 
-Webhook olayları `audit_log.jsonl`'a **eklenmez** — en-iyi-çaba (best-effort) bir yan kanal üzerinde giderler. Bir ping'i regülasyon kaydıyla ilişkilendirmek için `run_name` ve zaman damgası üzerinden birleştirin.
+Webhook olayları `audit_log.jsonl`'a **eklenmez** — en-iyi-çaba (best-effort) bir yan kanal üzerinde giderler. Bir ping'i regülasyon kaydıyla ilişkilendirmek için `run_name` ve `event` adı üzerinden birleştirin.
+
+**Kabloda zaman damgası yoktur.** Hiçbir payload zaman damgası taşımaz — hiçbir anahtar altında, hiçbir olayda. Bir zaman damgasına ihtiyacınız varsa alıcınızın kendi varış zamanını kullanın ve bunu yaklaşık kabul edin: teslimat en-iyi-çaba ve sırasızdır, dolayısıyla varış zamanı emit zamanı değildir. Zaman damgalı kayıt denetim günlüğüdür.
+
+### Bu olayların emit edilmediği durumlar
+
+`pipeline.started` ve `pipeline.completed`, koşuyu kuşatan koşulsuz bir çift gibi okunur; ancak orchestrator'da bunları atlayan iki deterministik yol vardır. İkisi birlikte tam olarak kurumsal onay-kapısı akışını oluşturur, dolayısıyla eksik bir `pipeline.completed`'ı arıza sayan bir alıcı, doğru çalışan kapılı bir pipeline'ı hatalı raporlar:
+
+- **`--resume-from` ile başlatılan bir koşuda `pipeline.started` emit edilmez.** Olay yalnızca `resume_from is None` iken tetiklenir; dolayısıyla devam ettirilen bir pipeline kalan aşamalarını çalıştırıp, o süreçte kendisinden önce hiç `pipeline.started` gelmemişken `pipeline.completed` emit edebilir. İkisini bir aç/kapa çifti olarak eşleştirmeyin.
+- **Koşu `gated_pending_approval` ile bittiğinde `pipeline.completed` emit edilmez.** Terminal olay yalnızca `final_status` `completed` / `stopped_at_stage` iken tetiklenir. İnsan onayı kapısıyla durdurulan bir pipeline tutarlı bir terminal durumdur, ama bu ikisinden biri değildir: `pipeline.stage_gated` **denetim** olayını emit eder ve durur. Buna karşılık gelen webhook sinyali, kapılayan aşamadan gelen `approval.required`'dır — alıcıya zincirin bir inceleyiciyi beklediğini söyleyen şey `pipeline.completed` değil, o ping'tir.
+
+Her ikisi de aşağıdaki en-iyi-çaba teslimat kuralı 3'ün bir arıza biçimi değil bir tasarım özelliği olmasının sonucudur: **bir olayın yokluğu, o şeyin gerçekleşmediğinin kanıtı hiçbir zaman değildir.**
 
 ### Kararlılık sözleşmesi
 
@@ -104,7 +115,7 @@ Hatalı bir alan bildirimi zayıflatır; asla iptal etmez ve asla hata fırlatma
 
 ## Örnek payload'lar
 
-Olay ailesi başına bir örnek. Alanlar, her zaman bulunan null'lar dâhil, kabloda göründükleri hâliyle verilmiştir.
+Aşağıdaki payload'ların tamamı elle yazılmadı, **sevk edilen notifier'dan kaydedildi**: her `notify_*` metodu, POST sınırına yerleştirilen kaydedici bir taşıma katmanıyla çalıştırıldı ve topladığı nesne birebir yeniden üretildi — anahtar sırası, kaçış dizileri, her zaman bulunan null'lar dâhil. Elle düzenlemek yerine aynı yolla yeniden üretin; aksi hâlde payload'ın ne olduğunun değil ne olması gerektiğinin tarifine geri kayarlar.
 
 ### `training.*` ailesi
 
@@ -115,18 +126,23 @@ Olay ailesi başına bir örnek. Alanlar, her zaman bulunan null'lar dâhil, kab
   "event": "training.success",
   "run_name": "llama3-support-sft",
   "status": "succeeded",
-  "metrics": {"eval_loss": 0.4231, "train_runtime": 1820.5},
+  "metrics": {
+    "eval_loss": 0.4231,
+    "train_runtime": 1820.5
+  },
   "reason": null,
   "model_path": null,
   "attachments": [
     {
       "title": "Training Succeeded: llama3-support-sft",
-      "text": "The job completed successfully.\n\nMetrics:\n• eval_loss: 0.4231",
+      "text": "The job completed successfully.\n\nMetrics:\n• eval_loss: 0.4231\n• train_runtime: 1820.5000",
       "color": "#36a64f"
     }
   ]
 }
 ```
+
+Attachment `text`'ine dikkat: **her** metrik listelenir ve her biri dört ondalık basamağa biçimlendirilir; dolayısıyla `train_runtime` metinde `1820.5000` olarak görünürken `metrics.train_runtime` JSON sayısı olarak `1820.5` kalır. Biçimlenmiş metin sunumdur; değerler için `metrics`'i okuyun.
 
 `training.reverted` — aynı zarf, `reason` dolu, `metrics` boş:
 
@@ -217,7 +233,26 @@ Erken duruş yolunda aynı olay; `status` ve `final_status` ikisi de `stopped_at
 }
 ```
 
-`pipeline.started`, temel zarfın ötesinde yalnızca `stage_count` taşır.
+`pipeline.started`, temel zarfın ötesinde yalnızca `stage_count` taşır:
+
+```json
+{
+  "event": "pipeline.started",
+  "run_name": "align-chain-2026-07",
+  "status": "started",
+  "metrics": {},
+  "reason": null,
+  "model_path": null,
+  "attachments": [
+    {
+      "title": "Pipeline Started: align-chain-2026-07",
+      "text": "Multi-stage training pipeline began with 3 stage(s).",
+      "color": "#0052cc"
+    }
+  ],
+  "stage_count": 3
+}
+```
 
 ## Gizli bilgi maskeleme
 

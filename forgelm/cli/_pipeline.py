@@ -1628,9 +1628,19 @@ class PipelineOrchestrator:
         # Capture results onto the stage state.
         stage_state.metrics = {k: float(v) for k, v in (result.metrics or {}).items() if isinstance(v, (int, float))}
         stage_state.auto_revert_triggered = bool(result.reverted)
-        stage_state.training_manifest = os.path.join(
-            stage_cfg.training.output_dir, "compliance", "training_manifest.json"
-        )
+        # Point at the artefact that actually carries the Annex IV payload the
+        # chain verifier deep-parses: ``export_compliance_artifacts`` writes
+        # ``annex_iv_metadata.json`` (§1-9 layout + ``metadata.manifest_hash``)
+        # and ``training_manifest.yaml`` (a flat summary, no hash) — only the
+        # former is verifiable, so only the former is evidence.  This recorded
+        # ``training_manifest.json`` until v0.9.1, a filename no ForgeLM
+        # version has ever written; a permanently-dangling pointer made
+        # deleted evidence indistinguishable from a writer defect, forcing
+        # deletion (archetypal Art. 12 tampering) to route *softer* than
+        # corruption.  See forgelm/verify.py for the reader half.
+        from ..compliance import ANNEX_IV_ARTEFACT_BASENAME as _EVIDENCE
+
+        stage_state.training_manifest = os.path.join(stage_cfg.training.output_dir, "compliance", _EVIDENCE)
 
         # Auto-revert or gate failure takes precedence: a reverted stage is an
         # eval-failure (exit 3), never "awaiting approval" (exit 4). Revert

@@ -297,16 +297,54 @@ def is_annex_iv_integrity_failure(result: VerifyAnnexIVResult) -> bool:
 # violation, not a pass — fail closed.
 STAGE_EVIDENCE_MAX_BYTES = 8 * 1024 * 1024
 
-# The orchestrator records ``<output_dir>/compliance/training_manifest.json``
-# as each stage's evidence pointer, but no ForgeLM version has ever written
-# that file: export_compliance_artifacts emits ``training_manifest.yaml`` and
-# ``annex_iv_metadata.json``.  The pointer has therefore always dangled on
-# real runs.  We resolve the legacy basename to the artefact that actually
-# carries the Annex IV payload, and when even that is absent we report
-# UNVERIFIED rather than "missing evidence" — a product defect in the writer
-# must not be reported to an operator as tampering.
-_LEGACY_EVIDENCE_BASENAME = "training_manifest.json"
+# The same cap, for the same reason, on the chain manifest itself.  It was
+# previously ``json.load``ed with no cap at all, which contradicted the
+# rationale written directly above it: a 600 MB pipeline_manifest.json reaches
+# roughly 3.6 GB peak RSS because CPython's parser materialises the whole
+# object graph.  The number is not tuned to the manifest's real size (one row
+# per stage; single-digit kB for any pipeline a human would configure) — it is
+# deliberately the *same* 8 MiB as the stage cap so there is one number to
+# reason about, and it sits several orders of magnitude above any legitimate
+# manifest while staying far below a size that can exhaust memory.  Unlike the
+# stage cap this routes to INPUT_ERROR (exit 1), not a violation: an oversized
+# manifest is refused *unread*, so nothing was ever compared, and the
+# exit-code contract reserves 6 for comparisons that were made and failed.
+PIPELINE_MANIFEST_MAX_BYTES = 8 * 1024 * 1024
+
+# json.load recurses once per nesting level, so a deeply-nested document blows
+# the interpreter stack long before it approaches the byte caps above — a
+# ~100 KB file of 50 000 nested arrays is enough.  RecursionError is not an
+# OSError and not a ValueError, so it escaped every existing handler and killed
+# the verifier with a raw traceback, no stdout and no JSON envelope.  Both the
+# stage artefact and the chain manifest catch it explicitly.
+# Mirrors ``forgelm.compliance.ANNEX_IV_ARTEFACT_BASENAME``.  Duplicated as a
+# literal rather than imported because ``compliance`` imports this module and a
+# module-level import back would close the cycle; every cross-module reference
+# in this file is deliberately function-local for the same reason.
+# ``tests/test_pipeline_compliance.py`` pins the two to the same value and to
+# what ``export_compliance_artifacts`` actually writes, so the duplication
+# cannot drift the way the orchestrator's pointer did.
 _ANNEX_IV_EVIDENCE_BASENAME = "annex_iv_metadata.json"
+
+# Pointers written by ForgeLM < 0.9.1 name ``training_manifest.json``, a
+# filename no ForgeLM version has ever written (``export_compliance_artifacts``
+# emits ``training_manifest.yaml`` and ``annex_iv_metadata.json``).  0.9.1
+# repointed the writer at the real artefact; see
+# ``forgelm/cli/_pipeline.py``.  Archived manifests from before that fix still
+# carry the dangling pointer, so the reader resolves it to the sibling that
+# actually holds the payload — but *only* for manifests old enough to have
+# been written by the broken writer.  On a current manifest that basename is
+# not a legacy artefact, it is a pointer that does not match what this version
+# writes, and it gets the conservative routing.
+_LEGACY_EVIDENCE_BASENAME = "training_manifest.json"
+_LEGACY_POINTER_FIXED_IN = (0, 9, 1)
+
+# Leading numeric release components of a ``forgelm_version`` string
+# ("0.9.1rc1" -> (0, 9, 1); "0.8.0" -> (0, 8, 0)).  A version that does not
+# match is treated as *not* legacy, which is the conservative direction: it
+# routes a missing artefact to a violation rather than to the softer
+# compatibility path.
+_VERSION_RE = re.compile(r"^\s*(\d+)\.(\d+)\.(\d+)")
 
 # Per-stage outcome tokens.  Callers route on these, never on message prose.
 EVIDENCE_VERIFIED = "verified"
@@ -367,12 +405,28 @@ def _resolve_stage_evidence_path(pointer: str, pipeline_dir: str) -> Tuple[str, 
       which is not a property of the archived run.
     - A **directory** is refused for the same reason ``open()`` would fail,
       but with a verdict instead of a traceback.
+
+    The relative branch deliberately runs *three* checks rather than one.
+    It previously called ``os.path.realpath`` on the joined pointer and
+    checked containment on the result, which resolved symlinks before
+    anything looked at them — so ``os.path.islink(candidate)`` below could
+    never be true for a relative pointer, and the documented symlink
+    refusal was dead code.  A relative pointer at a symlink was silently
+    followed.  Now: lexical containment rejects ``../`` escapes without
+    resolving anything, the symlink refusal sees the *unresolved* path so
+    it actually bites, and a final realpath containment check catches an
+    escape smuggled through a symlinked parent directory (which lexical
+    normalisation alone cannot see).
     """
     if not os.path.isabs(pointer):
-        base = os.path.realpath(pipeline_dir)
-        candidate = os.path.realpath(os.path.join(pipeline_dir, pointer))
+        base = os.path.abspath(pipeline_dir)
+        candidate = os.path.normpath(os.path.join(base, pointer))
         if candidate != base and not candidate.startswith(base + os.sep):
             return "", f"evidence path {pointer!r} escapes the pipeline directory"
+        real_base = os.path.realpath(base)
+        resolved = os.path.realpath(candidate)
+        if resolved != real_base and not resolved.startswith(real_base + os.sep):
+            return "", f"evidence path {pointer!r} escapes the pipeline directory via a symlinked parent"
     else:
         candidate = pointer
 
@@ -383,7 +437,78 @@ def _resolve_stage_evidence_path(pointer: str, pipeline_dir: str) -> Tuple[str, 
     return candidate, ""
 
 
-def _verify_stage_evidence(pointer: Any, pipeline_dir: str) -> Tuple[str, str]:
+def _annex_iv_was_configured(manifest: Dict[str, Any] | None) -> bool:
+    """Did the run's config carry an Annex IV block at all?
+
+    Mirrors :func:`forgelm.compliance.build_annex_iv_artifact`'s two ``None``
+    conditions against the *chain* manifest, which embeds the same
+    operator-supplied block via ``_provider_metadata_from_config``: the key is
+    present only when a ``compliance:`` block was configured, and the writer
+    additionally skips the artefact when all three §1 identity fields are
+    blank.  When this returns ``False`` no per-stage evidence file was ever
+    produced, for an entirely legitimate reason — the operator did not ask for
+    compliance artefacts.  That is not tampering and must not be reported as
+    such; it is also not the same situation as evidence that *should* exist and
+    does not, which is why the two are routed separately below.
+    """
+    if not isinstance(manifest, dict):
+        return True  # Unknown provenance: assume evidence was expected.
+    block = manifest.get("annex_iv")
+    if not isinstance(block, dict):
+        return False
+    return any(str(block.get(key, "")).strip() for key in ("provider_name", "system_name", "intended_purpose"))
+
+
+def _manifest_predates_pointer_fix(manifest: Dict[str, Any] | None) -> bool:
+    """Was *manifest* written by a ForgeLM old enough to emit the dangling
+    ``training_manifest.json`` pointer?
+
+    Gates the legacy-basename fallback so it is what it claims to be — a
+    compatibility path for archived pre-0.9.1 runs — rather than the universal
+    path every current run took while the writer was still emitting a phantom
+    filename.  An absent or unparseable ``forgelm_version`` returns ``False``:
+    the conservative direction, since it routes a missing artefact to a
+    violation rather than to the softer compatibility path.
+    """
+    if not isinstance(manifest, dict):
+        return False
+    match = _VERSION_RE.match(str(manifest.get("forgelm_version") or ""))
+    if not match:
+        return False
+    return tuple(int(part) for part in match.groups()) < _LEGACY_POINTER_FIXED_IN
+
+
+def _missing_evidence_outcome(label: str, manifest: Dict[str, Any] | None) -> Tuple[str, str]:
+    """Route a per-stage artefact that is not on disk.
+
+    Two genuinely different situations, and conflating them is what inverted
+    the tamper signal:
+
+    - The run configured no ``compliance:`` block, so no artefact was ever
+      written.  Nothing is missing; there was never anything to miss.
+      UNVERIFIED (exit 1) — the verifier never got to compare anything.
+    - The run configured Annex IV metadata, so the artefact was written and is
+      now gone.  Deleting a stage's Annex IV evidence is the archetypal
+      Article 12 tampering and is *more* severe than corrupting it.
+      VIOLATION (exit 6).
+    """
+    if not _annex_iv_was_configured(manifest):
+        return (
+            EVIDENCE_UNVERIFIED,
+            f"no Annex IV evidence exists at {label!r} because the run configured no 'compliance:' block — "
+            "nothing was produced to verify",
+        )
+    return (
+        EVIDENCE_VIOLATION,
+        f"evidence at {label!r} is missing — the run configured Annex IV metadata, so this artefact was written",
+    )
+
+
+def _verify_stage_evidence(
+    pointer: Any,
+    pipeline_dir: str,
+    manifest: Dict[str, Any] | None = None,
+) -> Tuple[str, str]:
     """Deep-verify one completed stage's Annex IV evidence.
 
     Returns ``(outcome, message)`` where *outcome* is one of the
@@ -402,44 +527,58 @@ def _verify_stage_evidence(pointer: Any, pipeline_dir: str) -> Tuple[str, str]:
     if problem:
         return EVIDENCE_VIOLATION, problem
 
+    # Every message below names the file that was actually examined.  When the
+    # legacy fallback rebinds ``path``, interpolating the original pointer
+    # would tell the operator about a file the verifier never opened (F3).
+    label = pointer
+
     if not os.path.isfile(path):
-        # The legacy pointer names a file no writer produces.  Fall back to
-        # the artefact that actually carries the Annex IV payload before
-        # concluding anything.
-        if os.path.basename(path) == _LEGACY_EVIDENCE_BASENAME:
+        # Compatibility path for archived pre-0.9.1 runs only: those recorded
+        # a ``training_manifest.json`` pointer that no writer ever satisfied,
+        # so resolve it to the sibling that actually carries the payload.
+        # Current manifests fall straight through to the missing-evidence
+        # routing, where a deleted artefact is the violation it is.
+        if os.path.basename(path) == _LEGACY_EVIDENCE_BASENAME and _manifest_predates_pointer_fix(manifest):
             sibling = os.path.join(os.path.dirname(path), _ANNEX_IV_EVIDENCE_BASENAME)
             if os.path.isfile(sibling) and not os.path.islink(sibling):
                 path = sibling
+                label = sibling
             else:
-                return (
-                    EVIDENCE_UNVERIFIED,
-                    f"evidence pointer {pointer!r} names a filename no ForgeLM version writes "
-                    f"and no {_ANNEX_IV_EVIDENCE_BASENAME} sits beside it — the run's evidence "
-                    "cannot be located, which is a writer defect, not tampering",
-                )
+                return _missing_evidence_outcome(label, manifest)
         else:
-            return EVIDENCE_VIOLATION, f"evidence at {pointer!r} is missing"
+            return _missing_evidence_outcome(label, manifest)
 
     try:
         size = os.path.getsize(path)
     except OSError as exc:
-        return EVIDENCE_IO_ERROR, f"evidence at {pointer!r} could not be stat'd: {exc}"
+        return EVIDENCE_IO_ERROR, f"evidence at {label!r} could not be stat'd: {exc}"
     if size == 0:
-        return EVIDENCE_VIOLATION, f"evidence at {pointer!r} is zero bytes"
+        return EVIDENCE_VIOLATION, f"evidence at {label!r} is zero bytes"
     if size > STAGE_EVIDENCE_MAX_BYTES:
         return (
             EVIDENCE_VIOLATION,
-            f"evidence at {pointer!r} is {size} bytes, over the {STAGE_EVIDENCE_MAX_BYTES}-byte cap — refused unread",
+            f"evidence at {label!r} is {size} bytes, over the {STAGE_EVIDENCE_MAX_BYTES}-byte cap — refused unread",
         )
 
     try:
         result = verify_annex_iv_artifact(path)
     except json.JSONDecodeError as exc:
-        return EVIDENCE_VIOLATION, f"evidence at {pointer!r} is not valid JSON: {exc.msg} (line {exc.lineno})"
+        return EVIDENCE_VIOLATION, f"evidence at {label!r} is not valid JSON: {exc.msg} (line {exc.lineno})"
     except UnicodeDecodeError as exc:
-        return EVIDENCE_VIOLATION, f"evidence at {pointer!r} is not valid UTF-8: {exc}"
+        return EVIDENCE_VIOLATION, f"evidence at {label!r} is not valid UTF-8: {exc}"
+    except RecursionError:
+        # A deeply-nested document exhausts the interpreter stack inside
+        # json.load well under the byte cap (~100 KB of nested arrays is
+        # enough), and RecursionError is neither an OSError nor a ValueError,
+        # so it escaped every handler above and killed the verifier with a raw
+        # traceback and no envelope.  Same class as unparseable JSON: the
+        # artefact was reached and is not usable evidence.
+        return (
+            EVIDENCE_VIOLATION,
+            f"evidence at {label!r} is nested too deeply to parse — refused rather than crashing the verifier",
+        )
     except OSError as exc:
-        return EVIDENCE_IO_ERROR, f"evidence at {pointer!r} is unreadable: {exc}"
+        return EVIDENCE_IO_ERROR, f"evidence at {label!r} is unreadable: {exc}"
 
     if not result.valid:
         # Deliberate divergence from the standalone verifier: an
@@ -448,14 +587,14 @@ def _verify_stage_evidence(pointer: Any, pipeline_dir: str) -> Tuple[str, str]:
         # *asserts* this stage completed with valid evidence; that assertion
         # was compared against the artefact and it did not hold.
         if is_annex_iv_integrity_failure(result):
-            return EVIDENCE_VIOLATION, f"evidence at {pointer!r} failed tamper detection: {result.reason}"
+            return EVIDENCE_VIOLATION, f"evidence at {label!r} failed tamper detection: {result.reason}"
         detail = f" (missing: {', '.join(result.missing_fields)})" if result.missing_fields else ""
-        return EVIDENCE_VIOLATION, f"evidence at {pointer!r} is unusable: {result.reason}{detail}"
+        return EVIDENCE_VIOLATION, f"evidence at {label!r} is unusable: {result.reason}{detail}"
 
     if not result.manifest_hash_expected:
         return (
             EVIDENCE_UNVERIFIED,
-            f"evidence at {pointer!r} is complete but carries no manifest_hash — tampering could not be checked",
+            f"evidence at {label!r} is complete but carries no manifest_hash — tampering could not be checked",
         )
     return EVIDENCE_VERIFIED, ""
 
@@ -498,7 +637,7 @@ def verify_pipeline_stage_evidence(manifest: Dict[str, Any], pipeline_dir: str) 
             continue
         report.stages_examined += 1
         name = stage.get("name", "<unnamed>")
-        outcome, message = _verify_stage_evidence(stage.get("training_manifest"), pipeline_dir)
+        outcome, message = _verify_stage_evidence(stage.get("training_manifest"), pipeline_dir, manifest)
         if outcome == EVIDENCE_VERIFIED:
             report.evidence_verified += 1
         elif outcome == EVIDENCE_UNVERIFIED:
@@ -557,6 +696,21 @@ def verify_pipeline_manifest_report(pipeline_dir: str) -> PipelineEvidenceReport
     # (1); an OSError on a reachable path is genuine runtime I/O (2).
     # UnicodeDecodeError needs its own branch because it is a ValueError
     # subclass, not an OSError one, and would otherwise escape uncaught.
+    # Refuse an oversized manifest *unread*, exactly as the per-stage artefact
+    # path does.  This file was previously json.load'ed with no cap at all,
+    # which contradicted the rationale written for the stage cap: a 600 MB
+    # manifest reaches roughly 3.6 GB peak RSS and kills the verifier.
+    try:
+        manifest_size = os.path.getsize(manifest_path)
+    except OSError as exc:
+        return _preflight(PIPELINE_MANIFEST_IO_ERROR_PREFIX, f"pipeline_manifest.json could not be stat'd: {exc}")
+    if manifest_size > PIPELINE_MANIFEST_MAX_BYTES:
+        return _preflight(
+            PIPELINE_MANIFEST_INPUT_ERROR_PREFIX,
+            f"pipeline_manifest.json is {manifest_size} bytes, over the "
+            f"{PIPELINE_MANIFEST_MAX_BYTES}-byte cap — refused unread",
+        )
+
     try:
         with open(manifest_path, "r", encoding="utf-8") as fh:
             manifest = json.load(fh)
@@ -564,6 +718,16 @@ def verify_pipeline_manifest_report(pipeline_dir: str) -> PipelineEvidenceReport
         return _preflight(PIPELINE_MANIFEST_INPUT_ERROR_PREFIX, f"pipeline_manifest.json invalid JSON: {exc}")
     except UnicodeDecodeError as exc:
         return _preflight(PIPELINE_MANIFEST_INPUT_ERROR_PREFIX, f"pipeline_manifest.json is not valid UTF-8: {exc}")
+    except RecursionError:
+        # Nesting depth, not byte count, is what exhausts the interpreter
+        # stack: ~100 KB of nested arrays passes the cap above and still
+        # blows up inside json.load.  RecursionError is neither an OSError
+        # nor a ValueError, so without this branch it escapes as a raw
+        # traceback with no stdout and no JSON envelope.
+        return _preflight(
+            PIPELINE_MANIFEST_INPUT_ERROR_PREFIX,
+            "pipeline_manifest.json is nested too deeply to parse — refused rather than crashing the verifier",
+        )
     except OSError as exc:
         return _preflight(PIPELINE_MANIFEST_IO_ERROR_PREFIX, f"pipeline_manifest.json unreadable: {exc}")
 

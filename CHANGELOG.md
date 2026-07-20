@@ -275,6 +275,60 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Fixed
 
+- **`forgelm verify-annex-iv --pipeline` raised a tamper alarm on every clean
+  pipeline run.** If you investigated an integrity failure on a chain you had
+  just produced yourself, found the evidence intact, and could not work out what
+  the verifier was objecting to — this was it, and the run was clean. The
+  orchestrator recorded each completed stage's Annex IV evidence pointer as
+  `<output_dir>/compliance/training_manifest.json`, a filename **no ForgeLM
+  version has ever written**: `export_compliance_artifacts` emits
+  `training_manifest.yaml` (a flat operator summary, no hash) and
+  `annex_iv_metadata.json` (the §1-9 canonical layout plus the
+  `metadata.manifest_hash` stamp). The pointer therefore dangled on every real
+  run, and the verifier reported the resulting absence as missing evidence. The
+  orchestrator now records the artefact that actually carries the payload, so
+  `--pipeline` **exits `0` instead of `6`** on a clean chain. An operator who
+  suppressed, ignored or worked around this alarm should re-enable the check:
+  it now means what it says (`forgelm/cli/_pipeline.py`, `forgelm/verify.py`).
+- **Archived pre-0.9.1 pipeline manifests still verify.** A pointer naming the
+  legacy `training_manifest.json` resolves to its `annex_iv_metadata.json`
+  sibling, but **only** when the chain manifest's `forgelm_version` parses to a
+  release earlier than `0.9.1`. On a current manifest — or one whose
+  `forgelm_version` is absent or unparseable — the fallback does not apply and
+  an absent target routes conservatively to a violation. Both `forgelm_version`
+  and the `annex_iv` block are covered by the chain manifest's
+  `metadata.manifest_hash`, so neither can be edited to unlock the softer path
+  without producing a hash mismatch (`forgelm/verify.py`).
+- **The chain verifier no longer dies with a raw traceback on a deeply-nested
+  document.** A pipeline manifest or per-stage artefact of ~100 KB — about
+  twenty times *under* the 8 MiB byte cap — nested deeply enough to exhaust the
+  interpreter stack killed `verify-annex-iv` inside `json.load` with no stdout
+  and no JSON envelope, because `RecursionError` is neither an `OSError` nor a
+  `ValueError` and escaped every existing handler. Depth, not byte count, is
+  what exhausts the stack. Both sites now refuse the document instead of
+  crashing: a nested per-stage artefact is a violation (exit `6`), a nested
+  chain manifest is an input error (exit `1`, refused unread)
+  (`forgelm/verify.py`).
+- **The chain manifest is now size-capped, like the per-stage artefact already
+  was.** `pipeline_manifest.json` was `json.load`ed with no cap at all, directly
+  contradicting the rationale written for the stage-level cap: a 600 MB manifest
+  reaches roughly 3.6 GB peak RSS. `PIPELINE_MANIFEST_MAX_BYTES` is deliberately
+  the *same* 8 MiB as the stage cap so there is one number to reason about —
+  orders of magnitude above any legitimate manifest (one row per stage,
+  single-digit kB) and far below a size that exhausts memory. It routes to exit
+  `1`, not `6`, because the file is refused **unread**: nothing was compared
+  (`forgelm/verify.py`).
+- **The documented symlink refusal for relative evidence pointers was dead
+  code.** `os.path.realpath` ran on the joined pointer *before* anything
+  inspected it, so `os.path.islink` could never be true and a relative pointer
+  aimed at a symlink was silently followed. The relative branch now runs three
+  checks that all bite: lexical containment rejects `../` escapes without
+  resolving anything, the symlink refusal inspects the **unresolved** path, and
+  a final realpath containment check catches an escape smuggled through a
+  symlinked parent directory. Absolute pointers remain allowed unconditionally
+  (a stage's `training.output_dir` legitimately lives outside the pipeline tree)
+  and are still refused when they are symlinks or directories
+  (`forgelm/verify.py`).
 - **Hub metadata lookups had no timeout at all and could hang a run
   indefinitely.** `HfApi().model_info()` / `.dataset_info()` default to
   `timeout=None`, which is not a sensible library default but *no ceiling*: a
@@ -487,6 +541,40 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Security
 
+- **Deleting a stage's Annex IV evidence routed *softer* than corrupting it —
+  the Article 12 tamper signal was inverted.** Filed under Security rather than
+  Fixed because the defect did not merely mute a compliance signal, it reversed
+  it, and the operator-facing message actively argued the auditor out of the
+  correct conclusion. With the orchestrator emitting a pointer no writer
+  satisfies (see *Fixed*), the reader could not distinguish "the writer never
+  produced this file" from "someone removed it", so the two were collapsed onto
+  the softer verdict. Measured on the shipped build:
+
+  ```text
+  evidence present but rotten   -> EVIDENCE_VIOLATION   -> exit 6
+  evidence DELETED entirely     -> EVIDENCE_UNVERIFIED  -> exit 1
+  ```
+
+  Deleting evidence is the archetypal Article 12 tampering and is **more**
+  severe than corrupting it, yet it drew the lesser code — and the exit-`1`
+  message told the auditor in prose that the cause was *"a writer defect, not
+  tampering"*, an assertion the verifier had no basis to make. That claim is
+  now deleted from every operator-facing message; it survives only as a source
+  comment recording the history.
+
+  Missing evidence is now routed on what the run actually configured, which the
+  verifier can establish and the manifest hash protects:
+
+  - The chain manifest carries a populated `annex_iv` block, so the artefact
+    *was* written and is now gone → **violation, exit `6`**.
+  - The run configured no `compliance:` block (no `annex_iv` key, or all three
+    §1 identity fields blank), so nothing was ever produced → **unverified,
+    exit `1`**, and the message never phrases this as a deletion.
+
+  This restores the governing rule shipped earlier in this cycle: **`6` = the
+  verifier compared something and it did not match; `1` = it never got to
+  compare anything; `2` = runtime/IO.** Exit-code precedence was reordered to
+  honour it (`forgelm/verify.py`, `forgelm/cli/_pipeline.py`).
 - **Un-loadable default safety classifier now fails fast and is audited.** The
   shipped default `meta-llama/Llama-Guard-3-8B` is a generative checkpoint with
   no trained sequence-classification head and can never score through the
@@ -684,8 +772,12 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   `completed` stage's evidence is now guaranteed to have survived, and the
   fail-closed table of every rejected on-disk state), the integrity-first
   precedence rule, and the JSON envelope's `stages_examined` /
-  `evidence_verified` / `evidence_unverified` counters. Documents `F-PR54-H6`
-  and `F-PR54-H7`.
+  `evidence_verified` / `evidence_unverified` counters. Documents `F-PR54-H7`.
+  **The chain manifest hash it describes is not new in this release** — it
+  shipped in `v0.8.0` (commit `e7c3321`, 2026-06-14) as `F-P4-OPUS-20`, before
+  anyone noticed it also satisfied the open Phase 14.5 row `F-PR54-H6`, which
+  was simply never closed. This release documents that behaviour for the first
+  time; it did not implement it.
   The distinction the section is built around: **valid and verified are
   different states and the docs must not blur them.** A manifest predating the
   hash stamp exits `0` with `hash_state: "absent"` and prints

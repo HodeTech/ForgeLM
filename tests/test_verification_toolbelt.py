@@ -2665,23 +2665,42 @@ class TestPipelineManifestNonUtf8:
         # The routing token is internal and must never reach the operator.
         assert not any(v.startswith("INPUT_ERROR::") for v in payload["violations"])
 
-    def test_dispatcher_guard_also_covers_a_bubbled_unicode_error(self, tmp_path: Path, monkeypatch) -> None:
+    def test_dispatcher_guard_also_covers_a_bubbled_unicode_error(self, tmp_path: Path, monkeypatch, capsys) -> None:
         """The defensive ``try`` around the verifier: if a future change there
         lets a ``UnicodeDecodeError`` bubble, it must still land on 1, not on a
-        raw traceback and not on the ``OSError`` branch's exit 2."""
+        raw traceback and not on the ``OSError`` branch's exit 2.
+
+        The seam is ``forgelm.verify.verify_pipeline_manifest_report`` — what
+        ``_run_pipeline_mode`` actually imports and calls.  This test used to
+        patch ``forgelm.compliance.verify_pipeline_manifest_at_path``, which
+        the CLI stopped calling when the pipeline path was repointed, so the
+        patch intercepted nothing and the assertion was satisfied by the
+        *unpatched* missing-manifest path — which also exits 1.  Deleting the
+        entire ``except UnicodeDecodeError`` branch left it green.  Two guards
+        keep it honest now: the stub records that it was reached, and the
+        payload assertion pins this branch's own message instead of an exit
+        code several paths share.
+        """
         from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
         from forgelm.cli.subcommands import _verify_annex_iv as _mod
 
+        called: list[str] = []
+
         def _bubble(_path):
+            called.append(_path)
             raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
 
-        import forgelm.compliance as _compliance
+        import forgelm.verify as _verify
 
-        monkeypatch.setattr(_compliance, "verify_pipeline_manifest_at_path", _bubble)
+        monkeypatch.setattr(_verify, "verify_pipeline_manifest_report", _bubble)
 
         with pytest.raises(SystemExit) as ei:
             _mod._run_verify_annex_iv_cmd(_build_args(path=str(tmp_path), pipeline=True), output_format="json")
+        assert called, "the patched seam was never reached — the test would be vacuous"
         assert ei.value.code == EXIT_CONFIG_ERROR
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert any("not valid UTF-8" in v for v in payload["violations"])
 
 
 # ---------------------------------------------------------------------------
@@ -2942,6 +2961,166 @@ class TestPipelineManifestHashState:
         report = verify_pipeline_manifest_report(str(tmp_path))
         assert all(v.startswith(PIPELINE_MANIFEST_INPUT_ERROR_PREFIX) for v in report.violations)
         assert report.stages_examined == 0
+
+
+class TestVerifierParserHardening:
+    """A verifier that can be killed by its own input is not a verifier.
+
+    Deep-parsing every per-stage evidence file is what newly exposed these
+    paths, so the regressions are this step's to own.
+    """
+
+    @staticmethod
+    def _deep_json(path: Path, depth: int = 50_000) -> None:
+        """A document that is small in bytes but ruinous in nesting depth."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("[" * depth + "1" + "]" * depth)
+
+    def _configured_manifest(self) -> dict:
+        manifest = _manifest_pointing_at(None)
+        manifest["annex_iv"] = {
+            "provider_name": "Acme Inc.",
+            "system_name": "ForgeLM-test",
+            "intended_purpose": "baseline",
+        }
+        return manifest
+
+    def test_deeply_nested_stage_evidence_is_refused_not_a_traceback(self, tmp_path: Path) -> None:
+        """S6-D-01: ~100 KB of nested arrays — twenty times *under* the 8 MiB
+        cap — raised an uncaught RecursionError that killed the verifier with a
+        raw traceback, no stdout and no JSON envelope.  RecursionError is
+        neither an OSError nor a ValueError, so every existing handler missed
+        it.  It must route like any other unparseable artefact."""
+        from forgelm.verify import EVIDENCE_VIOLATION, STAGE_EVIDENCE_MAX_BYTES, _verify_stage_evidence
+
+        target = tmp_path / "s0" / "compliance" / "annex_iv_metadata.json"
+        self._deep_json(target)
+        assert target.stat().st_size < STAGE_EVIDENCE_MAX_BYTES, "fixture must sit under the byte cap"
+
+        outcome, message = _verify_stage_evidence(str(target), str(tmp_path), self._configured_manifest())
+        assert outcome == EVIDENCE_VIOLATION
+        assert "nested too deeply" in message
+
+    def test_deeply_nested_chain_manifest_is_refused_not_a_traceback(self, tmp_path: Path) -> None:
+        """Same defect one level up, on the manifest the verifier reads first."""
+        from forgelm.compliance import PIPELINE_MANIFEST_INPUT_ERROR_PREFIX
+        from forgelm.verify import verify_pipeline_manifest_report
+
+        self._deep_json(tmp_path / "compliance" / "pipeline_manifest.json")
+        report = verify_pipeline_manifest_report(str(tmp_path))
+        assert report.violations
+        assert all(v.startswith(PIPELINE_MANIFEST_INPUT_ERROR_PREFIX) for v in report.violations)
+        assert any("nested too deeply" in v for v in report.violations)
+        assert report.stages_examined == 0
+
+    def test_oversized_chain_manifest_is_refused_unread(self, tmp_path: Path, monkeypatch) -> None:
+        """S6-D-02: the chain manifest was ``json.load``ed with no size cap at
+        all, directly contradicting the rationale written for the stage-level
+        cap.  A 600 MB manifest reaches ~3.6 GB peak RSS.
+
+        The cap is patched down rather than writing a real 8 MiB fixture — the
+        branch under test is the comparison, not the number.
+        """
+        import forgelm.verify as verify_mod
+        from forgelm.compliance import PIPELINE_MANIFEST_INPUT_ERROR_PREFIX
+        from forgelm.verify import verify_pipeline_manifest_report
+
+        monkeypatch.setattr(verify_mod, "PIPELINE_MANIFEST_MAX_BYTES", 16)
+        manifest_path = tmp_path / "compliance" / "pipeline_manifest.json"
+        manifest_path.parent.mkdir(parents=True)
+        manifest_path.write_text(json.dumps(_manifest_pointing_at(None)))
+
+        report = verify_pipeline_manifest_report(str(tmp_path))
+        assert report.violations
+        assert all(v.startswith(PIPELINE_MANIFEST_INPUT_ERROR_PREFIX) for v in report.violations)
+        assert any("refused unread" in v for v in report.violations)
+
+    def test_the_cap_does_not_fire_on_a_normal_manifest(self, tmp_path: Path) -> None:
+        """The other half of the cap: a real manifest is orders of magnitude
+        below it and must verify untouched."""
+        from forgelm.verify import PIPELINE_MANIFEST_MAX_BYTES, verify_pipeline_manifest_report
+
+        evidence = tmp_path / "s0" / "compliance" / "annex_iv_metadata.json"
+        evidence.parent.mkdir(parents=True)
+        evidence.write_text(json.dumps(_hashed_annex_iv_artifact()))
+        manifest_path = tmp_path / "compliance" / "pipeline_manifest.json"
+        manifest_path.parent.mkdir(parents=True)
+        manifest_path.write_text(json.dumps(_manifest_pointing_at(str(evidence))))
+
+        assert manifest_path.stat().st_size < PIPELINE_MANIFEST_MAX_BYTES / 1000
+        assert verify_pipeline_manifest_report(str(tmp_path)).violations == []
+
+
+class TestStageEvidencePathContainment:
+    """F4 / S6-D-03: the containment check and the symlink refusal must both
+    actually bite.
+
+    ``_resolve_stage_evidence_path`` called ``os.path.realpath`` on the joined
+    relative pointer and checked containment on the *result*, which resolved
+    symlinks before anything looked at them — so ``os.path.islink`` could never
+    be true for a relative pointer and the documented symlink refusal was dead
+    code.  A relative pointer at a symlink was silently followed.
+    """
+
+    def test_relative_symlink_is_refused(self, tmp_path: Path) -> None:
+        from forgelm.verify import _resolve_stage_evidence_path
+
+        real = tmp_path / "c" / "real.json"
+        real.parent.mkdir(parents=True)
+        real.write_text("{}")
+        (tmp_path / "c" / "link.json").symlink_to(real)
+
+        path, problem = _resolve_stage_evidence_path("c/link.json", str(tmp_path))
+        assert path == ""
+        assert "symlink" in problem
+
+    def test_absolute_symlink_is_still_refused(self, tmp_path: Path) -> None:
+        """The branch that already worked must keep working."""
+        from forgelm.verify import _resolve_stage_evidence_path
+
+        real = tmp_path / "real.json"
+        real.write_text("{}")
+        link = tmp_path / "link.json"
+        link.symlink_to(real)
+
+        path, problem = _resolve_stage_evidence_path(str(link), str(tmp_path))
+        assert path == ""
+        assert "symlink" in problem
+
+    def test_relative_escape_is_refused(self, tmp_path: Path) -> None:
+        from forgelm.verify import _resolve_stage_evidence_path
+
+        path, problem = _resolve_stage_evidence_path("../../etc/passwd", str(tmp_path))
+        assert path == ""
+        assert "escapes the pipeline directory" in problem
+
+    def test_escape_through_a_symlinked_parent_is_refused(self, tmp_path: Path) -> None:
+        """Lexical normalisation alone cannot see this one: every component is
+        innocent until the symlinked directory is resolved."""
+        from forgelm.verify import _resolve_stage_evidence_path
+
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "evil.json").write_text("{}")
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / "sneaky").symlink_to(outside, target_is_directory=True)
+
+        path, problem = _resolve_stage_evidence_path("sneaky/evil.json", str(run_dir))
+        assert path == ""
+        assert "escapes the pipeline directory" in problem
+
+    def test_a_plain_relative_pointer_still_resolves(self, tmp_path: Path) -> None:
+        """The refusals must not swallow the legitimate case."""
+        from forgelm.verify import _resolve_stage_evidence_path
+
+        real = tmp_path / "s0" / "compliance" / "annex_iv_metadata.json"
+        real.parent.mkdir(parents=True)
+        real.write_text("{}")
+
+        path, problem = _resolve_stage_evidence_path("s0/compliance/annex_iv_metadata.json", str(tmp_path))
+        assert problem == ""
+        assert os.path.realpath(path) == os.path.realpath(str(real))
 
 
 class TestPipelineViolationPrecedence:
