@@ -16,7 +16,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "forgelm"
-version = "0.9.1rc1"
+version = "0.10.0"
 description = "Config-driven LLM fine-tuning with safety evaluation, EU AI Act compliance, 6 alignment methods, and one-command bundled quickstart templates."
 readme = "README.md"
 requires-python = ">=3.10"

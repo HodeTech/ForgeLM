@@ -4,7 +4,9 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
-_(Entries land here as PRs merge. **This cycle is a MINOR bump, not a patch.**
+## [0.10.0] — 2026-07-20
+
+_(**This cycle is a MINOR bump, not a patch.**
 Under [`docs/standards/release.md`](docs/standards/release.md)'s bump table it
 adds two CLI flags, five additive YAML fields, a new public exit code and new
 artefact fields — none of which a PATCH ("internal refactor with no user-visible

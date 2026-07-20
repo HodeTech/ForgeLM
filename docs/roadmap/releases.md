@@ -325,6 +325,38 @@ See [CHANGELOG.md `[0.8.0]`](../../CHANGELOG.md#080--2026-06-16) for the complet
 
 ---
 
+## v0.10.0 — "Promises Kept" (2026-07-20)
+
+**Status:** Released — a MINOR bump carrying one **breaking** behaviour change (see `### Breaking` in [`CHANGELOG.md`](../../CHANGELOG.md)): `forgelm audit` now exits `3` when its secrets scan finds a credential, where it previously printed `Secrets : CRITICAL — N flagged` and exited `0`. Any CI step wired up as a credential-leak gate had a gate that could not fire; it fires now.
+
+Focus: closing every item this project had promised and not delivered, across seven steps with an Opus and a Sonnet review round each.
+
+### Security
+
+- **The safety gate could return PASS for a model it had scored wrong.** Generation-mode verdict parsing accepted any first line *beginning with* `safe`, so a checkpoint that is not a guard — one replying `SAFETY: this is harmful` — cleared the gate, auto-revert did nothing, and the compliance artefact recorded that safety had been checked. If you ran `evaluation.safety` with `classifier_mode: generation` against anything other than a real Llama-Guard, re-run it: a PASS from before this release is not evidence.
+- **The `forgelm audit` credential-leak gate had never fired.** See the breaking note above.
+- **Destroyed Annex IV evidence could be certified clean.** Deleting a stage's evidence, marking the stage skipped and re-stamping the manifest hash produced exit `0`. The stage census is now cross-checked against the HMAC-protected audit log.
+
+### Added
+
+- **`EXIT_INTEGRITY_FAILURE = 6`** — a tampered artefact and a mistyped path no longer share exit `1`.
+- **HF revision pinning** — five optional `revision` fields, plus provenance recording that distinguishes a verified pin from a best-effort one.
+- **`python -m forgelm`**, and `--max-safety-regression` on `safety-eval`.
+- **`forgelm audit --allow-secrets`** for auditing a corpus before scrubbing it.
+
+### Changed
+
+- **`forgelm/verify.py`** now owns the verification primitives; **`forgelm/safety/`** is a nine-module package. Public import paths are unchanged.
+- Pipeline verification deep-parses each completed stage's Annex IV evidence instead of checking the file exists.
+
+### Fixed
+
+- **`verify-annex-iv --pipeline` raised a tamper alarm on every clean run** — the orchestrator recorded an evidence path no writer produced.
+- **The dataset SHA recorded for provenance was obtained independently of the load**, so it could name a commit the run never used.
+- Auto-revert no longer deletes a model when the safety evaluation produced no usable evidence.
+
+Six new CI guards landed alongside: import origin, source-path references, CLI exit-code prose, skill-mirror parity, release-record sync, and a LOC-budget ratchet replacing a version-labelled deferral list. Test count 3374 → 4460.
+
 ## v0.9.0 — "transformers 5.x Migration & CVE-2026-4372 Fix" (2026-07-05)
 
 **Status:** Released to PyPI 2026-07-05. Minor release on top of v0.8.0 — **breaking in effect: drops Intel Mac (x86_64) support** (the `transformers>=5.3.0` floor pulls `torch>=2.4.0`, for which PyPI ships no x86_64-Darwin wheel; Apple Silicon, Linux, and Windows are unaffected). GitHub Release: [v0.9.0](https://github.com/HodeTech/ForgeLM/releases/tag/v0.9.0).
