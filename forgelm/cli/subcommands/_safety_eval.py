@@ -30,6 +30,10 @@ Exit codes:
   (operator-actionable; the model failed the gate).  Maps to
   ``EXIT_EVAL_FAILURE`` so a regulated CI pipeline can branch on
   "evaluation failed" vs "config rejected the run before evaluation".
+  The threshold is ``--max-safety-regression`` (unsafe-ratio ceiling,
+  default ``DEFAULT_MAX_SAFETY_REGRESSION``); it is echoed back in both
+  output formats so the number the verdict was produced against is
+  visible next to the verdict.
 """
 
 from __future__ import annotations
@@ -201,7 +205,7 @@ def _run_safety_eval_cmd(args, output_format: str) -> None:
     max_new_tokens = int(getattr(args, "max_new_tokens", 512) or 512)
 
     try:
-        from forgelm.safety import SafetyEvalThresholds, run_safety_evaluation
+        from forgelm.safety import DEFAULT_MAX_SAFETY_REGRESSION, SafetyEvalThresholds, run_safety_evaluation
     except ImportError as exc:
         _output_error_and_exit(
             output_format,
@@ -222,6 +226,19 @@ def _run_safety_eval_cmd(args, output_format: str) -> None:
     # — F-P3-FABLE-13).
     thresholds = SafetyEvalThresholds(track_categories=True)
 
+    # The unsafe-ratio ceiling the gate actually trips on.  The parser defaults
+    # this to DEFAULT_MAX_SAFETY_REGRESSION — the same constant that is
+    # run_safety_evaluation's signature default — so behaviour is unchanged when
+    # the flag is omitted.  It is forwarded explicitly rather than left to the
+    # signature default: the value is echoed back to the operator below, and an
+    # echoed threshold that was never passed is the kind of claim this cycle
+    # exists to remove.  ``getattr`` keeps direct library callers of this
+    # dispatcher (which construct their own args namespace) working.
+    max_safety_regression = getattr(args, "max_safety_regression", None)
+    if max_safety_regression is None:
+        max_safety_regression = DEFAULT_MAX_SAFETY_REGRESSION
+    max_safety_regression = float(max_safety_regression)
+
     model, tokenizer = _load_model_for_safety(model_path, output_format)
 
     # No ``classifier_revision=`` here, deliberately.  ``run_safety_evaluation``
@@ -240,6 +257,7 @@ def _run_safety_eval_cmd(args, output_format: str) -> None:
             tokenizer=tokenizer,
             classifier_path=classifier_path,
             test_prompts_path=probes_path,
+            max_safety_regression=max_safety_regression,
             max_new_tokens=max_new_tokens,
             output_dir=output_dir,
             thresholds=thresholds,
@@ -258,6 +276,7 @@ def _run_safety_eval_cmd(args, output_format: str) -> None:
         classifier_path=classifier_path,
         probes_path=probes_path,
         output_dir=output_dir,
+        max_safety_regression=max_safety_regression,
     )
     _emit_safety_result(payload, output_format)
     # F-P3-FABLE-12: a classifier that never loaded (or a probes file with no
@@ -302,6 +321,7 @@ def _build_safety_eval_payload(
     classifier_path: str,
     probes_path: str,
     output_dir: str,
+    max_safety_regression: float,
 ) -> Dict[str, Any]:
     """Project a :class:`forgelm.safety.SafetyResult` onto the JSON envelope shape.
 
@@ -315,12 +335,19 @@ def _build_safety_eval_payload(
     ``track_categories``).  The earlier ``harm_categories`` field name
     was wrong (Wave 2b Round-1 fix); the helper preserves the corrected
     accessor.
+
+    ``max_safety_regression`` is echoed into the envelope as
+    ``max_safety_regression`` because it is the number the pass/fail verdict was
+    produced against.  A consumer reading ``passed: false`` alongside
+    ``safe_ratio`` previously had no way to see which ceiling the ratio was
+    compared to.
     """
     return {
         "model": model_path,
         "classifier": classifier_path,
         "probes": probes_path,
         "output_dir": output_dir,
+        "max_safety_regression": max_safety_regression,
         "passed": getattr(result, "passed", False),
         "safety_score": getattr(result, "safety_score", None),
         "safe_ratio": getattr(result, "safe_ratio", None),
@@ -345,6 +372,7 @@ def _emit_safety_result(payload: Dict[str, Any], output_format: str) -> None:
     print(f"{marker}: safety-eval against {payload['model']}")
     print(f"  safety_score = {payload['safety_score']}")
     print(f"  safe_ratio   = {payload['safe_ratio']}")
+    print(f"  max_safety_regression = {payload['max_safety_regression']}  (unsafe-ratio ceiling; exceeding it exits 3)")
     if payload["category_distribution"]:
         print("  category_distribution:")
         for cat, count in sorted(payload["category_distribution"].items()):

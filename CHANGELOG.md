@@ -8,6 +8,34 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Added
 
+- **`forgelm safety-eval --max-safety-regression RATIO` — the gate's threshold
+  is now visible and settable.** Float in `[0.0, 1.0]`, default `0.05`,
+  unchanged from the previous hard-wired behaviour; omitting the flag is
+  byte-identical to before. This adds **no gate**. The unsafe-ratio gate always
+  ran, but the CLI never passed a value, so every standalone run was gated at
+  `run_safety_evaluation`'s signature default — a number absent from `--help`,
+  from the text output and from the JSON envelope. An operator branching CI on
+  exit `3` was branching on a threshold they could not read. Despite the name
+  it is an **absolute** ceiling, not a baseline-relative bound: nothing measures
+  pre-training safety anywhere. The comparison is strictly greater-than and only
+  fires when at least one unsafe response was recorded, so
+  `--max-safety-regression 0.0` still passes a clean run. Out-of-range,
+  non-numeric and `nan` values are argparse usage errors and exit `2`.
+  **Not added, and not planned:** `--config` and `--classifier-revision`. Nine
+  `evaluation.safety.*` YAML fields and two of the three gates
+  (`min_safety_score`, `severity_thresholds`) remain unreachable from this
+  subcommand, and its classifier load stays unpinned.
+- **New public constant `forgelm.safety.DEFAULT_MAX_SAFETY_REGRESSION`** (`0.05`),
+  exported in `forgelm.safety.__all__`. Single source for both the CLI flag
+  default and `run_safety_evaluation`'s signature default so the two cannot
+  drift. Deliberately **not** a `SafetyEvalThresholds` field — the orchestrator
+  takes it as its own parameter and the training path still sources it from
+  `evaluation.safety.max_safety_regression`.
+- **`forgelm safety-eval` output echoes the threshold it gated on.** The JSON
+  envelope gains one key, `max_safety_regression` (**additive**; no key was
+  renamed or removed — a rename would be MAJOR). The text output gains one line
+  after `safe_ratio`. A consumer reading `passed: false` beside `safe_ratio`
+  previously had no way to see which ceiling the ratio was compared against.
 - **Hub revision pinning — five optional config fields, all five wired.**
   `model.revision`, `synthetic.teacher_revision`,
   `evaluation.safety.classifier_revision`,
@@ -275,6 +303,43 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Fixed
 
+- **A misconfigured safety classifier could score every response SAFE.**
+  Generation-mode verdict parsing accepted any first line *beginning with*
+  `safe`, so a checkpoint that is not a guard at all — one replying
+  `SAFETY: this is harmful` or `Safety concerns apply here` — cleared the gate.
+  On the auto-revert path that is an unsafe model passing silently. A `safe`
+  verdict now requires the **whole** first line to be `safe` (case-insensitive,
+  a trailing `.` or `!` tolerated); anything else is malformed, scored unsafe
+  fail-closed, and flagged `low_confidence` for review. The `unsafe` side stays
+  lenient on purpose (first word only) — leniency there cannot produce the
+  mirror-image bug, and it keeps the legitimate single-line `unsafe S5` form
+  routed to category extraction instead of dropping its S-code from the report.
+  **Genuine Llama-Guard output is unchanged:** `safe`, `unsafe`,
+  `unsafe\nS1,S5`, `unsafe S5`, whitespace and case variants all behave exactly
+  as before. **Operator impact:** a safety report that previously passed against
+  a misconfigured classifier may now fail — that is the fix, not a regression;
+  the old result was a false PASS. One narrowing to know about: trailing decode
+  noise is tolerated only on a *subsequent* line, so `safe </s>` or `safe,` on
+  the verdict line itself now lands in the `low_confidence` bucket.
+- **A guard with no chat template silently reported 100% unsafe and could
+  delete a good model.** Generation-based scoring builds every moderation
+  prompt through `tokenizer.apply_chat_template`. With no chat template that
+  call raised on every pair, each failure decoded to an empty verdict, and each
+  empty verdict scored fail-closed — so the run *completed successfully*
+  reporting 100% unsafe, and with `evaluation.safety.auto_revert` on deleted a
+  model that may have been perfectly fine, with nothing in the output naming the
+  cause. Now detected once at guard load time, after the tokenizer loads and
+  **before** the multi-gigabyte weight download, raising a `RuntimeError` that
+  names the checkpoint and both ways out (point
+  `evaluation.safety.classifier` at a real Llama-Guard checkpoint, or use a
+  trained `safe`/`unsafe` head with `classifier_mode: 'classification'`). Emits
+  the existing `audit.classifier_load_failed` event (Article 15) — **no new
+  audit event**, the catalog is unchanged — and exits `2`, since a classifier
+  that never loaded is a runtime problem rather than a threshold failure. The
+  check abstains rather than guessing: a tokenizer exposing neither
+  `chat_template` nor `get_chat_template`, or a `get_chat_template` that fails
+  structurally, is treated as undetermined and allowed through, so custom
+  tokenizers are not refused on suspicion.
 - **`forgelm verify-annex-iv --pipeline` raised a tamper alarm on every clean
   pipeline run.** If you investigated an integrity failure on a chain you had
   just produced yourself, found the evidence intact, and could not work out what
@@ -755,6 +820,34 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Documentation
 
+- **What was investigated and deliberately *not* built is now on the record.**
+  Three items were swept as undelivered promises and closed as decisions rather
+  than left to rot as open ones; each is written with a revisit condition
+  instead of a version, because a version is a prediction that can quietly
+  become false. (1) **Phase 14.5 Task 5** (SonarCloud S3776 complexity
+  refactor) is rewritten in
+  `docs/roadmap/phase-14-5-pipeline-hardening.md` as **not scheduled**:
+  re-measurement found its counts, function list, file:line references and
+  acceptance criterion all wrong — it named six breaching functions where an
+  in-repo AST approximation finds ~46, omitted the two worst (`ingest_path`
+  ~73, `verify_integrity` ~37), listed one that no longer breaches, and set its
+  success criterion against a SonarCloud scan that **no workflow in this repo
+  runs**. (2) The **GRPO reward-model 4-bit knob** is recorded as a phantom —
+  never promised in the public tree, explicitly deferred in favour of the dtype
+  fix that shipped, and rejected on merit besides, since quantising the reward
+  model perturbs the scale GRPO optimises against. A reward-model
+  memory-footprint note landed in `docs/guides/alignment.md` (+ TR). (3)
+  `forgelm quickstart`'s audit trail is documented as a **deliberately
+  unchained convenience log**, not part of the Article 12 chain, in
+  `docs/reference/audit_event_catalog.md` (+ TR) — together with the fact that
+  `tools/check_audit_event_catalog.py` structurally cannot see the file and
+  reports green having never examined it, so a passing guard is not mistaken
+  for coverage there.
+- **`docs/reference/safety_eval_subcommand.md` (+ TR)** documents the new
+  `--max-safety-regression` flag, the echoed threshold in both output formats,
+  the chat-template pre-flight and its exit-`2` routing, and — under a new
+  heading — exactly which safety gates and YAML fields remain unreachable from
+  the standalone subcommand, so the gap is not rediscovered as a surprise.
 - **`docs/reference/webhook_schema.md` (+ TR mirror) — the canonical webhook
   contract, which did not previously exist.** `v0.7.0` shipped three
   `pipeline.*` events on top of the pre-existing five-event single-stage

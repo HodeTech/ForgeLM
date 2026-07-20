@@ -376,6 +376,26 @@ def _append_audit_event(audit_dir: Path, event: Dict[str, Any]) -> None:
     discipline without coupling to the checkpoint-dir-bound logger. A UTC
     ISO-8601 ``timestamp`` is injected automatically. Write failures are logged
     at ``warning`` and swallowed so audit-disk problems never block quickstart.
+
+    **This is a convenience log, not a compliance chain, deliberately.** It is
+    unchained (no ``_hmac``, no previous-entry hash), carries no run context or
+    resolved model revision, and its writes are best-effort. That is the right
+    weight for what it records — which template and VRAM figure produced which
+    model choice, before any training run exists to attach it to. A second
+    hash-chained trail rooted in nothing would be *weaker* compliance evidence
+    than one honest chain (``compliance.AuditLogger``, the EU AI Act Art. 12
+    artefact) plus a clearly-labelled convenience log; do not "upgrade" it.
+
+    Two consequences a future author must know before adding an event here:
+
+    - The key is ``event_type``, not ``event``, and the namespace is
+      ``quickstart.*``. ``tools/check_audit_event_catalog.py`` matches neither,
+      so it reports green having never examined this file — it is not a safety
+      net for anything written here.
+    - What *does* hold the line is ``tests/test_quickstart_compat.py``'s
+      ``TestAuditLog``, which asserts exactly one event with this exact
+      ``event_type``. A new event fails there, which is the intended prompt to
+      go and decide whether it belongs in the real chain instead.
     """
     entry = {"timestamp": datetime.now(timezone.utc).isoformat(), **event}
     try:

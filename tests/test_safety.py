@@ -124,6 +124,123 @@ class TestGenerativeGuardPin:
         assert model_mod.get_loaded_model_revision("meta/guard") is None
 
 
+class TestGuardChatTemplatePreflight:
+    """``_reject_guard_without_chat_template`` — defence-in-depth at guard load.
+
+    Generation-based scoring builds every moderation prompt with
+    ``tokenizer.apply_chat_template``.  With no template that call raises on
+    every pair, each failure is swallowed into ``""``, and ``""`` parses as a
+    malformed fail-closed verdict — so the run completes reporting 100% unsafe
+    and (with ``auto_revert`` on) deletes a model that may be fine, with
+    nothing in the operator's output naming the cause.  The pre-flight turns
+    that into one actionable error.
+
+    Both directions are asserted: it fires on a positively template-less
+    tokenizer, and it stays silent on every legitimate tokenizer shape.
+    """
+
+    def _tokenizer(self, **attrs):
+        """Tokenizer double with exactly the attributes named, nothing else.
+
+        A ``MagicMock`` auto-creates every attribute as truthy, which would
+        mask a check that fires too eagerly — so the negative cases need a
+        real object with a controlled attribute surface.  Attributes are set on
+        the *instance*, not the class, so a callable stays a plain function
+        instead of becoming a bound method that swallows an argument.
+        """
+        tok = type("_Tok", (), {})()
+        for name, value in attrs.items():
+            setattr(tok, name, value)
+        return tok
+
+    # --- fires closed -------------------------------------------------------
+
+    @pytest.mark.parametrize("empty", [None, "", {}])
+    def test_absent_template_is_refused(self, empty):
+        tok = self._tokenizer(chat_template=empty)
+        with pytest.raises(RuntimeError) as ei:
+            safety_mod._reject_guard_without_chat_template(tok, "acme/not-a-guard")
+        msg = str(ei.value)
+        assert "chat template" in msg
+        # Actionable per error-handling.md: names the config key to change.
+        assert "classifier_mode" in msg
+        assert "acme/not-a-guard" in msg
+
+    def test_getter_reporting_no_template_is_refused(self):
+        def _raise():
+            raise ValueError("This tokenizer does not have a chat template")
+
+        tok = self._tokenizer(chat_template=None, get_chat_template=_raise)
+        with pytest.raises(RuntimeError):
+            safety_mod._reject_guard_without_chat_template(tok, "acme/not-a-guard")
+
+    def test_refusal_reaches_the_loader_as_runtime_error_with_audit(self, stub_resolver):
+        """The pre-flight must ride the loader's existing failure contract:
+        Article 15 ``audit.classifier_load_failed`` event, then RuntimeError."""
+        stub_resolver(revision_resolved=SHA, resolution_source="pinned_resolved")
+        events = []
+
+        class _Audit:
+            def log_event(self, name, **kw):
+                events.append((name, kw))
+
+        def _tok(path, **kwargs):
+            return type("_Tok", (), {"chat_template": None})()
+
+        fake = MagicMock()
+        fake.AutoTokenizer.from_pretrained = _tok
+        fake.AutoModelForCausalLM.from_pretrained = lambda *a, **k: pytest.fail(
+            "weights must not be downloaded after the tokenizer pre-flight refuses"
+        )
+        with patch("torch.cuda.is_available", return_value=False):
+            with patch.dict("sys.modules", {"transformers": fake}):
+                with pytest.raises(RuntimeError, match="chat template"):
+                    safety_mod._load_generative_guard("acme/not-a-guard", _Audit(), SHA)
+        assert [n for n, _ in events] == ["audit.classifier_load_failed"]
+        # Provenance must NOT be recorded for a guard that was refused.
+        assert model_mod.get_loaded_model_revision("acme/not-a-guard", model_mod.ROLE_SAFETY_CLASSIFIER) is None
+
+    # --- stays silent -------------------------------------------------------
+
+    def test_real_template_passes(self):
+        tok = self._tokenizer(chat_template="{% for m in messages %}{{ m.content }}{% endfor %}")
+        safety_mod._reject_guard_without_chat_template(tok, "meta-llama/Llama-Guard-3-8B")
+
+    def test_template_supplied_only_via_getter_passes(self):
+        tok = self._tokenizer(chat_template=None, get_chat_template=lambda: "{{ messages }}")
+        safety_mod._reject_guard_without_chat_template(tok, "meta-llama/Llama-Guard-3-8B")
+
+    def test_structurally_unqueryable_getter_abstains(self):
+        """A getter that fails on its *signature* has not answered "no template".
+
+        Treating a TypeError as a negative answer would refuse any tokenizer
+        whose ``get_chat_template`` takes a required argument — a false alarm
+        on a load that would have worked. "We could not ask" != "the answer
+        was no".
+        """
+
+        def _needs_an_argument(which):  # pragma: no cover - never called successfully
+            return "{{ messages }}"
+
+        tok = self._tokenizer(chat_template=None, get_chat_template=_needs_an_argument)
+        safety_mod._reject_guard_without_chat_template(tok, "acme/custom-guard")
+
+    def test_tokenizer_exposing_neither_api_abstains(self):
+        """A tokenizer with neither attribute is undetermined, not template-less.
+
+        Custom/stubbed tokenizers whose ``apply_chat_template`` works fine live
+        here; refusing them would be a false alarm on a legitimate load.
+        """
+        safety_mod._reject_guard_without_chat_template(self._tokenizer(), "acme/custom-guard")
+
+    def test_magicmock_tokenizer_is_not_refused(self):
+        """Guards the whole existing test suite: every other generative-guard
+        test passes a ``MagicMock`` tokenizer.  If the pre-flight fired on
+        those, this fix would have traded a false-PASS for a false-FAIL across
+        the suite — exactly the near-miss this cycle keeps producing."""
+        safety_mod._reject_guard_without_chat_template(MagicMock(), "meta-llama/Llama-Guard-3-8B")
+
+
 class TestClassificationPipelinePin:
     """``_load_safety_classifier`` pins the ``text-classification`` pipeline."""
 

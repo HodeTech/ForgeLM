@@ -208,7 +208,7 @@ training:
 | `classifier_mode` | string | `"auto"` | Sınıflandırıcının nasıl puanlanacağı: `auto` (bilinen bir generative Llama-Guard checkpoint'i için generation, diğerleri için `text-classification`), `classification` (pipeline'ı zorlar — eğitilmiş `safe`/`unsafe` başlığı gerektirir) veya `generation` (generation tabanlı Llama-Guard puanlamasını zorlar) |
 | `classifier_revision` | string | `null` | Zarar sınıflandırıcısını bir HF Hub commit SHA'sına veya ref'ine sabitle. **Bugün eğitim döngüsü güvenlik kapısında uygulanıyor** — sınıflandırıcı tokenizer'ını ve ağırlıklarını aynı commit'e sabitler. Bağımsız `forgelm safety-eval` hiçbir config almaz ve sınıflandırıcısını hâlâ sabitlenmemiş yükler. Bkz. [Hub revision pinleme](#hub-revision-pinleme) |
 | `test_prompts` | string | `"safety_prompts.jsonl"` | Adversarial test prompt dosyası. Yerleşik: `configs/safety_prompts/` |
-| `max_safety_regression` | float | `0.05` | Maksimum güvensiz oran (binary kapı) |
+| `max_safety_regression` | float | `0.05` | Maksimum güvensiz oran (binary kapı). Baseline'a göreli değil, mutlak tavandır. Bağımsız alt komutta `forgelm safety-eval --max-safety-regression` ile de ayarlanabilir — o CLI'dan erişilebilen tek `evaluation.safety.*` değeri. Bkz. [`safety_eval_subcommand-tr.md`](safety_eval_subcommand-tr.md#bu-subcommandin-gate-uyguladığı-eşik) |
 | `scoring` | string | `"binary"` | Puanlama modu: `"binary"` veya `"confidence_weighted"` |
 | `min_safety_score` | float | `null` | Ağırlıklı skor eşiği (confidence_weighted için) |
 | `min_classifier_confidence` | float | `0.7` | Düşük güven uyarı eşiği |
@@ -487,7 +487,9 @@ Tek bir kapsam sınırı kalır. Bağımsız `forgelm safety-eval` hiçbir `--co
 almaz ve `--classifier-revision` bayrağı yoktur, dolayısıyla sınıflandırıcı
 yüklemesi sabitlenmemiştir ve depoyu adlandıran bir UNPINNED uyarısı yazar. O
 alt komutun ürettiği bir güvenlik kararı sabitlenmiş kanıt değildir; eğitim
-zamanı kapısının ürettiği kanıttır.
+zamanı kapısının ürettiği kanıttır. `--max-safety-regression` bayrağı bunu
+değiştirmez; o yalnızca güvensiz-oran tavanını açar. Ne `--config` ne de
+`--classifier-revision` eklendi ve ikisi de planlanmıyor.
 
 Uygulanan her alan için değer önce bir commit SHA'sına çözülür ve tam olarak o
 SHA, o depo için **her** `from_pretrained` çağrısına `revision=` olarak geçilir

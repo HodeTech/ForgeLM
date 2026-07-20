@@ -115,6 +115,17 @@ _Reserved namespace — `cli` is a recognized event-namespace prefix (see "Addin
 3. Mirror the row to [audit_event_catalog-tr.md](audit_event_catalog-tr.md).
 4. Emit via `AuditLogger.log_event(event, **payload)`. Never call `json.dump` directly into `audit_log.jsonl`; the hash chain depends on the canonical writer.
 
+## Logs this catalog does not cover
+
+One other JSONL log in the tree looks like an audit trail and is **not** part of the Article 12 chain. It is recorded here so nobody has to rediscover it.
+
+`forgelm quickstart` writes `<config-dir>/quickstart_audit.jsonl` containing exactly one entry, `quickstart.model_selection`, from a single call site in [`forgelm/quickstart.py`](../../forgelm/quickstart.py). It is a **convenience log, deliberately**: unchained (no `_hmac`, no previous-entry hash), carrying no run context and no resolved model revision, with best-effort writes that are logged and swallowed on failure. That is the right weight for what it records — which template and VRAM figure produced which model choice, before any training run exists to attach it to. A second hash-chained trail rooted in nothing would be *weaker* compliance evidence than one honest chain plus a clearly-labelled convenience log, so it should not be "upgraded". The Article 12 artefact remains `compliance.AuditLogger`'s `audit_log.jsonl`, described above.
+
+Two consequences for anyone adding an event there:
+
+- **The catalog guard cannot see that file.** [`tools/check_audit_event_catalog.py`](../../tools/check_audit_event_catalog.py) misses it for two independent reasons: `quickstart` is not one of its `_EVENT_NAMESPACES`, and the key is `event_type` rather than the `event` its emission regex matches. It reports green having never examined the file. Do not treat a passing catalog guard as coverage for `quickstart.py`.
+- **What does hold the line is a test.** `tests/test_quickstart_compat.py::TestAuditLog` asserts exactly one event with exactly that `event_type`. A new event fails there — which is the intended prompt to stop and decide whether it belongs in the real chain instead.
+
 ## Tamper-evidence summary
 
 | Mechanism                | Defends against                                                       | Always on?                                           |

@@ -209,7 +209,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `classifier_mode` | string | `"auto"` | How the classifier is scored: `auto` (generation for a known generative Llama-Guard checkpoint, `text-classification` otherwise), `classification` (force the pipeline — needs a trained `safe`/`unsafe` head), or `generation` (force generation-based Llama-Guard scoring) |
 | `classifier_revision` | string | `null` | Pin the harm classifier to an HF Hub commit SHA or ref. **Honoured today by the training-loop safety gate** — pins the classifier tokenizer and weights at the same commit. Standalone `forgelm safety-eval` takes no config and still loads its classifier unpinned. See [Hub revision pinning](#hub-revision-pinning) |
 | `test_prompts` | string | `"safety_prompts.jsonl"` | Adversarial test prompts file. Built-in sets in `configs/safety_prompts/` |
-| `max_safety_regression` | float | `0.05` | Max allowed unsafe ratio (binary gate) |
+| `max_safety_regression` | float | `0.05` | Max allowed unsafe ratio (binary gate). Absolute ceiling, not baseline-relative. Also settable on the standalone subcommand via `forgelm safety-eval --max-safety-regression` — the one `evaluation.safety.*` value reachable from that CLI. See [`safety_eval_subcommand.md`](safety_eval_subcommand.md#the-threshold-this-subcommand-gates-on) |
 | `scoring` | string | `"binary"` | Scoring mode: `"binary"` or `"confidence_weighted"` |
 | `min_safety_score` | float | `null` | Weighted score threshold (0.0-1.0). Used when `scoring="confidence_weighted"` |
 | `min_classifier_confidence` | float | `0.7` | Flag responses below this confidence for manual review |
@@ -495,6 +495,9 @@ One scope limit remains. Standalone `forgelm safety-eval` takes no `--config`
 and has no `--classifier-revision` flag, so its classifier load is unpinned and
 logs an UNPINNED warning naming the repo. A safety verdict produced by that
 subcommand is not pinned evidence; one produced by the training-time gate is.
+This is unchanged by the `--max-safety-regression` flag, which exposes the
+unsafe-ratio ceiling only; neither `--config` nor `--classifier-revision` was
+added and neither is planned.
 
 For each honoured field the value is resolved to a commit SHA first, and that
 exact SHA is passed as `revision=` to **every** `from_pretrained` for that repo

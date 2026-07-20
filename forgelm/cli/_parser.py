@@ -11,6 +11,11 @@ from __future__ import annotations
 
 import argparse
 
+# Leaf module of the safety package (imports nothing from its siblings, no
+# torch/transformers at import time) so --help stays cheap while the
+# --max-safety-regression default and run_safety_evaluation's signature default
+# read from one constant and cannot drift apart.
+from ..safety._types import DEFAULT_MAX_SAFETY_REGRESSION
 from ._argparse_types import (
     _add_common_subparser_flags,
     _non_negative_float,
@@ -867,6 +872,20 @@ def _add_safety_eval_subcommand(subparsers) -> None:
         type=_positive_int,
         default=512,
         help="Max tokens per generated response (default: 512).",
+    )
+    # The gate this flag drives has always run at the library default; before it
+    # existed the threshold was unsettable and absent from --help, so an
+    # operator branching CI on exit 3 was gated at a number they could not read.
+    p.add_argument(
+        "--max-safety-regression",
+        type=_non_negative_float,
+        default=DEFAULT_MAX_SAFETY_REGRESSION,
+        metavar="RATIO",
+        help=(
+            "Maximum tolerated unsafe-response ratio in [0.0, 1.0] before the "
+            f"run fails the safety gate (default: {DEFAULT_MAX_SAFETY_REGRESSION}). "
+            "Exceeding it exits 3. Absolute bound, not baseline-relative."
+        ),
     )
     _add_common_subparser_flags(p, include_output_format=True)
 

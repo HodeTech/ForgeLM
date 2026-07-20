@@ -22,6 +22,26 @@ def _build_args(**kwargs) -> SimpleNamespace:
     return SimpleNamespace(**kwargs)
 
 
+def _parse_cli(argv: list) -> SimpleNamespace:
+    """Run the real CLI parser over ``argv``.
+
+    ``forgelm.cli._parser.parse_args`` builds its parser inline and reads
+    ``sys.argv``, so exercising the shipped flag definitions (types, defaults,
+    mutual exclusion) means swapping ``sys.argv`` rather than importing a
+    parser factory.  Argparse's own usage errors still raise ``SystemExit(2)``.
+    """
+    import sys as _sys
+
+    from forgelm.cli._parser import parse_args
+
+    saved = _sys.argv
+    _sys.argv = ["forgelm", *argv]
+    try:
+        return parse_args()
+    finally:
+        _sys.argv = saved
+
+
 # ---------------------------------------------------------------------------
 # verify-annex-iv
 # ---------------------------------------------------------------------------
@@ -621,6 +641,177 @@ class TestSafetyEvalDispatcher:
         assert ei.value.code == 0
         assert captured["thresholds"].track_categories is True
         assert captured["audit_logger"] is not None
+
+    # ------------------------------------------------------------------
+    # --max-safety-regression: the threshold the exit-3 gate actually
+    # trips on.  It was never forwarded, so every standalone run was
+    # gated at run_safety_evaluation's 0.05 signature default — invisible
+    # in --help, unsettable, and absent from the JSON envelope an operator
+    # branches CI on.  These tests trace it config -> caller -> consumer at
+    # runtime rather than by reading, per the half-wired-field failures
+    # this cycle already produced twice.
+    # ------------------------------------------------------------------
+
+    def _capture_run(self, monkeypatch, *, passed=True, safe_ratio=1.0):
+        from forgelm.cli.subcommands import _safety_eval
+
+        captured: dict = {}
+
+        def fake_run(**kw):
+            captured.update(kw)
+            return SimpleNamespace(
+                passed=passed,
+                evaluation_completed=True,
+                safety_score=safe_ratio,
+                safe_ratio=safe_ratio,
+                category_distribution={},
+                failure_reason=None if passed else "threshold-exceeded",
+            )
+
+        monkeypatch.setenv("FORGELM_OPERATOR", "ci@test")
+        monkeypatch.setattr(_safety_eval, "_load_model_for_safety", lambda *a, **kw: (object(), object()))
+        monkeypatch.setattr("forgelm.safety.run_safety_evaluation", fake_run)
+        return captured
+
+    def test_flag_value_reaches_run_safety_evaluation(self, tmp_path: Path, monkeypatch) -> None:
+        """The operator's number must arrive at the consumer, not just validate."""
+        from forgelm.cli.subcommands import _safety_eval
+
+        captured = self._capture_run(monkeypatch)
+        probes = tmp_path / "probes.jsonl"
+        probes.write_text('{"prompt": "x"}\n')
+        args = _build_args(
+            model="gpt2",
+            classifier=None,
+            probes=str(probes),
+            default_probes=False,
+            output_dir=str(tmp_path),
+            max_new_tokens=8,
+            max_safety_regression=0.25,
+        )
+        with pytest.raises(SystemExit):
+            _safety_eval._run_safety_eval_cmd(args, output_format="json")
+        assert captured["max_safety_regression"] == 0.25, (
+            "the flag validated but never reached run_safety_evaluation — a half-wired knob"
+        )
+
+    def test_omitted_flag_preserves_the_library_default(self, tmp_path: Path, monkeypatch) -> None:
+        """Additive change: behaviour with the flag absent is byte-identical."""
+        from forgelm.cli.subcommands import _safety_eval
+        from forgelm.safety import DEFAULT_MAX_SAFETY_REGRESSION
+
+        captured = self._capture_run(monkeypatch)
+        probes = tmp_path / "probes.jsonl"
+        probes.write_text('{"prompt": "x"}\n')
+        # No max_safety_regression attribute at all — the direct-library-caller
+        # shape that every pre-existing test in this class uses.
+        args = _build_args(
+            model="gpt2",
+            classifier=None,
+            probes=str(probes),
+            default_probes=False,
+            output_dir=str(tmp_path),
+            max_new_tokens=8,
+        )
+        with pytest.raises(SystemExit):
+            _safety_eval._run_safety_eval_cmd(args, output_format="json")
+        assert captured["max_safety_regression"] == DEFAULT_MAX_SAFETY_REGRESSION
+
+    def test_parser_default_matches_the_library_signature_default(self) -> None:
+        """The two defaults are one constant; this pins that they cannot drift.
+
+        A parser default of 0.05 hard-coded beside a signature default of 0.05
+        is exactly the "true when written, silently false later" shape.
+        """
+        import inspect
+
+        from forgelm.safety import DEFAULT_MAX_SAFETY_REGRESSION, run_safety_evaluation
+
+        args = _parse_cli(["safety-eval", "--model", "m", "--default-probes"])
+        signature_default = inspect.signature(run_safety_evaluation).parameters["max_safety_regression"].default
+        assert args.max_safety_regression == DEFAULT_MAX_SAFETY_REGRESSION == signature_default
+
+    def test_threshold_is_echoed_in_both_output_formats(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """An operator reading passed=false must be able to see which ceiling
+        the safe_ratio was compared against."""
+        from forgelm.cli.subcommands import _safety_eval
+
+        self._capture_run(monkeypatch, passed=False, safe_ratio=0.5)
+        probes = tmp_path / "probes.jsonl"
+        probes.write_text('{"prompt": "x"}\n')
+        kwargs = dict(
+            model="gpt2",
+            classifier=None,
+            probes=str(probes),
+            default_probes=False,
+            output_dir=str(tmp_path),
+            max_new_tokens=8,
+            max_safety_regression=0.25,
+        )
+        with pytest.raises(SystemExit):
+            _safety_eval._run_safety_eval_cmd(_build_args(**kwargs), output_format="json")
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["max_safety_regression"] == 0.25
+
+        with pytest.raises(SystemExit):
+            _safety_eval._run_safety_eval_cmd(_build_args(**kwargs), output_format="text")
+        assert "max_safety_regression = 0.25" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("bad", ["-0.1", "1.5", "abc", "nan"])
+    def test_out_of_range_threshold_rejected_at_the_cli_boundary(self, bad: str) -> None:
+        with pytest.raises(SystemExit) as ei:
+            _parse_cli(["safety-eval", "--model", "m", "--default-probes", "--max-safety-regression", bad])
+        assert ei.value.code == 2  # argparse usage error
+
+    def test_operator_threshold_drives_exit_3_end_to_end(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """Exit 3 must follow the operator's number, through the real gate.
+
+        Nothing is stubbed between the flag and ``_evaluate_safety_gates``:
+        only response generation and the guard verdict are faked, so the same
+        1-unsafe-in-4 run exits 0 under a tolerant ceiling and 3 under a strict
+        one.  A threshold that parses but does not move the exit code is the
+        defect this whole item is about.
+        """
+        from forgelm import safety as _safety
+        from forgelm.cli.subcommands import _safety_eval
+
+        probes = tmp_path / "probes.jsonl"
+        probes.write_text("".join(json.dumps({"prompt": f"p{i}"}) + "\n" for i in range(4)))
+
+        monkeypatch.setenv("FORGELM_OPERATOR", "ci@test")
+        monkeypatch.setattr(_safety_eval, "_load_model_for_safety", lambda *a, **kw: (object(), object()))
+        monkeypatch.setattr(_safety._orchestrator, "_generate_safety_responses", lambda *a, **k: ["r"] * 4)
+        monkeypatch.setattr(_safety._orchestrator, "_release_model_from_gpu", lambda *a, **k: None)
+        monkeypatch.setattr(_safety._score_generation, "_load_generative_guard", lambda *a, **k: (object(), object()))
+        # 1 unsafe in 4 -> unsafe ratio 0.25, straddling the two thresholds.
+        verdicts = iter(["safe", "safe", "unsafe\nS1", "safe"])
+        monkeypatch.setattr(_safety._score_generation, "_generate_guard_verdict", lambda *a, **k: next(verdicts))
+
+        def _run(threshold: str) -> int:
+            args = _parse_cli(
+                [
+                    "safety-eval",
+                    "--model",
+                    "gpt2",
+                    "--probes",
+                    str(probes),
+                    "--output-dir",
+                    str(tmp_path),
+                    "--classifier",
+                    "meta-llama/Llama-Guard-3-8B",
+                    "--max-safety-regression",
+                    threshold,
+                ]
+            )
+            with pytest.raises(SystemExit) as ei:
+                _safety_eval._run_safety_eval_cmd(args, output_format="json")
+            capsys.readouterr()
+            return ei.value.code
+
+        assert _run("0.5") == 0, "0.25 unsafe under a 0.50 ceiling must pass"
+        verdicts = iter(["safe", "safe", "unsafe\nS1", "safe"])
+        monkeypatch.setattr(_safety._score_generation, "_generate_guard_verdict", lambda *a, **k: next(verdicts))
+        assert _run("0.1") == 3, "0.25 unsafe under a 0.10 ceiling must exit EXIT_EVAL_FAILURE (3)"
 
 
 # ---------------------------------------------------------------------------

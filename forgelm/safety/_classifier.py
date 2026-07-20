@@ -123,6 +123,70 @@ def _reject_uninitialized_classifier_head(classifier: Any, classifier_path: str)
         )
 
 
+def _reject_guard_without_chat_template(tokenizer: Any, classifier_path: str) -> None:
+    """Refuse a generative guard whose tokenizer carries no chat template.
+
+    Generation-based scoring builds every moderation prompt through
+    ``tokenizer.apply_chat_template`` (see :func:`_generate_guard_verdict`).  A
+    tokenizer with no chat template makes that call raise on *every* pair, and
+    each failure is caught and returned as ``""`` — parsed downstream as a
+    malformed, fail-closed verdict.  The run therefore completes with 100%
+    unsafe, the safety gate fails, and with ``auto_revert`` on a perfectly good
+    model is deleted, with nothing in the operator's output naming the actual
+    cause.  Detect it once at load time and fail with an actionable error
+    instead, mirroring :func:`_reject_generation_only_classifier`'s fail-fast
+    contract (the caller's ``except`` emits the Article 15
+    ``audit.classifier_load_failed`` event and re-raises as ``RuntimeError``).
+
+    Fires only on a *positive* determination that no template exists; every
+    other outcome abstains.  Two shapes are deliberately treated as
+    *undetermined* rather than template-less, because refusing them would be a
+    false alarm on a legitimate load — the mirror-image defect of the one this
+    function exists to prevent:
+
+    - A tokenizer exposing neither ``chat_template`` nor ``get_chat_template``.
+      That is a custom or stubbed tokenizer whose ``apply_chat_template`` may
+      work perfectly well; we simply cannot see its template from here.
+    - A ``get_chat_template`` that fails *structurally* (``TypeError`` from an
+      unexpected signature, ``AttributeError`` from a partially-built object).
+      "We could not ask the question" is not "the answer was no".  Only the
+      exceptions transformers raises to *mean* no template (``ValueError``,
+      ``KeyError``) count as a negative answer.
+
+    Raises:
+        RuntimeError: if the tokenizer positively reports no chat template.
+    """
+    has_attr = hasattr(tokenizer, "chat_template")
+    getter = getattr(tokenizer, "get_chat_template", None)
+    if not has_attr and not callable(getter):
+        return
+    template = getattr(tokenizer, "chat_template", None) if has_attr else None
+    if not template and callable(getter):
+        try:
+            template = getter()
+        except (ValueError, KeyError) as e:
+            # transformers' documented "no chat template is defined" signal.
+            logger.debug("get_chat_template() on %s reports no template: %s", classifier_path, e)
+            template = None
+        except (TypeError, AttributeError) as e:
+            # Could not interrogate the tokenizer — undetermined, not negative.
+            logger.debug("Could not query get_chat_template() on %s; skipping pre-flight: %s", classifier_path, e)
+            return
+    if template:
+        return
+    raise RuntimeError(
+        f"Safety guard {classifier_path!r} loaded, but its tokenizer carries no chat "
+        "template. Generation-based Llama-Guard scoring builds every moderation "
+        "prompt with tokenizer.apply_chat_template, so without one every verdict "
+        "would be unparsable and scored fail-closed — the run would report 100% "
+        "unsafe and (with evaluation.safety.auto_revert on) delete a model that "
+        "may be fine. Point evaluation.safety.classifier at a real Llama-Guard "
+        "checkpoint (default: meta-llama/Llama-Guard-3-8B), or use a checkpoint "
+        "with a trained safe/unsafe classification head and set "
+        "evaluation.safety.classifier_mode='classification'."
+    )
+
+
 def _emit_classifier_load_failed_audit(audit_logger: Any, classifier_path: str, reason: str) -> None:
     """Best-effort Article 15 record-keeping for a safety-classifier outage.
 
@@ -230,6 +294,10 @@ def _load_generative_guard(
             classifier_path, role=ROLE_SAFETY_CLASSIFIER, requested=classifier_revision
         )
         tokenizer = AutoTokenizer.from_pretrained(classifier_path, trust_remote_code=False, revision=pin)
+        # Pre-flight before the multi-GB weight download: a tokenizer with no
+        # chat template can never produce a parsable verdict, and the resulting
+        # all-unsafe run is indistinguishable from a genuinely unsafe model.
+        _reject_guard_without_chat_template(tokenizer, classifier_path)
         model = AutoModelForCausalLM.from_pretrained(
             classifier_path,
             # ``dtype`` is the transformers-5 name for the former ``torch_dtype``.

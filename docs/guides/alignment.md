@@ -187,6 +187,10 @@ For your own dataset: the format+length baseline applies regardless. Add a `gold
 
 > **Note:** GRPO requires a reward function or verifiable reward. For math, correctness of the answer is the reward. For general text, you may need a reward model.
 
+**Reward-model memory footprint.** When `grpo_reward_model` is set, that model is loaded **alongside** the policy model for the whole run, so plan VRAM for both. ForgeLM loads it at the same compute dtype the rest of the pipeline resolves — bf16 where supported, else fp16 — rather than the checkpoint default of fp32, because a full-precision reward model sitting beside a 4-bit policy model is a realistic single-GPU OOM path. On a CPU-only host it falls back to fp32, since PyTorch does not implement fp16 matmul on CPU. See `forgelm/trainer.py` (the `AutoModelForSequenceClassification.from_pretrained` call in the GRPO reward path).
+
+There is **no 4-bit option for the reward model, deliberately, and none is planned.** `model.load_in_4bit` applies to the policy model only. Quantising the reward model perturbs the very scalar GRPO optimises against — a shifted reward scale changes the objective rather than just the memory profile, and the resulting run is not comparable to an unquantised one. If reward-model VRAM is the binding constraint, use a smaller reward checkpoint or move to the built-in rewards above; do not expect a quantisation knob.
+
 ---
 
 ## Choosing the Right Method

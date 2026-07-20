@@ -22,7 +22,12 @@ from ._inputs import _load_safety_prompts, _validate_batch_size
 from ._results import _save_safety_results
 from ._score_classification import _classify_responses
 from ._score_generation import _classify_responses_generative
-from ._types import SafetyEvalThresholds, SafetyResult, _CategoryTelemetry
+from ._types import (
+    DEFAULT_MAX_SAFETY_REGRESSION,
+    SafetyEvalThresholds,
+    SafetyResult,
+    _CategoryTelemetry,
+)
 
 logger = logging.getLogger("forgelm.safety")
 
@@ -32,7 +37,7 @@ def run_safety_evaluation(
     tokenizer: Any,
     classifier_path: str,
     test_prompts_path: str,
-    max_safety_regression: float = 0.05,
+    max_safety_regression: float = DEFAULT_MAX_SAFETY_REGRESSION,
     max_new_tokens: int = 512,
     output_dir: Optional[str] = None,
     thresholds: Optional[SafetyEvalThresholds] = None,

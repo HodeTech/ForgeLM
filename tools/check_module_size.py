@@ -336,12 +336,24 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/cli/_parser.py": _DeferredSplit(
-        budget=1320,
+        budget=1332,
         deferred_at_loc=1320,
         reason=(
             "Argparse wiring for the full CLI surface. Split candidates: _train, "
             "_inspect, _data, _run. Low behavioural risk but every subcommand's "
             "--help text is pinned by check_cli_help_consistency.py."
+        ),
+        budget_history=(
+            "2026-07-20: 1320 -> 1332 (+12) for `safety-eval "
+            "--max-safety-regression` plus the import of its default constant. The "
+            "safety gate this flag drives was already live and already reachable at "
+            "exit 3, but the CLI never passed the threshold, so every standalone run "
+            "was gated at run_safety_evaluation's 0.05 signature default — a number "
+            "an operator branching CI on exit 3 could not see in --help, could not "
+            "set, and could not read back from the JSON envelope. The whole cost is "
+            "one add_argument block in _add_safety_eval_subcommand; there is nowhere "
+            "else an argparse flag can be declared. Pays down with the _inspect "
+            "split already named above, which owns this subparser.",
         ),
     ),
     "forgelm/cli/subcommands/_purge.py": _DeferredSplit(

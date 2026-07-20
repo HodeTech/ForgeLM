@@ -115,6 +115,17 @@ _Ayrılmış ad alanı — `cli`, tanınan bir event-namespace önekidir (aşağ
 3. Aynı satırı İngilizce kardeş katalog `audit_event_catalog.md`'ye de ekleyin (EN ↔ TR senkron kalmalı).
 4. `AuditLogger.log_event(event, **payload)` üzerinden emit edin. `audit_log.jsonl`'a doğrudan `json.dump` çağırmayın; hash zinciri kanonik yazıcıya bağımlıdır.
 
+## Bu kataloğun kapsamadığı log'lar
+
+Ağaçta denetim izine benzeyen ama Madde 12 zincirinin parçası **olmayan** bir JSONL log'u daha var. Kimse yeniden keşfetmek zorunda kalmasın diye buraya kaydediliyor.
+
+`forgelm quickstart`, [`forgelm/quickstart.py`](../../forgelm/quickstart.py) içindeki tek bir çağrı noktasından `<config-dizini>/quickstart_audit.jsonl` dosyasına tam olarak bir kayıt yazar: `quickstart.model_selection`. Bu bilinçli olarak bir **kolaylık log'udur**: zincirsizdir (`_hmac` yok, önceki-kayıt hash'i yok), koşum bağlamı ve çözülmüş model revizyonu taşımaz, yazımları best-effort'tur ve hata durumunda loglanıp yutulur. Kaydettiği şey için doğru ağırlık budur — hangi template ve VRAM değerinin hangi model seçimini ürettiği; henüz iliştirilecek bir eğitim koşumu yokken. Hiçbir şeye dayanmayan ikinci bir hash-zincirli iz, dürüst tek bir zincir artı açıkça etiketlenmiş bir kolaylık log'undan *daha zayıf* uyumluluk kanıtı olurdu; bu yüzden "yükseltilmemelidir". Madde 12 artefaktı, yukarıda anlatılan `compliance.AuditLogger`'ın `audit_log.jsonl` dosyası olmaya devam eder.
+
+Oraya event ekleyecek biri için iki sonuç:
+
+- **Katalog guard'ı o dosyayı göremez.** [`tools/check_audit_event_catalog.py`](../../tools/check_audit_event_catalog.py) onu birbirinden bağımsız iki nedenle kaçırır: `quickstart` onun `_EVENT_NAMESPACES` listesinde yoktur ve anahtar, emisyon regex'inin eşleştirdiği `event` yerine `event_type`'tır. Dosyayı hiç incelememiş olarak yeşil rapor verir. Geçen bir katalog guard'ını `quickstart.py` için kapsam saymayın.
+- **Sınırı tutan şey bir testtir.** `tests/test_quickstart_compat.py::TestAuditLog`, tam olarak o `event_type` ile tam olarak bir event olduğunu doğrular. Yeni bir event orada düşer — bu da durup onun asıl zincire ait olup olmadığına karar vermek için amaçlanan uyarıdır.
+
 ## Tampering-evidence özeti
 
 | Mekanizma                | Şuna karşı koruma sağlar                                                          | Her zaman açık mı?                                |

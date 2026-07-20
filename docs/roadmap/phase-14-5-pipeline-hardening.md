@@ -1,6 +1,6 @@
 # Phase 14.5: Pipeline Hardening (post-release review deferrals)
 
-> **Status:** **Tasks 1-4 delivered** in the `v0.9.x` cycle (unreleased at the time of writing; entries sit under `[Unreleased]` in [`CHANGELOG.md`](../../CHANGELOG.md)).  **Task 5 (the SonarCloud S3776 cognitive-complexity refactor) is NOT delivered** and remains open — it was never part of the four v0.7.0 release-cut deferrals this phase was created for, and was appended to this file later.  Do not read "Phase 14.5 shipped" as "this file is closed".
+> **Status:** **Tasks 1-4 delivered** in the `v0.9.x` cycle (unreleased at the time of writing; entries sit under `[Unreleased]` in [`CHANGELOG.md`](../../CHANGELOG.md)).  **Task 5 (the SonarCloud S3776 cognitive-complexity refactor) is NOT delivered** — it was never part of the four v0.7.0 release-cut deferrals this phase was created for, and was appended to this file later.  Do not read "Phase 14.5 shipped" as "this file is closed".  As of 2026-07-20 Task 5 is additionally recorded as **not scheduled and not to be executed as originally specified**: re-measurement found the entry's counts, function list, file:line references and acceptance criterion all wrong.  It is gated on a stated condition, not on a version — see the task body.
 >
 > Originally targeted at `v0.7.x`; the cycle closed and both v0.8.0 and v0.9.0 shipped without it, so the target moved forward to the next open line rather than naming a version the mainline had already passed.  Originates as the 4 review findings explicitly deferred during the v0.7.0 release cut (see PR #54 + the `risks-and-decisions.md` "2026-05-15 — v0.7.0 release review deferrals" section).  Wave 2 carry-overs from Phase 14 (intra-stage resume, DAG pipelines, parallel exec, wizard pipeline path) are tracked at the bottom as **future phases**, not in-flight Phase 14.5 work.
 >
@@ -131,22 +131,24 @@
    - **`tests/test_webhook.py`** gets a new `TestSendExtrasAllowlist` class: every `_ALLOWED_PIPELINE_EXTRAS` member must be emitted by at least one `notify_pipeline_*` method; an unexpected extra triggers the WARN log + drop.
    - **Optional follow-up:** typed `WebhookPayload` `TypedDict` so static type checkers catch unknown keys at edit time.
 
-5. [ ] **Cognitive Complexity refactor — SonarCloud S3776** (LOW 12)
-   SonarCloud's `python:S3776` flagged six functions whose cognitive complexity exceeds the 15-allowed ceiling.  None are correctness defects (every call site is covered by the existing test suite) — they are readability/maintainability deferrals from earlier phases that accumulated branches over successive review-cycles.  Splitting them is deliberately scoped here rather than in a feature PR because the change shape is mechanical (extract helpers, no behaviour change) and benefits from being audited as one block against the existing test suite.
+5. [ ] **Cognitive Complexity refactor — SonarCloud S3776** (LOW 12) — **NOT SCHEDULED. The task as originally written was false; do not execute it as specified.**
 
-   | Function | File | CC | Likely seam |
-   |---|---|---|---|
-   | `safe_post` | `forgelm/_http.py:272` | 17 → ≤15 | Pull the header-mask + SSRF resolve + retry-on-rebind branches into `_prepare_request_headers`, `_resolve_pinned_host`, `_retry_once_on_rebind` helpers. |
-   | `safe_get` | `forgelm/_http.py:415` | 18 → ≤15 | Same seam as `safe_post`; the two share enough structure that a private `_dispatch(method, ...)` is a natural extraction. |
-   | `_parse_webhook_value` | `forgelm/wizard/_collectors.py:96` | 17 → ≤15 | Lift the scheme / private-IP / env-prefix decision tree into a `_classify_webhook_input(raw) -> _Classification` enum-returning helper. |
-   | `_step_model` | `forgelm/wizard/_orchestrator.py:277` | 19 → ≤15 | Each of (preset apply, manual entry, env-var resolve, validation echo) becomes a `_substep_*` helper sharing the same `_WizardState` argument. |
-   | `_step_evaluation` | `forgelm/wizard/_orchestrator.py:652` | 26 → ≤15 | Largest split: auto-revert / safety / benchmark / judge / webhook / synthetic each become a private `_step_evaluation_<section>` helper.  Phase 22's existing `_collect_*` helpers point at the seam already. |
-   | `_print_preflight_checklist` | `forgelm/wizard/_orchestrator.py:1155` | 20 → ≤15 | Pull each check (VRAM, dataset, write-permission) into its own `_check_*` predicate returning a `(ok, message)` tuple; the orchestrator just formats and prints. |
+   *Rewritten 2026-07-20 after re-measuring against the tree rather than against the entry.* The original text (preserved in git history) claimed SonarCloud's `python:S3776` flagged **six** functions over the 15 ceiling, named them in a table with file:line and per-function counts, and set the acceptance criterion "the S3776 issue count drops from 6 → 0 on the next analysis run". Every load-bearing part of that is wrong now, and some of it was wrong when written:
 
-   - **Approach** — pure-mechanical extraction, no behaviour change.  Each function lands its own commit with the test surface unchanged (just regression coverage for the helpers if they become individually testable).
-   - **Verification** — the SonarCloud `python:S3776` issue count drops from 6 → 0 on the next analysis run; the per-function CC is visible in the SonarCloud "Measures" tab.
-   - **Tests** — no new behaviour to test; the existing wizard / `_http` SSRF / webhook tests stay green.  Add a docstring on each helper noting the parent function it was extracted from so future readers can follow the seam back.
-   - **Tracking** — SonarCloud issues marked WONTFIX with comment "Tracked in Phase 14.5 Task 5 (S3776 refactor)" until this task ships, at which point the next scan will auto-resolve them.
+   - **The count is off by roughly an order of magnitude.** An in-repo AST approximation of cognitive complexity over `forgelm/` finds **~46** functions above 15, not 6. The exact number depends on the metric implementation — this figure is an approximation and should be treated as such — but no plausible implementation turns 46 into 6.
+   - **The table omits the worst offenders entirely.** The two largest are `ingest_path` (`forgelm/ingestion.py`, ~73) and `verify_integrity` (`forgelm/verify.py`, ~37), neither of which appears in the original six. Also above the ceiling and unlisted: `manage_checkpoints` (`forgelm/utils.py`, ~39), `verify_pipeline_stage_evidence` (`forgelm/verify.py`, ~34), `audit_dataset` (`forgelm/data_audit/_orchestrator.py`, ~28). A refactor executed against the original table would have spent its effort on the wrong functions.
+   - **At least one listed function no longer breaches.** `_parse_webhook_value` was listed at 17; it now measures ~9 and is comfortably under the ceiling. It was reduced by unrelated work in a later cycle and nobody revisited the entry.
+   - **Every file:line in the table is stale.** `safe_post` is at `forgelm/_http.py:476`, not `:272`; `_parse_webhook_value` at `_collectors.py:133`, not `:96`; `_print_preflight_checklist` at `_orchestrator.py:1198`, not `:1155`. The table is a snapshot of a tree that no longer exists.
+   - **The acceptance criterion is unobservable.** `sonar-project.properties` exists at the repo root, but **no workflow in `.github/workflows/` references Sonar at all**, and the properties file sets nothing for `S3776`. "The issue count drops 6 → 0 on the next analysis run" names a scan that this repo never triggers. This is the same failure mode this cycle has been closing repeatedly: *a check that reports success without examining its subject* — here, a verification step that cites a CI integration that does not exist.
+
+   **Decision: do not do the refactor.** The stated benefit is readability; the cost is a wide mechanical diff across `_http.py` (the SSRF chokepoint), the wizard orchestrator and the ingestion path, for **zero correctness gain** — none of these are defects and every call site is already covered by the test suite. A large no-behaviour-change diff over the SSRF chokepoint carries more risk than the readability it buys.
+
+   **The real prerequisite, and the condition for revisiting.** This item is not blocked on a version; it is blocked on the metric becoming observable. Revisit when **either**:
+
+   1. SonarCloud is actually wired into a workflow, so `S3776` counts are produced on PRs and a regression can be caught — at which point the honest first step is to record the true baseline, not to assert a target; **or**
+   2. an in-repo cognitive-complexity ceiling check lands under `tools/` (the `ast`-based approach used to produce the numbers above is sufficient), wired as a **ratchet** rather than a threshold — the same shape as `tools/check_module_size.py`'s per-file LOC budgets, so existing breaches are frozen at their current values and new growth fails, without demanding a 46-function refactor up front.
+
+   Until one of those holds there is no way to observe whether a refactor helped, and a refactor whose success cannot be measured is not a task. **Do not retarget this to a version number** — a version is a prediction that can quietly become false, which is exactly how this entry rotted. The condition above cannot become false without someone doing the work that makes it true.
 
 ## Requirements
 

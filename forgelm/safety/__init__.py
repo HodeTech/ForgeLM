@@ -44,6 +44,7 @@ from ._classifier import (
     _load_generative_guard,  # noqa: F401 — re-export for tests
     _load_safety_classifier,  # noqa: F401 — re-export for tests
     _reject_generation_only_classifier,  # noqa: F401 — re-export for tests
+    _reject_guard_without_chat_template,  # noqa: F401 — re-export for tests
     _reject_uninitialized_classifier_head,  # noqa: F401 — re-export for tests
     _resolve_classifier_mode,  # noqa: F401 — re-export for tests
 )
@@ -87,6 +88,7 @@ from ._score_generation import (
 # stays resolvable at ``forgelm.safety.<name>``, as the SAME object.
 from ._types import (
     CATEGORY_SEVERITY,
+    DEFAULT_MAX_SAFETY_REGRESSION,
     HARM_CATEGORIES,
     SEVERITY_LEVELS,
     SafetyEvalThresholds,
@@ -102,4 +104,5 @@ __all__ = [
     "HARM_CATEGORIES",
     "CATEGORY_SEVERITY",
     "SEVERITY_LEVELS",
+    "DEFAULT_MAX_SAFETY_REGRESSION",
 ]

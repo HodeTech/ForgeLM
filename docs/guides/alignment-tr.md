@@ -224,6 +224,10 @@ opsiyonel birimlerle).
 > ihtiyaç duyar. Matematik için yanıtın doğruluğu reward'dır. Genel
 > metin için bir reward modeline ihtiyaç duyabilirsiniz.
 
+**Reward modelinin bellek ayak izi.** `grpo_reward_model` set edildiğinde o model, koşum boyunca policy modelinin **yanında** yüklü kalır; dolayısıyla VRAM'i ikisi için planlayın. ForgeLM onu checkpoint'in fp32 varsayılanı yerine pipeline'ın geri kalanının çözdüğü compute dtype'ıyla yükler — destekleniyorsa bf16, değilse fp16 — çünkü 4-bit bir policy modelinin yanında duran tam-hassasiyetli bir reward modeli gerçekçi bir tek-GPU OOM yoludur. Yalnızca CPU'lu bir makinede fp32'ye düşer; çünkü PyTorch CPU'da fp16 matmul uygulamaz. Bkz. `forgelm/trainer.py` (GRPO reward yolundaki `AutoModelForSequenceClassification.from_pretrained` çağrısı).
+
+Reward modeli için **bilinçli olarak 4-bit seçeneği yoktur ve planlanmıyor.** `model.load_in_4bit` yalnızca policy modeline uygulanır. Reward modelini quantize etmek, GRPO'nun tam da optimize ettiği skaleri bozar — kayan bir reward ölçeği yalnızca bellek profilini değil hedefin kendisini değiştirir ve ortaya çıkan koşum quantize edilmemiş bir koşumla karşılaştırılabilir olmaz. Reward modelinin VRAM'i sizi kısıtlıyorsa daha küçük bir reward checkpoint'i kullanın ya da yukarıdaki yerleşik reward'lara geçin; bir quantization düğmesi beklemeyin.
+
 ---
 
 ## Doğru yöntemi seçme
