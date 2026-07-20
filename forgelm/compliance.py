@@ -16,9 +16,9 @@ import os
 import socket
 import uuid
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ._version import __version__ as _forgelm_version
 from .config import ConfigError, WebhookConfig
@@ -115,6 +115,20 @@ AUDIT_FAILURE_EMPTY = "empty"  # log exists, holds zero entries     → CLI exit
 AUDIT_FAILURE_UNREADABLE = "unreadable"  # exists, read failed      → CLI exit 2
 AUDIT_FAILURE_ENCODING = "encoding"  # log body is not UTF-8        → CLI exit 6
 AUDIT_FAILURE_INTEGRITY = "integrity"  # chain / HMAC / manifest    → CLI exit 6
+AUDIT_FAILURE_OVERSIZE = "oversize"  # over the byte cap, unread    → CLI exit 1
+
+# Byte cap for callers that read an audit log defensively (the pipeline
+# corroborator below).  Unlike an Annex IV artefact — a single small document —
+# an audit log is append-only and grows with every event across every run that
+# shares an output directory, so the 8 MiB stage/manifest cap in
+# ``forgelm/verify.py`` would refuse legitimate long-lived logs.  32 MiB is
+# roughly 80 000 pipeline events: several orders of magnitude past any real
+# run, and still far below a size whose parsed ``List[str]`` can exhaust
+# memory.  ``verify_audit_log`` deliberately keeps no cap (default ``None``):
+# that command's whole job is to read the operator's own log, and refusing it
+# would be a regression.  The cap applies where an *untrusted* directory is
+# read as a side effect of verifying something else.
+AUDIT_LOG_CORROBORATION_MAX_BYTES = 32 * 1024 * 1024
 
 # Recommended minimum length for ``FORGELM_AUDIT_SECRET``.  Shorter secrets are
 # accepted (no hard-fail) but trigger a one-time weak-secret WARNING because the
@@ -2555,8 +2569,33 @@ def _verify_chain_walk(
     return VerifyResult(valid=True, entries_count=entries_count)
 
 
-def _read_audit_log_lines(path: str) -> Tuple[Optional[Tuple[VerifyResult, str]], List[str]]:
+def _oversize_audit_log_failure(size: int, cap: int) -> Tuple[VerifyResult, str]:
+    """Classified verdict for a log refused unread at the byte cap."""
+    return (
+        VerifyResult(
+            valid=False,
+            entries_count=0,
+            first_invalid_index=None,
+            reason=f"audit log is {size} bytes, over the {cap}-byte cap — refused unread",
+        ),
+        AUDIT_FAILURE_OVERSIZE,
+    )
+
+
+def _read_audit_log_lines(
+    path: str,
+    max_bytes: Optional[int] = None,
+) -> Tuple[Optional[Tuple[VerifyResult, str]], List[str]]:
     """Stream the audit log line-by-line.
+
+    *max_bytes*, when given, refuses an over-cap log **unread** with
+    :data:`AUDIT_FAILURE_OVERSIZE`.  The size is taken with ``os.fstat`` on
+    the **already-open descriptor**, never a separate ``os.path.getsize``:
+    under stat-then-open the file that was measured and the file that is read
+    are two different observations, so the cap that exists to stop the reader
+    being killed by its own input is bypassed outright.  Same rule as
+    ``compute_dataset_fingerprint`` and ``forgelm.verify._read_capped_json``.
+    ``verify_audit_log`` passes no cap and is byte-for-byte unchanged.
 
     Returns ``((failure, failure_kind) or None, non-empty-lines)``.  The
     classification token rides alongside the result rather than inside it —
@@ -2590,9 +2629,23 @@ def _read_audit_log_lines(path: str) -> Tuple[Optional[Tuple[VerifyResult, str]]
             [],
         )
     lines: List[str] = []
+    consumed = 0
     try:
         with open(path, "r", encoding="utf-8") as fh:
+            if max_bytes is not None:
+                size = os.fstat(fh.fileno()).st_size
+                if size > max_bytes:
+                    return (_oversize_audit_log_failure(size, max_bytes), [])
             for raw_line in fh:
+                if max_bytes is not None:
+                    # Second, independent guard against a log being appended
+                    # to while we stream it — the fstat above bound the file
+                    # only as it was at open time.  This counts *characters*,
+                    # which is what bounds the memory held by ``lines``; the
+                    # fstat is what bounds bytes on disk.
+                    consumed += len(raw_line)
+                    if consumed > max_bytes:
+                        return (_oversize_audit_log_failure(consumed, max_bytes), [])
                 line = raw_line.rstrip("\n")
                 if line:
                     lines.append(line)
@@ -3032,6 +3085,436 @@ def verify_pipeline_manifest(manifest: Dict[str, Any]) -> List[str]:
     existence) on top.
     """
     return _verify_manifest_payload(manifest)
+
+
+# ---------------------------------------------------------------------------
+# Tier 3 — audit-log corroboration of the manifest's stage census
+# ---------------------------------------------------------------------------
+#
+# The chain manifest's ``metadata.manifest_hash`` is an UNKEYED SHA-256 from a
+# public function, so an adversary who can write the manifest can re-stamp it
+# for free.  That is what let a stage be erased from scrutiny — flip its
+# ``status`` to ``skipped_by_filter``, drop its ``gate_decision``, delete its
+# Annex IV evidence, re-stamp — and still exit 0.
+#
+# ``<pipeline_dir>/audit_log.jsonl`` is the one artefact here with **keyed**
+# integrity: per-line ``_hmac`` tags under a key derived from
+# ``sha256(FORGELM_AUDIT_SECRET + run_id)``.  An attacker without the secret
+# can neither forge nor re-sign a line, and the SHA-256 ``prev_hash`` chain
+# (plus the genesis manifest sidecar) makes deletion and truncation visible.
+# Cross-checking the manifest's census against that log therefore borrows an
+# existing keyed guarantee rather than minting a second scheme — which is why
+# it is worth doing now, while a *manifest* HMAC (new key management, an
+# archive migration, air-gap implications) stays deferred.
+#
+# The rule is deliberately ONE-DIRECTIONAL: log ⇒ manifest, never the reverse.
+# Every stage the authenticated log says finished with ``gate_decision
+# "passed"`` must appear in the manifest as ``completed``.  The converse — a
+# manifest row that the log never mentions — is NOT a violation, because
+# ``--stage`` re-runs legitimately carry a prior run's ``completed`` rows
+# forward into a manifest stamped with a *fresh* ``pipeline_run_id``
+# (``_init_state_preserving`` in ``forgelm/cli/_pipeline.py``), so the new
+# run's log rightly says nothing about them.  An earlier design pass proposed
+# the two-directional rule and it false-alarmed on exactly that.
+#
+# Only the LAST ``pipeline.stage_*`` event per stage counts.  ``--resume-from``
+# reuses the *same* ``pipeline_run_id`` and appends to the *same* log, so a
+# stage that passed, was re-run and then failed / was gated / is still running
+# has a stale "passed" earlier in the file.  Taking the last event lets the
+# log's own final word about a stage be the assertion, which is what keeps
+# every legitimate re-run path clean.
+
+# Every violation string this section produces carries this marker.  It is the
+# machine-stable way for a caller — the CLI, an integrator, a test — to tell a
+# Tier 3 corroboration finding from a per-stage evidence finding without
+# matching on prose that a reword would break, and it labels the source of the
+# finding in operator-facing output.  Routing to an exit code still keys off
+# the standard ``UNVERIFIED::`` / ``IO_ERROR::`` prefixes, which come first.
+AUDIT_CORROBORATION_MARKER = "[audit-log corroboration]"
+
+CORROBORATION_CORROBORATED = "corroborated"
+CORROBORATION_CONTRADICTED = "contradicted"
+CORROBORATION_UNATTESTED = "unattested"
+
+# The audit log's filename under the pipeline root output dir.  ``AuditLogger``
+# builds it as ``os.path.join(output_dir, "audit_log.jsonl")`` and the
+# orchestrator constructs one at ``paths["root_output_dir"]``, the parent of
+# the ``compliance/`` directory this verifier is handed.
+_AUDIT_LOG_BASENAME = "audit_log.jsonl"
+
+# Events whose *last* occurrence per stage is the log's final word on it.
+# ``pipeline.stage_started`` is included on purpose: a stage that passed and
+# was then re-started under the same run id (``--resume-from``) has no
+# terminal event for the new attempt, and the started event is what stops the
+# stale "passed" from being read as a live assertion.
+_STAGE_EVENT_PREFIX = "pipeline.stage_"
+_STAGE_PASSED_EVENT = "pipeline.stage_completed"
+_STAGE_STARTED_EVENT = "pipeline.stage_started"
+
+# ``_finalise_pipeline`` emits this for final_status "completed" and
+# "stopped_at_stage" (and for nothing else — a gated run emits no terminal
+# event).  Its presence is what makes tail truncation of the log visible: the
+# SHA-256 ``prev_hash`` chain links each line to its predecessor, so deleting a
+# line from the MIDDLE breaks the chain, but deleting the last N lines does
+# not.  Requiring this run's terminal event whenever the manifest claims a
+# terminal status turns "the log was truncated to erase a stage" from a clean
+# exit 0 into UNVERIFIED.
+_PIPELINE_TERMINAL_EVENT = "pipeline.completed"
+_TERMINAL_FINAL_STATUSES = frozenset({"completed", "stopped_at_stage"})
+
+
+@dataclass
+class PipelineAuditCorroboration:
+    """Three-valued verdict from cross-checking a manifest against the log.
+
+    ``outcome`` is one of :data:`CORROBORATION_CORROBORATED` (the keyed log
+    was read, authenticated, and agrees), :data:`CORROBORATION_CONTRADICTED`
+    (it was read, authenticated, and disagrees — or is itself broken) and
+    :data:`CORROBORATION_UNATTESTED` (nothing attested to the manifest, so no
+    comparison happened).
+
+    ``unattested`` is **never** a clean corroboration.  A check that reports
+    success without examining the thing it claims to check is the exact defect
+    this whole area exists to close; publishing the outcome and its reason is
+    what makes "we could not check" distinguishable from "we checked and it
+    was fine".
+    """
+
+    outcome: str
+    reason: str
+    violations: List[str] = field(default_factory=list)
+    events_examined: int = 0
+    stages_asserted: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "outcome": self.outcome,
+            "reason": self.reason,
+            "events_examined": self.events_examined,
+            "stages_asserted": self.stages_asserted,
+        }
+
+
+def _unattested(reason: str, detail: str) -> PipelineAuditCorroboration:
+    """UNVERIFIED (exit 1): the verifier never got to compare anything."""
+    return PipelineAuditCorroboration(
+        CORROBORATION_UNATTESTED,
+        reason,
+        violations=[
+            f"{PIPELINE_MANIFEST_UNVERIFIED_PREFIX}{AUDIT_CORROBORATION_MARKER} unattested ({reason}): {detail}"
+        ],
+    )
+
+
+def _corroboration_read_failure(kind: str, detail: str) -> PipelineAuditCorroboration:
+    """Route a classified :func:`_read_audit_log_lines` failure.
+
+    Honours the exit-code contract rather than flattening everything to one
+    code: ``6`` is reserved for a comparison that was made and failed, ``2``
+    for genuine runtime I/O on a reachable file, ``1`` for everything that
+    never reached a comparison.
+
+    - :data:`AUDIT_FAILURE_UNREADABLE` — the log exists but a mid-read I/O
+      failure means the bytes were never all seen.  ``IO_ERROR::`` → exit 2.
+    - :data:`AUDIT_FAILURE_ENCODING` — non-UTF-8 bytes inside ForgeLM's own
+      Article 12 record, which we wrote as UTF-8, mean it was corrupted after
+      we wrote it.  Untagged integrity violation → exit 6.  Same reasoning
+      :func:`_read_audit_log_lines` already documents for this branch.
+    - Everything else (absent, over the cap) — ``UNVERIFIED::`` → exit 1.
+    """
+    if kind == AUDIT_FAILURE_UNREADABLE:
+        return PipelineAuditCorroboration(
+            CORROBORATION_UNATTESTED,
+            "audit_log_unreadable",
+            violations=[
+                f"{PIPELINE_MANIFEST_IO_ERROR_PREFIX}{AUDIT_CORROBORATION_MARKER} could not read the log: {detail}"
+            ],
+        )
+    if kind == AUDIT_FAILURE_ENCODING:
+        return PipelineAuditCorroboration(
+            CORROBORATION_CONTRADICTED,
+            "audit_log_encoding",
+            violations=[
+                f"{AUDIT_CORROBORATION_MARKER} audit log at the pipeline root is not valid UTF-8 — the Article 12 record was corrupted after ForgeLM wrote it: {detail}"
+            ],
+        )
+    return _unattested(f"audit_log_{kind}", detail)
+
+
+def _manifest_statuses_by_stage_name(manifest: Dict[str, Any]) -> Dict[str, List[Any]]:
+    """Every status the manifest records under each stage name.
+
+    A list rather than a single value because nothing in the structural
+    verifier enforces name uniqueness.  Row *insertion* is already caught
+    there by the index-monotonicity rule, so collecting all statuses and
+    accepting the name when any of them is ``completed`` cannot be used to
+    smuggle a stage back in; it only avoids a false alarm on a manifest that
+    legitimately repeats a name.
+    """
+    statuses: Dict[str, List[Any]] = {}
+    raw = manifest.get("stages")
+    if not isinstance(raw, list):
+        return statuses
+    for row in raw:
+        if isinstance(row, dict) and isinstance(row.get("name"), str):
+            statuses.setdefault(row["name"], []).append(row.get("status"))
+    return statuses
+
+
+def _manifest_stage_positions(manifest: Dict[str, Any]) -> Dict[str, int]:
+    """Map each stage name to its ordinal position in the manifest.
+
+    Position in the list, not the row's own ``index`` field: the structural
+    verifier already pins ``index`` to the position, so reading the position
+    means a forged ``index`` cannot reorder the supersession cutoff below
+    without also tripping that rule.  First occurrence wins, so a repeated
+    name resolves to its earliest position — the conservative direction, since
+    a lower cutoff retires MORE assertions and can only lose detections, never
+    invent them.
+    """
+    positions: Dict[str, int] = {}
+    raw = manifest.get("stages")
+    if not isinstance(raw, list):
+        return positions
+    for idx, row in enumerate(raw):
+        if isinstance(row, dict) and isinstance(row.get("name"), str):
+            positions.setdefault(row["name"], idx)
+    return positions
+
+
+def _live_passed_stages(
+    entries: List[Dict[str, Any]],
+    run_id: str,
+    positions: Dict[str, int],
+) -> Tuple[Set[str], int, bool]:
+    """Replay *run_id*'s stage events in order; return the LIVE passed set.
+
+    Returns ``(live_passed, stage_events_seen, run_terminated)``.
+
+    Filtering on ``pipeline_run_id`` is load-bearing: one ``audit_log.jsonl``
+    accumulates events from every run that shared the output directory, and a
+    ``--stage`` re-run gets a fresh run id while carrying prior ``completed``
+    rows into its manifest.  Without the filter the previous run's assertions
+    would be tested against this run's manifest.
+
+    "Live" is what keeps ``--resume-from`` clean.  A resume reuses the SAME
+    run id and appends to the SAME log, so a stage that passed, was re-run and
+    then failed / was gated / is still running has a stale "passed" earlier in
+    the file.  Two rules retire it:
+
+    - **Re-start supersession.**  A ``pipeline.stage_started`` for stage *S*
+      retires the passed assertion for *S* and for every stage at a manifest
+      position at or after *S*'s.  Once the orchestrator restarts *S* it will
+      run or skip everything downstream, so any of those rows may legitimately
+      change — including to ``skipped_due_to_prior_revert`` when the restarted
+      *S* then fails.  That precise sequence (a previously-passed downstream
+      stage downgraded by a later chain break under the same run id) is the
+      false alarm an earlier design pass shipped; this is what prevents it.
+      A start for a name the manifest does not carry retires only that name —
+      it must not be able to wipe assertions about stages it cannot be
+      positioned against, since a missing name is itself the deletion this
+      whole check exists to catch.
+    - **Last word.**  Any other terminal event for *S* (``stage_completed``
+      with a non-passed gate, ``stage_gated``, ``stage_reverted``) retires
+      *S*'s assertion.  Redundant with the rule above on every path the
+      orchestrator actually takes, kept because audit emission is best-effort:
+      a dropped ``stage_started`` must not resurrect a stale assertion.
+
+    ``run_terminated`` records whether the log carries this run's
+    ``pipeline.completed`` — the tail-truncation detector; see the caller.
+    """
+    live: Set[str] = set()
+    seen = 0
+    terminated = False
+    for entry in entries:
+        if entry.get("pipeline_run_id") != run_id:
+            continue
+        event = entry.get("event")
+        if not isinstance(event, str):
+            continue
+        if event == _PIPELINE_TERMINAL_EVENT:
+            terminated = True
+            continue
+        if not event.startswith(_STAGE_EVENT_PREFIX):
+            continue
+        stage_name = entry.get("stage_name")
+        if not isinstance(stage_name, str) or not stage_name:
+            continue
+        seen += 1
+        if event == _STAGE_STARTED_EVENT:
+            live.discard(stage_name)
+            cutoff = positions.get(stage_name)
+            if cutoff is not None:
+                live = {s for s in live if positions.get(s, -1) < cutoff}
+        elif event == _STAGE_PASSED_EVENT and entry.get("gate_decision") == "passed":
+            live.add(stage_name)
+        else:
+            live.discard(stage_name)
+    return live, seen, terminated
+
+
+def _parse_authenticated_entries(lines: List[str]) -> Tuple[Optional[PipelineAuditCorroboration], List[Dict[str, Any]]]:
+    """Parse every log line and require each to carry an ``_hmac`` tag.
+
+    Returns ``(early_verdict or None, entries)``.  A line that is not a JSON
+    object is a corrupted Article 12 record (contradicted, exit 6).  A line
+    with no ``_hmac`` means the writer was never keyed for it — no secret was
+    configured when the run happened — so nothing authenticates the log and
+    the honest verdict is ``unattested`` (exit 1), not a pass.
+    """
+    entries: List[Dict[str, Any]] = []
+    for idx, line in enumerate(lines, start=1):
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as exc:
+            return (
+                PipelineAuditCorroboration(
+                    CORROBORATION_CONTRADICTED,
+                    "audit_log_malformed",
+                    violations=[f"{AUDIT_CORROBORATION_MARKER} audit log line {idx} is not valid JSON: {exc}"],
+                ),
+                [],
+            )
+        if not isinstance(entry, dict):
+            return (
+                PipelineAuditCorroboration(
+                    CORROBORATION_CONTRADICTED,
+                    "audit_log_malformed",
+                    violations=[f"{AUDIT_CORROBORATION_MARKER} audit log line {idx} is not a JSON object"],
+                ),
+                [],
+            )
+        if "_hmac" not in entry:
+            return (
+                _unattested(
+                    "audit_log_unsigned",
+                    f"line {idx} carries no _hmac tag — FORGELM_AUDIT_SECRET was not set when the run was "
+                    "recorded, so the log authenticates nothing and cannot corroborate the manifest",
+                ),
+                [],
+            )
+        entries.append(entry)
+    return None, entries
+
+
+def corroborate_pipeline_stage_census(manifest: Dict[str, Any], pipeline_dir: str) -> PipelineAuditCorroboration:
+    """Cross-check *manifest*'s stage census against the keyed audit log.
+
+    See the block comment above for the threat model, the one-directional
+    rule, and why only each stage's last event counts.  Every outcome is
+    published in the CLI envelope under ``audit_corroboration``; exit-code
+    routing is carried by the standard violation prefixes, not by the outcome
+    token, so a caller that only reads the exit code still gets the right
+    answer.
+    """
+    run_id = manifest.get("pipeline_run_id")
+    if not isinstance(run_id, str) or not run_id.strip():
+        return _unattested(
+            "manifest_has_no_run_id",
+            "the manifest records no pipeline_run_id, so no audit event can be attributed to this run",
+        )
+
+    log_path = os.path.join(pipeline_dir, _AUDIT_LOG_BASENAME)
+    if not os.path.isfile(log_path):
+        # An operator who never enabled compliance has no log here, and that
+        # is not tampering — but it is also not a corroboration, so it must
+        # not be reported as one.
+        return _unattested(
+            "audit_log_absent",
+            f"no audit log at {log_path!r} — the manifest's stage census could not be corroborated against "
+            "any keyed record",
+        )
+
+    secret = os.getenv("FORGELM_AUDIT_SECRET", "") or None
+    if secret is None:
+        return _unattested(
+            "no_audit_secret",
+            "FORGELM_AUDIT_SECRET is not set, so the audit log's per-line _hmac tags cannot be verified and "
+            "the log is not evidence",
+        )
+
+    failure, lines = _read_audit_log_lines(log_path, max_bytes=AUDIT_LOG_CORROBORATION_MAX_BYTES)
+    if failure is not None:
+        result, kind = failure
+        return _corroboration_read_failure(kind, result.reason or "")
+    if not lines:
+        return _unattested("audit_log_empty", f"audit log at {log_path!r} holds zero entries")
+
+    early, entries = _parse_authenticated_entries(lines)
+    if early is not None:
+        return early
+
+    chain = _verify_audit_log_chain(log_path, lines, secret, require_hmac=True)
+    if not chain.valid:
+        # Compared and did not match: the keyed record itself fails its chain,
+        # HMAC or genesis-manifest check.  Exit 6.
+        return PipelineAuditCorroboration(
+            CORROBORATION_CONTRADICTED,
+            "audit_log_integrity",
+            violations=[
+                f"{AUDIT_CORROBORATION_MARKER} audit log at the pipeline root failed keyed verification: {chain.reason}"
+            ],
+        )
+
+    statuses = _manifest_statuses_by_stage_name(manifest)
+    positions = _manifest_stage_positions(manifest)
+    live, seen, terminated = _live_passed_stages(entries, run_id, positions)
+    if not seen:
+        return _unattested(
+            "no_events_for_run_id",
+            f"the audit log is authentic but carries no pipeline stage event for run {run_id!r}",
+        )
+    if manifest.get("final_status") in _TERMINAL_FINAL_STATUSES and not terminated:
+        # The manifest claims the run reached a terminal state, which is
+        # exactly when ``_finalise_pipeline`` emits ``pipeline.completed``.
+        # Its absence means the log does not cover the end of the run it is
+        # being asked to attest to — the signature of a truncated tail, which
+        # the hash chain alone cannot see.  UNVERIFIED, not a violation: a
+        # hard kill between the manifest write and the best-effort audit
+        # emission produces the same shape without anyone tampering.
+        return _unattested(
+            "run_terminal_event_absent",
+            f"the manifest records final_status {manifest.get('final_status')!r} but the audit log carries no "
+            f"{_PIPELINE_TERMINAL_EVENT!r} for run {run_id!r} — the log does not cover the end of this run, so "
+            "it cannot corroborate the stage census",
+        )
+
+    violations: List[str] = []
+    asserted = 0
+    for stage_name in sorted(live):
+        asserted += 1
+        recorded = statuses.get(stage_name)
+        if recorded is None:
+            violations.append(
+                f"{AUDIT_CORROBORATION_MARKER} Stage {stage_name!r}: the HMAC-verified audit log records it "
+                f"finished with gate_decision 'passed' under run {run_id!r}, but the manifest carries no stage "
+                "of that name — the row was removed after the run"
+            )
+        elif "completed" not in recorded:
+            violations.append(
+                f"{AUDIT_CORROBORATION_MARKER} Stage {stage_name!r}: the HMAC-verified audit log records it "
+                f"finished with gate_decision 'passed' under run {run_id!r}, but the manifest records status "
+                f"{recorded[0]!r} — the status was altered after the run"
+            )
+    if violations:
+        return PipelineAuditCorroboration(
+            CORROBORATION_CONTRADICTED,
+            "stage_census_mismatch",
+            violations=violations,
+            events_examined=seen,
+            stages_asserted=asserted,
+        )
+    # ``asserted == 0`` with events present is a real, clean state: a run in
+    # which every stage failed, was gated, or is still running makes no
+    # positive claim to test.  The counters are published so "agreed about
+    # nothing" is legible rather than indistinguishable from "agreed about
+    # everything" — the whole point of this tier.
+    return PipelineAuditCorroboration(
+        CORROBORATION_CORROBORATED,
+        "stage_census_agrees" if asserted else "no_passed_stage_assertions",
+        events_examined=seen,
+        stages_asserted=asserted,
+    )
 
 
 def verify_pipeline_manifest_at_path(pipeline_dir: str) -> List[str]:

@@ -2119,19 +2119,52 @@ class TestVerifyModuleExtraction:
         assert forgelm._LAZY_SYMBOLS["verify_audit_log"] == ("forgelm.compliance", "verify_audit_log")
         assert forgelm._LAZY_SYMBOLS["VerifyResult"] == ("forgelm.compliance", "VerifyResult")
 
-    def test_verify_module_stays_under_the_architecture_ceiling(self) -> None:
+    def test_verify_module_size_is_governed_by_the_module_size_guard(self, monkeypatch) -> None:
         """architecture.md sets a ~1000 code-line sub-package-split trigger.
-        The extraction landed well under it; pin that so future growth in the
-        verification toolbelt is a deliberate decision rather than a drift."""
+
+        ``forgelm/verify.py`` crossed it on 2026-07-20 wiring the audit-log
+        corroboration outcome into ``PipelineEvidenceReport``, and took a
+        deferred-split entry in ``tools/check_module_size.py`` rather than a
+        rushed split (the split moves the exit-code routing tokens that the
+        CLI and these tests both pin).  A bare ``< 1000`` here would now be a
+        second, *silently divergent* budget for the same file: this asserts
+        against the guard's recorded budget so there is exactly one number,
+        and growth past it still fails — in the guard, where the raise
+        requires a reviewed ``budget_history`` note.
+        """
         from pathlib import Path as _Path
 
-        source = _Path(forgelm_verify_path())
-        loc = sum(
-            1
-            for line in source.read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.strip().startswith("#")
+        tool = _load_module_size_tool(monkeypatch)
+        entry = tool._DEFERRED_SPLITS["forgelm/verify.py"]
+        loc = tool._count_code_lines(_Path(forgelm_verify_path()))
+        assert loc <= entry.budget, (
+            f"forgelm/verify.py is {loc} code lines, past its recorded budget of {entry.budget} — "
+            "split it, or raise the budget in tools/check_module_size.py with a budget_history note"
         )
-        assert loc < 1000, f"forgelm/verify.py is {loc} code lines — split it or update architecture.md"
+
+
+def _load_module_size_tool(monkeypatch):
+    """Import ``tools/check_module_size.py`` as a module.
+
+    The module MUST be registered in ``sys.modules`` under its own name before
+    ``exec_module``: ``@dataclass`` resolves string annotations through
+    ``sys.modules[cls.__module__]``, which is ``None`` for an unregistered
+    file-loaded module.  ``monkeypatch.setitem`` rather than a bare assignment
+    so the entry is removed at teardown — a stray ``check_module_size`` left
+    in ``sys.modules`` is exactly the cross-test pollution
+    ``tools/check_no_unguarded_sys_modules_pop.py`` exists to prevent.
+    """
+    import importlib.util
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    path = _Path(__file__).resolve().parents[1] / "tools" / "check_module_size.py"
+    spec = importlib.util.spec_from_file_location("check_module_size", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(_sys.modules, "check_module_size", module)
+    spec.loader.exec_module(module)
+    return module
 
 
 def forgelm_verify_path() -> str:
@@ -2717,6 +2750,24 @@ def _hashed_annex_iv_artifact() -> dict:
     return artifact
 
 
+def _evidence_violations(report) -> list:
+    """Violations excluding the Tier 3 audit-log corroboration findings.
+
+    These fixtures write a manifest with no ``audit_log.jsonl`` beside it,
+    which is a legitimate state (an operator who never enabled compliance) and
+    correctly reports ``unattested`` — never a clean corroboration.  Tests
+    whose subject is the *per-stage evidence* rules assert on the remainder;
+    the corroboration outcomes have their own coverage in
+    ``TestAuditLogCorroboration``.
+
+    Filters on the machine-stable
+    :data:`forgelm.compliance.AUDIT_CORROBORATION_MARKER`, never on prose.
+    """
+    from forgelm.compliance import AUDIT_CORROBORATION_MARKER
+
+    return [v for v in report.violations if AUDIT_CORROBORATION_MARKER not in v]
+
+
 def _manifest_pointing_at(pointer, *, final_status: str = "completed") -> dict:
     """A one-stage pipeline manifest whose completed stage points at *pointer*."""
     return {
@@ -2760,7 +2811,7 @@ class TestPipelineStageEvidenceDeepParse:
         target.parent.mkdir(parents=True)
         target.write_text(json.dumps(_hashed_annex_iv_artifact()))
         report = self._evidence(tmp_path, str(target))
-        assert report.violations == []
+        assert _evidence_violations(report) == []
         assert report.stages_examined == 1
         assert report.evidence_verified == 1
 
@@ -2801,7 +2852,9 @@ class TestPipelineStageEvidenceDeepParse:
         report = self._evidence(tmp_path, str(target))
         assert any("unusable" in v for v in report.violations)
         # Untagged ⇒ routes to EXIT_INTEGRITY_FAILURE (6).
-        assert all(not v.startswith(("UNVERIFIED::", "INPUT_ERROR::", "IO_ERROR::")) for v in report.violations)
+        assert all(
+            not v.startswith(("UNVERIFIED::", "INPUT_ERROR::", "IO_ERROR::")) for v in _evidence_violations(report)
+        )
 
     def test_tampered_evidence_is_flagged_as_tampering(self, tmp_path: Path) -> None:
         target = tmp_path / "annex_iv_metadata.json"
@@ -2888,7 +2941,7 @@ class TestPipelineStageEvidenceDeepParse:
         manifest = _manifest_pointing_at(None, final_status="failed")
         manifest["stages"][0]["status"] = "skipped_by_filter"
         report = verify_pipeline_stage_evidence(manifest, str(tmp_path))
-        assert report.violations == []
+        assert _evidence_violations(report) == []
         assert report.stages_examined == 0
 
     def test_completed_pipeline_with_no_completed_stage_is_a_violation(self, tmp_path: Path) -> None:
@@ -2998,7 +3051,7 @@ class TestDestroyedStageEvidenceCannotVanish:
 
         _two_stage_chain(tmp_path)
         report = verify_pipeline_manifest_report(str(tmp_path))
-        assert report.violations == []
+        assert _evidence_violations(report) == []
         assert report.hash_state == "verified"
         assert report.to_dict()["stages_total"] == 2
         assert report.stages_examined == 2
@@ -3137,7 +3190,7 @@ class TestLegitimateSkipsStayClean:
         """An operator-configured ``--stage`` skip must not be flagged."""
         stage = self._stale_stage(tmp_path, gate_decision=None)
         report = self._report(tmp_path, stage)
-        assert report.violations == []
+        assert _evidence_violations(report) == []
         assert report.to_dict()["stage_dispositions"][0]["disposition"] == "not_applicable:filtered"
 
     def test_resume_chain_break_with_stale_execution_traces_is_clean(self, tmp_path: Path) -> None:
@@ -3149,7 +3202,7 @@ class TestLegitimateSkipsStayClean:
             skipped_reason="stage 'earlier' reverted; downstream stages skipped.",
         )
         report = self._report(tmp_path, stage)
-        assert report.violations == []
+        assert _evidence_violations(report) == []
         assert report.to_dict()["stage_dispositions"][0]["disposition"] == "not_applicable:chain_broken"
 
     def test_carried_over_failed_gate_decision_is_clean(self, tmp_path: Path) -> None:
@@ -3159,7 +3212,7 @@ class TestLegitimateSkipsStayClean:
         code path, alongside ``status = "completed"``.
         """
         stage = self._stale_stage(tmp_path, gate_decision="failed")
-        assert self._report(tmp_path, stage).violations == []
+        assert _evidence_violations(self._report(tmp_path, stage)) == []
 
     @pytest.mark.parametrize(
         "status,gate,disposition",
@@ -3176,7 +3229,7 @@ class TestLegitimateSkipsStayClean:
     ) -> None:
         stage = self._stale_stage(tmp_path, status=status, gate_decision=gate)
         report = self._report(tmp_path, stage)
-        assert report.violations == [], status
+        assert _evidence_violations(report) == [], status
         assert report.to_dict()["stage_dispositions"][0]["disposition"] == disposition
 
     def test_status_enum_matches_the_orchestrator(self) -> None:
@@ -3423,7 +3476,7 @@ class TestPipelineManifestHashState:
         manifest = _manifest_pointing_at(self._stage_evidence(tmp_path))
         self._write(tmp_path, manifest)
         report = verify_pipeline_manifest_report(str(tmp_path))
-        assert report.violations == []  # stays VALID
+        assert _evidence_violations(report) == []  # stays VALID
         assert report.hash_state == "absent"  # but not VERIFIED
 
     def test_matching_hash_reports_verified(self, tmp_path: Path) -> None:
@@ -3434,7 +3487,7 @@ class TestPipelineManifestHashState:
         manifest["metadata"] = {"manifest_hash": compute_annex_iv_manifest_hash(manifest)}
         self._write(tmp_path, manifest)
         report = verify_pipeline_manifest_report(str(tmp_path))
-        assert report.violations == []
+        assert _evidence_violations(report) == []
         assert report.hash_state == "verified"
 
     def test_edited_non_chain_field_reports_mismatch(self, tmp_path: Path) -> None:
@@ -3546,7 +3599,7 @@ class TestVerifierParserHardening:
         manifest_path.write_text(json.dumps(_manifest_pointing_at(str(evidence))))
 
         assert manifest_path.stat().st_size < PIPELINE_MANIFEST_MAX_BYTES / 1000
-        assert verify_pipeline_manifest_report(str(tmp_path)).violations == []
+        assert _evidence_violations(verify_pipeline_manifest_report(str(tmp_path))) == []
 
 
 class TestStageEvidencePathContainment:
@@ -3661,3 +3714,726 @@ class TestPipelineViolationPrecedence:
 
         _, display = _classify_pipeline_violations(["UNVERIFIED::no hash", "IO_ERROR::disk"])
         assert display == ["no hash", "disk"]
+
+
+# ---------------------------------------------------------------------------
+# Tier 3 — audit-log corroboration of the manifest's stage census
+#
+# The chain manifest's ``metadata.manifest_hash`` is an UNKEYED SHA-256 from a
+# public function, so an attacker who can write the manifest re-stamps it for
+# free.  The reproduction that motivated this tier:
+#
+#     status = "skipped_by_filter" + gate_decision REMOVED + evidence deleted
+#     + manifest re-stamped  ->  ZERO VIOLATIONS, EXIT 0
+#
+# ``audit_log.jsonl``'s per-line ``_hmac`` is the one keyed integrity tag in
+# the system.  These tests pin all three outcomes, and — the harder half —
+# pin that every legitimate not-completed path stays clean.  The verifier this
+# area replaced cried tamper on clean runs; a false alarm here is as much a
+# defect as a missed attack.
+# ---------------------------------------------------------------------------
+
+
+_CORROBORATION_SECRET = "s" * 40
+
+
+def _corroboration_stage(name: str, index: int, status: str, gate, evidence, prev_output) -> dict:
+    return {
+        "name": name,
+        "index": index,
+        "trainer_type": "sft",
+        "status": status,
+        "input_model": prev_output or "org/base",
+        "input_source": "chain" if prev_output else "root",
+        "output_model": f"./out/{name}/final_model" if status == "completed" else None,
+        "started_at": "2026-07-20T10:00:00+00:00",
+        "finished_at": "2026-07-20T11:00:00+00:00",
+        "duration_seconds": 3600.0,
+        "training_manifest": evidence,
+        "metrics": {},
+        "gate_decision": gate,
+        "auto_revert_triggered": False,
+        "skipped_reason": None,
+        "exit_code": 0,
+        "error": None,
+    }
+
+
+def _stamp_manifest(root: Path, manifest: dict) -> dict:
+    """(Re-)stamp *manifest*'s unkeyed hash and write it — the attacker's move."""
+    from forgelm.compliance import compute_annex_iv_manifest_hash
+
+    manifest.pop("metadata", None)
+    manifest["metadata"] = {"manifest_hash": compute_annex_iv_manifest_hash(manifest)}
+    target = root / "compliance" / "pipeline_manifest.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(manifest, indent=2))
+    return manifest
+
+
+def _build_corroboration_run(
+    root: Path,
+    monkeypatch,
+    *,
+    stages,
+    events,
+    run_id: str = "fg-abc123",
+    final_status: str = "completed",
+    writer_secret: str = _CORROBORATION_SECRET,
+) -> dict:
+    """Write a manifest plus a real ``AuditLogger``-written log beside it.
+
+    *stages* is ``[(name, status, gate_decision, has_evidence), ...]``;
+    *events* is ``[(run_id, event, stage_name_or_None, gate_or_None), ...]``
+    replayed through the real writer so the hash chain and ``_hmac`` tags are
+    produced by the production code path, never hand-rolled.
+    """
+    from forgelm.compliance import AuditLogger
+
+    rows = []
+    prev_output = None
+    for idx, (name, status, gate, has_evidence) in enumerate(stages):
+        evidence = None
+        if has_evidence:
+            path = root / name / "compliance" / "annex_iv_metadata.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(_hashed_annex_iv_artifact()))
+            evidence = str(path)
+        row = _corroboration_stage(name, idx, status, gate, evidence, prev_output)
+        rows.append(row)
+        # Only the IMMEDIATELY preceding stage's output can be chained from —
+        # carrying the last non-null output past a failed stage trips the
+        # manifest's own chain-integrity rule.
+        prev_output = row["output_model"]
+
+    manifest = {
+        "forgelm_version": "1.0.0",
+        "generated_at": "2026-07-20T11:05:00+00:00",
+        "pipeline_run_id": run_id,
+        "pipeline_config_hash": "sha256:abc",
+        "started_at": "2026-07-20T10:00:00+00:00",
+        "finished_at": "2026-07-20T11:00:00+00:00",
+        "final_status": final_status,
+        "stopped_at": None,
+        "stages": rows,
+        "annex_iv": {
+            "provider_name": "Acme Inc",
+            "system_name": "Acme Pipeline System",
+            "intended_purpose": "Customer-service assistant fine-tune",
+        },
+    }
+    _stamp_manifest(root, manifest)
+
+    monkeypatch.setenv("FORGELM_OPERATOR", "tester")
+    if writer_secret:
+        monkeypatch.setenv("FORGELM_AUDIT_SECRET", writer_secret)
+    else:
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+    loggers: dict = {}
+    for rid, event, stage_name, gate in events:
+        logger = loggers.get(rid)
+        if logger is None:
+            logger = loggers[rid] = AuditLogger(str(root), run_id=rid)
+        payload = {"pipeline_run_id": rid}
+        if stage_name is not None:
+            payload["stage_name"] = stage_name
+        if gate is not None:
+            payload["gate_decision"] = gate
+        logger.log_event(event, **payload)
+    return manifest
+
+
+def _corroborate(root: Path, monkeypatch, *, verifier_secret: str = _CORROBORATION_SECRET):
+    from forgelm.verify import verify_pipeline_manifest_report
+
+    if verifier_secret:
+        monkeypatch.setenv("FORGELM_AUDIT_SECRET", verifier_secret)
+    else:
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+    return verify_pipeline_manifest_report(str(root))
+
+
+def _started(run_id, name):
+    return (run_id, "pipeline.stage_started", name, None)
+
+
+def _passed(run_id, name):
+    return (run_id, "pipeline.stage_completed", name, "passed")
+
+
+def _finished(run_id="fg-abc123"):
+    return (run_id, "pipeline.completed", None, None)
+
+
+_CLEAN_TWO_STAGE = dict(
+    stages=[("sft", "completed", "passed", True), ("dpo", "completed", "passed", True)],
+    events=[
+        _started("fg-abc123", "sft"),
+        _passed("fg-abc123", "sft"),
+        _started("fg-abc123", "dpo"),
+        _passed("fg-abc123", "dpo"),
+        _finished(),
+    ],
+)
+
+
+class TestAuditCorroborationCorroborated:
+    """The keyed log was read, authenticated, and agrees.  Exit 0."""
+
+    def test_clean_two_stage_run_is_corroborated(self, tmp_path: Path, monkeypatch) -> None:
+        _build_corroboration_run(tmp_path, monkeypatch, **_CLEAN_TWO_STAGE)
+        report = _corroborate(tmp_path, monkeypatch)
+        assert report.violations == []
+        assert report.audit_corroboration == {
+            "outcome": "corroborated",
+            "reason": "stage_census_agrees",
+            "events_examined": 4,
+            "stages_asserted": 2,
+        }
+
+    def test_outcome_is_published_in_the_cli_envelope(self, tmp_path: Path, monkeypatch) -> None:
+        """A verdict nobody can see is not a verdict.  The three-valued
+        outcome must reach the JSON envelope, not just the report object."""
+        _build_corroboration_run(tmp_path, monkeypatch, **_CLEAN_TWO_STAGE)
+        payload = _corroborate(tmp_path, monkeypatch).to_dict()
+        assert payload["audit_corroboration"]["outcome"] == "corroborated"
+        assert payload["stages_total"] == 2
+        assert [row["disposition"] for row in payload["stage_dispositions"]] == ["examined", "examined"]
+
+
+class TestAuditCorroborationLegitimateRunsStayClean:
+    """The trap.  A legitimately not-completed stage must NOT be a violation.
+
+    The verifier this area replaced cried tamper on clean runs, and an earlier
+    design pass for this very tier proposed a discriminator that false-alarmed
+    on ``--stage``.  Every legitimate not-completed path is enumerated here.
+    """
+
+    def test_stage_filter_rerun_gets_a_fresh_run_id(self, tmp_path: Path, monkeypatch) -> None:
+        """``--stage dpo`` after a full run: ``_init_state_preserving`` carries
+        the prior ``completed`` rows into a manifest stamped with a NEW
+        ``pipeline_run_id``, so the new run's log rightly says nothing about
+        them.  The rule is one-directional (log => manifest) precisely so this
+        does not fire."""
+        _build_corroboration_run(
+            tmp_path,
+            monkeypatch,
+            run_id="fg-run2",
+            stages=[("sft", "completed", "passed", True), ("dpo", "completed", "passed", True)],
+            events=[
+                _started("fg-run1", "sft"),
+                _passed("fg-run1", "sft"),
+                _started("fg-run1", "dpo"),
+                _passed("fg-run1", "dpo"),
+                _finished("fg-run1"),
+                _started("fg-run2", "dpo"),
+                _passed("fg-run2", "dpo"),
+                _finished("fg-run2"),
+            ],
+        )
+        report = _corroborate(tmp_path, monkeypatch)
+        assert report.violations == []
+        assert report.audit_corroboration["outcome"] == "corroborated"
+
+    def test_stage_filter_on_a_fresh_directory(self, tmp_path: Path, monkeypatch) -> None:
+        """``--stage dpo`` with no prior run: sft is stamped
+        ``skipped_by_filter`` and never emitted a passed event."""
+        _build_corroboration_run(
+            tmp_path,
+            monkeypatch,
+            stages=[("sft", "skipped_by_filter", None, False), ("dpo", "completed", "passed", True)],
+            events=[_started("fg-abc123", "dpo"), _passed("fg-abc123", "dpo"), _finished()],
+        )
+        assert _corroborate(tmp_path, monkeypatch).violations == []
+
+    def test_chain_break_downgrades_downstream_stages(self, tmp_path: Path, monkeypatch) -> None:
+        """A failed stage stops the chain; downstream stages become
+        ``skipped_due_to_prior_revert`` having emitted nothing."""
+        _build_corroboration_run(
+            tmp_path,
+            monkeypatch,
+            final_status="stopped_at_stage",
+            stages=[
+                ("sft", "completed", "passed", True),
+                ("dpo", "failed", "failed", False),
+                ("kto", "skipped_due_to_prior_revert", None, False),
+            ],
+            events=[
+                _started("fg-abc123", "sft"),
+                _passed("fg-abc123", "sft"),
+                _started("fg-abc123", "dpo"),
+                ("fg-abc123", "pipeline.stage_completed", "dpo", "failed"),
+                _finished(),
+            ],
+        )
+        assert _corroborate(tmp_path, monkeypatch).violations == []
+
+    def test_gated_stage_emits_stage_gated_not_stage_completed(self, tmp_path: Path, monkeypatch) -> None:
+        _build_corroboration_run(
+            tmp_path,
+            monkeypatch,
+            final_status="gated_pending_approval",
+            stages=[("sft", "completed", "passed", True), ("dpo", "gated_pending_approval", "approval_pending", False)],
+            events=[
+                _started("fg-abc123", "sft"),
+                _passed("fg-abc123", "sft"),
+                _started("fg-abc123", "dpo"),
+                ("fg-abc123", "pipeline.stage_gated", "dpo", "approval_pending"),
+            ],
+        )
+        assert _corroborate(tmp_path, monkeypatch).violations == []
+
+    def test_pending_and_running_stages(self, tmp_path: Path, monkeypatch) -> None:
+        _build_corroboration_run(
+            tmp_path,
+            monkeypatch,
+            final_status="in_progress",
+            stages=[
+                ("sft", "completed", "passed", True),
+                ("dpo", "running", None, False),
+                ("kto", "pending", None, False),
+            ],
+            events=[
+                _started("fg-abc123", "sft"),
+                _passed("fg-abc123", "sft"),
+                _started("fg-abc123", "dpo"),
+            ],
+        )
+        assert _corroborate(tmp_path, monkeypatch).violations == []
+
+    def test_auto_reverted_stage(self, tmp_path: Path, monkeypatch) -> None:
+        _build_corroboration_run(
+            tmp_path,
+            monkeypatch,
+            final_status="stopped_at_stage",
+            stages=[("sft", "failed", "failed", False)],
+            events=[
+                _started("fg-abc123", "sft"),
+                ("fg-abc123", "pipeline.stage_reverted", "sft", "failed"),
+                _finished(),
+            ],
+        )
+        report = _corroborate(tmp_path, monkeypatch)
+        assert report.violations == []
+        assert report.audit_corroboration["reason"] == "no_passed_stage_assertions"
+        assert report.audit_corroboration["stages_asserted"] == 0
+
+    def test_resume_reruns_a_passed_stage_which_then_fails(self, tmp_path: Path, monkeypatch) -> None:
+        """THE false alarm to avoid.
+
+        ``--resume-from`` reuses the SAME ``pipeline_run_id`` and appends to
+        the SAME log.  Re-running stage 0, which then fails, downgrades the
+        previously-passed stage 1 to ``skipped_due_to_prior_revert`` — while
+        the log still holds both stages' stale "passed" under that run id.
+        Re-start supersession is what retires those assertions.
+        """
+        _build_corroboration_run(
+            tmp_path,
+            monkeypatch,
+            final_status="stopped_at_stage",
+            stages=[("sft", "failed", "failed", False), ("dpo", "skipped_due_to_prior_revert", None, False)],
+            events=[
+                _started("fg-abc123", "sft"),
+                _passed("fg-abc123", "sft"),
+                _started("fg-abc123", "dpo"),
+                _passed("fg-abc123", "dpo"),
+                _finished(),
+                _started("fg-abc123", "sft"),
+                ("fg-abc123", "pipeline.stage_completed", "sft", "failed"),
+                _finished(),
+            ],
+        )
+        report = _corroborate(tmp_path, monkeypatch)
+        assert report.violations == []
+        assert report.audit_corroboration["stages_asserted"] == 0
+
+    def test_resume_reruns_a_passed_stage_which_is_then_gated(self, tmp_path: Path, monkeypatch) -> None:
+        _build_corroboration_run(
+            tmp_path,
+            monkeypatch,
+            final_status="gated_pending_approval",
+            stages=[("sft", "gated_pending_approval", "approval_pending", False), ("dpo", "pending", None, False)],
+            events=[
+                _started("fg-abc123", "sft"),
+                _passed("fg-abc123", "sft"),
+                _started("fg-abc123", "dpo"),
+                _passed("fg-abc123", "dpo"),
+                _finished(),
+                _started("fg-abc123", "sft"),
+                ("fg-abc123", "pipeline.stage_gated", "sft", "approval_pending"),
+            ],
+        )
+        assert _corroborate(tmp_path, monkeypatch).violations == []
+
+    def test_resume_reruns_a_passed_stage_and_is_killed_mid_run(self, tmp_path: Path, monkeypatch) -> None:
+        """No terminal event for the new attempt at all: the ``stage_started``
+        alone must retire the stale assertion, which is why it counts."""
+        _build_corroboration_run(
+            tmp_path,
+            monkeypatch,
+            final_status="in_progress",
+            stages=[("sft", "running", None, False), ("dpo", "completed", "passed", True)],
+            events=[
+                _started("fg-abc123", "sft"),
+                _passed("fg-abc123", "sft"),
+                _started("fg-abc123", "dpo"),
+                _passed("fg-abc123", "dpo"),
+                _finished(),
+                _started("fg-abc123", "sft"),
+            ],
+        )
+        assert _corroborate(tmp_path, monkeypatch).violations == []
+
+    def test_a_dropped_stage_started_still_retires_a_stale_assertion(self, tmp_path: Path, monkeypatch) -> None:
+        """The last-word rule, isolated from re-start supersession.
+
+        Audit emission is best-effort (``_audit_event`` logs a warning and
+        continues on failure), so a re-run's ``pipeline.stage_started`` can be
+        missing from the log while its terminal event landed.  Supersession
+        cannot fire without that started event; the stage's own last terminal
+        event must still retire the stale "passed", or a legitimately gated
+        re-run reads as tampering.
+        """
+        _build_corroboration_run(
+            tmp_path,
+            monkeypatch,
+            final_status="gated_pending_approval",
+            stages=[("sft", "gated_pending_approval", "approval_pending", False)],
+            events=[
+                _started("fg-abc123", "sft"),
+                _passed("fg-abc123", "sft"),
+                _finished(),
+                # No stage_started for the second attempt — emission was dropped.
+                ("fg-abc123", "pipeline.stage_gated", "sft", "approval_pending"),
+            ],
+        )
+        report = _corroborate(tmp_path, monkeypatch)
+        assert report.violations == []
+        assert report.audit_corroboration["stages_asserted"] == 0
+
+    def test_resume_reruns_a_mid_chain_stage_and_everything_passes(self, tmp_path: Path, monkeypatch) -> None:
+        """Supersession must not be so eager that it retires the assertions a
+        successful resume legitimately re-establishes."""
+        _build_corroboration_run(
+            tmp_path,
+            monkeypatch,
+            stages=[
+                ("sft", "completed", "passed", True),
+                ("dpo", "completed", "passed", True),
+                ("kto", "completed", "passed", True),
+            ],
+            events=[
+                _started("fg-abc123", "sft"),
+                _passed("fg-abc123", "sft"),
+                _started("fg-abc123", "dpo"),
+                ("fg-abc123", "pipeline.stage_completed", "dpo", "failed"),
+                _finished(),
+                _started("fg-abc123", "dpo"),
+                _passed("fg-abc123", "dpo"),
+                _started("fg-abc123", "kto"),
+                _passed("fg-abc123", "kto"),
+                _finished(),
+            ],
+        )
+        report = _corroborate(tmp_path, monkeypatch)
+        assert report.violations == []
+        assert report.audit_corroboration["stages_asserted"] == 3
+
+
+class TestAuditCorroborationContradicted:
+    """Compared and did not match.  VIOLATION, exit 6."""
+
+    def _exit_code(self, report) -> int:
+        from forgelm.cli.subcommands._verify_annex_iv import _classify_pipeline_violations
+
+        return _classify_pipeline_violations(report.violations)[0]
+
+    def test_the_reproduction_status_downgraded_and_re_stamped(self, tmp_path: Path, monkeypatch) -> None:
+        """The open bypass, closed.
+
+        ``status="skipped_by_filter"`` + ``gate_decision`` REMOVED + evidence
+        deleted + manifest re-stamped used to exit 0 with zero violations.
+        """
+        manifest = _build_corroboration_run(tmp_path, monkeypatch, **_CLEAN_TWO_STAGE)
+        manifest["stages"][1]["status"] = "skipped_by_filter"
+        manifest["stages"][1].pop("gate_decision")
+        os.remove(manifest["stages"][1]["training_manifest"])
+        _stamp_manifest(tmp_path, manifest)
+
+        report = _corroborate(tmp_path, monkeypatch)
+        assert report.hash_state == "verified", "the unkeyed re-stamp still 'passes' — that is the point"
+        assert report.audit_corroboration["outcome"] == "contradicted"
+        assert report.audit_corroboration["reason"] == "stage_census_mismatch"
+        assert any("'dpo'" in v and "status was altered" in v for v in report.violations)
+        assert self._exit_code(report) == 6
+
+    def test_stage_row_deleted_outright(self, tmp_path: Path, monkeypatch) -> None:
+        manifest = _build_corroboration_run(tmp_path, monkeypatch, **_CLEAN_TWO_STAGE)
+        os.remove(manifest["stages"][1]["training_manifest"])
+        manifest["stages"].pop(1)
+        _stamp_manifest(tmp_path, manifest)
+
+        report = _corroborate(tmp_path, monkeypatch)
+        assert report.audit_corroboration["outcome"] == "contradicted"
+        assert any("'dpo'" in v and "no stage of that name" in v for v in report.violations)
+        assert self._exit_code(report) == 6
+
+    def test_a_deleted_log_line_breaks_the_hash_chain(self, tmp_path: Path, monkeypatch) -> None:
+        _build_corroboration_run(tmp_path, monkeypatch, **_CLEAN_TWO_STAGE)
+        log = tmp_path / "audit_log.jsonl"
+        lines = log.read_text().splitlines(keepends=True)
+        log.write_text("".join(lines[:1] + lines[2:]))
+
+        report = _corroborate(tmp_path, monkeypatch)
+        assert report.audit_corroboration["reason"] == "audit_log_integrity"
+        assert self._exit_code(report) == 6
+
+    def test_an_edited_log_line_fails_its_hmac(self, tmp_path: Path, monkeypatch) -> None:
+        """The keyed guarantee: an attacker without the secret cannot re-sign."""
+        _build_corroboration_run(tmp_path, monkeypatch, **_CLEAN_TWO_STAGE)
+        log = tmp_path / "audit_log.jsonl"
+        lines = log.read_text().splitlines()
+        entry = json.loads(lines[1])
+        entry["stage_name"] = "somewhere-else"
+        lines[1] = json.dumps(entry)
+        log.write_text("\n".join(lines) + "\n")
+
+        report = _corroborate(tmp_path, monkeypatch)
+        assert report.audit_corroboration["reason"] == "audit_log_integrity"
+        assert self._exit_code(report) == 6
+
+    def test_non_utf8_bytes_in_our_own_article_12_record(self, tmp_path: Path, monkeypatch) -> None:
+        """We wrote the log as UTF-8; non-UTF-8 inside it means it was
+        corrupted after we wrote it — an integrity verdict, not exit 1."""
+        _build_corroboration_run(tmp_path, monkeypatch, **_CLEAN_TWO_STAGE)
+        with open(tmp_path / "audit_log.jsonl", "ab") as fh:
+            fh.write(b"\xff\xfe not utf-8\n")
+
+        report = _corroborate(tmp_path, monkeypatch)
+        assert report.audit_corroboration["reason"] == "audit_log_encoding"
+        assert self._exit_code(report) == 6
+
+    def test_a_log_line_that_is_valid_json_but_not_an_object(self, tmp_path: Path, monkeypatch) -> None:
+        """``123`` and ``"text"`` parse fine and have no ``.get``.
+
+        Without the shape guard the very next line — the ``_hmac`` presence
+        check — raises ``TypeError`` and kills the verifier with a raw
+        traceback and no envelope, which is the failure mode every cap and
+        parse guard in this module exists to prevent.
+        """
+        _build_corroboration_run(tmp_path, monkeypatch, **_CLEAN_TWO_STAGE)
+        with open(tmp_path / "audit_log.jsonl", "a") as fh:
+            fh.write("123\n")
+
+        report = _corroborate(tmp_path, monkeypatch)
+        assert report.audit_corroboration["reason"] == "audit_log_malformed"
+        assert any("not a JSON object" in v for v in report.violations)
+
+    def test_a_malformed_log_line(self, tmp_path: Path, monkeypatch) -> None:
+        _build_corroboration_run(tmp_path, monkeypatch, **_CLEAN_TWO_STAGE)
+        with open(tmp_path / "audit_log.jsonl", "a") as fh:
+            fh.write("{not json\n")
+
+        report = _corroborate(tmp_path, monkeypatch)
+        assert report.audit_corroboration["reason"] == "audit_log_malformed"
+        assert self._exit_code(report) == 6
+
+
+class TestAuditCorroborationUnattested:
+    """Nothing attested to the manifest.  UNVERIFIED (exit 1), never a pass.
+
+    This is the whole point of the three-valued outcome.  Reporting any of
+    these as a clean corroboration would be the eighth instance of "a check
+    that reports success without examining the thing it claims to check" — in
+    the very code written to close the seventh.
+    """
+
+    def _exit_code(self, report) -> int:
+        from forgelm.cli.subcommands._verify_annex_iv import _classify_pipeline_violations
+
+        return _classify_pipeline_violations(report.violations)[0]
+
+    def _assert_unattested(self, report, reason: str) -> None:
+        assert report.audit_corroboration["outcome"] == "unattested"
+        assert report.audit_corroboration["reason"] == reason
+        assert report.audit_corroboration["stages_asserted"] == 0
+        assert self._exit_code(report) == 1
+
+    def test_no_audit_log_at_all_is_not_a_violation(self, tmp_path: Path, monkeypatch) -> None:
+        """An operator who never enabled compliance must not become a tamper
+        finding — but must not be certified clean either."""
+        _build_corroboration_run(tmp_path, monkeypatch, stages=_CLEAN_TWO_STAGE["stages"], events=[])
+        report = _corroborate(tmp_path, monkeypatch)
+        self._assert_unattested(report, "audit_log_absent")
+
+    def test_no_secret_configured_at_verify_time(self, tmp_path: Path, monkeypatch) -> None:
+        _build_corroboration_run(tmp_path, monkeypatch, **_CLEAN_TWO_STAGE)
+        report = _corroborate(tmp_path, monkeypatch, verifier_secret="")
+        self._assert_unattested(report, "no_audit_secret")
+
+    def test_log_written_by_an_unkeyed_writer_carries_no_hmac(self, tmp_path: Path, monkeypatch) -> None:
+        _build_corroboration_run(tmp_path, monkeypatch, writer_secret="", **_CLEAN_TWO_STAGE)
+        report = _corroborate(tmp_path, monkeypatch)
+        self._assert_unattested(report, "audit_log_unsigned")
+
+    def test_log_carries_no_event_for_this_run_id(self, tmp_path: Path, monkeypatch) -> None:
+        _build_corroboration_run(tmp_path, monkeypatch, run_id="fg-elsewhere", **_CLEAN_TWO_STAGE)
+        report = _corroborate(tmp_path, monkeypatch)
+        self._assert_unattested(report, "no_events_for_run_id")
+
+    def test_zero_byte_log(self, tmp_path: Path, monkeypatch) -> None:
+        _build_corroboration_run(tmp_path, monkeypatch, stages=_CLEAN_TWO_STAGE["stages"], events=[])
+        (tmp_path / "audit_log.jsonl").write_text("")
+        report = _corroborate(tmp_path, monkeypatch)
+        self._assert_unattested(report, "audit_log_empty")
+
+    def test_manifest_without_a_run_id(self, tmp_path: Path, monkeypatch) -> None:
+        manifest = _build_corroboration_run(tmp_path, monkeypatch, **_CLEAN_TWO_STAGE)
+        manifest.pop("pipeline_run_id")
+        _stamp_manifest(tmp_path, manifest)
+        report = _corroborate(tmp_path, monkeypatch)
+        assert report.audit_corroboration["reason"] == "manifest_has_no_run_id"
+
+    def test_log_tail_truncated_to_erase_a_stage(self, tmp_path: Path, monkeypatch) -> None:
+        """The hash chain links each line to its predecessor, so deleting from
+        the MIDDLE is visible and deleting the TAIL is not.  Requiring this
+        run's ``pipeline.completed`` whenever the manifest claims a terminal
+        status turns the truncation attack from exit 0 into exit 1."""
+        manifest = _build_corroboration_run(tmp_path, monkeypatch, **_CLEAN_TWO_STAGE)
+        log = tmp_path / "audit_log.jsonl"
+        lines = log.read_text().splitlines(keepends=True)
+        log.write_text("".join(lines[:-2]))  # drop dpo's passed event + pipeline.completed
+        manifest["stages"][1]["status"] = "skipped_by_filter"
+        manifest["stages"][1].pop("gate_decision")
+        os.remove(manifest["stages"][1]["training_manifest"])
+        _stamp_manifest(tmp_path, manifest)
+
+        report = _corroborate(tmp_path, monkeypatch)
+        self._assert_unattested(report, "run_terminal_event_absent")
+
+    def test_oversize_log_is_refused_unread(self, tmp_path: Path, monkeypatch) -> None:
+        from forgelm.compliance import AUDIT_LOG_CORROBORATION_MAX_BYTES
+
+        _build_corroboration_run(tmp_path, monkeypatch, **_CLEAN_TWO_STAGE)
+        with open(tmp_path / "audit_log.jsonl", "a") as fh:
+            fh.write("x" * (AUDIT_LOG_CORROBORATION_MAX_BYTES + 1))
+        report = _corroborate(tmp_path, monkeypatch)
+        self._assert_unattested(report, "audit_log_oversize")
+
+    def test_a_mid_read_io_failure_routes_to_exit_2(self, tmp_path: Path, monkeypatch) -> None:
+        """Exit-code contract: 6 = compared and did not match, 1 = never got to
+        compare, 2 = runtime I/O.  An unreadable log is the third."""
+        _build_corroboration_run(tmp_path, monkeypatch, **_CLEAN_TWO_STAGE)
+        real_open = open
+
+        def _boom(path, *args, **kwargs):
+            if str(path).endswith("audit_log.jsonl"):
+                raise OSError("simulated mid-read failure")
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", _boom)
+        report = _corroborate(tmp_path, monkeypatch)
+        assert report.audit_corroboration["reason"] == "audit_log_unreadable"
+        assert self._exit_code(report) == 2
+
+
+class TestAuditLogReaderCap:
+    """``_read_audit_log_lines``'s opt-in byte cap."""
+
+    def test_verify_audit_log_is_uncapped_by_default(self, tmp_path: Path, monkeypatch) -> None:
+        """The cap applies where an untrusted directory is read as a side
+        effect of verifying something else — never to ``verify-audit``, whose
+        whole job is to read the operator's own log."""
+        from forgelm.compliance import _read_audit_log_lines
+
+        log = tmp_path / "audit_log.jsonl"
+        log.write_text('{"a": 1}\n' * 200)
+        failure, lines = _read_audit_log_lines(str(log))
+        assert failure is None
+        assert len(lines) == 200
+
+    def test_the_size_is_taken_from_the_open_descriptor(self, tmp_path: Path, monkeypatch) -> None:
+        """Not a separate ``os.path.getsize``: under stat-then-open the file
+        measured and the file read are two different observations, so the cap
+        is bypassed outright.  ``os.fstat`` is what makes it true."""
+        import os as _os
+
+        from forgelm.compliance import AUDIT_FAILURE_OVERSIZE, _read_audit_log_lines
+
+        log = tmp_path / "audit_log.jsonl"
+        log.write_text('{"a": 1}\n' * 200)
+
+        def _forbidden(*args, **kwargs):  # pragma: no cover - must never run
+            raise AssertionError("the cap must be enforced via os.fstat on the open descriptor")
+
+        monkeypatch.setattr(_os.path, "getsize", _forbidden)
+        failure, lines = _read_audit_log_lines(str(log), max_bytes=10)
+        assert failure is not None
+        assert failure[1] == AUDIT_FAILURE_OVERSIZE
+        assert lines == [], "an over-cap log must be refused UNREAD"
+
+    def test_the_fstat_alone_refuses_an_over_cap_log(self, tmp_path: Path, monkeypatch) -> None:
+        """The descriptor stat must refuse on its own.
+
+        Isolated from the streaming guard below by making only the *stat* say
+        the file is over cap: the bytes on disk are tiny, so nothing else can
+        trip.  Without the fstat branch the file would stream through clean.
+        """
+        from forgelm.compliance import AUDIT_FAILURE_OVERSIZE, _read_audit_log_lines
+
+        log = tmp_path / "audit_log.jsonl"
+        log.write_text('{"a": 1}\n')
+        _fake_fstat_size(monkeypatch, target=str(log), size=10_000)
+
+        failure, lines = _read_audit_log_lines(str(log), max_bytes=100)
+        assert failure is not None and failure[1] == AUDIT_FAILURE_OVERSIZE
+        assert lines == []
+
+    def test_the_streaming_guard_catches_a_log_that_grew_after_open(self, tmp_path: Path, monkeypatch) -> None:
+        """The fstat bounds the file only as it was at open time.
+
+        Isolated from the fstat branch by making the stat under-report: a log
+        being appended to by a live writer passes the stat and would then be
+        streamed without bound.  The running character budget is what keeps
+        the cap true regardless of what the descriptor claims about itself.
+        """
+        from forgelm.compliance import AUDIT_FAILURE_OVERSIZE, _read_audit_log_lines
+
+        log = tmp_path / "audit_log.jsonl"
+        log.write_text('{"a": 1}\n' * 200)
+        _fake_fstat_size(monkeypatch, target=str(log), size=1)
+
+        failure, lines = _read_audit_log_lines(str(log), max_bytes=50)
+        assert failure is not None and failure[1] == AUDIT_FAILURE_OVERSIZE
+        assert lines == []
+
+
+def _fake_fstat_size(monkeypatch, *, target: str, size: int) -> None:
+    """Make ``os.fstat`` report *size* for the descriptor opened on *target*.
+
+    Every other descriptor keeps its real stat, so pytest's own I/O is
+    untouched.  Patching ``os.fstat`` rather than the file is the only way to
+    drive the two byte-cap guards apart: on a real file both fire, and each
+    then masks the other's absence.
+    """
+    import os as _os
+
+    real_fstat = _os.fstat
+    target_stat = _os.stat(target)
+    identity = (target_stat.st_dev, target_stat.st_ino)
+
+    class _Stat:
+        def __init__(self, wrapped, st_size):
+            self._wrapped = wrapped
+            self.st_size = st_size
+
+        def __getattr__(self, name):
+            return getattr(self._wrapped, name)
+
+    def _fake(fd):
+        wrapped = real_fstat(fd)
+        if (wrapped.st_dev, wrapped.st_ino) == identity:
+            return _Stat(wrapped, size)
+        return wrapped
+
+    monkeypatch.setattr(_os, "fstat", _fake)

@@ -70,6 +70,21 @@ def _attach_stage_evidence(state: PipelineState, run_dir) -> None:
         stage.training_manifest = str(evidence)
 
 
+def _evidence_only(violations: list) -> list:
+    """Violations excluding the Tier 3 audit-log corroboration findings.
+
+    These fixtures write a manifest with no ``audit_log.jsonl`` beside it —
+    a legitimate state (an operator who never enabled compliance) that
+    correctly reports ``unattested``, never a clean corroboration.  Tests
+    whose subject is the structural / per-stage-evidence rules assert on the
+    remainder.  Filters on the machine-stable
+    :data:`forgelm.compliance.AUDIT_CORROBORATION_MARKER`, never on prose.
+    """
+    from forgelm.compliance import AUDIT_CORROBORATION_MARKER
+
+    return [v for v in violations if AUDIT_CORROBORATION_MARKER not in v]
+
+
 def _report_with(violations: list[str]):
     """Build a :class:`PipelineEvidenceReport` carrying *violations*.
 
@@ -342,7 +357,7 @@ class TestManifestContentHash:
         _attach_stage_evidence(state, run_dir)
         manifest = generate_pipeline_manifest(state, _root_with_compliance())
         export_pipeline_manifest(manifest, str(run_dir))
-        assert verify_pipeline_manifest_at_path(str(run_dir)) == []
+        assert _evidence_only(verify_pipeline_manifest_at_path(str(run_dir))) == []
 
         # Tamper on disk, then re-verify.
         manifest_path = run_dir / "compliance" / "pipeline_manifest.json"
@@ -630,12 +645,14 @@ class TestVerifyPipelineManifestAtPath:
         state = _three_stage_state()
         _attach_stage_evidence(state, tmp_path)
         self._write_manifest(tmp_path, state)
-        assert verify_pipeline_manifest_at_path(str(tmp_path)) == [], "sanity: intact run verifies clean"
+        assert _evidence_only(verify_pipeline_manifest_at_path(str(tmp_path))) == [], (
+            "sanity: intact run verifies clean"
+        )
 
         for stage in state.stages:
             (tmp_path / stage.name / "compliance" / "annex_iv_metadata.json").unlink()
 
-        violations = verify_pipeline_manifest_at_path(str(tmp_path))
+        violations = _evidence_only(verify_pipeline_manifest_at_path(str(tmp_path)))
         assert violations, "deleted evidence must not verify silently"
         assert all(not v.startswith(("UNVERIFIED::", "IO_ERROR::", "INPUT_ERROR::")) for v in violations)
         assert any("is missing" in v for v in violations)
@@ -709,7 +726,7 @@ class TestVerifyPipelineManifestAtPath:
             s.training_manifest = str(stage_compliance / "training_manifest.json")
         self._write_manifest(tmp_path, state, version="0.8.0")
 
-        assert verify_pipeline_manifest_at_path(str(tmp_path)) == []
+        assert _evidence_only(verify_pipeline_manifest_at_path(str(tmp_path))) == []
 
     def test_legacy_fallback_does_not_apply_to_a_current_manifest(self, tmp_path):
         """The fallback must be a compatibility path for *older* ForgeLM
@@ -728,7 +745,7 @@ class TestVerifyPipelineManifestAtPath:
             s.training_manifest = str(stage_compliance / "training_manifest.json")
         self._write_manifest(tmp_path, state, version="0.9.1")
 
-        violations = verify_pipeline_manifest_at_path(str(tmp_path))
+        violations = _evidence_only(verify_pipeline_manifest_at_path(str(tmp_path)))
         assert violations, "the legacy fallback must not silently rescue a current manifest"
         assert all(not v.startswith("UNVERIFIED::") for v in violations)
 
@@ -746,7 +763,7 @@ class TestVerifyPipelineManifestAtPath:
                 _write_stage_evidence(stage_compliance / "annex_iv_metadata.json")
                 s.training_manifest = str(stage_compliance / "training_manifest.json")
             self._write_manifest(run, state, version=version)
-            violations = verify_pipeline_manifest_at_path(str(run))
+            violations = _evidence_only(verify_pipeline_manifest_at_path(str(run)))
             assert violations, version
             assert all(not v.startswith("UNVERIFIED::") for v in violations), version
 
@@ -764,7 +781,7 @@ class TestVerifyPipelineManifestAtPath:
             s.training_manifest = str(stage_compliance / "training_manifest.json")
         self._write_manifest(tmp_path, state, version="0.8.0")
 
-        violations = verify_pipeline_manifest_at_path(str(tmp_path))
+        violations = _evidence_only(verify_pipeline_manifest_at_path(str(tmp_path)))
         assert violations
         assert all("annex_iv_metadata.json" in v for v in violations)
         assert not any("training_manifest.json" in v for v in violations)
@@ -1107,7 +1124,7 @@ class TestRealWriterSkipsVerifyClean:
         manifest = generate_pipeline_manifest(state, _root_with_compliance())
         assert _verify_manifest_payload(manifest) == []
         report = verify_pipeline_stage_evidence(manifest, str(tmp_path))
-        assert report.violations == [], (status, gate_decision)
+        assert _evidence_only(report.violations) == [], (status, gate_decision)
         # Still counted and listed, never silently dropped.
         payload = report.to_dict()
         assert payload["stages_total"] == 2

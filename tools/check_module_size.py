@@ -263,12 +263,40 @@ class _DeferredSplit:
 # _validate_entries() sees a raise without reading the diff.
 _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
     "forgelm/compliance.py": _DeferredSplit(
-        budget=2147,
+        budget=2471,
         deferred_at_loc=2147,
         reason=(
             "EU AI Act Art. 9-17 + Annex IV builder + hash-chained audit log + "
             "GDPR purge/reverse-PII primitives. Split candidates: _audit_log, "
             "_annex_iv, _provenance, _gdpr."
+        ),
+        budget_history=(
+            "2026-07-20: 2147 -> 2471 (+324) for the pipeline-manifest audit-log "
+            "corroborator (corroborate_pipeline_stage_census and helpers). The chain "
+            "manifest's metadata.manifest_hash is an UNKEYED SHA-256 from a public "
+            "function, so an attacker who can write the manifest can re-stamp it and "
+            "erase a stage from the verifier's scrutiny; audit_log.jsonl's per-line "
+            "_hmac is the only keyed integrity tag in the system. The code lands here "
+            "rather than in verify.py precisely to REUSE the existing reader, chain "
+            "walk and HMAC helper — a writer and a verifier that canonicalise "
+            "separately is a documented hazard in this repo, and duplicating the "
+            "canonicalisation to dodge a budget would be the worse trade. Pays down "
+            "with the _audit_log split already named above, which this code is "
+            "entirely inside.",
+        ),
+    ),
+    "forgelm/verify.py": _DeferredSplit(
+        budget=1013,
+        deferred_at_loc=1013,
+        reason=(
+            "Three unrelated verifiers in one module: single-artefact Annex IV "
+            "(field completeness + manifest hash), the pipeline chain's per-stage "
+            "evidence deep-parse, and GGUF magic/metadata/sidecar integrity. Split "
+            "candidates: _annex_iv, _pipeline_evidence, _gguf. Crossed the 1000-LOC "
+            "ceiling on 2026-07-20 wiring the audit-log corroboration outcome into "
+            "PipelineEvidenceReport; deferred rather than split in the same change "
+            "because the split moves the exit-code routing tokens that the CLI and "
+            "tests both pin, and that belongs in its own diff."
         ),
     ),
     "forgelm/ingestion.py": _DeferredSplit(

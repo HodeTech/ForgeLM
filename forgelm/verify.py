@@ -425,7 +425,15 @@ class PipelineEvidenceReport:
     reproducing, and the only defence is publishing the count.
     """
 
-    __slots__ = ("violations", "stages_examined", "evidence_verified", "evidence_unverified", "hash_state", "stages")
+    __slots__ = (
+        "violations",
+        "stages_examined",
+        "evidence_verified",
+        "evidence_unverified",
+        "hash_state",
+        "stages",
+        "audit_corroboration",
+    )
 
     def __init__(self, *, hash_state: str = HASH_STATE_ABSENT) -> None:
         self.violations: List[str] = []
@@ -433,6 +441,11 @@ class PipelineEvidenceReport:
         self.evidence_verified = 0
         self.evidence_unverified = 0
         self.hash_state = hash_state
+        # Tier 3: the manifest's own hash is unkeyed, so it proves nothing
+        # against an adversary who can write the manifest.  This is the
+        # cross-check against the one keyed artefact in the system.  ``None``
+        # on the pre-flight paths, where no manifest was ever parsed.
+        self.audit_corroboration: Dict[str, Any] | None = None
         # One row per stage the manifest carries, each with a disposition.
         # ``stages_examined`` alone cannot distinguish "this chain had one
         # stage" from "this chain had two and one was made to disappear";
@@ -456,6 +469,7 @@ class PipelineEvidenceReport:
             "hash_state": self.hash_state,
             "status_census": dict(sorted(census.items())),
             "stage_dispositions": list(self.stages),
+            "audit_corroboration": self.audit_corroboration,
         }
 
 
@@ -834,6 +848,20 @@ def verify_pipeline_stage_evidence(manifest: Dict[str, Any], pipeline_dir: str) 
         report.violations.append(
             "manifest reports final_status 'completed' but carries no completed stage — there is no evidence to verify"
         )
+
+    # Tier 3 — corroborate the census above against the keyed audit log.  Every
+    # rule up to this point reads only artefacts the manifest's own writer
+    # controls, and ``metadata.manifest_hash`` is an unkeyed SHA-256 from a
+    # public function, so an adversary who edits a stage row can re-stamp it
+    # for free.  ``audit_log.jsonl``'s per-line ``_hmac`` is the one integrity
+    # tag in this system that an attacker without ``FORGELM_AUDIT_SECRET``
+    # cannot reproduce.  Runs last so its findings follow the direct evidence
+    # findings in the violation list.
+    from forgelm.compliance import corroborate_pipeline_stage_census
+
+    corroboration = corroborate_pipeline_stage_census(manifest, pipeline_dir)
+    report.audit_corroboration = corroboration.to_dict()
+    report.violations.extend(corroboration.violations)
     return report
 
 
