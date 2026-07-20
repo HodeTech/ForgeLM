@@ -51,14 +51,21 @@ $ forgelm audit data/ingested.jsonl --no-quality-filter
 
 Quality-filter threshold configuration is not exposed as YAML fields in the current release — thresholds are fixed at the heuristic defaults listed below. The CLI flags `--quality-filter` / `--no-quality-filter` control whether the filter runs; there is no per-threshold override flag.
 
-| Heuristic | Default |
+There are exactly five checks. The names below are the identifiers that appear in the audit report's `quality_summary.by_check` map, so you can gate on them directly.
+
+| Check (`by_check` key) | Fires when |
 |---|---|
-| `min_alpha_ratio` | 0.55 |
-| `min_mean_word_length` | 3 |
-| `max_mean_word_length` | 10 |
-| `max_repeated_line_ratio` | 0.30 |
-| `min_content_length` | 50 characters |
-| `max_bullet_ratio` | 0.90 |
+| `low_alpha_ratio` | Letters make up **less than 70 %** of non-whitespace characters. |
+| `low_punct_endings` | **Fewer than 50 %** of non-empty lines end with punctuation. |
+| `abnormal_mean_word_length` | Mean word length falls outside the **3.0–12.0** character window. |
+| `short_paragraphs` | **More than 50 %** of `\n\n`-separated blocks contain fewer than 5 words. |
+| `repeated_lines` | The top-3 lines that actually repeat (count ≥ 2) cover **more than 30 %** of all lines. |
+
+Constants read from `forgelm/data_audit/_quality.py`.
+
+:::warn
+**There is no content-length check and no bullet-ratio check.** Earlier versions of this page listed `min_content_length` (50 characters) and `max_bullet_ratio` (0.90) alongside a `min_alpha_ratio` of 0.55 and a mean-word-length window of 3–10. None of those names exist, and the two real numbers were understated: the alpha cutoff is **0.70**, not 0.55, and the upper word-length bound is **12.0**, not 10. If you tuned a bullet-heavy or code-heavy corpus against the old table, re-check it — the alpha check is materially stricter than documented.
+:::
 
 For corpora that legitimately violate one of these (e.g. code-heavy datasets violate alpha ratio), use `--no-quality-filter` to skip the filter entirely for that run.
 
@@ -72,16 +79,30 @@ The thresholds are tuned to *flag, not drop*. The reasons:
 
 If you want stricter filtering — for instance, on a public web crawl going into pre-training — pair the filter with a manual review of edge cases.
 
-## Programmatic API
+## Reading quality flags
 
-```python
-from forgelm.data_audit import score_quality
+:::warn
+**There is no public programmatic API for the quality filter.** Earlier versions of this page documented `from forgelm.data_audit import score_quality`. That import raises `ImportError: cannot import name 'score_quality'` — the function has never existed, and neither do the flag names `symbol_density` or `short_content` that its sample output showed.
+:::
 
-text = "= = = = = = = =\n* * *\n[no content]"
-flags = score_quality(text)
-print(flags)
-# {'low_alpha_ratio': True, 'symbol_density': True, 'short_content': True}
+The supported surface is the audit report. `quality_summary.by_check` gives you per-check counts across the corpus:
+
+```shell
+forgelm audit data/ --output-format json | jq '.quality_summary'
 ```
+
+```json
+{
+  "samples_flagged": 5,
+  "samples_evaluated": 360,
+  "by_check": {"low_punct_endings": 3, "short_paragraphs": 2},
+  "overall_quality_score": 0.9861
+}
+```
+
+Per-split counts are also available at `.splits.<name>.quality_samples_flagged` and `.splits.<name>.quality_samples_evaluated`.
+
+If you need row-level flags, the underlying helper is `forgelm.data_audit._quality._row_quality_flags(text) -> List[str]`, which returns the subset of the five check names that fired (an empty list for clean text). It is private — the leading underscore means it carries no stability guarantee and may change without a deprecation cycle. Pin your ForgeLM version if you depend on it.
 
 ## Common pitfalls
 

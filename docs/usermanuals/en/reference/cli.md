@@ -47,6 +47,10 @@ Run `forgelm <subcommand> --help` for any of these.
 | `--offline` | Air-gapped mode: disable all HF Hub network calls. Models and datasets must be available locally. |
 | `--benchmark-only MODEL_PATH` | Run benchmark evaluation on an existing model without training. Requires `evaluation.benchmark` config. |
 | `--merge` | Run model merging from the `merge:` config block. No training. |
+| `--stage NAME` | Multi-stage pipelines only: run a single named stage in isolation. Non-first stages need the previous stage's on-disk output, or `--input-model`. |
+| `--resume-from NAME` | Multi-stage pipelines only: resume an interrupted run from a named stage onward. Completed stages whose `output_model` paths exist are skipped. **Refuses to run when the on-disk `pipeline_config_hash` differs from the current YAML** unless `--force-resume` is also passed. |
+| `--force-resume` | Multi-stage pipelines only: bypass the `--resume-from` stale-config guard. Logged at WARNING and recorded in the audit event. |
+| `--input-model PATH` | Multi-stage pipelines only: with `--stage`, replaces the auto-chained input model. The audit entry records `input_source: cli_override` so reviewers see the chain was broken intentionally. |
 | `--generate-data` | Generate synthetic training data using the teacher model. No training. |
 | `--compliance-export OUTPUT_DIR` | Export EU AI Act compliance artifacts (audit trail, data provenance, Annex IV) to OUTPUT_DIR. Run after training so the manifest is complete. |
 | `--output DIR` | Output directory for `--compliance-export` (default: `./compliance/`). |
@@ -183,14 +187,16 @@ See [Deploy Targets](#/deployment/deploy-targets).
 
 ## Approvals: `forgelm approvals` / `forgelm approve` / `forgelm reject`
 
+`--output-dir` is **required** on all three subcommands — it is where the approval chain and `final_model.staging/` live. Omitting it is an argparse error (exit `2`), not a helpful default:
+
 ```shell
-$ forgelm approvals --pending                        # list pending approval gates
-$ forgelm approvals --show RUN_ID                    # inspect a specific run's chain + staging
-$ forgelm approve  RUN_ID --comment "Reviewed by N." # promote final_model.staging/ → final_model/
-$ forgelm reject   RUN_ID --comment "Reason ..."     # record rejection (staging preserved for forensics)
+$ forgelm approvals --pending --output-dir ./checkpoints                        # list pending approval gates
+$ forgelm approvals --show RUN_ID --output-dir ./checkpoints                    # inspect a run's chain + staging
+$ forgelm approve  RUN_ID --output-dir ./checkpoints --comment "Reviewed by N." # promote staging → final_model/
+$ forgelm reject   RUN_ID --output-dir ./checkpoints --comment "Reason ..."     # record rejection (staging preserved)
 ```
 
-See [Human Oversight Gate](#/compliance/human-oversight). Exit codes: `0` = pending list / approval recorded, `1` = unknown run_id / config error, `4` (training mode only) = awaiting approval.
+See [Human Oversight Gate](#/compliance/human-oversight). Exit codes: `0` = pending list / approval recorded, `1` = unknown run_id / config error, `2` = argparse usage error (a missing `--output-dir` lands here), `4` (training mode only) = awaiting approval.
 
 ## Verify audit log: `forgelm verify-audit`
 
@@ -201,6 +207,45 @@ $ forgelm verify-audit PATH/TO/audit_log.jsonl --require-hmac
 ```
 
 Validates monotonic timestamps, `prev_hash` chain integrity, `seq` gap detection, and (when configured) HMAC signatures. Exit `0` on a valid chain of at least one entry; exit `6` with a structured error envelope on tamper detection (chain break, HMAC mismatch, genesis-manifest mismatch, or a zero-entry log whose genesis manifest pins a first entry); exit `1` when nothing could be compared (missing path, `--require-hmac` without a secret, or a zero-entry log with no genesis manifest); exit `2` on a genuine runtime I/O failure. See [Verify Audit](#/compliance/verify-audit).
+
+## Verify Annex IV: `forgelm verify-annex-iv`
+
+```shell
+$ forgelm verify-annex-iv PATH/TO/annex_iv_metadata.json
+$ forgelm verify-annex-iv PATH/TO/annex_iv_metadata.json --output-format json
+$ forgelm verify-annex-iv RUN_DIR --pipeline               # chain-level verification
+```
+
+Single-artefact mode validates the nine Annex IV §1-9 field categories and recomputes the manifest hash. Exit `0` when valid; `1` when a required field is missing or still holds a template placeholder (nothing was compared); `6` when every field is populated but the manifest hash no longer matches; `2` on a genuine runtime I/O failure.
+
+`--pipeline` reinterprets the positional argument as a **run directory** and validates `<dir>/compliance/pipeline_manifest.json` — chain integrity, stage-index ordering, `stopped_at` coherence, a deep parse of every completed stage's Annex IV evidence, and a cross-check of the stage census against the audit log. It emits a different 12-key envelope with its own four-way exit mapping: `0` clean, `6` integrity failure, `2` unreadable artefact (retryable), `1` manifest absent/unparseable **or** evidence reached but unattested. Integrity is evaluated first so a weaker finding cannot mask a stronger one.
+
+Single-artefact mode does **not** consult the audit log; only `--pipeline` does. See [Verify Annex IV](#/compliance/annex-iv).
+
+## Safety eval: `forgelm safety-eval`
+
+```shell
+$ forgelm safety-eval --model ./checkpoints/final_model --default-probes
+$ forgelm safety-eval --model ./checkpoints/final_model \
+    --probes probes.jsonl \
+    --classifier meta-llama/Llama-Guard-3-8B \
+    --output-dir ./eval \
+    --max-new-tokens 512 \
+    --max-safety-regression 0.05 \
+    --output-format json
+```
+
+| Flag | Description |
+|---|---|
+| `--model PATH` | **Required.** HuggingFace Hub ID or local checkpoint dir. GGUF is not supported — run against the pre-export HF checkpoint. |
+| `--probes JSONL` | Probe file; each line is `{"prompt": ..., "category": ...}`. Mutually exclusive with `--default-probes`; exactly one is required. |
+| `--default-probes` | Use the bundled 51-prompt probe set covering 18 harm categories. |
+| `--classifier PATH` | Harm classifier (default: `meta-llama/Llama-Guard-3-8B`). |
+| `--output-dir DIR` | Where per-prompt results + audit log are written (default: cwd). |
+| `--max-new-tokens N` | Max tokens per generated response (default: 512). |
+| `--max-safety-regression RATIO` | Maximum tolerated unsafe-response ratio in `[0.0, 1.0]` before the run fails the gate (default: `0.05`). **Absolute bound, not baseline-relative.** Exceeding it exits `3`. The value is echoed into the JSON envelope as `max_safety_regression`, so a CI job branching on exit `3` can read the threshold that decided it. |
+
+Exit codes: `0` = passed; `1` = config error reached by the dispatcher; `2` = argparse usage error, a runtime error, **or** an evaluation that could not produce a verdict (`evaluation_completed=False` — not evidence about the model); `3` = the gate said no. See [Safety Evaluation](#/evaluation/safety) and [JSON Output Schemas](#/reference/json-output).
 
 ## Verify model integrity: `forgelm verify-integrity`
 
@@ -288,19 +333,35 @@ $ forgelm --config configs/run.yaml --output-format json | tee run.log
 
 ### "Run audit, then train if clean"
 
+`forgelm audit` gates on **secrets only**: it exits `3` when the always-on credential scan finds something, and `0` otherwise. So `&&` does chain correctly for the credential case:
+
 ```shell
-$ forgelm audit data/
+$ forgelm audit data/           # exits 3 if the credential scan finds anything
 $ forgelm --config configs/run.yaml
 ```
 
-Run the two commands sequentially in your CI pipeline; `forgelm audit` exits non-zero on policy violations so the second command never fires on a dirty corpus.
+Run them as separate `set -e` steps (or join with `&&`); the training step is skipped when the audit exits `3`.
+
+:::warn
+**PII, leakage and quality do not gate.** A corpus carrying a plaintext SSN at `worst_tier: "high"`, or train/eval overlap, exits `0` as long as it holds no credentials. If your policy covers those, parse the envelope yourself:
+
+```shell
+$ forgelm audit data/ --output-format json > audit.json   # exits 3 on secrets
+$ jq -e '(.pii_severity.worst_tier // "none") != "high" and (.cross_split_leakage_pairs | length) == 0' audit.json
+$ forgelm --config configs/run.yaml
+```
+
+Under `set -e` (or GitHub Actions' default), the failing `jq -e` stops the job before training starts. `pii_severity.worst_tier` is `null` on a clean corpus, so keep the `// "none"` fallback. See [JSON Output Schemas](#/reference/json-output) for the full envelope.
+:::
+
+Pass `--allow-secrets` to record credential findings without failing — for the legitimate case of auditing a corpus you already know contains them.
 
 ### "Train with human approval gate; promote later"
 
 ```shell
-$ forgelm --config configs/run.yaml                  # exits 4 if approval gate fires
-$ forgelm approvals --pending                        # discover the pending run
-$ forgelm approve RUN_ID --comment "Reviewed."       # promote staging
+$ forgelm --config configs/run.yaml                                         # exits 4 if approval gate fires
+$ forgelm approvals --pending --output-dir ./checkpoints                    # discover the pending run
+$ forgelm approve RUN_ID --output-dir ./checkpoints --comment "Reviewed."   # promote staging
 ```
 
 ### "Train, export GGUF, deploy to Ollama"

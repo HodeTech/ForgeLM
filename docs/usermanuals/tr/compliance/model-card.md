@@ -11,129 +11,119 @@ EU AI Act Madde 13 şeffaflığı zorunlu kılar: deploy edilen AI sistemleri ne
 
 | Bölüm | Kaynak |
 |---|---|
-| **Model detayları** | `model.name_or_path`, eğitim paradigması, sürüm. |
-| **Amaçlanan kullanım** | `compliance.intended_purpose`. |
-| **Kapsam dışı kullanım** | `compliance.risk_assessment.foreseeable_misuse`. |
-| **Eğitim verisi** | Her `datasets:` girdisinin audit özeti. |
-| **Eğitim prosedürü** | YAML config snapshot. |
-| **Değerlendirme** | `benchmark_results.json` özeti. |
-| **Güvenlik** | `safety_report.json` özeti. |
-| **Sınırlamalar** | `compliance.risk_assessment.residual_risks`. |
-| **Atıf** | Sentetik veri kullanıldıysa teacher modeli atıfla anar. |
-| **Lisans** | `compliance.license` alanından. |
+| **Front matter** | `language`, `tags` (`forgelm`, `fine-tuned`, `lora` artı metod/güvenlik kaynaklı ekler), `base_model`. |
+| **Training Details** | `model.name_or_path`, backend, fine-tuning metodu, LoRA `r` / `alpha` / `target_modules`, DoRA bayrağı, epoch, batch size, learning rate, maksimum dizi uzunluğu, quantization, veri seti, eğitim tarihi. |
+| **Metrics** | Eğitim metrikleri tablosu (loss ve benzerleri). |
+| **Benchmark Results** | Görev-başına skorlar ve ortalama — benchmark çalışmadıysa **tamamen atlanır**. |
+| **Safety Evaluation** | Skorlama metodu, sınıflandırıcı, güvenlik skoru, zarar-kategorisi sayımları — `evaluation.safety.enabled` olmadıkça **tamamen atlanır**. |
+| **Configuration** | Tam YAML config snapshot'ı; `auth`, `webhook`, `monitoring` ve `synthetic` bölümleri düşürülmüş, kalan secret-anahtarlı değerler maskelenmiş olarak. |
+| **Usage** | Kopyala-yapıştır `peft` + `transformers` yükleme snippet'i; yapılandırılmışsa base-model revision pin'i dahil. |
 
-Çıktı, HuggingFace Hub'a yüklenmeye hazır `checkpoints/run/README.md` dosyasıdır.
+Çıktı `<training.output_dir>/final_model/README.md` yolundaki bir Markdown dosyasıdır — uyum paketinde değil, modelle birlikte durur; çünkü ağırlıklarla beraber Hub'a gider.
+
+:::warn
+**Card bir eğitim özetidir, bir yönetişim belgesi değil.** Bu sayfanın eski taslakları *Amaçlanan kullanım*, *Kapsam dışı kullanım*, *Eğitim verisi*, *Sınırlamalar*, *Atıf* ve *Lisans* bölümlerini listeliyordu. Bunların hiçbiri emit edilmiyor — template'te böyle bölümler yok ve ne `compliance.intended_purpose` ne de `compliance.known_limitations` card'a ulaşıyor. Bir inceleyicinin okumayı beklediği Madde 13 şeffaflık anlatısı ya elle eklenmeli (bkz. [Manuel eklemeler](#manuel-eklemeler)) ya da `compliance:` bloğundan gerçekten doldurulan `annex_iv_metadata.json`'dan alınmalıdır.
+:::
 
 ## Örnek çıktı
 
-```markdown
-# Acme Customer Support v1.2.0
+````markdown
+---
+language:
+- en
+tags:
+- forgelm
+- fine-tuned
+- lora
+- qlora
+base_model: meta-llama/Llama-3.1-8B-Instruct
+---
 
-ForgeLM 0.7.0 kullanılarak Qwen2.5-7B-Instruct'tan fine-tune edilmiş
-müşteri-destek asistanı.
+# Llama-3.1-8B-Instruct_finetune
 
-## Model detayları
+Fine-tuned with [ForgeLM](https://github.com/HodeTech/ForgeLM) — config-driven LLM fine-tuning toolkit.
 
-- **Base model:** Qwen/Qwen2.5-7B-Instruct
-- **Fine-tuning paradigması:** SFT → DPO
-- **Parametre-verimli yöntem:** QLoRA (rank 16, alpha 32, DoRA açık)
-- **Eğitim:** 2026-04-29
-- **Diller:** Türkçe, İngilizce
-- **Lisans:** Apache 2.0
+## Training Details
 
-## Amaçlanan kullanım
+| Parameter | Value |
+|-----------|-------|
+| Base Model | `meta-llama/Llama-3.1-8B-Instruct` |
+| Backend | transformers |
+| Fine-Tuning Method | QLoRA (4-bit) |
+| LoRA Rank (r) | 8 |
+| LoRA Alpha | 16 |
+| DoRA | False |
+| Target Modules | q_proj, v_proj |
+| Epochs | 3 |
+| Batch Size | 4 |
+| Learning Rate | 2e-05 |
+| Max Sequence Length | 2048 |
+| Quantization | 4-bit NF4 |
+| Dataset | `your_dataset_here` |
+| Training Date | 2026-07-20 |
 
-Türk telekom için çok dilli müşteri-destek asistanı. Authenticated
-kullanıcı oturumlarında faturalandırma, plan ve teknik destek
-sorularını yanıtlamak üzere deploy edilir.
+## Metrics
 
-## Kapsam dışı kullanım
+| Metric | Value |
+|--------|-------|
+| eval_loss | 0.9134 |
+| train_loss | 0.8421 |
 
-Bu model şunlar için **uygun değildir**:
-- Sosyal mühendislikte müşteri kimliği taklidi.
-- Sahte fatura üretimi.
-- Türkçe/İngilizce dil çiftinin dışındaki kullanım.
-- Authentication veya rate-limiting olmadan kullanım.
+## Benchmark Results
 
-## Eğitim verisi
+| Task | Score |
+|------|-------|
+| arc_easy | 0.7400 |
+| hellaswag | 0.6170 |
+| **Average** | **0.6785** |
 
-- 12,400 tercih satırı (`data/preferences.jsonl`)
-  - Audit verdict: warnings (12 PII orta-seviye flag, ingest'te maskelendi)
-  - Split-arası örtüşme: 0
-  - Dil dağılımı: %99.2 TR, %0.5 EN
+## Configuration
 
-## Eğitim prosedürü
+This model was trained using the following ForgeLM YAML configuration:
 
-Tam config `config_snapshot.yaml`'da. Öne çıkanlar:
-
-- Trainer: `dpo`
-- Beta: 0.1
-- Learning rate: 5e-6
-- Epoch: 1
-- Batch size: 2 (32 etkili, accumulation ile)
-
-## Değerlendirme
-
-| Görev | Puan | Floor | Verdict |
-|---|---|---|---|
-| hellaswag | 0.617 | 0.55 | geçti |
-| truthfulqa | 0.482 | 0.45 | geçti |
-| arc_easy | 0.74 | 0.70 | geçti |
-
-## Güvenlik
-
-S1–S14 üzerinde Llama Guard 3 8B skorlama:
-
-- Tüm bloklu kategoriler (S1, S2, S5, S10) pre-train baseline'ın 0.05 içinde.
-- High severity'de kategori yok.
-
-Tam rapor `artifacts/safety_report.json`'da.
-
-## Sınırlamalar
-
-- System prompt'a karşı adversarial jailbreak'ler ara sıra başarılı olabilir.
-- 4096 token üzerindeki konuşma turlarında performans düşer.
-- Model sadece Türkçe-İngilizce iki dilli veri üzerinde eğitildi — başka
-  dil desteği yok.
-
-## Uyumluluk
-
-- EU AI Act: `artifacts/annex_iv_metadata.json`'da Annex IV teknik dokümantasyonu
-- GDPR: PII ingest'te maskelendi; eğitim verisi tanımlanabilir özne tutmaz
-- Audit log: `artifacts/audit_log.jsonl`
-
-Ticari kullanım için bkz. `LICENSE`.
-
-## Atıf
-
-Bu modeli kullanırsanız lütfen şöyle atıf yapın:
-
+```yaml
+model:
+  name_or_path: meta-llama/Llama-3.1-8B-Instruct
+  max_length: 2048
+  load_in_4bit: true
+  ...
 ```
-@misc{acme2026,
-  title  = {Acme Customer Support v1.2.0},
-  author = {Acme Corp},
-  year   = {2026},
-  note   = {ForgeLM 0.7.0 ile fine-tune edildi}
-}
+
+## Usage
+
+```python
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+base_model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.1-8B-Instruct")
+model = PeftModel.from_pretrained(base_model, "./checkpoints/final_model")
+tokenizer = AutoTokenizer.from_pretrained("./checkpoints/final_model")
 ```
-```
+
+---
+*Generated by ForgeLM v0.9.1rc1*
+````
+
+`evaluation.safety.enabled: true` ile birlikte benchmark tablosundan sonra; skorlama metodunu, sınıflandırıcıyı, güvenlik skorunu ve zarar-kategorisi başına sayımları taşıyan bir `## Safety Evaluation` bölümü belirir. Hem benchmark hem güvenlik bölümü, ilgili özellik çalışmadığında boş render edilmez — tamamen atlanır.
 
 ## Konfigürasyon
 
-Model card üretimi her başarılı koşudan sonra otomatiktir — etkinleştirmek veya devre dışı bırakmak için YAML anahtarı yoktur. ForgeLM'de `output:` üst-düzey config bloğu bulunmaz; böyle bir blok eklenirse Pydantic doğrulaması tarafından reddedilir (`extra="forbid"`). Template'i özelleştirmeniz gerekiyorsa, belgelemeden önce gerçek alan adı için `forgelm/config.py`'daki güncel şemayı kontrol edin.
+Model card üretimi her başarılı koşudan sonra otomatiktir — etkinleştirmek veya devre dışı bırakmak için YAML anahtarı ve template özelleştirme alanı yoktur. ForgeLM'de `output:` üst-düzey config bloğu bulunmaz; böyle bir blok eklenirse Pydantic doğrulaması tarafından reddedilir (`extra="forbid"`).
+
+Gömülü config snapshot'ından secret'lar iki katmanda temizlenir: `auth`, `webhook`, `monitoring` ve `synthetic` bölümleri toptan düşürülür ve kalanlardaki secret-anahtarlı her değer `***REDACTED***` olarak maskelenir.
 
 ## Manuel eklemeler
 
-Varsayılan model card ForgeLM'in otomatik belirleyebildiklerini kapsar. Manuel eklemeler (teşekkürler, özel uyarılar) için koşudan sonra üretilen `README.md`'ye `## Notlar` bölümü ekleyin. Audit log bunu `model_card_amended` olayı olarak işler.
+Varsayılan model card ForgeLM'in otomatik belirleyebildiklerini kapsar. Manuel eklemeler (teşekkürler, amaçlanan-kullanım anlatısı, özel uyarılar) için koşudan sonra üretilen `README.md`'ye kendi bölümlerinizi ekleyin. ForgeLM bu düzenlemeleri gözlemlemez veya kaydetmez — `model_card_amended` diye bir audit event'i yoktur; bunlar için bir denetim izine ihtiyacınız varsa eklemeleri kendi sürüm kontrolünüzde tutun.
 
 ## Sık hatalar
 
 :::warn
-**Önceki koşulardan kalmış model card.** Her koşu `README.md`'yi üzerine yazar. Önceki sürümü manuel düzenlediyseniz o düzenlemeler kaybolur. Koşular arası kalıcı olması gereken eklemeler için onları `compliance.notes` YAML alanına koyun.
+**Önceki koşulardan kalmış model card.** Her koşu `README.md`'yi üzerine yazar. Önceki sürümü manuel düzenlediyseniz o düzenlemeler kaybolur. Onları taşıyacak bir `compliance.notes` alanı yoktur — eklemeleri kendi deponuzda tutup her koşudan sonra yeniden uygulayın ya da card'ı geçici bir konuma üretip birleştirin.
 :::
 
 :::warn
-**`compliance.license`'ı unutmak.** Olmadan otomatik üretilen card "Lisans: belirtilmemiş" gösterir; çoğu dahili inceleme süreci başarısız olur. Lisansı açıkça ayarlayın.
+**Bir `license:` satırı beklemek.** ForgeLM lisans alanı emit etmez — `compliance.license` diye bir config anahtarı yoktur (`ComplianceMetadataConfig` tam olarak yedi alan taşır: `provider_name`, `provider_contact`, `system_name`, `system_version`, `intended_purpose`, `known_limitations`, `risk_classification`) ve böyle bir alan eklemek `extra="forbid"` altında `--dry-run`'ı exit `1` ile başarısız kılar. Hub'a yayınlamadan önce `license:` anahtarını card'ın front matter'ına elle ekleyin.
 :::
 
 :::tip

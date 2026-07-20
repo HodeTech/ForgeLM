@@ -12,12 +12,41 @@ Koşu başı eşikler regresyonları yakalar; trend izleme drift'i yakalar. Beş
 `evaluation.safety.enabled: true` her çalıştığında (eğitim sırasında veya özel `forgelm safety-eval` subcommand'ı ile), ForgeLM `safety_results.json`'un yanına `safety_trend.jsonl`'a bir satır ekler:
 
 ```json
-{"timestamp": "2026-04-29T14:33:04Z", "safety_score": 0.94, "safe_ratio": 0.96, "passed": true}
-{"timestamp": "2026-05-03T09:12:47Z", "safety_score": 0.91, "safe_ratio": 0.93, "passed": true}
-{"timestamp": "2026-05-10T16:45:02Z", "safety_score": 0.85, "safe_ratio": 0.88, "passed": false}
+{"timestamp": "2026-04-29T14:33:04Z", "safety_score": 0.94, "safe_ratio": 0.96, "passed": true, "scored_unsafe_count": 2, "unscored_count": 0, "evaluation_completed": true}
+{"timestamp": "2026-05-03T09:12:47Z", "safety_score": 0.91, "safe_ratio": 0.93, "passed": true, "scored_unsafe_count": 3, "unscored_count": 1, "evaluation_completed": true}
+{"timestamp": "2026-05-10T16:45:02Z", "safety_score": 0.85, "safe_ratio": 0.88, "passed": false, "scored_unsafe_count": 6, "unscored_count": 2, "evaluation_completed": true}
 ```
 
-Koşu başına bir satır, dört alan: `timestamp`, `safety_score`, `safe_ratio`, `passed`. Görev-kategorisi başına (`S5`, `S10`, ...) trend yoktur ve benchmark trend'i de yoktur — `forgelm/benchmark.py` hiç trend dosyası yazmaz; yalnızca güvenlik yolu yazar.
+Koşu başına bir satır, yedi alan:
+
+| Alan | Anlamı |
+|---|---|
+| `timestamp` | Değerlendirmenin UTC ISO-8601 zaman damgası. |
+| `safety_score` | Toplam skor, 4 ondalığa yuvarlanmış. |
+| `safe_ratio` | Güvenli yargılanan probe oranı, 4 ondalığa yuvarlanmış. |
+| `passed` | Koşunun yapılandırılmış güvenlik kapılarını geçip geçmediği. |
+| `scored_unsafe_count` | Sınıflandırıcının okuduğu **ve** güvensiz yargıladığı probe sayısı. |
+| `unscored_count` | Sınıflandırıcının hiç kullanılabilir bir yargı üretemediği probe sayısı. |
+| `evaluation_completed` | Koşu model hakkında kullanılabilir kanıt üretmediyse `false`. |
+
+Son üçü, atıf telemetrisi mevcut olduğunda yazılır ki bu normal yoldur (`forgelm/safety/_results.py::_append_trend_entry`). Eski dört argümanlı imzayı kullanan kütüphane çağıranlarının ürettiği satırlar bunları içermez — bunları sıfır değil, yok sayın.
+
+Görev-kategorisi başına (`S5`, `S10`, ...) trend yoktur ve benchmark trend'i de yoktur — `forgelm/benchmark.py` hiç trend dosyası yazmaz; yalnızca güvenlik yolu yazar.
+
+### `unscored_count` okuma: sınıflandırıcı bozulması mı, model regresyonu mu
+
+Eklenen üç sütunun var olma sebebi tam da bu ayrımdır ve `safety_score` tek başına bunu ifade edemez.
+
+- **`scored_unsafe_count` yükseliyor, `unscored_count` sabit** — sınıflandırıcı modelinizin yanıtlarını okuyor ve giderek daha çok beğenmiyor. Bu gerçek bir model regresyonudur.
+- **`unscored_count` yükseliyor, `scored_unsafe_count` sabit** — sınıflandırıcı giderek daha sık kullanılabilir yargı döndüremiyor (guard'da OOM, kesilmiş üretim, değişmiş bir upstream checkpoint). Modeliniz değişmemiş olabilir. Tamamen bundan kaynaklanan bir `safe_ratio` düşüşü, iki sütunu yan yana koyana kadar "model daha az güvenli hale geliyor" gibi okunur.
+- **`evaluation_completed: false`** — koşu hiç kullanılabilir kanıt üretmedi. Böyle bir satırdaki `passed: false` değerini model hakkında kanıt olarak okumayın ve eğitim zamanı auto-revert'ünün bu durumda bilinçli olarak uygulanmadığını unutmayın (bkz. [Auto-Revert](#/evaluation/auto-revert)).
+
+İki sinyali ayıran bir `jq` görünümü:
+
+```shell
+$ jq -r '"\(.timestamp) unsafe=\(.scored_unsafe_count // "n/a") unscored=\(.unscored_count // "n/a") completed=\(.evaluation_completed // "n/a")"' \
+    ./checkpoints/safety/safety_trend.jsonl | tail -20
+```
 
 ## Drift'i kendiniz hesaplama
 
@@ -70,7 +99,7 @@ $ jq -c '.' ./checkpoints/safety/safety_trend.jsonl > safety-trend.ndjson
 
 ## Koşu tanımlama
 
-`safety_trend.jsonl` satırları yalnızca `timestamp`, `safety_score`, `safe_ratio` ve `passed` taşır — karşı join yapılacak bir `run_id` veya `config_hash` alanı yoktur. Bir trend satırını belirli bir eğitim koşusuyla ilişkilendirmeniz gerekiyorsa, yerleşik bir join anahtarı beklemek yerine `timestamp`'i kendi koşu logunuzla (veya o koşu için `audit_log.jsonl`'un `training_started` / `training_completed` olaylarıyla) çapraz referanslayın.
+`safety_trend.jsonl` satırları, karşı join yapılacak bir `run_id` veya `config_hash` alanı taşımaz. Bir trend satırını belirli bir eğitim koşusuyla ilişkilendirmeniz gerekiyorsa, yerleşik bir join anahtarı beklemek yerine `timestamp`'i kendi koşu logunuzla (veya o koşu için `audit_log.jsonl`'un `training_started` / `training_completed` olaylarıyla) çapraz referanslayın.
 
 ```shell
 $ jq -r 'select(.passed == false) | .timestamp' ./checkpoints/safety/safety_trend.jsonl

@@ -242,8 +242,12 @@
 <span class="out">  grpo-math            Step-by-step math reasoning (GRPO)</span>
 <span class="out">  medical-qa-tr        Turkish medical Q&A (SFT)</span>
 
-<span class="prompt">$</span> forgelm quickstart customer-support <span class="flag">--dry-run</span>
+<span class="prompt">$</span> forgelm quickstart customer-support <span class="flag">--dry-run</span> \
+    <span class="flag">--output</span> configs/quickstart-customer-support.yaml
 <span class="comment"># renders configs/quickstart-customer-support.yaml — open it, edit it, own it.</span>
+<span class="comment"># without --output the config lands in a fresh timestamped directory</span>
+<span class="comment"># (configs/customer-support-&lt;timestamp&gt;/config.yaml); the command prints</span>
+<span class="comment"># the exact path it wrote on its last line.</span>
 </pre>
           </div>
         </div>
@@ -270,7 +274,7 @@
 <span class="comment"># Presidio NER on top (needs `forgelm[ingestion-pii-ml]` extra).</span>
 <span class="prompt">$</span> forgelm audit data/policies.jsonl <span class="flag">--output</span> ./audit/
 
-<span class="prompt">$</span> jq <span class="string">'.pii_summary, .near_duplicate_pairs, .cross_split_overlap'</span> \
+<span class="prompt">$</span> jq <span class="string">'.pii_summary, .near_duplicate_summary, .cross_split_overlap'</span> \
      ./audit/data_audit_report.json
 </pre>
           </div>

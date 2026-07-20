@@ -4,7 +4,48 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
-_(v0.9.1 dev cycle — entries land here as PRs merge.)_
+_(Entries land here as PRs merge. **This cycle is a MINOR bump, not a patch.**
+Under [`docs/standards/release.md`](docs/standards/release.md)'s bump table it
+adds two CLI flags, five additive YAML fields, a new public exit code and new
+artefact fields — none of which a PATCH ("internal refactor with no user-visible
+change") may contain — and it changes two exit-code meanings, which the table
+lists as a MAJOR trigger but which the pre-1.0 rule at that section's end folds
+into a minor bump with an explicit `### Breaking` call-out. See that section
+below before upgrading a pinned CI pipeline.)_
+
+### Breaking
+
+- **`forgelm audit` now exits `3` instead of `0` when its secrets scan finds a
+  credential.** If your audit job started failing after this upgrade, this is
+  why, and the failure is telling you the truth: **the previous exit `0` was a
+  bug** (see `### Security`). The scan was always on and always printed
+  `Secrets : CRITICAL — N flagged`, but the process exited `0` regardless, so
+  every CI step wired up as a credential-leak gate had a gate that could not
+  fire. **Affected:** any pipeline running `forgelm audit` over a corpus
+  containing AWS / GitHub / Slack / OpenAI / Google keys, JWTs, PEM private-key
+  blocks or Azure storage keys — that step now fails. **Two ways forward:**
+  scrub the corpus (`forgelm ingest --secrets-mask`) — the recommended one,
+  because a credential in training data is memorised by the model and re-emitted
+  at inference — or pass the new `forgelm audit --allow-secrets` to record the
+  findings and keep exiting `0`. **Not affected:** a clean corpus (still `0`),
+  and PII, quality, near-duplicate and cross-split-leakage findings, none of
+  which gate — secrets are the only finding class that fails the command. The
+  report is still written to `data_audit_report.json` and still printed *before*
+  the process exits, so a failing run leaves complete triage material
+  (`forgelm/cli/subcommands/_audit.py`, `forgelm/data_audit/_summary.py`).
+- **`forgelm audit --output-format json` sets `success: false` when that gate
+  fails.** A consumer asserting `.success == true` over a corpus with secrets in
+  it now sees `false`, matching the exit code — the same rule `forgelm
+  safety-eval` already follows (`success` reports the gate verdict, not "the
+  command finished"). Every pre-existing envelope key is unchanged and nothing
+  was renamed or removed; `report_path` still points at a complete report in the
+  failing case (`forgelm/cli/subcommands/_audit.py`).
+- **`verify-audit` / `verify-annex-iv` / `verify-gguf` / `verify-integrity` exit
+  `6`, not `1`, on an integrity failure.** Full detail — including which
+  failures moved and the four that deliberately stayed on `1` — is under
+  `### Changed` below. Listed here because a CI step asserting the exact code
+  `== 1` as its tamper signal stops firing; `!= 0`, `set -e` and `&&` chains are
+  unaffected.
 
 ### Added
 
@@ -198,7 +239,9 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   `verify-integrity`). Previously a tampered artifact and a mistyped path both
   exited `1`, so a CI pipeline could not tell an operator error from a security
   event. The line: `6` means the verifier read the target artefact and it
-  failed its integrity check — a broken audit-log hash chain, an Annex IV
+  failed its integrity check — a broken audit-log hash chain, an audit-log entry
+  missing its `_hmac` tag (or carrying a tag that does not recompute) under
+  `verify-audit --require-hmac`, an Annex IV
   manifest hash mismatch, a GGUF metadata/SHA-256 sidecar mismatch, or model
   files that no longer match `model_integrity.json`; `1` still means the
   verifier never got far enough to compare anything (missing path, malformed
@@ -227,6 +270,33 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   the classification pipeline. The prior fail-fast now fires only for the genuine
   misconfiguration (`classification` mode + a generative checkpoint)
   (`forgelm/safety.py`, `forgelm/config.py`).
+- **`forgelm audit --allow-secrets` — record credential findings without failing
+  the pipeline.** The secrets gate that now exits `3` (see `### Breaking`) is on
+  by default; this flag suppresses **only the exit code**. Detection, the printed
+  `Secrets : CRITICAL — N flagged` line, the on-disk `data_audit_report.json` and
+  a new `WARNING` naming the suppression all still happen, so a suppressed run is
+  never silent. Intended for the two legitimate cases: auditing a corpus
+  *before* scrubbing it with `forgelm ingest --secrets-mask`, and fixture sets
+  that carry known dummy credentials. **The scan itself cannot be disabled**, and
+  this is deliberately a command-line flag rather than a YAML field or an env var
+  — suppression has to be visible in the pipeline diff a reviewer reads
+  (`forgelm/cli/_parser.py`, `forgelm/cli/subcommands/_audit.py`).
+- **`forgelm audit --output-format json` gains a `secrets_gate` block**
+  (**additive**; no key renamed or removed). Keys: `status` (`"passed"` —
+  nothing critical found; `"failed"` — gating, process exits `3`; `"suppressed"`
+  — findings present and `--allow-secrets` was passed), `severity`,
+  `critical_total`, `critical_types` (a `{detector: count}` map) and
+  `allow_secrets`. This is the only place a reviewer can tell "nothing was
+  found" apart from "something was found and waved through" — `secrets_summary`
+  alone cannot express the difference, and `success` collapses `passed` and
+  `suppressed` into the same `true` (`forgelm/cli/subcommands/_audit.py`).
+- **New public helper `forgelm.data_audit.secrets_gate_verdict(secrets_summary)`**,
+  exported in `forgelm.data_audit.__all__`. The pure pass/fail classifier behind
+  the CLI gate, for library callers that run `audit_dataset` themselves and want
+  the same verdict without shelling out. Returns the `secrets_gate` dict
+  described above. Not added to the top-level `forgelm.__all__`, so
+  `__api_version__` is unchanged (`forgelm/data_audit/_summary.py`,
+  `forgelm/data_audit/__init__.py`).
 - **`ingest --input-encoding`** to read source documents in a non-UTF-8 legacy
   encoding, and **`verify-audit … --output-format json`** now works when the flag
   follows the subcommand (matching the other `verify-*` commands).
@@ -303,24 +373,6 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Fixed
 
-- **A misconfigured safety classifier could score every response SAFE.**
-  Generation-mode verdict parsing accepted any first line *beginning with*
-  `safe`, so a checkpoint that is not a guard at all — one replying
-  `SAFETY: this is harmful` or `Safety concerns apply here` — cleared the gate.
-  On the auto-revert path that is an unsafe model passing silently. A `safe`
-  verdict now requires the **whole** first line to be `safe` (case-insensitive,
-  a trailing `.` or `!` tolerated); anything else is malformed, scored unsafe
-  fail-closed, and flagged `low_confidence` for review. The `unsafe` side stays
-  lenient on purpose (first word only) — leniency there cannot produce the
-  mirror-image bug, and it keeps the legitimate single-line `unsafe S5` form
-  routed to category extraction instead of dropping its S-code from the report.
-  **Genuine Llama-Guard output is unchanged:** `safe`, `unsafe`,
-  `unsafe\nS1,S5`, `unsafe S5`, whitespace and case variants all behave exactly
-  as before. **Operator impact:** a safety report that previously passed against
-  a misconfigured classifier may now fail — that is the fix, not a regression;
-  the old result was a false PASS. One narrowing to know about: trailing decode
-  noise is tolerated only on a *subsequent* line, so `safe </s>` or `safe,` on
-  the verdict line itself now lands in the `low_confidence` bucket.
 - **A guard with no chat template silently reported 100% unsafe and could
   delete a good model.** Generation-based scoring builds every moderation
   prompt through `tokenizer.apply_chat_template`. With no chat template that
@@ -674,6 +726,53 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Security
 
+- **The safety gate could return PASS for a model it had scored wrong — a
+  misconfigured classifier scored every response SAFE.** Filed here rather than
+  under `Fixed` for the same reason as the Annex IV entries below: the defect did
+  not mute a safety signal, it **reversed** one. Generation-mode verdict parsing
+  accepted any first line *beginning with* `safe`, so a checkpoint that is not a
+  guard at all — one replying `SAFETY: this is harmful` or `Safety concerns apply
+  here` — cleared the gate. The gate passed, auto-revert did nothing, the model
+  shipped, and the compliance artefact recorded that safety had been checked.
+  **If you ran `evaluation.safety` with `classifier_mode: generation` pointed at
+  anything other than a real Llama-Guard checkpoint, re-run the evaluation — a
+  PASS from before this release is not evidence of anything.** A `safe` verdict
+  now requires the **whole** first line to be `safe` (case-insensitive,
+  a trailing `.` or `!` tolerated); anything else is malformed, scored unsafe
+  fail-closed, and flagged `low_confidence` for review. The `unsafe` side stays
+  lenient on purpose (first word only) — leniency there cannot produce the
+  mirror-image bug, and it keeps the legitimate single-line `unsafe S5` form
+  routed to category extraction instead of dropping its S-code from the report.
+  **Genuine Llama-Guard output is unchanged:** `safe`, `unsafe`,
+  `unsafe\nS1,S5`, `unsafe S5`, whitespace and case variants all behave exactly
+  as before. **Operator impact:** a safety report that previously passed against
+  a misconfigured classifier may now fail — that is the fix, not a regression;
+  the old result was a false PASS. One narrowing to know about: trailing decode
+  noise is tolerated only on a *subsequent* line, so `safe </s>` or `safe,` on
+  the verdict line itself now lands in the `low_confidence` bucket. The two
+  `Fixed` entries on unscored verdicts describe the follow-on work that keeps
+  this fix from deleting good models.
+- **The `forgelm audit` credential-leak gate had never fired.** The secrets scan
+  detected AWS / GitHub / Slack / OpenAI / Google keys, JWTs, PEM private-key
+  blocks and Azure storage keys correctly, printed `Secrets : CRITICAL — N
+  flagged`, wrote them to `data_audit_report.json` — and then exited `0`. A CI
+  step wired up per the documentation (`docs/usermanuals/en/data/secrets.md`
+  promised "a `critical` severity exits non-zero so a CI pipeline fails fast")
+  therefore reported success while its own output said otherwise: a control that
+  failed **open**, which is worse than no control, because the operator believed
+  they were covered. **If you have been relying on `forgelm audit` as a
+  credential gate, treat every prior green run as unverified and re-audit the
+  corpora that fed your released models.** The gate now exits `3`; see
+  `### Breaking` for the migration and `--allow-secrets` for the escape hatch
+  (`forgelm/cli/subcommands/_audit.py`).
+- **Webhook `**extra` payload keys are now allowlisted.** `_send(**extra)`
+  forwarded whatever a caller passed straight into the JSON body delivered to a
+  third-party Slack/Teams endpoint. `_ALLOWED_EXTRA_PAYLOAD_KEYS` narrows it to
+  exactly the four keys the shipped `notify_*` methods already pass. **This is a
+  true non-change for receivers** — no field that used to arrive stops arriving
+  and no payload changes shape — and is preventive: it closes `**extra` as a
+  future route for user- or config-derived text to reach an external receiver
+  (`forgelm/webhook.py`).
 - **A stage could be dropped from `--pipeline` verification entirely by
   downgrading its status, and the report never mentioned it.** The chain
   verifier deep-parsed only stages whose `status` was exactly `completed` and
@@ -792,6 +891,19 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   public import paths, so `from forgelm.safety import ...` and
   `from forgelm import ...` are both unaffected.
 
+- **The four `verify-*` implementations moved into a new `forgelm/verify.py`.**
+  `verify_gguf`, `verify_integrity`, `verify_annex_iv_artifact` and their result
+  dataclasses previously lived inside the `forgelm.cli.subcommands._verify_*`
+  modules, where library callers were importing them out of a CLI package. The
+  logic now sits in one importable module and the subcommands are thin wrappers.
+  **This is a move, not a rewrite** (the behaviour changes in this cycle are
+  recorded separately in this section and under `### Security`), and it is
+  backward-compatible: both the old and the new import paths resolve, and the
+  lazily-exported names on `forgelm` itself are unchanged, so `__api_version__`
+  does not move. Announced for the same reason as the `forgelm/cli/`,
+  `forgelm/data_audit/` and `forgelm/safety/` splits — anyone who pinned a
+  private path gets to see it here rather than discover it (`forgelm/verify.py`).
+
 - **Module-size deferrals now carry an LOC budget instead of a target version,
   and growing past that budget fails the build.** Every entry in
   `tools/check_module_size.py` was labelled *"defer to v0.6.x split"* — accurate
@@ -837,7 +949,15 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   exit `6`, not `1`, when the target artefact was read and failed its
   integrity check** (broken audit-log hash chain, Annex IV manifest hash
   mismatch, GGUF metadata/SHA-256 sidecar mismatch, or model files that no
-  longer match `model_integrity.json`). **Affected:** a CI pipeline step that
+  longer match `model_integrity.json`). **Also moved: the `verify-audit
+  --require-hmac` failures** — a log whose chain is *intact* but whose entries
+  carry no `_hmac` tag, or a tag that does not recompute under the secret in
+  `$FORGELM_AUDIT_SECRET`, exited `1` and now exits `6`. This is called out
+  separately because it is not a chain break, so a reader scanning the list
+  above will not find it there, and because `--require-hmac` exists precisely
+  for the regulated CI pipelines most likely to assert an exact code. (The
+  usage error — `--require-hmac` with the secret env var unset — is unchanged
+  at `1`: nothing was compared.) **Affected:** a CI pipeline step that
   asserts the exact exit code `== 1` to catch a `verify-*` tamper signal —
   that assertion needs `== 6` added alongside it. **Not affected:** a pipeline
   that only branches on `!= 0`, or that runs `verify-*` under `set -e` /
@@ -1057,8 +1177,7 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   receivers.** `docs/reference/webhook_schema.md` states plainly that the
   allowlist contains exactly the keys the shipped `notify_*` methods already
   pass, so no field that used to arrive stops arriving and no payload changes
-  shape — the narrowing is preventive, closing `**extra` as a future route for
-  user- or config-derived text to reach a third-party receiver. Documents
+  shape. The hardening itself is recorded under `### Security`. Documents
   `F-PR54-M11`.
 
 - **Stale `forgelm/safety.py` pointers swept from every prose surface.** The
@@ -1114,6 +1233,103 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   reconciled against the actual `.github/workflows/` + `tools/`, and the example
   notebooks were reconciled against the current output schemas (notably
   `safety_evaluation.ipynb`'s results cell).
+
+The following corrections came out of an execution-verified audit of all 134
+user-manual pages and the marketing site against the code. They change no
+behaviour, but several of them change what an operator should *do* — the
+auto-revert one in particular.
+
+- **Auto-revert was documented as a rollback. It is a deletion.** Every surface
+  that described it — `evaluation/auto-revert.md`, `training/dpo.md`, and the
+  marketing site in **all six locales** — said the run "rolls back to the
+  last-good checkpoint". `_revert_model` calls `shutil.rmtree` on the final
+  model directory; there is no checkpoint restore anywhere in the revert path,
+  and after a revert there is no fine-tuned model on disk at all. **If you sized
+  your recovery plan around ForgeLM leaving a serviceable earlier artefact
+  behind, it does not — keep your own backups.** The pages now also state the
+  two behaviours that most often surprise: with the shipped default
+  `evaluation.auto_revert: false` nothing is deleted, the regressed model is
+  promoted and the run exits `0`; and a safety failure with
+  `evaluation_completed: false` is never reverted regardless of `auto_revert`.
+  The `model.reverted` audit-event payload is corrected to its real two fields
+  (`reason`, `detail`).
+- **`data/audit.md` and `data/secrets.md` rewritten against the now-live secrets
+  gate** — exit `3`, `--allow-secrets`, and an explicit statement that secrets
+  are the only finding class that gates. The CI gate these pages previously
+  recommended did not work: it read `cross_split_overlap` and
+  `pii_summary.severity`, neither of which exists in the stdout envelope, so it
+  failed on *clean* input. Replaced with a snippet verified to pass on a clean
+  corpus and fail on a dirty one, plus a table of where the on-disk report and
+  the stdout envelope diverge.
+- **Four "Programmatic API" sections were not runnable.** `data/quality-filter.md`
+  called a `score_quality` that has never existed; `operations/vram-fit-check.md`
+  called `estimate_peak_memory` / `available_memory`, likewise; and
+  `data/pii-masking.md` plus `guides/library_api.md` passed `locale=` /
+  `language=` kwargs that raise `TypeError`. All four rewritten from executed
+  code.
+- **`reference/cli.md` and `reference/json-output.md` reconciled with the real
+  envelopes.** The `forgelm audit` envelope is corrected to its actual shape
+  (flat `{kind: count}` PII/secrets maps, `pii_severity.worst_tier`,
+  `cross_split_leakage_pairs`) with five phantom keys removed; the
+  `verify-annex-iv --pipeline` envelope (12 keys) and its four-way exit mapping
+  are documented for the first time, as are `--max-safety-regression` and its
+  envelope key; `forgelm safety-eval` and `forgelm verify-annex-iv` gained CLI
+  sections; the four pipeline flags (`--stage`, `--resume-from`,
+  `--force-resume`, `--input-model`) were added to the top-level flag table; the
+  phantom `manifest_hash_present` key was removed and `path` /
+  `checks.metadata_error` added, with hash fields corrected to bare-hex strings;
+  and the `approvals` / `approve` / `reject` examples now carry the required
+  `--output-dir` and document exit `2`.
+- **The compliance manual now discloses what the integrity artefacts actually
+  prove.** `metadata.manifest_hash` and `model_integrity.json` are **unkeyed**
+  SHA-256 digests that any writer can re-stamp: they detect corruption, not
+  adversarial tampering. That is now stated on all four surfaces that describe
+  them, contrasted against the HMAC-protected audit log, which is the one
+  artefact here with keyed integrity. `verify-annex-iv --pipeline` and the
+  three-valued `audit_corroboration.outcome` are documented, including that
+  `unattested` — the case where `FORGELM_AUDIT_SECRET` was never set — is
+  **never a pass**.
+- **Fabricated compliance content removed.** The on-disk artefact tree is
+  corrected to the real six-file `compliance/` bundle; the invented eight-section
+  Annex IV list is replaced with the real nine `§1`–`§9` keys; the
+  declaration-of-conformity scaffold claims are deleted (no such scaffold is
+  emitted); the model-card page is rewritten against the real template (the
+  documented Intended use / Out-of-scope use / Training data / Limitations /
+  Citation / License sections are not emitted); the phantom
+  `compliance.license`, `compliance.notes` and `compliance.risk_assessment.*`
+  fields and the `cli.legacy_flag_invoked` and `model_card_amended` events are
+  removed; the high-risk tier is documented as requiring
+  `evaluation.safety.enabled: true`; and the `verify-audit` chain-break sample
+  and `verify-integrity` exit-1 enumeration are corrected.
+- **`operations/cicd.md` documents the full `0`–`6` exit-code contract**, adding
+  the `5` (wizard cancelled) and `6` (integrity failure) rows it was missing.
+  `evaluation/benchmarks.md` now states that revert-and-exit-3 requires
+  `evaluation.auto_revert: true`; `evaluation/trend-tracking.md` documents all
+  seven `safety_trend.jsonl` fields and how to read a rising `unscored_count` as
+  classifier degradation rather than model regression.
+- **Wrong constants and shapes corrected** across the manuals: quality-filter
+  alpha `0.70` (not `0.55`) and word-length window `3.0`–`12.0` (not `3`–`10`);
+  `training.learning_rate` default `2e-5` (not `2e-4`); the safety `label` shape
+  `"unsafe S5"` (not `"unsafe\nS5"`); the bundled probe set as **51 probes over
+  18 independent category slugs** (not an extension of the S1–S14 Llama-Guard
+  taxonomy); and `forgelm doctor`'s probe list.
+- **Fabricated features removed** from the manuals: preference/KTO
+  format-specific audit checks, per-category PII redaction tags, secrets
+  false-positive guards (entropy / context-window / exclusion list), an
+  `--output-jsonl` flag, a `webhook_failed` audit event, and an IPv4/IPv6 PII
+  category — none of which exist.
+- **`getting-started/first-run.md`'s quickstart flow now works end to end** (it
+  uses `--output` so the config path it then references is real), and
+  `getting-started/installation.md` documents `python -m forgelm` as an
+  equivalent entry point.
+- **Marketing site corrected against the code** (`site/`, all six locales): the
+  auto-revert rollback claim above; a quickstart page whose copy-paste flow did
+  not work; `compliance.html`'s artefact tree no longer lists
+  `data_audit_report.json` inside `compliance/`; the "automatic" Annex IV +
+  Llama Guard hero claim is now qualified by its real preconditions; the probe
+  count corrected `50` → `51`; HMAC activation no longer described as requiring
+  KMS; and the unqualified "confidence-weighted scoring" headline corrected to
+  binary-by-default.
 
 ## [0.9.0] — 2026-07-05
 

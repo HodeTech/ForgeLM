@@ -155,12 +155,14 @@ def scrub(record: dict) -> dict:
     text = record["text"]
     if detect_secrets(text):
         text = mask_secrets(text)
-    if detect_pii(text, language="en"):
-        text = mask_pii(text, language="en")
+    if detect_pii(text):
+        text = mask_pii(text)
     return {**record, "text": text}
 
 scrubbed = [scrub(r) for r in raw_records]
 ```
+
+Dördü de tek bir string alır ve dil ya da locale argümanı almaz — pattern'lar locale boyutu olmayan tek bir düz kümedir. `detect_pii` ve `detect_secrets` `Dict[str, int]` sayım haritaları döndürür (hiçbir şey bulunmadığında falsy olur ki yukarıdaki `if` buna dayanır); `mask_pii` `[REDACTED]`, `mask_secrets` ise `[REDACTED-SECRET]` ile değiştirir ve her ikisi de `replacement=` ile geçersiz kılınabilir. Her iki maskeleyiciye `return_counts=True` geçerek `(maskelenmiş_metin, sayımlar)` tuple'ı alabilirsiniz.
 
 ### Audit gate'ini bir Airflow PythonOperator olarak çalıştırma
 

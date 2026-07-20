@@ -57,42 +57,66 @@ ForgeLM's PEM detector (`openssh_private_key` family — also covers RSA / DSA /
 
 ```shell
 $ forgelm audit data/tickets.jsonl
-✓ format: instructions (8,400 rows)
-⚠ secrets: 47 detected (severity: critical)
-   12 AWS access keys
-   18 JWTs
-   ...
+Data audit summary
+  Source        : /srv/corpora/tickets.jsonl
+  Total samples : 8400
+  Splits        : train
+  └─ train: n=8400
+     length  min=44 max=2317 mean=311.5 p95=980
+     languages (top-3): en=8400
+     secrets         : aws_access_key=12, jwt=18
+  Secrets        : CRITICAL — 30 flagged (aws_access_key=12, jwt=18)
+
+Report written to: audit/data_audit_report.json
 ```
 
-The secrets scan is always on — it cannot be disabled from the CLI surface (a credential leak in training data is never something the operator should be able to wave away). A `critical` severity exits non-zero so a CI pipeline fails fast.
+The secrets scan is always on — it cannot be disabled from the CLI surface (a credential leak in training data is never something the operator should be able to wave away).
+
+A critical-severity finding **exits `3`**, so a CI pipeline fails fast:
+
+```text
+[ERROR] Secrets gate FAILED (critical): 1 credential/secret span(s) detected (aws_access_key=1).
+Do not train on this corpus — a credential in training data is memorised and re-emitted at
+inference time. Scrub it with `forgelm ingest --secrets-mask`, or re-run
+`forgelm audit --allow-secrets` to record the findings without failing the pipeline. Exiting 3.
+```
+
+Verified: a corpus containing `AKIAIOSFODNN7EXAMPLE` exits `3`; the same corpus with `--allow-secrets` exits `0` and logs a `SUPPRESSED` warning instead.
+
+:::warn
+**This gate did not always fire.** Until recently `forgelm audit` printed `Secrets : CRITICAL — N flagged` and exited `0`, so any credential-leak gate wired up on the strength of this page's old "exits non-zero" promise was silently dead. If you built one before this release, re-run it against a corpus with a known dummy credential and confirm you now get exit `3` — and re-audit any corpus that passed the dead gate.
+:::
+
+Secrets are the **only** finding that gates. PII, cross-split leakage, near-duplicates and quality flags are all reported at exit `0` however severe — gate on those with `jq` over the JSON envelope. See the exit-code table in [Dataset Audit](#/data/audit).
 
 ## Programmatic API
+
+Both functions take a single string and are re-exported from `forgelm.data_audit`. `detect_secrets` returns a **count map**, not spans — there is no row-level span or value surface.
 
 ```python
 from forgelm.data_audit import detect_secrets, mask_secrets
 
-text = "Use this key: AKIAIOSFODNN7EXAMPLE and JWT eyJhbGc..."
-hits = detect_secrets(text)
-print(hits)
-# [{'category': 'aws_access_key', 'span': (14, 34), 'value': 'AKIAIOSFODNN7EXAMPLE'}]
+text = "Use this key: AKIAIOSFODNN7EXAMPLE for the bucket."
+print(detect_secrets(text))
+# {'aws_access_key': 1}
 
-cleaned = mask_secrets(text)
-# "Use this key: [REDACTED-SECRET] and JWT [REDACTED-SECRET]..."
+print(mask_secrets(text))
+# Use this key: [REDACTED-SECRET] for the bucket.
 ```
 
-## False-positive guards
+Signatures: `detect_secrets(text) -> Dict[str, int]` and `mask_secrets(text, replacement='[REDACTED-SECRET]', *, return_counts=False)`. Pass `return_counts=True` to get a `(masked_text, counts)` tuple. Because the return is a count map, you cannot recover *where* in the row a credential appeared — plan reviews around per-row iteration in your own code.
 
-ForgeLM ships secrets detection with stricter false-positive guards than typical "git-secrets"-style tools, because:
+## How detection actually works
 
-1. False positives in training data corrupt examples (replacing legitimate strings).
-2. Many regex-only patterns flag `EXAMPLEKEY` or test fixtures, which makes audit reports useless.
+`detect_secrets` is a plain loop of `pattern.findall(text)` over nine prefix-anchored regexes, returning one count per family (`forgelm/data_audit/_secrets.py`). Precision comes entirely from how narrow those anchors are — `aws_access_key` requires the literal `AKIA` prefix, `jwt` requires a `eyJ`-prefixed three-segment structure, `github_token` requires `ghp_`/`gho_`/etc. The module deliberately does **not** match generic high-entropy strings, which is the main source of noise in "git-secrets"-style tools.
 
-Specific guards:
-- **Entropy threshold** for OpenAI keys (random-looking, not human-readable). ForgeLM does **not** ship Anthropic / Stripe / SendGrid / Twilio patterns by default (see line 26); operators with that traffic profile extend `_SECRET_PATTERNS` out-of-tree.
-- **Context window check** — `AKIA*` only fires if accompanied by a secret-key-shaped neighbour or "aws" context within 100 characters.
-- **Test/example exclusion list** — common dummy values (`AKIAIOSFODNN7EXAMPLE`, `xxx`, `your_key_here`) bypass detection.
+The nine families are `aws_access_key`, `azure_storage_key`, `github_token`, `google_api_key`, `jwt`, `openai_api_key`, `openssh_private_key`, `pgp_private_key`, `slack_token`. Anthropic / Stripe / SendGrid / Twilio patterns are not shipped; operators with that traffic profile extend `_SECRET_PATTERNS` out-of-tree.
 
-For a high-stakes audit (e.g. legal disclosure scan), the test-exclusion list is intentional — `forgelm audit` records the surviving findings under `AuditReport.secrets_summary` (one count per pattern type), and the per-row JSON output (`--output-format json`, optional `--output-jsonl`) is the canonical surface for prose-level review. Walk that JSON for any pattern-type count > 0 in your high-stakes audit so a human can confirm none of the dummies are real secrets in disguise. (A dedicated `secret_findings_review_notes` envelope is on the v0.6+ roadmap.)
+:::warn
+**There is no entropy check, no context window, and no test/example exclusion list.** Earlier versions of this page described all three. None exist in the code, and the practical consequence runs the opposite way to what that text implied: dummy values **are** detected. `detect_secrets("Use this key: AKIAIOSFODNN7EXAMPLE")` returns `{'aws_access_key': 1}` — the canonical AWS documentation placeholder fires, with no `aws` token anywhere nearby. Expect your fixtures, test data and documentation samples to light up, and triage them by hand.
+:::
+
+For a high-stakes audit (e.g. a legal disclosure scan), `forgelm audit` records findings under `secrets_summary` (one count per pattern family). Walk that map for any count > 0 so a human can confirm which hits are live credentials and which are placeholders — the tool cannot make that distinction for you.
 
 ## Configuration
 

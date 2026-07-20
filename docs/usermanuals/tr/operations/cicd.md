@@ -14,10 +14,12 @@ ForgeLM, CI/CD hattının bir adımı olarak temiz şekilde yerleşmek üzere ta
 | `0` | Başarı | Artifact'ları terfi ettir |
 | `1` | Konfigürasyon hatası | Hızlıca başarısız ol; YAML'ı düzelt, sonra dene |
 | `2` | Eğitim hatası | Hızlıca başarısız ol; kilitlenmeyi / OOM / işlenmeyen istisnayı araştır |
-| `3` | Otomatik geri alma tetiklendi | Başarısız olarak işaretle; gerilemeyi araştır |
+| `3` | Değerlendirme kapısı başarısız — `auto_revert: true` ile artefaktlar silindi | Başarısız olarak işaretle; gerilemeyi araştır |
 | `4` | İnsan onayı bekliyor | Hattı askıya al; reviewer'ı tetikle |
+| `5` | Sihirbaz iptal edildi — config üretilmedi | Hata değil; terfi ettirilecek bir şey yok |
+| `6` | Bütünlük hatası — bir artefakt okundu ve hash karşılaştırması uyuşmadı | Yüksek sesle başarısız ol; artefakt sahibini çağır. Körlemesine terfi ettirme veya yeniden deneme |
 
-Tam kontrat için [Exit Kodları](#/reference/exit-codes).
+Genel aralık `0`–`6`'dır. Pipeline'ınızın `case` bloğu eski 0–4 tablosuna göre yazıldıysa `5` ve `6` için dal ekleyin — özellikle `6` güvenlikle ilgili olandır ("bu artefakt imzalandıktan sonra değiştirildi") ve asla genel bir default'a düşmemelidir. Tam kontrat için [Exit Kodları](#/reference/exit-codes).
 
 ## GitHub Actions
 

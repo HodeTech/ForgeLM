@@ -51,14 +51,21 @@ $ forgelm audit data/ingested.jsonl --no-quality-filter
 
 Kalite filtresi eşik konfigürasyonu mevcut sürümde YAML alanı olarak açık değildir — eşikler aşağıda listelenen heuristik varsayılanlarına sabit. `--quality-filter` / `--no-quality-filter` CLI bayrakları filtrenin çalışıp çalışmayacağını kontrol eder; eşik başına override bayrağı yoktur.
 
-| Heuristik | Varsayılan |
+Tam olarak beş kontrol vardır. Aşağıdaki adlar audit raporundaki `quality_summary.by_check` haritasında görünen tanımlayıcılardır; doğrudan bunlara göre kapı kurabilirsiniz.
+
+| Kontrol (`by_check` anahtarı) | Tetiklenme koşulu |
 |---|---|
-| `min_alpha_ratio` | 0.55 |
-| `min_mean_word_length` | 3 |
-| `max_mean_word_length` | 10 |
-| `max_repeated_line_ratio` | 0.30 |
-| `min_content_length` | 50 karakter |
-| `max_bullet_ratio` | 0.90 |
+| `low_alpha_ratio` | Harfler, boşluk olmayan karakterlerin **%70'inden azını** oluşturuyor. |
+| `low_punct_endings` | Boş olmayan satırların **%50'sinden azı** noktalama ile bitiyor. |
+| `abnormal_mean_word_length` | Ortalama kelime uzunluğu **3.0–12.0** karakter penceresinin dışında. |
+| `short_paragraphs` | `\n\n` ile ayrılmış blokların **%50'sinden fazlası** 5 kelimeden az içeriyor. |
+| `repeated_lines` | Gerçekten tekrar eden (sayı ≥ 2) ilk 3 satır, tüm satırların **%30'undan fazlasını** kaplıyor. |
+
+Sabitler `forgelm/data_audit/_quality.py` dosyasından okundu.
+
+:::warn
+**İçerik uzunluğu kontrolü ve madde-işareti oranı kontrolü yoktur.** Bu sayfanın önceki sürümleri `min_content_length` (50 karakter) ve `max_bullet_ratio` (0.90) alanlarını, 0.55'lik bir `min_alpha_ratio` ve 3–10'luk bir ortalama kelime uzunluğu penceresiyle birlikte listeliyordu. Bu adların hiçbiri mevcut değil ve gerçek olan iki sayı da olduğundan düşük gösterilmişti: alfa eşiği 0.55 değil **0.70**, üst kelime uzunluğu sınırı ise 10 değil **12.0**. Madde-işareti veya kod ağırlıklı bir corpus'u eski tabloya göre ayarladıysanız yeniden kontrol edin — alfa kontrolü belgelenenden belirgin şekilde daha sıkıdır.
+:::
 
 Bunlardan birini meşru ihlal eden corpus'lar için (ör. kod-ağırlıklı dataset'ler alfa oranını ihlal eder) `--no-quality-filter` ile o koşu için filtreyi tamamen atlayın.
 
@@ -72,16 +79,30 @@ Eşikler *flag, düşürme* için ayarlandı. Sebepler:
 
 Daha sıkı filtreleme isterseniz — örneğin pre-training'e giden kamu web crawl'ında — filtreyi uç durumların manuel incelemesi ile birleştirin.
 
-## Programatik API
+## Kalite flag'lerini okuma
 
-```python
-from forgelm.data_audit import score_quality
+:::warn
+**Kalite filtresi için genel (public) bir programatik API yoktur.** Bu sayfanın önceki sürümleri `from forgelm.data_audit import score_quality` satırını belgeliyordu. Bu import `ImportError: cannot import name 'score_quality'` hatası verir — fonksiyon hiç var olmadı; örnek çıktısında gösterilen `symbol_density` ve `short_content` flag adları da öyle.
+:::
 
-text = "= = = = = = = =\n* * *\n[içerik yok]"
-flags = score_quality(text)
-print(flags)
-# {'low_alpha_ratio': True, 'symbol_density': True, 'short_content': True}
+Desteklenen yüzey audit raporudur. `quality_summary.by_check` size corpus genelinde kontrol başına sayımları verir:
+
+```shell
+forgelm audit data/ --output-format json | jq '.quality_summary'
 ```
+
+```json
+{
+  "samples_flagged": 5,
+  "samples_evaluated": 360,
+  "by_check": {"low_punct_endings": 3, "short_paragraphs": 2},
+  "overall_quality_score": 0.9861
+}
+```
+
+Split başına sayımlar da `.splits.<ad>.quality_samples_flagged` ve `.splits.<ad>.quality_samples_evaluated` altında bulunur.
+
+Satır seviyesinde flag'lere ihtiyacınız varsa, altta yatan yardımcı `forgelm.data_audit._quality._row_quality_flags(text) -> List[str]` fonksiyonudur; tetiklenen beş kontrol adının alt kümesini döndürür (temiz metin için boş liste). Fonksiyon private'dır — baştaki alt çizgi hiçbir kararlılık garantisi taşımadığı ve bir deprecation döngüsü olmadan değişebileceği anlamına gelir. Buna bağımlıysanız ForgeLM sürümünüzü sabitleyin.
 
 ## Sık hatalar
 

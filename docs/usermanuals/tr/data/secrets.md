@@ -57,42 +57,66 @@ ForgeLM'in PEM detector'ı (`openssh_private_key` ailesi — RSA / DSA / EC enve
 
 ```shell
 $ forgelm audit data/tickets.jsonl
-✓ format: instructions (8,400 satır)
-⚠ sırlar: 47 tespit (severity: critical)
-   12 AWS access key
-   18 JWT
-   ...
+Data audit summary
+  Source        : /srv/corpora/tickets.jsonl
+  Total samples : 8400
+  Splits        : train
+  └─ train: n=8400
+     length  min=44 max=2317 mean=311.5 p95=980
+     languages (top-3): en=8400
+     secrets         : aws_access_key=12, jwt=18
+  Secrets        : CRITICAL — 30 flagged (aws_access_key=12, jwt=18)
+
+Report written to: audit/data_audit_report.json
 ```
 
-Sırlar taraması her zaman açıktır — CLI yüzeyinden devre dışı bırakılamaz (eğitim verisinde credential sızıntısı, operatörün asla kapatabilmesi gereken bir şey değildir). `critical` severity non-zero exit verir, böylece CI pipeline hızlı fail eder.
+Sırlar taraması her zaman açıktır — CLI yüzeyinden devre dışı bırakılamaz (eğitim verisinde credential sızıntısı, operatörün asla kapatabilmesi gereken bir şey değildir).
+
+Kritik ciddiyetteki bir bulgu **`3` ile çıkar**, böylece CI pipeline'ı hızlı başarısız olur:
+
+```text
+[ERROR] Secrets gate FAILED (critical): 1 credential/secret span(s) detected (aws_access_key=1).
+Do not train on this corpus — a credential in training data is memorised and re-emitted at
+inference time. Scrub it with `forgelm ingest --secrets-mask`, or re-run
+`forgelm audit --allow-secrets` to record the findings without failing the pipeline. Exiting 3.
+```
+
+Doğrulandı: `AKIAIOSFODNN7EXAMPLE` içeren bir corpus `3` ile çıkar; aynı corpus `--allow-secrets` ile `0` ile çıkar ve bunun yerine bir `SUPPRESSED` uyarısı log'lar.
+
+:::warn
+**Bu kapı her zaman tetiklenmiyordu.** Yakın zamana kadar `forgelm audit`, `Secrets : CRITICAL — N flagged` yazdırıp `0` ile çıkıyordu; dolayısıyla bu sayfanın eski "non-zero exit verir" vaadine dayanarak kurulan her credential-sızıntı kapısı sessizce ölüydü. Bu sürümden önce böyle bir kapı kurduysanız, bilinen bir dummy credential taşıyan bir corpus'a karşı yeniden koşturun ve artık exit `3` aldığınızı doğrulayın — ayrıca ölü kapıdan geçmiş her corpus'u yeniden denetleyin.
+:::
+
+Kapılayan **tek** bulgu sırlardır. PII, split-arası sızıntı, near-duplicate'ler ve kalite flag'leri ne kadar ciddi olursa olsun `0` ile raporlanır — bunlara JSON zarfı üzerinde `jq` ile kapı koyun. Bkz. [Dataset Audit](#/data/audit) sayfasındaki exit kodu tablosu.
 
 ## Programatik API
+
+Her iki fonksiyon da tek bir string alır ve `forgelm.data_audit` üzerinden yeniden dışa aktarılır. `detect_secrets` bir **sayım haritası** döndürür, span değil — satır seviyesinde span veya değer yüzeyi yoktur.
 
 ```python
 from forgelm.data_audit import detect_secrets, mask_secrets
 
-text = "Şu key'i kullan: AKIAIOSFODNN7EXAMPLE ve JWT eyJhbGc..."
-hits = detect_secrets(text)
-print(hits)
-# [{'category': 'aws_access_key', 'span': (16, 36), 'value': 'AKIAIOSFODNN7EXAMPLE'}]
+text = "Use this key: AKIAIOSFODNN7EXAMPLE for the bucket."
+print(detect_secrets(text))
+# {'aws_access_key': 1}
 
-cleaned = mask_secrets(text)
-# "Şu key'i kullan: [REDACTED-SECRET] ve JWT [REDACTED-SECRET]..."
+print(mask_secrets(text))
+# Use this key: [REDACTED-SECRET] for the bucket.
 ```
 
-## False-positive guard'ları
+İmzalar: `detect_secrets(text) -> Dict[str, int]` ve `mask_secrets(text, replacement='[REDACTED-SECRET]', *, return_counts=False)`. `(maskelenmiş_metin, sayımlar)` tuple'ı almak için `return_counts=True` geçin. Dönüş bir sayım haritası olduğu için bir credential'ın satırın *neresinde* geçtiğini geri elde edemezsiniz — incelemeleri kendi kodunuzda satır başına yineleme etrafında planlayın.
 
-ForgeLM tipik "git-secrets" tarzı araçlardan daha sıkı false-positive guard'larıyla sırlar tespiti yayınlar; çünkü:
+## Tespit gerçekte nasıl çalışır
 
-1. Eğitim verisinde false positive örnekleri bozar (gerçek string'leri değiştirir).
-2. Çoğu sadece-regex pattern `EXAMPLEKEY` veya test fixture'ları flagler; audit raporlarını kullanışsız kılar.
+`detect_secrets`, dokuz adet ön-ek sabitli (prefix-anchored) regex üzerinde dönen düz bir `pattern.findall(text)` döngüsüdür ve family başına bir sayım döndürür (`forgelm/data_audit/_secrets.py`). Hassasiyet tamamen bu sabitlerin ne kadar dar olduğundan gelir — `aws_access_key` düz `AKIA` ön-ekini, `jwt` `eyJ` ön-ekli üç parçalı bir yapıyı, `github_token` ise `ghp_`/`gho_` gibi ön-ekleri şart koşar. Modül, "git-secrets" tarzı araçlardaki başlıca gürültü kaynağı olan genel yüksek-entropili string'leri bilinçli olarak eşleştirmez.
 
-Spesifik guard'lar:
-- OpenAI key'leri için **entropi eşiği** (insan-okunur değil, rastgele görünüm). ForgeLM Anthropic / Stripe / SendGrid / Twilio pattern'larını **göndermez** (bkz. Line 26); bu trafik profiline sahip operatörler `_SECRET_PATTERNS`'i out-of-tree genişletir.
-- **Bağlam pencere kontrolü** — `AKIA*` sadece secret-key-şeklinde komşu veya 100 karakter içinde "aws" bağlamı varsa tetiklenir.
-- **Test/örnek dışlama listesi** — yaygın dummy değerler (`AKIAIOSFODNN7EXAMPLE`, `xxx`, `your_key_here`) tespiti atlar.
+Dokuz family: `aws_access_key`, `azure_storage_key`, `github_token`, `google_api_key`, `jwt`, `openai_api_key`, `openssh_private_key`, `pgp_private_key`, `slack_token`. Anthropic / Stripe / SendGrid / Twilio pattern'ları gönderilmez; bu trafik profiline sahip operatörler `_SECRET_PATTERNS`'i out-of-tree genişletir.
 
-Yüksek-stake audit (ör. yasal açıklama taraması) için test-dışlama listesi bilinçlidir — `forgelm audit` hayatta kalan bulguları `AuditReport.secrets_summary` altında kaydeder (pattern türü başına bir sayım) ve prose-seviyesinde inceleme için kanonik yüzey satır başına JSON çıktısıdır (`--output-format json`, opsiyonel `--output-jsonl`). Yüksek-stake audit'inizde sayımı > 0 olan herhangi bir pattern türü için bu JSON'u dolaşın; bir insan dummy'lerin gizlenmiş gerçek bir secret olmadığını teyit etsin. (Özel `secret_findings_review_notes` zarfı v0.6+ yol haritasında.)
+:::warn
+**Entropi kontrolü, bağlam penceresi ve test/örnek dışlama listesi yoktur.** Bu sayfanın önceki sürümleri üçünü de tarif ediyordu. Hiçbiri kodda mevcut değil ve pratikteki sonuç, o metnin ima ettiğinin tam tersi yönde işliyor: dummy değerler **tespit edilir**. `detect_secrets("Use this key: AKIAIOSFODNN7EXAMPLE")` `{'aws_access_key': 1}` döndürür — AWS'in kanonik dokümantasyon placeholder'ı, yakınında hiçbir `aws` sözcüğü olmadan tetiklenir. Fixture'larınızın, test verinizin ve dokümantasyon örneklerinizin işaretlenmesini bekleyin ve bunları elle triyaj edin.
+:::
+
+Yüksek-stake bir audit (ör. yasal açıklama taraması) için `forgelm audit` bulguları `secrets_summary` altında kaydeder (pattern family'si başına bir sayım). Sayımı > 0 olan her family için bu haritayı dolaşın; hangi eşleşmelerin canlı credential, hangilerinin placeholder olduğunu bir insan teyit etsin — araç bu ayrımı sizin yerinize yapamaz.
 
 ## Konfigürasyon
 

@@ -137,6 +137,36 @@ def _secrets_summary_notes(secrets_summary: Dict[str, int]) -> List[str]:
     ]
 
 
+def secrets_gate_verdict(secrets_summary: Dict[str, int]) -> Dict[str, Any]:
+    """Classify an audit's secrets findings into a pass/fail gate verdict.
+
+    Every family in :data:`forgelm.data_audit.SECRET_TYPES` is
+    ``critical`` by construction — the detector only ships anchored
+    patterns for credential formats whose mere presence in a training
+    corpus is a leak (there is no "informational tier" of a live AWS key).
+    Returning a structured verdict rather than a bare ``bool`` keeps the
+    severity explicit at the call site, so if a lower-severity family is
+    ever added it slots into ``by_severity`` without silently inheriting
+    the gate.
+
+    Counts of ``0`` are ignored so an empty-but-present key (a
+    forward-compatible detector that reports "scanned, found nothing")
+    can never fail a pipeline.
+
+    Returns ``{"failed": bool, "severity": "critical"|None,
+    "critical_total": int, "critical_types": {...}}``.  Pure — callers
+    decide what to do with it; nothing here exits or logs.
+    """
+    critical = {kind: count for kind, count in sorted((secrets_summary or {}).items()) if count > 0}
+    total = sum(critical.values())
+    return {
+        "failed": total > 0,
+        "severity": "critical" if total else None,
+        "critical_total": total,
+        "critical_types": critical,
+    }
+
+
 def _quality_summary_notes(quality_summary: Dict[str, Any]) -> List[str]:
     """Operator-actionable note for the heuristic quality filter."""
     if not quality_summary or not quality_summary.get("samples_flagged"):
@@ -408,6 +438,7 @@ __all__ = [
     "_pii_summary_notes",
     "_cross_split_leak_notes",
     "_secrets_summary_notes",
+    "secrets_gate_verdict",
     "_quality_summary_notes",
     "_fold_outcome_into_summary",
     "_build_quality_summary",

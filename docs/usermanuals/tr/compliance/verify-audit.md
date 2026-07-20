@@ -97,8 +97,10 @@ Değişken adı yapılandırılabilir; varsayılan `FORGELM_AUDIT_SECRET`'tir.
 Bir zincir kopması 1-tabanlı satır numarasını yazar:
 
 ```text
-FAIL at line 53: prev_hash mismatch — chain break suggests entry was inserted, removed, or reordered
+FAIL at line 4: chain broken at line 4: prev_hash='7429a5c8393163e6f50a4c4b50bb73221023754705f3db341e64175ddc4c20b7' expected='3aad1795cd0e0e1a4b79534e2f1d0b7e783525246f0176931c98196063c0afeb'
 ```
+
+Aynı `chain broken at line N` biçimi; düzenlenen, araya eklenen, silinen ya da yeniden sıralanan bir girdiyi kapsar. `FORGELM_AUDIT_SECRET` ayarlıyken, zinciri bozmayan bir düzenleme de satır-başına HMAC tarafından yakalanır ve `FAIL at line N: line N: HMAC mismatch` raporlanır.
 
 Genesis-manifest hataları, manifest'in sabitlediği girdi olan 1. satıra atfedilir; dolayısıyla onlar da bir satır numarası taşır:
 

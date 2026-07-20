@@ -40,6 +40,15 @@ $ forgelm --version
 $ forgelm --help
 ```
 
+`python -m forgelm …` eşdeğer bir giriş noktasıdır ve aynı argümanları kabul eder:
+
+```shell
+$ python -m forgelm --version
+ForgeLM 0.9.1rc1
+```
+
+`forgelm` console script'i eksik veya gölgelenmiş olduğunda buna başvurun — conda ortamlarında, CI imajlarında ve editable kurulumlarda sık görülür. Projenin kendi içinde kullandığı biçim de budur.
+
 ## Opsiyonel extra'lar
 
 ForgeLM ağır veya nadir gereken bağımlılıkları extra'lara ayırır; ihtiyaç duymadığınız sürece kurulmazlar.
@@ -106,14 +115,19 @@ GPU eğitimi için kurduysanız CUDA'nın doğru bağlandığını teyit edin:
 $ forgelm doctor
 ```
 
-`forgelm doctor` tabular bir pass / warn / fail teşhis raporu üretir:
+`forgelm doctor` 18 probe üzerinde tabular bir pass / warn / fail teşhis raporu üretir:
+- `forgelm.install` — kurulumun kendisi import edilebilir ve tutarlı. Gerçek çıktının ilk satırıdır ve bozuk ya da yarım yükseltilmiş bir kurulumu yakalayan probe budur
 - Python sürümü (>=3.10 zorunlu, >=3.11 önerilen)
 - torch + CUDA varlığı (CPU-only `warn`'dur, `fail` değil)
+- `numpy.torch_abi` — NumPy/torch ABI çiftinin uyumlu olması
 - GPU envanteri (cihaz başına VRAM, GiB)
-- Opsiyonel extras: `qlora`, `unsloth`, `distributed`, `eval`, `tracking`, `merging`, `export`, `ingestion`, `ingestion-pii-ml`, `ingestion-scale` — eksik extra'lar tam `pip install 'forgelm[<isim>]'` ipucu ile `warn`'lanır
+- Opsiyonel extras: `qlora`, `unsloth`, `distributed`, `eval`, `tracking`, `export`, `ingestion`, `ingestion-pii-ml`, `ingestion-scale` — eksik extra'lar tam `pip install 'forgelm[<isim>]'` ipucu ile `warn`'lanır
+- `pypdf_normalise.turkish` — PDF ingest yolundaki Türkçe metin normalizasyonu
 - HuggingFace Hub erişimi (varsa `HF_ENDPOINT` üzerinden; `--offline` ile atlanır)
 - Workspace disk alanı (<10 GiB → `fail`, <50 GiB → `warn`)
 - `FORGELM_OPERATOR` audit kimliği ipucu (Madde 12)
+
+Bilinçli olarak **`extras.merging` probe'u yoktur**. Model birleştirme, çekirdek `peft` + `torch` bağımlılıkları üzerinde yerel olarak uygulanmıştır; dolayısıyla `merging` extra'sı boş bir no-op'tur (`pyproject.toml` içinde `merging = []`) ve kontrol edecek bir şeyi yoktur. O satırı arıyorduysanız, yokluğu doğrudur ve bozuk bir kurulum işareti değildir.
 
 `--output-format json` yapısal zarf döner (`{"success": bool, "checks": [...], "summary": {pass, warn, fail}}`); `--offline` air-gap modu (ağ probe'unu atlar, yerel HF cache'i inceler).
 

@@ -260,23 +260,66 @@ Pre-train data audit. Full report; key fields shown.
 ```json
 {
   "success": true,
-  "report_path": "audit/data_audit_report.json",
-  "splits": {"train": {"sample_count": 100, "...": "..."}, "...": {}},
-  "pii_summary": {"total_findings": 0, "by_kind": {}},
-  "secrets_summary": {"total_findings": 0, "by_kind": {}},
-  "cross_split_overlap": {"pairs": {}},
-  "leakage": {"...": "..."},
-  "quality_summary": {"samples_evaluated": 100, "samples_flagged": 3, "by_check": {"...": "..."}},
-  "near_duplicates": {"...": "..."},
-  "languages_top3": [{"code": "en", "count": 87}],
-  "generated_at": "2026-05-04T12:34:56+00:00",
-  "warnings": []
+  "report_path": "/work/audit/data_audit_report.json",
+  "generated_at": "2026-07-20T16:13:19.426220+00:00",
+  "source_input": "/work/data/train.jsonl",
+  "total_samples": 3,
+  "splits": {"train": 3},
+  "pii_summary": {"email": 1, "us_ssn": 1},
+  "pii_severity": {
+    "total": 2,
+    "by_tier": {"critical": 0, "high": 1, "medium": 1, "low": 0},
+    "by_type": {"email": {"count": 1, "tier": "medium"}, "us_ssn": {"count": 1, "tier": "high"}},
+    "worst_tier": "high"
+  },
+  "secrets_summary": {"aws_access_key": 1},
+  "quality_summary": {
+    "samples_flagged": 3,
+    "samples_evaluated": 3,
+    "by_check": {"low_punct_endings": 3},
+    "overall_quality_score": 0.0
+  },
+  "near_duplicate_pairs_per_split": {"train": 0},
+  "near_duplicate_summary": {"method": "simhash", "pairs_per_split": {"train": 0}, "hamming_threshold": 3},
+  "cross_split_leakage_pairs": [],
+  "croissant": {},
+  "notes": ["WORST tier: HIGH. PII flags surfaced (2 total: email=1, us_ssn=1). …"]
 }
 ```
 
+| Key | Type | Notes |
+|---|---|---|
+| `success` | bool | The audit **ran**. It is not a full verdict about the corpus — see the gate warning below. |
+| `report_path` | str | Absolute path of the on-disk `data_audit_report.json`. |
+| `source_input` | str | Absolute path of the audited input. |
+| `total_samples` | int | Rows examined across all splits. |
+| `splits` | object | `{split_name: row_count}` — a flat integer map, not a nested object. |
+| `pii_summary` | object | Flat `{pii_type: count}`, e.g. `{"email": 1}`. **No** `total_findings` / `by_kind` keys. `{}` when clean. |
+| `pii_severity` | object | `total`, `by_tier` (`critical`/`high`/`medium`/`low` counts), `by_type`, and `worst_tier`. **`worst_tier` is the field a CI gate wants** — it is `null` when nothing was flagged. |
+| `secrets_summary` | object | Flat `{pattern_name: count}`, e.g. `{"aws_access_key": 1}`. `{}` when clean. |
+| `quality_summary` | object | `samples_flagged`, `samples_evaluated`, `by_check` (`{check_name: count}`), `overall_quality_score`. |
+| `near_duplicate_pairs_per_split` | object | `{split_name: pair_count}`. |
+| `near_duplicate_summary` | object | `method` (`simhash`/`minhash`), `pairs_per_split`, and the threshold field for the chosen method. |
+| `cross_split_leakage_pairs` | list | Train/eval overlap pairs; empty list when clean. |
+| `croissant` | object | Croissant metadata when `--croissant` is passed; `{}` otherwise. |
+| `notes` | list[str] | Human-readable findings and remediation hints. |
+
 > **Phase 15 (v0.6.0) note:** `quality_summary` is populated by default from v0.6.0+ because the audit's `--quality-filter` flag was flipped to default-on. Pass `--no-quality-filter` to skip; the field is `{}` in that case.
 
-The full schema is in the in-manual [Data Audit](#/data/audit) page. Pin against `report_path` (where the on-disk JSON lives) + `success` for CI gates.
+:::warn
+**Only the secrets scan gates. Everything else is a report.** `forgelm audit` exits `3` when the always-on secrets scan finds credentials (pass `--allow-secrets` to record without failing). But a corpus carrying a plaintext SSN, train/eval leakage, or a wall of low-quality rows and **no** credentials exits `0` — verified: a two-row corpus with a `us_ssn` finding at `worst_tier: "high"` returns `0`.
+
+So `success: true` plus exit `0` means "the audit completed and found no secrets", not "the corpus is clean". To gate on the other dimensions you must parse this envelope yourself:
+
+```shell
+$ forgelm audit data/ --output-format json > audit.json   # exits 3 on secrets
+$ jq -e '(.pii_severity.worst_tier // "none") != "high" and (.cross_split_leakage_pairs | length) == 0' audit.json
+```
+
+`pii_severity.worst_tier` is `null` on a clean corpus, so the `// "none"` fallback is required — without it the expression evaluates against `null` and the gate misbehaves.
+:::
+
+The full schema is in the in-manual [Data Audit](#/data/audit) page. Note that the **on-disk** `data_audit_report.json` and this **stdout** envelope do not use identical key names — pin your tooling against whichever one it actually reads.
 
 ## `forgelm ingest`
 
@@ -566,6 +609,7 @@ Wave 2b Phase 36 — standalone safety evaluation against a model checkpoint.
   "classifier": "meta-llama/Llama-Guard-3-8B",
   "probes": "/work/probes.jsonl",
   "output_dir": "/work/eval",
+  "max_safety_regression": 0.05,
   "passed": true,
   "safety_score": 0.93,
   "safe_ratio": 0.95,
@@ -577,12 +621,20 @@ Wave 2b Phase 36 — standalone safety evaluation against a model checkpoint.
 | Key | Type | Notes |
 |---|---|---|
 | `success` | bool | Mirrors `passed`. `success: false` does NOT mean the dispatcher crashed — it means the model failed the safety gate. |
+| `max_safety_regression` | float | The unsafe-ratio ceiling the verdict was produced against (`--max-safety-regression`, default `0.05`). Echoed so a consumer reading `passed: false` can see *which* number `safe_ratio` was compared to. |
 | `passed` | bool | `true` if `safety_score` and `safe_ratio` cleared the configured thresholds. |
 | `safety_score` | float \| null | Aggregate score from `forgelm.safety.run_safety_evaluation`. |
+| `safe_ratio` | float \| null | Proportion of probe responses the classifier judged safe. |
 | `category_distribution` | object | Per-harm-category counts (empty when `track_categories=False`). |
 | `failure_reason` | str \| null | Human-readable reason from `SafetyResult` when `passed: false`. |
 
-**Exit code mapping:** `0` = thresholds passed; `1` = config error reached by the dispatcher (GGUF model path, probes file missing/unreadable); `2` = argparse usage error (missing `--model`, missing both `--probes`/`--default-probes`, or providing both together — exactly one of the two is required, so argparse rejects the request with exit 2 before the dispatcher runs) **or** a runtime error (model load failure, classifier load failure, broken environment); `3` = `EXIT_EVAL_FAILURE` — evaluation completed but the safety gate said no (operator-actionable: re-train or re-classify).
+**Exit code mapping:** `0` = thresholds passed; `1` = config error reached by the dispatcher (GGUF model path, probes file missing/unreadable); `2` = argparse usage error (missing `--model`, missing both `--probes`/`--default-probes`, or providing both together — exactly one of the two is required, so argparse rejects the request with exit 2 before the dispatcher runs), a runtime error (model load failure, classifier load failure, broken environment), **or** an evaluation that could not produce a verdict (see below); `3` = `EXIT_EVAL_FAILURE` — evaluation completed and the safety gate said no (operator-actionable: re-train or re-classify).
+
+:::warn
+**Exit `2` also means "the guard could not answer" — it is not evidence about the model.** When the classifier never loaded, the probe file yielded no usable prompts, or too large a share of responses came back unscored, the result carries `evaluation_completed=False` and the command exits `2` rather than `3`. This is deliberate: a regulated pipeline that retries on `2` and blocks deployment on `3` must not treat a transient Hub outage as "the model failed the safety gate".
+
+The JSON envelope does **not** carry `evaluation_completed`, so the process exit code is currently the only discriminator between "broken guard" (`2`) and "gate said no" (`3`). Branch on `$?`, not on `success`. The on-disk `safety_results.json` and `safety_trend.jsonl` do carry `evaluation_completed`, alongside `scored_unsafe_count` and `unscored_count` — see [Safety Evaluation](#/evaluation/safety).
+:::
 
 ## `forgelm verify-annex-iv`
 
@@ -596,23 +648,75 @@ Wave 2b Phase 36 — EU AI Act Annex IV §1-9 artefact integrity check.
   "path": "/work/output/compliance/annex_iv_metadata.json",
   "valid": true,
   "missing_fields": [],
-  "manifest_hash_actual": "abcd1234...",
-  "manifest_hash_expected": "abcd1234...",
-  "manifest_hash_present": true,
-  "reason": ""
+  "manifest_hash_actual": "e06b780a91150b1c56e9094a43f273ddd1f308acac13e896ed26747d9085220d",
+  "manifest_hash_expected": "e06b780a91150b1c56e9094a43f273ddd1f308acac13e896ed26747d9085220d",
+  "reason": "All Annex IV §1-9 fields populated; manifest hash matches."
 }
 ```
 
 | Key | Type | Notes |
 |---|---|---|
 | `valid` | bool | `true` when all 9 §1-9 fields are present AND (when `metadata.manifest_hash` is present) the recomputed hash matches. |
-| `missing_fields` | list[str] | Names of any `_ANNEX_IV_REQUIRED_FIELDS` that are absent / empty. |
-| `manifest_hash_actual` | str \| null | Recomputed canonical SHA-256 of the artefact-minus-metadata. |
-| `manifest_hash_expected` | str \| null | Value extracted from the artefact's `metadata.manifest_hash` field. |
-| `manifest_hash_present` | bool | `false` when the artefact carries no hash (older exports — verifier passes with a warning). |
-| `reason` | str | Empty on `valid: true`; one-line failure description otherwise. |
+| `missing_fields` | list[str] | Absent / empty required fields. Entries for `system_identification` sub-fields are **dotted paths** (`"system_identification.provider_name"`), not bare keys. |
+| `manifest_hash_actual` | str | Recomputed canonical SHA-256 of the artefact-minus-metadata. **Bare hex, no `sha256:` prefix**; `""` (empty string, not `null`) when absent. |
+| `manifest_hash_expected` | str | Value extracted from the artefact's `metadata.manifest_hash` field. Same shape as above. |
+| `path` | str | Absolute path of the verified artefact. |
+| `reason` | str | One-line verdict — populated on success too, not only on failure. |
+
+> There is **no** `manifest_hash_present` key. Earlier drafts of this page documented one; it is emitted nowhere in the codebase. Derive it yourself from `manifest_hash_expected != ""`.
+
+:::warn
+`metadata.manifest_hash` is an **unkeyed** SHA-256 from a public function. A matching hash means the artefact is internally consistent with its own stamp — not that it is authentic. Anyone who can write the file can edit it and re-stamp it, after which this envelope reports `"valid": true`. See [Verify Annex IV](#/compliance/annex-iv) for the full threat model.
+:::
 
 **Exit code mapping:** `0` = `valid: true`; `1` = `valid: false` because the verifier never got as far as comparing a hash — required §1-9 fields missing or still holding template placeholders, or a root that is not a JSON object (operator-actionable: go and populate the artefact); `6` = `EXIT_INTEGRITY_FAILURE` — every required field was populated, the artefact carried a `metadata.manifest_hash`, and the recomputed hash disagrees with it (the document was edited after generation — treat as a security event); `2` = genuine runtime I/O failure on a reachable path (permission denied, mid-read I/O error). A file that is **not found**, is not a regular file, is malformed JSON, or is not valid UTF-8 exits `1`, not `2` — those are operator input errors, and the envelope is the 2-key `{"success": false, "error": "…"}` form in every case.
+
+## `forgelm verify-annex-iv --pipeline`
+
+Pipeline mode reads `<run_dir>/compliance/pipeline_manifest.json` and emits a **different, 12-key envelope**. It is the only surface that cross-checks the manifest against the audit log.
+
+```json
+{
+  "success": false,
+  "mode": "pipeline",
+  "path": "/work/checkpoints/pipeline_run",
+  "violations": ["[audit-log corroboration] unattested (audit_log_absent): …"],
+  "stages_total": 2,
+  "stages_examined": 2,
+  "evidence_verified": 2,
+  "evidence_unverified": 0,
+  "hash_state": "verified",
+  "status_census": {"completed": 2},
+  "stage_dispositions": [
+    {"index": 0, "name": "sft_stage", "status": "completed", "disposition": "examined"},
+    {"index": 1, "name": "dpo_stage", "status": "completed", "disposition": "examined"}
+  ],
+  "audit_corroboration": {
+    "outcome": "unattested",
+    "reason": "audit_log_absent",
+    "events_examined": 0,
+    "stages_asserted": 0
+  }
+}
+```
+
+| Key | Type | Notes |
+|---|---|---|
+| `success` | bool | `true` only when `violations` is empty. |
+| `mode` | str | Always `"pipeline"`. |
+| `path` | str | Absolute path of the run directory. |
+| `violations` | list[str] | Findings, with internal routing prefixes stripped. |
+| `stages_total` | int | Rows in the manifest — compare against `stages_examined`; a stage cannot be hidden by flipping its status without the census showing it. |
+| `stages_examined` | int | Stages whose Annex IV evidence was parsed. |
+| `evidence_verified` / `evidence_unverified` | int | Stage artefacts hash-checked vs. reached-but-unattested. |
+| `hash_state` | str | `"verified"` — the manifest matched its own stamp; `"absent"` — no `manifest_hash`, so nothing attested to it. |
+| `status_census` | object | `{status: count}` across all rows. |
+| `stage_dispositions` | list[object] | Per stage: `index`, `name`, `status`, `disposition`. |
+| `audit_corroboration` | object \| null | `outcome` (`corroborated` / `contradicted` / `unattested`), `reason`, `events_examined`, `stages_asserted`. `null` on pre-flight paths where no manifest was parsed. |
+
+**`audit_corroboration.outcome: "unattested"` is never a pass.** It means no keyed record backed the manifest's claims. With no `FORGELM_AUDIT_SECRET` set — or no audit log present — this is the outcome you get, and `hash_state: "verified"` alongside it means only "the file agrees with its own unkeyed stamp". Gate CI on `outcome == "corroborated"`, not on `hash_state`.
+
+**Exit code mapping (integrity first, so a weaker finding never masks a stronger one):** `0` = no violations; `6` = `EXIT_INTEGRITY_FAILURE` — a structural, chain-integrity or per-stage-evidence check failed; `2` = `EXIT_TRAINING_ERROR` — the manifest or a stage artefact exists but could not be read (retryable I/O); `1` = `EXIT_CONFIG_ERROR` — the manifest is absent or unparseable, **or** the verifier reached the evidence and nothing attested to it (including an `unattested` corroboration).
 
 ## `forgelm verify-gguf`
 
@@ -644,7 +748,9 @@ Wave 2b Phase 36 — GGUF model file integrity check.
 | `checks.metadata_parsed` | bool | `true` when the `gguf` metadata block was successfully parsed; `false` when the block is corrupted **OR** when the optional `gguf` package is absent / skipped. A `false` value alone does NOT force `valid: false` — corruption sets `reason` and rejects, but the absent-package case leaves `valid` unaffected. |
 | `checks.sidecar_present` | bool | `true` when `<path>.sha256` exists. |
 | `checks.sidecar_match` | bool \| null | `true` on byte-for-byte match; `false` on mismatch or malformed sidecar; `null` when no sidecar. A *malformed* sidecar (empty / non-hex / wrong-length) fails closed. |
+| `checks.metadata_error` | str | Present only when `metadata_parsed: false` — carries the parse exception (e.g. `"ValueError: Sorry, file appears to be version 0 which we cannot handle"`). This is the field that tells you whether a `metadata_parsed: false` is a too-old `gguf` package or genuine corruption. |
 | `reason` | str | One-line summary; carries the failure detail on `valid: false`. |
+| `path` | str | Absolute path of the verified file (top-level, alongside `checks`). |
 
 **Exit code mapping:** `0` = `valid: true`; `1` = `valid: false` with nothing actually compared — a magic-header mismatch (the file is not a GGUF at all: a file-type verdict, not a tamper verdict), a sidecar whose contents are not a 64-character hex digest (unusable, so the check fails closed), **or** a metadata-parse failure on a file whose SHA-256 sidecar *matched* (the checksum has proven the bytes are byte-identical to what was exported, so the likely cause is a `gguf` package too old for this file's format revision, not tampering); `6` = `EXIT_INTEGRITY_FAILURE` — a well-formed sidecar digest that disagrees (the file changed after export, and a checksum mismatch dominates even if the metadata block also failed to parse), or a metadata block that could not be parsed with no usable sidecar available to rule out corruption; `2` = genuine runtime I/O failure on a reachable path (permission denied, mid-read I/O error) — a file that is simply **not found** exits `1`, not `2`. The optional-`gguf`-package-missing path stays at `valid: true` + exit `0` (operator's "metadata check skipped" — the magic header + SHA-256 sidecar checks remain the load-bearing integrity surface).
 

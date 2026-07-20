@@ -14,10 +14,12 @@ ForgeLM is designed to slot cleanly into a CI/CD pipeline step. Every command ha
 | `0` | Success | Promote artifacts |
 | `1` | Configuration error | Fail; fix YAML before retry |
 | `2` | Training error | Fail; investigate crash / OOM / unhandled exception |
-| `3` | Auto-revert triggered | Fail; investigate regression |
+| `3` | Evaluation gate failed — with `auto_revert: true` the artefacts were deleted | Fail; investigate regression |
 | `4` | Awaiting human approval | Hold pipeline; trigger reviewer notification |
+| `5` | Wizard cancelled — no config was produced | Not an error; nothing to promote |
+| `6` | Integrity failure — an artefact was read and its hash comparison disagreed | Fail loudly; page the artefact owner. Do **not** promote or retry blindly |
 
-See [Exit Codes](#/reference/exit-codes) for the full contract.
+The public range is `0`–`6`. If your pipeline's `case` statement was written against an older 0–4 table, add branches for `5` and `6` — `6` in particular is the security-relevant one ("this artefact was modified after sign-off") and should never fall through to a generic default. See [Exit Codes](#/reference/exit-codes) for the full contract.
 
 ## GitHub Actions
 

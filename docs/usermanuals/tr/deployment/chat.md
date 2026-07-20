@@ -63,7 +63,7 @@ $ forgelm chat "Qwen/Qwen2.5-7B" --adapter ./checkpoints/run/
 
 ## Güvenlik routing'i
 
-> Not: `forgelm chat` üzerinde yerleşik `--safety` bayrağı v0.6.0+ Pro CLI için planlanmıştır ([GitHub'daki Phase 13 yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)). Mevcut sürüm chat REPL'inde her-tur güvenlik taramasını **desteklemez**: `forgelm chat`'in `--safety` bayrağı yoktur ve hiçbir YAML config okumaz (chat subcommand parser'ında doğrulanabilir, `forgelm/cli/_parser.py`). `evaluation.safety.enabled: true` config bloğu yalnızca eğitim pipeline'ının auto-revert güvenlik kapısı (`forgelm/trainer.py`) ve bağımsız `forgelm safety-eval` subcommand'ı tarafından okunur — chat REPL'i tarafından asla. Aşağıdaki snippet planlanan `--safety` UX'in önizlemesidir; bugün runnable bir komut DEĞİLDİR.
+> Not: `forgelm chat` üzerinde yerleşik `--safety` bayrağı gelecekteki bir Pro CLI sürümü için planlanmıştır ([GitHub'daki Phase 13 yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)). Mevcut sürüm chat REPL'inde her-tur güvenlik taramasını **desteklemez**: `forgelm chat`'in `--safety` bayrağı yoktur ve hiçbir YAML config okumaz (chat subcommand parser'ında doğrulanabilir, `forgelm/cli/_parser.py`). `evaluation.safety.enabled: true` config bloğu yalnızca eğitim pipeline'ının auto-revert güvenlik kapısı (`forgelm/trainer.py`) ve bağımsız `forgelm safety-eval` subcommand'ı tarafından okunur — chat REPL'i tarafından asla. Aşağıdaki snippet planlanan `--safety` UX'in önizlemesidir; bugün runnable bir komut DEĞİLDİR.
 
 Planlanan `--safety` bayrağı altında (yalnız önizleme — yukarıdaki nota bakın) her prompt ve yanıt Llama Guard tarafından taranır:
 
@@ -98,7 +98,7 @@ forgelm> /save sessions/qa-1.jsonl
 ```
 
 Kaydedilen JSONL, yeni bir oturumun prompt history'sine geri
-besleyerek tekrar oynatılabilir (replay tooling v0.6.0+ Pro CLI için
+besleyerek tekrar oynatılabilir (replay tooling gelecekteki bir Pro CLI sürümü için
 roadmap'tedir).
 
 Oturumlar şu durumlar için faydalı:
@@ -108,7 +108,7 @@ Oturumlar şu durumlar için faydalı:
 
 ## İki modeli karşılaştırma
 
-> Not: `chat-compare` subcommand'ı — judge hakemliğiyle interaktif, yan-yana chat-prompt karşılaştırması — v0.6.0+ Pro CLI katmanı için planlanmıştır ([GitHub'daki Phase 13 yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)). Bugün eşdeğeri yoktur: `forgelm --benchmark-only` (bkz. `forgelm/cli/_no_train_modes.py`) her seferinde **tek** bir checkpoint üzerinde lm-evaluation-harness benchmark'ları çalıştırır — yan-yana karşılaştırma veya judge hakemliği yapmaz. İki checkpoint'i şimdi karşılaştırmak için `--benchmark-only`'yi checkpoint başına bir kez çalıştırın, judge'ı ayrıca koşturun ve sonuçları kendiniz birleştirin. Aşağıdaki snippet planlanan UX'i önizler.
+> Not: `chat-compare` subcommand'ı — judge hakemliğiyle interaktif, yan-yana chat-prompt karşılaştırması — gelecekteki bir Pro CLI sürümü için planlanmıştır ([GitHub'daki Phase 13 yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)). Bugün eşdeğeri yoktur: `forgelm --benchmark-only` (bkz. `forgelm/cli/_no_train_modes.py`) her seferinde **tek** bir checkpoint üzerinde lm-evaluation-harness benchmark'ları çalıştırır — yan-yana karşılaştırma veya judge hakemliği yapmaz. İki checkpoint'i şimdi karşılaştırmak için `--benchmark-only`'yi checkpoint başına bir kez çalıştırın, judge'ı ayrıca koşturun ve sonuçları kendiniz birleştirin. Aşağıdaki snippet planlanan UX'i önizler.
 
 ```shell
 $ forgelm chat-compare ./checkpoints/v1 ./checkpoints/v2 --prompts data/probes.jsonl

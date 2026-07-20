@@ -102,16 +102,34 @@ ZeRO-3 sharding:
 
 ## Programatik API
 
-Dashboard veya otomasyon için:
+Dashboard veya otomasyon için. `estimate_vram` bir yol değil, **yüklenmiş bir config nesnesi** alır:
 
 ```python
-from forgelm.fit_check import estimate_peak_memory, available_memory
+from forgelm.config import load_config
+from forgelm.fit_check import estimate_vram
 
-estimate = estimate_peak_memory(config_path="configs/run.yaml")
-available = available_memory()
-print(f"Verdict: {estimate.verdict}")
-print(f"Peak: {estimate.peak_gb:.1f} GB / {available.total_gb:.1f} GB available")
+config = load_config("configs/run.yaml")
+result = estimate_vram(config)
+
+print(f"Verdict:   {result.verdict}")
+print(f"Estimated: {result.estimated_gb:.1f} GB")
+if result.available_gb is None:
+    print("Available: unknown (no CUDA device visible)")
+else:
+    print(f"Available: {result.available_gb:.1f} GB")
+for note in result.recommendations:
+    print(f"  - {note}")
 ```
+
+`FitCheckResult` alanları: `verdict`, `estimated_gb`, `available_gb`, `recommendations`, `breakdown`, `hypothetical`, `notes`. `forgelm.fit_check` ayrıca CLI'nın kullandığı insan-okunur render için `format_fit_check` dışa aktarır.
+
+:::warn
+**Görünür bir CUDA cihazı yoksa `available_gb` `None`'dır** ve `verdict` o zaman `UNKNOWN` olur — tahminci yine de `estimated_gb` hesaplayabilir, ama kıyaslayacak bir şeyi yoktur. Yukarıdaki gibi, biçimlendirmeden önce `None` kontrolü yapın; float varsayan bir dashboard herhangi bir CPU-only runner'da çöker.
+:::
+
+:::warn
+**`estimate_peak_memory` ve `available_memory` mevcut değildir.** Bu sayfanın önceki sürümleri her ikisini de, bir `config_path=` anahtar kelimesiyle ve `.peak_gb` / `.total_gb` nitelikleriyle birlikte belgeliyordu. Import doğrudan başarısız olur. Yukarıda listelenen alan adlarıyla `estimate_vram(config)` kullanın.
+:::
 
 ## --fit-check'in yanıldığı yerler
 

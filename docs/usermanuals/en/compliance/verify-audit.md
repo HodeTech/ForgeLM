@@ -97,8 +97,10 @@ The variable name is configurable; the default is `FORGELM_AUDIT_SECRET`.
 A chain break prints the 1-based line number:
 
 ```text
-FAIL at line 53: prev_hash mismatch — chain break suggests entry was inserted, removed, or reordered
+FAIL at line 4: chain broken at line 4: prev_hash='7429a5c8393163e6f50a4c4b50bb73221023754705f3db341e64175ddc4c20b7' expected='3aad1795cd0e0e1a4b79534e2f1d0b7e783525246f0176931c98196063c0afeb'
 ```
+
+The same `chain broken at line N` form covers an entry that was edited, inserted, removed, or reordered. When `FORGELM_AUDIT_SECRET` is set, an edit that leaves the chain intact is still caught by the per-line HMAC and reports `FAIL at line N: line N: HMAC mismatch`.
 
 Genesis-manifest failures are attributed to line 1 — the entry the manifest pins — so they also carry a line number:
 

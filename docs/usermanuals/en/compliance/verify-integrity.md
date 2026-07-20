@@ -1,6 +1,6 @@
 ---
 title: Verify Model Integrity
-description: Re-hash a trained model directory against its SHA-256 integrity manifest (model_integrity.json) to prove no artifact changed, was removed, or was added since training.
+description: Re-hash a trained model directory against its SHA-256 integrity manifest (model_integrity.json) to detect artifacts changed, removed, or added since training.
 ---
 
 # Verify Model Integrity
@@ -9,10 +9,18 @@ description: Re-hash a trained model directory against its SHA-256 integrity man
 
 ## When to use it
 
-- **Before deploying or shipping a trained model.** A clean `verify-integrity` exit proves the bytes you are about to serve are the bytes you trained and recorded.
+- **Before deploying or shipping a trained model.** A clean exit means every recorded artifact is byte-identical to what the manifest records — the check that catches a truncated download or a half-synced directory before it reaches production.
 - **After moving a model between machines or storage tiers.** Any silent corruption in transit surfaces as a changed/removed artifact.
 - **In CI/CD release gates.** Run after the compliance export; fail the release on a non-zero exit.
-- **As part of a periodic compliance sweep.** A scheduled re-verification of archived models surfaces tampering or bit-rot early.
+- **As part of a periodic compliance sweep.** A scheduled re-verification of archived models surfaces bit-rot and accidental overwrites early.
+
+:::warn
+**`model_integrity.json` is unkeyed — this is a corruption check, not a tamper-proof.** The manifest is a plain SHA-256 list with no signature and no HMAC. An attacker who can write the model directory can modify the weights, regenerate the manifest, and `verify-integrity` will report `OK: All 1 recorded artifact(s) present and unchanged.` and exit `0`. The verifier's own source states the threat model plainly: it is not adversarial.
+
+What a clean exit establishes: no accidental corruption, bit-rot, transit damage, or casual edit since the manifest was written. What it does **not** establish: that a party with write access did not deliberately substitute the weights.
+
+For real tamper-evidence you need the manifest to live somewhere the model directory's writer cannot reach — a detached signature, a write-once store (S3 Object Lock, ledger DB), or a separate artefact registry. Compare with the audit log, which *is* keyed: under `FORGELM_AUDIT_SECRET` each line carries an HMAC tag, so `verify-audit` catches an edit made by someone who does not hold the secret (exit `6`, `HMAC mismatch`). No equivalent key protects `model_integrity.json`.
+:::
 
 ## How it works
 
@@ -87,13 +95,15 @@ When an artifact no longer matches the manifest, the diff lists are populated an
 | Code | Meaning |
 |---|---|
 | `0` | Every recorded artifact is present and unchanged, and no extra files exist. |
-| `1` | Operator / input error — missing path, path is a file not a directory, manifest not found, malformed JSON, non-list `artifacts`, or a manifest entry path that escapes the model directory. Each of these returns before any artifact is hashed, so nothing was ever compared. |
+| `1` | Operator / input error — missing path, path is a file not a directory, manifest not found, malformed JSON, a manifest root that is not a JSON object, a missing `artifacts` key, a non-list `artifacts`, an **empty** `artifacts` list, a non-dict entry, a non-string `file` value, or a manifest entry path that escapes the model directory. Each of these returns before any artifact is hashed, so nothing was ever compared. |
 | `2` | Genuine runtime I/O failure on a reachable path (read error, permission denied mid-walk). |
 | `6` | Integrity mismatch — the manifest parsed and the walk ran, but at least one file was changed, removed, or added since the manifest was generated. |
 
 The runtime-error envelope (exit `2`) emits only `{"success": false, "error": "…"}` — branch on `success` first, then inspect `valid` and the diff lists.
 
 **Judgement call:** a manifest entry whose path escapes the model directory stays on `1`, not `6`, even though it's the shape of an attack — the verifier refuses to hash an out-of-tree path *before* reading anything, so nothing was compared.
+
+An **empty** `artifacts` list is on `1` for the same reason, with its own message: *"Manifest records 0 artifacts, so nothing was verified. An empty manifest cannot attest to anything; regenerate it from a populated model directory."* This arises non-adversarially from an interrupted export or a mistyped `final_path`, and it is exactly the case where a silent `0` would be most misleading.
 
 ## Common pitfalls
 

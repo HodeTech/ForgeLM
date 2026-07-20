@@ -75,7 +75,7 @@ SFT-özgü ayarlar standart `training` bloğuyla yan yanadır.
 
 | Parametre | Tip | Vars. | Açıklama |
 |---|---|---|---|
-| `training.learning_rate` | float | `2e-4` | LoRA: 1e-4 - 5e-4. Full-parametre: 1e-5 - 5e-5. |
+| `training.learning_rate` | float | `2e-5` | Şema varsayılanı full-parametre eğitimi için ayarlanmıştır (1e-5 - 5e-5). **LoRA koşuları bunu açıkça ayarlamalıdır** — 1e-4 - 5e-4 — yukarıdaki hızlı örnekte olduğu gibi. Atlanırsa LoRA 2e-5 ile eğitilir ve sessizce yetersiz eğitilmiş olur. |
 | `training.num_train_epochs` | int | `3` | Daha çok = daha çok ezberleme, daha az genelleme. |
 | `training.per_device_train_batch_size` | int | `4` | Cihaz başına. Etkili batch için `gradient_accumulation_steps` ile çarpın. |
 | `training.packing` | bool | `false` | Kısa dizileri throughput için paketle. %30-50 hız. |

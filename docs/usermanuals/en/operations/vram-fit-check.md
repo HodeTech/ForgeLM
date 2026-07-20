@@ -102,16 +102,34 @@ ZeRO-3 sharding:
 
 ## Programmatic API
 
-For dashboards or automation:
+For dashboards or automation. `estimate_vram` takes a **loaded config object**, not a path:
 
 ```python
-from forgelm.fit_check import estimate_peak_memory, available_memory
+from forgelm.config import load_config
+from forgelm.fit_check import estimate_vram
 
-estimate = estimate_peak_memory(config_path="configs/run.yaml")
-available = available_memory()
-print(f"Verdict: {estimate.verdict}")
-print(f"Peak: {estimate.peak_gb:.1f} GB / {available.total_gb:.1f} GB available")
+config = load_config("configs/run.yaml")
+result = estimate_vram(config)
+
+print(f"Verdict:   {result.verdict}")
+print(f"Estimated: {result.estimated_gb:.1f} GB")
+if result.available_gb is None:
+    print("Available: unknown (no CUDA device visible)")
+else:
+    print(f"Available: {result.available_gb:.1f} GB")
+for note in result.recommendations:
+    print(f"  - {note}")
 ```
+
+`FitCheckResult` fields: `verdict`, `estimated_gb`, `available_gb`, `recommendations`, `breakdown`, `hypothetical`, `notes`. `forgelm.fit_check` also exports `format_fit_check` for the human-readable rendering the CLI uses.
+
+:::warn
+**`available_gb` is `None` when no CUDA device is visible**, and `verdict` is then `UNKNOWN` — the estimator can still compute `estimated_gb`, but it has nothing to compare it against. Guard for `None` before formatting, as above; a dashboard that assumes a float crashes on any CPU-only runner.
+:::
+
+:::warn
+**`estimate_peak_memory` and `available_memory` do not exist.** Earlier versions of this page documented both, plus a `config_path=` keyword and the attributes `.peak_gb` / `.total_gb`. The import fails outright. Use `estimate_vram(config)` with the field names listed above.
+:::
 
 ## When --fit-check is wrong
 

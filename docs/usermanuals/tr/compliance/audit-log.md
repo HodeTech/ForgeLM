@@ -48,7 +48,6 @@ zincirine (ve genesis-manifest sidecar'ına) dayanır, sıra numaralarına deği
 | `compliance.artifacts_exported` | Annex IV bundle'ı (manifest + model card + audit zip) yazıldığında. |
 | `data.erasure_*` | `forgelm purge` yaşam döngüsünü kapsayan altı-event ailesi (Madde 17). |
 | `data.access_request_query` | `forgelm reverse-pii` çağrısı (GDPR Madde 15). |
-| `cli.legacy_flag_invoked` | Deprecated bir CLI flag'i kullanıldığında. |
 
 Tam event kataloğu (payload şeması ve emit yeri ile)
 [GitHub'daki Audit Event Kataloğu](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog-tr.md) altındadır.

@@ -506,7 +506,8 @@ def _add_audit_subcommand(subparsers) -> None:
             "tiers — feeding the EU AI Act Article 10 governance artifact when run inside a training "
             "output directory. Phase 12 added: --dedup-method minhash for MinHash LSH, --quality-filter "
             "for Gopher/C4-style heuristics, and an always-on secrets scan that surfaces "
-            "credential/key leakage in the audit report."
+            "credential/key leakage in the audit report. A critical secrets finding exits 3 "
+            "(evaluation-gate failure) so a CI step fails fast; --allow-secrets records without failing."
         ),
     )
     p.add_argument(
@@ -637,6 +638,19 @@ def _add_audit_subcommand(subparsers) -> None:
             "not row count — single-split corpora ignore values > 1.  The merge "
             "step is single-threaded so the audit JSON is byte-identical across "
             "worker counts (determinism contract pinned by the test suite)."
+        ),
+    )
+    p.add_argument(
+        "--allow-secrets",
+        action="store_true",
+        help=(
+            "Exit 0 even when the always-on secrets scan finds credentials. DEFAULT is to exit 3 "
+            "(evaluation-gate failure) so a CI pipeline stops before a leaked key is memorised by "
+            "the fine-tuned model. Pass this for the legitimate exceptions — auditing a corpus "
+            "before scrubbing it with `forgelm ingest --secrets-mask`, or a fixture set carrying "
+            "known dummy credentials. Findings are still detected, printed, written to "
+            "data_audit_report.json and flagged by a WARNING; only the exit code is suppressed. "
+            "The scan itself cannot be disabled."
         ),
     )
     _add_common_subparser_flags(p, include_output_format=True)

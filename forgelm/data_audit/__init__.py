@@ -124,6 +124,7 @@ from ._streaming import _read_jsonl_split  # noqa: F401 — re-export for tests
 # Summary renderer.
 from ._summary import (
     _build_pii_severity,  # noqa: F401 — re-export for tests
+    secrets_gate_verdict,
     summarize_report,
 )
 
@@ -168,4 +169,5 @@ __all__ = [
     "find_near_duplicates_minhash",
     "audit_dataset",
     "summarize_report",
+    "secrets_gate_verdict",
 ]

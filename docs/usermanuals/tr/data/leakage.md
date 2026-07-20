@@ -41,35 +41,46 @@ Her train satırı için ForgeLM kontrol eder:
 - Val/test'te **kesin eşleşme** (önemli her alan: `prompt`, `chosen`, `response` vb.).
 - Val/test'te **near-duplicate** (Hamming eşiği 3 simhash).
 
-Herhangi bir eşleşme raporlanır. `forgelm audit` başarılı tamamlanmada yine `0` ile çıkar — sızıntı oranına göre gate **yapmaz** (yalnızca girdi/config hatasında veya I/O hatasında sıfır-dışı çıkar). Sızıntı bulununca CI'ı başarısız kılmak için JSON raporunu `jq` ile dallandırın (bkz. [Veri Seti Denetimi](#/data/audit)).
+Herhangi bir eşleşme raporlanır. `forgelm audit` sızıntılı bir corpus'ta yine `0` ile çıkar — sızıntı oranına göre gate **yapmaz**. (Kapılayan tek bulgu, `3` ile çıkan tespit edilmiş bir credential'dır; girdi/config ve I/O hataları `1` ve `2` ile çıkar.) Sızıntı bulununca CI'ı başarısız kılmak için JSON raporunu `jq` ile dallandırın (bkz. [Veri Seti Denetimi](#/data/audit)).
 
 ## Hızlı örnek
 
 ```shell
-$ forgelm audit data/      # train.jsonl + val.jsonl + test.jsonl'ı denetler
-✗ split-arası örtüşme tespit edildi:
-   train ↔ val: 47 kesin, 12 near-dup
-   train ↔ test: 23 kesin, 5 near-dup
-   val ↔ test: 0
+$ forgelm audit data/      # train.jsonl + validation.jsonl + test.jsonl'ı denetler
+Data audit summary
+  Source        : /srv/corpora/support/data
+  Total samples : 360
+  Splits        : train, validation
+  └─ (2 clean split(s): train, validation — pass verbose=True to expand)
+  Cross-split leakage (simhash):
+    train__validation: leaked=284/57 rate=94.67%/95.00%
 
-Audit bu split'leri onaylamayı reddeder. Çift seviyesinde tam rapor disk üzerindeki audit JSON'da.
-
-exit kodu: 0
+Report written to: audit/data_audit_report.json
 ```
 
-Hatayı tetikleyen satır seviyesindeki çiftleri `jq` ile inceleyin:
+Exit kodu `0`'dır — sızıntı raporlanır, gate edilmez. Toplamları `jq` ile inceleyin:
 
 ```shell
-$ jq '.cross_split_overlap.pairs[]' audit/data_audit_report.json | head
-{"train": 1240, "val": 312, "type": "exact", "text": "Aboneliği nasıl iptal..."}
-{"train": 4521, "val": 890, "type": "near-dup", "hamming": 2}
+$ jq '.cross_split_overlap.pairs' audit/data_audit_report.json
+{
+  "train__validation": {
+    "leaked_rows_in_train": 284,
+    "leak_rate_train": 0.9467,
+    "leaked_rows_in_validation": 57,
+    "leak_rate_validation": 0.95
+  }
+}
 ```
+
+:::warn
+**Satır seviyesinde sızıntı tespiti yayınlanmaz.** `cross_split_overlap.pairs` split-çiftine göre anahtarlanır (`train__validation`) ve değerleri yalnızca toplam sayılar ve oranlardır. Satır indeksleri, eşleşen metin, `type` ve `hamming` alanı yoktur — bu sayfanın önceki sürümleri audit'in hiç üretmediği satır seviyesinde bir liste (`{"train": 1240, "val": 312, "type": "exact", "text": "Aboneliği nasıl iptal..."}`) gösteriyordu. İhlal eden belirli satırları bulmak için şu an bunları kendiniz türetmeniz gerekir; ör. her split'in metin alanını hash'leyip kesişimlerini alarak.
+:::
 
 ## Nasıl düzeltirsiniz
 
 1. **Veriyi yeniden bölün**, bu sefer kaynak seviyesinde gruplayarak (parafraz'ları bölmeyin, dokümanları gruplayın). Splitter'ınızda `--group-by` bayrağı kullanın.
 2. **Yeniden çıkarma** sızıntı tekrar ingest'ten geliyorsa (aynı FAQ iki kez ingest edilmiş).
-3. **Kaldırma** küçük split'ten sızdıran satırları manuel olarak — audit JSON zarfının `cross_split_overlap.pairs` haritası her ihlal eden satır id'sini split-çifti girdisi başına adlandırır (ör. `cross_split_overlap.pairs["train↔val"]`). `jq` ile süzüp çıkarın, sonra `forgelm audit`'i yeniden koşturarak zincirin temiz geçtiğini doğrulayın. v0.7.0'da otomatik kaldırma CLI bayrağı yoktur — açık `jq` adımı silmeyi denetlenebilir tutar.
+3. **Kaldırma** küçük split'ten sızdıran satırları manuel olarak. Audit raporu size split-çifti başına *kaç* satırın ve hangi oranda sızdığını söyler, ama *hangilerinin* sızdığını söylemez — bunları kendiniz belirlemeniz gerekir (her split'in metin alanını hash'leyip kesişim alın veya splitter'ınızı gruplama ile yeniden koşturun). Ardından `forgelm audit`'i yeniden koşturarak `leaked_rows_*` değerlerinin sıfıra düştüğünü doğrulayın. Otomatik kaldırma CLI bayrağı yoktur.
 
 ## Konfigürasyon
 

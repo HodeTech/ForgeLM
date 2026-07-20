@@ -40,6 +40,15 @@ $ forgelm --version
 $ forgelm --help
 ```
 
+`python -m forgelm …` is an equivalent entry point and accepts the same arguments:
+
+```shell
+$ python -m forgelm --version
+ForgeLM 0.9.1rc1
+```
+
+Reach for it when the `forgelm` console script is missing or shadowed — common in conda environments, CI images, and editable installs. It is also the form the project uses internally.
+
 ## Optional extras
 
 ForgeLM splits heavy or rarely-needed dependencies into extras so you don't pull them in unless you need them.
@@ -106,14 +115,19 @@ If you've installed ForgeLM for GPU training, confirm CUDA is wired up correctly
 $ forgelm doctor
 ```
 
-`forgelm doctor` reports a tabular pass / warn / fail diagnostic over:
+`forgelm doctor` reports a tabular pass / warn / fail diagnostic over 18 probes:
+- `forgelm.install` — the install itself is importable and coherent. This is the first row of real output and the one that catches a broken or half-upgraded install
 - Python version (>=3.10 floor; >=3.11 recommended)
 - torch + CUDA availability (CPU-only is a `warn`, not a `fail`)
+- `numpy.torch_abi` — the NumPy/torch ABI pair is compatible
 - GPU inventory (per-device VRAM in GiB)
-- Optional extras: `qlora`, `unsloth`, `distributed`, `eval`, `tracking`, `merging`, `export`, `ingestion`, `ingestion-pii-ml`, `ingestion-scale` — missing extras `warn` with the exact `pip install 'forgelm[<name>]'` hint
+- Optional extras: `qlora`, `unsloth`, `distributed`, `eval`, `tracking`, `export`, `ingestion`, `ingestion-pii-ml`, `ingestion-scale` — missing extras `warn` with the exact `pip install 'forgelm[<name>]'` hint
+- `pypdf_normalise.turkish` — Turkish text normalisation in the PDF ingestion path
 - HuggingFace Hub reachability (via `HF_ENDPOINT` if set; skipped under `--offline`)
 - Workspace disk space (<10 GiB → `fail`, <50 GiB → `warn`)
 - `FORGELM_OPERATOR` audit-identity hint (Article 12)
+
+There is deliberately **no `extras.merging` probe**. Model merging is implemented natively on the core `peft` + `torch` dependencies, so the `merging` extra is an empty no-op (`merging = []` in `pyproject.toml`) and has nothing to check. If you were looking for that row, its absence is correct and not a sign of a broken install.
 
 Pass `--output-format json` for a structured envelope (`{"success": bool, "checks": [...], "summary": {pass, warn, fail}}`); pass `--offline` for air-gap mode (skips the network probe and instead inspects the local HF cache).
 

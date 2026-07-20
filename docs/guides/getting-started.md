@@ -102,7 +102,7 @@ $ export HF_TOKEN="hf_xxxxx"   # or huggingface-cli login
 ### Step 5 — Generate a config and validate it
 
 ```shell
-$ forgelm quickstart customer-support
+$ forgelm quickstart customer-support --output configs/quickstart-customer-support.yaml
 $ forgelm --config configs/quickstart-customer-support.yaml --dry-run
 ```
 

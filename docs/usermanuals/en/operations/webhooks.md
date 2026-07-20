@@ -122,7 +122,7 @@ live outside ForgeLM.
 ## Common pitfalls
 
 :::warn
-**Webhook silently failing.** A 4xx response from the webhook endpoint shouldn't fail the training run, but ForgeLM also shouldn't silently swallow the error. Check `audit_log.jsonl` for `webhook_failed` events; investigate why your endpoint rejected.
+**Webhook silently failing.** A 4xx response from the webhook endpoint does not fail the training run — delivery is deliberately non-fatal. **Delivery failures are not written to the audit log**: `forgelm/webhook.py` reports every failure with a `logger.warning` on stderr and emits no audit event. There is no `webhook_failed` event (earlier versions of this page said to grep for one; it has never existed and is absent from the audit-event catalogue). Search your run's stderr or captured CI logs for `WARNING` lines from `forgelm.webhook` instead.
 :::
 
 :::warn

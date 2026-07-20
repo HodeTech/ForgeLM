@@ -336,7 +336,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/cli/_parser.py": _DeferredSplit(
-        budget=1332,
+        budget=1346,
         deferred_at_loc=1320,
         reason=(
             "Argparse wiring for the full CLI surface. Split candidates: _train, "
@@ -354,6 +354,14 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "one add_argument block in _add_safety_eval_subcommand; there is nowhere "
             "else an argparse flag can be declared. Pays down with the _inspect "
             "split already named above, which owns this subparser.",
+            "2026-07-20: 1332 -> 1346 (+14) for `audit --allow-secrets` plus the "
+            "one sentence in the audit subparser's description that tells an "
+            "operator the command can now fail. `forgelm audit` detected critical "
+            "credentials, printed 'Secrets : CRITICAL - N flagged' and exited 0, so "
+            "every CI credential-leak gate wired up per the docs was dead. Making it "
+            "exit 3 needs a named per-invocation opt-out for the audit-then-mask and "
+            "known-dummy-fixture workflows, and an argparse flag has no other home. "
+            "Pays down with the _data split (the audit subparser's owner).",
         ),
     ),
     "forgelm/cli/subcommands/_purge.py": _DeferredSplit(

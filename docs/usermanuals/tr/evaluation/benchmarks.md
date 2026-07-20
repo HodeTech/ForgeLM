@@ -11,6 +11,8 @@ ForgeLM, [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-har
 
 ```yaml
 evaluation:
+  auto_revert: true                      # aşağıdaki exit-3 davranışı için GEREKLİ;
+                                         # şema varsayılanı false
   benchmark:
     enabled: true
     tasks: ["hellaswag", "arc_easy", "truthfulqa", "mmlu"]
@@ -22,7 +24,13 @@ evaluation:
 
 Eğitimden sonra ForgeLM listelenen görevleri koşturur, ortalama skoru hesaplar ve:
 - Ortalama skor `min_score`'u karşılıyorsa veya aşıyorsa → koşu başarılı (exit 0)
-- Ortalama skor `min_score`'un altına düşerse → son-iyi checkpoint'e otomatik geri al, exit 3
+- Ortalama skor `min_score`'un altına düşerse → benchmark kapısı başarısız olur. Sonrasında ne olacağı `evaluation.auto_revert` değerine bağlıdır:
+  - `auto_revert: true` → eğitilen artefaktlar **silinir** ve koşu `3` (`EXIT_EVAL_FAILURE`) ile çıkar.
+  - `auto_revert: false` (**gönderilen varsayılan**) → hata audit log'una ve JSON `benchmark` bloğuna kaydedilir, ancak model yine de terfi ettirilir, pipeline güvenlik ve judge aşamalarına devam eder ve koşu `0` ile çıkar.
+
+:::warn
+**Gönderilen varsayılanlarda bir benchmark gerilemesi build'inizi başarısız kılmaz.** `EvaluationConfig.auto_revert` varsayılan olarak `False`'tur; dolayısıyla ortalama skor `min_score`'un altına düştüğünde bile `forgelm --config run.yaml` `0` ile çıkar — ve gerileyen model terfi ettirilir. Bu kapıyı CI'ya bağlıyorsanız `evaluation.auto_revert: true` ayarlayın (yukarıdaki örnekte olduğu gibi) veya `$?` yerine JSON zarfındaki `passed` alanına göre dallanın. "Geri alma"nın rollback değil silme anlamına geldiğini unutmayın — bkz. [Otomatik Geri Alma](#/evaluation/auto-revert).
+:::
 
 ## Desteklenen görevler
 

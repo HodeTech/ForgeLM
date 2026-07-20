@@ -75,7 +75,7 @@ The SFT-specific knobs live alongside the standard `training` block.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `training.learning_rate` | float | `2e-4` | LoRA: 1e-4 to 5e-4. Full-parameter: 1e-5 to 5e-5. |
+| `training.learning_rate` | float | `2e-5` | Schema default is tuned for full-parameter training (1e-5 to 5e-5). **LoRA runs should set this explicitly** — 1e-4 to 5e-4 — as the quick example above does. Omitting it trains a LoRA at 2e-5, which undertrains silently. |
 | `training.num_train_epochs` | int | `3` | More epochs = more memorisation, less generalisation. |
 | `training.per_device_train_batch_size` | int | `4` | Per-device. Multiply by `gradient_accumulation_steps` for effective batch. |
 | `training.packing` | bool | `false` | Pack short sequences together for throughput. Adds 30-50% speed. |

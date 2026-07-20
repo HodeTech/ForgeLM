@@ -57,19 +57,45 @@ ForgeLM ships with five starter templates that cover most real-world fine-tuning
 
 ```shell
 $ forgelm quickstart --list
-  customer-support     Multi-turn helpful + safe (SFT + DPO)
-  code-assistant       Code-completion fine-tune (SFT + ORPO)
-  domain-expert        PDF/DOCX corpus → domain Q&A (SFT)
-  medical-qa-tr        Turkish medical Q&A (SFT)
-  grpo-math            Step-by-step reasoning (GRPO)
+Available quickstart templates:
+
+  customer-support
+    Customer Support Assistant — Polite, brand-safe support replies. SFT on a tiny seed FAQ dataset.
+    primary=Qwen/Qwen2.5-7B-Instruct  fallback=HuggingFaceTB/SmolLM2-1.7B-Instruct  trainer=sft  ~15min  [x] bundled data
+
+  code-assistant
+    Code Assistant — Short code-question Q&A. SFT on a curated programming seed set.
+    primary=Qwen/Qwen2.5-Coder-7B-Instruct  fallback=Qwen/Qwen2.5-Coder-1.5B-Instruct  trainer=sft  ~25min  [x] bundled data
+
+  domain-expert
+    Domain Expert (BYOD — bring your own docs) — Empty data — pair with `forgelm ingest` (Phase 11) or a custom JSONL.
+    primary=Qwen/Qwen2.5-7B-Instruct  fallback=HuggingFaceTB/SmolLM2-1.7B-Instruct  trainer=sft  ~20min  [ ] user-supplied data
+
+  medical-qa-tr
+    Medical Q&A (Türkçe / Turkish) — Turkish medical-question SFT seed. Disclaimers baked in; not clinical advice.
+    primary=Qwen/Qwen2.5-7B-Instruct  fallback=Qwen/Qwen2.5-1.5B-Instruct  trainer=sft  ~15min  [x] bundled data
+
+  grpo-math
+    Math Reasoning via GRPO — Group Relative Policy Optimization on grade-school math problems.
+    primary=Qwen/Qwen2.5-Math-7B-Instruct  fallback=Qwen/Qwen2.5-Math-1.5B-Instruct  trainer=grpo  ~45min  [x] bundled data
 ```
 
-For your first run, pick `customer-support` — it's small, finishes in ~30 minutes on a 12 GB GPU, and exercises every feature (SFT, DPO, eval, safety, audit):
+For your first run, pick `customer-support` — it's the smallest and finishes in roughly 15 minutes on the primary model. It is an **SFT-only** run: four of the five templates use the `sft` trainer, and only `grpo-math` uses a different one (`grpo`). No bundled template runs a preference stage such as DPO or ORPO.
+
+Pass `--output` so the config lands at a stable, predictable path — the default is a timestamped directory (`./configs/<template>-<timestamp>/config.yaml`), which is fine but changes on every invocation:
 
 ```shell
-$ forgelm quickstart customer-support
-Wrote configs/quickstart-customer-support.yaml
+$ forgelm quickstart customer-support --output configs/quickstart-customer-support.yaml
+Template       : customer-support — Customer Support Assistant
+Model          : Qwen/Qwen2.5-7B-Instruct
+Dataset        : configs/customer-support.jsonl
+Generated YAML : configs/quickstart-customer-support.yaml
+Trainer        : sft
+Est. wall-clock: ~15 minutes on primary model
+Note           : copied seed dataset to configs/customer-support.jsonl
 ```
+
+On a machine with no GPU, quickstart automatically substitutes the smaller fallback model and says so on a `Selection :` line.
 
 The generated YAML is yours to keep, edit, and version-control. Open it.
 

@@ -26,27 +26,45 @@ flowchart LR
 ## Quick example
 
 ```shell
-$ forgelm audit data/preferences.jsonl --output ./audit/
-✓ format: preference (12,400 rows, 3 splits)
-⚠ PII: 12 emails, 3 phone, 1 IBAN (medium severity, see report)
-✓ secrets: 0 detected
-⚠ near-duplicate pairs: 47 (LSH-banded simhash, threshold 3)
-✗ chosen-rejected identical: 12 rows (likely collection bug)
-✓ language: 99.2% Turkish, 0.8% English
-✓ no cross-split leakage
+$ forgelm audit data/ --output ./audit/ --verbose
+Data audit summary
+  Source        : /srv/corpora/support/data
+  Total samples : 360
+  Splits        : train, validation
+  └─ train: n=300
+     length  min=71 max=117 mean=110.2 p95=117
+     near-duplicate pairs: 84
+     languages (top-3): tr=280, en=20
+     PII             : email=18
+  └─ validation: n=60
+     length  min=76 max=117 mean=110.1 p95=117
+     near-duplicate pairs: 3
+     languages (top-3): tr=57, en=3
+     PII             : email=4
+  PII severity   : worst tier = medium
+     by tier      : medium=22
+  Cross-split leakage (simhash):
+    train__validation: leaked=284/57 rate=94.67%/95.00%
 
-audit complete — see ./audit/data_audit_report.json
+Report written to: audit/data_audit_report.json
 ```
+
+Without `--verbose`, splits with no findings collapse to a single line (`└─ (2 clean split(s): train, validation — pass verbose=True to expand)`). Aggregate `Secrets` and `Quality` lines print only when those checks flag something.
 
 Exit codes from `forgelm audit`:
 
 | Exit | Meaning |
 |---|---|
-| `0` | Audit completed (regardless of findings — read the report). |
-| `1` | IO error (the input path does not exist or cannot be read). |
+| `0` | Audit completed and no critical finding gated it. |
+| `1` | IO error (the input path does not exist or cannot be read) — the audit never ran. |
 | `2` | Import error (a required optional extra is missing). |
+| `3` | The audit ran, wrote its report, and the **secrets gate failed** — at least one credential was detected. |
 
-`forgelm audit` does not exit non-zero based on the *severity* of what it finds. To gate CI on specific findings, pipe the JSON report through `jq` (see [What's in the report](#whats-in-the-report) below).
+**Secrets are the only finding that gates.** A detected credential exits `3` because a credential in training data is memorised by the model and re-emitted at inference time. Everything else — PII, cross-split leakage, near-duplicates, quality flags — is reported at exit `0`, however severe. Verified: a corpus carrying an AWS key exits `3`; a corpus with 95 % train/validation leakage and no credentials exits `0`.
+
+Pass `--allow-secrets` to record credential findings without failing the pipeline (exit `0` with a `SUPPRESSED` warning). Use it for the legitimate exceptions — auditing a corpus *before* scrubbing it with `forgelm ingest --secrets-mask`, or a fixture set carrying known dummy credentials.
+
+To gate CI on any of the non-gating findings, pipe the JSON report through `jq` (see [What's in the report](#whats-in-the-report) below).
 
 ## What audit checks
 
@@ -76,19 +94,15 @@ Uses `langdetect` to identify the dominant language per row. Reports top-3 acros
 
 ### Cross-split leakage
 
-Compares train vs validation vs test rows for exact and near-duplicate matches. The single most expensive evaluation bug — leakage means your reported metrics are inflated. Audit refuses to certify a leaky split. See [Cross-Split Leakage](#/data/leakage).
+Compares train vs validation vs test rows for exact and near-duplicate matches. The single most expensive evaluation bug — leakage means your reported metrics are inflated. Audit *reports* leakage; it does not block on it (see the exit-code table above). See [Cross-Split Leakage](#/data/leakage).
 
-### Format-specific checks
+### Schema and null checks
 
-For **preference** datasets, audit also flags:
-- Rows where `chosen == rejected` (collection bug)
-- Rows where `chosen` is shorter than `rejected` by more than 10× (likely accidental swap)
-- Empty `chosen` or `rejected`
+Audit records each split's `columns` and counts rows whose text payload is null or empty (`null_or_empty_count` / `null_or_empty_rate`).
 
-For **binary** (KTO) datasets:
-- Severe class imbalance (>99/1)
-- Empty responses
-- Non-boolean labels
+:::warn
+**There are no format-specific checks.** Earlier drafts of this page claimed audit flags `chosen == rejected` rows, `chosen`/`rejected` length skew, KTO class imbalance, and non-boolean labels. None of these exist — `grep -rn 'chosen' forgelm/data_audit/` returns nothing. Audit is format-agnostic: it concatenates each row's text fields and runs the PII, secrets, near-duplicate, quality, language and leakage scans over the result. Format *detection* happens separately at train time in `forgelm/data.py`, and the audit's text summary prints no `format:` line.
+:::
 
 ## CLI flags
 
@@ -117,43 +131,91 @@ Authoritative source: `forgelm/cli/_parser.py::_add_audit_subcommand`.
 
 ```json
 {
-  "format": "preference",
-  "row_count": 12400,
-  "splits": {"train": 10000, "val": 1200, "test": 1200},
-  "pii_summary": {
-    "email": 12,
-    "phone": 3,
-    "iban": 1,
-    "severity": "medium"
+  "generated_at": "2026-07-20T19:13:50.101922+00:00",
+  "source_path": "/srv/corpora/support/data",
+  "source_input": "data/",
+  "total_samples": 360,
+  "splits": {
+    "train": {
+      "sample_count": 300,
+      "columns": ["instruction", "output"],
+      "text_length": {"min": 71, "max": 117, "mean": 110.2, "p95": 117},
+      "languages_top3": {"tr": 280, "en": 20},
+      "pii_counts": {"email": 18},
+      "secrets_counts": {},
+      "near_duplicate_pairs": 84,
+      "simhash_distinct": 216,
+      "null_or_empty_count": 0,
+      "null_or_empty_rate": 0.0,
+      "quality_samples_evaluated": 300,
+      "quality_samples_flagged": 4
+    }
   },
-  "secrets_summary": {"total": 0},
-  "near_duplicate_pairs": 47,
-  "cross_split_overlap": 0,
+  "pii_summary": {"email": 22},
+  "pii_severity": {
+    "total": 22,
+    "by_tier": {"critical": 0, "high": 0, "medium": 22, "low": 0},
+    "by_type": {"email": {"count": 22, "tier": "medium"}},
+    "worst_tier": "medium"
+  },
+  "secrets_summary": {},
+  "near_duplicate_summary": {
+    "method": "simhash",
+    "pairs_per_split": {"train": 84, "validation": 3},
+    "hamming_threshold": 3
+  },
+  "cross_split_overlap": {
+    "method": "simhash",
+    "hamming_threshold": 3,
+    "pairs": {
+      "train__validation": {
+        "leaked_rows_in_train": 284,
+        "leak_rate_train": 0.9467,
+        "leaked_rows_in_validation": 57,
+        "leak_rate_validation": 0.95
+      }
+    }
+  },
   "quality_summary": {
-    "samples_flagged": 36,
-    "samples_evaluated": 12400,
-    "by_check": {
-      "low_alpha_ratio": 4,
-      "low_punct_endings": 8,
-      "abnormal_mean_word_length": 12,
-      "short_paragraphs": 5,
-      "repeated_lines": 7
-    },
-    "overall_quality_score": 0.997
+    "samples_flagged": 5,
+    "samples_evaluated": 360,
+    "by_check": {"low_punct_endings": 3, "short_paragraphs": 2},
+    "overall_quality_score": 0.9861
   },
-  "language_distribution": {"tr": 0.992, "en": 0.008}
+  "croissant": null,
+  "notes": []
 }
 ```
 
-CI integrations parse individual counts to gate merges. There is no `--strict` flag (see "Removed flags" above) and no `verdict` field in the report — wrap the JSON envelope with `jq`:
+:::warn
+**The on-disk report and the `--output-format json` stdout envelope are not the same shape.** They overlap but differ in both key names and membership — pin your CI against whichever one you actually read, and do not copy field names between them.
+
+| On-disk `data_audit_report.json` | stdout `--output-format json` |
+|---|---|
+| `cross_split_overlap` (object with `method` / `hamming_threshold` / `pairs`) | `cross_split_leakage_pairs` (list) |
+| `source_path` **and** `source_input` | `source_input` only |
+| — | `success`, `report_path`, `near_duplicate_pairs_per_split` |
+
+Both carry `total_samples`, `splits`, `pii_summary`, `pii_severity`, `secrets_summary`, `near_duplicate_summary`, `quality_summary`, `croissant`, `notes` and `generated_at`.
+:::
+
+`pii_summary` and `secrets_summary` are flat `{kind: count}` maps — there is no `total`, no `by_kind` and no `severity` key inside them. Severity lives in the separate `pii_severity` object, and `worst_tier` is the field a gate usually wants.
+
+CI integrations parse individual counts to gate merges. There is no `--strict` flag (see "Removed flags" above) and no `verdict` field in the report — wrap the JSON envelope with `jq`. Note the stdout key names:
 
 ```yaml
 # .github/workflows/data.yml
 - name: Audit data
   run: |
-    forgelm audit data/train.jsonl --output-format json > audit.json
-    jq -e '.cross_split_overlap == 0 and .pii_summary.severity != "high"' audit.json
+    forgelm audit data/ --output-format json > audit.json
+    jq -e '(.cross_split_leakage_pairs | length) == 0
+           and (.secrets_summary | length) == 0
+           and (.pii_severity.worst_tier // "none") != "high"' audit.json
 ```
+
+Verified against a real envelope: on a clean corpus this gate passes, and it fails on a corpus carrying a leaked AWS key or a high-tier PII type. The earlier form published here (`.cross_split_overlap == 0 and .pii_summary.severity != "high"`) referenced two keys that do not exist in the stdout envelope, so it evaluated `false` on *clean* input and could never go green.
+
+Note that the `secrets_summary` clause above is belt-and-braces: `forgelm audit` already exits `3` on a credential finding, so the step fails before `jq` runs unless you passed `--allow-secrets`. The clause that earns its keep is the leakage and PII pair, which the command itself does not gate on.
 
 ## Common pitfalls
 

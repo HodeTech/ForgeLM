@@ -260,26 +260,69 @@ Eğitim öncesi veri denetimi. Tam rapor; ana alanlar gösterildi.
 ```json
 {
   "success": true,
-  "report_path": "audit/data_audit_report.json",
-  "splits": {"train": {"sample_count": 100, "...": "..."}, "...": {}},
-  "pii_summary": {"total_findings": 0, "by_kind": {}},
-  "secrets_summary": {"total_findings": 0, "by_kind": {}},
-  "cross_split_overlap": {"pairs": {}},
-  "leakage": {"...": "..."},
-  "quality_summary": {"samples_evaluated": 100, "samples_flagged": 3, "by_check": {"...": "..."}},
-  "near_duplicates": {"...": "..."},
-  "languages_top3": [{"code": "en", "count": 87}],
-  "generated_at": "2026-05-04T12:34:56+00:00",
-  "warnings": []
+  "report_path": "/work/audit/data_audit_report.json",
+  "generated_at": "2026-07-20T16:13:19.426220+00:00",
+  "source_input": "/work/data/train.jsonl",
+  "total_samples": 3,
+  "splits": {"train": 3},
+  "pii_summary": {"email": 1, "us_ssn": 1},
+  "pii_severity": {
+    "total": 2,
+    "by_tier": {"critical": 0, "high": 1, "medium": 1, "low": 0},
+    "by_type": {"email": {"count": 1, "tier": "medium"}, "us_ssn": {"count": 1, "tier": "high"}},
+    "worst_tier": "high"
+  },
+  "secrets_summary": {"aws_access_key": 1},
+  "quality_summary": {
+    "samples_flagged": 3,
+    "samples_evaluated": 3,
+    "by_check": {"low_punct_endings": 3},
+    "overall_quality_score": 0.0
+  },
+  "near_duplicate_pairs_per_split": {"train": 0},
+  "near_duplicate_summary": {"method": "simhash", "pairs_per_split": {"train": 0}, "hamming_threshold": 3},
+  "cross_split_leakage_pairs": [],
+  "croissant": {},
+  "notes": ["WORST tier: HIGH. PII flags surfaced (2 total: email=1, us_ssn=1). …"]
 }
 ```
+
+| Anahtar | Tip | Not |
+|---|---|---|
+| `success` | bool | Denetimin **çalıştığını** bildirir. Corpus hakkında eksiksiz bir hüküm değildir — aşağıdaki uyarıya bakın. |
+| `report_path` | str | On-disk `data_audit_report.json`'un mutlak yolu. |
+| `source_input` | str | Denetlenen girdinin mutlak yolu. |
+| `total_samples` | int | Tüm split'ler boyunca incelenen satır sayısı. |
+| `splits` | object | `{split_adı: satır_sayısı}` — iç içe bir nesne değil, düz bir tam sayı haritası. |
+| `pii_summary` | object | Düz `{pii_türü: sayı}`, örn. `{"email": 1}`. `total_findings` / `by_kind` anahtarları **yoktur**. Temizken `{}`. |
+| `pii_severity` | object | `total`, `by_tier` (`critical`/`high`/`medium`/`low` sayıları), `by_type` ve `worst_tier`. **CI gate'inin isteyeceği alan `worst_tier`'dır** — hiçbir şey işaretlenmediğinde `null` olur. |
+| `secrets_summary` | object | Düz `{pattern_adı: sayı}`, örn. `{"aws_access_key": 1}`. Temizken `{}`. |
+| `quality_summary` | object | `samples_flagged`, `samples_evaluated`, `by_check` (`{kontrol_adı: sayı}`), `overall_quality_score`. |
+| `near_duplicate_pairs_per_split` | object | `{split_adı: çift_sayısı}`. |
+| `near_duplicate_summary` | object | `method` (`simhash`/`minhash`), `pairs_per_split` ve seçilen metodun eşik alanı. |
+| `cross_split_leakage_pairs` | list | Train/eval örtüşme çiftleri; temizken boş liste. |
+| `croissant` | object | `--croissant` geçildiğinde Croissant metadata'sı; aksi halde `{}`. |
+| `notes` | list[str] | İnsan tarafından okunabilir bulgular ve düzeltme ipuçları. |
 
 > **Faz 15 (v0.6.0) notu:** `quality_summary`, v0.6.0'dan itibaren default
 > olarak doldurulur çünkü audit'in `--quality-filter` bayrağı default-AÇIK'a
 > çevrildi. Atlamak için `--no-quality-filter` geçirin; o durumda alan `{}`
 > olur.
 
-Tam şema manuel içindeki [Veri Audit'i](#/data/audit) sayfasındadır. CI gate'leri için `report_path` (on-disk JSON'un yeri) + `success`'e karşı pin'leyin.
+:::warn
+**Yalnızca secret taraması gate uygular. Geri kalan her şey rapordur.** `forgelm audit`, her zaman açık olan secret taraması kimlik bilgisi bulduğunda `3` ile çıkar (başarısız olmadan kaydetmek için `--allow-secrets` geçirin). Ancak düz metin SSN, train/eval sızıntısı ya da bir yığın düşük kaliteli satır taşıyan ve **hiç** kimlik bilgisi içermeyen bir corpus `0` ile çıkar — doğrulandı: `worst_tier: "high"` seviyesinde `us_ssn` bulgusu olan iki satırlık bir corpus `0` döner.
+
+Yani `success: true` artı exit `0`, "corpus temiz" değil, "denetim tamamlandı ve secret bulunmadı" demektir. Diğer boyutlarda gate uygulamak için bu zarfı kendiniz parse etmelisiniz:
+
+```shell
+$ forgelm audit data/ --output-format json > audit.json   # secret'larda 3 ile çıkar
+$ jq -e '(.pii_severity.worst_tier // "none") != "high" and (.cross_split_leakage_pairs | length) == 0' audit.json
+```
+
+`pii_severity.worst_tier` temiz bir corpus'ta `null` olduğundan `// "none"` yedeği zorunludur — onsuz ifade `null` üzerinde değerlendirilir ve gate yanlış davranır.
+:::
+
+Tam şema manuel içindeki [Veri Audit'i](#/data/audit) sayfasındadır. **On-disk** `data_audit_report.json` ile bu **stdout** zarfının anahtar adları birebir aynı değildir — araçlarınızı hangisini gerçekten okuyorsa ona karşı pin'leyin.
 
 ## `forgelm ingest`
 
@@ -569,6 +612,7 @@ Wave 2b Phase 36 — bir model checkpoint'ine karşı standalone safety evaluati
   "classifier": "meta-llama/Llama-Guard-3-8B",
   "probes": "/work/probes.jsonl",
   "output_dir": "/work/eval",
+  "max_safety_regression": 0.05,
   "passed": true,
   "safety_score": 0.93,
   "safe_ratio": 0.95,
@@ -580,12 +624,20 @@ Wave 2b Phase 36 — bir model checkpoint'ine karşı standalone safety evaluati
 | Anahtar | Tip | Notlar |
 |---|---|---|
 | `success` | bool | `passed`'i yansıtır. `success: false` dispatcher crash anlamına gelmez — model safety gate'i geçemedi demektir. |
+| `max_safety_regression` | float | Hükmün karşısında üretildiği unsafe-ratio tavanı (`--max-safety-regression`, default `0.05`). `passed: false` okuyan bir tüketicinin `safe_ratio`'nun *hangi* sayıyla karşılaştırıldığını görebilmesi için zarfa yansıtılır. |
 | `passed` | bool | `safety_score` ve `safe_ratio` configured threshold'ları geçtiyse `true`. |
 | `safety_score` | float \| null | `forgelm.safety.run_safety_evaluation`'dan agregate skor. |
+| `safe_ratio` | float \| null | Sınıflandırıcının güvenli saydığı probe yanıtlarının oranı. |
 | `category_distribution` | object | Per-harm-category sayımları (`track_categories=False` ise boş). |
 | `failure_reason` | str \| null | `passed: false` durumunda `SafetyResult`'tan human-readable sebep. |
 
-**Exit kodu:** `0` = threshold'lar geçildi; `1` = dispatcher'ın ulaştığı config hatası (GGUF model yolu, probes dosyası eksik/okunamıyor); `2` = argparse kullanım hatası (eksik `--model`, `--probes`/`--default-probes` ikisinin de eksikliği ya da ikisinin birden verilmesi — ikisinden tam olarak biri zorunlu olduğundan argparse dispatcher çalışmadan önce exit 2 ile reddeder) **veya** runtime hatası (model load failure, classifier load failure, broken environment); `3` = `EXIT_EVAL_FAILURE` — evaluation tamamlandı ama safety gate hayır dedi (operator-actionable: re-train veya re-classify).
+**Exit kodu:** `0` = threshold'lar geçildi; `1` = dispatcher'ın ulaştığı config hatası (GGUF model yolu, probes dosyası eksik/okunamıyor); `2` = argparse kullanım hatası (eksik `--model`, `--probes`/`--default-probes` ikisinin de eksikliği ya da ikisinin birden verilmesi — ikisinden tam olarak biri zorunlu olduğundan argparse dispatcher çalışmadan önce exit 2 ile reddeder), runtime hatası (model load failure, classifier load failure, broken environment) **veya** hüküm üretemeyen bir evaluation (aşağıya bakın); `3` = `EXIT_EVAL_FAILURE` — evaluation tamamlandı ve safety gate hayır dedi (operator-actionable: re-train veya re-classify).
+
+:::warn
+**Exit `2` aynı zamanda "guard cevap veremedi" demektir — model hakkında kanıt değildir.** Sınıflandırıcı hiç yüklenemediğinde, probe dosyası kullanılabilir prompt vermediğinde ya da yanıtların fazla büyük bir kısmı skorlanmadan döndüğünde sonuç `evaluation_completed=False` taşır ve komut `3` yerine `2` ile çıkar. Bu bilinçlidir: `2`'de yeniden deneyip `3`'te deployment'ı bloklayan regüle bir pipeline, geçici bir Hub kesintisini "model safety gate'i geçemedi" diye ele almamalıdır.
+
+JSON zarfı `evaluation_completed` **taşımaz**; dolayısıyla şu an "bozuk guard" (`2`) ile "gate hayır dedi" (`3`) arasındaki tek ayırt edici process exit kodudur. `success`'e değil, `$?`'a dallanın. On-disk `safety_results.json` ve `safety_trend.jsonl` ise `evaluation_completed`'ı, `scored_unsafe_count` ve `unscored_count` ile birlikte taşır — bkz. [Safety Evaluation](#/evaluation/safety).
+:::
 
 ## `forgelm verify-annex-iv`
 
@@ -599,23 +651,75 @@ Wave 2b Phase 36 — EU AI Act Annex IV §1-9 artefact bütünlük kontrolü.
   "path": "/work/output/compliance/annex_iv_metadata.json",
   "valid": true,
   "missing_fields": [],
-  "manifest_hash_actual": "abcd1234...",
-  "manifest_hash_expected": "abcd1234...",
-  "manifest_hash_present": true,
-  "reason": ""
+  "manifest_hash_actual": "e06b780a91150b1c56e9094a43f273ddd1f308acac13e896ed26747d9085220d",
+  "manifest_hash_expected": "e06b780a91150b1c56e9094a43f273ddd1f308acac13e896ed26747d9085220d",
+  "reason": "All Annex IV §1-9 fields populated; manifest hash matches."
 }
 ```
 
 | Anahtar | Tip | Notlar |
 |---|---|---|
 | `valid` | bool | Tüm 9 §1-9 field'ı mevcutsa VE (`metadata.manifest_hash` mevcutsa) yeniden hesaplanan hash eşleşirse `true`. |
-| `missing_fields` | list[str] | Eksik / boş `_ANNEX_IV_REQUIRED_FIELDS`'ın isimleri. |
-| `manifest_hash_actual` | str \| null | Artefact-minus-metadata'nın yeniden hesaplanan canonical SHA-256'sı. |
-| `manifest_hash_expected` | str \| null | Artefact'in `metadata.manifest_hash` field'ından çıkarılan değer. |
-| `manifest_hash_present` | bool | Artefact hash taşımıyorsa `false` (eski export — verifier warning ile geçer). |
-| `reason` | str | `valid: true` ise boş; aksi halde tek-satır failure açıklaması. |
+| `missing_fields` | list[str] | Eksik / boş zorunlu field'lar. `system_identification` alt-field'ları için girdiler düz anahtar değil, **noktalı yol**'dur (`"system_identification.provider_name"`). |
+| `manifest_hash_actual` | str | Artefact-minus-metadata'nın yeniden hesaplanan canonical SHA-256'sı. **Çıplak hex, `sha256:` öneki yok**; yokken `null` değil `""` (boş string). |
+| `manifest_hash_expected` | str | Artefact'in `metadata.manifest_hash` field'ından çıkarılan değer. Aynı biçim. |
+| `path` | str | Doğrulanan artefact'in mutlak yolu. |
+| `reason` | str | Tek-satır hüküm — yalnızca hatada değil, başarıda da doldurulur. |
+
+> `manifest_hash_present` diye bir anahtar **yoktur**. Bu sayfanın eski taslakları böyle bir alan belgeliyordu; kod tabanının hiçbir yerinde emit edilmiyor. Kendiniz `manifest_hash_expected != ""` üzerinden türetin.
+
+:::warn
+`metadata.manifest_hash`, public bir fonksiyondan gelen **anahtarsız** bir SHA-256'dır. Eşleşen bir hash, artefact'in kendi damgasıyla iç tutarlı olduğu anlamına gelir — özgün olduğu anlamına gelmez. Dosyaya yazabilen herkes onu düzenleyip yeniden damgalayabilir; ardından bu zarf `"valid": true` raporlar. Tam tehdit modeli için bkz. [Annex IV Doğrulama](#/compliance/annex-iv).
+:::
 
 **Exit kodu:** `0` = `valid: true`; `1` = `valid: false` çünkü verifier bir hash karşılaştırmasına kadar hiç gelemedi — gerekli §1-9 field'ları eksik ya da hâlâ template placeholder tutuyor veya kök bir JSON nesnesi değil (operatör-aksiyonu: artefact'i doldurun); `6` = `EXIT_INTEGRITY_FAILURE` — gerekli her field doluydu, artefact bir `metadata.manifest_hash` taşıyordu ve yeniden hesaplanan hash onunla uyuşmuyor (belge üretimden sonra düzenlenmiş — güvenlik olayı olarak ele alın); `2` = erişilebilir bir yolda gerçek runtime I/O hatası (izin reddi, okuma ortasında I/O hatası). **Bulunamayan**, normal dosya olmayan, malformed JSON olan veya geçerli UTF-8 olmayan bir dosya `2` değil `1` ile çıkar — bunlar operatör girdi hatalarıdır ve zarf her durumda 2-anahtarlı `{"success": false, "error": "…"}` biçimindedir.
+
+## `forgelm verify-annex-iv --pipeline`
+
+Pipeline modu `<run_dir>/compliance/pipeline_manifest.json` dosyasını okur ve **farklı, 12 anahtarlı** bir zarf yayar. Manifest'i audit log'a karşı çapraz kontrol eden tek yüzey budur.
+
+```json
+{
+  "success": false,
+  "mode": "pipeline",
+  "path": "/work/checkpoints/pipeline_run",
+  "violations": ["[audit-log corroboration] unattested (audit_log_absent): …"],
+  "stages_total": 2,
+  "stages_examined": 2,
+  "evidence_verified": 2,
+  "evidence_unverified": 0,
+  "hash_state": "verified",
+  "status_census": {"completed": 2},
+  "stage_dispositions": [
+    {"index": 0, "name": "sft_stage", "status": "completed", "disposition": "examined"},
+    {"index": 1, "name": "dpo_stage", "status": "completed", "disposition": "examined"}
+  ],
+  "audit_corroboration": {
+    "outcome": "unattested",
+    "reason": "audit_log_absent",
+    "events_examined": 0,
+    "stages_asserted": 0
+  }
+}
+```
+
+| Anahtar | Tip | Notlar |
+|---|---|---|
+| `success` | bool | Yalnızca `violations` boşken `true`. |
+| `mode` | str | Bu yolda her zaman `"pipeline"`. |
+| `path` | str | Run dizininin mutlak yolu. |
+| `violations` | list[str] | Bulgular; dahili yönlendirme önekleri temizlenmiş olarak. |
+| `stages_total` | int | Manifest'teki satır sayısı — `stages_examined` ile karşılaştırın; bir stage, status'ü değiştirilerek rapordan gizlenemez, census bunu gösterir. |
+| `stages_examined` | int | Annex IV kanıtı parse edilen stage sayısı. |
+| `evidence_verified` / `evidence_unverified` | int | Hash'i kontrol edilen stage artefact'leri ile ulaşılıp doğrulanamayanlar. |
+| `hash_state` | str | `"verified"` — manifest kendi damgasıyla eşleşti; `"absent"` — `manifest_hash` yok, dolayısıyla hiçbir şey onu doğrulamadı. |
+| `status_census` | object | Tüm satırlar boyunca `{status: sayı}`. |
+| `stage_dispositions` | list[object] | Stage başına: `index`, `name`, `status`, `disposition`. |
+| `audit_corroboration` | object \| null | `outcome` (`corroborated` / `contradicted` / `unattested`), `reason`, `events_examined`, `stages_asserted`. Manifest parse edilmeyen ön-uçuş yollarında `null`. |
+
+**`audit_corroboration.outcome: "unattested"` asla bir geçiş değildir.** Manifest'in iddialarını destekleyen anahtarlı hiçbir kaydın bulunmadığı anlamına gelir. `FORGELM_AUDIT_SECRET` ayarlı değilken — ya da audit log mevcut değilken — alacağınız sonuç budur ve yanındaki `hash_state: "verified"` yalnızca "dosya kendi anahtarsız damgasıyla uyuşuyor" demektir. CI'ı `hash_state`'e değil, `outcome == "corroborated"` koşuluna göre gate'leyin.
+
+**Exit kodu eşlemesi (önce bütünlük; böylece zayıf bir bulgu güçlü olanı asla maskeleyemez):** `0` = ihlal yok; `6` = `EXIT_INTEGRITY_FAILURE` — yapısal, zincir-bütünlüğü veya stage-başına-kanıt kontrolü başarısız; `2` = `EXIT_TRAINING_ERROR` — manifest ya da bir stage artefact'i var ama okunamadı (yeniden denenebilir I/O); `1` = `EXIT_CONFIG_ERROR` — manifest yok veya parse edilemiyor, **ya da** verifier kanıta ulaştı ve hiçbir şey onu doğrulamadı (`unattested` corroboration dahil).
 
 ## `forgelm verify-gguf`
 
@@ -647,7 +751,9 @@ Wave 2b Phase 36 — GGUF model dosyası bütünlük kontrolü.
 | `checks.metadata_parsed` | bool | `gguf` metadata block başarıyla parse edildiyse `true`; block bozuksa **VEYA** opsiyonel `gguf` paketi yok / skipped ise `false`. Tek başına `false` değer `valid: false`'a zorlamaz — bozulma `reason`'ı set edip reddediyor, ama paket-eksik yolu `valid`'i etkilemiyor. |
 | `checks.sidecar_present` | bool | `<path>.sha256` mevcutsa `true`. |
 | `checks.sidecar_match` | bool \| null | Byte-for-byte eşleşmede `true`; mismatch veya malformed sidecar'da `false`; sidecar yoksa `null`. *Malformed* sidecar (empty / non-hex / yanlış uzunluk) fail-closed olur. |
+| `checks.metadata_error` | str | Yalnızca `metadata_parsed: false` iken bulunur — parse exception'ını taşır (örn. `"ValueError: Sorry, file appears to be version 0 which we cannot handle"`). Bir `metadata_parsed: false` durumunun fazla eski bir `gguf` paketinden mi yoksa gerçek bozulmadan mı kaynaklandığını söyleyen alan budur. |
 | `reason` | str | Tek-satır özet; `valid: false` durumunda failure detayını taşır. |
+| `path` | str | Doğrulanan dosyanın mutlak yolu (`checks` ile aynı seviyede, üst düzeyde). |
 
 **Exit kodu:** `0` = `valid: true`; `1` = `valid: false` ama aslında hiçbir şey karşılaştırılmadı — magic-header mismatch (dosya hiç GGUF değil: tamper verdict'i değil, dosya-tipi verdict'i), içeriği 64 karakterlik hex digest olmayan bir sidecar (kullanılamaz, bu yüzden fail-closed) **veya** SHA-256 sidecar'ı *eşleşen* bir dosyada metadata-parse hatası (checksum byte'ların export edilenle birebir aynı olduğunu kanıtladı; muhtemel neden bu dosyanın format revizyonu için fazla eski bir `gguf` paketi, tamper değil); `6` = `EXIT_INTEGRITY_FAILURE` — düzgün-formed bir sidecar digest'inin uyuşmaması (dosya export'tan sonra değişmiş; metadata block da parse edilemese bile checksum uyuşmazlığı baskındır) veya bozulmayı eleyecek kullanılabilir bir sidecar yokken parse edilemeyen metadata block'u; `2` = erişilebilir bir yolda gerçek runtime I/O hatası (izin reddi, okuma ortasında I/O hatası) — sadece **bulunamayan** bir dosya `2` değil `1` ile çıkar. Opsiyonel-`gguf`-paketi-eksik yolu `valid: true` + exit `0` olarak kalır (operatörün "metadata check skipped" durumu — magic header + SHA-256 sidecar checks load-bearing integrity yüzeyi olmaya devam eder).
 

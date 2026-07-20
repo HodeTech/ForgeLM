@@ -277,18 +277,26 @@
         <pre class="code-block-body">checkpoints/policy-bot/             <span class="comment"># training.output_dir from your YAML</span>
 ├── audit_log.jsonl                 <span class="comment"># Article 12 append-only event log</span>
 ├── audit_log.jsonl.manifest.json   <span class="comment"># SHA-256 sidecar over the audit log</span>
+├── data_audit_report.json          <span class="comment"># Article 10 quality/PII/bias scan — you place it here (see note)</span>
 ├── compliance/                     <span class="comment"># Annex IV bundle (Articles 9-17)</span>
 │   ├── annex_iv_metadata.json      <span class="comment"># Article 11 technical documentation (flat JSON)</span>
 │   ├── compliance_report.json      <span class="comment"># Full Article 9-17 manifest — superset of the per-artefact files</span>
 │   ├── training_manifest.yaml      <span class="comment"># Human-readable summary (model, data, params, final metrics)</span>
 │   ├── data_provenance.json        <span class="comment"># Data lineage extracted from the manifest (Article 10)</span>
 │   ├── risk_assessment.json        <span class="comment"># Article 9 risk-management output (when risk_assessment block is set)</span>
-│   ├── data_audit_report.json      <span class="comment"># Article 10 data governance — quality/PII/bias scan (forgelm audit)</span>
 │   └── data_governance_report.json <span class="comment"># Article 10 governance summary (sources, licenses)</span>
 └── final_model/                    <span class="comment"># PEFT adapter or merged weights</span>
     ├── README.md                   <span class="comment"># Article 13 model card (HuggingFace-compatible) — auto-generated</span>
     ├── deployer_instructions.md    <span class="comment"># Article 13 downstream-deployer guidance</span>
     └── model_integrity.json        <span class="comment"># SHA-256 over weights/adapter for Article 15</span>
+
+<span class="comment"># Note on data_audit_report.json: the training run does not produce it.</span>
+<span class="comment">#   `forgelm audit` writes it to --output DIR (default ./audit/). The trainer</span>
+<span class="comment">#   looks for it at training.output_dir and, when found, inlines it into</span>
+<span class="comment">#   compliance/data_governance_report.json as the Article 10 data-quality</span>
+<span class="comment">#   section. When absent the run still succeeds, but that section is dropped</span>
+<span class="comment">#   and a compliance.governance_section_missing event lands on the audit log.</span>
+<span class="comment">#   So: forgelm audit data/train.jsonl --output ./checkpoints/policy-bot/</span>
 </pre>
       </div>
     </div>

@@ -47,6 +47,10 @@ Bunlardan herhangi biri için `forgelm <subcommand> --help`.
 | `--offline` | Air-gap modu: tüm HF Hub ağ çağrılarını kapat. Modeller ve dataset'ler yerel olarak mevcut olmalı. |
 | `--benchmark-only MODEL_PATH` | Mevcut bir model üzerinde benchmark koştur, eğitim yok. `evaluation.benchmark` config'i gerektirir. |
 | `--merge` | Config'in `merge:` bloğundan model birleştirmeyi koştur. Eğitim yok. |
+| `--stage NAME` | Yalnızca çok aşamalı pipeline'lar: adı verilen tek bir stage'i izole koştur. İlk olmayan stage'ler önceki stage'in on-disk çıktısına ya da `--input-model` override'ına ihtiyaç duyar. |
+| `--resume-from NAME` | Yalnızca çok aşamalı pipeline'lar: kesintiye uğramış bir koşuya adı verilen stage'den itibaren devam et. `output_model` yolları diskte var olan tamamlanmış stage'ler atlanır. **On-disk `pipeline_config_hash` mevcut YAML'dan farklıysa çalışmayı reddeder** — `--force-resume` da verilmedikçe. |
+| `--force-resume` | Yalnızca çok aşamalı pipeline'lar: `--resume-from` bayat-config korumasını devre dışı bırak. WARNING seviyesinde loglanır ve audit event'ine kaydedilir. |
+| `--input-model PATH` | Yalnızca çok aşamalı pipeline'lar: `--stage` ile birlikte, otomatik zincirlenen input modeli bununla değiştirir. Audit girdisi `input_source: cli_override` kaydeder; böylece inceleyenler zincirin bilinçli olarak kırıldığını görür. |
 | `--generate-data` | Teacher modelle sentetik eğitim verisi üret. Eğitim yok. |
 | `--compliance-export OUTPUT_DIR` | EU AI Act uyum artifact'larını (audit trail, data provenance, Annex IV) OUTPUT_DIR'a export et. Manifest'in tamamlanması için eğitimden sonra koşturun. |
 | `--output DIR` | `--compliance-export` için çıktı dizini (varsayılan: `./compliance/`). |
@@ -183,14 +187,16 @@ Bkz. [Deploy Hedefleri](#/deployment/deploy-targets).
 
 ## Onaylar: `forgelm approvals` / `forgelm approve` / `forgelm reject`
 
+`--output-dir` üç alt komutta da **zorunludur** — onay zinciri ve `final_model.staging/` orada bulunur. Onu atlamak yardımcı bir varsayılana değil, argparse hatasına (exit `2`) yol açar:
+
 ```shell
-$ forgelm approvals --pending                        # bekleyen onay gate'lerini listele
-$ forgelm approvals --show RUN_ID                    # belirli bir koşunun chain + staging'ini incele
-$ forgelm approve  RUN_ID --comment "N. inceledi."   # final_model.staging/ → final_model/ promote
-$ forgelm reject   RUN_ID --comment "Sebep ..."      # reddi kaydet (staging adli inceleme için korunur)
+$ forgelm approvals --pending --output-dir ./checkpoints                        # bekleyen onay gate'lerini listele
+$ forgelm approvals --show RUN_ID --output-dir ./checkpoints                    # bir koşunun chain + staging'ini incele
+$ forgelm approve  RUN_ID --output-dir ./checkpoints --comment "N. inceledi."   # staging → final_model/ promote
+$ forgelm reject   RUN_ID --output-dir ./checkpoints --comment "Sebep ..."      # reddi kaydet (staging korunur)
 ```
 
-Bkz. [İnsan Gözetim Gate'i](#/compliance/human-oversight). Exit kodları: `0` = bekleyen liste / onay kaydedildi, `1` = bilinmeyen run_id / config hatası, `4` (sadece eğitim modu) = onay bekliyor.
+Bkz. [İnsan Gözetim Gate'i](#/compliance/human-oversight). Exit kodları: `0` = bekleyen liste / onay kaydedildi, `1` = bilinmeyen run_id / config hatası, `2` = argparse kullanım hatası (eksik `--output-dir` buraya düşer), `4` (sadece eğitim modu) = onay bekliyor.
 
 ## Audit log doğrula: `forgelm verify-audit`
 
@@ -201,6 +207,45 @@ $ forgelm verify-audit PATH/TO/audit_log.jsonl --require-hmac
 ```
 
 Monoton timestamp'leri, `prev_hash` zincir bütünlüğünü, `seq` boşluk tespitini ve (yapılandırıldığında) HMAC imzalarını doğrular. En az bir girdilik geçerli zincirde exit `0`; tahrif tespitinde (zincir kırılması, HMAC uyuşmazlığı, genesis-manifest uyuşmazlığı, ya da genesis manifest'i bir ilk girdi sabitleyen sıfır-girdili bir log) structured error envelope ile exit `6`; hiçbir şey karşılaştırılamadığında (eksik yol, secret olmadan `--require-hmac`, ya da genesis manifest'i olmayan sıfır-girdili bir log) exit `1`; gerçek bir runtime I/O hatasında exit `2`. Bkz. [Audit Log Doğrulama](#/compliance/verify-audit).
+
+## Annex IV doğrula: `forgelm verify-annex-iv`
+
+```shell
+$ forgelm verify-annex-iv PATH/TO/annex_iv_metadata.json
+$ forgelm verify-annex-iv PATH/TO/annex_iv_metadata.json --output-format json
+$ forgelm verify-annex-iv RUN_DIR --pipeline               # zincir düzeyinde doğrulama
+```
+
+Tek-artefakt modu dokuz Annex IV §1-9 alan kategorisini doğrular ve manifest hash'ini yeniden hesaplar. Geçerliyse exit `0`; zorunlu bir alan eksik ya da hâlâ template placeholder tutuyorsa (hiçbir şey karşılaştırılmadı) `1`; tüm alanlar doluyken manifest hash artık eşleşmiyorsa `6`; gerçek bir runtime I/O hatasında `2`.
+
+`--pipeline`, konumsal argümanı bir **run dizini** olarak yeniden yorumlar ve `<dizin>/compliance/pipeline_manifest.json` dosyasını doğrular — zincir bütünlüğü, stage-index sıralaması, `stopped_at` tutarlılığı, tamamlanmış her stage'in Annex IV kanıtının derin parse'ı ve stage census'ünün audit log'a karşı çapraz kontrolü. Kendi dört yönlü exit eşlemesiyle farklı, 12 anahtarlı bir zarf yayar: `0` temiz, `6` bütünlük hatası, `2` okunamayan artefact (yeniden denenebilir), `1` manifest yok/parse edilemiyor **ya da** kanıta ulaşıldı ama doğrulanmadı. Önce bütünlük değerlendirilir; böylece zayıf bir bulgu güçlü olanı maskeleyemez.
+
+Tek-artefakt modu audit log'a **bakmaz**; yalnızca `--pipeline` bakar. Bkz. [Annex IV Doğrulama](#/compliance/annex-iv).
+
+## Safety eval: `forgelm safety-eval`
+
+```shell
+$ forgelm safety-eval --model ./checkpoints/final_model --default-probes
+$ forgelm safety-eval --model ./checkpoints/final_model \
+    --probes probes.jsonl \
+    --classifier meta-llama/Llama-Guard-3-8B \
+    --output-dir ./eval \
+    --max-new-tokens 512 \
+    --max-safety-regression 0.05 \
+    --output-format json
+```
+
+| Bayrak | Açıklama |
+|---|---|
+| `--model PATH` | **Zorunlu.** HuggingFace Hub ID'si ya da yerel checkpoint dizini. GGUF desteklenmez — export öncesi HF checkpoint'ine karşı koşturun. |
+| `--probes JSONL` | Probe dosyası; her satır `{"prompt": ..., "category": ...}`. `--default-probes` ile karşılıklı dışlayıcıdır; tam olarak biri zorunludur. |
+| `--default-probes` | 18 zarar kategorisini kapsayan yerleşik 51 promptluk probe setini kullan. |
+| `--classifier PATH` | Zarar sınıflandırıcısı (varsayılan: `meta-llama/Llama-Guard-3-8B`). |
+| `--output-dir DIR` | Prompt-başına sonuçların + audit log'un yazılacağı yer (varsayılan: cwd). |
+| `--max-new-tokens N` | Yanıt başına üretilecek maksimum token (varsayılan: 512). |
+| `--max-safety-regression RATIO` | Koşunun gate'i geçemeden önce tolere edilen maksimum unsafe-yanıt oranı, `[0.0, 1.0]` aralığında (varsayılan: `0.05`). **Mutlak sınırdır, baseline'a göreli değil.** Aşılması exit `3` verir. Değer JSON zarfına `max_safety_regression` olarak yansıtılır; böylece exit `3`'e dallanan bir CI işi, kararı veren eşiği okuyabilir. |
+
+Exit kodları: `0` = geçti; `1` = dispatcher'ın ulaştığı config hatası; `2` = argparse kullanım hatası, runtime hatası **ya da** hüküm üretemeyen bir evaluation (`evaluation_completed=False` — model hakkında kanıt değildir); `3` = gate hayır dedi. Bkz. [Safety Evaluation](#/evaluation/safety) ve [JSON Çıktı Şemaları](#/reference/json-output).
 
 ## Model bütünlüğü doğrula: `forgelm verify-integrity`
 
@@ -289,19 +334,35 @@ $ forgelm --config configs/run.yaml --output-format json | tee run.log
 
 ### "Önce audit, temizse eğit"
 
+`forgelm audit` **yalnızca secret'lar üzerinden** gate uygular: her zaman açık olan kimlik-bilgisi taraması bir şey bulduğunda `3`, aksi halde `0` ile çıkar. Dolayısıyla kimlik-bilgisi durumu için `&&` doğru şekilde zincirlenir:
+
 ```shell
-$ forgelm audit data/
+$ forgelm audit data/           # kimlik-bilgisi taraması bir şey bulursa 3 ile çıkar
 $ forgelm --config configs/run.yaml
 ```
 
-İki komutu CI pipeline'ında sırayla çalıştırın; `forgelm audit` policy ihlalinde non-zero exit verir, dolayısıyla kirli corpus'ta ikinci komut tetiklenmez.
+Bunları ayrı `set -e` adımları olarak çalıştırın (ya da `&&` ile birleştirin); audit `3` ile çıktığında eğitim adımı atlanır.
+
+:::warn
+**PII, sızıntı ve kalite gate uygulamaz.** `worst_tier: "high"` seviyesinde düz metin SSN taşıyan ya da train/eval örtüşmesi olan bir corpus, içinde kimlik bilgisi bulunmadığı sürece `0` ile çıkar. Politikanız bunları da kapsıyorsa zarfı kendiniz parse edin:
+
+```shell
+$ forgelm audit data/ --output-format json > audit.json   # secret'larda 3 ile çıkar
+$ jq -e '(.pii_severity.worst_tier // "none") != "high" and (.cross_split_leakage_pairs | length) == 0' audit.json
+$ forgelm --config configs/run.yaml
+```
+
+`set -e` altında (ya da GitHub Actions'ın varsayılanında) başarısız olan `jq -e`, eğitim başlamadan işi durdurur. `pii_severity.worst_tier` temiz bir corpus'ta `null` olduğundan `// "none"` yedeğini koruyun. Tam zarf için bkz. [JSON Çıktı Şemaları](#/reference/json-output).
+:::
+
+Kimlik-bilgisi bulgularını başarısız olmadan kaydetmek için `--allow-secrets` geçirin — zaten bunları içerdiğini bildiğiniz bir corpus'u denetlediğiniz meşru durum için.
 
 ### "İnsan onay gate'iyle eğit; sonra promote et"
 
 ```shell
 $ forgelm --config configs/run.yaml                  # onay gate ateşlerse exit 4
-$ forgelm approvals --pending                        # bekleyen koşuyu keşfet
-$ forgelm approve RUN_ID --comment "İnceledim."      # staging'i promote et
+$ forgelm approvals --pending --output-dir ./checkpoints                     # bekleyen koşuyu keşfet
+$ forgelm approve RUN_ID --output-dir ./checkpoints --comment "İnceledim."   # staging'i promote et
 ```
 
 ### "Eğit, GGUF export et, Ollama'ya deploy et"

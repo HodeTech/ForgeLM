@@ -152,10 +152,10 @@ sequenceDiagram
     Guard-->>Eval: Kategori başına güven
     Eval->>Bench: Benchmark suite
     Bench-->>Eval: Görev başına doğruluk
-    alt Eşik aşıldı
+    alt Eşik aşıldı (auto_revert: true ile)
         Eval->>FL: Regresyon
-        FL->>FL: SFT checkpoint'e geri al
         FL->>Audit: Olay kaydı ekle
+        FL->>FL: DPO artefaktlarini sil (geri yukleme yok)
         FL-->>User: Exit 3 + yapılandırılmış rapor
     else Eşikler geçti
         FL->>Audit: Başarı kaydı

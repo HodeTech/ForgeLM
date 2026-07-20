@@ -166,10 +166,10 @@ sequenceDiagram
     Guard-->>Eval: Per-category confidence
     Eval->>Bench: Run benchmark suite
     Bench-->>Eval: Per-task accuracy
-    alt Any threshold violated
+    alt Any threshold violated (with auto_revert: true)
         Eval->>FL: Regression detected
-        FL->>FL: Restore SFT checkpoint
         FL->>Audit: Append incident record
+        FL->>FL: Delete DPO artefacts (no restore)
         FL-->>User: Exit 3 + structured report
     else All thresholds pass
         FL->>Audit: Append success record

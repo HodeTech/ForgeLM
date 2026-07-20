@@ -57,19 +57,45 @@ ForgeLM, gerçek-dünya fine-tuning senaryolarının çoğunu kapsayan beş baş
 
 ```shell
 $ forgelm quickstart --list
-  customer-support     Multi-turn helpful + safe (SFT + DPO)
-  code-assistant       Code-completion fine-tune (SFT + ORPO)
-  domain-expert        PDF/DOCX corpus → domain Q&A (SFT)
-  medical-qa-tr        Turkish medical Q&A (SFT)
-  grpo-math            Step-by-step reasoning (GRPO)
+Available quickstart templates:
+
+  customer-support
+    Customer Support Assistant — Polite, brand-safe support replies. SFT on a tiny seed FAQ dataset.
+    primary=Qwen/Qwen2.5-7B-Instruct  fallback=HuggingFaceTB/SmolLM2-1.7B-Instruct  trainer=sft  ~15min  [x] bundled data
+
+  code-assistant
+    Code Assistant — Short code-question Q&A. SFT on a curated programming seed set.
+    primary=Qwen/Qwen2.5-Coder-7B-Instruct  fallback=Qwen/Qwen2.5-Coder-1.5B-Instruct  trainer=sft  ~25min  [x] bundled data
+
+  domain-expert
+    Domain Expert (BYOD — bring your own docs) — Empty data — pair with `forgelm ingest` (Phase 11) or a custom JSONL.
+    primary=Qwen/Qwen2.5-7B-Instruct  fallback=HuggingFaceTB/SmolLM2-1.7B-Instruct  trainer=sft  ~20min  [ ] user-supplied data
+
+  medical-qa-tr
+    Medical Q&A (Türkçe / Turkish) — Turkish medical-question SFT seed. Disclaimers baked in; not clinical advice.
+    primary=Qwen/Qwen2.5-7B-Instruct  fallback=Qwen/Qwen2.5-1.5B-Instruct  trainer=sft  ~15min  [x] bundled data
+
+  grpo-math
+    Math Reasoning via GRPO — Group Relative Policy Optimization on grade-school math problems.
+    primary=Qwen/Qwen2.5-Math-7B-Instruct  fallback=Qwen/Qwen2.5-Math-1.5B-Instruct  trainer=grpo  ~45min  [x] bundled data
 ```
 
-İlk koşunuz için `customer-support` seçin — küçük, 12 GB GPU'da ~30 dakikada biter ve her özelliği egzersiz eder (SFT, DPO, eval, güvenlik, audit):
+(Çıktı yalnızca İngilizcedir.) İlk koşunuz için `customer-support` seçin — en küçüğüdür ve primary model üzerinde yaklaşık 15 dakikada biter. Bu **yalnızca SFT** olan bir koşudur: beş şablonun dördü `sft` trainer'ını kullanır, yalnızca `grpo-math` farklı bir trainer (`grpo`) kullanır. Hiçbir yerleşik şablon DPO veya ORPO gibi bir tercih (preference) aşaması çalıştırmaz.
+
+Config'in kararlı ve öngörülebilir bir yola inmesi için `--output` geçin — varsayılan, zaman damgalı bir dizindir (`./configs/<şablon>-<zaman-damgası>/config.yaml`); bu da sorunsuzdur ama her çağrıda değişir:
 
 ```shell
-$ forgelm quickstart customer-support
-Wrote configs/quickstart-customer-support.yaml
+$ forgelm quickstart customer-support --output configs/quickstart-customer-support.yaml
+Template       : customer-support — Customer Support Assistant
+Model          : Qwen/Qwen2.5-7B-Instruct
+Dataset        : configs/customer-support.jsonl
+Generated YAML : configs/quickstart-customer-support.yaml
+Trainer        : sft
+Est. wall-clock: ~15 minutes on primary model
+Note           : copied seed dataset to configs/customer-support.jsonl
 ```
+
+GPU'su olmayan bir makinede quickstart otomatik olarak daha küçük fallback modeli kullanır ve bunu bir `Selection :` satırında bildirir.
 
 Üretilen YAML sizin — saklayın, düzenleyin, version-control'e alın. Açın.
 

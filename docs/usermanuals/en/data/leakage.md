@@ -41,35 +41,46 @@ For every train row, ForgeLM checks:
 - **Exact match** in val/test (any field that matters: `prompt`, `chosen`, `response`, etc.).
 - **Near-duplicate** (Hamming threshold 3 simhash) in val/test.
 
-Any match is reported. `forgelm audit` still exits `0` on successful completion — it does **not** gate on a leakage rate (it only exits non-zero on an input/config error or an I/O failure). To fail CI when cross-split leakage is found, branch on the JSON report with `jq` (see [Dataset Audit](#/data/audit)).
+Any match is reported. `forgelm audit` still exits `0` on a leaky corpus — it does **not** gate on a leakage rate. (The only finding that gates is a detected credential, which exits `3`; input/config and I/O errors exit `1` and `2`.) To fail CI when cross-split leakage is found, branch on the JSON report with `jq` (see [Dataset Audit](#/data/audit)).
 
 ## Quick example
 
 ```shell
-$ forgelm audit data/      # audits train.jsonl + val.jsonl + test.jsonl
-✗ cross-split overlap detected:
-   train ↔ val: 47 exact, 12 near-dup
-   train ↔ test: 23 exact, 5 near-dup
-   val ↔ test: 0
+$ forgelm audit data/      # audits train.jsonl + validation.jsonl + test.jsonl
+Data audit summary
+  Source        : /srv/corpora/support/data
+  Total samples : 360
+  Splits        : train, validation
+  └─ (2 clean split(s): train, validation — pass verbose=True to expand)
+  Cross-split leakage (simhash):
+    train__validation: leaked=284/57 rate=94.67%/95.00%
 
-Audit refuses to certify these splits. The full pair-level report lives in the on-disk audit JSON.
-
-exit code: 0
+Report written to: audit/data_audit_report.json
 ```
 
-Inspect the per-row pairs that triggered the failure with `jq`:
+The exit code is `0` — leakage is reported, not gated. Inspect the aggregates with `jq`:
 
 ```shell
-$ jq '.cross_split_overlap.pairs[]' audit/data_audit_report.json | head
-{"train": 1240, "val": 312, "type": "exact", "text": "How do I cancel..."}
-{"train": 4521, "val": 890, "type": "near-dup", "hamming": 2}
+$ jq '.cross_split_overlap.pairs' audit/data_audit_report.json
+{
+  "train__validation": {
+    "leaked_rows_in_train": 284,
+    "leak_rate_train": 0.9467,
+    "leaked_rows_in_validation": 57,
+    "leak_rate_validation": 0.95
+  }
+}
 ```
+
+:::warn
+**Per-row leak identification is not emitted.** `cross_split_overlap.pairs` is keyed by split-pair (`train__validation`) and its values are aggregate counts and rates only. There are no row indices, no matched text, no `type` and no `hamming` field — earlier versions of this page showed a per-row listing (`{"train": 1240, "val": 312, "type": "exact", "text": "How do I cancel..."}`) that the audit has never produced. To find the specific offending rows you currently have to re-derive them yourself, e.g. by hashing the text field of each split and intersecting.
+:::
 
 ## How to fix it
 
 1. **Re-split the data**, this time grouping at the source level (don't split paraphrases, group documents). Use the `--group-by` flag in your splitter.
 2. **Re-extract** if leakage came from duplicate ingestion (the same FAQ ingested twice).
-3. **Remove** the leaked rows from the smaller split manually — the audit JSON envelope's `cross_split_overlap.pairs` map names every offending row id under each split-pair entry (e.g. `cross_split_overlap.pairs["train↔val"]`). Pipe through `jq` to strip them out, then re-run `forgelm audit` to confirm the chain re-passes. There is no auto-remove CLI flag in v0.7.0 — the explicit `jq` step keeps the deletion auditable.
+3. **Remove** the leaked rows from the smaller split manually. The audit report tells you *how many* rows leaked per split-pair and at what rate, but not *which* ones — you will need to identify them yourself (hash each split's text field and intersect, or re-run your splitter with grouping). Re-run `forgelm audit` afterwards to confirm `leaked_rows_*` drops to zero. There is no auto-remove CLI flag.
 
 ## Configuration
 

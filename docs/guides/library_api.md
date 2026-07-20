@@ -154,12 +154,14 @@ def scrub(record: dict) -> dict:
     text = record["text"]
     if detect_secrets(text):
         text = mask_secrets(text)
-    if detect_pii(text, language="en"):
-        text = mask_pii(text, language="en")
+    if detect_pii(text):
+        text = mask_pii(text)
     return {**record, "text": text}
 
 scrubbed = [scrub(r) for r in raw_records]
 ```
+
+All four take a single string and no language or locale argument — the patterns are one flat set with no locale dimension. `detect_pii` and `detect_secrets` return `Dict[str, int]` count maps (falsy when nothing was found, which is what the `if` above relies on); `mask_pii` replaces with `[REDACTED]` and `mask_secrets` with `[REDACTED-SECRET]`, both overridable via `replacement=`. Pass `return_counts=True` to either masker for a `(masked_text, counts)` tuple.
 
 ### Run the audit gate as an Airflow PythonOperator
 

@@ -102,7 +102,7 @@ $ export HF_TOKEN="hf_xxxxx"   # veya huggingface-cli login
 ### Adım 5 — Bir config üretin ve doğrulayın
 
 ```shell
-$ forgelm quickstart customer-support
+$ forgelm quickstart customer-support --output configs/quickstart-customer-support.yaml
 $ forgelm --config configs/quickstart-customer-support.yaml --dry-run
 ```
 

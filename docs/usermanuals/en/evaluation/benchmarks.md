@@ -11,6 +11,8 @@ ForgeLM integrates with [lm-evaluation-harness](https://github.com/EleutherAI/lm
 
 ```yaml
 evaluation:
+  auto_revert: true                      # REQUIRED for the exit-3 behaviour below;
+                                         # the schema default is false
   benchmark:
     enabled: true
     tasks: ["hellaswag", "arc_easy", "truthfulqa", "mmlu"]
@@ -22,7 +24,13 @@ evaluation:
 
 After training, ForgeLM runs the listed tasks, computes the mean score, and:
 - Mean score meets or exceeds `min_score` → run succeeds (exit 0)
-- Mean score falls below `min_score` → auto-revert to last-good checkpoint, exit 3
+- Mean score falls below `min_score` → the benchmark gate fails. What happens next depends on `evaluation.auto_revert`:
+  - `auto_revert: true` → the trained artefacts are **deleted** and the run exits `3` (`EXIT_EVAL_FAILURE`).
+  - `auto_revert: false` (**the shipped default**) → the failure is recorded in the audit log and the JSON `benchmark` block, but the model is still promoted, the pipeline continues to the safety and judge stages, and the run exits `0`.
+
+:::warn
+**A benchmark regression does not fail your build on the shipped defaults.** `EvaluationConfig.auto_revert` defaults to `False`, so `forgelm --config run.yaml` exits `0` even when the mean score falls below `min_score` — and the regressed model is promoted. If you are wiring this gate into CI, set `evaluation.auto_revert: true` (as the example above does), or branch on `passed` in the JSON envelope rather than on `$?`. Note that "revert" means deletion, not rollback — see [Auto-Revert](#/evaluation/auto-revert).
+:::
 
 ## Supported tasks
 

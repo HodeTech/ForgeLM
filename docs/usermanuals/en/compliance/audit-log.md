@@ -48,7 +48,6 @@ There is **no** `seq` field. Gap- and deletion-detection rest entirely on the
 | `compliance.artifacts_exported` | Annex IV bundle (manifest + model card + audit zip) written. |
 | `data.erasure_*` | Six-event family covering `forgelm purge` lifecycle (Article 17). |
 | `data.access_request_query` | `forgelm reverse-pii` invocation (GDPR Article 15). |
-| `cli.legacy_flag_invoked` | A deprecated CLI flag was used. |
 
 The full event catalog (with payload schema and emitting site) lives in the
 [Audit Event Catalog on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md).

@@ -12,12 +12,41 @@ Per-run thresholds catch regressions; trend tracking catches drift. A safety sco
 Every time `evaluation.safety.enabled: true` runs (during training or via the standalone `forgelm safety-eval` subcommand), ForgeLM appends one line to `safety_trend.jsonl` next to `safety_results.json`:
 
 ```json
-{"timestamp": "2026-04-29T14:33:04Z", "safety_score": 0.94, "safe_ratio": 0.96, "passed": true}
-{"timestamp": "2026-05-03T09:12:47Z", "safety_score": 0.91, "safe_ratio": 0.93, "passed": true}
-{"timestamp": "2026-05-10T16:45:02Z", "safety_score": 0.85, "safe_ratio": 0.88, "passed": false}
+{"timestamp": "2026-04-29T14:33:04Z", "safety_score": 0.94, "safe_ratio": 0.96, "passed": true, "scored_unsafe_count": 2, "unscored_count": 0, "evaluation_completed": true}
+{"timestamp": "2026-05-03T09:12:47Z", "safety_score": 0.91, "safe_ratio": 0.93, "passed": true, "scored_unsafe_count": 3, "unscored_count": 1, "evaluation_completed": true}
+{"timestamp": "2026-05-10T16:45:02Z", "safety_score": 0.85, "safe_ratio": 0.88, "passed": false, "scored_unsafe_count": 6, "unscored_count": 2, "evaluation_completed": true}
 ```
 
-Four fields, one line per run: `timestamp`, `safety_score`, `safe_ratio`, `passed`. There is no per-harm-category (`S5`, `S10`, ...) trend and no benchmark trend — `forgelm/benchmark.py` does not write a trend file at all; only the safety path does.
+Seven fields, one line per run:
+
+| Field | Meaning |
+|---|---|
+| `timestamp` | UTC ISO-8601 timestamp of the evaluation. |
+| `safety_score` | Aggregate score, rounded to 4 decimals. |
+| `safe_ratio` | Share of probes judged safe, rounded to 4 decimals. |
+| `passed` | Whether the run cleared its configured safety gates. |
+| `scored_unsafe_count` | Probes the classifier read **and** judged unsafe. |
+| `unscored_count` | Probes the classifier never produced a usable verdict for. |
+| `evaluation_completed` | `false` when the run produced no usable evidence about the model. |
+
+The last three are written whenever attribution telemetry is available, which is the normal path (`forgelm/safety/_results.py::_append_trend_entry`). Rows produced by library callers using the older four-argument signature omit them — treat them as absent rather than zero.
+
+There is no per-harm-category (`S5`, `S10`, ...) trend and no benchmark trend — `forgelm/benchmark.py` does not write a trend file at all; only the safety path does.
+
+### Reading `unscored_count`: classifier degradation vs model regression
+
+This is the distinction the three added columns exist to make, and `safety_score` alone cannot express it.
+
+- **`scored_unsafe_count` rising, `unscored_count` flat** — the classifier is reading your model's responses and increasingly disliking them. This is a genuine model regression.
+- **`unscored_count` rising, `scored_unsafe_count` flat** — the classifier is failing to return usable verdicts more often (an OOM in the guard, a truncated generation, a changed upstream checkpoint). Your model may be unchanged. A falling `safe_ratio` driven entirely by this reads as "the model is getting less safe" until you put the two columns side by side.
+- **`evaluation_completed: false`** — the run produced no usable evidence at all. Do not read `passed: false` on such a row as evidence about the model, and note that the training-time auto-revert is deliberately withheld in this case (see [Auto-Revert](#/evaluation/auto-revert)).
+
+A `jq` view that separates the two signals:
+
+```shell
+$ jq -r '"\(.timestamp) unsafe=\(.scored_unsafe_count // "n/a") unscored=\(.unscored_count // "n/a") completed=\(.evaluation_completed // "n/a")"' \
+    ./checkpoints/safety/safety_trend.jsonl | tail -20
+```
 
 ## Computing drift yourself
 
@@ -70,7 +99,7 @@ $ jq -c '.' ./checkpoints/safety/safety_trend.jsonl > safety-trend.ndjson
 
 ## Run identification
 
-`safety_trend.jsonl` rows carry only `timestamp`, `safety_score`, `safe_ratio`, and `passed` — there is no `run_id` or `config_hash` field to join against. If you need to correlate a trend row with a specific training run, cross-reference the `timestamp` against your own run log (or `audit_log.jsonl`'s `training_started` / `training_completed` events for that run) rather than expecting a built-in join key.
+`safety_trend.jsonl` rows carry no `run_id` and no `config_hash` field to join against. If you need to correlate a trend row with a specific training run, cross-reference the `timestamp` against your own run log (or `audit_log.jsonl`'s `training_started` / `training_completed` events for that run) rather than expecting a built-in join key.
 
 ```shell
 $ jq -r 'select(.passed == false) | .timestamp' ./checkpoints/safety/safety_trend.jsonl

@@ -221,12 +221,12 @@
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
         <h3 data-i18n="features.eval.lguard.title">Llama Guard safety</h3>
-        <p data-i18n="features.eval.lguard.body">Confidence-weighted scoring across 14 harm categories.</p>
+        <p data-i18n="features.eval.lguard.body">Verdicts across 14 harm categories, scored binary by default.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></div>
         <h3 data-i18n="features.eval.revert.title">Auto-revert</h3>
-        <p data-i18n="features.eval.revert.body">If thresholds fail, ForgeLM rolls back to the last-good checkpoint.</p>
+        <p data-i18n-html="features.eval.revert.body">With <code>evaluation.auto_revert: true</code>, a failed threshold makes ForgeLM delete the trained artefacts and exit 3. There is no rollback to an earlier checkpoint.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
@@ -241,7 +241,7 @@
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
         <h3 data-i18n="features.eval.safetyeval.title">Standalone safety eval</h3>
-        <p data-i18n-html="features.eval.safetyeval.body"><code>forgelm safety-eval</code> runs Llama Guard against a <code>--probes</code> JSONL prompt file (or <code>--default-probes</code> for the bundled 50-prompt set) and emits a per-category safety summary (<code>safety_results.json</code> + <code>safety_trend.jsonl</code>).</p>
+        <p data-i18n-html="features.eval.safetyeval.body"><code>forgelm safety-eval</code> runs Llama Guard against a <code>--probes</code> JSONL prompt file (or <code>--default-probes</code> for the bundled 51-prompt set covering 18 harm categories) and emits a per-category safety summary (<code>safety_results.json</code> + <code>safety_trend.jsonl</code>).</p>
       </div>
     </div>
   </div>

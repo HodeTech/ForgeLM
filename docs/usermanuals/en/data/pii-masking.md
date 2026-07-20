@@ -19,7 +19,8 @@ Personal data in your training set is a regulatory hazard (GDPR Article 5(1)(c) 
 | **National ID — Germany** | Steuer-ID | Format + checksum |
 | **National ID — France** | NIR (social security) | Format + key validation |
 | **US SSN** | `123-45-6789` | Format + reserved-block exclusions |
-| **IPv4 / IPv6** | `192.168.1.1`, `2001:db8::1` | Standard regex (off by default; opt in) |
+
+These eight are the complete set (`_PII_PATTERNS` in `forgelm/data_audit/_pii_regex.py`). **IP addresses are not detected** — earlier versions of this page listed an "IPv4 / IPv6 (off by default; opt in)" row, but no such pattern and no such opt-in exists. If your GDPR assessment treats IP addresses as personal data, you need a separate control for them.
 
 ## Quick example
 
@@ -33,28 +34,22 @@ $ forgelm ingest ./policies/ \
 ✓ masked 18 PII matches across 12,240 chunks
 ```
 
-After ingest, every match is replaced with a tagged placeholder:
+After ingest, every match is replaced with a placeholder:
 
 ```text
-Before: "Send your CV to ali@example.com or call +90 532 555 7890."
-After:  "Send your CV to [EMAIL_REDACTED] or call [PHONE_REDACTED]."
+Before: "Send your CV to ali@example.com or call +90 532 123 45 67."
+After:  "Send your CV to [REDACTED] or call [REDACTED] 67."
 ```
 
-The placeholder is consistent across the dataset, so a model can still learn that *some* email goes in that slot — just not the specific one.
+The placeholder is consistent across the dataset, so a model can still learn that *something* redacted goes in that slot — just not the specific value.
 
-## Tags emitted
+## The placeholder emitted
 
-| Tag | Replaces |
-|---|---|
-| `[EMAIL_REDACTED]` | Email addresses |
-| `[PHONE_REDACTED]` | Phone numbers |
-| `[CREDITCARD_REDACTED]` | Credit card numbers (Luhn-validated) |
-| `[IBAN_REDACTED]` | IBANs |
-| `[ID_TR_REDACTED]` | TC kimlik numbers |
-| `[ID_DE_REDACTED]` | Steuer-IDs |
-| `[ID_FR_REDACTED]` | NIR numbers |
-| `[SSN_REDACTED]` | US SSNs |
-| `[IP_REDACTED]` | IP addresses |
+:::warn
+**There is one placeholder, not one per category.** Every detected span — email, phone, credit card, IBAN, TC kimlik, Steuer-ID, NIR, US SSN — is replaced with the single literal `[REDACTED]`. Earlier versions of this page published a nine-row table of per-category tags (`[EMAIL_REDACTED]`, `[PHONE_REDACTED]`, `[IP_REDACTED]`, …). None of those strings exist anywhere in the codebase. A downstream consumer that parses redaction tags to recover *which* category was masked cannot do so — that information survives only in the audit report's `pii_summary` counts.
+:::
+
+The default is `[REDACTED]` (`mask_pii`'s `replacement` parameter). The parallel secrets masker uses `[REDACTED-SECRET]` — see [Secrets Scrubbing](#/data/secrets). Note in the example above that the phone pattern does not always consume the full number; verify masking against your own formats before relying on it.
 
 ## Conservative-by-design
 
@@ -102,25 +97,30 @@ For a Presidio ML-NER pass with a locale hint, pass `--pii-ml-language` to the C
 $ forgelm ingest ./corpus/ --pii-mask --output out.jsonl
 ```
 
-> **Note:** There is no `ingestion:` top-level block in the YAML config (`ForgeConfig` rejects unknown keys). Locale and category selection for the regex PII layer are available only via the programmatic API — `mask_pii(text, locale="de")` — or via CLI flags such as `--pii-ml-language de` for the Presidio ML-NER pass.
+> **Note:** There is no `ingestion:` top-level block in the YAML config (`ForgeConfig` rejects unknown keys), and there is no locale or category selection for the regex PII layer anywhere — not in YAML, not on the CLI, and not in the programmatic API. `_PII_PATTERNS` is a single flat dict with no locale dimension; every pattern is always active. The `--pii-ml-language` flag applies **only** to the optional Presidio ML-NER pass, not to the regex layer.
 
 ## Programmatic API
 
-For pipelines that need PII detection outside ingest:
+For pipelines that need PII detection outside ingest. Both functions take a single string:
 
 ```python
 from forgelm.data_audit import detect_pii, mask_pii
 
-text = "Email: ali@example.com, Phone: +90 532 555 7890"
-hits = detect_pii(text, locale="tr")
-print(hits)
-# [{'category': 'email', 'span': (7, 22), 'value': 'ali@example.com'},
-#  {'category': 'phone', 'span': (31, 47), 'value': '+90 532 555 7890'}]
+text = "Email: ali@example.com, Phone: +90 532 123 45 67"
+print(detect_pii(text))
+# {'email': 1, 'phone': 1}
 
-masked = mask_pii(text, locale="tr")
-print(masked)
-# Email: [EMAIL_REDACTED], Phone: [PHONE_REDACTED]
+print(mask_pii(text))
+# Email: [REDACTED], Phone: [REDACTED] 67
 ```
+
+Signatures: `detect_pii(text) -> Dict[str, int]` and `mask_pii(text, replacement='[REDACTED]', *, return_counts=False)`.
+
+:::warn
+**There is no `locale=` keyword.** `detect_pii(text, locale="tr")` raises `TypeError: detect_pii() got an unexpected keyword argument 'locale'`, and so does `mask_pii`. Earlier versions of this page documented both, along with a list-of-spans return shape (`[{'category': ..., 'span': ..., 'value': ...}]`) and per-category placeholders (`[EMAIL_REDACTED]` / `[PHONE_REDACTED]`). The real return is a flat `{kind: count}` map, and masking uses **one uniform placeholder** — `[REDACTED]` by default, overridable via `replacement=`. Row-level span extraction is not available.
+:::
+
+The eight detected pattern kinds are `credit_card`, `de_id`, `email`, `fr_ssn`, `iban`, `phone`, `tr_id`, `us_ssn`.
 
 ## Common pitfalls
 

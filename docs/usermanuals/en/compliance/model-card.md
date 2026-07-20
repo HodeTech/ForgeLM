@@ -11,128 +11,121 @@ EU AI Act Article 13 requires transparency: deployed AI systems must be accompan
 
 | Section | Source |
 |---|---|
-| **Model details** | `model.name_or_path`, training paradigm, version. |
-| **Intended use** | `compliance.intended_purpose`. |
-| **Out-of-scope use** | `compliance.risk_assessment.foreseeable_misuse`. |
-| **Training data** | Audit summaries from each `datasets:` entry. |
-| **Training procedure** | YAML config snapshot. |
-| **Evaluation** | `benchmark_results.json` summary. |
-| **Safety** | `safety_report.json` summary. |
-| **Limitations** | `compliance.risk_assessment.residual_risks`. |
-| **Citation** | Cites teacher model if synthetic data was used. |
-| **License** | From `compliance.license` field. |
+| **Front matter** | `language`, `tags` (`forgelm`, `fine-tuned`, `lora`, plus method/safety-derived extras), `base_model`. |
+| **Training Details** | `model.name_or_path`, backend, fine-tuning method, LoRA `r` / `alpha` / `target_modules`, DoRA flag, epochs, batch size, learning rate, max sequence length, quantization, dataset, training date. |
+| **Metrics** | The training metrics table (loss and friends). |
+| **Benchmark Results** | Per-task scores and the average — **omitted entirely** when no benchmark ran. |
+| **Safety Evaluation** | Scoring method, classifier, safety score, harm-category counts — **omitted entirely** unless `evaluation.safety.enabled`. |
+| **Configuration** | The full YAML config snapshot, with `auth`, `webhook`, `monitoring` and `synthetic` dropped and any residual secret-keyed values masked. |
+| **Usage** | A copy-paste `peft` + `transformers` load snippet, including the base-model revision pin when one is configured. |
 
-The output is a Markdown file at `checkpoints/run/README.md` ready to upload to HuggingFace Hub.
+The output is a Markdown file at `<training.output_dir>/final_model/README.md` — it lives with the model, not in the `compliance/` bundle, because it ships to the Hub alongside the weights.
+
+:::warn
+**The card is a training summary, not a governance document.** Earlier drafts of this page listed *Intended use*, *Out-of-scope use*, *Training data*, *Limitations*, *Citation* and *License* sections. None of those is emitted — the template has no such sections, and neither `compliance.intended_purpose` nor `compliance.known_limitations` reaches the card. Article 13 transparency narrative that a reviewer expects to read must be appended by hand (see [Manual additions](#manual-additions)) or taken from `annex_iv_metadata.json`, which *is* populated from the `compliance:` block.
+:::
 
 ## Sample output
 
-```markdown
-# Acme Customer Support v1.2.0
+Abridged from a real run (benchmark enabled, safety disabled):
 
-Customer-support assistant fine-tuned from Qwen2.5-7B-Instruct using ForgeLM 0.7.0.
+````markdown
+---
+language:
+- en
+tags:
+- forgelm
+- fine-tuned
+- lora
+- qlora
+base_model: meta-llama/Llama-3.1-8B-Instruct
+---
 
-## Model details
+# Llama-3.1-8B-Instruct_finetune
 
-- **Base model:** Qwen/Qwen2.5-7B-Instruct
-- **Fine-tuning paradigm:** SFT → DPO
-- **Parameter-efficient method:** QLoRA (rank 16, alpha 32, DoRA enabled)
-- **Trained:** 2026-04-29
-- **Languages:** Turkish, English
-- **License:** Apache 2.0
+Fine-tuned with [ForgeLM](https://github.com/HodeTech/ForgeLM) — config-driven LLM fine-tuning toolkit.
 
-## Intended use
+## Training Details
 
-Multilingual customer-support assistant for telecom. Deployed within
-authenticated user sessions to answer billing, plan, and technical
-support questions.
+| Parameter | Value |
+|-----------|-------|
+| Base Model | `meta-llama/Llama-3.1-8B-Instruct` |
+| Backend | transformers |
+| Fine-Tuning Method | QLoRA (4-bit) |
+| LoRA Rank (r) | 8 |
+| LoRA Alpha | 16 |
+| DoRA | False |
+| Target Modules | q_proj, v_proj |
+| Epochs | 3 |
+| Batch Size | 4 |
+| Learning Rate | 2e-05 |
+| Max Sequence Length | 2048 |
+| Quantization | 4-bit NF4 |
+| Dataset | `your_dataset_here` |
+| Training Date | 2026-07-20 |
 
-## Out-of-scope use
+## Metrics
 
-This model is **not** intended for:
-- Customer impersonation in social engineering attacks.
-- Generation of fraudulent invoices.
-- Use outside Turkish/English language pairs.
-- Use without authentication or rate limiting.
+| Metric | Value |
+|--------|-------|
+| eval_loss | 0.9134 |
+| train_loss | 0.8421 |
 
-## Training data
+## Benchmark Results
 
-- 12,400 preference rows (`data/preferences.jsonl`)
-  - Audit verdict: warnings (12 PII medium-severity flags, masked at ingest)
-  - Cross-split overlap: 0
-  - Language distribution: 99.2% TR, 0.5% EN
-
-## Training procedure
-
-Full configuration in `config_snapshot.yaml`. Highlights:
-
-- Trainer: `dpo`
-- Beta: 0.1
-- Learning rate: 5e-6
-- Epochs: 1
-- Batch size: 2 (effective 32 with accumulation)
-
-## Evaluation
-
-| Task | Score | Floor | Verdict |
-|---|---|---|---|
-| hellaswag | 0.617 | 0.55 | pass |
-| truthfulqa | 0.482 | 0.45 | pass |
-| arc_easy | 0.74 | 0.70 | pass |
-
-## Safety
-
-Llama Guard 3 8B scoring across S1–S14:
-
-- All blocked categories (S1, S2, S5, S10) within 0.05 of pre-train baseline.
-- No category at high severity.
-
-Full report in `artifacts/safety_report.json`.
-
-## Limitations
-
-- Adversarial jailbreaks against system prompt may occasionally succeed.
-- Performance degrades on dialogue turns longer than 4096 tokens.
-- Model was trained on Turkish-English bilingual data only — no support
-  for other languages.
-
-## Compliance
-
-- EU AI Act: Annex IV technical documentation in `artifacts/annex_iv_metadata.json`
-- GDPR: PII masked at ingest; no training data retains identifiable subjects
-- Audit log: `artifacts/audit_log.jsonl`
-
-For commercial use, see `LICENSE`.
-
-## Citation
-
-If you use this model, please cite:
-
-```
-@misc{acme2026,
-  title  = {Acme Customer Support v1.2.0},
-  author = {Acme Corp},
-  year   = {2026},
-  note   = {Fine-tuned with ForgeLM 0.7.0}
-}
-```
-```
+| Task | Score |
+|------|-------|
+| arc_easy | 0.7400 |
+| hellaswag | 0.6170 |
+| **Average** | **0.6785** |
 
 ## Configuration
 
-Model card generation is automatic after every successful run — there is no YAML knob to enable or disable it. There is no `output:` top-level config block in ForgeLM; adding one will be rejected by Pydantic validation (`extra="forbid"`). If you need to customise the card template, check the current schema in `forgelm/config.py` for the actual field name before documenting it.
+This model was trained using the following ForgeLM YAML configuration:
+
+```yaml
+model:
+  name_or_path: meta-llama/Llama-3.1-8B-Instruct
+  max_length: 2048
+  load_in_4bit: true
+  ...
+```
+
+## Usage
+
+```python
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+base_model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.1-8B-Instruct")
+model = PeftModel.from_pretrained(base_model, "./checkpoints/final_model")
+tokenizer = AutoTokenizer.from_pretrained("./checkpoints/final_model")
+```
+
+---
+*Generated by ForgeLM v0.9.1rc1*
+````
+
+With `evaluation.safety.enabled: true`, a `## Safety Evaluation` section appears after the benchmark table carrying the scoring method, the classifier, the safety score and per-harm-category counts. Both the benchmark and safety sections are omitted entirely — not rendered empty — when their feature did not run.
+
+## Configuration
+
+Model card generation is automatic after every successful run — there is no YAML knob to enable or disable it, and no template-customisation field. There is no `output:` top-level config block in ForgeLM; adding one will be rejected by Pydantic validation (`extra="forbid"`).
+
+Secrets are stripped from the embedded config snapshot in two layers: the `auth`, `webhook`, `monitoring` and `synthetic` sections are dropped wholesale, and any residual secret-keyed value in what remains is masked as `***REDACTED***`.
 
 ## Manual additions
 
-The default model card covers what ForgeLM can auto-determine. For manual additions (acknowledgements, custom warnings), append a `## Notes` section to the generated `README.md` after the run. The audit log treats this as a `model_card_amended` event.
+The default model card covers what ForgeLM can auto-determine. For manual additions (acknowledgements, intended-use narrative, custom warnings), append your own sections to the generated `README.md` after the run. ForgeLM does not observe or record such edits — there is no `model_card_amended` audit event, so keep amendments under your own version control if you need an audit trail for them.
 
 ## Common pitfalls
 
 :::warn
-**Stale model cards from previous runs.** Each run overwrites `README.md`. If you've manually edited the previous version, those edits are lost. For amendments that should persist across runs, add them to the `compliance.notes` YAML field instead.
+**Stale model cards from previous runs.** Each run overwrites `README.md`. If you've manually edited the previous version, those edits are lost. There is no `compliance.notes` field to carry them forward — keep amendments in your own repository and re-apply them after each run, or generate the card into a scratch location and merge.
 :::
 
 :::warn
-**Forgetting `compliance.license`.** Without it, the auto-generated card shows "License: not specified", which fails most internal review processes. Set the license explicitly.
+**Expecting a `license:` line.** ForgeLM emits no license field — there is no `compliance.license` config key (`ComplianceMetadataConfig` has exactly seven fields: `provider_name`, `provider_contact`, `system_name`, `system_version`, `intended_purpose`, `known_limitations`, `risk_classification`), and adding one fails `--dry-run` with exit `1` under `extra="forbid"`. Add the `license:` key to the card's front matter by hand before publishing to the Hub.
 :::
 
 :::tip

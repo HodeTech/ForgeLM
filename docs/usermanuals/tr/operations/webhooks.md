@@ -123,7 +123,7 @@ payload zaten curated), ve routing hepsi ForgeLM'in dışında yaşar.
 ## Sık hatalar
 
 :::warn
-**Webhook sessiz başarısız.** Webhook endpoint'inden 4xx yanıtı eğitimi başarısız etmemeli ama ForgeLM hatayı sessizce yutmamalı. `audit_log.jsonl`'da `webhook_failed` olaylarına bakın; endpoint'inizin neden reddettiğini araştırın.
+**Webhook sessiz başarısız.** Webhook endpoint'inden gelen 4xx yanıtı eğitim koşusunu başarısız kılmaz — teslimat bilinçli olarak ölümcül değildir. **Teslimat hataları audit log'a yazılmaz**: `forgelm/webhook.py` her hatayı stderr'e bir `logger.warning` ile bildirir ve hiçbir audit olayı yaymaz. `webhook_failed` diye bir olay yoktur (bu sayfanın önceki sürümleri böyle bir olayı aramanızı söylüyordu; hiç var olmadı ve audit olay kataloğunda da bulunmuyor). Bunun yerine koşunuzun stderr çıktısında veya yakalanan CI log'larında `forgelm.webhook` kaynaklı `WARNING` satırlarını arayın.
 :::
 
 :::warn
