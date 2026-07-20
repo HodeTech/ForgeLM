@@ -77,6 +77,7 @@ import hashlib
 import json
 import os
 import re
+from collections import Counter
 from typing import Any, Dict, List, Tuple
 
 # ---------------------------------------------------------------------------
@@ -177,7 +178,15 @@ def verify_annex_iv_artifact(path: str) -> VerifyAnnexIVResult:
     """
     with open(path, "r", encoding="utf-8") as fh:
         artifact = json.load(fh)
+    return verify_annex_iv_payload(artifact)
 
+
+# Split out of ``verify_annex_iv_artifact`` so a caller holding an already-open
+# file can reuse the verdict logic without a second ``open()``.  The chain
+# verifier needs exactly that: it enforces a byte cap, and a cap that stats one
+# handle then opens another is not a cap at all.  See ``_read_capped_json``.
+def verify_annex_iv_payload(artifact: Any) -> VerifyAnnexIVResult:
+    """Verify an already-parsed Annex IV artefact."""
     if not isinstance(artifact, dict):
         return VerifyAnnexIVResult(
             valid=False,
@@ -344,7 +353,25 @@ _LEGACY_POINTER_FIXED_IN = (0, 9, 1)
 # match is treated as *not* legacy, which is the conservative direction: it
 # routes a missing artefact to a violation rather than to the softer
 # compatibility path.
-_VERSION_RE = re.compile(r"^\s*(\d+)\.(\d+)\.(\d+)")
+#
+# Only the leading *release triple* is compared, so a pre-release, dev, post
+# or local segment of X.Y.Z is X.Y.Z and is never "older" than X.Y.Z.  This is
+# deliberate and load-bearing: ``packaging.Version("0.9.1rc1") < "0.9.1"`` is
+# ``True``, so a Version-based gate would hand every manifest written by an
+# rc build the compatibility path meant only for archived releases.
+#
+# ``[0-9]`` and ``re.ASCII`` rather than ``\d``: ``\d`` is Unicode-aware, so
+# Arabic-Indic digits ("٠.٩.٠") parsed and were classified
+# legacy.  A version string is ASCII by construction; anything else is
+# unparseable and takes the conservative branch.
+_VERSION_RE = re.compile(r"^\s*([0-9]+)\.([0-9]+)\.([0-9]+)", re.ASCII)
+
+# ``forgelm/_version.py``'s sentinel for a raw-source checkout that was never
+# pip-installed.  It parses to (0, 0, 0) and would therefore be classified as
+# the *oldest possible* release — precisely backwards, since it denotes a
+# current working tree, not an archived pre-0.9.1 run.  Carved out explicitly
+# so an uninstalled checkout does not unlock the softer path.
+_DEV_VERSION_SENTINEL = "0.0.0+dev"
 
 # Per-stage outcome tokens.  Callers route on these, never on message prose.
 EVIDENCE_VERIFIED = "verified"
@@ -357,6 +384,36 @@ HASH_STATE_VERIFIED = "verified"
 HASH_STATE_MISMATCH = "mismatch"
 HASH_STATE_ABSENT = "absent"
 
+# Every not-completed status a stage can legitimately hold, mapped to why it
+# was not deep-parsed.  Published per stage so each manifest row appears in the
+# report with a stated reason instead of being silently omitted.
+_DISPOSITION_BY_STATUS = {
+    "pending": "not_applicable:pending",
+    "running": "not_applicable:running",
+    "failed": "not_applicable:failed",
+    "gated_pending_approval": "not_applicable:gated",
+    "skipped_by_filter": "not_applicable:filtered",
+    "skipped_due_to_prior_revert": "not_applicable:chain_broken",
+}
+
+# The complete, closed set of status tokens any ForgeLM version has ever
+# written — the six above plus "completed".  Derived rather than restated so
+# the two cannot drift apart.  Mirrors
+# ``forgelm.cli._pipeline.StageStatusLiteral``; ``tests/`` pins them together
+# (a module-level import back would close an import cycle, as everywhere else
+# in this file).
+#
+# Anything outside this set is a violation, not a stage to skip.  A verifier
+# that silently ignores statuses it does not recognise lets an adversary
+# *choose* a token to be ignored by: flip "completed" to "skipped" — a value no
+# writer emits — and the stage, with its now-deleted evidence, drops out of the
+# report entirely.
+_KNOWN_STAGE_STATUSES = frozenset(_DISPOSITION_BY_STATUS) | {"completed"}
+
+# Dispositions for stages that were examined or refused.
+_DISPOSITION_UNKNOWN_STATUS = "violation:unrecognised_status"
+_DISPOSITION_PASSED_NOT_COMPLETED = "violation:gate_passed_but_not_completed"
+
 
 class PipelineEvidenceReport:
     """Aggregate verdict over a pipeline manifest's per-stage evidence.
@@ -368,7 +425,7 @@ class PipelineEvidenceReport:
     reproducing, and the only defence is publishing the count.
     """
 
-    __slots__ = ("violations", "stages_examined", "evidence_verified", "evidence_unverified", "hash_state")
+    __slots__ = ("violations", "stages_examined", "evidence_verified", "evidence_unverified", "hash_state", "stages")
 
     def __init__(self, *, hash_state: str = HASH_STATE_ABSENT) -> None:
         self.violations: List[str] = []
@@ -376,14 +433,84 @@ class PipelineEvidenceReport:
         self.evidence_verified = 0
         self.evidence_unverified = 0
         self.hash_state = hash_state
+        # One row per stage the manifest carries, each with a disposition.
+        # ``stages_examined`` alone cannot distinguish "this chain had one
+        # stage" from "this chain had two and one was made to disappear";
+        # the published total and per-status census can.  Both are derived
+        # from this list in ``to_dict`` so there is a single source of truth.
+        self.stages: List[Dict[str, Any]] = []
+
+    def record_stage(self, *, name: Any, index: int, status: Any, disposition: str) -> None:
+        """Record one manifest stage row and why it was or was not examined."""
+        key = status if isinstance(status, str) and status else f"<{type(status).__name__}>"
+        label = name if isinstance(name, str) else "<unnamed>"
+        self.stages.append({"index": index, "name": label, "status": key, "disposition": disposition})
 
     def to_dict(self) -> Dict[str, Any]:
+        census = Counter(row["status"] for row in self.stages)
         return {
+            "stages_total": len(self.stages),
             "stages_examined": self.stages_examined,
             "evidence_verified": self.evidence_verified,
             "evidence_unverified": self.evidence_unverified,
             "hash_state": self.hash_state,
+            "status_census": dict(sorted(census.items())),
+            "stage_dispositions": list(self.stages),
         }
+
+
+# A zero-byte artefact would otherwise surface as a generic JSONDecodeError
+# ("Expecting value: line 1 column 1").  It gets its own exception because
+# "the evidence file is empty" is a materially different — and far more
+# legible — finding than "the JSON is malformed".
+class _EmptyFileError(Exception):
+    """Raised by :func:`_read_capped_json` for a zero-byte file."""
+
+
+class _OversizeError(Exception):
+    """Raised past the byte cap; carries the size so callers can name it."""
+
+    def __init__(self, size: int) -> None:
+        super().__init__(f"{size} bytes")
+        self.size = size
+
+
+# The size check MUST come from ``os.fstat`` on the open descriptor, not from
+# a separate ``os.path.getsize`` — the rule
+# ``compliance.compute_dataset_fingerprint`` already follows.  Under
+# stat-then-open the file that was measured and the file that is read are two
+# different observations: a payload can be small at the stat and arbitrarily
+# large at the read, so the cap that exists to stop the verifier being killed
+# by its own input is bypassed outright.  Stating the open descriptor closes
+# that window — the bytes measured are the bytes read.
+#
+# The bounded ``read(cap + 1)`` is a second, independent guard: it rejects an
+# over-cap payload even when fstat under-reports (a growing file, or a path
+# where st_size is not authoritative).  The fstat is the correctness fix; the
+# bounded read is what makes the cap true regardless of what the descriptor
+# claims about itself.
+#
+# Binary mode so that read counts *bytes*.  In text mode ``read(n)`` counts
+# decoded characters, so a multibyte UTF-8 payload could satisfy a character
+# budget while carrying several times the byte cap.  The explicit decode
+# leaves behaviour unchanged: invalid UTF-8 still raises UnicodeDecodeError,
+# which every caller already routes.
+def _read_capped_json(path: str, cap: int) -> Any:
+    """Open *path* once, enforce *cap* on that same handle, then parse.
+
+    Raises :class:`_OversizeError` past the cap and :class:`_EmptyFileError`
+    on a zero-byte file; otherwise propagates what ``json.load`` would.
+    """
+    with open(path, "rb") as fh:
+        size = os.fstat(fh.fileno()).st_size
+        if size > cap:
+            raise _OversizeError(size)
+        raw = fh.read(cap + 1)
+        if len(raw) > cap:
+            raise _OversizeError(len(raw))
+    if not raw:
+        raise _EmptyFileError()
+    return json.loads(raw.decode("utf-8"))
 
 
 def _resolve_stage_evidence_path(pointer: str, pipeline_dir: str) -> Tuple[str, str]:
@@ -472,7 +599,12 @@ def _manifest_predates_pointer_fix(manifest: Dict[str, Any] | None) -> bool:
     """
     if not isinstance(manifest, dict):
         return False
-    match = _VERSION_RE.match(str(manifest.get("forgelm_version") or ""))
+    raw = str(manifest.get("forgelm_version") or "").strip()
+    if raw == _DEV_VERSION_SENTINEL:
+        # A raw-source checkout is a *current* build whose version string
+        # merely sorts lowest.  Not legacy.
+        return False
+    match = _VERSION_RE.match(raw)
     if not match:
         return False
     return tuple(int(part) for part in match.groups()) < _LEGACY_POINTER_FIXED_IN
@@ -548,29 +680,27 @@ def _verify_stage_evidence(
         else:
             return _missing_evidence_outcome(label, manifest)
 
+    # Size cap and parse share ONE open descriptor: a stat on one handle
+    # followed by an open of another measures a file that need not be the
+    # file that gets read.  See ``_read_capped_json``.
     try:
-        size = os.path.getsize(path)
-    except OSError as exc:
-        return EVIDENCE_IO_ERROR, f"evidence at {label!r} could not be stat'd: {exc}"
-    if size == 0:
-        return EVIDENCE_VIOLATION, f"evidence at {label!r} is zero bytes"
-    if size > STAGE_EVIDENCE_MAX_BYTES:
+        artifact = _read_capped_json(path, STAGE_EVIDENCE_MAX_BYTES)
+    except _OversizeError as exc:
         return (
             EVIDENCE_VIOLATION,
-            f"evidence at {label!r} is {size} bytes, over the {STAGE_EVIDENCE_MAX_BYTES}-byte cap — refused unread",
+            f"evidence at {label!r} is {exc.size} bytes, over the {STAGE_EVIDENCE_MAX_BYTES}-byte cap — refused unread",
         )
-
-    try:
-        result = verify_annex_iv_artifact(path)
+    except _EmptyFileError:
+        return EVIDENCE_VIOLATION, f"evidence at {label!r} is zero bytes"
     except json.JSONDecodeError as exc:
         return EVIDENCE_VIOLATION, f"evidence at {label!r} is not valid JSON: {exc.msg} (line {exc.lineno})"
     except UnicodeDecodeError as exc:
         return EVIDENCE_VIOLATION, f"evidence at {label!r} is not valid UTF-8: {exc}"
     except RecursionError:
         # A deeply-nested document exhausts the interpreter stack inside
-        # json.load well under the byte cap (~100 KB of nested arrays is
+        # json.loads well under the byte cap (~100 KB of nested arrays is
         # enough), and RecursionError is neither an OSError nor a ValueError,
-        # so it escaped every handler above and killed the verifier with a raw
+        # so it escaped every handler and killed the verifier with a raw
         # traceback and no envelope.  Same class as unparseable JSON: the
         # artefact was reached and is not usable evidence.
         return (
@@ -579,6 +709,10 @@ def _verify_stage_evidence(
         )
     except OSError as exc:
         return EVIDENCE_IO_ERROR, f"evidence at {label!r} is unreadable: {exc}"
+
+    # Pure, already-parsed payload: raises none of the I/O or decode errors
+    # handled above, so it needs no handlers of its own.
+    result = verify_annex_iv_payload(artifact)
 
     if not result.valid:
         # Deliberate divergence from the standalone verifier: an
@@ -632,11 +766,54 @@ def verify_pipeline_stage_evidence(manifest: Dict[str, Any], pipeline_dir: str) 
     for idx, stage in enumerate(raw_stages):
         if not isinstance(stage, dict):
             report.violations.append(f"stage at index {idx} is not an object (got {type(stage).__name__})")
+            report.record_stage(name=None, index=idx, status=stage, disposition="violation:not_an_object")
             continue
-        if stage.get("status") != "completed":
-            continue
-        report.stages_examined += 1
+
+        status = stage.get("status")
         name = stage.get("name", "<unnamed>")
+
+        if status != "completed":
+            # Rule 1 — an unrecognised status token is a violation, never a
+            # stage to skip.  The seven literals in _KNOWN_STAGE_STATUSES are
+            # the complete closed set; no legitimate manifest can trip this.
+            disposition = _DISPOSITION_BY_STATUS.get(status) if isinstance(status, str) else None
+            # The isinstance guard is load-bearing, not defensive noise: a JSON
+            # manifest can carry a list or dict here, and ``x in frozenset``
+            # raises TypeError on an unhashable x — crashing the verifier with
+            # a raw traceback and no envelope, which is the failure mode the
+            # caps and parse guards exist to prevent.
+            if not isinstance(status, str) or status not in _KNOWN_STAGE_STATUSES:
+                report.violations.append(
+                    f"Stage {name!r}: unrecognised status {status!r} — not one of the "
+                    f"{len(_KNOWN_STAGE_STATUSES)} values any ForgeLM version writes; the stage "
+                    "was not examined and its evidence, if any, was not verified"
+                )
+                disposition = _DISPOSITION_UNKNOWN_STATUS
+            # Rule 2 — ``gate_decision == "passed"`` is written on exactly one
+            # code path, alongside ``status = "completed"``
+            # (``forgelm/cli/_pipeline.py``).  A stage carrying the passed gate
+            # without the completed status is internally inconsistent: the
+            # status was changed after the fact.  Checked independently of
+            # Rule 1 so a downgrade to a *recognised* status is caught too.
+            #
+            # Deliberately NOT keyed on finished_at / duration_seconds /
+            # metrics / exit_code / output_model: ``--stage`` and chain-break
+            # skips overwrite ``status`` while clearing none of those, so a
+            # legitimately skipped stage carries stale execution traces from
+            # an earlier pass.  Using them as a tamper signal false-alarms on
+            # real runs; ``gate_decision`` is the only field that survives.
+            if stage.get("gate_decision") == "passed":
+                report.violations.append(
+                    f"Stage {name!r}: records gate_decision 'passed' but status {status!r} — "
+                    "the passed gate is written only alongside status 'completed', so this "
+                    "stage's status was altered after the run"
+                )
+                disposition = _DISPOSITION_PASSED_NOT_COMPLETED
+            report.record_stage(name=name, index=idx, status=status, disposition=disposition)
+            continue
+
+        report.stages_examined += 1
+        report.record_stage(name=name, index=idx, status=status, disposition="examined")
         outcome, message = _verify_stage_evidence(stage.get("training_manifest"), pipeline_dir, manifest)
         if outcome == EVIDENCE_VERIFIED:
             report.evidence_verified += 1
@@ -701,19 +878,15 @@ def verify_pipeline_manifest_report(pipeline_dir: str) -> PipelineEvidenceReport
     # which contradicted the rationale written for the stage cap: a 600 MB
     # manifest reaches roughly 3.6 GB peak RSS and kills the verifier.
     try:
-        manifest_size = os.path.getsize(manifest_path)
-    except OSError as exc:
-        return _preflight(PIPELINE_MANIFEST_IO_ERROR_PREFIX, f"pipeline_manifest.json could not be stat'd: {exc}")
-    if manifest_size > PIPELINE_MANIFEST_MAX_BYTES:
+        manifest = _read_capped_json(manifest_path, PIPELINE_MANIFEST_MAX_BYTES)
+    except _OversizeError as exc:
         return _preflight(
             PIPELINE_MANIFEST_INPUT_ERROR_PREFIX,
-            f"pipeline_manifest.json is {manifest_size} bytes, over the "
+            f"pipeline_manifest.json is {exc.size} bytes, over the "
             f"{PIPELINE_MANIFEST_MAX_BYTES}-byte cap — refused unread",
         )
-
-    try:
-        with open(manifest_path, "r", encoding="utf-8") as fh:
-            manifest = json.load(fh)
+    except _EmptyFileError:
+        return _preflight(PIPELINE_MANIFEST_INPUT_ERROR_PREFIX, "pipeline_manifest.json is zero bytes")
     except json.JSONDecodeError as exc:
         return _preflight(PIPELINE_MANIFEST_INPUT_ERROR_PREFIX, f"pipeline_manifest.json invalid JSON: {exc}")
     except UnicodeDecodeError as exc:
@@ -751,6 +924,12 @@ def verify_pipeline_manifest_report(pipeline_dir: str) -> PipelineEvidenceReport
 
 _GGUF_MAGIC = b"GGUF"
 _SIDECAR_SUFFIX = ".sha256"
+
+# A ``.sha256`` sidecar is one line: a 64-char digest optionally followed by
+# `` *<filename>`` (sha256sum format).  Only the first whitespace-separated
+# token is ever used, so the read is bounded generously rather than slurping
+# whatever a writer put next to the artefact.
+_SIDECAR_MAX_CHARS = 4096
 
 # A SHA-256 sidecar must contain a 64-character hex digest.  Anything
 # else (empty file, "TODO" placeholder, truncated paste, wrong-algorithm
@@ -835,8 +1014,20 @@ def verify_gguf(path: str) -> VerifyGgufResult:
     if os.path.isfile(sidecar_path):
         checks["sidecar_present"] = True
         actual = _file_sha256(path)
+        # Bounded read: only the first whitespace-separated token is ever
+        # used, but ``fh.read()`` would pull an arbitrarily large file into
+        # memory first.  A sidecar sits next to the artefact and is written
+        # by whoever can write the artefact's directory, so an unbounded read
+        # here is the same "verifier killed by its own input" exposure the
+        # byte caps above exist to close.  A legitimate sidecar is one line.
+        #
+        # Decoding stays STRICT: ``_run_verify_gguf_cmd`` handles
+        # ``UnicodeDecodeError`` explicitly for this exact branch, so
+        # ``errors="replace"`` would silently delete a routed failure path.
+        # Text mode is correct here — ``read(n)`` counts characters and so
+        # cannot split a multi-byte sequence.
         with open(sidecar_path, "r", encoding="utf-8") as fh:
-            expected_text = fh.read().strip()
+            expected_text = fh.read(_SIDECAR_MAX_CHARS).strip()
         # Sidecars are typically `<hex> *<filename>` (sha256sum format)
         # OR plain `<hex>`.  Take the first whitespace-separated token.
         expected = expected_text.split()[0] if expected_text else ""

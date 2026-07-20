@@ -2868,10 +2868,15 @@ class TestPipelineStageEvidenceDeepParse:
         target = tmp_path / "annex_iv_metadata.json"
         target.write_text(json.dumps(_hashed_annex_iv_artifact()))
 
-        def _boom(path: str):
+        def _boom(path: str, cap: int):
             raise OSError("EIO: device failure")
 
-        monkeypatch.setattr("forgelm.verify.verify_annex_iv_artifact", _boom)
+        # Patch the read seam, not the verdict function.  The stage evidence
+        # read moved into ``_read_capped_json`` so the byte cap and the parse
+        # share one descriptor (a stat on one handle followed by an open of
+        # another does not bound what actually gets read).  The OSError
+        # routing under test is unchanged; only where the I/O happens moved.
+        monkeypatch.setattr("forgelm.verify._read_capped_json", _boom)
         report = self._evidence(tmp_path, str(target))
         assert any(v.startswith(PIPELINE_MANIFEST_IO_ERROR_PREFIX) for v in report.violations)
 
@@ -2898,6 +2903,499 @@ class TestPipelineStageEvidenceDeepParse:
         report = verify_pipeline_stage_evidence(manifest, str(tmp_path))
         assert report.stages_examined == 0
         assert any("no completed stage" in v for v in report.violations)
+
+
+def _two_stage_chain(tmp_path: Path) -> str:
+    """A clean, hash-stamped two-stage chain on disk.  Returns the manifest path.
+
+    The shape the destroyed-evidence reproduction needs: more than one stage,
+    so that removing one still leaves a completed stage behind and the
+    "final_status completed but nothing examined" backstop does not fire.
+    """
+    from forgelm.compliance import compute_annex_iv_manifest_hash
+
+    stages = []
+    for idx, name in enumerate(("sft_stage", "dpo_stage")):
+        evidence = tmp_path / name / "compliance" / "annex_iv_metadata.json"
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        evidence.write_text(json.dumps(_hashed_annex_iv_artifact()))
+        stages.append(
+            {
+                "name": name,
+                "index": idx,
+                "trainer_type": "sft" if idx == 0 else "dpo",
+                "status": "completed",
+                "input_model": "org/base" if idx == 0 else "./out/s1/final_model",
+                "input_source": "root" if idx == 0 else "chain",
+                "output_model": f"./out/s{idx + 1}/final_model",
+                "started_at": "2026-07-20T12:00:00+00:00",
+                "finished_at": "2026-07-20T13:00:00+00:00",
+                "duration_seconds": 3600.0,
+                "metrics": {"eval_loss": 0.5},
+                "gate_decision": "passed",
+                "exit_code": 0,
+                "training_manifest": str(evidence),
+            }
+        )
+    manifest = {
+        "forgelm_version": "0.9.1",
+        "pipeline_run_id": "pl_test",
+        "pipeline_config_hash": "sha256:abc",
+        "started_at": "2026-07-20T12:00:00+00:00",
+        "finished_at": "2026-07-20T13:00:00+00:00",
+        "final_status": "completed",
+        "stages": stages,
+        "annex_iv": {
+            "provider_name": "Acme Inc",
+            "system_name": "Acme Pipeline System",
+            "intended_purpose": "Customer-service assistant fine-tune",
+        },
+    }
+    manifest["metadata"] = {"manifest_hash": compute_annex_iv_manifest_hash(manifest)}
+    compliance_dir = tmp_path / "compliance"
+    compliance_dir.mkdir(parents=True, exist_ok=True)
+    path = compliance_dir / "pipeline_manifest.json"
+    path.write_text(json.dumps(manifest))
+    return str(path)
+
+
+def _restamp(manifest_path: str, manifest: dict) -> None:
+    """Re-stamp ``metadata.manifest_hash`` with the *public* hash function.
+
+    This is the whole point of the reproduction: the digest is unkeyed and
+    ``compute_annex_iv_manifest_hash`` requires no secret, so anyone who can
+    write the manifest can also make the stamp agree with their edit.
+    """
+    from forgelm.compliance import compute_annex_iv_manifest_hash
+
+    manifest.pop("metadata", None)
+    manifest["metadata"] = {"manifest_hash": compute_annex_iv_manifest_hash(manifest)}
+    Path(manifest_path).write_text(json.dumps(manifest))
+
+
+class TestDestroyedStageEvidenceCannotVanish:
+    """A stage whose evidence was destroyed must not drop out of the report.
+
+    The chain manifest's ``metadata.manifest_hash`` is an UNKEYED SHA-256
+    produced by the public ``compute_annex_iv_manifest_hash``, so re-stamping
+    after an edit is free.  The per-stage deep parse examined only stages whose
+    status was literally ``"completed"``, which handed an adversary a way to
+    choose the token they would be ignored by:
+
+        1. delete a stage's annex_iv_metadata.json
+        2. flip that stage's status from "completed" to "skipped"
+        3. recompute manifest_hash with the public function
+
+    The stage then vanished from the report entirely — not flagged, not
+    mentioned — while the chain and hash checks passed.  The single-stage
+    variant was caught by the "final_status completed with no completed stage"
+    backstop; the multi-stage case was not.
+    """
+
+    def test_clean_two_stage_chain_verifies(self, tmp_path: Path) -> None:
+        """Baseline: the untampered chain is genuinely clean."""
+        from forgelm.verify import verify_pipeline_manifest_report
+
+        _two_stage_chain(tmp_path)
+        report = verify_pipeline_manifest_report(str(tmp_path))
+        assert report.violations == []
+        assert report.hash_state == "verified"
+        assert report.to_dict()["stages_total"] == 2
+        assert report.stages_examined == 2
+        assert report.evidence_verified == 2
+
+    def test_destroyed_evidence_plus_status_flip_is_reported(self, tmp_path: Path) -> None:
+        """The exact reproduction, end to end."""
+        from forgelm.verify import verify_pipeline_manifest_report
+
+        manifest_path = _two_stage_chain(tmp_path)
+        manifest = json.loads(Path(manifest_path).read_text())
+
+        Path(manifest["stages"][0]["training_manifest"]).unlink()  # 1. destroy
+        manifest["stages"][0]["status"] = "skipped"  # 2. flip
+        _restamp(manifest_path, manifest)  # 3. re-stamp
+
+        report = verify_pipeline_manifest_report(str(tmp_path))
+        payload = report.to_dict()
+
+        # The unkeyed hash still agrees — that is exactly why the hash alone
+        # cannot carry this weight, and why the status rules must.
+        assert report.hash_state == "verified"
+        # The tampered stage is reported, not silently skipped.
+        assert report.violations != []
+        assert any("sft_stage" in v and "unrecognised status" in v for v in report.violations)
+        assert any("sft_stage" in v and "gate_decision 'passed'" in v for v in report.violations)
+        # And it is still *listed*, with a disposition, so the census cannot
+        # quietly shrink from two stages to one.
+        assert payload["stages_total"] == 2
+        assert payload["status_census"] == {"completed": 1, "skipped": 1}
+        assert [row["name"] for row in payload["stage_dispositions"]] == ["sft_stage", "dpo_stage"]
+        assert payload["stage_dispositions"][0]["disposition"].startswith("violation:")
+
+    def test_status_flip_to_a_recognised_status_is_still_caught(self, tmp_path: Path) -> None:
+        """Rule 1 alone would miss a downgrade to a *legitimate* token.
+
+        ``skipped_by_filter`` is a real status, so the closed-enum check stays
+        silent; ``gate_decision == "passed"`` is what gives it away.
+        """
+        from forgelm.verify import verify_pipeline_manifest_report
+
+        manifest_path = _two_stage_chain(tmp_path)
+        manifest = json.loads(Path(manifest_path).read_text())
+        Path(manifest["stages"][0]["training_manifest"]).unlink()
+        manifest["stages"][0]["status"] = "skipped_by_filter"
+        _restamp(manifest_path, manifest)
+
+        report = verify_pipeline_manifest_report(str(tmp_path))
+        assert not any("unrecognised status" in v for v in report.violations)
+        assert any("sft_stage" in v and "gate_decision 'passed'" in v for v in report.violations)
+
+    @pytest.mark.parametrize("token", ["skipped", "SKIPPED", "completed ", "", "done", "ok"])
+    def test_unrecognised_status_tokens_are_violations(self, tmp_path: Path, token: str) -> None:
+        from forgelm.verify import verify_pipeline_stage_evidence
+
+        manifest = _manifest_pointing_at(None)
+        manifest["stages"][0]["status"] = token
+        report = verify_pipeline_stage_evidence(manifest, str(tmp_path))
+        assert any("unrecognised status" in v for v in report.violations), token
+
+    @pytest.mark.parametrize("token", [None, 42, True, [], {}])
+    def test_non_string_status_is_a_violation(self, tmp_path: Path, token) -> None:
+        """A missing or non-string status must not be silently skipped."""
+        from forgelm.verify import verify_pipeline_stage_evidence
+
+        manifest = _manifest_pointing_at(None)
+        manifest["stages"][0]["status"] = token
+        report = verify_pipeline_stage_evidence(manifest, str(tmp_path))
+        assert any("unrecognised status" in v for v in report.violations), token
+
+    def test_every_stage_appears_in_the_census(self, tmp_path: Path) -> None:
+        """Publish the count: every manifest row is listed with a disposition."""
+        from forgelm.verify import verify_pipeline_stage_evidence
+
+        manifest = _manifest_pointing_at(None, final_status="failed")
+        manifest["stages"] = [
+            dict(manifest["stages"][0], name="a", index=0, status="pending", gate_decision=None),
+            dict(manifest["stages"][0], name="b", index=1, status="failed", gate_decision="failed"),
+            dict(manifest["stages"][0], name="c", index=2, status="skipped_by_filter", gate_decision=None),
+        ]
+        payload = verify_pipeline_stage_evidence(manifest, str(tmp_path)).to_dict()
+        assert payload["stages_total"] == 3
+        assert payload["status_census"] == {"pending": 1, "failed": 1, "skipped_by_filter": 1}
+        assert [row["disposition"] for row in payload["stage_dispositions"]] == [
+            "not_applicable:pending",
+            "not_applicable:failed",
+            "not_applicable:filtered",
+        ]
+
+
+class TestLegitimateSkipsStayClean:
+    """The false alarm this fix must NOT reintroduce.
+
+    ``_pipeline.py`` overwrites ``status`` and ``skipped_reason`` on a
+    ``--stage`` filter or a chain break and clears *nothing* else, so a stage
+    that genuinely ran in an earlier pass keeps its ``finished_at``,
+    ``duration_seconds``, ``metrics``, ``exit_code``, ``error`` and sometimes
+    ``training_manifest`` while its status reads skipped.  Those fields are
+    therefore unusable as tamper signals: keying on "a not-completed stage
+    carrying execution traces" would fire on real runs.  ``gate_decision`` is
+    the only field that survives the overwrite, which is why it is the only
+    one the rules use.
+    """
+
+    def _stale_stage(self, tmp_path: Path, **overrides) -> dict:
+        """A stage carrying every execution trace a prior pass leaves behind."""
+        evidence = tmp_path / "prior" / "annex_iv_metadata.json"
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        evidence.write_text(json.dumps(_hashed_annex_iv_artifact()))
+        stage = {
+            "name": "carried",
+            "index": 0,
+            "trainer_type": "sft",
+            "status": "skipped_by_filter",
+            "input_source": "root",
+            "output_model": "./prior/final_model",
+            "started_at": "2026-07-20T10:00:00+00:00",
+            "finished_at": "2026-07-20T11:00:00+00:00",
+            "duration_seconds": 3600.0,
+            "metrics": {"eval_loss": 0.4},
+            "exit_code": 0,
+            "training_manifest": str(evidence),
+            "skipped_reason": "--stage 'other' was specified; only that stage runs.",
+        }
+        stage.update(overrides)
+        return stage
+
+    def _report(self, tmp_path: Path, stage: dict):
+        from forgelm.verify import verify_pipeline_stage_evidence
+
+        manifest = _manifest_pointing_at(None, final_status="stopped_at_stage")
+        manifest["stages"] = [stage]
+        return verify_pipeline_stage_evidence(manifest, str(tmp_path))
+
+    def test_stage_filter_skip_with_stale_execution_traces_is_clean(self, tmp_path: Path) -> None:
+        """An operator-configured ``--stage`` skip must not be flagged."""
+        stage = self._stale_stage(tmp_path, gate_decision=None)
+        report = self._report(tmp_path, stage)
+        assert report.violations == []
+        assert report.to_dict()["stage_dispositions"][0]["disposition"] == "not_applicable:filtered"
+
+    def test_resume_chain_break_with_stale_execution_traces_is_clean(self, tmp_path: Path) -> None:
+        """``--resume-from`` after a chain break carries the same stale fields."""
+        stage = self._stale_stage(
+            tmp_path,
+            status="skipped_due_to_prior_revert",
+            gate_decision=None,
+            skipped_reason="stage 'earlier' reverted; downstream stages skipped.",
+        )
+        report = self._report(tmp_path, stage)
+        assert report.violations == []
+        assert report.to_dict()["stage_dispositions"][0]["disposition"] == "not_applicable:chain_broken"
+
+    def test_carried_over_failed_gate_decision_is_clean(self, tmp_path: Path) -> None:
+        """A skip may inherit ``gate_decision='failed'`` from a prior pass.
+
+        Only ``"passed"`` is a tamper signal — it is written on exactly one
+        code path, alongside ``status = "completed"``.
+        """
+        stage = self._stale_stage(tmp_path, gate_decision="failed")
+        assert self._report(tmp_path, stage).violations == []
+
+    @pytest.mark.parametrize(
+        "status,gate,disposition",
+        [
+            ("pending", None, "not_applicable:pending"),
+            ("failed", "failed", "not_applicable:failed"),
+            ("gated_pending_approval", None, "not_applicable:gated"),
+            ("skipped_by_filter", None, "not_applicable:filtered"),
+            ("skipped_due_to_prior_revert", None, "not_applicable:chain_broken"),
+        ],
+    )
+    def test_every_legitimate_not_completed_status_is_clean(
+        self, tmp_path: Path, status: str, gate, disposition: str
+    ) -> None:
+        stage = self._stale_stage(tmp_path, status=status, gate_decision=gate)
+        report = self._report(tmp_path, stage)
+        assert report.violations == [], status
+        assert report.to_dict()["stage_dispositions"][0]["disposition"] == disposition
+
+    def test_status_enum_matches_the_orchestrator(self) -> None:
+        """The verifier's closed set must equal the writer's Literal.
+
+        A module-level import back into ``forgelm.verify`` would close an
+        import cycle, so the two are pinned by this test instead.
+        """
+        import typing
+
+        from forgelm.cli._pipeline import StageStatusLiteral
+        from forgelm.verify import _KNOWN_STAGE_STATUSES
+
+        assert set(typing.get_args(StageStatusLiteral)) == set(_KNOWN_STAGE_STATUSES)
+
+
+class TestLegacyPointerVersionGate:
+    """The pre-0.9.1 compatibility path must be gated on real release order.
+
+    Only the leading numeric release triple is compared: a pre-release, dev,
+    post or local segment of X.Y.Z *is* X.Y.Z and is never "older".  A
+    ``packaging.Version`` comparison gets this wrong — ``Version("0.9.1rc1") <
+    Version("0.9.1")`` is ``True`` — which would hand every manifest an rc
+    build writes the softer path meant only for archived runs.
+    """
+
+    def _predates(self, version) -> bool:
+        from forgelm.verify import _manifest_predates_pointer_fix
+
+        return _manifest_predates_pointer_fix({"forgelm_version": version})
+
+    @pytest.mark.parametrize("version", ["0.9.0", "0.8.0", "0.1.0", "0.0.1"])
+    def test_genuinely_older_versions_are_legacy(self, version: str) -> None:
+        assert self._predates(version) is True
+
+    @pytest.mark.parametrize(
+        "version",
+        ["0.9.1", "0.9.1rc1", "0.9.1.dev3", "0.9.1.post1", "0.9.1+local", "0.9.1-rc1"],
+    )
+    def test_the_fix_version_and_its_prereleases_are_not_legacy(self, version: str) -> None:
+        """An rc of the fix version carries the fix; it is not an old manifest."""
+        assert self._predates(version) is False
+
+    @pytest.mark.parametrize("version", ["0.10.0", "1.0.0", "0.9.2", "10.0.0"])
+    def test_future_versions_are_not_legacy(self, version: str) -> None:
+        """Tuple comparison, not string comparison: "0.10.0" > "0.9.1"."""
+        assert self._predates(version) is False
+
+    @pytest.mark.parametrize("version", [None, "", "garbage", "v0.9.0", "0.9", "0.9.x", 42, [], {}])
+    def test_unparseable_versions_are_not_legacy(self, version) -> None:
+        """Conservative direction: routes a missing artefact to a violation
+        rather than to the softer compatibility path."""
+        assert self._predates(version) is False
+
+    def test_dev_sentinel_is_not_legacy(self) -> None:
+        """``0.0.0+dev`` is ``_version.py``'s raw-source-checkout sentinel.
+
+        It parses to (0, 0, 0) — the oldest possible release — but it denotes a
+        *current* working tree, not an archived run.  Without the carve-out
+        every manifest written from an uninstalled checkout unlocked the
+        compatibility path.
+        """
+        from forgelm._version import __version__
+
+        assert self._predates("0.0.0+dev") is False
+        # Whatever this build stamps must not be classified legacy either.
+        assert self._predates(__version__) is False
+
+    @pytest.mark.parametrize("version", ["٠.٩.٠", "۰.۹.۰"])
+    def test_non_ascii_digits_do_not_parse(self, version: str) -> None:
+        """``\\d`` is Unicode-aware, so Arabic-Indic digits parsed and were
+        classified legacy.  The pattern is ``[0-9]`` under ``re.ASCII``."""
+        assert self._predates(version) is False
+
+    def test_missing_key_is_not_legacy(self) -> None:
+        from forgelm.verify import _manifest_predates_pointer_fix
+
+        assert _manifest_predates_pointer_fix({}) is False
+        assert _manifest_predates_pointer_fix(None) is False
+
+
+class TestCappedReadIsFailClosed:
+    """The byte cap must bind the handle that is actually read.
+
+    Both size caps were stat-then-open: ``os.path.getsize`` on one handle,
+    ``open()`` on another.  A file that changes size between the two defeats
+    the cap entirely — a payload several times over the limit parsed to a
+    clean pass.  ``compliance.compute_dataset_fingerprint`` already carries
+    the rule this now follows: the stat must come from the open fd.
+    """
+
+    def _write(self, tmp_path: Path, name: str, payload: str) -> str:
+        target = tmp_path / name
+        target.write_text(payload, encoding="utf-8")
+        return str(target)
+
+    def test_under_cap_parses(self, tmp_path: Path) -> None:
+        from forgelm.verify import _read_capped_json
+
+        path = self._write(tmp_path, "ok.json", json.dumps({"a": 1}))
+        assert _read_capped_json(path, 1024) == {"a": 1}
+
+    def test_over_cap_is_refused_by_the_fstat_guard(self, tmp_path: Path) -> None:
+        from forgelm.verify import _OversizeError, _read_capped_json
+
+        path = self._write(tmp_path, "big.json", json.dumps({"pad": "x" * 4096}))
+        with pytest.raises(_OversizeError):
+            _read_capped_json(path, 1024)
+
+    def test_under_reported_size_is_still_refused(self, tmp_path: Path, monkeypatch) -> None:
+        """A lying ``fstat`` — what a file growing after the stat looks like —
+        must not get past the bounded read."""
+        from forgelm.verify import _OversizeError, _read_capped_json
+
+        path = self._write(tmp_path, "grow.json", json.dumps({"pad": "x" * 4096}))
+
+        class _Small:
+            st_size = 12
+
+        monkeypatch.setattr("forgelm.verify.os.fstat", lambda fd: _Small())
+        with pytest.raises(_OversizeError):
+            _read_capped_json(path, 1024)
+
+    def test_multibyte_payload_is_measured_in_bytes(self, tmp_path: Path, monkeypatch) -> None:
+        """The bounded read is binary: in text mode ``read(n)`` counts decoded
+        characters, so a multibyte payload could carry several times the byte
+        cap while satisfying a character budget."""
+        from forgelm.verify import _OversizeError, _read_capped_json
+
+        path = self._write(tmp_path, "multi.json", json.dumps({"pad": "é" * 2048}))
+
+        class _Small:
+            st_size = 12
+
+        monkeypatch.setattr("forgelm.verify.os.fstat", lambda fd: _Small())
+        with pytest.raises(_OversizeError):
+            _read_capped_json(path, 1024)
+
+    def test_size_check_reads_the_open_descriptor_not_the_path(self, tmp_path: Path, monkeypatch) -> None:
+        """Pins the mechanism, because the verdict alone cannot.
+
+        With the bounded read in place, reverting ``os.fstat(fh.fileno())`` to
+        ``os.path.getsize(path)`` still ends in a refusal, so no black-box
+        assertion distinguishes them.  What differs is *which file* is
+        measured: ``getsize`` re-resolves the path, so the bytes measured need
+        not be the bytes read.  This asserts the stat is taken from the
+        descriptor, which is the property the fix exists to hold.
+        """
+        from forgelm.verify import _read_capped_json
+
+        calls: list = []
+        real_fstat = os.fstat
+        monkeypatch.setattr("forgelm.verify.os.fstat", lambda fd: (calls.append(fd), real_fstat(fd))[1])
+        path = self._write(tmp_path, "ok.json", json.dumps({"a": 1}))
+        assert _read_capped_json(path, 1024) == {"a": 1}
+        assert calls, "size check did not consult the open descriptor"
+
+    def test_zero_byte_file_gets_its_own_error(self, tmp_path: Path) -> None:
+        from forgelm.verify import _EmptyFileError, _read_capped_json
+
+        path = self._write(tmp_path, "empty.json", "")
+        with pytest.raises(_EmptyFileError):
+            _read_capped_json(path, 1024)
+
+    def test_gguf_sidecar_read_is_bounded(self, tmp_path: Path, monkeypatch) -> None:
+        """A ``.sha256`` sidecar must not be slurped whole.
+
+        Only the first whitespace-separated token is ever used, but the read
+        was unbounded — and a sidecar is written by whoever can write the
+        artefact's directory.  Same "verifier killed by its own input"
+        exposure the byte caps close.  The verdict is unchanged either way
+        (a huge junk sidecar fails the hex check in both), so this pins the
+        bound itself: the digest is still found when megabytes of padding
+        follow it.
+        """
+        from forgelm.verify import _SIDECAR_MAX_CHARS, verify_gguf
+
+        gguf = tmp_path / "model.gguf"
+        gguf.write_bytes(b"GGUF" + b"\x00" * 64)
+        digest = hashlib.sha256(gguf.read_bytes()).hexdigest()
+        # Valid digest first, then far more padding than the bound allows.
+        (tmp_path / "model.gguf.sha256").write_text(f"{digest} *model.gguf\n" + "#" * (_SIDECAR_MAX_CHARS * 4))
+
+        import builtins
+
+        sidecar_reads: list = []
+        real_open = builtins.open
+
+        def _spy_open(file, *args, **kwargs):
+            handle = real_open(file, *args, **kwargs)
+            if str(file).endswith(".sha256"):
+                real_read = handle.read
+
+                def _read(n=-1):
+                    sidecar_reads.append(n)
+                    return real_read(n)
+
+                handle.read = _read  # type: ignore[method-assign]
+            return handle
+
+        monkeypatch.setattr("forgelm.verify.open", _spy_open, raising=False)
+        result = verify_gguf(str(gguf))
+
+        assert result.checks["sidecar_match"] is True
+        assert sidecar_reads, "sidecar was never read"
+        assert all(n == _SIDECAR_MAX_CHARS for n in sidecar_reads), (
+            f"sidecar read was unbounded: read({sidecar_reads}) — only the first token is used, "
+            "so an arbitrarily large sidecar must not be pulled into memory"
+        )
+
+    def test_oversized_stage_evidence_is_a_violation(self, tmp_path: Path) -> None:
+        """End to end: the cap still routes to a violation, not a clean pass."""
+        from forgelm.verify import STAGE_EVIDENCE_MAX_BYTES, verify_pipeline_stage_evidence
+
+        target = tmp_path / "s0" / "compliance" / "annex_iv_metadata.json"
+        target.parent.mkdir(parents=True)
+        target.write_text(json.dumps({"pad": "x" * (STAGE_EVIDENCE_MAX_BYTES + 64)}))
+        report = verify_pipeline_stage_evidence(_manifest_pointing_at(str(target)), str(tmp_path))
+        assert any("refused unread" in v for v in report.violations)
 
 
 class TestPipelineManifestHashState:

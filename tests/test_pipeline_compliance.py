@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
+
 from forgelm.cli._pipeline import PipelineStageState, PipelineState
 from forgelm.compliance import _verify_manifest_payload, generate_pipeline_manifest
 from forgelm.config import ForgeConfig
@@ -1025,3 +1027,105 @@ class TestVerifyOnPartialFilterRun:
         )
         manifest = generate_pipeline_manifest(state, _root_with_compliance())
         assert _verify_manifest_payload(manifest) == []
+
+
+class TestRealWriterSkipsVerifyClean:
+    """The false-alarm guard, driven through the *real* manifest writer.
+
+    ``TestLegitimateSkipsStayClean`` in ``test_verification_toolbelt.py``
+    builds stage dicts by hand.  This pins the same property against
+    ``generate_pipeline_manifest`` + ``PipelineStageState``, so the rules
+    cannot start false-alarming because the writer changed shape.
+
+    ``_pipeline.py`` overwrites ``status``/``skipped_reason`` on a ``--stage``
+    filter or a chain break and clears nothing else, so these stages carry
+    real execution traces from an earlier pass while reading as skipped.
+    """
+
+    def _state_with_skip(self, tmp_path, *, status: str, gate_decision):
+        """A completed stage plus a carried-over stage stamped *status*."""
+        evidence = tmp_path / "s1" / "compliance" / "annex_iv_metadata.json"
+        _write_stage_evidence(evidence)
+        done = PipelineStageState(
+            name="sft_stage",
+            index=0,
+            trainer_type="sft",
+            status="completed",
+            input_model="org/base",
+            input_source="root",
+            output_model="./out/stage1/final_model",
+            started_at="2026-07-20T12:00:00+00:00",
+            finished_at="2026-07-20T13:00:00+00:00",
+            duration_seconds=3600.0,
+            metrics={"eval_loss": 0.5},
+            gate_decision="passed",
+            exit_code=0,
+            training_manifest=str(evidence),
+        )
+        # Everything below survived the status overwrite from an earlier run.
+        carried = PipelineStageState(
+            name="dpo_stage",
+            index=1,
+            trainer_type="dpo",
+            status=status,
+            input_model="./out/stage1/final_model",
+            input_source="chain",
+            output_model="./out/stage2/final_model",
+            started_at="2026-07-20T13:00:00+00:00",
+            finished_at="2026-07-20T13:45:00+00:00",
+            duration_seconds=2700.0,
+            metrics={"eval_loss": 0.3},
+            gate_decision=gate_decision,
+            exit_code=0,
+            skipped_reason="carried over from a prior pass",
+        )
+        return PipelineState(
+            pipeline_run_id="pl_skip",
+            pipeline_config_hash="sha256:abc",
+            forgelm_version="0.9.1",
+            started_at="2026-07-20T12:00:00+00:00",
+            finished_at="2026-07-20T13:45:00+00:00",
+            final_status="stopped_at_stage",
+            stages=[done, carried],
+        )
+
+    @pytest.mark.parametrize(
+        "status,gate_decision",
+        [
+            ("skipped_by_filter", None),
+            ("skipped_by_filter", "failed"),
+            ("skipped_due_to_prior_revert", None),
+            ("skipped_due_to_prior_revert", "failed"),
+            ("gated_pending_approval", None),
+            ("pending", None),
+        ],
+    )
+    def test_carried_over_skip_verifies_clean(self, tmp_path, status, gate_decision):
+        from forgelm.verify import verify_pipeline_stage_evidence
+
+        state = self._state_with_skip(tmp_path, status=status, gate_decision=gate_decision)
+        manifest = generate_pipeline_manifest(state, _root_with_compliance())
+        assert _verify_manifest_payload(manifest) == []
+        report = verify_pipeline_stage_evidence(manifest, str(tmp_path))
+        assert report.violations == [], (status, gate_decision)
+        # Still counted and listed, never silently dropped.
+        payload = report.to_dict()
+        assert payload["stages_total"] == 2
+        assert payload["stage_dispositions"][1]["status"] == status
+
+    def test_writer_never_emits_passed_on_a_non_completed_stage(self, tmp_path):
+        """The invariant Rule 2 rests on, asserted against the writer.
+
+        ``gate_decision='passed'`` is written on exactly one code path, next to
+        ``status='completed'``.  If that ever stops being true, Rule 2 becomes
+        a false-alarm generator and this test is the tripwire.
+        """
+        import inspect
+
+        from forgelm.cli import _pipeline
+
+        source = inspect.getsource(_pipeline)
+        assert source.count('gate_decision = "passed"') == 1
+        # ...and it sits with the completed-status assignment.
+        idx = source.index('gate_decision = "passed"')
+        assert 'status = "completed"' in source[max(0, idx - 200) : idx]

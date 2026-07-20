@@ -60,6 +60,20 @@ Doğrulama tek geçişte üç katmanda çalışır:
 
 **Kasıtlı olarak kapsamadıkları:** `metadata` bloğunun kendisi (hash'i tuttuğu için dâhil edilmesi döngüsel olurdu) ve aşama başına kanıt dosyalarının *içerikleri*. Zincir hash'i indeksi sabitler, indeksin atıfta bulunduğu belgeleri değil; onlar 3. katman ve kendi artefakt-başı hash'leri tarafından kapsanır.
 
+**Tehdit modeli: bu anahtarsız bir özettir ve tahrifata karşı koruma değildir.** `compute_annex_iv_manifest_hash`, `forgelm/compliance.py` içinde herkese açık bir fonksiyondur. Hiçbir gizli anahtar almaz ve paketi kurmuş olan herkes onu çağırabilir. Dolayısıyla garanti tam olarak şudur:
+
+| Tespit eder | Tespit edemez |
+|---|---|
+| Kazara bozulma — yarım kalmış yazmalar, hatalı bir kopya, başarısız bir arşiv geri yüklemesi. | Manifest dosyasına yazabilen herkes. Alanı düzenler, herkese açık fonksiyonu yeniden çalıştırır ve yeni özeti geri yazar. |
+| Dikkatsiz ya da gelişigüzel düzenlemeler — bir özetin kapsadığı fark edilmeden sonradan elle "düzeltilmiş" bir alan. | Kapsanan herhangi bir alanın — `forgelm_version` ve `annex_iv` bloğu dâhil — kasıtlı ve bilinçli olarak sahtelenmesi. |
+| Manifest ile tarif ettiği koşu arasındaki ayrışma. | Manifestin, kanıt ağacıyla birlikte tümden silinmesi ya da değiştirilmesi. |
+
+Bu nedenle `hash_state: verified`, *"bu manifest kendi içinde tutarlıdır"* anlamına gelir; **"bu manifesti kimse değiştirmedi"** anlamına **gelmez**. Anahtarsız bir hash, yazıcıyı saldırgandan ayırt edemez, çünkü ikisi de onu hesaplayabilir.
+
+**Denetim günlüğüyle karşıtlık — o *anahtarlıdır*.** `FORGELM_AUDIT_SECRET` ayarlandığında her denetim günlüğü satırı, `sha256(secret + run_id)` olarak türetilen bir anahtarla hesaplanan bir `_hmac` etiketi taşır (`forgelm/compliance.py`) ve `forgelm verify-audit --require-hmac`, bu etiketleri eksik olan ya da doğrulamayan bir günlüğü reddeder. Bunu sahtelemek yalnızca kodu değil, gizli anahtarı gerektirir. Pipeline manifest hash'inin **eşdeğeri yoktur** — `verify-annex-iv` için bir `--require-hmac` bulunmaz.
+
+Uygulamada bu, manifestin bütünlüğünün onu barındıran depolamanın bütünlüğüne dayandığı anlamına gelir. Arşiv, kayıt niteliğindeki uyumluluk belgesiyse; kendi erişim denetimi, bir kez-yazılır (write-once) depolama ya da harici bir imza bulunan bir yere koyun — `hash_state: verified`'ı bunların yerine geçen bir şey olarak görmeyin. Denetim günlüğü HMAC kurulumu için [`docs/guides/safety_compliance-tr.md`](../guides/safety_compliance-tr.md) sayfasına bakın.
+
 **Geçerli ile doğrulanmış farklı durumlardır ve CLI hangisini aldığınızı söyler.** JSON zarfında `hash_state` olarak raporlanan üç sonuç vardır:
 
 | `hash_state` | Anlamı | Çıkış kodu | Metin çıktısı |
@@ -91,10 +105,28 @@ Kontrol kapalı biçimde başarısız olur (fail closed). Aşağıdakilerin her 
 | Zorunlu bir Annex IV alanı eksik ya da boş | Kasıtlı ayrışmaya dikkat: tek başına doğrulandığında eksik bir artefakt `1` ile çıkar; zincir kanıtı olarak `6` ile çıkar, çünkü pipeline manifesti bu aşamanın geçerli kanıtla tamamlandığını *iddia eder* ve bu iddia karşılaştırıldı, tutmadı. |
 | Artefaktın kendi `manifest_hash`'i içeriğiyle uyuşmuyor | Kanıtın kendisinde tahrifat tespiti. |
 
-İki koşul ihlal yerine **UNVERIFIED** (çıkış `1`) raporlar, çünkü bir karşılaştırmanın başarısız olduğunu değil, doğrulayıcının karşılaştırmaya hiç ulaşamadığını gösterirler:
+**Eksik kanıt, koşunun Annex IV'ü hiç yapılandırıp yapılandırmadığına göre yönlendirilir.** Bu sayfanın önceki bir revizyonu, eksik bir artefaktı koşulsuz olarak UNVERIFIED / çıkış `1` diye tarif ediyordu. Bu yalnızca okuyucu tarafında yapılmış bir davranıştı ve geçersiz kılınmıştır — *silinmiş* kanıtın (arketipik Madde 12 tahrifatı), *bozulmuş* kanıttan daha yumuşak bir kodla çıkmasına yol açıyordu. Sevk edilen yönlendirme, yazıcının bir şey üretip üretmeyeceğine karar verirken kullandığı kaynağın aynısını — zincir manifestinin `annex_iv` bloğunu — okur:
+
+| Koşu bir `compliance:` bloğu yapılandırmış mı? | Hüküm | Çıkış |
+|---|---|---|
+| Evet — artefakt yazılmıştı ve şimdi yok | **VIOLATION** | `6` |
+| Hayır — hiçbir zaman bir şey üretilmedi, dolayısıyla eksik bir şey yok | **UNVERIFIED** | `1` |
+
+**Eski işaretçi geri dönüşü (fallback)** sürüm kapılıdır. `0.9.1` öncesi ForgeLM, hiçbir yazıcının karşılamadığı bir `training_manifest.json` işaretçisi kaydediyordu (`export_compliance_artifacts`, `training_manifest.yaml` ve `annex_iv_metadata.json` üretir); `0.9.1` yazıcıyı gerçek artefakta yöneltti. `forgelm_version`'ı `0.9.1`'in altında ayrıştırılan bir manifest için doğrulayıcı, bu eski dosya adını yanındaki `annex_iv_metadata.json`'a çözer ve onu normal biçimde doğrular. Güncel bir manifestte bu dosya adı eski bir artefakt değildir — bu sürümün yazdığıyla uyuşmayan bir işaretçidir — ve yukarıdaki tablodaki yönlendirmeyi alır. Eksik ya da ayrıştırılamayan bir `forgelm_version`, muhafazakâr yön olan *eski değil* şeklinde ele alınır. Yalnızca baştaki sayısal sürüm bileşenlerinin karşılaştırıldığına dikkat edin: `0.9.1rc1` gibi bir ön-sürüm `0.9.1` sayılır ve uyumluluk yolunu **açmaz**.
+
+Bir koşul hâlâ ihlal yerine **UNVERIFIED** (çıkış `1`) raporlar, çünkü bir karşılaştırmanın başarısız olduğunu değil, doğrulayıcının karşılaştırmaya hiç ulaşamadığını gösterir:
 
 - Artefakt yapısal olarak tamdır fakat `manifest_hash` taşımaz. Tahrifat kontrol edilemedi.
-- Kanıt işaretçisi `training_manifest.json` adını taşır ve yanında bir `annex_iv_metadata.json` yoktur. Sevk edilmiş hiçbir ForgeLM sürümü `training_manifest.json` yazmaz — `export_compliance_artifacts`, `training_manifest.yaml` ve `annex_iv_metadata.json` üretir — dolayısıyla bu eski işaretçi her zaman boşta kalmıştır. Doğrulayıcı, eski dosya adını yanındaki `annex_iv_metadata.json`'a çözer ve onu normal biçimde doğrular; kardeş dosya yoksa UNVERIFIED raporlar, çünkü yazıcı tarafındaki bir kusur operatöre tahrifat olarak raporlanmamalıdır.
+
+**Yalnızca `status` değeri tam olarak `completed` olan aşamalar derin ayrıştırılır — fakat hiçbir aşama rapordan çıkarılmaz.** Zincir hash'i anahtarsız olduğundan, arşive yazabilen bir saldırgan aksi hâlde bir aşamanın kanıtını silebilir, durumunu `completed` dışına çevirebilir, özeti herkese açık fonksiyonla yeniden hesaplayabilir ve aşamayı rapordan tümüyle düşürebilirdi. Üç kural bunu daraltır:
+
+| Kural | Etkisi |
+|---|---|
+| **Her aşama satırı raporlanır.** `stages_total` hepsini sayar, `status_census` onları durum belirtecine göre sayar ve `stage_dispositions` her birine derin ayrıştırılmama gerekçesi verir (`not_applicable:filtered`, `not_applicable:gated`, …). | Durumu düşürülen bir aşama artık yok olmaz; `stages_examined < stages_total` olarak görünür. |
+| **Tanınmayan bir durum bir ihlaldir** (çıkış `6`), atlanacak bir aşama değil. Herhangi bir ForgeLM sürümünün yazdığı yedi belirteç kapalı bir kümedir. | Saldırgan, göz ardı edilmek için bir belirteç uyduramaz. |
+| **`completed` dışında bir durumla birlikte `gate_decision: "passed"` bir ihlaldir** (çıkış `6`). Bu kapı değeri tam olarak tek bir kod yolunda, `status = "completed"` ile birlikte yazılır. | Bir kapı çalıştırmış her aşamada *tanınan* bir belirtece düşürmeyi yakalar. |
+
+**Artık boşluk, geçiştirilmeden belirtiliyor.** `gate_decision` **olmadan** tamamlanmış bir aşama, manifeste yazabilen biri tarafından hâlâ tanınan bir "tamamlanmamış" duruma düşürülebilir. Artık sessizce düşürülmez — `stages_total` içinde sayılır ve `status_census` / `stage_dispositions` içinde adlandırılır — fakat bir ihlal üretmez, dolayısıyla çıkış `0` hâlâ mümkündür. Tahrifat sinyali olarak yalnızca `gate_decision` kullanılır: `finished_at`, `metrics`, `exit_code` ve `output_model`'in tümü meşru bir `--stage` ya da zincir kırılması atlamasından sağ çıkar, dolayısıyla onlara dayanmak gerçek koşularda yanlış alarm verirdi. Bunu kapatmak, okuyucu tarafında bir kontrol daha değil, kimliği doğrulanmış bir manifest gerektirir. **Depolamayı güven sınırı olarak ele alın ve CI'yı çıkış kodu yerine sayaçlara dayandırın** — aşağıya bakın.
 
 Varlık kontrolünü geçmiş bir yolda stat hatası IO_ERROR (çıkış `2`) raporlar.
 
@@ -112,12 +144,15 @@ Varlık kontrolünü geçmiş bir yolda stat hatası IO_ERROR (çıkış `2`) ra
 | `mode` | dize | Bu modda her zaman `"pipeline"`. |
 | `path` | dize | Koşu dizininin mutlak yolu. |
 | `violations` | dize dizisi | İç yönlendirme token'ları çıkarılmış, insan-okunur bulgular. |
+| `stages_total` | int | Manifestin taşıdığı her aşama satırı, durumundan bağımsız olarak. |
 | `stages_examined` | int | Kanıt katmanının baktığı tamamlanmış aşama sayısı. |
+| `status_census` | object | Her aşama, `status` belirtecine göre sayılmış ve sıralanmış hâlde. Nesne olmayan bir aşama satırı `<tür>` altında sayılır. |
+| `stage_dispositions` | array of object | Aşama başına bir satır — `name`, `index`, `status` ve aşamanın neden derin ayrıştırıldığını ya da ayrıştırılmadığını belirten bir `disposition`. |
 | `evidence_verified` | int | Bunlardan kaçı kendi hash'i dâhil her kontrolü geçti. |
 | `evidence_unverified` | int | Bunlardan kaçına ulaşıldı fakat tanıklanmadı. |
 | `hash_state` | dize | `verified` / `absent` / `mismatch` — zincir manifestinin kendi hash'i. |
 
-"Yalnızca geçerli değil, doğrulanmış" isteyen bir CI kapısı, sadece çıkış `0`'ı değil; `hash_state == "verified"`, `evidence_verified == stages_examined` ve `stages_examined > 0` koşullarını doğrulamalıdır.
+"Yalnızca geçerli değil, doğrulanmış" isteyen bir CI kapısı, sadece çıkış `0`'ı değil; `hash_state == "verified"` ve `evidence_verified == stages_examined` koşullarını doğrulamalıdır. `stages_examined`'ı pipeline yapılandırmasının bildirdiği aşama sayısına karşı doğrulayın — `> 0`'a karşı değil ve `stages_total`'a karşı da değil; çünkü ikisi de saldırganın düzenlemiş olacağı aynı manifestten okunur. Yukarıdaki artık boşluğu kapatan şey bu dışarıdan gelen beklentidir: `completed` dışına düşürülen bir aşama, `stages_examined`'ın beklediğiniz sayının altında kalmasıyla ortaya çıkar ve `status_census` düşürüldüğü belirteci adlandırır. Ve `hash_state == "verified"`'ın özgünlüğü değil iç tutarlılığı tasdik ettiğini unutmayın — yukarıdaki tehdit modeline bakın.
 
 ## Zorunlu Annex IV alanları
 

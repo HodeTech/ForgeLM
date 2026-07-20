@@ -203,8 +203,23 @@ def _run_pipeline_mode(path: str, output_format: str) -> NoReturn:
                     # How much was actually examined, and whether the chain
                     # manifest's own hash attested to it.  A verifier that
                     # prints only a verdict lets "OK" mean both "checked
-                    # everything" and "checked nothing"; these four fields are
-                    # what make those distinguishable to CI (F-PR54-H6/H7).
+                    # everything" and "checked nothing"; these fields are what
+                    # make those distinguishable to CI (F-PR54-H6/H7).
+                    #
+                    # ``stages_total`` / ``status_census`` /
+                    # ``stage_dispositions`` additionally make every manifest
+                    # row visible with a stated reason.  Without them a stage
+                    # could be removed from the report by editing its status,
+                    # and the shrunken census was the only trace — unpublished,
+                    # so nobody could see it.
+                    #
+                    # NOTE: ``hash_state: "verified"`` means the file is
+                    # internally consistent with its own stamp.  The stamp is
+                    # an UNKEYED SHA-256 from the public
+                    # ``compute_annex_iv_manifest_hash``, so it does not
+                    # survive an adversary who can write the manifest.  See
+                    # that function and ``FORGELM_AUDIT_SECRET`` for the keyed
+                    # guarantee.
                     **report.to_dict(),
                 },
                 indent=2,

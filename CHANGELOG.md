@@ -295,10 +295,10 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   sibling, but **only** when the chain manifest's `forgelm_version` parses to a
   release earlier than `0.9.1`. On a current manifest — or one whose
   `forgelm_version` is absent or unparseable — the fallback does not apply and
-  an absent target routes conservatively to a violation. Both `forgelm_version`
-  and the `annex_iv` block are covered by the chain manifest's
-  `metadata.manifest_hash`, so neither can be edited to unlock the softer path
-  without producing a hash mismatch (`forgelm/verify.py`).
+  an absent target routes conservatively to a violation. Only the leading
+  numeric release components are compared, so a pre-release such as `0.9.1rc1`
+  counts as `0.9.1` and does not unlock the compatibility path
+  (`forgelm/verify.py`).
 - **The chain verifier no longer dies with a raw traceback on a deeply-nested
   document.** A pipeline manifest or per-stage artefact of ~100 KB — about
   twenty times *under* the 8 MiB byte cap — nested deeply enough to exhaust the
@@ -541,6 +541,30 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Security
 
+- **A stage could be dropped from `--pipeline` verification entirely by
+  downgrading its status, and the report never mentioned it.** The chain
+  verifier deep-parsed only stages whose `status` was exactly `completed` and
+  silently skipped every other row. Because `metadata.manifest_hash` is an
+  unkeyed digest computed by the public `compute_annex_iv_manifest_hash`,
+  anyone able to write the archive could delete a stage's
+  `annex_iv_metadata.json`, flip that stage's status, recompute the digest and
+  obtain a clean report: reproduced on a two-stage chain, where the tampered
+  stage vanished from the output with `hash_state` still `verified`. The
+  single-stage case was already caught by the `final_status: completed` with
+  zero completed stages rule; the multi-stage case was not. Three reader-side
+  rules now narrow it — every stage row is published through the new
+  `stages_total`, `status_census` and `stage_dispositions` envelope fields so
+  none can be silently omitted; a status token outside the closed set of seven
+  any ForgeLM version writes is a violation (exit `6`) rather than a skip; and
+  `gate_decision: "passed"` alongside a non-`completed` status is a violation,
+  since that gate value is written only next to `status = "completed"`.
+  **Not fully closed, by construction:** a stage that completed without a
+  `gate_decision` can still be downgraded without producing a violation, and no
+  reader-side check can fix that while the manifest is unauthenticated — the
+  remaining defence is asserting `stages_examined` against the stage count the
+  pipeline config declares. Threat model and residual gap documented in
+  `docs/reference/verify_annex_iv_subcommand.md` (+ TR mirror)
+  (`forgelm/verify.py`).
 - **Deleting a stage's Annex IV evidence routed *softer* than corrupting it —
   the Article 12 tamper signal was inverted.** Filed under Security rather than
   Fixed because the defect did not merely mute a compliance signal, it reversed
@@ -763,6 +787,42 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
   first tag containing either is `v0.5.5`, so no published release carried the
   old name. The page says exactly that instead of claiming an unbroken record.
 
+- **The pipeline manifest hash is documented as unkeyed, and a false security
+  claim was corrected.** `docs/reference/verify_annex_iv_subcommand.md` (+ TR
+  mirror) now carries an explicit threat model for
+  `metadata.manifest_hash`: it is a plain SHA-256 produced by
+  `compute_annex_iv_manifest_hash`, a public function taking no secret, so it
+  detects accidental corruption, careless edits and drift, and does **not**
+  detect anyone who can write the manifest file — they edit a covered field,
+  re-run the public function and write the digest back. `hash_state: verified`
+  attests internal consistency, not authenticity. The page contrasts this with
+  the audit log, which *is* keyed (`FORGELM_AUDIT_SECRET`, a per-run
+  `sha256(secret + run_id)` key, per-line `_hmac` tags and
+  `verify-audit --require-hmac`) and notes that `verify-annex-iv` has no
+  equivalent, so the manifest's integrity rests on the storage holding it. The
+  claim being corrected — that `forgelm_version` and the `annex_iv` block
+  "cannot be edited to unlock the softer path without a hash mismatch" — was
+  made in this same `[Unreleased]` section and in
+  `docs/roadmap/risks-and-decisions.md`; it does not follow from an unkeyed
+  digest. The append-only record carries a dated correction rather than an edit.
+  Also documented: only stages whose `status` is exactly `completed` are
+  deep-parsed, the three rules that keep a downgraded stage visible anyway, and
+  the residual gap those rules do not close (a stage that completed with no
+  `gate_decision` can still be downgraded to a recognised status without
+  producing a violation) — hence the guidance to assert `stages_examined`
+  against the stage count the config declares, not against `> 0` and not
+  against `stages_total`, since both come from the manifest itself.
+- **Superseded missing-evidence semantics corrected in
+  `docs/reference/verify_annex_iv_subcommand.md` (+ TR mirror).** Both mirrors
+  still described a missing per-stage artefact as unconditionally UNVERIFIED /
+  exit `1` — the reader-side-only behaviour that was reverted for making
+  *deleted* evidence route softer than *corrupted* evidence. They now document
+  the shipped routing: VIOLATION / exit `6` when the run configured a
+  `compliance:` block (the artefact was written and is gone), UNVERIFIED /
+  exit `1` only when it did not (nothing was ever produced). The legacy
+  `training_manifest.json` fallback is documented as version-gated to
+  pre-`0.9.1` manifests, including the note that only leading numeric release
+  components are compared, so `0.9.1rc1` counts as `0.9.1`.
 - **Pipeline-mode verification documented in
   `docs/reference/verify_annex_iv_subcommand.md` (+ TR mirror).** `--pipeline`
   was an undocumented flag on that page — absent from the synopsis, the flag

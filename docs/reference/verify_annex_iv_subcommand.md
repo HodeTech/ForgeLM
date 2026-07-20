@@ -60,6 +60,20 @@ Verification runs in three layers, all in one pass:
 
 **What it deliberately does not cover:** the `metadata` block itself (it holds the hash, so including it would be circular), and the *contents* of the per-stage evidence files. The chain hash pins the index, not the documents the index references; those are covered by layer 3 and by their own per-artefact hashes.
 
+**Threat model: this is an unkeyed digest, and it is not tamper-proofing.** `compute_annex_iv_manifest_hash` is a public function in `forgelm/compliance.py`. It takes no secret, and anyone with the package installed can call it. So the guarantee is exactly this:
+
+| Detects | Does not detect |
+|---|---|
+| Accidental corruption — truncated writes, a mangled copy, a botched archive restore. | Anyone who can write the manifest file. They edit the field, re-run the public function, and write the new digest back. |
+| Casual or careless edits — a field "corrected" by hand after the fact, without realising a digest covers it. | A deliberate, informed forgery of any covered field, including `forgelm_version` and the `annex_iv` block. |
+| Drift between the manifest and the run it describes. | Deletion or replacement of the whole manifest together with its evidence tree. |
+
+`hash_state: verified` therefore means *"this manifest is internally consistent"*, **not** *"nobody altered this manifest"*. An unkeyed hash cannot distinguish the writer from an attacker, because both can compute it.
+
+**Contrast with the audit log, which *is* keyed.** When `FORGELM_AUDIT_SECRET` is set, each audit-log line carries an `_hmac` tag computed with a key derived as `sha256(secret + run_id)` (`forgelm/compliance.py`), and `forgelm verify-audit --require-hmac` refuses a log that is missing or fails those tags. Forging that requires the secret, not merely the code. The pipeline manifest hash has **no equivalent** — there is no `--require-hmac` for `verify-annex-iv`.
+
+Operationally, this means the manifest's integrity rests on the integrity of the storage holding it. If the archive is the compliance record of record, put it somewhere with its own access control, write-once storage, or an external signature — do not treat `hash_state: verified` as a substitute. See [`docs/guides/safety_compliance.md`](../guides/safety_compliance.md) for the audit-log HMAC setup.
+
 **Valid and verified are different states, and the CLI says which one you got.** Three outcomes exist, reported as `hash_state` in the JSON envelope:
 
 | `hash_state` | What it means | Exit code | Text output |
@@ -91,10 +105,28 @@ The check fails closed. Each of the following is a violation (exit `6`):
 | A required Annex IV field is missing or empty | Note the deliberate divergence: verified standalone, an incomplete artefact exits `1`; as chain evidence it exits `6`, because the pipeline manifest *asserts* this stage completed with valid evidence and that assertion was compared and did not hold. |
 | The artefact's own `manifest_hash` disagrees with its contents | Tamper detection on the evidence itself. |
 
-Two conditions report **UNVERIFIED** (exit `1`) rather than a violation, because they indicate the verifier never got to compare rather than a comparison failing:
+**Missing evidence routes on whether the run configured Annex IV at all.** An earlier revision of this page described a missing artefact as unconditionally UNVERIFIED / exit `1`. That was a reader-side-only behaviour and it has been superseded — it made *deleted* evidence (archetypal Article 12 tampering) exit softer than *corrupted* evidence. The shipped routing reads the chain manifest's `annex_iv` block, the same source the writer uses to decide whether to emit anything:
+
+| Run configured a `compliance:` block? | Verdict | Exit |
+|---|---|---|
+| Yes — the artefact was written and is now gone | **VIOLATION** | `6` |
+| No — nothing was ever produced, so nothing is missing | **UNVERIFIED** | `1` |
+
+The **legacy-pointer fallback** is version-gated. ForgeLM before `0.9.1` recorded a `training_manifest.json` pointer that no writer has ever satisfied (`export_compliance_artifacts` emits `training_manifest.yaml` and `annex_iv_metadata.json`); `0.9.1` repointed the writer at the real artefact. For a manifest whose `forgelm_version` parses below `0.9.1`, the verifier resolves that legacy basename to its `annex_iv_metadata.json` sibling and verifies it normally. On a current manifest the basename is not a legacy artefact — it is a pointer that disagrees with what this version writes — and it gets the routing in the table above. An absent or unparseable `forgelm_version` is treated as *not* legacy, the conservative direction. Note that only the leading numeric release components are compared, so a pre-release such as `0.9.1rc1` counts as `0.9.1` and does **not** unlock the compatibility path.
+
+One condition still reports **UNVERIFIED** (exit `1`) rather than a violation, because it means the verifier never got to compare rather than a comparison failing:
 
 - The artefact is structurally complete but carries no `manifest_hash`. Tampering could not be checked.
-- The evidence pointer names `training_manifest.json` and no `annex_iv_metadata.json` sits beside it. No shipped ForgeLM version writes `training_manifest.json` — `export_compliance_artifacts` emits `training_manifest.yaml` and `annex_iv_metadata.json` — so this legacy pointer has always dangled. The verifier resolves the legacy basename to its `annex_iv_metadata.json` sibling and verifies that normally; when no sibling exists it reports UNVERIFIED, because a writer-side defect must not be reported to an operator as tampering.
+
+**Only stages whose `status` is exactly `completed` are deep-parsed — but no stage is omitted from the report.** Because the chain hash is unkeyed, an adversary who can write the archive could otherwise delete a stage's evidence, flip its status away from `completed`, recompute the digest with the public function, and drop the stage out of the report entirely. Three rules narrow that:
+
+| Rule | Effect |
+|---|---|
+| **Every stage row is reported.** `stages_total` counts all of them, `status_census` counts them by status token, and `stage_dispositions` gives each one a stated reason for not being deep-parsed (`not_applicable:filtered`, `not_applicable:gated`, …). | A downgraded stage no longer vanishes; it appears with `stages_examined < stages_total`. |
+| **An unrecognised status is a violation** (exit `6`), never a stage to skip. The seven tokens any ForgeLM version writes are a closed set. | An attacker cannot invent a token to be ignored by. |
+| **`gate_decision: "passed"` with a status other than `completed` is a violation** (exit `6`). That gate value is written on exactly one code path, alongside `status = "completed"`. | Catches a downgrade to a *recognised* token on any stage that ran a gate. |
+
+**Residual gap, stated rather than glossed.** A stage that completed *without* a `gate_decision` can still be downgraded to a recognised non-completed status by someone who can write the manifest. It is no longer silently dropped — it is counted in `stages_total` and named in `status_census` / `stage_dispositions` — but it produces no violation, so exit `0` is still possible. Only `gate_decision` is used as the tamper signal: `finished_at`, `metrics`, `exit_code` and `output_model` all survive a legitimate `--stage` or chain-break skip, so keying on them would false-alarm on real runs. Closing this needs an authenticated manifest, not a further reader-side check. **Treat the storage as the trust boundary, and gate CI on the counters rather than on the exit code** — see below.
 
 A stat failure on a path that passed the existence check reports IO_ERROR (exit `2`).
 
@@ -112,12 +144,15 @@ A stat failure on a path that passed the existence check reports IO_ERROR (exit 
 | `mode` | string | Always `"pipeline"` in this mode. |
 | `path` | string | Absolute path of the run directory. |
 | `violations` | array of string | Human-readable findings, with internal routing tokens stripped. |
+| `stages_total` | int | Every stage row the manifest carries, regardless of status. |
 | `stages_examined` | int | Completed stages the evidence layer looked at. |
+| `status_census` | object | Every stage counted by its `status` token, sorted. A non-object stage row is counted under `<type>`. |
+| `stage_dispositions` | array of object | One row per stage — `name`, `index`, `status`, and a `disposition` stating why it was or was not deep-parsed. |
 | `evidence_verified` | int | Of those, how many passed every check including their own hash. |
 | `evidence_unverified` | int | Of those, how many were reached but unattested. |
 | `hash_state` | string | `verified` / `absent` / `mismatch` — the chain manifest's own hash. |
 
-A CI gate that wants "verified, not merely valid" should assert `hash_state == "verified"` and `evidence_verified == stages_examined` and `stages_examined > 0`, not just exit `0`.
+A CI gate that wants "verified, not merely valid" should assert `hash_state == "verified"` and `evidence_verified == stages_examined`, not just exit `0`. Assert `stages_examined` against the stage count the pipeline config declares — not against `> 0`, and not against `stages_total`, since both are read from the same manifest an attacker would have edited. That external expectation is what closes the residual gap above: a stage downgraded out of `completed` shows up as `stages_examined` falling short of the count you expected, and `status_census` names the token it was downgraded to. And remember that `hash_state == "verified"` attests internal consistency, not authenticity — see the threat model above.
 
 ## Required Annex IV fields
 
