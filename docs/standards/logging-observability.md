@@ -133,10 +133,10 @@ class WebhookNotifier:
 **Rules:**
 
 1. **Webhooks never abort training.** A 500 from Slack is a warning, not a failure. Wrap the POST in `try/except requests.RequestException` and log at `WARNING`.
-2. **Timeout every request** (`timeout=10` minimum, `timeout=30` maximum).
-3. **Sanitize payload.** Never send API keys, full config contents, or sensitive data paths. Whitelist fields going into `payload`.
+2. **Timeout every request.** `webhook.timeout` defaults to 10s and is clamped up to a 1s floor by the notifier. There is no upper clamp — the schema's `ge=1` is the only bound.
+3. **Sanitize payload.** Never send API keys, full config contents, or sensitive data paths. Fields reaching `payload` are allowlisted: the base envelope is fixed, and `_send(**extra)` screens every extra key against `_ALLOWED_EXTRA_PAYLOAD_KEYS`, dropping and logging anything unregistered.
 4. **Lifecycle events:** `training.start`, `training.success`, `training.failure`, `training.reverted`, `approval.required` — see the table below for the canonical list. Each webhook event mirrors a distinct audit-log event (e.g., webhook `training.start` ↔ audit `training.started`); the two vocabularies are paired but not identical because past-tense audit identifiers describe a finalized record while webhooks announce a state transition.
-5. **Retry:** Up to 3 times with exponential backoff. After that, audit-log the failure and move on.
+5. **No retry.** A failed delivery is logged at `WARNING` and abandoned; the notifier makes exactly one POST attempt per event and never re-sends. This rule previously promised "up to 3 times with exponential backoff", which the shipped notifier has never done — receivers must be idempotent and must not treat a missing event as proof the transition did not occur. Adding retry is a deliberate design change, not a bug fix: it needs a bounded-backoff budget that cannot delay a training run's exit.
 
 ### Webhook event vocabulary
 
@@ -146,6 +146,14 @@ should expect: five single-stage lifecycle events (`training.*` +
 multi-stage orchestrator emits *alongside* (not replacing) the per-stage
 lifecycle events. Adding new ones requires a docs update here, a `Notifier`
 method, a paired audit event, and tests. Do not invent ad-hoc event strings.
+
+Adding a new event **appends** to this vocabulary; renaming a released
+event name is a breaking change for every enum-validating receiver and
+has never been done. The receiver-facing contract — payload shapes,
+types, stability guarantees, the extra-field allowlist, and the redaction
+rules — is published as
+[`docs/reference/webhook_schema.md`](../reference/webhook_schema.md);
+keep it in step with any change made here.
 
 | Event | Emitted when | Required fields | Notes |
 |---|---|---|---|

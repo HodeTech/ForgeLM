@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, FrozenSet, Optional, Tuple, Type
 from urllib.parse import urlparse
 
 import requests
@@ -17,6 +17,41 @@ from ._http import HttpSafetyError, _mask_netloc, safe_post
 __all__ = ["HttpSafetyError", "WebhookNotifier", "safe_post"]
 
 logger = logging.getLogger("forgelm.webhook")
+
+# ---------------------------------------------------------------------------
+# Outbound payload allowlist (F-PR54-M11)
+# ---------------------------------------------------------------------------
+#
+# ``WebhookNotifier._send`` accepts ``**extra`` so the ``notify_pipeline_*``
+# methods can attach event-specific fields without widening a fixed signature
+# (see the ``_send`` docstring for why the fixed signature was abandoned in
+# Phase 14).  ``**extra`` is an unbounded funnel into an outbound HTTP body:
+# whatever a caller passes leaves the process.  Every caller today is
+# orchestrator-internal and passes orchestrator-derived literals, so this is
+# hygiene rather than a live leak — the risk is a *future* caller threading
+# user- or config-derived text through ``_send`` and having it land on a
+# third-party receiver (Slack/Teams persist and index message bodies).
+#
+# The allowlist below is the complete set of extra keys the shipped
+# ``notify_*`` methods pass.  ``tests/test_webhook.py`` drives every notifier
+# and asserts the two stay in sync, so adding a key without registering it
+# fails CI rather than silently dropping a field in production.
+_ALLOWED_EXTRA_PAYLOAD_KEYS: FrozenSet[str] = frozenset(
+    {
+        "stage_count",  # pipeline.started   — int, number of stages in the chain
+        "final_status",  # pipeline.completed — str, terminal pipeline state
+        "stopped_at",  # pipeline.completed — str|None, halting stage name
+        "stage_name",  # pipeline.stage_reverted — str, reverting stage name
+    }
+)
+
+# Scalar types that survive ``json.dumps`` in ``_post_payload``.  A container
+# or arbitrary object would raise ``TypeError`` *inside* the notifier, which
+# propagates out of ``notify_*`` and crashes an otherwise-successful run at
+# its final step — the exact outcome this module's contract forbids
+# ("notify_* is never allowed to fail the training run").  Mirrors the
+# existing ``safe_metrics`` numeric filter one level up.
+_ALLOWED_EXTRA_VALUE_TYPES: Tuple[Type[Any], ...] = (str, int, float, bool)
 
 
 class WebhookNotifier:
@@ -219,6 +254,13 @@ class WebhookNotifier:
         silently never fired.  Extras are merged into the payload under
         their original key names so existing Slack / Teams receivers
         that pick fields by name keep working.
+
+        ``**extra`` is **not** a free-form passthrough: it is screened by
+        :meth:`_screen_extras` against ``_ALLOWED_EXTRA_PAYLOAD_KEYS``
+        before anything reaches the wire (F-PR54-M11).  An unregistered
+        key is logged and dropped, so a future caller cannot use this
+        parameter to funnel user- or config-derived text to a third-party
+        receiver by accident.
         """
         url = self._resolve_url()
         if not url:
@@ -253,16 +295,126 @@ class WebhookNotifier:
             "attachments": [{"title": title, "text": text, "color": color}],
         }
         # Merge event-specific extras (pipeline.* events carry
-        # stage_count / final_status / stopped_at / stage_name).  Drop
-        # any extra whose key collides with a base-payload field so the
-        # contract stays stable; we don't expect collisions in practice
-        # since the pipeline notifier names are disjoint, but the guard
-        # makes the merge order explicit.
-        for key, value in extra.items():
+        # stage_count / final_status / stopped_at / stage_name) after
+        # allowlist + type + secret-masking screening.  Drop any extra
+        # whose key collides with a base-payload field so the contract
+        # stays stable; we don't expect collisions in practice since the
+        # pipeline notifier names are disjoint, but the guard makes the
+        # merge order explicit.
+        for key, value in self._screen_extras(event, extra).items():
             if key not in payload:
                 payload[key] = value
 
-        self._post_payload(url, payload, event)
+        self._post_payload(url, self._mask_outbound_strings(payload), event)
+
+    @classmethod
+    def _mask_outbound_strings(cls, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Run every free-text string in *payload* through the secrets masker.
+
+        Single chokepoint, applied last, so no field can reach the wire
+        unmasked by being assembled somewhere the per-field masking didn't
+        reach.  That gap was real: ``notify_pipeline_reverted`` masked its
+        ``stage_name`` field but interpolated the *raw* stage name into the
+        Slack ``attachments[0].text`` prose two lines later, so a
+        secret-shaped stage name shipped anyway.  Masking the assembled
+        payload instead of the individual arguments makes that class of
+        mistake structurally impossible.
+
+        ``event``, ``status`` and ``color`` are deliberately exempt: each is
+        a closed set of code literals chosen by ``notify_*`` itself, never
+        operator- or config-derived, and receivers route on them.  Everything
+        else — ``run_name``, ``reason``, ``model_path``, the attachment
+        ``title`` / ``text``, and every allowlisted string extra — originates
+        in operator YAML, a filesystem path, or an exception string, so all
+        of it is treated as untrusted free text.
+
+        Masking is idempotent, so ``reason`` (already masked + truncated
+        upstream by :meth:`_mask_and_truncate_reason`) is unaffected by the
+        second pass.
+        """
+        exempt = {"event", "status", "color"}
+
+        def _walk(value: Any, key: Optional[str]) -> Any:
+            if key in exempt:
+                return value
+            if isinstance(value, str):
+                return cls._mask_free_text(value)
+            if isinstance(value, dict):
+                return {k: _walk(v, k) for k, v in value.items()}
+            if isinstance(value, list):
+                return [_walk(v, key) for v in value]
+            return value
+
+        return {k: _walk(v, k) for k, v in payload.items()}
+
+    @staticmethod
+    def _screen_extras(event: str, extra: Dict[str, Any]) -> Dict[str, Any]:
+        """Filter ``**extra`` down to the allowlisted, transportable set.
+
+        Two screens, in order:
+
+        1. **Key allowlist** (``_ALLOWED_EXTRA_PAYLOAD_KEYS``) — an
+           unregistered key is dropped, never transmitted.
+        2. **Value type** — only JSON scalars survive; ``None`` is kept
+           (it is a meaningful value for ``stopped_at``).
+
+        Secret masking is *not* done here: it happens once for the whole
+        assembled payload in :meth:`_mask_outbound_strings`, so surviving
+        extras are masked on exactly the same terms as ``reason`` and the
+        attachment prose.  Doing it per-argument is what let a raw
+        ``stage_name`` leak through the Slack ``text`` field.
+
+        *Why WARN-and-drop rather than raise.*
+        ``error-handling.md`` forbids silent failures, and this is not one:
+        the drop is logged at WARNING with the event name and the offending
+        key, so an operator reading the run log sees it.  Raising was
+        considered and rejected on the module's own contract — ``notify_*``
+        is a best-effort side channel that "is never allowed to fail the
+        training run" (``error-handling.md`` names webhook delivery in the
+        best-effort carve-out).  An exception here would propagate out of
+        ``notify_success`` and abort a completed, promoted run at its final
+        step over a *notification-formatting* mistake, which is strictly
+        worse than a missing Slack field.  Phase 14 already lived through
+        the neighbouring version of this bug: unknown kwargs hit a fixed
+        signature, the ``TypeError`` was swallowed by the orchestrator's
+        best-effort wrapper, and pipeline webhooks silently never fired.
+        The loudness the standard asks for is bought at CI time instead —
+        ``tests/test_webhook.py`` drives every ``notify_*`` method and fails
+        if any key it passes is missing from the allowlist, so the
+        "contributor adds a field and forgets to register it" path is caught
+        before release rather than in an operator's log.
+
+        Being on the allowlist buys a key transport, not trust:
+        ``stage_name`` and ``stopped_at`` are pipeline stage names read
+        straight out of operator YAML, so they are config-derived text and
+        still get masked downstream.  This complements, rather than
+        bypasses, the URL redaction in :meth:`_mask` — that one protects the
+        *destination*, this path protects the *body*.
+        """
+        screened: Dict[str, Any] = {}
+        for key, value in extra.items():
+            if key not in _ALLOWED_EXTRA_PAYLOAD_KEYS:
+                logger.warning(
+                    "Dropping unregistered webhook payload field %r for event '%s' — "
+                    "not in the outbound allowlist (%s). Register it in "
+                    "_ALLOWED_EXTRA_PAYLOAD_KEYS in forgelm/webhook.py if it is "
+                    "intended to leave the process.",
+                    key,
+                    event,
+                    ", ".join(sorted(_ALLOWED_EXTRA_PAYLOAD_KEYS)),
+                )
+                continue
+            if value is not None and not isinstance(value, _ALLOWED_EXTRA_VALUE_TYPES):
+                logger.warning(
+                    "Dropping webhook payload field %r for event '%s' — value of type "
+                    "%s is not a JSON scalar and would break payload serialization.",
+                    key,
+                    event,
+                    type(value).__name__,
+                )
+                continue
+            screened[key] = value
+        return screened
 
     def notify_start(self, run_name: str) -> None:
         if self.config and self.config.notify_on_start:
@@ -349,7 +501,26 @@ class WebhookNotifier:
         )
 
     @staticmethod
-    def _mask_and_truncate_reason(reason: str) -> str:
+    def _mask_free_text(value: str) -> str:
+        """Redact secret-shaped substrings from a single outbound string.
+
+        Wraps :func:`forgelm.data_audit.mask_secrets` (AWS / GitHub / Slack /
+        OpenAI / Google / JWT / private-key blocks / Azure storage strings).
+        On ``ImportError`` the value is replaced wholesale rather than passed
+        through: we cannot guarantee credentials were scrubbed, and shipping
+        an un-scrubbed string to a third-party receiver is the worse option.
+        """
+        try:
+            from .data_audit import mask_secrets
+
+            return mask_secrets(value)
+        except ImportError:
+            # data_audit imports stay light enough that this should not
+            # happen in practice.
+            return "[REDACTED — secrets masker unavailable]"
+
+    @classmethod
+    def _mask_and_truncate_reason(cls, reason: str) -> str:
         """Mask secrets in *reason* and truncate to 2048 chars.
 
         Shared between :meth:`notify_failure` and :meth:`notify_reverted`
@@ -357,16 +528,7 @@ class WebhookNotifier:
         back to a hard placeholder when ``data_audit`` cannot be imported
         because shipping an un-scrubbed stack trace is the worse option.
         """
-        try:
-            from .data_audit import mask_secrets
-
-            masked = mask_secrets(reason)
-        except ImportError:
-            # data_audit imports stay light enough that this should not
-            # happen in practice; if it ever does, refuse to ship the raw
-            # reason because we cannot guarantee credentials/tokens have
-            # been scrubbed.
-            masked = "[REDACTED — secrets masker unavailable]"
+        masked = cls._mask_free_text(reason)
         if isinstance(masked, str) and len(masked) > 2048:
             masked = masked[:2048] + "… (truncated)"
         return masked

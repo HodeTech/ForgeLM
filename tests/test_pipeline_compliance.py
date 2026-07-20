@@ -16,6 +16,70 @@ from forgelm.compliance import _verify_manifest_payload, generate_pipeline_manif
 from forgelm.config import ForgeConfig
 
 
+def _full_annex_iv_artifact() -> dict:
+    """A minimal *complete* Annex IV §1-9 artefact.
+
+    Mirrors the factory in ``tests/test_verification_toolbelt.py``; kept
+    local so a change to the required-field catalogue fails both suites
+    independently rather than one silently inheriting the other's drift.
+    """
+    return {
+        "system_identification": {
+            "provider_name": "Acme Inc.",
+            "system_name": "Acme Pipeline System",
+            "intended_purpose": "Customer-service assistant fine-tune",
+        },
+        "intended_purpose": "Customer-service assistant fine-tune",
+        "system_components": ["transformers>=4.40"],
+        "computational_resources": {"gpu": "A100 80GB"},
+        "data_governance": {"sources": ["internal.jsonl"]},
+        "technical_documentation": {"design_doc": "designs/x.md"},
+        "monitoring_and_logging": {"audit_log": "audit_log.jsonl"},
+        "performance_metrics": {"eval_loss": 1.4},
+        "risk_management": {"art9_reference": "risk_assessment.json"},
+    }
+
+
+def _write_stage_evidence(path, *, hashed: bool = True, artifact: dict | None = None) -> None:
+    """Write a per-stage Annex IV evidence file at *path*.
+
+    With ``hashed=True`` it carries a correct ``metadata.manifest_hash``,
+    which is what makes the stage count as *verified* rather than merely
+    *unverified* in the chain report.
+    """
+    from forgelm.compliance import compute_annex_iv_manifest_hash
+
+    payload = _full_annex_iv_artifact() if artifact is None else artifact
+    if hashed:
+        payload = dict(payload)
+        payload["metadata"] = {"manifest_hash": compute_annex_iv_manifest_hash(payload)}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload))
+
+
+def _attach_stage_evidence(state: PipelineState, run_dir) -> None:
+    """Point every completed stage at a real, hash-stamped evidence file."""
+    for stage in state.stages:
+        if stage.status != "completed":
+            continue
+        evidence = run_dir / stage.name / "compliance" / "annex_iv_metadata.json"
+        _write_stage_evidence(evidence)
+        stage.training_manifest = str(evidence)
+
+
+def _report_with(violations: list[str]):
+    """Build a :class:`PipelineEvidenceReport` carrying *violations*.
+
+    Used where a test drives the CLI's exit-code routing directly and does
+    not care about the counters.
+    """
+    from forgelm.verify import PipelineEvidenceReport
+
+    report = PipelineEvidenceReport()
+    report.violations.extend(violations)
+    return report
+
+
 def _root_with_compliance() -> ForgeConfig:
     return ForgeConfig(
         model={"name_or_path": "org/base"},
@@ -261,13 +325,19 @@ class TestManifestContentHash:
         assert _verify_manifest_payload(manifest) == []
 
     def test_export_round_trip_through_disk_verifies(self, tmp_path):
-        """The stamped hash survives the export ``default=str`` JSON
-        round-trip so the disk-backed verifier passes a clean manifest
-        and fails a tampered one."""
+        """The stamped hash survives the export JSON round-trip so the
+        disk-backed verifier passes a clean manifest and fails a tampered
+        one."""
         from forgelm.compliance import export_pipeline_manifest, verify_pipeline_manifest_at_path
 
-        manifest = generate_pipeline_manifest(_three_stage_state(), _root_with_compliance())
+        state = _three_stage_state()
         run_dir = tmp_path / "run"
+        # Every completed stage must now present real Annex IV evidence:
+        # a completed stage recording *no* evidence pointer is itself a
+        # violation (F-PR54-H7 fail-closed rule), so the clean-manifest
+        # assertion below only means anything if the evidence exists.
+        _attach_stage_evidence(state, run_dir)
+        manifest = generate_pipeline_manifest(state, _root_with_compliance())
         export_pipeline_manifest(manifest, str(run_dir))
         assert verify_pipeline_manifest_at_path(str(run_dir)) == []
 
@@ -521,26 +591,67 @@ class TestVerifyPipelineManifestAtPath:
         assert any("stage at index 0 is not an object" in v for v in violations)
         assert any("stage at index 1 is not an object" in v for v in violations)
 
-    def test_completed_stage_with_missing_training_manifest_flagged(self, tmp_path):
-        """The disk wrapper layers a per-stage training_manifest
-        existence check on top of the in-memory verifier — the
-        difference between the two surfaces.  This test pins that the
-        wrapper actually reaches that branch."""
+    def test_completed_stage_with_dangling_legacy_pointer_is_unverified_not_missing(self, tmp_path):
+        """The orchestrator records ``<out>/compliance/training_manifest.json``
+        as each stage's evidence pointer, but no ForgeLM version writes that
+        filename — ``export_compliance_artifacts`` emits
+        ``training_manifest.yaml`` + ``annex_iv_metadata.json``.  The pointer
+        has therefore always dangled on real runs.
+
+        Reporting that as "evidence missing" (exit 6) would accuse a clean run
+        of tampering over a writer-side defect, so the dangling *legacy*
+        basename with no sibling artefact routes to ``UNVERIFIED::`` (exit 1)
+        instead: nothing was compared, and the verifier says so.
+        """
+        from forgelm.compliance import PIPELINE_MANIFEST_UNVERIFIED_PREFIX, verify_pipeline_manifest_at_path
+
+        manifest_dir = tmp_path / "compliance"
+        manifest_dir.mkdir()
+        state = _three_stage_state()
+        for s in state.stages:
+            s.training_manifest = str(tmp_path / s.name / "compliance" / "training_manifest.json")
+        manifest = generate_pipeline_manifest(state, _root_with_compliance())
+        (manifest_dir / "pipeline_manifest.json").write_text(json.dumps(manifest))
+
+        violations = verify_pipeline_manifest_at_path(str(tmp_path))
+        assert violations, "a dangling evidence pointer must not verify silently"
+        assert all(v.startswith(PIPELINE_MANIFEST_UNVERIFIED_PREFIX) for v in violations)
+        assert any("no ForgeLM version writes" in v for v in violations)
+
+    def test_legacy_pointer_resolves_to_sibling_annex_iv_artifact(self, tmp_path):
+        """When the real artefact sits beside the dangling legacy pointer,
+        the verifier resolves to it and genuinely verifies the stage —
+        turning today's always-broken check into a working one."""
         from forgelm.compliance import verify_pipeline_manifest_at_path
 
         manifest_dir = tmp_path / "compliance"
         manifest_dir.mkdir()
         state = _three_stage_state()
-        # Wire training_manifest paths that don't exist on disk so the
-        # disk wrapper's existence check has something to fail against.
         for s in state.stages:
-            s.training_manifest = str(tmp_path / s.name / "compliance" / "training_manifest.json")
+            stage_compliance = tmp_path / s.name / "compliance"
+            _write_stage_evidence(stage_compliance / "annex_iv_metadata.json")
+            s.training_manifest = str(stage_compliance / "training_manifest.json")
         manifest = generate_pipeline_manifest(state, _root_with_compliance())
-        import json as _json
+        (manifest_dir / "pipeline_manifest.json").write_text(json.dumps(manifest))
 
-        (manifest_dir / "pipeline_manifest.json").write_text(_json.dumps(manifest))
+        assert verify_pipeline_manifest_at_path(str(tmp_path)) == []
+
+    def test_non_legacy_dangling_pointer_is_an_integrity_violation(self, tmp_path):
+        """A pointer at any *other* basename is not a known writer defect —
+        an absent file there means the evidence the manifest asserts exists
+        does not, which is untagged (exit 6)."""
+        from forgelm.compliance import verify_pipeline_manifest_at_path
+
+        manifest_dir = tmp_path / "compliance"
+        manifest_dir.mkdir()
+        state = _three_stage_state()
+        for s in state.stages:
+            s.training_manifest = str(tmp_path / s.name / "compliance" / "annex_iv_metadata.json")
+        manifest = generate_pipeline_manifest(state, _root_with_compliance())
+        (manifest_dir / "pipeline_manifest.json").write_text(json.dumps(manifest))
+
         violations = verify_pipeline_manifest_at_path(str(tmp_path))
-        assert any("training_manifest" in v and "is missing" in v for v in violations)
+        assert any("is missing" in v and not v.startswith("UNVERIFIED::") for v in violations)
 
 
 class TestVerifyAnnexIvPipelineModeExitCodes:
@@ -658,8 +769,10 @@ class TestVerifyAnnexIvPipelineModeExitCodes:
         from forgelm.compliance import PIPELINE_MANIFEST_IO_ERROR_PREFIX
 
         monkeypatch.setattr(
-            "forgelm.compliance.verify_pipeline_manifest_at_path",
-            lambda _p: [f"{PIPELINE_MANIFEST_IO_ERROR_PREFIX}pipeline_manifest.json unreadable: disk error"],
+            "forgelm.verify.verify_pipeline_manifest_report",
+            lambda _p: _report_with(
+                [f"{PIPELINE_MANIFEST_IO_ERROR_PREFIX}pipeline_manifest.json unreadable: disk error"]
+            ),
         )
         code = self._run(tmp_path, {})
         assert code == 2  # EXIT_TRAINING_ERROR
@@ -677,8 +790,8 @@ class TestVerifyAnnexIvPipelineModeExitCodes:
         lands on ``EXIT_INTEGRITY_FAILURE`` (6); the point of the guard is
         unchanged — it must never be 2."""
         monkeypatch.setattr(
-            "forgelm.compliance.verify_pipeline_manifest_at_path",
-            lambda _p: ["Stage 'unreadable-by-design': input_model does not chain from prior output"],
+            "forgelm.verify.verify_pipeline_manifest_report",
+            lambda _p: _report_with(["Stage 'unreadable-by-design': input_model does not chain from prior output"]),
         )
         code = self._run(tmp_path, {})
         assert code == 6  # EXIT_INTEGRITY_FAILURE, NOT 2

@@ -764,3 +764,262 @@ class TestWebhookPersistRoundTrip:
         notifier = cli_facade._build_approval_notifier(str(tmp_path))
         # Must not raise AttributeError on the rebuilt SimpleNamespace.
         notifier.notify_success(run_name="approved", metrics={"loss": 1.0})
+
+
+class TestExtraPayloadAllowlist:
+    """F-PR54-M11: ``_send(**extra)`` is screened by an explicit allowlist.
+
+    ``**extra`` is an unbounded funnel into an outbound HTTP body. Every
+    caller today is orchestrator-internal, so this is hygiene rather than a
+    live leak — the guarded case is a *future* caller threading user- or
+    config-derived text through ``_send`` and having it land on a
+    third-party receiver.
+    """
+
+    # Keyword parameters ``_send`` declares explicitly; anything else a
+    # ``notify_*`` method passes lands in ``**extra``.
+    @staticmethod
+    def _declared_send_params():
+        import inspect
+
+        return {
+            name
+            for name, param in inspect.signature(WebhookNotifier._send).parameters.items()
+            if param.kind is inspect.Parameter.KEYWORD_ONLY
+        }
+
+    def _record_send(self, monkeypatch):
+        """Replace ``_send`` with a recorder and return the captured-call list."""
+        calls = []
+
+        def _recorder(_self, **kwargs):
+            calls.append(kwargs)
+
+        monkeypatch.setattr(WebhookNotifier, "_send", _recorder)
+        return calls
+
+    def _drive_every_notifier(self, monkeypatch):
+        """Call every shipped ``notify_*`` method once; return captured kwargs."""
+        calls = self._record_send(monkeypatch)
+        config = _make_config(
+            {
+                "url": "https://example.com/hook",
+                "notify_on_start": True,
+                "notify_on_success": True,
+                "notify_on_failure": True,
+            }
+        )
+        n = WebhookNotifier(config)
+        n.notify_start(run_name="r")
+        n.notify_success(run_name="r", metrics={"loss": 0.5})
+        n.notify_failure(run_name="r", reason="boom")
+        n.notify_reverted(run_name="r", reason="judge said no")
+        n.notify_awaiting_approval(run_name="r", model_path="/tmp/staging")
+        n.notify_pipeline_started(run_id="r", stage_count=3)
+        n.notify_pipeline_completed(run_id="r", final_status="completed", stopped_at=None)
+        n.notify_pipeline_reverted(run_id="r", stage_name="sft-warmup", reason="revert")
+        assert len(calls) == 8, "a notify_* method did not reach _send"
+        return calls
+
+    def test_allowlist_exactly_matches_keys_the_notifiers_pass(self, monkeypatch):
+        """The whole point of the allowlist: it must neither drop a field a
+        shipped notifier sends, nor carry a dead entry.
+
+        This is the CI-time loudness that justifies WARN-and-drop at runtime
+        (see ``_screen_extras``). A contributor who adds an extra kwarg to a
+        ``notify_*`` method without registering it fails here rather than
+        silently losing the field in an operator's Slack channel.
+        """
+        from forgelm.webhook import _ALLOWED_EXTRA_PAYLOAD_KEYS
+
+        declared = self._declared_send_params()
+        passed = set()
+        for kwargs in self._drive_every_notifier(monkeypatch):
+            passed |= set(kwargs) - declared
+
+        assert passed == set(_ALLOWED_EXTRA_PAYLOAD_KEYS), (
+            "webhook extra-payload allowlist drifted from what the notifiers pass: "
+            f"{passed ^ set(_ALLOWED_EXTRA_PAYLOAD_KEYS)}"
+        )
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_allowlisted_extras_reach_the_wire(self, mock_post):
+        """Screening must not regress the Phase 14 fix — the registered
+        pipeline fields still land in the serialized payload."""
+        config = _make_config({"url": "https://example.com/hook", "notify_on_failure": True})
+        notifier = WebhookNotifier(config)
+        notifier.notify_pipeline_reverted(run_id="p1", stage_name="dpo-align", reason="gate failed")
+
+        payload = json.loads(mock_post.call_args.kwargs["data"])
+        assert payload["event"] == "pipeline.stage_reverted"
+        assert payload["stage_name"] == "dpo-align"
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_unregistered_key_is_dropped_and_warned(self, mock_post, caplog):
+        """An unregistered extra never reaches the wire, and the drop is loud.
+
+        WARN-and-drop rather than raise: ``notify_*`` is a best-effort side
+        channel that must never abort a completed run. The drop is not a
+        silent failure — ``error-handling.md`` requires it be logged, and
+        this asserts that it is.
+        """
+        config = _make_config({"url": "https://example.com/hook"})
+        notifier = WebhookNotifier(config)
+
+        with caplog.at_level("WARNING", logger="forgelm.webhook"):
+            notifier._send(
+                event="training.start",
+                run_name="r",
+                status="started",
+                title="t",
+                text="x",
+                customer_email="alice@example.com",
+            )
+
+        payload = json.loads(mock_post.call_args.kwargs["data"])
+        assert "customer_email" not in payload
+        assert "alice@example.com" not in json.dumps(payload)
+        assert "customer_email" in caplog.text
+        assert "allowlist" in caplog.text
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_unregistered_key_does_not_abort_the_notification(self, mock_post):
+        """The rest of the payload still ships — a rogue field degrades the
+        notification, it does not cancel it, and it does not raise."""
+        config = _make_config({"url": "https://example.com/hook"})
+        notifier = WebhookNotifier(config)
+        notifier._send(
+            event="training.success",
+            run_name="r",
+            status="succeeded",
+            title="t",
+            text="x",
+            bogus="drop me",
+        )
+        mock_post.assert_called_once()
+        payload = json.loads(mock_post.call_args.kwargs["data"])
+        assert payload["event"] == "training.success"
+        assert payload["run_name"] == "r"
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_non_scalar_allowlisted_value_is_dropped_not_serialized(self, mock_post):
+        """A registered key carrying a non-JSON-scalar must not crash the
+        notifier: ``json.dumps`` would raise inside ``_post_payload``, which
+        propagates out of ``notify_*`` and kills an otherwise-successful run."""
+        config = _make_config({"url": "https://example.com/hook"})
+        notifier = WebhookNotifier(config)
+        notifier._send(
+            event="pipeline.completed",
+            run_name="r",
+            status="completed",
+            title="t",
+            text="x",
+            stopped_at=object(),
+        )
+        mock_post.assert_called_once()
+        payload = json.loads(mock_post.call_args.kwargs["data"])
+        assert "stopped_at" not in payload
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_none_valued_extra_is_preserved(self, mock_post):
+        """``stopped_at=None`` is meaningful (pipeline finished cleanly) and
+        must survive the type screen rather than being filtered out."""
+        config = _make_config({"url": "https://example.com/hook", "notify_on_success": True})
+        notifier = WebhookNotifier(config)
+        notifier.notify_pipeline_completed(run_id="p", final_status="completed", stopped_at=None)
+
+        payload = json.loads(mock_post.call_args.kwargs["data"])
+        assert "stopped_at" in payload
+        assert payload["stopped_at"] is None
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_allowlisted_string_values_are_secret_masked(self, mock_post):
+        """Stage names come from operator YAML, so an allowlisted string is
+        config-derived text on an outbound wire — same category as ``reason``.
+        The allowlist must cooperate with the existing masking, not bypass it.
+        """
+        config = _make_config({"url": "https://example.com/hook", "notify_on_failure": True})
+        notifier = WebhookNotifier(config)
+        token = "ghp_" + "A" * 36
+        notifier.notify_pipeline_reverted(run_id="p", stage_name=f"stage-{token}", reason="r")
+
+        # Assert on the raw serialized body, not just the ``stage_name`` field:
+        # the first version of this fix masked the field but interpolated the
+        # RAW stage name into the Slack ``attachments[0].text`` prose, so the
+        # token shipped anyway. Masking is applied to the assembled payload.
+        assert token not in mock_post.call_args.kwargs["data"], "secret-shaped stage name left the process unmasked"
+        payload = json.loads(mock_post.call_args.kwargs["data"])
+        assert "[REDACTED-SECRET]" in payload["stage_name"]
+        assert "[REDACTED-SECRET]" in payload["attachments"][0]["text"]
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_run_name_and_attachment_prose_are_masked(self, mock_post):
+        """``run_name`` is config-derived and is interpolated into the
+        attachment title/text by every notifier — it must be masked in all
+        three places, not only in the top-level field."""
+        config = _make_config({"url": "https://example.com/hook", "notify_on_start": True})
+        notifier = WebhookNotifier(config)
+        token = "ghp_" + "B" * 36
+        notifier.notify_start(run_name=f"run-{token}")
+
+        body = mock_post.call_args.kwargs["data"]
+        assert token not in body
+        payload = json.loads(body)
+        assert "[REDACTED-SECRET]" in payload["run_name"]
+        assert "[REDACTED-SECRET]" in payload["attachments"][0]["title"]
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_routing_fields_are_exempt_from_masking(self, mock_post):
+        """``event`` / ``status`` / ``color`` are closed-set code literals that
+        receivers route on; the masking sweep must leave them byte-identical."""
+        config = _make_config({"url": "https://example.com/hook", "notify_on_failure": True})
+        notifier = WebhookNotifier(config)
+        notifier.notify_reverted(run_name="r", reason="gate failed")
+
+        payload = json.loads(mock_post.call_args.kwargs["data"])
+        assert payload["event"] == "training.reverted"
+        assert payload["status"] == "reverted"
+        assert payload["attachments"][0]["color"] == "#ff9900"
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_masker_unavailable_redacts_rather_than_ships_raw(self, mock_post, monkeypatch):
+        """If ``data_audit`` cannot be imported we refuse to ship un-scrubbed
+        text — the pre-existing stance for ``reason``, now applied to every
+        free-text field. Routing fields must survive so the ping still
+        correlates."""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _no_data_audit(name, *args, **kwargs):
+            if name.endswith("data_audit") or ".data_audit" in name:
+                raise ImportError("simulated: data_audit unavailable")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_data_audit)
+        config = _make_config({"url": "https://example.com/hook", "notify_on_start": True})
+        notifier = WebhookNotifier(config)
+        notifier.notify_start(run_name="secret-bearing-run")
+
+        payload = json.loads(mock_post.call_args.kwargs["data"])
+        assert "secret-bearing-run" not in json.dumps(payload)
+        assert payload["run_name"] == "[REDACTED — secrets masker unavailable]"
+        assert payload["event"] == "training.start"
+        assert payload["status"] == "started"
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_screening_happens_before_transport_not_after(self, mock_post):
+        """Defence in depth: assert on the bytes handed to the HTTP layer, not
+        on an intermediate dict, so a future refactor that screens a copy while
+        posting the original is caught."""
+        config = _make_config({"url": "https://example.com/hook"})
+        notifier = WebhookNotifier(config)
+        notifier._send(
+            event="training.start",
+            run_name="r",
+            status="started",
+            title="t",
+            text="x",
+            internal_api_key="sk-live-should-never-ship",
+        )
+        assert "sk-live-should-never-ship" not in mock_post.call_args.kwargs["data"]

@@ -287,6 +287,301 @@ def is_annex_iv_integrity_failure(result: VerifyAnnexIVResult) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Pipeline per-stage evidence verification (F-PR54-H7)
+# ---------------------------------------------------------------------------
+
+# A per-stage Annex IV artefact is a small JSON document (single-digit kB in
+# practice).  Anything past this cap is refused *unread* rather than parsed:
+# json.load on an attacker-supplied multi-GB file is an OOM, and a verifier
+# that can be killed by its own input is not a verifier.  Refusing is a
+# violation, not a pass — fail closed.
+STAGE_EVIDENCE_MAX_BYTES = 8 * 1024 * 1024
+
+# The orchestrator records ``<output_dir>/compliance/training_manifest.json``
+# as each stage's evidence pointer, but no ForgeLM version has ever written
+# that file: export_compliance_artifacts emits ``training_manifest.yaml`` and
+# ``annex_iv_metadata.json``.  The pointer has therefore always dangled on
+# real runs.  We resolve the legacy basename to the artefact that actually
+# carries the Annex IV payload, and when even that is absent we report
+# UNVERIFIED rather than "missing evidence" — a product defect in the writer
+# must not be reported to an operator as tampering.
+_LEGACY_EVIDENCE_BASENAME = "training_manifest.json"
+_ANNEX_IV_EVIDENCE_BASENAME = "annex_iv_metadata.json"
+
+# Per-stage outcome tokens.  Callers route on these, never on message prose.
+EVIDENCE_VERIFIED = "verified"
+EVIDENCE_UNVERIFIED = "unverified"
+EVIDENCE_VIOLATION = "violation"
+EVIDENCE_IO_ERROR = "io_error"
+
+# Chain-level manifest hash states, mirrored into the CLI JSON envelope.
+HASH_STATE_VERIFIED = "verified"
+HASH_STATE_MISMATCH = "mismatch"
+HASH_STATE_ABSENT = "absent"
+
+
+class PipelineEvidenceReport:
+    """Aggregate verdict over a pipeline manifest's per-stage evidence.
+
+    ``violations`` carries the routing-token-prefixed strings the CLI maps
+    to exit codes.  The counters exist so the envelope can state how much
+    was actually examined: a chain verifier that reports success having
+    verified nothing is precisely the defect this class of check keeps
+    reproducing, and the only defence is publishing the count.
+    """
+
+    __slots__ = ("violations", "stages_examined", "evidence_verified", "evidence_unverified", "hash_state")
+
+    def __init__(self, *, hash_state: str = HASH_STATE_ABSENT) -> None:
+        self.violations: List[str] = []
+        self.stages_examined = 0
+        self.evidence_verified = 0
+        self.evidence_unverified = 0
+        self.hash_state = hash_state
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "stages_examined": self.stages_examined,
+            "evidence_verified": self.evidence_verified,
+            "evidence_unverified": self.evidence_unverified,
+            "hash_state": self.hash_state,
+        }
+
+
+def _resolve_stage_evidence_path(pointer: str, pipeline_dir: str) -> Tuple[str, str]:
+    """Resolve a stage evidence pointer to a readable path.
+
+    Returns ``(path, problem)``; exactly one is non-empty.  Rejects the
+    ambiguous shapes rather than reading through them:
+
+    - A **relative** pointer resolves against *pipeline_dir* and must stay
+      inside it.  ``../../etc/passwd`` escapes and is refused.  Absolute
+      pointers are allowed unconditionally because a stage's
+      ``training.output_dir`` is config-declared and legitimately lives
+      outside the pipeline tree (``forgelm/cli/_pipeline.py`` resolves stage
+      outputs under each stage's own ``training.output_dir``, not under
+      ``pipeline.output_dir``), so containment is not a rule we can impose
+      on them without breaking valid configs.
+    - A **symlink** is refused where a regular file is expected: the
+      evidence would be whatever the link points at when the verifier runs,
+      which is not a property of the archived run.
+    - A **directory** is refused for the same reason ``open()`` would fail,
+      but with a verdict instead of a traceback.
+    """
+    if not os.path.isabs(pointer):
+        base = os.path.realpath(pipeline_dir)
+        candidate = os.path.realpath(os.path.join(pipeline_dir, pointer))
+        if candidate != base and not candidate.startswith(base + os.sep):
+            return "", f"evidence path {pointer!r} escapes the pipeline directory"
+    else:
+        candidate = pointer
+
+    if os.path.islink(candidate):
+        return "", f"evidence path {pointer!r} is a symlink, not a regular file"
+    if os.path.isdir(candidate):
+        return "", f"evidence path {pointer!r} is a directory, not a regular file"
+    return candidate, ""
+
+
+def _verify_stage_evidence(pointer: Any, pipeline_dir: str) -> Tuple[str, str]:
+    """Deep-verify one completed stage's Annex IV evidence.
+
+    Returns ``(outcome, message)`` where *outcome* is one of the
+    ``EVIDENCE_*`` tokens.  Every ambiguous on-disk state fails closed;
+    see this module's docstring and
+    ``docs/standards/error-handling.md`` for the exit-code contract.
+
+    Depth is exactly one level — the per-stage artefact is verified, but
+    nothing it references is followed — so an adversarial manifest cannot
+    drive unbounded recursion.
+    """
+    if not pointer or not isinstance(pointer, str):
+        return EVIDENCE_VIOLATION, "stage claims status 'completed' but records no evidence path"
+
+    path, problem = _resolve_stage_evidence_path(pointer, pipeline_dir)
+    if problem:
+        return EVIDENCE_VIOLATION, problem
+
+    if not os.path.isfile(path):
+        # The legacy pointer names a file no writer produces.  Fall back to
+        # the artefact that actually carries the Annex IV payload before
+        # concluding anything.
+        if os.path.basename(path) == _LEGACY_EVIDENCE_BASENAME:
+            sibling = os.path.join(os.path.dirname(path), _ANNEX_IV_EVIDENCE_BASENAME)
+            if os.path.isfile(sibling) and not os.path.islink(sibling):
+                path = sibling
+            else:
+                return (
+                    EVIDENCE_UNVERIFIED,
+                    f"evidence pointer {pointer!r} names a filename no ForgeLM version writes "
+                    f"and no {_ANNEX_IV_EVIDENCE_BASENAME} sits beside it — the run's evidence "
+                    "cannot be located, which is a writer defect, not tampering",
+                )
+        else:
+            return EVIDENCE_VIOLATION, f"evidence at {pointer!r} is missing"
+
+    try:
+        size = os.path.getsize(path)
+    except OSError as exc:
+        return EVIDENCE_IO_ERROR, f"evidence at {pointer!r} could not be stat'd: {exc}"
+    if size == 0:
+        return EVIDENCE_VIOLATION, f"evidence at {pointer!r} is zero bytes"
+    if size > STAGE_EVIDENCE_MAX_BYTES:
+        return (
+            EVIDENCE_VIOLATION,
+            f"evidence at {pointer!r} is {size} bytes, over the {STAGE_EVIDENCE_MAX_BYTES}-byte cap — refused unread",
+        )
+
+    try:
+        result = verify_annex_iv_artifact(path)
+    except json.JSONDecodeError as exc:
+        return EVIDENCE_VIOLATION, f"evidence at {pointer!r} is not valid JSON: {exc.msg} (line {exc.lineno})"
+    except UnicodeDecodeError as exc:
+        return EVIDENCE_VIOLATION, f"evidence at {pointer!r} is not valid UTF-8: {exc}"
+    except OSError as exc:
+        return EVIDENCE_IO_ERROR, f"evidence at {pointer!r} is unreadable: {exc}"
+
+    if not result.valid:
+        # Deliberate divergence from the standalone verifier: an
+        # incomplete-fields artefact verified on its own exits 1, but as
+        # chain evidence it exits 6.  At chain level the pipeline manifest
+        # *asserts* this stage completed with valid evidence; that assertion
+        # was compared against the artefact and it did not hold.
+        if is_annex_iv_integrity_failure(result):
+            return EVIDENCE_VIOLATION, f"evidence at {pointer!r} failed tamper detection: {result.reason}"
+        detail = f" (missing: {', '.join(result.missing_fields)})" if result.missing_fields else ""
+        return EVIDENCE_VIOLATION, f"evidence at {pointer!r} is unusable: {result.reason}{detail}"
+
+    if not result.manifest_hash_expected:
+        return (
+            EVIDENCE_UNVERIFIED,
+            f"evidence at {pointer!r} is complete but carries no manifest_hash — tampering could not be checked",
+        )
+    return EVIDENCE_VERIFIED, ""
+
+
+def verify_pipeline_stage_evidence(manifest: Dict[str, Any], pipeline_dir: str) -> PipelineEvidenceReport:
+    """Chain-level aggregator over every completed stage's evidence.
+
+    Called by :func:`forgelm.compliance.verify_pipeline_manifest_at_path`
+    for the disk-bound half of ``forgelm verify-annex-iv --pipeline``.  The
+    in-memory structural verifier cannot see the filesystem; this can.
+    """
+    from forgelm.compliance import (
+        PIPELINE_MANIFEST_IO_ERROR_PREFIX,
+        PIPELINE_MANIFEST_UNVERIFIED_PREFIX,
+    )
+
+    metadata = manifest.get("metadata") if isinstance(manifest.get("metadata"), dict) else None
+    expected_hash = metadata.get("manifest_hash") if metadata else None
+    if not expected_hash:
+        hash_state = HASH_STATE_ABSENT
+    else:
+        from forgelm.compliance import compute_annex_iv_manifest_hash
+
+        hash_state = (
+            HASH_STATE_VERIFIED if compute_annex_iv_manifest_hash(manifest) == expected_hash else HASH_STATE_MISMATCH
+        )
+    report = PipelineEvidenceReport(hash_state=hash_state)
+
+    raw_stages = manifest.get("stages")
+    if not isinstance(raw_stages, list):
+        # The in-memory verifier already flagged this shape; nothing on disk
+        # to add.
+        return report
+
+    for idx, stage in enumerate(raw_stages):
+        if not isinstance(stage, dict):
+            report.violations.append(f"stage at index {idx} is not an object (got {type(stage).__name__})")
+            continue
+        if stage.get("status") != "completed":
+            continue
+        report.stages_examined += 1
+        name = stage.get("name", "<unnamed>")
+        outcome, message = _verify_stage_evidence(stage.get("training_manifest"), pipeline_dir)
+        if outcome == EVIDENCE_VERIFIED:
+            report.evidence_verified += 1
+        elif outcome == EVIDENCE_UNVERIFIED:
+            report.evidence_unverified += 1
+            report.violations.append(f"{PIPELINE_MANIFEST_UNVERIFIED_PREFIX}Stage {name!r}: {message}")
+        elif outcome == EVIDENCE_IO_ERROR:
+            report.violations.append(f"{PIPELINE_MANIFEST_IO_ERROR_PREFIX}Stage {name!r}: {message}")
+        else:
+            report.violations.append(f"Stage {name!r}: {message}")
+
+    # A manifest declaring the whole pipeline completed while presenting no
+    # completed stage to examine is itself a violation.  Without this, the
+    # verifier's happiest path is the one where it inspected nothing —
+    # exactly the "reports success without examining the thing it claims to
+    # check" defect closed six times elsewhere in this cycle.
+    if manifest.get("final_status") == "completed" and report.stages_examined == 0:
+        report.violations.append(
+            "manifest reports final_status 'completed' but carries no completed stage — there is no evidence to verify"
+        )
+    return report
+
+
+def verify_pipeline_manifest_report(pipeline_dir: str) -> PipelineEvidenceReport:
+    """Full disk-backed pipeline verification, returning the typed report.
+
+    Reads ``<pipeline_dir>/compliance/pipeline_manifest.json``, runs the
+    structural + chain verifier on the payload, then the per-stage evidence
+    deep-parse.  :func:`forgelm.compliance.verify_pipeline_manifest_at_path`
+    is the ``List[str]`` facade over this (its stable public signature is
+    unchanged); the CLI calls this one so the JSON envelope can report
+    ``hash_state`` and the evidence counters from a **single** pass rather
+    than verifying every stage artefact twice.
+
+    Pre-flight failures (absent file, malformed JSON, bad encoding,
+    unreadable) return a report whose sole violation carries the matching
+    routing token and whose counters stay at zero — nothing was examined,
+    and the envelope says so rather than implying a clean run.
+    """
+    from forgelm.compliance import (
+        PIPELINE_MANIFEST_INPUT_ERROR_PREFIX,
+        PIPELINE_MANIFEST_IO_ERROR_PREFIX,
+        _verify_manifest_payload,
+    )
+
+    manifest_path = os.path.join(pipeline_dir, "compliance", "pipeline_manifest.json")
+
+    def _preflight(prefix: str, message: str) -> PipelineEvidenceReport:
+        failed = PipelineEvidenceReport()
+        failed.violations.append(f"{prefix}{message}")
+        return failed
+
+    if not os.path.isfile(manifest_path):
+        return _preflight(PIPELINE_MANIFEST_INPUT_ERROR_PREFIX, f"pipeline_manifest.json not found at {manifest_path}")
+    # The two failure modes get distinct tokens so the CLI maps each to the
+    # right exit code: unparseable/mis-encoded input is operator-actionable
+    # (1); an OSError on a reachable path is genuine runtime I/O (2).
+    # UnicodeDecodeError needs its own branch because it is a ValueError
+    # subclass, not an OSError one, and would otherwise escape uncaught.
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as fh:
+            manifest = json.load(fh)
+    except json.JSONDecodeError as exc:
+        return _preflight(PIPELINE_MANIFEST_INPUT_ERROR_PREFIX, f"pipeline_manifest.json invalid JSON: {exc}")
+    except UnicodeDecodeError as exc:
+        return _preflight(PIPELINE_MANIFEST_INPUT_ERROR_PREFIX, f"pipeline_manifest.json is not valid UTF-8: {exc}")
+    except OSError as exc:
+        return _preflight(PIPELINE_MANIFEST_IO_ERROR_PREFIX, f"pipeline_manifest.json unreadable: {exc}")
+
+    if not isinstance(manifest, dict):
+        # A JSON array / string / number parses fine but carries no manifest.
+        # Guard before the verifiers, which both assume a mapping.
+        return _preflight(
+            PIPELINE_MANIFEST_INPUT_ERROR_PREFIX,
+            f"pipeline_manifest.json root is {type(manifest).__name__}, expected a JSON object",
+        )
+
+    report = verify_pipeline_stage_evidence(manifest, pipeline_dir)
+    # Structural + chain violations lead; evidence findings follow.
+    report.violations[:0] = _verify_manifest_payload(manifest)
+    return report
+
+
+# ---------------------------------------------------------------------------
 # GGUF integrity verification
 # ---------------------------------------------------------------------------
 

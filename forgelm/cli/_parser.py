@@ -807,8 +807,8 @@ def _add_verify_annex_iv_subcommand(subparsers) -> None:
         help=(
             "Phase 14: interpret `path` as a pipeline run directory and "
             "validate the chain-level `pipeline_manifest.json` (chain "
-            "integrity, stage-index ordering, `stopped_at` coherence, "
-            "per-stage training_manifest existence)."
+            "integrity, stage-index ordering, `stopped_at` coherence, and a "
+            "deep parse of each completed stage's Annex IV evidence)."
         ),
     )
     _add_common_subparser_flags(p, include_output_format=True)

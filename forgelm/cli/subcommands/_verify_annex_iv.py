@@ -72,18 +72,27 @@ def _classify_pipeline_violations(violations: list[str]) -> tuple[int, list[str]
     on free text — a reworded violation must not be able to flip the
     exit-code contract (F-P4-OPUS-25).
 
-    Precedence, most-specific first:
+    Precedence, **integrity first**:
 
+    - Any *untagged* violation → ``EXIT_INTEGRITY_FAILURE`` (6): the
+      manifest parsed and failed a structural, chain-integrity, or
+      per-stage-evidence check.  Something rewrote the run's record.
     - Any ``IO_ERROR::`` violation → ``EXIT_TRAINING_ERROR`` (2): the
-      manifest exists but could not be read (locked file, mid-read I/O
-      failure).  Retryable infrastructure problem.
+      manifest or a stage artefact exists but could not be read (locked
+      file, mid-read I/O failure).  Retryable infrastructure problem.
     - Any ``INPUT_ERROR::`` violation → ``EXIT_CONFIG_ERROR`` (1): the
       manifest is absent (wrong directory) or unparseable.  The verifier
       never saw a payload, so it has no integrity verdict to give.
-    - Any remaining violation → ``EXIT_INTEGRITY_FAILURE`` (6): the
-      manifest parsed and failed a structural, chain-integrity, or
-      per-stage-evidence check.  Something rewrote the run's record.
+    - Any ``UNVERIFIED::`` violation → ``EXIT_CONFIG_ERROR`` (1): the
+      verifier reached the evidence but nothing attested to it.  Not a
+      pass and not tampering — no comparison happened.
     - No violations → ``EXIT_SUCCESS`` (0).
+
+    Integrity moved to the front to close a masking bug: the shipped order
+    returned on the tagged prefixes first, so a single unreadable stage
+    artefact (2) or an unhashed one (1) *downgraded* a genuine tamper
+    finding reported in the same run.  A verifier must never let a weaker
+    finding hide a stronger one.
 
     The routing tokens are internal and are stripped from every returned
     display string so they never reach operator-facing output.
@@ -91,11 +100,14 @@ def _classify_pipeline_violations(violations: list[str]) -> tuple[int, list[str]
     from forgelm.compliance import (
         PIPELINE_MANIFEST_INPUT_ERROR_PREFIX,
         PIPELINE_MANIFEST_IO_ERROR_PREFIX,
+        PIPELINE_MANIFEST_UNVERIFIED_PREFIX,
     )
 
     display: list[str] = []
     runtime_io_error = False
     input_error = False
+    unverified = False
+    integrity_error = False
     for violation in violations:
         if violation.startswith(PIPELINE_MANIFEST_IO_ERROR_PREFIX):
             runtime_io_error = True
@@ -103,14 +115,20 @@ def _classify_pipeline_violations(violations: list[str]) -> tuple[int, list[str]
         elif violation.startswith(PIPELINE_MANIFEST_INPUT_ERROR_PREFIX):
             input_error = True
             display.append(violation[len(PIPELINE_MANIFEST_INPUT_ERROR_PREFIX) :])
+        elif violation.startswith(PIPELINE_MANIFEST_UNVERIFIED_PREFIX):
+            unverified = True
+            display.append(violation[len(PIPELINE_MANIFEST_UNVERIFIED_PREFIX) :])
         else:
+            integrity_error = True
             display.append(violation)
 
     if not violations:
         return EXIT_SUCCESS, display
+    if integrity_error:
+        return EXIT_INTEGRITY_FAILURE, display
     if runtime_io_error:
         return EXIT_TRAINING_ERROR, display
-    if input_error:
+    if input_error or unverified:
         return EXIT_CONFIG_ERROR, display
     return EXIT_INTEGRITY_FAILURE, display
 
@@ -126,7 +144,7 @@ def _run_pipeline_mode(path: str, output_format: str) -> NoReturn:
     Exit-code mapping is owned by :func:`_classify_pipeline_violations`;
     see its docstring for the four-way split.
     """
-    from forgelm.compliance import verify_pipeline_manifest_at_path
+    from forgelm.verify import verify_pipeline_manifest_report
 
     # Defensive try/except: the verifier already maps OSError /
     # JSONDecodeError / UnicodeDecodeError to violation strings, but a
@@ -136,7 +154,8 @@ def _run_pipeline_mode(path: str, output_format: str) -> NoReturn:
     # input verdict (exit 1) rather than a retryable I/O failure (exit 2) —
     # matching the three sibling single-artefact paths (D1-08).
     try:
-        violations = verify_pipeline_manifest_at_path(path)
+        report = verify_pipeline_manifest_report(path)
+        violations = report.violations
     except UnicodeDecodeError as exc:
         if output_format == "json":
             print(
@@ -181,12 +200,25 @@ def _run_pipeline_mode(path: str, output_format: str) -> NoReturn:
                     "mode": "pipeline",
                     "path": os.path.abspath(path),
                     "violations": display_violations,
+                    # How much was actually examined, and whether the chain
+                    # manifest's own hash attested to it.  A verifier that
+                    # prints only a verdict lets "OK" mean both "checked
+                    # everything" and "checked nothing"; these four fields are
+                    # what make those distinguishable to CI (F-PR54-H6/H7).
+                    **report.to_dict(),
                 },
                 indent=2,
             )
         )
     elif not violations:
-        print(f"OK: pipeline manifest at {path}")
+        # hash_state separates "valid" from "verified".  A pre-v0.8.0 archived
+        # manifest carries no manifest_hash: its structural and chain rules
+        # passed, but nothing attested to its non-chain fields, and saying
+        # plain "OK" would overclaim.
+        if report.hash_state == "verified":
+            print(f"OK: pipeline manifest at {path} (hash verified, {report.evidence_verified} stage artefact(s))")
+        else:
+            print(f"OK (UNVERIFIED): pipeline manifest at {path} — no manifest_hash; tampering not checked")
     else:
         print(f"FAIL: pipeline manifest at {path}")
         for v in display_violations:

@@ -57,6 +57,17 @@ PIPELINE_MANIFEST_IO_ERROR_PREFIX = "IO_ERROR::"
 # match the prefix, never the free text.
 PIPELINE_MANIFEST_INPUT_ERROR_PREFIX = "INPUT_ERROR::"
 
+# Third routing token: the verifier *reached* the evidence and found it
+# structurally fine, but nothing attested to it — a per-stage Annex IV
+# artefact carrying no ``metadata.manifest_hash``, or a stage evidence
+# pointer naming a filename no ForgeLM version has ever written.  This is
+# neither "valid" nor "tampered": no comparison happened, so the honest
+# verdict is ``EXIT_CONFIG_ERROR`` (1) under the shipped rule (6 = compared
+# and mismatched, 1 = never got to compare).  Distinguishing it from a
+# silent pass is the whole point — a verifier that reports OK having
+# compared nothing is the defect class this cycle has closed six times.
+PIPELINE_MANIFEST_UNVERIFIED_PREFIX = "UNVERIFIED::"
+
 # Structural failure taxonomy for the audit-log verifier.
 #
 # ``verify_audit_log`` folds five very different situations into the same
@@ -2833,12 +2844,21 @@ def _verify_audit_log_chain(
 # ---------------------------------------------------------------------------
 #
 # The pipeline manifest is the *index* over a multi-stage training run.
-# Per-stage ``training_manifest.json`` files (produced by
-# :func:`generate_training_manifest` + :func:`export_compliance_artifacts`)
-# remain individually valid against the existing single-stage Annex IV
-# schema; the pipeline manifest ties them together at the chain level so
-# auditors can verify both the per-stage evidence AND the chain
-# integrity that connects the records.
+# Each stage's per-stage Annex IV evidence — ``annex_iv_metadata.json``,
+# written by :func:`export_compliance_artifacts` — remains individually
+# valid against the single-stage Annex IV schema; the pipeline manifest
+# ties them together at the chain level so auditors can verify both the
+# per-stage evidence AND the chain integrity that connects the records.
+#
+# NOTE: the orchestrator records each stage's evidence pointer as
+# ``<output_dir>/compliance/training_manifest.json``, a filename NO writer
+# in this module has ever produced (``export_compliance_artifacts`` emits
+# ``training_manifest.yaml`` and ``annex_iv_metadata.json``).  The pointer
+# therefore dangles on every real run.  The verifier resolves that legacy
+# basename to its ``annex_iv_metadata.json`` sibling; where no sibling
+# exists it reports UNVERIFIED rather than "evidence missing", because a
+# writer-side defect must not be reported to an operator as tampering.
+# Correcting the pointer itself lives in ``forgelm/cli/_pipeline.py``.
 #
 # Lives in ``compliance.py`` (alongside the single-stage manifest) so
 # Annex IV schema decisions live in one module.  The orchestrator
@@ -2954,7 +2974,13 @@ def export_pipeline_manifest(manifest: Dict[str, Any], pipeline_output_dir: str)
     target_path = os.path.join(target_dir, "pipeline_manifest.json")
     tmp_path = target_path + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2, default=str)
+        # _manifest_json_default, not default=str: the stamped manifest_hash is
+        # computed over the _manifest_json_default normalisation, so writing a
+        # set with default=str emits a PYTHONHASHSEED-dependent "{'a', 'b'}"
+        # that re-hashes to a different digest on read-back — a false-tampering
+        # verdict on an untouched manifest.  Same fix as F-H-05 applied to
+        # annex_iv_metadata.json in export_compliance_artifacts.
+        json.dump(manifest, f, indent=2, default=_manifest_json_default)
         # Flush userspace buffer then sync to storage before the rename so the
         # artefact survives a kernel crash or OOM-kill between file-close and
         # os.replace.  Mirrors the fsync discipline in log_event (Article 12
@@ -2986,62 +3012,21 @@ def verify_pipeline_manifest_at_path(pipeline_dir: str) -> List[str]:
 
     Reads ``<pipeline_dir>/compliance/pipeline_manifest.json``, runs the
     in-memory verifier on the parsed payload, then layers on disk-only
-    checks (per-stage ``training_manifest`` file existence).  Pre-flight
+    checks (per-stage Annex IV evidence, deep-parsed via
+    :func:`forgelm.verify.verify_pipeline_stage_evidence`).  Pre-flight
     failures (missing manifest file, malformed JSON) surface as a single-
     entry violation list so the CLI's exit-code mapping is uniform.
 
     Violation strings may carry a leading routing token —
     :data:`PIPELINE_MANIFEST_IO_ERROR_PREFIX` for an OSError-shaped read
     failure, :data:`PIPELINE_MANIFEST_INPUT_ERROR_PREFIX` for a missing or
-    unparseable manifest.  Untagged violations are integrity findings
-    (structural, chain, missing per-stage evidence).  Callers that display
-    violations must strip the tokens; callers that route on them must match
-    the exact prefix rather than any free-text substring (F-P4-OPUS-25).
+    unparseable manifest, :data:`PIPELINE_MANIFEST_UNVERIFIED_PREFIX` for
+    evidence that was reached but that nothing attested to.  Untagged
+    violations are integrity findings (structural, chain, unusable or
+    tampered per-stage evidence).  Callers that display violations must
+    strip the tokens; callers that route on them must match the exact
+    prefix rather than any free-text substring (F-P4-OPUS-25).
     """
-    manifest_path = os.path.join(pipeline_dir, "compliance", "pipeline_manifest.json")
-    if not os.path.isfile(manifest_path):
-        return [f"{PIPELINE_MANIFEST_INPUT_ERROR_PREFIX}pipeline_manifest.json not found at {manifest_path}"]
-    # Phase 14 post-release review: separate the two failure modes via
-    # distinct sentinel prefixes so the CLI can map them to the right
-    # exit code (mirrors the single-artifact verifier in
-    # _verify_annex_iv.py — FileNotFoundError / JSONDecodeError →
-    # EXIT_CONFIG_ERROR (1) (operator-actionable input), OSError →
-    # EXIT_TRAINING_ERROR (2) (genuine runtime I/O failure on a
-    # reachable path)).
-    try:
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            manifest = json.load(f)
-    except json.JSONDecodeError as e:
-        return [f"{PIPELINE_MANIFEST_INPUT_ERROR_PREFIX}pipeline_manifest.json invalid JSON: {e}"]
-    except UnicodeDecodeError as e:
-        # UnicodeDecodeError is a ValueError subclass, not an OSError one, so
-        # it matches neither branch around it and escaped this function as an
-        # unhandled traceback (D1-08).  All three sibling single-artefact
-        # verifiers carry an explicit branch for the same failure mode; a
-        # non-UTF-8 manifest is operator-actionable input, not a chain verdict.
-        return [f"{PIPELINE_MANIFEST_INPUT_ERROR_PREFIX}pipeline_manifest.json is not valid UTF-8: {e}"]
-    except OSError as e:
-        return [f"{PIPELINE_MANIFEST_IO_ERROR_PREFIX}pipeline_manifest.json unreadable: {e}"]
+    from .verify import verify_pipeline_manifest_report
 
-    violations: List[str] = list(_verify_manifest_payload(manifest))
-
-    # Disk-only check: each completed stage's training_manifest must
-    # exist.  The in-memory verifier cannot see the filesystem.
-    # Phase 14 review-response: type-guard each stage entry so a
-    # tampered manifest (``stages: [null, "foo"]``) surfaces as a
-    # violation rather than raising ``AttributeError`` on ``s.get``.
-    raw_stages = manifest.get("stages")
-    if not isinstance(raw_stages, list):
-        # In-memory verifier already flagged this; nothing more to
-        # check on disk.
-        return violations
-    for idx, s in enumerate(raw_stages):
-        if not isinstance(s, dict):
-            violations.append(f"stage at index {idx} is not an object (got {type(s).__name__})")
-            continue
-        name = s.get("name", "<unnamed>")
-        per_stage_manifest = s.get("training_manifest")
-        if per_stage_manifest and s.get("status") == "completed" and not os.path.isfile(per_stage_manifest):
-            violations.append(f"Stage {name!r}: training_manifest at {per_stage_manifest!r} is missing.")
-
-    return violations
+    return verify_pipeline_manifest_report(pipeline_dir).violations

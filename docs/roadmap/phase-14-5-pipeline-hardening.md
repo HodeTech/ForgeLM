@@ -1,6 +1,28 @@
 # Phase 14.5: Pipeline Hardening (post-release review deferrals)
 
-> **Status:** Planned for the `v0.9.x` cycle.  Originally targeted at `v0.7.x`; the cycle closed and both v0.8.0 and v0.9.0 shipped without it, so the target moves forward to the next open line rather than naming a version the mainline has already passed.  Originates as the 4 review findings explicitly deferred during the v0.7.0 release cut (see PR #54 + the `risks-and-decisions.md` "2026-05-15 — v0.7.0 release review deferrals" section).  Wave 2 carry-overs from Phase 14 (intra-stage resume, DAG pipelines, parallel exec, wizard pipeline path) are tracked at the bottom as **future phases**, not in-flight Phase 14.5 work.
+> **Status:** **Tasks 1-4 delivered** in the `v0.9.x` cycle (unreleased at the time of writing; entries sit under `[Unreleased]` in [`CHANGELOG.md`](../../CHANGELOG.md)).  **Task 5 (the SonarCloud S3776 cognitive-complexity refactor) is NOT delivered** and remains open — it was never part of the four v0.7.0 release-cut deferrals this phase was created for, and was appended to this file later.  Do not read "Phase 14.5 shipped" as "this file is closed".
+>
+> Originally targeted at `v0.7.x`; the cycle closed and both v0.8.0 and v0.9.0 shipped without it, so the target moved forward to the next open line rather than naming a version the mainline had already passed.  Originates as the 4 review findings explicitly deferred during the v0.7.0 release cut (see PR #54 + the `risks-and-decisions.md` "2026-05-15 — v0.7.0 release review deferrals" section).  Wave 2 carry-overs from Phase 14 (intra-stage resume, DAG pipelines, parallel exec, wizard pipeline path) are tracked at the bottom as **future phases**, not in-flight Phase 14.5 work.
+>
+> **Where the delivered shape differs from the plan below.**  The task descriptions are preserved as written so the delta is auditable rather than quietly erased:
+>
+> - **Task 1** did not add a separate `compute_pipeline_manifest_hash`.  `generate_pipeline_manifest` stamps `metadata.manifest_hash` using the existing `compute_annex_iv_manifest_hash`, so writer and verifier share one canonicalisation routine instead of two that can drift.  The planned exit-code mapping ("hash mismatch → `EXIT_CONFIG_ERROR (1)`") was **rejected**: `EXIT_INTEGRITY_FAILURE (6)` shipped between the plan and the work, and a recomputed digest that disagrees is the definition of "compared and did not match".  A mismatch exits `6`.
+> - **Task 2**'s planned mapping ("per-stage failures → `EXIT_CONFIG_ERROR (1)`") was likewise superseded.  Rotten evidence — zero bytes, malformed JSON, missing Annex IV fields, hash mismatch, path escape, symlink, directory, oversize — exits `6`.  A third routing token, `UNVERIFIED::`, was added for the genuinely different case where the verifier reached the evidence and nothing attested to it (complete-but-unhashed artefact; dangling legacy pointer with no sibling), which exits `1`.
+> - **Task 3** shipped `docs/reference/webhook_schema.md` + TR mirror.  The planned `event_kind` discriminator was **not** added — no such field exists on the wire, and inventing one for a doc would have documented a payload ForgeLM does not send.  The planned `docs/standards/webhook_schema.md` was not created either; the contributor-facing rules already live in `docs/standards/logging-observability.md`, which now points at the new reference.  The optional `SUPPORTED_EVENTS` constant + `tools/check_webhook_event_vocabulary.py` guard were not built — see the open follow-ups below.
+> - **Task 4** landed as `_ALLOWED_EXTRA_PAYLOAD_KEYS`, not `_ALLOWED_PIPELINE_EXTRAS`, and holds four keys rather than the six sketched below: `gate_decision` and `staging_path` are **not** passed by any shipped notifier, and registering keys nothing emits would have made the allowlist a wish-list rather than a description of the wire.  A value-type screen (JSON scalars only) and a base-field collision screen were added beyond the plan.
+>
+> **Open follow-ups from this delivery** (small, tracked here so they are not lost):
+>
+> All three follow-ups this delivery opened were closed before the step was committed:
+>
+> - `docs/reference/webhook_schema.md` ↔ `webhook_schema-tr.md` is registered in
+>   `tools/check_bilingual_parity.py::_PAIRS`.  It was caught by the test that audits the guard's own
+>   hand-maintained registry, not by the guard itself — the registry is exactly the kind of hand-kept list
+>   that rots, so the audit test is what holds it honest.
+> - `--pipeline`'s argparse help said the verifier checks "per-stage training_manifest existence", which is
+>   what it did before Task 2.  It now says it deep-parses each completed stage's Annex IV evidence.
+> - The "all 222 existing tests stay green" claim under **Requirements** was re-derived (330) rather than
+>   carried forward.
 >
 > **Note:** This file details a single planned phase.  See [../roadmap.md](../roadmap.md) for the cross-phase summary; the Phase 14 design + shipped scope is archived in [completed-phases.md#phase-14-multi-stage-pipeline-chains-v070](completed-phases.md#phase-14--multi-stage-pipeline-chains-v070).
 
@@ -14,7 +36,7 @@
 
 ## Tasks
 
-1. [ ] **Canonical pipeline manifest hash** (HIGH 6)
+1. [x] **Canonical pipeline manifest hash** (HIGH 6)
    The chain-level `compliance/pipeline_manifest.json` does not carry a canonical hash of its own bytes.  Structural verifier (`_verify_manifest_payload`) catches chain-integrity / index / status drift but accepts edits to non-chain fields (provider metadata, metrics, `final_status`, per-stage `error` strings) without protest.  Single-artefact Annex IV already pins this surface via `compute_annex_iv_manifest_hash()`; pipeline manifest should mirror that pattern.
 
    ```python
@@ -36,7 +58,7 @@
    - **Golden fixtures** under `tests/fixtures/pipeline/` re-baseline once; backward-compat note in CHANGELOG for operators who pinned a manifest hash in external systems.
    - **CLI:** `forgelm verify-annex-iv --pipeline <dir>` exit-code mapping stays: hash mismatch → `EXIT_CONFIG_ERROR (1)` (manifest is operator-fixable; treat the same as a chain-integrity violation).
 
-2. [ ] **Per-stage `training_manifest.json` deep parse validation** (HIGH 7)
+2. [x] **Per-stage `training_manifest.json` deep parse validation** (HIGH 7)
    `verify_pipeline_manifest_at_path` currently checks `os.path.isfile(per_stage_manifest)` only.  A zero-byte / malformed-JSON / tampered file still passes the existence check; the verifier reports "OK" while one of the per-stage Annex IV artefacts is rotten.
 
    ```python
@@ -68,7 +90,7 @@
    - **Exit-code mapping** — per-stage failures are operator-fixable (regenerate the per-stage manifest from training_run output, or accept that the run is lost and start fresh); route to `EXIT_CONFIG_ERROR (1)` alongside the existing chain-integrity violations.
    - **Tests:** extend `tests/test_pipeline_compliance.py::TestVerifyPipelineManifestAtPath` with `test_per_stage_manifest_zero_byte`, `test_per_stage_manifest_malformed_json`, `test_per_stage_manifest_missing_required_field`.
 
-3. [ ] **Webhook `pipeline.*` event vocabulary documentation** (MEDIUM 10)
+3. [x] **Webhook `pipeline.*` event vocabulary documentation** (MEDIUM 10)
    v0.7.0 introduced 7 new `pipeline.*` event names alongside the pre-existing 5-event `training.*` vocabulary.  The receiver-side contract (Slack / Teams / Discord webhook adapters; Make.com / Zapier flows; downstream enum-validating consumers) was implicit — `event` is documented as a string, not a frozen enum — but never explicitly enumerated in a single canonical reference.  v0.7.0's CHANGELOG lists the seven new events, but a downstream consumer searching for the authoritative list has to read CHANGELOG.
 
    Three sub-tasks:
@@ -77,7 +99,7 @@
    - **Update `docs/standards/webhook_schema.md`** (if it exists; otherwise add) with the explicit "event field is an open-ended string, not a frozen enum" rule + the post-v0.7.0 vocabulary.
    - **Optional:** add a `WebhookNotifier.SUPPORTED_EVENTS: frozenset[str]` class constant + a `tools/check_webhook_event_vocabulary.py` `--strict` guard so the documented vocabulary cannot drift from the actual emission sites.
 
-4. [ ] **`WebhookNotifier._send(**extra)` explicit allowlist** (MEDIUM 11)
+4. [x] **`WebhookNotifier._send(**extra)` explicit allowlist** (MEDIUM 11)
    PR #53's blocker fix added `**extra` to `_send` so `notify_pipeline_*` could pass `stage_count` / `final_status` / `stopped_at` / `stage_name` through to the receiver payload.  Today `**extra` accepts any keyword the caller passes; in practice all callers are orchestrator-internal (controlled), but a future contributor passing external user input through `_send` would have nothing stopping that input from landing in the payload.
 
    ```python
@@ -126,7 +148,7 @@
 - **Backward compatibility, byte-identical.**  Pre-v0.7.x configs without a `pipeline:` block continue to reach `forgelm/trainer.py` byte-identical to v0.6.0 — orchestrator surface unchanged.
 - **No fixture mass-regeneration.**  Existing `tests/fixtures/pipeline/*.yaml` and their golden manifests are *amended*, not replaced.  Each task that touches a fixture adds a single migration commit.
 - **Webhook contract widening, not narrowing.**  Adding `_send` allowlist is the only narrowing; the documented vocabulary surface widens (more events, more fields).  No receiver should need to update *unless* they were already hard-validating the pre-v0.7.0 `event` enum (in which case CHANGELOG calls it out as a breaking change for v0.7.x).
-- **Test surface preserved.**  All 222 existing pipeline + webhook + verification tests stay green.  Each task adds tests; none rewrite existing assertions except where the contract genuinely tightens (Task 1's hash-mismatch addition).
+- **Test surface preserved.**  Every existing pipeline + webhook + verification test stays green — 330 collected across `test_pipeline_compliance.py`, `test_webhook.py` and `test_verification_toolbelt.py` at delivery (2026-07-20), re-derived rather than carried forward; the "222" this line used to assert was written at planning time and was never true of the suite that shipped.  Each task adds tests; none rewrite existing assertions except where the contract genuinely tightens (Task 1's hash-mismatch addition, and the no-hash manifest that used to report success).
 
 ## Validation gate to ship Phase 14.5
 

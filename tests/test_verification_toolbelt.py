@@ -2682,3 +2682,305 @@ class TestPipelineManifestNonUtf8:
         with pytest.raises(SystemExit) as ei:
             _mod._run_verify_annex_iv_cmd(_build_args(path=str(tmp_path), pipeline=True), output_format="json")
         assert ei.value.code == EXIT_CONFIG_ERROR
+
+
+# ---------------------------------------------------------------------------
+# Phase 14.5 / F-PR54-H7 — per-stage pipeline evidence deep-parse
+# ---------------------------------------------------------------------------
+
+
+def _hashed_annex_iv_artifact() -> dict:
+    """A complete Annex IV artefact carrying a correct manifest hash."""
+    from forgelm.compliance import compute_annex_iv_manifest_hash
+
+    artifact = _full_annex_iv_artifact()
+    artifact["metadata"] = {"manifest_hash": compute_annex_iv_manifest_hash(artifact)}
+    return artifact
+
+
+def _manifest_pointing_at(pointer, *, final_status: str = "completed") -> dict:
+    """A one-stage pipeline manifest whose completed stage points at *pointer*."""
+    return {
+        "forgelm_version": "0.9.1",
+        "pipeline_run_id": "pl_test",
+        "pipeline_config_hash": "sha256:abc",
+        "started_at": "2026-07-20T12:00:00+00:00",
+        "final_status": final_status,
+        "stages": [
+            {
+                "name": "s0",
+                "index": 0,
+                "trainer_type": "sft",
+                "status": "completed",
+                "input_source": "root",
+                "output_model": "./s0/out",
+                "training_manifest": pointer,
+            }
+        ],
+    }
+
+
+class TestPipelineStageEvidenceDeepParse:
+    """Every ambiguous on-disk shape of a per-stage Annex IV artefact must
+    fail closed.
+
+    Before this, the chain verifier's per-stage check was ``os.path.isfile``
+    only: a zero-byte, truncated, or tampered artefact passed while the
+    verifier reported the run OK.  That is the "reports success without
+    examining the thing it claims to check" defect class, and these tests
+    pin each branch of the fix so it cannot regress into a silent pass.
+    """
+
+    def _evidence(self, tmp_path: Path, pointer):
+        from forgelm.verify import verify_pipeline_stage_evidence
+
+        return verify_pipeline_stage_evidence(_manifest_pointing_at(pointer), str(tmp_path))
+
+    def test_complete_hashed_artifact_verifies(self, tmp_path: Path) -> None:
+        target = tmp_path / "s0" / "compliance" / "annex_iv_metadata.json"
+        target.parent.mkdir(parents=True)
+        target.write_text(json.dumps(_hashed_annex_iv_artifact()))
+        report = self._evidence(tmp_path, str(target))
+        assert report.violations == []
+        assert report.stages_examined == 1
+        assert report.evidence_verified == 1
+
+    def test_zero_byte_evidence_is_a_violation(self, tmp_path: Path) -> None:
+        target = tmp_path / "annex_iv_metadata.json"
+        target.write_text("")
+        report = self._evidence(tmp_path, str(target))
+        assert any("zero bytes" in v for v in report.violations)
+        assert report.evidence_verified == 0
+
+    def test_truncated_json_is_a_violation(self, tmp_path: Path) -> None:
+        target = tmp_path / "annex_iv_metadata.json"
+        target.write_text('{"system_identification": {"provider_name": "Ac')
+        report = self._evidence(tmp_path, str(target))
+        assert any("not valid JSON" in v for v in report.violations)
+
+    def test_non_utf8_evidence_is_a_violation(self, tmp_path: Path) -> None:
+        target = tmp_path / "annex_iv_metadata.json"
+        target.write_bytes(b"\xff\xfe\x00{invalid")
+        report = self._evidence(tmp_path, str(target))
+        assert any("not valid UTF-8" in v or "not valid JSON" in v for v in report.violations)
+
+    @pytest.mark.parametrize("root", [[], "a string", 42, None])
+    def test_valid_json_that_is_not_an_object_is_a_violation(self, tmp_path: Path, root) -> None:
+        target = tmp_path / "annex_iv_metadata.json"
+        target.write_text(json.dumps(root))
+        report = self._evidence(tmp_path, str(target))
+        assert report.violations, f"root {root!r} passed the evidence check"
+        assert report.evidence_verified == 0
+
+    def test_object_missing_required_fields_is_a_violation(self, tmp_path: Path) -> None:
+        """Deliberate divergence from the standalone verifier: incomplete
+        fields exit 1 on their own, but 6 as chain evidence — the pipeline
+        manifest asserted this stage completed with valid evidence, and that
+        assertion was compared and failed."""
+        target = tmp_path / "annex_iv_metadata.json"
+        target.write_text(json.dumps({"system_identification": {}}))
+        report = self._evidence(tmp_path, str(target))
+        assert any("unusable" in v for v in report.violations)
+        # Untagged ⇒ routes to EXIT_INTEGRITY_FAILURE (6).
+        assert all(not v.startswith(("UNVERIFIED::", "INPUT_ERROR::", "IO_ERROR::")) for v in report.violations)
+
+    def test_tampered_evidence_is_flagged_as_tampering(self, tmp_path: Path) -> None:
+        target = tmp_path / "annex_iv_metadata.json"
+        artifact = _hashed_annex_iv_artifact()
+        artifact["performance_metrics"] = {"eval_loss": 0.0001}  # edited post-hash
+        target.write_text(json.dumps(artifact))
+        report = self._evidence(tmp_path, str(target))
+        assert any("failed tamper detection" in v for v in report.violations)
+
+    def test_unhashed_but_complete_evidence_is_unverified_not_verified(self, tmp_path: Path) -> None:
+        """The distinction the brief requires: valid is not verified."""
+        from forgelm.compliance import PIPELINE_MANIFEST_UNVERIFIED_PREFIX
+
+        target = tmp_path / "annex_iv_metadata.json"
+        target.write_text(json.dumps(_full_annex_iv_artifact()))  # no metadata.manifest_hash
+        report = self._evidence(tmp_path, str(target))
+        assert report.evidence_verified == 0
+        assert report.evidence_unverified == 1
+        assert all(v.startswith(PIPELINE_MANIFEST_UNVERIFIED_PREFIX) for v in report.violations)
+
+    def test_relative_pointer_escaping_the_pipeline_dir_is_refused(self, tmp_path: Path) -> None:
+        outside = tmp_path.parent / "outside_annex_iv.json"
+        outside.write_text(json.dumps(_hashed_annex_iv_artifact()))
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        report = self._evidence(run_dir, "../../outside_annex_iv.json")
+        assert any("escapes the pipeline directory" in v for v in report.violations)
+
+    def test_symlink_evidence_is_refused(self, tmp_path: Path) -> None:
+        """The evidence would be whatever the link resolves to at verify
+        time, which is not a property of the archived run."""
+        real = tmp_path / "real_annex_iv.json"
+        real.write_text(json.dumps(_hashed_annex_iv_artifact()))
+        link = tmp_path / "annex_iv_metadata.json"
+        link.symlink_to(real)
+        report = self._evidence(tmp_path, str(link))
+        assert any("symlink" in v for v in report.violations)
+        assert report.evidence_verified == 0
+
+    def test_directory_where_a_file_is_expected_is_refused(self, tmp_path: Path) -> None:
+        target = tmp_path / "annex_iv_metadata.json"
+        target.mkdir()
+        report = self._evidence(tmp_path, str(target))
+        assert any("is a directory" in v for v in report.violations)
+
+    def test_oversize_evidence_is_refused_unread(self, tmp_path: Path, monkeypatch) -> None:
+        """A verifier that its own input can OOM is not a verifier."""
+        import forgelm.verify as verify_mod
+
+        monkeypatch.setattr(verify_mod, "STAGE_EVIDENCE_MAX_BYTES", 16)
+        target = tmp_path / "annex_iv_metadata.json"
+        target.write_text(json.dumps(_hashed_annex_iv_artifact()))
+        report = self._evidence(tmp_path, str(target))
+        assert any("refused unread" in v for v in report.violations)
+
+    def test_completed_stage_with_no_evidence_pointer_is_a_violation(self, tmp_path: Path) -> None:
+        for pointer in (None, "", 0, [], {}):
+            report = self._evidence(tmp_path, pointer)
+            assert any("records no evidence path" in v for v in report.violations), pointer
+
+    def test_unreadable_evidence_routes_to_io_error(self, tmp_path: Path, monkeypatch) -> None:
+        from forgelm.compliance import PIPELINE_MANIFEST_IO_ERROR_PREFIX
+
+        target = tmp_path / "annex_iv_metadata.json"
+        target.write_text(json.dumps(_hashed_annex_iv_artifact()))
+
+        def _boom(path: str):
+            raise OSError("EIO: device failure")
+
+        monkeypatch.setattr("forgelm.verify.verify_annex_iv_artifact", _boom)
+        report = self._evidence(tmp_path, str(target))
+        assert any(v.startswith(PIPELINE_MANIFEST_IO_ERROR_PREFIX) for v in report.violations)
+
+    def test_non_completed_stages_are_not_examined(self, tmp_path: Path) -> None:
+        """Only completed stages assert evidence; a skipped or failed stage
+        legitimately has none."""
+        from forgelm.verify import verify_pipeline_stage_evidence
+
+        manifest = _manifest_pointing_at(None, final_status="failed")
+        manifest["stages"][0]["status"] = "skipped_by_filter"
+        report = verify_pipeline_stage_evidence(manifest, str(tmp_path))
+        assert report.violations == []
+        assert report.stages_examined == 0
+
+    def test_completed_pipeline_with_no_completed_stage_is_a_violation(self, tmp_path: Path) -> None:
+        """The class defect, inverted: a verifier whose happiest path is the
+        one where it examined nothing.  A manifest claiming the whole run
+        completed while presenting no completed stage must not verify clean.
+        """
+        from forgelm.verify import verify_pipeline_stage_evidence
+
+        manifest = _manifest_pointing_at(None)
+        manifest["stages"] = []
+        report = verify_pipeline_stage_evidence(manifest, str(tmp_path))
+        assert report.stages_examined == 0
+        assert any("no completed stage" in v for v in report.violations)
+
+
+class TestPipelineManifestHashState:
+    """``hash_state`` separates *valid* from *verified* on the chain manifest.
+
+    A pre-v0.8.0 archived manifest carries no ``metadata.manifest_hash``: its
+    structural and chain rules still pass, but nothing attested to its
+    non-chain fields.  Reporting that as a plain OK overclaims.
+    """
+
+    def _write(self, tmp_path: Path, manifest: dict) -> None:
+        compliance_dir = tmp_path / "compliance"
+        compliance_dir.mkdir(parents=True, exist_ok=True)
+        (compliance_dir / "pipeline_manifest.json").write_text(json.dumps(manifest))
+
+    def _stage_evidence(self, tmp_path: Path) -> str:
+        target = tmp_path / "s0" / "compliance" / "annex_iv_metadata.json"
+        target.parent.mkdir(parents=True)
+        target.write_text(json.dumps(_hashed_annex_iv_artifact()))
+        return str(target)
+
+    def test_absent_hash_reports_absent_and_still_verifies_structurally(self, tmp_path: Path) -> None:
+        from forgelm.verify import verify_pipeline_manifest_report
+
+        manifest = _manifest_pointing_at(self._stage_evidence(tmp_path))
+        self._write(tmp_path, manifest)
+        report = verify_pipeline_manifest_report(str(tmp_path))
+        assert report.violations == []  # stays VALID
+        assert report.hash_state == "absent"  # but not VERIFIED
+
+    def test_matching_hash_reports_verified(self, tmp_path: Path) -> None:
+        from forgelm.compliance import compute_annex_iv_manifest_hash
+        from forgelm.verify import verify_pipeline_manifest_report
+
+        manifest = _manifest_pointing_at(self._stage_evidence(tmp_path))
+        manifest["metadata"] = {"manifest_hash": compute_annex_iv_manifest_hash(manifest)}
+        self._write(tmp_path, manifest)
+        report = verify_pipeline_manifest_report(str(tmp_path))
+        assert report.violations == []
+        assert report.hash_state == "verified"
+
+    def test_edited_non_chain_field_reports_mismatch(self, tmp_path: Path) -> None:
+        from forgelm.compliance import compute_annex_iv_manifest_hash
+        from forgelm.verify import verify_pipeline_manifest_report
+
+        manifest = _manifest_pointing_at(self._stage_evidence(tmp_path))
+        manifest["metadata"] = {"manifest_hash": compute_annex_iv_manifest_hash(manifest)}
+        manifest["final_status"] = "completed_with_edits"  # non-chain field
+        self._write(tmp_path, manifest)
+        report = verify_pipeline_manifest_report(str(tmp_path))
+        assert report.hash_state == "mismatch"
+        assert any("manifest hash mismatch" in v for v in report.violations)
+
+    def test_non_object_manifest_root_is_an_input_error(self, tmp_path: Path) -> None:
+        from forgelm.compliance import PIPELINE_MANIFEST_INPUT_ERROR_PREFIX
+        from forgelm.verify import verify_pipeline_manifest_report
+
+        compliance_dir = tmp_path / "compliance"
+        compliance_dir.mkdir()
+        (compliance_dir / "pipeline_manifest.json").write_text("[1, 2, 3]")
+        report = verify_pipeline_manifest_report(str(tmp_path))
+        assert all(v.startswith(PIPELINE_MANIFEST_INPUT_ERROR_PREFIX) for v in report.violations)
+        assert report.stages_examined == 0
+
+
+class TestPipelineViolationPrecedence:
+    """A weaker finding must never mask a stronger one.
+
+    The shipped order returned on the tagged prefixes before the untagged
+    ones, so a single unreadable or unhashed stage artefact downgraded a
+    genuine tamper finding reported in the same run from 6 to 2 or 1.
+    """
+
+    def _classify(self, violations: list[str]) -> int:
+        from forgelm.cli.subcommands._verify_annex_iv import _classify_pipeline_violations
+
+        return _classify_pipeline_violations(violations)[0]
+
+    def test_integrity_beats_io_input_and_unverified(self) -> None:
+        assert (
+            self._classify(
+                [
+                    "IO_ERROR::stage artefact unreadable",
+                    "INPUT_ERROR::manifest not found",
+                    "UNVERIFIED::stage carries no manifest_hash",
+                    "manifest hash mismatch — modified after generation",
+                ]
+            )
+            == 6
+        )
+
+    def test_io_beats_input_and_unverified(self) -> None:
+        assert self._classify(["UNVERIFIED::no hash", "INPUT_ERROR::bad json", "IO_ERROR::disk"]) == 2
+
+    def test_unverified_alone_is_exit_one(self) -> None:
+        assert self._classify(["UNVERIFIED::stage carries no manifest_hash"]) == 1
+
+    def test_no_violations_is_exit_zero(self) -> None:
+        assert self._classify([]) == 0
+
+    def test_tokens_are_stripped_from_display(self) -> None:
+        from forgelm.cli.subcommands._verify_annex_iv import _classify_pipeline_violations
+
+        _, display = _classify_pipeline_violations(["UNVERIFIED::no hash", "IO_ERROR::disk"])
+        assert display == ["no hash", "disk"]

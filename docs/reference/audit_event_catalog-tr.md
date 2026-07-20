@@ -127,7 +127,9 @@ _Ayrılmış ad alanı — `cli`, tanınan bir event-namespace önekidir (aşağ
 
 ## Webhook olayları
 
-Webhook payload'ları (Slack / Teams / jenerik HTTP) operatör bildirimlerine kapsamlanmış ayrı bir sözlüktür, regülasyon kaydı değil. Webhook olayları `audit_log.jsonl`'a **eklenmez**; yan-kanal bildirim bus'ı üzerinde gider. Kanonik yaşam döngüsü sözlüğü ayrıca [logging-observability.md](../standards/logging-observability.md)'da da belgelenmiştir.
+Webhook payload'ları (Slack / Teams / jenerik HTTP) operatör bildirimlerine kapsamlanmış ayrı bir sözlüktür, regülasyon kaydı değil. Webhook olayları `audit_log.jsonl`'a **eklenmez**; yan-kanal bildirim bus'ı üzerinde gider.
+
+> **Kanonik referans:** [`webhook_schema-tr.md`](webhook_schema-tr.md), alıcıya dönük eksiksiz sözleşmedir — tam payload biçimleri, tipler, kararlılık garantileri, dışa çıkış ek-alan allowlist'i ve maskeleme kuralları. Aşağıdaki tablo, bir denetçinin ihtiyaç duyduğu webhook ↔ denetim günlüğü **korelasyonuna** kapsamlanmıştır; bir alıcı yazarı bunun yerine oradan başlamalıdır. Olay eklemenin katkıcıya dönük kuralları [logging-observability.md](../standards/logging-observability.md)'dadır (İngilizce).
 
 Bu sekiz olay, webhook alıcılarının `WebhookNotifier`'dan
 beklemesi gereken **tek** olaylardır: beş tek-aşamalı yaşam döngüsü
@@ -184,11 +186,16 @@ ihtiyaç duyan olaylarda doldurulur. `attachments`, Slack uyumlu blok'tur
 
 ### Güvenlik garantileri
 
-1. **Sebepler maskelenir.** Her `reason` alanı, taşıma öncesi
-   `forgelm.data_audit.mask_secrets` üzerinden geçer; böylece AWS /
-   GitHub / Slack / OpenAI / Google / JWT / özel-anahtar blokları /
-   Azure storage dizeleri süreçten dışarı çıkmaz. `data_audit` ithal
-   edilemezse, ham dize yerine alan
+1. **Yalnızca `reason` değil, her serbest metin alanı maskelenir.**
+   Maskeleme, serileştirmeden hemen önce tam olarak birleştirilmiş
+   payload'a bir kez uygulanır; böylece `run_name`, `reason`,
+   `model_path`, olaya özgü her dize alanı ve attachment `title` / `text`
+   `forgelm.data_audit.mask_secrets`'ten geçer. AWS / GitHub / Slack /
+   OpenAI / Google / JWT / özel-anahtar blokları / Azure storage dizeleri
+   süreçten dışarı çıkmaz. `event`, `status` ve attachment `color` muaftır
+   ve bayt-bayt aynıdır — alıcıların üzerinde yönlendirme yaptığı kapalı
+   kod literali kümeleri. `data_audit` ithal edilemezse, her serbest metin
+   alanı ham gönderilmek yerine
    `"[REDACTED — secrets masker unavailable]"` ile değiştirilir.
 2. **Sebepler 2048 karaktere kırpılır.** Bundan uzun stack trace'ler
    `"… (truncated)"` ile kesilir.

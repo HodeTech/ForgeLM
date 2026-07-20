@@ -127,7 +127,9 @@ _Reserved namespace — `cli` is a recognized event-namespace prefix (see "Addin
 
 ## Webhook events
 
-Webhook payloads (Slack / Teams / generic HTTP) are a separate vocabulary scoped to operator notifications, not the regulatory record. Webhook events are **not** appended to `audit_log.jsonl`; they ride the side-channel notification bus. The canonical lifecycle vocabulary is also documented in [logging-observability.md](../standards/logging-observability.md).
+Webhook payloads (Slack / Teams / generic HTTP) are a separate vocabulary scoped to operator notifications, not the regulatory record. Webhook events are **not** appended to `audit_log.jsonl`; they ride the side-channel notification bus.
+
+> **Canonical reference:** [`webhook_schema.md`](webhook_schema.md) is the exhaustive receiver-facing contract — full payload shapes, types, stability guarantees, the outbound extra-field allowlist, and the redaction rules. The table below is scoped to the webhook ↔ audit-log **correlation** an auditor needs; a receiver author should start there instead. The contributor-facing rules for adding an event are in [logging-observability.md](../standards/logging-observability.md).
 
 These eight events are the **only** events that webhook
 receivers should expect from `WebhookNotifier`: five single-stage
@@ -183,12 +185,17 @@ Slack-compatible block — other receivers may ignore it.
 
 ### Security guarantees
 
-1. **Reasons are masked.** Every `reason` field passes through
-   `forgelm.data_audit.mask_secrets` before transport, so AWS / GitHub /
-   Slack / OpenAI / Google / JWT / private-key blocks / Azure storage
-   strings do not leave the process. If `data_audit` cannot be imported,
-   the field is replaced with `"[REDACTED — secrets masker unavailable]"`
-   rather than the raw string.
+1. **Every free-text field is masked, not just `reason`.** Masking is
+   applied once to the fully assembled payload immediately before
+   serialization, so `run_name`, `reason`, `model_path`, every
+   event-specific string field, and the attachment `title` / `text` all
+   pass through `forgelm.data_audit.mask_secrets`. AWS / GitHub / Slack /
+   OpenAI / Google / JWT / private-key blocks / Azure storage strings do
+   not leave the process. `event`, `status`, and the attachment `color`
+   are exempt and byte-exact — closed sets of code literals receivers
+   route on. If `data_audit` cannot be imported, every free-text field is
+   replaced with `"[REDACTED — secrets masker unavailable]"` rather than
+   shipped raw.
 2. **Reasons are truncated to 2048 chars.** Stack traces longer than
    that are clipped with `"… (truncated)"`.
 3. **No model weights.** `approval.required` carries the staging

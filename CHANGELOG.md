@@ -643,6 +643,66 @@ _(v0.9.1 dev cycle — entries land here as PRs merge.)_
 
 ### Documentation
 
+- **`docs/reference/webhook_schema.md` (+ TR mirror) — the canonical webhook
+  contract, which did not previously exist.** `v0.7.0` shipped three
+  `pipeline.*` events on top of the pre-existing five-event single-stage
+  vocabulary with no single reference enumerating the surface; a receiver
+  author had to read `forgelm/webhook.py` or reconstruct the list from
+  CHANGELOG. The new page documents all eight webhook events, when each fires
+  and which `notify_on_*` flag gates it, the seven always-present payload keys
+  with types, the four event-specific keys and which event carries each, a
+  worked example payload per event family, the transport and SSRF/TLS policy,
+  the payload-wide redaction guarantees (including which three fields are
+  exempt and byte-exact), and the delivery semantics a receiver must design
+  against — no retry, no ordering, no delivery receipt, be idempotent. It also
+  states the stability contract explicitly: what a receiver may pin on versus
+  what may grow. Closes `F-PR54-M10`.
+  Two claims were corrected against the code while writing it rather than
+  copied forward. `docs/standards/logging-observability.md` promised webhook
+  delivery is retried "up to 3 times with exponential backoff" — the shipped
+  notifier has never retried, makes exactly one POST per event, and logs and
+  abandons on failure; a receiver written to trust that promise would treat a
+  missing event as impossible. The same rule list claimed a `timeout=30`
+  maximum, which no code enforces (the schema's `ge=1` is the only bound, the
+  default is 10s, and the notifier clamps *up* to a 1s floor).
+  `docs/reference/audit_event_catalog.md` (+ TR) described masking as
+  `reason`-scoped; it is now payload-wide, so that guarantee was widened to
+  name every field it actually covers.
+  The append-over-rename convention this page states was verified against
+  history rather than assumed: no webhook event name has changed in a released
+  version. One rename did happen in development (`training.awaiting_approval`
+  → `approval.required`), but both commits land inside the same phase and the
+  first tag containing either is `v0.5.5`, so no published release carried the
+  old name. The page says exactly that instead of claiming an unbroken record.
+
+- **Pipeline-mode verification documented in
+  `docs/reference/verify_annex_iv_subcommand.md` (+ TR mirror).** `--pipeline`
+  was an undocumented flag on that page — absent from the synopsis, the flag
+  table, and every example. It now carries a full section covering the chain
+  manifest hash (what it covers, what it deliberately does not, and the
+  three-way `hash_state`), the per-stage evidence deep parse (what a
+  `completed` stage's evidence is now guaranteed to have survived, and the
+  fail-closed table of every rejected on-disk state), the integrity-first
+  precedence rule, and the JSON envelope's `stages_examined` /
+  `evidence_verified` / `evidence_unverified` counters. Documents `F-PR54-H6`
+  and `F-PR54-H7`.
+  The distinction the section is built around: **valid and verified are
+  different states and the docs must not blur them.** A manifest predating the
+  hash stamp exits `0` with `hash_state: "absent"` and prints
+  `OK (UNVERIFIED)`; a hash-verified one exits `0` with
+  `hash_state: "verified"` and prints `OK`. Both are exit `0`, and only one had
+  anything compared. The page tells a CI author to assert
+  `hash_state == "verified"`, `evidence_verified == stages_examined` and
+  `stages_examined > 0` rather than trusting the exit code alone.
+
+- **The `_send(**extra)` allowlist is documented as a non-change for
+  receivers.** `docs/reference/webhook_schema.md` states plainly that the
+  allowlist contains exactly the keys the shipped `notify_*` methods already
+  pass, so no field that used to arrive stops arriving and no payload changes
+  shape — the narrowing is preventive, closing `**extra` as a future route for
+  user- or config-derived text to reach a third-party receiver. Documents
+  `F-PR54-M11`.
+
 - **Stale `forgelm/safety.py` pointers swept from every prose surface.** The
   sub-package split left the old path cited across the doc, site, notebook and
   agent-skill surfaces no guard was watching. Each reference was judged

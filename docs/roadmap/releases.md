@@ -356,7 +356,9 @@ See [CHANGELOG.md `[0.9.0]`](../../CHANGELOG.md#090--2026-07-05) for the complet
 
 ## v0.9.x — "Pipeline Hardening" (Planned)
 
-**Status:** Planned. Focus: [Phase 14.5](phase-14-5-pipeline-hardening.md).  Four review-deferred items from v0.7.0: canonical pipeline manifest hash + non-chain-field tamper detection, per-stage `training_manifest.json` deep-parse validation, webhook `pipeline.*` event vocabulary documentation, `WebhookNotifier._send(**extra)` explicit allowlist.  Originally targeted the v0.7.x patch cycle; that cycle closed with v0.8.0 and v0.9.0 shipping without it, so the target now moves to the v0.9.x patch cycle (v0.9.1, or split across v0.9.1 / v0.9.2 depending on bandwidth).
+**Status:** Merged on main, publish pending. Focus: [Phase 14.5](phase-14-5-pipeline-hardening.md).  All four review-deferred items from v0.7.0 are delivered and sit under `[Unreleased]` in [`CHANGELOG.md`](../../CHANGELOG.md): canonical pipeline manifest hash + non-chain-field tamper detection, per-stage evidence deep-parse validation, the canonical webhook vocabulary reference, and the `WebhookNotifier._send(**extra)` explicit allowlist.  Originally targeted the v0.7.x patch cycle; that cycle closed with v0.8.0 and v0.9.0 shipping without it, so the work landed on the v0.9.x cycle instead.
+
+Two scope notes an auditor should not have to reconstruct.  **Exit-code mapping changed from the plan.** Phase 14.5's task descriptions predate `EXIT_INTEGRITY_FAILURE = 6` and route manifest-hash and per-stage failures to `EXIT_CONFIG_ERROR (1)`; as delivered, a recomputed digest that disagrees — or per-stage evidence that is zero-byte, malformed, oversize, symlinked, escaping, or missing a required Annex IV field — exits `6`, and a new `UNVERIFIED::` routing token carries the genuinely different "reached the evidence, nothing attested to it" case at `1`.  **Task 5 is not part of this delivery.** The SonarCloud S3776 cognitive-complexity refactor was appended to the phase file after its creation and was never one of the four v0.7.0 deferrals; it stays open.
 
 ---
 

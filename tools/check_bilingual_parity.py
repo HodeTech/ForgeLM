@@ -118,6 +118,7 @@ _PAIRS: Tuple[Tuple[str, str], ...] = (
     ("docs/reference/verify_audit.md", "docs/reference/verify_audit-tr.md"),
     ("docs/reference/verify_gguf_subcommand.md", "docs/reference/verify_gguf_subcommand-tr.md"),
     ("docs/reference/verify_integrity_subcommand.md", "docs/reference/verify_integrity_subcommand-tr.md"),
+    ("docs/reference/webhook_schema.md", "docs/reference/webhook_schema-tr.md"),
     # docs/usermanuals/ pairs are NOT hand-listed here — they are
     # auto-discovered by ``_usermanual_pairs`` below (every
     # ``docs/usermanuals/en/**/*.md`` paired with its ``tr/`` mirror) and
