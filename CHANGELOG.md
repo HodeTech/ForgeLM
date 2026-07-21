@@ -4,6 +4,16 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-07-21
+
+_(**This cycle is a MINOR bump, not a patch.** It changes the `forgelm audit`
+exit-code contract — a critical-tier PII finding now exits `3` where it exited
+`0` — and changes the `[distributed]` extra's install behaviour on Windows.
+Under [`docs/standards/release.md`](docs/standards/release.md)'s bump table both
+are MAJOR triggers, folded into a MINOR bump with an explicit `### Breaking`
+call-out by the pre-1.0 rule at that section's end. See below before upgrading a
+pinned CI pipeline.)_
+
 ### Breaking
 
 - **`forgelm audit` now exits `3` when the scan finds critical-tier PII** — a
@@ -53,6 +63,8 @@ All notable changes to ForgeLM are documented here.
   that installs it. Kept separate from `[tracking]` rather than folded in, so a
   W&B-only user does not pull MLflow's dependency tree; `[tracking]` keeps its
   historical name because renaming it would break existing installs.
+  `forgelm doctor` gained a probe row for it, so an operator can confirm MLflow
+  is installed the same way they check every other extra.
 - **`tools/check_readme_links.py`** (29th CI guard). `pyproject.toml` ships
   `README.md` as the PyPI long description with no URL rewriting, so every
   relative href in it resolves against `pypi.org` and 404s — for exactly the

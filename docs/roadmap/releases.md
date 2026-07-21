@@ -325,6 +325,34 @@ See [CHANGELOG.md `[0.8.0]`](../../CHANGELOG.md#080--2026-06-16) for the complet
 
 ---
 
+## v0.11.0 — "The Front Door" (2026-07-21)
+
+**Status:** Released — a MINOR bump carrying two **breaking** changes (see `### Breaking` in [`CHANGELOG.md`](../../CHANGELOG.md)): `forgelm audit` now exits `3` on a critical-tier PII finding (credit card / IBAN) where it exited `0`, and the `[distributed]` extra now installs nothing on Windows (marked `sys_platform != 'win32'`) instead of failing the whole install on a source build.
+
+Focus: the README — the project's highest-traffic document and the one surface no CI guard could see.
+
+### The README audit
+
+A four-agent audit against the code, with independent verification, found **fourteen claims that did not survive execution** — a broken `forgelm export` command in the Quick Start, auto-revert described as skipping a save when it deletes the model directory, a Croissant card sold as doubling as the Article 10 artefact, an unkeyed SHA-256 manifest called "proof-of-integrity", "every CLI surface has a typed entry point" when half raise `AttributeError`, and a `revision`-field list naming the tokenizer instead of the judge model. The root cause was structural: the README sat outside the scope of every guard that keeps `docs/` honest. `tools/check_readme_links.py` (the 29th guard) now enforces PyPI-safe absolute links, and `check_doc_numerical_claims.py` derives and enforces the test-module and CI-guard counts on the README.
+
+### The PII gate, and two review rounds
+
+The critical-tier PII gate began as a straightforward mirror of the v0.10.0 secrets gate. An Opus review found it fired on clean numeric corpora — Luhn alone clears ~9.8% of 16-digit runs and every IMEI by construction — so an issuer-prefix (IIN) requirement was added. A Sonnet second pass, chartered to scrutinise that fix, found the tightening had over-narrowed and silently dropped Diners Club, Maestro, Mir and part of the Discover range. The shipped table re-covers the low-collision brands (net false-positive rate ~1.1%) while still excluding IMEIs; Maestro is documented as a deliberate omission. Three independent agents converged on the same precision/recall balance.
+
+### Also
+
+- **`[tracking-mlflow]` extra** — `report_to: "mlflow"` was an accepted config value whose documented install path installed only `wandb`; MLflow now has its own extra and a `forgelm doctor` probe row.
+- **Auto-revert drift swept** — "restores a previous checkpoint" was corrected in seven places (it deletes), including two `config.py` field descriptions that reach the generated Configuration Reference.
+- **The Unsloth "2-5× faster" figure** — an unsourced upstream number restated as fact across 18 sites in two languages — was removed where bare and attributed where kept.
+
+`__api_version__` stays at `1.1.0` — no stable library symbol added or changed. Test count 4460 → 4560; 28 → 29 CI guards.
+
+### Full changelog
+
+See [CHANGELOG.md `[0.11.0]`](../../CHANGELOG.md#0110--2026-07-21).
+
+---
+
 ## v0.10.0 — "Promises Kept" (2026-07-20)
 
 **Status:** Released — a MINOR bump carrying one **breaking** behaviour change (see `### Breaking` in [`CHANGELOG.md`](../../CHANGELOG.md)): `forgelm audit` now exits `3` when its secrets scan finds a credential, where it previously printed `Secrets : CRITICAL — N flagged` and exited `0`. Any CI step wired up as a credential-leak gate had a gate that could not fire; it fires now.
