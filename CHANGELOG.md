@@ -12,8 +12,13 @@ All notable changes to ForgeLM are documented here.
   checksum-valid card number in a training corpus was reported to an operator
   who had wired the step up as a gate, and the step passed.
   Scope is deliberately narrow. Only the `critical` tier of `PII_SEVERITY`
-  gates, and both families in it clear a checksum (Luhn for cards, ISO 7064
-  mod-97 for IBANs), so a hit is a real value rather than a lookalike.
+  gates, and both families in it clear a checksum (issuer-prefix + Luhn for
+  cards, ISO 7064 mod-97 for IBANs), so a hit is indistinguishable from a
+  genuine card or account number. The card check now requires a real issuer
+  prefix (IIN) at a length the issuer actually mints, not the Luhn checksum
+  alone: ~9.8% of arbitrary 16-digit runs clear Luhn and every IMEI clears
+  it by construction, so a Luhn-only gate fired on corpora of device IMEIs,
+  order numbers or invoice references.
   **Government IDs, emails and phone numbers do not gate and are not intended
   to.** The tier is what gates, not the detector: `tr_id` also clears a
   checksum but sits at `high`, so it reports without failing. Checksum

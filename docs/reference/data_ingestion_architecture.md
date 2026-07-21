@@ -432,7 +432,7 @@ mask precedence so a span that could match two categories is attributed
 to the narrowest one (an SSN is also a digit run; we want it flagged as
 `us_ssn`, not `phone`).
 
-Detected categories: email, IBAN, credit card (Luhn-validated), US SSN,
+Detected categories: email, IBAN, credit card (issuer-prefix + Luhn), US SSN,
 FR INSEE, TR Kimlik No (`_is_tr_id` checksum), DE Personalausweis,
 phone. Replacement token: `[REDACTED]`.
 

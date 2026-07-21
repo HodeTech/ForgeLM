@@ -328,7 +328,7 @@ Eğitim öncesi veri denetimi. Tam rapor; ana alanlar gösterildi.
 > olur.
 
 :::warn
-**İki tarama gate uygular. Geri kalan her şey rapordur.** `forgelm audit`, her zaman açık olan secret taraması kimlik bilgisi bulduğunda (`--allow-secrets` başarısız olmadan kaydeder) ve PII taraması `critical` katman PII bulduğunda `3` ile çıkar — `credit_card` ya da `iban`; bir checksum'dan (Luhn / ISO 7064 mod-97) geçen iki kategori, dolayısıyla eşleşme benzer görünen bir dizi değil gerçek bir değerdir (`--allow-pii` başarısız olmadan kaydeder). İki bayrak birbirinden bağımsızdır.
+**İki tarama gate uygular. Geri kalan her şey rapordur.** `forgelm audit`, her zaman açık olan secret taraması kimlik bilgisi bulduğunda (`--allow-secrets` başarısız olmadan kaydeder) ve PII taraması `critical` katman PII bulduğunda `3` ile çıkar — `credit_card` ya da `iban`; bir checksum'dan (issuer-prefix + Luhn / ISO 7064 mod-97) geçen iki kategori, dolayısıyla eşleşme gerçek bir kart ya da hesap numarasından ayırt edilemez (`--allow-pii` başarısız olmadan kaydeder). İki bayrak birbirinden bağımsızdır.
 
 Kritik-altı PII gate uygula**maz**: `tr_id` / `de_id` / `fr_ssn` / `us_ssn` (`high`), `email` (`medium`) ve `phone` (`low`) tespit edilir, sayılır ve `pii_gate.advisory_types` altında yüzeye çıkar, ama exit kodunu asla belirlemez — çoğu yalnızca şekil üzerinden eşleşir ve kasıtlı olarak fazla raporlar; temiz bir corpus'ta tetiklenen kapıyı ise operatör kapatır. Dolayısıyla düz metin SSN, train/eval sızıntısı ya da bir yığın düşük kaliteli satır taşıyan ve **hiç** kimlik bilgisi ya da kart numarası içermeyen bir corpus `0` ile çıkar — doğrulandı: `worst_tier: "high"` seviyesinde `us_ssn` bulgusu olan iki satırlık bir corpus `0` döner.
 

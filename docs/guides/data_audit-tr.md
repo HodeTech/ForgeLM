@@ -123,10 +123,10 @@ sessiz katili odur.
 }
 ```
 
-Her satırın metin payload'ı regex ile taranır; kredi kartları Luhn
-doğrulaması, TR Kimlik No'ları TC Kimlik checksum'ından geçirilir.
-Diğer kategoriler regex şekli üzerinden yüzeylenir — false positive'ler
-kasıtlıdır. Veri setini paylaşmadan önce `forgelm ingest --pii-mask`
+Her satırın metin payload'ı regex ile taranır; kredi kartları
+issuer-prefix + Luhn kontrolünden, TR Kimlik No'ları TC Kimlik
+checksum'ından geçirilir. Diğer kategoriler regex şekli üzerinden
+yüzeylenir — false positive'ler kasıtlıdır. Veri setini paylaşmadan önce `forgelm ingest --pii-mask`
 ile (veya kendi ön işlemenizde) maskeleyin.
 
 **Pattern önceliği belgeli.** `_PII_PATTERNS` iter sırası hem tespit
@@ -178,17 +178,21 @@ audit, pipeline'a her şeyin yolunda olduğunu söylemiş olur.
 
 ```text
 [ERROR] PII gate FAILED (critical): 1 critical-tier PII span(s) detected (credit_card=1).
-These clear a checksum, so they are real values rather than lookalikes — a card or account
-number in training data is memorised and re-emitted at inference time. Mask it with
-`forgelm ingest --pii-mask`, or re-run `forgelm audit --allow-pii` to record the findings
-without failing the pipeline. Exiting 3.
+These pass an issuer-prefix and checksum test, so they are indistinguishable from real card /
+account numbers — and such a value in training data is memorised and re-emitted at inference
+time. Mask it with `forgelm ingest --pii-mask`, or re-run `forgelm audit --allow-pii` to record
+the findings without failing the pipeline. Exiting 3.
 ```
 
 **Neden yalnızca `critical` katman.** `credit_card` ve `iban`
-sayılmadan önce bir checksum'dan geçer — kartlar için Luhn, IBAN'lar
-için ISO 7064 mod-97 — dolayısıyla bir eşleşme benzer görünen bir dizi
-değil, gerçek bir değerdir. Sert bir kapıyı savunulabilir kılan özellik
-budur. Kritik-altı aileler (`de_id`, `fr_ssn`, `us_ssn`, `email`,
+sayılmadan önce bir checksum'dan geçer — kartlar için gerçek bir issuer
+öneki artı Luhn, IBAN'lar için ISO 7064 mod-97 — dolayısıyla bir eşleşme
+gerçek bir kart ya da hesap numarasından ayırt edilemez. Sert bir kapıyı
+savunulabilir kılan özellik budur. Kart kontrolünün Luhn'a ek olarak
+gerçek bir issuer öneki (IIN) gerektirmesi, kapıyı IMEI'lerden ve sipariş
+numaralarından uzak tutan şeydir — Luhn, rastgele 16 haneli dizilerin
+~%9,8'inin geçtiği ve her IMEI'nin yapısı gereği geçtiği bir mod-10
+checksum'ıdır. Kritik-altı aileler (`de_id`, `fr_ssn`, `us_ssn`, `email`,
 `phone`) yalnızca regex şekliyle eşleşir ve *kasıtlı olarak* fazla
 raporlar; çünkü audit'in işi bir insanın değerlendirmesi için aday
 yüzeye çıkarmaktır. Kasıtlı olarak fazla raporlayan bir sinyale kapı

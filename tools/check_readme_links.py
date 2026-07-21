@@ -16,7 +16,8 @@ of them dead on the PyPI project page, and **nothing in CI could see it**:
 - ``tools/check_source_path_refs.py`` does scan ``README.md``, but only
   for backticked *source* paths such as ``forgelm/trainer.py`` — never for
   Markdown hrefs;
-- ``tools/check_doc_numerical_claims.py`` walks ``DOCS.rglob("*.md")``.
+- ``tools/check_doc_numerical_claims.py`` scanned ``docs/`` only when this
+  guard was written (it now also checks README *counts*, but never *links*).
 
 The project's single highest-traffic document was outside the coverage of
 every guard that would have kept it honest.  That is why it accumulated
@@ -97,6 +98,16 @@ _LINK_RE = re.compile(r"!?\[(?P<text>[^\]]*)\]\((?P<href>[^)\s]+)")
 # Reference-style link definitions: ``[label]: href``.
 _LINK_DEF_RE = re.compile(r"^\s{0,3}\[(?P<label>[^\]]+)\]:\s*(?P<href>\S+)")
 
+# Raw HTML links/images inside Markdown.  GitHub and PyPI both render inline
+# HTML, so an ``<a href=…>`` or ``<img src=…>`` reaches a reader exactly like a
+# Markdown link and rots exactly the same way — but ``_LINK_RE`` would never see
+# it.  Matched here so both routes go through the same two rules.  The value is
+# captured out of single or double quotes; an unquoted attribute is not valid
+# HTML for a URL and is left for a stricter linter.
+_HTML_ATTR_RE = re.compile(
+    r"<(?:a|img|source|link)\b[^>]*?\b(?:href|src)\s*=\s*[\"'](?P<href>[^\"']+)[\"']", re.IGNORECASE
+)
+
 # Footnote definitions (``[^1]: text``) are prose, not links.  They match
 # _LINK_DEF_RE's shape, so they are filtered by label rather than by
 # weakening that pattern.
@@ -130,6 +141,8 @@ def _iter_hrefs(text: str) -> List[Tuple[int, str, str]]:
             continue
         if in_fence:
             continue
+        for match in _HTML_ATTR_RE.finditer(line):
+            found.append((line_no, "html-attr", match.group("href")))
         def_match = _LINK_DEF_RE.match(line)
         if def_match and not _FOOTNOTE_LABEL_RE.match(def_match.group("label")):
             found.append((line_no, "link-definition", def_match.group("href")))

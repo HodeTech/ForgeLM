@@ -205,9 +205,18 @@ def pii_gate_verdict(pii_summary: Dict[str, int]) -> Dict[str, Any]:
     "advisory_total": int, "advisory_types": {...}}``.  Pure — callers
     decide what to do with it; nothing here exits or logs.
     """
+    # Read the SAME merged table the severity report uses
+    # (``_build_pii_severity`` = ``{**PII_SEVERITY, **PII_ML_SEVERITY}``).  If
+    # the gate read only ``PII_SEVERITY`` while the report merged in the ML-NER
+    # tiers, an operator who took ``PII_ML_SEVERITY``'s documented invitation to
+    # raise an ML category to ``critical`` would get a report declaring a
+    # critical finding while the gate silently exited 0 — verdict and exit code
+    # disagreeing.  All shipped ML tiers are sub-critical, so this changes no
+    # default behaviour; it only makes the invitation actually arm the gate.
+    severity_table = {**PII_SEVERITY, **PII_ML_SEVERITY}
     present = {kind: count for kind, count in sorted((pii_summary or {}).items()) if count > 0}
-    critical = {k: v for k, v in present.items() if PII_SEVERITY.get(k) == "critical"}
-    advisory = {k: v for k, v in present.items() if PII_SEVERITY.get(k) != "critical"}
+    critical = {k: v for k, v in present.items() if severity_table.get(k) == "critical"}
+    advisory = {k: v for k, v in present.items() if severity_table.get(k) != "critical"}
     total = sum(critical.values())
     return {
         "failed": total > 0,

@@ -13,7 +13,7 @@ Personal data in your training set is a regulatory hazard (GDPR Article 5(1)(c) 
 |---|---|---|
 | **Email** | `alice@example.com` | RFC 5321-compatible regex |
 | **Phone** | `+90 532 123 45 67`, `(555) 123-4567` | E.164-compatible patterns + locale variants |
-| **Credit card** | `4111-1111-1111-1111` | Visa/MC/Amex/Discover patterns + Luhn check (no false-positives on lookalikes) |
+| **Credit card** | `4111-1111-1111-1111` | Issuer prefix (Visa/MC/Amex/Discover/JCB/UnionPay) + Luhn check — not Luhn alone, which every IMEI passes |
 | **IBAN** | `TR12 0006 4000 0011 2345 6789 01` | Country-aware checksum |
 | **National ID — Turkey** | 11-digit TC kimlik | Modulo-10 + modulo-11 checksums |
 | **National ID — Germany** | Steuer-ID | Format + checksum |

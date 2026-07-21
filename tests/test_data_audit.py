@@ -57,6 +57,32 @@ class TestPiiDetection:
         # Same shape but invalid Luhn → not flagged
         assert detect_pii("not a card 4111 1111 1111 1112").get("credit_card", 0) == 0
 
+    def test_credit_card_requires_a_real_issuer_prefix_not_just_luhn(self):
+        # Luhn is a mod-10 check: ~9.8% of arbitrary 16-digit runs pass it, and
+        # every IMEI passes by construction. Without an issuer-prefix (IIN)
+        # requirement, a corpus of device IMEIs / order numbers is flagged as
+        # full of credit cards — a false positive on the *gating* tier.
+        # 490154203237518 is a well-known valid-Luhn IMEI; its "49" prefix is
+        # not a card IIN, so it must not be counted as a card.
+        assert detect_pii("imei 490154203237518").get("credit_card", 0) == 0
+        # 16 digits, passes Luhn, but "1800..." is not a real issuer prefix.
+        assert detect_pii("ref 1800000000000008").get("credit_card", 0) == 0
+
+    @pytest.mark.parametrize(
+        "brand,number",
+        [
+            ("visa16", "4111 1111 1111 1111"),
+            ("visa13", "4222222222222"),
+            ("mastercard-5x", "5555 5555 5555 4444"),
+            ("mastercard-2x", "2223 0031 2200 3222"),
+            ("amex", "3782 822463 10005"),
+            ("discover", "6011 1111 1111 1117"),
+            ("jcb", "3530 1113 3330 0000"),
+        ],
+    )
+    def test_real_issuer_prefixes_across_brands_are_detected(self, brand, number):
+        assert detect_pii(f"card {number}").get("credit_card") == 1
+
     def test_tr_id_validated_via_checksum(self):
         # Real-format checksum-valid TR Kimlik (synthetic, math-checked)
         valid = "10000000146"  # passes the canonical TR algorithm

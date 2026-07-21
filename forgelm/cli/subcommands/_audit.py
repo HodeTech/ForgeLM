@@ -141,10 +141,11 @@ def _exit_on_critical_pii(verdict: dict, *, allow_pii: bool, defer_exit: bool = 
         return
     logger.error(
         "PII gate FAILED (critical): %d critical-tier PII span(s) detected (%s). "
-        "These clear a checksum, so they are real values rather than lookalikes — a card "
-        "or account number in training data is memorised and re-emitted at inference time. "
-        "Mask it with `forgelm ingest --pii-mask`, or re-run `forgelm audit --allow-pii` to "
-        "record the findings without failing the pipeline. Exiting %d.",
+        "These pass an issuer-prefix and checksum test, so they are indistinguishable from "
+        "real card / account numbers — and such a value in training data is memorised and "
+        "re-emitted at inference time. Mask it with `forgelm ingest --pii-mask`, or re-run "
+        "`forgelm audit --allow-pii` to record the findings without failing the pipeline. "
+        "Exiting %d.",
         verdict["critical_total"],
         breakdown,
         EXIT_EVAL_FAILURE,

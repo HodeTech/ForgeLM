@@ -77,7 +77,7 @@ ForgeLM automated checks:
   length distribution, top-3 language detection, near-duplicate rate
   (default 64-bit simhash, or **MinHash LSH** via
   `--dedup-method minhash` for >50K-row corpora), cross-split
-  leakage check, PII flag counts (email / phone / Luhn-validated
+  leakage check, PII flag counts (email / phone / issuer-prefix + Luhn
   credit card / IBAN / TR–DE–FR–US national IDs) with **severity
   tiers**, always-on **secrets/credentials scan** (AWS / GitHub /
   Slack / OpenAI / Google / JWT / private-key headers), and an

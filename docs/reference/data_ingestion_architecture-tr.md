@@ -432,7 +432,7 @@ sırası aynı zamanda maske önceliğidir; iki kategoriye eşleşebilen bir
 span en dar olana atfedilir (bir SSN aynı zamanda bir basamak dizisidir;
 `phone` değil `us_ssn` olarak işaretlemek isteriz).
 
-Algılanan kategoriler: email, IBAN, kredi kartı (Luhn-doğrulamalı),
+Algılanan kategoriler: email, IBAN, kredi kartı (issuer-prefix + Luhn),
 US SSN, FR INSEE, TR Kimlik No (`_is_tr_id` checksum), DE
 Personalausweis, telefon. Yer değiştirme token'ı: `[REDACTED]`.
 

@@ -98,6 +98,18 @@ class TestIterHrefs:
         text = "\n\n```\nx\n```\n[a](https://x.example)\n"
         assert guard._iter_hrefs(text)[0][0] == 6
 
+    def test_raw_html_anchor_is_seen(self):
+        found = guard._iter_hrefs('<a href="docs/x.md">link</a>\n')
+        assert found == [(1, "html-attr", "docs/x.md")]
+
+    def test_raw_html_image_src_is_seen(self):
+        found = guard._iter_hrefs("<img src='https://x.example/a.svg' alt='x'>\n")
+        assert [href for _, _, href in found] == ["https://x.example/a.svg"]
+
+    def test_html_inside_a_fence_is_skipped(self):
+        text = '```html\n<a href="nope.md">x</a>\n```\n[a](https://x.example)\n'
+        assert [href for _, _, href in guard._iter_hrefs(text)] == ["https://x.example"]
+
 
 class TestResolveViolation:
     def test_existing_path_is_clean(self, tmp_path):

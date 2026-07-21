@@ -78,7 +78,7 @@ ForgeLM otomatik kontroller:
   near-duplicate oranı (varsayılan 64-bit simhash, veya >50K-row
   corpora için `--dedup-method minhash` üzerinden **MinHash LSH**),
   cross-split leakage check, severity tier'lı PII flag sayıları
-  (email / phone / Luhn-validated credit card / IBAN / TR–DE–FR–US
+  (email / phone / issuer-prefix + Luhn credit card / IBAN / TR–DE–FR–US
   national IDs) ve always-on **secrets/credentials scan** (AWS /
   GitHub / Slack / OpenAI / Google / JWT / private-key headers) ile
   `data_audit_report.json` üretir; opsiyonel **heuristic quality

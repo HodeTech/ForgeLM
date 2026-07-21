@@ -71,7 +71,7 @@ Everything else — sub-critical PII, cross-split leakage, near-duplicates, qual
 
 ### Why the PII gate stops at `critical`
 
-The two `critical` categories clear a checksum before they are counted — Luhn for `credit_card`, ISO 7064 mod-97 for `iban` — so a hit is a real value rather than a lookalike. That is what makes them safe to fail a build on.
+The two `critical` categories clear a checksum before they are counted — issuer-prefix + Luhn for `credit_card`, ISO 7064 mod-97 for `iban` — so a hit is indistinguishable from a genuine card or account number. The card check requires a real issuer prefix (IIN), not Luhn alone, so it does not fire on IMEIs or order numbers (every IMEI clears Luhn by construction). That is what makes them safe to fail a build on.
 
 The rest are reported but **never gate**: `tr_id`, `de_id`, `fr_ssn`, `us_ssn` (`high`), `email` (`medium`), `phone` (`low`). Most are matched on regex shape alone and *deliberately* over-report, because the audit's job is to surface candidates for a human to judge. A gate built on a deliberately over-reporting signal fails clean corpora — a customer-support dataset legitimately full of example addresses and phone numbers would go red on every run, and the first thing an operator does with a gate that cries wolf is switch it off, taking the trustworthy half down with it.
 
@@ -88,7 +88,7 @@ To gate CI on any of the non-gating findings, pipe the JSON report through `jq` 
 
 ### PII (personally identifiable information)
 
-Detects emails, phone numbers, credit card numbers (Luhn-validated), IBAN (mod-97-validated), and national IDs (TR — TC Kimlik checksum; DE, FR, US-SSN — shape only). Tags rows by severity. A `critical`-tier finding gates the run; the rest are reported only — see the exit-code table above. See [PII Masking](#/data/pii-masking).
+Detects emails, phone numbers, credit card numbers (issuer-prefix + Luhn), IBAN (mod-97-validated), and national IDs (TR — TC Kimlik checksum; DE, FR, US-SSN — shape only). Tags rows by severity. A `critical`-tier finding gates the run; the rest are reported only — see the exit-code table above. See [PII Masking](#/data/pii-masking).
 
 ### Secrets
 

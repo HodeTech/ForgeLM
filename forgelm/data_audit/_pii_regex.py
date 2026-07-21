@@ -11,7 +11,7 @@ locations) which regex inherently misses.
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Dict, FrozenSet
+from typing import Any, Callable, Dict, FrozenSet, Tuple
 
 # ---------------------------------------------------------------------------
 # PII regex — module level so they're compiled once
@@ -97,9 +97,47 @@ _PII_PATTERNS: Dict[str, re.Pattern] = {
 }
 
 
+# Issuer Identification Number prefixes paired with the card lengths that
+# issuer actually mints (ISO/IEC 7812).  Luhn alone is not evidence of a card:
+# it is a mod-10 checksum, so ~9.8% of arbitrary 16-digit runs clear it, and
+# **every IMEI clears it by construction** — IMEIs use Luhn as their own check
+# digit.  A corpus of device identifiers, order numbers or invoice references
+# would therefore be flagged as full of credit cards.  Requiring a real issuer
+# prefix at a length that issuer uses drops the random-16-digit rate to ~2.2%
+# and excludes the IMEI class outright (measured on 20k samples).
+#
+# This constrains *detection*, not just gating: reporting an IMEI under the
+# ``credit_card`` key is mis-categorisation rather than the deliberate
+# over-reporting the shape-matched families do.
+_CARD_ISSUER_PREFIXES: Tuple[Tuple[str, FrozenSet[int]], ...] = (
+    ("4", frozenset({13, 16, 19})),  # Visa
+    ("34", frozenset({15})),  # American Express
+    ("37", frozenset({15})),  # American Express
+    ("35", frozenset({16})),  # JCB
+    ("6011", frozenset({16})),  # Discover
+    ("65", frozenset({16})),  # Discover
+    ("62", frozenset({16, 17, 18, 19})),  # UnionPay
+    *((str(p), frozenset({16})) for p in range(51, 56)),  # Mastercard 51-55
+    *((str(p), frozenset({16})) for p in range(2221, 2721)),  # Mastercard 2221-2720
+)
+
+
+def _has_card_issuer_prefix(digits: str) -> bool:
+    """True when *digits* opens with a real IIN at a length that issuer mints."""
+    return any(digits.startswith(prefix) and len(digits) in lengths for prefix, lengths in _CARD_ISSUER_PREFIXES)
+
+
 def _is_credit_card(candidate: str) -> bool:
-    digits = [int(c) for c in candidate if c.isdigit()]
+    # ``str(int(c))`` rather than ``c`` so Unicode digit forms (Arabic-Indic,
+    # fullwidth, Devanagari — deliberately matched by the pattern, see the
+    # module-level note) normalise to ASCII before the prefix comparison.
+    # Comparing the raw characters would silently fail the IIN check for every
+    # non-ASCII rendering of a real card number.
+    digit_str = "".join(str(int(c)) for c in candidate if c.isdigit())
+    digits = [int(c) for c in digit_str]
     if not 13 <= len(digits) <= 19:
+        return False
+    if not _has_card_issuer_prefix(digit_str):
         return False
     # Luhn check.
     total = 0

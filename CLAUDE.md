@@ -304,9 +304,10 @@ Default workflow for a non-trivial change:
    could see them: `check_anchor_resolution.py` defaults to `--root docs`
    and reports "OK: 259 markdown file(s) under docs/" without ever opening
    the README, `check_source_path_refs.py` scans the README but only for
-   backticked source paths, and `check_doc_numerical_claims.py` walks
-   `DOCS.rglob("*.md")`. The project's front door sat outside the coverage
-   of every guard that would have kept it honest, which is why it
+   backticked source paths, and `check_doc_numerical_claims.py` scanned
+   `docs/` only (it now also checks README *counts* — test-module and
+   CI-guard totals — but never *links*). The project's front door sat
+   outside the coverage of every guard that would have kept it honest, which is why it
    accumulated fourteen false claims while `docs/` stayed comparatively
    clean. The guard applies the absolute-https rule only to the surface
    that is actually rendered off GitHub (`README.md`) and the

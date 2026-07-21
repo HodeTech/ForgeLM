@@ -71,7 +71,7 @@ Diğer her şey — kritik-altı PII, split-arası sızıntı, near-duplicate'le
 
 ### PII kapısı neden `critical` ile sınırlı
 
-`critical` katmandaki iki kategori sayılmadan önce bir checksum'dan geçer — `credit_card` için Luhn, `iban` için ISO 7064 mod-97 — dolayısıyla bir eşleşme benzer görünen bir dizi değil, gerçek bir değerdir. Bir build'i düşürmeyi güvenli kılan şey budur.
+`critical` katmandaki iki kategori sayılmadan önce bir checksum'dan geçer — `credit_card` için issuer-prefix + Luhn, `iban` için ISO 7064 mod-97 — dolayısıyla bir eşleşme gerçek bir kart ya da hesap numarasından ayırt edilemez. Kart kontrolü Luhn'a ek olarak gerçek bir issuer öneki (IIN) gerektirir; bu yüzden IMEI'lerde veya sipariş numaralarında tetiklenmez (her IMEI yapısı gereği Luhn'dan geçer). Bir build'i düşürmeyi güvenli kılan şey budur.
 
 Geri kalanlar raporlanır ama **asla kapılamaz**: `tr_id`, `de_id`, `fr_ssn`, `us_ssn` (`high`), `email` (`medium`), `phone` (`low`). Çoğu yalnızca regex şekliyle eşleşir ve *kasıtlı olarak* fazla raporlar; çünkü audit'in işi bir insanın değerlendirmesi için aday yüzeye çıkarmaktır. Kasıtlı olarak fazla raporlayan bir sinyalin üstüne kurulan kapı temiz corpus'ları düşürür — örnek adres ve telefon numaralarıyla meşru biçimde dolu bir müşteri destek veri seti her koşuda kırmızıya döner ve operatörün "kurt geldi" diye bağıran bir kapıya yaptığı ilk şey onu kapatmaktır; bu da güvenilir yarısını beraberinde götürür.
 
@@ -88,7 +88,7 @@ Kapılamayan bulgulardan herhangi birine göre CI'da kapı koymak için JSON rap
 
 ### PII
 
-E-posta, telefon, kredi kartı (Luhn doğrulamalı), IBAN (mod-97 doğrulamalı) ve ulusal kimlik (TR — TC Kimlik checksum'ı; DE, FR, US-SSN — yalnızca şekil) tespit eder. Satırları şiddete göre etiketler. `critical` katmandaki bir bulgu koşuyu kapılar; geri kalanlar yalnızca raporlanır — yukarıdaki exit kodu tablosuna bakın. Bkz. [PII Maskeleme](#/data/pii-masking).
+E-posta, telefon, kredi kartı (issuer-prefix + Luhn), IBAN (mod-97 doğrulamalı) ve ulusal kimlik (TR — TC Kimlik checksum'ı; DE, FR, US-SSN — yalnızca şekil) tespit eder. Satırları şiddete göre etiketler. `critical` katmandaki bir bulgu koşuyu kapılar; geri kalanlar yalnızca raporlanır — yukarıdaki exit kodu tablosuna bakın. Bkz. [PII Maskeleme](#/data/pii-masking).
 
 ### Sırlar
 

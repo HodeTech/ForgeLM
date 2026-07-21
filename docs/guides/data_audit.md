@@ -123,10 +123,10 @@ silent killer of test integrity.
 }
 ```
 
-Each row's text payload is scanned with regex; credit cards run through
-Luhn validation, TR national IDs run through the TC Kimlik No checksum.
-Other categories surface on regex shape alone — false positives are
-intentional. Mask with `forgelm ingest --pii-mask` (or in your own
+Each row's text payload is scanned with regex; credit cards run through an
+issuer-prefix + Luhn check, TR national IDs run through the TC Kimlik No
+checksum. Other categories surface on regex shape alone — false positives
+are intentional. Mask with `forgelm ingest --pii-mask` (or in your own
 preprocessing) before publishing the dataset.
 
 ### PII severity tiers (Phase 11.5)
@@ -168,16 +168,20 @@ fine.
 
 ```text
 [ERROR] PII gate FAILED (critical): 1 critical-tier PII span(s) detected (credit_card=1).
-These clear a checksum, so they are real values rather than lookalikes — a card or account
-number in training data is memorised and re-emitted at inference time. Mask it with
-`forgelm ingest --pii-mask`, or re-run `forgelm audit --allow-pii` to record the findings
-without failing the pipeline. Exiting 3.
+These pass an issuer-prefix and checksum test, so they are indistinguishable from real card /
+account numbers — and such a value in training data is memorised and re-emitted at inference
+time. Mask it with `forgelm ingest --pii-mask`, or re-run `forgelm audit --allow-pii` to record
+the findings without failing the pipeline. Exiting 3.
 ```
 
 **Why only the `critical` tier.** `credit_card` and `iban` clear a
-checksum before they are counted — Luhn for cards, ISO 7064 mod-97 for
-IBANs — so a hit is a real value rather than a lookalike. That is the
-property that makes a hard gate defensible. The sub-critical families
+checksum before they are counted — a real issuer prefix plus Luhn for
+cards, ISO 7064 mod-97 for IBANs — so a hit is indistinguishable from a
+genuine card or account number. That is the property that makes a hard
+gate defensible. That the card check also requires a real issuer prefix
+(IIN), not Luhn alone, is what keeps it off IMEIs and order numbers —
+Luhn is a mod-10 checksum that ~9.8% of random 16-digit runs pass and
+every IMEI passes by construction. The sub-critical families
 (`de_id`, `fr_ssn`, `us_ssn`, `email`, `phone`) are matched on regex
 shape alone and *deliberately* over-report, because the audit's job is
 to surface candidates for a human to judge. Gating on a deliberately

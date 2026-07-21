@@ -87,7 +87,7 @@ checkpoints/
 Every decision gate appends one line to `audit_log.jsonl`. Here is a real safety gate failing:
 
 ```json
-{"timestamp": "2026-07-20T18:41:00.356441+00:00", "run_id": "fg-13f28267fe1c", "operator": "ci-runner@build-07", "event": "safety.evaluation_completed", "prev_hash": "f39b5678b9ccf3ebf259da457fdea175d4046f5d6479a6f9916cf0963a21246b", "passed": false, "safe_ratio": 0.91, "total_count": 200, "safety_score": 0.91, "categories": {"S1": 4, "S9": 14}}
+{"timestamp": "2026-07-20T18:41:00.356441+00:00", "run_id": "fg-13f28267fe1c", "operator": "ci-runner@build-07", "event": "safety.evaluation_completed", "prev_hash": "f39b5678b9ccf3ebf259da457fdea175d4046f5d6479a6f9916cf0963a21246b", "passed": false, "safe_ratio": 0.91, "total_count": 200, "evaluation_completed": true, "scored_unsafe_count": 18, "unscored_count": 0, "safety_score": 0.91, "categories": {"S1": 4, "S9": 14}}
 ```
 
 `prev_hash` chains each line to the one before it. Every event is catalogued in the [Audit Event Catalog](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md).
@@ -127,7 +127,7 @@ CI/CD branches on these. They are a public contract; any other value is clamped 
 
 ## `forgelm audit` — before you spend a GPU-hour
 
-One command, no model download, no training commitment. It scans a corpus for length and language distribution, near-duplicates (SimHash, optional MinHash LSH), cross-split leakage, quality flags, PII across 8 categories (email, phone, IBAN, credit card, and TR / DE / FR / US-SSN national IDs — with checksum validation on cards (Luhn), IBANs (mod-97) and TR IDs; the rest are shape-matched and deliberately over-report), and a 9-family secrets scan.
+One command, no model download, no training commitment. It scans a corpus for length and language distribution, near-duplicates (SimHash, optional MinHash LSH), cross-split leakage, quality flags, PII across 8 categories (email, phone, IBAN, credit card, and TR / DE / FR / US-SSN national IDs — with checksum validation on cards (issuer-prefix + Luhn), IBANs (mod-97) and TR IDs; the rest are shape-matched and deliberately over-report), and a 9-family secrets scan.
 
 **Two gates exit 3.** These are the ones that stop a build:
 
@@ -140,7 +140,7 @@ in training data is memorised and re-emitted at inference time. Scrub it with
 record the findings without failing the pipeline. Exiting 3.
 ```
 
-The **PII gate** is the second, and it is deliberately narrower: only critical-tier findings — credit-card numbers and IBANs — fail a run. Both clear a checksum, so a hit is a real value rather than a lookalike. Government IDs, emails and phone numbers are reported and never gate: most are shape-matched and deliberately over-report, and a gate that fires on a clean corpus is a gate somebody switches off. The tier decides, not the detector — a TC national ID is checksum-validated too, but sits below critical.
+The **PII gate** is the second, and it is deliberately narrower: only critical-tier findings — credit-card numbers and IBANs — fail a run. Both clear a checksum — a card needs a real issuer prefix (IIN) plus Luhn, an IBAN the mod-97 check — so a hit is indistinguishable from a genuine card or account number, not an IMEI or order number that merely happens to pass Luhn. Government IDs, emails and phone numbers are reported and never gate: most are shape-matched and deliberately over-report, and a gate that fires on a clean corpus is a gate somebody switches off. The tier decides, not the detector — a TC national ID is checksum-validated too, but sits below critical.
 
 Both gates previously printed their finding and exited `0`. `--allow-secrets` and `--allow-pii` record the findings without failing the pipeline — for auditing a corpus before scrubbing it, or fixtures with known dummy values — and are independent of each other. `--croissant` embeds a Croissant 1.0 dataset card under the `croissant` key of `data_audit_report.json`; that report is inlined into `data_governance_report.json` at compliance-export time. [Dataset Audit Guide](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/data_audit.md)
 
@@ -162,7 +162,7 @@ Both gates previously printed their finding and exited `0`. `--allow-secrets` an
 
 Also here: multi-dataset mixing, and synthetic distillation from a teacher model into a smaller student.
 
-**What it is not:** no web UI, no custom inference engine (hand off to Ollama, vLLM, TGI, llama.cpp), no custom architectures or quantization kernels, no pretraining. Fine-tuning, evaluation, and the evidence trail, only — backed by 123 test modules / 4,524 tests and 29 CI guards that fail the build on documentation and schema drift. **No telemetry:** ForgeLM makes no outbound call you did not configure.
+**What it is not:** no web UI, no custom inference engine (hand off to Ollama, vLLM, TGI, llama.cpp), no custom architectures or quantization kernels, no pretraining. Fine-tuning, evaluation, and the evidence trail, only — backed by 124 test modules and 29 CI guards that fail the build on documentation and schema drift. **No telemetry:** ForgeLM makes no outbound call you did not configure.
 
 ---
 

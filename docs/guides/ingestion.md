@@ -96,7 +96,7 @@ re-run with the same input + flags produces the same JSONL byte-for-byte.
 
 ## PII masking on the way in
 
-Add `--pii-mask` to redact emails, phone numbers, credit cards (Luhn-validated),
+Add `--pii-mask` to redact emails, phone numbers, credit cards (issuer-prefix + Luhn),
 IBAN, and national IDs (TR Kimlik No, DE Personalausweis, FR INSEE, US SSN)
 before any chunk lands in the JSONL:
 

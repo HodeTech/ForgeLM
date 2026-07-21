@@ -96,9 +96,9 @@ _PROBE_PYPDF_NORMALISE_TURKISH = "pypdf_normalise.turkish"
 # ``pip install 'forgelm[deepspeed]'`` would 404.  Now aligned with the
 # actual pyproject names.
 _OPTIONAL_EXTRAS: Tuple[Tuple[str, str, str], ...] = (
-    ("qlora", "bitsandbytes", "4-bit / 8-bit QLoRA training"),
+    ("qlora", "bitsandbytes", "4-bit / 8-bit QLoRA training (Linux GPUs only)"),
     ("unsloth", "unsloth", "Unsloth-accelerated training (Linux GPUs only)"),
-    ("distributed", "deepspeed", "DeepSpeed ZeRO + offload distributed training"),
+    ("distributed", "deepspeed", "DeepSpeed ZeRO + offload distributed training (Linux + macOS only)"),
     ("eval", "lm_eval", "lm-evaluation-harness benchmark scoring"),
     ("tracking", "wandb", "Weights & Biases experiment tracking"),
     # NOTE: model merging is implemented natively (peft + torch core deps); the

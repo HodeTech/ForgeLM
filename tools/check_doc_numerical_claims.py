@@ -105,6 +105,27 @@ def canonical_templates() -> int:
     return sum(1 for d in TEMPLATES.iterdir() if d.is_dir() and (d / "config.yaml").exists())
 
 
+def canonical_test_modules() -> int:
+    """Count ``tests/test_*.py`` modules.
+
+    README.md advertised a precise test-module count that its own commits
+    silently falsified — the count lived outside this guard's ``docs/``-only
+    scan, so nothing recomputed it. Derived from the glob so the claim can no
+    longer drift past a PR that adds or removes a test module.
+    """
+    return sum(1 for _ in (REPO_ROOT / "tests").glob("test_*.py"))
+
+
+def canonical_ci_guards() -> int:
+    """Count ``tools/check_*.py`` CI guards.
+
+    Same rot mode as the test-module count: the README/CLAUDE.md "N CI guards"
+    literal moved every time a guard landed (28 -> 29 in this very cycle) with
+    nothing to catch a stale copy.
+    """
+    return sum(1 for _ in (REPO_ROOT / "tools").glob("check_*.py"))
+
+
 def canonical_webhook_events() -> int:
     """Count distinct ``event="..."`` strings in forgelm/webhook.py.
 
@@ -207,12 +228,14 @@ def _scan_line_for_mismatches(
     return found
 
 
-def search_doc_claims(pattern: re.Pattern[str], canonical_value: int, label: str) -> List[Mismatch]:
-    """Scan all docs for a claim matching ``pattern``; report any whose
-    captured number disagrees with ``canonical_value``.
+def search_doc_claims(
+    pattern: re.Pattern[str], canonical_value: int, label: str, *, scope: str = "all"
+) -> List[Mismatch]:
+    """Scan the ``scope``'d surfaces for a claim matching ``pattern``; report
+    any whose captured number disagrees with ``canonical_value``.
     """
     out: List[Mismatch] = []
-    for path in sorted(DOCS.rglob("*.md")):
+    for path in _scanned_docs(scope):
         if not _is_indexable_doc(path):
             continue
         try:
@@ -224,7 +247,29 @@ def search_doc_claims(pattern: re.Pattern[str], canonical_value: int, label: str
     return out
 
 
-def build_rules() -> List[Tuple[re.Pattern[str], str]]:
+def _scanned_docs(scope: str) -> List[Path]:
+    """Markdown surfaces to enforce a rule on, selected by ``scope``.
+
+    ``"all"`` — ``docs/`` plus the top-level ``README.md``. Used for counts
+    that always mean a current total (secret families, trainers, templates,
+    webhook events), so any stale copy anywhere is a real drift.
+
+    ``"toplevel"`` — ``README.md`` only. Used for the test-module and CI-guard
+    counts, which also appear in ``docs/roadmap/`` as *historical* per-wave
+    figures ("+4 CI guards this wave") that are correct as written and must not
+    be rewritten to the current total. README is the one place they mean "how
+    many exist now", so it is the one place the guard enforces them.
+    """
+    readme = REPO_ROOT / "README.md"
+    if scope == "toplevel":
+        return [readme] if readme.exists() else []
+    files = list(DOCS.rglob("*.md"))
+    if readme.exists():
+        files.append(readme)
+    return sorted(files)
+
+
+def build_rules() -> List[Tuple[re.Pattern[str], str, str]]:
     """Build the ``(pattern, canonical_label)`` scan rules.
 
     Module-level (not buried in ``main``) so the regexes are unit-testable
@@ -247,6 +292,7 @@ def build_rules() -> List[Tuple[re.Pattern[str], str]]:
                 re.IGNORECASE,
             ),
             "secret_families",
+            "all",
         ),
         # "6 trainer types", "six trainers". Anchor on standalone
         # numeric/word counts to avoid matching e.g. "Phase 6" or
@@ -257,6 +303,7 @@ def build_rules() -> List[Tuple[re.Pattern[str], str]]:
                 re.IGNORECASE,
             ),
             "trainer_types",
+            "all",
         ),
         # "5 (first-class )?quickstart templates" — require either
         # "quickstart" or "first-class" as qualifier so generic
@@ -267,6 +314,7 @@ def build_rules() -> List[Tuple[re.Pattern[str], str]]:
                 re.IGNORECASE,
             ),
             "templates",
+            "all",
         ),
         # "5 webhook events", "**five** wire-format events",
         # "**sekiz** webhook event'i" — qualifier MUST be one of
@@ -284,6 +332,29 @@ def build_rules() -> List[Tuple[re.Pattern[str], str]]:
                 re.IGNORECASE,
             ),
             "webhook_events",
+            "all",
+        ),
+        # "124 test modules", "**124** test modules". Qualifier "test module"
+        # keeps generic counts ("124 rows") from matching. Scope "toplevel":
+        # docs/roadmap/ records the count as a historical per-wave figure.
+        (
+            re.compile(
+                rf"\b(?P<count>\d+|{_NUM_WORD_ALT})\s+test\s+modules?\b",
+                re.IGNORECASE,
+            ),
+            "test_modules",
+            "toplevel",
+        ),
+        # "29 CI guards", "29 CI guards that fail the build". Qualifier "CI
+        # guard(s)" is specific; scope "toplevel" because docs/roadmap/ says
+        # "+N CI guards this wave", correct as a historical delta.
+        (
+            re.compile(
+                rf"\b(?P<count>\d+|{_NUM_WORD_ALT})\s+CI\s+guards?\b",
+                re.IGNORECASE,
+            ),
+            "ci_guards",
+            "toplevel",
         ),
     ]
 
@@ -305,13 +376,15 @@ def main(argv=None) -> int:
         "trainer_types": canonical_trainer_types(),
         "templates": canonical_templates(),
         "webhook_events": canonical_webhook_events(),
+        "test_modules": canonical_test_modules(),
+        "ci_guards": canonical_ci_guards(),
     }
 
     rules = build_rules()
 
     mismatches: List[Mismatch] = []
-    for pattern, label in rules:
-        mismatches.extend(search_doc_claims(pattern, canonical[label], label))
+    for pattern, label, scope in rules:
+        mismatches.extend(search_doc_claims(pattern, canonical[label], label, scope=scope))
 
     if mismatches:
         print(f"FAIL: {len(mismatches)} numerical claim(s) disagree with canonical source.")

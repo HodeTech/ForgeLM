@@ -33,7 +33,7 @@ import pytest
 from forgelm.cli import EXIT_EVAL_FAILURE, _run_data_audit
 from forgelm.data_audit import pii_gate_verdict
 from forgelm.data_audit._pii_regex import CHECKSUM_VALIDATED_PII_TYPES
-from forgelm.data_audit._types import PII_SEVERITY
+from forgelm.data_audit._types import PII_ML_SEVERITY, PII_SEVERITY
 
 # 4111 1111 1111 1111 is the canonical Visa test number and passes Luhn.
 _LUHN_VALID_CARD = "4111 1111 1111 1111"
@@ -106,8 +106,13 @@ class TestCriticalTierIsChecksumBacked:
     """The invariant that makes gating on this tier defensible."""
 
     def test_every_critical_family_clears_a_checksum(self):
-        critical = {k for k, tier in PII_SEVERITY.items() if tier == "critical"}
-        assert critical, "PII_SEVERITY declares no critical tier — the gate would be dead"
+        # The merged table is what the gate and the severity report both read, so
+        # the invariant must hold across BOTH the regex tier and the ML-NER tier —
+        # an ML category promoted to critical (person/org/location) is shape-matched
+        # too and would arm the gate on a noisy signal exactly as a regex one would.
+        merged = {**PII_SEVERITY, **PII_ML_SEVERITY}
+        critical = {k for k, tier in merged.items() if tier == "critical"}
+        assert critical, "no critical tier declared — the gate would be dead"
         unvalidated = critical - CHECKSUM_VALIDATED_PII_TYPES
         assert not unvalidated, (
             f"{unvalidated} are critical-tier but shape-matched only. Shape-matched detectors "
@@ -120,6 +125,17 @@ class TestCriticalTierIsChecksumBacked:
         with patch.dict(PII_SEVERITY, {"email": "critical"}):
             assert pii_gate_verdict({"email": 1})["failed"] is True
         assert pii_gate_verdict({"email": 1})["failed"] is False
+
+    def test_the_gate_honours_an_upgraded_ml_category(self):
+        """The report and the exit code must agree when an ML tier is raised.
+
+        Before the merged-table fix, `_build_pii_severity` reported worst_tier
+        'critical' for an upgraded ML category while `pii_gate_verdict` stayed
+        green — verdict and exit code disagreeing on the same finding.
+        """
+        with patch.dict(PII_ML_SEVERITY, {"person": "critical"}):
+            assert pii_gate_verdict({"person": 1})["failed"] is True
+        assert pii_gate_verdict({"person": 1})["failed"] is False
 
 
 # --------------------------------------------------------------------------
@@ -148,6 +164,23 @@ class TestPiiGateExitCode:
             [
                 {"text": "Contact alice@example.com or +1 555 010 1234"},
                 {"text": "SSN 123-45-6789"},
+            ],
+        )  # no SystemExit
+
+    def test_luhn_valid_non_cards_do_not_gate(self, tmp_path):
+        """The regression that motivated the issuer-prefix requirement.
+
+        A corpus of device IMEIs, ISBNs, git SHAs, order numbers and UUIDs
+        contains no card and no IBAN. A bare-Luhn card check fired on the IMEIs
+        (Luhn is their own check digit) and failed the build. The gate must
+        stay silent here.
+        """
+        _audit(
+            tmp_path,
+            [
+                {"text": "IMEI 490154203237518, invoice INV-2024-0001234567."},
+                {"text": "ISBN 978-0-306-40615-7; commit a1b2c3d4e5f6789012345678901234567890abcd"},
+                {"text": "uuid 550e8400-e29b-41d4-a716-446655440000, part no 1800000000000008"},
             ],
         )  # no SystemExit
 

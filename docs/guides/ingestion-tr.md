@@ -96,8 +96,8 @@ JSONL'i üretir.
 
 ## Yazma sırasında PII maskeleme
 
-Tespit edilen e-posta, telefon, Luhn-doğrulanmış kredi kartı, IBAN ve
-ulusal kimlik numaralarını (TR Kimlik No, DE Personalausweis, FR INSEE,
+Tespit edilen e-posta, telefon, issuer-prefix + Luhn doğrulamalı kredi
+kartı, IBAN ve ulusal kimlik numaralarını (TR Kimlik No, DE Personalausweis, FR INSEE,
 US SSN) chunk'lar JSONL'a inmeden önce redact etmek için `--pii-mask`
 ekleyin:
 

@@ -13,7 +13,7 @@ Eğitim setinizdeki kişisel veri hem regülatif tehlikedir (GDPR Md. 5(1)(c) �
 |---|---|---|
 | **E-posta** | `ali@example.com` | RFC 5321-uyumlu regex |
 | **Telefon** | `+90 532 123 45 67`, `(555) 123-4567` | E.164-uyumlu pattern + locale varyantları |
-| **Kredi kartı** | `4111-1111-1111-1111` | Visa/MC/Amex/Discover pattern + Luhn (görünür benzerlerde false-positive yok) |
+| **Kredi kartı** | `4111-1111-1111-1111` | Issuer öneki (Visa/MC/Amex/Discover/JCB/UnionPay) + Luhn — yalnızca Luhn değil; her IMEI Luhn'dan geçer |
 | **IBAN** | `TR12 0006 4000 0011 2345 6789 01` | Ülke-bilinçli checksum |
 | **Ulusal ID — Türkiye** | 11 haneli TC kimlik | Modulo-10 + modulo-11 checksum |
 | **Ulusal ID — Almanya** | Steuer-ID | Format + checksum |
