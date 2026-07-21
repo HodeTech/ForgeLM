@@ -103,20 +103,35 @@ _PII_PATTERNS: Dict[str, re.Pattern] = {
 # **every IMEI clears it by construction** — IMEIs use Luhn as their own check
 # digit.  A corpus of device identifiers, order numbers or invoice references
 # would therefore be flagged as full of credit cards.  Requiring a real issuer
-# prefix at a length that issuer uses drops the random-16-digit rate to ~2.2%
-# and excludes the IMEI class outright (measured on 20k samples).
+# prefix at a length that issuer uses drops the random-digit-run rate to ~1.1%
+# and excludes the IMEI class outright (measured on 60k samples).
 #
 # This constrains *detection*, not just gating: reporting an IMEI under the
 # ``credit_card`` key is mis-categorisation rather than the deliberate
 # over-reporting the shape-matched families do.
+#
+# Coverage is chosen for low IIN collision, not exhaustiveness.  Maestro
+# (BIN 50, 56-69, 12-19 digits) is deliberately omitted: its range is wide
+# enough to roughly double the false-positive rate (~2.5%), and its common
+# BINs already fall under Discover (6011/65) and UnionPay (62).  A Maestro
+# number outside those shared ranges reports at the sub-critical tier via the
+# generic digit-run detector rather than gating.  Adding a brand here also
+# needs a parametrised positive case in tests/test_data_audit.py so a future
+# narrowing cannot silently drop it again.
 _CARD_ISSUER_PREFIXES: Tuple[Tuple[str, FrozenSet[int]], ...] = (
     ("4", frozenset({13, 16, 19})),  # Visa
     ("34", frozenset({15})),  # American Express
     ("37", frozenset({15})),  # American Express
-    ("35", frozenset({16})),  # JCB
-    ("6011", frozenset({16})),  # Discover
-    ("65", frozenset({16})),  # Discover
-    ("62", frozenset({16, 17, 18, 19})),  # UnionPay
+    ("35", frozenset({16, 17, 18, 19})),  # JCB (3528-3589, 16-19 digits)
+    ("36", frozenset({14, 15, 16, 17, 18, 19})),  # Diners Club International
+    ("38", frozenset({14, 15, 16, 17, 18, 19})),  # Diners Club
+    ("39", frozenset({14, 15, 16, 17, 18, 19})),  # Diners Club
+    ("6011", frozenset({16, 17, 18, 19})),  # Discover
+    ("65", frozenset({16, 17, 18, 19})),  # Discover
+    ("62", frozenset({16, 17, 18, 19})),  # UnionPay (covers Discover 622126-622925)
+    *((str(p), frozenset({16, 17, 18, 19})) for p in range(644, 650)),  # Discover 644-649
+    *((str(p), frozenset({14, 15, 16, 17, 18, 19})) for p in range(300, 306)),  # Diners Club 300-305
+    *((str(p), frozenset({16, 17, 18, 19})) for p in range(2200, 2205)),  # Mir 2200-2204
     *((str(p), frozenset({16})) for p in range(51, 56)),  # Mastercard 51-55
     *((str(p), frozenset({16})) for p in range(2221, 2721)),  # Mastercard 2221-2720
 )
@@ -133,8 +148,17 @@ def _is_credit_card(candidate: str) -> bool:
     # module-level note) normalise to ASCII before the prefix comparison.
     # Comparing the raw characters would silently fail the IIN check for every
     # non-ASCII rendering of a real card number.
-    digit_str = "".join(str(int(c)) for c in candidate if c.isdigit())
+    #
+    # ``isdecimal()`` not ``isdigit()``: this is the ``Nd`` (decimal) class,
+    # matching the pattern's ``\d`` exactly, and every character it admits has
+    # an ``int()`` value.  ``isdigit()`` also admits ``No`` forms (superscripts
+    # ``²``, circled ``①``, ...) that ``\d`` never matches and that
+    # ``int()`` rejects with a ValueError — so on this public helper, called
+    # directly rather than only via ``detect_pii``, the wider filter would
+    # crash on adversarial input it can never legitimately receive.
+    digit_str = "".join(c for c in candidate if c.isdecimal())
     digits = [int(c) for c in digit_str]
+    digit_str = "".join(str(d) for d in digits)
     if not 13 <= len(digits) <= 19:
         return False
     if not _has_card_issuer_prefix(digit_str):

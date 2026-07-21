@@ -76,12 +76,27 @@ class TestPiiDetection:
             ("mastercard-5x", "5555 5555 5555 4444"),
             ("mastercard-2x", "2223 0031 2200 3222"),
             ("amex", "3782 822463 10005"),
-            ("discover", "6011 1111 1111 1117"),
+            ("discover-6011", "6011 1111 1111 1117"),
             ("jcb", "3530 1113 3330 0000"),
+            # Brands a bare-Luhn -> issuer-prefix tightening dropped; re-added
+            # after the Sonnet review flagged the recall regression. Each is a
+            # Luhn-valid number at a length its issuer mints.
+            ("diners-club-14", "3056 930902 5904"),
+            ("diners-club-36", "3614 890064 7913"),
+            ("discover-644", "6440 0000 0000 0005"),
+            ("mir", "2200 0000 0000 0004"),
         ],
     )
     def test_real_issuer_prefixes_across_brands_are_detected(self, brand, number):
         assert detect_pii(f"card {number}").get("credit_card") == 1
+
+    def test_credit_card_helper_tolerates_non_decimal_digit_forms(self):
+        # _is_credit_card is a public helper; called directly (not only via
+        # detect_pii, whose \\d never matches these) it must not crash on
+        # isdigit()-but-not-isdecimal() code points — superscripts, circled
+        # digits — that int() would reject with a ValueError.
+        for weird in ("²²²²²²²²²²²²²²²²", "①①①①①①①①①①①①①①①①"):
+            assert _is_credit_card(weird) is False
 
     def test_tr_id_validated_via_checksum(self):
         # Real-format checksum-valid TR Kimlik (synthetic, math-checked)

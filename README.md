@@ -103,7 +103,7 @@ CI/CD branches on these. They are a public contract; any other value is clamped 
 | 0 | Success |
 | 1 | Config error — invalid YAML, bad path, failed schema validation |
 | 2 | Training/runtime error |
-| 3 | Evaluation gate failed — loss, benchmark, safety, judge, or a critical secrets finding |
+| 3 | Evaluation gate failed — loss, benchmark, safety, judge, or a critical secrets / PII finding |
 | 4 | Awaiting human approval (Article 14 gate; the model is staged, not promoted) |
 | 5 | Wizard cancelled before writing a config |
 | 6 | Integrity failure — an artefact was read and its hash did not match |

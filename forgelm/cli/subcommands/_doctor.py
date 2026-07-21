@@ -101,6 +101,7 @@ _OPTIONAL_EXTRAS: Tuple[Tuple[str, str, str], ...] = (
     ("distributed", "deepspeed", "DeepSpeed ZeRO + offload distributed training (Linux + macOS only)"),
     ("eval", "lm_eval", "lm-evaluation-harness benchmark scoring"),
     ("tracking", "wandb", "Weights & Biases experiment tracking"),
+    ("tracking-mlflow", "mlflow", "MLflow experiment tracking"),
     # NOTE: model merging is implemented natively (peft + torch core deps); the
     # `merging` extra is a no-op and intentionally has no probe row here.
     ("export", "llama_cpp", "GGUF export via llama-cpp-python (Linux + macOS only)"),

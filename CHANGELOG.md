@@ -18,7 +18,11 @@ All notable changes to ForgeLM are documented here.
   prefix (IIN) at a length the issuer actually mints, not the Luhn checksum
   alone: ~9.8% of arbitrary 16-digit runs clear Luhn and every IMEI clears
   it by construction, so a Luhn-only gate fired on corpora of device IMEIs,
-  order numbers or invoice references.
+  order numbers or invoice references. The issuer table covers Visa,
+  Mastercard, Amex, Discover, JCB, UnionPay, Diners Club and Mir; Maestro is
+  deliberately omitted (its BIN range is wide enough to roughly double the
+  false-positive rate and its common BINs already fall under Discover /
+  UnionPay). Net random-digit-run false-positive rate ~1.1%.
   **Government IDs, emails and phone numbers do not gate and are not intended
   to.** The tier is what gates, not the detector: `tr_id` also clears a
   checksum but sits at `high`, so it reports without failing. Checksum
