@@ -182,7 +182,14 @@ dev = [
   # change to flip collection order.  Run locally via
   # ``pytest --randomly-seed=<n>`` to reproduce a failure.
   "pytest-randomly>=3.15.0,<4.0.0",
-  "ruff>=0.4.0",
+  # Bounded on purpose.  ruff 0.16.0 began formatting Python blocks *inside
+  # Markdown*, taking the format check from 277 files to 562 — on an unchanged
+  # tree that is 32 newly "unformatted" documents and a red lint job nobody
+  # caused.  ci.yml installed `ruff` unpinned, so the breakage would have
+  # arrived with whatever the runner resolved that morning.  Adopting a
+  # formatter major is a reviewed decision with a diff attached, not an ambush;
+  # tests/test_packaging.py pins this constraint against ci.yml's copy.
+  "ruff>=0.4.0,<0.16.0",
   # packaging supplies Version() for semantic (not lexical) version comparison
   # in tools/check_deprecation_targets.py and tests/test_config.py — "v1.10.0"
   # sorts below "v1.2.0" as a string, which would silently invert the
