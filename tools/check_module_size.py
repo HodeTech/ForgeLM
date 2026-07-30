@@ -294,8 +294,22 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/config.py": _DeferredSplit(
-        budget=1795,
+        budget=1833,
         deferred_at_loc=1795,
+        budget_history=(
+            "2026-07-30 (Phase 16 S2, +38): finite/bounded domains on the numeric fields a "
+            "decision is made against. `evaluation.max_acceptable_loss` and `baseline_loss` "
+            "gained `ge=0.0, allow_inf_nan=False` because `final_loss > nan` is always False, "
+            "so a `.nan` ceiling — spellable in ordinary YAML — made the quality gate pass "
+            "every model it was asked to reject. `merge.models` became a typed `MergeInput` "
+            "with `extra='forbid'` and `weight: gt=0.0, allow_inf_nan=False`, closing both a "
+            "silently-ignored key and a weight that made SLERP discard the operator's weights "
+            "entirely. `ties_trim_fraction` narrowed to `[0.0, 1.0)`. The new model is ~30 of "
+            "the 38 lines. Taken as a raise rather than a split per decision C-18: `config.py` "
+            "is the highest-blast-radius entry in the backlog (every module imports it, and a "
+            "split reorders import-time model registration), and S3/S8/S10 all add fields to "
+            "it — splitting mid-programme would rebase three later steps onto a moving file.",
+        ),
         reason=(
             "23 Pydantic models + cross-field validators + deprecation shims in one "
             "schema module. Splitting risks changing import-time validation order, so "
@@ -303,7 +317,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/trainer.py": _DeferredSplit(
-        budget=1460,
+        budget=1483,
         deferred_at_loc=1432,
         reason=(
             "ForgeTrainer god-object: TRL kwarg fold-in + OOM/DeepSpeed runtime + "
@@ -325,6 +339,20 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "_apply_distributed_config, the only caller and the site that decides the "
             "strategy — the same locality as benchmark.py's _check_lm_eval_available. "
             "A future _runtime split takes it along with the OOM/DeepSpeed concern.",
+            "2026-07-30 (Phase 16 S2, 1460 -> 1483, +23): two fail-closed guards on the "
+            "loss gate. A non-finite `max_acceptable_loss` now fails the run instead of "
+            "passing every model — `final_loss > nan` is always False, so the gate used "
+            "to report `passed=True` into the append-only audit log for a model it was "
+            "asked to reject, and discarding the threshold instead would be the same "
+            "fail-open under another name. And `save_steps % eval_steps != 0` raises "
+            "ConfigError at training-args construction rather than surfacing as a "
+            "transformers ValueError the top-level handler maps to EXIT_TRAINING_ERROR — "
+            "a config defect reported as a training failure. The second check lives here "
+            "rather than in config.py because the invariant only applies when a "
+            "validation split exists, and that is decided by data._ensure_validation_split "
+            "at load time. Raised rather than split per decision C-18: S3, S4 and S8 all "
+            "still edit this file, and a god-object split ahead of three behaviour changes "
+            "maximises rebase risk.",
         ),
     ),
     "forgelm/cli/_pipeline.py": _DeferredSplit(

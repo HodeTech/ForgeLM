@@ -181,8 +181,8 @@ training:
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
 | `auto_revert` | bool | `false` | Değerlendirme başarısız olursa modeli sil |
-| `max_acceptable_loss` | float | `null` | eval_loss üst sınırı |
-| `baseline_loss` | float | `null` | `null` ise otomatik hesaplanır |
+| `max_acceptable_loss` | float | `null` | eval_loss üst sınırı. Sonlu ve negatif olmayan bir sayı olmalı — `.nan` / `.inf` yükleme anında reddedilir, çünkü `loss > nan` her zaman false'tur ve sonlu olmayan bir tavan, kapının reddetmesi istenen her modeli geçirmesine yol açar |
+| `baseline_loss` | float | `null` | `null` ise otomatik hesaplanır. Aynı sonlu, negatif olmayan kısıt geçerlidir |
 | `require_human_approval` | bool | `false` | İnsan incelemesi için duraklat (çıkış kodu 4) |
 
 #### `evaluation.benchmark` (İsteğe bağlı)
@@ -366,13 +366,13 @@ uzatmasını engeller.
 |------|-----|-----------|----------|
 | `enabled` | bool | `false` | Model birleştirmeyi etkinleştir |
 | `method` | string | `"ties"` | `"ties"`, `"dare"`, `"slerp"`, `"linear"` |
-| `models` | list | `[]` | `{path, weight}` sözlük listesi |
+| `models` | list | `[]` | `{path, weight}` girdi listesi. Bilinmeyen anahtarlar reddedilir; `weight` sonlu ve kesin pozitif olmalıdır |
 | `output_dir` | string | `"./merged_model"` | Çıktı dizini |
-| `ties_trim_fraction` | float | `0.2` | TIES: görev başına kırpılan en küçük büyüklükteki delta'ların oranı (0.0–1.0). Yalnızca `method` `ties` olduğunda kullanılır. |
+| `ties_trim_fraction` | float | `0.2` | TIES: görev başına kırpılan en küçük büyüklükteki delta'ların oranı. Aralık `[0.0, 1.0)` — `1.0` reddedilir, çünkü her şeyi kırpmak merge'i işlevsiz bırakırdı. Yalnızca `method` `ties` olduğunda kullanılır. |
 | `dare_drop_rate` | float | `0.3` | DARE: yeniden ölçeklemeden önce her delta'nın rastgele düşürülme olasılığı (0.0–1.0). Yalnızca `method` `dare` olduğunda kullanılır. |
 | `dare_seed` | int | `42` | DARE: rastgele düşürme maskesi için RNG seed'i; bir birleştirme çalıştırmadan çalıştırmaya tekrarlanabilir olur. |
 
-> `enabled: true`, `models` içinde her biri bir `path` anahtarı taşıyan en az iki girdi gerektirir — ikiden az kaynak model (veya `path` eksik bir girdi) içeren bir birleştirme config-load zamanında reddedilir.
+> `enabled: true`, `models` içinde her biri bir `path` taşıyan en az iki girdi gerektirir — ikiden az kaynak model, `path` eksik bir girdi, bilinmeyen bir anahtar veya sonlu-ve-kesin-pozitif olmayan bir `weight` config-load zamanında reddedilir (çıkış 1). Ağırlık kısıtı süs değildir: SLERP'te sonlu olmayan bir ağırlık toplamı `t = 0.5` dalına düşer, yani birleştirme yazdığınız ağırlıkları sessizce yok sayıp orta noktada interpolasyon yapar.
 
 > **TIES/DARE varsayılan hiperparametreleri kasıtlı olarak korumacıdır.**
 > ForgeLM'in yerel `ties` birleştirmesi, ağırlıkların büyüklüğe göre alttaki

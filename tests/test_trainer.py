@@ -139,12 +139,35 @@ class TestEvaluationChecks:
         result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": float("inf")})
         assert result is False
 
-    def test_nan_baseline_config_is_ignored(self, caplog):
-        """A config-supplied NaN baseline_loss must be silently discarded so it
-        cannot covertly disable the regression check.  The guard must log a
-        WARNING mentioning 'NaN or Inf' and the call must return True (no revert)
-        because the baseline regression gate is disarmed, not triggered."""
-        trainer = self._make_trainer(auto_revert=True, baseline_loss=float("nan"))
+    def test_nan_baseline_is_refused_by_the_schema(self):
+        """A non-finite baseline can no longer be written in a config at all.
+
+        This used to construct ``ForgeConfig`` with ``baseline_loss=nan`` and
+        assert the runtime neutralised it. ``EvaluationConfig`` now carries
+        ``allow_inf_nan=False``, so the value is refused at load time with
+        exit 1 — a config defect reported as a config defect, before any GPU
+        is touched. The runtime guard is still asserted, one test down, because
+        the schema is not the only ingress.
+        """
+        from pydantic import ValidationError
+
+        from forgelm.config import EvaluationConfig
+
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with pytest.raises(ValidationError, match="finite_number|finite number"):
+                EvaluationConfig(baseline_loss=value)
+
+    def test_nan_baseline_is_still_neutralised_at_runtime(self, caplog):
+        """Belt and braces for the ingress the schema does not cover.
+
+        ``model_construct`` and direct attribute assignment bypass validation,
+        and the public Python API accepts a ``ForgeConfig`` a caller may have
+        built either way. A NaN baseline must therefore still be discarded at
+        the gate — disarming the regression check, not silently passing it —
+        with a WARNING naming the cause.
+        """
+        trainer = self._make_trainer(auto_revert=True)
+        trainer.config.evaluation.baseline_loss = float("nan")
         with patch.object(trainer, "_revert_model") as revert, caplog.at_level("WARNING"):
             result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.5})
         assert result is True
@@ -1284,3 +1307,69 @@ class TestGrpoRewardModelRevisionPin:
         with tok_patch, model_patch, cuda_patch:
             trainer._resolve_grpo_reward_funcs()
         assert seen["offline"] is True
+
+
+class TestNonFiniteThresholdFailsClosed:
+    """A ceiling the gate cannot compare against must not pass the model.
+
+    ``final_loss > nan`` is always False, so a NaN ``max_acceptable_loss``
+    made the loss gate pass every model it was asked to reject — and wrote
+    ``passed=True`` into the append-only audit log while doing it. YAML 1.1
+    spells the value ``.nan``, so this was reachable from an ordinary config
+    file. ``EvaluationConfig`` now refuses it at load time; these tests cover
+    the ingress the schema cannot see (``model_construct``, direct assignment,
+    a ``ForgeConfig`` a library caller built by hand).
+
+    The direction matters: the guard **fails**, it does not discard. Treating
+    an unusable ceiling as "no ceiling configured" would be the same fail-open
+    wearing a different label.
+    """
+
+    @staticmethod
+    def _trainer(auto_revert: bool, max_loss: float):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model"},
+            lora={},
+            training={"output_dir": "/tmp/test_forge_threshold"},
+            data={"dataset_name_or_path": "org/dataset"},
+            evaluation={"auto_revert": auto_revert},
+        )
+        # Bypass the schema on purpose — that is the ingress under test.
+        config.evaluation.max_acceptable_loss = max_loss
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.dataset = {"train": ["dummy"], "validation": ["dummy"]}
+            trainer.checkpoint_dir = "/tmp/test_forge_threshold"
+            trainer.run_name = "test_threshold"
+            trainer.notifier = MagicMock()
+            trainer.audit = MagicMock()
+        return trainer
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")], ids=["nan", "inf"])
+    def test_non_finite_ceiling_fails_the_run(self, bad, caplog):
+        trainer = self._trainer(auto_revert=False, max_loss=bad)
+        with patch.object(trainer, "_revert_model") as revert, caplog.at_level("ERROR"):
+            result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 999.0})
+        assert result is False, "a gate that cannot compare must not report a pass"
+        revert.assert_not_called()
+        assert any("not a finite number" in r.getMessage() for r in caplog.records)
+
+    def test_non_finite_ceiling_reverts_when_auto_revert_is_on(self):
+        trainer = self._trainer(auto_revert=True, max_loss=float("nan"))
+        with patch.object(trainer, "_revert_model") as revert:
+            result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 999.0})
+        assert result is False
+        revert.assert_called_once()
+        assert revert.call_args.kwargs.get("source") == "invalid_threshold"
+
+    def test_a_finite_ceiling_still_passes_a_good_model(self):
+        """The guard must not fire on the ordinary path."""
+        trainer = self._trainer(auto_revert=True, max_loss=2.0)
+        with patch.object(trainer, "_revert_model") as revert:
+            result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.0})
+        assert result is True
+        revert.assert_not_called()

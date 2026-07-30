@@ -589,7 +589,16 @@ class TestMergeEnabledValidation:
             MergeConfig(enabled=True)
 
     def test_merge_enabled_requires_path_key(self):
-        with pytest.raises(ValidationError, match="`path` key"):
+        """Still rejected, now by the schema and with the index named.
+
+        This asserted the hand-rolled ``Each merge.models entry must carry a
+        `path` key`` message from ``_validate_merge_inputs``. ``merge.models``
+        is now ``List[MergeInput]`` with ``path`` required, so Pydantic
+        reports ``models.0.path`` / ``models.1.path`` — same rejection, and it
+        says *which* entry. The old loop was deleted rather than left as dead
+        code that still looked load-bearing.
+        """
+        with pytest.raises(ValidationError, match=r"models\.0\.path"):
             MergeConfig(enabled=True, models=[{"weight": 0.5}, {"weight": 0.5}])
 
     def test_merge_disabled_empty_models_accepted(self):
@@ -598,6 +607,50 @@ class TestMergeEnabledValidation:
     def test_merge_enabled_with_two_paths_accepted(self):
         cfg = MergeConfig(enabled=True, models=[{"path": "a"}, {"path": "b"}])
         assert len(cfg.models) == 2
+        assert cfg.models[0].path == "a"
+        assert cfg.models[0].weight == 1.0
+
+    @pytest.mark.parametrize(
+        "weight",
+        [float("nan"), float("inf"), float("-inf"), -1.0, 0.0],
+        ids=["nan", "inf", "-inf", "negative", "zero"],
+    )
+    def test_merge_weight_must_be_finite_and_positive(self, weight):
+        """A weight the merge algorithms cannot use is refused at load time.
+
+        ``.nan`` propagated into every merged tensor under TIES/DARE, and under
+        SLERP did something worse than propagate: ``t = w2/(w1+w2) if
+        (w1+w2) > 0 else 0.5`` sends a non-finite sum down the else branch, so
+        the operator's weights are discarded and the merge silently
+        interpolates at the midpoint. Zero and negative were separately
+        reachable — a zero sum raised at runtime (exit 2, a *training* error,
+        for a config defect) and negatives were documented as dangerous but
+        legal.
+        """
+        with pytest.raises(ValidationError):
+            MergeConfig(enabled=True, models=[{"path": "a"}, {"path": "b", "weight": weight}])
+
+    def test_merge_entry_rejects_an_unknown_key(self):
+        """A silently-ignored key is a config that does not mean what it says.
+
+        ``merge.models`` was ``List[Dict[str, Any]]``, so a mergekit-style
+        ``density:`` — a plausible thing to carry over — was read, discarded
+        and never mentioned.
+        """
+        with pytest.raises(ValidationError, match="extra_forbidden|Extra inputs"):
+            MergeConfig(enabled=True, models=[{"path": "a"}, {"path": "b", "density": 0.5}])
+
+    def test_merge_weight_accepts_a_numeric_string(self):
+        """Coercion is kept deliberately.
+
+        A string weight used to raise ``TypeError`` inside
+        ``any(w < 0 for w in weights)``, which the blanket ``except Exception``
+        in ``merge_peft_adapters`` converted into EXIT_TRAINING_ERROR (2) —
+        a *training* verdict for a config defect. Pydantic coerces it to a
+        float at load time instead.
+        """
+        cfg = MergeConfig(enabled=True, models=[{"path": "a"}, {"path": "b", "weight": "0.5"}])
+        assert cfg.models[1].weight == 0.5
 
 
 class TestMergeHyperparameterFields:

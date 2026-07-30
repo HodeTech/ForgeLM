@@ -457,6 +457,32 @@ class ForgeTrainer:
         eval_strategy = "steps" if has_validation else "no"
         load_best_model_at_end = has_validation
 
+        # Transformers refuses ``load_best_model_at_end`` with step-based
+        # save/eval strategies unless ``save_steps`` is an exact multiple of
+        # ``eval_steps``, and raises deep inside ``TrainingArguments``
+        # construction — a ``ValueError`` the top-level handler maps to
+        # EXIT_TRAINING_ERROR (2), i.e. "your training run failed", for what is
+        # purely a config defect the operator can fix in one line.
+        #
+        # It is checked here rather than in ``config.py`` because the invariant
+        # only applies when a validation split exists, and that is decided by
+        # ``data._ensure_validation_split`` at load time — a config-level rule
+        # would fire on runs that never evaluate. ``config.py`` keeps its
+        # separate ``eval_steps > save_steps`` warning, which catches the
+        # commonest shape earlier without needing the dataset.
+        if load_best_model_at_end and eval_strategy == "steps":
+            eval_steps = self.config.training.eval_steps
+            save_steps = self.config.training.save_steps
+            if eval_steps and save_steps and save_steps % eval_steps != 0:
+                raise ConfigError(
+                    f"training.save_steps ({save_steps}) must be an exact multiple of "
+                    f"training.eval_steps ({eval_steps}) when a validation split exists, because "
+                    "best-model selection reloads the checkpoint matching the best evaluation and "
+                    "cannot do so if the two schedules never coincide. "
+                    f"Nearest valid values: {(save_steps // eval_steps) * eval_steps or eval_steps} "
+                    f"or {((save_steps // eval_steps) + 1) * eval_steps}."
+                )
+
         kwargs = {
             "output_dir": self.checkpoint_dir,
             "max_steps": self.config.training.max_steps,
@@ -781,6 +807,33 @@ class ForgeTrainer:
                 baseline_loss,
             )
             baseline_loss = None
+
+        # The threshold gets the opposite treatment from the baseline above,
+        # and the asymmetry is the point. A non-finite *baseline* disarms a
+        # comparison that is only ever informational, so discarding it is
+        # safe. A non-finite *ceiling* disarms the gate itself: ``final_loss >
+        # nan`` is always False, so every model passes, ``passed=True`` is
+        # written to the audit log, and with ``auto_revert`` on nothing is ever
+        # reverted. Discarding it would be the same fail-open under a different
+        # name, so it fails **closed** — the run is failed with the value
+        # named. ``EvaluationConfig`` refuses these at load time; this covers
+        # the ``model_construct`` / direct-assignment ingress the schema
+        # cannot see.
+        if max_loss is not None and not math.isfinite(max_loss):
+            reason = (
+                f"evaluation.max_acceptable_loss is {max_loss!r}, which is not a finite number. "
+                "A non-finite ceiling makes the loss gate pass every model it is asked to reject, "
+                "so the run is failed rather than allowed through with an unusable threshold."
+            )
+            logger.error("EVALUATION FAILED: %s", reason)
+            self._emit_loss_gate_event(
+                False, final_loss if final_loss is not None else float("nan"), max_loss, baseline_loss
+            )
+            if not auto_revert:
+                logger.warning("auto_revert=false — model NOT reverted (detection-only). %s", reason)
+                return False
+            self._revert_model(final_path, reason, source="invalid_threshold")
+            return False
 
         # When auto_revert is off and no threshold/baseline is configured there is
         # nothing to detect — keep the original cheap early return.

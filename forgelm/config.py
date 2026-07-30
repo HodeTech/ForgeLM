@@ -134,6 +134,45 @@ class MultimodalConfig(BaseModel):
     text_column: str = Field(default="text", description="Dataset column name for text or captions.")
 
 
+class MergeInput(BaseModel):
+    """One `{path, weight}` entry in ``merge.models``.
+
+    Typed rather than a free-form ``Dict[str, Any]`` for two reasons the old
+    shape got wrong in opposite directions.
+
+    A **silently ignored key**: ``merge.models`` accepted anything, so a
+    mergekit-style ``density:`` — a plausible thing for an operator to carry
+    over — was read, discarded and never mentioned. ``extra="forbid"`` matches
+    every other model in this module and turns that into an exit-1 config
+    error naming the key.
+
+    A **weight that poisons the merge**: ``weight`` was unvalidated, so
+    ``.nan`` reached the algorithms. In TIES/DARE it propagates into every
+    merged tensor; SLERP is worse than propagation — ``t = w2/(w1+w2) if
+    (w1+w2) > 0 else 0.5`` makes a non-finite sum fall to the else branch, so
+    the operator's weights are **discarded** and the merge silently
+    interpolates at the midpoint. ``gt=0.0`` additionally rejects zero and
+    negative weights: a zero-sum was already a runtime error, and negatives
+    were documented as dangerous but legal, which left the renormalization
+    guard in ``_ties_merge_tensor`` reachable with a negative
+    ``agree_weight_sum``. A value the code warns you not to use is better
+    refused at load time, where the exit code says "your config" (1) instead
+    of "your training run" (2).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(..., description="Filesystem path or Hub id of the source model / adapter to merge.")
+    weight: float = Field(
+        default=1.0,
+        gt=0.0,
+        allow_inf_nan=False,
+        description=(
+            "Relative contribution of this source, normalised across all entries. Must be finite and strictly positive."
+        ),
+    )
+
+
 class MergeConfig(BaseModel):
     """Post-training model merging configuration."""
 
@@ -147,25 +186,30 @@ class MergeConfig(BaseModel):
         default="ties",
         description="Merge algorithm: `ties` (TIES-merging), `dare` (DARE), `slerp` (spherical interpolation), `linear` (weighted average).",
     )
-    models: List[Dict[str, Any]] = Field(
+    models: List[MergeInput] = Field(
         default=[],
-        description="List of `{path, weight}` dicts naming the source models to merge.",
+        description="List of `{path, weight}` entries naming the source models to merge.",
     )
     output_dir: str = Field(default="./merged_model", description="Directory to write the merged model into.")
     ties_trim_fraction: float = Field(
         default=0.2,
         ge=0.0,
-        le=1.0,
+        lt=1.0,
+        allow_inf_nan=False,
         description=(
             "TIES merge: fraction of smallest-magnitude deltas trimmed per task "
             "(default `0.2` keeps the top ~80%; the published TIES default is sparser). "
-            "Only consulted when `method` is `ties`."
+            "Must be in `[0.0, 1.0)`: `0.0` trims nothing, and `1.0` is refused because "
+            "trimming everything would make the merge a no-op — the implementation's "
+            "k-th-smallest threshold turns `1.0` into *keep only the maxima*, the opposite "
+            "of what the value reads as. Only consulted when `method` is `ties`."
         ),
     )
     dare_drop_rate: float = Field(
         default=0.3,
         ge=0.0,
         le=1.0,
+        allow_inf_nan=False,
         description=(
             "DARE merge: probability each delta is randomly dropped before rescaling "
             "(default `0.3`; the DARE paper recommends 0.9+ for fine-tuned deltas). "
@@ -194,9 +238,10 @@ class MergeConfig(BaseModel):
                 "merge.enabled is true but fewer than two source models are listed; "
                 "every merge algorithm needs at least two `{path, weight}` entries in merge.models."
             )
-        for entry in self.models:
-            if "path" not in entry:
-                raise ValueError("Each merge.models entry must carry a `path` key naming the source model.")
+        # The former ``"path" not in entry`` loop is gone: ``MergeInput.path``
+        # is a required field, so a missing path is now a Pydantic error naming
+        # the offending index instead of a hand-rolled message. Leaving the
+        # loop would have been dead code that still looked load-bearing.
         return self
 
 
@@ -1125,12 +1170,24 @@ class EvaluationConfig(BaseModel):
         default=False,
         description="Delete the saved model directory on quality regression (loss / benchmark / safety / judge threshold).  Nothing is restored — the trained artefacts are removed and the failure is recorded in the audit log.",
     )
+    # ``allow_inf_nan=False`` is the whole point, not a formality.  A gate
+    # compares ``final_loss > max_acceptable_loss``; with ``.nan`` on the right
+    # that comparison is *always* False, so the gate passes every model it is
+    # asked to reject — it fails **open**, silently, and the run reports
+    # ``passed=True``.  YAML 1.1 spells the value ``.nan`` / ``.inf``, so this
+    # is reachable from an ordinary config file, not just the Python API.
+    # ``ge=0.0`` because a cross-entropy loss cannot be negative and a negative
+    # ceiling is the same fail-open in a different disguise.
     max_acceptable_loss: Optional[float] = Field(
         default=None,
+        ge=0.0,
+        allow_inf_nan=False,
         description="Hard cap on validation loss.  When exceeded + auto_revert=True, training auto-reverts.",
     )
     baseline_loss: Optional[float] = Field(
         default=None,
+        ge=0.0,
+        allow_inf_nan=False,
         description="Pre-training baseline loss for regression detection.  Auto-computed when validation set exists.",
     )
     benchmark: Optional[BenchmarkConfig] = Field(

@@ -380,7 +380,16 @@ def _ties_merge_tensor(deltas, weights, trim_fraction=0.2):
         # (F-P3-FABLE-19). ``kthvalue`` has no size limit and yields the same
         # trim threshold: the k-th smallest magnitude, k = trim_fraction · n.
         flat_f = flat.float()
-        k = max(1, int(trim_fraction * flat_f.numel()))
+        # ``k`` is clamped to n-1, not n. At ``trim_fraction == 1.0`` the
+        # unclamped ``k == n`` makes ``kthvalue`` return the *largest*
+        # magnitude, so ``abs() < threshold`` zeroes everything except the
+        # maxima — "trim 100%" quietly meaning "keep only the biggest value",
+        # the exact inverse of what the parameter reads as. ``MergeConfig``
+        # now refuses ``1.0`` outright (exit 1), so a config cannot reach here;
+        # the clamp is the second line of defence for a direct library caller,
+        # matching how the loss gate guards its own threshold.
+        n = flat_f.numel()
+        k = min(max(1, int(trim_fraction * n)), max(1, n - 1))
         threshold = flat_f.kthvalue(k).values
         stacked[i][stacked[i].abs() < threshold] = 0.0
 

@@ -182,8 +182,8 @@ across retries. Each retry attempt is logged to the audit trail.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `auto_revert` | bool | `false` | Delete model if evaluation fails |
-| `max_acceptable_loss` | float | `null` | Hard ceiling for eval_loss |
-| `baseline_loss` | float | `null` | Computed automatically if null |
+| `max_acceptable_loss` | float | `null` | Hard ceiling for eval_loss. Must be a finite, non-negative number — `.nan` / `.inf` are rejected at load time, because `loss > nan` is always false and a non-finite ceiling would make the gate pass every model it was asked to reject |
+| `baseline_loss` | float | `null` | Computed automatically if null. Same finite, non-negative constraint |
 | `require_human_approval` | bool | `false` | Pause for human review (exit code 4) |
 
 #### `evaluation.benchmark` (Optional)
@@ -306,13 +306,13 @@ silently extend the retention horizon by re-using a stale workspace.
 |-------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable model merging |
 | `method` | string | `"ties"` | `"ties"`, `"dare"`, `"slerp"`, `"linear"` |
-| `models` | list | `[]` | List of `{path, weight}` dicts |
+| `models` | list | `[]` | List of `{path, weight}` entries. Unknown keys are rejected; `weight` must be finite and strictly positive |
 | `output_dir` | string | `"./merged_model"` | Output directory |
-| `ties_trim_fraction` | float | `0.2` | TIES: fraction (0.0–1.0) of smallest-magnitude deltas trimmed per task. Only consulted when `method` is `ties`. |
+| `ties_trim_fraction` | float | `0.2` | TIES: fraction of smallest-magnitude deltas trimmed per task. Range `[0.0, 1.0)` — `1.0` is rejected because trimming everything would make the merge a no-op. Only consulted when `method` is `ties`. |
 | `dare_drop_rate` | float | `0.3` | DARE: probability (0.0–1.0) each delta is randomly dropped before rescaling. Only consulted when `method` is `dare`. |
 | `dare_seed` | int | `42` | DARE: RNG seed for the random drop mask, so a merge is reproducible run-to-run. |
 
-> `enabled: true` requires at least two entries in `models`, each with a `path` key — a merge with fewer than two source models (or an entry missing `path`) is rejected at config-load time.
+> `enabled: true` requires at least two entries in `models`, each with a `path` — a merge with fewer than two source models, an entry missing `path`, an unknown key, or a `weight` that is not finite and strictly positive is rejected at config-load time (exit 1). The weight constraint is not cosmetic: under SLERP a non-finite weight sum falls to the `t = 0.5` branch, so the merge silently ignores the weights you wrote and interpolates at the midpoint.
 
 > **TIES/DARE default hyperparameters are intentionally conservative.** ForgeLM's
 > native `ties` merge trims the bottom **20%** of weights by magnitude (keeps

@@ -135,7 +135,12 @@ def _run_merge(config: ForgeConfig, output_format: str) -> None:
 
     result = merge_peft_adapters(
         base_model_path=config.model.name_or_path,
-        adapters=config.merge.models,
+        # ``merge.models`` is now ``List[MergeInput]``; ``merge_peft_adapters``
+        # takes the plain-dict shape it has always taken, so the conversion
+        # happens here rather than pushing a Pydantic type into the merge
+        # algorithms. Keeping the library function dict-typed also keeps it
+        # callable from a notebook without importing the schema.
+        adapters=[entry.model_dump() for entry in config.merge.models],
         method=config.merge.method,
         output_dir=config.merge.output_dir,
         trust_remote_code=config.model.trust_remote_code,
