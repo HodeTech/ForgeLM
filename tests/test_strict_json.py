@@ -129,3 +129,52 @@ class TestPublishedArtefactsAreStrict:
         assert parsed["scores"] == {"t": 0.75}
         assert parsed["average_score"] == 0.75
         assert math.isclose(parsed["average_score"], 0.75)
+
+
+class TestFailureEnvelopeCarriesTheReason:
+    """`success: false` with no `error` tells automation nothing.
+
+    `TrainResult.error` already carried the gate's computed reason — the
+    loss-gate threshold breach, the benchmark verdict, the safety failure —
+    and `_build_result_json_envelope` simply never read it. Every gate exits
+    3, so the exit code cannot say which one fired either; the cause existed
+    only in log text a JSON consumer does not parse.
+    """
+
+    @staticmethod
+    def _envelope(**kw):
+        from forgelm.cli._result import _build_result_json_envelope
+        from forgelm.results import TrainResult
+
+        return _build_result_json_envelope(TrainResult(**kw))
+
+    def test_failure_carries_the_producer_reason(self):
+        env = self._envelope(success=False, metrics={}, error="eval_loss 3.2000 exceeded max 2.0000")
+        assert env["success"] is False
+        assert env["error"] == "eval_loss 3.2000 exceeded max 2.0000"
+
+    def test_failure_without_a_reason_says_so_rather_than_omitting_the_key(self):
+        """The silent shape is what made this invisible; it must not recur.
+
+        Omitting `error` when no producer set one would leave the envelope
+        byte-identical to the bug, so an unattributed failure is stated
+        explicitly and points at the audit trail.
+        """
+        env = self._envelope(success=False, metrics={})
+        assert "error" in env
+        assert "no failure reason was recorded" in env["error"]
+        assert "audit_log.jsonl" in env["error"]
+
+    def test_success_envelope_shape_is_unchanged(self):
+        """No permanent `"error": null` on the happy path."""
+        env = self._envelope(success=True, metrics={"eval_loss": 1.0}, final_model_path="/m")
+        assert "error" not in env
+
+    def test_the_failure_envelope_is_strict_json(self):
+        """The two S2 halves compose: a reason, and bytes a strict parser reads."""
+        from forgelm._strict_json import dumps_strict
+
+        env = self._envelope(success=False, metrics={"eval_loss": float("nan")}, error="training diverged")
+        parsed = strict_loads(dumps_strict(env, default=str))
+        assert parsed["error"] == "training diverged"
+        assert parsed["metrics"]["eval_loss"] == "nan"

@@ -51,6 +51,26 @@ def _build_result_json_envelope(result) -> dict:
         }
     if result.judge_score is not None:
         output["judge"] = {"average_score": result.judge_score}
+
+    # A failed run must say why, in the envelope, unconditionally.
+    #
+    # ``TrainResult.error`` carries the gate's computed reason — the loss-gate
+    # threshold breach, the benchmark verdict, the safety failure — and the
+    # envelope simply never read it. So an operator's automation saw
+    # ``success: false`` with the cause available only in log text it does not
+    # parse, and the exit code (3 for every gate) cannot distinguish which gate
+    # fired. Emitted only on failure so a successful envelope keeps its
+    # existing shape rather than growing a permanent ``"error": null``.
+    #
+    # The fallback is deliberate rather than defensive: a ``success: false``
+    # with no reason at all is the shape that made this invisible, so if no
+    # producer set one, the envelope says so explicitly instead of omitting
+    # the key and looking identical to the old bug.
+    if result.success is False:
+        output["error"] = getattr(result, "error", None) or (
+            "Training did not complete successfully and no failure reason was recorded. "
+            "See the run's audit_log.jsonl for the decision trail."
+        )
     return output
 
 
