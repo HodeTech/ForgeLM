@@ -1438,3 +1438,160 @@ class TestSaveEvalStepInvariant:
         """`load_best_model_at_end` is off, so the upstream constraint does not apply."""
         trainer = self._trainer(eval_steps=200, save_steps=300, has_validation=False)
         trainer._get_common_training_kwargs()
+
+
+class TestRevertedFlagAtTheCallSite:
+    """`TrainResult.reverted` must be derived where the result is built.
+
+    A unit test already pinned that `execute_evaluation_checks` does not call
+    `_revert_model` on the detection-only path. That test passed while the
+    call site three hundred lines away still hardcoded `reverted=True`, so
+    the envelope claimed a deletion that never happened — and a commit message
+    and CHANGELOG entry both announced the fix. Asserting a property in
+    isolation is not establishing it at the point where it matters, so this
+    drives `_run_training_pipeline`'s construction directly.
+    """
+
+    @staticmethod
+    def _trainer(auto_revert: bool):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/m"},
+            lora={},
+            training={"output_dir": "/tmp/test_reverted_callsite"},
+            data={"dataset_name_or_path": "org/d"},
+            evaluation={"auto_revert": auto_revert},
+        )
+        config.evaluation.max_acceptable_loss = float("nan")
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.dataset = {"train": ["x"], "validation": ["x"]}
+            trainer.checkpoint_dir = "/tmp/test_reverted_callsite"
+            trainer.run_name = "r"
+            trainer.notifier = MagicMock()
+            trainer.audit = MagicMock()
+        return trainer
+
+    @staticmethod
+    def _result_from_call_site(trainer):
+        """Replay exactly what `_run_training_pipeline` builds on gate failure.
+
+        Read out of the source rather than restated, so a future edit to the
+        call site that reintroduces a literal cannot leave this test green.
+        """
+        import inspect
+        import re
+
+        from forgelm.results import TrainResult
+
+        source = inspect.getsource(trainer.__class__._run_training_pipeline)
+        match = re.search(
+            r"return TrainResult\(\s*success=False,\s*metrics=metrics,\s*reverted=(.+),\s*$", source, re.M
+        )
+        assert match, "the loss-gate failure TrainResult is no longer recognisable — update this test"
+        expression = match.group(1).strip()
+        assert expression != "True", (
+            "the loss-gate call site hardcodes reverted=True again. It must be derived from whether "
+            "_revert_model actually ran: execute_evaluation_checks returns False both when the model "
+            "was deleted and when it was left intact."
+        )
+        return TrainResult(
+            success=False,
+            metrics={},
+            reverted=eval(expression, {}, {"self": trainer, "getattr": getattr}),  # noqa: S307
+            error=getattr(trainer, "_last_revert_reason", None),
+        )
+
+    def test_detection_only_failure_reports_no_revert(self):
+        trainer = self._trainer(auto_revert=False)
+        assert trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.0}) is False
+        result = self._result_from_call_site(trainer)
+        assert result.reverted is False, "nothing was deleted, so the envelope must not claim it was"
+        assert result.error and "max_acceptable_loss" in result.error
+
+    def test_a_real_revert_reports_one(self):
+        trainer = self._trainer(auto_revert=True)
+        with patch.object(
+            trainer, "_revert_model", side_effect=lambda *a, **k: setattr(trainer, "_loss_gate_reverted", True)
+        ):
+            assert trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.0}) is False
+        assert self._result_from_call_site(trainer).reverted is True
+
+    def test_the_flag_does_not_leak_between_runs(self):
+        """A library caller runs two trainings in one process.
+
+        Without a per-invocation reset the second run inherits the first's
+        revert flag and reports a deletion belonging to a different model.
+        """
+        trainer = self._trainer(auto_revert=True)
+        with patch.object(
+            trainer, "_revert_model", side_effect=lambda *a, **k: setattr(trainer, "_loss_gate_reverted", True)
+        ):
+            trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.0})
+        assert trainer._loss_gate_reverted is True
+
+        trainer.config.evaluation.max_acceptable_loss = 10.0
+        assert trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.0}) is True
+        assert trainer._loss_gate_reverted is False, "the second run inherited the first run's revert flag"
+
+
+class TestAuditLogDoesNotFabricateAMeasurement:
+    """`eval_loss` has three states and the Art. 12 log must keep them apart.
+
+    The non-finite-ceiling branch passed `float("nan")` when `metrics` carried
+    no `eval_loss` at all, producing a line byte-identical to the genuine
+    divergence branch — where `eval_loss: "nan"` means the model really did
+    diverge. An auditor grepping the log could not tell "this model diverged"
+    from "the operator's ceiling was unusable and nothing was ever measured".
+    Inventing a measurement at write time is the failure this whole phase
+    exists to remove, in the artefact it exists to protect.
+    """
+
+    @staticmethod
+    def _trainer(max_loss):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/m"},
+            lora={},
+            training={"output_dir": "/tmp/test_audit_fabrication"},
+            data={"dataset_name_or_path": "org/d"},
+            evaluation={"auto_revert": False},
+        )
+        config.evaluation.max_acceptable_loss = max_loss
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.dataset = {"train": ["x"], "validation": ["x"]}
+            trainer.checkpoint_dir = "/tmp/test_audit_fabrication"
+            trainer.run_name = "r"
+            trainer.notifier = MagicMock()
+            trainer.audit = MagicMock()
+        return trainer
+
+    def test_no_measurement_is_recorded_as_null_not_nan(self):
+        trainer = self._trainer(float("nan"))
+        trainer.execute_evaluation_checks("/tmp/nonexistent", {})
+        kwargs = trainer.audit.log_event.call_args.kwargs
+        assert kwargs["eval_loss"] is None, (
+            "a run with no eval_loss must record null, not a synthesised nan — that is "
+            "indistinguishable from genuine divergence in the permanent record"
+        )
+        assert kwargs["passed"] is False
+
+    def test_genuine_divergence_is_still_recorded_as_a_string(self):
+        """The state that must NOT change: a real NaN loss is a real measurement."""
+        trainer = self._trainer(2.0)
+        trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": float("nan")})
+        kwargs = trainer.audit.log_event.call_args.kwargs
+        assert kwargs["eval_loss"] == "nan"
+
+    def test_an_ordinary_measurement_stays_a_number(self):
+        trainer = self._trainer(2.0)
+        trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.25})
+        kwargs = trainer.audit.log_event.call_args.kwargs
+        assert kwargs["eval_loss"] == 1.25

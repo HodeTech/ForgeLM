@@ -804,6 +804,11 @@ class ForgeTrainer:
                 logger.warning("Skipping evaluation checks — no validation data available.")
             return True
 
+        # Reset per invocation: a library caller running two trainings in one
+        # process would otherwise carry the first run's revert flag into the
+        # second, and report a deletion that belongs to a different model.
+        self._loss_gate_reverted = False
+
         final_loss = metrics.get("eval_loss")
         baseline_loss = self.config.evaluation.baseline_loss
         max_loss = self.config.evaluation.max_acceptable_loss
@@ -836,9 +841,16 @@ class ForgeTrainer:
                 "so the run is failed rather than allowed through with an unusable threshold."
             )
             logger.error("EVALUATION FAILED: %s", reason)
-            self._emit_loss_gate_event(
-                False, final_loss if final_loss is not None else float("nan"), max_loss, baseline_loss
-            )
+            # ``final_loss`` is passed through as-is, including ``None``.
+            # Synthesising ``float("nan")`` for a run that produced no
+            # ``eval_loss`` wrote a measurement into the Art. 12 log that was
+            # invented at write time — and it was byte-identical to the genuine
+            # divergence branch below, where ``eval_loss: "nan"`` means the
+            # model really did diverge. An auditor could not tell "this model
+            # diverged" from "the operator's ceiling was unusable and nothing
+            # was ever measured". ``None`` serialises as ``null``, which is the
+            # honest record: no measurement exists.
+            self._emit_loss_gate_event(False, final_loss, max_loss, baseline_loss)
             # Record the reason even when nothing is reverted: this path fails
             # the run either way (an unusable ceiling is a config defect, not a
             # model verdict), and without this the JSON envelope falls back to
@@ -913,7 +925,7 @@ class ForgeTrainer:
     def _emit_loss_gate_event(
         self,
         passed: bool,
-        eval_loss: float,
+        eval_loss: Optional[float],
         max_loss: Optional[float],
         baseline_loss: Optional[float],
     ) -> None:
@@ -922,10 +934,21 @@ class ForgeTrainer:
         Mirrors the benchmark/safety/judge ``*.evaluation_completed`` events so
         an auditor can grep a discrete pass/fail record for the primary
         post-training quality gate, carrying the thresholds it was checked
-        against. Non-finite ``eval_loss`` (NaN/Inf divergence) is recorded as a
-        string sentinel rather than a bare float so the JSONL stays valid JSON.
+        against.
+
+        ``eval_loss`` has three distinct states and the log keeps them
+        distinct, because an auditor's first question is which one occurred:
+
+        - a **number** — the model was evaluated and this is the measurement;
+        - the **string** ``"nan"`` / ``"inf"`` — the model was evaluated and
+          diverged. A string rather than a bare float because JSON has no
+          non-finite number literal;
+        - ``null`` — **no measurement exists**. The gate failed for a reason
+          that is not about the model at all, such as an unusable configured
+          ceiling. This case previously synthesised ``float("nan")``, making it
+          byte-identical to divergence in the permanent record.
         """
-        loss_field: Any = eval_loss if math.isfinite(eval_loss) else str(eval_loss)
+        loss_field: Any = None if eval_loss is None else (eval_loss if math.isfinite(eval_loss) else str(eval_loss))
         self.audit.log_event(
             _EVT_LOSS_GATE_COMPLETED,
             passed=passed,
@@ -960,6 +983,9 @@ class ForgeTrainer:
         # surface it on ``.error`` even for the eval-loss path, which returns a
         # freshly-built result that never saw the gate's computed reason
         self._last_revert_reason = reason
+        # Recorded so the caller can report what actually happened rather than
+        # assuming it. See the loss-gate call site in _run_training_pipeline.
+        self._loss_gate_reverted = True
 
         # Article 12 audit trail — emit before destructive action so the
         # record exists even if the rmtree below explodes.
@@ -1597,10 +1623,18 @@ class ForgeTrainer:
             # Surface the eval-loss gate's computed reason (NaN/Inf or threshold
             # breach) on .error so the pipeline stage / JSON envelope don't fall
             # back to the generic "Stage gate failed." string.
+            # ``reverted`` is derived, never assumed. ``execute_evaluation_checks``
+            # returns False on two materially different outcomes: the model was
+            # deleted (auto_revert on), or the gate failed and the artefacts are
+            # still on disk (auto_revert off — the *shipped default* — and the
+            # invalid-threshold branch). Hardcoding ``True`` told an operator
+            # their model was destroyed when it was intact, and told a dashboard
+            # the same. The three later gates already derive it via
+            # ``_mark_reverted``; this call site is the one that did not.
             return TrainResult(
                 success=False,
                 metrics=metrics,
-                reverted=True,
+                reverted=getattr(self, "_loss_gate_reverted", False),
                 error=getattr(self, "_last_revert_reason", None),
             )
 

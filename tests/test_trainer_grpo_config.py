@@ -200,7 +200,19 @@ def test_grpo_pipeline_skips_post_train_evaluate(tmp_path):
     result = trainer._run_training_pipeline(None)
 
     trainer.trainer.evaluate.assert_not_called()
-    assert result.reverted is True  # short-circuited via the stubbed gate
+    # The subject of this test is that `evaluate()` is never reached; the gate
+    # is stubbed only to short-circuit the pipeline right after it.
+    #
+    # This previously asserted `result.reverted is True`, which codified a
+    # defect: the stub returns False without any revert occurring, and the call
+    # site hardcoded `reverted=True` regardless. `reverted` is now derived from
+    # whether `_revert_model` actually ran, so a stubbed gate failure — like a
+    # real detection-only failure under the shipped `auto_revert: false`
+    # default — correctly reports that nothing was deleted.
+    assert result.success is False
+    assert result.reverted is False, (
+        "nothing was reverted here — the gate was stubbed — so the envelope must not claim it was"
+    )
 
 
 def test_legacy_field_name_still_accepted(tmp_path):

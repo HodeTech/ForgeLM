@@ -328,7 +328,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/trainer.py": _DeferredSplit(
-        budget=1483,
+        budget=1492,
         deferred_at_loc=1432,
         reason=(
             "ForgeTrainer god-object: TRL kwarg fold-in + OOM/DeepSpeed runtime + "
@@ -364,6 +364,19 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "at load time. Raised rather than split per decision C-18: S3, S4 and S8 all "
             "still edit this file, and a god-object split ahead of three behaviour changes "
             "maximises rebase risk.",
+            "2026-07-30 (Phase 16 S2 Sonnet review, 1483 -> 1492, +9): two record-honesty fixes "
+            "the review found in code S2 itself had just written. `TrainResult.reverted` was still "
+            "hardcoded True at the loss-gate call site — the three later gates derive it via "
+            "_mark_reverted, this one did not — so a detection-only failure (auto_revert off, the "
+            "shipped default) told the operator and every dashboard that a model had been deleted "
+            "while it sat intact on disk. It now derives from a per-invocation `_loss_gate_reverted` "
+            "flag, reset at entry so a library caller running two trainings in one process cannot "
+            "carry the first run's verdict into the second. And `_emit_loss_gate_event` synthesised "
+            '`float("nan")` when a run produced no eval_loss at all, writing a measurement into '
+            "the Art. 12 log that was invented at write time and byte-identical to genuine "
+            "divergence; it now records `null`, keeping measured / diverged / never-measured "
+            "distinguishable. Raised rather than split for the reason above: S3, S4 and S8 all still "
+            "edit this file.",
         ),
     ),
     "forgelm/cli/_pipeline.py": _DeferredSplit(

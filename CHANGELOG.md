@@ -68,7 +68,12 @@ All notable changes to ForgeLM are documented here.
 - **`reverted` in the result envelope now reflects what happened.** It was
   hardcoded `true` on the gate-failure path, which is false whenever
   `auto_revert` is off (the shipped default) — an envelope claiming a
-  deletion that did not occur.
+  deletion that did not occur, in both the JSON and the operator-facing log.
+- **The audit log no longer records a measurement that does not exist.**
+  `evaluation.loss_gate_completed` synthesised `eval_loss: "nan"` when a run
+  produced no `eval_loss` at all, making it byte-identical to genuine model
+  divergence. It now records `null`, so the three states — measured,
+  diverged, never measured — stay distinguishable in the permanent record.
 
 - **`__api_version__` 1.1.0 → 1.2.0.** `SyntheticDataGenerator.__init__` and
   `WebhookNotifier.__init__` were bare `def __init__(self, config):` and are
