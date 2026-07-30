@@ -93,7 +93,7 @@ ForgeLM/
 │   ├── deepspeed/          # ZeRO-2, ZeRO-3, ZeRO-3+Offload presets
 │   └── safety_prompts/     # Built-in adversarial prompt library (140 prompts, 6 categories)
 ├── notebooks/              # 10 Colab-ready Jupyter notebooks
-├── tests/                  # 126 test modules
+├── tests/                  # 127 test modules
 ├── tools/                  # CI guards: bilingual_parity, anchor_resolution,
 │                            # cli_help_consistency, yaml_snippets,
 │                            # audit_event_catalog, library_api_doc,

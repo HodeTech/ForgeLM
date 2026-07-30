@@ -308,8 +308,11 @@ def _ties_dare_merge(
         del adapter_model, merged
 
     if any(w < 0 for w in weights):
-        # MergeConfig does not constrain merge.models[].weight to be
-        # non-negative. A negative weight can make the per-key
+        # Unreachable from YAML since Phase 16 S2: ``MergeInput.weight`` is
+        # ``gt=0.0``, so a negative weight is refused at config load with exit 1.
+        # Kept for the direct library caller of ``merge_peft_adapters``, which
+        # still takes the plain-dict shape and therefore bypasses the schema.
+        # A negative weight can make the per-key
         # ``agree_weight_sum`` in ``_ties_merge_tensor`` negative-but-nonzero
         # at a sign-agreeing position, which silently falls through the
         # ``agree_weight_sum > 0`` renormalization guard to the
@@ -320,7 +323,8 @@ def _ties_dare_merge(
             "disjoint-merge renormalization assumes non-negative weights and "
             "may silently skip renormalization at positions where the only "
             "sign-agreeing adapter has negative weight. Use non-negative "
-            "merge.models[].weight values.",
+            "weights; a YAML config cannot reach here — merge.models[].weight "
+            "is validated gt=0.0 — so this is a direct library caller.",
             weights,
         )
 

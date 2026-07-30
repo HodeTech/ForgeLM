@@ -76,6 +76,16 @@ jobs:
       - name: Mutation-scaffolding guard
         run: python3 tools/check_no_mutation_artifacts.py --strict
 
+      # Phase 16 S2 follow-up: converting four writers did not close the class.
+      # The step's own review found compliance_report.json — an EU AI Act
+      # Art. 11 / Annex IV artefact — still emitting bare NaN from the same
+      # metrics dict, plus safety_results.json and safety_trend.jsonl. This
+      # names the modules that write measurement-bearing artefacts and
+      # requires dumps_strict in each, the way check_http_discipline.py does
+      # for outbound HTTP.
+      - name: Strict-JSON writer discipline
+        run: python3 tools/check_strict_json_writers.py --strict
+
       # Phase 16 S1 (F-W20260729-OPS-23): docs/design/library_api.md has
       # described this as "a new CI step" since Phase 36.  It never existed,
       # mypy was in no dependency group, and when the documented command was

@@ -4,7 +4,71 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
+### Breaking
+
+- **A config carrying a non-finite or out-of-domain number now exits `1`.**
+  `evaluation.max_acceptable_loss` and `baseline_loss` must be finite and
+  non-negative; `merge.models[]` is a typed entry with no unknown keys and a
+  finite, strictly-positive `weight`; `merge.ties_trim_fraction` is
+  `[0.0, 1.0)`; every `evaluation.safety.severity_thresholds` value is a
+  finite rate in `[0.0, 1.0]`. **Why it matters:** `x > nan` is always False,
+  so a `.nan` threshold — spellable in ordinary YAML — made the gate it
+  guards pass every model it was asked to reject, and wrote `passed: true`
+  into the append-only audit log while doing it. **Affected:** any config
+  using those spellings, and any `merge.models` entry carrying a key ForgeLM
+  did not define (a mergekit-style `density:`, previously read and silently
+  discarded).
+- **`training.save_steps` must be an exact multiple of `training.eval_steps`
+  when a validation split exists.** This moves from exit `2` to exit `1`: the
+  constraint is transformers', it was surfacing as a `ValueError` mapped to
+  "training failed", and it is a one-line config defect. GRPO is exempt — it
+  discards every argument the rule constrains.
+- **Quality and safety gates fail closed on measurements they cannot
+  compare.** `run_benchmark` returns `passed=False` when an lm-eval task
+  reports a non-finite or out-of-`[0,1]` score; the safety gate fails when
+  `safe_ratio`, `safety_score` or a threshold is non-finite. **Affected:** a
+  run that previously reported `passed: true` on corrupt measurement output
+  now reports failure, and under `auto_revert: true` that is the difference
+  between keeping and deleting the model. This is deliberate: a gate that
+  could not be evaluated must never read as "the model is safe".
+- **`run_safety_evaluation` raises `ValueError` for threshold values it
+  previously accepted** and silently mis-compared. It is stable-tier public
+  API; the validation runs before any model is loaded.
+
 ### Changed
+
+- **`__api_version__` 1.1.0 → 1.2.0.** `SyntheticDataGenerator.__init__` and
+  `WebhookNotifier.__init__` were bare `def __init__(self, config):` and are
+  now annotated. Both are stable-tier callables, so this is visible to a
+  downstream `mypy --strict` consumer — `SyntheticDataGenerator(some_object)`
+  type-checked before and does not now. The runtime signature (names, order,
+  defaults, arity) is byte-identical, so nothing breaks at import or call
+  time. Recorded because `__api_version__` is the pin library consumers read;
+  the internal `forgelm/verify.py` → `forgelm/verify/` split and the new dev
+  tooling are deliberately **not** listed, per `release.md` rules 5 and 6.
+- **`merge.models[]` entries are now typed objects, not plain dicts.** A
+  library consumer reading `cfg.merge.models[0]["path"]` must use
+  `cfg.merge.models[0].path`; `merge_peft_adapters` still takes the dict
+  shape it always took.
+- **Every artefact ForgeLM writes is now valid JSON.** The audit log, the
+  training result envelope, `benchmark_results.json`, `judge_results.json`,
+  `safety_results.json`, `safety_trend.jsonl`, the compliance and Annex IV
+  manifests, the data-audit report, the pipeline state and the webhook body
+  went through `json.dumps`, which emits the bare tokens `NaN` / `Infinity`
+  — tokens RFC 8259 has no literal for, so `jq`, Go, Rust and `JSON.parse`
+  all reject them. A non-finite measurement is now written as the string
+  `"nan"` / `"inf"` / `"-inf"`, which preserves the value for a human reader
+  while being unmistakable for a number to a consumer computing on the field.
+  **Consumers that type these fields as numeric should widen to
+  number-or-string.**
+- **A `success: false` result envelope now carries `error`.** The gate's own
+  reason was computed and then dropped, so automation branching on the JSON
+  saw a failure with no cause — and every gate exits `3`, so the exit code
+  could not distinguish them either.
+- **`reverted` in the result envelope now reflects what happened.** It was
+  hardcoded `true` on the gate-failure path, which is false whenever
+  `auto_revert` is off (the shipped default) — an envelope claiming a
+  deletion that did not occur.
 
 - **`__api_version__` 1.1.0 → 1.2.0.** `SyntheticDataGenerator.__init__` and
   `WebhookNotifier.__init__` were bare `def __init__(self, config):` and are

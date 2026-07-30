@@ -206,7 +206,7 @@ merge:
     - path: "./checkpoints/run2/final_model"
       weight: 0.3
   output_dir: "./merged_model"
-  ties_trim_fraction: 0.2                     # TIES: fraction of smallest deltas trimmed (0.0-1.0); only used when method: ties
+  ties_trim_fraction: 0.2                     # TIES: fraction of smallest deltas trimmed [0.0, 1.0); only used when method: ties
   dare_drop_rate: 0.3                         # DARE: probability each delta is dropped (0.0-1.0); only used when method: dare
   dare_seed: 42                               # DARE: RNG seed for the random drop mask
 ```

@@ -224,3 +224,64 @@ class TestFailureEnvelopeCarriesTheReason:
         parsed = strict_loads(dumps_strict(env, default=str))
         assert parsed["error"] == "training diverged"
         assert parsed["metrics"]["eval_loss"] == "nan"
+
+
+class TestRevertedFlagIsDerivedNotAssumed:
+    """`reverted: true` must mean artefacts were deleted.
+
+    The gate-failure `TrainResult` hardcoded `reverted=True`, which is false on
+    every path that fails without deleting anything — `auto_revert: false`
+    (detection-only, the *shipped default*) and the invalid-threshold branch.
+    An envelope claiming a revert that did not happen sends an operator
+    looking for artefacts that are still on disk, and an auditor reading the
+    audit trail to the wrong conclusion.
+
+    The same path also left `error` unset, so S2d's "no failure reason was
+    recorded" fallback fired for a failure whose cause is known exactly.
+    """
+
+    @staticmethod
+    def _trainer(auto_revert):
+        from unittest.mock import MagicMock, patch
+
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/m"},
+            lora={},
+            training={"output_dir": "/tmp/test_reverted_flag"},
+            data={"dataset_name_or_path": "org/d"},
+            evaluation={"auto_revert": auto_revert},
+        )
+        config.evaluation.max_acceptable_loss = float("nan")
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.dataset = {"train": ["x"], "validation": ["x"]}
+            trainer.checkpoint_dir = "/tmp/test_reverted_flag"
+            trainer.run_name = "r"
+            trainer.notifier = MagicMock()
+            trainer.audit = MagicMock()
+        return trainer
+
+    def test_detection_only_failure_does_not_claim_a_revert(self):
+        trainer = self._trainer(auto_revert=False)
+        assert trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.0}) is False
+        assert getattr(trainer, "_reverted", False) is False, "nothing was deleted, so nothing may claim it was"
+
+    def test_a_real_revert_sets_the_flag(self):
+        from unittest.mock import patch
+
+        trainer = self._trainer(auto_revert=True)
+        with patch.object(trainer, "_revert_model", wraps=lambda *a, **k: setattr(trainer, "_reverted", True)):
+            trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.0})
+        assert getattr(trainer, "_reverted", False) is True
+
+    def test_the_failure_reason_survives_a_non_reverting_failure(self):
+        """Without this the envelope falls back to "no reason recorded"."""
+        trainer = self._trainer(auto_revert=False)
+        trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.0})
+        reason = getattr(trainer, "_last_revert_reason", None)
+        assert reason and "max_acceptable_loss" in reason
+        assert "not a finite number" in reason

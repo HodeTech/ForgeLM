@@ -180,7 +180,7 @@ When training runs to completion the pipeline emits a result envelope on **stdou
 |---|---|---|
 | `success` | bool | `true` when the run completed (including a staged, awaiting-approval run). `false` when a gate auto-reverted the model. |
 | `error` | string | Present **iff** `success` is `false`, never on the success path. Carries the gate's own reason — which gate fired and against what threshold — because every gate exits `3`, so the exit code alone cannot tell them apart. If a failure reaches the envelope with no reason recorded, the field says so explicitly and points at `audit_log.jsonl` rather than being omitted. |
-| `metrics` | object | Numeric training/eval/gate metrics (e.g. `eval_loss`, `benchmark/average`, `safety/safe_ratio`). |
+| `metrics` | object | Training/eval/gate metrics (e.g. `eval_loss`, `benchmark/average`, `safety/safe_ratio`). Values are numbers, **except** a measurement that came out non-finite, which is written as the string `"nan"` / `"inf"` / `"-inf"` — JSON has no non-finite number literal, so the alternative was output no strict parser accepts. Type these fields as number-or-string. |
 | `final_model_path` | str | Where the model artefacts live. For an awaiting-approval run this is the **staging** directory until `forgelm approve` promotes it. |
 | `reverted` | bool | `true` iff a gate (eval-loss / benchmark / safety / judge) auto-reverted the model. Mutually exclusive with `awaiting_approval`. |
 | `awaiting_approval` | bool | **Discriminator.** `true` iff the run halted at the Article 14 human-approval gate (exit `4`). A reverted run is always `false` here. |

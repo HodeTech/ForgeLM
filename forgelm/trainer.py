@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 # NOTE: Heavy ML imports (torch, transformers.EarlyStoppingCallback, trl.SFTConfig/SFTTrainer)
 # are deferred to method bodies so `import forgelm.trainer` is cheap. Eagerly importing
 # torch here costs ~3-5s of CLI startup per invocation. See closure-plan F-performance-101.
+from ._strict_json import dumps_strict
 from .config import ConfigError
 from .grpo_rewards import ANSWER_EXTRACT_PATTERN
 
@@ -470,7 +471,16 @@ class ForgeTrainer:
         # would fire on runs that never evaluate. ``config.py`` keeps its
         # separate ``eval_steps > save_steps`` warning, which catches the
         # commonest shape earlier without needing the dataset.
-        if load_best_model_at_end and eval_strategy == "steps":
+        # GRPO is exempt, and the exemption is load-bearing rather than
+        # defensive: ``_get_training_args_for_type`` pops ``eval_strategy``,
+        # ``eval_steps`` AND ``load_best_model_at_end`` for GRPO, so
+        # transformers never reaches the constraint this check anticipates.
+        # Without the exemption a perfectly valid GRPO config — one
+        # transformers would accept — is rejected at exit 1 by ForgeLM alone,
+        # which is a worse failure than the one being prevented: an invented
+        # error the operator cannot act on because the upstream rule does not
+        # apply to them.
+        if self._trainer_type != "grpo" and load_best_model_at_end and eval_strategy == "steps":
             eval_steps = self.config.training.eval_steps
             save_steps = self.config.training.save_steps
             if eval_steps and save_steps and save_steps % eval_steps != 0:
@@ -829,6 +839,12 @@ class ForgeTrainer:
             self._emit_loss_gate_event(
                 False, final_loss if final_loss is not None else float("nan"), max_loss, baseline_loss
             )
+            # Record the reason even when nothing is reverted: this path fails
+            # the run either way (an unusable ceiling is a config defect, not a
+            # model verdict), and without this the JSON envelope falls back to
+            # its "no failure reason was recorded" text for a failure whose
+            # cause is known exactly.
+            self._last_revert_reason = reason
             if not auto_revert:
                 logger.warning("auto_revert=false — model NOT reverted (detection-only). %s", reason)
                 return False
@@ -1968,8 +1984,6 @@ class ForgeTrainer:
         Article 11 manifest by default.
         """
         try:
-            import json
-
             from .compliance import (
                 export_compliance_artifacts,
                 generate_data_governance_report,
@@ -2041,7 +2055,7 @@ class ForgeTrainer:
                 governance = generate_data_governance_report(self.config, self.dataset)
                 gov_path = os.path.join(compliance_dir, "data_governance_report.json")
                 with open(gov_path, "w", encoding="utf-8") as fh:
-                    json.dump(governance, fh, indent=2)
+                    fh.write(dumps_strict(governance, indent=2))
                 self.audit.log_event(
                     "compliance.governance_exported",
                     output_path=gov_path,
@@ -2107,10 +2121,9 @@ class ForgeTrainer:
 
             integrity = generate_model_integrity(final_path)
             integrity_path = os.path.join(final_path, "model_integrity.json")
-            import json
 
             with open(integrity_path, "w") as f:
-                json.dump(integrity, f, indent=2)
+                f.write(dumps_strict(integrity, indent=2))
             self.audit.log_event("model.integrity_verified", artifacts=len(integrity.get("artifacts", [])))
             logger.info("Model integrity checksums saved to %s", integrity_path)
         except (OSError, ValueError, TypeError) as e:

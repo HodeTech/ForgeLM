@@ -180,7 +180,7 @@ Eğitim tamamlanana kadar çalıştığında pipeline **stdout**'a bir sonuç en
 |---|---|---|
 | `success` | bool | Çalışma tamamlandığında (stage'lenmiş, onay-bekleyen çalışma dahil) `true`. Bir gate modeli auto-revert ettiğinde `false`. |
 | `error` | string | **Yalnızca** `success` `false` iken bulunur, başarı yolunda asla. Gate'in kendi gerekçesini taşır — hangi gate'in hangi eşiğe karşı tetiklendiğini — çünkü her gate `3` ile çıkar, dolayısıyla exit kodu tek başına ayırt edemez. Bir başarısızlık zarfa gerekçesiz ulaşırsa alan bunu açıkça söyler ve `audit_log.jsonl`'a yönlendirir; atlanmaz. |
-| `metrics` | object | Sayısal eğitim/eval/gate metrikleri (ör. `eval_loss`, `benchmark/average`, `safety/safe_ratio`). |
+| `metrics` | object | Eğitim/eval/gate metrikleri (ör. `eval_loss`, `benchmark/average`, `safety/safe_ratio`). Değerler sayıdır; **istisna**, sonlu çıkmayan bir ölçüm `"nan"` / `"inf"` / `"-inf"` string'i olarak yazılır — JSON'da sonlu olmayan sayı literali yoktur, alternatifi hiçbir katı ayrıştırıcının kabul etmediği bir çıktıydı. Bu alanları sayı-veya-string olarak tipleyin. |
 | `final_model_path` | str | Model artefactlarının yaşadığı yer. Onay-bekleyen bir çalışma için bu, `forgelm approve` promote edene kadar **staging** dizinidir. |
 | `reverted` | bool | Bir gate (eval-loss / benchmark / safety / judge) modeli auto-revert ettiyse `true`. `awaiting_approval` ile karşılıklı dışlayıcıdır. |
 | `awaiting_approval` | bool | **Discriminator.** Çalışma Article 14 insan-onay gate'inde durakladıysa (exit `4`) `true`. Revert edilmiş bir çalışma burada her zaman `false`'tur. |

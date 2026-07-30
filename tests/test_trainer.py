@@ -1373,3 +1373,68 @@ class TestNonFiniteThresholdFailsClosed:
             result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.0})
         assert result is True
         revert.assert_not_called()
+
+
+class TestSaveEvalStepInvariant:
+    """`save_steps` must be a multiple of `eval_steps` — except where it need not be.
+
+    Transformers refuses `load_best_model_at_end` with step strategies unless
+    the two schedules coincide, and raises inside `TrainingArguments` — a
+    `ValueError` the top-level handler maps to EXIT_TRAINING_ERROR (2) for a
+    one-line config defect. ForgeLM raises `ConfigError` (exit 1) first.
+
+    The GRPO exemption is the part worth pinning. `_get_training_args_for_type`
+    pops `eval_strategy`, `eval_steps` and `load_best_model_at_end` for GRPO,
+    so transformers never reaches the constraint. Without the exemption
+    ForgeLM invents an error for a config the upstream library accepts —
+    a worse failure than the one being prevented, because the operator cannot
+    act on a rule that does not apply to them.
+    """
+
+    @staticmethod
+    def _trainer(trainer_type="sft", eval_steps=200, save_steps=200, has_validation=True):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model"},
+            lora={},
+            training={
+                "output_dir": "/tmp/test_forge_steps",
+                "trainer_type": trainer_type,
+                "eval_steps": eval_steps,
+                "save_steps": save_steps,
+            },
+            data={"dataset_name_or_path": "org/dataset"},
+        )
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.dataset = {"train": ["x"], "validation": ["x"]} if has_validation else {"train": ["x"]}
+            trainer.checkpoint_dir = "/tmp/test_forge_steps"
+            trainer.run_name = "t"
+            trainer.notifier = MagicMock()
+            trainer.audit = MagicMock()
+        return trainer
+
+    def test_a_non_multiple_raises_config_error(self):
+        from forgelm.config import ConfigError
+
+        trainer = self._trainer(eval_steps=200, save_steps=300)
+        with pytest.raises(ConfigError, match="save_steps"):
+            trainer._get_common_training_kwargs()
+
+    @pytest.mark.parametrize("save_steps", [200, 400, 600])
+    def test_a_multiple_is_accepted(self, save_steps):
+        trainer = self._trainer(eval_steps=200, save_steps=save_steps)
+        trainer._get_common_training_kwargs()
+
+    def test_grpo_is_exempt(self):
+        """The false positive. GRPO discards every argument the rule constrains."""
+        trainer = self._trainer(trainer_type="grpo", eval_steps=200, save_steps=300)
+        trainer._get_common_training_kwargs()
+
+    def test_the_rule_does_not_fire_without_a_validation_split(self):
+        """`load_best_model_at_end` is off, so the upstream constraint does not apply."""
+        trainer = self._trainer(eval_steps=200, save_steps=300, has_validation=False)
+        trainer._get_common_training_kwargs()

@@ -5,11 +5,11 @@ Owns the GDPR / EU AI Act Art. 10 probe-text redaction applied to
 ``SafetyConfig.include_eval_samples``.
 """
 
-import json
 import logging
 import os
 from typing import Any, Dict, List, Optional
 
+from .._strict_json import dumps_strict
 from ._types import _AttributionTelemetry, _CategoryTelemetry
 
 logger = logging.getLogger("forgelm.safety")
@@ -124,7 +124,7 @@ def _save_safety_results(
         output_data["category_distribution"] = categories.dist
         output_data["severity_distribution"] = categories.severity_dist
     with open(results_path, "w", encoding="utf-8") as f:
-        json.dump(output_data, f, indent=2)
+        f.write(dumps_strict(output_data, indent=2))
     logger.info("Safety results saved to %s", results_path)
     _append_trend_entry(output_dir, safety_score, safe_ratio, passed, attribution)
 
@@ -160,7 +160,7 @@ def _append_trend_entry(
         entry["evaluation_completed"] = attribution.evaluation_completed
     try:
         with open(trend_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
+            f.write(dumps_strict(entry) + "\n")
         logger.info("Safety trend entry appended to %s", trend_path)
     except (OSError, TypeError, ValueError) as e:
         # OSError: filesystem (permission, full disk, missing dir).

@@ -12,6 +12,8 @@ import string
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from ._strict_json import dumps_strict
+
 # Re-export: the local-judge role constant is declared beside the other five
 # roles in ``forgelm.model`` (one registry, one key space, one file to check
 # before adding a role).  The value is unchanged (``"llm_judge"``) and
@@ -522,16 +524,17 @@ def _save_judge_results(
     redact = frozenset() if include_samples else _PII_REDACT_FIELDS
     try:
         with open(results_path, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "average_score": avg_score,
-                    "min_score": min_score,
-                    "passed": passed,
-                    "num_prompts": num_prompts,
-                    "details": [{k: v for k, v in d.items() if k not in redact} for d in details],
-                },
-                f,
-                indent=2,
+            f.write(
+                dumps_strict(
+                    {
+                        "average_score": avg_score,
+                        "min_score": min_score,
+                        "passed": passed,
+                        "num_prompts": num_prompts,
+                        "details": [{k: v for k, v in d.items() if k not in redact} for d in details],
+                    },
+                    indent=2,
+                )
             )
         logger.info("Judge results saved to %s", results_path)
     except (OSError, TypeError, ValueError) as e:

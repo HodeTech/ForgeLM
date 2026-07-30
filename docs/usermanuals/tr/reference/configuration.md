@@ -207,7 +207,7 @@ merge:
     - path: "./checkpoints/run2/final_model"
       weight: 0.3
   output_dir: "./merged_model"
-  ties_trim_fraction: 0.2                     # TIES: trim edilen en küçük delta oranı (0.0-1.0); yalnızca method: ties iken kullanılır
+  ties_trim_fraction: 0.2                     # TIES: trim edilen en küçük delta oranı [0.0, 1.0); yalnızca method: ties iken kullanılır
   dare_drop_rate: 0.3                         # DARE: her delta'nın drop edilme olasılığı (0.0-1.0); yalnızca method: dare iken kullanılır
   dare_seed: 42                               # DARE: rastgele drop maskesi için RNG seed'i
 ```

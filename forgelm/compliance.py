@@ -466,7 +466,7 @@ class AuditLogger:
         tmp_path = self._manifest_path + ".tmp"
         try:
             with open(tmp_path, "w", encoding="utf-8") as fh:
-                json.dump(manifest, fh, indent=2)
+                fh.write(dumps_strict(manifest, indent=2))
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(tmp_path, self._manifest_path)
@@ -2171,7 +2171,7 @@ def export_compliance_artifacts(
 
         # 1. Full compliance report (JSON)
         with open(os.path.join(staging_dir, "compliance_report.json"), "w", encoding="utf-8") as f:
-            json.dump(manifest, f, indent=2, default=str)
+            f.write(dumps_strict(manifest, indent=2, default=str))
         pending.append(("compliance_report.json", "compliance_report.json"))
 
         # 2. Training manifest (YAML)
@@ -2195,13 +2195,13 @@ def export_compliance_artifacts(
 
         # 3. Data provenance (JSON)
         with open(os.path.join(staging_dir, "data_provenance.json"), "w", encoding="utf-8") as f:
-            json.dump(manifest["data_provenance"], f, indent=2, default=str)
+            f.write(dumps_strict(manifest["data_provenance"], indent=2, default=str))
         pending.append(("data_provenance.json", "data_provenance.json"))
 
         # 4. Risk assessment (JSON) — if present
         if "risk_assessment" in manifest:
             with open(os.path.join(staging_dir, "risk_assessment.json"), "w", encoding="utf-8") as f:
-                json.dump(manifest["risk_assessment"], f, indent=2)
+                f.write(dumps_strict(manifest["risk_assessment"], indent=2))
             pending.append(("risk_assessment.json", "risk_assessment.json"))
 
         # 5. Annex IV metadata (JSON) — emitted in the §1-9 canonical layout
@@ -2232,7 +2232,7 @@ def export_compliance_artifacts(
                 # emit a PYTHONHASHSEED-dependent string like "{'q_proj', 'v_proj'}" while
                 # the verifier re-hashes a list, producing a false-tampering verdict
                 # (F-H-05).
-                json.dump(annex_artifact, f, indent=2, default=_manifest_json_default)
+                f.write(dumps_strict(annex_artifact, indent=2, default=_manifest_json_default))
             pending.append(("annex_iv_metadata.json", "annex_iv_metadata.json"))
 
         # All writes succeeded — promote into place.  os.replace is atomic
@@ -3069,7 +3069,7 @@ def export_pipeline_manifest(manifest: Dict[str, Any], pipeline_output_dir: str)
         # that re-hashes to a different digest on read-back — a false-tampering
         # verdict on an untouched manifest.  Same fix as F-H-05 applied to
         # annex_iv_metadata.json in export_compliance_artifacts.
-        json.dump(manifest, f, indent=2, default=_manifest_json_default)
+        f.write(dumps_strict(manifest, indent=2, default=_manifest_json_default))
         # Flush userspace buffer then sync to storage before the rename so the
         # artefact survives a kernel crash or OOM-kill between file-close and
         # os.replace.  Mirrors the fsync discipline in log_event (Article 12

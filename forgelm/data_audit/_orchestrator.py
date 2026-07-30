@@ -9,7 +9,6 @@ modules; this file is the orchestration glue.
 
 from __future__ import annotations
 
-import json
 import logging
 import multiprocessing
 import os
@@ -19,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from .._strict_json import dumps_strict
 from ._croissant import _build_croissant_metadata
 
 # ``_require_datasketch`` lives in ``_minhash.py`` but the orchestrator
@@ -164,7 +164,7 @@ def _atomic_write_json(target: Path, payload: Dict[str, Any]) -> None:
             delete=False,
         ) as fh:
             tmp_path = Path(fh.name)
-            json.dump(payload, fh, indent=2, ensure_ascii=False)
+            fh.write(dumps_strict(payload, indent=2, ensure_ascii=False))
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp_path, target)
