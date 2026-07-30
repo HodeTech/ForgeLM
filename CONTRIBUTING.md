@@ -53,7 +53,11 @@ enforces — passing locally means CI will too):
 python3 tools/check_import_origin.py --strict && \
   ruff format . && ruff check . && pytest tests/ && \
   python3 -m forgelm --config config_template.yaml --dry-run && \
+  python3 -m mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py && \
+  python3 tools/check_field_descriptions.py --strict forgelm/config.py && \
+  python3 tools/check_http_discipline.py && \
   python3 tools/check_bilingual_parity.py --strict && \
+  python3 tools/check_bilingual_code_blocks.py --strict && \
   python3 tools/check_anchor_resolution.py --strict && \
   python3 tools/check_cli_help_consistency.py --strict && \
   python3 tools/check_cli_exit_code_prose.py --strict && \
@@ -65,11 +69,20 @@ python3 tools/check_import_origin.py --strict && \
   python3 tools/check_usermanual_self_contained.py --strict && \
   python3 tools/check_notebook_pins.py --strict && \
   python3 tools/check_usermanual_schema_drift.py --strict && \
+  python3 tools/check_yaml_snippets.py --strict && \
   python3 tools/check_deprecation_targets.py --strict && \
   python3 tools/check_release_record_sync.py --strict && \
   python3 tools/check_skill_mirror_parity.py --strict && \
   python3 tools/check_source_path_refs.py --strict && \
-  python3 tools/update_site_version.py --check
+  python3 tools/check_readme_links.py --strict && \
+  python3 tools/check_library_api_doc.py --strict && \
+  python3 tools/check_doc_numerical_claims.py --strict && \
+  python3 tools/check_site_claims.py --strict && \
+  python3 tools/check_site_chrome_parity.py && \
+  python3 tools/check_module_size.py --strict && \
+  python3 tools/update_site_version.py --check && \
+  bandit -c pyproject.toml -r forgelm/ -f json -o /tmp/bandit.json || true; \
+  python3 tools/check_bandit.py /tmp/bandit.json
 ```
 
 **Do not "simplify" `python3 -m forgelm` back to `forgelm`.** A console
@@ -83,8 +96,11 @@ every later step depends on — that the `forgelm` being imported is the one
 you just edited — and `-m` alone does not cover the `tools/check_*.py`
 guards that import `forgelm` with `sys.path[0] == tools/`.
 
-All twenty-two must pass. The four after the import-origin guard are the
-historical "self-review"
+All twenty-nine must pass — the exact set `.github/workflows/ci.yml` runs.
+`tests/test_guard_wiring.py` compares the two inventories in **both**
+directions across this file, `CLAUDE.md` and `AGENTS.md`, so wiring a new
+guard into CI without listing it here fails the build. The four after the
+import-origin guard are the historical "self-review"
 command from [`docs/standards/code-review.md`](docs/standards/code-review.md).
 The rest are doc/schema/audit-log guards that landed across Waves 3-5 and
 later review cycles and run on every PR via `.github/workflows/`; running

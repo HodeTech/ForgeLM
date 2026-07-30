@@ -46,7 +46,7 @@ Each skill's `SKILL.md` has the full checklist. Follow it; don't skip steps to s
 
 ```text
 ForgeLM/
-├── forgelm/                 # Source code: 28 single-file modules + 4 code sub-packages
+├── forgelm/                 # Source code: 27 single-file modules + 5 code sub-packages
 │   ├── cli/                 # CLI package (Phase 15 split): _parser, _dispatch,
 │   │                        # _exit_codes, subcommands/{ingest, audit, chat,
 │   │                        # export, deploy, quickstart, doctor, cache,
@@ -73,7 +73,10 @@ ForgeLM/
 │   ├── grpo_rewards.py      # Built-in GRPO format/length shaping reward fallback
 │   ├── _http.py             # SSRF-guarded HTTP chokepoint (safe_post / safe_get)
 │   ├── _version.py          # `__version__` + `__api_version__` (decoupled)
-│   └── ...                  # benchmark, judge, merging, synthetic, verify,
+│   ├── verify/              # Verification package (Phase 16 S1 split):
+│   │                        # _annex_iv, _pipeline_evidence, _gguf,
+│   │                        # _model_integrity, _audit_log
+│   └── ...                  # benchmark, judge, merging, synthetic,
 │                            # quickstart, model_card, fit_check, deploy, chat,
 │                            # export, inference, results, utils, __main__,
 │                            # _pypdf_normalise, _script_sanity, _strip_pattern
@@ -158,7 +161,11 @@ Default workflow for a non-trivial change:
    python3 tools/check_import_origin.py --strict && \
      ruff format . && ruff check . && pytest tests/ && \
      python3 -m forgelm --config config_template.yaml --dry-run && \
+     python3 -m mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py && \
+     python3 tools/check_field_descriptions.py --strict forgelm/config.py && \
+     python3 tools/check_http_discipline.py && \
      python3 tools/check_bilingual_parity.py --strict && \
+     python3 tools/check_bilingual_code_blocks.py --strict && \
      python3 tools/check_anchor_resolution.py --strict && \
      python3 tools/check_cli_help_consistency.py --strict && \
      python3 tools/check_cli_exit_code_prose.py --strict && \
@@ -170,12 +177,20 @@ Default workflow for a non-trivial change:
      python3 tools/check_usermanual_self_contained.py --strict && \
      python3 tools/check_notebook_pins.py --strict && \
      python3 tools/check_usermanual_schema_drift.py --strict && \
+     python3 tools/check_yaml_snippets.py --strict && \
      python3 tools/check_deprecation_targets.py --strict && \
      python3 tools/check_release_record_sync.py --strict && \
      python3 tools/check_skill_mirror_parity.py --strict && \
      python3 tools/check_source_path_refs.py --strict && \
      python3 tools/check_readme_links.py --strict && \
-     python3 tools/update_site_version.py --check
+     python3 tools/check_library_api_doc.py --strict && \
+     python3 tools/check_doc_numerical_claims.py --strict && \
+     python3 tools/check_site_claims.py --strict && \
+     python3 tools/check_site_chrome_parity.py && \
+     python3 tools/check_module_size.py --strict && \
+     python3 tools/update_site_version.py --check && \
+     bandit -c pyproject.toml -r forgelm/ -f json -o /tmp/bandit.json || true; \
+     python3 tools/check_bandit.py /tmp/bandit.json
    ```
 
    **Do not "simplify" `python3 -m forgelm` back to `forgelm`.** A
@@ -190,7 +205,9 @@ Default workflow for a non-trivial change:
    does not cover the `tools/check_*.py` guards that import `forgelm`
    with `sys.path[0] == tools/`.
 
-   All twenty-three must pass (the usermanual-schema-drift guard —
+   All twenty-nine must pass — the exact set `.github/workflows/ci.yml`
+   runs, held there by `tests/test_guard_wiring.py`, which now compares the
+   two inventories in **both** directions (the usermanual-schema-drift guard —
    `check_usermanual_schema_drift.py --strict` — validates that every
    fenced YAML key under `docs/usermanuals/` resolves against the real
    `ForgeConfig` schema, catching fabricated-field examples that would

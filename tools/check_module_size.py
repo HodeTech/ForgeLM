@@ -285,20 +285,6 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "entirely inside.",
         ),
     ),
-    "forgelm/verify.py": _DeferredSplit(
-        budget=1013,
-        deferred_at_loc=1013,
-        reason=(
-            "Three unrelated verifiers in one module: single-artefact Annex IV "
-            "(field completeness + manifest hash), the pipeline chain's per-stage "
-            "evidence deep-parse, and GGUF magic/metadata/sidecar integrity. Split "
-            "candidates: _annex_iv, _pipeline_evidence, _gguf. Crossed the 1000-LOC "
-            "ceiling on 2026-07-20 wiring the audit-log corroboration outcome into "
-            "PipelineEvidenceReport; deferred rather than split in the same change "
-            "because the split moves the exit-code routing tokens that the CLI and "
-            "tests both pin, and that belongs in its own diff."
-        ),
-    ),
     "forgelm/ingestion.py": _DeferredSplit(
         budget=2110,
         deferred_at_loc=2110,
@@ -398,6 +384,17 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "checks. Split candidates: _row_id, _run_id, _check_policy, _shared."
         ),
     ),
+    # NOTE: ``forgelm/verify.py`` was deferred here on 2026-07-20 at 1013 LOC and
+    # has since been split into the ``forgelm/verify/`` sub-package (``_annex_iv``,
+    # ``_pipeline_evidence``, ``_gguf``, ``_model_integrity``, ``_audit_log`` behind
+    # a re-exporting ``__init__``). This entry's own reason named the condition for
+    # paying it — "the split moves the exit-code routing tokens that the CLI and
+    # tests both pin, and that belongs in its own diff" — so it was paid as a
+    # behaviour-neutral diff of its own, ahead of the Phase 16 step that changes
+    # those verdict semantics. Largest resulting module is ~65% of the ceiling.
+    # Kept as a comment so the removal is legible in blame rather than looking
+    # like an accidental deletion.
+    #
     # NOTE: ``forgelm/safety.py`` was deferred here at v0.9.1 and has since been
     # split into the ``forgelm/safety/`` sub-package (``_types``, ``_inputs``,
     # ``_generate``, ``_classifier``, ``_score_classification``,

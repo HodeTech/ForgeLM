@@ -32,7 +32,13 @@ jobs:
           python-version: "3.11"
 
       - name: Install linter
-        run: pip install ruff
+        # mypy joins ruff here rather than in the test job because the
+        # public-surface gate needs no runtime dependency: --follow-imports=silent
+        # silences errors from followed modules, so `forgelm/__init__.py` and
+        # `forgelm/_version.py` type-check with mypy alone (verified against a
+        # venv containing nothing else).  Keeping it in the fast job means the
+        # gate reports in seconds instead of behind a 4-way matrix install.
+        run: pip install ruff 'mypy>=1.8.0,<2.0.0'
 
       - name: Ruff lint
         run: ruff check .
@@ -60,6 +66,18 @@ jobs:
       # tests/test_check_http_discipline.py.
       - name: HTTP discipline guard
         run: python tools/check_http_discipline.py
+
+      # Phase 16 S1 (F-W20260729-OPS-23): docs/design/library_api.md has
+      # described this as "a new CI step" since Phase 36.  It never existed,
+      # mypy was in no dependency group, and when the documented command was
+      # finally run it failed — forgelm.__getattr__ had no return annotation,
+      # so the "100% typed stable surface" claim was unchecked for three minor
+      # releases.  Scoped to the two public-surface modules deliberately:
+      # --strict over trainer.py would mean typing the whole transformers/trl
+      # surface (library_api.md Q3).  The package's broader internal typing
+      # debt is a recorded budget, not a blocker for this gate.
+      - name: Public-surface type gate (mypy --strict)
+        run: mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py
 
   # --- Job 2: Test (matrix across Python versions) ---
   test:

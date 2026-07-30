@@ -13,7 +13,21 @@ This meta-test makes the apparatus self-checking:
    unless its owner consciously defers it).
 2. Every guard named in the CLAUDE.md self-review gauntlet is also wired into a
    workflow (no gauntlet-only enforcement — CI is the enforcement boundary).
-3. The CLAUDE.md and AGENTS.md gauntlets stay in lockstep.
+3. The CLAUDE.md, AGENTS.md and CONTRIBUTING.md gauntlets stay in lockstep with
+   each other **and** with ci.yml, in BOTH directions.
+
+Rule 3 used to run one way only — every gauntlet guard had to be in a workflow,
+but nothing required every workflow guard to be in a gauntlet. So the guard set
+grew and the documented gauntlets did not: at the time this test was made
+bidirectional, ci.yml ran 29 guards while CLAUDE.md and AGENTS.md listed 19 and
+CONTRIBUTING.md listed 18. A developer running the documented block locally and
+seeing it green had no signal that ten CI gates had not been evaluated. This is
+the second occurrence of exactly this defect — an earlier remediation package
+closed the same drift between CONTRIBUTING.md and CI, and it reopened as soon as
+new guards landed, because the one-directional check could not see it.
+
+CONTRIBUTING.md is included deliberately: it is pinned by nothing else in the
+suite, which is why it drifted one guard further than the two rulebooks.
 """
 
 from __future__ import annotations
@@ -47,17 +61,47 @@ def _workflow_text() -> str:
     return "\n".join(p.read_text(encoding="utf-8") for p in sorted(_WORKFLOWS.glob("*.yml")))
 
 
+_GAUNTLET_DOCS = ("CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md")
+
+
 def _gauntlet_guards(doc: Path) -> set[str]:
-    """Return the tools/*.py guard names invoked in the doc's gauntlet block."""
+    """Return the tools/*.py guard names invoked in the doc's gauntlet block.
+
+    Scoped to the fenced block that starts at the import-origin guard rather
+    than the whole file: prose elsewhere in these documents discusses guards by
+    name, and counting those would let a *mention* satisfy a rule about what the
+    reader is told to *run*.
+    """
     text = doc.read_text(encoding="utf-8")
-    return set(re.findall(r"tools/(check_[a-z_]+\.py|update_site_version\.py)", text))
+    match = re.search(r"(python3? tools/check_import_origin\.py --strict.*?)```", text, re.S)
+    assert match, f"{doc.name} has no gauntlet block starting at check_import_origin.py"
+    return set(re.findall(r"tools/(check_[a-z0-9_]+\.py|update_site_version\.py)", match.group(1)))
 
 
-def test_guard_count_is_nineteen_or_more():
-    """Inventory sanity — the review corrected the stale '23 guards' claim to
-    the real count. The floor catches an accidental guard deletion."""
+def _ci_guards() -> set[str]:
+    """Guards `.github/workflows/ci.yml` actually invokes.
+
+    ci.yml, not every workflow: the gauntlet's contract is "what a PR must
+    pass". `check_pip_audit.py` runs only in nightly.yml because it needs a
+    fresh scan report, and requiring it locally would make the documented block
+    unrunnable.
+    """
+    ci = (_WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+    return set(re.findall(r"tools/(check_[a-z0-9_]+\.py|update_site_version\.py)", ci))
+
+
+def test_guard_inventory_is_derived_not_asserted():
+    """No hand-written floor.
+
+    This used to assert `len(guards) >= 19`, which is satisfied by any number
+    at or above the count on the day it was written and therefore says nothing
+    about drift. The real invariant is that the three documented gauntlets and
+    ci.yml name the same set — asserted below — so all this needs to do is
+    prove the inventory is non-empty and reachable.
+    """
     guards = _all_guards()
-    assert len(guards) >= 19, f"expected >=19 check_*.py guards, found {len(guards)}: {guards}"
+    assert guards, "no tools/check_*.py guards found — the inventory scan is broken"
+    assert _ci_guards(), "ci.yml invokes no guards — the CI scan is broken"
 
 
 def test_every_guard_is_wired_or_allowlisted():
@@ -95,7 +139,50 @@ def test_every_gauntlet_guard_is_wired_into_ci():
     assert not gauntlet_only, f"gauntlet guards enforced only by human discipline: {gauntlet_only}"
 
 
-def test_claude_and_agents_gauntlets_match():
-    """The .agents/ mirror (AGENTS.md) must list the same gauntlet guards as
-    CLAUDE.md ([[project_agents_md_mirror]])."""
-    assert _gauntlet_guards(_REPO_ROOT / "CLAUDE.md") == _gauntlet_guards(_REPO_ROOT / "AGENTS.md")
+def test_all_three_gauntlets_match_each_other():
+    """CLAUDE.md, AGENTS.md and CONTRIBUTING.md must publish one gauntlet.
+
+    AGENTS.md is CLAUDE.md's mirror for a second harness; CONTRIBUTING.md is
+    the human-facing copy. Three hand-maintained restatements of one command
+    block is exactly the shape that rots, so they are compared to each other
+    rather than each to CI alone.
+    """
+    sets = {doc: _gauntlet_guards(_REPO_ROOT / doc) for doc in _GAUNTLET_DOCS}
+    reference = sets["CLAUDE.md"]
+    for doc, got in sets.items():
+        assert got == reference, (
+            f"{doc}'s gauntlet diverges from CLAUDE.md's — "
+            f"only in {doc}: {sorted(got - reference)}; missing from {doc}: {sorted(reference - got)}"
+        )
+
+
+def test_every_ci_guard_appears_in_every_gauntlet():
+    """The reverse direction, which is the one that was missing.
+
+    A guard wired into ci.yml but absent from the documented block means a
+    developer can run the whole published self-review, see green, and still be
+    failed by CI on a gate they were never told to run.
+    """
+    ci = _ci_guards()
+    for doc in _GAUNTLET_DOCS:
+        missing = sorted(ci - _gauntlet_guards(_REPO_ROOT / doc))
+        assert not missing, (
+            f"{doc}'s gauntlet omits {len(missing)} guard(s) that ci.yml runs: {missing}. "
+            "Add them to the block — a local run that cannot fail where CI fails is not a self-review."
+        )
+
+
+def test_no_gauntlet_invents_a_guard_ci_does_not_run():
+    """The forward direction, tightened to ci.yml specifically.
+
+    `test_every_gauntlet_guard_is_wired_into_ci` accepts any workflow, so a
+    nightly-only guard would satisfy it while still being unrunnable as part of
+    a pre-push check. This pins the gauntlet to the PR gate.
+    """
+    ci = _ci_guards()
+    for doc in _GAUNTLET_DOCS:
+        extra = sorted(_gauntlet_guards(_REPO_ROOT / doc) - ci)
+        assert not extra, (
+            f"{doc}'s gauntlet lists {extra}, which ci.yml does not run — "
+            "either wire it into ci.yml or drop it from the documented block."
+        )

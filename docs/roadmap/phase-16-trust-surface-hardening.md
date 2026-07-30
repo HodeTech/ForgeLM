@@ -1,9 +1,14 @@
 # Phase 16: Trust Surface Hardening (full-project review remediation)
 
-> **Status:** **Planned — nothing in this file is delivered.**  This document
-> is the execution plan approved on 2026-07-30 for the 83 remediation units
-> produced by the 2026-07-29/30 full-project review.  Every task below is
-> `[ ]`.  Do not read "Phase 16 exists" as "Phase 16 started".
+> **Status:** **In progress — pre-work and S1 delivered; S2-S16 are not.**
+> This document is the execution plan approved on 2026-07-30 for the 83
+> remediation units produced by the 2026-07-29/30 full-project review.
+> Delivered so far: the pre-work standards reconciliation (P-1…P-5c) and
+> **S1** — `forgelm/verify.py` split into `forgelm/verify/`, the guard-inventory
+> meta-test made bidirectional across three documents, and the public-surface
+> `mypy --strict` gate wired and green.  **Fourteen of the eighty-three units
+> are closed; sixty-nine are not.**  Do not read "Phase 16 exists" as "Phase 16
+> is done" — the checkbox state below is the record.
 >
 > **Phase number.** 16 follows [Phase 15](completed-phases.md#phase-15--ingestion-pipeline-reliability-v060)
 > in the main sequential track.  The `Phase 22` row in [roadmap.md](../roadmap.md)
@@ -107,7 +112,7 @@ record.
 | C-16 | `docker-compose.yaml` cache path | Fix in the same change, `### Fixed` naming the orphaned-volume effect | S13 |
 | C-17 | Finding-ID re-key | **Rejected** — IDs are already canonical | — |
 | C-18 | Split `forgelm/trainer.py` before the behaviour steps | No — budget-raise per step | S1 |
-| C-19 | Coverage ratchet | Advisory diff-coverage at S1, enforcing at S14, global floor = measured − 2 | S1/S14 |
+| C-19 | Coverage ratchet | Diff-coverage enforcing at S14 only; global floor = measured − 2. **Amended 2026-07-30** — the "advisory at S1" limb was withdrawn during S1: a non-failing CI step needs `continue-on-error`/`|| true`, which principle 6 outlaws | S14 |
 | C-20 | Does this phase cut a release | No — every PR files under `[Unreleased]` | — |
 | GTM | AI Act moat framing after Regulation (EU) 2026/1744 | Retarget to 2 December 2027, framing preserved | S15 |
 
@@ -167,7 +172,7 @@ reads *before* touching code, and each would actively mislead the work below.
 doc corrections **ahead** of code work explicitly legitimate; batching them
 after is not.
 
-- [ ] **P-1 — Bare `forgelm …` invocations in normative documents.**
+- [x] **P-1 — Bare `forgelm …` invocations in normative documents.**
   `code-review.md:226`, `testing.md:184,263`, `error-handling.md:299` and six
   `SKILL.md` files invoke the console script.  A console script's `sys.path[0]`
   is its own `bin/`, so a stale non-editable install validates a weeks-old
@@ -175,27 +180,27 @@ after is not.
   prepend `check_import_origin.py --strict`.  **Highest-risk item in the
   phase**: this is precisely how a remediation agent would "verify" a fix that
   never ran.
-- [ ] **P-2 — `CLAUDE.md:113` / `AGENTS.md:113` publish the exit contract as
+- [x] **P-2 — `CLAUDE.md:113` / `AGENTS.md:113` publish the exit contract as
   `0/1/2/3/4/5`.**  `EXIT_INTEGRITY_FAILURE = 6` exists
   (`forgelm/cli/_exit_codes.py:39`) and the same files explain it ninety lines
   later.  Principle 4 is labelled non-negotiable; an agent treating the
   truncated list as binding will misclassify a genuine integrity failure.
   *(Two lines only.  The meta-test and the `compliance_summary` prose are
   `OPS-24` in S15.)*
-- [ ] **P-3 — `code-review.md:111` (`≤ 10 ms`) contradicts `regex.md:157`**
+- [x] **P-3 — `code-review.md:111` (`≤ 10 ms`) contradicts `regex.md:157`**
   ("don't pin a hard ms cutoff"; existing tests use ≤ 100 ms / ≤ 1 s).  One
   order of magnitude apart, and S10 and S15 both touch regexes.
-- [ ] **P-4 — Two incompatible closed lists of CHANGELOG categories.**
+- [x] **P-4 — Two incompatible closed lists of CHANGELOG categories.**
   `documentation.md:281` says "Added / Changed / Fixed / Removed / Deprecated.
   No others."; `CHANGELOG.md` uses `### Breaking` and `### Security`, and this
   phase will file both.  Delete the list from `documentation.md`; cross-link
   `release.md#changelog`.
-- [ ] **P-5 — `forgelm/cli.py` has not existed since Phase 15**, yet
+- [x] **P-5 — `forgelm/cli.py` has not existed since Phase 15**, yet
   `error-handling.md:68`, `logging-observability.md:47`,
   `architecture.md:17,249`, `documentation.md:219` and two skills cite it as
   live.  Invisible to `check_source_path_refs.py` (mermaid fences and bare
   basenames).  Steps S5-S11 all edit `forgelm/cli/`.
-- [ ] **P-5b — Skill-taught patterns that are stale or wrong.**
+- [x] **P-5b — Skill-taught patterns that are stale or wrong.**
   `add-config-field/SKILL.md:45-59` teaches a field style that **fails**
   `check_field_descriptions.py --strict`; `:37-38` names `ComplianceConfig` /
   `TrackingConfig`, which do not exist (the real classes are
@@ -207,7 +212,7 @@ after is not.
   parity, false since Wave 3.  `review-pr/SKILL.md` says "seven-question" at
   `:22` and "six questions" at `:111,:187`, and its step-6 one-liner
   under-tests by nineteen commands.
-- [ ] **P-5c — Counts and rosters in the rulebooks.**  `CLAUDE.md:79` says
+- [x] **P-5c — Counts and rosters in the rulebooks.**  `CLAUDE.md:79` says
   "~70 test modules" (actual **124**); `:49` says "~21 single-file modules + 4
   sub-packages" (actual **27** modules + **5** packages, roster omitting
   `verify.py`, `_pypdf_normalise.py`, `_script_sanity.py`,
@@ -240,7 +245,7 @@ committed, then the same with Sonnet, then the next step.
 
 ---
 
-1. [ ] **S1 — Measurement instruments: module budgets, guard inventory, typing gate** (M)
+1. [x] **S1 — Measurement instruments: module budgets, guard inventory, typing gate** (M)
    Units: `OPS-10`, `OPS-09`, `OPS-23`.
 
    All three are the same defect class: *the project's instruments for
@@ -262,7 +267,9 @@ committed, then the same with Sonnet, then the next step.
      `mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py`
      into `ci.yml`; record the 47 internal typing errors as a budget, not a
      blocker.
-   - Introduce diff-coverage as **advisory** (C-19).
+   - Diff-coverage is **not** introduced here — see the 2026-07-30 amendment to
+     C-19 in [risks-and-decisions.md](risks-and-decisions.md). It lands once, in
+     S14, enforcing.
 
    *Exit:* wiring a new `tools/check_*.py` into `ci.yml` without adding it to
    all three documents fails the meta-test; removing a return annotation on an
@@ -678,6 +685,9 @@ committed, then the same with Sonnet, then the next step.
     Deliberately late (**C-19**): ratcheting at position 1 would gate every
     remediation PR on a floor calibrated against pre-remediation code, and
     roughly half the no-assert triage list sits in files S2-S11 rewrite anyway.
+    Diff-coverage lands here too, **enforcing** — the plan's original
+    "advisory at S1" step was withdrawn in S1 because a CI step that cannot go
+    red is the fake green principle 6 outlaws.
 
     *Exit:* diff-coverage on changed lines **and** a ratcheted global
     `fail_under` both enforced, with explicit measured thresholds for

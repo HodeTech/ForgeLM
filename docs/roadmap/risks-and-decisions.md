@@ -212,6 +212,39 @@ See [`docs/standards/architecture.md`](../standards/architecture.md#module-size-
 
 **Escape hatch, made explicit.** Any of these may be revisited inside the step that executes it, in the same PR, by appending a dated addendum to this section stating what was measured and what changed. What is not permitted is executing a step against a different decision than the one recorded here without saying so — that is how the Phase 14.5 records came to describe already-shipped behaviour as new work.
 
+### 2026-07-30 — Phase 16 S1: `forgelm/verify.py` split paid; conditions recorded for the remaining seven; C-19's advisory limb withdrawn
+
+> **Source.** Executing S1 of [phase-16-trust-surface-hardening.md](phase-16-trust-surface-hardening.md). Two of the three items below are deliveries; the third is a correction to a decision recorded four hours earlier in this same file, surfaced by trying to implement it.
+
+**`forgelm/verify.py` is split and its deferral is discharged.** The entry recorded its own release condition — *"the split moves the exit-code routing tokens that the CLI and tests both pin, and that belongs in its own diff"* — and that is exactly how it was paid: a behaviour-neutral diff of its own, ahead of the step that changes those verdict semantics. It became `forgelm/verify/` with `_annex_iv`, `_pipeline_evidence`, `_gguf`, `_model_integrity` and `_audit_log` behind a re-exporting `__init__`, following the `forgelm/safety/` precedent. Deferred debt drops 12,768 → 11,755 LOC.
+
+Two things the split exposed that a pure file-move would have hidden, both worth recording because they generalise:
+
+- **Five test patch targets silently moved.** `monkeypatch.setattr("forgelm.verify._read_capped_json", …)`, three `forgelm.verify.os.fstat` patches and one `forgelm.verify.open` patch all aimed at names the package facade re-exports but the *submodule* resolves at call time. Rebinding the facade attribute does not touch the reference the owning module reads. Four of the five failed loudly and were retargeted; the fifth carried `raising=False`, so it would have kept passing while intercepting nothing — a green test measuring an empty set. This is the same defect class the `add-test` skill was corrected for in the same cycle, and it is the reason a module split is not a mechanical refactor.
+- **The module-size test would have passed vacuously.** `test_verify_module_size_is_governed_by_the_module_size_guard` compared one file against its own recorded budget; after the split that comparison measures `__init__.py`, a few dozen lines, and passes without examining anything. It is replaced by an assertion that the deferral entry is *gone* and that every resulting module is under the **normal** ceiling — because an entry left behind would grant the package a 1013-line budget it no longer needs, which is how a paid deferral silently re-accrues.
+
+**The remaining seven keep their budgets; each now carries a release condition rather than an ordinal.** The 2026-07-20 section ordered them by expected value and stated plainly that they were not scheduled. That stands. What it lacked was a per-module *trigger*, so the backlog could only be worked by someone deciding to. Conditions, in the same order:
+
+| # | Module | Condition that releases the split |
+|---|---|---|
+| 1 | `forgelm/ingestion.py` | The next change that adds a reader or a chunker. The seams are already near-independent, so the split is cheapest when someone is in the file anyway. |
+| 2 | `forgelm/compliance.py` | Phase 16 S9 lands and its audit-chain fixtures are re-verified. Splitting Art. 9-17 surface plus the hash-chained log *before* the GDPR/evidence work would rebase that work onto a moving file. |
+| 3 | `forgelm/trainer.py` | Phase 16 S2, S3, S4 and S8 have all landed. Per **C-18** the split is deliberately after them, not before: a god-object split ahead of four behaviour changes to the same file maximises rebase risk. |
+| 4 | `forgelm/cli/subcommands/_purge.py` | Phase 16 S9 lands (it rewrites `_artefact_targets_for_run`, one of the four candidate seams). |
+| 5 | `forgelm/cli/_parser.py` | Phase 16 S5, S7 and S11 have all landed; every one of them edits this file, and `check_cli_help_consistency.py` pins every `--help` string, so the diff is wide and must be taken once. |
+| 6 | `forgelm/cli/_pipeline.py` | Unchanged from 2026-07-20: after the Phase 14.5 manifest-verification rewrite, which shipped in v0.10.0 — so this one is now *released* and is the only entry whose condition is already met. |
+| 7 | `forgelm/config.py` | Deliberately none. The 2026-07-20 entry's judgement holds: splitting changes import-time model-registration order and every other module imports it. "Reasonable to never split this one" is still the position. |
+
+Owners stay `TBD`, honestly. Recording a name nobody has agreed to is the same failure as recording a date nobody has committed to.
+
+**Correction to C-19: the advisory diff-coverage limb is withdrawn, not deferred.** C-19 was recorded this morning as "introduce diff-coverage as advisory at S1, enforcing at S14". Implementing it surfaced that the advisory half cannot exist in this repository: a CI step that reports without failing needs `continue-on-error` or `|| true`, and `CLAUDE.md` principle 6 outlaws exactly that — *"No `|| true` in CI"* — because a step that cannot go red is a fake green. The three candidate readings were each rejected:
+
+- **Add it with `continue-on-error`.** Violates the principle in letter and spirit; the project has an explicit guard culture against decorative checks.
+- **Add it blocking at S1 with a floor low enough not to block anything.** A gate calibrated to never fire is the same fake green with extra machinery, and it would have to be re-tuned at S14 anyway.
+- **Add it blocking at S1 at a real floor.** This is what C-19 rejected on its merits, and those merits are unchanged: the floor would be calibrated against pre-remediation code and could block unrelated PRs for the whole programme.
+
+So diff-coverage lands **once**, in S14, enforcing. The rest of C-19 — ratchet the global `fail_under` toward the measured level, add per-module floors for `compliance.py`, `verify/`, `_http.py`, `safety/` and `config.py` — is unchanged. Recorded rather than quietly dropped because a plan limb that disappears without explanation is indistinguishable from one that was forgotten, and this cycle has already documented four items that rotted exactly that way.
+
 ### 2026-07-30 — Phase 16 deferral cohort
 
 > **Source.** Items the Phase 16 plan deliberately does not close, recorded at plan time rather than discovered at the end. Per the 2026-07-20 policy above, each row states a **budget or a condition**, never a target version. Removal contract as documented at the top of this section: a row leaves only when the fix is on `main`, **and** the CHANGELOG names the ID, **and** any promised guard exists.

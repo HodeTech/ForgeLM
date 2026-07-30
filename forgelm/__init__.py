@@ -43,6 +43,7 @@ from __future__ import annotations as _annotations
 
 from types import MappingProxyType as _MappingProxyType
 from typing import TYPE_CHECKING as _TYPE_CHECKING
+from typing import Any as _Any
 
 from ._version import __api_version__, __version__
 from .config import ConfigError, ForgeConfig, load_config
@@ -271,8 +272,16 @@ if _TYPE_CHECKING:  # pragma: no cover — type-only imports
     from .webhook import WebhookNotifier  # noqa: F401
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> _Any:
     """PEP 562 lazy attribute resolver for the public surface.
+
+    The return type is ``Any`` because this hook is a generic dispatcher over
+    :data:`_LAZY_SYMBOLS` — it resolves names of unrelated types (dataclasses,
+    functions, exception classes), so no narrower annotation is truthful.
+    Static callers do not go through here: the ``TYPE_CHECKING`` block above
+    imports the real symbols, so a type checker sees their genuine signatures
+    rather than this ``Any``. Without the annotation the whole
+    ``mypy --strict`` public-surface gate fails on this one function.
 
     Looks ``name`` up in :data:`_LAZY_SYMBOLS`, imports the source
     submodule, fetches the attribute, and caches the result back into

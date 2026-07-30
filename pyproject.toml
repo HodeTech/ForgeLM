@@ -197,6 +197,17 @@ dev = [
   # (``tools/check_notebook_pins.py``, ``tools/check_deprecation_targets.py``)
   # and their test modules can run.  Never imported by the runtime path.
   "tomli>=2.0.0; python_version < '3.11'",
+  # mypy backs the public-surface type gate that
+  # ``docs/design/library_api.md`` has documented since Phase 36 as "a new CI
+  # step": ``mypy --strict --follow-imports=silent forgelm/__init__.py
+  # forgelm/_version.py``.  No such step existed, mypy was not installed
+  # anywhere, and the command failed when finally run.  Scoped to the two
+  # public-surface modules on purpose — ``--strict`` over ``trainer.py`` would
+  # mean typing the whole transformers/trl surface, which is not this
+  # project's to fix (that argument is made in library_api.md Q3, and the
+  # broader package's internal typing debt is tracked as a budget in
+  # docs/roadmap/risks-and-decisions.md rather than blocking this gate).
+  "mypy>=1.8.0,<2.0.0",
 ]
 
 # ISO 27001 / SOC 2 alignment supply-chain security tooling.

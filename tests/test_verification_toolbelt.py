@@ -311,10 +311,15 @@ def _stub_metadata_parse(monkeypatch) -> None:
     helper from) rather than the CLI subcommand module, which only
     re-exports the public entry point.
     """
-    from forgelm import verify as _verify_mod
+    # Patch the OWNING submodule, not the package facade.  ``forgelm/verify.py``
+    # became ``forgelm/verify/`` and re-exports every name it used to define, so
+    # imports are unchanged — but rebinding an attribute on the facade does not
+    # touch the reference the submodule resolves at call time, and the patch
+    # would be a silent no-op.
+    from forgelm.verify import _gguf as _gguf_mod
 
     monkeypatch.setattr(
-        _verify_mod,
+        _gguf_mod,
         "_maybe_parse_metadata",
         lambda _path: {"parsed": False, "error": None, "tensor_count": None},
     )
@@ -2110,12 +2115,12 @@ class TestExitOneStaysOneForGenuineInputErrors:
     def test_gguf_corrupt_metadata_block_is_integrity_failure(self, tmp_path: Path, monkeypatch) -> None:
         """Magic passed, so the file *is* a GGUF; an unparseable metadata
         block is a corrupted/truncated artefact → 6."""
-        from forgelm import verify as _verify_mod
         from forgelm.cli._exit_codes import EXIT_INTEGRITY_FAILURE
         from forgelm.cli.subcommands._verify_gguf import _run_verify_gguf_cmd
+        from forgelm.verify import _gguf as _gguf_mod
 
         monkeypatch.setattr(
-            _verify_mod,
+            _gguf_mod,
             "_maybe_parse_metadata",
             lambda _p: {"parsed": False, "error": "struct.error: unpack requires 8 bytes", "tensor_count": None},
         )
@@ -2310,27 +2315,47 @@ class TestVerifyModuleExtraction:
         assert forgelm._LAZY_SYMBOLS["verify_audit_log"] == ("forgelm.compliance", "verify_audit_log")
         assert forgelm._LAZY_SYMBOLS["VerifyResult"] == ("forgelm.compliance", "VerifyResult")
 
-    def test_verify_module_size_is_governed_by_the_module_size_guard(self, monkeypatch) -> None:
-        """architecture.md sets a ~1000 code-line sub-package-split trigger.
+    def test_verify_debt_is_paid_and_stays_paid(self, monkeypatch) -> None:
+        """The deferral is discharged, and this asserts it cannot come back.
 
-        ``forgelm/verify.py`` crossed it on 2026-07-20 wiring the audit-log
-        corroboration outcome into ``PipelineEvidenceReport``, and took a
-        deferred-split entry in ``tools/check_module_size.py`` rather than a
-        rushed split (the split moves the exit-code routing tokens that the
-        CLI and these tests both pin).  A bare ``< 1000`` here would now be a
-        second, *silently divergent* budget for the same file: this asserts
-        against the guard's recorded budget so there is exactly one number,
-        and growth past it still fails — in the guard, where the raise
-        requires a reviewed ``budget_history`` note.
+        ``forgelm/verify.py`` crossed the ~1000-line sub-package-split trigger
+        on 2026-07-20 and took a deferred-split entry rather than a rushed
+        split.  That entry named its own release condition — the split moves
+        the exit-code routing tokens the CLI and these tests pin, so it had to
+        be its own diff — and it has now been paid: the module is the
+        ``forgelm/verify/`` package.
+
+        Two assertions, because either alone can pass while the debt is back.
+        The entry must be **gone** from ``_DEFERRED_SPLITS`` (an entry left
+        behind would grant the package's largest module a 1013-line budget it
+        no longer needs, which is how a paid deferral silently re-accrues),
+        and every resulting module must be under the **normal** ceiling that
+        governs any non-deferred file.  The previous form of this test
+        compared a single file against its own recorded budget; after the
+        split that comparison measures ``__init__.py``, which is a few dozen
+        lines, and passes without examining anything.
         """
         from pathlib import Path as _Path
 
         tool = _load_module_size_tool(monkeypatch)
-        entry = tool._DEFERRED_SPLITS["forgelm/verify.py"]
-        loc = tool._count_code_lines(_Path(forgelm_verify_path()))
-        assert loc <= entry.budget, (
-            f"forgelm/verify.py is {loc} code lines, past its recorded budget of {entry.budget} — "
-            "split it, or raise the budget in tools/check_module_size.py with a budget_history note"
+        assert "forgelm/verify.py" not in tool._DEFERRED_SPLITS, (
+            "the forgelm/verify.py deferral was paid by splitting into forgelm/verify/ — "
+            "its _DEFERRED_SPLITS entry must be removed, or the package inherits a budget "
+            "for a file that no longer exists"
+        )
+        assert "forgelm/verify/__init__.py" not in tool._DEFERRED_SPLITS, (
+            "the split package must be held to the normal ceiling, not re-deferred"
+        )
+
+        pkg = _Path(forgelm_verify_path()).parent
+        oversized = {
+            module.name: tool._count_code_lines(module)
+            for module in sorted(pkg.glob("*.py"))
+            if tool._count_code_lines(module) > tool._WARN_THRESHOLD
+        }
+        assert not oversized, (
+            f"forgelm/verify/ modules past the {tool._WARN_THRESHOLD}-line ceiling: {oversized} — "
+            "split further, or take a deferral entry with a written reason"
         )
 
 
@@ -2747,10 +2772,10 @@ class TestVerifyAuditProbeRationaleIsPinned:
 
 
 def _stub_metadata_error(monkeypatch, message: str = "struct.error: unpack requires 8 bytes") -> None:
-    from forgelm import verify as _verify_mod
+    from forgelm.verify import _gguf as _gguf_mod
 
     monkeypatch.setattr(
-        _verify_mod,
+        _gguf_mod,
         "_maybe_parse_metadata",
         lambda _p: {"parsed": False, "error": message, "tensor_count": None},
     )
@@ -3093,9 +3118,14 @@ class TestPipelineStageEvidenceDeepParse:
 
     def test_oversize_evidence_is_refused_unread(self, tmp_path: Path, monkeypatch) -> None:
         """A verifier that its own input can OOM is not a verifier."""
-        import forgelm.verify as verify_mod
+        # Patch the OWNING submodule, not the package facade.  ``forgelm/verify.py``
+        # became ``forgelm/verify/`` and re-exports every name it used to define, so
+        # imports are unchanged — but rebinding an attribute on the facade does not
+        # touch the reference the submodule resolves at call time, and the patch
+        # would be a silent no-op.
+        from forgelm.verify import _pipeline_evidence as pe_mod
 
-        monkeypatch.setattr(verify_mod, "STAGE_EVIDENCE_MAX_BYTES", 16)
+        monkeypatch.setattr(pe_mod, "STAGE_EVIDENCE_MAX_BYTES", 16)
         target = tmp_path / "annex_iv_metadata.json"
         target.write_text(json.dumps(_hashed_annex_iv_artifact()))
         report = self._evidence(tmp_path, str(target))
@@ -3120,7 +3150,7 @@ class TestPipelineStageEvidenceDeepParse:
         # share one descriptor (a stat on one handle followed by an open of
         # another does not bound what actually gets read).  The OSError
         # routing under test is unchanged; only where the I/O happens moved.
-        monkeypatch.setattr("forgelm.verify._read_capped_json", _boom)
+        monkeypatch.setattr("forgelm.verify._pipeline_evidence._read_capped_json", _boom)
         report = self._evidence(tmp_path, str(target))
         assert any(v.startswith(PIPELINE_MANIFEST_IO_ERROR_PREFIX) for v in report.violations)
 
@@ -3540,7 +3570,7 @@ class TestCappedReadIsFailClosed:
         class _Small:
             st_size = 12
 
-        monkeypatch.setattr("forgelm.verify.os.fstat", lambda fd: _Small())
+        monkeypatch.setattr("forgelm.verify._pipeline_evidence.os.fstat", lambda fd: _Small())
         with pytest.raises(_OversizeError):
             _read_capped_json(path, 1024)
 
@@ -3555,7 +3585,7 @@ class TestCappedReadIsFailClosed:
         class _Small:
             st_size = 12
 
-        monkeypatch.setattr("forgelm.verify.os.fstat", lambda fd: _Small())
+        monkeypatch.setattr("forgelm.verify._pipeline_evidence.os.fstat", lambda fd: _Small())
         with pytest.raises(_OversizeError):
             _read_capped_json(path, 1024)
 
@@ -3573,7 +3603,9 @@ class TestCappedReadIsFailClosed:
 
         calls: list = []
         real_fstat = os.fstat
-        monkeypatch.setattr("forgelm.verify.os.fstat", lambda fd: (calls.append(fd), real_fstat(fd))[1])
+        monkeypatch.setattr(
+            "forgelm.verify._pipeline_evidence.os.fstat", lambda fd: (calls.append(fd), real_fstat(fd))[1]
+        )
         path = self._write(tmp_path, "ok.json", json.dumps({"a": 1}))
         assert _read_capped_json(path, 1024) == {"a": 1}
         assert calls, "size check did not consult the open descriptor"
@@ -3621,7 +3653,7 @@ class TestCappedReadIsFailClosed:
                 handle.read = _read  # type: ignore[method-assign]
             return handle
 
-        monkeypatch.setattr("forgelm.verify.open", _spy_open, raising=False)
+        monkeypatch.setattr("forgelm.verify._gguf.open", _spy_open, raising=False)
         result = verify_gguf(str(gguf))
 
         assert result.checks["sidecar_match"] is True
@@ -3763,8 +3795,8 @@ class TestVerifierParserHardening:
         The cap is patched down rather than writing a real 8 MiB fixture — the
         branch under test is the comparison, not the number.
         """
-        import forgelm.verify as verify_mod
         from forgelm.compliance import PIPELINE_MANIFEST_INPUT_ERROR_PREFIX
+        from forgelm.verify import _pipeline_evidence as verify_mod
         from forgelm.verify import verify_pipeline_manifest_report
 
         monkeypatch.setattr(verify_mod, "PIPELINE_MANIFEST_MAX_BYTES", 16)
