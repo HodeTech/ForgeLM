@@ -97,6 +97,7 @@ The hash chain advances after the line lands on disk (`flush` + `fsync`), so an 
 | `cache.populate_tasks_requested`     | `forgelm cache-tasks` invocation begins.                                      | `tasks`, `cache_dir`                                                   | 12      |
 | `cache.populate_tasks_completed`     | Every lm-eval task dataset prepared successfully.                             | All `requested` fields + `count`                                       | 12      |
 | `cache.populate_tasks_failed`        | Unknown task name OR dataset download failure.                                | All `requested` fields + `tasks_completed`, `error_class`, `error_message` | 12 |
+| `cache.populate_tasks_partial`       | Some tasks staged, some did not — the on-disk cache is incomplete.            | All `requested` fields + `tasks_cached`, `tasks_failed`, `tasks_unavailable` | 12 |
 
 ### CLI / migration
 

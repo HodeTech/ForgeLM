@@ -305,9 +305,19 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/config.py": _DeferredSplit(
-        budget=1833,
+        budget=1846,
         deferred_at_loc=1795,
         budget_history=(
+            "2026-07-30 (Phase 16 S3, 1833 -> 1846, +13): "
+            "`evaluation.llm_judge.min_valid_fraction` (default 0.8, `[0.0, 1.0]`, "
+            "`allow_inf_nan=False`). The judge gate averages over *parseable* scores only, "
+            "so a failed judge call is dropped rather than counted: one score of 9 out of two "
+            "hundred prompts cleared a `min_score: 8` gate outright, and the envelope reported "
+            "a passing judge evaluation. The field is the evidence floor below which the "
+            "average stops being treated as a measurement. Twelve of the thirteen lines are the "
+            "field's own `description=`, which `check_field_descriptions.py --strict` requires "
+            "and which is the text an operator actually reads. Raised rather than split for the "
+            "same reason as the entry below.",
             "2026-07-30 (Phase 16 S2, +38): finite/bounded domains on the numeric fields a "
             "decision is made against. `evaluation.max_acceptable_loss` and `baseline_loss` "
             "gained `ge=0.0, allow_inf_nan=False` because `final_loss > nan` is always False, "
@@ -328,7 +338,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/trainer.py": _DeferredSplit(
-        budget=1492,
+        budget=1493,
         deferred_at_loc=1432,
         reason=(
             "ForgeTrainer god-object: TRL kwarg fold-in + OOM/DeepSpeed runtime + "
@@ -364,6 +374,13 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "at load time. Raised rather than split per decision C-18: S3, S4 and S8 all "
             "still edit this file, and a god-object split ahead of three behaviour changes "
             "maximises rebase risk.",
+            "2026-07-30 (Phase 16 S3, 1492 -> 1493, +1): one line threading "
+            "`evaluation.llm_judge.min_valid_fraction` from the schema into "
+            "`run_judge_evaluation`, so the judge gate's evidence floor is config-driven "
+            "rather than pinned to the library default. Direct attribute access, matching "
+            "`min_score`/`batch_size` rather than the `getattr` used for the optional fields "
+            "beside it, so the floor cannot silently diverge from the schema if that default "
+            "is ever retuned.",
             "2026-07-30 (Phase 16 S2 Sonnet review, 1483 -> 1492, +9): two record-honesty fixes "
             "the review found in code S2 itself had just written. `TrainResult.reverted` was still "
             "hardcoded True at the loss-gate call site — the three later gates derive it via "

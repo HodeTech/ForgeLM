@@ -215,6 +215,11 @@ data:
 #     # judge_model_revision: "a09a3540..."  # local judge only; rejected alongside judge_api_key_env
 #     eval_dataset: "eval_prompts.jsonl"
 #     min_score: 7.0
+#     # Fraction of eval prompts that must yield a parseable score before the
+#     # average is treated as evidence.  The average is taken over parseable
+#     # scores only, so without this floor one score of 9 out of two hundred
+#     # prompts clears a min_score: 8 gate.  0.0 accepts any non-empty sample.
+#     min_valid_fraction: 0.8
 
 # webhook:
 #   # Prefer providing secrets via env vars in CI/CD

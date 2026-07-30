@@ -97,6 +97,7 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 | `cache.populate_tasks_requested`     | `forgelm cache-tasks` çağrısı başlar.                                         | `tasks`, `cache_dir`                                                   | 12    |
 | `cache.populate_tasks_completed`     | Her lm-eval task dataset'i başarıyla hazırlandı.                              | Tüm `requested` field'ları + `count`                                   | 12    |
 | `cache.populate_tasks_failed`        | Bilinmeyen task adı VEYA dataset download başarısız.                          | Tüm `requested` field'ları + `tasks_completed`, `error_class`, `error_message` | 12 |
+| `cache.populate_tasks_partial`       | Bazı task'lar hazırlandı, bazıları hazırlanmadı — disk üzerindeki cache eksik. | Tüm `requested` field'ları + `tasks_cached`, `tasks_failed`, `tasks_unavailable` | 12 |
 
 ### CLI / göç
 

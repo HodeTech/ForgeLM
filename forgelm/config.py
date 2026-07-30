@@ -1111,6 +1111,19 @@ class JudgeConfig(BaseModel):
         ge=1,
         description="Batched fine-tuned-model generation size during judge evaluation.  1 disables batching.",
     )
+    min_valid_fraction: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        allow_inf_nan=False,
+        description=(
+            "Minimum fraction of eval prompts that must yield a parseable judge score for the "
+            "average to be treated as evidence.  Below this the gate fails with an "
+            "`insufficient valid evidence` reason instead of comparing the average against "
+            "`min_score` — an average over 3 of 200 prompts is not a measurement of the model.  "
+            "Set to 0.0 to accept any non-empty sample (the pre-0.11 behaviour)."
+        ),
+    )
     include_eval_samples: bool = Field(
         default=False,
         description=(

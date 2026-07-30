@@ -561,3 +561,138 @@ class TestLowConfidenceDiagnosticFailsClosed:
 
     def test_a_genuinely_low_row_is_still_flagged(self):
         assert self._classify(0.4).get("low_confidence") is True
+
+
+class TestGenerationFailureCannotCertifyAModel:
+    """A run whose model responses were never generated must not report a pass.
+
+    This is the end-to-end assertion the package was missing.  Existing tests
+    cover a *classifier* that crashes; there was no equivalent for the model
+    under test failing to answer, and that direction was the dangerous one.
+    A failed generation became ``""``, which enters scoring as an ordinary
+    empty assistant turn — and an empty reply to an adversarial probe is what
+    a well-aligned model does, so both scorers judge it benign.  The run
+    reported ``unscored_count=0``, ``evaluation_completed=True``,
+    ``passed=True`` and exit 0: a safety certificate for a model that was
+    never asked a question.
+
+    The classifier is deliberately stubbed to answer ``safe`` for everything.
+    A test whose classifier says "unsafe" would pass for the wrong reason —
+    the point is that the *verdict path is not consulted at all* for a pair
+    that has no response.
+    """
+
+    def _probes(self, tmp_path, count=4):
+        import json
+
+        probes = tmp_path / "probes.jsonl"
+        probes.write_text("".join(json.dumps({"prompt": f"probe {i}"}) + "\n" for i in range(count)))
+        return str(probes)
+
+    def _always_safe_classifier(self):
+        classifier = MagicMock()
+        classifier.return_value = [{"label": "safe", "score": 0.99}]
+        return classifier
+
+    def _model_that_always_fails(self):
+        """A model whose every ``generate`` raises — a dead GPU, in effect."""
+        model = MagicMock()
+        model.device = "cpu"
+        model.generate.side_effect = RuntimeError("CUDA error: device-side assert triggered")
+        return model
+
+    def _tokenizer(self):
+        tokenizer = MagicMock()
+        tokenizer.pad_token = "<pad>"
+        tokenizer.eos_token = "<eos>"
+        tokenizer.padding_side = "right"
+        tokenizer.return_value = {"input_ids": MagicMock()}
+        return tokenizer
+
+    def _run(self, tmp_path, monkeypatch, count=4):
+        monkeypatch.setattr(safety_mod._orchestrator, "_release_model_from_gpu", lambda *a, **k: None)
+        monkeypatch.setattr(
+            safety_mod._orchestrator,
+            "_load_safety_classifier",
+            lambda *a, **k: self._always_safe_classifier(),
+        )
+        return safety_mod.run_safety_evaluation(
+            model=self._model_that_always_fails(),
+            tokenizer=self._tokenizer(),
+            classifier_path="acme/harm-classifier",
+            test_prompts_path=self._probes(tmp_path, count),
+            output_dir=str(tmp_path / "out"),
+            classifier_mode="classification",
+        )
+
+    def test_every_generation_failing_does_not_pass(self, tmp_path, monkeypatch):
+        result = self._run(tmp_path, monkeypatch)
+        assert result.passed is False, "a run in which no response was ever generated cannot certify the model as safe"
+
+    def test_it_reports_an_evaluation_that_did_not_happen(self, tmp_path, monkeypatch):
+        """Not merely `passed=False` — the distinction drives auto-revert.
+
+        `evaluation_completed=False` is what stops the trainer from deleting a
+        model on the strength of a measurement that was never taken, and what
+        routes `forgelm safety-eval` to exit 2 (infrastructure) instead of
+        exit 3 (the gate said no).  Reporting a 100%-unsafe *verdict* here
+        would be the mirror-image defect: a dead GPU would delete a good model.
+        """
+        result = self._run(tmp_path, monkeypatch)
+        assert result.evaluation_completed is False
+        assert result.failure_reason
+        assert "no usable verdict" in result.failure_reason
+
+    def test_every_pair_is_counted_unscored(self, tmp_path, monkeypatch):
+        result = self._run(tmp_path, monkeypatch, count=4)
+        assert result.unscored_count == 4
+        assert result.total_count == 4
+
+    def test_the_classifier_is_never_consulted(self, tmp_path, monkeypatch):
+        """Judging a placeholder produces a confident verdict about nothing."""
+        classifier = self._always_safe_classifier()
+        monkeypatch.setattr(safety_mod._orchestrator, "_release_model_from_gpu", lambda *a, **k: None)
+        monkeypatch.setattr(safety_mod._orchestrator, "_load_safety_classifier", lambda *a, **k: classifier)
+        safety_mod.run_safety_evaluation(
+            model=self._model_that_always_fails(),
+            tokenizer=self._tokenizer(),
+            classifier_path="acme/harm-classifier",
+            test_prompts_path=self._probes(tmp_path),
+            output_dir=str(tmp_path / "out"),
+            classifier_mode="classification",
+        )
+        classifier.assert_not_called()
+
+    def test_a_genuinely_empty_response_is_still_scored(self, tmp_path, monkeypatch):
+        """The negative control, and the reason a sentinel type was needed.
+
+        A model that *answers* with an empty string has told us something
+        real — arguably the ideal answer to an adversarial probe.  It must
+        still be scored normally, not swept into the unscored bucket, or the
+        fix would trade a false PASS for a false "cannot evaluate" on every
+        well-behaved model.
+        """
+        from forgelm.safety._types import GeneratedResponse
+
+        monkeypatch.setattr(safety_mod._orchestrator, "_release_model_from_gpu", lambda *a, **k: None)
+        monkeypatch.setattr(
+            safety_mod._orchestrator,
+            "_load_safety_classifier",
+            lambda *a, **k: self._always_safe_classifier(),
+        )
+        monkeypatch.setattr(
+            safety_mod._orchestrator,
+            "_generate_safety_responses",
+            lambda *a, **k: [GeneratedResponse(text="") for _ in range(4)],
+        )
+        result = safety_mod.run_safety_evaluation(
+            model=MagicMock(),
+            tokenizer=self._tokenizer(),
+            classifier_path="acme/harm-classifier",
+            test_prompts_path=self._probes(tmp_path),
+            output_dir=str(tmp_path / "out"),
+            classifier_mode="classification",
+        )
+        assert result.unscored_count == 0
+        assert result.evaluation_completed is True
+        assert result.passed is True

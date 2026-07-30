@@ -62,9 +62,11 @@ HF cache, amacına göre bölümlüdür; `HF_HUB_CACHE` set etmek dataset indirm
 |---|---|
 | `0` | İstenen her model / task başarıyla cache'lendi. |
 | `1` | Config hatası — boş `--model`+`--safety`, bozuk model adı, boş `--tasks`, bilinmeyen lm-eval task adı, eksik `[eval]` extra'sı. |
-| `2` | Runtime hatası — HF Hub transport hatası, disk dolu, `huggingface_hub` import bozuk, batch ortasında dataset indirme çökmesi. |
+| `2` | Runtime hatası — HF Hub transport hatası, disk dolu, `huggingface_hub` import bozuk, bir veya daha fazla task dataset'i hazırlanamadı. |
 
 `cache-models`, kısmi-batch hatasını raporlar: audit zinciri `cache.populate_models_failed` event'ini `models_completed=[<şimdiye-kadar-yapılan-liste>]` payload'ı ile kaydeder; böylece operatör çökmeden önce neyin tamamlandığını bilir ve hatalı modeli atlayarak yeniden çalıştırabilir.
+
+`cache-tasks` da aynı şekilde raporlar. `cached: false` ile biten herhangi bir task — indirme hatası ya da lm-eval'in indirilebilir dataset sunmadığı bir task — komutun tamamını `success: false` ile exit `2`'ye düşürür ve hata zarfı per-task satırları `tasks` altında korur. **0.11'de değişti:** 0.10'a kadar bu hatalar `tasks[].error`'a yazılıyor, komut yine 0 ile çıkıyor ve `cache.populate_tasks_completed` logluyordu; `jq -e '.success'` ile gate eden bir CI job'ı bu yüzden eksik bir cache'i paketleyip air-gap'li host'a gönderiyordu.
 
 ## Üretilen audit event'leri
 
@@ -75,7 +77,8 @@ HF cache, amacına göre bölümlüdür; `HF_HUB_CACHE` set etmek dataset indirm
 | `cache.populate_models_failed` | Bir veya daha fazla model indirme hatası (transport, disk-full, HF auth). | Tüm `requested` alanları + `models_completed`, `error_class`, `error_message` | 12 |
 | `cache.populate_tasks_requested` | `cache-tasks` invocation başlar. | `tasks`, `cache_dir` | 12 |
 | `cache.populate_tasks_completed` | Her lm-eval task dataset'i başarıyla hazırlandı. | Tüm `requested` alanları + `count` | 12 |
-| `cache.populate_tasks_failed` | Bilinmeyen task adı VEYA dataset indirme hatası. | Tüm `requested` alanları + `tasks_completed`, `error_class`, `error_message` | 12 |
+| `cache.populate_tasks_failed` | Bilinmeyen task adı VEYA hiçbir task hazırlanamadı. | Tüm `requested` alanları + `tasks_completed`, `error_class`, `error_message` (enumeration hatası) veya `tasks_cached`, `tasks_failed`, `tasks_unavailable` (hiçbiri hazırlanamadı) | 12 |
+| `cache.populate_tasks_partial` | Bazı task'lar hazırlandı, bazıları hazırlanmadı. | Tüm `requested` alanları + `tasks_cached`, `tasks_failed`, `tasks_unavailable` | 12 |
 
 Audit-logger inşası **best-effort**'tur: bağlı stage makinesinde `FORGELM_OPERATOR` set edilmemiş bir operatör debug-seviyesinde bir not görür ve çalıştırma audit zinciri olmadan devam eder. Cache subcommand'larının değeri disk üzerindeki artefaktlardadır, audit zincirinde değil. Ayna girişler: [`audit_event_catalog-tr.md`](audit_event_catalog-tr.md) §Air-gap ön-cache.
 

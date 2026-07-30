@@ -229,6 +229,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `judge_model_revision` | string | `null` | Pin a **local** judge model to an HF Hub commit SHA or ref. Rejected alongside `judge_api_key_env` (the API judge loads nothing). **Honoured today** — pins the judge tokenizer and weights at the same commit. See [Hub revision pinning](#hub-revision-pinning) |
 | `eval_dataset` | string | `"eval_prompts.jsonl"` | Evaluation prompts file |
 | `min_score` | float | `5.0` | Minimum average score (1-10) |
+| `min_valid_fraction` | float | `0.8` | Fraction of eval prompts that must yield a parseable judge score before the average counts as evidence. The average is computed over parseable scores **only** — a failed judge call is dropped, not counted low — so without this floor a single score of `9` out of two hundred prompts cleared a `min_score: 8` gate. Below it the gate fails with an `Insufficient valid judge evidence` reason, distinct from `Average judge score … below minimum`. `0.0` restores the pre-0.11 behaviour. |
 | `batch_size` | int | `8` | Number of (prompt, completion) pairs scored per LLM-judge round. `1` disables batching. |
 | `include_eval_samples` | bool | `false` | Persist raw eval `prompt`, `response`, and judge `reason` strings to `judge_results.json`. **Off by default** for GDPR / EU AI Act Art. 10 privacy — judge reasoning can quote PII from the eval set. Opt in only for debugging. |
 

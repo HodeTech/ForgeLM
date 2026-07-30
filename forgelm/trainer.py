@@ -1990,6 +1990,12 @@ class ForgeTrainer:
             judge_model=judge_cfg.judge_model,
             judge_api_key=api_key,
             min_score=judge_cfg.min_score,
+            # Direct attribute access, matching min_score/batch_size rather than
+            # the ``getattr`` used for the genuinely-optional fields below: this
+            # is a required scalar with a schema default, and a getattr fallback
+            # would let the gate's evidence floor silently diverge from the
+            # schema if that default were ever retuned.
+            min_valid_fraction=judge_cfg.min_valid_fraction,
             output_dir=output_dir,
             api_base=getattr(judge_cfg, "judge_api_base", None),
             batch_size=judge_cfg.batch_size,

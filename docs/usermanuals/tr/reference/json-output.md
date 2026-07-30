@@ -616,10 +616,37 @@ Wave 2b Phase 35 — lm-evaluation-harness task dataset cache'ini önceden doldu
 
 | Anahtar | Tip | Notlar |
 |---|---|---|
-| `tasks` | list[object] | Her task için bir entry; `cached: false` + non-null `error` per-task best-effort'tür (batch devam eder). |
+| `tasks` | list[object] | Her task için bir entry: `cached` ve `error`. Hata zarfında da bulunur; yani non-zero çıkan bir batch hangi task'ların eksik olduğunu yine de söyler. |
 | `cache_dir` | str | Operatörün `--output`'u veya env-resolved (`HF_DATASETS_CACHE > HF_HOME/datasets > ~/.cache/huggingface/datasets` — Hub chain'inden ayrı *Datasets* chain'idir). |
 
-**Exit kodu:** `0` = enumeration başarılı (per-task download hataları `tasks[].error`'da raporlanır ama batch'i fail etmez); `1` = config hatası (boş `--tasks`, bilinmeyen task, eksik `[eval]` extra); `2` = runtime hatası (broken environment / mid-batch failure).
+**Kısmi batch bir hatadır.** Herhangi bir task `cached: false` ile biterse —
+indirme hatası ya da lm-eval'in indirilebilir bir dataset sunmadığı bir task —
+komut `success: false` verir ve `2` ile çıkar; per-task satırlar hata zarfının
+`tasks` anahtarında döner. Disk üzerindeki cache eksiktir ve transfer
+edilmemelidir.
+
+Komutun varlık nedeni budur: air-gap'li bir host'ta ikinci şans yoktur.
+[GitHub'daki air-gap kılavuzu](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/air_gap_deployment-tr.md) bundle'lamadan önce
+`jq -e '.success'` ile gate eder ve bu gate ancak yarı dolu bir cache'i
+kırmızıya çevirdiğinde bir işe yarar.
+
+> **0.11'de değişti.** 0.10'a kadar per-task indirme hataları `tasks[].error`
+> içinde raporlanıyor ama batch yine `success: true` ve exit `0` döndürüyor,
+> audit log da `cache.populate_tasks_completed` yazıyordu. Belgelenmiş örneği
+> izleyen bir CI job'ı bu yüzden boş bir dataset cache'ini yeşil bir gate ile
+> paketleyip gönderiyordu. Bilerek eksik bir set stage etmek için eski
+> davranışa dayanıyorsanız, `success` üzerinden dallanmak yerine exit-2
+> zarfındaki `tasks[]`'i okuyun.
+
+**Exit kodu:** `0` = her task hazırlandı; `1` = config hatası (boş `--tasks`,
+bilinmeyen task, eksik `[eval]` extra); `2` = bir veya daha fazla task
+hazırlanamadı ya da bozuk ortam.
+
+**Audit olayları:** hepsi hazırlandı → `cache.populate_tasks_completed`; bir
+kısmı hazırlandı → `cache.populate_tasks_partial`; hiçbiri hazırlanmadı →
+`cache.populate_tasks_failed`. Bu ayrım, append-only log'u okuyan bir
+denetçinin "hiçbir şey inmedi" ile "arşiv transfer edilebilir görünüyor ama
+veri eksik" durumlarını ayırt edebilmesi içindir.
 
 ## `forgelm safety-eval`
 

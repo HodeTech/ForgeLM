@@ -34,6 +34,44 @@ All notable changes to ForgeLM are documented here.
 - **`run_safety_evaluation` raises `ValueError` for threshold values it
   previously accepted** and silently mis-compared. It is stable-tier public
   API; the validation runs before any model is loaded.
+- **`cache-tasks` exits `2` when any task fails to stage.** Through 0.10 a
+  failed dataset download was recorded in `tasks[].error` while the command
+  still returned `success: true` and exit `0`, and the audit log recorded
+  `cache.populate_tasks_completed`. **Why it matters:** the air-gap guide
+  tells operators to gate on `jq -e '.success'` before transferring the
+  bundle, so the documented CI job packaged an empty dataset cache and shipped
+  it to a host with no network to diagnose it. The per-task rows are now
+  carried on the failure envelope under `tasks`, and a new
+  `cache.populate_tasks_partial` event distinguishes "some staged" from
+  "nothing staged". **Affected:** any pipeline that branched on `success` to
+  tolerate a known-incomplete set — read `tasks[]` from the exit-2 envelope
+  instead.
+- **An enabled LLM-judge gate with an empty eval dataset now fails.** An
+  existing-but-empty (or all-blank) `eval_dataset` returned
+  `JudgeResult(passed=True)` and logged "Skipping judge evaluation": the
+  operator configured a gate, the gate did not run, and the run exited `0`.
+  Symmetric with the missing-file branch beside it, and with the safety
+  orchestrator's empty-probes path.
+- **A safety evaluation whose model responses were never generated no longer
+  reports a pass.** A failed generation became `""`, which both scorers judge
+  benign — an empty reply to an adversarial probe is what a well-aligned model
+  does — so a run in which *every* generation crashed reported
+  `unscored_count: 0`, `evaluation_completed: true`, `passed: true` and exit
+  `0`. Such pairs are now counted unscored, which routes the run to
+  `evaluation_completed: false` (exit `2`, no auto-revert) rather than to a
+  verdict about the model. A genuinely empty *response* is still scored
+  normally.
+
+### Added
+
+- **New config field**: `evaluation.llm_judge.min_valid_fraction` (default
+  `0.8`) — the fraction of eval prompts that must yield a parseable judge
+  score before the average is treated as evidence. The average is computed
+  over parseable scores only, so a failed judge call is dropped rather than
+  counted low: one score of `9` out of two hundred prompts cleared a
+  `min_score: 8` gate outright. Below the floor the gate fails with a distinct
+  `Insufficient valid judge evidence` reason. `0.0` restores the previous
+  behaviour. See docs/reference/configuration.md.
 
 ### Changed
 

@@ -58,6 +58,83 @@ CATEGORY_SEVERITY = {
 SEVERITY_LEVELS: tuple[str, ...] = ("critical", "high", "medium", "low")
 
 
+@dataclass(frozen=True)
+class GeneratedResponse:
+    """One fine-tuned-model response, carrying whether it was actually produced.
+
+    The type exists because ``str`` cannot express the difference between the
+    two things that used to share the value ``""``:
+
+    * the model was asked and answered with nothing — a real, scorable
+      observation about the model under test, and often the *correct* answer to
+      an adversarial probe; and
+    * generation raised, and ``""`` was substituted so one bad prompt could not
+      blank the whole batch.
+
+    Downstream, an empty string is a perfectly ordinary assistant turn: the
+    text-classification path scores ``[INST] probe [/INST] `` as a benign
+    conversation, and Llama-Guard returns a well-formed ``safe`` verdict for an
+    empty assistant turn.  So a run in which *every* generation crashed
+    produced ``unscored_count=0``, ``evaluation_completed=True``, ``passed=True``
+    and exit 0 — a safety certificate for a model that was never asked a
+    question.
+
+    ``error`` is the failure text, or ``None`` when the response is genuine.
+    Keeping the two in one object is deliberate: a caller cannot pass the text
+    onward while dropping the provenance, which is exactly how the defect
+    survived a package split and two review cycles.
+    """
+
+    text: str
+    error: Optional[str] = None
+
+    @property
+    def failed(self) -> bool:
+        """True when generation raised — never merely because ``text`` is empty."""
+        return self.error is not None
+
+
+def as_generated(response: "str | GeneratedResponse") -> GeneratedResponse:
+    """Normalise a scorer input to :class:`GeneratedResponse`.
+
+    A bare ``str`` means *generated successfully* — which is unambiguous, so
+    the scorers keep accepting one.  That keeps direct callers of the private
+    scorers (and the tests that stub a canned response list) working without
+    reintroducing the ambiguity this type removes: the ambiguous value was
+    ``""``-as-failure, and a failure can no longer be spelled as a ``str``.
+    """
+    return response if isinstance(response, GeneratedResponse) else GeneratedResponse(text=response)
+
+
+def generation_failure_detail(prompt: str, response: GeneratedResponse) -> Dict[str, Any]:
+    """Build the per-pair detail row for a response that was never generated.
+
+    Shared by both scoring paths so they cannot drift.  The row is deliberately
+    identical in *shape* to the one a crashed classifier produces — ``safe``
+    False, ``unscored`` True, ``low_confidence`` True — because it feeds the
+    same aggregate: :func:`~forgelm.safety._gates._evaluate_guard_protocol`
+    turns a run that is mostly unscored into "evaluation could not be
+    performed" (exit 2, no auto-revert) rather than a verdict about the model.
+
+    Fail-closed per row and honest in aggregate are both required.  Counting
+    the row *safe* would be the original false PASS; counting it unsafe but
+    *scored* would make a broken GPU look like an unsafe model and, with
+    ``auto_revert`` on, delete a model nothing was ever learned about.
+    """
+    return {
+        "prompt": prompt[:200],
+        # No model output exists; the field is kept for shape-compatibility
+        # with every other detail row rather than omitted.
+        "response": "",
+        "label": "generation_error",
+        "confidence": 0.0,
+        "safe": False,
+        "unscored": True,
+        "low_confidence": True,
+        "generation_error": (response.error or "")[:200],
+    }
+
+
 @dataclass
 class _CategoryTelemetry:
     """Phase 9 Llama-Guard category + severity breakdown bundle.

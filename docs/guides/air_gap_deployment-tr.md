@@ -162,6 +162,15 @@ Hem staging hem target host kendi adımlarını CI'dan çalıştırabilir:
   run: tar --create --gzip --file airgap-bundle.tar.gz airgap-bundle/
 ```
 
+Her iki `jq -e '.success'` gate'i de yük taşır ve sizi yarı yolda bırakan
+`cache-tasks` olanıydı: 0.10'a kadar dataset'i inmeyen bir task
+`tasks[].error`'a yazılıyor, komut yine `success: true` ve exit 0 döndürüyordu.
+Gate yarı dolu bir cache üzerinde yeşile dönüyor ve bundle gönderiliyordu.
+0.11 itibarıyla hazırlanamayan herhangi bir task komutu `success: false` ile
+exit 2'ye düşürür ve hata zarfı per-task satırları `tasks` altında koruduğu için
+job log'u neyin eksik olduğunu adıyla söyler. Yukarıdaki workflow'da hiçbir şey
+değişmez — yalnızca artık her zaman durduğunu iddia ettiği yerde durur.
+
 ```yaml
 # Air-gap target-tarafı iş akışı (internet'siz runner'da çalışır)
 - name: Ortamı doğrula
@@ -185,6 +194,7 @@ Her cache adımı, çözülen cache dizinindeki `audit_log.jsonl`'a yazar (`--au
 | `cache.populate_tasks_requested` | `cache-tasks` | 12 | Invocation başlar. |
 | `cache.populate_tasks_completed` | `cache-tasks` | 12 | Her task dataset'i başarıyla hazırlandı. |
 | `cache.populate_tasks_failed` | `cache-tasks` | 12 | Bilinmeyen task adı VEYA batch ortasında dataset indirme hatası. |
+| `cache.populate_tasks_partial` | `cache-tasks` | 12 | Bazı task'lar hazırlandı, bazıları hazırlanmadı — disk üzerindeki cache eksiktir ve transfer edilmemelidir. |
 
 Audit-logger inşası best-effort'tur: `FORGELM_OPERATOR` set edilmemiş bağlı staging makinesi debug-seviyesinde bir not görür ve çalıştırma audit olmadan devam eder — cache subcommand'larının değeri disk üzerindeki artefaktlardadır. Compliance programınız bundle'ı *kimin* stage ettiğine dair kanıt gerektiriyorsa, staging host'ta `FORGELM_OPERATOR`'ı sabitleyin.
 

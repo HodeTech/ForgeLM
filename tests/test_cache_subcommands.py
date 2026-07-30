@@ -691,3 +691,152 @@ class TestCacheFacadeReExports:
             "_walk_directory_size",
         ):
             assert hasattr(_cli_facade, name), f"forgelm.cli must re-export {name!r}"
+
+
+class TestCacheTasksVerdictMatrix:
+    """`cache-tasks` must not report success for a cache it did not populate.
+
+    ``_prepare_one_task`` converts every per-task exception into a
+    ``cached=False`` row, which makes the ``except`` wrapping the loop
+    structurally dead — the loop body cannot raise. So the aggregating caller
+    emitted ``cache.populate_tasks_completed``, ``success: true`` and exit 0
+    for a batch in which every download had failed.
+
+    That matters because of what this command is *for*. The air-gap guide
+    tells operators to gate on ``jq -e '.success'`` before transferring the
+    bundle to a restricted host. A green gate over an empty dataset cache
+    ships the archive anyway, and the failure resurfaces days later on the
+    air-gapped machine as an inscrutable training error, with no network to
+    diagnose it.
+
+    Decision C-5: a partial batch is a hard failure, not a warning.
+    """
+
+    def _run(self, tmp_path, outcomes, output_format="json"):
+        """Drive the real dispatcher with a task dict whose datasets behave per `outcomes`.
+
+        `outcomes` maps task name -> None (downloads fine) or an Exception to
+        raise from ``download_and_prepare``.
+        """
+        from forgelm.cli.subcommands import _cache
+
+        task_dict = {}
+        for name, outcome in outcomes.items():
+            dataset = NonCallableMagicMock()
+            if outcome is not None:
+                dataset.download_and_prepare.side_effect = outcome
+            task = NonCallableMagicMock()
+            task.dataset = dataset
+            task_dict[name] = task
+
+        fake_tasks = MagicMock()
+        fake_tasks.get_task_dict = MagicMock(return_value=task_dict)
+        with patch.dict("sys.modules", {"lm_eval": MagicMock(), "lm_eval.tasks": fake_tasks}):
+            args = _build_args(
+                tasks=",".join(outcomes),
+                output=str(tmp_path / "cache"),
+                audit_dir=str(tmp_path / "audit"),
+            )
+            with pytest.raises(SystemExit) as ei:
+                _cache._run_cache_tasks_cmd(args, output_format=output_format)
+            return ei.value.code
+
+    @staticmethod
+    def _events(tmp_path):
+        log = tmp_path / "audit" / "audit_log.jsonl"
+        if not log.exists():
+            return []
+        return [json.loads(line)["event"] for line in log.read_text().splitlines() if line.strip()]
+
+    def test_zero_of_n_exits_two(self, tmp_path, capsys):
+        code = self._run(tmp_path, {"a": OSError("network unreachable"), "b": OSError("network unreachable")})
+        assert code == 2, "a batch that staged nothing cannot exit 0"
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+
+    def test_zero_of_n_logs_failed_not_completed(self, tmp_path, capsys):
+        self._run(tmp_path, {"a": OSError("boom"), "b": OSError("boom")})
+        capsys.readouterr()
+        events = self._events(tmp_path)
+        assert "cache.populate_tasks_failed" in events
+        assert "cache.populate_tasks_completed" not in events, (
+            "recording a failed download as `completed` in an append-only log is an Art. 12 evidence defect"
+        )
+
+    def test_partial_batch_exits_two(self, tmp_path, capsys):
+        code = self._run(tmp_path, {"ok": None, "bad": OSError("403 from the hub")})
+        assert code == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+
+    def test_partial_batch_logs_its_own_event(self, tmp_path, capsys):
+        """`_partial` is distinct from `_failed` on purpose.
+
+        "Nothing landed" and "some landed, the bundle on disk is incomplete"
+        are different situations for whoever reads the log afterwards — the
+        second produces a transferable-looking archive that is missing data.
+        """
+        self._run(tmp_path, {"ok": None, "bad": OSError("403")})
+        capsys.readouterr()
+        events = self._events(tmp_path)
+        assert "cache.populate_tasks_partial" in events
+        assert "cache.populate_tasks_completed" not in events
+
+    def test_the_failure_envelope_still_names_the_tasks(self, tmp_path, capsys):
+        """A JSON consumer must learn *which* tasks are missing, not just that some are."""
+        self._run(tmp_path, {"ok": None, "bad": OSError("403 from the hub")})
+        payload = json.loads(capsys.readouterr().out)
+        by_name = {t["name"]: t for t in payload["tasks"]}
+        assert by_name["ok"]["cached"] is True
+        assert by_name["bad"]["cached"] is False
+        assert "403 from the hub" in by_name["bad"]["error"]
+        assert "403 from the hub" in payload["error"]
+
+    def test_full_success_is_unchanged(self, tmp_path, capsys):
+        """The negative control — a healthy batch must still exit 0."""
+        code = self._run(tmp_path, {"a": None, "b": None})
+        assert code == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is True
+        assert all(t["cached"] for t in payload["tasks"])
+        assert "cache.populate_tasks_completed" in self._events(tmp_path)
+
+    def test_text_mode_prints_the_same_per_task_detail(self, tmp_path, capsys):
+        """Text-mode operators must not get strictly less than `--json` does."""
+        code = self._run(tmp_path, {"ok": None, "bad": OSError("403 from the hub")}, output_format="text")
+        assert code == 2
+        combined = capsys.readouterr()
+        out = combined.out + combined.err
+        assert "ok: ok" in out
+        assert "bad: FAILED" in out
+
+    def test_json_failure_emits_exactly_one_document(self, tmp_path, capsys):
+        """The air-gap guide pipes stdout into `jq`; two documents break it."""
+        self._run(tmp_path, {"ok": None, "bad": OSError("403")})
+        out = capsys.readouterr().out
+        json.loads(out)  # raises if a second document was appended
+
+    def test_a_task_exposing_no_dataset_is_not_a_silent_pass(self, tmp_path, capsys):
+        """`cached=False, error=None` still means the bundle is incomplete.
+
+        Nothing raised — lm-eval simply exposed no downloadable dataset for
+        the task — but for the one purpose this command serves, an archive
+        that must be complete before it travels, an absent dataset is missing
+        data just the same. It is named separately in the message so the
+        operator can tell lm-eval surface drift from a network failure.
+        """
+        from forgelm.cli.subcommands import _cache
+
+        task = NonCallableMagicMock()
+        task.dataset = None
+        fake_tasks = MagicMock()
+        fake_tasks.get_task_dict = MagicMock(return_value={"weird": task})
+        with patch.dict("sys.modules", {"lm_eval": MagicMock(), "lm_eval.tasks": fake_tasks}):
+            args = _build_args(tasks="weird", output=str(tmp_path / "cache"), audit_dir=str(tmp_path / "audit"))
+            with pytest.raises(SystemExit) as ei:
+                _cache._run_cache_tasks_cmd(args, output_format="json")
+        assert ei.value.code == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert "no downloadable dataset exposed by lm-eval" in payload["error"]
+        assert "weird" in payload["error"]

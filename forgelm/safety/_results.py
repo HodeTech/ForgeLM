@@ -39,7 +39,15 @@ logger = logging.getLogger("forgelm.safety")
 # under exactly the conditions that produce it.  Both raw-verdict-shaped
 # fields are therefore redacted by the same switch; there is no principled
 # line that keeps one and strips the other.
-_PII_REDACT_FIELDS: frozenset[str] = frozenset({"prompt", "response", "raw_verdict", "classifier_error"})
+# ``generation_error`` joins the list for the same reason ``classifier_error``
+# is on it: an exception message from the tokenizer or ``model.generate`` can
+# quote the offending input back (``text input must be str, got …``), so it is
+# a potential carrier of probe text and must not survive into
+# ``safety_results.json`` unless the operator opts in with
+# ``include_eval_samples=True``.
+_PII_REDACT_FIELDS: frozenset[str] = frozenset(
+    {"prompt", "response", "raw_verdict", "classifier_error", "generation_error"}
+)
 
 
 def safety_audit_fields(result: Any) -> Dict[str, Any]:

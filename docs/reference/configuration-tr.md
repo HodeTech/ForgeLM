@@ -228,6 +228,7 @@ training:
 | `judge_model_revision` | string | `null` | **Yerel** judge modelini bir HF Hub commit SHA'sına veya ref'ine sabitle. `judge_api_key_env` ile birlikte reddedilir (API judge hiçbir şey yüklemez). **Bugün uygulanıyor** — judge tokenizer'ını ve ağırlıklarını aynı commit'e sabitler. Bkz. [Hub revision pinleme](#hub-revision-pinleme) |
 | `eval_dataset` | string | `"eval_prompts.jsonl"` | Değerlendirme prompt dosyası |
 | `min_score` | float | `5.0` | Minimum ortalama puan (1-10) |
+| `min_valid_fraction` | float | `0.8` | Ortalamanın kanıt sayılabilmesi için parse edilebilir judge puanı üretmesi gereken eval prompt oranı. Ortalama **yalnızca** parse edilebilen puanlar üzerinden hesaplanır — başarısız bir judge çağrısı düşük sayılmaz, atılır — dolayısıyla bu taban olmadan iki yüz prompt içinden tek bir `9` puanı `min_score: 8` kapısını geçiyordu. Bu oranın altında kapı, `Average judge score … below minimum`'dan ayrı bir `Insufficient valid judge evidence` gerekçesiyle başarısız olur. `0.0`, 0.11 öncesi davranışa döner. |
 | `batch_size` | int | `8` | LLM-hakim turunda puanlanan (prompt, completion) çift sayısı. `1` batching'i devre dışı bırakır. |
 | `include_eval_samples` | bool | `false` | Ham eval `prompt`, `response` ve hakim `reason` dizgelerini `judge_results.json`'a yazar. GDPR / EU AI Act Madde 10 gizliliği için **varsayılan olarak kapalı** — hakim gerekçesi eval setinden PII alıntılayabilir. Yalnızca hata ayıklama için açın. |
 

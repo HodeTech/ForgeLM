@@ -162,6 +162,15 @@ Both staging and target hosts can run their respective steps from CI:
   run: tar --create --gzip --file airgap-bundle.tar.gz airgap-bundle/
 ```
 
+Both `jq -e '.success'` gates are load-bearing, and `cache-tasks` is the one
+that used to let you down: through 0.10 a task whose dataset failed to download
+was recorded in `tasks[].error` while the command still returned
+`success: true` and exit 0. The gate went green over a half-populated cache and
+the bundle shipped. As of 0.11 any task that did not stage makes the command
+exit 2 with `success: false`, and the failure envelope keeps the per-task rows
+under `tasks` so the job log names what is missing. Nothing about the workflow
+above changes — it simply now stops where it always claimed to.
+
 ```yaml
 # Air-gapped target-side workflow (runs on a runner with no internet)
 - name: Validate environment
@@ -185,6 +194,7 @@ Every cache step writes to `audit_log.jsonl` in the resolved cache directory (ov
 | `cache.populate_tasks_requested` | `cache-tasks` | 12 | Invocation begins. |
 | `cache.populate_tasks_completed` | `cache-tasks` | 12 | Every task dataset prepared successfully. |
 | `cache.populate_tasks_failed` | `cache-tasks` | 12 | Unknown task name OR dataset download failure mid-batch. |
+| `cache.populate_tasks_partial` | `cache-tasks` | 12 | Some tasks staged, some did not — the on-disk cache is incomplete and must not be transferred. |
 
 Audit-logger construction is best-effort: a connected staging machine without `FORGELM_OPERATOR` set sees a debug-level note and the run continues without auditing — the cache subcommands' value is in the on-disk artefacts. Pin `FORGELM_OPERATOR` on the staging host if your compliance program requires evidence of *who* staged the bundle.
 
