@@ -46,7 +46,7 @@ Each skill's `SKILL.md` has the full checklist. Follow it; don't skip steps to s
 
 ```text
 ForgeLM/
-├── forgelm/                 # Source code: ~21 single-file modules + 4 sub-packages
+├── forgelm/                 # Source code: 28 single-file modules + 4 code sub-packages
 │   ├── cli/                 # CLI package (Phase 15 split): _parser, _dispatch,
 │   │                        # _exit_codes, subcommands/{ingest, audit, chat,
 │   │                        # export, deploy, quickstart, doctor, cache,
@@ -69,14 +69,15 @@ ForgeLM/
 │   │                        # _score_classification, _score_generation,
 │   │                        # _gates, _results, _orchestrator
 │   ├── compliance.py        # EU AI Act Articles 9-17 + Annex IV + GDPR purge / reverse-pii primitives
-│   ├── webhook.py           # Slack/Teams notifications (5-event vocabulary)
+│   ├── webhook.py           # Slack/Teams notifications (8-event vocabulary)
 │   ├── grpo_rewards.py      # Built-in GRPO format/length shaping reward fallback
 │   ├── _http.py             # SSRF-guarded HTTP chokepoint (safe_post / safe_get)
 │   ├── _version.py          # `__version__` + `__api_version__` (decoupled)
-│   └── ...                  # benchmark, judge, merging, synthetic,
+│   └── ...                  # benchmark, judge, merging, synthetic, verify,
 │                            # quickstart, model_card, fit_check, deploy, chat,
-│                            # export, inference, results, utils
-├── tests/                   # 70 test modules; count grows over time (run `pytest --collect-only -q` for current)
+│                            # export, inference, results, utils, __main__,
+│                            # _pypdf_normalise, _script_sanity, _strip_pattern
+├── tests/                   # 124 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
 ├── tools/                   # CI guards: check_anchor_resolution,
 │                            # check_bilingual_parity, check_cli_help_consistency,
 │                            # check_field_descriptions, check_no_analysis_refs,
@@ -110,7 +111,7 @@ These come from the standards documents; summarized here for quick reference:
 1. **Config-driven.** Behaviour is determined by validated YAML. No env-var sniffing for behaviour (only for secrets). No hardcoded feature flags.
 2. **Reliability before features.** Every new capability ships with tests, docs, and CI coverage. "I'll add tests later" = the PR is not ready.
 3. **Optional dependencies as extras.** Heavy deps (`bitsandbytes`, `unsloth`, `deepspeed`, `lm-eval`, `wandb`, `mergekit`) live under `[project.optional-dependencies]` and raise `ImportError` with an install hint when missing.
-4. **Exit codes are a public contract.** 0/1/2/3/4/5 — see [error-handling.md](docs/standards/error-handling.md) for the full table (`0=success`, `1=config`, `2=training`, `3=eval-failure`, `4=awaiting-approval`, `5=wizard-cancelled`). CI/CD pipelines depend on these.
+4. **Exit codes are a public contract.** 0/1/2/3/4/5/6 — see [error-handling.md](docs/standards/error-handling.md) for the full table (`0=success`, `1=config`, `2=training`, `3=eval-failure`, `4=awaiting-approval`, `5=wizard-cancelled`, `6=integrity-failure`). The canonical source is `forgelm/cli/_exit_codes.py`'s `_PUBLIC_EXIT_CODES`. Code `6` matters most in CI: `1` means the verifier never got to compare (missing path, no secret), while `6` means it compared and the artefact did **not** match — a security event, not an operator typo. Wire alarms to `6`. CI/CD pipelines depend on these.
 5. **Append-only audit log.** Every decision gate emits a structured event. Never edit or delete entries.
 6. **No silent failures.** No bare `except:`, no `except Exception: pass`, no `|| true` in CI, no logging-and-swallowing for anything except explicitly-non-fatal paths (webhooks, cleanup).
 7. **Bilingual where it counts.** User-facing docs are EN + TR mirrors. Code, CLI output, logs, config keys are English only.
@@ -193,7 +194,8 @@ Default workflow for a non-trivial change:
    `check_usermanual_schema_drift.py --strict` — validates that every
    fenced YAML key under `docs/usermanuals/` resolves against the real
    `ForgeConfig` schema, catching fabricated-field examples that would
-   fail `--dry-run`). The first four are the historical gauntlet;
+   fail `--dry-run`). The four after the import-origin guard are the
+   historical gauntlet;
    the three doc guards (Wave 3 / Wave 4 / Wave 5 additions) catch
    bilingual structural drift, broken markdown anchors, and CLI ↔ docs
    help-text drift before the PR opens.  Its companion, the

@@ -65,7 +65,7 @@ class ConfigError(Exception):
 | Situation | Do |
 |---|---|
 | Inside `config.py`, `trainer.py`, `model.py`, etc. | **Raise.** Let the caller decide. |
-| Inside `cli.py` dispatch | **Log + `sys.exit(N)`.** CLI is the top level. |
+| Inside the `forgelm/cli/` package (dispatch, parser, subcommands) | **Log + `sys.exit(N)`.** The CLI is the top level. Phase 15 split the monolithic `cli.py` into `forgelm/cli/`; the rule follows the package, not the old filename. |
 | Inside tests | **Assert.** Tests are tests. |
 | Optional dep missing | **Raise `ImportError`** with install hint. See [architecture.md](architecture.md#3-optional-dependencies-are-extras-never-silent-imports). |
 
@@ -291,14 +291,28 @@ Each subcommand's success envelope wraps the result in a per-command collection 
 Every custom exception and every non-zero exit path must have a test. See [testing.md](testing.md) for structure. Pattern:
 
 ```python
+import subprocess
+import sys
+
+
 def test_invalid_trainer_type_raises_config_error(tmp_path):
     config_path = tmp_path / "bad.yaml"
     config_path.write_text("training:\n  trainer_type: spo\n...")
 
     result = subprocess.run(
-        ["forgelm", "--config", str(config_path), "--dry-run"],
+        [sys.executable, "-m", "forgelm", "--config", str(config_path), "--dry-run"],
         capture_output=True, text=True
     )
     assert result.returncode == 1  # EXIT_CONFIG_ERROR
     assert "trainer_type" in result.stderr
 ```
+
+> **Never spawn the bare `forgelm` console script here.** A console script's
+> `sys.path[0]` is its own `bin/` directory, never the current working
+> directory, so `["forgelm", ...]` runs whatever is installed in
+> `site-packages` — which may be a stale non-editable install of a weeks-old
+> release. The test then passes against code the author never wrote.
+> `[sys.executable, "-m", "forgelm", ...]` puts the cwd first on `sys.path`,
+> so it exercises the checkout. The one deliberate exception is post-publish
+> verification, where testing the *installed* artefact is the whole point —
+> see the `cut-release` skill.

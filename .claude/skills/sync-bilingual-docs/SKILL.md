@@ -5,7 +5,16 @@ description: Use this skill when editing any docs/reference/* or other bilingual
 
 # Skill: Keep Bilingual Docs in Sync
 
-ForgeLM ships user-facing docs in English + Turkish. The mirrors must stay in structural sync or readers switching languages get confused and CI (future) will complain.
+ForgeLM ships user-facing docs in English + Turkish. The mirrors must stay in structural sync or readers switching languages get confused — and **CI enforces this today**, so a one-sided edit fails the build:
+
+| Guard | What it pins |
+|---|---|
+| `tools/check_bilingual_parity.py --strict` | H2/H3/H4 heading spine between every registered `*.md` / `*-tr.md` pair |
+| `tools/check_bilingual_code_blocks.py --strict` | fenced code blocks and their languages match across the pair |
+| `tools/check_tr_links_prefer_mirror.py --strict` | a `-tr.md` page links the `-tr.md` sibling when one exists (sole exemption: the `**Ayna:**` backlink) |
+| `tools/check_anchor_resolution.py --strict` | every `#anchor` link resolves in the target file |
+
+None of these compares *meaning*. Matching headings over diverging prose passes every one of them, which is how four separate TR meaning-drifts reached readers — reading the Turkish for sense is still the only control that catches those.
 
 ## When to use
 
@@ -117,7 +126,7 @@ grep -E "\]\([^)]+\.md\)" docs/reference/configuration-tr.md | \
 # Should produce no output
 ```
 
-(These aren't enforced by CI yet, but the rules are the same.)
+(The link rule above is enforced by `tools/check_tr_links_prefer_mirror.py --strict` in CI; run it before pushing rather than relying on the grep.)
 
 ## Terminology
 

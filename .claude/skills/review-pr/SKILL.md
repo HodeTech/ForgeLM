@@ -19,7 +19,7 @@ Do **not** use for:
 
 ## The seven-question review
 
-Go through these **in order**. If any answer is "no" or "unclear," block the PR. Question 7 fires only when a regex changes; the other six apply to every PR.
+Go through these **in order**. If any answer is "no" or "unclear," block the PR. Question 7 fires only when a regex changes; the other six apply to every PR. Where the rest of this file says "the six questions", it means those six universal ones.
 
 ### 1. Does it match the architecture?
 
@@ -48,7 +48,7 @@ Check against [docs/standards/error-handling.md](../../../docs/standards/error-h
 
 - [ ] New exit codes (if any) use named constants and appear in the exit-code table
 - [ ] Custom exceptions only if there's a distinct `except` handler
-- [ ] `sys.exit()` only in `cli.py`, not in library modules
+- [ ] `sys.exit()` only inside the `forgelm/cli/` package, not in library modules
 - [ ] No bare `except:`, no `except Exception: pass`
 - [ ] User-facing error messages are specific + actionable + not apologetic
 - [ ] Auto-revert path writes audit log before cleanup
@@ -58,7 +58,7 @@ Check against [docs/standards/error-handling.md](../../../docs/standards/error-h
 Check against [docs/standards/logging-observability.md](../../../docs/standards/logging-observability.md):
 
 - [ ] Module has its own logger (`logger = logging.getLogger("forgelm.X")`)
-- [ ] No `print()` outside `cli.py` JSON-output blocks
+- [ ] No `print()` outside the `forgelm/cli/` package's output blocks
 - [ ] Every `sys.exit(!=0)` preceded by `logger.error(...)`
 - [ ] New decision gates (safety/benchmark/judge) emit audit events
 - [ ] Webhook failures wrapped in try/except, never abort training
@@ -162,12 +162,20 @@ Before clicking "Create PR":
 3. **Grep for `print(` in non-CLI code** — remove or justify.
 4. **Click through each test file** — does each new test actually assert something?
 5. **Click the doc diffs** — renders correctly? Links work?
-6. **Run the one-liner**:
+6. **Run the full local gauntlet** — the canonical command block in the root
+   [`CLAUDE.md`](../../../CLAUDE.md) ("Verify before opening PR"), not a
+   shortened stand-in. It starts:
 
    ```bash
-   ruff format . && ruff check . && pytest tests/ && \
-     forgelm --config config_template.yaml --dry-run
+   python3 tools/check_import_origin.py --strict && \
+     ruff format . && ruff check . && pytest tests/ && \
+     python3 -m forgelm --config config_template.yaml --dry-run && \
+     ...  # every remaining tools/check_*.py guard listed in CLAUDE.md
    ```
+
+   The import-origin guard leads deliberately: it asserts the premise every
+   later step depends on — that the `forgelm` being imported is the checkout
+   you just edited, not a stale install in `site-packages`.
 
 7. **Read your PR description** — does it state the one concern clearly?
 

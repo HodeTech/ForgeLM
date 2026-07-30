@@ -39,7 +39,7 @@ The current template lives at [`.github/pull_request_template.md`](../../.github
 - [ ] `ruff check .` passes
 - [ ] `ruff format --check .` passes
 - [ ] New tests added for new code
-- [ ] `forgelm --config config_template.yaml --dry-run` works
+- [ ] `python3 -m forgelm --config config_template.yaml --dry-run` works
 
 ## Checklist
 - [ ] Code follows `docs/standards/coding.md`
@@ -108,7 +108,7 @@ Trigger: any new or modified `re.compile` / `re.match` / `re.sub` / `re.findall`
 - No two competing unbounded `*` / `+` / `*?` / `+?` over the same character class.
 - No `.*?` + back-reference + `re.DOTALL` (replace with a state machine — see `forgelm/data_audit/_quality.py::_strip_code_fences`).
 - `\s` is `[ \t\n\r\f\v]` — under `re.MULTILINE`, prefer `[ \t]` to keep newlines out of the way.
-- Operator-controlled input → 10K-char pathological-input wall-clock benchmark must stay ≤ 10ms.
+- Operator-controlled input → the pathological-input benchmark must show **roughly linear scaling** across several input sizes, not a wall-clock number. See [regex.md](regex.md#redos-exposure-budget) for the method (median of N runs at 1K / 5K / 10K); that standard is canonical and deliberately refuses a hard millisecond cutoff, because the number a reviewer measures depends on their laptop while the *shape* of the curve does not. Existing ReDoS-regression tests assert ≤ 100 ms / ≤ 1 s on 10K input as a generous safety floor only.
 - Test fixtures with credential-shaped strings built from inert fragments (see `tests/test_data_audit_phase12.py::FAKE_AWS_KEY`).
 
 ## Comment etiquette
@@ -222,8 +222,9 @@ Before pushing, run the full local gauntlet documented in the root
 [`CLAUDE.md`](../../CLAUDE.md) ("Verify before opening PR"). It starts:
 
 ```bash
-ruff format . && ruff check . && pytest tests/ && \
-  forgelm --config config_template.yaml --dry-run && \
+python3 tools/check_import_origin.py --strict && \
+  ruff format . && ruff check . && pytest tests/ && \
+  python3 -m forgelm --config config_template.yaml --dry-run && \
   python3 tools/check_bilingual_parity.py --strict && \
   python3 tools/check_anchor_resolution.py --strict && \
   python3 tools/check_cli_help_consistency.py --strict && \

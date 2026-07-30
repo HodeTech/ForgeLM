@@ -14,7 +14,7 @@ Everything in `forgelm/` serves one of those stages. Anything that doesn't is ou
 ```mermaid
 graph TB
     subgraph Entry["Entry"]
-        CLI[cli.py]
+        CLI[cli/ sub-package]
     end
 
     subgraph Config["Config layer"]
@@ -161,7 +161,7 @@ never silent — they ship as a coherent series with regression tests.
 | `judge.py` | LLM-as-judge evaluation | Safety classification |
 | `compliance.py` | Audit log, manifests, provenance, governance artifacts, GDPR purge / reverse-pii primitives | Runtime policy enforcement |
 | `verify.py` | Artefact verification primitives: Annex IV manifest-hash recomputation, GGUF magic / metadata / SHA-256-sidecar checks, the model-directory integrity walk, and the `is_*_integrity_failure` predicates the four `verify-*` subcommands route exit code `6` on | Audit-log verification (stays beside its writer in `compliance.py`); output formatting and exit-code emission (that's `cli/`) |
-| `webhook.py` | Slack/Teams lifecycle notifications (5-event vocabulary) | Decision-making (just reports) |
+| `webhook.py` | Slack/Teams lifecycle notifications (8-event vocabulary — see [webhook_schema.md](../reference/webhook_schema.md)) | Decision-making (just reports) |
 | `model_card.py` | HF-compatible README generation | Running the model |
 | `merging.py` | TIES/DARE/SLERP/linear | Training |
 | `synthetic.py` | Teacher-student distillation | General generation helpers |
@@ -246,7 +246,7 @@ Checklist before opening the PR:
 3. [ ] If a new module is warranted, does it fit the table above? Add a row.
 4. [ ] Does it need a new optional dependency? Add an extra in `pyproject.toml`.
 5. [ ] Does it have a `tests/test_<module>.py`? See [testing.md](testing.md).
-6. [ ] Is it imported by `trainer.py` or `cli.py` behind config? Runtime features must be config-gated.
+6. [ ] Is it imported by `trainer.py` or the `forgelm/cli/` package behind config? Runtime features must be config-gated.
 
 ## The extras matrix
 

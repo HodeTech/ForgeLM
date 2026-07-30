@@ -110,21 +110,38 @@ def test_no_gpu_path(monkeypatch):
 # Using mock.patch:
 from unittest.mock import patch, MagicMock
 
-@patch("forgelm.safety.pipeline")
+# `forgelm/safety/_classifier.py` imports `pipeline` lazily, inside the
+# function, so patch it at its source module — patching `forgelm.safety.pipeline`
+# does nothing (no such attribute) and the test would pass without exercising
+# anything.
+@patch("transformers.pipeline")
 def test_safety_eval_returns_score(mock_pipeline):
     mock_pipeline.return_value = MagicMock(return_value=[{"label": "safe", "score": 0.98}])
-    result = safety.evaluate(...)
+    result = run_safety_evaluation(...)
     assert result.safety_score > 0.9
 
-# Patching requests:
+# Patching outbound HTTP:
 from unittest.mock import patch
 
+# `forgelm/webhook.py` does NOT call `requests.post` — every outbound request
+# goes through the SSRF-guarded chokepoint `forgelm._http.safe_post`, imported
+# at module load. Patch the name where it is *used*, not where it is defined.
 def test_webhook_failure_doesnt_raise(caplog):
-    with patch("forgelm.webhook.requests.post") as mock_post:
+    with patch("forgelm.webhook.safe_post") as mock_post:
         mock_post.side_effect = requests.RequestException("boom")
         notifier.send(...)  # must not raise
     assert "webhook delivery failed" in caplog.text.lower()
 ```
+
+> **Mock at the name the code resolves at call time.** Both corrections above
+> are the same mistake: a patch target that no longer exists silently
+> intercepts nothing, and the test still passes — green, and measuring
+> nothing. When a module moves or an import is rerouted through a chokepoint,
+> every patch string aimed at the old path becomes a no-op. `mock.patch`
+> raises `AttributeError` for a missing attribute on an existing module, so
+> a target that is merely *wrong* (right module, dead attribute) does fail
+> loudly — but one aimed at a module that still exists and still has that
+> attribute, like `forgelm.webhook.requests`, does not.
 
 ## Assertions
 
@@ -148,7 +165,7 @@ def test_invalid_trainer_type_exit_code(tmp_path, monkeypatch):
     config_path.write_text("training:\n  trainer_type: 'nonexistent'\n...")
     # Use subprocess to get real exit code:
     result = subprocess.run(
-        ["forgelm", "--config", str(config_path), "--dry-run"],
+        [sys.executable, "-m", "forgelm", "--config", str(config_path), "--dry-run"],
         capture_output=True, text=True
     )
     assert result.returncode == 1  # EXIT_CONFIG_ERROR

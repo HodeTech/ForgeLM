@@ -148,11 +148,11 @@ The public roadmap is a release artifact, not a post-release chore:
 ruff check . && ruff format --check .
 pytest tests/ -v
 pytest --cov=forgelm --cov-fail-under=40
-forgelm --config config_template.yaml --dry-run
+python3 -m forgelm --config config_template.yaml --dry-run
 
 # Fresh install smoke:
 python -m pip install -e .
-forgelm --version   # should print the new version
+python3 -m forgelm --version   # should print the new version
 ```
 
 All four must pass. The `--cov-fail-under=40` value tracks the canonical
@@ -191,6 +191,13 @@ workflow completes.
 pip install forgelm==0.4.0 --force-reinstall
 forgelm --version
 ```
+
+> **The bare console script is deliberate here, and only here.** Everywhere
+> else the gauntlet uses `python3 -m forgelm` so it exercises the checkout.
+> This step verifies the *published artefact*: a console script resolves
+> `site-packages`, which is exactly what a user gets. Running `python3 -m
+> forgelm` from a checkout directory would import the source tree and prove
+> nothing about PyPI.
 
 If the install fails or returns the wrong version, investigate the workflow run. Common issues: tag mismatch with pyproject, build artifact missing, PyPI trust not configured.
 
