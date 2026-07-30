@@ -8,9 +8,6 @@ on-disk format and its canonicalisation — see the package docstring.
 
 from __future__ import annotations
 
-# ---------------------------------------------------------------------------
-# Audit-log verification classification
-# ---------------------------------------------------------------------------
 #
 # The verifier itself stays in ``forgelm.compliance`` (see the module
 # docstring above for why).  Only the *classification* predicate lives

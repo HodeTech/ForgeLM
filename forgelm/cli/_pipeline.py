@@ -1637,7 +1637,7 @@ class PipelineOrchestrator:
         # version has ever written; a permanently-dangling pointer made
         # deleted evidence indistinguishable from a writer defect, forcing
         # deletion (archetypal Art. 12 tampering) to route *softer* than
-        # corruption.  See forgelm/verify.py for the reader half.
+        # corruption.  See forgelm/verify/_pipeline_evidence.py for the reader half.
         from ..compliance import ANNEX_IV_ARTEFACT_BASENAME as _EVIDENCE
 
         stage_state.training_manifest = os.path.join(stage_cfg.training.output_dir, "compliance", _EVIDENCE)

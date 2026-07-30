@@ -91,7 +91,7 @@ ANNEX_IV_ARTEFACT_BASENAME = "annex_iv_metadata.json"
 # ``valid=False``, and the CLI has to route them to three different exit
 # codes.  Routing keys off these typed tokens — never off ``reason`` prose —
 # so rewording an operator message cannot silently move a verdict between
-# exit codes (the discipline ``forgelm/verify.py``'s ``is_*_integrity_failure``
+# exit codes (the discipline ``forgelm/verify/``'s ``is_*_integrity_failure``
 # predicates already impose on the sibling verifiers).
 #
 # The classification travels beside the result, out of
@@ -121,7 +121,7 @@ AUDIT_FAILURE_OVERSIZE = "oversize"  # over the byte cap, unread    → CLI exit
 # corroborator below).  Unlike an Annex IV artefact — a single small document —
 # an audit log is append-only and grows with every event across every run that
 # shares an output directory, so the 8 MiB stage/manifest cap in
-# ``forgelm/verify.py`` would refuse legitimate long-lived logs.  32 MiB is
+# ``forgelm/verify/_pipeline_evidence.py`` would refuse legitimate long-lived logs.  32 MiB is
 # roughly 80 000 pipeline events: several orders of magnitude past any real
 # run, and still far below a size whose parsed ``List[str]`` can exhaust
 # memory.  ``verify_audit_log`` deliberately keeps no cap (default ``None``):

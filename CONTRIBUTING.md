@@ -49,11 +49,12 @@ Branch naming: `feat/`, `fix/`, `docs/`, `test/`, `chore/` + short description.
 Edit the code, then run the full validation gauntlet (every guard CI also
 enforces — passing locally means CI will too):
 
+<!-- gauntlet:begin -->
 ```bash
 python3 tools/check_import_origin.py --strict && \
   ruff format . && ruff check . && pytest tests/ && \
   python3 -m forgelm --config config_template.yaml --dry-run && \
-  python3 -m mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py && \
+  python3 -m mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py tests/typing/public_surface_probe.py && \
   python3 tools/check_field_descriptions.py --strict forgelm/config.py && \
   python3 tools/check_http_discipline.py && \
   python3 tools/check_bilingual_parity.py --strict && \
@@ -81,9 +82,11 @@ python3 tools/check_import_origin.py --strict && \
   python3 tools/check_site_chrome_parity.py && \
   python3 tools/check_module_size.py --strict && \
   python3 tools/update_site_version.py --check && \
-  bandit -c pyproject.toml -r forgelm/ -f json -o /tmp/bandit.json || true; \
-  python3 tools/check_bandit.py /tmp/bandit.json
+  BANDIT_JSON=$(mktemp) && \
+  { bandit -c pyproject.toml -r forgelm/ -f json -o "$BANDIT_JSON" || true; } && \
+  python3 tools/check_bandit.py "$BANDIT_JSON"
 ```
+<!-- gauntlet:end -->
 
 **Do not "simplify" `python3 -m forgelm` back to `forgelm`.** A console
 script's `sys.path[0]` is its own `bin/` directory, never the cwd, so
@@ -116,10 +119,11 @@ Push your branch and open a Pull Request against `main`.
 
 ### Project Structure
 
-ForgeLM is a single-package layout: a mix of single-file modules and four
+ForgeLM is a single-package layout: a mix of single-file modules and five
 focused sub-packages (`forgelm/cli/` post-Phase-15 split,
-`forgelm/data_audit/` post-Phase-14 split, `forgelm/wizard/` from Phase 22
-and `forgelm/safety/` from the post-v0.9.1 split) under `forgelm/`, 124 test files
+`forgelm/data_audit/` post-Phase-14 split, `forgelm/wizard/` from Phase 22,
+`forgelm/safety/` from the post-v0.9.1 split and `forgelm/verify/` from
+Phase 16 S1) under `forgelm/`, 124 test files
 under `tests/` (collected-test count grows over time — run
 `pytest --collect-only -q` for current), plus `configs/`, `docs/`, `tools/`
 (CI guards), and `notebooks/`. For the authoritative module-by-module map

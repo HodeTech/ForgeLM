@@ -105,3 +105,9 @@ logs/
 /vllm.yaml
 /endpoint.json
 /*.gguf
+
+# Type-checker / test-runner caches. `.mypy_cache/` in particular is created by
+# the public-surface type gate the gauntlet now tells every contributor to run.
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/

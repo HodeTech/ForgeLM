@@ -17,7 +17,10 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle guard, type-checkers only
+    from .config import ForgeConfig
 
 logger = logging.getLogger("forgelm.synthetic")
 
@@ -47,7 +50,7 @@ class SyntheticDataGenerator:
     - "file": Read responses from a pre-existing file (for offline/reproducible pipelines)
     """
 
-    def __init__(self, config):
+    def __init__(self, config: "ForgeConfig") -> None:
         self.config = config
         self.synth_cfg = config.synthetic
         if not self.synth_cfg or not self.synth_cfg.enabled:

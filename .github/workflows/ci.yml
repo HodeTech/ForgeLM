@@ -76,8 +76,16 @@ jobs:
       # --strict over trainer.py would mean typing the whole transformers/trl
       # surface (library_api.md Q3).  The package's broader internal typing
       # debt is a recorded budget, not a blocker for this gate.
+      #
+      # tests/typing/public_surface_probe.py is what makes the gate see the
+      # surface at all: --follow-imports=silent discards diagnostics inside the
+      # defining modules and __init__.py calls nothing, so before the probe
+      # existed you could strip the annotations off load_config or
+      # verify_integrity and the gate still reported Success.  The probe calls
+      # every forgelm.__all__ callable from an annotated context, so --strict's
+      # --disallow-untyped-calls fires at the call site.  It is never executed.
       - name: Public-surface type gate (mypy --strict)
-        run: mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py
+        run: mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py tests/typing/public_surface_probe.py
 
   # --- Job 2: Test (matrix across Python versions) ---
   test:

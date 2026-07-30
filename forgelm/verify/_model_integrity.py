@@ -1,7 +1,9 @@
 """Model-directory integrity verification (EU AI Act Art. 15).
 
-Owns :class:`VerifyIntegrityResult` and the walk that re-hashes a
-trained model directory against its ``model_integrity.json`` manifest.
+Owns :class:`VerifyIntegrityResult`, the walk that re-hashes a trained model
+directory against its ``model_integrity.json`` manifest, and
+:func:`is_model_integrity_failure` — the structural predicate that routes a
+mismatch to exit ``6`` and an unusable manifest to exit ``1``.
 """
 
 from __future__ import annotations
@@ -9,10 +11,6 @@ from __future__ import annotations
 import json
 import os
 from typing import Any, Dict, List
-
-# ---------------------------------------------------------------------------
-# Model-directory integrity verification (EU AI Act Art. 15)
-# ---------------------------------------------------------------------------
 
 _MANIFEST_NAME = "model_integrity.json"
 

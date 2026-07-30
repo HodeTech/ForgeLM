@@ -110,22 +110,40 @@ def test_no_gpu_path(monkeypatch):
 # Using mock.patch:
 from unittest.mock import patch, MagicMock
 
-# `forgelm/safety/_classifier.py` imports `pipeline` lazily, inside the
-# function, so patch it at its source module — patching `forgelm.safety.pipeline`
-# does nothing (no such attribute) and the test would pass without exercising
-# anything.
-@patch("transformers.pipeline")
-def test_safety_eval_returns_score(mock_pipeline):
-    mock_pipeline.return_value = MagicMock(return_value=[{"label": "safe", "score": 0.98}])
+# Patch the extracted helper, NOT `transformers.pipeline`.
+# `forgelm/safety/_classifier.py` imports `pipeline` lazily inside the
+# function, and `transformers` is a lazy module: `mock.patch("transformers.
+# pipeline")` resolves only when the module happens to be import-cached, which
+# makes the test order-sensitive across pytest sessions and, on a miss, runs
+# the real loader — a multi-GB download inside a unit test. The repo hit this;
+# see the docstring at `tests/test_safety_advanced.py::TestClassifierConversationFormat`.
+def test_safety_eval_returns_score(monkeypatch):
+    import forgelm.safety._classifier as classifier_mod
+
+    monkeypatch.setattr(
+        classifier_mod,
+        "_load_safety_classifier",
+        lambda *a, **kw: MagicMock(return_value=[{"label": "safe", "score": 0.98}]),
+    )
     result = run_safety_evaluation(...)
     assert result.safety_score > 0.9
+
+
+# When the seam under test IS the loader, stub the module instead of the
+# attribute — this is what `tests/test_safety.py` does:
+def test_revision_reaches_the_pipeline():
+    fake_transformers = MagicMock()
+    fake_transformers.pipeline = _recording_pipeline()
+    with patch.dict("sys.modules", {"transformers": fake_transformers}):
+        classifier_mod._load_safety_classifier("acme/harm-classifier", None, SHA)
 
 # Patching outbound HTTP:
 from unittest.mock import patch
 
 # `forgelm/webhook.py` does NOT call `requests.post` — every outbound request
 # goes through the SSRF-guarded chokepoint `forgelm._http.safe_post`, imported
-# at module load. Patch the name where it is *used*, not where it is defined.
+# at module load. Patch the name where it is *used*, not where it is defined:
+# `forgelm.webhook.safe_post`, never `forgelm._http.safe_post`.
 def test_webhook_failure_doesnt_raise(caplog):
     with patch("forgelm.webhook.safe_post") as mock_post:
         mock_post.side_effect = requests.RequestException("boom")
@@ -134,14 +152,31 @@ def test_webhook_failure_doesnt_raise(caplog):
 ```
 
 > **Mock at the name the code resolves at call time.** Both corrections above
-> are the same mistake: a patch target that no longer exists silently
-> intercepts nothing, and the test still passes — green, and measuring
-> nothing. When a module moves or an import is rerouted through a chokepoint,
-> every patch string aimed at the old path becomes a no-op. `mock.patch`
-> raises `AttributeError` for a missing attribute on an existing module, so
-> a target that is merely *wrong* (right module, dead attribute) does fail
-> loudly — but one aimed at a module that still exists and still has that
-> attribute, like `forgelm.webhook.requests`, does not.
+> are the same mistake: a patch target that no longer intercepts anything, in
+> a test that still passes — green, and measuring nothing. When a module moves
+> or an import is rerouted through a chokepoint, every patch string aimed at
+> the old path becomes a no-op.
+>
+> Three specific traps this repository has actually hit:
+>
+> 1. **Lazy third-party modules.** `transformers` resolves `pipeline` through
+>    its own `__getattr__`, so `patch("transformers.pipeline")` works or does
+>    not depending on import order. Patch a ForgeLM seam instead.
+> 2. **Chokepoint reroutes.** `forgelm/webhook.py` imports `safe_post` at
+>    module load, so the live name is `forgelm.webhook.safe_post`. Patching
+>    `forgelm._http.safe_post` rebinds a name webhook.py no longer reads.
+> 3. **Package facades.** After a `module.py` → `module/` split, patching a
+>    name the `__init__` re-exports does not touch the reference the owning
+>    submodule resolves. ForgeLM keeps private helpers **off** its facades
+>    precisely so this raises `AttributeError` rather than passing silently —
+>    see `forgelm/verify/__init__.py`. Target
+>    `forgelm.verify._pipeline_evidence._read_capped_json`, not
+>    `forgelm.verify._read_capped_json`.
+>
+> `mock.patch` raises `AttributeError` for a missing attribute, so a target
+> that is merely *wrong* fails loudly. The dangerous ones are targets that
+> still resolve — and `raising=False` / `create=True`, which suppress even the
+> loud case. Never reach for either without a written reason.
 
 ## Assertions
 

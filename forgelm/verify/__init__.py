@@ -85,28 +85,32 @@ and alone**, before any verdict semantics change.
 - :mod:`._model_integrity` — Art. 15 model-directory re-hash
 - :mod:`._audit_log` — audit-log failure classification
 
-Every name this module previously exported — including the private helpers
-and constants the test suite reaches for — is re-exported below, so
-``from forgelm.verify import X`` is unchanged for every existing caller.
+**What the facade carries, and why not more.**  Every *public* name the old
+module exported is re-exported below — the three stable-tier verifiers, their
+result dataclasses, the four ``is_*_integrity_failure`` predicates, the
+pipeline-evidence entry points and the report constants — so
+``from forgelm.verify import X`` is unchanged for every caller of the public
+surface.
 
-**One thing the re-export cannot preserve, deliberately.** Patching a name
-*here* rebinds the package attribute, not the reference the owning submodule
-resolves at call time.  A test that did ``monkeypatch.setattr(
-"forgelm.verify._read_capped_json", boom)`` must now target
-``forgelm.verify._pipeline_evidence._read_capped_json``.  Left unfixed, such
-a patch is not an error — it is a test that passes while exercising nothing,
-which is the exact failure mode `docs/standards/testing.md` and the
-``add-test`` skill warn about.
+Private helpers and constants deliberately stay on their owning submodule and
+are **not** re-exported.  That is not tidiness; it is what keeps a whole class
+of silent test failure from existing.  Rebinding a name *here* does not touch
+the reference the owning submodule resolves at call time, so a facade-level
+patch of, say, ``_read_capped_json`` would leave the real function running
+while the test reported success — a test that passes while exercising nothing,
+the exact failure mode ``docs/standards/testing.md`` and the ``add-test``
+skill warn about.  Because the name is absent from this module,
+``mock.patch("forgelm.verify._read_capped_json", …)`` and
+``monkeypatch.setattr`` now raise ``AttributeError`` instead: the trap
+disarms itself, and the correct target —
+``forgelm.verify._pipeline_evidence._read_capped_json`` — is the only one that
+works.  ``tests/test_verification_toolbelt.py`` pins that behaviour.
 """
 
 from __future__ import annotations
 
 from ._annex_iv import (  # noqa: F401
-    _ANNEX_IV_REQUIRED_FIELDS,
-    _SYSTEM_IDENTIFICATION_REQUIRED_SUBKEYS,
     VerifyAnnexIVResult,
-    _compute_manifest_hash,
-    _is_field_populated,
     is_annex_iv_integrity_failure,
     verify_annex_iv_artifact,
     verify_annex_iv_payload,
@@ -115,25 +119,16 @@ from ._audit_log import (  # noqa: F401
     is_audit_integrity_failure,
 )
 from ._gguf import (  # noqa: F401
-    _GGUF_MAGIC,
-    _SIDECAR_MAX_CHARS,
-    _SIDECAR_SUFFIX,
     VerifyGgufResult,
-    _file_sha256,
-    _maybe_parse_metadata,
     is_gguf_integrity_failure,
     verify_gguf,
 )
 from ._model_integrity import (  # noqa: F401
-    _MANIFEST_NAME,
     VerifyIntegrityResult,
     is_model_integrity_failure,
     verify_integrity,
 )
 from ._pipeline_evidence import (  # noqa: F401
-    _ANNEX_IV_EVIDENCE_BASENAME,
-    _KNOWN_STAGE_STATUSES,
-    _LEGACY_EVIDENCE_BASENAME,
     EVIDENCE_IO_ERROR,
     EVIDENCE_UNVERIFIED,
     EVIDENCE_VERIFIED,
@@ -144,14 +139,6 @@ from ._pipeline_evidence import (  # noqa: F401
     PIPELINE_MANIFEST_MAX_BYTES,
     STAGE_EVIDENCE_MAX_BYTES,
     PipelineEvidenceReport,
-    _annex_iv_was_configured,
-    _EmptyFileError,
-    _manifest_predates_pointer_fix,
-    _missing_evidence_outcome,
-    _OversizeError,
-    _read_capped_json,
-    _resolve_stage_evidence_path,
-    _verify_stage_evidence,
     verify_pipeline_manifest_report,
     verify_pipeline_stage_evidence,
 )

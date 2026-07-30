@@ -208,6 +208,13 @@ dev = [
   # broader package's internal typing debt is tracked as a budget in
   # docs/roadmap/risks-and-decisions.md rather than blocking this gate).
   "mypy>=1.8.0,<2.0.0",
+  # bandit is in the gauntlet CLAUDE.md/AGENTS.md/CONTRIBUTING.md publish, so
+  # it must be installable from the extra CONTRIBUTING tells a contributor to
+  # install.  It was only in [security], so the documented block was
+  # unrunnable in the documented venv.  The <2.0.0 cap matches the [security]
+  # copy and exists because a scanner major can redden a blocking gate with no
+  # code change on this side.
+  "bandit[toml]>=1.7.0,<2.0.0",
 ]
 
 # ISO 27001 / SOC 2 alignment supply-chain security tooling.

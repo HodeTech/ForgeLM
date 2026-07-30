@@ -22,10 +22,6 @@ from typing import Any, Dict, List, Tuple
 
 from ._annex_iv import is_annex_iv_integrity_failure, verify_annex_iv_payload
 
-# ---------------------------------------------------------------------------
-# Pipeline per-stage evidence verification (F-PR54-H7)
-# ---------------------------------------------------------------------------
-
 # A per-stage Annex IV artefact is a small JSON document (single-digit kB in
 # practice).  Anything past this cap is refused *unread* rather than parsed:
 # json.load on an attacker-supplied multi-GB file is an OOM, and a verifier

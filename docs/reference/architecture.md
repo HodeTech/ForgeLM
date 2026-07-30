@@ -31,7 +31,7 @@ forgelm --config job.yaml
     │   ├── judge.py            → LLM-as-Judge scoring
     │   ├── model_card.py       → Auto-generate HF model card
     │   ├── compliance.py       → EU AI Act audit artifacts
-    │   ├── verify.py           → Annex IV / GGUF / model-integrity verification
+    │   ├── verify/            → Annex IV / GGUF / model-integrity verification (sub-package)
     │   └── webhook.py          → Slack/Teams notifications
     ├── merging.py          → TIES/DARE/SLERP model merge
     ├── synthetic.py        → Synthetic data generation
@@ -42,7 +42,7 @@ forgelm --config job.yaml
 
 ```
 ForgeLM/
-├── forgelm/                # Core Python package (~21 single-file modules + 4 sub-packages)
+├── forgelm/                # Core Python package (27 single-file modules + 5 sub-packages)
 │   ├── __init__.py         # Lazy imports for fast CLI startup
 │   ├── cli/                # CLI sub-package (Phase 15 split)
 │   │   ├── _parser.py          # 19 subcommands + global flags
@@ -75,7 +75,9 @@ ForgeLM/
 │   │       _results, _orchestrator
 │   ├── judge.py            # LLM-as-Judge (API + local)
 │   ├── compliance.py       # EU AI Act compliance + audit log + provenance
-│   ├── verify.py           # Annex IV / GGUF / model-integrity verification primitives
+│   ├── verify/             # Verification sub-package (Phase 16 S1 split):
+│   │                       #   _annex_iv, _pipeline_evidence, _gguf,
+│   │                       #   _model_integrity, _audit_log
 │   ├── model_card.py       # HF-compatible model card generation
 │   ├── merging.py          # Model merging (TIES/DARE/SLERP/linear)
 │   ├── synthetic.py        # Synthetic data generation (teacher→student)
@@ -91,7 +93,7 @@ ForgeLM/
 │   ├── deepspeed/          # ZeRO-2, ZeRO-3, ZeRO-3+Offload presets
 │   └── safety_prompts/     # Built-in adversarial prompt library (140 prompts, 6 categories)
 ├── notebooks/              # 10 Colab-ready Jupyter notebooks
-├── tests/                  # ~70 test modules
+├── tests/                  # 124 test modules
 ├── tools/                  # CI guards: bilingual_parity, anchor_resolution,
 │                            # cli_help_consistency, yaml_snippets,
 │                            # audit_event_catalog, library_api_doc,
@@ -144,12 +146,12 @@ EU AI Act compliance engine covering Articles 9-17:
 - `export_compliance_artifacts()`: All artifacts to directory
 - `export_evidence_bundle()`: ZIP archive for auditors
 
-### `verify.py`
+### `verify/`
 Consuming counterpart to `compliance.py`'s writers — re-hashes and re-validates the artifacts `compliance.py` produces:
 - `verify_annex_iv_artifact()`: field completeness + manifest-hash tamper check for an Annex IV JSON bundle
 - `verify_gguf()`: magic header + optional metadata parse + SHA-256 sidecar check for an exported GGUF file
 - `verify_integrity()`: re-walks a model directory against `model_integrity.json`, reporting changed/removed/added artifacts
-- `is_annex_iv_integrity_failure()` / `is_gguf_integrity_failure()` / `is_model_integrity_failure()`: structural (never string-matched) predicates the `verify-*` CLI subcommands use to route between `EXIT_CONFIG_ERROR` (1, nothing was compared) and `EXIT_INTEGRITY_FAILURE` (6, compared and disagreed)
+- `is_annex_iv_integrity_failure()` / `is_gguf_integrity_failure()` / `is_model_integrity_failure()` / `is_audit_integrity_failure()`: structural (never string-matched) predicates the `verify-*` CLI subcommands use to route between `EXIT_CONFIG_ERROR` (1, nothing was compared) and `EXIT_INTEGRITY_FAILURE` (6, compared and disagreed)
 
 `verify_audit_log` deliberately stays in `compliance.py` rather than moving here — it must mirror `AuditLogger.log_event`'s canonicalisation byte-for-byte, and separating a writer from its verifier is the drift hazard this module's docstring warns against.
 

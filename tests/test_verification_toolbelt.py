@@ -115,7 +115,8 @@ class TestVerifyAnnexIv:
         assert "intended_purpose" in result.missing_fields
 
     def test_manifest_hash_match_passes(self, tmp_path: Path) -> None:
-        from forgelm.verify import _compute_manifest_hash, verify_annex_iv_artifact
+        from forgelm.verify import verify_annex_iv_artifact
+        from forgelm.verify._annex_iv import _compute_manifest_hash
 
         artifact = _full_annex_iv_artifact()
         # Two-step: compute over the artifact-without-hash, then write
@@ -989,7 +990,8 @@ class TestAnnexIvComparisonCountIsNotInputDetermined:
     def test_checklist_is_static_not_derived_from_the_artifact(self, tmp_path: Path) -> None:
         """An empty object and a fully-populated-but-blank object are both
         measured against the *same* checklist length."""
-        from forgelm.verify import _ANNEX_IV_REQUIRED_FIELDS, verify_annex_iv_artifact
+        from forgelm.verify import verify_annex_iv_artifact
+        from forgelm.verify._annex_iv import _ANNEX_IV_REQUIRED_FIELDS
 
         path = tmp_path / "annex_iv.json"
         path.write_text(json.dumps({}))
@@ -3462,7 +3464,7 @@ class TestLegitimateSkipsStayClean:
         import typing
 
         from forgelm.cli._pipeline import StageStatusLiteral
-        from forgelm.verify import _KNOWN_STAGE_STATUSES
+        from forgelm.verify._pipeline_evidence import _KNOWN_STAGE_STATUSES
 
         assert set(typing.get_args(StageStatusLiteral)) == set(_KNOWN_STAGE_STATUSES)
 
@@ -3478,7 +3480,7 @@ class TestLegacyPointerVersionGate:
     """
 
     def _predates(self, version) -> bool:
-        from forgelm.verify import _manifest_predates_pointer_fix
+        from forgelm.verify._pipeline_evidence import _manifest_predates_pointer_fix
 
         return _manifest_predates_pointer_fix({"forgelm_version": version})
 
@@ -3526,7 +3528,7 @@ class TestLegacyPointerVersionGate:
         assert self._predates(version) is False
 
     def test_missing_key_is_not_legacy(self) -> None:
-        from forgelm.verify import _manifest_predates_pointer_fix
+        from forgelm.verify._pipeline_evidence import _manifest_predates_pointer_fix
 
         assert _manifest_predates_pointer_fix({}) is False
         assert _manifest_predates_pointer_fix(None) is False
@@ -3548,13 +3550,13 @@ class TestCappedReadIsFailClosed:
         return str(target)
 
     def test_under_cap_parses(self, tmp_path: Path) -> None:
-        from forgelm.verify import _read_capped_json
+        from forgelm.verify._pipeline_evidence import _read_capped_json
 
         path = self._write(tmp_path, "ok.json", json.dumps({"a": 1}))
         assert _read_capped_json(path, 1024) == {"a": 1}
 
     def test_over_cap_is_refused_by_the_fstat_guard(self, tmp_path: Path) -> None:
-        from forgelm.verify import _OversizeError, _read_capped_json
+        from forgelm.verify._pipeline_evidence import _OversizeError, _read_capped_json
 
         path = self._write(tmp_path, "big.json", json.dumps({"pad": "x" * 4096}))
         with pytest.raises(_OversizeError):
@@ -3563,7 +3565,7 @@ class TestCappedReadIsFailClosed:
     def test_under_reported_size_is_still_refused(self, tmp_path: Path, monkeypatch) -> None:
         """A lying ``fstat`` — what a file growing after the stat looks like —
         must not get past the bounded read."""
-        from forgelm.verify import _OversizeError, _read_capped_json
+        from forgelm.verify._pipeline_evidence import _OversizeError, _read_capped_json
 
         path = self._write(tmp_path, "grow.json", json.dumps({"pad": "x" * 4096}))
 
@@ -3578,7 +3580,7 @@ class TestCappedReadIsFailClosed:
         """The bounded read is binary: in text mode ``read(n)`` counts decoded
         characters, so a multibyte payload could carry several times the byte
         cap while satisfying a character budget."""
-        from forgelm.verify import _OversizeError, _read_capped_json
+        from forgelm.verify._pipeline_evidence import _OversizeError, _read_capped_json
 
         path = self._write(tmp_path, "multi.json", json.dumps({"pad": "é" * 2048}))
 
@@ -3599,7 +3601,7 @@ class TestCappedReadIsFailClosed:
         not be the bytes read.  This asserts the stat is taken from the
         descriptor, which is the property the fix exists to hold.
         """
-        from forgelm.verify import _read_capped_json
+        from forgelm.verify._pipeline_evidence import _read_capped_json
 
         calls: list = []
         real_fstat = os.fstat
@@ -3611,7 +3613,7 @@ class TestCappedReadIsFailClosed:
         assert calls, "size check did not consult the open descriptor"
 
     def test_zero_byte_file_gets_its_own_error(self, tmp_path: Path) -> None:
-        from forgelm.verify import _EmptyFileError, _read_capped_json
+        from forgelm.verify._pipeline_evidence import _EmptyFileError, _read_capped_json
 
         path = self._write(tmp_path, "empty.json", "")
         with pytest.raises(_EmptyFileError):
@@ -3628,7 +3630,8 @@ class TestCappedReadIsFailClosed:
         bound itself: the digest is still found when megabytes of padding
         follow it.
         """
-        from forgelm.verify import _SIDECAR_MAX_CHARS, verify_gguf
+        from forgelm.verify import verify_gguf
+        from forgelm.verify._gguf import _SIDECAR_MAX_CHARS
 
         gguf = tmp_path / "model.gguf"
         gguf.write_bytes(b"GGUF" + b"\x00" * 64)
@@ -3765,7 +3768,8 @@ class TestVerifierParserHardening:
         raw traceback, no stdout and no JSON envelope.  RecursionError is
         neither an OSError nor a ValueError, so every existing handler missed
         it.  It must route like any other unparseable artefact."""
-        from forgelm.verify import EVIDENCE_VIOLATION, STAGE_EVIDENCE_MAX_BYTES, _verify_stage_evidence
+        from forgelm.verify import EVIDENCE_VIOLATION, STAGE_EVIDENCE_MAX_BYTES
+        from forgelm.verify._pipeline_evidence import _verify_stage_evidence
 
         target = tmp_path / "s0" / "compliance" / "annex_iv_metadata.json"
         self._deep_json(target)
@@ -3837,7 +3841,7 @@ class TestStageEvidencePathContainment:
     """
 
     def test_relative_symlink_is_refused(self, tmp_path: Path) -> None:
-        from forgelm.verify import _resolve_stage_evidence_path
+        from forgelm.verify._pipeline_evidence import _resolve_stage_evidence_path
 
         real = tmp_path / "c" / "real.json"
         real.parent.mkdir(parents=True)
@@ -3850,7 +3854,7 @@ class TestStageEvidencePathContainment:
 
     def test_absolute_symlink_is_still_refused(self, tmp_path: Path) -> None:
         """The branch that already worked must keep working."""
-        from forgelm.verify import _resolve_stage_evidence_path
+        from forgelm.verify._pipeline_evidence import _resolve_stage_evidence_path
 
         real = tmp_path / "real.json"
         real.write_text("{}")
@@ -3862,7 +3866,7 @@ class TestStageEvidencePathContainment:
         assert "symlink" in problem
 
     def test_relative_escape_is_refused(self, tmp_path: Path) -> None:
-        from forgelm.verify import _resolve_stage_evidence_path
+        from forgelm.verify._pipeline_evidence import _resolve_stage_evidence_path
 
         path, problem = _resolve_stage_evidence_path("../../etc/passwd", str(tmp_path))
         assert path == ""
@@ -3871,7 +3875,7 @@ class TestStageEvidencePathContainment:
     def test_escape_through_a_symlinked_parent_is_refused(self, tmp_path: Path) -> None:
         """Lexical normalisation alone cannot see this one: every component is
         innocent until the symlinked directory is resolved."""
-        from forgelm.verify import _resolve_stage_evidence_path
+        from forgelm.verify._pipeline_evidence import _resolve_stage_evidence_path
 
         outside = tmp_path / "outside"
         outside.mkdir()
@@ -3886,7 +3890,7 @@ class TestStageEvidencePathContainment:
 
     def test_a_plain_relative_pointer_still_resolves(self, tmp_path: Path) -> None:
         """The refusals must not swallow the legitimate case."""
-        from forgelm.verify import _resolve_stage_evidence_path
+        from forgelm.verify._pipeline_evidence import _resolve_stage_evidence_path
 
         real = tmp_path / "s0" / "compliance" / "annex_iv_metadata.json"
         real.parent.mkdir(parents=True)
@@ -4660,3 +4664,56 @@ def _fake_fstat_size(monkeypatch, *, target: str, size: int) -> None:
         return wrapped
 
     monkeypatch.setattr(_os, "fstat", _fake)
+
+
+class TestFacadeKeepsPrivatesOffItself:
+    """The package facade must not re-export submodule privates.
+
+    Not a style rule. A facade that carries ``_read_capped_json`` accepts
+    ``mock.patch("forgelm.verify._read_capped_json", …)`` without error while
+    the owning submodule keeps calling the real function — the patch is a
+    no-op and the test reports success having exercised nothing. Five patch
+    targets in this very file had to be retargeted by hand when the split
+    landed, one of them carrying ``raising=False`` and therefore silent.
+
+    Keeping the names off the facade makes ``mock.patch`` raise
+    ``AttributeError``, so the trap cannot be walked into: the only target that
+    resolves is the correct one.
+    """
+
+    def test_no_private_names_on_the_facade(self) -> None:
+        import forgelm.verify as facade
+
+        leaked = sorted(
+            name
+            for name in vars(facade)
+            if name.startswith("_")
+            and not name.startswith("__")
+            and not name.lstrip("_").startswith(
+                ("annex_iv", "audit_log", "gguf", "model_integrity", "pipeline_evidence")
+            )
+        )
+        assert not leaked, (
+            f"forgelm.verify re-exports private name(s) {leaked}. Patching those on the facade is a "
+            "silent no-op — the owning submodule resolves its own reference at call time. Import "
+            "them from forgelm.verify.<submodule> instead."
+        )
+
+    def test_patching_a_private_on_the_facade_raises(self) -> None:
+        """The disarm is asserted, not assumed."""
+        from unittest.mock import patch
+
+        with pytest.raises(AttributeError):
+            with patch("forgelm.verify._read_capped_json", lambda *a, **k: None):
+                pass
+
+    def test_the_correct_target_still_works(self) -> None:
+        """And the retargeted form must genuinely intercept."""
+        from unittest.mock import patch
+
+        sentinel = object()
+        with patch("forgelm.verify._pipeline_evidence._read_capped_json", return_value=sentinel) as spy:
+            from forgelm.verify import _pipeline_evidence as module
+
+            assert module._read_capped_json("ignored", 1) is sentinel
+        assert spy.call_count == 1

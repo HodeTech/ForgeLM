@@ -13,10 +13,6 @@ import os
 import re
 from typing import Any, Dict
 
-# ---------------------------------------------------------------------------
-# GGUF integrity verification
-# ---------------------------------------------------------------------------
-
 _GGUF_MAGIC = b"GGUF"
 _SIDECAR_SUFFIX = ".sha256"
 

@@ -43,7 +43,6 @@ from __future__ import annotations as _annotations
 
 from types import MappingProxyType as _MappingProxyType
 from typing import TYPE_CHECKING as _TYPE_CHECKING
-from typing import Any as _Any
 
 from ._version import __api_version__, __version__
 from .config import ConfigError, ForgeConfig, load_config
@@ -272,16 +271,24 @@ if _TYPE_CHECKING:  # pragma: no cover — type-only imports
     from .webhook import WebhookNotifier  # noqa: F401
 
 
-def __getattr__(name: str) -> _Any:
+def __getattr__(name: str) -> object:
     """PEP 562 lazy attribute resolver for the public surface.
 
-    The return type is ``Any`` because this hook is a generic dispatcher over
-    :data:`_LAZY_SYMBOLS` — it resolves names of unrelated types (dataclasses,
-    functions, exception classes), so no narrower annotation is truthful.
-    Static callers do not go through here: the ``TYPE_CHECKING`` block above
-    imports the real symbols, so a type checker sees their genuine signatures
-    rather than this ``Any``. Without the annotation the whole
-    ``mypy --strict`` public-surface gate fails on this one function.
+    ``object``, not ``Any``, and the difference is load-bearing. This hook is a
+    generic dispatcher over :data:`_LAZY_SYMBOLS`, resolving names of unrelated
+    types (dataclasses, functions, exception classes), so no *narrow* type is
+    truthful — but ``object`` is their least upper bound and is truthful, while
+    ``Any`` silently blesses whatever a caller does next. Under ``Any``,
+    ``forgelm.ForgeTraner("x")`` — a typo — type-checks clean; under ``object``
+    it is ``"object" not callable``. Nothing real is lost: every genuine public
+    name is imported in the ``TYPE_CHECKING`` block above, so a type checker
+    resolves it there with its actual signature and never reaches this hook
+    (``tests/test_library_api.py`` asserts that block covers
+    :data:`_LAZY_SYMBOLS` exactly). Only typos and internal reach-ins land
+    here, and those are precisely what should not type-check.
+
+    Without any annotation the whole ``mypy --strict`` public-surface gate
+    fails on this one function.
 
     Looks ``name`` up in :data:`_LAZY_SYMBOLS`, imports the source
     submodule, fetches the attribute, and caches the result back into

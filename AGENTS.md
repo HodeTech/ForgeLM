@@ -157,11 +157,12 @@ Default workflow for a non-trivial change:
 5. **Test immediately.** Write the test before or alongside the code, never after merge.
 6. **Verify before opening PR.** Run the self-review command:
 
+   <!-- gauntlet:begin -->
    ```bash
    python3 tools/check_import_origin.py --strict && \
      ruff format . && ruff check . && pytest tests/ && \
      python3 -m forgelm --config config_template.yaml --dry-run && \
-     python3 -m mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py && \
+     python3 -m mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py tests/typing/public_surface_probe.py && \
      python3 tools/check_field_descriptions.py --strict forgelm/config.py && \
      python3 tools/check_http_discipline.py && \
      python3 tools/check_bilingual_parity.py --strict && \
@@ -189,9 +190,11 @@ Default workflow for a non-trivial change:
      python3 tools/check_site_chrome_parity.py && \
      python3 tools/check_module_size.py --strict && \
      python3 tools/update_site_version.py --check && \
-     bandit -c pyproject.toml -r forgelm/ -f json -o /tmp/bandit.json || true; \
-     python3 tools/check_bandit.py /tmp/bandit.json
+     BANDIT_JSON=$(mktemp) && \
+     { bandit -c pyproject.toml -r forgelm/ -f json -o "$BANDIT_JSON" || true; } && \
+     python3 tools/check_bandit.py "$BANDIT_JSON"
    ```
+   <!-- gauntlet:end -->
 
    **Do not "simplify" `python3 -m forgelm` back to `forgelm`.** A
    console script's `sys.path[0]` is its own `bin/` directory, never the

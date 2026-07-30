@@ -11,10 +11,6 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Tuple
 
-# ---------------------------------------------------------------------------
-# Annex IV artifact verification
-# ---------------------------------------------------------------------------
-
 # EU AI Act Annex IV §1-9 — the nine required categories every
 # high-risk-system technical-documentation file must carry.  We map
 # each category to the JSON keys we expect at the top level of the

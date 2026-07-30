@@ -130,14 +130,15 @@ Rules for the list:
   (path gone) as fatal and a stale entry (module back under the ceiling) as
   fatal under `--strict`.
 
-Three such splits are permanent today (Phase 12.6 closure cycle Wave 1, plus
-`forgelm/safety/` at v0.9.1):
+Four such splits are permanent today (Phase 12.6 closure cycle Wave 1,
+`forgelm/safety/` at v0.9.1, and `forgelm/verify/` in Phase 16 S1):
 
 | Sub-package | Pre-split source | Reason | Public surface |
 |---|---|---|---|
 | `forgelm/cli/` | legacy `cli.py` (~1756 lines) | Argparse wiring + ~17 subcommand modules grew far past the ceiling; each subcommand needed its own test boundary. | `forgelm.cli.main()` (entry point), `forgelm.cli._exit_codes` (public exit-code constants), per-subcommand modules (`_audit`, `_ingest`, `_doctor`, `_cache`, `_purge`, `_reverse_pii`, `_safety_eval`, `_verify_audit`, `_verify_annex_iv`, `_verify_gguf`, `_approve`, `_approvals`, ...) |
 | `forgelm/data_audit/` | legacy `data_audit.py` (~3098 lines) | Aggregator, simhash, MinHash, regex-PII, ML-NER PII, secrets, quality, croissant, summary, streaming reader — 10 cohesive concerns under one orchestrator. | `forgelm.data_audit.run_audit()`, `forgelm.data_audit.AuditReport`, `forgelm.data_audit.SECRET_TYPES`, `forgelm.data_audit.summarize_report()` (re-exported via the package `__init__.py`) |
 | `forgelm/safety/` | legacy `safety.py` (1038 LOC) | Generation-based Llama-Guard scoring pushed the module over the ceiling: input prep, classifier load, generation, two scoring aggregators, gate evaluation and result assembly are separable concerns. | `forgelm.safety.run_safety_evaluation()`, `forgelm.safety.SafetyEvalThresholds` (public library surface per `forgelm/__init__.py`'s `__all__`), re-exported via the package `__init__.py` |
+| `forgelm/verify/` | legacy `verify.py` (1013 LOC) | Three unrelated verifiers plus a chain walker in one module: single-artefact Annex IV completeness, the pipeline's per-stage evidence deep-parse, GGUF magic/metadata/sidecar, the Art. 15 model-directory re-hash, and the audit-log failure classifier. Split behaviour-neutral and alone, because it moves the exit-code routing tokens the CLI and the tests both pin. | `forgelm.verify.verify_annex_iv_artifact()` / `verify_gguf()` / `verify_integrity()` and their result dataclasses (stable tier per `forgelm/__init__.py`'s `__all__`), the four `is_*_integrity_failure` predicates, re-exported via the package `__init__.py` |
 
 Future splits follow the same rule: when crossing ~1000 lines, design the
 sub-package boundary first (one design doc under `docs/design/`), execute
@@ -160,7 +161,7 @@ never silent — they ship as a coherent series with regression tests.
 | `safety/` (package) | Llama Guard, harm categories, auto-revert — sub-package with `_types`, `_inputs`, `_generate`, `_classifier`, `_score_classification`, `_score_generation`, `_gates`, `_results`, `_orchestrator` modules | Content generation for scoring (helpers only) |
 | `judge.py` | LLM-as-judge evaluation | Safety classification |
 | `compliance.py` | Audit log, manifests, provenance, governance artifacts, GDPR purge / reverse-pii primitives | Runtime policy enforcement |
-| `verify.py` | Artefact verification primitives: Annex IV manifest-hash recomputation, GGUF magic / metadata / SHA-256-sidecar checks, the model-directory integrity walk, and the `is_*_integrity_failure` predicates the four `verify-*` subcommands route exit code `6` on | Audit-log verification (stays beside its writer in `compliance.py`); output formatting and exit-code emission (that's `cli/`) |
+| `verify/` (package) | Artefact verification primitives — sub-package with `_annex_iv`, `_pipeline_evidence`, `_gguf`, `_model_integrity`, `_audit_log` modules behind a re-exporting `__init__`: Annex IV manifest-hash recomputation, GGUF magic / metadata / SHA-256-sidecar checks, the model-directory integrity walk, and the `is_*_integrity_failure` predicates the four `verify-*` subcommands route exit code `6` on | Audit-log verification (stays beside its writer in `compliance.py`); output formatting and exit-code emission (that's `cli/`) |
 | `webhook.py` | Slack/Teams lifecycle notifications (8-event vocabulary — see [webhook_schema.md](../reference/webhook_schema.md)) | Decision-making (just reports) |
 | `model_card.py` | HF-compatible README generation | Running the model |
 | `merging.py` | TIES/DARE/SLERP/linear | Training |

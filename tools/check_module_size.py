@@ -391,7 +391,10 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
     # paying it — "the split moves the exit-code routing tokens that the CLI and
     # tests both pin, and that belongs in its own diff" — so it was paid as a
     # behaviour-neutral diff of its own, ahead of the Phase 16 step that changes
-    # those verdict semantics. Largest resulting module is ~65% of the ceiling.
+    # those verdict semantics. Largest resulting module is _pipeline_evidence.py at
+    # 398 code lines, well under the 1000-line ceiling (measured with this file's
+    # own _count_code_lines, not raw wc -l — the two disagree by ~40% and quoting
+    # the wrong one inside the guard that defines the metric would be its own drift).
     # Kept as a comment so the removal is legible in blame rather than looking
     # like an accidental deletion.
     #

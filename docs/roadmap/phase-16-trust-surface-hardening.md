@@ -6,8 +6,10 @@
 > Delivered so far: the pre-work standards reconciliation (P-1…P-5c) and
 > **S1** — `forgelm/verify.py` split into `forgelm/verify/`, the guard-inventory
 > meta-test made bidirectional across three documents, and the public-surface
-> `mypy --strict` gate wired and green.  **Fourteen of the eighty-three units
-> are closed; sixty-nine are not.**  Do not read "Phase 16 exists" as "Phase 16
+> `mypy --strict` gate wired and green.  **Three of the eighty-three units are
+> closed — `OPS-09`, `OPS-10` and `OPS-23`, all in S1 — and eighty are not.**
+> (Plus the seven pre-work corrections P-1…P-5c, which §Pre-work excludes from
+> the unit count by design.)  Do not read "Phase 16 exists" as "Phase 16
 > is done" — the checkbox state below is the record.
 >
 > **Phase number.** 16 follows [Phase 15](completed-phases.md#phase-15--ingestion-pipeline-reliability-v060)
@@ -46,7 +48,7 @@ path, fail-open evaluation gates, two advertised trainers that cannot import
 on any permitted dependency version, and a publish DAG that has never executed
 a line of the wheel it publishes.
 
-**Estimated Effort:** Large.  Sixteen steps, four of them XL.  Each step
+**Estimated Effort:** Large.  Sixteen steps, five of them XL (S2, S7, S8, S12, S15).  Each step
 carries its own Opus and Sonnet review round before the next begins.
 
 > **Context:** The 2026-07-29/30 full-project review examined 628 tracked files
@@ -261,8 +263,11 @@ committed, then the same with Sonnet, then the next step.
    - Record the remaining seven budgets as a dated decision naming, per module,
      the split boundary, an owner and a **condition** for payment.
    - Make `tests/test_guard_wiring.py` bidirectional across `CLAUDE.md`,
-     `AGENTS.md` **and** `CONTRIBUTING.md`; replace the `>= 19` floor with an
-     exact derived inventory count.
+     `AGENTS.md` **and** `CONTRIBUTING.md`, comparing guard **invocations**
+     (name *and* flags), and pin the non-guard steps too. Replace the `>= 19`
+     floor with set-equality against `ci.yml` in both directions — a count
+     assertion was considered and rejected as subsumed by the set comparison,
+     which is strictly stronger.
    - Add the `forgelm.__getattr__` return annotation; wire the documented
      `mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py`
      into `ci.yml`; record the 47 internal typing errors as a budget, not a

@@ -848,7 +848,7 @@ class TestEvidencePointerNamesARealArtefact:
         """``forgelm.verify`` re-declares the constant (it cannot import it
         without closing an import cycle); pin the two together."""
         from forgelm.compliance import ANNEX_IV_ARTEFACT_BASENAME
-        from forgelm.verify import _ANNEX_IV_EVIDENCE_BASENAME
+        from forgelm.verify._pipeline_evidence import _ANNEX_IV_EVIDENCE_BASENAME
 
         assert _ANNEX_IV_EVIDENCE_BASENAME == ANNEX_IV_ARTEFACT_BASENAME
 

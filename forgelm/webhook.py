@@ -57,7 +57,13 @@ _ALLOWED_EXTRA_VALUE_TYPES: Tuple[Type[Any], ...] = (str, int, float, bool)
 class WebhookNotifier:
     """Handles sending training status updates to configured webhook endpoints."""
 
-    def __init__(self, config):
+    def __init__(self, config: Any) -> None:
+        # ``Any``, not ``ForgeConfig``, and deliberately so: the approve/reject
+        # dispatchers rebuild a notifier from a co-located JSON manifest and
+        # pass a ``_Carrier`` shim that exposes only ``.webhook``
+        # (``forgelm/cli/subcommands/_approve.py``). Narrowing this to
+        # ``ForgeConfig`` would be a type that lies about the contract the
+        # class actually honours — see ``_resolve_url``'s ``getattr`` note.
         self.config = config.webhook
 
     def _resolve_url(self) -> Optional[str]:

@@ -31,7 +31,7 @@ forgelm --config job.yaml
     │   ├── judge.py            → LLM-Hakim puanlama
     │   ├── model_card.py       → HF model kartı üretimi
     │   ├── compliance.py       → EU AI Act denetim belgeleri + audit log
-    │   ├── verify.py           → Annex IV / GGUF / model-bütünlük doğrulama
+    │   ├── verify/            → Annex IV / GGUF / model-bütünlük doğrulama (alt-paket)
     │   └── webhook.py          → Slack/Teams bildirimleri
     ├── merging.py          → TIES/DARE/SLERP model birleştirme
     ├── synthetic.py        → Sentetik veri üretimi
@@ -42,7 +42,7 @@ forgelm --config job.yaml
 
 ```
 ForgeLM/
-├── forgelm/                  # Çekirdek Python paketi (~21 tek-dosya modül + 4 alt-paket)
+├── forgelm/                  # Çekirdek Python paketi (27 tek-dosya modül + 5 alt-paket)
 │   ├── __init__.py           # Hızlı CLI başlatma için lazy import
 │   ├── cli/                  # CLI alt-paketi (Faz 15 split)
 │   │   ├── _parser.py            # 19 subcommand + global flag
@@ -75,7 +75,9 @@ ForgeLM/
 │   │       _results, _orchestrator
 │   ├── judge.py              # LLM-Hakim (API + yerel)
 │   ├── compliance.py         # EU AI Act uyumluluk + AuditLogger + kaynak takibi
-│   ├── verify.py             # Annex IV / GGUF / model-bütünlük doğrulama primitifleri
+│   ├── verify/               # Doğrulama alt-paketi (Faz 16 S1 split):
+│   │                         #   _annex_iv, _pipeline_evidence, _gguf,
+│   │                         #   _model_integrity, _audit_log
 │   ├── model_card.py         # HF uyumlu model kartı üretimi
 │   ├── merging.py            # Model birleştirme (TIES/DARE/SLERP/linear)
 │   ├── synthetic.py          # Sentetik veri üretimi (öğretmen→öğrenci)
@@ -91,7 +93,7 @@ ForgeLM/
 │   ├── deepspeed/            # ZeRO-2, ZeRO-3, ZeRO-3+Offload ön ayarları
 │   └── safety_prompts/       # Yerleşik adversarial prompt kütüphanesi (140 prompt, 6 kategori)
 ├── notebooks/                # 10 Colab-uyumlu Jupyter notebook
-├── tests/                    # ~70 test modülü
+├── tests/                    # 124 test modülü
 ├── tools/                    # CI guard'ları: bilingual_parity, anchor_resolution,
 │                              # cli_help_consistency, yaml_snippets,
 │                              # audit_event_catalog, library_api_doc,
@@ -142,12 +144,12 @@ EU AI Act uyumluluk motoru — Madde 9-17:
 - `generate_deployer_instructions()`: Dağıtıcı talimatları (Madde 13)
 - `export_evidence_bundle()`: Denetçiler için ZIP arşivi
 
-### `verify.py`
+### `verify/`
 `compliance.py`'nin yazıcılarının tüketici karşılığı — `compliance.py`'nin ürettiği artefaktları yeniden hash'ler ve yeniden doğrular:
 - `verify_annex_iv_artifact()`: bir Annex IV JSON paketi için alan bütünlüğü + manifest-hash tahrifat kontrolü
 - `verify_gguf()`: export edilen bir GGUF dosyası için magic header + opsiyonel metadata parse + SHA-256 sidecar kontrolü
 - `verify_integrity()`: bir model dizinini `model_integrity.json`'a karşı yeniden dolaşır, değişen/silinen/eklenen artefaktları raporlar
-- `is_annex_iv_integrity_failure()` / `is_gguf_integrity_failure()` / `is_model_integrity_failure()`: `verify-*` CLI subcommand'larının `EXIT_CONFIG_ERROR` (1, hiçbir şey karşılaştırılmadı) ile `EXIT_INTEGRITY_FAILURE` (6, karşılaştırıldı ve uyuşmadı) arasında yönlendirmek için kullandığı yapısal (asla string-eşleşmeli değil) predicate'ler
+- `is_annex_iv_integrity_failure()` / `is_gguf_integrity_failure()` / `is_model_integrity_failure()` / `is_audit_integrity_failure()`: `verify-*` CLI subcommand'larının `EXIT_CONFIG_ERROR` (1, hiçbir şey karşılaştırılmadı) ile `EXIT_INTEGRITY_FAILURE` (6, karşılaştırıldı ve uyuşmadı) arasında yönlendirmek için kullandığı yapısal (asla string-eşleşmeli değil) predicate'ler
 
 `verify_audit_log` bilerek buraya taşınmadı, `compliance.py`'de kaldı — `AuditLogger.log_event`'in kanonikalleştirmesini bayt-bayt yansıtmak zorunda, ve bir yazıcıyı kendi doğrulayıcısından ayırmak bu modülün docstring'inin uyardığı tam da o sapma riskidir.
 
