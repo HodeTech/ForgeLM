@@ -373,3 +373,73 @@ class TestRunSafetyEvaluationThreadsTheRevision:
             output_dir=str(tmp_path / "out"),
         )
         assert seen["revision"] is None
+
+
+class TestPublicApiThresholdValidation:
+    """`run_safety_evaluation` is public, and its gate parameters bypass Pydantic.
+
+    The training path reaches the safety gate through a validated
+    `ForgeConfig`, but `from forgelm.safety import run_safety_evaluation` is a
+    stable-tier import and its thresholds arrive as a plain
+    `SafetyEvalThresholds` dataclass with no `__post_init__`. Every one of
+    those numbers is compared with `<` or `>`, and every such comparison
+    against `nan` is False — so an unvalidated threshold does not merely
+    misbehave, it makes the gate report PASS for a run that scored 100%
+    unsafe, which is the verdict `auto_revert` acts on.
+
+    `severity_thresholds` was unguarded on *both* routes: `Dict[str, float]`
+    carries Pydantic's default `allow_inf_nan=True` on the values, so
+    `{"critical": .nan}` was reachable from ordinary YAML.
+    """
+
+    @staticmethod
+    def _validate(max_regression=0.05, **kw):
+        from forgelm.safety import SafetyEvalThresholds
+        from forgelm.safety._inputs import _validate_thresholds
+
+        _validate_thresholds(max_regression, SafetyEvalThresholds(**kw) if kw else SafetyEvalThresholds())
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), 1.5, -0.1])
+    def test_max_safety_regression_must_be_a_finite_rate(self, bad):
+        with pytest.raises(ValueError, match="max_safety_regression"):
+            self._validate(max_regression=bad)
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), 2.0, -0.5])
+    def test_min_safety_score_must_be_a_finite_rate(self, bad):
+        with pytest.raises(ValueError, match="min_safety_score"):
+            self._validate(min_safety_score=bad)
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), 3.0])
+    def test_min_classifier_confidence_must_be_a_finite_rate(self, bad):
+        with pytest.raises(ValueError, match="min_classifier_confidence"):
+            self._validate(min_classifier_confidence=bad)
+
+    def test_severity_threshold_values_must_be_finite(self):
+        with pytest.raises(ValueError, match="severity_thresholds"):
+            self._validate(severity_thresholds={"critical": float("nan")})
+
+    def test_severity_threshold_keys_must_be_known_levels(self):
+        with pytest.raises(ValueError, match="not a known severity level"):
+            self._validate(severity_thresholds={"catastrophic": 0.5})
+
+    def test_scoring_must_be_a_known_mode(self):
+        with pytest.raises(ValueError, match="scoring"):
+            self._validate(scoring="vibes")
+
+    def test_realistic_configuration_is_accepted(self):
+        """The guard must not fire on the ordinary path."""
+        self._validate()
+        self._validate(
+            min_safety_score=0.9,
+            scoring="confidence_weighted",
+            severity_thresholds={"critical": 0.0, "high": 0.02},
+        )
+
+    def test_yaml_route_also_rejects_a_non_finite_severity_threshold(self):
+        """The one field that was unguarded on both routes."""
+        from pydantic import ValidationError
+
+        from forgelm.config import SafetyConfig
+
+        with pytest.raises(ValidationError, match="finite_number|finite number"):
+            SafetyConfig(enabled=True, track_categories=True, severity_thresholds={"critical": float("nan")})

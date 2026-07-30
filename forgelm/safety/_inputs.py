@@ -7,6 +7,7 @@ at eval start rather than deep inside the batched generation path.
 
 import json
 import logging
+import math
 from typing import Any, List
 
 logger = logging.getLogger("forgelm.safety")
@@ -81,3 +82,67 @@ def _validate_batch_size(batch_size: Any) -> None:
     """
     if not isinstance(batch_size, int) or batch_size < 1:
         raise ValueError(f"batch_size must be a positive integer (got {batch_size!r})")
+
+
+def _validate_thresholds(max_safety_regression: Any, thresholds: Any) -> None:
+    """Library-API boundary check for every numeric gate parameter.
+
+    ``run_safety_evaluation`` is public (``from forgelm.safety import
+    run_safety_evaluation``) and its gate parameters arrive as a plain
+    :class:`~forgelm.safety._types.SafetyEvalThresholds` dataclass, which has
+    no ``__post_init__`` and therefore no validation at all. The training path
+    reaches the same function through Pydantic, so the schema catches
+    ``min_safety_score`` and ``min_classifier_confidence`` there — but a
+    library caller bypasses that entirely, and one field is unguarded on
+    *both* routes: ``severity_thresholds`` is ``Optional[Dict[str, float]]``
+    with no per-value constraint, so ``{"critical": .nan}`` passes Pydantic's
+    default ``allow_inf_nan=True`` and reaches the gate from ordinary YAML.
+
+    Every one of these is compared with ``<`` or ``>``, and every such
+    comparison against ``nan`` is False — so an unvalidated threshold does not
+    merely misbehave, it makes the safety gate report PASS for a run that
+    scored 100% unsafe. This is the fail-open that decides whether an unsafe
+    model is promoted, so the check raises rather than clamping, and it runs
+    **before any device work** so the caller learns immediately rather than
+    after a multi-GB download.
+    """
+    from ._types import SEVERITY_LEVELS
+
+    def _require_unit_interval(name: str, value: Any) -> None:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise ValueError(f"{name} must be a number in [0.0, 1.0] (got {value!r})")
+        if not math.isfinite(value) or not 0.0 <= float(value) <= 1.0:
+            raise ValueError(
+                f"{name} must be a finite number in [0.0, 1.0] (got {value!r}). "
+                "A comparison against a non-finite threshold is always False, which would make "
+                "the safety gate pass a run it should fail."
+            )
+
+    _require_unit_interval("max_safety_regression", max_safety_regression)
+
+    if thresholds is None:
+        return
+
+    scoring = getattr(thresholds, "scoring", "binary")
+    if scoring not in ("binary", "confidence_weighted"):
+        raise ValueError(f"thresholds.scoring must be 'binary' or 'confidence_weighted' (got {scoring!r})")
+
+    min_safety_score = getattr(thresholds, "min_safety_score", None)
+    if min_safety_score is not None:
+        _require_unit_interval("thresholds.min_safety_score", min_safety_score)
+
+    _require_unit_interval(
+        "thresholds.min_classifier_confidence", getattr(thresholds, "min_classifier_confidence", 0.7)
+    )
+
+    severity = getattr(thresholds, "severity_thresholds", None)
+    if severity is not None:
+        if not isinstance(severity, dict):
+            raise ValueError(f"thresholds.severity_thresholds must be a dict or None (got {severity!r})")
+        for level, value in severity.items():
+            if level not in SEVERITY_LEVELS:
+                raise ValueError(
+                    f"thresholds.severity_thresholds key {level!r} is not a known severity level; "
+                    f"expected one of {SEVERITY_LEVELS}"
+                )
+            _require_unit_interval(f"thresholds.severity_thresholds[{level!r}]", value)

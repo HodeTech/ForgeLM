@@ -411,8 +411,33 @@ class TestSafetyGateValidation:
             SafetyConfig(enabled=True, track_categories=True, severity_thresholds={"Critical": 0.0})
 
     def test_severity_thresholds_value_above_one_raises(self):
-        with pytest.raises(ValidationError, match=r"\[0.0, 1.0\]"):
+        """Still rejected, now at parse time and with the key named.
+
+        This matched the hand-rolled ``must be in [0.0, 1.0]`` message from the
+        model validator. The field is now
+        ``Dict[str, Annotated[float, ge=0.0, le=1.0, allow_inf_nan=False]]``,
+        so Pydantic reports ``severity_thresholds.high`` /
+        ``less_than_equal`` — earlier, and it says which entry. The validator's
+        range loop was deleted rather than left as dead code that still looked
+        load-bearing; its *key*-vocabulary half stays, because a ``Dict[str,
+        …]`` key has no type-level constraint.
+        """
+        with pytest.raises(ValidationError, match=r"severity_thresholds\.high"):
             SafetyConfig(enabled=True, track_categories=True, severity_thresholds={"high": 5.0})
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_severity_thresholds_value_must_be_finite(self, bad):
+        """The gap the range check could not see.
+
+        ``Dict[str, float]`` carries Pydantic's default ``allow_inf_nan=True``
+        on the values, and the old loop's ``0.0 <= value <= 1.0`` is False for
+        ``nan`` — so it happened to reject NaN, but only by accident of
+        comparison semantics, and only when the surrounding validator ran at
+        all (it early-returns when ``enabled`` is false). The constraint now
+        lives on the value type, where it holds unconditionally.
+        """
+        with pytest.raises(ValidationError, match="finite_number|finite number"):
+            SafetyConfig(enabled=True, track_categories=True, severity_thresholds={"high": bad})
 
     def test_severity_thresholds_without_track_categories_auto_enables(self, caplog):
         with caplog.at_level(logging.WARNING, logger="forgelm.config"):

@@ -4,10 +4,11 @@ import math
 import os
 import re
 import warnings
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import Field as PydField
 
 logger = logging.getLogger("forgelm.config")
 
@@ -967,9 +968,19 @@ class SafetyConfig(BaseModel):
     track_categories: bool = Field(
         default=False, description="Parse Llama Guard S1-S14 harm categories per-response and surface in the report."
     )
-    severity_thresholds: Optional[Dict[str, float]] = Field(
+    # ``Dict[str, float]`` alone carries Pydantic's default
+    # ``allow_inf_nan=True`` on the *values*, so ``{"critical": .nan}`` — an
+    # ordinary YAML spelling — reached the gate unvalidated. Every one of these
+    # is compared with ``>``, and ``rate > nan`` is False, so a single
+    # non-finite entry silently disarmed the severity gate for that level.
+    # ``Annotated`` puts the constraint on the value type, which is the only
+    # place a per-entry rule can live.
+    severity_thresholds: Optional[Dict[str, Annotated[float, PydField(ge=0.0, le=1.0, allow_inf_nan=False)]]] = Field(
         default=None,
-        description='Per-severity limits: e.g. `{"critical": 0, "high": 0.01}`.  Auto-revert when exceeded.',
+        description=(
+            'Per-severity limits: e.g. `{"critical": 0, "high": 0.01}`.  Auto-revert when exceeded.  '
+            "Each value must be a finite rate in `[0.0, 1.0]`."
+        ),
     )
     batch_size: int = Field(
         default=8, ge=1, description="Batched generation size for safety evaluation.  1 disables batching."
@@ -1049,21 +1060,19 @@ class SafetyConfig(BaseModel):
                 self.model_fields_set | {"track_categories"},
             )
 
-        # (3) restrict severity_thresholds to the known vocabulary and 0.0–1.0
-        # values so a typo'd/wrongly-cased key cannot validate and then never
-        # match a distribution bucket (permanently inert), and an out-of-range
-        # value cannot make the per-severity gate unfireable (>1.0) or fire
-        # unconditionally (<0.0).
+        # (3) restrict severity_thresholds to the known vocabulary so a
+        # typo'd/wrongly-cased key cannot validate and then never match a
+        # distribution bucket (permanently inert).  The *value* range is no
+        # longer checked here: the field's ``Annotated[float, ge=0, le=1,
+        # allow_inf_nan=False]`` enforces it at parse time, earlier and with
+        # the offending key named by Pydantic.  Leaving the loop would be dead
+        # code that still looked load-bearing.
         if self.severity_thresholds:
-            for key, value in self.severity_thresholds.items():
+            for key in self.severity_thresholds:
                 if key not in SEVERITY_LEVELS:
                     raise ValueError(
                         f"evaluation.safety.severity_thresholds key {key!r} is not a "
                         f"recognized severity level; allowed: {list(SEVERITY_LEVELS)}."
-                    )
-                if not 0.0 <= value <= 1.0:
-                    raise ValueError(
-                        f"evaluation.safety.severity_thresholds[{key!r}] must be in [0.0, 1.0], got {value}."
                     )
         return self
 

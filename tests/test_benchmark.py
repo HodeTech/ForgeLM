@@ -28,7 +28,9 @@ class TestExtractTaskScore:
         # *before* the real metric — the matcher must still skip the 0.012.
         result = {"alias": "taskC", "acc_stderr,flex": 0.012, "acc,flex": 0.70}
         assert _extract_task_score("taskC", result) == pytest.approx(0.70)
-        assert _parse_results({"taskC": result}) == {"taskC": pytest.approx(0.70)}
+        scores, invalid = _parse_results({"taskC": result})
+        assert scores == {"taskC": pytest.approx(0.70)}
+        assert invalid == []
 
     def test_only_stderr_present_returns_none(self):
         # A degenerate result with no real accuracy metric must not be rescued
@@ -244,3 +246,57 @@ class TestTrainResultWithBenchmark:
         assert result.benchmark_scores is None
         assert result.benchmark_average is None
         assert result.benchmark_passed is None
+
+
+class TestBenchmarkFailsClosedOnUnusableScores:
+    """A gate that cannot compare must not report a pass.
+
+    `average_score < min_score` is False when the average is NaN, so a single
+    NaN task score carried the whole run to `passed=True` — a benchmark gate
+    reporting success for a benchmark it could not evaluate, and under
+    `auto_revert: true` that verdict is what keeps a model. Out-of-range is
+    grouped with non-finite because `min_score` is bounded [0, 1]: a task
+    reporting 5.0 clears any threshold on its own and skews the mean for every
+    other task in the run.
+
+    Per decision C-1 any invalid task fails the gate. A configurable
+    valid-fraction floor was considered and deferred rather than adding a
+    second threshold to defend on a gate that until now passed NaN outright.
+    """
+
+    @pytest.mark.parametrize(
+        "bad",
+        [float("nan"), float("inf"), float("-inf"), 5.0, -0.5],
+        ids=["nan", "inf", "-inf", "above-one", "negative"],
+    )
+    def test_unusable_score_is_quarantined_not_averaged(self, bad):
+        from forgelm.benchmark import _parse_results
+
+        scores, invalid = _parse_results({"good": {"acc,none": 0.8}, "bad": {"acc,none": bad}})
+        assert scores == {"good": pytest.approx(0.8)}, "a usable task must still be scored"
+        assert [name for name, _ in invalid] == ["bad"]
+
+    def test_a_task_with_no_metric_is_not_an_invalid_task(self):
+        """The third case must stay distinguishable.
+
+        A task with no accuracy metric at all is already handled — it is
+        absent from `scores`, which drags the average down and correctly fails
+        a positive threshold. Folding it in with "reported an unusable number"
+        would turn an existing correct failure into a differently-worded one
+        and lose the distinction an operator needs to debug the run.
+        """
+        from forgelm.benchmark import _parse_results
+
+        scores, invalid = _parse_results({"nometric": {"perplexity": 12.0}})
+        assert scores == {}
+        assert invalid == []
+
+    def test_empty_scores_still_fails_a_positive_threshold(self):
+        """Pre-existing behaviour that must be preserved, asserted explicitly."""
+        from forgelm.benchmark import _parse_results
+
+        scores, invalid = _parse_results({})
+        average = sum(scores.values()) / len(scores) if scores else 0.0
+        assert invalid == []
+        assert average == 0.0
+        assert average < 0.5, "an empty score set must not satisfy a positive min_score"
