@@ -263,7 +263,7 @@ class _DeferredSplit:
 # _validate_entries() sees a raise without reading the diff.
 _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
     "forgelm/compliance.py": _DeferredSplit(
-        budget=2471,
+        budget=2473,
         deferred_at_loc=2147,
         reason=(
             "EU AI Act Art. 9-17 + Annex IV builder + hash-chained audit log + "
@@ -283,6 +283,17 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "canonicalisation to dodge a budget would be the worse trade. Pays down "
             "with the _audit_log split already named above, which this code is "
             "entirely inside.",
+            "2026-07-30 (Phase 16 S2, 2471 -> 2473, +2): the append-only audit log now writes "
+            "strict JSON. A non-finite value anywhere in an event payload was serialised as the "
+            "bare token `NaN`/`Infinity`, which RFC 8259 has no literal for — so a single such "
+            "line made this Art. 12 record unparseable for an auditor's jq/Go/Rust tooling while "
+            "ForgeLM reported success, and because `json.loads` accepts those tokens every "
+            "read-back test kept passing. The two lines are the `_strict_json` import and the "
+            "`sanitize_non_finite(entry)` call, which is deliberately placed *before* the HMAC so "
+            "the tag authenticates the bytes that reach disk rather than a line that was never "
+            "written. Raised rather than split: the audit log is the `_audit_log` concern this "
+            "entry already names, and Phase 16 S9 rewrites the GDPR/evidence half of this file, "
+            "so splitting now would rebase that work.",
         ),
     ),
     "forgelm/ingestion.py": _DeferredSplit(

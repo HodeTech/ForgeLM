@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 from typing import Any, Dict, FrozenSet, Optional, Tuple, Type
@@ -7,6 +6,7 @@ from urllib.parse import urlparse
 import requests
 
 from ._http import HttpSafetyError, _mask_netloc, safe_post
+from ._strict_json import dumps_strict
 
 # Public re-export surface.  Wave 3 / Faz 28 (C-54) cleanup: dropped
 # the ``_is_private_destination`` re-export.  The Phase 7 split moved
@@ -156,7 +156,11 @@ class WebhookNotifier:
         try:
             resp = safe_post(
                 url,
-                data=json.dumps(payload),
+                # ``dumps_strict``: metrics reach this payload unfiltered, and
+                # a receiver that validates JSON simply rejects a body
+                # containing the bare token ``NaN`` — a delivery failure
+                # ForgeLM would log as a transport problem.
+                data=dumps_strict(payload),
                 headers={"Content-Type": "application/json"},
                 timeout=timeout,
                 ca_bundle=ca_bundle,

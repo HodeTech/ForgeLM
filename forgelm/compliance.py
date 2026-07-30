@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from ._strict_json import dumps_strict, sanitize_non_finite
 from ._version import __version__ as _forgelm_version
 from .config import ConfigError, WebhookConfig
 
@@ -563,14 +564,22 @@ class AuditLogger:
                     # the tag can be stripped before verification without
                     # invalidating the hash chain. Skip when no secret is
                     # configured — see class docstring.
+                    # ``dumps_strict``: a non-finite value in ``details`` was
+                    # written as the bare token ``NaN``/``Infinity``, which is
+                    # not JSON — one such line makes this Art. 12 record
+                    # unparseable for an auditor's tooling while ForgeLM
+                    # reports success, and ``json.loads`` accepts the tokens
+                    # so every read-back test kept passing. Sanitised *before*
+                    # the HMAC so the tag covers the bytes that reach disk.
+                    entry = sanitize_non_finite(entry)
                     if self._hmac_key is not None:
-                        entry_json_for_hmac = json.dumps(entry, default=str)
+                        entry_json_for_hmac = dumps_strict(entry, default=str)
                         entry["_hmac"] = _hmac_module.new(
                             self._hmac_key,
                             entry_json_for_hmac.encode(),
                             hashlib.sha256,
                         ).hexdigest()
-                    entry_json = json.dumps(entry, default=str)
+                    entry_json = dumps_strict(entry, default=str)
 
                     f.seek(0, 2)
                     f.write((entry_json + "\n").encode("utf-8"))

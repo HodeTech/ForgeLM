@@ -3,12 +3,13 @@
 This module is optional — requires `pip install forgelm[eval]`.
 """
 
-import json
 import logging
 import math
 import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
+
+from ._strict_json import dumps_strict
 
 logger = logging.getLogger("forgelm.benchmark")
 
@@ -110,17 +111,22 @@ def _save_benchmark_json(
     results_path = os.path.join(output_dir, "benchmark_results.json")
     try:
         with open(results_path, "w") as f:
-            json.dump(
-                {
-                    "tasks": tasks,
-                    "scores": scores,
-                    "average_score": average_score,
-                    "passed": passed,
-                    "num_fewshot": num_fewshot,
-                    "limit": limit,
-                },
-                f,
-                indent=2,
+            # ``dumps_strict``: an lm-eval task can report a non-finite score,
+            # and ``json.dump`` wrote it as the bare token ``NaN`` — not JSON,
+            # so the artefact a downstream consumer reads would fail to parse
+            # while the run reported success.
+            f.write(
+                dumps_strict(
+                    {
+                        "tasks": tasks,
+                        "scores": scores,
+                        "average_score": average_score,
+                        "passed": passed,
+                        "num_fewshot": num_fewshot,
+                        "limit": limit,
+                    },
+                    indent=2,
+                )
             )
         logger.info("Benchmark results saved to %s", results_path)
     except (OSError, TypeError, ValueError) as e:

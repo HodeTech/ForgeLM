@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import json
-
+from .._strict_json import dumps_strict
 from ._logging import logger
 
 
@@ -101,7 +100,12 @@ def _output_result(result, output_format: str) -> None:
         # ``TypeError`` and dump a Python traceback to stdout — breaking
         # CI pipelines that parse stdout as JSON.  Coercing to ``str`` for
         # any non-JSON-native type preserves the documented envelope shape.
-        print(json.dumps(_build_result_json_envelope(result), indent=2, default=str))
+        # ``dumps_strict``: the envelope carries loss, benchmark and safety
+        # numbers straight from the run, and a diverged run produces NaN.
+        # ``json.dumps`` wrote that as the bare token ``NaN``, which is not
+        # JSON — so the one artefact CI/CD is documented to branch on could
+        # not be read by ``jq``, while ForgeLM exited 0.
+        print(dumps_strict(_build_result_json_envelope(result), indent=2, default=str))
         return
     _log_result_status(result)
     _log_cost_summary(result)
