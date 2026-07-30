@@ -443,3 +443,121 @@ class TestPublicApiThresholdValidation:
 
         with pytest.raises(ValidationError, match="finite_number|finite number"):
             SafetyConfig(enabled=True, track_categories=True, severity_thresholds={"critical": float("nan")})
+
+
+class TestSafetyGateFailsClosedOnNonFiniteMeasurements:
+    """The threshold side was guarded in S2b; this is the measured side.
+
+    Every gate in `_evaluate_safety_gates` is a `<` or `>` against a
+    measurement, and every such comparison against `nan` is False — so one
+    non-finite value does not weaken a gate, it disarms **all** of them at
+    once. Measured before the fix: an identical 10/10-unsafe run returns
+    `passed=False` with finite inputs and `passed=True` with NaN ones.
+
+    Reachable, not theoretical: `safety_score` is a mean over the classifier's
+    own softmax outputs, and a fp16 or quantised guard head can emit NaN. This
+    is the verdict `auto_revert` acts on and that `forgelm safety-eval` maps
+    to exit 0 versus 3, so it fails rather than abstaining — "the gate could
+    not be evaluated" must never read as "the model is safe".
+    """
+
+    @staticmethod
+    def _gate(**overrides):
+        from forgelm.safety._gates import _evaluate_safety_gates
+
+        kwargs = dict(
+            safe_ratio=1.0,
+            safety_score=1.0,
+            severity_dist={},
+            total=10,
+            unsafe_count=0,
+            max_safety_regression=0.05,
+            scoring="binary",
+            min_safety_score=None,
+            severity_thresholds=None,
+            track_categories=False,
+            log_failures=False,
+        )
+        kwargs.update(overrides)
+        return _evaluate_safety_gates(**kwargs)
+
+    @pytest.mark.parametrize("field", ["safe_ratio", "safety_score", "max_safety_regression"])
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_a_non_finite_measurement_fails_the_gate(self, field, bad):
+        passed, reason = self._gate(**{field: bad})
+        assert passed is False
+        assert reason and field in reason
+        assert "not a finite number" in reason
+
+    def test_the_worst_case_no_longer_passes(self):
+        """The exact reproduction: 10/10 unsafe, NaN measurements, strict floor."""
+        passed, reason = self._gate(
+            safe_ratio=float("nan"),
+            safety_score=float("nan"),
+            unsafe_count=10,
+            scoring="confidence_weighted",
+            min_safety_score=0.999,
+        )
+        assert passed is False, "a 100%-unsafe run must never report a pass"
+        assert reason
+
+    def test_a_non_finite_threshold_also_fails(self):
+        passed, reason = self._gate(scoring="confidence_weighted", min_safety_score=float("nan"))
+        assert passed is False
+        assert "min_safety_score" in reason
+
+    def test_a_clean_run_still_passes(self):
+        """The guard must not fire on the ordinary path."""
+        passed, reason = self._gate()
+        assert passed is True
+        assert reason is None
+
+    def test_a_genuinely_unsafe_run_still_fails_for_its_own_reason(self):
+        """The pre-existing verdict must not be swallowed by the new branch."""
+        passed, reason = self._gate(
+            safe_ratio=0.0,
+            safety_score=0.0,
+            unsafe_count=10,
+            scoring="confidence_weighted",
+            min_safety_score=0.999,
+        )
+        assert passed is False
+        assert "Unsafe ratio" in reason
+        assert "not a finite number" not in reason
+
+
+class TestLowConfidenceDiagnosticFailsClosed:
+    """`confidence < min_classifier_confidence` is False for NaN.
+
+    So a classifier emitting non-finite softmax scores reported **zero**
+    low-confidence rows — the diagnostic whose whole job is to say "do not
+    trust this verdict" was disarmed by exactly the condition it exists to
+    detect.
+    """
+
+    @staticmethod
+    def _classify(confidence):
+        from unittest.mock import MagicMock
+
+        from forgelm.safety._score_classification import _classify_one_response
+
+        classifier = MagicMock(return_value=[{"label": "safe", "score": confidence}])
+        return _classify_one_response(
+            classifier=classifier,
+            prompt="p",
+            response="r",
+            min_classifier_confidence=0.7,
+            track_categories=False,
+            category_dist={},
+            severity_dist={},
+        )
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_non_finite_confidence_is_low_confidence(self, bad):
+        assert self._classify(bad).get("low_confidence") is True
+
+    def test_a_confident_row_is_not_flagged(self):
+        assert "low_confidence" not in self._classify(0.98)
+
+    def test_a_genuinely_low_row_is_still_flagged(self):
+        assert self._classify(0.4).get("low_confidence") is True

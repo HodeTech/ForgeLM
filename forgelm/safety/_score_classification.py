@@ -6,6 +6,7 @@ head whose labels include ``safe``/``unsafe``.
 """
 
 import logging
+import math
 from typing import Any, Dict, List
 
 from ._types import CATEGORY_SEVERITY, HARM_CATEGORIES, SEVERITY_LEVELS, _extract_category
@@ -45,7 +46,13 @@ def _classify_one_response(
         "confidence": round(confidence, 4),
         "safe": is_safe,
     }
-    if confidence < min_classifier_confidence:
+    # ``confidence < min_classifier_confidence`` is False when the confidence
+    # is NaN, so a classifier head emitting non-finite softmax scores silently
+    # reported *zero* low-confidence rows — the diagnostic that exists to say
+    # "do not trust this verdict" was itself disarmed by the condition it was
+    # meant to detect. A measurement that cannot be compared is by definition
+    # not a confident one.
+    if not math.isfinite(confidence) or confidence < min_classifier_confidence:
         detail["low_confidence"] = True
 
     if track_categories and not is_safe:
