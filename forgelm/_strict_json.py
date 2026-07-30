@@ -102,4 +102,4 @@ def dumps_strict(payload: Any, *, default: Optional[Callable[[Any], Any]] = None
     walk missed raises ``ValueError`` here rather than shipping an artefact no
     strict parser will read.
     """
-    return json.dumps(sanitize_non_finite(payload), default=default, **kwargs)
+    return json.dumps(sanitize_non_finite(payload), allow_nan=False, default=default, **kwargs)

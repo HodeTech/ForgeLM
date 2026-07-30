@@ -300,3 +300,88 @@ class TestBenchmarkFailsClosedOnUnusableScores:
         assert invalid == []
         assert average == 0.0
         assert average < 0.5, "an empty score set must not satisfy a positive min_score"
+
+
+class TestRunBenchmarkGateDecision:
+    """`run_benchmark`'s verdict, not just `_parse_results`'s bookkeeping.
+
+    The existing tests cover the private helper. The *decision* — the `if
+    invalid_tasks:` branch that C-1 exists to add — had no test at all, and
+    that gap was not theoretical: the branch shipped as `if False:` for a
+    whole commit while 4,644 tests stayed green and the commit message said
+    "full gauntlet green". A guard nothing exercises is a comment.
+
+    `lm_eval` is stubbed at the module boundary rather than installed: these
+    assert ForgeLM's verdict logic, and the harness itself is an optional
+    extra the unit suite must not require.
+    """
+
+    @staticmethod
+    def _run(raw_results, min_score=None, tmp_path=None):
+        import sys
+        import types
+        from unittest.mock import patch
+
+        fake = types.ModuleType("lm_eval")
+        fake.simple_evaluate = lambda **kw: {"results": raw_results}
+        fake.models = types.ModuleType("lm_eval.models")
+        fake.models.huggingface = types.ModuleType("lm_eval.models.huggingface")
+        fake.models.huggingface.HFLM = lambda **kw: object()
+
+        from forgelm import benchmark as bm
+
+        with patch.dict(
+            sys.modules,
+            {
+                "lm_eval": fake,
+                "lm_eval.models": fake.models,
+                "lm_eval.models.huggingface": fake.models.huggingface,
+            },
+        ):
+            return bm.run_benchmark(
+                model=object(),
+                tokenizer=object(),
+                tasks=["t"],
+                min_score=min_score,
+                output_dir=str(tmp_path) if tmp_path else None,
+            )
+
+    def test_a_nan_task_score_fails_the_gate(self):
+        """The C-1 decision. This is the assertion whose absence let `if False:` ship."""
+        result = self._run({"t": {"acc,none": float("nan")}}, min_score=0.5)
+        assert result.passed is False
+        assert result.failure_reason and "unusable task score" in result.failure_reason
+        assert "nan" in result.failure_reason
+
+    def test_an_out_of_range_task_score_fails_the_gate(self):
+        result = self._run({"t": {"acc,none": 5.0}}, min_score=0.5)
+        assert result.passed is False
+        assert result.failure_reason and "5.0" in result.failure_reason
+
+    def test_an_unusable_score_fails_even_with_no_threshold_configured(self):
+        """`min_score=None` must not mean "nothing can fail".
+
+        Without the invalid-task branch this returns `passed=True`, because
+        the only other failure path is the threshold comparison.
+        """
+        result = self._run({"t": {"acc,none": float("nan")}}, min_score=None)
+        assert result.passed is False
+
+    def test_a_healthy_run_still_passes(self):
+        result = self._run({"t": {"acc,none": 0.9}}, min_score=0.5)
+        assert result.passed is True
+        assert result.failure_reason is None
+        assert result.average_score == pytest.approx(0.9)
+
+    def test_a_below_threshold_run_still_fails_for_the_original_reason(self):
+        """The pre-existing verdict must not be swallowed by the new branch."""
+        result = self._run({"t": {"acc,none": 0.2}}, min_score=0.5)
+        assert result.passed is False
+        assert result.failure_reason and "below minimum threshold" in result.failure_reason
+
+    def test_a_mixed_run_reports_the_unusable_task_not_the_average(self):
+        """One good task and one NaN: the operator needs to know which."""
+        result = self._run({"good": {"acc,none": 0.95}, "bad": {"acc,none": float("inf")}}, min_score=0.5)
+        assert result.passed is False
+        assert "bad" in result.failure_reason
+        assert "good" not in result.failure_reason

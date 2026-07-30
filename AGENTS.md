@@ -80,7 +80,7 @@ ForgeLM/
 │                            # quickstart, model_card, fit_check, deploy, chat,
 │                            # export, inference, results, utils, __main__,
 │                            # _pypdf_normalise, _script_sanity, _strip_pattern
-├── tests/                   # 124 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
+├── tests/                   # 126 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
 ├── tools/                   # CI guards: check_anchor_resolution,
 │                            # check_bilingual_parity, check_cli_help_consistency,
 │                            # check_field_descriptions, check_no_analysis_refs,
@@ -165,6 +165,7 @@ Default workflow for a non-trivial change:
      python3 -m mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py tests/typing/public_surface_probe.py && \
      python3 tools/check_field_descriptions.py --strict forgelm/config.py && \
      python3 tools/check_http_discipline.py && \
+     python3 tools/check_no_mutation_artifacts.py --strict && \
      python3 tools/check_bilingual_parity.py --strict && \
      python3 tools/check_bilingual_code_blocks.py --strict && \
      python3 tools/check_anchor_resolution.py --strict && \
@@ -208,7 +209,7 @@ Default workflow for a non-trivial change:
    does not cover the `tools/check_*.py` guards that import `forgelm`
    with `sys.path[0] == tools/`.
 
-   All 29 must pass — the exact set `.github/workflows/ci.yml`
+   All 30 must pass — the exact set `.github/workflows/ci.yml`
    runs, held there by `tests/test_guard_wiring.py`, which now compares the
    two inventories in **both** directions (the usermanual-schema-drift guard —
    `check_usermanual_schema_drift.py --strict` — validates that every

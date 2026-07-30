@@ -91,18 +91,27 @@ class TestDumpsStrict:
         assert strict_loads(raw) == {"a": "nan", "b": ["inf"], "ok": 2.5}
 
     def test_the_tripwire_fires_on_anything_the_walk_misses(self):
-        """The second pass is the point, not belt-and-braces theatre.
+        """The second pass is the point, and it must be ForgeLM's, not CPython's.
 
-        A future container type the sanitiser does not recurse into must fail
-        loudly here rather than shipping an unparseable artefact.
+        The first version of this test asserted
+        ``json.dumps(..., allow_nan=False)`` raises — a property of the
+        standard library, true whether or not ``dumps_strict`` passes the flag.
+        It therefore stayed green when ``allow_nan=False`` was missing from
+        ``dumps_strict`` itself, which is exactly what happened: the flag was
+        absent from the shipped bytes for a whole commit while this test
+        reported success.
+
+        A ``default=`` hook is the realistic way a non-finite value gets past
+        the sanitiser — the walk never sees the object, the hook manufactures
+        the float — so that is what this drives.
         """
+        with pytest.raises(ValueError, match="not JSON compliant|Out of range"):
+            dumps_strict({"x": object()}, default=lambda _o: float("nan"))
 
-        class Sneaky(dict):
-            def items(self):  # pragma: no cover - exercised via json, not directly
-                return []
-
-        with pytest.raises(ValueError):
-            json.dumps({"x": float("nan")}, allow_nan=False)
+    def test_a_type_the_walk_cannot_reach_still_cannot_ship(self):
+        """Sets are not recursed into; the tripwire must still stop them."""
+        with pytest.raises((ValueError, TypeError)):
+            dumps_strict({"x": {float("nan")}})
 
 
 class TestPublishedArtefactsAreStrict:

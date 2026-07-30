@@ -57,6 +57,7 @@ python3 tools/check_import_origin.py --strict && \
   python3 -m mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py tests/typing/public_surface_probe.py && \
   python3 tools/check_field_descriptions.py --strict forgelm/config.py && \
   python3 tools/check_http_discipline.py && \
+  python3 tools/check_no_mutation_artifacts.py --strict && \
   python3 tools/check_bilingual_parity.py --strict && \
   python3 tools/check_bilingual_code_blocks.py --strict && \
   python3 tools/check_anchor_resolution.py --strict && \
@@ -99,7 +100,7 @@ every later step depends on — that the `forgelm` being imported is the one
 you just edited — and `-m` alone does not cover the `tools/check_*.py`
 guards that import `forgelm` with `sys.path[0] == tools/`.
 
-All 29 must pass — the exact set `.github/workflows/ci.yml` runs.
+All 30 must pass — the exact set `.github/workflows/ci.yml` runs.
 `tests/test_guard_wiring.py` compares the two inventories in **both**
 directions across this file, `CLAUDE.md` and `AGENTS.md`, so wiring a new
 guard into CI without listing it here fails the build. The four after the
@@ -123,7 +124,7 @@ ForgeLM is a single-package layout: a mix of single-file modules and five
 focused sub-packages (`forgelm/cli/` post-Phase-15 split,
 `forgelm/data_audit/` post-Phase-14 split, `forgelm/wizard/` from Phase 22,
 `forgelm/safety/` from the post-v0.9.1 split and `forgelm/verify/` from
-Phase 16 S1) under `forgelm/`, 124 test files
+Phase 16 S1) under `forgelm/`, 126 test files
 under `tests/` (collected-test count grows over time — run
 `pytest --collect-only -q` for current), plus `configs/`, `docs/`, `tools/`
 (CI guards), and `notebooks/`. For the authoritative module-by-module map

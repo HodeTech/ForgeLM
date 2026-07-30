@@ -67,6 +67,15 @@ jobs:
       - name: HTTP discipline guard
         run: python tools/check_http_discipline.py
 
+      # Phase 16 S2 follow-up: mutation testing is how this project proves a
+      # guard is real (disable it, confirm a test reddens, restore). The
+      # restore step failed once — a review agent's `if False:` was swept into
+      # a commit by `git add -A` from a shared working tree and shipped at
+      # HEAD, disabling the benchmark fail-closed gate, with 4,644 tests and
+      # 29 guards green. ruff does not flag `if False:`; it is legal Python.
+      - name: Mutation-scaffolding guard
+        run: python3 tools/check_no_mutation_artifacts.py --strict
+
       # Phase 16 S1 (F-W20260729-OPS-23): docs/design/library_api.md has
       # described this as "a new CI step" since Phase 36.  It never existed,
       # mypy was in no dependency group, and when the documented command was

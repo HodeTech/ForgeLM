@@ -162,7 +162,7 @@ Both gates previously printed their finding and exited `0`. `--allow-secrets` an
 
 Also here: multi-dataset mixing, and synthetic distillation from a teacher model into a smaller student.
 
-**What it is not:** no web UI, no custom inference engine (hand off to Ollama, vLLM, TGI, llama.cpp), no custom architectures or quantization kernels, no pretraining. Fine-tuning, evaluation, and the evidence trail, only — backed by 125 test modules and 29 CI guards that fail the build on documentation and schema drift. **No telemetry:** ForgeLM makes no outbound call you did not configure.
+**What it is not:** no web UI, no custom inference engine (hand off to Ollama, vLLM, TGI, llama.cpp), no custom architectures or quantization kernels, no pretraining. Fine-tuning, evaluation, and the evidence trail, only — backed by 126 test modules and 30 CI guards that fail the build on documentation and schema drift. **No telemetry:** ForgeLM makes no outbound call you did not configure.
 
 ---
 

@@ -204,7 +204,7 @@ def run_benchmark(
     # decision C-1 any invalid task fails the gate; a valid-fraction floor was
     # considered and deferred rather than adding a second threshold to defend
     # on a gate that until now passed NaN outright.
-    if False:
+    if invalid_tasks:
         passed = False
         detail = ", ".join(f"{name}={value!r}" for name, value in invalid_tasks)
         failure_reason = (
