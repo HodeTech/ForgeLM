@@ -1,13 +1,19 @@
 # Phase 16: Trust Surface Hardening (full-project review remediation)
 
-> **Status:** **In progress — pre-work and S1 delivered; S2-S16 are not.**
+> **Status:** **In progress — pre-work, S1 and S2 delivered; S3-S16 are not.**
 > This document is the execution plan approved on 2026-07-30 for the 83
 > remediation units produced by the 2026-07-29/30 full-project review.
-> Delivered so far: the pre-work standards reconciliation (P-1…P-5c) and
+> Delivered so far: the pre-work standards reconciliation (P-1…P-5c);
 > **S1** — `forgelm/verify.py` split into `forgelm/verify/`, the guard-inventory
 > meta-test made bidirectional across three documents, and the public-surface
-> `mypy --strict` gate wired and green.  **Three of the eighty-three units are
-> closed — `OPS-09`, `OPS-10` and `OPS-23`, all in S1 — and eighty are not.**
+> `mypy --strict` gate wired and green; and **S2** — the numeric domain modelled
+> in the schema, four gates that failed *open* on a non-finite value now failing
+> closed, and every artefact writer routed through a strict-JSON chokepoint.
+> **Ten of the eighty-three units are closed — `OPS-09`, `OPS-10`, `OPS-23`
+> in S1, and `C31-NUMERIC-CONFIG`, `C33-TRAIN-JSON-CONTRACT`, `CORE-03`,
+> `CORE-10`, `CORE-14`, `GAP-02`, `TRUST-15` in S2 — and seventy-three are
+> not.**  Counted the way §Coverage cross-check counts: a cluster is one unit,
+> so S2's seven canonical units absorb nine review findings.
 > (Plus the seven pre-work corrections P-1…P-5c, which §Pre-work excludes from
 > the unit count by design.)  Do not read "Phase 16 exists" as "Phase 16
 > is done" — the checkbox state below is the record.
@@ -280,7 +286,7 @@ committed, then the same with Sonnet, then the next step.
    all three documents fails the meta-test; removing a return annotation on an
    exported symbol turns CI red; aggregate deferred LOC drops by 1013.
 
-2. [ ] **S2 — Numeric-domain integrity: finite config, fail-closed gates, strict serializers** (XL, 4 commits)
+2. [x] **S2 — Numeric-domain integrity: finite config, fail-closed gates, strict serializers** (XL, 4 commits)
    Units: `C31-NUMERIC-CONFIG` (= `CORE-01` + `CORE-05`), `CORE-03`, `GAP-02`,
    `C33-TRAIN-JSON-CONTRACT` (= `CLI-06` + `GAP-05`), `TRUST-15`, `CORE-10`,
    `CORE-14`.
@@ -314,6 +320,38 @@ committed, then the same with Sonnet, then the next step.
    parser (`json.loads(..., parse_constant=_reject)`) — Python's permissive
    loader is never the sole oracle; deleting any `isfinite` guard turns a test
    red.
+
+   **Delivered** across ten commits — the planned four, plus three in-flight
+   corrections and the two review rounds.  Exit criteria, one by one:
+
+   - *Parametrized matrix at both levels, exit 1* — **met.**  Sub-config level
+     in `tests/test_config.py` / `tests/test_trainer.py`; whole-file level in
+     `tests/test_config_non_finite_matrix.py`, which loads real YAML through
+     the CLI's own loader and asserts `SystemExit.code == 1`.  That module
+     also pins the premise (`.nan` really resolves to a float) and carries a
+     negative control, because a schema that refused everything would satisfy
+     a rejection-only matrix.
+   - *`model_construct` cannot produce `passed=True`* — **met** for the loss
+     gate and the safety gate, whose runtime guards are asserted against a
+     config mutated after validation.  Not asserted for every gate in the
+     codebase; S3 owns the remaining aggregate verdicts and inherits the
+     obligation.
+   - *No bare `NaN`/`Infinity`, strict-parser verified* — **met**, and
+     widened: the Opus round found the four hand-patched call sites were four
+     instances of a class with eighteen members, so `_strict_json.dumps_strict`
+     became the single chokepoint and `tools/check_strict_json_writers.py`
+     keeps new artefact writers from bypassing it.
+   - *Deleting any `isfinite` guard turns a test red* — **met**, verified by
+     mutation rather than by inspection each time.
+
+   Two process defects surfaced here and are fixed structurally, not by
+   resolve: a review agent's scaffolding (`if False:`) was swept into a commit
+   by `git add -A` and disabled a live gate with the full gauntlet green — now
+   blocked by `tools/check_no_mutation_artifacts.py`, and review rounds run in
+   isolated worktrees.  And a multi-edit script aborted midway, so a fix the
+   commit message claimed shipped had not — the guard is now that a fix of the
+   form "stop returning a hardcoded literal" is tested by reading the
+   expression out of `inspect.getsource`, not by asserting the returned value.
 
 3. [ ] **S3 — Evidence sufficiency: per-item errors must reach the aggregate verdict** (L)
    Units: `TRUST-03`, `CORE-04`, `C33-CACHE-TASK-VERDICT` (= `CLI-07` + `GAP-04`).
