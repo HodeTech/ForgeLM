@@ -47,6 +47,43 @@ class TestSanitizer:
         """``bool`` is an ``int`` subclass; a careless isinstance check breaks it."""
         assert sanitize_non_finite({"flag": True, "other": False}) == {"flag": True, "other": False}
 
+    def test_ints_and_strings_are_untouched(self):
+        assert sanitize_non_finite({"i": 42, "s": "nan", "n": None}) == {"i": 42, "s": "nan", "n": None}
+
+    @pytest.mark.parametrize("dtype", ["float64", "float32"])
+    @pytest.mark.parametrize("bad", ["nan", "inf", "-inf"])
+    def test_numpy_scalars_normalise_to_the_same_representation(self, dtype, bad):
+        """lm-eval returns NumPy scalars, which is where the finding came from.
+
+        Two distinct traps. ``numpy.float64`` **is** a ``float`` subclass, so a
+        bare ``isinstance(value, float)`` catches it — but ``repr()`` on it
+        yields ``"np.float64(nan)"`` under NumPy 2, putting a
+        NumPy-version-dependent string into a compliance artefact instead of
+        the measurement. ``numpy.float32`` is **not** a ``float`` subclass at
+        all and fell through the walk entirely, landing on whatever
+        ``default=`` the caller happened to pass — correct only by accident.
+
+        Every numeric type must produce one representation.
+        """
+        np = pytest.importorskip("numpy")
+
+        value = getattr(np, dtype)(bad)
+        assert sanitize_non_finite(value) == bad
+        assert strict_loads(dumps_strict({"x": value})) == {"x": bad}
+
+    def test_finite_numpy_values_keep_their_precision(self):
+        """The sanitiser must not silently widen a finite measurement.
+
+        Converting every numeric through ``float()`` would turn a ``float32``
+        0.1 into 0.10000000149011612 in the artefact. Only the *non-finite*
+        branch normalises; finite values pass through untouched and are
+        serialised by ``json`` exactly as before.
+        """
+        np = pytest.importorskip("numpy")
+
+        assert sanitize_non_finite(np.float64(0.1)) == np.float64(0.1)
+        assert strict_loads(dumps_strict({"x": np.float64(0.1)})) == {"x": 0.1}
+
 
 class TestDumpsStrict:
     def test_output_survives_a_strict_parser(self):

@@ -54,9 +54,45 @@ def sanitize_non_finite(value: Any) -> Any:
         return {key: sanitize_non_finite(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [sanitize_non_finite(item) for item in value]
-    if isinstance(value, float) and not math.isfinite(value):
-        return repr(value)
+    if isinstance(value, bool):
+        # ``bool`` is an ``int`` subclass and ``int`` is not handled below, but
+        # say so explicitly: a future widening of the numeric branch that
+        # forgets this turns ``True`` into ``"1"`` in every artefact.
+        return value
+    if isinstance(value, (int, float)) or _is_numpy_scalar(value):
+        # ``float(value)`` first, then ``math.isfinite``. Both conversions
+        # matter and for different reasons.
+        #
+        # lm-eval returns ``numpy.float64`` and ``numpy.float32``. The first
+        # *is* a ``float`` subclass, so a bare ``isinstance(value, float)``
+        # caught it — but ``repr()`` on it yields ``"np.float64(nan)"`` under
+        # NumPy 2, so a compliance artefact would carry a NumPy-version-
+        # dependent string instead of the measurement. The second is **not** a
+        # ``float`` subclass at all and fell through entirely, landing on
+        # whatever ``default=`` the caller passed — correct only by accident,
+        # and a ``TypeError`` rather than the intended ``ValueError`` when no
+        # default was given.
+        #
+        # Normalising through ``float()`` gives one representation for every
+        # numeric type: ``"nan"``, ``"inf"``, ``"-inf"``.
+        try:
+            as_float = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return value
+        if not math.isfinite(as_float):
+            return repr(as_float)
     return value
+
+
+def _is_numpy_scalar(value: Any) -> bool:
+    """True for a NumPy scalar, without importing NumPy.
+
+    NumPy is a transitive dependency, not a declared one, and this module is
+    imported by the audit logger — which must not acquire a hard dependency on
+    the scientific stack to write a log line. The duck-type check is on the
+    attributes every ``numpy.generic`` carries.
+    """
+    return hasattr(value, "dtype") and hasattr(value, "item") and not isinstance(value, (str, bytes))
 
 
 def dumps_strict(payload: Any, *, default: Optional[Callable[[Any], Any]] = None, **kwargs: Any) -> str:
@@ -66,4 +102,4 @@ def dumps_strict(payload: Any, *, default: Optional[Callable[[Any], Any]] = None
     walk missed raises ``ValueError`` here rather than shipping an artefact no
     strict parser will read.
     """
-    return json.dumps(sanitize_non_finite(payload), allow_nan=False, default=default, **kwargs)
+    return json.dumps(sanitize_non_finite(payload), default=default, **kwargs)
