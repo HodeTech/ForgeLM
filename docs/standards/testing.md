@@ -5,11 +5,18 @@
 
 ## Layout
 
-Current structure (post Wave 5 / Phase 12.6 closure cycle: **~70 test
-modules**, one per feature area; the collected-test count grows over time —
-run `pytest --collect-only -q` for current). The tree below is a
-**representative subset** — see `git ls-files tests/` for the full
-inventory:
+Current structure (one test module per feature area; run
+`ls tests/test_*.py | wc -l` for the module count and
+`pytest --collect-only -q` for the collected-test count — both grow, so
+neither is restated here). The tree below is a **representative subset** —
+see `git ls-files tests/` for the full inventory.
+
+`tests/typing/` is deliberately **not** a test package: it holds
+`public_surface_probe.py`, which exists to be type-checked by the
+`mypy --strict` public-surface gate and would fail by construction if it were
+ever executed. It carries no `__init__.py` and no `test_` prefix so pytest
+does not collect it; `tests/test_library_api.py` asserts it covers every name
+in `forgelm.__all__` and every public method on those classes.
 
 ```
 tests/

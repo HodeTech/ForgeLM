@@ -4,6 +4,18 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- **`__api_version__` 1.1.0 → 1.2.0.** `SyntheticDataGenerator.__init__` and
+  `WebhookNotifier.__init__` were bare `def __init__(self, config):` and are
+  now annotated. Both are stable-tier callables, so this is visible to a
+  downstream `mypy --strict` consumer — `SyntheticDataGenerator(some_object)`
+  type-checked before and does not now. The runtime signature (names, order,
+  defaults, arity) is byte-identical, so nothing breaks at import or call
+  time. Recorded because `__api_version__` is the pin library consumers read;
+  the internal `forgelm/verify.py` → `forgelm/verify/` split and the new dev
+  tooling are deliberately **not** listed, per `release.md` rules 5 and 6.
+
 ## [0.11.0] — 2026-07-21
 
 _(**This cycle is a MINOR bump, not a patch.** It changes the `forgelm audit`

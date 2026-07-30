@@ -80,6 +80,9 @@ def verify_integrity(model_dir: str) -> VerifyIntegrityResult:
 
     manifest_path = os.path.join(model_dir, _MANIFEST_NAME)
     with open(manifest_path, "r", encoding="utf-8") as fh:
+        # Uncapped — same deferral as _annex_iv.py's read, same owner (S5),
+        # same primitive waiting in ``_io_safety``. This one walks a manifest
+        # from a model directory the operator did not necessarily produce.
         manifest = json.load(fh)
 
     # A non-object root (a JSON array, string or number) has no ``artifacts``

@@ -104,6 +104,11 @@ def verify_annex_iv_artifact(path: str) -> VerifyAnnexIVResult:
     ``EXIT_CONFIG_ERROR`` since malformed JSON is a caller-input error).
     """
     with open(path, "r", encoding="utf-8") as fh:
+        # Uncapped, deliberately and temporarily: a byte cap here changes a
+        # verdict (a large-but-valid artefact would start failing), and S1 is
+        # behaviour-neutral by contract. ``_io_safety._read_capped_json`` is the
+        # primitive to switch to; tracked as F-W20260729-VERIFY-UNCAPPED-READ
+        # against S5 in docs/roadmap/risks-and-decisions.md.
         artifact = json.load(fh)
     return verify_annex_iv_payload(artifact)
 

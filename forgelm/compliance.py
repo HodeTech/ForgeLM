@@ -2594,7 +2594,7 @@ def _read_audit_log_lines(
     under stat-then-open the file that was measured and the file that is read
     are two different observations, so the cap that exists to stop the reader
     being killed by its own input is bypassed outright.  Same rule as
-    ``compute_dataset_fingerprint`` and ``forgelm.verify._read_capped_json``.
+    ``compute_dataset_fingerprint`` and ``forgelm.verify._io_safety._read_capped_json``.
     ``verify_audit_log`` passes no cap and is byte-for-byte unchanged.
 
     Returns ``((failure, failure_kind) or None, non-empty-lines)``.  The

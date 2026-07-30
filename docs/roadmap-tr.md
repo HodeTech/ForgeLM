@@ -118,7 +118,7 @@ docs/
     ├── completed-phases.md                     # Faz 1-12.6 + 15 + 14 arşivi (detaylı, İngilizce) — Faz 10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 12.6 / 15 / 14 inline gömüldü (sırasıyla v0.4.0 / v0.4.5 / v0.5.0 / v0.5.5 / v0.6.0 / v0.7.0; dosyada 15, 14'ten önce gelir — yayınlanma sırasıyla eşleşir)
     ├── phase-13-pro-cli.md                     # Planlandı — v0.6.0-pro (gated)
     ├── phase-14-5-pipeline-hardening.md        # 4 review-deferred öğe kapandı (biri v0.8.0'da, kalanı v0.10.0'da sevk edildi); Task 5 (S3776) NOT SCHEDULED olarak kapandı (koşula bağlı)
-    ├── phase-16-trust-surface-hardening.md     # Planlandı — 16 adımda 83 tam-proje-review remediation birimi; etiket cut'ta türetilir
+    ├── phase-16-trust-surface-hardening.md     # Sürüyor — S1 sevk edildi; 16 adımda 83 tam-proje-review birimi; etiket cut'ta türetilir
     ├── releases.md                             # v0.3.0 → v0.11.0 sürüm notları
     └── risks-and-decisions.md                  # Risk matrisi, fırsatlar, rekabet analizi, karar günlüğü
 ```

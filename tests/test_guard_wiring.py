@@ -149,7 +149,16 @@ def _gauntlet_block(doc: Path) -> str:
         re.S,
     )
     assert len(blocks) == 1, f"{doc.name} must contain exactly one gauntlet:begin/end block, found {len(blocks)}"
-    return blocks[0]
+    block = blocks[0]
+    assert "```bash" in block, (
+        f"{doc.name}'s gauntlet markers contain no ```bash fence. Prose between the markers would "
+        "satisfy every parity assertion below while leaving the reader nothing to run."
+    )
+    # Strip shell comments, exactly as _run_scalars does for workflow YAML.
+    # Without this a commented-out `# example: python3 tools/check_x.py` line
+    # counts as a real invocation, so the two sides of the comparison were
+    # using different definitions of "invoked".
+    return re.sub(r"(?<!\S)#.*$", "", block, flags=re.M)
 
 
 def _gauntlet_guards(doc: Path) -> set[tuple[str, tuple[str, ...]]]:
@@ -313,13 +322,18 @@ def test_gauntlet_non_guard_steps_are_wired_into_ci():
     deleting ``pytest tests/`` from a gauntlet, or the mypy step from ci.yml,
     was a green mutation.
     """
-    ci_text = "\n".join(_run_scalars(_WORKFLOWS / "ci.yml"))
+    ci_text = " ".join(" ".join(script.split()) for script in _run_scalars(_WORKFLOWS / "ci.yml"))
     required = (
         "ruff check .",
         "ruff format",
         "pytest",
         "--config config_template.yaml --dry-run",
-        "mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py",
+        # The FULL mypy argv, including the probe. A fragment stopping one
+        # argument short was the bug: deleting ` tests/typing/public_surface_probe.py`
+        # from ci.yml left every test green while restoring the exact blind spot
+        # the probe was created to close.
+        "mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py"
+        " tests/typing/public_surface_probe.py",
     )
     commands = " \n".join(_gauntlet_commands(_REPO_ROOT / "CLAUDE.md"))
     for fragment in required:
@@ -375,38 +389,21 @@ def test_no_gauntlet_short_circuits_on_failure():
 
 
 def test_gauntlet_prose_count_matches_the_inventory():
-    """The spelled-out numeral above each block is hand-maintained.
+    """The count above each block is hand-written; derive it, do not trust it.
 
-    Adding a 30th guard would otherwise leave three documents saying
-    "twenty-nine" while correctly listing thirty.
+    Adding a 30th guard would otherwise leave three documents claiming 29 while
+    correctly listing 30. Stated as a digit rather than a spelled-out word so
+    this test needs no int-to-English table — a lookup table needing its own
+    manual edit is the artefact class the rest of this file exists to remove.
     """
-    words = {
-        18: "eighteen",
-        19: "nineteen",
-        20: "twenty",
-        21: "twenty-one",
-        22: "twenty-two",
-        23: "twenty-three",
-        24: "twenty-four",
-        25: "twenty-five",
-        26: "twenty-six",
-        27: "twenty-seven",
-        28: "twenty-eight",
-        29: "twenty-nine",
-        30: "thirty",
-        31: "thirty-one",
-        32: "thirty-two",
-        33: "thirty-three",
-        34: "thirty-four",
-        35: "thirty-five",
-    }
     count = len({name for name, _ in _ci_guards()})
-    expected = words.get(count)
-    assert expected, f"extend the numeral table in this test for {count} guards"
     for doc in _GAUNTLET_DOCS:
         text = (_REPO_ROOT / doc).read_text(encoding="utf-8")
-        match = re.search(r"All ([a-z-]+) must pass", text)
-        assert match, f"{doc} no longer states 'All <n> must pass' above its gauntlet"
-        assert match.group(1) == expected, (
-            f"{doc} says 'All {match.group(1)} must pass' but ci.yml runs {expected} ({count}) guards"
+        match = re.search(r"All (\d+) must pass", text)
+        assert match, (
+            f"{doc} no longer states 'All <n> must pass' above its gauntlet — that sentence is what "
+            "tells a reader how many gates they are running."
+        )
+        assert int(match.group(1)) == count, (
+            f"{doc} says 'All {match.group(1)} must pass' but ci.yml runs {count} guards"
         )

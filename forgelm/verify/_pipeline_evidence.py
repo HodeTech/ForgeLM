@@ -21,6 +21,7 @@ from collections import Counter
 from typing import Any, Dict, List, Tuple
 
 from ._annex_iv import is_annex_iv_integrity_failure, verify_annex_iv_payload
+from ._io_safety import _EmptyFileError, _OversizeError, _read_capped_json
 
 # A per-stage Annex IV artefact is a small JSON document (single-digit kB in
 # practice).  Anything past this cap is refused *unread* rather than parsed:
@@ -197,59 +198,6 @@ class PipelineEvidenceReport:
 
 
 # A zero-byte artefact would otherwise surface as a generic JSONDecodeError
-# ("Expecting value: line 1 column 1").  It gets its own exception because
-# "the evidence file is empty" is a materially different — and far more
-# legible — finding than "the JSON is malformed".
-class _EmptyFileError(Exception):
-    """Raised by :func:`_read_capped_json` for a zero-byte file."""
-
-
-class _OversizeError(Exception):
-    """Raised past the byte cap; carries the size so callers can name it."""
-
-    def __init__(self, size: int) -> None:
-        super().__init__(f"{size} bytes")
-        self.size = size
-
-
-# The size check MUST come from ``os.fstat`` on the open descriptor, not from
-# a separate ``os.path.getsize`` — the rule
-# ``compliance.compute_dataset_fingerprint`` already follows.  Under
-# stat-then-open the file that was measured and the file that is read are two
-# different observations: a payload can be small at the stat and arbitrarily
-# large at the read, so the cap that exists to stop the verifier being killed
-# by its own input is bypassed outright.  Stating the open descriptor closes
-# that window — the bytes measured are the bytes read.
-#
-# The bounded ``read(cap + 1)`` is a second, independent guard: it rejects an
-# over-cap payload even when fstat under-reports (a growing file, or a path
-# where st_size is not authoritative).  The fstat is the correctness fix; the
-# bounded read is what makes the cap true regardless of what the descriptor
-# claims about itself.
-#
-# Binary mode so that read counts *bytes*.  In text mode ``read(n)`` counts
-# decoded characters, so a multibyte UTF-8 payload could satisfy a character
-# budget while carrying several times the byte cap.  The explicit decode
-# leaves behaviour unchanged: invalid UTF-8 still raises UnicodeDecodeError,
-# which every caller already routes.
-def _read_capped_json(path: str, cap: int) -> Any:
-    """Open *path* once, enforce *cap* on that same handle, then parse.
-
-    Raises :class:`_OversizeError` past the cap and :class:`_EmptyFileError`
-    on a zero-byte file; otherwise propagates what ``json.load`` would.
-    """
-    with open(path, "rb") as fh:
-        size = os.fstat(fh.fileno()).st_size
-        if size > cap:
-            raise _OversizeError(size)
-        raw = fh.read(cap + 1)
-        if len(raw) > cap:
-            raise _OversizeError(len(raw))
-    if not raw:
-        raise _EmptyFileError()
-    return json.loads(raw.decode("utf-8"))
-
-
 def _resolve_stage_evidence_path(pointer: str, pipeline_dir: str) -> Tuple[str, str]:
     """Resolve a stage evidence pointer to a readable path.
 

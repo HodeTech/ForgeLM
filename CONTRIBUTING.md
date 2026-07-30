@@ -82,7 +82,7 @@ python3 tools/check_import_origin.py --strict && \
   python3 tools/check_site_chrome_parity.py && \
   python3 tools/check_module_size.py --strict && \
   python3 tools/update_site_version.py --check && \
-  BANDIT_JSON=$(mktemp) && \
+  BANDIT_JSON=$(mktemp) && trap 'rm -f "$BANDIT_JSON"' EXIT && \
   { bandit -c pyproject.toml -r forgelm/ -f json -o "$BANDIT_JSON" || true; } && \
   python3 tools/check_bandit.py "$BANDIT_JSON"
 ```
@@ -99,7 +99,7 @@ every later step depends on — that the `forgelm` being imported is the one
 you just edited — and `-m` alone does not cover the `tools/check_*.py`
 guards that import `forgelm` with `sys.path[0] == tools/`.
 
-All twenty-nine must pass — the exact set `.github/workflows/ci.yml` runs.
+All 29 must pass — the exact set `.github/workflows/ci.yml` runs.
 `tests/test_guard_wiring.py` compares the two inventories in **both**
 directions across this file, `CLAUDE.md` and `AGENTS.md`, so wiring a new
 guard into CI without listing it here fails the build. The four after the

@@ -4682,16 +4682,22 @@ class TestFacadeKeepsPrivatesOffItself:
     """
 
     def test_no_private_names_on_the_facade(self) -> None:
+        import pkgutil
+
         import forgelm.verify as facade
 
+        # The five submodule attributes Python binds automatically when the
+        # package imports them are derived, not spelled out. An earlier form
+        # exempted by *prefix* (``_gguf``, ``_annex_iv``, …), which also
+        # exempted any private helper sharing those prefixes — and
+        # ``_gguf_<something>`` is the natural helper-naming convention inside
+        # ``_gguf.py``, so the filter had a live hole exactly where the leak
+        # would appear.
+        submodules = {module.name for module in pkgutil.iter_modules(facade.__path__)}
         leaked = sorted(
             name
             for name in vars(facade)
-            if name.startswith("_")
-            and not name.startswith("__")
-            and not name.lstrip("_").startswith(
-                ("annex_iv", "audit_log", "gguf", "model_integrity", "pipeline_evidence")
-            )
+            if name.startswith("_") and not name.startswith("__") and name not in submodules
         )
         assert not leaked, (
             f"forgelm.verify re-exports private name(s) {leaked}. Patching those on the facade is a "

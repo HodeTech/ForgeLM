@@ -15,14 +15,28 @@ at the **call site** when the callee has no annotations. Call sites live here,
 in a file passed on the command line and therefore not "followed", so the
 diagnostic is reported rather than silenced.
 
-``*cast(Any, ())`` makes each probe arity-independent — mypy still resolves the
-callee and still reports ``no-untyped-call``, but no argument list has to be
-maintained here as signatures evolve. Nothing in this module runs: the
-functions are never called, and ``pytest`` does not collect it (the filename
-carries no ``test_`` prefix and ``tests/typing/`` holds no ``__init__.py``).
+``*cast(Any, ()), **cast(Any, {})`` makes each probe arity-independent — mypy
+still resolves the callee and still reports ``no-untyped-call``, but no
+argument list has to be maintained here as signatures evolve.
 
-Regenerate the symbol list when ``forgelm.__all__`` changes;
-``tests/test_library_api.py`` asserts this file covers it.
+**What this gate does and does not catch**, stated precisely because the first
+version of this file over-claimed:
+
+- It catches a **fully unannotated** callable reachable from a probe line —
+  every name in ``forgelm.__all__``, and every public method declared in
+  ``forgelm/`` on the classes among them.
+- It does **not** catch *partial* annotation loss. ``--disallow-untyped-calls``
+  fires only when a callee is wholly dynamic, so dropping just the ``-> X`` or
+  adding one untyped parameter to an otherwise-typed signature stays green.
+  That is mypy's semantics, not an oversight here; closing it would need a
+  different instrument (per-symbol ``assert_type`` rows), and the claim is
+  narrowed rather than the gap hidden.
+
+Nothing in this module runs: the functions are never called, and ``pytest``
+does not collect it (no ``test_`` prefix, and ``tests/typing/`` holds no
+``__init__.py``). ``tests/test_library_api.py`` asserts this file covers
+``forgelm.__all__`` and every public method, so the roster cannot drift behind
+the surface it is supposed to pin.
 """
 
 from __future__ import annotations
@@ -64,6 +78,35 @@ def _probe_public_callables() -> None:
     forgelm.verify_audit_log(*cast(Any, ()), **cast(Any, {}))
     forgelm.verify_gguf(*cast(Any, ()), **cast(Any, {}))
     forgelm.verify_integrity(*cast(Any, ()), **cast(Any, {}))
+
+
+def _probe_public_methods() -> None:
+    """One call per public method declared in ``forgelm/`` on an exported class.
+
+    Constructing an object is not enough: ``--disallow-untyped-calls`` needs a
+    call site for the method itself. Without these lines
+    ``ForgeTrainer.train`` — named in this file's own docstring as the
+    regression the probe closes — could lose every annotation with the gate
+    still reporting success.
+    """
+    forgelm.AuditLogger(*cast(Any, ()), **cast(Any, {})).log_event(*cast(Any, ()), **cast(Any, {}))
+    forgelm.ForgeConfig(*cast(Any, ()), **cast(Any, {})).model_dump(*cast(Any, ()), **cast(Any, {}))
+    forgelm.ForgeConfig(*cast(Any, ()), **cast(Any, {})).model_dump_json(*cast(Any, ()), **cast(Any, {}))
+    forgelm.ForgeTrainer(*cast(Any, ()), **cast(Any, {})).execute_evaluation_checks(*cast(Any, ()), **cast(Any, {}))
+    forgelm.ForgeTrainer(*cast(Any, ()), **cast(Any, {})).save_final_model(*cast(Any, ()), **cast(Any, {}))
+    forgelm.ForgeTrainer(*cast(Any, ()), **cast(Any, {})).train(*cast(Any, ()), **cast(Any, {}))
+    forgelm.SyntheticDataGenerator(*cast(Any, ()), **cast(Any, {})).generate(*cast(Any, ()), **cast(Any, {}))
+    forgelm.VerifyAnnexIVResult(*cast(Any, ()), **cast(Any, {})).to_dict(*cast(Any, ()), **cast(Any, {}))
+    forgelm.VerifyGgufResult(*cast(Any, ()), **cast(Any, {})).to_dict(*cast(Any, ()), **cast(Any, {}))
+    forgelm.VerifyIntegrityResult(*cast(Any, ()), **cast(Any, {})).to_dict(*cast(Any, ()), **cast(Any, {}))
+    forgelm.WebhookNotifier(*cast(Any, ()), **cast(Any, {})).notify_awaiting_approval(*cast(Any, ()), **cast(Any, {}))
+    forgelm.WebhookNotifier(*cast(Any, ()), **cast(Any, {})).notify_failure(*cast(Any, ()), **cast(Any, {}))
+    forgelm.WebhookNotifier(*cast(Any, ()), **cast(Any, {})).notify_pipeline_completed(*cast(Any, ()), **cast(Any, {}))
+    forgelm.WebhookNotifier(*cast(Any, ()), **cast(Any, {})).notify_pipeline_reverted(*cast(Any, ()), **cast(Any, {}))
+    forgelm.WebhookNotifier(*cast(Any, ()), **cast(Any, {})).notify_pipeline_started(*cast(Any, ()), **cast(Any, {}))
+    forgelm.WebhookNotifier(*cast(Any, ()), **cast(Any, {})).notify_reverted(*cast(Any, ()), **cast(Any, {}))
+    forgelm.WebhookNotifier(*cast(Any, ()), **cast(Any, {})).notify_start(*cast(Any, ()), **cast(Any, {}))
+    forgelm.WebhookNotifier(*cast(Any, ()), **cast(Any, {})).notify_success(*cast(Any, ()), **cast(Any, {}))
 
 
 def _probe_public_constants() -> None:

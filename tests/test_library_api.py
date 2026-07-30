@@ -856,6 +856,40 @@ class TestPublicSurfaceTypeProbe:
             "add one call per callable and one typed assignment per constant."
         )
 
+    def test_probe_covers_every_public_method(self) -> None:
+        """Constructing an object does not type-check its methods.
+
+        ``--disallow-untyped-calls`` needs a call site per callee. The first
+        version of this probe called only constructors and module-level
+        functions, so ``ForgeTrainer.train`` — named in the probe's own
+        docstring as the regression it closes — could lose every annotation
+        with the gate still green. Seventeen public methods across seven
+        classes were unchecked.
+
+        The roster is derived from the live classes rather than listed here,
+        so a new public method cannot land outside the gate.
+        """
+        import inspect
+
+        import forgelm
+
+        source = self._PROBE.read_text(encoding="utf-8")
+        missing: list[str] = []
+        for name in forgelm.__all__:
+            obj = getattr(forgelm, name)
+            if not inspect.isclass(obj):
+                continue
+            for method, function in inspect.getmembers(obj, inspect.isfunction):
+                if method.startswith("_") or not getattr(function, "__module__", "").startswith("forgelm"):
+                    continue
+                if f".{method}(" not in source:
+                    missing.append(f"{name}.{method}")
+        assert not missing, (
+            f"tests/typing/public_surface_probe.py never calls {missing}. A public method with no "
+            "call site in the probe can lose every annotation with the type gate still reporting "
+            "success — add one probe line per method."
+        )
+
     def test_probe_references_nothing_that_left_the_public_surface(self) -> None:
         import re
 

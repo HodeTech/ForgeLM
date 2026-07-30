@@ -190,7 +190,7 @@ Default workflow for a non-trivial change:
      python3 tools/check_site_chrome_parity.py && \
      python3 tools/check_module_size.py --strict && \
      python3 tools/update_site_version.py --check && \
-     BANDIT_JSON=$(mktemp) && \
+     BANDIT_JSON=$(mktemp) && trap 'rm -f "$BANDIT_JSON"' EXIT && \
      { bandit -c pyproject.toml -r forgelm/ -f json -o "$BANDIT_JSON" || true; } && \
      python3 tools/check_bandit.py "$BANDIT_JSON"
    ```
@@ -208,7 +208,7 @@ Default workflow for a non-trivial change:
    does not cover the `tools/check_*.py` guards that import `forgelm`
    with `sys.path[0] == tools/`.
 
-   All twenty-nine must pass — the exact set `.github/workflows/ci.yml`
+   All 29 must pass — the exact set `.github/workflows/ci.yml`
    runs, held there by `tests/test_guard_wiring.py`, which now compares the
    two inventories in **both** directions (the usermanual-schema-drift guard —
    `check_usermanual_schema_drift.py --strict` — validates that every
