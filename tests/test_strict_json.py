@@ -133,7 +133,7 @@ class TestPublishedArtefactsAreStrict:
                 if line.strip():
                     strict_loads(line)
 
-    def test_audit_hmac_covers_the_bytes_that_reach_disk(self):
+    def test_audit_hmac_covers_the_bytes_that_reach_disk(self, monkeypatch):
         """Sanitise-then-HMAC, not HMAC-then-sanitise.
 
         Computing the tag over the raw entry would authenticate a line that
@@ -144,12 +144,11 @@ class TestPublishedArtefactsAreStrict:
 
         secret = "test-secret-for-strict-json"
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["FORGELM_AUDIT_SECRET"] = secret
-            try:
-                audit = AuditLogger(tmp)
-                audit.log_event("evaluation.loss_gate_completed", score=float("nan"))
-            finally:
-                os.environ.pop("FORGELM_AUDIT_SECRET", None)
+            # monkeypatch restores the process's own value (or absence) after the test
+            monkeypatch.setenv("FORGELM_AUDIT_SECRET", secret)
+            audit = AuditLogger(tmp)
+            audit.log_event("evaluation.loss_gate_completed", score=float("nan"))
+            monkeypatch.delenv("FORGELM_AUDIT_SECRET")  # verification must rely on the explicit secret only
             result = verify_audit_log(
                 os.path.join(tmp, "audit_log.jsonl"),
                 hmac_secret=secret,

@@ -80,7 +80,7 @@ ForgeLM/
 │                            # quickstart, model_card, fit_check, deploy, chat,
 │                            # export, inference, results, utils, __main__,
 │                            # _pypdf_normalise, _script_sanity, _strip_pattern
-├── tests/                   # 127 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
+├── tests/                   # 128 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
 ├── tools/                   # CI guards: check_anchor_resolution,
 │                            # check_bilingual_parity, check_cli_help_consistency,
 │                            # check_field_descriptions, check_no_analysis_refs,

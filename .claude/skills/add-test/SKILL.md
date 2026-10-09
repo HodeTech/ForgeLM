@@ -132,6 +132,8 @@ def test_safety_eval_returns_score(monkeypatch):
 # When the seam under test IS the loader, stub the module instead of the
 # attribute — this is what `tests/test_safety.py` does:
 def test_revision_reaches_the_pipeline():
+    import forgelm.safety._classifier as classifier_mod
+
     fake_transformers = MagicMock()
     fake_transformers.pipeline = _recording_pipeline()
     with patch.dict("sys.modules", {"transformers": fake_transformers}):

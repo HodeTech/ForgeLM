@@ -120,7 +120,7 @@ record.
 | C-16 | `docker-compose.yaml` cache path | Fix in the same change, `### Fixed` naming the orphaned-volume effect | S13 |
 | C-17 | Finding-ID re-key | **Rejected** — IDs are already canonical | — |
 | C-18 | Split `forgelm/trainer.py` before the behaviour steps | No — budget-raise per step | S1 |
-| C-19 | Coverage ratchet | Diff-coverage enforcing at S14 only; global floor = measured − 2. **Amended 2026-07-30** — the "advisory at S1" limb was withdrawn during S1: a non-failing CI step needs `continue-on-error`/`|| true`, which principle 6 outlaws | S14 |
+| C-19 | Coverage ratchet | Diff-coverage enforcing at S14 only; global floor = measured − 2. **Amended 2026-07-30** — the "advisory at S1" limb was withdrawn during S1: a non-failing CI step needs `continue-on-error`/`\|\| true`, which principle 6 outlaws | S14 |
 | C-20 | Does this phase cut a release | No — every PR files under `[Unreleased]` | — |
 | GTM | AI Act moat framing after Regulation (EU) 2026/1744 | Retarget to 2 December 2027, framing preserved | S15 |
 

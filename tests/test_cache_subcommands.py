@@ -840,3 +840,65 @@ class TestCacheTasksVerdictMatrix:
         assert payload["success"] is False
         assert "no downloadable dataset exposed by lm-eval" in payload["error"]
         assert "weird" in payload["error"]
+
+
+class TestCacheTasksGroups:
+    """A group task (``mmlu``, ``truthfulqa``) is staged through its leaf tasks.
+
+    ``get_task_dict`` keys a group by a ``ConfigurableGroup`` object and maps it
+    to a nested dict of subtasks. Treating that pair as one task staged nothing
+    and put a non-string "name" into the envelope, the audit event and the
+    failure message — where ``", ".join`` raised instead of exiting ``2``.
+    """
+
+    class _Group:
+        """Stands in for lm-eval's ``ConfigurableGroup``: hashable, not a string."""
+
+        group_name = "mmlu"
+
+    @staticmethod
+    def _task(dataset):
+        task = NonCallableMagicMock()
+        task.dataset = dataset
+        return task
+
+    def _run(self, tmp_path, task_dict):
+        from forgelm.cli.subcommands import _cache
+
+        fake_tasks = MagicMock()
+        fake_tasks.get_task_dict = MagicMock(return_value=task_dict)
+        with patch.dict("sys.modules", {"lm_eval": MagicMock(), "lm_eval.tasks": fake_tasks}):
+            args = _build_args(
+                tasks="mmlu,hellaswag", output=str(tmp_path / "cache"), audit_dir=str(tmp_path / "audit")
+            )
+            with pytest.raises(SystemExit) as ei:
+                _cache._run_cache_tasks_cmd(args, output_format="json")
+        return ei.value.code
+
+    def test_a_nested_group_is_staged_through_its_leaf_tasks(self, tmp_path, capsys):
+        datasets = {name: NonCallableMagicMock() for name in ("mmlu_anatomy", "mmlu_law", "hellaswag")}
+        nested = {
+            self._Group(): {
+                "mmlu_anatomy": self._task(datasets["mmlu_anatomy"]),
+                "mmlu_law": self._task(datasets["mmlu_law"]),
+            },
+            "hellaswag": self._task(datasets["hellaswag"]),
+        }
+        assert self._run(tmp_path, nested) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is True
+        assert sorted(t["name"] for t in payload["tasks"]) == ["hellaswag", "mmlu_anatomy", "mmlu_law"]
+        for dataset in datasets.values():
+            dataset.download_and_prepare.assert_called_once()
+
+    def test_an_unavailable_subtask_keeps_the_exit_two_envelope_with_string_names(self, tmp_path, capsys):
+        nested = {self._Group(): {"mmlu_anatomy": self._task(NonCallableMagicMock()), "mmlu_law": self._task(None)}}
+        assert self._run(tmp_path, nested) == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert all(isinstance(t["name"], str) for t in payload["tasks"])
+        assert "mmlu_law" in payload["error"]
+        log = (tmp_path / "audit" / "audit_log.jsonl").read_text().splitlines()
+        partial = next(json.loads(line) for line in log if "cache.populate_tasks_partial" in line)
+        assert partial["tasks_unavailable"] == ["mmlu_law"]
+        assert partial["tasks_cached"] == ["mmlu_anatomy"]

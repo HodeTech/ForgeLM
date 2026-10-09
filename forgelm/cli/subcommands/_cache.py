@@ -37,8 +37,9 @@ import json
 import os
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Dict, List, NoReturn
+from typing import Any, Dict, List, NoReturn, Tuple
 
 from .._exit_codes import EXIT_CONFIG_ERROR, EXIT_SUCCESS, EXIT_TRAINING_ERROR
 from .._logging import logger
@@ -465,8 +466,13 @@ def _run_cache_tasks_cmd(args, output_format: str) -> None:
                 EXIT_CONFIG_ERROR,
             )
 
+        # A group task (``mmlu``, ``truthfulqa``) comes back as a nested
+        # mapping keyed by a group object, not a task name: staging the group
+        # itself would stage nothing and put a non-string name into the
+        # envelope, the audit event and the failure message.
+        leaf_tasks = _leaf_tasks(task_dict)
         try:
-            for name, task_obj in task_dict.items():
+            for name, task_obj in leaf_tasks:
                 results.append(_prepare_one_task(name, task_obj, cache_dir))
         except Exception as exc:  # noqa: BLE001 — best-effort: dataset download failures, parquet decode failures, all funnel into the same operator-facing message with the partial results so the operator knows what completed. # NOSONAR
             if audit is not None:
@@ -479,7 +485,7 @@ def _run_cache_tasks_cmd(args, output_format: str) -> None:
                 )
             _output_error_and_exit(
                 output_format,
-                f"cache-tasks failed on {len(results)} of {len(task_dict)} task(s): {exc}",
+                f"cache-tasks failed on {len(results)} of {len(leaf_tasks)} task(s): {exc}",
                 EXIT_TRAINING_ERROR,
             )
 
@@ -550,6 +556,35 @@ def _run_cache_tasks_cmd(args, output_format: str) -> None:
             os.environ.pop("HF_DATASETS_CACHE", None)
         else:
             os.environ["HF_DATASETS_CACHE"] = prior_hf_datasets_cache
+
+
+def _task_label(key: Any) -> str:
+    """A task or group key as a name: lm-eval keys groups by a ``ConfigurableGroup`` object, not a string."""
+    if isinstance(key, str):
+        return key
+    for attr in ("group_name", "group", "task_name"):
+        value = getattr(key, attr, None)
+        if isinstance(value, str) and value:
+            return value
+    return str(key)
+
+
+def _leaf_tasks(task_dict: Mapping) -> List[Tuple[str, Any]]:
+    """``(name, task)`` for every leaf task of an lm-eval task dict, expanding nested groups.
+
+    ``get_task_dict`` returns ``{name: Task}`` for plain tasks and
+    ``{group: {name: Task, ...}}`` for groups (nesting can repeat); older
+    lm-eval releases used a ``(group_config, {name: Task})`` tuple instead.
+    """
+    leaves: List[Tuple[str, Any]] = []
+    for key, value in task_dict.items():
+        if isinstance(value, Mapping):
+            leaves.extend(_leaf_tasks(value))
+        elif isinstance(value, tuple) and value and isinstance(value[-1], Mapping):
+            leaves.extend(_leaf_tasks(value[-1]))
+        else:
+            leaves.append((_task_label(key), value))
+    return leaves
 
 
 def _prepare_one_task(name: str, task_obj, cache_dir: str | None = None) -> Dict[str, Any]:

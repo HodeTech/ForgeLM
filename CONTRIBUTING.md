@@ -174,7 +174,7 @@ ForgeLM is a single-package layout: a mix of single-file modules and five
 focused sub-packages (`forgelm/cli/` post-Phase-15 split,
 `forgelm/data_audit/` post-Phase-14 split, `forgelm/wizard/` from Phase 22,
 `forgelm/safety/` from the post-v0.9.1 split and `forgelm/verify/` from
-Phase 16 S1) under `forgelm/`, 127 test files
+Phase 16 S1) under `forgelm/`, 128 test files
 under `tests/` (collected-test count grows over time — run
 `pytest --collect-only -q` for current), plus `configs/`, `docs/`, `tools/`
 (CI guards), and `notebooks/`. For the authoritative module-by-module map

@@ -172,7 +172,7 @@ When training runs to completion the pipeline emits a result envelope on **stdou
   "final_model_path": "/work/output/final_model",
   "reverted": true,
   "awaiting_approval": false,
-  "error": "eval_loss 0.9100 exceeded evaluation.max_acceptable_loss 0.8000"
+  "error": "Final eval_loss (0.9100) exceeded max_acceptable_loss (0.8000)."
 }
 ```
 

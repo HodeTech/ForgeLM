@@ -172,7 +172,7 @@ Eğitim tamamlanana kadar çalıştığında pipeline **stdout**'a bir sonuç en
   "final_model_path": "/work/output/final_model",
   "reverted": true,
   "awaiting_approval": false,
-  "error": "eval_loss 0.9100 exceeded evaluation.max_acceptable_loss 0.8000"
+  "error": "Final eval_loss (0.9100) exceeded max_acceptable_loss (0.8000)."
 }
 ```
 

@@ -7,7 +7,7 @@
 
 Please **do not open a public issue, discussion or pull request** for a security vulnerability, and do not post exploit details anywhere public.
 
-Report it privately through GitHub instead: open the repository's **Security** tab and choose **Report a vulnerability**, or go directly to [github.com/HodeTech/ForgeLM/security/advisories/new](https://github.com/HodeTech/ForgeLM/security/advisories/new). Only you and the maintainers can see the report.
+Report it privately through GitHub instead: open the repository's **Security** tab and choose **Report a vulnerability**, or go directly to [github.com/HodeTech/ForgeLM/security/advisories/new](https://github.com/HodeTech/ForgeLM/security/advisories/new). The report is visible only to you and the advisory's authorised participants: repository administrators, organisation owners and security managers, plus any collaborators the maintainers add to the advisory.
 
 A useful report includes:
 
