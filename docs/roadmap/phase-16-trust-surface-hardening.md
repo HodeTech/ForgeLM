@@ -21,6 +21,12 @@
 > the unit count by design.)  Do not read "Phase 16 exists" as "Phase 16
 > is done" — the checkbox state below is the record.
 >
+> **Tracking.** Each open step (S4-S16) and both standards in §"Standards to be
+> written" are GitHub issues — sub-issues of
+> [#903](https://github.com/HodeTech/ForgeLM/issues/903), labelled `phase: 16`; each
+> step issue lists the review issues that track its units.  Claim and discuss
+> a step there, and tick it here in the same pull request that closes its issue.
+>
 > **Phase number.** 16 follows [Phase 15](completed-phases.md#phase-15--ingestion-pipeline-reliability-v060)
 > in the main sequential track.  The `Phase 22` row in [roadmap.md](../roadmap.md)
 > belongs to the separate Faz 1-38 closure-cycle numbering used for `v0.5.5`

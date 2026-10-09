@@ -17,7 +17,11 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
 Work is tracked in two places that play different roles:
 
 - **Issues are where the work happens.** Each issue is one unit of work: it describes the problem, links the code, and lists acceptance criteria. Discussion, claiming and pull-request links all happen on the issue.
-- **The [ForgeLM Project Plan](https://github.com/orgs/HodeTech/projects/5) is where the work is planned.** It shows every issue with its priority, release target and iteration, in several views: *Backlog* (table), *Board* (by status), *Current iteration*, and *Roadmap* (timeline). Use it to choose what to work on; you never need to edit it — maintainers keep it current, and a card moves automatically when its issue is closed.
+- **The [ForgeLM Project Plan](https://github.com/orgs/HodeTech/projects/5) is where the work is planned.** It shows every issue with its priority, release target and iteration, in several views: *Backlog* (table), *Board* (by status), *Current iteration* and *Roadmap* (timeline), plus filtered views such as *Small tasks*, *Epics*, *Docs & TR mirror* and *Roadmap — Phase 16 & deferred*. Use it to choose what to work on; you never need to edit it — maintainers keep it current, and a card moves automatically when its issue is closed.
+
+### Planned work lives here too
+
+Every piece of planned or deferred work has an issue and a project card, not only the defects: the remaining steps of [Phase 16](docs/roadmap/phase-16-trust-surface-hardening.md) are sub-issues of [#903](https://github.com/HodeTech/ForgeLM/issues/903), and the deferred items recorded in [risks-and-decisions.md](docs/roadmap/risks-and-decisions.md) are sub-issues of [#929](https://github.com/HodeTech/ForgeLM/issues/929). New issues land in the project's *Intake — unplanned* view until a maintainer plans them. If you notice work that your pull request is not going to do, open an issue for it instead of leaving a `TODO` or a roadmap line.
 
 ### How the backlog is organised
 
@@ -27,15 +31,19 @@ Issues carry labels, and the project adds planning fields on top of them.
 |---|---|
 | `severity: critical` · `high` · `medium` · `low` · `info` | How serious the defect is: a broken security or safety contract, a wrong behaviour or false claim users rely on, a limited defect, a minor inaccuracy, or a hardening suggestion |
 | `urgency: now` · `next-release` · `watch` | For dependency and ecosystem items, how soon they need action |
-| `wave: 0` … `wave: 4` | Roadmap wave: 0 is immediate (patch release), 1–2 are the next minor releases, 3 is medium-severity cleanup per module, 4 is low/info work done whenever the module is touched |
+| `wave: 0` … `wave: 4` | Roadmap wave: 0 is due in the next release, 1–2 in the releases after it, 3 is medium-severity cleanup per module, 4 is low/info work done whenever the module is touched. Milestones name the wave; the release number is set when the release is cut |
 | `area: <name>` | The code area, e.g. `area: cli`, `area: eval-gates`, `area: data-audit` |
 | `bug` · `documentation` · `i18n` · `dependencies` | The kind of change: code, English docs, the Turkish mirror, or a dependency/ecosystem update |
 | `backlog: known` | Already described in [`docs/roadmap/`](docs/roadmap/); the issue links the roadmap entry |
 | `security` | Security-relevant; read [Reporting Security Vulnerabilities](#reporting-security-vulnerabilities) before discussing details |
-| `needs-triage` | Reviewers disagreed on whether this is a defect; wait for a maintainer decision before working on it |
+| `needs-triage` | Not triaged yet — a new report, or a finding reviewers disagreed on; wait for a maintainer to confirm and plan it before working on it |
 | `source: review-2026-10` | Found by the October 2026 code and documentation review |
+| `source: review-2026-09` | Found by the September 2026 independent review |
+| `source: roadmap` · `phase: 16` | Planned work recorded in [`docs/roadmap/`](docs/roadmap/): a roadmap step or a deferred item |
+| `deferred` | Waits for a condition recorded in the issue; check that it holds before starting |
+| `epic` | A parent issue that groups one theme or roadmap phase; its sub-issues are the work |
 
-In the project, the **Wave**, **Severity**, **Theme**, **Kind**, **Area**, **Size** (effort: XS–L) and **Iteration** fields let you filter and group the same issues. **Milestones** map waves to releases.
+In the project, the **Wave**, **Severity**, **Theme**, **Kind**, **Area**, **Size** (effort: XS–XL) and **Iteration** fields let you filter and group the same issues. **Milestones** map waves to releases.
 
 Useful starting points:
 
@@ -45,12 +53,14 @@ Useful starting points:
 
 ### Working on an issue
 
-1. **Claim it first.** Comment on the issue that you would like to work on it, so a maintainer can assign it to you and nobody duplicates the work. Skip issues labelled `needs-triage`.
+1. **Claim it first.** Comment on the issue that you would like to work on it, so a maintainer can assign it to you and nobody duplicates the work. Skip issues labelled `needs-triage`, and check the recorded condition of an issue labelled `deferred` before you start.
 2. **Re-check against `development`.** Issues from the review link code at the commit they were found on; the links stay valid, but line numbers may have moved. Confirm the problem still exists on `development` before fixing it.
 3. **Follow the acceptance criteria** in the issue. In particular, a code fix carries a regression test that reproduces the described failure, and a documentation fix updates the English page and its Turkish mirror (`-tr.md`, or the `tr/` tree for user manuals) in the same pull request.
 4. **Reference the issue in your pull request.** Use `Fixes #123` when the PR resolves the whole issue, and `Refs #123` when it resolves only part of it.
 
 **Grouped issues.** Some issues collect several related findings as a checklist, for example a module sweep or one document's corrections. You do not need to fix the whole list: claim the finding IDs you will handle in a comment, mention those IDs in your pull request, and use `Refs #…` so the issue stays open until every item is ticked.
+
+**Roadmap steps.** A Phase 16 step issue is claimed as a whole and worked in step order: each step lands as one root-cause family with its own review rounds, and its issue lists the review issues it closes.
 
 **Finding IDs.** Issues created from the review name their findings with stable IDs — `CR-…` for code, `DOC-…` for documentation (including the Turkish mirror), `TECH-…` for dependency and ecosystem currency. Quote the ID in commits and pull requests so the finding can be traced.
 

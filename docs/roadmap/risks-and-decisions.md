@@ -72,6 +72,12 @@
 
 > **Why this section exists.** PR #29 master review identified 15 findings whose fix-strategy is **defer to v0.6.x with explicit roadmap row**. Each row makes the deferred finding visible forever — silently dropping items is the failure mode this section guards against. Rows are removed only when the underlying work lands.
 
+> **Tracking — 2026-10-09.** Every row in this section that is still open has a GitHub issue: a sub-issue of
+> [#929](https://github.com/HodeTech/ForgeLM/issues/929), labelled `source: roadmap` (and `deferred` while its recorded
+> condition has not been met). Rows whose work is already done or moot are queued for removal in
+> [#926](https://github.com/HodeTech/ForgeLM/issues/926), [#779](https://github.com/HodeTech/ForgeLM/issues/779) and
+> [#532](https://github.com/HodeTech/ForgeLM/issues/532). The removal contract below is unchanged.
+
 ### 2026-05-06 — PR #29 master review deferrals → v0.6.x
 
 | Finding ID | Severity | Area | Reason for deferral | Cost | Owner |
