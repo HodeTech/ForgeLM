@@ -31,7 +31,7 @@ Issues carry labels, and the project adds planning fields on top of them.
 |---|---|
 | `severity: critical` · `high` · `medium` · `low` · `info` | How serious the defect is: a broken security or safety contract, a wrong behaviour or false claim users rely on, a limited defect, a minor inaccuracy, or a hardening suggestion |
 | `urgency: now` · `next-release` · `watch` | For dependency and ecosystem items, how soon they need action |
-| `wave: 0` … `wave: 4` | Roadmap wave: 0 is immediate (patch release), 1–2 are the next minor releases, 3 is medium-severity cleanup per module, 4 is low/info work done whenever the module is touched |
+| `wave: 0` … `wave: 4` | Roadmap wave: 0 is due in the next release, 1–2 in the releases after it, 3 is medium-severity cleanup per module, 4 is low/info work done whenever the module is touched. Milestones name the wave; the release number is set when the release is cut |
 | `area: <name>` | The code area, e.g. `area: cli`, `area: eval-gates`, `area: data-audit` |
 | `bug` · `documentation` · `i18n` · `dependencies` | The kind of change: code, English docs, the Turkish mirror, or a dependency/ecosystem update |
 | `backlog: known` | Already described in [`docs/roadmap/`](docs/roadmap/); the issue links the roadmap entry |

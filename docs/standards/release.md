@@ -366,7 +366,8 @@ When in doubt, treat as breaking. Users bumping minors without reading notes is 
 
 ## Security releases
 
-If a security issue is reported (see `SECURITY.md` if present):
+If a security issue is reported — privately, as [`SECURITY.md`](../../SECURITY.md) asks, so it arrives as a draft
+security advisory:
 
 1. Do **not** discuss publicly until fixed.
 2. Coordinate with reporter on embargo dates.
