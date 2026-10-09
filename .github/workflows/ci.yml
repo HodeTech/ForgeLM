@@ -1,10 +1,12 @@
 name: CI
 
 on:
+  # development is the integration branch (contributor PRs land there) and main the released code:
+  # both run the full CI, and both require its checks before a merge.
   push:
-    branches: [main]
+    branches: [main, development]
   pull_request:
-    branches: [main]
+    branches: [main, development]
 
 # Coverage gate (--cov-fail-under=40) is enforced via pyproject.toml's
 # [tool.pytest.ini_options].addopts; the test job intentionally does not
@@ -32,7 +34,13 @@ jobs:
           python-version: "3.11"
 
       - name: Install linter
-        run: pip install ruff
+        # mypy joins ruff here rather than in the test job because the
+        # public-surface gate needs no runtime dependency: --follow-imports=silent
+        # silences errors from followed modules, so `forgelm/__init__.py` and
+        # `forgelm/_version.py` type-check with mypy alone (verified against a
+        # venv containing nothing else).  Keeping it in the fast job means the
+        # gate reports in seconds instead of behind a 4-way matrix install.
+        run: pip install 'ruff>=0.4.0,<0.16.0' 'mypy>=1.8.0,<2.0.0'
 
       - name: Ruff lint
         run: ruff check .
@@ -60,6 +68,45 @@ jobs:
       # tests/test_check_http_discipline.py.
       - name: HTTP discipline guard
         run: python tools/check_http_discipline.py
+
+      # Phase 16 S2 follow-up: mutation testing is how this project proves a
+      # guard is real (disable it, confirm a test reddens, restore). The
+      # restore step failed once — a review agent's `if False:` was swept into
+      # a commit by `git add -A` from a shared working tree and shipped at
+      # HEAD, disabling the benchmark fail-closed gate, with 4,644 tests and
+      # 29 guards green. ruff does not flag `if False:`; it is legal Python.
+      - name: Mutation-scaffolding guard
+        run: python3 tools/check_no_mutation_artifacts.py --strict
+
+      # Phase 16 S2 follow-up: converting four writers did not close the class.
+      # The step's own review found compliance_report.json — an EU AI Act
+      # Art. 11 / Annex IV artefact — still emitting bare NaN from the same
+      # metrics dict, plus safety_results.json and safety_trend.jsonl. This
+      # names the modules that write measurement-bearing artefacts and
+      # requires dumps_strict in each, the way check_http_discipline.py does
+      # for outbound HTTP.
+      - name: Strict-JSON writer discipline
+        run: python3 tools/check_strict_json_writers.py --strict
+
+      # Phase 16 S1 (F-W20260729-OPS-23): docs/design/library_api.md has
+      # described this as "a new CI step" since Phase 36.  It never existed,
+      # mypy was in no dependency group, and when the documented command was
+      # finally run it failed — forgelm.__getattr__ had no return annotation,
+      # so the "100% typed stable surface" claim was unchecked for three minor
+      # releases.  Scoped to the two public-surface modules deliberately:
+      # --strict over trainer.py would mean typing the whole transformers/trl
+      # surface (library_api.md Q3).  The package's broader internal typing
+      # debt is a recorded budget, not a blocker for this gate.
+      #
+      # tests/typing/public_surface_probe.py is what makes the gate see the
+      # surface at all: --follow-imports=silent discards diagnostics inside the
+      # defining modules and __init__.py calls nothing, so before the probe
+      # existed you could strip the annotations off load_config or
+      # verify_integrity and the gate still reported Success.  The probe calls
+      # every forgelm.__all__ callable from an annotated context, so --strict's
+      # --disallow-untyped-calls fires at the call site.  It is never executed.
+      - name: Public-surface type gate (mypy --strict)
+        run: mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py tests/typing/public_surface_probe.py
 
   # --- Job 2: Test (matrix across Python versions) ---
   test:

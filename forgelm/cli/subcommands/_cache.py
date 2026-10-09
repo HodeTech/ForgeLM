@@ -33,13 +33,14 @@ Exit codes (per ``docs/standards/error-handling.md``):
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Dict, List, NoReturn
+from typing import Any, Dict, List, NoReturn, Tuple
 
+from ..._strict_json import dumps_strict
 from .._exit_codes import EXIT_CONFIG_ERROR, EXIT_SUCCESS, EXIT_TRAINING_ERROR
 from .._logging import logger
 
@@ -52,17 +53,41 @@ _EVT_CACHE_MODELS_FAILED = "cache.populate_models_failed"
 _EVT_CACHE_TASKS_REQUESTED = "cache.populate_tasks_requested"
 _EVT_CACHE_TASKS_COMPLETED = "cache.populate_tasks_completed"
 _EVT_CACHE_TASKS_FAILED = "cache.populate_tasks_failed"
+# Distinct from _FAILED so an auditor reading the append-only log can tell
+# "the batch never started / every task failed" from "some tasks landed and
+# the bundle on disk is incomplete" — the second is the one that produces a
+# transferable-looking archive that is missing data.
+_EVT_CACHE_TASKS_PARTIAL = "cache.populate_tasks_partial"
 
 
-def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoReturn:
+def _output_error_and_exit(
+    output_format: str,
+    msg: str,
+    exit_code: int,
+    extra: Dict[str, Any] | None = None,
+) -> NoReturn:
     """Emit *msg* as a structured JSON error or a log record, then exit.
 
     Mirrors the helpers in :mod:`._approve` / :mod:`._approvals` /
     :mod:`._purge` so the JSON envelope contract stays identical across
     every Wave 2b subcommand.
+
+    ``extra`` merges additional keys into the JSON envelope beside
+    ``success``/``error``.  It exists so a failing ``cache-tasks`` batch can
+    still hand back the per-task ``cached``/``error`` rows: an operator whose
+    bundle is incomplete needs to know *which* tasks are missing, and telling
+    them only in a log line means the machine-readable path — the one the
+    air-gap guide's ``jq`` gate reads — carries strictly less information on
+    the failure branch than on the success branch.  Reserved keys are not
+    overwritten: ``success`` must stay ``false`` no matter what a caller
+    passes.
     """
     if output_format == "json":
-        print(json.dumps({"success": False, "error": msg}, ensure_ascii=False))
+        envelope: Dict[str, Any] = {"success": False, "error": msg}
+        for key, value in (extra or {}).items():
+            if key not in envelope:
+                envelope[key] = value
+        print(dumps_strict(envelope, ensure_ascii=False))
     else:
         logger.error(msg)
     sys.exit(exit_code)
@@ -432,6 +457,7 @@ def _run_cache_tasks_cmd(args, output_format: str) -> None:
                 audit.log_event(
                     _EVT_CACHE_TASKS_FAILED,
                     **request_fields,
+                    tasks_completed=[],
                     error_class=exc.__class__.__name__,
                     error_message=str(exc),
                 )
@@ -441,8 +467,28 @@ def _run_cache_tasks_cmd(args, output_format: str) -> None:
                 EXIT_CONFIG_ERROR,
             )
 
+        # A group task (``mmlu``, ``truthfulqa``) comes back as a nested
+        # mapping keyed by a group object, not a task name: staging the group
+        # itself would stage nothing and put a non-string name into the
+        # envelope, the audit event and the failure message.
         try:
-            for name, task_obj in task_dict.items():
+            leaf_tasks = _leaf_tasks(task_dict)
+        except Exception as exc:  # noqa: BLE001 — lm-eval's task-dict shape has changed across releases; any walk failure means the surface drifted, and a raw traceback would skip the envelope and the audit event.
+            _fail_tasks_enumeration(audit, request_fields, output_format, exc.__class__.__name__, str(exc))
+        # ``{}`` and ``{group: {}}`` enumerate to nothing: the loop below never
+        # runs, ``uncached`` stays empty, and without this check the command
+        # reported ``success: true`` for a cache it never touched — the same
+        # air-gap hazard as the per-task fold, one layer earlier.
+        if not leaf_tasks:
+            _fail_tasks_enumeration(
+                audit,
+                request_fields,
+                output_format,
+                "NoTasksResolved",
+                f"lm-eval resolved no runnable task from {task_names!r}; nothing was staged and the cache is empty",
+            )
+        try:
+            for name, task_obj in leaf_tasks:
                 results.append(_prepare_one_task(name, task_obj, cache_dir))
         except Exception as exc:  # noqa: BLE001 — best-effort: dataset download failures, parquet decode failures, all funnel into the same operator-facing message with the partial results so the operator knows what completed. # NOSONAR
             if audit is not None:
@@ -455,8 +501,60 @@ def _run_cache_tasks_cmd(args, output_format: str) -> None:
                 )
             _output_error_and_exit(
                 output_format,
-                f"cache-tasks failed on {len(results)} of {len(task_dict)} task(s): {exc}",
+                f"cache-tasks failed on {len(results)} of {len(leaf_tasks)} task(s): {exc}",
                 EXIT_TRAINING_ERROR,
+            )
+
+        # ``_prepare_one_task`` converts every per-task exception into a
+        # ``cached=False`` row, which makes the ``except`` above structurally
+        # dead: the loop body cannot raise. Until this fold existed, the
+        # command therefore emitted ``cache.populate_tasks_completed``,
+        # ``success: true`` and exit 0 for a batch in which *every* download
+        # had failed. The air-gap guide gates on ``jq -e '.success'``, so the
+        # documented CI example packaged an empty dataset cache and shipped it
+        # to the restricted host, where the failure resurfaced as an
+        # inscrutable training error.
+        #
+        # Per decision C-5 a partial batch is a hard failure, not a warning:
+        # the four other places the project describes this command — this
+        # module's own exit-code contract above, cache_subcommands.md, the
+        # air-gap guide, and the sibling ``cache-models`` — all say fail-fast.
+        uncached = [r for r in results if not r["cached"]]
+        if uncached:
+            failed = [r for r in uncached if r["error"]]
+            # ``cached=False`` with no error means lm-eval exposed no
+            # downloadable dataset attribute for the task. Nothing raised, but
+            # nothing was staged either, and for the one purpose this command
+            # serves — an archive that must be complete before it travels —
+            # an absent dataset is an incomplete bundle just the same. It is
+            # named separately in the message so the operator can tell a
+            # network failure from lm-eval surface drift.
+            unavailable = [r["name"] for r in uncached if not r["error"]]
+            if audit is not None:
+                audit.log_event(
+                    _EVT_CACHE_TASKS_PARTIAL if len(uncached) < len(results) else _EVT_CACHE_TASKS_FAILED,
+                    **request_fields,
+                    tasks_cached=[r["name"] for r in results if r["cached"]],
+                    tasks_failed=[r["name"] for r in failed],
+                    tasks_unavailable=unavailable,
+                )
+            if output_format != "json":
+                # JSON mode carries the rows in the error envelope's ``tasks``
+                # key instead; printing them here too would emit two documents
+                # on stdout and break the air-gap guide's ``jq`` gate.
+                _emit_cache_success(output_format, {"tasks": results, "cache_dir": cache_dir}, kind="tasks")
+            detail = "; ".join(f"{r['name']}: {r['error']}" for r in failed)
+            if unavailable:
+                note = f"no downloadable dataset exposed by lm-eval for: {', '.join(unavailable)}"
+                detail = f"{detail}; {note}" if detail else note
+            _output_error_and_exit(
+                output_format,
+                (
+                    f"cache-tasks staged {len(results) - len(uncached)} of {len(results)} task(s); "
+                    f"the cache is incomplete and must not be transferred. {detail}"
+                ),
+                EXIT_TRAINING_ERROR,
+                extra={"tasks": results, "cache_dir": cache_dir},
             )
 
         if audit is not None:
@@ -474,6 +572,56 @@ def _run_cache_tasks_cmd(args, output_format: str) -> None:
             os.environ.pop("HF_DATASETS_CACHE", None)
         else:
             os.environ["HF_DATASETS_CACHE"] = prior_hf_datasets_cache
+
+
+def _fail_tasks_enumeration(
+    audit, request_fields: Dict[str, Any], output_format: str, error_class: str, message: str
+) -> NoReturn:
+    """Record and exit for a ``cache-tasks`` run that never reached a single task.
+
+    Uses the enumeration-failure payload shape the audit catalog documents for
+    ``cache.populate_tasks_failed`` (``tasks_completed``, ``error_class``,
+    ``error_message``) and exits 2: the cache was not populated, and nothing about
+    the operator's flags was wrong.
+    """
+    if audit is not None:
+        audit.log_event(
+            _EVT_CACHE_TASKS_FAILED,
+            **request_fields,
+            tasks_completed=[],
+            error_class=error_class,
+            error_message=message,
+        )
+    _output_error_and_exit(output_format, f"cache-tasks failed: {message}", EXIT_TRAINING_ERROR)
+
+
+def _task_label(key: Any) -> str:
+    """A task or group key as a name: lm-eval keys groups by a ``ConfigurableGroup`` object, not a string."""
+    if isinstance(key, str):
+        return key
+    for attr in ("group_name", "group", "task_name"):
+        value = getattr(key, attr, None)
+        if isinstance(value, str) and value:
+            return value
+    return str(key)
+
+
+def _leaf_tasks(task_dict: Mapping) -> List[Tuple[str, Any]]:
+    """``(name, task)`` for every leaf task of an lm-eval task dict, expanding nested groups.
+
+    ``get_task_dict`` returns ``{name: Task}`` for plain tasks and
+    ``{group: {name: Task, ...}}`` for groups (nesting can repeat); older
+    lm-eval releases used a ``(group_config, {name: Task})`` tuple instead.
+    """
+    leaves: List[Tuple[str, Any]] = []
+    for key, value in task_dict.items():
+        if isinstance(value, Mapping):
+            leaves.extend(_leaf_tasks(value))
+        elif isinstance(value, tuple) and value and isinstance(value[-1], Mapping):
+            leaves.extend(_leaf_tasks(value[-1]))
+        else:
+            leaves.append((_task_label(key), value))
+    return leaves
 
 
 def _prepare_one_task(name: str, task_obj, cache_dir: str | None = None) -> Dict[str, Any]:
@@ -550,12 +698,22 @@ def _maybe_audit_logger(audit_dir: str):
 
 
 def _emit_cache_success(output_format: str, payload: Dict[str, Any], *, kind: str) -> None:
-    """Render the success envelope (text or JSON)."""
+    """Render the per-item envelope (text or JSON).
+
+    Also used on the ``cache-tasks`` *failure* branch in text mode, so an
+    operator reading a terminal sees the same per-task table a ``--json``
+    consumer gets from the ``tasks`` key of the error envelope. Without
+    that, the text path reported "3 of 5 staged" and named the failures
+    only inside one long error string, while JSON carried structured rows —
+    strictly less information on the branch where the operator most needs
+    it. The name is kept because the success path is still its primary
+    caller and renaming it would churn the facade re-exports.
+    """
     if output_format == "json":
         # ``ensure_ascii=False`` matches the doctor renderer (PR #29 F-34-01):
         # a Unicode ``cache_dir`` / ``cached_path`` (e.g. ``/work/önbellek``)
         # would otherwise render as ``\uXXXX`` escapes, unreadable for operators.
-        print(json.dumps(payload, indent=2, default=str, ensure_ascii=False))
+        print(dumps_strict(payload, indent=2, default=str, ensure_ascii=False))
         return
     if kind == "models":
         models = payload.get("models", [])
@@ -573,7 +731,10 @@ def _emit_cache_success(output_format: str, payload: Dict[str, Any], *, kind: st
             # ``or`` so that case renders an actionable message rather than the
             # bare literal ``None`` that ``dict.get(key, default)`` would leave.
             reason = entry.get("error") or "unknown (task exposes no downloadable dataset attribute)"
-            status = "ok" if entry.get("cached") else f"warn ({reason})"
+            # "FAILED", not "warn": an uncached task means the bundle is
+            # incomplete and the command exits non-zero, so the line an
+            # operator scrolls past must not read as advisory.
+            status = "ok" if entry.get("cached") else f"FAILED ({reason})"
             print(f"  - {entry['name']}: {status}")
 
 

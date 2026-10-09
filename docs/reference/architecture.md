@@ -17,7 +17,7 @@ forgelm --config job.yaml
     │       │   approve, reject, approvals, safety-eval,
     │       │   verify-audit, verify-annex-iv, verify-gguf,
     │       │   verify-integrity, quickstart
-    ├── config.py           → Pydantic validation (23 config models)
+    ├── config.py           → Pydantic validation (24 config models)
     ├── utils.py            → HF authentication
     ├── model.py            → Load model + tokenizer + LoRA/PEFT
     ├── data.py             → Load + format dataset
@@ -31,7 +31,7 @@ forgelm --config job.yaml
     │   ├── judge.py            → LLM-as-Judge scoring
     │   ├── model_card.py       → Auto-generate HF model card
     │   ├── compliance.py       → EU AI Act audit artifacts
-    │   ├── verify.py           → Annex IV / GGUF / model-integrity verification
+    │   ├── verify/            → Annex IV / GGUF / model-integrity verification (sub-package)
     │   └── webhook.py          → Slack/Teams notifications
     ├── merging.py          → TIES/DARE/SLERP model merge
     ├── synthetic.py        → Synthetic data generation
@@ -42,7 +42,7 @@ forgelm --config job.yaml
 
 ```
 ForgeLM/
-├── forgelm/                # Core Python package (~21 single-file modules + 4 sub-packages)
+├── forgelm/                # Core Python package (27 single-file modules + 5 sub-packages)
 │   ├── __init__.py         # Lazy imports for fast CLI startup
 │   ├── cli/                # CLI sub-package (Phase 15 split)
 │   │   ├── _parser.py          # 19 subcommands + global flags
@@ -57,7 +57,7 @@ ForgeLM/
 │   │   └── _orchestrator, _aggregator, _streaming, _simhash,
 │   │       _minhash, _pii_regex, _pii_ml, _secrets, _quality,
 │   │       _croissant, _summary, _splits, _types, _optional
-│   ├── config.py           # 23 Pydantic config models
+│   ├── config.py           # 24 Pydantic config models
 │   ├── data.py             # Dataset loading (SFT/DPO/KTO/GRPO/multimodal)
 │   ├── ingestion.py        # Raw docs → SFT JSONL (PDF/DOCX/EPUB/TXT/Markdown)
 │   ├── model.py            # Model + LoRA/DoRA/PiSSA + MoE detection
@@ -75,7 +75,9 @@ ForgeLM/
 │   │       _results, _orchestrator
 │   ├── judge.py            # LLM-as-Judge (API + local)
 │   ├── compliance.py       # EU AI Act compliance + audit log + provenance
-│   ├── verify.py           # Annex IV / GGUF / model-integrity verification primitives
+│   ├── verify/             # Verification sub-package (Phase 16 S1 split):
+│   │                       #   _annex_iv, _pipeline_evidence, _gguf,
+│   │                       #   _model_integrity, _audit_log, _io_safety
 │   ├── model_card.py       # HF-compatible model card generation
 │   ├── merging.py          # Model merging (TIES/DARE/SLERP/linear)
 │   ├── synthetic.py        # Synthetic data generation (teacher→student)
@@ -91,7 +93,7 @@ ForgeLM/
 │   ├── deepspeed/          # ZeRO-2, ZeRO-3, ZeRO-3+Offload presets
 │   └── safety_prompts/     # Built-in adversarial prompt library (140 prompts, 6 categories)
 ├── notebooks/              # 10 Colab-ready Jupyter notebooks
-├── tests/                  # ~70 test modules
+├── tests/                  # 128 test modules
 ├── tools/                  # CI guards: bilingual_parity, anchor_resolution,
 │                            # cli_help_consistency, yaml_snippets,
 │                            # audit_event_catalog, library_api_doc,
@@ -108,10 +110,10 @@ ForgeLM/
 ## Component Details
 
 ### `cli/`
-The orchestrator (Phase 15 split). `_parser.py` registers 19 subcommands (`audit`, `approve`, `approvals`, `reject`, `cache-models`, `cache-tasks`, `chat`, `deploy`, `doctor`, `export`, `ingest`, `purge`, `quickstart`, `reverse-pii`, `safety-eval`, `verify-annex-iv`, `verify-audit`, `verify-gguf`, `verify-integrity`) plus the legacy training-mode flag set. `_dispatch.py` routes to the appropriate handler in `subcommands/`. `_exit_codes.py` defines the public 0/1/2/3/4/5/6 contract (5 = wizard cancelled, 6 = integrity failure — the `verify-*` subcommands only, when a read artefact fails its hash/chain check). The verification primitives themselves live in `forgelm/verify.py`, not under `cli/`, keeping the CLI subcommand modules thin dispatchers per `docs/standards/architecture.md`'s "CLI is a thin shim" rule.
+The orchestrator (Phase 15 split). `_parser.py` registers 19 subcommands (`audit`, `approve`, `approvals`, `reject`, `cache-models`, `cache-tasks`, `chat`, `deploy`, `doctor`, `export`, `ingest`, `purge`, `quickstart`, `reverse-pii`, `safety-eval`, `verify-annex-iv`, `verify-audit`, `verify-gguf`, `verify-integrity`) plus the legacy training-mode flag set. `_dispatch.py` routes to the appropriate handler in `subcommands/`. `_exit_codes.py` defines the public 0/1/2/3/4/5/6 contract (5 = wizard cancelled, 6 = integrity failure — the `verify-*` subcommands only, when a read artefact fails its hash/chain check). The verification primitives themselves live in the `forgelm/verify/` sub-package (`_annex_iv.py`, `_pipeline_evidence.py`, `_gguf.py`, `_model_integrity.py`, `_audit_log.py` behind a re-exporting `__init__.py`), not under `cli/`, keeping the CLI subcommand modules thin dispatchers per `docs/standards/architecture.md`'s "CLI is a thin shim" rule.
 
 ### `config.py`
-23 Pydantic v2 models providing strict validation for all YAML configuration. Includes cross-field validation (e.g., high-risk classification enforces safety evaluation). Config models cover: model, LoRA, training, data, evaluation, safety, benchmark, judge, webhook, distributed, merge, compliance, retention, risk assessment, monitoring, MoE, multimodal, data governance, and synthetic-data generation.
+24 Pydantic v2 models providing strict validation for all YAML configuration. Includes cross-field validation (e.g., high-risk classification enforces safety evaluation). Config models cover: model, LoRA, training, data, evaluation, safety, benchmark, judge, webhook, distributed, merge, compliance, retention, risk assessment, monitoring, MoE, multimodal, data governance, and synthetic-data generation.
 
 ### `data.py`
 Interfaces with HuggingFace `datasets` library. Auto-detects dataset format (SFT, DPO, KTO, GRPO, multimodal) and validates against `trainer_type`. Handles multi-dataset mixing with configurable ratios. Applies chat templates via `tokenizer.apply_chat_template()` with fallback formatting.
@@ -144,12 +146,12 @@ EU AI Act compliance engine covering Articles 9-17:
 - `export_compliance_artifacts()`: All artifacts to directory
 - `export_evidence_bundle()`: ZIP archive for auditors
 
-### `verify.py`
+### `verify/`
 Consuming counterpart to `compliance.py`'s writers — re-hashes and re-validates the artifacts `compliance.py` produces:
 - `verify_annex_iv_artifact()`: field completeness + manifest-hash tamper check for an Annex IV JSON bundle
 - `verify_gguf()`: magic header + optional metadata parse + SHA-256 sidecar check for an exported GGUF file
 - `verify_integrity()`: re-walks a model directory against `model_integrity.json`, reporting changed/removed/added artifacts
-- `is_annex_iv_integrity_failure()` / `is_gguf_integrity_failure()` / `is_model_integrity_failure()`: structural (never string-matched) predicates the `verify-*` CLI subcommands use to route between `EXIT_CONFIG_ERROR` (1, nothing was compared) and `EXIT_INTEGRITY_FAILURE` (6, compared and disagreed)
+- `is_annex_iv_integrity_failure()` / `is_gguf_integrity_failure()` / `is_model_integrity_failure()` / `is_audit_integrity_failure()`: structural (never string-matched) predicates the `verify-*` CLI subcommands use to route between `EXIT_CONFIG_ERROR` (1, nothing was compared) and `EXIT_INTEGRITY_FAILURE` (6, compared and disagreed)
 
 `verify_audit_log` deliberately stays in `compliance.py` rather than moving here — it must mirror `AuditLogger.log_event`'s canonicalisation byte-for-byte, and separating a writer from its verifier is the drift hazard this module's docstring warns against.
 

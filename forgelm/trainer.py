@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 # NOTE: Heavy ML imports (torch, transformers.EarlyStoppingCallback, trl.SFTConfig/SFTTrainer)
 # are deferred to method bodies so `import forgelm.trainer` is cheap. Eagerly importing
 # torch here costs ~3-5s of CLI startup per invocation. See closure-plan F-performance-101.
+from ._strict_json import dumps_strict
 from .config import ConfigError
 from .grpo_rewards import ANSWER_EXTRACT_PATTERN
 
@@ -28,6 +29,7 @@ logger = logging.getLogger("forgelm.trainer")
 # Audit event names — kept as constants so the audit-log schema stays grep-able
 # and downstream consumers don't break on a typo.
 _EVT_REVERT_TRIGGERED = "model.reverted"
+_EVT_REVERT_FAILED = "model.revert_failed"
 # Loss/eval-loss auto-revert decision gate — emitted on PASS and FAIL so the
 # primary post-training quality gate leaves a discrete decision record with the
 # thresholds it was checked against, mirroring the benchmark/safety/judge
@@ -457,6 +459,43 @@ class ForgeTrainer:
         eval_strategy = "steps" if has_validation else "no"
         load_best_model_at_end = has_validation
 
+        # Transformers refuses ``load_best_model_at_end`` with step-based
+        # save/eval strategies unless ``save_steps`` is an exact multiple of
+        # ``eval_steps``, and raises deep inside ``TrainingArguments``
+        # construction — a ``ValueError`` the top-level handler maps to
+        # EXIT_TRAINING_ERROR (2), i.e. "your training run failed", for what is
+        # purely a config defect the operator can fix in one line.
+        #
+        # It is checked here rather than in ``config.py`` because the invariant
+        # only applies when a validation split exists, and that is decided by
+        # ``data._ensure_validation_split`` at load time — a config-level rule
+        # would fire on runs that never evaluate. ``config.py`` keeps its
+        # separate ``eval_steps > save_steps`` warning, which catches the
+        # commonest shape earlier without needing the dataset.
+        # GRPO is exempt, and the exemption is load-bearing rather than
+        # defensive: ``_get_training_args_for_type`` pops ``eval_strategy``,
+        # ``eval_steps`` AND ``load_best_model_at_end`` for GRPO, so
+        # transformers never reaches the constraint this check anticipates.
+        # Without the exemption a perfectly valid GRPO config — one
+        # transformers would accept — is rejected at exit 1 by ForgeLM alone,
+        # which is a worse failure than the one being prevented: an invented
+        # error the operator cannot act on because the upstream rule does not
+        # apply to them.
+        if self._trainer_type != "grpo" and load_best_model_at_end and eval_strategy == "steps":
+            eval_steps = self.config.training.eval_steps
+            save_steps = self.config.training.save_steps
+            if eval_steps and save_steps and save_steps % eval_steps != 0:
+                below = (save_steps // eval_steps) * eval_steps or eval_steps
+                above = ((save_steps // eval_steps) + 1) * eval_steps
+                nearest = str(below) if below == above else f"{below} or {above}"  # equal when save < eval
+                raise ConfigError(
+                    f"training.save_steps ({save_steps}) must be an exact multiple of "
+                    f"training.eval_steps ({eval_steps}) when a validation split exists, because "
+                    "best-model selection reloads the checkpoint matching the best evaluation and "
+                    "cannot do so if the two schedules never coincide. "
+                    f"Nearest valid value(s): {nearest}."
+                )
+
         kwargs = {
             "output_dir": self.checkpoint_dir,
             "max_steps": self.config.training.max_steps,
@@ -768,6 +807,11 @@ class ForgeTrainer:
                 logger.warning("Skipping evaluation checks — no validation data available.")
             return True
 
+        # Reset per invocation: a library caller running two trainings in one
+        # process would otherwise carry the first run's revert flag into the
+        # second, and report a deletion that belongs to a different model.
+        self._loss_gate_reverted = False
+
         final_loss = metrics.get("eval_loss")
         baseline_loss = self.config.evaluation.baseline_loss
         max_loss = self.config.evaluation.max_acceptable_loss
@@ -781,6 +825,46 @@ class ForgeTrainer:
                 baseline_loss,
             )
             baseline_loss = None
+
+        # The threshold gets the opposite treatment from the baseline above,
+        # and the asymmetry is the point. A non-finite *baseline* disarms a
+        # comparison that is only ever informational, so discarding it is
+        # safe. A non-finite *ceiling* disarms the gate itself: ``final_loss >
+        # nan`` is always False, so every model passes, ``passed=True`` is
+        # written to the audit log, and with ``auto_revert`` on nothing is ever
+        # reverted. Discarding it would be the same fail-open under a different
+        # name, so it fails **closed** — the run is failed with the value
+        # named. ``EvaluationConfig`` refuses these at load time; this covers
+        # the ``model_construct`` / direct-assignment ingress the schema
+        # cannot see.
+        if max_loss is not None and not math.isfinite(max_loss):
+            reason = (
+                f"evaluation.max_acceptable_loss is {max_loss!r}, which is not a finite number. "
+                "A non-finite ceiling makes the loss gate pass every model it is asked to reject, "
+                "so the run is failed rather than allowed through with an unusable threshold."
+            )
+            logger.error("EVALUATION FAILED: %s", reason)
+            # ``final_loss`` is passed through as-is, including ``None``.
+            # Synthesising ``float("nan")`` for a run that produced no
+            # ``eval_loss`` wrote a measurement into the Art. 12 log that was
+            # invented at write time — and it was byte-identical to the genuine
+            # divergence branch below, where ``eval_loss: "nan"`` means the
+            # model really did diverge. An auditor could not tell "this model
+            # diverged" from "the operator's ceiling was unusable and nothing
+            # was ever measured". ``None`` serialises as ``null``, which is the
+            # honest record: no measurement exists.
+            self._emit_loss_gate_event(False, final_loss, max_loss, baseline_loss)
+            # Record the reason even when nothing is reverted: this path fails
+            # the run either way (an unusable ceiling is a config defect, not a
+            # model verdict), and without this the JSON envelope falls back to
+            # its "no failure reason was recorded" text for a failure whose
+            # cause is known exactly.
+            self._last_revert_reason = reason
+            if not auto_revert:
+                logger.warning("auto_revert=false — model NOT reverted (detection-only). %s", reason)
+                return False
+            self._revert_model(final_path, reason, source="invalid_threshold")
+            return False
 
         # When auto_revert is off and no threshold/baseline is configured there is
         # nothing to detect — keep the original cheap early return.
@@ -844,7 +928,7 @@ class ForgeTrainer:
     def _emit_loss_gate_event(
         self,
         passed: bool,
-        eval_loss: float,
+        eval_loss: Optional[float],
         max_loss: Optional[float],
         baseline_loss: Optional[float],
     ) -> None:
@@ -853,10 +937,21 @@ class ForgeTrainer:
         Mirrors the benchmark/safety/judge ``*.evaluation_completed`` events so
         an auditor can grep a discrete pass/fail record for the primary
         post-training quality gate, carrying the thresholds it was checked
-        against. Non-finite ``eval_loss`` (NaN/Inf divergence) is recorded as a
-        string sentinel rather than a bare float so the JSONL stays valid JSON.
+        against.
+
+        ``eval_loss`` has three distinct states and the log keeps them
+        distinct, because an auditor's first question is which one occurred:
+
+        - a **number** — the model was evaluated and this is the measurement;
+        - the **string** ``"nan"`` / ``"inf"`` — the model was evaluated and
+          diverged. A string rather than a bare float because JSON has no
+          non-finite number literal;
+        - ``null`` — **no measurement exists**. The gate failed for a reason
+          that is not about the model at all, such as an unusable configured
+          ceiling. This case previously synthesised ``float("nan")``, making it
+          byte-identical to divergence in the permanent record.
         """
-        loss_field: Any = eval_loss if math.isfinite(eval_loss) else str(eval_loss)
+        loss_field: Any = None if eval_loss is None else (eval_loss if math.isfinite(eval_loss) else str(eval_loss))
         self.audit.log_event(
             _EVT_LOSS_GATE_COMPLETED,
             passed=passed,
@@ -865,8 +960,14 @@ class ForgeTrainer:
             baseline_loss=baseline_loss,
         )
 
-    def _revert_model(self, final_path: str, reason: str, *, source: str = "evaluation") -> None:
+    def _revert_model(self, final_path: str, reason: str, *, source: str = "evaluation") -> bool:
         """Delete generated model artifacts, emit audit event, and notify webhook.
+
+        Returns ``True`` when the artifacts are gone and ``False`` when the delete
+        failed. ``model.reverted`` is written *before* the delete, so on failure a
+        second ``model.revert_failed`` record retracts it — the append-only log
+        cannot be edited, and an auditor must not read "reverted" over files that
+        are still on disk. Callers must carry the return value into the result.
 
         Centralises the revert flow so every code path that triggers a revert
         produces both:
@@ -891,6 +992,9 @@ class ForgeTrainer:
         # surface it on ``.error`` even for the eval-loss path, which returns a
         # freshly-built result that never saw the gate's computed reason
         self._last_revert_reason = reason
+        # Only set once the delete has succeeded (below), so the caller reports what
+        # happened rather than what was intended. See the loss-gate call site.
+        self._loss_gate_reverted = False
 
         # Article 12 audit trail — emit before destructive action so the
         # record exists even if the rmtree below explodes.
@@ -901,15 +1005,24 @@ class ForgeTrainer:
             try:
                 shutil.rmtree(final_path)
                 logger.info("Reverted artifacts deleted successfully.")
-            except OSError:
+            except OSError as exc:
                 logger.exception(
                     "Failed to delete reverted artifacts at %s. Manual cleanup may be required.", final_path
                 )
+                self.audit.log_event(_EVT_REVERT_FAILED, reason=source, path=final_path, error_class=type(exc).__name__)
+                # Not a revert: say the opposite of "Artifacts discarded".
+                self.notifier.notify_failure(
+                    run_name=self.run_name,
+                    reason=f"{reason} Auto-revert could NOT delete {final_path}; the artifacts remain on disk.",
+                )
+                return False
+        self._loss_gate_reverted = True
 
         # Lifecycle event: dashboards distinguish "training.reverted" (gate
         # rejected an otherwise-completed run) from "training.failure"
         # (training itself crashed). See docs/standards/logging-observability.md.
         self.notifier.notify_reverted(run_name=self.run_name, reason=f"{reason} Artifacts discarded.")
+        return True
 
     def _build_trainer(self, callbacks: list) -> None:
         """Build (or rebuild) self.trainer from current config. Called on first build and after OOM retry."""
@@ -1256,26 +1369,30 @@ class ForgeTrainer:
         train_result.error = reason
 
     @staticmethod
-    def _mark_reverted(train_result: TrainResult, reason: Optional[str] = None) -> None:
+    def _mark_reverted(train_result: TrainResult, reason: Optional[str] = None, *, deleted: bool = True) -> None:
         """Mark a result as auto-reverted and clear every stale artifact path.
 
-        ``_revert_model`` has just deleted the on-disk model, so neither
-        ``final_model_path`` nor ``staging_path`` point at a real directory — the
-        CLI/JSON envelope must not advertise a path that no longer exists. A
-        reverted run is also never "awaiting approval" (exit 3, not 4), so clear
-        the discriminator defensively even though the gate hasn't fired here.
+        ``deleted`` is ``_revert_model``'s return value. When ``True`` the on-disk
+        model is gone, so neither ``final_model_path`` nor ``staging_path`` point at
+        a real directory — the CLI/JSON envelope must not advertise a path that no
+        longer exists. When ``False`` the delete failed: the run still failed its
+        gate, but ``reverted`` stays ``False`` and the paths are kept, because the
+        artifacts are on disk and an operator needs to find them. A failed run is
+        also never "awaiting approval" (exit 3, not 4), so clear the discriminator
+        defensively even though the gate hasn't fired here.
 
         ``reason`` populates ``TrainResult.error`` so the pipeline stage error
         and JSON envelope carry the gate's precise failure reason instead of the
         generic "Stage gate failed." fallback.
         """
         train_result.success = False
-        train_result.reverted = True
-        train_result.staging_path = None
-        train_result.final_model_path = None
+        train_result.reverted = deleted
+        if deleted:
+            train_result.staging_path = None
+            train_result.final_model_path = None
         train_result.awaiting_approval = False
         if reason:
-            train_result.error = reason
+            train_result.error = reason if deleted else f"{reason} Auto-revert could not delete the artifacts."
 
     def _apply_benchmark_result(
         self,
@@ -1303,6 +1420,7 @@ class ForgeTrainer:
             passed=benchmark_result.passed,
             average=benchmark_result.average_score,
             scores=benchmark_result.scores,
+            failure_reason=benchmark_result.failure_reason,
         )
         if benchmark_result.passed:
             return True
@@ -1311,8 +1429,8 @@ class ForgeTrainer:
             # Failure recorded on train_result; pipeline continues to safety/judge stages.
             self._log_gate_kept_no_revert("benchmark", reason, train_result)
             return True
-        self._revert_model(final_path, reason, source="benchmark")
-        self._mark_reverted(train_result, reason)
+        deleted = self._revert_model(final_path, reason, source="benchmark")
+        self._mark_reverted(train_result, reason, deleted=deleted)
         return False
 
     def _apply_resource_usage(self, train_result: TrainResult, metrics: Dict[str, float]) -> None:
@@ -1366,8 +1484,8 @@ class ForgeTrainer:
         if not (self.config.evaluation and self.config.evaluation.auto_revert):
             self._log_gate_kept_no_revert("safety", safety_reason, train_result)
             return True
-        self._revert_model(final_path, safety_reason, source="safety")
-        self._mark_reverted(train_result, safety_reason)
+        deleted = self._revert_model(final_path, safety_reason, source="safety")
+        self._mark_reverted(train_result, safety_reason, deleted=deleted)
         return False
 
     def _apply_judge_result(
@@ -1382,11 +1500,13 @@ class ForgeTrainer:
             return True
         train_result.judge_score = judge_result.average_score
         train_result.judge_details = judge_result.details
+        train_result.judge_passed = judge_result.passed
         metrics["judge/average_score"] = judge_result.average_score
         self.audit.log_event(
             "judge.evaluation_completed",
             passed=judge_result.passed,
             average_score=judge_result.average_score,
+            failure_reason=judge_result.failure_reason,
         )
         if judge_result.passed:
             return True
@@ -1394,8 +1514,8 @@ class ForgeTrainer:
         if not (self.config.evaluation and self.config.evaluation.auto_revert):
             self._log_gate_kept_no_revert("judge", judge_reason, train_result)
             return True
-        self._revert_model(final_path, judge_reason, source="judge")
-        self._mark_reverted(train_result, judge_reason)
+        deleted = self._revert_model(final_path, judge_reason, source="judge")
+        self._mark_reverted(train_result, judge_reason, deleted=deleted)
         return False
 
     def _finalize_artifacts(
@@ -1528,11 +1648,24 @@ class ForgeTrainer:
             # Surface the eval-loss gate's computed reason (NaN/Inf or threshold
             # breach) on .error so the pipeline stage / JSON envelope don't fall
             # back to the generic "Stage gate failed." string.
+            # ``reverted`` is derived, never assumed. ``execute_evaluation_checks``
+            # returns False on two materially different outcomes: the model was
+            # deleted (auto_revert on), or the gate failed and the artefacts are
+            # still on disk (auto_revert off — the *shipped default* — and the
+            # invalid-threshold branch). Hardcoding ``True`` told an operator
+            # their model was destroyed when it was intact, and told a dashboard
+            # the same. The three later gates already derive it via
+            # ``_mark_reverted``; this call site is the one that did not.
+            reverted = getattr(self, "_loss_gate_reverted", False)
             return TrainResult(
                 success=False,
                 metrics=metrics,
-                reverted=True,
+                reverted=reverted,
                 error=getattr(self, "_last_revert_reason", None),
+                # A model that was not deleted is still on disk; ``reverted: false``
+                # with ``final_model_path: null`` would tell the operator it is gone.
+                final_model_path=None if reverted else train_result.final_model_path,
+                staging_path=None if reverted else train_result.staging_path,
             )
 
         if not self._apply_benchmark_result(self._run_benchmark_if_configured(), train_result, metrics, gate_path):
@@ -1887,6 +2020,12 @@ class ForgeTrainer:
             judge_model=judge_cfg.judge_model,
             judge_api_key=api_key,
             min_score=judge_cfg.min_score,
+            # Direct attribute access, matching min_score/batch_size rather than
+            # the ``getattr`` used for the genuinely-optional fields below: this
+            # is a required scalar with a schema default, and a getattr fallback
+            # would let the gate's evidence floor silently diverge from the
+            # schema if that default were ever retuned.
+            min_valid_fraction=judge_cfg.min_valid_fraction,
             output_dir=output_dir,
             api_base=getattr(judge_cfg, "judge_api_base", None),
             batch_size=judge_cfg.batch_size,
@@ -1915,8 +2054,6 @@ class ForgeTrainer:
         Article 11 manifest by default.
         """
         try:
-            import json
-
             from .compliance import (
                 export_compliance_artifacts,
                 generate_data_governance_report,
@@ -1988,7 +2125,7 @@ class ForgeTrainer:
                 governance = generate_data_governance_report(self.config, self.dataset)
                 gov_path = os.path.join(compliance_dir, "data_governance_report.json")
                 with open(gov_path, "w", encoding="utf-8") as fh:
-                    json.dump(governance, fh, indent=2)
+                    fh.write(dumps_strict(governance, indent=2))
                 self.audit.log_event(
                     "compliance.governance_exported",
                     output_path=gov_path,
@@ -2054,10 +2191,9 @@ class ForgeTrainer:
 
             integrity = generate_model_integrity(final_path)
             integrity_path = os.path.join(final_path, "model_integrity.json")
-            import json
 
             with open(integrity_path, "w") as f:
-                json.dump(integrity, f, indent=2)
+                f.write(dumps_strict(integrity, indent=2))
             self.audit.log_event("model.integrity_verified", artifacts=len(integrity.get("artifacts", [])))
             logger.info("Model integrity checksums saved to %s", integrity_path)
         except (OSError, ValueError, TypeError) as e:

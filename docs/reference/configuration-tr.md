@@ -77,7 +77,7 @@ Tam açıklamalı örnek için `config_template.yaml` dosyasına bakın.
 | `warmup_ratio` | float | `0.1` | Isınma oranı |
 | `weight_decay` | float | `0.01` | AdamW ağırlık bozunumu |
 | `eval_steps` | int | `200` | Her N adımda bir değerlendir |
-| `save_steps` | int | `200` | Her N adımda bir checkpoint kaydet |
+| `save_steps` | int | `200` | Her N adımda bir checkpoint kaydet. Bir validation split'i varsa `eval_steps`'in tam katı olmalıdır, aksi halde çalışma başlangıçta `1` ile çıkar (split bilindikten sonra kontrol edildiği için `--dry-run` bunu göremez); GRPO muaftır |
 | `save_total_limit` | int | `3` | Tutulacak maksimum checkpoint sayısı |
 | `early_stopping_patience` | int | `3` | Doğrulama kaybı iyileşmeden N değerlendirme sonra dur (yalnızca bir doğrulama bölünmesi varsa etkin). |
 | `packing` | bool | `false` | Dizi paketleme (yalnızca SFT) |
@@ -181,8 +181,8 @@ training:
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
 | `auto_revert` | bool | `false` | Değerlendirme başarısız olursa modeli sil |
-| `max_acceptable_loss` | float | `null` | eval_loss üst sınırı |
-| `baseline_loss` | float | `null` | `null` ise otomatik hesaplanır |
+| `max_acceptable_loss` | float | `null` | eval_loss üst sınırı. Sonlu ve negatif olmayan bir sayı olmalı — `.nan` / `.inf` yükleme anında reddedilir, çünkü `loss > nan` her zaman false'tur ve sonlu olmayan bir tavan, kapının reddetmesi istenen her modeli geçirmesine yol açar |
+| `baseline_loss` | float | `null` | `null` ise otomatik hesaplanır. Aynı sonlu, negatif olmayan kısıt geçerlidir |
 | `require_human_approval` | bool | `false` | İnsan incelemesi için duraklat (çıkış kodu 4) |
 
 #### `evaluation.benchmark` (İsteğe bağlı)
@@ -228,6 +228,7 @@ training:
 | `judge_model_revision` | string | `null` | **Yerel** judge modelini bir HF Hub commit SHA'sına veya ref'ine sabitle. `judge_api_key_env` ile birlikte reddedilir (API judge hiçbir şey yüklemez). **Bugün uygulanıyor** — judge tokenizer'ını ve ağırlıklarını aynı commit'e sabitler. Bkz. [Hub revision pinleme](#hub-revision-pinleme) |
 | `eval_dataset` | string | `"eval_prompts.jsonl"` | Değerlendirme prompt dosyası |
 | `min_score` | float | `5.0` | Minimum ortalama puan (1-10) |
+| `min_valid_fraction` | float | `0.8` | Ortalamanın kanıt sayılabilmesi için parse edilebilir judge puanı üretmesi gereken eval prompt oranı. Ortalama **yalnızca** parse edilebilen puanlar üzerinden hesaplanır — başarısız bir judge çağrısı düşük sayılmaz, atılır — dolayısıyla bu taban olmadan iki yüz prompt içinden tek bir `9` puanı `min_score: 8` kapısını geçiyordu. Bu oranın altında kapı, `Average judge score … below minimum`'dan ayrı bir `Insufficient valid judge evidence` gerekçesiyle başarısız olur. `0.0`, 0.11.0'a kadarki davranışa döner. |
 | `batch_size` | int | `8` | LLM-hakim turunda puanlanan (prompt, completion) çift sayısı. `1` batching'i devre dışı bırakır. |
 | `include_eval_samples` | bool | `false` | Ham eval `prompt`, `response` ve hakim `reason` dizgelerini `judge_results.json`'a yazar. GDPR / EU AI Act Madde 10 gizliliği için **varsayılan olarak kapalı** — hakim gerekçesi eval setinden PII alıntılayabilir. Yalnızca hata ayıklama için açın. |
 
@@ -366,13 +367,13 @@ uzatmasını engeller.
 |------|-----|-----------|----------|
 | `enabled` | bool | `false` | Model birleştirmeyi etkinleştir |
 | `method` | string | `"ties"` | `"ties"`, `"dare"`, `"slerp"`, `"linear"` |
-| `models` | list | `[]` | `{path, weight}` sözlük listesi |
+| `models` | list | `[]` | `{path, weight}` girdi listesi. Bilinmeyen anahtarlar reddedilir; `weight` sonlu ve kesin pozitif olmalıdır |
 | `output_dir` | string | `"./merged_model"` | Çıktı dizini |
-| `ties_trim_fraction` | float | `0.2` | TIES: görev başına kırpılan en küçük büyüklükteki delta'ların oranı (0.0–1.0). Yalnızca `method` `ties` olduğunda kullanılır. |
+| `ties_trim_fraction` | float | `0.2` | TIES: görev başına kırpılan en küçük büyüklükteki delta'ların oranı. Aralık `[0.0, 1.0)` — `1.0` reddedilir, çünkü her şeyi kırpmak merge'i işlevsiz bırakırdı. Yalnızca `method` `ties` olduğunda kullanılır. |
 | `dare_drop_rate` | float | `0.3` | DARE: yeniden ölçeklemeden önce her delta'nın rastgele düşürülme olasılığı (0.0–1.0). Yalnızca `method` `dare` olduğunda kullanılır. |
 | `dare_seed` | int | `42` | DARE: rastgele düşürme maskesi için RNG seed'i; bir birleştirme çalıştırmadan çalıştırmaya tekrarlanabilir olur. |
 
-> `enabled: true`, `models` içinde her biri bir `path` anahtarı taşıyan en az iki girdi gerektirir — ikiden az kaynak model (veya `path` eksik bir girdi) içeren bir birleştirme config-load zamanında reddedilir.
+> `enabled: true`, `models` içinde her biri bir `path` taşıyan en az iki girdi gerektirir — ikiden az kaynak model, `path` eksik bir girdi, bilinmeyen bir anahtar veya sonlu-ve-kesin-pozitif olmayan bir `weight` config-load zamanında reddedilir (çıkış 1). Ağırlık kısıtı süs değildir: SLERP'te sonlu olmayan bir ağırlık toplamı `t = 0.5` dalına düşer, yani birleştirme yazdığınız ağırlıkları sessizce yok sayıp orta noktada interpolasyon yapar.
 
 > **TIES/DARE varsayılan hiperparametreleri kasıtlı olarak korumacıdır.**
 > ForgeLM'in yerel `ties` birleştirmesi, ağırlıkların büyüklüğe göre alttaki

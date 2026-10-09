@@ -242,3 +242,131 @@ def test_setuptools_security_floor_meets_pysec_2026_3447() -> None:
         f"[build-system].requires setuptools entry {str(requirement)!r} still admits {vulnerable}, "
         f"which predates the PYSEC-2026-3447 fix in setuptools {_SETUPTOOLS_SECURITY_FLOOR}."
     )
+
+
+def _lint_job_pins() -> dict[str, Requirement]:
+    """Requirements the ci.yml lint job installs directly.
+
+    The lint job deliberately does NOT ``pip install -e ".[dev]"`` — it exists
+    to report in seconds without provisioning torch — so its tool versions are
+    a second copy of a constraint that also lives in ``[dev]``. Two hand-kept
+    copies of one literal is the drift shape this repository has already had
+    rot three times, so they are compared rather than trusted.
+    """
+    import re
+
+    ci = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+    for line in ci.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("run: pip install ") and "ruff" in stripped:
+            specs = re.findall(r"'([^']+)'|\b([a-zA-Z0-9_.\[\]-]+[<>=!~][^\s']+)", stripped)
+            reqs = [Requirement(a or b) for a, b in specs]
+            return {canonicalize_name(r.name): r for r in reqs}
+    raise AssertionError("ci.yml's lint job no longer has a `run: pip install …` step installing ruff")
+
+
+@pytest.mark.parametrize("tool", ["ruff", "mypy"])
+def test_lint_job_tool_pins_match_the_dev_extra(tool: str) -> None:
+    """The formatter and type-checker that gate CI must be the ones ``[dev]`` installs.
+
+    ``ci.yml`` installed a bare ``pip install ruff`` for a long time. ruff
+    0.16.0 then began formatting Python blocks inside Markdown, taking
+    ``ruff format --check .`` from 277 files to 562 — 32 of which were
+    suddenly "unformatted" on a tree nobody had touched. An unpinned formatter
+    in a blocking job means any upstream release can redden CI with no commit
+    behind it, and a contributor running the documented gauntlet with a
+    different resolution sees a different answer than the gate does.
+
+    Adopting a formatter major should be a reviewed diff, not an ambush.
+    """
+    dev = {
+        canonicalize_name(Requirement(spec).name): Requirement(spec) for spec in _load_optional_dependencies()["dev"]
+    }
+    ci = _lint_job_pins()
+    name = canonicalize_name(tool)
+
+    assert name in dev, f"{tool} is installed by the ci.yml lint job but is not in the [dev] extra"
+    assert name in ci, f"{tool} is in the [dev] extra but the ci.yml lint job no longer installs it"
+    assert str(dev[name].specifier) == str(ci[name].specifier), (
+        f"{tool} is constrained as {str(dev[name].specifier)!r} in [dev] but "
+        f"{str(ci[name].specifier)!r} in ci.yml's lint job. The job gates every PR, so a "
+        "divergence means CI and contributors run different versions of the same tool."
+    )
+    assert str(dev[name].specifier).count(",") >= 1, (
+        f"{tool} carries no upper bound ({str(dev[name].specifier)!r}). A blocking gate whose tool "
+        "is unpinned can go red on an unchanged tree the day upstream ships a release."
+    )
+
+
+def test_the_shadow_check_sees_a_nested_shadow(tmp_path: Path) -> None:
+    """Negative control: the recursive scan must flag a shadow below the top level."""
+    nested = tmp_path / "forgelm" / "cli" / "subcommands" / "_thing"
+    nested.mkdir(parents=True)
+    (nested / "__init__.py").write_text("")
+    (nested.parent / "_thing.py").write_text("")
+    found = [
+        d
+        for d in (tmp_path / "forgelm").rglob("*")
+        if d.is_dir() and (d / "__init__.py").exists() and (d.parent / f"{d.name}.py").exists()
+    ]
+    assert found == [nested]
+
+
+def test_bandit_pin_matches_the_dev_and_security_extras() -> None:
+    """``bandit`` gates CI in its own job, so its pin is a third hand-kept copy.
+
+    The ruff/mypy parity test covers the lint job only. bandit is installed by a
+    different step, and a scanner major can redden a blocking gate with no commit on
+    this side — the same ambush the other pins are compared to prevent.
+    """
+    import re
+
+    ci_text = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    found = re.findall(r"pip install '(bandit\[toml\][^']+)'", ci_text)
+    assert found, "ci.yml no longer installs bandit via `pip install 'bandit[toml]…'` — update this test"
+    ci_spec = {str(Requirement(spec).specifier) for spec in found}
+    extras = _load_optional_dependencies()
+    for extra in ("dev", "security"):
+        pins = {
+            str(Requirement(spec).specifier)
+            for spec in extras[extra]
+            if canonicalize_name(Requirement(spec).name) == "bandit"
+        }
+        assert pins, f"[{extra}] no longer lists bandit"
+        assert pins == ci_spec, f"bandit is {pins} in [{extra}] but {ci_spec} in ci.yml"
+
+
+def test_no_module_shadows_a_sub_package() -> None:
+    """No ``forgelm/<name>.py`` may sit beside a ``forgelm/<name>/`` package.
+
+    Every ``module.py`` -> ``module/`` split in this project leaves the old
+    file one careless command away from returning: a ``git checkout <old-ref>
+    -- forgelm/verify.py`` taken to compare against the split, an unpruned
+    ``build/`` directory, a bad merge resolution. It happened during Phase 16
+    S1 — a stale ``build/lib`` put BOTH ``forgelm/verify.py`` and
+    ``forgelm/verify/`` into a locally-built wheel, and separately the old
+    module was restored into the checkout and staged.
+
+    Python resolves the package over the module, so nothing crashes and no
+    test fails; the shadow is invisible until a wheel ships two copies of the
+    same import path and a consumer's resolution order decides which one they
+    get. Cheap to assert, silent to miss.
+    """
+    package_root = Path(__file__).resolve().parents[1] / "forgelm"
+    # Recursive: the splits are not all top-level (``cli/subcommands/``, ``safety/``,
+    # ``data_audit/``...), and a shadow beside a nested package is the same silent
+    # two-copies-in-a-wheel hazard that a top-level one is.
+    shadows = sorted(
+        f"{directory.parent.relative_to(package_root.parent).as_posix()}/{directory.name}.py "
+        f"shadows {directory.relative_to(package_root.parent).as_posix()}/"
+        for directory in package_root.rglob("*")
+        if directory.is_dir()
+        and "__pycache__" not in directory.parts
+        and (directory / "__init__.py").exists()
+        and (directory.parent / f"{directory.name}.py").exists()
+    )
+    assert not shadows, (
+        f"a module is shadowing a sub-package of the same name: {shadows}. "
+        "Delete the leftover module — Python imports the package, so this fails silently until "
+        "a built distribution carries both."
+    )

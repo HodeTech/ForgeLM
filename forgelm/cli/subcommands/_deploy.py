@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import sys
 
+from ..._strict_json import dumps_strict
 from .._exit_codes import EXIT_CONFIG_ERROR, EXIT_TRAINING_ERROR
 from .._logging import logger
 
@@ -27,7 +27,7 @@ def _run_deploy_cmd(args, output_format: str) -> None:
 
     if output_format == "json":
         print(
-            json.dumps(
+            dumps_strict(
                 {
                     "success": result.success,
                     "target": result.target,

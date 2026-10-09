@@ -25,7 +25,7 @@ EXIT_INTEGRITY_FAILURE = 6
 | **3** | Training completed but eval/safety/benchmark threshold failed, and auto-revert happened | CI/CD decision: do not deploy |
 | **4** | Training + evals passed, but `require_human_approval: true` — staged, awaiting human sign-off | CI/CD pauses pipeline |
 | **5** | Wizard cancelled before producing a config (operator decline, non-tty stdin refusal, Ctrl-C through prompts) | CI/CD distinguishes "wizard finished with a config" from "wizard never saved anything" |
-| **6** | `verify-audit` / `verify-annex-iv` / `verify-gguf` / `verify-integrity` read an artefact successfully and its **integrity check failed** — a broken audit-log hash chain, an Annex IV manifest hash mismatch, a GGUF SHA-256 sidecar mismatch (or an unparsable metadata block with no matching sidecar to clear it), or model files that no longer match `model_integrity.json`. Split out of `EXIT_CONFIG_ERROR` (1) in the `forgelm/verify.py` verification-toolbelt closure because the two are different incidents with different owners: a mistyped path is an operator typo (1 — fix the command), whereas a hash that no longer matches is a security event (6 — page whoever owns the artefact). Both used to exit 1 | CI/CD: treat as "do not promote", route to whoever owns the artefact, not the pipeline author |
+| **6** | `verify-audit` / `verify-annex-iv` / `verify-gguf` / `verify-integrity` read an artefact successfully and its **integrity check failed** — a broken audit-log hash chain, an Annex IV manifest hash mismatch, a GGUF SHA-256 sidecar mismatch (or an unparsable metadata block with no matching sidecar to clear it), or model files that no longer match `model_integrity.json`. Split out of `EXIT_CONFIG_ERROR` (1) in the verification-toolbelt closure because the two are different incidents with different owners: a mistyped path is an operator typo (1 — fix the command), whereas a hash that no longer matches is a security event (6 — page whoever owns the artefact). Both used to exit 1 | CI/CD: treat as "do not promote", route to whoever owns the artefact, not the pipeline author |
 
 **The line between 1 and 6 for `verify-*` subcommands:** 6 means the verifier compared something and it did not match; 1 means the verifier never got to compare anything (bad path, malformed input, unreadable artefact) — or, in the third case below, that everything it *could* compare came out clean. Four deliberate judgement calls that stay on 1 even though they look tamper-adjacent:
 
@@ -34,7 +34,7 @@ EXIT_INTEGRITY_FAILURE = 6
 - **`verify-gguf` metadata-parse failure on a file whose SHA-256 sidecar matches.** A parse error alone is ambiguous: the file may be truncated, or the installed `gguf` package may simply be too old for its format revision. The parse failure therefore does not short-circuit the sidecar comparison, and a matching digest resolves the ambiguity — the bytes are provably identical to what was exported, so nothing was tampered with and the exit code downgrades from 6 to 1. Exit 6 means "page whoever owns the artefact"; a library-version incompatibility must never trigger that. The other two branches keep 6: **no sidecar** (nothing available to rule out corruption) and **mismatching sidecar** (the checksum disagreement is the stronger evidence and dominates the verdict).
 - **`verify-audit` on a zero-entry log with no genesis manifest.** The log must still *fail* — reporting `OK: 0 entries verified` after comparing nothing is the fail-open this rule exists to prevent — but it fails as input, not as tampering, because with no manifest there is no baseline in existence to compare zero entries against. An attacker who deleted the log *and* its sidecar lands here, and so does a mistyped path; the one artefact that could tell them apart is the thing that is missing, so claiming tampering would be the mirror image of the `verify-gguf` magic-header case. The split is the whole point: the same empty log **does** exit 6 when a manifest survives to pin a first entry, because that manifest is a baseline and the comparison genuinely ran (see `_classify_empty_audit_log` in `forgelm/compliance.py`). An empty log is never a legitimate fresh-run state — `AuditLogger` writes the file and its manifest together on the first event, so a never-used log is absent, not empty.
 
-The per-verifier classification is structural, not string-matched: each of `forgelm/verify.py`'s `is_*_integrity_failure` predicates reads the result's typed fields (never the human-readable `reason` prose) so a reworded operator message can never silently flip the exit code.
+The per-verifier classification is structural, not string-matched: each of the `forgelm/verify/` sub-package's `is_*_integrity_failure` predicates reads the result's typed fields (never the human-readable `reason` prose) so a reworded operator message can never silently flip the exit code.
 
 **Rules:**
 
@@ -65,7 +65,7 @@ class ConfigError(Exception):
 | Situation | Do |
 |---|---|
 | Inside `config.py`, `trainer.py`, `model.py`, etc. | **Raise.** Let the caller decide. |
-| Inside `cli.py` dispatch | **Log + `sys.exit(N)`.** CLI is the top level. |
+| Inside the `forgelm/cli/` package (dispatch, parser, subcommands) | **Log + `sys.exit(N)`.** The CLI is the top level. Phase 15 split the monolithic `cli.py` into `forgelm/cli/`; the rule follows the package, not the old filename. |
 | Inside tests | **Assert.** Tests are tests. |
 | Optional dep missing | **Raise `ImportError`** with install hint. See [architecture.md](architecture.md#3-optional-dependencies-are-extras-never-silent-imports). |
 
@@ -291,14 +291,28 @@ Each subcommand's success envelope wraps the result in a per-command collection 
 Every custom exception and every non-zero exit path must have a test. See [testing.md](testing.md) for structure. Pattern:
 
 ```python
+import subprocess
+import sys
+
+
 def test_invalid_trainer_type_raises_config_error(tmp_path):
     config_path = tmp_path / "bad.yaml"
     config_path.write_text("training:\n  trainer_type: spo\n...")
 
     result = subprocess.run(
-        ["forgelm", "--config", str(config_path), "--dry-run"],
+        [sys.executable, "-m", "forgelm", "--config", str(config_path), "--dry-run"],
         capture_output=True, text=True
     )
     assert result.returncode == 1  # EXIT_CONFIG_ERROR
     assert "trainer_type" in result.stderr
 ```
+
+> **Never spawn the bare `forgelm` console script here.** A console script's
+> `sys.path[0]` is its own `bin/` directory, never the current working
+> directory, so `["forgelm", ...]` runs whatever is installed in
+> `site-packages` — which may be a stale non-editable install of a weeks-old
+> release. The test then passes against code the author never wrote.
+> `[sys.executable, "-m", "forgelm", ...]` puts the cwd first on `sys.path`,
+> so it exercises the checkout. The one deliberate exception is post-publish
+> verification, where testing the *installed* artefact is the whole point —
+> see the `cut-release` skill.

@@ -49,6 +49,18 @@ except PackageNotFoundError:  # pragma: no cover — uninstalled-source path
 # Bumped to 1.1.0 in v0.8.0: the stable ``verify_integrity`` callable and
 # ``VerifyIntegrityResult`` dataclass were added to ``forgelm.__all__``
 # (additive → MINOR ``__api_version__`` bump per the rule above).
-__api_version__ = "1.1.0"
+#
+# 1.2.0 (the unreleased 0.11.1rc1 cycle): ``TrainResult`` gained ``judge_passed``,
+# an additive field on a stable dataclass — the MINOR trigger the rule above names.
+# Phase 16 S1 also annotated ``SyntheticDataGenerator.__init__`` and
+# ``WebhookNotifier.__init__``, which were bare ``def __init__(self, config):`` and
+# are reported as ``no-untyped-call`` by the public-surface type gate.  Both are
+# *experimental*-tier (``_STABILITY_TIERS``), so that annotation alone would not
+# have moved the version — the table above covers stable symbols only.  It is
+# still recorded in the CHANGELOG because it is visible to a downstream
+# ``mypy --strict`` consumer (``SyntheticDataGenerator(some_other_object)``
+# type-checked before and does not now).  The runtime signature (names, order,
+# defaults, arity) is byte-identical, so no caller breaks at import or call time.
+__api_version__ = "1.2.0"
 
 __all__ = ["__version__", "__api_version__"]

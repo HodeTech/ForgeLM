@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import sys
 
+from .._strict_json import dumps_strict
 from ._exit_codes import EXIT_SUCCESS, EXIT_WIZARD_CANCELLED
 
 
@@ -44,7 +44,7 @@ def _maybe_run_wizard(args) -> None:
         # (F-P7-OPUS-06).  Refuse the combination up front with a proper
         # envelope on stdout and exit 5 (no config produced).
         print(
-            json.dumps(
+            dumps_strict(
                 {
                     "success": False,
                     "error": "--wizard is interactive and cannot be combined with --output-format json. "

@@ -62,6 +62,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import ValidationError
 
+from .._strict_json import dumps_strict
 from ..config import ConfigError, ForgeConfig, PipelineConfig, PipelineStage, merge_pipeline_stage_config
 from ._exit_codes import (
     EXIT_AWAITING_APPROVAL,
@@ -263,7 +264,7 @@ def _atomic_write_json(path: str, payload: Dict[str, Any]) -> None:
     tmp = f"{path}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, sort_keys=False)
+            f.write(dumps_strict(payload, indent=2, sort_keys=False))
         os.replace(tmp, path)
     except Exception:
         # If the write failed before the replace, clean up the orphan
@@ -1637,7 +1638,7 @@ class PipelineOrchestrator:
         # version has ever written; a permanently-dangling pointer made
         # deleted evidence indistinguishable from a writer defect, forcing
         # deletion (archetypal Art. 12 tampering) to route *softer* than
-        # corruption.  See forgelm/verify.py for the reader half.
+        # corruption.  See forgelm/verify/_pipeline_evidence.py for the reader half.
         from ..compliance import ANNEX_IV_ARTEFACT_BASENAME as _EVIDENCE
 
         stage_state.training_manifest = os.path.join(stage_cfg.training.output_dir, "compliance", _EVIDENCE)
@@ -1668,7 +1669,7 @@ class PipelineOrchestrator:
     def _emit_summary(self, state: PipelineState) -> None:
         """Operator-facing run summary (text or JSON envelope)."""
         if self.output_format == "json":
-            print(json.dumps(_serialise_state(state), indent=2))
+            print(dumps_strict(_serialise_state(state), indent=2))
             return
 
         logger.info("Pipeline %s — final_status=%s", state.pipeline_run_id, state.final_status)
@@ -1778,10 +1779,10 @@ def run_pipeline_from_args(
     except (ConfigError, ValidationError) as e:
         logger.error("Pipeline configuration error: %s", e)
         if output_format == "json":
-            print(json.dumps({"success": False, "error": str(e)}))
+            print(dumps_strict({"success": False, "error": str(e)}))
         return EXIT_CONFIG_ERROR
     except Exception as e:  # noqa: BLE001 — best-effort: top-of-CLI pipeline catch mirrors cli/_training.py. The orchestrator crosses state-file I/O, manifest generation, per-stage merge/validation, and trainer invocation; any leak must surface as a structured CLI failure (traceback in the log) and the 2-key JSON envelope on stdout rather than a raw traceback that breaks JSON parsers.  # NOSONAR
         logger.exception("Pipeline run failed.")
         if output_format == "json":
-            print(json.dumps({"success": False, "error": str(e)}))
+            print(dumps_strict({"success": False, "error": str(e)}))
         return EXIT_TRAINING_ERROR

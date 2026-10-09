@@ -10,6 +10,7 @@ import os
 import sys
 from typing import Optional, Tuple
 
+from .._strict_json import dumps_strict
 from ..config import ForgeConfig
 from ._dry_run import _run_dry_run
 from ._exit_codes import EXIT_CONFIG_ERROR, EXIT_EVAL_FAILURE, EXIT_SUCCESS, EXIT_TRAINING_ERROR
@@ -110,7 +111,7 @@ def _run_benchmark_only(config: ForgeConfig, model_path: str, output_format: str
         }
         if result.failure_reason:
             output["failure_reason"] = result.failure_reason
-        print(json.dumps(output, indent=2))
+        print(dumps_strict(output, indent=2))
     else:
         logger.info("Benchmark Results:")
         for task, score in result.scores.items():
@@ -135,7 +136,12 @@ def _run_merge(config: ForgeConfig, output_format: str) -> None:
 
     result = merge_peft_adapters(
         base_model_path=config.model.name_or_path,
-        adapters=config.merge.models,
+        # ``merge.models`` is now ``List[MergeInput]``; ``merge_peft_adapters``
+        # takes the plain-dict shape it has always taken, so the conversion
+        # happens here rather than pushing a Pydantic type into the merge
+        # algorithms. Keeping the library function dict-typed also keeps it
+        # callable from a notebook without importing the schema.
+        adapters=[entry.model_dump() for entry in config.merge.models],
         method=config.merge.method,
         output_dir=config.merge.output_dir,
         trust_remote_code=config.model.trust_remote_code,
@@ -146,7 +152,7 @@ def _run_merge(config: ForgeConfig, output_format: str) -> None:
 
     if output_format == "json":
         print(
-            json.dumps(
+            dumps_strict(
                 {
                     "success": result.success,
                     "method": result.method,
@@ -194,7 +200,7 @@ def _run_generate_data(config: ForgeConfig, output_format: str) -> None:
 
     if output_format == "json":
         print(
-            json.dumps(
+            dumps_strict(
                 {
                     "success": meets_threshold,
                     "total_prompts": result.total_prompts,
@@ -249,7 +255,7 @@ def _run_compliance_export(config: ForgeConfig, output_dir: str, output_format: 
     files = export_compliance_artifacts(manifest, output_dir)
 
     if output_format == "json":
-        print(json.dumps({"success": True, "files": files, "output_dir": output_dir}, indent=2))
+        print(dumps_strict({"success": True, "files": files, "output_dir": output_dir}, indent=2))
     else:
         logger.info("Compliance artifacts exported:")
         for f in files:

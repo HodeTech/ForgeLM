@@ -18,6 +18,7 @@ from typing import Any, Dict, Iterator, NoReturn, Optional
 
 import yaml
 
+from ..._strict_json import dumps_strict
 from .._exit_codes import EXIT_CONFIG_ERROR, EXIT_TRAINING_ERROR
 from .._logging import logger
 
@@ -328,7 +329,7 @@ def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoRe
     returns; pinning the type makes the contract visible to the typechecker.
     """
     if output_format == "json":
-        print(json.dumps({"success": False, "error": msg}))
+        print(dumps_strict({"success": False, "error": msg}))
     else:
         logger.error(msg)
     sys.exit(exit_code)
@@ -643,7 +644,7 @@ def _run_approve_cmd(args, output_format: str) -> None:
 
     if output_format == "json":
         print(
-            json.dumps(
+            dumps_strict(
                 {
                     "success": True,
                     "run_id": run_id,
@@ -741,7 +742,7 @@ def _run_reject_cmd(args, output_format: str) -> None:
 
     if output_format == "json":
         print(
-            json.dumps(
+            dumps_strict(
                 {
                     "success": True,
                     "run_id": run_id,

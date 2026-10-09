@@ -308,8 +308,11 @@ def _ties_dare_merge(
         del adapter_model, merged
 
     if any(w < 0 for w in weights):
-        # MergeConfig does not constrain merge.models[].weight to be
-        # non-negative. A negative weight can make the per-key
+        # Unreachable from YAML since Phase 16 S2: ``MergeInput.weight`` is
+        # ``gt=0.0``, so a negative weight is refused at config load with exit 1.
+        # Kept for the direct library caller of ``merge_peft_adapters``, which
+        # still takes the plain-dict shape and therefore bypasses the schema.
+        # A negative weight can make the per-key
         # ``agree_weight_sum`` in ``_ties_merge_tensor`` negative-but-nonzero
         # at a sign-agreeing position, which silently falls through the
         # ``agree_weight_sum > 0`` renormalization guard to the
@@ -320,7 +323,8 @@ def _ties_dare_merge(
             "disjoint-merge renormalization assumes non-negative weights and "
             "may silently skip renormalization at positions where the only "
             "sign-agreeing adapter has negative weight. Use non-negative "
-            "merge.models[].weight values.",
+            "weights; a YAML config cannot reach here — merge.models[].weight "
+            "is validated gt=0.0 — so this is a direct library caller.",
             weights,
         )
 
@@ -380,7 +384,16 @@ def _ties_merge_tensor(deltas, weights, trim_fraction=0.2):
         # (F-P3-FABLE-19). ``kthvalue`` has no size limit and yields the same
         # trim threshold: the k-th smallest magnitude, k = trim_fraction · n.
         flat_f = flat.float()
-        k = max(1, int(trim_fraction * flat_f.numel()))
+        # ``k`` is clamped to n-1, not n. At ``trim_fraction == 1.0`` the
+        # unclamped ``k == n`` makes ``kthvalue`` return the *largest*
+        # magnitude, so ``abs() < threshold`` zeroes everything except the
+        # maxima — "trim 100%" quietly meaning "keep only the biggest value",
+        # the exact inverse of what the parameter reads as. ``MergeConfig``
+        # now refuses ``1.0`` outright (exit 1), so a config cannot reach here;
+        # the clamp is the second line of defence for a direct library caller,
+        # matching how the loss gate guards its own threshold.
+        n = flat_f.numel()
+        k = min(max(1, int(trim_fraction * n)), max(1, n - 1))
         threshold = flat_f.kthvalue(k).values
         stacked[i][stacked[i].abs() < threshold] = 0.0
 

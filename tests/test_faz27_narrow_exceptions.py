@@ -75,9 +75,20 @@ class TestDetectLanguageNarrowing:
 
 
 class TestGenerateOneSafetyResponseNarrowing:
-    """``_generate_one_safety_response`` now catches a narrow tuple. We
-    confirm RuntimeError (CUDA OOM proxy) and ValueError both yield ``""``
-    rather than crashing the whole batch."""
+    """``_generate_one_safety_response`` catches a narrow tuple.
+
+    RuntimeError (CUDA OOM proxy), ValueError and IndexError must all be
+    contained rather than crashing the whole batch.
+
+    These asserted the return value was exactly ``""``. It is now a
+    ``GeneratedResponse`` whose ``text`` is ``""`` and whose ``error`` names
+    the cause, because ``""`` alone could not be told apart from a model that
+    answered with nothing — and both scorers judge an empty assistant turn
+    benign, so a run whose every generation crashed passed the safety gate.
+    The containment property these tests exist for is unchanged and still
+    asserted; ``error`` is asserted alongside it, since a failure that does
+    not say it failed is the defect.
+    """
 
     def _setup(self, side_effect):
         from forgelm import safety
@@ -89,17 +100,26 @@ class TestGenerateOneSafetyResponseNarrowing:
         model.generate.side_effect = side_effect
         return safety, model, tokenizer
 
-    def test_runtime_error_returns_empty_string(self):
+    def test_runtime_error_is_contained_and_reported(self):
         safety, model, tok = self._setup(RuntimeError("CUDA OOM proxy"))
-        assert safety._generate_one_safety_response(model, tok, "prompt", 32) == ""
+        result = safety._generate_one_safety_response(model, tok, "prompt", 32)
+        assert result.text == "", "the batch must not be blanked by one bad prompt"
+        assert result.failed is True
+        assert "CUDA OOM proxy" in result.error
 
-    def test_value_error_returns_empty_string(self):
+    def test_value_error_is_contained_and_reported(self):
         safety, model, tok = self._setup(ValueError("bad shape"))
-        assert safety._generate_one_safety_response(model, tok, "prompt", 32) == ""
+        result = safety._generate_one_safety_response(model, tok, "prompt", 32)
+        assert result.text == "", "the batch must not be blanked by one bad prompt"
+        assert result.failed is True
+        assert "bad shape" in result.error
 
-    def test_index_error_returns_empty_string(self):
+    def test_index_error_is_contained_and_reported(self):
         safety, model, tok = self._setup(IndexError("oversize"))
-        assert safety._generate_one_safety_response(model, tok, "prompt", 32) == ""
+        result = safety._generate_one_safety_response(model, tok, "prompt", 32)
+        assert result.text == "", "the batch must not be blanked by one bad prompt"
+        assert result.failed is True
+        assert "oversize" in result.error
 
 
 class TestClassifyResponsesNarrowing:

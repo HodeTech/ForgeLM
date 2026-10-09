@@ -55,13 +55,13 @@ from __future__ import annotations
 
 import glob as _glob
 import hashlib
-import json
 import os
 import re
 import signal as _signal
 import sys
 from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
+from ..._strict_json import dumps_strict
 from .._exit_codes import EXIT_CONFIG_ERROR, EXIT_SUCCESS, EXIT_TRAINING_ERROR
 from .._logging import logger
 
@@ -104,7 +104,7 @@ def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoRe
     """Mirror the JSON-vs-text envelope helper used by every other
     Wave 2b/3 subcommand so the contract stays uniform."""
     if output_format == "json":
-        print(json.dumps({"success": False, "error": msg}))
+        print(dumps_strict({"success": False, "error": msg}))
     else:
         logger.error(msg)
     sys.exit(exit_code)
@@ -806,7 +806,7 @@ def _emit_reverse_pii_result(payload: Dict[str, Any], output_format: str) -> Non
                 "content (PII).  Do not redirect this output to a persistent log.",
                 payload["match_count"],
             )
-        print(json.dumps(payload, indent=2, default=str))
+        print(dumps_strict(payload, indent=2, default=str))
         return
     match_count = payload["match_count"]
     files_scanned = payload["files_scanned"]

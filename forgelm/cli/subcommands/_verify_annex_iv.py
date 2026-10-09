@@ -32,6 +32,7 @@ import os
 import sys
 from typing import NoReturn
 
+from ..._strict_json import dumps_strict
 from ...verify import (
     VerifyAnnexIVResult,  # noqa: F401 — re-exported for the forgelm.cli facade
     is_annex_iv_integrity_failure,
@@ -57,7 +58,7 @@ def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoRe
     unindented).
     """
     if output_format == "json":
-        print(json.dumps({"success": False, "error": msg}, indent=2))
+        print(dumps_strict({"success": False, "error": msg}, indent=2))
     else:
         logger.error(msg)
     sys.exit(exit_code)
@@ -159,7 +160,7 @@ def _run_pipeline_mode(path: str, output_format: str) -> NoReturn:
     except UnicodeDecodeError as exc:
         if output_format == "json":
             print(
-                json.dumps(
+                dumps_strict(
                     {
                         "success": False,
                         "mode": "pipeline",
@@ -176,7 +177,7 @@ def _run_pipeline_mode(path: str, output_format: str) -> NoReturn:
         msg = f"FAIL: pipeline manifest at {path} — runtime I/O error: {exc}"
         if output_format == "json":
             print(
-                json.dumps(
+                dumps_strict(
                     {
                         "success": False,
                         "mode": "pipeline",
@@ -194,7 +195,7 @@ def _run_pipeline_mode(path: str, output_format: str) -> NoReturn:
 
     if output_format == "json":
         print(
-            json.dumps(
+            dumps_strict(
                 {
                     "success": not violations,
                     "mode": "pipeline",
@@ -304,7 +305,7 @@ def _print_artefact_result(result: VerifyAnnexIVResult, path: str, output_format
     payload = result.to_dict()
     payload["path"] = os.path.abspath(path)
     if output_format == "json":
-        print(json.dumps({"success": result.valid, **payload}, indent=2))
+        print(dumps_strict({"success": result.valid, **payload}, indent=2))
         return
     if result.valid:
         print(f"OK: {path}")

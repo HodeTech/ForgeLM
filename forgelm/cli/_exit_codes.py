@@ -34,7 +34,7 @@ EXIT_WIZARD_CANCELLED = 5
 # Only the ``verify-*`` subcommands emit this code, and only after the
 # artefact has been read: an unreadable/missing/malformed artefact stays
 # on 1 (caller input) or 2 (runtime I/O) as before.  The per-verifier
-# classification lives in ``forgelm/verify.py``'s ``is_*_integrity_failure``
+# classification lives in ``forgelm/verify/``'s ``is_*_integrity_failure``
 # predicates so the split is structural, not string-matched.
 EXIT_INTEGRITY_FAILURE = 6
 

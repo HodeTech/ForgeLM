@@ -411,8 +411,33 @@ class TestSafetyGateValidation:
             SafetyConfig(enabled=True, track_categories=True, severity_thresholds={"Critical": 0.0})
 
     def test_severity_thresholds_value_above_one_raises(self):
-        with pytest.raises(ValidationError, match=r"\[0.0, 1.0\]"):
+        """Still rejected, now at parse time and with the key named.
+
+        This matched the hand-rolled ``must be in [0.0, 1.0]`` message from the
+        model validator. The field is now
+        ``Dict[str, Annotated[float, ge=0.0, le=1.0, allow_inf_nan=False]]``,
+        so Pydantic reports ``severity_thresholds.high`` /
+        ``less_than_equal`` — earlier, and it says which entry. The validator's
+        range loop was deleted rather than left as dead code that still looked
+        load-bearing; its *key*-vocabulary half stays, because a ``Dict[str,
+        …]`` key has no type-level constraint.
+        """
+        with pytest.raises(ValidationError, match=r"severity_thresholds\.high"):
             SafetyConfig(enabled=True, track_categories=True, severity_thresholds={"high": 5.0})
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_severity_thresholds_value_must_be_finite(self, bad):
+        """The gap the range check could not see.
+
+        ``Dict[str, float]`` carries Pydantic's default ``allow_inf_nan=True``
+        on the values, and the old loop's ``0.0 <= value <= 1.0`` is False for
+        ``nan`` — so it happened to reject NaN, but only by accident of
+        comparison semantics, and only when the surrounding validator ran at
+        all (it early-returns when ``enabled`` is false). The constraint now
+        lives on the value type, where it holds unconditionally.
+        """
+        with pytest.raises(ValidationError, match="finite_number|finite number"):
+            SafetyConfig(enabled=True, track_categories=True, severity_thresholds={"high": bad})
 
     def test_severity_thresholds_without_track_categories_auto_enables(self, caplog):
         with caplog.at_level(logging.WARNING, logger="forgelm.config"):
@@ -589,7 +614,16 @@ class TestMergeEnabledValidation:
             MergeConfig(enabled=True)
 
     def test_merge_enabled_requires_path_key(self):
-        with pytest.raises(ValidationError, match="`path` key"):
+        """Still rejected, now by the schema and with the index named.
+
+        This asserted the hand-rolled ``Each merge.models entry must carry a
+        `path` key`` message from ``_validate_merge_inputs``. ``merge.models``
+        is now ``List[MergeInput]`` with ``path`` required, so Pydantic
+        reports ``models.0.path`` / ``models.1.path`` — same rejection, and it
+        says *which* entry. The old loop was deleted rather than left as dead
+        code that still looked load-bearing.
+        """
+        with pytest.raises(ValidationError, match=r"models\.0\.path"):
             MergeConfig(enabled=True, models=[{"weight": 0.5}, {"weight": 0.5}])
 
     def test_merge_disabled_empty_models_accepted(self):
@@ -598,6 +632,50 @@ class TestMergeEnabledValidation:
     def test_merge_enabled_with_two_paths_accepted(self):
         cfg = MergeConfig(enabled=True, models=[{"path": "a"}, {"path": "b"}])
         assert len(cfg.models) == 2
+        assert cfg.models[0].path == "a"
+        assert cfg.models[0].weight == 1.0
+
+    @pytest.mark.parametrize(
+        "weight",
+        [float("nan"), float("inf"), float("-inf"), -1.0, 0.0],
+        ids=["nan", "inf", "-inf", "negative", "zero"],
+    )
+    def test_merge_weight_must_be_finite_and_positive(self, weight):
+        """A weight the merge algorithms cannot use is refused at load time.
+
+        ``.nan`` propagated into every merged tensor under TIES/DARE, and under
+        SLERP did something worse than propagate: ``t = w2/(w1+w2) if
+        (w1+w2) > 0 else 0.5`` sends a non-finite sum down the else branch, so
+        the operator's weights are discarded and the merge silently
+        interpolates at the midpoint. Zero and negative were separately
+        reachable — a zero sum raised at runtime (exit 2, a *training* error,
+        for a config defect) and negatives were documented as dangerous but
+        legal.
+        """
+        with pytest.raises(ValidationError):
+            MergeConfig(enabled=True, models=[{"path": "a"}, {"path": "b", "weight": weight}])
+
+    def test_merge_entry_rejects_an_unknown_key(self):
+        """A silently-ignored key is a config that does not mean what it says.
+
+        ``merge.models`` was ``List[Dict[str, Any]]``, so a mergekit-style
+        ``density:`` — a plausible thing to carry over — was read, discarded
+        and never mentioned.
+        """
+        with pytest.raises(ValidationError, match="extra_forbidden|Extra inputs"):
+            MergeConfig(enabled=True, models=[{"path": "a"}, {"path": "b", "density": 0.5}])
+
+    def test_merge_weight_accepts_a_numeric_string(self):
+        """Coercion is kept deliberately.
+
+        A string weight used to raise ``TypeError`` inside
+        ``any(w < 0 for w in weights)``, which the blanket ``except Exception``
+        in ``merge_peft_adapters`` converted into EXIT_TRAINING_ERROR (2) —
+        a *training* verdict for a config defect. Pydantic coerces it to a
+        float at load time instead.
+        """
+        cfg = MergeConfig(enabled=True, models=[{"path": "a"}, {"path": "b", "weight": "0.5"}])
+        assert cfg.models[1].weight == 0.5
 
 
 class TestMergeHyperparameterFields:
@@ -897,6 +975,20 @@ class TestRopeScalingValidation:
     def test_non_positive_factor_rejected(self, bad_factor):
         with pytest.raises(ValidationError, match="must be positive"):
             TrainingConfig(rope_scaling={"type": "linear", "factor": bad_factor})
+
+    @pytest.mark.parametrize("bad_factor", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "-inf"])
+    def test_non_finite_factor_rejected(self, bad_factor):
+        """``nan <= 0`` and ``inf <= 0`` are both False, so a sign check alone lets them through."""
+        with pytest.raises(ValidationError, match="positive and finite"):
+            TrainingConfig(rope_scaling={"type": "linear", "factor": bad_factor})
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")], ids=["nan", "inf"])
+    @pytest.mark.parametrize("key", ["short_factor", "long_factor"])
+    def test_non_finite_longrope_factor_list_entry_rejected(self, key, bad):
+        factors = {"short_factor": [1.0, 1.5], "long_factor": [2.0, 3.0]}
+        factors[key] = [factors[key][0], bad]
+        with pytest.raises(ValidationError, match="only finite numbers"):
+            TrainingConfig(rope_scaling={"type": "longrope", **factors})
 
     def test_non_numeric_factor_rejected(self):
         with pytest.raises(ValidationError, match="must be a number"):

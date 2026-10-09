@@ -17,7 +17,7 @@ forgelm --config job.yaml
     │       │   approve, reject, approvals, safety-eval,
     │       │   verify-audit, verify-annex-iv, verify-gguf,
     │       │   verify-integrity, quickstart
-    ├── config.py           → Pydantic doğrulama (23 config modeli)
+    ├── config.py           → Pydantic doğrulama (24 config modeli)
     ├── utils.py            → HF kimlik doğrulama
     ├── model.py            → Model + tokenizer + LoRA/PEFT yükleme
     ├── data.py             → Veri seti yükleme + formatlama
@@ -31,7 +31,7 @@ forgelm --config job.yaml
     │   ├── judge.py            → LLM-Hakim puanlama
     │   ├── model_card.py       → HF model kartı üretimi
     │   ├── compliance.py       → EU AI Act denetim belgeleri + audit log
-    │   ├── verify.py           → Annex IV / GGUF / model-bütünlük doğrulama
+    │   ├── verify/            → Annex IV / GGUF / model-bütünlük doğrulama (alt-paket)
     │   └── webhook.py          → Slack/Teams bildirimleri
     ├── merging.py          → TIES/DARE/SLERP model birleştirme
     ├── synthetic.py        → Sentetik veri üretimi
@@ -42,7 +42,7 @@ forgelm --config job.yaml
 
 ```
 ForgeLM/
-├── forgelm/                  # Çekirdek Python paketi (~21 tek-dosya modül + 4 alt-paket)
+├── forgelm/                  # Çekirdek Python paketi (27 tek-dosya modül + 5 alt-paket)
 │   ├── __init__.py           # Hızlı CLI başlatma için lazy import
 │   ├── cli/                  # CLI alt-paketi (Faz 15 split)
 │   │   ├── _parser.py            # 19 subcommand + global flag
@@ -57,7 +57,7 @@ ForgeLM/
 │   │   └── _orchestrator, _aggregator, _streaming, _simhash,
 │   │       _minhash, _pii_regex, _pii_ml, _secrets, _quality,
 │   │       _croissant, _summary, _splits, _types, _optional
-│   ├── config.py             # 23 Pydantic config modeli
+│   ├── config.py             # 24 Pydantic config modeli
 │   ├── data.py               # Veri yükleme (SFT/DPO/KTO/GRPO/multimodal)
 │   ├── ingestion.py          # Ham doküman → SFT JSONL (PDF/DOCX/EPUB/TXT/Markdown)
 │   ├── model.py              # Model + LoRA/DoRA/PiSSA + MoE algılama
@@ -75,7 +75,9 @@ ForgeLM/
 │   │       _results, _orchestrator
 │   ├── judge.py              # LLM-Hakim (API + yerel)
 │   ├── compliance.py         # EU AI Act uyumluluk + AuditLogger + kaynak takibi
-│   ├── verify.py             # Annex IV / GGUF / model-bütünlük doğrulama primitifleri
+│   ├── verify/               # Doğrulama alt-paketi (Faz 16 S1 split):
+│   │                         #   _annex_iv, _pipeline_evidence, _gguf,
+│   │                         #   _model_integrity, _audit_log, _io_safety
 │   ├── model_card.py         # HF uyumlu model kartı üretimi
 │   ├── merging.py            # Model birleştirme (TIES/DARE/SLERP/linear)
 │   ├── synthetic.py          # Sentetik veri üretimi (öğretmen→öğrenci)
@@ -91,7 +93,7 @@ ForgeLM/
 │   ├── deepspeed/            # ZeRO-2, ZeRO-3, ZeRO-3+Offload ön ayarları
 │   └── safety_prompts/       # Yerleşik adversarial prompt kütüphanesi (140 prompt, 6 kategori)
 ├── notebooks/                # 10 Colab-uyumlu Jupyter notebook
-├── tests/                    # ~70 test modülü
+├── tests/                    # 128 test modülü
 ├── tools/                    # CI guard'ları: bilingual_parity, anchor_resolution,
 │                              # cli_help_consistency, yaml_snippets,
 │                              # audit_event_catalog, library_api_doc,
@@ -107,10 +109,10 @@ ForgeLM/
 ## Bileşen Detayları
 
 ### `cli/`
-Orkestratör (Faz 15 split). `_parser.py` 19 subcommand'ı (`audit`, `approve`, `approvals`, `reject`, `cache-models`, `cache-tasks`, `chat`, `deploy`, `doctor`, `export`, `ingest`, `purge`, `quickstart`, `reverse-pii`, `safety-eval`, `verify-annex-iv`, `verify-audit`, `verify-gguf`, `verify-integrity`) artı eski training-mode flag setini kaydeder. `_dispatch.py` `subcommands/` altındaki uygun handler'a yönlendirir. `_exit_codes.py` public 0/1/2/3/4/5/6 sözleşmesini tanımlar (5 = sihirbaz iptal edildi, 6 = bütünlük arızası — yalnızca `verify-*` subcommand'ları, okunan bir artefakt hash/zincir kontrolünde başarısız olduğunda). Doğrulama primitiflerinin kendisi `cli/` altında değil `forgelm/verify.py`'de yaşar; bu, `docs/standards/architecture.md`'nin "CLI ince bir kabuktur" kuralına uygun olarak CLI subcommand modüllerini ince dispatcher olarak tutar.
+Orkestratör (Faz 15 split). `_parser.py` 19 subcommand'ı (`audit`, `approve`, `approvals`, `reject`, `cache-models`, `cache-tasks`, `chat`, `deploy`, `doctor`, `export`, `ingest`, `purge`, `quickstart`, `reverse-pii`, `safety-eval`, `verify-annex-iv`, `verify-audit`, `verify-gguf`, `verify-integrity`) artı eski training-mode flag setini kaydeder. `_dispatch.py` `subcommands/` altındaki uygun handler'a yönlendirir. `_exit_codes.py` public 0/1/2/3/4/5/6 sözleşmesini tanımlar (5 = sihirbaz iptal edildi, 6 = bütünlük arızası — yalnızca `verify-*` subcommand'ları, okunan bir artefakt hash/zincir kontrolünde başarısız olduğunda). Doğrulama primitiflerinin kendisi `cli/` altında değil `forgelm/verify/` alt-paketinde yaşar (`_annex_iv.py`, `_pipeline_evidence.py`, `_gguf.py`, `_model_integrity.py`, `_audit_log.py`, yeniden dışa aktaran bir `__init__.py` arkasında); bu, `docs/standards/architecture.md`'nin "CLI ince bir kabuktur" kuralına uygun olarak CLI subcommand modüllerini ince dispatcher olarak tutar.
 
 ### `config.py`
-23 Pydantic v2 modeli: ModelConfig, LoraConfigModel, TrainingConfig, DataConfig, DataGovernanceConfig, EvaluationConfig, SafetyConfig, BenchmarkConfig, JudgeConfig, WebhookConfig, DistributedConfig, MergeConfig, ComplianceMetadataConfig, RetentionConfig, RiskAssessmentConfig, MonitoringConfig, MoeConfig, MultimodalConfig, AuthConfig, SyntheticConfig, PipelineStage, PipelineConfig + üst-düzey ForgeConfig. Çapraz alan doğrulaması içerir.
+24 Pydantic v2 modeli: ModelConfig, LoraConfigModel, TrainingConfig, DataConfig, DataGovernanceConfig, EvaluationConfig, SafetyConfig, BenchmarkConfig, JudgeConfig, WebhookConfig, DistributedConfig, MergeConfig, MergeInput, ComplianceMetadataConfig, RetentionConfig, RiskAssessmentConfig, MonitoringConfig, MoeConfig, MultimodalConfig, AuthConfig, SyntheticConfig, PipelineStage, PipelineConfig + üst-düzey ForgeConfig. Çapraz alan doğrulaması içerir.
 
 ### `data.py`
 HuggingFace `datasets` kütüphanesi ile arayüz. Veri formatını otomatik algılar (SFT, DPO, KTO, GRPO, multimodal) ve uyumsuzlukta önerili trainer_type ile hata verir. Mix ratio ile çoklu veri seti karıştırma. `tokenizer.apply_chat_template()` ile sohbet şablonları.
@@ -142,12 +144,12 @@ EU AI Act uyumluluk motoru — Madde 9-17:
 - `generate_deployer_instructions()`: Dağıtıcı talimatları (Madde 13)
 - `export_evidence_bundle()`: Denetçiler için ZIP arşivi
 
-### `verify.py`
+### `verify/`
 `compliance.py`'nin yazıcılarının tüketici karşılığı — `compliance.py`'nin ürettiği artefaktları yeniden hash'ler ve yeniden doğrular:
 - `verify_annex_iv_artifact()`: bir Annex IV JSON paketi için alan bütünlüğü + manifest-hash tahrifat kontrolü
 - `verify_gguf()`: export edilen bir GGUF dosyası için magic header + opsiyonel metadata parse + SHA-256 sidecar kontrolü
 - `verify_integrity()`: bir model dizinini `model_integrity.json`'a karşı yeniden dolaşır, değişen/silinen/eklenen artefaktları raporlar
-- `is_annex_iv_integrity_failure()` / `is_gguf_integrity_failure()` / `is_model_integrity_failure()`: `verify-*` CLI subcommand'larının `EXIT_CONFIG_ERROR` (1, hiçbir şey karşılaştırılmadı) ile `EXIT_INTEGRITY_FAILURE` (6, karşılaştırıldı ve uyuşmadı) arasında yönlendirmek için kullandığı yapısal (asla string-eşleşmeli değil) predicate'ler
+- `is_annex_iv_integrity_failure()` / `is_gguf_integrity_failure()` / `is_model_integrity_failure()` / `is_audit_integrity_failure()`: `verify-*` CLI subcommand'larının `EXIT_CONFIG_ERROR` (1, hiçbir şey karşılaştırılmadı) ile `EXIT_INTEGRITY_FAILURE` (6, karşılaştırıldı ve uyuşmadı) arasında yönlendirmek için kullandığı yapısal (asla string-eşleşmeli değil) predicate'ler
 
 `verify_audit_log` bilerek buraya taşınmadı, `compliance.py`'de kaldı — `AuditLogger.log_event`'in kanonikalleştirmesini bayt-bayt yansıtmak zorunda, ve bir yazıcıyı kendi doğrulayıcısından ayırmak bu modülün docstring'inin uyardığı tam da o sapma riskidir.
 

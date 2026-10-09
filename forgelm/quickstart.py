@@ -23,7 +23,6 @@ Usage (programmatic):
 from __future__ import annotations
 
 import itertools
-import json
 import logging
 import os
 import shutil
@@ -34,6 +33,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
+
+from ._strict_json import dumps_strict
 
 logger = logging.getLogger("forgelm.quickstart")
 
@@ -402,7 +403,7 @@ def _append_audit_event(audit_dir: Path, event: Dict[str, Any]) -> None:
         audit_dir.mkdir(parents=True, exist_ok=True)
         log_path = audit_dir / "quickstart_audit.jsonl"
         with open(log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, default=str) + "\n")
+            f.write(dumps_strict(entry, default=str) + "\n")
     except (OSError, TypeError, ValueError) as exc:
         # OSError: filesystem write (ENOSPC, permission, broken parent dir).
         # TypeError / ValueError: ``json.dumps`` rejecting an unserialisable

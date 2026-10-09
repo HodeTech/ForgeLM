@@ -8,10 +8,10 @@ the JSON envelope on the way out stays a single-source contract.
 
 from __future__ import annotations
 
-import json
 import sys
 from typing import NoReturn, Optional, Tuple
 
+from ..._strict_json import dumps_strict
 from ..._strip_pattern import DEFAULT_TIMEOUT_S as _STRIP_PATTERN_DEFAULT_TIMEOUT_S
 from .._exit_codes import EXIT_CONFIG_ERROR, EXIT_TRAINING_ERROR
 from .._logging import logger
@@ -34,7 +34,7 @@ def _emit_error_and_exit(
     python:S3776 flagged on ``_run_ingest_cmd``.
     """
     if output_format == "json":
-        print(json.dumps({"success": False, "error": str(exc)}))
+        print(dumps_strict({"success": False, "error": str(exc)}))
     else:
         logger.error(log_prefix, exc)
     sys.exit(exit_code)
@@ -237,7 +237,7 @@ def _run_ingest_cmd(args, output_format: str) -> None:
 
     if output_format == "json":
         print(
-            json.dumps(
+            dumps_strict(
                 {
                     "success": True,
                     "output_path": str(result.output_path),

@@ -23,7 +23,6 @@ live here so the dispatcher stays cohesive; only the *parser* is shared.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from datetime import datetime, timezone
@@ -53,7 +52,7 @@ def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoRe
     checker knows control never returns past this helper.
     """
     if output_format == "json":
-        print(json.dumps({"success": False, "error": msg}))
+        print(dumps_strict({"success": False, "error": msg}))
     else:
         logger.error(msg)
     sys.exit(exit_code)
@@ -69,6 +68,7 @@ def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoRe
 # in-module helpers by design (the module's other late imports follow
 # the same pattern); ``F401`` no longer needed because the symbol is
 # actively used at lines 97 + 151 of this file.
+from ..._strict_json import dumps_strict
 from ._audit_log_reader import iter_audit_events as _iter_audit_events  # noqa: E402
 
 
@@ -304,7 +304,7 @@ def _emit_pending_json(pending_summaries: List[Dict[str, Any]]) -> None:
     # ``ensure_ascii=False`` keeps Turkish operator names + Unicode paths
     # readable in the JSON output.
     print(
-        json.dumps(
+        dumps_strict(
             {"success": True, "pending": pending_summaries, "count": len(pending_summaries)},
             indent=2,
             default=str,
@@ -486,7 +486,7 @@ def _emit_show_json(
         payload["corrupted"] = True
         payload["corruption_detail"] = corruption
     print(
-        json.dumps(
+        dumps_strict(
             payload,
             indent=2,
             default=str,

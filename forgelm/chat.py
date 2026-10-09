@@ -15,11 +15,12 @@ Usage (CLI):
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from datetime import datetime
 from typing import Any, List, Optional
+
+from ._strict_json import dumps_strict
 
 logger = logging.getLogger("forgelm.chat")
 
@@ -184,14 +185,14 @@ class ChatSession:
                 # transcript is replayable as-is (reproducibility requirement).
                 if self.system_prompt:
                     f.write(
-                        json.dumps(
+                        dumps_strict(
                             {"role": "system", "content": self.system_prompt},
                             ensure_ascii=False,
                         )
                         + "\n"
                     )
                 for msg in self.history:
-                    f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+                    f.write(dumps_strict(msg, ensure_ascii=False) + "\n")
             total = len(self.history) + (1 if self.system_prompt else 0)
             self._print(f"[History saved → {path} ({total} messages)]")
         except OSError as e:

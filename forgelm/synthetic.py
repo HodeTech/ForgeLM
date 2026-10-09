@@ -17,7 +17,12 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
+
+from ._strict_json import dumps_strict
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle guard, type-checkers only
+    from .config import ForgeConfig
 
 logger = logging.getLogger("forgelm.synthetic")
 
@@ -47,7 +52,7 @@ class SyntheticDataGenerator:
     - "file": Read responses from a pre-existing file (for offline/reproducible pipelines)
     """
 
-    def __init__(self, config):
+    def __init__(self, config: "ForgeConfig") -> None:
         self.config = config
         self.synth_cfg = config.synthetic
         if not self.synth_cfg or not self.synth_cfg.enabled:
@@ -127,7 +132,7 @@ class SyntheticDataGenerator:
                         # output file — same observable contract as before.
                         os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
                         handle = open(output_file, "w", encoding="utf-8")
-                    handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                    handle.write(dumps_strict(entry, ensure_ascii=False) + "\n")
                     handle.flush()
                 # Skip the trailing sleep — there's no next request to throttle
                 if rate_limit and i < last_idx:

@@ -139,12 +139,35 @@ class TestEvaluationChecks:
         result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": float("inf")})
         assert result is False
 
-    def test_nan_baseline_config_is_ignored(self, caplog):
-        """A config-supplied NaN baseline_loss must be silently discarded so it
-        cannot covertly disable the regression check.  The guard must log a
-        WARNING mentioning 'NaN or Inf' and the call must return True (no revert)
-        because the baseline regression gate is disarmed, not triggered."""
-        trainer = self._make_trainer(auto_revert=True, baseline_loss=float("nan"))
+    def test_nan_baseline_is_refused_by_the_schema(self):
+        """A non-finite baseline can no longer be written in a config at all.
+
+        This used to construct ``ForgeConfig`` with ``baseline_loss=nan`` and
+        assert the runtime neutralised it. ``EvaluationConfig`` now carries
+        ``allow_inf_nan=False``, so the value is refused at load time with
+        exit 1 — a config defect reported as a config defect, before any GPU
+        is touched. The runtime guard is still asserted, one test down, because
+        the schema is not the only ingress.
+        """
+        from pydantic import ValidationError
+
+        from forgelm.config import EvaluationConfig
+
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with pytest.raises(ValidationError, match="finite_number|finite number"):
+                EvaluationConfig(baseline_loss=value)
+
+    def test_nan_baseline_is_still_neutralised_at_runtime(self, caplog):
+        """Belt and braces for the ingress the schema does not cover.
+
+        ``model_construct`` and direct attribute assignment bypass validation,
+        and the public Python API accepts a ``ForgeConfig`` a caller may have
+        built either way. A NaN baseline must therefore still be discarded at
+        the gate — disarming the regression check, not silently passing it —
+        with a WARNING naming the cause.
+        """
+        trainer = self._make_trainer(auto_revert=True)
+        trainer.config.evaluation.baseline_loss = float("nan")
         with patch.object(trainer, "_revert_model") as revert, caplog.at_level("WARNING"):
             result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.5})
         assert result is True
@@ -298,7 +321,7 @@ class TestEvaluationChecks:
         failing_benchmark.average_score = 0.30
         failing_benchmark.failure_reason = "Benchmark score below threshold."
 
-        with patch.object(trainer, "_revert_model") as revert:
+        with patch.object(trainer, "_revert_model", return_value=True) as revert:
             result = trainer._apply_benchmark_result(failing_benchmark, train_result, metrics, "/tmp/nonexistent/final")
 
         assert result is False  # halt → exit 3
@@ -587,7 +610,7 @@ class TestGateApplication:
             low_confidence_count=0,
             failure_reason="unsafe ratio too high",
         )
-        with patch.object(trainer, "_revert_model") as revert:
+        with patch.object(trainer, "_revert_model", return_value=True) as revert:
             cont = trainer._apply_safety_result(safety, result, {}, str(tmp_path / "final"))
         assert cont is False  # halt → exit 3
         assert result.reverted is True
@@ -631,7 +654,7 @@ class TestGateApplication:
         trainer = self._make_trainer(auto_revert=True, tmp_path=tmp_path)
         result = TrainResult(success=True, metrics={}, final_model_path=str(tmp_path / "final"))
         judge = MagicMock(passed=False, average_score=2.0, details=[], failure_reason="below min_score")
-        with patch.object(trainer, "_revert_model") as revert:
+        with patch.object(trainer, "_revert_model", return_value=True) as revert:
             cont = trainer._apply_judge_result(judge, result, {}, str(tmp_path / "final"))
         assert cont is False
         assert result.reverted is True
@@ -1284,3 +1307,313 @@ class TestGrpoRewardModelRevisionPin:
         with tok_patch, model_patch, cuda_patch:
             trainer._resolve_grpo_reward_funcs()
         assert seen["offline"] is True
+
+
+class TestNonFiniteThresholdFailsClosed:
+    """A ceiling the gate cannot compare against must not pass the model.
+
+    ``final_loss > nan`` is always False, so a NaN ``max_acceptable_loss``
+    made the loss gate pass every model it was asked to reject — and wrote
+    ``passed=True`` into the append-only audit log while doing it. YAML 1.1
+    spells the value ``.nan``, so this was reachable from an ordinary config
+    file. ``EvaluationConfig`` now refuses it at load time; these tests cover
+    the ingress the schema cannot see (``model_construct``, direct assignment,
+    a ``ForgeConfig`` a library caller built by hand).
+
+    The direction matters: the guard **fails**, it does not discard. Treating
+    an unusable ceiling as "no ceiling configured" would be the same fail-open
+    wearing a different label.
+    """
+
+    @staticmethod
+    def _trainer(auto_revert: bool, max_loss: float):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model"},
+            lora={},
+            training={"output_dir": "/tmp/test_forge_threshold"},
+            data={"dataset_name_or_path": "org/dataset"},
+            evaluation={"auto_revert": auto_revert},
+        )
+        # Bypass the schema on purpose — that is the ingress under test.
+        config.evaluation.max_acceptable_loss = max_loss
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.dataset = {"train": ["dummy"], "validation": ["dummy"]}
+            trainer.checkpoint_dir = "/tmp/test_forge_threshold"
+            trainer.run_name = "test_threshold"
+            trainer.notifier = MagicMock()
+            trainer.audit = MagicMock()
+        return trainer
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")], ids=["nan", "inf"])
+    def test_non_finite_ceiling_fails_the_run(self, bad, caplog):
+        trainer = self._trainer(auto_revert=False, max_loss=bad)
+        with patch.object(trainer, "_revert_model") as revert, caplog.at_level("ERROR"):
+            result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 999.0})
+        assert result is False, "a gate that cannot compare must not report a pass"
+        revert.assert_not_called()
+        assert any("not a finite number" in r.getMessage() for r in caplog.records)
+
+    def test_non_finite_ceiling_reverts_when_auto_revert_is_on(self):
+        trainer = self._trainer(auto_revert=True, max_loss=float("nan"))
+        with patch.object(trainer, "_revert_model") as revert:
+            result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 999.0})
+        assert result is False
+        revert.assert_called_once()
+        assert revert.call_args.kwargs.get("source") == "invalid_threshold"
+
+    def test_a_finite_ceiling_still_passes_a_good_model(self):
+        """The guard must not fire on the ordinary path."""
+        trainer = self._trainer(auto_revert=True, max_loss=2.0)
+        with patch.object(trainer, "_revert_model") as revert:
+            result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.0})
+        assert result is True
+        revert.assert_not_called()
+
+
+class TestSaveEvalStepInvariant:
+    """`save_steps` must be a multiple of `eval_steps` — except where it need not be.
+
+    Transformers refuses `load_best_model_at_end` with step strategies unless
+    the two schedules coincide, and raises inside `TrainingArguments` — a
+    `ValueError` the top-level handler maps to EXIT_TRAINING_ERROR (2) for a
+    one-line config defect. ForgeLM raises `ConfigError` (exit 1) first.
+
+    The GRPO exemption is the part worth pinning. `_get_training_args_for_type`
+    pops `eval_strategy`, `eval_steps` and `load_best_model_at_end` for GRPO,
+    so transformers never reaches the constraint. Without the exemption
+    ForgeLM invents an error for a config the upstream library accepts —
+    a worse failure than the one being prevented, because the operator cannot
+    act on a rule that does not apply to them.
+    """
+
+    @staticmethod
+    def _trainer(trainer_type="sft", eval_steps=200, save_steps=200, has_validation=True):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/model"},
+            lora={},
+            training={
+                "output_dir": "/tmp/test_forge_steps",
+                "trainer_type": trainer_type,
+                "eval_steps": eval_steps,
+                "save_steps": save_steps,
+            },
+            data={"dataset_name_or_path": "org/dataset"},
+        )
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.dataset = {"train": ["x"], "validation": ["x"]} if has_validation else {"train": ["x"]}
+            trainer.checkpoint_dir = "/tmp/test_forge_steps"
+            trainer.run_name = "t"
+            trainer.notifier = MagicMock()
+            trainer.audit = MagicMock()
+        return trainer
+
+    def test_a_non_multiple_raises_config_error(self):
+        from forgelm.config import ConfigError
+
+        trainer = self._trainer(eval_steps=200, save_steps=300)
+        with pytest.raises(ConfigError, match="save_steps"):
+            trainer._get_common_training_kwargs()
+
+    def test_the_message_offers_two_candidates_when_they_differ(self):
+        from forgelm.config import ConfigError
+
+        trainer = self._trainer(eval_steps=200, save_steps=300)
+        with pytest.raises(ConfigError, match=r"Nearest valid value\(s\): 200 or 400\."):
+            trainer._get_common_training_kwargs()
+
+    def test_the_message_does_not_name_one_number_twice(self):
+        """``save_steps < eval_steps``: both candidates are ``eval_steps``; "200 or 200" is noise."""
+        from forgelm.config import ConfigError
+
+        trainer = self._trainer(eval_steps=200, save_steps=100)
+        with pytest.raises(ConfigError) as exc_info:
+            trainer._get_common_training_kwargs()
+        assert "Nearest valid value(s): 200." in str(exc_info.value)
+        assert "200 or 200" not in str(exc_info.value)
+
+    @pytest.mark.parametrize("save_steps", [200, 400, 600])
+    def test_a_multiple_is_accepted(self, save_steps):
+        trainer = self._trainer(eval_steps=200, save_steps=save_steps)
+        trainer._get_common_training_kwargs()
+
+    def test_grpo_is_exempt(self):
+        """The false positive. GRPO discards every argument the rule constrains."""
+        trainer = self._trainer(trainer_type="grpo", eval_steps=200, save_steps=300)
+        trainer._get_common_training_kwargs()
+
+    def test_the_rule_does_not_fire_without_a_validation_split(self):
+        """`load_best_model_at_end` is off, so the upstream constraint does not apply."""
+        trainer = self._trainer(eval_steps=200, save_steps=300, has_validation=False)
+        trainer._get_common_training_kwargs()
+
+
+class TestRevertedFlagAtTheCallSite:
+    """`TrainResult.reverted` must be derived where the result is built.
+
+    A unit test already pinned that `execute_evaluation_checks` does not call
+    `_revert_model` on the detection-only path. That test passed while the
+    call site three hundred lines away still hardcoded `reverted=True`, so
+    the envelope claimed a deletion that never happened — and a commit message
+    and CHANGELOG entry both announced the fix. Asserting a property in
+    isolation is not establishing it at the point where it matters, so this
+    drives `_run_training_pipeline`'s construction directly.
+    """
+
+    @staticmethod
+    def _trainer(auto_revert: bool):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/m"},
+            lora={},
+            training={"output_dir": "/tmp/test_reverted_callsite"},
+            data={"dataset_name_or_path": "org/d"},
+            evaluation={"auto_revert": auto_revert},
+        )
+        config.evaluation.max_acceptable_loss = float("nan")
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.dataset = {"train": ["x"], "validation": ["x"]}
+            trainer.checkpoint_dir = "/tmp/test_reverted_callsite"
+            trainer.run_name = "r"
+            trainer.notifier = MagicMock()
+            trainer.audit = MagicMock()
+        return trainer
+
+    @staticmethod
+    def _result_from_call_site(trainer):
+        """Replay exactly what `_run_training_pipeline` builds on gate failure.
+
+        Read out of the source rather than restated, so a future edit to the
+        call site that reintroduces a literal cannot leave this test green.
+        """
+        import inspect
+        import re
+
+        from forgelm.results import TrainResult
+
+        source = inspect.getsource(trainer.__class__._run_training_pipeline)
+        match = re.search(
+            r"return TrainResult\(\s*success=False,\s*metrics=metrics,\s*reverted=(.+),\s*$", source, re.M
+        )
+        assert match, "the loss-gate failure TrainResult is no longer recognisable — update this test"
+        expression = match.group(1).strip()
+        if expression.isidentifier():
+            # ``reverted=reverted`` — the expression is the local assigned just above the call.
+            local = re.search(rf"^\s*{expression} = (.+)$", source, re.M)
+            assert local, f"`{expression}` is passed as reverted= but its assignment is not recognisable"
+            expression = local.group(1).strip()
+        assert expression != "True", (
+            "the loss-gate call site hardcodes reverted=True again. It must be derived from whether "
+            "_revert_model actually ran: execute_evaluation_checks returns False both when the model "
+            "was deleted and when it was left intact."
+        )
+        return TrainResult(
+            success=False,
+            metrics={},
+            reverted=eval(expression, {}, {"self": trainer, "getattr": getattr}),  # noqa: S307
+            error=getattr(trainer, "_last_revert_reason", None),
+        )
+
+    def test_detection_only_failure_reports_no_revert(self):
+        trainer = self._trainer(auto_revert=False)
+        assert trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.0}) is False
+        result = self._result_from_call_site(trainer)
+        assert result.reverted is False, "nothing was deleted, so the envelope must not claim it was"
+        assert result.error and "max_acceptable_loss" in result.error
+
+    def test_a_real_revert_reports_one(self):
+        trainer = self._trainer(auto_revert=True)
+        with patch.object(
+            trainer, "_revert_model", side_effect=lambda *a, **k: setattr(trainer, "_loss_gate_reverted", True)
+        ):
+            assert trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.0}) is False
+        assert self._result_from_call_site(trainer).reverted is True
+
+    def test_the_flag_does_not_leak_between_runs(self):
+        """A library caller runs two trainings in one process.
+
+        Without a per-invocation reset the second run inherits the first's
+        revert flag and reports a deletion belonging to a different model.
+        """
+        trainer = self._trainer(auto_revert=True)
+        with patch.object(
+            trainer, "_revert_model", side_effect=lambda *a, **k: setattr(trainer, "_loss_gate_reverted", True)
+        ):
+            trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.0})
+        assert trainer._loss_gate_reverted is True
+
+        trainer.config.evaluation.max_acceptable_loss = 10.0
+        assert trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.0}) is True
+        assert trainer._loss_gate_reverted is False, "the second run inherited the first run's revert flag"
+
+
+class TestAuditLogDoesNotFabricateAMeasurement:
+    """`eval_loss` has three states and the Art. 12 log must keep them apart.
+
+    The non-finite-ceiling branch passed `float("nan")` when `metrics` carried
+    no `eval_loss` at all, producing a line byte-identical to the genuine
+    divergence branch — where `eval_loss: "nan"` means the model really did
+    diverge. An auditor grepping the log could not tell "this model diverged"
+    from "the operator's ceiling was unusable and nothing was ever measured".
+    Inventing a measurement at write time is the failure this whole phase
+    exists to remove, in the artefact it exists to protect.
+    """
+
+    @staticmethod
+    def _trainer(max_loss):
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        config = ForgeConfig(
+            model={"name_or_path": "org/m"},
+            lora={},
+            training={"output_dir": "/tmp/test_audit_fabrication"},
+            data={"dataset_name_or_path": "org/d"},
+            evaluation={"auto_revert": False},
+        )
+        config.evaluation.max_acceptable_loss = max_loss
+        with patch("forgelm.trainer.WebhookNotifier"):
+            trainer = ForgeTrainer.__new__(ForgeTrainer)
+            trainer.config = config
+            trainer.dataset = {"train": ["x"], "validation": ["x"]}
+            trainer.checkpoint_dir = "/tmp/test_audit_fabrication"
+            trainer.run_name = "r"
+            trainer.notifier = MagicMock()
+            trainer.audit = MagicMock()
+        return trainer
+
+    def test_no_measurement_is_recorded_as_null_not_nan(self):
+        trainer = self._trainer(float("nan"))
+        trainer.execute_evaluation_checks("/tmp/nonexistent", {})
+        kwargs = trainer.audit.log_event.call_args.kwargs
+        assert kwargs["eval_loss"] is None, (
+            "a run with no eval_loss must record null, not a synthesised nan — that is "
+            "indistinguishable from genuine divergence in the permanent record"
+        )
+        assert kwargs["passed"] is False
+
+    def test_genuine_divergence_is_still_recorded_as_a_string(self):
+        """The state that must NOT change: a real NaN loss is a real measurement."""
+        trainer = self._trainer(2.0)
+        trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": float("nan")})
+        kwargs = trainer.audit.log_event.call_args.kwargs
+        assert kwargs["eval_loss"] == "nan"
+
+    def test_an_ordinary_measurement_stays_a_number(self):
+        trainer = self._trainer(2.0)
+        trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.25})
+        kwargs = trainer.audit.log_event.call_args.kwargs
+        assert kwargs["eval_loss"] == 1.25

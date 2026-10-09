@@ -62,9 +62,11 @@ The HF cache is partitioned by purpose; setting `HF_HUB_CACHE` does **not** redi
 |---|---|
 | `0` | Every requested model / task cached successfully. |
 | `1` | Config error — empty `--model`+`--safety`, malformed model name, empty `--tasks`, unknown lm-eval task name, missing `[eval]` extra. |
-| `2` | Runtime error — HF Hub transport failure, disk-full, `huggingface_hub` import broken, dataset download crash mid-batch. |
+| `2` | Runtime error — HF Hub transport failure, disk-full, `huggingface_hub` import broken, one or more task datasets not staged. |
 
 `cache-models` reports a partial-batch failure: the audit chain records `cache.populate_models_failed` with `models_completed=[<list-so-far>]` so the operator knows what *did* land before the crash and can resume by re-running with the failing model omitted.
+
+`cache-tasks` reports one the same way. Any task ending `cached: false` — a download error, or a task for which lm-eval exposes no downloadable dataset — makes the whole command exit `2` with `success: false`, and the failure envelope keeps the per-task rows under `tasks`. **Changed after 0.11.0:** through 0.11.0 those failures were recorded in `tasks[].error` while the command still exited 0 and logged `cache.populate_tasks_completed`, so a CI job gating on `jq -e '.success'` packaged an incomplete cache and shipped it to the air-gapped host.
 
 ## Audit events emitted
 
@@ -75,7 +77,8 @@ The HF cache is partitioned by purpose; setting `HF_HUB_CACHE` does **not** redi
 | `cache.populate_models_failed` | One or more model downloads failed (transport, disk-full, HF auth). | All `requested` fields + `models_completed`, `error_class`, `error_message` | 12 |
 | `cache.populate_tasks_requested` | `cache-tasks` invocation begins. | `tasks`, `cache_dir` | 12 |
 | `cache.populate_tasks_completed` | Every lm-eval task dataset prepared successfully. | All `requested` fields + `count` | 12 |
-| `cache.populate_tasks_failed` | Unknown task name OR dataset download failure. | All `requested` fields + `tasks_completed`, `error_class`, `error_message` | 12 |
+| `cache.populate_tasks_failed` | Unknown task name, OR no task staged at all. | All `requested` fields + `tasks_completed`, `error_class`, `error_message` (enumeration failure) or `tasks_cached`, `tasks_failed`, `tasks_unavailable` (nothing staged) | 12 |
+| `cache.populate_tasks_partial` | Some tasks staged, some did not. | All `requested` fields + `tasks_cached`, `tasks_failed`, `tasks_unavailable` | 12 |
 
 Audit-logger construction is **best-effort**: an operator without `FORGELM_OPERATOR` set on a connected staging machine sees a debug-level note, and the run continues without the audit chain. The cache subcommands' value is in the on-disk artefacts, not the audit chain. Mirror entries: [`audit_event_catalog.md`](audit_event_catalog.md) §Air-gap pre-cache.
 

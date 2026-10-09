@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
 
+from ..._strict_json import dumps_strict
 from .._exit_codes import _PUBLIC_EXIT_CODES, EXIT_CONFIG_ERROR, EXIT_SUCCESS, EXIT_TRAINING_ERROR
 from .._logging import _CLI_MODULE, logger
 
@@ -59,7 +59,7 @@ def _emit_quickstart_list(output_format: str) -> None:
         # the single ``success`` key (json-output.md "Common conventions"),
         # matching the sibling list command ``approvals --pending`` rather
         # than emitting a bare top-level array.
-        print(json.dumps({"success": True, "templates": payload, "count": len(payload)}, indent=2))
+        print(dumps_strict({"success": True, "templates": payload, "count": len(payload)}, indent=2))
     else:
         print(format_template_list())
 
@@ -76,7 +76,7 @@ def _emit_quickstart_result(result, output_format: str, *, chat_launched: bool =
 
     if output_format == "json":
         print(
-            json.dumps(
+            dumps_strict(
                 {
                     "success": True,
                     "template": result.template.name,
@@ -201,7 +201,7 @@ def _run_quickstart_train_then_chat(args, result, output_format: str) -> None:
     if train_rc != EXIT_SUCCESS:
         if output_format == "json":
             print(
-                json.dumps(
+                dumps_strict(
                     {
                         "success": False,
                         "error": f"Training subprocess failed with exit code {train_rc}.",
@@ -246,7 +246,7 @@ def _run_quickstart_cmd(args, output_format: str) -> None:
     if not args.template:
         err = "forgelm quickstart: TEMPLATE is required (or pass --list to see the menu)."
         if output_format == "json":
-            print(json.dumps({"success": False, "error": err}))
+            print(dumps_strict({"success": False, "error": err}))
         else:
             logger.error(err)
         sys.exit(EXIT_CONFIG_ERROR)
@@ -268,7 +268,7 @@ def _run_quickstart_cmd(args, output_format: str) -> None:
         # target), IsADirectoryError, and other I/O failures all reach here
         # with the same actionable error path instead of a Python traceback.
         if output_format == "json":
-            print(json.dumps({"success": False, "error": str(e)}))
+            print(dumps_strict({"success": False, "error": str(e)}))
         else:
             logger.error("Quickstart failed: %s", e)
         sys.exit(EXIT_CONFIG_ERROR)

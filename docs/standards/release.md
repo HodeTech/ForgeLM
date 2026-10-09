@@ -317,13 +317,15 @@ The [`cut-release` skill](../../.claude/skills/cut-release/SKILL.md) walks the m
 
 ## Branching
 
-Trunk-based:
+One integration branch, one release branch:
 
-- `main` is always releasable.
-- Feature branches short-lived, merged back via PR.
-- **No release branches** (`release/v0.4`). If a hotfix is needed for an old version that has diverged, create a branch at that tag and cherry-pick — rare.
+- **`development`** is the default branch and the integration branch. Every change lands there first: contributors branch from it and open pull requests against it; maintainers may also commit to it directly. CI runs the full gauntlet on every push and pull request, and the branch requires the same status checks as `main` before a merge.
+- **`main`** holds released code only and is always releasable. It changes through a release pull request `development` → `main` (then the tag is cut on `main`, see the [`cut-release` skill](../../.claude/skills/cut-release/SKILL.md)) or through a hotfix (below).
+- **Feature branches** are short-lived and merged into `development` via pull request.
+- **After every release or hotfix, `development` is brought up to `main`** (fast-forward, or merge `main` into `development`), so `main` never carries a commit that `development` lacks.
+- **No long-lived release branches** (`release/v0.4`). If a hotfix is needed for an old version that has diverged, create a branch at that tag and cherry-pick — rare.
 
-Historical reason: this repo is one maintainer + small contributor pool. Branch ceremony doesn't pay off.
+Why an integration branch: a release bundles a roadmap wave of fixes that are reviewed and released together, and contributor pull requests need a target that is not the released code.
 
 ## Hotfixes
 
@@ -333,8 +335,9 @@ When a critical bug is found post-release:
 2. [ ] Fix + test + update CHANGELOG (add a `[0.4.1]` section).
 3. [ ] Merge to `main` first.
 4. [ ] Cherry-pick or merge into the hotfix branch.
-5. [ ] Tag `v0.4.1`, push. Automation handles the rest.
-6. [ ] Announce on Discord + a pinned GitHub issue if security-related.
+5. [ ] Bring `development` up to `main` so the fix is not lost on the next release.
+6. [ ] Tag `v0.4.1`, push. Automation handles the rest.
+7. [ ] Announce on Discord + a pinned GitHub issue if security-related.
 
 ## What constitutes "breaking"
 

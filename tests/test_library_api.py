@@ -813,3 +813,105 @@ class TestApiSignatureSnapshot:
             "(additive) per forgelm/_version.py and regenerate "
             f"tests/_data/api_signatures_{forgelm.__api_version__}.json."
         )
+
+
+class TestPublicSurfaceTypeProbe:
+    """The type gate is only as wide as the probe that feeds it.
+
+    ``mypy --strict --follow-imports=silent forgelm/__init__.py`` type-checks
+    two internal functions and nothing else — it reported ``Success`` with the
+    annotations stripped off ``load_config``, ``verify_integrity`` and
+    ``VerifyGgufResult``'s constructor alike, because ``__init__.py`` never
+    *calls* anything and ``--follow-imports=silent`` discards diagnostics
+    raised inside the defining modules. ``tests/typing/public_surface_probe.py``
+    supplies the call sites that make ``--disallow-untyped-calls`` fire.
+
+    A probe that drifts behind ``__all__`` reopens the blind spot silently, so
+    the coverage is asserted here rather than trusted.
+    """
+
+    _PROBE = Path(__file__).parent / "typing" / "public_surface_probe.py"
+
+    def test_probe_file_exists_and_is_not_collected(self) -> None:
+        assert self._PROBE.is_file(), (
+            "tests/typing/public_surface_probe.py is missing — the mypy gate wired into ci.yml "
+            "names it, and without it the gate checks two internal functions and nothing else."
+        )
+        assert not self._PROBE.name.startswith("test_"), (
+            "the probe must not be collected by pytest: it exists to be type-checked, and its "
+            "calls would fail at runtime by construction"
+        )
+        assert not (self._PROBE.parent / "__init__.py").exists(), (
+            "tests/typing/ must stay a non-package so pytest does not import the probe"
+        )
+
+    def test_probe_covers_every_public_symbol(self) -> None:
+        import re
+
+        import forgelm
+
+        source = self._PROBE.read_text(encoding="utf-8")
+        # Word-bounded: ``forgelm.VerifyResult`` must not be satisfied by a line that only
+        # mentions ``forgelm.VerifyResultX``.
+        missing = [name for name in forgelm.__all__ if not re.search(rf"forgelm\.{re.escape(name)}\b", source)]
+        assert not missing, (
+            f"tests/typing/public_surface_probe.py does not reference {missing}. "
+            "Every name in forgelm.__all__ needs a probe line, or the type gate cannot see it — "
+            "add one call per callable and one typed assignment per constant."
+        )
+
+    def test_probe_covers_every_public_method(self) -> None:
+        """Constructing an object does not type-check its methods.
+
+        ``--disallow-untyped-calls`` needs a call site per callee. The first
+        version of this probe called only constructors and module-level
+        functions, so ``ForgeTrainer.train`` — named in the probe's own
+        docstring as the regression it closes — could lose every annotation
+        with the gate still green. Seventeen public methods across seven
+        classes were unchecked.
+
+        The roster is derived from the live classes rather than listed here,
+        so a new public method cannot land outside the gate.
+
+        The match is **class-qualified**. A bare ``.{method}(`` substring was satisfied
+        by *any* class: ``.to_dict(`` appears on three probe lines, so a fourth class
+        gaining ``to_dict`` — or ``ForgeTrainer`` gaining a method named like one
+        already probed on another class — was reported covered without a call site.
+        """
+        import inspect
+        import re
+
+        import forgelm
+
+        source = self._PROBE.read_text(encoding="utf-8")
+        missing: list[str] = []
+        for name in forgelm.__all__:
+            obj = getattr(forgelm, name)
+            if not inspect.isclass(obj):
+                continue
+            for method, function in inspect.getmembers(obj, inspect.isfunction):
+                if method.startswith("_") or not getattr(function, "__module__", "").startswith("forgelm"):
+                    continue
+                if not re.search(rf"forgelm\.{re.escape(name)}\(.*\)\.{re.escape(method)}\(", source):
+                    missing.append(f"{name}.{method}")
+        assert not missing, (
+            f"tests/typing/public_surface_probe.py never calls {missing}. A public method with no "
+            "call site in the probe can lose every annotation with the type gate still reporting "
+            "success — add one probe line per method."
+        )
+
+    def test_probe_references_nothing_that_left_the_public_surface(self) -> None:
+        import re
+
+        import forgelm
+
+        # Skip the module docstring: it explains the probe by naming
+        # ``forgelm.__all__`` and ``forgelm/__init__.py``, and a prose mention
+        # is not a probe line.
+        body = self._PROBE.read_text(encoding="utf-8").split('"""', 2)[-1]
+        referenced = set(re.findall(r"forgelm\.([A-Za-z_][A-Za-z0-9_]*)", body))
+        stale = sorted(referenced - set(forgelm.__all__))
+        assert not stale, (
+            f"the probe references {stale}, which are no longer in forgelm.__all__ — "
+            "a probe line for a removed symbol is dead weight that will eventually stop compiling"
+        )

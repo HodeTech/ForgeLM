@@ -671,12 +671,22 @@ class TestSummarizeJudgeScores:
         assert "No valid judge scores" in reason
 
     def test_average_above_min_passes(self):
+        """The happy path: enough evidence, and the average clears the bar.
+
+        This used to pass ``scores=[8.0, 6.0, None]`` over three prompts — 2/3
+        valid, which is 66.7% and now falls below the ``min_valid_fraction``
+        floor of 0.8, so the gate refuses to treat the average as a
+        measurement. That refusal is the point of the new field and is
+        asserted directly in ``TestMinValidFraction``; the subject of *this*
+        test is the threshold comparison, so it now supplies a sample that is
+        actually sufficient.
+        """
         from forgelm.judge import _summarize_judge_scores
 
         avg, passed, reason = _summarize_judge_scores(
-            scores=[8.0, 6.0, None],
+            scores=[8.0, 6.0, 7.0, 7.0, None],
             failure_count=1,
-            eval_prompts=["a", "b", "c"],
+            eval_prompts=["a", "b", "c", "d", "e"],
             min_score=5.0,
         )
         assert avg == 7.0
@@ -776,6 +786,38 @@ class TestJudgeBatchSize:
                 eval_dataset_path="unused.jsonl",
                 batch_size=bad,
             )
+
+
+class TestJudgeThresholdBoundary:
+    """The YAML route bounds these; the public function must not rely on it.
+
+    ``valid_fraction < nan`` is False, so a NaN ``min_valid_fraction`` does not
+    tighten the gate — it removes the evidence floor, and one parseable score out
+    of two hundred is then compared against ``min_score`` on its own. Negative
+    values do the same. Both are refused before any work, like ``batch_size``.
+    """
+
+    @staticmethod
+    def _call(**kw):
+        from forgelm.judge import run_judge_evaluation
+
+        return run_judge_evaluation(model=MagicMock(), tokenizer=MagicMock(), eval_dataset_path="unused.jsonl", **kw)
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), -0.1, 1.5, True, "0.8"])
+    def test_min_valid_fraction_must_be_a_finite_rate(self, bad):
+        with pytest.raises(ValueError, match="min_valid_fraction"):
+            self._call(min_valid_fraction=bad)
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), 0.0, 10.5, -3, True, None])
+    def test_min_score_must_be_a_finite_score_on_the_judge_scale(self, bad):
+        with pytest.raises(ValueError, match="min_score"):
+            self._call(min_score=bad)
+
+    @pytest.mark.parametrize("fraction", [0.0, 0.8, 1.0])
+    def test_the_boundaries_themselves_are_accepted(self, fraction):
+        """The negative control: validation passes, so the missing eval file is what stops the call."""
+        result = self._call(min_valid_fraction=fraction, min_score=1.0)
+        assert result.passed is False and "not found" in result.failure_reason
 
 
 class TestNonNumericJudgeScore:
@@ -1009,3 +1051,132 @@ class TestRubricInjectionHardening:
 
         text = "A normal response discussing <html> tags and generic <foo>bar</foo> markup."
         assert _neutralize_delimiter_tags(text) == text
+
+
+class TestMinValidFraction:
+    """An average over a sliver of the eval set is arithmetic, not evidence.
+
+    ``_summarize_judge_scores`` averages over ``valid_scores`` only, so a
+    prompt whose judge call failed moves the average not at all — it is
+    dropped. One parseable ``9`` out of two hundred prompts therefore cleared
+    a ``min_score: 8`` gate outright, and the JSON envelope reported a passing
+    judge evaluation. ``min_valid_fraction`` (default 0.8) is the floor below
+    which the average stops being treated as a measurement.
+    """
+
+    @staticmethod
+    def _summarize(scores, prompts, **kw):
+        from forgelm.judge import _summarize_judge_scores
+
+        return _summarize_judge_scores(
+            scores=scores,
+            failure_count=sum(1 for s in scores if s is None),
+            eval_prompts=prompts,
+            min_score=kw.pop("min_score", 5.0),
+            **kw,
+        )
+
+    def test_one_high_score_out_of_many_does_not_pass(self):
+        """The headline case."""
+        scores = [9.0] + [None] * 199
+        avg, passed, reason = self._summarize(scores, [f"p{i}" for i in range(200)], min_score=8.0)
+        assert passed is False, "1/200 parseable scores cannot certify a model"
+        assert "Insufficient valid judge evidence" in reason
+
+    def test_the_reason_is_distinguishable_from_a_low_average(self):
+        """Three outcomes, three prefixes — a consumer must tell them apart.
+
+        "The model scored badly" and "the judge could not be run" call for
+        different operator responses, and ``failure_reason`` is what an
+        automated consumer branches on.
+        """
+        insufficient = self._summarize([9.0] + [None] * 9, [f"p{i}" for i in range(10)])[2]
+        low = self._summarize([2.0] * 10, [f"p{i}" for i in range(10)])[2]
+        none_valid = self._summarize([None] * 10, [f"p{i}" for i in range(10)])[2]
+
+        assert insufficient.startswith("Insufficient valid judge evidence")
+        assert low.startswith("Average judge score")
+        assert none_valid.startswith("No valid judge scores")
+        assert len({insufficient[:20], low[:20], none_valid[:20]}) == 3
+
+    def test_exactly_at_the_floor_passes(self):
+        """`<` not `<=` — the configured fraction is attainable.
+
+        A floor no configuration can satisfy is a disabled gate wearing a
+        threshold's clothes.
+        """
+        avg, passed, reason = self._summarize([8.0] * 8 + [None] * 2, [f"p{i}" for i in range(10)])
+        assert passed is True
+        assert reason is None
+
+    def test_just_below_the_floor_fails(self):
+        avg, passed, reason = self._summarize([8.0] * 7 + [None] * 3, [f"p{i}" for i in range(10)])
+        assert passed is False
+        assert "70.0%" in reason
+
+    def test_the_sliver_average_is_reported_but_not_the_verdict(self):
+        """The operator still gets to see what the few valid scores said."""
+        avg, passed, reason = self._summarize([9.0, 9.0] + [None] * 8, [f"p{i}" for i in range(10)])
+        assert avg == 9.0
+        assert passed is False
+        assert "9.00" in reason
+        assert "not a measurement of the model" in reason
+
+    def test_zero_disables_the_floor(self):
+        """The documented escape hatch, and the pre-0.11 behaviour."""
+        avg, passed, reason = self._summarize(
+            [9.0] + [None] * 199, [f"p{i}" for i in range(200)], min_score=8.0, min_valid_fraction=0.0
+        )
+        assert passed is True
+        assert reason is None
+
+    def test_a_full_valid_sample_is_unaffected(self):
+        """The negative control: the floor must not fire on a healthy run."""
+        avg, passed, reason = self._summarize([7.0] * 10, [f"p{i}" for i in range(10)])
+        assert passed is True
+        assert avg == 7.0
+
+
+class TestEmptyEvalDatasetFailsClosed:
+    """An enabled judge gate with no prompts is zero evidence, not a pass.
+
+    ``run_judge_evaluation`` logged "Skipping judge evaluation" and returned
+    ``JudgeResult(passed=True)``. The file exists — it just parsed to nothing:
+    truncated in transit, wrong schema, or every line blank. The operator
+    configured a gate, the gate was not run, and the run exited 0 with the
+    artefact recording a passing judge evaluation.
+
+    Symmetric with the missing-file branch beside it, which already fails, and
+    with the safety orchestrator's empty-probes path, fixed earlier for the
+    identical reason.
+    """
+
+    def _run(self, tmp_path, contents):
+        from forgelm.judge import run_judge_evaluation
+
+        eval_file = tmp_path / "eval.jsonl"
+        eval_file.write_text(contents)
+        return run_judge_evaluation(
+            model=MagicMock(),
+            tokenizer=MagicMock(),
+            eval_dataset_path=str(eval_file),
+            judge_model="gpt-4o",
+            judge_api_key="key",
+            min_score=5.0,
+        )
+
+    def test_completely_empty_file_fails(self, tmp_path):
+        result = self._run(tmp_path, "")
+        assert result.passed is False
+        assert "no usable prompts" in (result.failure_reason or "")
+
+    def test_blank_lines_only_fails(self, tmp_path):
+        result = self._run(tmp_path, "\n\n   \n")
+        assert result.passed is False
+        assert "no usable prompts" in (result.failure_reason or "")
+
+    @patch("forgelm._http.requests.Session.post")
+    def test_it_short_circuits_before_any_judge_call(self, mock_post, tmp_path):
+        """No prompts means no spend — and no chance of a partial verdict."""
+        self._run(tmp_path, "")
+        mock_post.assert_not_called()

@@ -46,7 +46,7 @@ Each skill's `SKILL.md` has the full checklist. Follow it; don't skip steps to s
 
 ```text
 ForgeLM/
-├── forgelm/                 # Source code: ~21 single-file modules + 4 sub-packages
+├── forgelm/                 # Source code: 27 single-file modules + 5 code sub-packages
 │   ├── cli/                 # CLI package (Phase 15 split): _parser, _dispatch,
 │   │                        # _exit_codes, subcommands/{ingest, audit, chat,
 │   │                        # export, deploy, quickstart, doctor, cache,
@@ -59,7 +59,7 @@ ForgeLM/
 │   │                        # _croissant, _summary, _splits
 │   ├── wizard/              # Interactive --wizard config generation: _collectors,
 │   │                        # _orchestrator, _state, _byod, _io, _defaults.json
-│   ├── config.py            # Pydantic schemas (23 models)
+│   ├── config.py            # Pydantic schemas (24 models)
 │   ├── trainer.py           # TRL wrapper (SFT/DPO/SimPO/KTO/ORPO/GRPO)
 │   ├── model.py             # HF + PEFT model loading
 │   ├── data.py              # Dataset loading + format detection
@@ -69,14 +69,18 @@ ForgeLM/
 │   │                        # _score_classification, _score_generation,
 │   │                        # _gates, _results, _orchestrator
 │   ├── compliance.py        # EU AI Act Articles 9-17 + Annex IV + GDPR purge / reverse-pii primitives
-│   ├── webhook.py           # Slack/Teams notifications (5-event vocabulary)
+│   ├── webhook.py           # Slack/Teams notifications (8-event vocabulary)
 │   ├── grpo_rewards.py      # Built-in GRPO format/length shaping reward fallback
 │   ├── _http.py             # SSRF-guarded HTTP chokepoint (safe_post / safe_get)
 │   ├── _version.py          # `__version__` + `__api_version__` (decoupled)
+│   ├── verify/              # Verification package (Phase 16 S1 split):
+│   │                        # _annex_iv, _pipeline_evidence, _gguf,
+│   │                        # _model_integrity, _audit_log, _io_safety
 │   └── ...                  # benchmark, judge, merging, synthetic,
 │                            # quickstart, model_card, fit_check, deploy, chat,
-│                            # export, inference, results, utils
-├── tests/                   # 70 test modules; count grows over time (run `pytest --collect-only -q` for current)
+│                            # export, inference, results, utils, __main__,
+│                            # _pypdf_normalise, _script_sanity, _strip_pattern
+├── tests/                   # 128 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
 ├── tools/                   # CI guards: check_anchor_resolution,
 │                            # check_bilingual_parity, check_cli_help_consistency,
 │                            # check_field_descriptions, check_no_analysis_refs,
@@ -110,7 +114,7 @@ These come from the standards documents; summarized here for quick reference:
 1. **Config-driven.** Behaviour is determined by validated YAML. No env-var sniffing for behaviour (only for secrets). No hardcoded feature flags.
 2. **Reliability before features.** Every new capability ships with tests, docs, and CI coverage. "I'll add tests later" = the PR is not ready.
 3. **Optional dependencies as extras.** Heavy deps (`bitsandbytes`, `unsloth`, `deepspeed`, `lm-eval`, `wandb`, `mergekit`) live under `[project.optional-dependencies]` and raise `ImportError` with an install hint when missing.
-4. **Exit codes are a public contract.** 0/1/2/3/4/5 — see [error-handling.md](docs/standards/error-handling.md) for the full table (`0=success`, `1=config`, `2=training`, `3=eval-failure`, `4=awaiting-approval`, `5=wizard-cancelled`). CI/CD pipelines depend on these.
+4. **Exit codes are a public contract.** 0/1/2/3/4/5/6 — see [error-handling.md](docs/standards/error-handling.md) for the full table (`0=success`, `1=config`, `2=training`, `3=eval-failure`, `4=awaiting-approval`, `5=wizard-cancelled`, `6=integrity-failure`). The canonical source is `forgelm/cli/_exit_codes.py`'s `_PUBLIC_EXIT_CODES`. Code `6` matters most in CI: `1` means the verifier never got to compare (missing path, no secret), while `6` means it compared and the artefact did **not** match — a security event, not an operator typo. Wire alarms to `6`. CI/CD pipelines depend on these.
 5. **Append-only audit log.** Every decision gate emits a structured event. Never edit or delete entries.
 6. **No silent failures.** No bare `except:`, no `except Exception: pass`, no `|| true` in CI, no logging-and-swallowing for anything except explicitly-non-fatal paths (webhooks, cleanup).
 7. **Bilingual where it counts.** User-facing docs are EN + TR mirrors. Code, CLI output, logs, config keys are English only.
@@ -153,11 +157,18 @@ Default workflow for a non-trivial change:
 5. **Test immediately.** Write the test before or alongside the code, never after merge.
 6. **Verify before opening PR.** Run the self-review command:
 
+   <!-- gauntlet:begin -->
    ```bash
    python3 tools/check_import_origin.py --strict && \
      ruff format . && ruff check . && pytest tests/ && \
      python3 -m forgelm --config config_template.yaml --dry-run && \
+     python3 -m mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py tests/typing/public_surface_probe.py && \
+     python3 tools/check_field_descriptions.py --strict forgelm/config.py && \
+     python3 tools/check_http_discipline.py && \
+     python3 tools/check_no_mutation_artifacts.py --strict && \
+     python3 tools/check_strict_json_writers.py --strict && \
      python3 tools/check_bilingual_parity.py --strict && \
+     python3 tools/check_bilingual_code_blocks.py --strict && \
      python3 tools/check_anchor_resolution.py --strict && \
      python3 tools/check_cli_help_consistency.py --strict && \
      python3 tools/check_cli_exit_code_prose.py --strict && \
@@ -169,13 +180,23 @@ Default workflow for a non-trivial change:
      python3 tools/check_usermanual_self_contained.py --strict && \
      python3 tools/check_notebook_pins.py --strict && \
      python3 tools/check_usermanual_schema_drift.py --strict && \
+     python3 tools/check_yaml_snippets.py --strict && \
      python3 tools/check_deprecation_targets.py --strict && \
      python3 tools/check_release_record_sync.py --strict && \
      python3 tools/check_skill_mirror_parity.py --strict && \
      python3 tools/check_source_path_refs.py --strict && \
      python3 tools/check_readme_links.py --strict && \
-     python3 tools/update_site_version.py --check
+     python3 tools/check_library_api_doc.py --strict && \
+     python3 tools/check_doc_numerical_claims.py --strict && \
+     python3 tools/check_site_claims.py --strict && \
+     python3 tools/check_site_chrome_parity.py && \
+     python3 tools/check_module_size.py --strict && \
+     python3 tools/update_site_version.py --check && \
+     BANDIT_JSON=$(mktemp) && trap 'rm -f "$BANDIT_JSON"' EXIT && \
+     { bandit -c pyproject.toml -r forgelm/ -f json -o "$BANDIT_JSON" || true; } && \
+     python3 tools/check_bandit.py "$BANDIT_JSON"
    ```
+   <!-- gauntlet:end -->
 
    **Do not "simplify" `python3 -m forgelm` back to `forgelm`.** A
    console script's `sys.path[0]` is its own `bin/` directory, never the
@@ -189,11 +210,14 @@ Default workflow for a non-trivial change:
    does not cover the `tools/check_*.py` guards that import `forgelm`
    with `sys.path[0] == tools/`.
 
-   All twenty-three must pass (the usermanual-schema-drift guard —
+   All 31 must pass — the exact set `.github/workflows/ci.yml`
+   runs, held there by `tests/test_guard_wiring.py`, which now compares the
+   two inventories in **both** directions (the usermanual-schema-drift guard —
    `check_usermanual_schema_drift.py --strict` — validates that every
    fenced YAML key under `docs/usermanuals/` resolves against the real
    `ForgeConfig` schema, catching fabricated-field examples that would
-   fail `--dry-run`). The first four are the historical gauntlet;
+   fail `--dry-run`). The four after the import-origin guard are the
+   historical gauntlet;
    the three doc guards (Wave 3 / Wave 4 / Wave 5 additions) catch
    bilingual structural drift, broken markdown anchors, and CLI ↔ docs
    help-text drift before the PR opens.  Its companion, the

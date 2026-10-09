@@ -28,7 +28,9 @@ class TestExtractTaskScore:
         # *before* the real metric — the matcher must still skip the 0.012.
         result = {"alias": "taskC", "acc_stderr,flex": 0.012, "acc,flex": 0.70}
         assert _extract_task_score("taskC", result) == pytest.approx(0.70)
-        assert _parse_results({"taskC": result}) == {"taskC": pytest.approx(0.70)}
+        scores, invalid = _parse_results({"taskC": result})
+        assert scores == {"taskC": pytest.approx(0.70)}
+        assert invalid == []
 
     def test_only_stderr_present_returns_none(self):
         # A degenerate result with no real accuracy metric must not be rescued
@@ -244,3 +246,186 @@ class TestTrainResultWithBenchmark:
         assert result.benchmark_scores is None
         assert result.benchmark_average is None
         assert result.benchmark_passed is None
+
+
+class TestBenchmarkFailsClosedOnUnusableScores:
+    """A gate that cannot compare must not report a pass.
+
+    `average_score < min_score` is False when the average is NaN, so a single
+    NaN task score carried the whole run to `passed=True` — a benchmark gate
+    reporting success for a benchmark it could not evaluate, and under
+    `auto_revert: true` that verdict is what keeps a model. Out-of-range is
+    grouped with non-finite because `min_score` is bounded [0, 1]: a task
+    reporting 5.0 clears any threshold on its own and skews the mean for every
+    other task in the run.
+
+    Per decision C-1 any invalid task fails the gate. A configurable
+    valid-fraction floor was considered and deferred rather than adding a
+    second threshold to defend on a gate that until now passed NaN outright.
+    """
+
+    @pytest.mark.parametrize(
+        "bad",
+        [float("nan"), float("inf"), float("-inf"), 5.0, -0.5],
+        ids=["nan", "inf", "-inf", "above-one", "negative"],
+    )
+    def test_unusable_score_is_quarantined_not_averaged(self, bad):
+        from forgelm.benchmark import _parse_results
+
+        scores, invalid = _parse_results({"good": {"acc,none": 0.8}, "bad": {"acc,none": bad}})
+        assert scores == {"good": pytest.approx(0.8)}, "a usable task must still be scored"
+        assert [name for name, _ in invalid] == ["bad"]
+
+    def test_a_task_with_no_metric_is_not_an_invalid_task(self):
+        """The third case must stay distinguishable.
+
+        A task with no accuracy metric at all is absent from `scores` — and from
+        `invalid`. Folding it in with "reported an unusable number" would lose the
+        distinction an operator needs to debug the run, so the helper keeps it
+        separate and `run_benchmark` finds it by difference. (It does not "drag the
+        average down": it leaves the mean's numerator and denominator alike. That
+        belief is what let a mixed run clear `min_score`; see `TestMissingMetric`.)
+        """
+        from forgelm.benchmark import _parse_results
+
+        scores, invalid = _parse_results({"nometric": {"perplexity": 12.0}})
+        assert scores == {}
+        assert invalid == []
+
+    def test_empty_scores_still_fails_a_positive_threshold(self):
+        """Pre-existing behaviour that must be preserved, asserted explicitly."""
+        from forgelm.benchmark import _parse_results
+
+        scores, invalid = _parse_results({})
+        average = sum(scores.values()) / len(scores) if scores else 0.0
+        assert invalid == []
+        assert average == 0.0
+        assert average < 0.5, "an empty score set must not satisfy a positive min_score"
+
+
+class TestRunBenchmarkGateDecision:
+    """`run_benchmark`'s verdict, not just `_parse_results`'s bookkeeping.
+
+    The existing tests cover the private helper. The *decision* — the `if
+    invalid_tasks:` branch that C-1 exists to add — had no test at all, and
+    that gap was not theoretical: the branch shipped as `if False:` for a
+    whole commit while 4,644 tests stayed green and the commit message said
+    "full gauntlet green". A guard nothing exercises is a comment.
+
+    `lm_eval` is stubbed at the module boundary rather than installed: these
+    assert ForgeLM's verdict logic, and the harness itself is an optional
+    extra the unit suite must not require.
+    """
+
+    @staticmethod
+    def _run(raw_results, min_score=None, tmp_path=None):
+        import sys
+        import types
+        from unittest.mock import patch
+
+        fake = types.ModuleType("lm_eval")
+        fake.simple_evaluate = lambda **kw: {"results": raw_results}
+        fake.models = types.ModuleType("lm_eval.models")
+        fake.models.huggingface = types.ModuleType("lm_eval.models.huggingface")
+        fake.models.huggingface.HFLM = lambda **kw: object()
+
+        from forgelm import benchmark as bm
+
+        with patch.dict(
+            sys.modules,
+            {
+                "lm_eval": fake,
+                "lm_eval.models": fake.models,
+                "lm_eval.models.huggingface": fake.models.huggingface,
+            },
+        ):
+            return bm.run_benchmark(
+                model=object(),
+                tokenizer=object(),
+                tasks=["t"],
+                min_score=min_score,
+                output_dir=str(tmp_path) if tmp_path else None,
+            )
+
+    def test_a_nan_task_score_fails_the_gate(self):
+        """The C-1 decision. This is the assertion whose absence let `if False:` ship."""
+        result = self._run({"t": {"acc,none": float("nan")}}, min_score=0.5)
+        assert result.passed is False
+        assert result.failure_reason and "unusable task score" in result.failure_reason
+        assert "nan" in result.failure_reason
+
+    def test_an_out_of_range_task_score_fails_the_gate(self):
+        result = self._run({"t": {"acc,none": 5.0}}, min_score=0.5)
+        assert result.passed is False
+        assert result.failure_reason and "5.0" in result.failure_reason
+
+    def test_an_unusable_score_fails_even_with_no_threshold_configured(self):
+        """`min_score=None` must not mean "nothing can fail".
+
+        Without the invalid-task branch this returns `passed=True`, because
+        the only other failure path is the threshold comparison.
+        """
+        result = self._run({"t": {"acc,none": float("nan")}}, min_score=None)
+        assert result.passed is False
+
+    def test_a_healthy_run_still_passes(self):
+        result = self._run({"t": {"acc,none": 0.9}}, min_score=0.5)
+        assert result.passed is True
+        assert result.failure_reason is None
+        assert result.average_score == pytest.approx(0.9)
+
+    def test_a_below_threshold_run_still_fails_for_the_original_reason(self):
+        """The pre-existing verdict must not be swallowed by the new branch."""
+        result = self._run({"t": {"acc,none": 0.2}}, min_score=0.5)
+        assert result.passed is False
+        assert result.failure_reason and "below minimum threshold" in result.failure_reason
+
+    def test_a_mixed_run_reports_the_unusable_task_not_the_average(self):
+        """One good task and one NaN: the operator needs to know which."""
+        result = self._run({"good": {"acc,none": 0.95}, "bad": {"acc,none": float("inf")}}, min_score=0.5)
+        assert result.passed is False
+        assert "bad" in result.failure_reason
+        assert "good" not in result.failure_reason
+
+
+class TestMissingMetric:
+    """A requested task with no accuracy metric must not be silently averaged around.
+
+    ``{"good": 0.95, "broken": <no accuracy key>}`` with ``min_score=0.5`` returned
+    ``passed=True, average=0.95``: the task left the mean's numerator *and*
+    denominator, so the gate compared a different set of tasks than the one asked
+    for. A NaN score already failed the gate; "no metric at all" cleared it —
+    an asymmetry the docstring papered over by claiming the task "drags the
+    average down".
+    """
+
+    _run = staticmethod(TestRunBenchmarkGateDecision._run)
+
+    def test_a_mixed_run_fails_a_configured_gate(self):
+        result = self._run({"good": {"acc,none": 0.95}, "broken": {"perplexity": 12.0}}, min_score=0.5)
+        assert result.passed is False
+        assert "broken" in result.failure_reason and "no accuracy metric" in result.failure_reason
+        assert "good" not in result.failure_reason, "the usable task is not the problem"
+
+    def test_a_run_with_only_metricless_tasks_names_the_real_cause(self):
+        """Previously reported as "average 0.0000 is below minimum" — true, and useless."""
+        result = self._run({"a": {"perplexity": 1.0}, "b": {"perplexity": 2.0}}, min_score=0.5)
+        assert result.passed is False
+        assert "no accuracy metric" in result.failure_reason
+
+    def test_without_a_threshold_a_non_accuracy_task_is_not_a_failure(self):
+        """No gate configured, nothing to satisfy: a perplexity-only report still completes."""
+        result = self._run({"good": {"acc,none": 0.95}, "ppl": {"perplexity": 12.0}}, min_score=None)
+        assert result.passed is True
+
+    def test_both_problems_are_reported_together(self):
+        result = self._run(
+            {"nan": {"acc,none": float("nan")}, "broken": {"perplexity": 3.0}, "ok": {"acc,none": 0.9}},
+            min_score=0.5,
+        )
+        assert result.passed is False
+        assert "unusable task score" in result.failure_reason and "no accuracy metric" in result.failure_reason
+
+    def test_a_clean_run_is_unaffected(self):
+        result = self._run({"a": {"acc,none": 0.9}, "b": {"acc_norm,none": 0.8}}, min_score=0.5)
+        assert result.passed is True and result.failure_reason is None

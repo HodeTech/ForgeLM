@@ -148,8 +148,8 @@ ruff check . && ruff format --check .
 pytest tests/ -v
 
 # Full pipeline smoke
-forgelm --config config_template.yaml --dry-run
-forgelm --wizard  # if wizard is aware of new feature
+python3 -m forgelm --config config_template.yaml --dry-run
+python3 -m forgelm --wizard  # if wizard is aware of new feature
 
 # Optional extras install cleanly?
 pip install -e '.[new_feature]'
@@ -161,7 +161,7 @@ pip install -e '.[new_feature]'
 - **Global state.** Tempting for trainer-level features ("let me cache this tokenizer"). Don't. Thread state through the function signature.
 - **Skipping the optional extra pattern.** A single missing `try: import X` with a helpful message is the difference between a kind error and an ugly traceback.
 - **Not testing auto-revert interaction.** If the feature can fail an evaluation gate, test that auto-revert correctly fires.
-- **Not updating wizard.py.** If the feature is user-visible, `forgelm --wizard` should surface it.
+- **Not updating the wizard.** If the feature is user-visible, `python3 -m forgelm --wizard` should surface it — collectors live in `forgelm/wizard/_collectors.py` and defaults in `forgelm/wizard/_defaults.json` (regenerate with `tools/generate_wizard_defaults.py`; `tools/check_wizard_defaults_sync.py` gates the pair).
 
 ## Related skills
 

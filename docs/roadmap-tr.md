@@ -14,11 +14,12 @@
 | ✅ Tamam | Faz 22 — CLI sihirbazı tarayıcı yüzeyiyle eşdeğerlik | `forgelm --wizard` artık tarayıcı sihirbazıyla aynı 9-adımlı akışı çalıştırıyor (welcome → use-case → model → strategy → trainer → dataset → training-params → compliance → evaluation), `--wizard-start-from <yaml>` ile idempotent yeniden çalıştırma, şema-güdümlü varsayılanlar SOT, ayrı `EXIT_WIZARD_CANCELLED = 5` exit kodu, `$XDG_CACHE_HOME` altında durum kalıcılığı ve çıkışta validate — `v0.5.5` ile paketlendi (PyPI 2026-05-10) |
 | ✅ Tamam | Site dokümantasyon düzeltme taraması | `site/*.html` üzerindeki tüm görünür YAML / artefakt-yolu / CLI / şema iddiaları artık live `forgelm/` yüzeyine karşı doğrulanıyor. Hero YAML demo'su gerçek Pydantic alan adlarıyla yeniden yazıldı, compliance artefakt ağacı disk düzenine göre yeniden çizildi, hayalet YAML anahtarları + CLI flag'leri kaldırıldı, ifadeler live davranışa hizalandı. Altı dilde i18n (en / tr / de / fr / es / zh) tam paritede (her biri 731 anahtar) — `v0.5.5` ile paketlendi (PyPI 2026-05-10) |
 | ✅ Tamam | [Faz 14 — Çok Aşamalı Pipeline Zincirleri](roadmap/completed-phases.md#phase-14--multi-stage-pipeline-chains-v070) | SFT → DPO → GRPO config zinciri, pipeline kaynak izleri, 7 yeni pipeline-kapsamlı audit olayı, `forgelm verify-annex-iv --pipeline` modu — `v0.7.0` ile yayınlandı (PyPI 2026-05-15; v0.6.0'dan yeniden planlandı, 2026-05-11 yutma pilotunun ardından Faz 15 önceliği aldı) |
-| 🚧 İncelemede | [Faz 14.5 — Pipeline Sertleştirme](roadmap/phase-14-5-pipeline-hardening.md) | v0.7.0 review'ında ertelenen 4 öğenin tamamı kapatıldı, publish bekliyor → `v0.9.x` patch döngüsü. Bu döngüde inen işler: aşama bazında kanıt deep-parse doğrulaması (ve `--pipeline`'ın temiz koşularda tamper alarmı vermesini durduran writer düzeltmesi), kanonik webhook sözlüğü referansı (`docs/reference/webhook_schema.md`) ve `WebhookNotifier._send(**extra)` explicit allowlist. Dördüncüsü — canonical pipeline manifest hash + chain-dışı alan tamper tespiti — **aslında v0.8.0'da**, farklı bir bulgu kimliği altında sevk edilmişti ve burada yalnızca belgelendi; satır gözden kaçtığı için açık kalmıştı. Dosyaya sonradan eklenen Task 5 (SonarCloud S3776 cognitive-complexity refactor) bu teslimatın parçası **değildir** ve kendisi de **NOT SCHEDULED** olarak kapatılmıştır: yeniden ölçüm, girdideki sayıları, fonksiyon listesini, file:line referanslarını ve kabul kriterini baştan sona yanlış buldu; bu yüzden artık bir sürüme değil, belirtilmiş bir koşula bağlıdır — ya Sonar gerçekten bir workflow'a bağlanır, ya da `tools/` altına in-repo bir `ast` karmaşıklık ratchet'i iner |
+| ✅ Tamam | [Faz 14.5 — Pipeline Sertleştirme](roadmap/phase-14-5-pipeline-hardening.md) | v0.7.0 review'ında ertelenen 4 öğenin tamamı kapatıldı — dosyanın başlangıçta adlandırdığı `v0.9.x` döngüsünde değil, `v0.10.0` ile yayınlandı (PyPI 2026-07-20). Orada inen işler: aşama bazında kanıt deep-parse doğrulaması (ve `--pipeline`'ın temiz koşularda tamper alarmı vermesini durduran writer düzeltmesi), kanonik webhook sözlüğü referansı (`docs/reference/webhook_schema.md`) ve `WebhookNotifier._send(**extra)` explicit allowlist. Dördüncüsü — canonical pipeline manifest hash + chain-dışı alan tamper tespiti — **aslında v0.8.0'da**, farklı bir bulgu kimliği altında sevk edilmişti ve burada yalnızca belgelendi; satır gözden kaçtığı için açık kalmıştı. Dosyaya sonradan eklenen Task 5 (SonarCloud S3776 cognitive-complexity refactor) bu teslimatın parçası **değildir** ve kendisi de **NOT SCHEDULED** olarak kapatılmıştır: yeniden ölçüm, girdideki sayıları, fonksiyon listesini, file:line referanslarını ve kabul kriterini baştan sona yanlış buldu; bu yüzden artık bir sürüme değil, belirtilmiş bir koşula bağlıdır — ya Sonar gerçekten bir workflow'a bağlanır, ya da `tools/` altına in-repo bir `ast` karmaşıklık ratchet'i iner |
 | ✅ Tamam | [Faz 15 — Yutma Pipeline'ı Güvenilirliği](roadmap/completed-phases.md#phase-15--ingestion-pipeline-reliability-v060) | Wave 1 + Wave 2 + 5 review-absorption turu: window tabanlı çok satırlı PDF dedup'ı, Türkçe glyph normalizasyon profili (language-hint'e bağlı default), dil-farkında Unicode block sağlamlık kontrolü, ingest-time kalite ön-sinyali, default-on audit `--quality-filter`, DOCX explicit header/footer çıkarımı, EPUB spine + whole-token nav/cover skip, TXT UTF-8 BOM + MD YAML frontmatter strip, notebook playground hizalama, ek olarak Wave 2 `--strip-pattern` (ReDoS-korumalı), `--page-range`, front-matter heuristic, `--strip-urls`, multi-column uyarı — `v0.6.0` ile yayınlandı (PyPI 2026-05-11) |
+| 🚧 Sürüyor | [Faz 16 — Güven Yüzeyi Sertleştirme](roadmap/phase-16-trust-surface-hardening.md) | 2026-07-29/30 tam proje review'ının remediation'ı: 16 adıma bölünmüş **83 canonical birim** (0 Critical / 24 High / 52 Medium / 7 Low), davranış → sözleşme → doküman sırasıyla, her adımın kendi Opus ve Sonnet review turuyla. Adapter-export yolundaki geri dönüşsüz veri kaybını, fail-open kalite/safety/doğrulama kapılarını, izin verilen hiçbir TRL sürümünde import edilemeyen iki ilan edilmiş trainer'ı, her subcommand'de etkisiz kalan `--offline` bayrağını, yayımladığı wheel'in tek satırını bile çalıştırmamış publish matrisini ve kodun arkasında durmadığı hukuki tarih / container / exit-code iddialarını kapatır. Açık `0.11.1rc1` döngüsüne iner; etiket cut'ta `release.md`'nin bump tablosundan türetilir ve planlandığı haliyle `### Breaking` girdileri PATCH'i kullanılamaz kılar |
 | 📋 Planlandı | [Faz 13 — Pro CLI ve Gözlemlenebilirlik Dashboard](roadmap/phase-13-pro-cli.md) | Lisans korumalı dashboard, HPO, zamanlanmış görevler, takım config store → `v0.6.0-pro` — Pro katmanı sürümleri OSS çekirdeğinden bağımsız ilerler, yani `v0.6.0-pro` kendi v0.6.0'ıdır, OSS `v0.6.0` ile eş değildir (adoption + v0.5.5'te yayınlanan ISO/SOC 2 baseline'a bağlı) |
 
-> **Durum lejantı:** ✅ Yayınlandı (PyPI) · 🟡 main'e indi, publish bekliyor · 🚧 İncelemede (PR açık) · 📋 / ⏳ Planlandı
+> **Durum lejantı:** ✅ Yayınlandı (PyPI) · 🟡 main'e indi, publish bekliyor · 🚧 Sürüyor (iş iniyor; nesi teslim edilip nesi edilmediği için faz dosyasına bakın) · 📋 / ⏳ Planlandı
 
 **Yayınlandı:** `v0.11.0` — "Ön Kapı" — PyPI 2026-07-21.  Kod'a karşı yapılan bir README denetimi **çalıştırma testinden geçemeyen on dört iddia** buldu — projenin en yüksek trafikli belgesi, `docs/`'u dürüst tutan her guard'ın kapsamı dışındaydı; artık `tools/check_readme_links.py` (29. guard) ve README kapsamlı sayısal-iddia kontrolleri bu boşluğu kapatıyor.  Kritik-katman **PII kapısı** (`forgelm audit` kredi kartı / IBAN'da `3` döner — kırıcı bir değişiklik), bir Opus ve bir Sonnet review turu boyunca ~%1.1 yanlış-pozitif oranlı issuer-prefix + Luhn kontrolüne rafine edildi; `[distributed]` extra'sı Windows'ta artık tüm kurulumu başarısız kılmak yerine sessizce atlanıyor (o da kırıcı); ayrıca `[tracking-mlflow]` extra'sı ve auto-revert dokümantasyon-sürüklenmesi taraması.  4460 → 4560 test.  Bkz. [releases.md](roadmap/releases.md#v0110--the-front-door-2026-07-21).
 
@@ -39,13 +40,13 @@ Başlangıçta dört ardışık PyPI tag'i (`v0.5.0` / `v0.5.1` / `v0.5.2` / `v0
 
 **Daha öncesi:** `v0.4.5` — Quickstart Katmanı (2026-04-26); `v0.4.0` — Post-Training Tamamlama (2026-04-26).
 
-**Güncel durum:** `v0.9.0`, PyPI'daki en güncel sürümdür. 21 faz (1, 2, 2.5, 3, 4, 5, 5.5, 6, 7, 8, 9, 10, 10.5, 11, 11.5, 12, 12.5, 12.6, 14, 15, 22) `v0.7.0` üzerinden yayınlandı; `v0.8.0` ve `v0.9.0` yeni bir roadmap fazı eklemeyen sonraki bakım / bağımlılık-göçü sürümleridir — kapsamlarının tamamı için [releases.md](roadmap/releases.md)'e bakın.  Faz 13, adoption gate'leri karşılandığında ayrıca `v0.6.0-pro` olarak yayınlanır (Pro katmanı sürümleri OSS çekirdeğinden bağımsız ilerler).
+**Güncel durum:** `v0.11.0`, PyPI'daki en güncel sürümdür (2026-07-21). 21 faz (1, 2, 2.5, 3, 4, 5, 5.5, 6, 7, 8, 9, 10, 10.5, 11, 11.5, 12, 12.5, 12.6, 14, 15, 22) `v0.7.0` üzerinden yayınlandı; Faz 14.5 `v0.10.0`'da kapandı; `v0.8.0`, `v0.9.0`, `v0.10.0` ve `v0.11.0` yeni bir roadmap fazı açmayan sonraki bakım / doğruluk sürümleridir — kapsamlarının tamamı için [releases.md](roadmap/releases.md)'e bakın.  [Faz 16 — Güven Yüzeyi Sertleştirme](roadmap/phase-16-trust-surface-hardening.md) açık `0.11.1rc1` döngüsünde sürüyor — S1, S2 ve S3 teslim edildi, S4-S16 edilmedi.  Faz 13, adoption gate'leri karşılandığında ayrıca `v0.6.0-pro` olarak yayınlanır (Pro katmanı sürümleri OSS çekirdeğinden bağımsız ilerler).
 
 > **Faz 12.6 görev / alt-görev iki eksenli not:** Faz 12.6 kendi içinde 38 görevlik bir kapanış döngüsüdür (Görev 1-38) ve [`roadmap/completed-phases.md`](roadmap/completed-phases.md) dosyasında izlenir; her wave'in PR açıklaması o wave'in kapsadığı görev delta'sını taşır.
 
 ## Planlanan işlerin özeti
 
-> **Not:** Oklar yayınlama sırasını gösterir, faz numaralarını değil (Faz 15 v0.6.0 ile yayınlandı; Faz 14 v0.7.0 ile yayınlandı (Faz 15 önceliği aldıktan sonra); v0.8.0 ve v0.9.0 yeni faz eklemeyen bakım / bağımlılık-göçü sürümleridir, aşağıda faz çıktısı olarak değil kendi bakım-sürümü hattında gösterilir; Faz 13 Pro katmanında ayrıca daha sonra yayınlanır).
+> **Not:** Oklar yayınlama sırasını gösterir, faz numaralarını değil (Faz 15 v0.6.0 ile yayınlandı; Faz 14 v0.7.0 ile yayınlandı (Faz 15 önceliği aldıktan sonra); Faz 14.5 v0.10.0'da kapandı; v0.8.0, v0.9.0, v0.10.0 ve v0.11.0 yeni faz eklemeyen bakım / doğruluk sürümleridir, aşağıda faz çıktısı olarak değil kendi bakım-sürümü hattında gösterilir; Faz 13 Pro katmanında ayrıca daha sonra yayınlanır; Faz 16 sürmektedir ve etiketi önceden adlandırılmaz, cut'ta türetilir).
 
 ```mermaid
 graph LR
@@ -59,6 +60,7 @@ graph LR
     P126 --> P15[Faz 15<br/>Yutma<br/>Güvenilirliği]
     P15 --> P14[Faz 14<br/>Pipeline<br/>Zincirleri]
     P14 --> P145[Faz 14.5<br/>Pipeline<br/>Sertleştirme]
+    P145 --> P16[Faz 16<br/>Güven Yüzeyi<br/>Sertleştirme]
     P14 --> P13[Faz 13<br/>Pro CLI<br/>+ Dashboard]
     P15 --> P13
 
@@ -71,16 +73,21 @@ graph LR
     P126 -.-> V25[v0.5.5]
     P15 -.-> V23[v0.6.0 ✅ Yayınlandı]
     P14 -.-> V27[v0.7.0 ✅ Yayınlandı]
-    P145 -.-> V275[v0.9.x]
+    P145 -.-> V275[v0.10.0 ✅ Yayınlandı]
     P13 -.-> V3[v0.6.0-pro]
+    P16 -.-> V32[sonraki etiket<br/>cut'ta türetilir]
 
     subgraph MAINT["Bakım sürümleri (yeni faz yok)"]
         V28[v0.8.0 ✅ Yayınlandı]
         V29[v0.9.0 ✅ Yayınlandı]
+        V30[v0.10.0 ✅ Yayınlandı]
+        V31[v0.11.0 ✅ Yayınlandı]
     end
 
     V27 ==>|bakım| V28
     V28 ==>|bakım| V29
+    V29 ==>|bakım| V30
+    V30 ==>|bakım| V31
 
     style P10 fill:#003300,stroke:#00ff88
     style P105 fill:#003300,stroke:#00ff88
@@ -110,8 +117,9 @@ docs/
 └── roadmap/
     ├── completed-phases.md                     # Faz 1-12.6 + 15 + 14 arşivi (detaylı, İngilizce) — Faz 10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 12.6 / 15 / 14 inline gömüldü (sırasıyla v0.4.0 / v0.4.5 / v0.5.0 / v0.5.5 / v0.6.0 / v0.7.0; dosyada 15, 14'ten önce gelir — yayınlanma sırasıyla eşleşir)
     ├── phase-13-pro-cli.md                     # Planlandı — v0.6.0-pro (gated)
-    ├── phase-14-5-pipeline-hardening.md        # 4 review-deferred öğe kapandı (biri v0.8.0'da sevk edildi), publish bekliyor; Task 5 (S3776) NOT SCHEDULED olarak kapandı (koşula bağlı)
-    ├── releases.md                             # v0.3.0 → v0.9.0 sürüm notları
+    ├── phase-14-5-pipeline-hardening.md        # 4 review-deferred öğe kapandı (biri v0.8.0'da, kalanı v0.10.0'da sevk edildi); Task 5 (S3776) NOT SCHEDULED olarak kapandı (koşula bağlı)
+    ├── phase-16-trust-surface-hardening.md     # Sürüyor — S1-S3 sevk edildi; 16 adımda 83 tam-proje-review birimi; etiket cut'ta türetilir
+    ├── releases.md                             # v0.3.0 → v0.11.0 sürüm notları
     └── risks-and-decisions.md                  # Risk matrisi, fırsatlar, rekabet analizi, karar günlüğü
 ```
 

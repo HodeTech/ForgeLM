@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from ._strict_json import dumps_strict, sanitize_non_finite
 from ._version import __version__ as _forgelm_version
 from .config import ConfigError, WebhookConfig
 
@@ -91,7 +92,7 @@ ANNEX_IV_ARTEFACT_BASENAME = "annex_iv_metadata.json"
 # ``valid=False``, and the CLI has to route them to three different exit
 # codes.  Routing keys off these typed tokens — never off ``reason`` prose —
 # so rewording an operator message cannot silently move a verdict between
-# exit codes (the discipline ``forgelm/verify.py``'s ``is_*_integrity_failure``
+# exit codes (the discipline ``forgelm/verify/``'s ``is_*_integrity_failure``
 # predicates already impose on the sibling verifiers).
 #
 # The classification travels beside the result, out of
@@ -121,7 +122,7 @@ AUDIT_FAILURE_OVERSIZE = "oversize"  # over the byte cap, unread    → CLI exit
 # corroborator below).  Unlike an Annex IV artefact — a single small document —
 # an audit log is append-only and grows with every event across every run that
 # shares an output directory, so the 8 MiB stage/manifest cap in
-# ``forgelm/verify.py`` would refuse legitimate long-lived logs.  32 MiB is
+# ``forgelm/verify/_pipeline_evidence.py`` would refuse legitimate long-lived logs.  32 MiB is
 # roughly 80 000 pipeline events: several orders of magnitude past any real
 # run, and still far below a size whose parsed ``List[str]`` can exhaust
 # memory.  ``verify_audit_log`` deliberately keeps no cap (default ``None``):
@@ -465,7 +466,7 @@ class AuditLogger:
         tmp_path = self._manifest_path + ".tmp"
         try:
             with open(tmp_path, "w", encoding="utf-8") as fh:
-                json.dump(manifest, fh, indent=2)
+                fh.write(dumps_strict(manifest, indent=2))
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(tmp_path, self._manifest_path)
@@ -563,14 +564,22 @@ class AuditLogger:
                     # the tag can be stripped before verification without
                     # invalidating the hash chain. Skip when no secret is
                     # configured — see class docstring.
+                    # ``dumps_strict``: a non-finite value in ``details`` was
+                    # written as the bare token ``NaN``/``Infinity``, which is
+                    # not JSON — one such line makes this Art. 12 record
+                    # unparseable for an auditor's tooling while ForgeLM
+                    # reports success, and ``json.loads`` accepts the tokens
+                    # so every read-back test kept passing. Sanitised *before*
+                    # the HMAC so the tag covers the bytes that reach disk.
+                    entry = sanitize_non_finite(entry)
                     if self._hmac_key is not None:
-                        entry_json_for_hmac = json.dumps(entry, default=str)
+                        entry_json_for_hmac = dumps_strict(entry, default=str)
                         entry["_hmac"] = _hmac_module.new(
                             self._hmac_key,
                             entry_json_for_hmac.encode(),
                             hashlib.sha256,
                         ).hexdigest()
-                    entry_json = json.dumps(entry, default=str)
+                    entry_json = dumps_strict(entry, default=str)
 
                     f.seek(0, 2)
                     f.write((entry_json + "\n").encode("utf-8"))
@@ -1885,7 +1894,7 @@ def _manifest_json_default(o: Any) -> Any:
     return str(o)
 
 
-def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
+def compute_annex_iv_manifest_hash(artifact: Dict[str, Any], *, legacy_non_finite: bool = False) -> str:
     """Canonical SHA-256 over the artifact MINUS its metadata block.
 
     Both the writer (:func:`build_annex_iv_artifact`) and the verifier
@@ -1899,7 +1908,7 @@ def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
     so non-significant whitespace + key ordering does not affect the
     digest.
 
-    The payload is normalised through ``json.loads(json.dumps(...,
+    The payload is normalised through ``json.loads(dumps_strict(...,
     default=_manifest_json_default))`` *before* the canonical dump so the
     writer (which hashes the in-memory dict) and the verifier (which
     hashes the dict read back from disk) operate on byte-identical
@@ -1914,16 +1923,20 @@ def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
     (F-P4-OPUS-16).  The config-driven path only ever feeds JSON-native
     types, so this is a no-op there; it closes the gap for the
     documented public library entry ``build_annex_iv_artifact``.
+
+    ``legacy_non_finite=True`` reproduces the encoding releases before the
+    strict-JSON change stamped: a NaN/Inf hashed as the bare token, not the
+    string the writer now emits. Only :func:`match_annex_iv_manifest_hash` uses it.
     """
     import hashlib as _hashlib
 
     # Normalise to the post-default shape the verifier will see on disk
     # (this also deep-copies, so the metadata strip below does not mutate
     # the caller's dict).  Sets/frozensets serialise to a sorted list so
-    # the digest is deterministic across PYTHONHASHSEED — ``str(set)``
-    # emits members in hash-randomised order, producing a different hash
-    # in a second process and a false-tampering verdict (F-P4-OPUS-16).
-    payload = json.loads(json.dumps(artifact, default=_manifest_json_default))
+    # the digest is deterministic across PYTHONHASHSEED (F-P4-OPUS-16).
+    # ``dumps_strict`` is the writers' serializer: it turns NaN/Inf into the
+    # strings that reach disk, so hashing the raw float false-flags tampering.
+    payload = json.loads((json.dumps if legacy_non_finite else dumps_strict)(artifact, default=_manifest_json_default))
     metadata = payload.get("metadata")
     if isinstance(metadata, dict):
         metadata.pop("manifest_hash", None)
@@ -1935,6 +1948,25 @@ def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
             payload.pop("metadata", None)
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def match_annex_iv_manifest_hash(artifact: Dict[str, Any], expected: str) -> Tuple[bool, str, bool]:
+    """``(matches, digest to report, matched_legacy_encoding)`` for *expected* against *artifact*.
+
+    An artefact written before the strict-JSON change and holding a non-finite value
+    was stamped over the bare ``NaN`` token and sits on disk with that token; the
+    current encoding hashes the string the writer now emits, so it can never
+    reproduce that stamp. Reporting it as modified would raise exit 6 — the code
+    operators alarm on — for an untouched file. The legacy digest binds the same
+    content, so accepting it weakens nothing; a genuine edit matches neither.
+    """
+    current = compute_annex_iv_manifest_hash(artifact)
+    if current == expected:
+        return True, current, False
+    legacy = compute_annex_iv_manifest_hash(artifact, legacy_non_finite=True)
+    if legacy == expected:
+        return True, legacy, True
+    return False, current, False
 
 
 # ---------------------------------------------------------------------------
@@ -2073,8 +2105,8 @@ def _verify_manifest_payload(manifest: Dict[str, Any]) -> List[str]:
     metadata = manifest.get("metadata") if isinstance(manifest.get("metadata"), dict) else None
     expected_hash = metadata.get("manifest_hash") if metadata else None
     if expected_hash:
-        actual_hash = compute_annex_iv_manifest_hash(manifest)
-        if actual_hash != expected_hash:
+        hash_matches, actual_hash, _legacy = match_annex_iv_manifest_hash(manifest, expected_hash)
+        if not hash_matches:
             violations.append(
                 "manifest hash mismatch — pipeline manifest may have been modified after "
                 f"generation (expected {expected_hash[:16]}…, recomputed {actual_hash[:16]}…)."
@@ -2162,7 +2194,7 @@ def export_compliance_artifacts(
 
         # 1. Full compliance report (JSON)
         with open(os.path.join(staging_dir, "compliance_report.json"), "w", encoding="utf-8") as f:
-            json.dump(manifest, f, indent=2, default=str)
+            f.write(dumps_strict(manifest, indent=2, default=str))
         pending.append(("compliance_report.json", "compliance_report.json"))
 
         # 2. Training manifest (YAML)
@@ -2186,13 +2218,13 @@ def export_compliance_artifacts(
 
         # 3. Data provenance (JSON)
         with open(os.path.join(staging_dir, "data_provenance.json"), "w", encoding="utf-8") as f:
-            json.dump(manifest["data_provenance"], f, indent=2, default=str)
+            f.write(dumps_strict(manifest["data_provenance"], indent=2, default=str))
         pending.append(("data_provenance.json", "data_provenance.json"))
 
         # 4. Risk assessment (JSON) — if present
         if "risk_assessment" in manifest:
             with open(os.path.join(staging_dir, "risk_assessment.json"), "w", encoding="utf-8") as f:
-                json.dump(manifest["risk_assessment"], f, indent=2)
+                f.write(dumps_strict(manifest["risk_assessment"], indent=2))
             pending.append(("risk_assessment.json", "risk_assessment.json"))
 
         # 5. Annex IV metadata (JSON) — emitted in the §1-9 canonical layout
@@ -2223,7 +2255,7 @@ def export_compliance_artifacts(
                 # emit a PYTHONHASHSEED-dependent string like "{'q_proj', 'v_proj'}" while
                 # the verifier re-hashes a list, producing a false-tampering verdict
                 # (F-H-05).
-                json.dump(annex_artifact, f, indent=2, default=_manifest_json_default)
+                f.write(dumps_strict(annex_artifact, indent=2, default=_manifest_json_default))
             pending.append(("annex_iv_metadata.json", "annex_iv_metadata.json"))
 
         # All writes succeeded — promote into place.  os.replace is atomic
@@ -2594,7 +2626,7 @@ def _read_audit_log_lines(
     under stat-then-open the file that was measured and the file that is read
     are two different observations, so the cap that exists to stop the reader
     being killed by its own input is bypassed outright.  Same rule as
-    ``compute_dataset_fingerprint`` and ``forgelm.verify._read_capped_json``.
+    ``compute_dataset_fingerprint`` and ``forgelm.verify._io_safety._read_capped_json``.
     ``verify_audit_log`` passes no cap and is byte-for-byte unchanged.
 
     Returns ``((failure, failure_kind) or None, non-empty-lines)``.  The
@@ -2820,7 +2852,7 @@ def verify_audit_log(
 
     Mirrors :meth:`AuditLogger.log_event` exactly:
 
-    - Each line is the JSON encoding produced by ``json.dumps(entry, default=str)``
+    - Each line is the JSON encoding produced by ``dumps_strict(entry, default=str)``
       (no key sorting, no separator overrides).
     - The first entry's ``prev_hash`` must be ``"genesis"``.
     - Every subsequent entry's ``prev_hash`` must equal
@@ -3060,7 +3092,7 @@ def export_pipeline_manifest(manifest: Dict[str, Any], pipeline_output_dir: str)
         # that re-hashes to a different digest on read-back — a false-tampering
         # verdict on an untouched manifest.  Same fix as F-H-05 applied to
         # annex_iv_metadata.json in export_compliance_artifacts.
-        json.dump(manifest, f, indent=2, default=_manifest_json_default)
+        f.write(dumps_strict(manifest, indent=2, default=_manifest_json_default))
         # Flush userspace buffer then sync to storage before the rename so the
         # artefact survives a kernel crash or OOM-kill between file-close and
         # os.replace.  Mirrors the fsync discipline in log_event (Article 12

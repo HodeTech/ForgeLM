@@ -141,7 +141,7 @@ class TestCountCodeLines:
 class TestDeferredSplits:
     def test_contains_expected_modules(self):
         tool = _load_tool()
-        assert len(tool._DEFERRED_SPLITS) == 8
+        assert len(tool._DEFERRED_SPLITS) == 7
 
     def test_contains_expected_paths(self):
         tool = _load_tool()
@@ -153,10 +153,14 @@ class TestDeferredSplits:
             "forgelm/config.py",
             "forgelm/cli/_parser.py",
             "forgelm/cli/_pipeline.py",
-            "forgelm/verify.py",
-            # NOTE: ``forgelm/safety.py`` (split into the ``forgelm/safety/``
-            # sub-package) and ``forgelm/cli/subcommands/_doctor.py`` (trimmed
-            # to 950 LOC, back under the ceiling) are deliberately absent.
+            # NOTE: three entries are deliberately absent, each for its own
+            # reason.  ``forgelm/safety.py`` was split into the
+            # ``forgelm/safety/`` sub-package; ``forgelm/verify.py`` was split
+            # into ``forgelm/verify/`` in Phase 16 S1, paying the condition its
+            # own entry named (the split moves the exit-code routing tokens the
+            # CLI and tests pin, so it had to be its own diff); and
+            # ``forgelm/cli/subcommands/_doctor.py`` was trimmed to 950 LOC,
+            # back under the ceiling.
         }
         assert set(tool._DEFERRED_SPLITS) == expected
 

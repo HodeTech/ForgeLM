@@ -263,7 +263,7 @@ class _DeferredSplit:
 # _validate_entries() sees a raise without reading the diff.
 _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
     "forgelm/compliance.py": _DeferredSplit(
-        budget=2471,
+        budget=2492,
         deferred_at_loc=2147,
         reason=(
             "EU AI Act Art. 9-17 + Annex IV builder + hash-chained audit log + "
@@ -271,6 +271,14 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "_annex_iv, _provenance, _gdpr."
         ),
         budget_history=(
+            "2026-10-09 (Phase 16 S1-S3 review, 2473 -> 2492, +19): "
+            "`match_annex_iv_manifest_hash`. Hashing the Annex IV / pipeline manifest over "
+            "the strict-JSON form (so a fresh artefact holding a NaN verifies) meant an "
+            "artefact stamped by an earlier release over the bare `NaN` token could no "
+            "longer reproduce its digest, and reported `modified after generation` — exit 6, "
+            "the code operators alarm on — for an untouched file. The matcher accepts the "
+            "legacy encoding as well; a genuine edit matches neither. Raised rather than "
+            "split per decision C-18.",
             "2026-07-20: 2147 -> 2471 (+324) for the pipeline-manifest audit-log "
             "corroborator (corroborate_pipeline_stage_census and helpers). The chain "
             "manifest's metadata.manifest_hash is an UNKEYED SHA-256 from a public "
@@ -283,20 +291,17 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "canonicalisation to dodge a budget would be the worse trade. Pays down "
             "with the _audit_log split already named above, which this code is "
             "entirely inside.",
-        ),
-    ),
-    "forgelm/verify.py": _DeferredSplit(
-        budget=1013,
-        deferred_at_loc=1013,
-        reason=(
-            "Three unrelated verifiers in one module: single-artefact Annex IV "
-            "(field completeness + manifest hash), the pipeline chain's per-stage "
-            "evidence deep-parse, and GGUF magic/metadata/sidecar integrity. Split "
-            "candidates: _annex_iv, _pipeline_evidence, _gguf. Crossed the 1000-LOC "
-            "ceiling on 2026-07-20 wiring the audit-log corroboration outcome into "
-            "PipelineEvidenceReport; deferred rather than split in the same change "
-            "because the split moves the exit-code routing tokens that the CLI and "
-            "tests both pin, and that belongs in its own diff."
+            "2026-07-30 (Phase 16 S2, 2471 -> 2473, +2): the append-only audit log now writes "
+            "strict JSON. A non-finite value anywhere in an event payload was serialised as the "
+            "bare token `NaN`/`Infinity`, which RFC 8259 has no literal for — so a single such "
+            "line made this Art. 12 record unparseable for an auditor's jq/Go/Rust tooling while "
+            "ForgeLM reported success, and because `json.loads` accepts those tokens every "
+            "read-back test kept passing. The two lines are the `_strict_json` import and the "
+            "`sanitize_non_finite(entry)` call, which is deliberately placed *before* the HMAC so "
+            "the tag authenticates the bytes that reach disk rather than a line that was never "
+            "written. Raised rather than split: the audit log is the `_audit_log` concern this "
+            "entry already names, and Phase 16 S9 rewrites the GDPR/evidence half of this file, "
+            "so splitting now would rebase that work.",
         ),
     ),
     "forgelm/ingestion.py": _DeferredSplit(
@@ -308,16 +313,48 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/config.py": _DeferredSplit(
-        budget=1795,
+        budget=1855,
         deferred_at_loc=1795,
+        budget_history=(
+            "2026-10-09 (Phase 16 S1-S3 review, 1846 -> 1855, +9): the `FiniteFloat` alias "
+            "(`Annotated[float, allow_inf_nan=False]`, 7 lines with its rationale) and its "
+            "application to the twelve float fields S2 left open — `learning_rate`, "
+            "`weight_decay`, the `*_beta` family, `galore_scale`, `neftune_noise_alpha`, "
+            "`gpu_cost_per_hour`, `synthetic.api_delay` / `temperature` — each of which "
+            "accepted `+inf` (`gt=0` / `ge=0` pass it) behind a changelog line saying a "
+            "non-finite config exits 1; plus the `rope_scaling` finiteness checks. The rest "
+            "is reflow. Raised rather than split for the same reason as the entries below.",
+            "2026-07-30 (Phase 16 S3, 1833 -> 1846, +13): "
+            "`evaluation.llm_judge.min_valid_fraction` (default 0.8, `[0.0, 1.0]`, "
+            "`allow_inf_nan=False`). The judge gate averages over *parseable* scores only, "
+            "so a failed judge call is dropped rather than counted: one score of 9 out of two "
+            "hundred prompts cleared a `min_score: 8` gate outright, and the envelope reported "
+            "a passing judge evaluation. The field is the evidence floor below which the "
+            "average stops being treated as a measurement. Twelve of the thirteen lines are the "
+            "field's own `description=`, which `check_field_descriptions.py --strict` requires "
+            "and which is the text an operator actually reads. Raised rather than split for the "
+            "same reason as the entry below.",
+            "2026-07-30 (Phase 16 S2, +38): finite/bounded domains on the numeric fields a "
+            "decision is made against. `evaluation.max_acceptable_loss` and `baseline_loss` "
+            "gained `ge=0.0, allow_inf_nan=False` because `final_loss > nan` is always False, "
+            "so a `.nan` ceiling — spellable in ordinary YAML — made the quality gate pass "
+            "every model it was asked to reject. `merge.models` became a typed `MergeInput` "
+            "with `extra='forbid'` and `weight: gt=0.0, allow_inf_nan=False`, closing both a "
+            "silently-ignored key and a weight that made SLERP discard the operator's weights "
+            "entirely. `ties_trim_fraction` narrowed to `[0.0, 1.0)`. The new model is ~30 of "
+            "the 38 lines. Taken as a raise rather than a split per decision C-18: `config.py` "
+            "is the highest-blast-radius entry in the backlog (every module imports it, and a "
+            "split reorders import-time model registration), and S3/S8/S10 all add fields to "
+            "it — splitting mid-programme would rebase three later steps onto a moving file.",
+        ),
         reason=(
-            "23 Pydantic models + cross-field validators + deprecation shims in one "
+            "24 Pydantic models + cross-field validators + deprecation shims in one "
             "schema module. Splitting risks changing import-time validation order, so "
             "this is the highest-risk entry despite being mechanical-looking."
         ),
     ),
     "forgelm/trainer.py": _DeferredSplit(
-        budget=1460,
+        budget=1519,
         deferred_at_loc=1432,
         reason=(
             "ForgeTrainer god-object: TRL kwarg fold-in + OOM/DeepSpeed runtime + "
@@ -325,6 +362,19 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "candidates: _kwargs, _runtime, _finalize, _artifacts (F-PR29-A1-05)."
         ),
         budget_history=(
+            "2026-10-09 (Phase 16 S1-S3 review, 1493 -> 1519, +26): the auto-revert path "
+            "stopped claiming a deletion it had not made. `_revert_model` returned None and "
+            "set `_loss_gate_reverted` before the `rmtree`, whose `OSError` was only logged — "
+            "so a failed delete still produced `reverted: true`, `final_model_path: null` and "
+            "an 'Artifacts discarded' webhook over files that were still on disk. It now "
+            "returns whether the delete happened, records a `model.revert_failed` audit event "
+            "(the earlier `model.reverted` is written pre-delete and cannot be retracted any "
+            "other way in an append-only log), and notifies a failure instead of a revert; "
+            "`_mark_reverted` keeps the paths when nothing was deleted, and the loss-gate "
+            "result keeps `final_model_path` when `auto_revert` is off. Two of the lines are the "
+            "`save_steps` / `eval_steps` message no longer naming the same number twice when "
+            "`save_steps < eval_steps`, and one is the benchmark verdict's `failure_reason` joining "
+            "its audit event. Raised rather than split per decision C-18.",
             "2026-07-20: 1432 -> 1460 (+28) for _check_deepspeed_available and its "
             "rationale. The `distributed` extra gained a `sys_platform != 'win32'` "
             "marker in the same change: DeepSpeed publishes no Windows wheels, so the "
@@ -339,6 +389,40 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "_apply_distributed_config, the only caller and the site that decides the "
             "strategy — the same locality as benchmark.py's _check_lm_eval_available. "
             "A future _runtime split takes it along with the OOM/DeepSpeed concern.",
+            "2026-07-30 (Phase 16 S2, 1460 -> 1483, +23): two fail-closed guards on the "
+            "loss gate. A non-finite `max_acceptable_loss` now fails the run instead of "
+            "passing every model — `final_loss > nan` is always False, so the gate used "
+            "to report `passed=True` into the append-only audit log for a model it was "
+            "asked to reject, and discarding the threshold instead would be the same "
+            "fail-open under another name. And `save_steps % eval_steps != 0` raises "
+            "ConfigError at training-args construction rather than surfacing as a "
+            "transformers ValueError the top-level handler maps to EXIT_TRAINING_ERROR — "
+            "a config defect reported as a training failure. The second check lives here "
+            "rather than in config.py because the invariant only applies when a "
+            "validation split exists, and that is decided by data._ensure_validation_split "
+            "at load time. Raised rather than split per decision C-18: S3, S4 and S8 all "
+            "still edit this file, and a god-object split ahead of three behaviour changes "
+            "maximises rebase risk.",
+            "2026-07-30 (Phase 16 S3, 1492 -> 1493, +1): one line threading "
+            "`evaluation.llm_judge.min_valid_fraction` from the schema into "
+            "`run_judge_evaluation`, so the judge gate's evidence floor is config-driven "
+            "rather than pinned to the library default. Direct attribute access, matching "
+            "`min_score`/`batch_size` rather than the `getattr` used for the optional fields "
+            "beside it, so the floor cannot silently diverge from the schema if that default "
+            "is ever retuned.",
+            "2026-07-30 (Phase 16 S2 Sonnet review, 1483 -> 1492, +9): two record-honesty fixes "
+            "the review found in code S2 itself had just written. `TrainResult.reverted` was still "
+            "hardcoded True at the loss-gate call site — the three later gates derive it via "
+            "_mark_reverted, this one did not — so a detection-only failure (auto_revert off, the "
+            "shipped default) told the operator and every dashboard that a model had been deleted "
+            "while it sat intact on disk. It now derives from a per-invocation `_loss_gate_reverted` "
+            "flag, reset at entry so a library caller running two trainings in one process cannot "
+            "carry the first run's verdict into the second. And `_emit_loss_gate_event` synthesised "
+            '`float("nan")` when a run produced no eval_loss at all, writing a measurement into '
+            "the Art. 12 log that was invented at write time and byte-identical to genuine "
+            "divergence; it now records `null`, keeping measured / diverged / never-measured "
+            "distinguishable. Raised rather than split for the reason above: S3, S4 and S8 all still "
+            "edit this file.",
         ),
     ),
     "forgelm/cli/_pipeline.py": _DeferredSplit(
@@ -391,13 +475,34 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/cli/subcommands/_purge.py": _DeferredSplit(
-        budget=1215,
+        budget=1216,
         deferred_at_loc=1215,
+        budget_history=(
+            "2026-10-09 (Phase 16 S1-S3 review, 1215 -> 1216, +1): the `dumps_strict` import. "
+            "The purge/audit-listing envelopes were `json.dumps` call sites outside the "
+            "strict-JSON guard's hand-picked module list; the guard now scans all of "
+            "`forgelm/`, so they route through the chokepoint like every other writer. "
+            "One line, taken as a raise rather than a split per decision C-18.",
+        ),
         reason=(
             "GDPR purge: row-id resolution + run-id resolution + retention-policy "
             "checks. Split candidates: _row_id, _run_id, _check_policy, _shared."
         ),
     ),
+    # NOTE: ``forgelm/verify.py`` was deferred here on 2026-07-20 at 1013 LOC and
+    # has since been split into the ``forgelm/verify/`` sub-package (``_annex_iv``,
+    # ``_pipeline_evidence``, ``_gguf``, ``_model_integrity``, ``_audit_log`` behind
+    # a re-exporting ``__init__``). This entry's own reason named the condition for
+    # paying it — "the split moves the exit-code routing tokens that the CLI and
+    # tests both pin, and that belongs in its own diff" — so it was paid as a
+    # behaviour-neutral diff of its own, ahead of the Phase 16 step that changes
+    # those verdict semantics. Largest resulting module is _pipeline_evidence.py at
+    # 377 code lines, well under the 1000-line ceiling (measured with this file's
+    # own _count_code_lines, not raw wc -l — the two disagree by ~40% and quoting
+    # the wrong one inside the guard that defines the metric would be its own drift).
+    # Kept as a comment so the removal is legible in blame rather than looking
+    # like an accidental deletion.
+    #
     # NOTE: ``forgelm/safety.py`` was deferred here at v0.9.1 and has since been
     # split into the ``forgelm/safety/`` sub-package (``_types``, ``_inputs``,
     # ``_generate``, ``_classifier``, ``_score_classification``,

@@ -61,6 +61,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
+from ..._strict_json import dumps_strict
 from .._exit_codes import EXIT_CONFIG_ERROR, EXIT_SUCCESS, EXIT_TRAINING_ERROR
 from .._logging import logger
 
@@ -139,7 +140,7 @@ def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoRe
     control never returns.
     """
     if output_format == "json":
-        print(json.dumps({"success": False, "error": msg}))
+        print(dumps_strict({"success": False, "error": msg}))
     else:
         logger.error(msg)
     sys.exit(exit_code)
@@ -1144,7 +1145,7 @@ def _run_purge_check_policy(args, output_format: str) -> None:
             "See `docs/guides/gdpr_erasure.md` for the schema."
         )
         if output_format == "json":
-            print(json.dumps({"success": True, "violations": [], "note": msg}))
+            print(dumps_strict({"success": True, "violations": [], "note": msg}))
         else:
             print(msg)
         sys.exit(EXIT_SUCCESS)
@@ -1152,7 +1153,7 @@ def _run_purge_check_policy(args, output_format: str) -> None:
     output_dir = args.output_dir or "."
     violations = _scan_retention_violations(config_loaded.retention, output_dir)
     if output_format == "json":
-        print(json.dumps({"success": True, "violations": violations, "count": len(violations)}, indent=2))
+        print(dumps_strict({"success": True, "violations": violations, "count": len(violations)}, indent=2))
     else:
         if not violations:
             print(f"No retention-policy violations under {output_dir!r}.")
@@ -1500,7 +1501,7 @@ def _emit_purge_success(output_format: str, payload: Dict[str, Any]) -> None:
     if/else chain with a dict lookup.
     """
     if output_format == "json":
-        print(json.dumps({"success": True, **payload}, indent=2))
+        print(dumps_strict({"success": True, **payload}, indent=2))
         return
     renderer = _TEXT_RENDERERS.get(payload.get("mode", "?"))
     if renderer is not None:

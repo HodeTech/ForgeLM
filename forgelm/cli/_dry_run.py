@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import os
 
+from .._strict_json import dumps_strict
 from ..config import ForgeConfig
 from ._logging import logger
 
@@ -74,7 +74,7 @@ def _run_dry_run(config: ForgeConfig, output_format: str) -> None:
     result = _build_dry_run_result(config)
 
     if output_format == "json":
-        print(json.dumps(result, indent=2))
+        print(dumps_strict(result, indent=2))
         return
 
     logger.info("=== DRY RUN MODE ===")

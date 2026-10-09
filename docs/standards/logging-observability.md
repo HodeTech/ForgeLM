@@ -44,7 +44,7 @@ def _setup_logging(log_level: str, json_format: bool = False) -> None:
 
 ## Logging + raising
 
-When raising an exception that will cause a non-zero exit, log at `ERROR` right before. From `cli.py`:
+When raising an exception that will cause a non-zero exit, log at `ERROR` right before. From `forgelm/cli/_config_load.py`:
 
 ```python
 except ValidationError as e:

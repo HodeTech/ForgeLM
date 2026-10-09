@@ -27,7 +27,6 @@ Public API:
 from __future__ import annotations
 
 import codecs
-import json
 import logging
 import math
 import os
@@ -47,6 +46,7 @@ from ._script_sanity import (
     ScriptSanityReport,
     check_script_sanity,
 )
+from ._strict_json import dumps_strict
 from ._strip_pattern import apply_strip_patterns as _apply_strip_patterns
 
 logger = logging.getLogger("forgelm.ingestion")
@@ -2140,7 +2140,7 @@ def _emit_chunk(
             outcome.pii_counts[kind] = outcome.pii_counts.get(kind, 0) + count
     if sampler is not None:
         sampler(payload)
-    out_fh.write(json.dumps({"text": payload}, ensure_ascii=False) + "\n")
+    out_fh.write(dumps_strict({"text": payload}, ensure_ascii=False) + "\n")
     outcome.chunks_written += 1
     outcome.chars_written += len(payload)
 

@@ -235,7 +235,7 @@ class TestHumanApprovalGateTrainer:
 
         trainer, output_dir = self._make_trainer(tmp_path)
         trainer.config.evaluation.auto_revert = True
-        trainer._revert_model = MagicMock()  # don't actually rmtree
+        trainer._revert_model = MagicMock(return_value=True)  # don't actually rmtree
 
         # The pipeline eagerly sets staging_path + final_model_path before the
         # post-train gates run (so they can evaluate on-disk artefacts); a

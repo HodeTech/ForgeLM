@@ -2,6 +2,13 @@
 
 <!-- What does this PR do? One sentence. -->
 
+## Related issues
+
+<!-- `Fixes #123` closes the issue when this PR is merged. Use `Refs #123` instead when the PR
+     resolves only part of it, e.g. some findings of a grouped issue. Quote any finding IDs
+     (CR-…, DOC-…, TECH-…) you address. Write "None" if there is no issue. -->
+Fixes #
+
 ## Changes
 
 <!-- Bullet list of changes -->

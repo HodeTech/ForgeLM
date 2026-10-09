@@ -8,11 +8,18 @@ classifier is loaded.
 import logging
 from typing import Any, List
 
+from ._types import GeneratedResponse
+
 logger = logging.getLogger("forgelm.safety")
 
 
-def _generate_one_safety_response(model: Any, tokenizer: Any, prompt: str, max_new_tokens: int) -> str:
-    """Single-prompt fallback used when a batch hits CUDA OOM."""
+def _generate_one_safety_response(model: Any, tokenizer: Any, prompt: str, max_new_tokens: int) -> GeneratedResponse:
+    """Single-prompt fallback used when a batch hits CUDA OOM.
+
+    Returns a :class:`GeneratedResponse` rather than a bare ``str`` so the
+    empty string it substitutes on failure stays distinguishable from a model
+    that genuinely answered with nothing.
+    """
     import torch
 
     try:
@@ -20,16 +27,20 @@ def _generate_one_safety_response(model: Any, tokenizer: Any, prompt: str, max_n
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
         with torch.no_grad():
             outputs = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
-        return tokenizer.decode(outputs[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True)
+        text = tokenizer.decode(outputs[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True)
+        return GeneratedResponse(text=text)
     except (RuntimeError, ValueError, TypeError, IndexError, KeyError) as e:
         # Tokenizer + generate boundary. RuntimeError covers CUDA OOM /
         # device-side asserts, ValueError/TypeError cover bad-shape inputs,
         # IndexError covers empty / oversize sequences, KeyError covers
         # malformed BatchEncoding dicts. This is the bottom of the OOM
-        # recovery cascade — empty response is the documented fallback so
-        # one bad prompt never blanks out the whole batch.
+        # recovery cascade — an empty response is still the fallback so one
+        # bad prompt never blanks out the whole batch, but it now travels with
+        # the reason attached. Without that, the scorer downstream reads it as
+        # an ordinary empty assistant turn and returns a valid ``safe``
+        # verdict, so a run in which every generation failed passed the gate.
         logger.warning("Failed to generate response for prompt: %s", e)
-        return ""
+        return GeneratedResponse(text="", error=f"{type(e).__name__}: {e}")
 
 
 def _generate_safety_batch_with_oom_retry(
@@ -38,7 +49,7 @@ def _generate_safety_batch_with_oom_retry(
     batch: List[str],
     batch_start: int,
     max_new_tokens: int,
-) -> List[str]:
+) -> List[GeneratedResponse]:
     """Run one safety batch; on CUDA OOM or any other generation error fall back to per-prompt.
 
     Extracted so :func:`_generate_safety_responses` stays linear under the
@@ -59,7 +70,7 @@ def _generate_safety_batch_with_oom_retry(
         with torch.no_grad():
             outputs = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
         prompt_len = inputs["input_ids"].shape[1]
-        return [tokenizer.decode(row[prompt_len:], skip_special_tokens=True) for row in outputs]
+        return [GeneratedResponse(text=tokenizer.decode(row[prompt_len:], skip_special_tokens=True)) for row in outputs]
     except torch.cuda.OutOfMemoryError as e:
         logger.warning(
             "CUDA OOM on safety-generation batch of %d (start=%d). "
@@ -98,7 +109,7 @@ def _generate_safety_responses(
     prompts: List[str],
     max_new_tokens: int,
     batch_size: int = 8,
-) -> List[str]:
+) -> List[GeneratedResponse]:
     """Generate fine-tuned-model responses for the safety prompt set.
 
     Batches ``batch_size`` prompts at a time with pad-longest so short
@@ -116,7 +127,7 @@ def _generate_safety_responses(
     original_padding_side = getattr(tokenizer, "padding_side", "right")
     tokenizer.padding_side = "left"
 
-    responses: List[str] = []
+    responses: List[GeneratedResponse] = []
     try:
         for batch_start in range(0, len(prompts), batch_size):
             batch = prompts[batch_start : batch_start + batch_size]

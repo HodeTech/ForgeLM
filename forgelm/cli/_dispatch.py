@@ -7,9 +7,9 @@ Subcommand dispatchers are looked up via the package facade
 
 from __future__ import annotations
 
-import json
 import sys
 
+from .._strict_json import dumps_strict
 from ._config_load import _apply_offline_flag, _load_config_or_exit
 from ._exit_codes import EXIT_CONFIG_ERROR, EXIT_SUCCESS, EXIT_TRAINING_ERROR, _clamp_exit_code
 from ._logging import _setup_logging, logger
@@ -202,7 +202,7 @@ def _dispatch_pipeline_mode(config, args, json_output: bool) -> None:
     except OSError as e:
         msg = f"Failed to re-read pipeline YAML for hashing: {e}"
         if json_output:
-            print(json.dumps({"success": False, "error": msg}))
+            print(dumps_strict({"success": False, "error": msg}))
         else:
             logger.error(msg)
         sys.exit(EXIT_CONFIG_ERROR)
@@ -230,7 +230,7 @@ def _main_inner() -> None:
 
     if not args.config:
         if getattr(args, "output_format", "text") == "json":
-            print(json.dumps({"success": False, "error": "--config is required."}))
+            print(dumps_strict({"success": False, "error": "--config is required."}))
         else:
             print("Error: --config is required. Use --help for usage.", file=sys.stderr)
         sys.exit(EXIT_CONFIG_ERROR)
@@ -268,7 +268,7 @@ def _main_inner() -> None:
             # every error path must honour ``--output-format json`` rather
             # than leaving stdout empty on a non-zero exit.
             if json_output:
-                print(json.dumps({"success": False, "error": msg}))
+                print(dumps_strict({"success": False, "error": msg}))
             else:
                 logger.error(msg)
             sys.exit(EXIT_CONFIG_ERROR)

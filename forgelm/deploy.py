@@ -20,13 +20,14 @@ Usage (CLI):
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from dataclasses import dataclass
 from typing import Literal, Optional
 
 import yaml
+
+from ._strict_json import dumps_strict
 
 logger = logging.getLogger("forgelm.deploy")
 
@@ -207,7 +208,7 @@ def _hf_endpoints_json(
         "_generated_by": "ForgeLM deploy",
         "_docs": "https://huggingface.co/docs/inference-endpoints/api_reference",
     }
-    return json.dumps(spec, indent=2) + "\n"
+    return dumps_strict(spec, indent=2) + "\n"
 
 
 # ---------------------------------------------------------------------------

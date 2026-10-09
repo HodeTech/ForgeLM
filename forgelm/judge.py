@@ -12,6 +12,8 @@ import string
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from ._strict_json import dumps_strict
+
 # Re-export: the local-judge role constant is declared beside the other five
 # roles in ``forgelm.model`` (one registry, one key space, one file to check
 # before adding a role).  The value is unchanged (``"llm_judge"``) and
@@ -508,6 +510,7 @@ def _save_judge_results(
     num_prompts: int,
     details: List[Dict[str, Any]],
     include_samples: bool = False,
+    failure_reason: Optional[str] = None,
 ) -> None:
     """Persist the judge run summary as judge_results.json.
 
@@ -522,16 +525,21 @@ def _save_judge_results(
     redact = frozenset() if include_samples else _PII_REDACT_FIELDS
     try:
         with open(results_path, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "average_score": avg_score,
-                    "min_score": min_score,
-                    "passed": passed,
-                    "num_prompts": num_prompts,
-                    "details": [{k: v for k, v in d.items() if k not in redact} for d in details],
-                },
-                f,
-                indent=2,
+            f.write(
+                dumps_strict(
+                    {
+                        "average_score": avg_score,
+                        "min_score": min_score,
+                        "passed": passed,
+                        # Why it failed, in the artefact itself: ``passed: false`` beside a
+                        # healthy-looking average is otherwise unexplained (a sliver of
+                        # valid scores and a low average look identical).
+                        "failure_reason": failure_reason,
+                        "num_prompts": num_prompts,
+                        "details": [{k: v for k, v in d.items() if k not in redact} for d in details],
+                    },
+                    indent=2,
+                )
             )
         logger.info("Judge results saved to %s", results_path)
     except (OSError, TypeError, ValueError) as e:
@@ -558,6 +566,7 @@ def run_judge_evaluation(
     batch_size: int = 8,
     include_samples: bool = False,
     judge_model_revision: Optional[str] = None,
+    min_valid_fraction: float = 0.8,
 ) -> JudgeResult:
     """Evaluate fine-tuned model outputs using an LLM judge.
 
@@ -569,6 +578,10 @@ def run_judge_evaluation(
         judge_api_key: API key for API-based judges. None = use local model.
         rubric: Custom scoring rubric template. Uses default if None.
         min_score: Minimum average score to pass (1-10 scale).
+        min_valid_fraction: Minimum fraction of eval prompts that must yield a
+            parseable score before the average is treated as evidence. Below
+            it the gate fails with a distinct "insufficient valid evidence"
+            reason rather than comparing the average against ``min_score``.
         max_new_tokens: Max tokens for response generation.
         output_dir: Directory to save judge results.
         judge_model_revision: Hub commit/tag/branch to pin the *local* judge
@@ -586,6 +599,15 @@ def run_judge_evaluation(
         # this function via direct import bypass that schema; reject invalid
         # values here so the batching loop never sees ``0`` or negatives.
         raise ValueError(f"batch_size must be a positive integer (got {batch_size!r})")
+    # The same bounds ``JudgeConfig`` enforces, for the same reason. A NaN or negative
+    # ``min_valid_fraction`` is not a stricter gate: ``valid_fraction < nan`` is False,
+    # so the evidence floor silently switches off and a sliver of the eval set can pass.
+    for name, value, low, high in (
+        ("min_score", min_score, 1.0, 10.0),
+        ("min_valid_fraction", min_valid_fraction, 0.0, 1.0),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high:
+            raise ValueError(f"{name} must be a finite number in [{low}, {high}] (got {value!r})")
 
     from ._http import HttpSafetyError
 
@@ -600,8 +622,17 @@ def run_judge_evaluation(
         return JudgeResult(passed=False, failure_reason=rubric_error)
     eval_prompts = _load_eval_prompts(eval_dataset_path)
     if not eval_prompts:
-        logger.warning("No eval prompts found. Skipping judge evaluation.")
-        return JudgeResult(passed=True)
+        # Fail CLOSED, symmetric with the missing-file branch above and with
+        # the safety orchestrator's empty-probes path. An enabled judge gate
+        # that finds an existing-but-empty (or all-blank / wrong-schema) eval
+        # file has zero evidence about the model, and zero evidence is not a
+        # pass — returning True here made the gate a rubber stamp that an
+        # operator could trip by shipping a truncated eval set, with the run
+        # exiting 0 and the artefact recording a passed judge evaluation over
+        # no prompt at all.
+        failure_reason = f"Eval dataset contained no usable prompts: {eval_dataset_path}"
+        logger.error(_LOG_JUDGE_FAILED, failure_reason)
+        return JudgeResult(passed=False, failure_reason=failure_reason)
 
     logger.info("Running LLM-as-Judge evaluation with %d prompts (judge: %s)...", len(eval_prompts), judge_model)
 
@@ -650,11 +681,19 @@ def run_judge_evaluation(
         failure_count=failure_count,
         eval_prompts=eval_prompts,
         min_score=min_score,
+        min_valid_fraction=min_valid_fraction,
     )
 
     if output_dir:
         _save_judge_results(
-            output_dir, avg_score, min_score, passed, len(eval_prompts), details, include_samples=include_samples
+            output_dir,
+            avg_score,
+            min_score,
+            passed,
+            len(eval_prompts),
+            details,
+            include_samples=include_samples,
+            failure_reason=failure_reason,
         )
 
     return JudgeResult(
@@ -767,12 +806,27 @@ def _summarize_judge_scores(
     failure_count: int,
     eval_prompts: List[str],
     min_score: float,
+    min_valid_fraction: float = 0.8,
 ) -> tuple[float, bool, Optional[str]]:
     """Reduce per-prompt scores to (avg, passed, failure_reason).
 
-    No valid scores → distinct failure mode. Treating it as "low average"
-    would mislead the operator into thinking the model performed badly when
-    the judge itself never produced a usable verdict.
+    Three outcomes, kept distinct because they call for three different
+    operator responses and the reason string is what an automated consumer
+    branches on:
+
+    * **no valid scores** — the judge never produced a usable verdict;
+    * **too few valid scores** — an average over a sliver of the eval set is
+      arithmetic, not evidence.  Under the old code, 1 parseable score out of
+      200 that happened to read ``9`` passed a ``min_score: 8`` gate outright:
+      the average is taken over ``valid_scores`` only, so 199 failures moved it
+      not at all.  ``min_valid_fraction`` (default 0.8) is the floor;
+    * **average below threshold** — the measurement succeeded and the model
+      did not clear the bar.
+
+    Only the third is a verdict about the model.  The first two say the gate
+    could not be evaluated, and the prefixes are deliberately distinguishable
+    so a log scraper or the ``failure_reason`` field can tell them apart
+    without parsing numbers.
     """
     valid_scores = [s for s in scores if s is not None]
 
@@ -780,6 +834,21 @@ def _summarize_judge_scores(
         failure_reason = f"No valid judge scores (all {failure_count}/{len(eval_prompts)} parses/requests failed)."
         logger.error(_LOG_JUDGE_FAILED, failure_reason)
         return 0.0, False, failure_reason
+
+    total = len(eval_prompts)
+    valid_fraction = len(valid_scores) / total if total > 0 else 0.0
+    if valid_fraction < min_valid_fraction:
+        # Reported *with* the average so the operator can see what the sliver
+        # said, but the average is explicitly not the reason for the verdict.
+        avg_of_sliver = sum(valid_scores) / len(valid_scores)
+        failure_reason = (
+            f"Insufficient valid judge evidence: only {len(valid_scores)}/{total} "
+            f"({valid_fraction:.1%}) of eval prompts produced a parseable score, below the "
+            f"{min_valid_fraction:.0%} minimum (evaluation.llm_judge.min_valid_fraction). "
+            f"The average over that sample ({avg_of_sliver:.2f}) is not a measurement of the model."
+        )
+        logger.error(_LOG_JUDGE_FAILED, failure_reason)
+        return avg_of_sliver, False, failure_reason
 
     avg_score = sum(valid_scores) / len(valid_scores)
     logger.info(

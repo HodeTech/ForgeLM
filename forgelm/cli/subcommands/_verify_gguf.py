@@ -34,11 +34,11 @@ contract in ``docs/reference/verify_gguf_subcommand.md``):
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from typing import NoReturn
 
+from ..._strict_json import dumps_strict
 from ...verify import (
     VerifyGgufResult,  # noqa: F401 — re-exported for the forgelm.cli facade
     is_gguf_integrity_failure,
@@ -57,7 +57,7 @@ def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoRe
     if output_format == "json":
         # ``indent=2`` matches the success/result envelope below so this
         # subcommand emits one consistent JSON shape on every branch.
-        print(json.dumps({"success": False, "error": msg}, indent=2))
+        print(dumps_strict({"success": False, "error": msg}, indent=2))
     else:
         logger.error(msg)
     sys.exit(exit_code)
@@ -114,7 +114,7 @@ def _run_verify_gguf_cmd(args, output_format: str) -> None:
     payload = result.to_dict()
     payload["path"] = os.path.abspath(path)
     if output_format == "json":
-        print(json.dumps({"success": result.valid, **payload}, indent=2))
+        print(dumps_strict({"success": result.valid, **payload}, indent=2))
     else:
         marker = "OK" if result.valid else "FAIL"
         print(f"{marker}: {path}")

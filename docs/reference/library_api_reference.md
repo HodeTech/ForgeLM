@@ -53,7 +53,7 @@ Tables grouped by concern. Every cell is a real attribute on the live `forgelm` 
 |---|---|---|---|
 | `forgelm.ForgeTrainer` | Stable | `ForgeTrainer(config: ForgeConfig)` | Primary training entry point. Wraps TRL `SFTTrainer` / `DPOTrainer` / `KTOTrainer` / `ORPOTrainer` / `GRPOTrainer` selection. |
 | `forgelm.ForgeTrainer.train` | Stable | `train() -> TrainResult` | Run the configured fine-tune. Returns `TrainResult.success` / `metrics` / `final_model_path`. Heavy deps (`torch`, `transformers`, `trl`) load only when this method is called. |
-| `forgelm.TrainResult` | Stable | `dataclass` | Result of `ForgeTrainer.train()`. Canonical fields (per `forgelm/results.py`): `success: bool`, `metrics: Dict[str, float]`, `final_model_path: Optional[str]`, `reverted: bool`, `error: Optional[str]`, `benchmark_scores`, `benchmark_average`, `benchmark_passed`, `safety_passed`, `safety_score`, `safety_categories`, `safety_severity`, `safety_low_confidence`, `judge_score`, `judge_details`, `estimated_cost_usd`, `staging_path`, `resource_usage`. |
+| `forgelm.TrainResult` | Stable | `dataclass` | Result of `ForgeTrainer.train()`. Canonical fields (per `forgelm/results.py`): `success: bool`, `metrics: Dict[str, float]`, `final_model_path: Optional[str]`, `reverted: bool`, `error: Optional[str]`, `benchmark_scores`, `benchmark_average`, `benchmark_passed`, `safety_passed`, `safety_score`, `safety_categories`, `safety_severity`, `safety_low_confidence`, `judge_score`, `judge_details`, `judge_passed`, `estimated_cost_usd`, `staging_path`, `resource_usage`. |
 
 ### Data preparation
 
@@ -86,7 +86,7 @@ Tables grouped by concern. Every cell is a real attribute on the live `forgelm` 
 
 ### Verification toolbelt (Phase 36)
 
-Implemented in `forgelm/verify.py` (moved out of the `forgelm/cli/subcommands/_verify_*` modules that originally housed them — the CLI subcommands are now thin wrappers around this module). The import paths below are unchanged either way; `forgelm.verify_annex_iv_artifact` resolves the same symbol before and after the move, so this was an internal refactor, not an API change. Library callers who want the same 1-vs-6 exit-code classification the `verify-*` CLI subcommands use can import the paired `is_annex_iv_integrity_failure` / `is_gguf_integrity_failure` / `is_model_integrity_failure` predicates from `forgelm.verify` directly — they are internal (not in `forgelm.__all__`) but stable enough in practice that the CLI itself depends on them for the split documented in [`error-handling.md`](../standards/error-handling.md#exit-codes).
+Implemented in the `forgelm/verify/` sub-package (moved out of the `forgelm/cli/subcommands/_verify_*` modules that originally housed them — the CLI subcommands are now thin wrappers around this module). The import paths below are unchanged either way; `forgelm.verify_annex_iv_artifact` resolves the same symbol before and after the move, so this was an internal refactor, not an API change. Library callers who want the same 1-vs-6 exit-code classification the `verify-*` CLI subcommands use can import the paired `is_annex_iv_integrity_failure` / `is_gguf_integrity_failure` / `is_model_integrity_failure` / `is_audit_integrity_failure` predicates from `forgelm.verify` directly — they are internal (not in `forgelm.__all__`) but stable enough in practice that the CLI itself depends on them for the split documented in [`error-handling.md`](../standards/error-handling.md#exit-codes).
 
 | Symbol | Tier | Signature | Description |
 |---|---|---|---|
@@ -109,7 +109,7 @@ Implemented in `forgelm/verify.py` (moved out of the `forgelm/cli/subcommands/_v
 
 | Symbol | Tier | Signature | Description |
 |---|---|---|---|
-| `forgelm.WebhookNotifier` | Experimental | `WebhookNotifier(config: ForgeConfig)` | Slack / Teams / generic-HTTP lifecycle notifications. Constructor schema may grow ISO/SOC 2 fields in a future release. |
+| `forgelm.WebhookNotifier` | Experimental | `WebhookNotifier(config: Any)` | Slack / Teams / generic-HTTP lifecycle notifications. Constructor schema may grow ISO/SOC 2 fields in a future release. |
 | `forgelm.setup_authentication` | Experimental | `setup_authentication(token: Optional[str] = None) -> None` | Wrapper around `huggingface_hub.login`. Reads `HUGGINGFACE_TOKEN` env var when `token` is `None`. |
 | `forgelm.manage_checkpoints` | Experimental | `manage_checkpoints(checkpoint_dir: str, action: str = "keep") -> None` | Apply checkpoint-retention behaviour against an output directory. `action` controls retain/prune semantics. |
 

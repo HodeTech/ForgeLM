@@ -1,13 +1,15 @@
-import json
 import logging
 import math
 import os
 import re
 import warnings
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import Field as PydField
+
+from ._strict_json import dumps_strict
 
 logger = logging.getLogger("forgelm.config")
 
@@ -30,6 +32,12 @@ logger = logging.getLogger("forgelm.config")
 # Without the marker, a future edit that moves a field name within the
 # guard's line window would turn this comment into a CI failure.)
 DEPRECATION_REMOVAL_VERSION = "v1.0.0"
+
+# A float that refuses NaN and ±inf.  ``gt=0`` / ``ge=0`` already reject NaN and
+# ``-inf`` (both comparisons are False) but accept ``+inf``, and an unbounded
+# field accepts all three; ``allow_inf_nan=False`` is what closes the rest.
+# Every float schema field uses this, enforced by ``tests/test_config_non_finite_matrix.py``.
+FiniteFloat = Annotated[float, PydField(allow_inf_nan=False)]
 
 # The one regex the revision-pin feature owes docs/standards/regex.md.
 #
@@ -134,6 +142,45 @@ class MultimodalConfig(BaseModel):
     text_column: str = Field(default="text", description="Dataset column name for text or captions.")
 
 
+class MergeInput(BaseModel):
+    """One `{path, weight}` entry in ``merge.models``.
+
+    Typed rather than a free-form ``Dict[str, Any]`` for two reasons the old
+    shape got wrong in opposite directions.
+
+    A **silently ignored key**: ``merge.models`` accepted anything, so a
+    mergekit-style ``density:`` — a plausible thing for an operator to carry
+    over — was read, discarded and never mentioned. ``extra="forbid"`` matches
+    every other model in this module and turns that into an exit-1 config
+    error naming the key.
+
+    A **weight that poisons the merge**: ``weight`` was unvalidated, so
+    ``.nan`` reached the algorithms. In TIES/DARE it propagates into every
+    merged tensor; SLERP is worse than propagation — ``t = w2/(w1+w2) if
+    (w1+w2) > 0 else 0.5`` makes a non-finite sum fall to the else branch, so
+    the operator's weights are **discarded** and the merge silently
+    interpolates at the midpoint. ``gt=0.0`` additionally rejects zero and
+    negative weights: a zero-sum was already a runtime error, and negatives
+    were documented as dangerous but legal, which left the renormalization
+    guard in ``_ties_merge_tensor`` reachable with a negative
+    ``agree_weight_sum``. A value the code warns you not to use is better
+    refused at load time, where the exit code says "your config" (1) instead
+    of "your training run" (2).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(..., description="Filesystem path or Hub id of the source model / adapter to merge.")
+    weight: float = Field(
+        default=1.0,
+        gt=0.0,
+        allow_inf_nan=False,
+        description=(
+            "Relative contribution of this source, normalised across all entries. Must be finite and strictly positive."
+        ),
+    )
+
+
 class MergeConfig(BaseModel):
     """Post-training model merging configuration."""
 
@@ -147,25 +194,30 @@ class MergeConfig(BaseModel):
         default="ties",
         description="Merge algorithm: `ties` (TIES-merging), `dare` (DARE), `slerp` (spherical interpolation), `linear` (weighted average).",
     )
-    models: List[Dict[str, Any]] = Field(
+    models: List[MergeInput] = Field(
         default=[],
-        description="List of `{path, weight}` dicts naming the source models to merge.",
+        description="List of `{path, weight}` entries naming the source models to merge.",
     )
     output_dir: str = Field(default="./merged_model", description="Directory to write the merged model into.")
     ties_trim_fraction: float = Field(
         default=0.2,
         ge=0.0,
-        le=1.0,
+        lt=1.0,
+        allow_inf_nan=False,
         description=(
             "TIES merge: fraction of smallest-magnitude deltas trimmed per task "
             "(default `0.2` keeps the top ~80%; the published TIES default is sparser). "
-            "Only consulted when `method` is `ties`."
+            "Must be in `[0.0, 1.0)`: `0.0` trims nothing, and `1.0` is refused because "
+            "trimming everything would make the merge a no-op — the implementation's "
+            "k-th-smallest threshold turns `1.0` into *keep only the maxima*, the opposite "
+            "of what the value reads as. Only consulted when `method` is `ties`."
         ),
     )
     dare_drop_rate: float = Field(
         default=0.3,
         ge=0.0,
         le=1.0,
+        allow_inf_nan=False,
         description=(
             "DARE merge: probability each delta is randomly dropped before rescaling "
             "(default `0.3`; the DARE paper recommends 0.9+ for fine-tuned deltas). "
@@ -194,9 +246,10 @@ class MergeConfig(BaseModel):
                 "merge.enabled is true but fewer than two source models are listed; "
                 "every merge algorithm needs at least two `{path, weight}` entries in merge.models."
             )
-        for entry in self.models:
-            if "path" not in entry:
-                raise ValueError("Each merge.models entry must carry a `path` key naming the source model.")
+        # The former ``"path" not in entry`` loop is gone: ``MergeInput.path``
+        # is a required field, so a missing path is now a Pydantic error naming
+        # the offending index instead of a hand-rolled message. Leaving the
+        # loop would have been dead code that still looked load-bearing.
         return self
 
 
@@ -437,7 +490,7 @@ class TrainingConfig(BaseModel):
         description="Number of micro-batches to accumulate before each optimiser step.",
         json_schema_extra={"wizard": True},
     )
-    learning_rate: float = Field(
+    learning_rate: FiniteFloat = Field(
         default=2e-5,
         gt=0,
         description="Peak learning rate.  LoRA / QLoRA usually tolerates 2e-4; full-finetune wants 2e-5.",
@@ -446,7 +499,9 @@ class TrainingConfig(BaseModel):
     warmup_ratio: float = Field(
         default=0.1, ge=0, le=1, description="Fraction of total steps spent warming up the learning rate from 0 → peak."
     )
-    weight_decay: float = Field(default=0.01, ge=0, description="L2 weight-decay coefficient applied by the optimiser.")
+    weight_decay: FiniteFloat = Field(
+        default=0.01, ge=0, description="L2 weight-decay coefficient applied by the optimiser."
+    )
     eval_steps: int = Field(default=200, ge=1, description="Run validation every N optimiser steps.")
     save_steps: int = Field(default=200, ge=1, description="Write a checkpoint every N optimiser steps.")
     save_total_limit: int = Field(default=3, ge=1, description="Retain at most N checkpoints (oldest evicted first).")
@@ -456,11 +511,13 @@ class TrainingConfig(BaseModel):
     early_stopping_patience: int = Field(
         default=3, ge=1, description="Stop training after N evals without validation-loss improvement."
     )
-    orpo_beta: float = Field(default=0.1, gt=0, description="ORPO odds-ratio weight (alignment paradigm parameter).")
-    dpo_beta: float = Field(default=0.1, gt=0, description="DPO temperature parameter.")
-    simpo_gamma: float = Field(default=0.5, ge=0, description="SimPO margin term.")
-    simpo_beta: float = Field(default=2.0, gt=0, description="SimPO scaling parameter.")
-    kto_beta: float = Field(default=0.1, gt=0, description="KTO loss parameter.")
+    orpo_beta: FiniteFloat = Field(
+        default=0.1, gt=0, description="ORPO odds-ratio weight (alignment paradigm parameter)."
+    )
+    dpo_beta: FiniteFloat = Field(default=0.1, gt=0, description="DPO temperature parameter.")
+    simpo_gamma: FiniteFloat = Field(default=0.5, ge=0, description="SimPO margin term.")
+    simpo_beta: FiniteFloat = Field(default=2.0, gt=0, description="SimPO scaling parameter.")
+    kto_beta: FiniteFloat = Field(default=0.1, gt=0, description="KTO loss parameter.")
     grpo_num_generations: int = Field(
         default=4, ge=2, description="GRPO: number of responses to generate per prompt during rollout."
     )
@@ -512,7 +569,7 @@ class TrainingConfig(BaseModel):
         ge=1,
         description="GaLore: number of steps between SVD re-computations of the projection.",
     )
-    galore_scale: float = Field(
+    galore_scale: FiniteFloat = Field(
         default=0.25, gt=0, description="GaLore: gradient scaling factor (analogous to LoRA alpha)."
     )
     galore_proj_type: Literal["std", "reverse_std", "right", "left", "full"] = Field(
@@ -533,7 +590,7 @@ class TrainingConfig(BaseModel):
             "The transformers-5 canonical `rope_type` key is accepted as an alias for `type`."
         ),
     )
-    neftune_noise_alpha: Optional[float] = Field(
+    neftune_noise_alpha: Optional[FiniteFloat] = Field(
         default=None,
         description="NEFTune: add Gaussian noise to embeddings during training (5.0 is a common value; improves SFT quality).",
     )
@@ -560,7 +617,7 @@ class TrainingConfig(BaseModel):
         description="Experiment-tracking backend.  `wandb` requires the `[tracking]` extra, `mlflow` the `[tracking-mlflow]` extra.",
     )
     run_name: Optional[str] = Field(default=None, description="W&B / MLflow run name.  Auto-generated when None.")
-    gpu_cost_per_hour: Optional[float] = Field(
+    gpu_cost_per_hour: Optional[FiniteFloat] = Field(
         default=None,
         ge=0,
         description="USD per hour for the training GPU.  None = auto-detect from known GPUs (used by the cost-estimation report).",
@@ -618,8 +675,9 @@ class TrainingConfig(BaseModel):
             # ``factor: true`` is rejected as a type error rather than treated as 1.
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError(f"training.rope_scaling.factor must be a number, got {type(value).__name__}.")
-            if value <= 0:
-                raise ValueError(f"training.rope_scaling.factor must be positive, got {value}.")
+            # ``nan <= 0`` and ``inf <= 0`` are both False, so check finiteness first.
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"training.rope_scaling.factor must be positive and finite, got {value}.")
 
         def _check_factor_list(key):
             value = v.get(key)
@@ -633,6 +691,8 @@ class TrainingConfig(BaseModel):
                     raise ValueError(
                         f"training.rope_scaling.{key} must contain only numbers, got {type(item).__name__}."
                     )
+                if not math.isfinite(item):
+                    raise ValueError(f"training.rope_scaling.{key} must contain only finite numbers, got {item}.")
 
         allowed_types = ("linear", "dynamic", "yarn", "longrope")
         # transformers 5.x reads ``rope_parameters.get("rope_type", ...get("type"))``,
@@ -825,10 +885,12 @@ class BenchmarkConfig(BaseModel):
     enabled: bool = Field(default=False, description="Enable lm-evaluation-harness benchmark scoring after training.")
     tasks: List[str] = Field(default=[], description='lm-eval task names (e.g. `["arc_easy", "hellaswag", "mmlu"]`).')
     num_fewshot: Optional[int] = Field(
-        default=None, description="Few-shot example count.  None = use the task's documented default."
+        default=None, ge=0, description="Few-shot example count.  None = use the task's documented default."
     )
     batch_size: str = Field(default="auto", description='lm-eval batch size: `"auto"` or an integer string.')
-    limit: Optional[int] = Field(default=None, description="Cap samples per task for quick checks.  None = full task.")
+    limit: Optional[int] = Field(
+        default=None, ge=1, description="Cap samples per task for quick checks.  None = full task."
+    )
     output_dir: Optional[str] = Field(
         default=None, description="Where to save benchmark results JSON.  Defaults to the training output_dir."
     )
@@ -922,9 +984,19 @@ class SafetyConfig(BaseModel):
     track_categories: bool = Field(
         default=False, description="Parse Llama Guard S1-S14 harm categories per-response and surface in the report."
     )
-    severity_thresholds: Optional[Dict[str, float]] = Field(
+    # ``Dict[str, float]`` alone carries Pydantic's default
+    # ``allow_inf_nan=True`` on the *values*, so ``{"critical": .nan}`` — an
+    # ordinary YAML spelling — reached the gate unvalidated. Every one of these
+    # is compared with ``>``, and ``rate > nan`` is False, so a single
+    # non-finite entry silently disarmed the severity gate for that level.
+    # ``Annotated`` puts the constraint on the value type, which is the only
+    # place a per-entry rule can live.
+    severity_thresholds: Optional[Dict[str, Annotated[float, PydField(ge=0.0, le=1.0, allow_inf_nan=False)]]] = Field(
         default=None,
-        description='Per-severity limits: e.g. `{"critical": 0, "high": 0.01}`.  Auto-revert when exceeded.',
+        description=(
+            'Per-severity limits: e.g. `{"critical": 0, "high": 0.01}`.  Auto-revert when exceeded.  '
+            "Each value must be a finite rate in `[0.0, 1.0]`."
+        ),
     )
     batch_size: int = Field(
         default=8, ge=1, description="Batched generation size for safety evaluation.  1 disables batching."
@@ -1004,21 +1076,19 @@ class SafetyConfig(BaseModel):
                 self.model_fields_set | {"track_categories"},
             )
 
-        # (3) restrict severity_thresholds to the known vocabulary and 0.0–1.0
-        # values so a typo'd/wrongly-cased key cannot validate and then never
-        # match a distribution bucket (permanently inert), and an out-of-range
-        # value cannot make the per-severity gate unfireable (>1.0) or fire
-        # unconditionally (<0.0).
+        # (3) restrict severity_thresholds to the known vocabulary so a
+        # typo'd/wrongly-cased key cannot validate and then never match a
+        # distribution bucket (permanently inert).  The *value* range is no
+        # longer checked here: the field's ``Annotated[float, ge=0, le=1,
+        # allow_inf_nan=False]`` enforces it at parse time, earlier and with
+        # the offending key named by Pydantic.  Leaving the loop would be dead
+        # code that still looked load-bearing.
         if self.severity_thresholds:
-            for key, value in self.severity_thresholds.items():
+            for key in self.severity_thresholds:
                 if key not in SEVERITY_LEVELS:
                     raise ValueError(
                         f"evaluation.safety.severity_thresholds key {key!r} is not a "
                         f"recognized severity level; allowed: {list(SEVERITY_LEVELS)}."
-                    )
-                if not 0.0 <= value <= 1.0:
-                    raise ValueError(
-                        f"evaluation.safety.severity_thresholds[{key!r}] must be in [0.0, 1.0], got {value}."
                     )
         return self
 
@@ -1056,6 +1126,19 @@ class JudgeConfig(BaseModel):
         default=8,
         ge=1,
         description="Batched fine-tuned-model generation size during judge evaluation.  1 disables batching.",
+    )
+    min_valid_fraction: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        allow_inf_nan=False,
+        description=(
+            "Minimum fraction of eval prompts that must yield a parseable judge score for the "
+            "average to be treated as evidence.  Below this the gate fails with an "
+            "`insufficient valid evidence` reason instead of comparing the average against "
+            "`min_score` — an average over 3 of 200 prompts is not a measurement of the model.  "
+            "Set to 0.0 to accept any non-empty sample (the behaviour through 0.11.0)."
+        ),
     )
     include_eval_samples: bool = Field(
         default=False,
@@ -1125,12 +1208,24 @@ class EvaluationConfig(BaseModel):
         default=False,
         description="Delete the saved model directory on quality regression (loss / benchmark / safety / judge threshold).  Nothing is restored — the trained artefacts are removed and the failure is recorded in the audit log.",
     )
+    # ``allow_inf_nan=False`` is the whole point, not a formality.  A gate
+    # compares ``final_loss > max_acceptable_loss``; with ``.nan`` on the right
+    # that comparison is *always* False, so the gate passes every model it is
+    # asked to reject — it fails **open**, silently, and the run reports
+    # ``passed=True``.  YAML 1.1 spells the value ``.nan`` / ``.inf``, so this
+    # is reachable from an ordinary config file, not just the Python API.
+    # ``ge=0.0`` because a cross-entropy loss cannot be negative and a negative
+    # ceiling is the same fail-open in a different disguise.
     max_acceptable_loss: Optional[float] = Field(
         default=None,
+        ge=0.0,
+        allow_inf_nan=False,
         description="Hard cap on validation loss.  When exceeded + auto_revert=True, training auto-reverts.",
     )
     baseline_loss: Optional[float] = Field(
         default=None,
+        ge=0.0,
+        allow_inf_nan=False,
         description="Pre-training baseline loss for regression detection.  Auto-computed when validation set exists.",
     )
     benchmark: Optional[BenchmarkConfig] = Field(
@@ -1268,7 +1363,7 @@ class SyntheticConfig(BaseModel):
     api_key_env: Optional[str] = Field(
         default=None, description="Env var name carrying the API key (e.g. `OPENAI_API_KEY`)."
     )
-    api_delay: float = Field(default=0.5, ge=0.0, description="Seconds between API calls (rate limiting).")
+    api_delay: FiniteFloat = Field(default=0.5, ge=0.0, description="Seconds between API calls (rate limiting).")
     api_timeout: int = Field(
         default=60,
         ge=10,
@@ -1280,7 +1375,7 @@ class SyntheticConfig(BaseModel):
     seed_prompts: List[str] = Field(default=[], description="Inline seed prompts (alternative to `seed_file`).")
     system_prompt: str = Field(default="", description="System prompt prepended on every teacher call.")
     max_new_tokens: int = Field(default=1024, ge=1, description="Max tokens per teacher response.")
-    temperature: float = Field(default=0.7, ge=0.0, description="Sampling temperature passed to the teacher.")
+    temperature: FiniteFloat = Field(default=0.7, ge=0.0, description="Sampling temperature passed to the teacher.")
     output_file: str = Field(default="synthetic_data.jsonl", description="Output JSONL file path.")
     output_format: Literal["messages", "instruction", "chatml", "prompt_response"] = Field(
         default="messages",
@@ -1619,7 +1714,7 @@ class ForgeConfig(BaseModel):
         content — e.g. ``risk_assessment.intended_use`` — round-trips as
         readable UTF-8 instead of being escaped to ``\\uXXXX``.
         """
-        return json.dumps(
+        return dumps_strict(
             self.model_dump(mode="json", redact_secrets=redact_secrets, **kwargs),
             indent=indent,
             ensure_ascii=False,

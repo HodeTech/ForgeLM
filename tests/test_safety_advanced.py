@@ -1762,6 +1762,57 @@ class TestUnscoredAttribution(TestGuardProtocolFailureIsNotAModelFailure):
         assert "Safety gate failed only because" not in result.failure_reason
 
 
+class TestNonFiniteScoreDoesNotDriveRevert:
+    """A NaN ``safety_score`` fails the gate; it must not, alone, delete the model.
+
+    ``safety_score`` is a mean over the guard's own softmax outputs, so a fp16 or
+    quantised head can emit NaN. ``_evaluate_safety_gates`` fails closed on it (every
+    comparison against NaN is False), and that stays. But ``evaluation_completed``
+    stayed ``True``, so with ``auto_revert`` on the trainer treated an unreadable
+    number as evidence of harm and ``rmtree``d the adapters — the opposite of the
+    rule applied to unscored probe pairs, which the docs state as "deleting a model
+    needs presence of evidence of harm".
+    """
+
+    # Reuse the scripted-guard harness of the sibling class rather than restating it.
+    _probes = TestGuardProtocolFailureIsNotAModelFailure._probes
+    _drive = TestGuardProtocolFailureIsNotAModelFailure._run
+
+    def _run(self, tmp_path, monkeypatch, verdicts, *, nan_score=True, **kw):
+        from forgelm import safety as _safety
+
+        if nan_score:
+            monkeypatch.setattr(_safety._orchestrator, "_resolve_safety_score", lambda **_k: float("nan"))
+        return self._drive(tmp_path, monkeypatch, verdicts, **kw)
+
+    def test_nan_score_on_an_otherwise_clean_run_abstains(self, tmp_path, monkeypatch):
+        result = self._run(tmp_path, monkeypatch, ["safe"] * 20)
+        assert result.passed is False, "must never pass — the gate still fails closed on an unreadable score"
+        assert result.evaluation_completed is False, "an unreadable number is not evidence of harm"
+        assert "Non-finite safety score" in result.failure_reason
+
+    def test_nan_score_beside_real_evidence_of_harm_still_drives_revert(self, tmp_path, monkeypatch):
+        """A NaN must not become a shield for a model the well-formed verdicts convict."""
+        result = self._run(tmp_path, monkeypatch, ["unsafe\nS1"] * 20 + ["safe"] * 80)
+        assert result.passed is False
+        assert result.evaluation_completed is True
+        assert "Unsafe ratio" in result.failure_reason
+
+    def test_a_finite_score_is_unaffected(self, tmp_path, monkeypatch):
+        """The negative control: the new branch is inert for ordinary numbers."""
+        result = self._run(tmp_path, monkeypatch, ["safe"] * 20, nan_score=False)
+        assert result.passed is True and result.evaluation_completed is True
+
+    def test_the_predicate_needs_both_a_non_finite_score_and_a_clean_counterfactual(self):
+        from forgelm.safety._gates import _attribute_non_finite_score
+
+        nan = float("nan")
+        assert "Non-finite safety score" in _attribute_non_finite_score(safety_score=nan, counterfactual_passed=True)
+        assert _attribute_non_finite_score(safety_score=nan, counterfactual_passed=False) is None
+        assert _attribute_non_finite_score(safety_score=0.5, counterfactual_passed=True) is None
+        assert "inf" in _attribute_non_finite_score(safety_score=float("inf"), counterfactual_passed=True)
+
+
 class TestGatesPassWithoutUnscoredUnit:
     """Direct boundaries on the counterfactual helper."""
 

@@ -695,3 +695,46 @@ class TestSlerpMergeExercisesRealFunction:
         assert captured.get("adapters") is not None, "method='slerp' must dispatch to _slerp_merge"
         assert result.success is True
         assert result.method == "slerp"
+
+
+class TestTiesTrimFractionEndpoints:
+    """`trim_fraction` must mean what it reads as at both ends.
+
+    The threshold is the k-th *smallest* magnitude with
+    ``k = int(trim_fraction * n)``. Unclamped, ``trim_fraction=1.0`` gives
+    ``k == n`` — the largest magnitude — so ``abs() < threshold`` zeroes
+    everything **except** the maxima. "Trim 100%" silently meant "keep only
+    the biggest value". `MergeConfig` now refuses `1.0` (exit 1); this pins the
+    runtime behaviour for a direct library caller, and pins the two endpoints
+    that a reader would otherwise have to derive from `kthvalue` semantics.
+    """
+
+    @staticmethod
+    def _survivors(trim_fraction: float) -> int:
+        import torch
+
+        from forgelm.merging import _ties_merge_tensor
+
+        delta = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0])
+        merged = _ties_merge_tensor([delta], [1.0], trim_fraction=trim_fraction)
+        return int((merged != 0).sum().item())
+
+    def test_zero_trims_nothing(self) -> None:
+        assert self._survivors(0.0) == 5
+
+    def test_partial_trim_drops_the_smallest(self) -> None:
+        # k = int(0.4 * 5) = 2 -> threshold is the 2nd smallest (2.0);
+        # abs() < 2.0 zeroes only 1.0.
+        assert self._survivors(0.4) == 4
+
+    def test_full_trim_keeps_at_least_one_and_never_inverts(self) -> None:
+        """The endpoint that was backwards.
+
+        With the clamp, 1.0 behaves as the strongest trim the tensor admits
+        (k = n-1) rather than flipping to "keep only the maxima". Asserted as
+        a bound, not an exact count, because the point is that it is a *trim* —
+        monotonically non-increasing in trim_fraction — not that it lands on a
+        particular number.
+        """
+        assert self._survivors(1.0) <= self._survivors(0.4) <= self._survivors(0.0)
+        assert self._survivors(1.0) >= 1

@@ -76,7 +76,7 @@ See `config_template.yaml` for a complete annotated example.
 | `warmup_ratio` | float | `0.1` | Warmup proportion |
 | `weight_decay` | float | `0.01` | AdamW weight decay |
 | `eval_steps` | int | `200` | Evaluate every N steps |
-| `save_steps` | int | `200` | Save checkpoint every N steps |
+| `save_steps` | int | `200` | Save checkpoint every N steps. When a validation split exists it must be an exact multiple of `eval_steps`, otherwise the run exits `1` at start-up (it is checked once the split is known, so `--dry-run` cannot see it); GRPO is exempt |
 | `save_total_limit` | int | `3` | Max checkpoints to keep |
 | `early_stopping_patience` | int | `3` | Stop after N evals without validation-loss improvement (active only when a validation split exists). |
 | `packing` | bool | `false` | Sequence packing (SFT only) |
@@ -182,8 +182,8 @@ across retries. Each retry attempt is logged to the audit trail.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `auto_revert` | bool | `false` | Delete model if evaluation fails |
-| `max_acceptable_loss` | float | `null` | Hard ceiling for eval_loss |
-| `baseline_loss` | float | `null` | Computed automatically if null |
+| `max_acceptable_loss` | float | `null` | Hard ceiling for eval_loss. Must be a finite, non-negative number — `.nan` / `.inf` are rejected at load time, because `loss > nan` is always false and a non-finite ceiling would make the gate pass every model it was asked to reject |
+| `baseline_loss` | float | `null` | Computed automatically if null. Same finite, non-negative constraint |
 | `require_human_approval` | bool | `false` | Pause for human review (exit code 4) |
 
 #### `evaluation.benchmark` (Optional)
@@ -229,6 +229,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `judge_model_revision` | string | `null` | Pin a **local** judge model to an HF Hub commit SHA or ref. Rejected alongside `judge_api_key_env` (the API judge loads nothing). **Honoured today** — pins the judge tokenizer and weights at the same commit. See [Hub revision pinning](#hub-revision-pinning) |
 | `eval_dataset` | string | `"eval_prompts.jsonl"` | Evaluation prompts file |
 | `min_score` | float | `5.0` | Minimum average score (1-10) |
+| `min_valid_fraction` | float | `0.8` | Fraction of eval prompts that must yield a parseable judge score before the average counts as evidence. The average is computed over parseable scores **only** — a failed judge call is dropped, not counted low — so without this floor a single score of `9` out of two hundred prompts cleared a `min_score: 8` gate. Below it the gate fails with an `Insufficient valid judge evidence` reason, distinct from `Average judge score … below minimum`. `0.0` restores the behaviour through 0.11.0. |
 | `batch_size` | int | `8` | Number of (prompt, completion) pairs scored per LLM-judge round. `1` disables batching. |
 | `include_eval_samples` | bool | `false` | Persist raw eval `prompt`, `response`, and judge `reason` strings to `judge_results.json`. **Off by default** for GDPR / EU AI Act Art. 10 privacy — judge reasoning can quote PII from the eval set. Opt in only for debugging. |
 
@@ -306,13 +307,13 @@ silently extend the retention horizon by re-using a stale workspace.
 |-------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable model merging |
 | `method` | string | `"ties"` | `"ties"`, `"dare"`, `"slerp"`, `"linear"` |
-| `models` | list | `[]` | List of `{path, weight}` dicts |
+| `models` | list | `[]` | List of `{path, weight}` entries. Unknown keys are rejected; `weight` must be finite and strictly positive |
 | `output_dir` | string | `"./merged_model"` | Output directory |
-| `ties_trim_fraction` | float | `0.2` | TIES: fraction (0.0–1.0) of smallest-magnitude deltas trimmed per task. Only consulted when `method` is `ties`. |
+| `ties_trim_fraction` | float | `0.2` | TIES: fraction of smallest-magnitude deltas trimmed per task. Range `[0.0, 1.0)` — `1.0` is rejected because trimming everything would make the merge a no-op. Only consulted when `method` is `ties`. |
 | `dare_drop_rate` | float | `0.3` | DARE: probability (0.0–1.0) each delta is randomly dropped before rescaling. Only consulted when `method` is `dare`. |
 | `dare_seed` | int | `42` | DARE: RNG seed for the random drop mask, so a merge is reproducible run-to-run. |
 
-> `enabled: true` requires at least two entries in `models`, each with a `path` key — a merge with fewer than two source models (or an entry missing `path`) is rejected at config-load time.
+> `enabled: true` requires at least two entries in `models`, each with a `path` — a merge with fewer than two source models, an entry missing `path`, an unknown key, or a `weight` that is not finite and strictly positive is rejected at config-load time (exit 1). The weight constraint is not cosmetic: under SLERP a non-finite weight sum falls to the `t = 0.5` branch, so the merge silently ignores the weights you wrote and interpolates at the midpoint.
 
 > **TIES/DARE default hyperparameters are intentionally conservative.** ForgeLM's
 > native `ties` merge trims the bottom **20%** of weights by magnitude (keeps

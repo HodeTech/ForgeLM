@@ -271,8 +271,24 @@ if _TYPE_CHECKING:  # pragma: no cover — type-only imports
     from .webhook import WebhookNotifier  # noqa: F401
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> object:
     """PEP 562 lazy attribute resolver for the public surface.
+
+    ``object``, not ``Any``, and the difference is load-bearing. This hook is a
+    generic dispatcher over :data:`_LAZY_SYMBOLS`, resolving names of unrelated
+    types (dataclasses, functions, exception classes), so no *narrow* type is
+    truthful — but ``object`` is their least upper bound and is truthful, while
+    ``Any`` silently blesses whatever a caller does next. Under ``Any``,
+    ``forgelm.ForgeTraner("x")`` — a typo — type-checks clean; under ``object``
+    it is ``"object" not callable``. Nothing real is lost: every genuine public
+    name is imported in the ``TYPE_CHECKING`` block above, so a type checker
+    resolves it there with its actual signature and never reaches this hook
+    (``tests/test_library_api.py`` asserts that block covers
+    :data:`_LAZY_SYMBOLS` exactly). Only typos and internal reach-ins land
+    here, and those are precisely what should not type-check.
+
+    Without any annotation the whole ``mypy --strict`` public-surface gate
+    fails on this one function.
 
     Looks ``name`` up in :data:`_LAZY_SYMBOLS`, imports the source
     submodule, fetches the attribute, and caches the result back into

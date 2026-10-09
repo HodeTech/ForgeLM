@@ -216,7 +216,7 @@ Example of a ForgeLM-style component diagram:
 
 ```mermaid
 graph LR
-    CLI[cli.py] --> CONFIG[config.py]
+    CLI[cli/ sub-package] --> CONFIG[config.py]
     CONFIG --> TRAINER[trainer.py]
     TRAINER --> MODEL[model.py]
     TRAINER --> DATA[data.py]
@@ -278,7 +278,11 @@ Keep [`CHANGELOG.md`](../../CHANGELOG.md) in "Keep a Changelog" format:
 Rules:
 
 1. Every version has a date.
-2. Categories: Added / Changed / Fixed / Removed / Deprecated. No others.
+2. Categories are defined once, in [release.md](release.md#changelog). Do not
+   restate the list here — this rule previously published a closed set
+   ("Added / Changed / Fixed / Removed / Deprecated. No others.") that the
+   very next rule contradicted by requiring `### Breaking`, and that
+   `CHANGELOG.md` had already outgrown with `### Breaking` and `### Security`.
 3. Entries link to PRs or issues only when useful for readers; not mandatory.
 4. Breaking changes explicitly called out in a `### Breaking` section above `Changed`.
 

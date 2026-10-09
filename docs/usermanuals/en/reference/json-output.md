@@ -171,14 +171,16 @@ When training runs to completion the pipeline emits a result envelope on **stdou
   "metrics": {"eval_loss": 0.91},
   "final_model_path": "/work/output/final_model",
   "reverted": true,
-  "awaiting_approval": false
+  "awaiting_approval": false,
+  "error": "Final eval_loss (0.9100) exceeded max_acceptable_loss (0.8000)."
 }
 ```
 
 | Key | Type | Notes |
 |---|---|---|
 | `success` | bool | `true` when the run completed (including a staged, awaiting-approval run). `false` when a gate auto-reverted the model. |
-| `metrics` | object | Numeric training/eval/gate metrics (e.g. `eval_loss`, `benchmark/average`, `safety/safe_ratio`). |
+| `error` | string | Present **iff** `success` is `false`, never on the success path. Carries the gate's own reason — which gate fired and against what threshold — because every gate exits `3`, so the exit code alone cannot tell them apart. If a failure reaches the envelope with no reason recorded, the field says so explicitly and points at `audit_log.jsonl` rather than being omitted. |
+| `metrics` | object | Training/eval/gate metrics (e.g. `eval_loss`, `benchmark/average`, `safety/safe_ratio`). Values are numbers, **except** a measurement that came out non-finite, which is written as the string `"nan"` / `"inf"` / `"-inf"` — JSON has no non-finite number literal, so the alternative was output no strict parser accepts. Type these fields as number-or-string. |
 | `final_model_path` | str | Where the model artefacts live. For an awaiting-approval run this is the **staging** directory until `forgelm approve` promotes it. |
 | `reverted` | bool | `true` iff a gate (eval-loss / benchmark / safety / judge) auto-reverted the model. Mutually exclusive with `awaiting_approval`. |
 | `awaiting_approval` | bool | **Discriminator.** `true` iff the run halted at the Article 14 human-approval gate (exit `4`). A reverted run is always `false` here. |
@@ -611,10 +613,36 @@ Wave 2b Phase 35 — pre-populates the lm-evaluation-harness task dataset cache.
 
 | Key | Type | Notes |
 |---|---|---|
-| `tasks` | list[object] | One entry per task; `cached: false` with a non-null `error` is per-task best-effort (the batch continues). |
+| `tasks` | list[object] | One entry per task, with `cached` and `error`. Present on the failure envelope too, so a batch that exits non-zero still tells you *which* tasks are missing. |
 | `cache_dir` | str | Operator's `--output`, or env-resolved (`HF_DATASETS_CACHE > HF_HOME/datasets > ~/.cache/huggingface/datasets` — note the *Datasets* chain, separate from the Hub chain). |
 
-**Exit code mapping:** `0` = enumeration succeeded (per-task download failures are reported in `tasks[].error` but do not fail the batch); `1` = config error (empty `--tasks`, unknown task, missing `[eval]` extra); `2` = runtime error (broken environment / mid-batch failure raised by the datasets layer).
+**A partial batch is a failure.** If any task ends `cached: false` — a download
+error, or a task for which lm-eval exposes no downloadable dataset — the command
+emits `success: false` and exits `2`, and the per-task rows come back under
+`tasks` in the error envelope. The cache on disk is incomplete and must not be
+transferred.
+
+This is the point of the command: an air-gapped host has no second chance. The
+[air-gap guide on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/air_gap_deployment.md) gates on
+`jq -e '.success'` before bundling, and that gate is only worth running if a
+half-populated cache turns it red.
+
+> **Changed after 0.11.0.** Through 0.11.0, per-task download failures were reported in
+> `tasks[].error` but the batch still returned `success: true` and exit `0`, and
+> the audit log recorded `cache.populate_tasks_completed`. A CI job following
+> the documented example therefore packaged and shipped an empty dataset cache
+> with a green gate. If you relied on the old behaviour to stage a
+> known-incomplete set, read `tasks[]` from the exit-2 envelope instead of
+> branching on `success`.
+
+**Exit code mapping:** `0` = every task staged; `1` = config error (empty
+`--tasks`, unknown task, missing `[eval]` extra); `2` = one or more tasks not
+staged, or a broken environment.
+
+**Audit events:** all staged → `cache.populate_tasks_completed`; some staged →
+`cache.populate_tasks_partial`; none staged → `cache.populate_tasks_failed`.
+The split exists so an auditor reading the append-only log can tell "nothing
+landed" from "the archive looks transferable and is missing data".
 
 ## `forgelm safety-eval`
 

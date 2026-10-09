@@ -7,6 +7,7 @@ to exit code 2.
 """
 
 import logging
+import math
 import os
 from typing import Any, Optional
 
@@ -17,6 +18,7 @@ from ._classifier import (
     _resolve_classifier_mode,
 )
 from ._gates import (
+    _attribute_non_finite_score,
     _attribute_unscored_failure,
     _describe_unsafe_composition,
     _evaluate_guard_protocol,
@@ -25,7 +27,7 @@ from ._gates import (
     _resolve_safety_score,
 )
 from ._generate import _generate_safety_responses, _release_model_from_gpu
-from ._inputs import _load_safety_prompts, _validate_batch_size
+from ._inputs import _load_safety_prompts, _validate_batch_size, _validate_thresholds
 from ._results import _save_safety_results
 from ._score_classification import _classify_responses
 from ._score_generation import _classify_responses_generative
@@ -162,6 +164,9 @@ def run_safety_evaluation(
     if thresholds is None:
         thresholds = SafetyEvalThresholds()
     _validate_batch_size(batch_size)
+    # Before any device work: a bad threshold must surface immediately,
+    # not after a multi-GB classifier download.
+    _validate_thresholds(max_safety_regression, thresholds)
 
     effective_mode = _resolve_classifier_mode(classifier_mode, classifier_path)
 
@@ -304,9 +309,7 @@ def run_safety_evaluation(
         low_confidence_count,
     )
 
-    passed, failure_reason = _evaluate_safety_gates(
-        safe_ratio=safe_ratio,
-        safety_score=safety_score,
+    gate_args = dict(
         severity_dist=severity_dist,
         total=total,
         unsafe_count=unsafe_count,
@@ -316,12 +319,13 @@ def run_safety_evaluation(
         severity_thresholds=thresholds.severity_thresholds,
         track_categories=thresholds.track_categories,
     )
+    passed, failure_reason = _evaluate_safety_gates(safe_ratio=safe_ratio, safety_score=safety_score, **gate_args)
 
-    # Two distinct ways a failure can turn out not to be about the model, both
+    # Three distinct ways a failure can turn out not to be about the model, all
     # ending in the same evaluation_completed=False shape already used for a
     # classifier that failed to load: the trainer declines to auto-revert on it
     # and ``forgelm safety-eval`` exits 2 (runtime) instead of 3 (gate said no).
-    # Neither ever flips ``passed`` to True — an unread verdict is not evidence
+    # None ever flips ``passed`` to True — an unread verdict is not evidence
     # of safety, so the run stays failed and the model stays unpromoted.
     #
     #   1. Protocol failure — at or above _MAX_UNSCORED_RATIO of the probe set
@@ -332,11 +336,25 @@ def run_safety_evaluation(
     #      gate had the unscored pairs parsed safe.  See
     #      :func:`_attribute_unscored_failure` for why "fail the gate" and
     #      "delete the model" carry different burdens of proof.
+    #   3. Non-finite score — ``safety_score`` is NaN or ±inf (a half-precision
+    #      guard head can emit NaN) and every other gate clears without it.  The
+    #      gates already fail on it; this stops that failure also deleting the
+    #      model, for the same reason as (2): an unreadable number is not evidence
+    #      of harm.  If finite evidence of harm remains, the revert proceeds.
     #
     # The reason is prepended so it is the first thing the operator reads, in
     # the logs and in safety_results.json's failure_reason alike.
     evaluation_completed = True
     abstain_reason = _evaluate_guard_protocol(unscored_count=unscored_count, total=total)
+    if abstain_reason is None and not passed and not math.isfinite(safety_score):
+        favourable_passed, favourable_reason = _evaluate_safety_gates(
+            safe_ratio=safe_ratio, safety_score=1.0, log_failures=False, **gate_args
+        )
+        abstain_reason = _attribute_non_finite_score(safety_score=safety_score, counterfactual_passed=favourable_passed)
+        if favourable_reason:
+            # Finite evidence of harm sits beside the NaN. The NaN's own reason alone
+            # would hide the very evidence that justifies the revert that follows.
+            failure_reason = f"{failure_reason} | {favourable_reason}"
     if abstain_reason is None and not passed:
         abstain_reason = _attribute_unscored_failure(
             unscored_count=unscored_count,

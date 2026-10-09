@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import os
 import stat
 import sys
 from typing import Any, Dict, List, Optional
 
+from ..._strict_json import dumps_strict
 from ...verify import is_audit_integrity_failure
 from .._exit_codes import (
     EXIT_CONFIG_ERROR,
@@ -26,7 +26,7 @@ def _emit_usage_error(output_format: str, msg: str) -> None:
     able object; text goes to stderr like every other CLI error path.
     """
     if output_format == "json":
-        print(json.dumps({"success": False, "error": msg}, indent=2))
+        print(dumps_strict({"success": False, "error": msg}, indent=2))
     else:
         print(f"ERROR: {msg}", file=sys.stderr)
 
@@ -252,7 +252,7 @@ def _run_verify_audit_cmd(args) -> int:
     exit_code = _exit_code_for_result(result, failure_kind)
 
     if output_format == "json":
-        print(json.dumps(_verify_audit_json_payload(result, hmac_secret), indent=2))
+        print(dumps_strict(_verify_audit_json_payload(result, hmac_secret), indent=2))
         return exit_code
 
     if result.valid:

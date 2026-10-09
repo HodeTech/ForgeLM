@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 
 import yaml
 from pydantic import ValidationError
 
+from .._strict_json import dumps_strict
 from ..config import ConfigError, load_config
 from ._exit_codes import EXIT_CONFIG_ERROR
 from ._logging import logger
@@ -41,7 +41,7 @@ def _load_config_or_exit(config_path: str, json_output: bool):
     except OSError as e:
         msg = f"Could not read config file {config_path}: {e}"
     if json_output:
-        print(json.dumps({"success": False, "error": msg}))
+        print(dumps_strict({"success": False, "error": msg}))
     else:
         logger.error("Configuration error: %s", msg)
     sys.exit(EXIT_CONFIG_ERROR)

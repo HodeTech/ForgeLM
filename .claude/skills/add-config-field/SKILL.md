@@ -33,9 +33,9 @@ Look at [forgelm/config.py](../../../forgelm/config.py). Choose:
 - `LoraConfigModel` — for LoRA/DoRA/PiSSA/rsLoRA parameters
 - `TrainingConfig` — for training hyperparameters, trainer types, algorithmic flags
 - `DataConfig` — for dataset paths, format, preprocessing
-- `EvaluationConfig` / `SafetyConfig` / `JudgeConfig` — for eval pipeline
-- `ComplianceConfig` — for EU AI Act artifacts
-- `WebhookConfig`, `TrackingConfig`, etc. — for integrations
+- `EvaluationConfig` / `SafetyConfig` / `JudgeConfig` / `BenchmarkConfig` — for the eval pipeline
+- `ComplianceMetadataConfig` / `RiskAssessmentConfig` / `DataGovernanceConfig` — for EU AI Act artifacts
+- `WebhookConfig`, `MonitoringConfig`, `AuthConfig`, `RetentionConfig` — for integrations and lifecycle
 - `ForgeConfig` (root) — only if genuinely cross-cutting
 
 If none fit, the field may belong to a **new** config class — see architecture.md §1.
@@ -48,15 +48,29 @@ class TrainingConfig(BaseModel):
     ...
     # existing fields
 
-    new_flag: Optional[bool] = None
-    """If set, enable the X behaviour. Default: inherit from model's default."""
+    new_flag: Optional[bool] = Field(
+        default=None,
+        description="If set, enable the X behaviour. Default: inherit from the model's own setting.",
+    )
 ```
 
 Rules:
-- Use `Optional[T] = None` for truly optional fields; `T = default_value` for always-set fields with safe defaults.
+- **Every field uses `Field(default=..., description=...)`.** A bare
+  `name: T = default` with a docstring underneath **fails**
+  `tools/check_field_descriptions.py --strict`, which is wired into CI: the
+  guard reads `description=` off the `FieldInfo`, and a Python docstring under
+  an attribute is not one. Pydantic carries `description` into the JSON schema
+  and the docs generators read it, so this is the only style that reaches a
+  user.
+- Use `Optional[T]` with `default=None` for truly optional fields; a concrete
+  `default=` for always-set fields with safe defaults.
 - Use `Literal["a", "b"]` for enums, not `str`.
+- Constrain the domain at the schema where one exists — `ge=` / `le=` /
+  `gt=` for bounded numbers, and `allow_inf_nan=False` for any float used as a
+  threshold, weight or ratio. A gate that compares against `NaN` fails **open**
+  (`x > nan` is `False`), so an unbounded float on a decision boundary is a
+  correctness bug, not a style preference.
 - Field order: existing fields first, new field at a logical group boundary.
-- One-line docstring directly below the field (Pydantic doesn't use these, but humans and docs do).
 
 ### 3. Validation
 
@@ -136,7 +150,7 @@ In [CHANGELOG.md](../../../CHANGELOG.md), under `[Unreleased]` / `### Added`:
 ```bash
 pytest tests/test_config.py -v
 ruff check forgelm/config.py
-forgelm --config config_template.yaml --dry-run
+python3 -m forgelm --config config_template.yaml --dry-run
 ```
 
 All three must pass.
