@@ -22,6 +22,9 @@ The current template lives at [`.github/pull_request_template.md`](../../.github
 ## Summary
 <one-sentence description>
 
+## Related issues
+Fixes #<issue>   (or Refs #<issue> for a partial fix; quote finding IDs such as CR-A05-012)
+
 ## Changes
 - bullet 1
 - bullet 2

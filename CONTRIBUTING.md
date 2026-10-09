@@ -10,6 +10,53 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
 - **Documentation** — fix typos, improve guides, add examples
 - **Notebooks** — add Colab notebooks for new use cases
 - **Config templates** — share training configs that worked well for you
+- **Planned work** — pick an open task from the [ForgeLM Project Plan](https://github.com/orgs/HodeTech/projects/5) (see below)
+
+## Finding Work: Issues and the Project Board
+
+Work is tracked in two places that play different roles:
+
+- **Issues are where the work happens.** Each issue is one unit of work: it describes the problem, links the code, and lists acceptance criteria. Discussion, claiming and pull-request links all happen on the issue.
+- **The [ForgeLM Project Plan](https://github.com/orgs/HodeTech/projects/5) is where the work is planned.** It shows every issue with its priority, release target and iteration, in several views: *Backlog* (table), *Board* (by status), *Current iteration*, and *Roadmap* (timeline). Use it to choose what to work on; you never need to edit it — maintainers keep it current, and a card moves automatically when its issue is closed.
+
+### How the backlog is organised
+
+Issues carry labels, and the project adds planning fields on top of them.
+
+| Label | Meaning |
+|---|---|
+| `severity: critical` · `high` · `medium` · `low` · `info` | How serious the defect is: a broken security or safety contract, a wrong behaviour or false claim users rely on, a limited defect, a minor inaccuracy, or a hardening suggestion |
+| `urgency: now` · `next-release` · `watch` | For dependency and ecosystem items, how soon they need action |
+| `wave: 0` … `wave: 4` | Roadmap wave: 0 is immediate (patch release), 1–2 are the next minor releases, 3 is medium-severity cleanup per module, 4 is low/info work done whenever the module is touched |
+| `area: <name>` | The code area, e.g. `area: cli`, `area: eval-gates`, `area: data-audit` |
+| `bug` · `documentation` · `i18n` · `dependencies` | The kind of change: code, English docs, the Turkish mirror, or a dependency/ecosystem update |
+| `backlog: known` | Already described in [`docs/roadmap/`](docs/roadmap/); the issue links the roadmap entry |
+| `security` | Security-relevant; read [Reporting Security Vulnerabilities](#reporting-security-vulnerabilities) before discussing details |
+| `needs-triage` | Reviewers disagreed on whether this is a defect; wait for a maintainer decision before working on it |
+| `source: review-2026-10` | Found by the October 2026 code and documentation review |
+
+In the project, the **Wave**, **Severity**, **Theme**, **Kind**, **Area**, **Size** (effort: XS–L) and **Iteration** fields let you filter and group the same issues. **Milestones** map waves to releases.
+
+Useful starting points:
+
+- [Open, unassigned wave 0–1 issues](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+no%3Aassignee+label%3A%22wave%3A+0%22%2C%22wave%3A+1%22) — the highest-priority work
+- [Documentation issues](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+label%3Adocumentation+no%3Aassignee) — often a good first contribution
+- The project's *Backlog* view, filtered by an **Area** you know or by **Size** `XS`/`S`
+
+### Working on an issue
+
+1. **Claim it first.** Comment on the issue that you would like to work on it, so a maintainer can assign it to you and nobody duplicates the work. Skip issues labelled `needs-triage`.
+2. **Re-check against `main`.** Issues from the review link code at the commit they were found on; the links stay valid, but line numbers may have moved. Confirm the problem still exists before fixing it.
+3. **Follow the acceptance criteria** in the issue. In particular, a code fix carries a regression test that reproduces the described failure, and a documentation fix updates the English page and its Turkish mirror (`-tr.md`, or the `tr/` tree for user manuals) in the same pull request.
+4. **Reference the issue in your pull request.** Use `Fixes #123` when the PR resolves the whole issue, and `Refs #123` when it resolves only part of it.
+
+**Grouped issues.** Some issues collect several related findings as a checklist, for example a module sweep or one document's corrections. You do not need to fix the whole list: claim the finding IDs you will handle in a comment, mention those IDs in your pull request, and use `Refs #…` so the issue stays open until every item is ticked.
+
+**Finding IDs.** Issues created from the review name their findings with stable IDs — `CR-…` for code, `DOC-…` for documentation (including the Turkish mirror), `TECH-…` for dependency and ecosystem currency. Quote the ID in commits and pull requests so the finding can be traced.
+
+## Reporting Security Vulnerabilities
+
+Please **do not open a public issue** for a security vulnerability, and do not post exploit details in comments. Report it privately through GitHub: on the repository's **Security** tab choose **Report a vulnerability**. [`SECURITY.md`](SECURITY.md) explains what to include, what counts as a vulnerability, and how disclosure works. Maintainers track confirmed vulnerabilities in private security advisories and publish them after a fixed release is available, so some planned security work is intentionally not visible in the public issue list.
 
 ## Quick Start for Code Contributors
 
@@ -115,7 +162,7 @@ keep this list and that one in sync if either changes.
 
 ### 5. Submit a PR
 
-Push your branch and open a Pull Request against `main`.
+Push your branch and open a Pull Request against `main`. Link the issue it addresses (`Fixes #123`, or `Refs #123` for part of a grouped issue) and quote any finding IDs — see [Working on an issue](#working-on-an-issue).
 
 ## Development Setup
 
@@ -241,6 +288,8 @@ style: apply ruff format
 ## First-Time Contributors
 
 Look for issues labeled [`good first issue`](https://github.com/HodeTech/ForgeLM/labels/good%20first%20issue). These are designed to be approachable for newcomers.
+
+Small, self-contained tasks also include single findings in a `wave: 3` or `wave: 4` grouped issue (claim one finding ID at a time) and [documentation issues](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+label%3Adocumentation+no%3Aassignee); in the [project](https://github.com/orgs/HodeTech/projects/5), filter by **Size** `XS` or `S`.
 
 ## Questions?
 

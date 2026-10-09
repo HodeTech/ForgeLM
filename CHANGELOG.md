@@ -64,6 +64,14 @@ All notable changes to ForgeLM are documented here.
 
 ### Added
 
+- **Private security reporting and a security policy.** Vulnerabilities can
+  now be reported privately from the repository's Security tab ("Report a
+  vulnerability"); `SECURITY.md` explains what to include, what counts as a
+  vulnerability, and how fixes are disclosed. `CONTRIBUTING.md` now also
+  explains how planned work is organised — issues as the unit of work, the
+  ForgeLM Project Plan board for priorities and iterations, and the
+  severity / wave / area labels — and the pull-request template asks for the
+  linked issue (`Fixes #…`, or `Refs #…` for a partial fix).
 - **New config field**: `evaluation.llm_judge.min_valid_fraction` (default
   `0.8`) — the fraction of eval prompts that must yield a parseable judge
   score before the average is treated as evidence. The average is computed
@@ -112,16 +120,6 @@ All notable changes to ForgeLM are documented here.
   produced no `eval_loss` at all, making it byte-identical to genuine model
   divergence. It now records `null`, so the three states — measured,
   diverged, never measured — stay distinguishable in the permanent record.
-
-- **`__api_version__` 1.1.0 → 1.2.0.** `SyntheticDataGenerator.__init__` and
-  `WebhookNotifier.__init__` were bare `def __init__(self, config):` and are
-  now annotated. Both are stable-tier callables, so this is visible to a
-  downstream `mypy --strict` consumer — `SyntheticDataGenerator(some_object)`
-  type-checked before and does not now. The runtime signature (names, order,
-  defaults, arity) is byte-identical, so nothing breaks at import or call
-  time. Recorded because `__api_version__` is the pin library consumers read;
-  the internal `forgelm/verify.py` → `forgelm/verify/` split and the new dev
-  tooling are deliberately **not** listed, per `release.md` rules 5 and 6.
 
 ## [0.11.0] — 2026-07-21
 
