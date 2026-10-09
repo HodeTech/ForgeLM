@@ -373,7 +373,8 @@ security advisory:
 2. Coordinate with reporter on embargo dates.
 3. Release as a patch (or minor if requires new feature).
 4. Add `### Security` section in CHANGELOG for that version.
-5. Post-release: file a GitHub Security Advisory referencing the CVE if assigned.
+5. Publish the draft advisory the report arrived as — together with the release, not after it, and not as a second
+   advisory — referencing the CVE if one is assigned.
 
 ## Version in code
 
