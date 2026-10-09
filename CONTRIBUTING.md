@@ -46,7 +46,7 @@ Useful starting points:
 ### Working on an issue
 
 1. **Claim it first.** Comment on the issue that you would like to work on it, so a maintainer can assign it to you and nobody duplicates the work. Skip issues labelled `needs-triage`.
-2. **Re-check against `main`.** Issues from the review link code at the commit they were found on; the links stay valid, but line numbers may have moved. Confirm the problem still exists before fixing it.
+2. **Re-check against `development`.** Issues from the review link code at the commit they were found on; the links stay valid, but line numbers may have moved. Confirm the problem still exists on `development` before fixing it.
 3. **Follow the acceptance criteria** in the issue. In particular, a code fix carries a regression test that reproduces the described failure, and a documentation fix updates the English page and its Turkish mirror (`-tr.md`, or the `tr/` tree for user manuals) in the same pull request.
 4. **Reference the issue in your pull request.** Use `Fixes #123` when the PR resolves the whole issue, and `Refs #123` when it resolves only part of it.
 
@@ -59,6 +59,8 @@ Useful starting points:
 Please **do not open a public issue** for a security vulnerability, and do not post exploit details in comments. Report it privately through GitHub: on the repository's **Security** tab choose **Report a vulnerability**. [`SECURITY.md`](SECURITY.md) explains what to include, what counts as a vulnerability, and how disclosure works. Maintainers track confirmed vulnerabilities in private security advisories and publish them after a fixed release is available, so some planned security work is intentionally not visible in the public issue list.
 
 ## Quick Start for Code Contributors
+
+**Branches.** `development` is the default and integration branch: every change lands there first, and it is where you branch from. `main` holds released code only — maintainers merge `development` into `main` through a release pull request and tag the release there. Open your pull request against `development`; CI runs the same checks on both branches.
 
 ### 1. Fork & Clone
 
@@ -86,7 +88,7 @@ python3 -m pip install -e ".[dev]"
 
 ```bash
 git fetch upstream
-git checkout -b feat/my-feature upstream/main
+git checkout -b feat/my-feature upstream/development
 ```
 
 Branch naming: `feat/`, `fix/`, `docs/`, `test/`, `chore/` + short description.
@@ -162,7 +164,7 @@ keep this list and that one in sync if either changes.
 
 ### 5. Submit a PR
 
-Push your branch and open a Pull Request against `main`. Link the issue it addresses (`Fixes #123`, or `Refs #123` for part of a grouped issue) and quote any finding IDs — see [Working on an issue](#working-on-an-issue).
+Push your branch to your fork and open a Pull Request against `development` (the default base). Link the issue it addresses (`Fixes #123`, or `Refs #123` for part of a grouped issue) and quote any finding IDs — see [Working on an issue](#working-on-an-issue).
 
 ## Development Setup
 

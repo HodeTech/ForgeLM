@@ -12,7 +12,7 @@ on:
       - "docs/usermanuals/**"
       - "tools/build_usermanuals.py"
   pull_request:
-    branches: [main]
+    branches: [main, development]
     paths:
       - "docs/usermanuals/**"
       - "tools/build_usermanuals.py"

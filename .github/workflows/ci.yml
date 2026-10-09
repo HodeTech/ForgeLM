@@ -1,10 +1,12 @@
 name: CI
 
 on:
+  # development is the integration branch (contributor PRs land there) and main the released code:
+  # both run the full CI, and both require its checks before a merge.
   push:
-    branches: [main]
+    branches: [main, development]
   pull_request:
-    branches: [main]
+    branches: [main, development]
 
 # Coverage gate (--cov-fail-under=40) is enforced via pyproject.toml's
 # [tool.pytest.ini_options].addopts; the test job intentionally does not

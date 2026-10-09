@@ -71,7 +71,9 @@ All notable changes to ForgeLM are documented here.
   explains how planned work is organised — issues as the unit of work, the
   ForgeLM Project Plan board for priorities and iterations, and the
   severity / wave / area labels — and the pull-request template asks for the
-  linked issue (`Fixes #…`, or `Refs #…` for a partial fix).
+  linked issue (`Fixes #…`, or `Refs #…` for a partial fix). Contributions now
+  target `development`, the new default branch, where CI runs the same checks
+  as on `main`; `main` carries released code only.
 - **New config field**: `evaluation.llm_judge.min_valid_fraction` (default
   `0.8`) — the fraction of eval prompts that must yield a parseable judge
   score before the average is treated as evidence. The average is computed
