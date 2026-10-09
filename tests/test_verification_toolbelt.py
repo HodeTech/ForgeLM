@@ -3582,7 +3582,12 @@ class TestCappedReadIsFailClosed:
         cap while satisfying a character budget."""
         from forgelm.verify._pipeline_evidence import _OversizeError, _read_capped_json
 
-        path = self._write(tmp_path, "multi.json", json.dumps({"pad": "é" * 2048}))
+        # ``ensure_ascii=False`` keeps the "é" as two UTF-8 bytes; the default
+        # escapes it to the six ASCII bytes ``é`` and the test would no
+        # longer be about multibyte text. 600 characters is under the 1024 cap
+        # counted as characters (~610 with the JSON framing) but 1200+ bytes,
+        # so only a byte-counting read refuses it.
+        path = self._write(tmp_path, "multi.json", json.dumps({"pad": "é" * 600}, ensure_ascii=False))
 
         class _Small:
             st_size = 12

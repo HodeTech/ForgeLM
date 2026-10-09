@@ -43,6 +43,9 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+# ``typing.assert_type`` is 3.11+; the project supports 3.10.
+from typing_extensions import assert_type
+
 import forgelm
 
 
@@ -110,8 +113,11 @@ def _probe_public_methods() -> None:
 
 
 def _probe_public_constants() -> None:
-    """Constants must keep a concrete type, not decay to ``Any``."""
-    _api_version: str = forgelm.__api_version__
-    del _api_version
-    _version: str = forgelm.__version__
-    del _version
+    """Constants must keep a concrete type, not decay to ``Any``.
+
+    ``assert_type`` rather than an annotated assignment: ``Any`` is assignable
+    to ``str``, so ``_v: str = forgelm.__version__`` stays green when the
+    constant decays, while ``assert_type`` fails on it.
+    """
+    assert_type(forgelm.__api_version__, str)
+    assert_type(forgelm.__version__, str)

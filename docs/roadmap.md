@@ -40,7 +40,7 @@ Originally planned as four sequential PyPI tags (`v0.5.0` / `v0.5.1` / `v0.5.2` 
 
 **Earlier:** `v0.4.5` — Quickstart Layer (2026-04-26); `v0.4.0` — Post-Training Completion (2026-04-26).
 
-**Current state:** `v0.11.0` is the latest released version (PyPI 2026-07-21). 21 phases (1, 2, 2.5, 3, 4, 5, 5.5, 6, 7, 8, 9, 10, 10.5, 11, 11.5, 12, 12.5, 12.6, 14, 15, 22) shipped on PyPI through `v0.7.0`; Phase 14.5 closed in `v0.10.0`; `v0.8.0`, `v0.9.0`, `v0.10.0` and `v0.11.0` are subsequent maintenance / correctness releases that did not open a new roadmap phase — see [releases.md](roadmap/releases.md) for their full scope.  [Phase 16 — Trust Surface Hardening](roadmap/phase-16-trust-surface-hardening.md) is in progress on the open `0.11.1rc1` cycle — S1 delivered, S2-S16 not.  Phase 13 ships separately as `v0.6.0-pro` (Pro tier versions independently of the OSS core) once adoption gates are met.
+**Current state:** `v0.11.0` is the latest released version (PyPI 2026-07-21). 21 phases (1, 2, 2.5, 3, 4, 5, 5.5, 6, 7, 8, 9, 10, 10.5, 11, 11.5, 12, 12.5, 12.6, 14, 15, 22) shipped on PyPI through `v0.7.0`; Phase 14.5 closed in `v0.10.0`; `v0.8.0`, `v0.9.0`, `v0.10.0` and `v0.11.0` are subsequent maintenance / correctness releases that did not open a new roadmap phase — see [releases.md](roadmap/releases.md) for their full scope.  [Phase 16 — Trust Surface Hardening](roadmap/phase-16-trust-surface-hardening.md) is in progress on the open `0.11.1rc1` cycle — S1, S2 and S3 delivered, S4-S16 not.  Phase 13 ships separately as `v0.6.0-pro` (Pro tier versions independently of the OSS core) once adoption gates are met.
 
 > **Phase 12.6 task / sub-task dual-axis note:** Phase 12.6 is itself a 38-task closure cycle (Tasks 1-38) tracked at [`roadmap/completed-phases.md`](roadmap/completed-phases.md); per-wave PR descriptions carry the closure-task delta.
 
@@ -118,7 +118,7 @@ docs/
     ├── completed-phases.md                     # Phase 1-12.6 + 15 + 14 archive (detailed) — Phase 10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 12.6 / 15 / 14 absorbed inline (shipped as v0.4.0 / v0.4.5 / v0.5.0 / v0.5.5 / v0.6.0 / v0.7.0; 15 precedes 14 in the file, matching shipping order)
     ├── phase-13-pro-cli.md                     # Planned — v0.6.0-pro (gated)
     ├── phase-14-5-pipeline-hardening.md        # 4 review-deferred items closed (one shipped in v0.8.0, the rest in v0.10.0); Task 5 (S3776) closed as NOT SCHEDULED (condition-gated)
-    ├── phase-16-trust-surface-hardening.md     # In progress — S1 delivered; 83 full-project-review units across 16 steps; tag derived at cut
+    ├── phase-16-trust-surface-hardening.md     # In progress — S1-S3 delivered; 83 full-project-review units across 16 steps; tag derived at cut
     ├── releases.md                             # v0.3.0 → v0.11.0 release notes
     └── risks-and-decisions.md                  # Risk matrix, opportunities, competitive positioning, decision log
 ```

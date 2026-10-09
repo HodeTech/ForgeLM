@@ -1,19 +1,22 @@
 # Phase 16: Trust Surface Hardening (full-project review remediation)
 
-> **Status:** **In progress — pre-work, S1 and S2 delivered; S3-S16 are not.**
+> **Status:** **In progress — pre-work, S1, S2 and S3 delivered; S4-S16 are not.**
 > This document is the execution plan approved on 2026-07-30 for the 83
 > remediation units produced by the 2026-07-29/30 full-project review.
 > Delivered so far: the pre-work standards reconciliation (P-1…P-5c);
 > **S1** — `forgelm/verify.py` split into `forgelm/verify/`, the guard-inventory
 > meta-test made bidirectional across three documents, and the public-surface
-> `mypy --strict` gate wired and green; and **S2** — the numeric domain modelled
+> `mypy --strict` gate wired and green; **S2** — the numeric domain modelled
 > in the schema, four gates that failed *open* on a non-finite value now failing
-> closed, and every artefact writer routed through a strict-JSON chokepoint.
-> **Ten of the eighty-three units are closed — `OPS-09`, `OPS-10`, `OPS-23`
-> in S1, and `C31-NUMERIC-CONFIG`, `C33-TRAIN-JSON-CONTRACT`, `CORE-03`,
-> `CORE-10`, `CORE-14`, `GAP-02`, `TRUST-15` in S2 — and seventy-three are
-> not.**  Counted the way §Coverage cross-check counts: a cluster is one unit,
-> so S2's seven canonical units absorb nine review findings.
+> closed, and every artefact writer routed through a strict-JSON chokepoint;
+> and **S3** — a per-item failure now reaching the verdict that reports it
+> (safety probes, judge scores and `cache-tasks` downloads).
+> **Thirteen of the eighty-three units are closed — `OPS-09`, `OPS-10`, `OPS-23`
+> in S1, `C31-NUMERIC-CONFIG`, `C33-TRAIN-JSON-CONTRACT`, `CORE-03`,
+> `CORE-10`, `CORE-14`, `GAP-02`, `TRUST-15` in S2, and `TRUST-03`, `CORE-04`,
+> `C33-CACHE-TASK-VERDICT` in S3 — and seventy are not.**  Counted the way
+> §Coverage cross-check counts: a cluster is one unit, so S2's seven canonical
+> units absorb nine review findings and S3's three absorb four.
 > (Plus the seven pre-work corrections P-1…P-5c, which §Pre-work excludes from
 > the unit count by design.)  Do not read "Phase 16 exists" as "Phase 16
 > is done" — the checkbox state below is the record.
@@ -121,7 +124,7 @@ record.
 | C-17 | Finding-ID re-key | **Rejected** — IDs are already canonical | — |
 | C-18 | Split `forgelm/trainer.py` before the behaviour steps | No — budget-raise per step | S1 |
 | C-19 | Coverage ratchet | Diff-coverage enforcing at S14 only; global floor = measured − 2. **Amended 2026-07-30** — the "advisory at S1" limb was withdrawn during S1: a non-failing CI step needs `continue-on-error`/`\|\| true`, which principle 6 outlaws | S14 |
-| C-20 | Does this phase cut a release | No — every PR files under `[Unreleased]` | — |
+| C-20 | Does this phase cut a release | No — a PR files under `[Unreleased]` only when it changes something a user or library consumer can observe | — |
 | GTM | AI Act moat framing after Regulation (EU) 2026/1744 | Retarget to 2 December 2027, framing preserved | S15 |
 
 ## Three structural facts that fix the ordering
@@ -353,7 +356,7 @@ committed, then the same with Sonnet, then the next step.
    form "stop returning a hardcoded literal" is tested by reading the
    expression out of `inspect.getsource`, not by asserting the returned value.
 
-3. [ ] **S3 — Evidence sufficiency: per-item errors must reach the aggregate verdict** (L)
+3. [x] **S3 — Evidence sufficiency: per-item errors must reach the aggregate verdict** (L)
    Units: `TRUST-03`, `CORE-04`, `C33-CACHE-TASK-VERDICT` (= `CLI-07` + `GAP-04`).
 
    Identical root cause in three places: **a helper converts a per-item failure
@@ -968,10 +971,13 @@ Plus, per step, its own acceptance criteria above, and:
 
 ## Delivery
 
-Per **C-20** no step cuts a release.  Every PR files under `[Unreleased]` in
-[`CHANGELOG.md`](../../CHANGELOG.md); a single `chore: release` commit follows
-the phase once all sixteen steps and their review rounds are complete, on the
-open `0.11.1rc1` cycle.
+Per **C-20** no step cuts a release.  A PR files under `[Unreleased]` in
+[`CHANGELOG.md`](../../CHANGELOG.md) only when it changes something a user or a
+library consumer can observe; internal-only work (a behaviour-neutral refactor,
+tooling, CI pins) files nothing — the narrowing is recorded in the 2026-07-30
+addendum in [risks-and-decisions.md](risks-and-decisions.md).  A single
+`chore: release` commit follows the phase once all sixteen steps and their
+review rounds are complete, on the open `0.11.1rc1` cycle.
 
 **The tag is derived at that commit, not before.**  Run the `cut-release`
 checklist against [`../standards/release.md`](../standards/release.md#versioning)'s

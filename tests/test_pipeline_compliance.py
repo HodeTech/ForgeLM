@@ -318,6 +318,30 @@ class TestManifestContentHash:
         manifest = generate_pipeline_manifest(_three_stage_state(), _root_with_compliance())
         assert _verify_manifest_payload(manifest) == []
 
+    def test_non_finite_stage_metric_verifies_in_memory_and_after_the_write(self, tmp_path):
+        """The stamped hash must cover the bytes that reach disk.
+
+        A diverged stage carries ``eval_loss: nan``. The writer emits it as the
+        string ``"nan"`` (strict JSON has no ``NaN`` literal), so a digest taken
+        over the raw float is one no reader can reproduce and the untouched
+        manifest fails its own verifier as tampered.
+        """
+        from forgelm.compliance import export_pipeline_manifest
+
+        def _reject(token: str) -> None:
+            raise AssertionError(f"non-finite JSON token {token!r} reached the manifest")
+
+        state = _three_stage_state()
+        state.stages[1].metrics["eval_loss"] = float("nan")
+        manifest = generate_pipeline_manifest(state, _root_with_compliance())
+        assert _verify_manifest_payload(manifest) == []
+
+        path = export_pipeline_manifest(manifest, str(tmp_path))
+        with open(path, encoding="utf-8") as fh:
+            on_disk = json.load(fh, parse_constant=_reject)
+        assert on_disk["stages"][1]["metrics"]["eval_loss"] == "nan", "premise: the non-finite value was written"
+        assert _verify_manifest_payload(on_disk) == []
+
     def test_tampered_stage_metric_fails_hash_check(self):
         """Editing a stage metric AFTER generation (post-hash) must be
         caught by the content-hash recompute even though the chain links

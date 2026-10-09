@@ -1908,7 +1908,7 @@ def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
     so non-significant whitespace + key ordering does not affect the
     digest.
 
-    The payload is normalised through ``json.loads(json.dumps(...,
+    The payload is normalised through ``json.loads(dumps_strict(...,
     default=_manifest_json_default))`` *before* the canonical dump so the
     writer (which hashes the in-memory dict) and the verifier (which
     hashes the dict read back from disk) operate on byte-identical
@@ -1929,10 +1929,10 @@ def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
     # Normalise to the post-default shape the verifier will see on disk
     # (this also deep-copies, so the metadata strip below does not mutate
     # the caller's dict).  Sets/frozensets serialise to a sorted list so
-    # the digest is deterministic across PYTHONHASHSEED — ``str(set)``
-    # emits members in hash-randomised order, producing a different hash
-    # in a second process and a false-tampering verdict (F-P4-OPUS-16).
-    payload = json.loads(json.dumps(artifact, default=_manifest_json_default))
+    # the digest is deterministic across PYTHONHASHSEED (F-P4-OPUS-16).
+    # ``dumps_strict`` is the writers' serializer: it turns NaN/Inf into the
+    # strings that reach disk, so hashing the raw float false-flags tampering.
+    payload = json.loads(dumps_strict(artifact, default=_manifest_json_default))
     metadata = payload.get("metadata")
     if isinstance(metadata, dict):
         metadata.pop("manifest_hash", None)

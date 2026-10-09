@@ -108,7 +108,11 @@ All notable changes to ForgeLM are documented here.
   `"nan"` / `"inf"` / `"-inf"`, which preserves the value for a human reader
   while being unmistakable for a number to a consumer computing on the field.
   **Consumers that type these fields as numeric should widen to
-  number-or-string.**
+  number-or-string.** The `metadata.manifest_hash` stamped on the Annex IV and
+  pipeline manifests is computed over that same written form, so a fresh
+  artefact holding a non-finite value verifies; an Annex IV artefact written by
+  an earlier release with a bare `NaN` in it was hashed over the raw token and
+  now reports a hash mismatch (`verify-annex-iv` exit `6`).
 - **A `success: false` result envelope now carries `error`.** The gate's own
   reason was computed and then dropped, so automation branching on the JSON
   saw a failure with no cause — and every gate exits `3`, so the exit code

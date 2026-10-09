@@ -40,7 +40,7 @@ Başlangıçta dört ardışık PyPI tag'i (`v0.5.0` / `v0.5.1` / `v0.5.2` / `v0
 
 **Daha öncesi:** `v0.4.5` — Quickstart Katmanı (2026-04-26); `v0.4.0` — Post-Training Tamamlama (2026-04-26).
 
-**Güncel durum:** `v0.11.0`, PyPI'daki en güncel sürümdür (2026-07-21). 21 faz (1, 2, 2.5, 3, 4, 5, 5.5, 6, 7, 8, 9, 10, 10.5, 11, 11.5, 12, 12.5, 12.6, 14, 15, 22) `v0.7.0` üzerinden yayınlandı; Faz 14.5 `v0.10.0`'da kapandı; `v0.8.0`, `v0.9.0`, `v0.10.0` ve `v0.11.0` yeni bir roadmap fazı açmayan sonraki bakım / doğruluk sürümleridir — kapsamlarının tamamı için [releases.md](roadmap/releases.md)'e bakın.  [Faz 16 — Güven Yüzeyi Sertleştirme](roadmap/phase-16-trust-surface-hardening.md) açık `0.11.1rc1` döngüsünde sürüyor — S1 teslim edildi, S2-S16 edilmedi.  Faz 13, adoption gate'leri karşılandığında ayrıca `v0.6.0-pro` olarak yayınlanır (Pro katmanı sürümleri OSS çekirdeğinden bağımsız ilerler).
+**Güncel durum:** `v0.11.0`, PyPI'daki en güncel sürümdür (2026-07-21). 21 faz (1, 2, 2.5, 3, 4, 5, 5.5, 6, 7, 8, 9, 10, 10.5, 11, 11.5, 12, 12.5, 12.6, 14, 15, 22) `v0.7.0` üzerinden yayınlandı; Faz 14.5 `v0.10.0`'da kapandı; `v0.8.0`, `v0.9.0`, `v0.10.0` ve `v0.11.0` yeni bir roadmap fazı açmayan sonraki bakım / doğruluk sürümleridir — kapsamlarının tamamı için [releases.md](roadmap/releases.md)'e bakın.  [Faz 16 — Güven Yüzeyi Sertleştirme](roadmap/phase-16-trust-surface-hardening.md) açık `0.11.1rc1` döngüsünde sürüyor — S1, S2 ve S3 teslim edildi, S4-S16 edilmedi.  Faz 13, adoption gate'leri karşılandığında ayrıca `v0.6.0-pro` olarak yayınlanır (Pro katmanı sürümleri OSS çekirdeğinden bağımsız ilerler).
 
 > **Faz 12.6 görev / alt-görev iki eksenli not:** Faz 12.6 kendi içinde 38 görevlik bir kapanış döngüsüdür (Görev 1-38) ve [`roadmap/completed-phases.md`](roadmap/completed-phases.md) dosyasında izlenir; her wave'in PR açıklaması o wave'in kapsadığı görev delta'sını taşır.
 
@@ -118,7 +118,7 @@ docs/
     ├── completed-phases.md                     # Faz 1-12.6 + 15 + 14 arşivi (detaylı, İngilizce) — Faz 10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 12.6 / 15 / 14 inline gömüldü (sırasıyla v0.4.0 / v0.4.5 / v0.5.0 / v0.5.5 / v0.6.0 / v0.7.0; dosyada 15, 14'ten önce gelir — yayınlanma sırasıyla eşleşir)
     ├── phase-13-pro-cli.md                     # Planlandı — v0.6.0-pro (gated)
     ├── phase-14-5-pipeline-hardening.md        # 4 review-deferred öğe kapandı (biri v0.8.0'da, kalanı v0.10.0'da sevk edildi); Task 5 (S3776) NOT SCHEDULED olarak kapandı (koşula bağlı)
-    ├── phase-16-trust-surface-hardening.md     # Sürüyor — S1 sevk edildi; 16 adımda 83 tam-proje-review birimi; etiket cut'ta türetilir
+    ├── phase-16-trust-surface-hardening.md     # Sürüyor — S1-S3 sevk edildi; 16 adımda 83 tam-proje-review birimi; etiket cut'ta türetilir
     ├── releases.md                             # v0.3.0 → v0.11.0 sürüm notları
     └── risks-and-decisions.md                  # Risk matrisi, fırsatlar, rekabet analizi, karar günlüğü
 ```

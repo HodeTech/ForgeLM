@@ -156,6 +156,46 @@ class TestPublishedArtefactsAreStrict:
             )
         assert result.valid, f"HMAC verification failed on a self-produced log: {result.reason}"
 
+    def test_annex_iv_manifest_hash_covers_the_bytes_that_reach_disk(self, tmp_path):
+        """A diverged run must not make its own Annex IV artefact fail verification.
+
+        The writer turns ``nan`` into the string ``"nan"``; the stamped
+        ``manifest_hash`` was computed over the raw float, which canonicalises
+        as the bare token ``NaN``. The verifier re-hashes what is on disk, so an
+        untouched artefact reported "modified after generation" — exit 6, the
+        code operators alarm on — for exactly the runs an auditor most needs to
+        read.
+        """
+        from forgelm.compliance import export_compliance_artifacts
+        from forgelm.verify import verify_annex_iv_artifact
+
+        manifest = {
+            "forgelm_version": "0",
+            "generated_at": "now",
+            "config_hash": "sha256:abc",
+            "model_lineage": {"base_model": "m", "adapter_method": "LoRA r=8"},
+            "training_parameters": {"trainer_type": "sft", "epochs": 1},
+            "data_provenance": {"primary_dataset": "ds"},
+            "evaluation_results": {"metrics": {"eval_loss": float("nan")}},
+            "annex_iv": {
+                "provider_name": "Acme",
+                "system_name": "Bot",
+                "intended_purpose": "QA",
+                "system_version": "1.0",
+                "risk_classification": "minimal-risk",
+            },
+        }
+        out = str(tmp_path / "compliance")
+        export_compliance_artifacts(manifest, out)
+
+        annex_path = os.path.join(out, "annex_iv_metadata.json")
+        with open(annex_path, encoding="utf-8") as fh:
+            on_disk = strict_loads(fh.read())
+        assert on_disk["performance_metrics"]["eval_loss"] == "nan", "premise: the non-finite value was written"
+
+        result = verify_annex_iv_artifact(annex_path)
+        assert result.valid, f"untouched artefact with a non-finite metric failed its own verifier: {result.reason}"
+
     def test_benchmark_results_json_is_strict(self):
         from forgelm.benchmark import _save_benchmark_json
 
@@ -264,18 +304,24 @@ class TestRevertedFlagIsDerivedNotAssumed:
             trainer.audit = MagicMock()
         return trainer
 
-    def test_detection_only_failure_does_not_claim_a_revert(self):
+    def test_detection_only_failure_does_not_claim_a_revert(self, tmp_path):
+        final = tmp_path / "model"
+        final.mkdir()
         trainer = self._trainer(auto_revert=False)
-        assert trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.0}) is False
-        assert getattr(trainer, "_reverted", False) is False, "nothing was deleted, so nothing may claim it was"
+        assert trainer.execute_evaluation_checks(str(final), {"eval_loss": 1.0}) is False
+        # Direct attribute access, not ``getattr(..., default)``: the gate sets
+        # the flag on every invocation, and an absent attribute must fail loudly.
+        assert trainer._loss_gate_reverted is False, "nothing was deleted, so nothing may claim it was"
+        assert final.exists()
 
-    def test_a_real_revert_sets_the_flag(self):
-        from unittest.mock import patch
-
+    def test_a_real_revert_sets_the_flag(self, tmp_path):
+        """Runs the real ``_revert_model``: the flag is the trainer's, not the test's."""
+        final = tmp_path / "model"
+        final.mkdir()
         trainer = self._trainer(auto_revert=True)
-        with patch.object(trainer, "_revert_model", wraps=lambda *a, **k: setattr(trainer, "_reverted", True)):
-            trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.0})
-        assert getattr(trainer, "_reverted", False) is True
+        assert trainer.execute_evaluation_checks(str(final), {"eval_loss": 1.0}) is False
+        assert trainer._loss_gate_reverted is True
+        assert not final.exists(), "the flag claims a deletion that did not happen"
 
     def test_the_failure_reason_survives_a_non_reverting_failure(self):
         """Without this the envelope falls back to "no reason recorded"."""
