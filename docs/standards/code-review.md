@@ -8,50 +8,17 @@
 A PR merges only after:
 
 1. **Green CI** — all required checks pass.
-2. **One approval** — from the maintainer or an authorized reviewer.
+2. **A maintainer's review** — a maintainer approves the PR, or merges their own once the checks and conversations
+   are clear. Branch protection does not enforce an approval count while the project has a single maintainer.
 3. **Self-checklist complete** — every box in the PR template ticked honestly.
-4. **No open review comments** marked as "changes requested."
+4. **Every review conversation resolved** — branch protection enforces this on `development` and `main`, including
+   the comments of the automated reviewers.
 
 No exceptions for "trivial" changes. Even typo fixes go through CI.
 
 ## PR template
 
-The current template lives at [`.github/pull_request_template.md`](../../.github/pull_request_template.md). Every PR auto-fills it. Structure:
-
-```markdown
-## Summary
-<one-sentence description>
-
-## Related issues
-Fixes #<issue>   (or Refs #<issue> for a partial fix; quote finding IDs such as CR-A05-012)
-
-## Changes
-- bullet 1
-- bullet 2
-
-## Type
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Documentation
-- [ ] Refactoring
-- [ ] Test
-- [ ] CI/CD
-
-## Testing
-- [ ] `pytest tests/` passes
-- [ ] `ruff check .` passes
-- [ ] `ruff format --check .` passes
-- [ ] New tests added for new code
-- [ ] `python3 -m forgelm --config config_template.yaml --dry-run` works
-
-## Checklist
-- [ ] Code follows `docs/standards/coding.md`
-- [ ] Documentation updated (if behaviour-visible)
-- [ ] `-tr.md` mirrors updated (if user-facing docs changed)
-- [ ] No new heavy deps (or added as optional extra)
-- [ ] `config_template.yaml` updated if a new config field was added
-- [ ] CHANGELOG entry added under `[Unreleased]`
-```
+The current template lives at [`.github/pull_request_template.md`](../../.github/pull_request_template.md). Every PR auto-fills it with six sections — **Summary**, **Related issues** (`Fixes #…` / `Refs #…` plus the finding IDs addressed), **Changes**, **Type**, **Testing** and **Checklist**. Read the template itself for the exact boxes; they are deliberately not copied here, because a copy drifts.
 
 **Rule:** every box must be ticked or explicitly crossed out (`~~[x]~~`) with a reason in the PR description. "Skipped because..." is acceptable. "Forgot" is not.
 

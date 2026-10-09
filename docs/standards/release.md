@@ -138,8 +138,8 @@ Done manually by the maintainer (or a bot when automated):
 
 ### Before the release
 
-1. [ ] All PRs targeted for this release are merged to `main`.
-2. [ ] `main` CI is green, including nightly runs this week.
+1. [ ] All PRs targeted for this release are merged to `development`.
+2. [ ] CI is green on `development`, including this week's nightly runs (the nightly builds the default branch).
 3. [ ] Move all `[Unreleased]` items into a new version section in `CHANGELOG.md` with today's date.
 4. [ ] Bump `version` in `pyproject.toml` (e.g., `0.3.1rc1` → `0.4.0`).
 5. [ ] If breaking changes: update README's "compatibility" section.
@@ -148,9 +148,10 @@ Done manually by the maintainer (or a bot when automated):
    - Add a `## vX.Y.Z — "Title" (YYYY-MM-DD)` section to [`docs/roadmap/releases.md`](../roadmap/releases.md). It needs a body (a `**Status:**` line at minimum); a bare heading is not a record and a `(Planned)` section never counts as one.
    - Refresh the `**Released:**` headline in [`docs/roadmap.md`](../roadmap.md) **and** the `**Yayınlandı:**` headline in its Turkish mirror [`docs/roadmap-tr.md`](../roadmap-tr.md).
    - Verify with `python3 tools/check_release_record_sync.py --strict`.
-8. [ ] Commit: `chore: release v0.4.0` — single commit, no squash needed.
-9. [ ] Tag: `git tag -s v0.4.0 -m "v0.4.0 — Post-Training Completion"` (GPG-signed).
-10. [ ] `git push origin main v0.4.0`.
+8. [ ] Commit on `development`: `chore: release v0.4.0` — single commit, no squash needed.
+9. [ ] Open the release pull request `development` → `main` and merge it with a merge commit once its required checks pass (`main` does not require a linear history, so the release keeps the commits `development` already has).
+10. [ ] Tag the merge commit on `main` (GPG-signed) and push only the tag: `git checkout main && git pull --ff-only && git tag -s v0.4.0 -m "v0.4.0 — Post-Training Completion" && git push origin v0.4.0`. Only repository admins can create `v*` tags (the *Release tags (v\*)* ruleset), and `publish.yml`'s publish job waits for a maintainer to approve the `pypi` environment deployment.
+11. [ ] Bring `development` up to `main` (see [Branching](#branching)).
 
 **Why step 7 sits before the tag, and must stay there.** It used to be a
 post-release chore, and it was skipped for two consecutive releases (v0.8.0 and
@@ -299,6 +300,10 @@ Current target:
 
 ## v0.5.5 release sequence (Phase 12.6 closure cycle)
 
+> **Historical record.** This is how v0.5.5 was cut, when release commits still landed on `main` directly and the
+> nightly ran there. New releases follow the [Release checklist](#release-checklist) above: a release pull request
+> `development` → `main`, then the tag.
+
 The closure-cycle bundle is the largest single release in ForgeLM history (38 fazlar / ~52 PRs across 5 integration waves). The release commit follows the same `cut-release` skill flow used for every minor, but the `[0.5.5]` CHANGELOG section is exceptionally long and the cross-OS matrix is mandatory before publish:
 
 1. **`pyproject.toml`** — bump `version = "0.5.1rc1"` → `"0.5.5"` (single source of truth).
@@ -333,11 +338,10 @@ When a critical bug is found post-release:
 
 1. [ ] Create a fix branch from the affected tag: `git checkout -b hotfix/0.4.1 v0.4.0`.
 2. [ ] Fix + test + update CHANGELOG (add a `[0.4.1]` section).
-3. [ ] Merge to `main` first.
-4. [ ] Cherry-pick or merge into the hotfix branch.
+3. [ ] Open a pull request from the hotfix branch to `main` and merge it once its required checks pass.
+4. [ ] Tag the merge commit on `main` as `v0.4.1` and push the tag; publishing then waits for the `pypi` environment approval, as for any release.
 5. [ ] Bring `development` up to `main` so the fix is not lost on the next release.
-6. [ ] Tag `v0.4.1`, push. Automation handles the rest.
-7. [ ] Announce on Discord + a pinned GitHub issue if security-related.
+6. [ ] Announce. If the fix closes a vulnerability, publish its security advisory with the release (see [Security releases](#security-releases)).
 
 ## What constitutes "breaking"
 
@@ -366,13 +370,15 @@ When in doubt, treat as breaking. Users bumping minors without reading notes is 
 
 ## Security releases
 
-If a security issue is reported (see `SECURITY.md` if present):
+If a security issue is reported — privately, as [`SECURITY.md`](../../SECURITY.md) asks, so it arrives as a draft
+security advisory:
 
 1. Do **not** discuss publicly until fixed.
 2. Coordinate with reporter on embargo dates.
 3. Release as a patch (or minor if requires new feature).
 4. Add `### Security` section in CHANGELOG for that version.
-5. Post-release: file a GitHub Security Advisory referencing the CVE if assigned.
+5. Publish the draft advisory the report arrived as — together with the release, not after it, and not as a second
+   advisory — referencing the CVE if one is assigned.
 
 ## Version in code
 

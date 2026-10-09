@@ -46,7 +46,8 @@ Each skill's `SKILL.md` has the full checklist. Follow it; don't skip steps to s
 
 ```text
 ForgeLM/
-├── forgelm/                 # Source code: 27 single-file modules + 5 code sub-packages
+├── forgelm/                 # Source code: 27 single-file modules (not counting
+│                            # __init__ / __main__) + 5 code sub-packages
 │   ├── cli/                 # CLI package (Phase 15 split): _parser, _dispatch,
 │   │                        # _exit_codes, subcommands/{ingest, audit, chat,
 │   │                        # export, deploy, quickstart, doctor, cache,
@@ -79,7 +80,8 @@ ForgeLM/
 │   └── ...                  # benchmark, judge, merging, synthetic,
 │                            # quickstart, model_card, fit_check, deploy, chat,
 │                            # export, inference, results, utils, __main__,
-│                            # _pypdf_normalise, _script_sanity, _strip_pattern
+│                            # _pypdf_normalise, _script_sanity, _strict_json,
+│                            # _strip_pattern
 ├── tests/                   # 128 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
 ├── tools/                   # CI guards: check_anchor_resolution,
 │                            # check_bilingual_parity, check_cli_help_consistency,
@@ -341,6 +343,27 @@ Default workflow for a non-trivial change:
    in-repo `blob/main/<path>` URL is checked by stripping the prefix, so
    converting a link to absolute form cannot trade a PyPI 404 for a
    universal one.
+
+## Branches, issues and the project board
+
+Work on ForgeLM is planned and tracked on GitHub, not in local notes:
+
+- **Branch from `development`, target `development`.** It is the default and
+  integration branch; `main` holds released code and changes only through a
+  release pull request (see [release.md](docs/standards/release.md#branching)).
+- **An issue is the unit of work.** Review findings, roadmap steps and
+  deferred items all live as issues on the
+  [ForgeLM Project Plan](https://github.com/orgs/HodeTech/projects/5). Find the
+  issue before you start, reference it from the pull request (`Fixes #N`, or
+  `Refs #N` when the change resolves only part of a grouped issue), and quote
+  finding IDs (`CR-…`, `DOC-…`, `TECH-…`, `F-W…`) in commit bodies.
+- **Work you find but do not do becomes an issue.** Do not leave a `TODO`, a
+  roadmap-only line or a note in working memory: open an issue (English, with
+  acceptance criteria) or tell the user so it can be filed. The exception is a
+  security vulnerability — never a public issue; it goes to a private advisory
+  as [SECURITY.md](SECURITY.md) describes.
+- **Name what you resolved.** For a grouped issue, list in the pull request the
+  finding IDs your change resolves, so each can be ticked.
 
 ## Etiquette when communicating with the user
 

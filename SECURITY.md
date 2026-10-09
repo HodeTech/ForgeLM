@@ -34,11 +34,11 @@ A vulnerability in a third-party dependency should be reported to that project. 
 
 ## Supported Versions
 
-Security fixes are made on `main` and shipped in the next release. Upgrade to the latest release to receive them; older releases are not patched separately.
+Only the latest release receives security fixes. A fix is developed privately (see below), merged into `development` and shipped in the next release, which is cut from `main`. Older releases are not patched separately, so upgrade to receive the fix.
 
 ## What Happens Next
 
-1. A maintainer reviews the report in the private advisory and may ask you questions there.
+1. A maintainer acknowledges the report within 72 hours, reviews it in the private advisory and may ask you questions there.
 2. Confirmed vulnerabilities are fixed privately, using the advisory's temporary private fork when needed.
 3. The advisory is published together with the release that contains the fix, crediting you unless you prefer to stay anonymous.
 

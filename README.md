@@ -50,6 +50,7 @@ Every key is a validated Pydantic field — a typo or an unenforceable threshold
 
 ```bash
 pip install forgelm
+pip install "forgelm[qlora]"   # Linux + CUDA: the bundled templates load the base model in 4-bit
 
 # Zero-to-trained-model on a bundled template (5 available: forgelm quickstart --list).
 # This generates the config AND trains it; add --dry-run to stop at the config.
@@ -174,7 +175,7 @@ pip install "forgelm[qlora]"            # 4-bit quantization (Linux)
 pip install "forgelm[ingestion]"        # PDF / DOCX / EPUB / Markdown
 
 # From source, for contributors
-git clone https://github.com/HodeTech/ForgeLM.git && cd ForgeLM && pip install -e .
+git clone https://github.com/HodeTech/ForgeLM.git && cd ForgeLM && pip install -e ".[dev]"
 ```
 
 **Prerequisites:** Python 3.10+, `torch>=2.4.0` (required by `transformers>=5.3.0`). Intel Macs (x86_64) are not supported — PyPI has no `torch>=2.4` wheel for that platform. Heavy backends ship as optional extras; the [installation guide](https://github.com/HodeTech/ForgeLM/blob/main/docs/usermanuals/en/getting-started/installation.md) lists each one with its platform constraints.[^1]
@@ -207,6 +208,6 @@ The first two run on a free Colab T4. The safety notebook needs a gated Llama-Gu
 
 ## Contributing & license
 
-Start with [CONTRIBUTING.md](https://github.com/HodeTech/ForgeLM/blob/main/CONTRIBUTING.md) and the engineering standards in [docs/standards/](https://github.com/HodeTech/ForgeLM/tree/main/docs/standards). Licensed under [Apache 2.0](https://github.com/HodeTech/ForgeLM/blob/main/LICENSE).
+Work is tracked as issues on the [ForgeLM Project Plan](https://github.com/orgs/HodeTech/projects/5), and pull requests target the `development` branch. Start with [CONTRIBUTING.md](https://github.com/HodeTech/ForgeLM/blob/main/CONTRIBUTING.md) and the engineering standards in [docs/standards/](https://github.com/HodeTech/ForgeLM/tree/main/docs/standards). Report security vulnerabilities privately, as [SECURITY.md](https://github.com/HodeTech/ForgeLM/blob/main/SECURITY.md) describes — never in a public issue. Licensed under [Apache 2.0](https://github.com/HodeTech/ForgeLM/blob/main/LICENSE).
 
 [^1]: Extras whose upstream wheels do not exist for a platform are marked, so the install succeeds and the backend is simply absent rather than taking the whole install down with a failed source build: `qlora` and `unsloth` are `sys_platform == 'linux'`; `export` (`llama-cpp-python`) and `distributed` (DeepSpeed) are `sys_platform != 'win32'`. Reaching a backend that is absent raises an `ImportError` naming the extra to install. All other extras are cross-platform.

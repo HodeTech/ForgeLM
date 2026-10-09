@@ -42,7 +42,7 @@ forgelm --config job.yaml
 
 ```
 ForgeLM/
-├── forgelm/                # Core Python package (27 single-file modules + 5 sub-packages)
+├── forgelm/                # Core Python package (27 single-file modules besides __init__/__main__, + 5 sub-packages)
 │   ├── __init__.py         # Lazy imports for fast CLI startup
 │   ├── cli/                # CLI sub-package (Phase 15 split)
 │   │   ├── _parser.py          # 19 subcommands + global flags
