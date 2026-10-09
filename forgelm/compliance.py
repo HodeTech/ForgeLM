@@ -1894,7 +1894,7 @@ def _manifest_json_default(o: Any) -> Any:
     return str(o)
 
 
-def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
+def compute_annex_iv_manifest_hash(artifact: Dict[str, Any], *, legacy_non_finite: bool = False) -> str:
     """Canonical SHA-256 over the artifact MINUS its metadata block.
 
     Both the writer (:func:`build_annex_iv_artifact`) and the verifier
@@ -1923,6 +1923,10 @@ def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
     (F-P4-OPUS-16).  The config-driven path only ever feeds JSON-native
     types, so this is a no-op there; it closes the gap for the
     documented public library entry ``build_annex_iv_artifact``.
+
+    ``legacy_non_finite=True`` reproduces the encoding releases before the
+    strict-JSON change stamped: a NaN/Inf hashed as the bare token, not the
+    string the writer now emits. Only :func:`match_annex_iv_manifest_hash` uses it.
     """
     import hashlib as _hashlib
 
@@ -1932,7 +1936,7 @@ def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
     # the digest is deterministic across PYTHONHASHSEED (F-P4-OPUS-16).
     # ``dumps_strict`` is the writers' serializer: it turns NaN/Inf into the
     # strings that reach disk, so hashing the raw float false-flags tampering.
-    payload = json.loads(dumps_strict(artifact, default=_manifest_json_default))
+    payload = json.loads((json.dumps if legacy_non_finite else dumps_strict)(artifact, default=_manifest_json_default))
     metadata = payload.get("metadata")
     if isinstance(metadata, dict):
         metadata.pop("manifest_hash", None)
@@ -1944,6 +1948,25 @@ def compute_annex_iv_manifest_hash(artifact: Dict[str, Any]) -> str:
             payload.pop("metadata", None)
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def match_annex_iv_manifest_hash(artifact: Dict[str, Any], expected: str) -> Tuple[bool, str, bool]:
+    """``(matches, digest to report, matched_legacy_encoding)`` for *expected* against *artifact*.
+
+    An artefact written before the strict-JSON change and holding a non-finite value
+    was stamped over the bare ``NaN`` token and sits on disk with that token; the
+    current encoding hashes the string the writer now emits, so it can never
+    reproduce that stamp. Reporting it as modified would raise exit 6 — the code
+    operators alarm on — for an untouched file. The legacy digest binds the same
+    content, so accepting it weakens nothing; a genuine edit matches neither.
+    """
+    current = compute_annex_iv_manifest_hash(artifact)
+    if current == expected:
+        return True, current, False
+    legacy = compute_annex_iv_manifest_hash(artifact, legacy_non_finite=True)
+    if legacy == expected:
+        return True, legacy, True
+    return False, current, False
 
 
 # ---------------------------------------------------------------------------
@@ -2082,8 +2105,8 @@ def _verify_manifest_payload(manifest: Dict[str, Any]) -> List[str]:
     metadata = manifest.get("metadata") if isinstance(manifest.get("metadata"), dict) else None
     expected_hash = metadata.get("manifest_hash") if metadata else None
     if expected_hash:
-        actual_hash = compute_annex_iv_manifest_hash(manifest)
-        if actual_hash != expected_hash:
+        hash_matches, actual_hash, _legacy = match_annex_iv_manifest_hash(manifest, expected_hash)
+        if not hash_matches:
             violations.append(
                 "manifest hash mismatch — pipeline manifest may have been modified after "
                 f"generation (expected {expected_hash[:16]}…, recomputed {actual_hash[:16]}…)."
@@ -2829,7 +2852,7 @@ def verify_audit_log(
 
     Mirrors :meth:`AuditLogger.log_event` exactly:
 
-    - Each line is the JSON encoding produced by ``json.dumps(entry, default=str)``
+    - Each line is the JSON encoding produced by ``dumps_strict(entry, default=str)``
       (no key sorting, no separator overrides).
     - The first entry's ``prev_hash`` must be ``"genesis"``.
     - Every subsequent entry's ``prev_hash`` must equal

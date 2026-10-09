@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import sys
 
+from .._strict_json import dumps_strict
 from ..config import ConfigError
 from ._exit_codes import (
     EXIT_AWAITING_APPROVAL,
@@ -32,7 +32,7 @@ def _report_training_error(
     else:
         logger.error(log_msg)
     if json_output:
-        print(json.dumps(payload))
+        print(dumps_strict(payload))
     sys.exit(exit_code)
 
 

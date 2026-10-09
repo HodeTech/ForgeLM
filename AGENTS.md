@@ -59,7 +59,7 @@ ForgeLM/
 │   │                        # _croissant, _summary, _splits
 │   ├── wizard/              # Interactive --wizard config generation: _collectors,
 │   │                        # _orchestrator, _state, _byod, _io, _defaults.json
-│   ├── config.py            # Pydantic schemas (23 models)
+│   ├── config.py            # Pydantic schemas (24 models)
 │   ├── trainer.py           # TRL wrapper (SFT/DPO/SimPO/KTO/ORPO/GRPO)
 │   ├── model.py             # HF + PEFT model loading
 │   ├── data.py              # Dataset loading + format detection
@@ -75,7 +75,7 @@ ForgeLM/
 │   ├── _version.py          # `__version__` + `__api_version__` (decoupled)
 │   ├── verify/              # Verification package (Phase 16 S1 split):
 │   │                        # _annex_iv, _pipeline_evidence, _gguf,
-│   │                        # _model_integrity, _audit_log
+│   │                        # _model_integrity, _audit_log, _io_safety
 │   └── ...                  # benchmark, judge, merging, synthetic,
 │                            # quickstart, model_card, fit_check, deploy, chat,
 │                            # export, inference, results, utils, __main__,

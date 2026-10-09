@@ -53,7 +53,7 @@ Best-effort. Şekil, major artış olmadan minor sürümde değişebilir. Çağr
 |---|---|---|---|
 | `forgelm.ForgeTrainer` | Stable | `ForgeTrainer(config: ForgeConfig)` | Birincil eğitim giriş noktası. TRL `SFTTrainer` / `DPOTrainer` / `KTOTrainer` / `ORPOTrainer` / `GRPOTrainer` seçimini sarmalar. |
 | `forgelm.ForgeTrainer.train` | Stable | `train() -> TrainResult` | Yapılandırılmış fine-tune'u çalıştırır. `TrainResult.success` / `metrics` / `final_model_path` döndürür. Ağır bağımlılıklar (`torch`, `transformers`, `trl`) yalnızca bu metot çağrılırken yüklenir. |
-| `forgelm.TrainResult` | Stable | `dataclass` | `ForgeTrainer.train()` sonucu. Kanonik alanlar (`forgelm/results.py`): `success: bool`, `metrics: Dict[str, float]`, `final_model_path: Optional[str]`, `reverted: bool`, `error: Optional[str]`, `benchmark_scores`, `benchmark_average`, `benchmark_passed`, `safety_passed`, `safety_score`, `safety_categories`, `safety_severity`, `safety_low_confidence`, `judge_score`, `judge_details`, `estimated_cost_usd`, `staging_path`, `resource_usage`. |
+| `forgelm.TrainResult` | Stable | `dataclass` | `ForgeTrainer.train()` sonucu. Kanonik alanlar (`forgelm/results.py`): `success: bool`, `metrics: Dict[str, float]`, `final_model_path: Optional[str]`, `reverted: bool`, `error: Optional[str]`, `benchmark_scores`, `benchmark_average`, `benchmark_passed`, `safety_passed`, `safety_score`, `safety_categories`, `safety_severity`, `safety_low_confidence`, `judge_score`, `judge_details`, `judge_passed`, `estimated_cost_usd`, `staging_path`, `resource_usage`. |
 
 ### Veri hazırlama
 
@@ -109,7 +109,7 @@ Best-effort. Şekil, major artış olmadan minor sürümde değişebilir. Çağr
 
 | Sembol | Katman | İmza | Açıklama |
 |---|---|---|---|
-| `forgelm.WebhookNotifier` | Experimental | `WebhookNotifier(config: ForgeConfig)` | Slack / Teams / generic-HTTP yaşam-döngüsü bildirimleri. Constructor şeması gelecek bir sürümde ISO/SOC 2 alanları büyütebilir. |
+| `forgelm.WebhookNotifier` | Experimental | `WebhookNotifier(config: Any)` | Slack / Teams / generic-HTTP yaşam-döngüsü bildirimleri. Constructor şeması gelecek bir sürümde ISO/SOC 2 alanları büyütebilir. |
 | `forgelm.setup_authentication` | Experimental | `setup_authentication(token: Optional[str] = None) -> None` | `huggingface_hub.login` etrafında sarmalayıcı. `token` `None` olduğunda `HUGGINGFACE_TOKEN` env var'ını okur. |
 | `forgelm.manage_checkpoints` | Experimental | `manage_checkpoints(checkpoint_dir: str, action: str = "keep") -> None` | Bir output dizinine karşı checkpoint-retention davranışını uygular. `action` retain/prune semantiklerini kontrol eder. |
 

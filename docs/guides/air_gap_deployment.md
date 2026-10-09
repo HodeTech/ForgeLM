@@ -163,10 +163,10 @@ Both staging and target hosts can run their respective steps from CI:
 ```
 
 Both `jq -e '.success'` gates are load-bearing, and `cache-tasks` is the one
-that used to let you down: through 0.10 a task whose dataset failed to download
+that used to let you down: through 0.11.0 a task whose dataset failed to download
 was recorded in `tasks[].error` while the command still returned
 `success: true` and exit 0. The gate went green over a half-populated cache and
-the bundle shipped. As of 0.11 any task that did not stage makes the command
+the bundle shipped. In releases after 0.11.0 any task that did not stage makes the command
 exit 2 with `success: false`, and the failure envelope keeps the per-task rows
 under `tasks` so the job log names what is missing. Nothing about the workflow
 above changes — it simply now stops where it always claimed to.

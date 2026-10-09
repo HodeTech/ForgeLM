@@ -162,8 +162,8 @@ def verify_annex_iv_payload(artifact: Any) -> VerifyAnnexIVResult:
     metadata = artifact.get("metadata") if isinstance(artifact.get("metadata"), dict) else None
     expected = metadata.get("manifest_hash") if metadata else None
     if expected:
-        actual = _compute_manifest_hash(artifact)
-        if actual != expected:
+        matches, actual, legacy = _match_manifest_hash(artifact, expected)
+        if not matches:
             return VerifyAnnexIVResult(
                 valid=False,
                 reason="Manifest hash mismatch — artifact may have been modified after generation.",
@@ -172,7 +172,12 @@ def verify_annex_iv_payload(artifact: Any) -> VerifyAnnexIVResult:
             )
         return VerifyAnnexIVResult(
             valid=True,
-            reason="All Annex IV §1-9 fields populated; manifest hash matches.",
+            reason="All Annex IV §1-9 fields populated; manifest hash matches."
+            + (
+                " (Stamped before non-finite values were written as strings; re-export to refresh the digest.)"
+                if legacy
+                else ""
+            ),
             manifest_hash_actual=actual,
             manifest_hash_expected=expected,
         )
@@ -183,6 +188,13 @@ def verify_annex_iv_payload(artifact: Any) -> VerifyAnnexIVResult:
         valid=True,
         reason="All Annex IV §1-9 fields populated; no manifest_hash present so tampering detection skipped.",
     )
+
+
+def _match_manifest_hash(artifact: Dict[str, Any], expected: str) -> "tuple[bool, str, bool]":
+    """``(matches, digest, matched_legacy_encoding)`` — see ``match_annex_iv_manifest_hash``."""
+    from forgelm.compliance import match_annex_iv_manifest_hash
+
+    return match_annex_iv_manifest_hash(artifact, expected)
 
 
 def _compute_manifest_hash(artifact: Dict[str, Any]) -> str:

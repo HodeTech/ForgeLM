@@ -30,9 +30,15 @@ because dropping either leaves a live hole.
 
 from __future__ import annotations
 
+import inspect
+import math
+import typing
+
 import pytest
 import yaml
+from pydantic import BaseModel, ValidationError
 
+import forgelm.config as config_module
 from forgelm.cli._config_load import _load_config_or_exit
 from forgelm.cli._exit_codes import EXIT_CONFIG_ERROR
 
@@ -61,6 +67,44 @@ MERGE_SCALAR_MATRIX = [
     ("dare_drop_rate", ".nan", "a non-finite drop probability"),
     ("dare_drop_rate", "1.5", "not a probability"),
 ]
+
+
+# Fields in sections the base config already declares (``training``) or that take a
+# mapping, so they cannot ride the append-a-fragment path above without a duplicate
+# YAML key silently replacing the base section.  ``value`` is substituted verbatim.
+OTHER_FIELD_MATRIX = [
+    ("training.learning_rate", ".inf", "+inf passes `gt=0` and reaches the optimiser"),
+    ("training.weight_decay", ".inf", "+inf passes `ge=0`"),
+    ("training.dpo_beta", ".inf", "+inf passes `gt=0`"),
+    ("training.galore_scale", ".inf", "+inf passes `gt=0`"),
+    ("training.gpu_cost_per_hour", ".inf", "+inf passes `ge=0` and poisons the cost report"),
+    ("training.neftune_noise_alpha", ".nan", "an unbounded field takes NaN straight into TrainingArguments"),
+    ("training.neftune_noise_alpha", ".inf", "an unbounded field takes inf"),
+    ("training.rope_scaling", "{type: linear, factor: .nan}", "`nan <= 0` is False, so it passed the sign check"),
+    ("training.rope_scaling", "{type: linear, factor: .inf}", "`inf <= 0` is False, so it passed the sign check"),
+    ("training.rope_scaling", "{type: longrope, short_factor: [1.0, .nan], long_factor: [1.0]}", "list entries"),
+    ("evaluation.benchmark.limit", "-1", "a negative sample cap is not a cap"),
+    ("evaluation.benchmark.num_fewshot", "-1", "a negative few-shot count"),
+]
+
+_RAW = "RAW-YAML-PLACEHOLDER"
+
+
+def _write_raw(tmp_path, dotted: str, raw: str) -> str:
+    """Write the base config with ``dotted`` set to the raw YAML text ``raw``.
+
+    The value goes in as a placeholder and is replaced in the serialised text, so
+    the operator's spelling (``.inf``, a flow mapping) is what the loader sees.
+    """
+    *parents, field = dotted.split(".")
+    config = _base_config(tmp_path)
+    node = config
+    for key in parents:
+        node = node.setdefault(key, {})
+    node[field] = _RAW
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(config).replace(_RAW, raw), encoding="utf-8")
+    return str(path)
 
 
 def _base_config(tmp_path) -> dict:
@@ -142,6 +186,14 @@ class TestNonFiniteConfigExitsOne:
         fragment = f"merge:\n  enabled: true\n  models:\n    - path: org/a\n    - path: org/b\n  {field}: {value}\n"
         self._assert_exit_1(_write(tmp_path, _base_config(tmp_path), fragment), capsys)
 
+    @pytest.mark.parametrize(
+        ("dotted", "value", "reason"),
+        OTHER_FIELD_MATRIX,
+        ids=[f"{d}={v}" for d, v, _ in OTHER_FIELD_MATRIX],
+    )
+    def test_numeric_fields_outside_the_original_matrix(self, dotted, value, reason, tmp_path, capsys):
+        self._assert_exit_1(_write_raw(tmp_path, dotted, value), capsys)
+
     def test_safety_severity_threshold(self, tmp_path, capsys):
         """A dict *value* constraint — the shape Pydantic does not check by default.
 
@@ -172,6 +224,21 @@ class TestTheMatrixCanStillLoadAGoodConfig:
         assert config.evaluation.max_acceptable_loss == 2.0
         assert config.evaluation.baseline_loss == 1.5
 
+    @pytest.mark.parametrize(
+        ("dotted", "value"),
+        [
+            ("training.learning_rate", "0.0003"),
+            ("training.neftune_noise_alpha", "5.0"),
+            ("training.rope_scaling", "{type: linear, factor: 4.0}"),
+            ("training.rope_scaling", "{type: longrope, short_factor: [1.0, 1.5], long_factor: [2.0]}"),
+            ("evaluation.benchmark.limit", "10"),
+            ("evaluation.benchmark.num_fewshot", "0"),
+        ],
+    )
+    def test_ordinary_values_of_the_other_numeric_fields_load(self, dotted, value, tmp_path):
+        """The negative control for ``OTHER_FIELD_MATRIX``: same keys, ordinary values."""
+        _load_config_or_exit(_write_raw(tmp_path, dotted, value), False)
+
     def test_ordinary_merge_block_loads(self, tmp_path):
         fragment = (
             "merge:\n"
@@ -192,3 +259,78 @@ class TestTheMatrixCanStillLoadAGoodConfig:
         fragment = "evaluation:\n  safety:\n    enabled: true\n    severity_thresholds:\n      high: 0.8\n"
         config = _load_config_or_exit(_write(tmp_path, _base_config(tmp_path), fragment), False)
         assert config.evaluation.safety.severity_thresholds == {"high": 0.8}
+
+
+def _config_models():
+    return [
+        cls
+        for _, cls in inspect.getmembers(config_module, inspect.isclass)
+        if issubclass(cls, BaseModel) and cls.__module__ == config_module.__name__
+    ]
+
+
+def _unwrap_optional(annotation):
+    """``Optional[Annotated[float, ...]]`` -> ``float``: pydantic only strips the outer ``Annotated``."""
+    if typing.get_origin(annotation) is typing.Annotated:
+        return _unwrap_optional(typing.get_args(annotation)[0])
+    if typing.get_origin(annotation) is typing.Union:
+        args = [a for a in typing.get_args(annotation) if a is not type(None)]
+        if len(args) == 1:
+            return _unwrap_optional(args[0])
+    return annotation
+
+
+def _mentions_float(annotation) -> bool:
+    return annotation is float or any(_mentions_float(a) for a in typing.get_args(annotation))
+
+
+# Float-bearing fields that are containers rather than scalars; each is closed by a
+# dedicated validator and covered above (`mix_ratio`: `_validate_mix_ratio`;
+# `severity_thresholds`: a bounded `Annotated` value type, `test_safety_severity_threshold`).
+# A new container-of-float field must be added here deliberately, with its own test.
+CONTAINER_FLOAT_FIELDS = {"DataConfig.mix_ratio", "SafetyConfig.severity_thresholds"}
+
+
+class TestEveryFloatFieldIsDerivedFromTheSchema:
+    """The matrix above lists fields by hand; this one cannot go stale.
+
+    The hand-written rows covered exactly the fields a fix had already touched,
+    which is how ``learning_rate``, ``neftune_noise_alpha`` and the ``*_beta``
+    family kept accepting ``.inf`` behind a changelog line saying non-finite
+    configs exit 1. A float field added tomorrow without the guard fails here.
+    """
+
+    @staticmethod
+    def _scalar_float_fields():
+        for cls in _config_models():
+            for name, info in cls.model_fields.items():
+                if _unwrap_optional(info.annotation) is float:
+                    yield cls, name
+
+    def test_the_walk_finds_the_fields_it_is_meant_to_police(self):
+        """Guards against a vacuous pass if the introspection ever returns nothing."""
+        found = {f"{cls.__name__}.{name}" for cls, name in self._scalar_float_fields()}
+        assert {"TrainingConfig.learning_rate", "TrainingConfig.neftune_noise_alpha"} <= found
+        assert len(found) >= 20
+
+    @pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf], ids=["nan", "inf", "-inf"])
+    def test_every_scalar_float_field_refuses_it(self, bad):
+        accepted = []
+        for cls, name in self._scalar_float_fields():
+            try:
+                cls.__pydantic_validator__.validate_assignment(cls.model_construct(), name, bad)
+            except ValidationError as exc:
+                # Rejected *for this field*, not by some unrelated model validator.
+                if any(name in err["loc"] for err in exc.errors()):
+                    continue
+            accepted.append(f"{cls.__name__}.{name}")
+        assert not accepted, f"{bad!r} is accepted by {accepted}; type them as forgelm.config.FiniteFloat"
+
+    def test_container_float_fields_are_the_known_ones(self):
+        found = {
+            f"{cls.__name__}.{name}"
+            for cls in _config_models()
+            for name, info in cls.model_fields.items()
+            if _mentions_float(info.annotation) and _unwrap_optional(info.annotation) is not float
+        }
+        assert found == CONTAINER_FLOAT_FIELDS

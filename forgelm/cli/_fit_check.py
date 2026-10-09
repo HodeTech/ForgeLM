@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import json
-
+from .._strict_json import dumps_strict
 from ..config import ForgeConfig
 
 
@@ -15,7 +14,7 @@ def _run_fit_check(config: ForgeConfig, output_format: str) -> None:
 
     if output_format == "json":
         print(
-            json.dumps(
+            dumps_strict(
                 {
                     "verdict": result.verdict,
                     "estimated_gb": result.estimated_gb,

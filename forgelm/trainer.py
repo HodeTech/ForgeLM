@@ -29,6 +29,7 @@ logger = logging.getLogger("forgelm.trainer")
 # Audit event names — kept as constants so the audit-log schema stays grep-able
 # and downstream consumers don't break on a typo.
 _EVT_REVERT_TRIGGERED = "model.reverted"
+_EVT_REVERT_FAILED = "model.revert_failed"
 # Loss/eval-loss auto-revert decision gate — emitted on PASS and FAIL so the
 # primary post-training quality gate leaves a discrete decision record with the
 # thresholds it was checked against, mirroring the benchmark/safety/judge
@@ -484,13 +485,15 @@ class ForgeTrainer:
             eval_steps = self.config.training.eval_steps
             save_steps = self.config.training.save_steps
             if eval_steps and save_steps and save_steps % eval_steps != 0:
+                below = (save_steps // eval_steps) * eval_steps or eval_steps
+                above = ((save_steps // eval_steps) + 1) * eval_steps
+                nearest = str(below) if below == above else f"{below} or {above}"  # equal when save < eval
                 raise ConfigError(
                     f"training.save_steps ({save_steps}) must be an exact multiple of "
                     f"training.eval_steps ({eval_steps}) when a validation split exists, because "
                     "best-model selection reloads the checkpoint matching the best evaluation and "
                     "cannot do so if the two schedules never coincide. "
-                    f"Nearest valid values: {(save_steps // eval_steps) * eval_steps or eval_steps} "
-                    f"or {((save_steps // eval_steps) + 1) * eval_steps}."
+                    f"Nearest valid value(s): {nearest}."
                 )
 
         kwargs = {
@@ -957,8 +960,14 @@ class ForgeTrainer:
             baseline_loss=baseline_loss,
         )
 
-    def _revert_model(self, final_path: str, reason: str, *, source: str = "evaluation") -> None:
+    def _revert_model(self, final_path: str, reason: str, *, source: str = "evaluation") -> bool:
         """Delete generated model artifacts, emit audit event, and notify webhook.
+
+        Returns ``True`` when the artifacts are gone and ``False`` when the delete
+        failed. ``model.reverted`` is written *before* the delete, so on failure a
+        second ``model.revert_failed`` record retracts it — the append-only log
+        cannot be edited, and an auditor must not read "reverted" over files that
+        are still on disk. Callers must carry the return value into the result.
 
         Centralises the revert flow so every code path that triggers a revert
         produces both:
@@ -983,9 +992,9 @@ class ForgeTrainer:
         # surface it on ``.error`` even for the eval-loss path, which returns a
         # freshly-built result that never saw the gate's computed reason
         self._last_revert_reason = reason
-        # Recorded so the caller can report what actually happened rather than
-        # assuming it. See the loss-gate call site in _run_training_pipeline.
-        self._loss_gate_reverted = True
+        # Only set once the delete has succeeded (below), so the caller reports what
+        # happened rather than what was intended. See the loss-gate call site.
+        self._loss_gate_reverted = False
 
         # Article 12 audit trail — emit before destructive action so the
         # record exists even if the rmtree below explodes.
@@ -996,15 +1005,24 @@ class ForgeTrainer:
             try:
                 shutil.rmtree(final_path)
                 logger.info("Reverted artifacts deleted successfully.")
-            except OSError:
+            except OSError as exc:
                 logger.exception(
                     "Failed to delete reverted artifacts at %s. Manual cleanup may be required.", final_path
                 )
+                self.audit.log_event(_EVT_REVERT_FAILED, reason=source, path=final_path, error_class=type(exc).__name__)
+                # Not a revert: say the opposite of "Artifacts discarded".
+                self.notifier.notify_failure(
+                    run_name=self.run_name,
+                    reason=f"{reason} Auto-revert could NOT delete {final_path}; the artifacts remain on disk.",
+                )
+                return False
+        self._loss_gate_reverted = True
 
         # Lifecycle event: dashboards distinguish "training.reverted" (gate
         # rejected an otherwise-completed run) from "training.failure"
         # (training itself crashed). See docs/standards/logging-observability.md.
         self.notifier.notify_reverted(run_name=self.run_name, reason=f"{reason} Artifacts discarded.")
+        return True
 
     def _build_trainer(self, callbacks: list) -> None:
         """Build (or rebuild) self.trainer from current config. Called on first build and after OOM retry."""
@@ -1351,26 +1369,30 @@ class ForgeTrainer:
         train_result.error = reason
 
     @staticmethod
-    def _mark_reverted(train_result: TrainResult, reason: Optional[str] = None) -> None:
+    def _mark_reverted(train_result: TrainResult, reason: Optional[str] = None, *, deleted: bool = True) -> None:
         """Mark a result as auto-reverted and clear every stale artifact path.
 
-        ``_revert_model`` has just deleted the on-disk model, so neither
-        ``final_model_path`` nor ``staging_path`` point at a real directory — the
-        CLI/JSON envelope must not advertise a path that no longer exists. A
-        reverted run is also never "awaiting approval" (exit 3, not 4), so clear
-        the discriminator defensively even though the gate hasn't fired here.
+        ``deleted`` is ``_revert_model``'s return value. When ``True`` the on-disk
+        model is gone, so neither ``final_model_path`` nor ``staging_path`` point at
+        a real directory — the CLI/JSON envelope must not advertise a path that no
+        longer exists. When ``False`` the delete failed: the run still failed its
+        gate, but ``reverted`` stays ``False`` and the paths are kept, because the
+        artifacts are on disk and an operator needs to find them. A failed run is
+        also never "awaiting approval" (exit 3, not 4), so clear the discriminator
+        defensively even though the gate hasn't fired here.
 
         ``reason`` populates ``TrainResult.error`` so the pipeline stage error
         and JSON envelope carry the gate's precise failure reason instead of the
         generic "Stage gate failed." fallback.
         """
         train_result.success = False
-        train_result.reverted = True
-        train_result.staging_path = None
-        train_result.final_model_path = None
+        train_result.reverted = deleted
+        if deleted:
+            train_result.staging_path = None
+            train_result.final_model_path = None
         train_result.awaiting_approval = False
         if reason:
-            train_result.error = reason
+            train_result.error = reason if deleted else f"{reason} Auto-revert could not delete the artifacts."
 
     def _apply_benchmark_result(
         self,
@@ -1398,6 +1420,7 @@ class ForgeTrainer:
             passed=benchmark_result.passed,
             average=benchmark_result.average_score,
             scores=benchmark_result.scores,
+            failure_reason=benchmark_result.failure_reason,
         )
         if benchmark_result.passed:
             return True
@@ -1406,8 +1429,8 @@ class ForgeTrainer:
             # Failure recorded on train_result; pipeline continues to safety/judge stages.
             self._log_gate_kept_no_revert("benchmark", reason, train_result)
             return True
-        self._revert_model(final_path, reason, source="benchmark")
-        self._mark_reverted(train_result, reason)
+        deleted = self._revert_model(final_path, reason, source="benchmark")
+        self._mark_reverted(train_result, reason, deleted=deleted)
         return False
 
     def _apply_resource_usage(self, train_result: TrainResult, metrics: Dict[str, float]) -> None:
@@ -1461,8 +1484,8 @@ class ForgeTrainer:
         if not (self.config.evaluation and self.config.evaluation.auto_revert):
             self._log_gate_kept_no_revert("safety", safety_reason, train_result)
             return True
-        self._revert_model(final_path, safety_reason, source="safety")
-        self._mark_reverted(train_result, safety_reason)
+        deleted = self._revert_model(final_path, safety_reason, source="safety")
+        self._mark_reverted(train_result, safety_reason, deleted=deleted)
         return False
 
     def _apply_judge_result(
@@ -1477,11 +1500,13 @@ class ForgeTrainer:
             return True
         train_result.judge_score = judge_result.average_score
         train_result.judge_details = judge_result.details
+        train_result.judge_passed = judge_result.passed
         metrics["judge/average_score"] = judge_result.average_score
         self.audit.log_event(
             "judge.evaluation_completed",
             passed=judge_result.passed,
             average_score=judge_result.average_score,
+            failure_reason=judge_result.failure_reason,
         )
         if judge_result.passed:
             return True
@@ -1489,8 +1514,8 @@ class ForgeTrainer:
         if not (self.config.evaluation and self.config.evaluation.auto_revert):
             self._log_gate_kept_no_revert("judge", judge_reason, train_result)
             return True
-        self._revert_model(final_path, judge_reason, source="judge")
-        self._mark_reverted(train_result, judge_reason)
+        deleted = self._revert_model(final_path, judge_reason, source="judge")
+        self._mark_reverted(train_result, judge_reason, deleted=deleted)
         return False
 
     def _finalize_artifacts(
@@ -1631,11 +1656,16 @@ class ForgeTrainer:
             # their model was destroyed when it was intact, and told a dashboard
             # the same. The three later gates already derive it via
             # ``_mark_reverted``; this call site is the one that did not.
+            reverted = getattr(self, "_loss_gate_reverted", False)
             return TrainResult(
                 success=False,
                 metrics=metrics,
-                reverted=getattr(self, "_loss_gate_reverted", False),
+                reverted=reverted,
                 error=getattr(self, "_last_revert_reason", None),
+                # A model that was not deleted is still on disk; ``reverted: false``
+                # with ``final_model_path: null`` would tell the operator it is gone.
+                final_model_path=None if reverted else train_result.final_model_path,
+                staging_path=None if reverted else train_result.staging_path,
             )
 
         if not self._apply_benchmark_result(self._run_benchmark_if_configured(), train_result, metrics, gate_path):

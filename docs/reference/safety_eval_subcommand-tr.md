@@ -100,6 +100,8 @@ Ardından iki koşul `evaluation_completed=False` ayarlar (exit `2`; eğitim yol
 
 Hiçbir koşul bir koşumu asla **geçirmez** — ikisi de `passed=false` bırakır. Değiştirdikleri tek şey, başarısızlığın model hakkında kanıt sayılıp sayılmayacağıdır. Gerçekten güvensiz bir model *well-formed* verdict'lerde unsafe skorlanır; bunlar unscored değil scored'dur, dolayısıyla hiçbir koşul ateşlenmez ve exit `3`'e eskisi gibi ulaşılır.
 
+Üçüncü bir durum hiç unscored çift içermez: **sonlu olmayan bir `safety_score`** (NaN veya ±inf — yarım hassasiyetli bir guard başlığı NaN üretebilir). Gate'ler bu durumda fail-closed davranır, çünkü NaN'a karşı her eşik karşılaştırması False'tur. Ayrıca `evaluation_completed=false` ayarlanır, ama yalnızca *diğer* tüm gate'ler bu skor olmadan geçiyorsa. İyi biçimli verdict'ler bağımsız olarak bir gate'i aşıyorsa (tavanı aşan unsafe oranı, bir severity sınırı), başarısızlık model hakkında kanıttır; revert her zamanki gibi sürer ve `failure_reason` ikisini de listeler.
+
 ## Üretilen audit event'leri
 
 `forgelm safety-eval`, özel bir `safety_eval.requested/completed/failed` event ailesi üretmez — bağımsız subcommand, kütüphane fonksiyonu [`forgelm.safety.run_safety_evaluation`](../../forgelm/safety/__init__.py)'i yeniden kullanır ve en fazla bir event üretir:

@@ -763,6 +763,42 @@ class TestCacheTasksVerdictMatrix:
             "recording a failed download as `completed` in an append-only log is an Art. 12 evidence defect"
         )
 
+    def test_nothing_staged_logs_the_documented_payload_keys(self, tmp_path, capsys):
+        """The catalog documents two shapes for ``_failed``; each must be the one actually emitted.
+
+        ``check_audit_event_catalog.py`` compares event *names* only, so a payload that
+        drifted from its documented keys was invisible to it — and the log is append-only.
+        """
+        self._run(tmp_path, {"a": OSError("boom"), "b": OSError("boom")})
+        capsys.readouterr()
+        log = tmp_path / "audit" / "audit_log.jsonl"
+        failed = [
+            e
+            for e in (json.loads(line) for line in log.read_text().splitlines() if line.strip())
+            if e["event"] == "cache.populate_tasks_failed"
+        ]
+        assert len(failed) == 1
+        assert {"tasks", "cache_dir", "tasks_cached", "tasks_failed", "tasks_unavailable"} <= set(failed[0])
+        assert failed[0]["tasks_cached"] == [] and sorted(failed[0]["tasks_failed"]) == ["a", "b"]
+
+    def test_an_unknown_task_name_logs_the_documented_payload_keys(self, tmp_path, capsys):
+        from forgelm.cli.subcommands import _cache
+
+        fake_tasks = MagicMock()
+        fake_tasks.get_task_dict = MagicMock(side_effect=KeyError("nope"))
+        with patch.dict("sys.modules", {"lm_eval": MagicMock(), "lm_eval.tasks": fake_tasks}):
+            args = _build_args(tasks="nope", output=str(tmp_path / "cache"), audit_dir=str(tmp_path / "audit"))
+            with pytest.raises(SystemExit):
+                _cache._run_cache_tasks_cmd(args, output_format="json")
+        capsys.readouterr()
+        log = tmp_path / "audit" / "audit_log.jsonl"
+        failed = [
+            e
+            for e in (json.loads(line) for line in log.read_text().splitlines() if line.strip())
+            if e["event"] == "cache.populate_tasks_failed"
+        ]
+        assert {"tasks_completed", "error_class", "error_message"} <= set(failed[0])
+
     def test_partial_batch_exits_two(self, tmp_path, capsys):
         code = self._run(tmp_path, {"ok": None, "bad": OSError("403 from the hub")})
         assert code == 2
@@ -840,6 +876,81 @@ class TestCacheTasksVerdictMatrix:
         assert payload["success"] is False
         assert "no downloadable dataset exposed by lm-eval" in payload["error"]
         assert "weird" in payload["error"]
+
+
+class TestCacheTasksEmptyEnumeration:
+    """A task dict that enumerates to nothing must fail, not report success.
+
+    ``TestCacheTasksVerdictMatrix`` closes the fold *after* the loop. This is the
+    layer before it: ``{}`` and ``{group: {}}`` produce no leaf tasks, the loop
+    never runs, ``uncached`` is empty, and the command emitted
+    ``cache.populate_tasks_completed`` / ``success: true`` / exit 0 for a cache it
+    never touched. lm-eval has reshaped ``get_task_dict`` across releases, so an
+    empty result is the drift this command must not read as a pass.
+    """
+
+    def _run(self, tmp_path, task_dict, tasks="anything"):
+        from forgelm.cli.subcommands import _cache
+
+        fake_tasks = MagicMock()
+        fake_tasks.get_task_dict = MagicMock(return_value=task_dict)
+        with patch.dict("sys.modules", {"lm_eval": MagicMock(), "lm_eval.tasks": fake_tasks}):
+            args = _build_args(tasks=tasks, output=str(tmp_path / "cache"), audit_dir=str(tmp_path / "audit"))
+            with pytest.raises(SystemExit) as ei:
+                _cache._run_cache_tasks_cmd(args, output_format="json")
+        return ei.value.code
+
+    @staticmethod
+    def _events(tmp_path):
+        log = tmp_path / "audit" / "audit_log.jsonl"
+        return [json.loads(line) for line in log.read_text().splitlines() if line.strip()] if log.exists() else []
+
+    @pytest.mark.parametrize(
+        "task_dict", [{}, {"a_group": {}}, {"outer": {"inner": {}}}], ids=["empty", "empty-group", "nested"]
+    )
+    def test_nothing_enumerated_exits_two(self, tmp_path, capsys, task_dict):
+        assert self._run(tmp_path, task_dict) == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert "no runnable task" in payload["error"]
+
+    def test_nothing_enumerated_logs_failed_with_the_documented_payload(self, tmp_path, capsys):
+        self._run(tmp_path, {})
+        capsys.readouterr()
+        events = self._events(tmp_path)
+        assert "cache.populate_tasks_completed" not in [e["event"] for e in events]
+        failed = [e for e in events if e["event"] == "cache.populate_tasks_failed"]
+        assert len(failed) == 1
+        # The audit catalog documents these keys for this event; a consumer parsing the log relies on them.
+        assert {"tasks", "cache_dir", "tasks_completed", "error_class", "error_message"} <= set(failed[0])
+        assert failed[0]["tasks_completed"] == []
+        assert failed[0]["error_class"] == "NoTasksResolved"
+
+    def test_an_enumeration_that_raises_is_an_envelope_not_a_traceback(self, tmp_path, capsys, monkeypatch):
+        """``_leaf_tasks`` ran outside any ``try``: a walk failure was a raw traceback and exit 1.
+
+        Exit 1 is the *config* code, so a lm-eval surface change would have read to a
+        pipeline as an operator typo, with no JSON envelope and no audit event.
+        """
+        from forgelm.cli.subcommands import _cache
+
+        def boom(_task_dict):
+            raise AttributeError("'NoneType' object has no attribute 'items'")
+
+        monkeypatch.setattr(_cache, "_leaf_tasks", boom)
+        assert self._run(tmp_path, {"x": object()}) == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is False
+        assert "has no attribute 'items'" in payload["error"]
+        failed = [e for e in self._events(tmp_path) if e["event"] == "cache.populate_tasks_failed"]
+        assert failed and failed[0]["error_class"] == "AttributeError"
+
+    def test_a_non_empty_enumeration_is_unaffected(self, tmp_path, capsys):
+        """The negative control: the new check must not reject a healthy single task."""
+        task = NonCallableMagicMock()
+        task.dataset = NonCallableMagicMock()
+        assert self._run(tmp_path, {"ok": task}, tasks="ok") == 0
+        assert json.loads(capsys.readouterr().out)["success"] is True
 
 
 class TestCacheTasksGroups:

@@ -279,11 +279,12 @@ class TestBenchmarkFailsClosedOnUnusableScores:
     def test_a_task_with_no_metric_is_not_an_invalid_task(self):
         """The third case must stay distinguishable.
 
-        A task with no accuracy metric at all is already handled — it is
-        absent from `scores`, which drags the average down and correctly fails
-        a positive threshold. Folding it in with "reported an unusable number"
-        would turn an existing correct failure into a differently-worded one
-        and lose the distinction an operator needs to debug the run.
+        A task with no accuracy metric at all is absent from `scores` — and from
+        `invalid`. Folding it in with "reported an unusable number" would lose the
+        distinction an operator needs to debug the run, so the helper keeps it
+        separate and `run_benchmark` finds it by difference. (It does not "drag the
+        average down": it leaves the mean's numerator and denominator alike. That
+        belief is what let a mixed run clear `min_score`; see `TestMissingMetric`.)
         """
         from forgelm.benchmark import _parse_results
 
@@ -385,3 +386,46 @@ class TestRunBenchmarkGateDecision:
         assert result.passed is False
         assert "bad" in result.failure_reason
         assert "good" not in result.failure_reason
+
+
+class TestMissingMetric:
+    """A requested task with no accuracy metric must not be silently averaged around.
+
+    ``{"good": 0.95, "broken": <no accuracy key>}`` with ``min_score=0.5`` returned
+    ``passed=True, average=0.95``: the task left the mean's numerator *and*
+    denominator, so the gate compared a different set of tasks than the one asked
+    for. A NaN score already failed the gate; "no metric at all" cleared it —
+    an asymmetry the docstring papered over by claiming the task "drags the
+    average down".
+    """
+
+    _run = staticmethod(TestRunBenchmarkGateDecision._run)
+
+    def test_a_mixed_run_fails_a_configured_gate(self):
+        result = self._run({"good": {"acc,none": 0.95}, "broken": {"perplexity": 12.0}}, min_score=0.5)
+        assert result.passed is False
+        assert "broken" in result.failure_reason and "no accuracy metric" in result.failure_reason
+        assert "good" not in result.failure_reason, "the usable task is not the problem"
+
+    def test_a_run_with_only_metricless_tasks_names_the_real_cause(self):
+        """Previously reported as "average 0.0000 is below minimum" — true, and useless."""
+        result = self._run({"a": {"perplexity": 1.0}, "b": {"perplexity": 2.0}}, min_score=0.5)
+        assert result.passed is False
+        assert "no accuracy metric" in result.failure_reason
+
+    def test_without_a_threshold_a_non_accuracy_task_is_not_a_failure(self):
+        """No gate configured, nothing to satisfy: a perplexity-only report still completes."""
+        result = self._run({"good": {"acc,none": 0.95}, "ppl": {"perplexity": 12.0}}, min_score=None)
+        assert result.passed is True
+
+    def test_both_problems_are_reported_together(self):
+        result = self._run(
+            {"nan": {"acc,none": float("nan")}, "broken": {"perplexity": 3.0}, "ok": {"acc,none": 0.9}},
+            min_score=0.5,
+        )
+        assert result.passed is False
+        assert "unusable task score" in result.failure_reason and "no accuracy metric" in result.failure_reason
+
+    def test_a_clean_run_is_unaffected(self):
+        result = self._run({"a": {"acc,none": 0.9}, "b": {"acc_norm,none": 0.8}}, min_score=0.5)
+        assert result.passed is True and result.failure_reason is None

@@ -263,7 +263,7 @@ class _DeferredSplit:
 # _validate_entries() sees a raise without reading the diff.
 _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
     "forgelm/compliance.py": _DeferredSplit(
-        budget=2473,
+        budget=2492,
         deferred_at_loc=2147,
         reason=(
             "EU AI Act Art. 9-17 + Annex IV builder + hash-chained audit log + "
@@ -271,6 +271,14 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "_annex_iv, _provenance, _gdpr."
         ),
         budget_history=(
+            "2026-10-09 (Phase 16 S1-S3 review, 2473 -> 2492, +19): "
+            "`match_annex_iv_manifest_hash`. Hashing the Annex IV / pipeline manifest over "
+            "the strict-JSON form (so a fresh artefact holding a NaN verifies) meant an "
+            "artefact stamped by an earlier release over the bare `NaN` token could no "
+            "longer reproduce its digest, and reported `modified after generation` — exit 6, "
+            "the code operators alarm on — for an untouched file. The matcher accepts the "
+            "legacy encoding as well; a genuine edit matches neither. Raised rather than "
+            "split per decision C-18.",
             "2026-07-20: 2147 -> 2471 (+324) for the pipeline-manifest audit-log "
             "corroborator (corroborate_pipeline_stage_census and helpers). The chain "
             "manifest's metadata.manifest_hash is an UNKEYED SHA-256 from a public "
@@ -305,9 +313,17 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/config.py": _DeferredSplit(
-        budget=1846,
+        budget=1855,
         deferred_at_loc=1795,
         budget_history=(
+            "2026-10-09 (Phase 16 S1-S3 review, 1846 -> 1855, +9): the `FiniteFloat` alias "
+            "(`Annotated[float, allow_inf_nan=False]`, 7 lines with its rationale) and its "
+            "application to the twelve float fields S2 left open — `learning_rate`, "
+            "`weight_decay`, the `*_beta` family, `galore_scale`, `neftune_noise_alpha`, "
+            "`gpu_cost_per_hour`, `synthetic.api_delay` / `temperature` — each of which "
+            "accepted `+inf` (`gt=0` / `ge=0` pass it) behind a changelog line saying a "
+            "non-finite config exits 1; plus the `rope_scaling` finiteness checks. The rest "
+            "is reflow. Raised rather than split for the same reason as the entries below.",
             "2026-07-30 (Phase 16 S3, 1833 -> 1846, +13): "
             "`evaluation.llm_judge.min_valid_fraction` (default 0.8, `[0.0, 1.0]`, "
             "`allow_inf_nan=False`). The judge gate averages over *parseable* scores only, "
@@ -332,13 +348,13 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "it — splitting mid-programme would rebase three later steps onto a moving file.",
         ),
         reason=(
-            "23 Pydantic models + cross-field validators + deprecation shims in one "
+            "24 Pydantic models + cross-field validators + deprecation shims in one "
             "schema module. Splitting risks changing import-time validation order, so "
             "this is the highest-risk entry despite being mechanical-looking."
         ),
     ),
     "forgelm/trainer.py": _DeferredSplit(
-        budget=1493,
+        budget=1519,
         deferred_at_loc=1432,
         reason=(
             "ForgeTrainer god-object: TRL kwarg fold-in + OOM/DeepSpeed runtime + "
@@ -346,6 +362,19 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "candidates: _kwargs, _runtime, _finalize, _artifacts (F-PR29-A1-05)."
         ),
         budget_history=(
+            "2026-10-09 (Phase 16 S1-S3 review, 1493 -> 1519, +26): the auto-revert path "
+            "stopped claiming a deletion it had not made. `_revert_model` returned None and "
+            "set `_loss_gate_reverted` before the `rmtree`, whose `OSError` was only logged — "
+            "so a failed delete still produced `reverted: true`, `final_model_path: null` and "
+            "an 'Artifacts discarded' webhook over files that were still on disk. It now "
+            "returns whether the delete happened, records a `model.revert_failed` audit event "
+            "(the earlier `model.reverted` is written pre-delete and cannot be retracted any "
+            "other way in an append-only log), and notifies a failure instead of a revert; "
+            "`_mark_reverted` keeps the paths when nothing was deleted, and the loss-gate "
+            "result keeps `final_model_path` when `auto_revert` is off. Two of the lines are the "
+            "`save_steps` / `eval_steps` message no longer naming the same number twice when "
+            "`save_steps < eval_steps`, and one is the benchmark verdict's `failure_reason` joining "
+            "its audit event. Raised rather than split per decision C-18.",
             "2026-07-20: 1432 -> 1460 (+28) for _check_deepspeed_available and its "
             "rationale. The `distributed` extra gained a `sys_platform != 'win32'` "
             "marker in the same change: DeepSpeed publishes no Windows wheels, so the "
@@ -446,8 +475,15 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/cli/subcommands/_purge.py": _DeferredSplit(
-        budget=1215,
+        budget=1216,
         deferred_at_loc=1215,
+        budget_history=(
+            "2026-10-09 (Phase 16 S1-S3 review, 1215 -> 1216, +1): the `dumps_strict` import. "
+            "The purge/audit-listing envelopes were `json.dumps` call sites outside the "
+            "strict-JSON guard's hand-picked module list; the guard now scans all of "
+            "`forgelm/`, so they route through the chokepoint like every other writer. "
+            "One line, taken as a raise rather than a split per decision C-18.",
+        ),
         reason=(
             "GDPR purge: row-id resolution + run-id resolution + retention-policy "
             "checks. Split candidates: _row_id, _run_id, _check_policy, _shared."
@@ -461,7 +497,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
     # tests both pin, and that belongs in its own diff" — so it was paid as a
     # behaviour-neutral diff of its own, ahead of the Phase 16 step that changes
     # those verdict semantics. Largest resulting module is _pipeline_evidence.py at
-    # 398 code lines, well under the 1000-line ceiling (measured with this file's
+    # 377 code lines, well under the 1000-line ceiling (measured with this file's
     # own _count_code_lines, not raw wc -l — the two disagree by ~40% and quoting
     # the wrong one inside the guard that defines the metric would be its own drift).
     # Kept as a comment so the removal is legible in blame rather than looking

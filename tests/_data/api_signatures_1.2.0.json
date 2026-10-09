@@ -83,6 +83,7 @@
         "safety_low_confidence",
         "judge_score",
         "judge_details",
+        "judge_passed",
         "estimated_cost_usd",
         "staging_path",
         "awaiting_approval",

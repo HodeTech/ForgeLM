@@ -66,7 +66,7 @@ The HF cache is partitioned by purpose; setting `HF_HUB_CACHE` does **not** redi
 
 `cache-models` reports a partial-batch failure: the audit chain records `cache.populate_models_failed` with `models_completed=[<list-so-far>]` so the operator knows what *did* land before the crash and can resume by re-running with the failing model omitted.
 
-`cache-tasks` reports one the same way. Any task ending `cached: false` — a download error, or a task for which lm-eval exposes no downloadable dataset — makes the whole command exit `2` with `success: false`, and the failure envelope keeps the per-task rows under `tasks`. **Changed in 0.11:** through 0.10 those failures were recorded in `tasks[].error` while the command still exited 0 and logged `cache.populate_tasks_completed`, so a CI job gating on `jq -e '.success'` packaged an incomplete cache and shipped it to the air-gapped host.
+`cache-tasks` reports one the same way. Any task ending `cached: false` — a download error, or a task for which lm-eval exposes no downloadable dataset — makes the whole command exit `2` with `success: false`, and the failure envelope keeps the per-task rows under `tasks`. **Changed after 0.11.0:** through 0.11.0 those failures were recorded in `tasks[].error` while the command still exited 0 and logged `cache.populate_tasks_completed`, so a CI job gating on `jq -e '.success'` packaged an incomplete cache and shipped it to the air-gapped host.
 
 ## Audit events emitted
 

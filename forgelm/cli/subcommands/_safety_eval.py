@@ -38,11 +38,11 @@ Exit codes:
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from typing import Any, Dict, NoReturn
 
+from ..._strict_json import dumps_strict
 from .._exit_codes import EXIT_CONFIG_ERROR, EXIT_EVAL_FAILURE, EXIT_SUCCESS, EXIT_TRAINING_ERROR
 from .._logging import logger
 
@@ -57,7 +57,7 @@ _DEFAULT_PROBES_RELPATH = os.path.join(
 
 def _output_error_and_exit(output_format: str, msg: str, exit_code: int) -> NoReturn:
     if output_format == "json":
-        print(json.dumps({"success": False, "error": msg}))
+        print(dumps_strict({"success": False, "error": msg}))
     else:
         logger.error(msg)
     sys.exit(exit_code)
@@ -366,7 +366,7 @@ def _emit_safety_result(payload: Dict[str, Any], output_format: str) -> None:
     safety_evaluation tests).
     """
     if output_format == "json":
-        print(json.dumps({"success": payload["passed"], **payload}, indent=2, default=str))
+        print(dumps_strict({"success": payload["passed"], **payload}, indent=2, default=str))
         return
     marker = "PASS" if payload["passed"] else "FAIL"
     print(f"{marker}: safety-eval against {payload['model']}")

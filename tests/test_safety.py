@@ -380,7 +380,7 @@ class TestPublicApiThresholdValidation:
 
     The training path reaches the safety gate through a validated
     `ForgeConfig`, but `from forgelm.safety import run_safety_evaluation` is a
-    stable-tier import and its thresholds arrive as a plain
+    public import and its thresholds arrive as a plain
     `SafetyEvalThresholds` dataclass with no `__post_init__`. Every one of
     those numbers is compared with `<` or `>`, and every such comparison
     against `nan` is False — so an unvalidated threshold does not merely
@@ -426,12 +426,45 @@ class TestPublicApiThresholdValidation:
         with pytest.raises(ValueError, match="scoring"):
             self._validate(scoring="vibes")
 
+    def test_a_min_safety_score_the_gate_would_ignore_is_refused(self):
+        """The YAML route refuses this; the library route accepted it and passed.
+
+        ``SafetyConfig`` rejects ``min_safety_score`` under ``scoring="binary"``
+        because the gate only consults it under confidence-weighted scoring. A
+        library caller builds ``SafetyEvalThresholds`` directly, skips Pydantic, and
+        got ``passed=True`` from a run in which the floor they set was never applied.
+        """
+        with pytest.raises(ValueError, match="only enforced when scoring='confidence_weighted'"):
+            self._validate(min_safety_score=0.99)  # scoring defaults to "binary"
+        with pytest.raises(ValueError, match="only enforced when scoring='confidence_weighted'"):
+            self._validate(min_safety_score=0.99, scoring="binary")
+
+    def test_severity_thresholds_the_gate_would_ignore_are_refused(self):
+        """Per-severity limits are consulted only when ``track_categories`` is on."""
+        with pytest.raises(ValueError, match="only enforced when track_categories=True"):
+            self._validate(severity_thresholds={"critical": 0.0})  # track_categories defaults to False
+
+    def test_the_library_and_yaml_routes_agree_on_both_couplings(self):
+        """Pins the parity, not just the library half: each rejected combination is rejected by ``SafetyConfig`` too."""
+        from pydantic import ValidationError
+
+        from forgelm.config import SafetyConfig
+
+        with pytest.raises(ValidationError, match="min_safety_score"):
+            SafetyConfig(enabled=True, scoring="binary", min_safety_score=0.99)
+        with pytest.raises(ValidationError, match="track_categories"):
+            SafetyConfig(enabled=True, severity_thresholds={"critical": 0.0}, track_categories=False)
+
     def test_realistic_configuration_is_accepted(self):
         """The guard must not fire on the ordinary path."""
         self._validate()
+        # ``track_categories=True`` is part of a realistic configuration: this test
+        # used to omit it, i.e. it asserted that per-severity limits the gate would
+        # never consult were "accepted" — the silent-ignore the validator now refuses.
         self._validate(
             min_safety_score=0.9,
             scoring="confidence_weighted",
+            track_categories=True,
             severity_thresholds={"critical": 0.0, "high": 0.02},
         )
 
@@ -443,6 +476,31 @@ class TestPublicApiThresholdValidation:
 
         with pytest.raises(ValidationError, match="finite_number|finite number"):
             SafetyConfig(enabled=True, track_categories=True, severity_thresholds={"critical": float("nan")})
+
+
+class TestAsGenerated:
+    """``as_generated`` normalises a scorer input; a non-response must fail one pair, not the run."""
+
+    def test_a_string_is_a_successful_generation(self):
+        from forgelm.safety._types import as_generated
+
+        out = as_generated("hello")
+        assert out.text == "hello" and out.failed is False
+
+    def test_an_existing_response_is_returned_unchanged(self):
+        from forgelm.safety._types import GeneratedResponse, as_generated
+
+        original = GeneratedResponse(text="", error="CUDA OOM")
+        assert as_generated(original) is original
+
+    @pytest.mark.parametrize("bad", [None, 3, b"bytes", ["a"]])
+    def test_a_non_response_is_a_recorded_failure_not_a_crash_later(self, bad):
+        from forgelm.safety._types import as_generated
+
+        out = as_generated(bad)
+        assert out.failed is True
+        assert isinstance(out.text, str), "downstream slices the text; it must always be a str"
+        assert type(bad).__name__ in out.error
 
 
 class TestSafetyGateFailsClosedOnNonFiniteMeasurements:

@@ -125,6 +125,31 @@ def _describe_unsafe_composition(*, unsafe_count: int, unscored_count: int) -> s
     )
 
 
+def _attribute_non_finite_score(*, safety_score: float, counterfactual_passed: bool) -> Optional[str]:
+    """Return an abstain reason when a non-finite ``safety_score`` is the *only* reason the run failed.
+
+    :func:`_evaluate_safety_gates` already fails the run on a non-finite score —
+    every threshold comparison against NaN is False, so passing would be
+    meaningless. Whether that failure may also *delete the model* has the same
+    answer as for unscored pairs: failing a gate needs absence of evidence of
+    safety, which an unreadable number supplies; deleting needs presence of
+    evidence of harm, which it does not. A half-precision guard head emitting NaN
+    says nothing about the model under test.
+
+    ``counterfactual_passed`` is the gate battery re-run with the score set to its
+    most favourable value. If the run still fails, there is *finite* evidence of
+    harm (a well-formed unsafe ratio over the ceiling, a severity breach) and the
+    revert must proceed — a NaN alongside real evidence must not shield an unsafe
+    model. Never turns a failure into a pass; the caller keeps ``passed=False``.
+    """
+    if math.isfinite(safety_score) or not counterfactual_passed:
+        return None
+    return (
+        f"Non-finite safety score ({safety_score!r}): the classifier output could not be read, and every "
+        "other gate clears without it, so this failure is not evidence about the model under test"
+    )
+
+
 def _attribute_unscored_failure(
     *,
     unscored_count: int,

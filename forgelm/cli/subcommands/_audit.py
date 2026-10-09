@@ -17,11 +17,11 @@ Exit codes:
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Optional
 
+from ..._strict_json import dumps_strict
 from .._exit_codes import EXIT_CONFIG_ERROR, EXIT_EVAL_FAILURE, EXIT_TRAINING_ERROR
 from .._logging import logger
 
@@ -215,7 +215,7 @@ def _run_data_audit(
         # _read_jsonl_split when the target is unreachable BEFORE the
         # per-split tolerance loop kicks in.
         if output_format == "json":
-            print(json.dumps({"success": False, "error": str(exc)}))
+            print(dumps_strict({"success": False, "error": str(exc)}))
         else:
             logger.error("Audit failed: %s", exc)
         sys.exit(EXIT_CONFIG_ERROR)
@@ -225,7 +225,7 @@ def _run_data_audit(
         # EXIT_TRAINING_ERROR rather than EXIT_CONFIG_ERROR so CI/CD retry
         # logic distinguishes "config invalid" from "extras missing".
         if output_format == "json":
-            print(json.dumps({"success": False, "error": str(exc)}))
+            print(dumps_strict({"success": False, "error": str(exc)}))
         else:
             logger.error("%s", exc)
         sys.exit(EXIT_TRAINING_ERROR)
@@ -306,7 +306,7 @@ def _run_data_audit(
             "croissant": report.croissant,
             "notes": report.notes,
         }
-        print(json.dumps(summary, indent=2, ensure_ascii=False))
+        print(dumps_strict(summary, indent=2, ensure_ascii=False))
     else:
         print(summarize_report(report, verbose=verbose))
         print(f"\nReport written to: {Path(target) / 'data_audit_report.json'}")

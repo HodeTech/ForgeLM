@@ -298,6 +298,44 @@ def test_lint_job_tool_pins_match_the_dev_extra(tool: str) -> None:
     )
 
 
+def test_the_shadow_check_sees_a_nested_shadow(tmp_path: Path) -> None:
+    """Negative control: the recursive scan must flag a shadow below the top level."""
+    nested = tmp_path / "forgelm" / "cli" / "subcommands" / "_thing"
+    nested.mkdir(parents=True)
+    (nested / "__init__.py").write_text("")
+    (nested.parent / "_thing.py").write_text("")
+    found = [
+        d
+        for d in (tmp_path / "forgelm").rglob("*")
+        if d.is_dir() and (d / "__init__.py").exists() and (d.parent / f"{d.name}.py").exists()
+    ]
+    assert found == [nested]
+
+
+def test_bandit_pin_matches_the_dev_and_security_extras() -> None:
+    """``bandit`` gates CI in its own job, so its pin is a third hand-kept copy.
+
+    The ruff/mypy parity test covers the lint job only. bandit is installed by a
+    different step, and a scanner major can redden a blocking gate with no commit on
+    this side — the same ambush the other pins are compared to prevent.
+    """
+    import re
+
+    ci_text = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    found = re.findall(r"pip install '(bandit\[toml\][^']+)'", ci_text)
+    assert found, "ci.yml no longer installs bandit via `pip install 'bandit[toml]…'` — update this test"
+    ci_spec = {str(Requirement(spec).specifier) for spec in found}
+    extras = _load_optional_dependencies()
+    for extra in ("dev", "security"):
+        pins = {
+            str(Requirement(spec).specifier)
+            for spec in extras[extra]
+            if canonicalize_name(Requirement(spec).name) == "bandit"
+        }
+        assert pins, f"[{extra}] no longer lists bandit"
+        assert pins == ci_spec, f"bandit is {pins} in [{extra}] but {ci_spec} in ci.yml"
+
+
 def test_no_module_shadows_a_sub_package() -> None:
     """No ``forgelm/<name>.py`` may sit beside a ``forgelm/<name>/`` package.
 
@@ -315,12 +353,17 @@ def test_no_module_shadows_a_sub_package() -> None:
     get. Cheap to assert, silent to miss.
     """
     package_root = Path(__file__).resolve().parents[1] / "forgelm"
+    # Recursive: the splits are not all top-level (``cli/subcommands/``, ``safety/``,
+    # ``data_audit/``...), and a shadow beside a nested package is the same silent
+    # two-copies-in-a-wheel hazard that a top-level one is.
     shadows = sorted(
-        f"forgelm/{directory.name}.py shadows forgelm/{directory.name}/"
-        for directory in package_root.iterdir()
+        f"{directory.parent.relative_to(package_root.parent).as_posix()}/{directory.name}.py "
+        f"shadows {directory.relative_to(package_root.parent).as_posix()}/"
+        for directory in package_root.rglob("*")
         if directory.is_dir()
+        and "__pycache__" not in directory.parts
         and (directory / "__init__.py").exists()
-        and (package_root / f"{directory.name}.py").exists()
+        and (directory.parent / f"{directory.name}.py").exists()
     )
     assert not shadows, (
         f"a module is shadowing a sub-package of the same name: {shadows}. "

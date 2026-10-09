@@ -163,10 +163,10 @@ Hem staging hem target host kendi adımlarını CI'dan çalıştırabilir:
 ```
 
 Her iki `jq -e '.success'` gate'i de yük taşır ve sizi yarı yolda bırakan
-`cache-tasks` olanıydı: 0.10'a kadar dataset'i inmeyen bir task
+`cache-tasks` olanıydı: 0.11.0'a kadar dataset'i inmeyen bir task
 `tasks[].error`'a yazılıyor, komut yine `success: true` ve exit 0 döndürüyordu.
 Gate yarı dolu bir cache üzerinde yeşile dönüyor ve bundle gönderiliyordu.
-0.11 itibarıyla hazırlanamayan herhangi bir task komutu `success: false` ile
+0.11.0 sonrası sürümlerde hazırlanamayan herhangi bir task komutu `success: false` ile
 exit 2'ye düşürür ve hata zarfı per-task satırları `tasks` altında koruduğu için
 job log'u neyin eksik olduğunu adıyla söyler. Yukarıdaki workflow'da hiçbir şey
 değişmez — yalnızca artık her zaman durduğunu iddia ettiği yerde durur.

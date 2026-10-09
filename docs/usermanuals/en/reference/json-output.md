@@ -627,7 +627,7 @@ This is the point of the command: an air-gapped host has no second chance. The
 `jq -e '.success'` before bundling, and that gate is only worth running if a
 half-populated cache turns it red.
 
-> **Changed in 0.11.** Through 0.10, per-task download failures were reported in
+> **Changed after 0.11.0.** Through 0.11.0, per-task download failures were reported in
 > `tasks[].error` but the batch still returned `success: true` and exit `0`, and
 > the audit log recorded `cache.populate_tasks_completed`. A CI job following
 > the documented example therefore packaged and shipped an empty dataset cache

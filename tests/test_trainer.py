@@ -321,7 +321,7 @@ class TestEvaluationChecks:
         failing_benchmark.average_score = 0.30
         failing_benchmark.failure_reason = "Benchmark score below threshold."
 
-        with patch.object(trainer, "_revert_model") as revert:
+        with patch.object(trainer, "_revert_model", return_value=True) as revert:
             result = trainer._apply_benchmark_result(failing_benchmark, train_result, metrics, "/tmp/nonexistent/final")
 
         assert result is False  # halt → exit 3
@@ -610,7 +610,7 @@ class TestGateApplication:
             low_confidence_count=0,
             failure_reason="unsafe ratio too high",
         )
-        with patch.object(trainer, "_revert_model") as revert:
+        with patch.object(trainer, "_revert_model", return_value=True) as revert:
             cont = trainer._apply_safety_result(safety, result, {}, str(tmp_path / "final"))
         assert cont is False  # halt → exit 3
         assert result.reverted is True
@@ -654,7 +654,7 @@ class TestGateApplication:
         trainer = self._make_trainer(auto_revert=True, tmp_path=tmp_path)
         result = TrainResult(success=True, metrics={}, final_model_path=str(tmp_path / "final"))
         judge = MagicMock(passed=False, average_score=2.0, details=[], failure_reason="below min_score")
-        with patch.object(trainer, "_revert_model") as revert:
+        with patch.object(trainer, "_revert_model", return_value=True) as revert:
             cont = trainer._apply_judge_result(judge, result, {}, str(tmp_path / "final"))
         assert cont is False
         assert result.reverted is True
@@ -1424,6 +1424,23 @@ class TestSaveEvalStepInvariant:
         with pytest.raises(ConfigError, match="save_steps"):
             trainer._get_common_training_kwargs()
 
+    def test_the_message_offers_two_candidates_when_they_differ(self):
+        from forgelm.config import ConfigError
+
+        trainer = self._trainer(eval_steps=200, save_steps=300)
+        with pytest.raises(ConfigError, match=r"Nearest valid value\(s\): 200 or 400\."):
+            trainer._get_common_training_kwargs()
+
+    def test_the_message_does_not_name_one_number_twice(self):
+        """``save_steps < eval_steps``: both candidates are ``eval_steps``; "200 or 200" is noise."""
+        from forgelm.config import ConfigError
+
+        trainer = self._trainer(eval_steps=200, save_steps=100)
+        with pytest.raises(ConfigError) as exc_info:
+            trainer._get_common_training_kwargs()
+        assert "Nearest valid value(s): 200." in str(exc_info.value)
+        assert "200 or 200" not in str(exc_info.value)
+
     @pytest.mark.parametrize("save_steps", [200, 400, 600])
     def test_a_multiple_is_accepted(self, save_steps):
         trainer = self._trainer(eval_steps=200, save_steps=save_steps)
@@ -1493,6 +1510,11 @@ class TestRevertedFlagAtTheCallSite:
         )
         assert match, "the loss-gate failure TrainResult is no longer recognisable — update this test"
         expression = match.group(1).strip()
+        if expression.isidentifier():
+            # ``reverted=reverted`` — the expression is the local assigned just above the call.
+            local = re.search(rf"^\s*{expression} = (.+)$", source, re.M)
+            assert local, f"`{expression}` is passed as reverted= but its assignment is not recognisable"
+            expression = local.group(1).strip()
         assert expression != "True", (
             "the loss-gate call site hardcodes reverted=True again. It must be derived from whether "
             "_revert_model actually ran: execute_evaluation_checks returns False both when the model "

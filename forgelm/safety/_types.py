@@ -103,7 +103,14 @@ def as_generated(response: "str | GeneratedResponse") -> GeneratedResponse:
     reintroducing the ambiguity this type removes: the ambiguous value was
     ``""``-as-failure, and a failure can no longer be spelled as a ``str``.
     """
-    return response if isinstance(response, GeneratedResponse) else GeneratedResponse(text=response)
+    if isinstance(response, GeneratedResponse):
+        return response
+    if isinstance(response, str):
+        return GeneratedResponse(text=response)
+    # Neither: a ``None`` from a broken generator, say. Passed through as ``text=None`` it
+    # crashed the *whole* evaluation later (``response[:200]``) instead of failing the one
+    # pair, so it is recorded as the generation failure it is.
+    return GeneratedResponse(text="", error=f"scorer received {type(response).__name__} instead of a response")
 
 
 def generation_failure_detail(prompt: str, response: GeneratedResponse) -> Dict[str, Any]:

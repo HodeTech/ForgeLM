@@ -282,6 +282,33 @@ def test_all_three_gauntlets_match_each_other():
         )
 
 
+def _missing_on_disk(names) -> list[str]:
+    return sorted(name for name in names if not (_TOOLS / name).is_file())
+
+
+def test_every_guard_that_is_invoked_exists_on_disk():
+    """The workflow -> disk direction, which no other test covers.
+
+    Every comparison above is between two *documents* (ci.yml and the gauntlet
+    blocks), plus disk -> workflow for "is each real guard wired". None asks the
+    converse: a guard named in ci.yml **and** in all three gauntlets, with no file
+    behind it, satisfies every set-equality in this module while CI fails with
+    "No such file" — or, if the invocation is later wrapped in ``|| true``, silently
+    never runs.
+    """
+    invoked = {name for name, _flags in _ci_guards()} | _workflow_guard_names()
+    for doc in _GAUNTLET_DOCS:
+        invoked |= {name for name, _flags in _gauntlet_guards(_REPO_ROOT / doc)}
+    assert invoked, "no guard invocations were extracted at all — the parser, not the repo, is broken"
+    assert not _missing_on_disk(invoked), f"invoked but absent from tools/: {_missing_on_disk(invoked)}"
+
+
+def test_the_disk_check_can_actually_fail():
+    """Negative control: a name with no file behind it is reported."""
+    assert _missing_on_disk({"check_does_not_exist_anywhere.py"}) == ["check_does_not_exist_anywhere.py"]
+    assert _missing_on_disk({"check_strict_json_writers.py"}) == []
+
+
 def test_every_ci_guard_appears_in_every_gauntlet():
     """The reverse direction, which is the one that was missing.
 

@@ -33,7 +33,6 @@ Exit codes (per ``docs/standards/error-handling.md``):
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import time
@@ -41,6 +40,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Dict, List, NoReturn, Tuple
 
+from ..._strict_json import dumps_strict
 from .._exit_codes import EXIT_CONFIG_ERROR, EXIT_SUCCESS, EXIT_TRAINING_ERROR
 from .._logging import logger
 
@@ -87,7 +87,7 @@ def _output_error_and_exit(
         for key, value in (extra or {}).items():
             if key not in envelope:
                 envelope[key] = value
-        print(json.dumps(envelope, ensure_ascii=False))
+        print(dumps_strict(envelope, ensure_ascii=False))
     else:
         logger.error(msg)
     sys.exit(exit_code)
@@ -457,6 +457,7 @@ def _run_cache_tasks_cmd(args, output_format: str) -> None:
                 audit.log_event(
                     _EVT_CACHE_TASKS_FAILED,
                     **request_fields,
+                    tasks_completed=[],
                     error_class=exc.__class__.__name__,
                     error_message=str(exc),
                 )
@@ -470,7 +471,22 @@ def _run_cache_tasks_cmd(args, output_format: str) -> None:
         # mapping keyed by a group object, not a task name: staging the group
         # itself would stage nothing and put a non-string name into the
         # envelope, the audit event and the failure message.
-        leaf_tasks = _leaf_tasks(task_dict)
+        try:
+            leaf_tasks = _leaf_tasks(task_dict)
+        except Exception as exc:  # noqa: BLE001 — lm-eval's task-dict shape has changed across releases; any walk failure means the surface drifted, and a raw traceback would skip the envelope and the audit event.
+            _fail_tasks_enumeration(audit, request_fields, output_format, exc.__class__.__name__, str(exc))
+        # ``{}`` and ``{group: {}}`` enumerate to nothing: the loop below never
+        # runs, ``uncached`` stays empty, and without this check the command
+        # reported ``success: true`` for a cache it never touched — the same
+        # air-gap hazard as the per-task fold, one layer earlier.
+        if not leaf_tasks:
+            _fail_tasks_enumeration(
+                audit,
+                request_fields,
+                output_format,
+                "NoTasksResolved",
+                f"lm-eval resolved no runnable task from {task_names!r}; nothing was staged and the cache is empty",
+            )
         try:
             for name, task_obj in leaf_tasks:
                 results.append(_prepare_one_task(name, task_obj, cache_dir))
@@ -556,6 +572,27 @@ def _run_cache_tasks_cmd(args, output_format: str) -> None:
             os.environ.pop("HF_DATASETS_CACHE", None)
         else:
             os.environ["HF_DATASETS_CACHE"] = prior_hf_datasets_cache
+
+
+def _fail_tasks_enumeration(
+    audit, request_fields: Dict[str, Any], output_format: str, error_class: str, message: str
+) -> NoReturn:
+    """Record and exit for a ``cache-tasks`` run that never reached a single task.
+
+    Uses the enumeration-failure payload shape the audit catalog documents for
+    ``cache.populate_tasks_failed`` (``tasks_completed``, ``error_class``,
+    ``error_message``) and exits 2: the cache was not populated, and nothing about
+    the operator's flags was wrong.
+    """
+    if audit is not None:
+        audit.log_event(
+            _EVT_CACHE_TASKS_FAILED,
+            **request_fields,
+            tasks_completed=[],
+            error_class=error_class,
+            error_message=message,
+        )
+    _output_error_and_exit(output_format, f"cache-tasks failed: {message}", EXIT_TRAINING_ERROR)
 
 
 def _task_label(key: Any) -> str:
@@ -676,7 +713,7 @@ def _emit_cache_success(output_format: str, payload: Dict[str, Any], *, kind: st
         # ``ensure_ascii=False`` matches the doctor renderer (PR #29 F-34-01):
         # a Unicode ``cache_dir`` / ``cached_path`` (e.g. ``/work/önbellek``)
         # would otherwise render as ``\uXXXX`` escapes, unreadable for operators.
-        print(json.dumps(payload, indent=2, default=str, ensure_ascii=False))
+        print(dumps_strict(payload, indent=2, default=str, ensure_ascii=False))
         return
     if kind == "models":
         models = payload.get("models", [])

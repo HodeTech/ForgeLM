@@ -788,6 +788,38 @@ class TestJudgeBatchSize:
             )
 
 
+class TestJudgeThresholdBoundary:
+    """The YAML route bounds these; the public function must not rely on it.
+
+    ``valid_fraction < nan`` is False, so a NaN ``min_valid_fraction`` does not
+    tighten the gate — it removes the evidence floor, and one parseable score out
+    of two hundred is then compared against ``min_score`` on its own. Negative
+    values do the same. Both are refused before any work, like ``batch_size``.
+    """
+
+    @staticmethod
+    def _call(**kw):
+        from forgelm.judge import run_judge_evaluation
+
+        return run_judge_evaluation(model=MagicMock(), tokenizer=MagicMock(), eval_dataset_path="unused.jsonl", **kw)
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), -0.1, 1.5, True, "0.8"])
+    def test_min_valid_fraction_must_be_a_finite_rate(self, bad):
+        with pytest.raises(ValueError, match="min_valid_fraction"):
+            self._call(min_valid_fraction=bad)
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), 0.0, 10.5, -3, True, None])
+    def test_min_score_must_be_a_finite_score_on_the_judge_scale(self, bad):
+        with pytest.raises(ValueError, match="min_score"):
+            self._call(min_score=bad)
+
+    @pytest.mark.parametrize("fraction", [0.0, 0.8, 1.0])
+    def test_the_boundaries_themselves_are_accepted(self, fraction):
+        """The negative control: validation passes, so the missing eval file is what stops the call."""
+        result = self._call(min_valid_fraction=fraction, min_score=1.0)
+        assert result.passed is False and "not found" in result.failure_reason
+
+
 class TestNonNumericJudgeScore:
     """A valid-JSON judge response can still carry a non-numeric score
     ("8/10", "N/A", a list/dict).  float() raises ValueError/TypeError on those;

@@ -19,6 +19,8 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List, Optional
 
+from ._strict_json import dumps_strict
+
 if TYPE_CHECKING:  # pragma: no cover - import cycle guard, type-checkers only
     from .config import ForgeConfig
 
@@ -130,7 +132,7 @@ class SyntheticDataGenerator:
                         # output file — same observable contract as before.
                         os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
                         handle = open(output_file, "w", encoding="utf-8")
-                    handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                    handle.write(dumps_strict(entry, ensure_ascii=False) + "\n")
                     handle.flush()
                 # Skip the trailing sleep — there's no next request to throttle
                 if rate_limit and i < last_idx:

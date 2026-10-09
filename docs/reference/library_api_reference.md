@@ -53,7 +53,7 @@ Tables grouped by concern. Every cell is a real attribute on the live `forgelm` 
 |---|---|---|---|
 | `forgelm.ForgeTrainer` | Stable | `ForgeTrainer(config: ForgeConfig)` | Primary training entry point. Wraps TRL `SFTTrainer` / `DPOTrainer` / `KTOTrainer` / `ORPOTrainer` / `GRPOTrainer` selection. |
 | `forgelm.ForgeTrainer.train` | Stable | `train() -> TrainResult` | Run the configured fine-tune. Returns `TrainResult.success` / `metrics` / `final_model_path`. Heavy deps (`torch`, `transformers`, `trl`) load only when this method is called. |
-| `forgelm.TrainResult` | Stable | `dataclass` | Result of `ForgeTrainer.train()`. Canonical fields (per `forgelm/results.py`): `success: bool`, `metrics: Dict[str, float]`, `final_model_path: Optional[str]`, `reverted: bool`, `error: Optional[str]`, `benchmark_scores`, `benchmark_average`, `benchmark_passed`, `safety_passed`, `safety_score`, `safety_categories`, `safety_severity`, `safety_low_confidence`, `judge_score`, `judge_details`, `estimated_cost_usd`, `staging_path`, `resource_usage`. |
+| `forgelm.TrainResult` | Stable | `dataclass` | Result of `ForgeTrainer.train()`. Canonical fields (per `forgelm/results.py`): `success: bool`, `metrics: Dict[str, float]`, `final_model_path: Optional[str]`, `reverted: bool`, `error: Optional[str]`, `benchmark_scores`, `benchmark_average`, `benchmark_passed`, `safety_passed`, `safety_score`, `safety_categories`, `safety_severity`, `safety_low_confidence`, `judge_score`, `judge_details`, `judge_passed`, `estimated_cost_usd`, `staging_path`, `resource_usage`. |
 
 ### Data preparation
 
@@ -109,7 +109,7 @@ Implemented in the `forgelm/verify/` sub-package (moved out of the `forgelm/cli/
 
 | Symbol | Tier | Signature | Description |
 |---|---|---|---|
-| `forgelm.WebhookNotifier` | Experimental | `WebhookNotifier(config: ForgeConfig)` | Slack / Teams / generic-HTTP lifecycle notifications. Constructor schema may grow ISO/SOC 2 fields in a future release. |
+| `forgelm.WebhookNotifier` | Experimental | `WebhookNotifier(config: Any)` | Slack / Teams / generic-HTTP lifecycle notifications. Constructor schema may grow ISO/SOC 2 fields in a future release. |
 | `forgelm.setup_authentication` | Experimental | `setup_authentication(token: Optional[str] = None) -> None` | Wrapper around `huggingface_hub.login`. Reads `HUGGINGFACE_TOKEN` env var when `token` is `None`. |
 | `forgelm.manage_checkpoints` | Experimental | `manage_checkpoints(checkpoint_dir: str, action: str = "keep") -> None` | Apply checkpoint-retention behaviour against an output directory. `action` controls retain/prune semantics. |
 

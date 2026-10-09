@@ -208,6 +208,8 @@ def _update_integrity_manifest(model_dir: str, export_result: ExportResult) -> N
     """Append the exported artifact to model_integrity.json if it exists."""
     import json
 
+    from ._strict_json import dumps_strict
+
     integrity_path = os.path.join(model_dir, "model_integrity.json")
     if not os.path.isfile(integrity_path):
         return
@@ -225,13 +227,16 @@ def _update_integrity_manifest(model_dir: str, export_result: ExportResult) -> N
         }
         data.setdefault("exported_artifacts", []).append(artifact)
 
+        # Serialise before opening for write: ``open(..., "w")`` truncates, so a
+        # serialisation error afterwards would leave an empty integrity manifest.
+        serialised = dumps_strict(data, indent=2)
         with open(integrity_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+            f.write(serialised)
 
         logger.info("model_integrity.json updated with exported artifact.")
     except (OSError, TypeError, ValueError) as e:
         # OSError: filesystem write / read failure on integrity_path.
-        # TypeError: ``json.dump`` rejecting an unserialisable artefact field.
+        # TypeError: ``dumps_strict`` rejecting an unserialisable artefact field.
         # ValueError: corrupt or partial existing manifest (covers
         # ``json.JSONDecodeError`` since it subclasses ``ValueError``).
         # Updating the manifest is non-fatal: the artefact itself was already

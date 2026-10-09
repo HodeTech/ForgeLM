@@ -1,4 +1,3 @@
-import json
 import logging
 import math
 import os
@@ -9,6 +8,8 @@ from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from pydantic import Field as PydField
+
+from ._strict_json import dumps_strict
 
 logger = logging.getLogger("forgelm.config")
 
@@ -31,6 +32,12 @@ logger = logging.getLogger("forgelm.config")
 # Without the marker, a future edit that moves a field name within the
 # guard's line window would turn this comment into a CI failure.)
 DEPRECATION_REMOVAL_VERSION = "v1.0.0"
+
+# A float that refuses NaN and ±inf.  ``gt=0`` / ``ge=0`` already reject NaN and
+# ``-inf`` (both comparisons are False) but accept ``+inf``, and an unbounded
+# field accepts all three; ``allow_inf_nan=False`` is what closes the rest.
+# Every float schema field uses this, enforced by ``tests/test_config_non_finite_matrix.py``.
+FiniteFloat = Annotated[float, PydField(allow_inf_nan=False)]
 
 # The one regex the revision-pin feature owes docs/standards/regex.md.
 #
@@ -483,7 +490,7 @@ class TrainingConfig(BaseModel):
         description="Number of micro-batches to accumulate before each optimiser step.",
         json_schema_extra={"wizard": True},
     )
-    learning_rate: float = Field(
+    learning_rate: FiniteFloat = Field(
         default=2e-5,
         gt=0,
         description="Peak learning rate.  LoRA / QLoRA usually tolerates 2e-4; full-finetune wants 2e-5.",
@@ -492,7 +499,9 @@ class TrainingConfig(BaseModel):
     warmup_ratio: float = Field(
         default=0.1, ge=0, le=1, description="Fraction of total steps spent warming up the learning rate from 0 → peak."
     )
-    weight_decay: float = Field(default=0.01, ge=0, description="L2 weight-decay coefficient applied by the optimiser.")
+    weight_decay: FiniteFloat = Field(
+        default=0.01, ge=0, description="L2 weight-decay coefficient applied by the optimiser."
+    )
     eval_steps: int = Field(default=200, ge=1, description="Run validation every N optimiser steps.")
     save_steps: int = Field(default=200, ge=1, description="Write a checkpoint every N optimiser steps.")
     save_total_limit: int = Field(default=3, ge=1, description="Retain at most N checkpoints (oldest evicted first).")
@@ -502,11 +511,13 @@ class TrainingConfig(BaseModel):
     early_stopping_patience: int = Field(
         default=3, ge=1, description="Stop training after N evals without validation-loss improvement."
     )
-    orpo_beta: float = Field(default=0.1, gt=0, description="ORPO odds-ratio weight (alignment paradigm parameter).")
-    dpo_beta: float = Field(default=0.1, gt=0, description="DPO temperature parameter.")
-    simpo_gamma: float = Field(default=0.5, ge=0, description="SimPO margin term.")
-    simpo_beta: float = Field(default=2.0, gt=0, description="SimPO scaling parameter.")
-    kto_beta: float = Field(default=0.1, gt=0, description="KTO loss parameter.")
+    orpo_beta: FiniteFloat = Field(
+        default=0.1, gt=0, description="ORPO odds-ratio weight (alignment paradigm parameter)."
+    )
+    dpo_beta: FiniteFloat = Field(default=0.1, gt=0, description="DPO temperature parameter.")
+    simpo_gamma: FiniteFloat = Field(default=0.5, ge=0, description="SimPO margin term.")
+    simpo_beta: FiniteFloat = Field(default=2.0, gt=0, description="SimPO scaling parameter.")
+    kto_beta: FiniteFloat = Field(default=0.1, gt=0, description="KTO loss parameter.")
     grpo_num_generations: int = Field(
         default=4, ge=2, description="GRPO: number of responses to generate per prompt during rollout."
     )
@@ -558,7 +569,7 @@ class TrainingConfig(BaseModel):
         ge=1,
         description="GaLore: number of steps between SVD re-computations of the projection.",
     )
-    galore_scale: float = Field(
+    galore_scale: FiniteFloat = Field(
         default=0.25, gt=0, description="GaLore: gradient scaling factor (analogous to LoRA alpha)."
     )
     galore_proj_type: Literal["std", "reverse_std", "right", "left", "full"] = Field(
@@ -579,7 +590,7 @@ class TrainingConfig(BaseModel):
             "The transformers-5 canonical `rope_type` key is accepted as an alias for `type`."
         ),
     )
-    neftune_noise_alpha: Optional[float] = Field(
+    neftune_noise_alpha: Optional[FiniteFloat] = Field(
         default=None,
         description="NEFTune: add Gaussian noise to embeddings during training (5.0 is a common value; improves SFT quality).",
     )
@@ -606,7 +617,7 @@ class TrainingConfig(BaseModel):
         description="Experiment-tracking backend.  `wandb` requires the `[tracking]` extra, `mlflow` the `[tracking-mlflow]` extra.",
     )
     run_name: Optional[str] = Field(default=None, description="W&B / MLflow run name.  Auto-generated when None.")
-    gpu_cost_per_hour: Optional[float] = Field(
+    gpu_cost_per_hour: Optional[FiniteFloat] = Field(
         default=None,
         ge=0,
         description="USD per hour for the training GPU.  None = auto-detect from known GPUs (used by the cost-estimation report).",
@@ -664,8 +675,9 @@ class TrainingConfig(BaseModel):
             # ``factor: true`` is rejected as a type error rather than treated as 1.
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError(f"training.rope_scaling.factor must be a number, got {type(value).__name__}.")
-            if value <= 0:
-                raise ValueError(f"training.rope_scaling.factor must be positive, got {value}.")
+            # ``nan <= 0`` and ``inf <= 0`` are both False, so check finiteness first.
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"training.rope_scaling.factor must be positive and finite, got {value}.")
 
         def _check_factor_list(key):
             value = v.get(key)
@@ -679,6 +691,8 @@ class TrainingConfig(BaseModel):
                     raise ValueError(
                         f"training.rope_scaling.{key} must contain only numbers, got {type(item).__name__}."
                     )
+                if not math.isfinite(item):
+                    raise ValueError(f"training.rope_scaling.{key} must contain only finite numbers, got {item}.")
 
         allowed_types = ("linear", "dynamic", "yarn", "longrope")
         # transformers 5.x reads ``rope_parameters.get("rope_type", ...get("type"))``,
@@ -871,10 +885,12 @@ class BenchmarkConfig(BaseModel):
     enabled: bool = Field(default=False, description="Enable lm-evaluation-harness benchmark scoring after training.")
     tasks: List[str] = Field(default=[], description='lm-eval task names (e.g. `["arc_easy", "hellaswag", "mmlu"]`).')
     num_fewshot: Optional[int] = Field(
-        default=None, description="Few-shot example count.  None = use the task's documented default."
+        default=None, ge=0, description="Few-shot example count.  None = use the task's documented default."
     )
     batch_size: str = Field(default="auto", description='lm-eval batch size: `"auto"` or an integer string.')
-    limit: Optional[int] = Field(default=None, description="Cap samples per task for quick checks.  None = full task.")
+    limit: Optional[int] = Field(
+        default=None, ge=1, description="Cap samples per task for quick checks.  None = full task."
+    )
     output_dir: Optional[str] = Field(
         default=None, description="Where to save benchmark results JSON.  Defaults to the training output_dir."
     )
@@ -1121,7 +1137,7 @@ class JudgeConfig(BaseModel):
             "average to be treated as evidence.  Below this the gate fails with an "
             "`insufficient valid evidence` reason instead of comparing the average against "
             "`min_score` — an average over 3 of 200 prompts is not a measurement of the model.  "
-            "Set to 0.0 to accept any non-empty sample (the pre-0.11 behaviour)."
+            "Set to 0.0 to accept any non-empty sample (the behaviour through 0.11.0)."
         ),
     )
     include_eval_samples: bool = Field(
@@ -1347,7 +1363,7 @@ class SyntheticConfig(BaseModel):
     api_key_env: Optional[str] = Field(
         default=None, description="Env var name carrying the API key (e.g. `OPENAI_API_KEY`)."
     )
-    api_delay: float = Field(default=0.5, ge=0.0, description="Seconds between API calls (rate limiting).")
+    api_delay: FiniteFloat = Field(default=0.5, ge=0.0, description="Seconds between API calls (rate limiting).")
     api_timeout: int = Field(
         default=60,
         ge=10,
@@ -1359,7 +1375,7 @@ class SyntheticConfig(BaseModel):
     seed_prompts: List[str] = Field(default=[], description="Inline seed prompts (alternative to `seed_file`).")
     system_prompt: str = Field(default="", description="System prompt prepended on every teacher call.")
     max_new_tokens: int = Field(default=1024, ge=1, description="Max tokens per teacher response.")
-    temperature: float = Field(default=0.7, ge=0.0, description="Sampling temperature passed to the teacher.")
+    temperature: FiniteFloat = Field(default=0.7, ge=0.0, description="Sampling temperature passed to the teacher.")
     output_file: str = Field(default="synthetic_data.jsonl", description="Output JSONL file path.")
     output_format: Literal["messages", "instruction", "chatml", "prompt_response"] = Field(
         default="messages",
@@ -1698,7 +1714,7 @@ class ForgeConfig(BaseModel):
         content — e.g. ``risk_assessment.intended_use`` — round-trips as
         readable UTF-8 instead of being escaped to ``\\uXXXX``.
         """
-        return json.dumps(
+        return dumps_strict(
             self.model_dump(mode="json", redact_secrets=redact_secrets, **kwargs),
             indent=indent,
             ensure_ascii=False,

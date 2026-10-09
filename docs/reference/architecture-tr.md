@@ -17,7 +17,7 @@ forgelm --config job.yaml
     │       │   approve, reject, approvals, safety-eval,
     │       │   verify-audit, verify-annex-iv, verify-gguf,
     │       │   verify-integrity, quickstart
-    ├── config.py           → Pydantic doğrulama (23 config modeli)
+    ├── config.py           → Pydantic doğrulama (24 config modeli)
     ├── utils.py            → HF kimlik doğrulama
     ├── model.py            → Model + tokenizer + LoRA/PEFT yükleme
     ├── data.py             → Veri seti yükleme + formatlama
@@ -57,7 +57,7 @@ ForgeLM/
 │   │   └── _orchestrator, _aggregator, _streaming, _simhash,
 │   │       _minhash, _pii_regex, _pii_ml, _secrets, _quality,
 │   │       _croissant, _summary, _splits, _types, _optional
-│   ├── config.py             # 23 Pydantic config modeli
+│   ├── config.py             # 24 Pydantic config modeli
 │   ├── data.py               # Veri yükleme (SFT/DPO/KTO/GRPO/multimodal)
 │   ├── ingestion.py          # Ham doküman → SFT JSONL (PDF/DOCX/EPUB/TXT/Markdown)
 │   ├── model.py              # Model + LoRA/DoRA/PiSSA + MoE algılama
@@ -77,7 +77,7 @@ ForgeLM/
 │   ├── compliance.py         # EU AI Act uyumluluk + AuditLogger + kaynak takibi
 │   ├── verify/               # Doğrulama alt-paketi (Faz 16 S1 split):
 │   │                         #   _annex_iv, _pipeline_evidence, _gguf,
-│   │                         #   _model_integrity, _audit_log
+│   │                         #   _model_integrity, _audit_log, _io_safety
 │   ├── model_card.py         # HF uyumlu model kartı üretimi
 │   ├── merging.py            # Model birleştirme (TIES/DARE/SLERP/linear)
 │   ├── synthetic.py          # Sentetik veri üretimi (öğretmen→öğrenci)
@@ -112,7 +112,7 @@ ForgeLM/
 Orkestratör (Faz 15 split). `_parser.py` 19 subcommand'ı (`audit`, `approve`, `approvals`, `reject`, `cache-models`, `cache-tasks`, `chat`, `deploy`, `doctor`, `export`, `ingest`, `purge`, `quickstart`, `reverse-pii`, `safety-eval`, `verify-annex-iv`, `verify-audit`, `verify-gguf`, `verify-integrity`) artı eski training-mode flag setini kaydeder. `_dispatch.py` `subcommands/` altındaki uygun handler'a yönlendirir. `_exit_codes.py` public 0/1/2/3/4/5/6 sözleşmesini tanımlar (5 = sihirbaz iptal edildi, 6 = bütünlük arızası — yalnızca `verify-*` subcommand'ları, okunan bir artefakt hash/zincir kontrolünde başarısız olduğunda). Doğrulama primitiflerinin kendisi `cli/` altında değil `forgelm/verify/` alt-paketinde yaşar (`_annex_iv.py`, `_pipeline_evidence.py`, `_gguf.py`, `_model_integrity.py`, `_audit_log.py`, yeniden dışa aktaran bir `__init__.py` arkasında); bu, `docs/standards/architecture.md`'nin "CLI ince bir kabuktur" kuralına uygun olarak CLI subcommand modüllerini ince dispatcher olarak tutar.
 
 ### `config.py`
-23 Pydantic v2 modeli: ModelConfig, LoraConfigModel, TrainingConfig, DataConfig, DataGovernanceConfig, EvaluationConfig, SafetyConfig, BenchmarkConfig, JudgeConfig, WebhookConfig, DistributedConfig, MergeConfig, ComplianceMetadataConfig, RetentionConfig, RiskAssessmentConfig, MonitoringConfig, MoeConfig, MultimodalConfig, AuthConfig, SyntheticConfig, PipelineStage, PipelineConfig + üst-düzey ForgeConfig. Çapraz alan doğrulaması içerir.
+24 Pydantic v2 modeli: ModelConfig, LoraConfigModel, TrainingConfig, DataConfig, DataGovernanceConfig, EvaluationConfig, SafetyConfig, BenchmarkConfig, JudgeConfig, WebhookConfig, DistributedConfig, MergeConfig, MergeInput, ComplianceMetadataConfig, RetentionConfig, RiskAssessmentConfig, MonitoringConfig, MoeConfig, MultimodalConfig, AuthConfig, SyntheticConfig, PipelineStage, PipelineConfig + üst-düzey ForgeConfig. Çapraz alan doğrulaması içerir.
 
 ### `data.py`
 HuggingFace `datasets` kütüphanesi ile arayüz. Veri formatını otomatik algılar (SFT, DPO, KTO, GRPO, multimodal) ve uyumsuzlukta önerili trainer_type ile hata verir. Mix ratio ile çoklu veri seti karıştırma. `tokenizer.apply_chat_template()` ile sohbet şablonları.

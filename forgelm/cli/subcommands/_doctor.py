@@ -38,7 +38,6 @@ doctor bug — flagging this here so future review bots do not refile it.
 
 from __future__ import annotations
 
-import json
 import os
 import platform
 import shutil
@@ -47,6 +46,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Tuple
 
+from ..._strict_json import dumps_strict
 from .._abi_check import (
     ABI_BROKEN,
     ABI_OK,
@@ -1147,7 +1147,7 @@ def _render_json(results: List[_CheckResult]) -> str:
     # Unicode cache path, or localized error message in ``detail`` /
     # ``extras`` would otherwise render as ``\uXXXX`` escape sequences,
     # making the JSON unreadable for operators and downstream parsers.
-    return json.dumps(envelope, indent=2, default=str, ensure_ascii=False)
+    return dumps_strict(envelope, indent=2, default=str, ensure_ascii=False)
 
 
 def _resolve_exit_code(results: List[_CheckResult]) -> int:

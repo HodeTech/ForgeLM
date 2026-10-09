@@ -69,9 +69,10 @@ def _parse_results(raw_results: Dict[str, Any]) -> Tuple[Dict[str, float], List[
     Returns ``(scores, invalid)``. A task whose metric is present but not a
     finite number in ``[0.0, 1.0]`` goes into ``invalid`` rather than
     ``scores``, because it must be distinguishable from the third case — a
-    task with **no** accuracy metric at all, which is already handled by
-    ``_extract_task_score`` returning ``None`` and correctly drags the average
-    down.
+    task with **no** accuracy metric at all. That task is absent from both
+    ``scores`` and ``invalid``; it does *not* drag the average down (it leaves
+    the mean's numerator and denominator alike), so :func:`run_benchmark` finds
+    it by difference and fails a configured gate on it.
 
     An out-of-range score is grouped with the non-finite one deliberately.
     ``BenchmarkConfig.min_score`` is bounded ``[0, 1]``, so a task reporting
@@ -105,6 +106,7 @@ def _save_benchmark_json(
     passed: bool,
     num_fewshot: Optional[int],
     limit: Optional[int],
+    failure_reason: Optional[str] = None,
 ) -> None:
     """Persist the benchmark summary to ``benchmark_results.json``."""
     os.makedirs(output_dir, exist_ok=True)
@@ -122,6 +124,9 @@ def _save_benchmark_json(
                         "scores": scores,
                         "average_score": average_score,
                         "passed": passed,
+                        # Why it failed, in the artefact itself: ``passed: false`` beside an
+                        # ordinary-looking average is otherwise unexplained.
+                        "failure_reason": failure_reason,
                         "num_fewshot": num_fewshot,
                         "limit": limit,
                     },
@@ -197,6 +202,15 @@ def run_benchmark(
 
     passed = True
     failure_reason = None
+    invalid_names = {name for name, _ in invalid_tasks}
+    # Requested tasks that reported no accuracy metric (a perplexity or exact-match
+    # task, or lm-eval surface drift). They are absent from ``scores`` and from
+    # ``invalid_tasks``, so the mean above is over a *different set of tasks than
+    # was asked for*: ``{good: 0.95, broken: <no metric>}`` averaged to 0.95 and
+    # cleared ``min_score: 0.5`` while one requested task was never compared.
+    # Gated on ``min_score`` so a benchmark run purely for reporting, with no
+    # threshold to satisfy, is not turned into a failure by a non-accuracy task.
+    missing_tasks = [name for name in raw_results if name not in scores and name not in invalid_names]
     # Fail closed on unusable measurements before consulting the threshold.
     # ``average_score < min_score`` is False when the average is NaN, so a
     # single NaN task score used to carry the whole run to ``passed=True`` —
@@ -204,14 +218,23 @@ def run_benchmark(
     # decision C-1 any invalid task fails the gate; a valid-fraction floor was
     # considered and deferred rather than adding a second threshold to defend
     # on a gate that until now passed NaN outright.
-    if invalid_tasks:
+    if invalid_tasks or (missing_tasks and min_score is not None):
         passed = False
-        detail = ", ".join(f"{name}={value!r}" for name, value in invalid_tasks)
-        failure_reason = (
-            f"Benchmark produced {len(invalid_tasks)} unusable task score(s): {detail}. "
-            "A score that is not a finite number in [0.0, 1.0] cannot be compared against "
-            "min_score, so the gate fails rather than averaging around it."
-        )
+        problems = []
+        if invalid_tasks:
+            detail = ", ".join(f"{name}={value!r}" for name, value in invalid_tasks)
+            problems.append(
+                f"Benchmark produced {len(invalid_tasks)} unusable task score(s): {detail}. "
+                "A score that is not a finite number in [0.0, 1.0] cannot be compared against "
+                "min_score, so the gate fails rather than averaging around it."
+            )
+        if missing_tasks and min_score is not None:
+            problems.append(
+                f"{len(missing_tasks)} task(s) reported no accuracy metric: {', '.join(missing_tasks)}. "
+                "The average over the remaining tasks is not the average over the requested ones, "
+                "so it cannot be compared against min_score."
+            )
+        failure_reason = " ".join(problems)
         logger.error("BENCHMARK FAILED: %s", failure_reason)
     elif not math.isfinite(average_score):
         # Belt and braces: no current path reaches here once every task score
@@ -226,7 +249,7 @@ def run_benchmark(
         logger.error("BENCHMARK FAILED: %s", failure_reason)
 
     if output_dir:
-        _save_benchmark_json(output_dir, tasks, scores, average_score, passed, num_fewshot, limit)
+        _save_benchmark_json(output_dir, tasks, scores, average_score, passed, num_fewshot, limit, failure_reason)
 
     return BenchmarkResult(
         scores=scores,

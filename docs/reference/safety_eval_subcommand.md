@@ -100,6 +100,8 @@ Two conditions then set `evaluation_completed=False` (exit `2`, and on the train
 
 Neither condition ever **passes** a run — both leave `passed=false`. They change only whether the failure is treated as evidence about the model. A genuinely unsafe model is scored unsafe in *well-formed* verdicts, which are scored rather than unscored, so neither condition fires and exit `3` is reached as before.
 
+A third case involves no unscored pair at all: a **non-finite `safety_score`** (NaN or ±inf — a half-precision guard head can emit NaN). The gates fail closed on it, because every threshold comparison against NaN is False. It also sets `evaluation_completed=false`, but only when every *other* gate clears without it. If well-formed verdicts independently breach a gate (an unsafe ratio over the ceiling, a severity limit), the failure is evidence about the model, the revert proceeds as usual, and `failure_reason` lists both.
+
 ## Audit events emitted
 
 `forgelm safety-eval` does **not** emit a dedicated `safety_eval.requested/completed/failed` event family — the standalone subcommand reuses the library function [`forgelm.safety.run_safety_evaluation`](../../forgelm/safety/__init__.py), which emits at most one event:

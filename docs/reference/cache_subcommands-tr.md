@@ -66,7 +66,7 @@ HF cache, amacına göre bölümlüdür; `HF_HUB_CACHE` set etmek dataset indirm
 
 `cache-models`, kısmi-batch hatasını raporlar: audit zinciri `cache.populate_models_failed` event'ini `models_completed=[<şimdiye-kadar-yapılan-liste>]` payload'ı ile kaydeder; böylece operatör çökmeden önce neyin tamamlandığını bilir ve hatalı modeli atlayarak yeniden çalıştırabilir.
 
-`cache-tasks` da aynı şekilde raporlar. `cached: false` ile biten herhangi bir task — indirme hatası ya da lm-eval'in indirilebilir dataset sunmadığı bir task — komutun tamamını `success: false` ile exit `2`'ye düşürür ve hata zarfı per-task satırları `tasks` altında korur. **0.11'de değişti:** 0.10'a kadar bu hatalar `tasks[].error`'a yazılıyor, komut yine 0 ile çıkıyor ve `cache.populate_tasks_completed` logluyordu; `jq -e '.success'` ile gate eden bir CI job'ı bu yüzden eksik bir cache'i paketleyip air-gap'li host'a gönderiyordu.
+`cache-tasks` da aynı şekilde raporlar. `cached: false` ile biten herhangi bir task — indirme hatası ya da lm-eval'in indirilebilir dataset sunmadığı bir task — komutun tamamını `success: false` ile exit `2`'ye düşürür ve hata zarfı per-task satırları `tasks` altında korur. **0.11.0'dan sonra değişti:** 0.11.0'a kadar bu hatalar `tasks[].error`'a yazılıyor, komut yine 0 ile çıkıyor ve `cache.populate_tasks_completed` logluyordu; `jq -e '.success'` ile gate eden bir CI job'ı bu yüzden eksik bir cache'i paketleyip air-gap'li host'a gönderiyordu.
 
 ## Üretilen audit event'leri
 

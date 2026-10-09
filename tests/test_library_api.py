@@ -821,7 +821,7 @@ class TestPublicSurfaceTypeProbe:
     ``mypy --strict --follow-imports=silent forgelm/__init__.py`` type-checks
     two internal functions and nothing else — it reported ``Success`` with the
     annotations stripped off ``load_config``, ``verify_integrity`` and
-    ``ForgeGgufResult``'s constructor alike, because ``__init__.py`` never
+    ``VerifyGgufResult``'s constructor alike, because ``__init__.py`` never
     *calls* anything and ``--follow-imports=silent`` discards diagnostics
     raised inside the defining modules. ``tests/typing/public_surface_probe.py``
     supplies the call sites that make ``--disallow-untyped-calls`` fire.
@@ -846,10 +846,14 @@ class TestPublicSurfaceTypeProbe:
         )
 
     def test_probe_covers_every_public_symbol(self) -> None:
+        import re
+
         import forgelm
 
         source = self._PROBE.read_text(encoding="utf-8")
-        missing = [name for name in forgelm.__all__ if f"forgelm.{name}" not in source]
+        # Word-bounded: ``forgelm.VerifyResult`` must not be satisfied by a line that only
+        # mentions ``forgelm.VerifyResultX``.
+        missing = [name for name in forgelm.__all__ if not re.search(rf"forgelm\.{re.escape(name)}\b", source)]
         assert not missing, (
             f"tests/typing/public_surface_probe.py does not reference {missing}. "
             "Every name in forgelm.__all__ needs a probe line, or the type gate cannot see it — "
@@ -868,8 +872,14 @@ class TestPublicSurfaceTypeProbe:
 
         The roster is derived from the live classes rather than listed here,
         so a new public method cannot land outside the gate.
+
+        The match is **class-qualified**. A bare ``.{method}(`` substring was satisfied
+        by *any* class: ``.to_dict(`` appears on three probe lines, so a fourth class
+        gaining ``to_dict`` — or ``ForgeTrainer`` gaining a method named like one
+        already probed on another class — was reported covered without a call site.
         """
         import inspect
+        import re
 
         import forgelm
 
@@ -882,7 +892,7 @@ class TestPublicSurfaceTypeProbe:
             for method, function in inspect.getmembers(obj, inspect.isfunction):
                 if method.startswith("_") or not getattr(function, "__module__", "").startswith("forgelm"):
                     continue
-                if f".{method}(" not in source:
+                if not re.search(rf"forgelm\.{re.escape(name)}\(.*\)\.{re.escape(method)}\(", source):
                     missing.append(f"{name}.{method}")
         assert not missing, (
             f"tests/typing/public_surface_probe.py never calls {missing}. A public method with no "

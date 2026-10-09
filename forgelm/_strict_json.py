@@ -81,6 +81,31 @@ def sanitize_non_finite(value: Any) -> Any:
             return value
         if not math.isfinite(as_float):
             return repr(as_float)
+        return _native_number(value)
+    return value
+
+
+def _native_number(value: Any) -> Any:
+    """A finite number as the Python type ``json`` can write, without widening it.
+
+    The non-finite half of the NumPy problem is not the whole of it: a finite
+    ``numpy.float32`` / ``int64`` / ``bool_`` is not JSON serialisable either, so
+    it raised ``TypeError`` from a writer with no ``default=`` and was silently
+    turned into a *string* by one with ``default=str``. Both break the rule this
+    module states — one representation per numeric type, a number stays a number.
+
+    A ``float32`` goes through its shortest round-trip decimal (``"0.85"``), not
+    ``float()``, which would publish its binary expansion (``0.8500000238418579``).
+    """
+    if isinstance(value, (int, float)):
+        return value  # Python numbers, and ``numpy.float64`` (a ``float`` subclass), json already writes
+    kind = getattr(getattr(value, "dtype", None), "kind", "")
+    if kind == "b":
+        return bool(value)
+    if kind in ("i", "u"):
+        return int(value)
+    if kind == "f":
+        return float(str(value))
     return value
 
 

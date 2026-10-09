@@ -44,13 +44,54 @@ class TestDetection:
             ("if False:\n    x = 1\n", True),
             ("if True:\n    x = 1\n", True),
             ("while False:\n    x = 1\n", True),
+            # The same accident spelled without the word False. The first version of the
+            # guard checked ``isinstance(value, bool)`` and could not see any of these.
+            ("if 0:\n    x = 1\n", True),
+            ("if 1:\n    x = 1\n", True),
+            ("if None:\n    x = 1\n", True),
+            ("if '':\n    x = 1\n", True),
+            ("if not True:\n    x = 1\n", True),
+            ("if not False:\n    x = 1\n", True),
+            ("if False and x:\n    y = 1\n", True),
+            ("if True or x:\n    y = 1\n", True),
+            ("if x:\n    pass\nelif 0:\n    y = 1\n", True),
+            ("while 0:\n    x = 1\n", True),
+            ("y = a if False else b\n", True),
             # The idiom. Must never fire.
             ("while True:\n    break\n", False),
+            ("while 1:\n    break\n", False),
+            # Not static: depends on a name, so it is ordinary code.
+            ("if x and False is None:\n    y = 1\n", False),
+            ("if not x:\n    y = 1\n", False),
+            ("y = a if x else b\n", False),
             ("if x:\n    y = 1\n", False),
             ("if TYPE_CHECKING:\n    import os\n", False),
             ("if sys.platform == 'win32':\n    x = 1\n", False),
         ],
-        ids=["if-false", "if-true", "while-false", "while-true", "normal", "type-checking", "platform"],
+        ids=[
+            "if-false",
+            "if-true",
+            "while-false",
+            "if-0",
+            "if-1",
+            "if-none",
+            "if-empty-str",
+            "if-not-true",
+            "if-not-false",
+            "false-and-x",
+            "true-or-x",
+            "elif-0",
+            "while-0",
+            "ternary-false",
+            "while-true",
+            "while-1",
+            "mixed-not-static",
+            "not-x",
+            "ternary-name",
+            "normal",
+            "type-checking",
+            "platform",
+        ],
     )
     def test_only_literal_branches_are_flagged(self, guard, tmp_path, source, expected):
         sample = tmp_path / "sample.py"
@@ -77,7 +118,7 @@ class TestDetection:
             findings = guard.scan_file(sample)
         finally:
             guard._REPO_ROOT = original
-        assert "while False:" in findings[0]
+        assert "while" in findings[0] and "if " not in findings[0].split("`")[1]
 
     def test_explicit_markers_are_flagged(self, guard, tmp_path):
         sample = tmp_path / "sample.py"
@@ -90,11 +131,42 @@ class TestDetection:
         assert findings and "MUTANT" in findings[0]
 
 
+class TestMarkers:
+    def _scan(self, guard, tmp_path, source):
+        sample = tmp_path / "sample.py"
+        sample.write_text(source, encoding="utf-8")
+        guard._REPO_ROOT, original = tmp_path, guard._REPO_ROOT
+        try:
+            return guard.scan_file(sample)
+        finally:
+            guard._REPO_ROOT = original
+
+    def test_a_marker_inside_a_string_literal_is_not_a_leftover(self, guard, tmp_path):
+        """Marker detection used ``marker in line``, so help text or a fixture containing the words failed the build."""
+        findings = self._scan(
+            guard,
+            tmp_path,
+            'HELP = "remove any # MUTATION marker before committing"\nDOC = """\n# MUTANT in a docstring\n"""\n',
+        )
+        assert findings == []
+
+    @pytest.mark.parametrize("marker", ["# MUTANT", "# MUTATION", "# mutation-test", "# TEMP-DISABLE"])
+    def test_each_marker_in_a_real_comment_is_flagged(self, guard, tmp_path, marker):
+        findings = self._scan(guard, tmp_path, f"x = 1  {marker} flipped\n")
+        assert findings and marker in findings[0]
+
+
 class TestAgainstTheRepo:
     def test_shipped_source_is_clean(self, guard):
         assert guard.main(["--quiet"]) == 0, (
             "forgelm/ carries mutation scaffolding — a disabled branch that still reads as live code"
         )
+
+    def test_an_empty_scan_root_fails_rather_than_passing_vacuously(self, guard, tmp_path, capsys):
+        (tmp_path / "forgelm").mkdir()
+        guard._REPO_ROOT = tmp_path
+        assert guard.main([]) == 1
+        assert "scans nothing passes" in capsys.readouterr().out
 
     def test_the_guard_reports_what_it_examined(self, guard, capsys):
         assert guard.main([]) == 0

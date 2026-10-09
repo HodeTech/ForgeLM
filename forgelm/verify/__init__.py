@@ -84,6 +84,7 @@ and alone**, before any verdict semantics change.
 - :mod:`._gguf` — GGUF magic / metadata / sidecar
 - :mod:`._model_integrity` — Art. 15 model-directory re-hash
 - :mod:`._audit_log` — audit-log failure classification
+- :mod:`._io_safety` — the size-capped, fail-closed JSON read the chain verifiers share
 
 **What the facade carries, and why not more.**  Every *public* name the old
 module exported is re-exported below — the three stable-tier verifiers, their

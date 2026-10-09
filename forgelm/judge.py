@@ -510,6 +510,7 @@ def _save_judge_results(
     num_prompts: int,
     details: List[Dict[str, Any]],
     include_samples: bool = False,
+    failure_reason: Optional[str] = None,
 ) -> None:
     """Persist the judge run summary as judge_results.json.
 
@@ -530,6 +531,10 @@ def _save_judge_results(
                         "average_score": avg_score,
                         "min_score": min_score,
                         "passed": passed,
+                        # Why it failed, in the artefact itself: ``passed: false`` beside a
+                        # healthy-looking average is otherwise unexplained (a sliver of
+                        # valid scores and a low average look identical).
+                        "failure_reason": failure_reason,
                         "num_prompts": num_prompts,
                         "details": [{k: v for k, v in d.items() if k not in redact} for d in details],
                     },
@@ -594,6 +599,15 @@ def run_judge_evaluation(
         # this function via direct import bypass that schema; reject invalid
         # values here so the batching loop never sees ``0`` or negatives.
         raise ValueError(f"batch_size must be a positive integer (got {batch_size!r})")
+    # The same bounds ``JudgeConfig`` enforces, for the same reason. A NaN or negative
+    # ``min_valid_fraction`` is not a stricter gate: ``valid_fraction < nan`` is False,
+    # so the evidence floor silently switches off and a sliver of the eval set can pass.
+    for name, value, low, high in (
+        ("min_score", min_score, 1.0, 10.0),
+        ("min_valid_fraction", min_valid_fraction, 0.0, 1.0),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high:
+            raise ValueError(f"{name} must be a finite number in [{low}, {high}] (got {value!r})")
 
     from ._http import HttpSafetyError
 
@@ -672,7 +686,14 @@ def run_judge_evaluation(
 
     if output_dir:
         _save_judge_results(
-            output_dir, avg_score, min_score, passed, len(eval_prompts), details, include_samples=include_samples
+            output_dir,
+            avg_score,
+            min_score,
+            passed,
+            len(eval_prompts),
+            details,
+            include_samples=include_samples,
+            failure_reason=failure_reason,
         )
 
     return JudgeResult(

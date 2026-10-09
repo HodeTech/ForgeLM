@@ -976,6 +976,20 @@ class TestRopeScalingValidation:
         with pytest.raises(ValidationError, match="must be positive"):
             TrainingConfig(rope_scaling={"type": "linear", "factor": bad_factor})
 
+    @pytest.mark.parametrize("bad_factor", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "-inf"])
+    def test_non_finite_factor_rejected(self, bad_factor):
+        """``nan <= 0`` and ``inf <= 0`` are both False, so a sign check alone lets them through."""
+        with pytest.raises(ValidationError, match="positive and finite"):
+            TrainingConfig(rope_scaling={"type": "linear", "factor": bad_factor})
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")], ids=["nan", "inf"])
+    @pytest.mark.parametrize("key", ["short_factor", "long_factor"])
+    def test_non_finite_longrope_factor_list_entry_rejected(self, key, bad):
+        factors = {"short_factor": [1.0, 1.5], "long_factor": [2.0, 3.0]}
+        factors[key] = [factors[key][0], bad]
+        with pytest.raises(ValidationError, match="only finite numbers"):
+            TrainingConfig(rope_scaling={"type": "longrope", **factors})
+
     def test_non_numeric_factor_rejected(self):
         with pytest.raises(ValidationError, match="must be a number"):
             TrainingConfig(rope_scaling={"type": "linear", "factor": "4x"})

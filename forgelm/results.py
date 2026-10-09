@@ -26,6 +26,10 @@ class TrainResult:
     # Judge evaluation
     judge_score: Optional[float] = None
     judge_details: Optional[List[Dict[str, Any]]] = None
+    # Whether the judge gate passed. ``judge_score`` alone cannot say: a healthy-looking
+    # average over a sliver of the eval set (or a failure kept because ``auto_revert`` is
+    # off, the shipped default) reads as success without this.
+    judge_passed: Optional[bool] = None
     # Cost estimation
     estimated_cost_usd: Optional[float] = None
     # Article 14 — human approval gate. Populated when

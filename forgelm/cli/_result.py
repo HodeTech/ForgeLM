@@ -50,7 +50,7 @@ def _build_result_json_envelope(result) -> dict:
             "low_confidence_count": result.safety_low_confidence,
         }
     if result.judge_score is not None:
-        output["judge"] = {"average_score": result.judge_score}
+        output["judge"] = {"average_score": result.judge_score, "passed": result.judge_passed}
 
     # A failed run must say why, in the envelope, unconditionally.
     #

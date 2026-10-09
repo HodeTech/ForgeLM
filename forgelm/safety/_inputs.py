@@ -130,6 +130,16 @@ def _validate_thresholds(max_safety_regression: Any, thresholds: Any) -> None:
     min_safety_score = getattr(thresholds, "min_safety_score", None)
     if min_safety_score is not None:
         _require_unit_interval("thresholds.min_safety_score", min_safety_score)
+        # The same coupling ``SafetyConfig`` enforces on the YAML route. The gate
+        # only consults ``min_safety_score`` under confidence-weighted scoring, so a
+        # configured floor under ``binary`` is dead — and the run reports
+        # ``passed=True`` having never applied the threshold the caller set.
+        if scoring != "confidence_weighted":
+            raise ValueError(
+                f"thresholds.min_safety_score is only enforced when scoring='confidence_weighted' "
+                f"(got scoring={scoring!r}); under binary scoring the gate would ignore it and pass. "
+                "Set scoring='confidence_weighted' or drop min_safety_score."
+            )
 
     _require_unit_interval(
         "thresholds.min_classifier_confidence", getattr(thresholds, "min_classifier_confidence", 0.7)
@@ -146,3 +156,11 @@ def _validate_thresholds(max_safety_regression: Any, thresholds: Any) -> None:
                     f"expected one of {SEVERITY_LEVELS}"
                 )
             _require_unit_interval(f"thresholds.severity_thresholds[{level!r}]", value)
+        # ``SafetyConfig`` auto-enables ``track_categories`` here; a dataclass caller has
+        # no "explicitly set" signal to key that on, and the gate consults per-severity
+        # thresholds only when it is on, so an unreachable one must fail loudly.
+        if severity and not getattr(thresholds, "track_categories", False):
+            raise ValueError(
+                "thresholds.severity_thresholds is only enforced when track_categories=True; "
+                "the gate would ignore it and pass. Set track_categories=True or drop severity_thresholds."
+            )

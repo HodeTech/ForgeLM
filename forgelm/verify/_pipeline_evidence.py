@@ -435,10 +435,10 @@ def verify_pipeline_stage_evidence(manifest: Dict[str, Any], pipeline_dir: str) 
     if not expected_hash:
         hash_state = HASH_STATE_ABSENT
     else:
-        from forgelm.compliance import compute_annex_iv_manifest_hash
+        from forgelm.compliance import match_annex_iv_manifest_hash
 
         hash_state = (
-            HASH_STATE_VERIFIED if compute_annex_iv_manifest_hash(manifest) == expected_hash else HASH_STATE_MISMATCH
+            HASH_STATE_VERIFIED if match_annex_iv_manifest_hash(manifest, expected_hash)[0] else HASH_STATE_MISMATCH
         )
     report = PipelineEvidenceReport(hash_state=hash_state)
 
