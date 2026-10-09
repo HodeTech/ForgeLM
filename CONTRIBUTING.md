@@ -44,7 +44,7 @@ Issues carry labels, and the project adds planning fields on top of them.
 | `deferred` | Waits for a condition recorded in the issue; check that it holds before starting. A deferred item is labelled `source: roadmap` and `deferred` |
 | `epic` | A parent issue that groups one theme or roadmap phase; its sub-issues are the work |
 
-In the project, the **Wave**, **Severity**, **Theme**, **Kind**, **Area**, **Size** (effort: XS–XL) and **Iteration** fields let you filter and group the same issues. **Milestones** map waves to releases.
+In the project, the **Wave**, **Severity**, **Theme**, **Kind**, **Area**, **Size** (effort: XS–XL) and **Iteration** fields let you filter and group the same issues. **Milestones** are the waves: waves 0–2 carry a target date at the end of their last iteration, and waves 3–4 are open-ended backlog.
 
 Useful starting points:
 
@@ -177,6 +177,8 @@ keep this list and that one in sync if either changes.
 
 Push your branch to your fork and open a Pull Request against `development` (the default base). Link the issue it addresses (`Fixes #123`, or `Refs #123` for part of a grouped issue) and quote any finding IDs — see [Working on an issue](#working-on-an-issue).
 
+**Before a pull request can merge**, branch protection on `development` (and on `main`) requires three things: the six CI checks — `lint`, `test (3.10)`, `test (3.11)`, `test (3.12)`, `test (3.13)` and `validate` — passing; the branch up to date with `development` (use *Update branch* or rebase); and every review conversation resolved, including the comments of the automated reviewers. Maintainers squash- or rebase-merge, so `development` keeps a linear history.
+
 ## Development Setup
 
 ### Project Structure
@@ -263,23 +265,25 @@ CI remains the enforcement boundary; skipping a hook locally never bypasses CI.
 - **Optional dependencies.** Heavy dependencies go in optional groups: `pip install forgelm[feature]`.
 - **Tests required.** Every new feature or bugfix needs a test. Keep coverage growing.
 - **Ruff clean.** CI will reject code that doesn't pass `ruff check`.
-- **No secrets.** Never commit tokens, API keys, or credentials. Use env vars.
+- **No secrets.** Never commit tokens, API keys, or credentials. Use env vars. Secret scanning with push protection is enabled, so a push that contains a recognised token is blocked.
 
 ### Config Changes
 
-If you add a new config field:
+If you add a new config field (the [`add-config-field`](.claude/skills/add-config-field/SKILL.md) checklist has the details):
 
-1. Add the field to the Pydantic model in `config.py`
-2. Add it to `config_template.yaml` (commented with example)
-3. Update the [Configuration Guide](docs/reference/configuration.md) if it's user-facing
-4. Add a test in `tests/test_config.py`
+1. Add it to the right Pydantic model in `forgelm/config.py` as `Field(default=..., description=...)` — a field without `description=` fails `tools/check_field_descriptions.py --strict` — and constrain its domain (`ge=` / `le=`, and `allow_inf_nan=False` for any float used as a threshold, weight or ratio)
+2. Read it where it is consumed, as `config.<section>.<field>` — never from an environment variable
+3. Add it to `config_template.yaml`, commented with an example
+4. Document it in the [Configuration Reference](docs/reference/configuration.md) and its Turkish mirror [`configuration-tr.md`](docs/reference/configuration-tr.md) in the same pull request
+5. Add a test in `tests/test_config.py`
+6. Add a CHANGELOG entry under `[Unreleased]` if users can observe the change
 
 ### Adding a New Trainer Type
 
 1. Add the type to the `Literal[...]` on `TrainingConfig.trainer_type` in `config.py`
 2. Add trainer-specific parameters to `TrainingConfig`
 3. Add the TRL config builder in `trainer.py:_get_training_args_for_type()`
-4. Add the trainer initialization in `trainer.py:train()`
+4. Add the trainer construction in `trainer.py:_build_trainer()` (the plain TRL trainers go through `_build_simple_trl_trainer()`)
 5. Add dataset format detection in `data.py`
 6. Update the trainer-specific prompts in `forgelm/wizard/_collectors.py` (and `forgelm/wizard/_defaults.json` if the new type needs its own defaults)
 7. Add tests in `tests/test_alignment.py`
@@ -300,7 +304,7 @@ style: apply ruff format
 
 ## First-Time Contributors
 
-Look for issues labeled [`good first issue`](https://github.com/HodeTech/ForgeLM/labels/good%20first%20issue). These are designed to be approachable for newcomers.
+Look for issues labeled [`good first issue`](https://github.com/HodeTech/ForgeLM/labels/good%20first%20issue): small, well-specified tasks that need no deep knowledge of the codebase.
 
 Small, self-contained tasks also include single findings in a `wave: 3` or `wave: 4` grouped issue (claim one finding ID at a time) and [documentation issues](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+label%3Adocumentation+no%3Aassignee); in the [project](https://github.com/orgs/HodeTech/projects/5), filter by **Size** `XS` or `S`.
 

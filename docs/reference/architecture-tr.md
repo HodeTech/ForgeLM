@@ -42,7 +42,7 @@ forgelm --config job.yaml
 
 ```
 ForgeLM/
-├── forgelm/                  # Çekirdek Python paketi (27 tek-dosya modül + 5 alt-paket)
+├── forgelm/                  # Çekirdek Python paketi (__init__/__main__ dışında 27 tek-dosya modül + 5 alt-paket)
 │   ├── __init__.py           # Hızlı CLI başlatma için lazy import
 │   ├── cli/                  # CLI alt-paketi (Faz 15 split)
 │   │   ├── _parser.py            # 19 subcommand + global flag

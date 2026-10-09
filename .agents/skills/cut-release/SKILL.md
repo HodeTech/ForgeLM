@@ -22,7 +22,7 @@ Do **not** use for:
 Checklist before even starting:
 
 - [ ] Is there meaningful new content since last release? If only internal refactors, skip and defer.
-- [ ] Is `main` CI green? If not, fix first.
+- [ ] Is CI green on `development`, including this week's nightly? If not, fix first.
 - [ ] Is it Tuesday through Thursday? Never release on Friday (weekend support pain).
 - [ ] Do we have at least one rc tested if this is a minor release?
 
@@ -55,13 +55,15 @@ assert Version(forgelm.__api_version__) >= Version("1.0.0")
 
 Run before tagging:
 
-### 1. Sync main
+### 1. Sync development
 
 ```bash
-git checkout main
-git pull
+git checkout development
+git pull --ff-only
 git status  # must be clean
 ```
+
+Steps 2–5 run on `development`; `main` changes only through the release pull request in step 6.
 
 ### 2. Finalize CHANGELOG
 
@@ -165,11 +167,21 @@ updating pyproject (or vice versa) you will hit a CI failure mid-release.
 ```bash
 git add -A
 git commit -m "chore: release v0.4.0"
+git push origin development
+
+# Release PR development -> main; merge it with a merge commit once its required checks pass
+gh pr create --base main --head development --title "Release v0.4.0" --body "Release v0.4.0"
+gh pr merge <number> --merge
+
+# Tag the merge commit on main and push only the tag
+git checkout main && git pull --ff-only
 git tag -s v0.4.0 -m "v0.4.0 — Post-Training Completion"
-git push origin main v0.4.0
+git push origin v0.4.0
 ```
 
-GPG-signed tag (`-s`) is required for trusted PyPI publishing.
+GPG-signed tag (`-s`) is required for trusted PyPI publishing. Only repository admins can create `v*` tags (the
+*Release tags (v\*)* ruleset), and the publish job waits for a maintainer to approve the `pypi` environment
+deployment.
 
 ## Automated publish
 
@@ -178,7 +190,7 @@ GPG-signed tag (`-s`) is required for trusted PyPI publishing.
 1. Build wheel + sdist
 2. Verify with twine
 3. Cross-OS / cross-Python install matrix smoke (3 OS x 4 Python = 12) plus SBOM generation
-4. Publish to PyPI (OIDC trusted publishing)
+4. Publish to PyPI (OIDC trusted publishing), once a maintainer approves the `pypi` environment deployment
 
 The workflow does **not** create a GitHub Release — it stops at PyPI
 publish. If a GitHub Release is desired, create it manually from the tag
@@ -229,10 +241,12 @@ Post to (ordered by priority):
 ### 2. Reset to next pre-release
 
 ```bash
+# Bring development up to main first (fast-forward; merge main into development if it has moved on)
+git checkout development && git pull --ff-only && git merge --ff-only origin/main
 # Edit pyproject.toml: version = "0.4.1rc1"
 # Edit CHANGELOG.md: add new ## [Unreleased] at top
-git commit -m "chore: bump to 0.4.1rc1 (next dev cycle)"
-git push
+git commit -am "chore: bump to 0.4.1rc1 (next dev cycle)"
+git push origin development
 ```
 
 ### 3. Update marketing roadmap metrics
@@ -273,9 +287,12 @@ git push origin hotfix/0.4.1
 
 # Create PR to main, review, merge
 # Then tag from main HEAD:
-git checkout main && git pull
+git checkout main && git pull --ff-only
 git tag -s v0.4.1 -m "v0.4.1 — hotfix for <bug>"
 git push origin v0.4.1
+
+# Bring development up to main so the fix is not lost on the next release
+git checkout development && git pull --ff-only && git merge origin/main && git push origin development
 ```
 
 Follow up in announcements with "⚠️ Security/Stability fix — please upgrade" if warranted.

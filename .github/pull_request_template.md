@@ -39,8 +39,9 @@ Fixes #
 
 ## Checklist
 
-- [ ] My code follows the project's style (ruff formatted)
-- [ ] I've updated documentation if needed
+- [ ] My code follows the project's style (ruff formatted) and `docs/standards/coding.md`
+- [ ] I've updated documentation if needed — and its Turkish mirror (`-tr.md`, or the `tr/` tree for user manuals) in the same PR
 - [ ] I've added tests for new functionality
 - [ ] No new dependencies added (or added as optional: `pip install forgelm[...]`)
 - [ ] Config template (`config_template.yaml`) updated if new config fields added
+- [ ] CHANGELOG entry under `[Unreleased]` if a user or library consumer can observe the change
