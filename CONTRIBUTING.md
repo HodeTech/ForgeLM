@@ -21,7 +21,7 @@ Work is tracked in two places that play different roles:
 
 ### Planned work lives here too
 
-Every piece of planned or deferred work has an issue and a project card, not only the defects: the remaining steps of [Phase 16](docs/roadmap/phase-16-trust-surface-hardening.md) are sub-issues of [#903](https://github.com/HodeTech/ForgeLM/issues/903), and the deferred items recorded in [risks-and-decisions.md](docs/roadmap/risks-and-decisions.md) are sub-issues of [#929](https://github.com/HodeTech/ForgeLM/issues/929). New issues land in the project's *Intake — unplanned* view until a maintainer plans them. If you notice work that your pull request is not going to do, open an issue for it instead of leaving a `TODO` or a roadmap line.
+Every piece of planned or deferred work has an issue and a project card, not only the defects: the remaining steps of [Phase 16](docs/roadmap/phase-16-trust-surface-hardening.md) are sub-issues of [#903](https://github.com/HodeTech/ForgeLM/issues/903), and the deferred items recorded in [risks-and-decisions.md](docs/roadmap/risks-and-decisions.md) are sub-issues of [#929](https://github.com/HodeTech/ForgeLM/issues/929). Each Phase 16 step, and each deferred row that has an issue, links that issue directly from the roadmap entry. New issues land in the project's *Intake — unplanned* view until a maintainer plans them. If you notice work that your pull request is not going to do, open an issue for it instead of leaving a `TODO` or a roadmap line.
 
 ### How the backlog is organised
 
@@ -39,8 +39,9 @@ Issues carry labels, and the project adds planning fields on top of them.
 | `needs-triage` | Not triaged yet — a new report, or a finding reviewers disagreed on; wait for a maintainer to confirm and plan it before working on it |
 | `source: review-2026-10` | Found by the October 2026 code and documentation review |
 | `source: review-2026-09` | Found by the September 2026 independent review |
-| `source: roadmap` · `phase: 16` | Planned work recorded in [`docs/roadmap/`](docs/roadmap/): a roadmap step or a deferred item |
-| `deferred` | Waits for a condition recorded in the issue; check that it holds before starting |
+| `source: roadmap` | Planned work recorded in [`docs/roadmap/`](docs/roadmap/): a roadmap step or a deferred item |
+| `phase: 16` | Part of [Phase 16](docs/roadmap/phase-16-trust-surface-hardening.md): one of its remaining steps, one of its two prerequisite standards, or the phase epic. Deferred items are not part of the phase and do not carry it |
+| `deferred` | Waits for a condition recorded in the issue; check that it holds before starting. A deferred item is labelled `source: roadmap` and `deferred` |
 | `epic` | A parent issue that groups one theme or roadmap phase; its sub-issues are the work |
 
 In the project, the **Wave**, **Severity**, **Theme**, **Kind**, **Area**, **Size** (effort: XS–XL) and **Iteration** fields let you filter and group the same issues. **Milestones** map waves to releases.

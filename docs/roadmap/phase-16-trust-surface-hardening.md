@@ -24,8 +24,9 @@
 > **Tracking.** Each open step (S4-S16) and both standards in §"Standards to be
 > written" are GitHub issues — sub-issues of
 > [#903](https://github.com/HodeTech/ForgeLM/issues/903), labelled `phase: 16`; each
-> step issue lists the review issues that track its units.  Claim and discuss
-> a step there, and tick it here in the same pull request that closes its issue.
+> step issue lists the review issues that track its units, and each step and standard
+> below links its own issue.  Claim and discuss a step there, and tick it here in the
+> same pull request that closes its issue.
 >
 > **Phase number.** 16 follows [Phase 15](completed-phases.md#phase-15--ingestion-pipeline-reliability-v060)
 > in the main sequential track.  The `Phase 22` row in [roadmap.md](../roadmap.md)
@@ -388,7 +389,7 @@ committed, then the same with Sonnet, then the next step.
    valid evidence" carry distinguishable `failure_reason` prefixes; the air-gap
    guide's `jq -e '.success'` gate stops an incomplete bundle.
 
-4. [ ] **S4 — Dependency-range truth for the six advertised trainers** (L)
+4. [ ] **S4 — Dependency-range truth for the six advertised trainers** (L) · [#890](https://github.com/HodeTech/ForgeLM/issues/890)
    Units: `GAP-03`, `CORE-02`.
 
    README, the site and the `trainer_type` enum advertise six alignment methods
@@ -419,7 +420,7 @@ committed, then the same with Sonnet, then the next step.
    `f(['…']) == f([[{'role':'assistant','content':'…'}]])` for all four reward
    paths; flat-string outcomes are byte-identical to baseline.
 
-5. [ ] **S5 — Verification truth: three states, not a success bit** (L)
+5. [ ] **S5 — Verification truth: three states, not a success bit** (L) · [#891](https://github.com/HodeTech/ForgeLM/issues/891)
    Units: `TRUST-04`, `TRUST-05`, `CLI-03`.
 
    One modelling error in three verifiers: **a three-valued reality
@@ -452,7 +453,7 @@ committed, then the same with Sonnet, then the next step.
    **structural** (typed fields, never `reason` prose); the existing per-stage
    `UNVERIFIED` behaviour is asserted unchanged.
 
-6. [ ] **S6 — Invocation-owned resources: temp state, atomic writes, worker lifetime** (M)
+6. [ ] **S6 — Invocation-owned resources: temp state, atomic writes, worker lifetime** (M) · [#892](https://github.com/HodeTech/ForgeLM/issues/892)
    Units: `C33-EXPORT-TEMP-OWNERSHIP` (= `CLI-01` + `GAP-01`), `TRUST-10`,
    `CLI-19`, `CLI-08`.
 
@@ -484,7 +485,7 @@ committed, then the same with Sonnet, then the next step.
    quickstart destination bytes unchanged; a timed-out chat streamer terminates
    its worker within a bounded time.
 
-7. [ ] **S7 — CLI and wizard boundary: policy declared must be policy enforced** (XL, 3 commits)
+7. [ ] **S7 — CLI and wizard boundary: policy declared must be policy enforced** (XL, 3 commits) · [#893](https://github.com/HodeTech/ForgeLM/issues/893)
    Units: `C33-CLI-ERROR-ENVELOPE` (= `CLI-05` + `CLI-11`), `CLI-04`, `CLI-02`,
    `CLI-17`, `CLI-18`, `CLI-09`, `CLI-12`, `CLI-13`.
 
@@ -521,7 +522,7 @@ committed, then the same with Sonnet, then the next step.
    no "start later" message and exits 1; explicit-disable answers leave fields
    absent while bare-Enter preserves them, both directions asserted.
 
-8. [ ] **S8 — Run-scoped effective state and provenance** (XL)
+8. [ ] **S8 — Run-scoped effective state and provenance** (XL) · [#894](https://github.com/HodeTech/ForgeLM/issues/894)
    Units: `C31-RUN-OUTCOME` (= `CORE-06` + `CORE-07` + `CORE-12`), `CORE-09`,
    `TRUST-08`, `OPS-22`.
 
@@ -556,7 +557,7 @@ committed, then the same with Sonnet, then the next step.
    a test **enumerates all loader surfaces** so a new one cannot be added
    silently.
 
-9. [ ] **S9 — Compliance evidence integrity and GDPR erasure completeness** (L)
+9. [ ] **S9 — Compliance evidence integrity and GDPR erasure completeness** (L) · [#895](https://github.com/HodeTech/ForgeLM/issues/895)
    Units: `TRUST-02`, `TRUST-13`, `TRUST-14`, `TRUST-01`, `TRUST-07`.
 
    All five are the compliance surface **claiming a stronger evidentiary state
@@ -586,7 +587,7 @@ committed, then the same with Sonnet, then the next step.
    `required → rejected → required` chain is served by **one shared**
    ordered-state helper across the listing and mutation surfaces.
 
-10. [ ] **S10 — Data-layer fidelity, scale and privacy** (L)
+10. [ ] **S10 — Data-layer fidelity, scale and privacy** (L) · [#896](https://github.com/HodeTech/ForgeLM/issues/896)
     Units: `TRUST-06`, `TRUST-09`, `TRUST-11`, `TRUST-12`, `CORE-08`,
     `CORE-11`, `CORE-13`.
 
@@ -616,7 +617,7 @@ committed, then the same with Sonnet, then the next step.
     log record while the warning still identifies the prompt by index and
     length.
 
-11. [ ] **S11 — Deploy/serving generator contract** (M)
+11. [ ] **S11 — Deploy/serving generator contract** (M) · [#897](https://github.com/HodeTech/ForgeLM/issues/897)
     Units: `CLI-10`, `CLI-14`, `CLI-15`, `CLI-16`.
 
     One subcommand's contract in four layers — what it accepts, what it emits,
@@ -639,7 +640,7 @@ committed, then the same with Sonnet, then the next step.
     window; the generated compose parses to a non-`latest` image and a
     read-only `/data` mount.
 
-12. [ ] **S12 — Release DAG and release-time evidence** (XL)
+12. [ ] **S12 — Release DAG and release-time evidence** (XL) · [#898](https://github.com/HodeTech/ForgeLM/issues/898)
     Units: `OPS-01`, `OPS-02`, `OPS-03`, `OPS-04`, `OPS-05`, `OPS-06`,
     `OPS-15`, `OPS-16`, `OPS-19`.
 
@@ -685,7 +686,7 @@ committed, then the same with Sonnet, then the next step.
     not, then restore, re-tag green, delete every throwaway tag from the remote,
     and confirm no `[X.Y.Z]` heading was left in `CHANGELOG.md`.
 
-13. [ ] **S13 — Packaging metadata, dependency single-source, container distribution** (L)
+13. [ ] **S13 — Packaging metadata, dependency single-source, container distribution** (L) · [#899](https://github.com/HodeTech/ForgeLM/issues/899)
     Units: `C31-DOCKER-RUNBOOK` (= `DOCS-05` + `OPS-13`), `OPS-11`, `OPS-12`,
     `OPS-14`, `C31-DEPENDENCY-SOURCE` (= `OPS-07` + `OPS-08`), `OPS-17`,
     `OPS-18`.
@@ -726,7 +727,7 @@ committed, then the same with Sonnet, then the next step.
     minimum-deps list and package metadata; a clean isolated build emits **no**
     packaging-metadata deprecation warning and `twine check dist/*` passes.
 
-14. [ ] **S14 — Test-quality ratchet** (M)
+14. [ ] **S14 — Test-quality ratchet** (M) · [#900](https://github.com/HodeTech/ForgeLM/issues/900)
     Units: `OPS-20`, `OPS-21`.
 
     Both are "the test suite's own quality contract is weaker than its actual
@@ -749,7 +750,7 @@ committed, then the same with Sonnet, then the next step.
     no-exception contracts versus silent-pass risks with the disposition
     recorded; `testing.md`'s stated floor matches the enforced one.
 
-15. [ ] **S15 — Documentation: claims bound to code** (XL, 4 commits)
+15. [ ] **S15 — Documentation: claims bound to code** (XL, 4 commits) · [#901](https://github.com/HodeTech/ForgeLM/issues/901)
     Units: `DOCS-01`, `DOCS-02`, `DOCS-04`, `DOCS-03`,
     `C31-EXIT-CODE-PROSE` (= `DOCS-07` + `OPS-24`),
     `C31-DOC-SCHEMA-PROSE` (= `DOCS-08` + `DOCS-09`), `DOCS-14`, `DOCS-15`,
@@ -800,7 +801,7 @@ committed, then the same with Sonnet, then the next step.
     the baseline, then flip — the documented `check_anchor_resolution.py`
     pattern.
 
-16. [ ] **S16 — Documentation source-of-truth and localization governance** (M)
+16. [ ] **S16 — Documentation source-of-truth and localization governance** (M) · [#902](https://github.com/HodeTech/ForgeLM/issues/902)
     Units: `C31-LOCALIZATION-GOV` (= `DOCS-10` + `DOCS-18`), `DOCS-11`,
     `DOCS-12`, `DOCS-13`, `DOCS-17`.
 
@@ -901,13 +902,13 @@ Two rule gaps must be closed **before their step**, not before Step 1.  Both
 are cases where the artifact ships and no document governs it, so there is
 nothing for a reviewer to review against.
 
-- [ ] **Docker standard** (blocks S13).  `Dockerfile`, `docker-compose.yaml`,
+- [ ] **Docker standard** (blocks S13) · [#888](https://github.com/HodeTech/ForgeLM/issues/888).  `Dockerfile`, `docker-compose.yaml`,
   `.dockerignore` and the EN/TR operations manual all ship; the only rule
   anywhere is a post-release checkbox at `release.md:182`, and there are zero
   Docker references in `.github/workflows/`.  Needs: base-image digest-pinning
   policy, runtime-versus-devel stage rule, non-root user with an owned cache
   path, service naming, and a CI smoke obligation.
-- [ ] **SBOM / supply-chain standard** (blocks S12).  SBOM appears only as
+- [ ] **SBOM / supply-chain standard** (blocks S12) · [#889](https://github.com/HodeTech/ForgeLM/issues/889).  SBOM appears only as
   descriptive prose and one command.  Needs: CycloneDX version, component
   completeness (root exclusion, `bom-ref` uniqueness, license coverage,
   dependency graph), retention channel and window, and the meaning of each
