@@ -29,10 +29,12 @@ as its noise on dead references.
 from __future__ import annotations
 
 import importlib.util
+import re
 import statistics
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -503,6 +505,49 @@ class TestPatternLinearity:
     body quantifier — the mandatory root alternation sits between them. Pinned
     empirically per the standard: 1K/5K/10K, median of 5, ~linear growth."""
 
+    @staticmethod
+    def _median_scan_time(pattern, payload, repetitions=1):
+        """Return the per-scan median and the calibrated number of scans."""
+        while True:
+            runs = []
+            for _ in range(5):
+                start = time.perf_counter()
+                for _ in range(repetitions):
+                    list(pattern.finditer(payload))
+                runs.append(time.perf_counter() - start)
+            elapsed = statistics.median(runs)
+            # Batch short scans so timer resolution and scheduler jitter do not
+            # dominate the median. Normalize back to the time of one scan.
+            if elapsed >= 0.1 or repetitions >= 262_144:
+                return elapsed / repetitions, repetitions
+            repetitions *= 2
+
+    def test_quadratic_scan_is_still_rejected(self):
+        # Deliberately quadratic negative control: each starting position retries
+        # the remaining run of "a" before discovering that "b" is absent.
+        tool = SimpleNamespace(_PATH_RE=re.compile(r"a+b"))
+        with pytest.raises(AssertionError, match="super-linear"):
+            self.test_growth_is_approximately_linear(tool, "quadratic negative control", lambda n: "a" * n)
+
+    def test_scheduler_jitter_does_not_reject_linear_scan(self, monkeypatch):
+        clock = 0.0
+        large_scans = 0
+
+        class LinearPattern:
+            def finditer(self, payload):
+                nonlocal clock, large_scans
+                clock += len(payload) * 1e-8
+                if len(payload) == 10_000:
+                    large_scans += 1
+                    if 2 <= large_scans <= 4:
+                        clock += 0.00011
+                return iter(())
+
+        monkeypatch.setattr(time, "perf_counter", lambda: clock)
+        self.test_growth_is_approximately_linear(
+            SimpleNamespace(_PATH_RE=LinearPattern()), "linear scan with scheduler jitter", lambda n: "a" * n
+        )
+
     @pytest.mark.parametrize(
         "label,build",
         [
@@ -514,14 +559,12 @@ class TestPatternLinearity:
     )
     def test_growth_is_approximately_linear(self, tool, label, build):
         timings = {}
+        repetitions = 1
         for n in (1_000, 5_000, 10_000):
             payload = build(n)
-            runs = []
-            for _ in range(5):
-                start = time.perf_counter()
-                list(tool._PATH_RE.finditer(payload))
-                runs.append(time.perf_counter() - start)
-            timings[n] = statistics.median(runs)
+            # Reuse the calibrated batch size: longer inputs need at least as
+            # much work per sample, rather than shrinking their sampling window.
+            timings[n], repetitions = self._median_scan_time(tool._PATH_RE, payload, repetitions)
 
         # Safety floor: a real ReDoS blows past this by orders of magnitude.
         assert timings[10_000] < 1.0, f"{label}: 10K input took {timings[10_000]:.3f}s"
