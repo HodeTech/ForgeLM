@@ -506,7 +506,7 @@ class TestPatternLinearity:
     empirically per the standard: 1K/5K/10K, median of 5, ~linear growth."""
 
     @staticmethod
-    def _median_scan_time(pattern, payload, repetitions=1):
+    def _median_scan_time(pattern, payload, repetitions=1, max_repetitions=262_144):
         """Return the per-scan median and the calibrated number of scans."""
         while True:
             runs = []
@@ -518,7 +518,7 @@ class TestPatternLinearity:
             elapsed = statistics.median(runs)
             # Batch short scans so timer resolution and scheduler jitter do not
             # dominate the median. Normalize back to the time of one scan.
-            if elapsed >= 0.1 or repetitions >= 262_144:
+            if elapsed >= 0.1 or repetitions >= max_repetitions:
                 return elapsed / repetitions, repetitions
             repetitions *= 2
 
@@ -527,7 +527,9 @@ class TestPatternLinearity:
         # the remaining run of "a" before discovering that "b" is absent.
         tool = SimpleNamespace(_PATH_RE=re.compile(r"a+b"))
         with pytest.raises(AssertionError, match="super-linear"):
-            self.test_growth_is_approximately_linear(tool, "quadratic negative control", lambda n: "a" * n)
+            self.test_growth_is_approximately_linear(
+                tool, "quadratic negative control", lambda n: "a" * n, max_repetitions=1
+            )
 
     def test_scheduler_jitter_does_not_reject_linear_scan(self, monkeypatch):
         clock = 0.0
@@ -557,14 +559,14 @@ class TestPatternLinearity:
             ("near-miss tail", lambda n: "." * n + "forgelm/x.p"),
         ],
     )
-    def test_growth_is_approximately_linear(self, tool, label, build):
+    def test_growth_is_approximately_linear(self, tool, label, build, max_repetitions=262_144):
         timings = {}
         repetitions = 1
         for n in (1_000, 5_000, 10_000):
             payload = build(n)
             # Reuse the calibrated batch size: longer inputs need at least as
             # much work per sample, rather than shrinking their sampling window.
-            timings[n], repetitions = self._median_scan_time(tool._PATH_RE, payload, repetitions)
+            timings[n], repetitions = self._median_scan_time(tool._PATH_RE, payload, repetitions, max_repetitions)
 
         # Safety floor: a real ReDoS blows past this by orders of magnitude.
         assert timings[10_000] < 1.0, f"{label}: 10K input took {timings[10_000]:.3f}s"
