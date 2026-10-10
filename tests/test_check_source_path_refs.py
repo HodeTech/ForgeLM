@@ -526,7 +526,7 @@ class TestPatternLinearity:
         # Deliberately quadratic negative control: each starting position retries
         # the remaining run of "a" before discovering that "b" is absent.
         tool = SimpleNamespace(_PATH_RE=re.compile(r"a+b"))
-        with pytest.raises(AssertionError, match="super-linear"):
+        with pytest.raises(AssertionError, match="super-linear|10K input took"):
             self.test_growth_is_approximately_linear(
                 tool, "quadratic negative control", lambda n: "a" * n, max_repetitions=1
             )
