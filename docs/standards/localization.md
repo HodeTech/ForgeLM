@@ -34,6 +34,7 @@ Rationale:
 | `docs/reference/distributed_training.md` | Yes | End-user distributed |
 | `docs/reference/compliance_summary.md` | Yes | EN+TR mirror (`compliance_summary-tr.md`) registered and spine-gated |
 | `docs/guides/*.md` | Yes, except one (Wave 1 + 2b + 3 + 4 progressively bilingualised) | Bilingualised today (complete, reviewed Turkish translations, registered in `tools/check_bilingual_parity.py::_PAIRS`): `air_gap_deployment`, `alignment`, `cicd_pipeline`, `data_audit`, `gdpr_erasure`, `getting-started`, `human_approval_gate`, `ingestion`, `iso_soc2_deployer_guide`, `library_api`, `performance`, `pipeline`, `quickstart`, `safety_compliance`, `troubleshooting`. Single-language (EN): `enterprise_deployment` — TR mirror is an open follow-up |
+| `docs/guides/cpu-demo/README.md` | Yes (`README-tr.md`) | Runnable CPU workflow, recording provenance, and evidence limits; the pair is registered in the bilingual guard. Generated captures are shared unchanged between languages. |
 | `docs/usermanuals/{en,tr}/` | Yes | EN+TR manual content authored & reviewed; DE/FR/ES/ZH fall back to EN via the `tableForLang(...) → DEFAULT='en'` chain (deferred to a future translation cycle). **Link-isolated:** pages here may only link to other in-manual pages (via the SPA route `#/<section>/<page>`) or external HTTPS URLs — see [`documentation.md` "User-manual link discipline"](documentation.md#user-manual-link-discipline-docsusermanuals). |
 | `docs/design/*.md` | No | Internal design history |
 | `docs/standards/*.md` | No | Contributor-facing |
