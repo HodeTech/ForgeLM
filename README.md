@@ -7,6 +7,8 @@
 
 **The config-driven LLM fine-tuning toolkit for teams that ship models into regulated environments.** YAML in — fine-tuned model, safety report, and EU AI Act audit artefacts out, with stable exit codes so a failed safety gate fails your pipeline instead of your launch.
 
+Want to contribute? Start with [your first pull request](https://github.com/HodeTech/ForgeLM/blob/development/CONTRIBUTING.md#your-first-pull-request) or an [unassigned good first issue](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee).
+
 New to fine-tuning? `forgelm quickstart customer-support` generates a config and seed dataset sized for a 12 GB GPU, trains it, and drops you into a chat REPL with the result — and you can ignore everything below until you need it.
 
 ---
@@ -68,6 +70,23 @@ forgelm deploy ./checkpoints/final_model --target ollama
 ```
 
 `python -m forgelm …` is equivalent and is what CI should use: a console script's `sys.path[0]` is its own `bin/`, so `forgelm …` runs whatever is in site-packages rather than the checkout you just built. `forgelm --wizard` generates a config interactively. Full walkthrough: [Quick Start Guide](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/quickstart.md).
+
+---
+
+## Try it without a GPU
+
+Validate a configuration, audit eight synthetic rows, and check a recorded audit-log chain on CPU.
+The [CPU sample](https://github.com/HodeTech/ForgeLM/blob/development/docs/guides/cpu-demo/README.md)
+contains the exact commands, unedited outputs, original log, version, date, and limitations.
+This is its real audit-log verification recording:
+
+```text
++ python3 -m forgelm verify-audit recorded-output/audit_log.jsonl
+OK: 7 entries verified
+```
+
+These checks do not establish model quality, safety, or legal compliance. The sample also documents
+why its source training bundle did not pass the separate model-integrity check.
 
 ---
 

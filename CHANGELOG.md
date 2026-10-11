@@ -101,6 +101,10 @@ All notable changes to ForgeLM are documented here.
 
 ### Added
 
+- Add a recorded CPU validation, data audit, and audit-log verification sample with EN/TR provenance
+  and limitations; link it from the README and website, expose installation and dry-run quickstart
+  commands in the hero, and make contributor entry points visible.
+
 - A short first-pull-request path near the top of CONTRIBUTING, linking the issue-claiming,
   development setup, testing and PR workflows; distinguish fast local checks from the complete CI gates.
 - **Private security reporting and a security policy.** Vulnerabilities can

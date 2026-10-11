@@ -408,7 +408,7 @@
     "home.cta.title":            "Ship your next fine-tune in <span class=\"text-gradient\">an afternoon.</span>",
     "home.cta.body":             "Pick a template, point it at your data, watch the audit report go green, and let ForgeLM forge the rest.",
     "home.cta.btn1":             "Quickstart in 5 minutes",
-    "home.cta.btn2":             "Star on GitHub"
+    "home.cta.btn2":             "Contribute"
   });
 
   Object.assign(T.tr, {
@@ -514,7 +514,7 @@
     "home.cta.title":             "Bir sonraki fine-tune'unuzu <span class=\"text-gradient\">bir öğleden sonrasında</span> gönderin.",
     "home.cta.body":              "Bir şablon seçin, verilerinize yönlendirin, denetim raporu yeşile dönsün — kalanını ForgeLM dövsün.",
     "home.cta.btn1":              "5 dakikada hızlı başlangıç",
-    "home.cta.btn2":              "GitHub'da yıldızla"
+    "home.cta.btn2":              "Katkıda bulun"
   });
 
   Object.assign(T.de, {
@@ -620,7 +620,7 @@
     "home.cta.title":             "Liefern Sie Ihren nächsten Fine-Tune <span class=\"text-gradient\">an einem Nachmittag</span> aus.",
     "home.cta.body":              "Wählen Sie eine Vorlage, richten Sie sie auf Ihre Daten, sehen Sie zu, wie der Audit-Bericht grün wird — den Rest schmiedet ForgeLM.",
     "home.cta.btn1":              "Schnellstart in 5 Minuten",
-    "home.cta.btn2":              "Auf GitHub starren"
+    "home.cta.btn2":              "Mitwirken"
   });
 
   Object.assign(T.fr, {
@@ -726,7 +726,7 @@
     "home.cta.title":             "Livrez votre prochain fine-tune en <span class=\"text-gradient\">un après-midi.</span>",
     "home.cta.body":              "Choisissez un modèle, pointez-le sur vos données, regardez le rapport d'audit passer au vert — laissez ForgeLM forger le reste.",
     "home.cta.btn1":              "Démarrage rapide en 5 minutes",
-    "home.cta.btn2":              "Étoile sur GitHub"
+    "home.cta.btn2":              "Contribuer"
   });
 
   Object.assign(T.es, {
@@ -832,7 +832,7 @@
     "home.cta.title":             "Despliegue su próximo fine-tune en <span class=\"text-gradient\">una tarde.</span>",
     "home.cta.body":              "Elija una plantilla, apúntela a sus datos, vea cómo el informe de auditoría se pone verde — y deje que ForgeLM forje el resto.",
     "home.cta.btn1":              "Inicio rápido en 5 minutos",
-    "home.cta.btn2":              "Estrella en GitHub"
+    "home.cta.btn2":              "Contribuir"
   });
 
   Object.assign(T.zh, {
@@ -938,7 +938,7 @@
     "home.cta.title":             "在<span class=\"text-gradient\">一个下午</span>内交付下一次微调。",
     "home.cta.body":              "选一个模板、对准你的数据、看着审计报告变绿 — 剩下的让 ForgeLM 来锻造。",
     "home.cta.btn1":              "5 分钟快速开始",
-    "home.cta.btn2":              "在 GitHub 加星"
+    "home.cta.btn2":              "参与贡献"
   });
 
   /* ── Features page (features.html) ───────────────────────── */
@@ -4666,6 +4666,32 @@
   Object.assign(T.zh, {
     "wizard.training.max_length.label": "最大序列长度",
     "wizard.training.max_length.hint": "每个训练样本的 token 数。2048 是安全的默认值;长上下文模型可调高 (超过 4096 时 RoPE 缩放生效)。",
+  });
+
+  // CPU sample copy: code and recorded command output stay language-neutral.
+  Object.assign(T.en, {
+    "common.footer.contribute": "Contribute",
+    "home.demo.install": "Install and generate a config without training:",
+    "home.demo.recorded": "Recorded CPU log check · 11 October 2026",
+    "home.demo.scope": "This checks a recorded audit-log chain. It does not verify model files or establish model quality, safety, or legal compliance.",
+    "home.demo.guide": "Try the CPU sample: commands, raw outputs, and limitations →",
+    "home.demo.guide_href": "https://github.com/HodeTech/ForgeLM/blob/development/docs/guides/cpu-demo/README.md",
+    "home.contribute.title": "Contribute to ForgeLM",
+    "home.contribute.body": "Start with the first pull request guide and an unassigned good first issue. Documentation, translations, tests, and small fixes all help.",
+    "home.contribute.guide": "Your first pull request",
+    "home.contribute.issues": "Browse good first issues"
+  });
+  Object.assign(T.tr, {
+    "common.footer.contribute": "Katkıda bulun",
+    "home.demo.install": "Kurun ve eğitim başlatmadan yapılandırma oluşturun:",
+    "home.demo.recorded": "Kaydedilmiş CPU log kontrolü · 11 Ekim 2026",
+    "home.demo.scope": "Bu kontrol, kaydedilmiş audit log zincirini denetler. Model dosyalarını doğrulamaz; model kalitesi, güvenliği veya hukuki uyumluluk kanıtı değildir.",
+    "home.demo.guide": "CPU örneğini deneyin: komutlar, ham çıktılar ve sınırlamalar →",
+    "home.demo.guide_href": "https://github.com/HodeTech/ForgeLM/blob/development/docs/guides/cpu-demo/README-tr.md",
+    "home.contribute.title": "ForgeLM'e katkıda bulunun",
+    "home.contribute.body": "İlk pull request rehberiyle ve henüz atanmamış bir başlangıç işiyle başlayın. Belgeler, çeviriler, testler ve küçük düzeltmeler katkı sağlar.",
+    "home.contribute.guide": "İlk pull request'iniz",
+    "home.contribute.issues": "Başlangıç işlerine göz atın"
   });
 
   window.ForgeLMTranslations = T;

@@ -1,0 +1,2 @@
++ python3 -m forgelm verify-audit recorded-output/audit_log.jsonl
+OK: 7 entries verified
