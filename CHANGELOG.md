@@ -101,6 +101,8 @@ All notable changes to ForgeLM are documented here.
 
 ### Added
 
+- A short first-pull-request path near the top of CONTRIBUTING, linking the issue-claiming,
+  development setup, testing and PR workflows; distinguish fast local checks from the complete CI gates.
 - **Private security reporting and a security policy.** Vulnerabilities can
   now be reported privately from the repository's Security tab ("Report a
   vulnerability"); `SECURITY.md` explains what to include, what counts as a
