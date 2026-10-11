@@ -514,6 +514,43 @@ class TestTrainingArgsValidationGuard:
         assert kwargs["load_best_model_at_end"] is False
 
 
+class TestWarmupArguments:
+    """Exercise the shared warmup mapping through real Transformers scheduling."""
+
+    @pytest.mark.parametrize("trainer_type", ["sft", "dpo", "orpo", "simpo", "kto", "grpo"])
+    @pytest.mark.parametrize(("ratio", "expected_steps"), [(0.0, 0), (0.03, 4), (0.4, 41), (1.0, 1)])
+    def test_warmup_steps_preserve_upstream_schedule(
+        self, tmp_path, minimal_config, monkeypatch, trainer_type, ratio, expected_steps
+    ):
+        import torch
+        from transformers import TrainingArguments
+
+        from forgelm.config import ForgeConfig
+        from forgelm.trainer import ForgeTrainer
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        trainer = ForgeTrainer.__new__(ForgeTrainer)
+        trainer.config = ForgeConfig.model_validate(
+            minimal_config(
+                training={
+                    "trainer_type": trainer_type,
+                    "output_dir": str(tmp_path),
+                    "report_to": "none",
+                    "warmup_ratio": ratio,
+                }
+            )
+        )
+        trainer.dataset = {"train": ["example"]}
+        trainer.checkpoint_dir = str(tmp_path)
+        trainer.run_name = "warmup-compatibility"
+
+        kwargs = trainer._get_common_training_kwargs()
+        assert "warmup_ratio" not in kwargs
+        args = TrainingArguments(**kwargs)
+        assert args.warmup_steps == pytest.approx(ratio)
+        assert args.get_warmup_steps(101) == expected_steps
+
+
 class TestGateRunnerImportContract:
     """F-P3-FABLE-25: configured eval gates must fail fast / fail loud on a missing
     extra, never silently degrade to a skip with exit 0."""

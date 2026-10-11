@@ -506,7 +506,8 @@ class ForgeTrainer:
             "per_device_train_batch_size": self.config.training.per_device_train_batch_size,
             "gradient_accumulation_steps": self.config.training.gradient_accumulation_steps,
             "learning_rate": self.config.training.learning_rate,
-            "warmup_ratio": self.config.training.warmup_ratio,
+            # Transformers >=5.3 accepts fractional warmup_steps; newer releases removed warmup_ratio.
+            "warmup_steps": self.config.training.warmup_ratio,
             "weight_decay": self.config.training.weight_decay,
             "eval_steps": self.config.training.eval_steps,
             "save_steps": self.config.training.save_steps,

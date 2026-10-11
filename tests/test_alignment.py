@@ -150,8 +150,17 @@ class TestConfigTemplateAlignment:
     ("trainer_type", "config_name", "trainer_name", "beta"),
     [("orpo", "ORPOConfig", "ORPOTrainer", 0.17), ("simpo", "CPOConfig", "CPOTrainer", 2.7)],
 )
+@pytest.mark.parametrize(("warmup_ratio", "expected_warmup_steps"), [(0.0, 0), (0.03, 4), (0.4, 41), (1.0, 1)])
 def test_real_preference_trainer_construction(
-    tmp_path, minimal_config, monkeypatch, trainer_type, config_name, trainer_name, beta
+    tmp_path,
+    minimal_config,
+    monkeypatch,
+    trainer_type,
+    config_name,
+    trainer_name,
+    beta,
+    warmup_ratio,
+    expected_warmup_steps,
 ):
     """Build real TRL configs/trainers with a local CPU model and tokenizer.
 
@@ -197,6 +206,7 @@ def test_real_preference_trainer_construction(
                 "orpo_beta": beta,
                 "simpo_beta": beta,
                 "simpo_gamma": 0.8,
+                "warmup_ratio": warmup_ratio,
             },
         )
     )
@@ -217,6 +227,8 @@ def test_real_preference_trainer_construction(
     assert actual.args.use_cpu is True
     assert actual.args.max_length == 64
     assert actual.args.beta == pytest.approx(beta)
+    assert actual.args.warmup_steps == pytest.approx(warmup_ratio)
+    assert actual.args.get_warmup_steps(101) == expected_warmup_steps
     assert len(actual.train_dataset) == 1
     if trainer_type == "simpo":
         assert actual.args.loss_type == "simpo"

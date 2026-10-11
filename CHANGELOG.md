@@ -6,6 +6,10 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Preserve the configured warmup schedule with newer Transformers/TRL releases by passing the
+  existing YAML `training.warmup_ratio` through fractional `warmup_steps`, supported throughout
+  the declared Transformers range. Restore real ORPO/SimPO construction without changing
+  dependency floors or suppressing compatibility tests.
 - Restore configuration loading with the supported Pydantic 2.0 minimum by avoiding duplicate
   `Field` metadata in finite-number and final-model directory types. Preserve non-finite rejection,
   numeric bounds, optional nulls, and validation of the default model directory; explicitly reject
