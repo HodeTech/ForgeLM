@@ -95,7 +95,9 @@ why its source training bundle did not pass the separate model-integrity check.
 ```text
 checkpoints/
 ├── final_model/
-│   └── model_integrity.json          # SHA-256 of every artefact in this directory
+│   ├── README.md                     # Model card
+│   ├── deployer_instructions.md      # Article 13 — deployer instructions
+│   └── model_integrity.json          # SHA-256 of saved files, including both documents
 ├── compliance/
 │   ├── annex_iv_metadata.json        # EU AI Act Annex IV technical documentation
 │   ├── data_governance_report.json   # Article 10 — inlines the dataset audit report

@@ -1524,10 +1524,10 @@ class ForgeTrainer:
         metrics: Dict[str, float],
         train_result: TrainResult,
     ) -> None:
-        """Generate model card / integrity / deployer instructions / compliance bundle."""
+        """Write model documentation before hashing the final model artifacts."""
         self._generate_model_card(final_path, metrics, train_result)
-        self._generate_model_integrity(final_path)
         self._generate_deployer_instructions(final_path, metrics)
+        self._generate_model_integrity(final_path)
         self._export_compliance_if_needed(metrics, train_result)
 
     def _handle_human_approval_gate(

@@ -30,8 +30,9 @@ ForgeLM kutudan çıktığı gibi şunları ship eder:
   `generate_deployer_instructions`.
 - **EU AI Act Madde 14** insan-gözetim kapısı: `forgelm approve` /
   `reject` Madde 14 staging.
-- **EU AI Act Madde 15** model-bütünlüğü: `compute_artefact_sha256` +
-  `model_integrity.json`; deployment-sonrası doğrulama:
+- **EU AI Act Madde 15** model-bütünlüğü: yeni bir model dizininde model
+  kartı ve deployer talimatlarından sonra üretilen
+  `generate_model_integrity` + `model_integrity.json`; deployment-sonrası doğrulama:
   `forgelm verify-integrity`.
 - **EU AI Act Madde 17** QMS şablonları: `docs/qms/` (Wave 0 baseline +
   Wave 4 ISO eklemeleri).

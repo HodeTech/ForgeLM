@@ -6,6 +6,9 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Write deployer instructions before the model-integrity manifest so a fresh, separate model
+  directory passes `verify-integrity`. Include the Article 13 document in the checksums while
+  preserving exit `6` for changed, removed, or added artifacts.
 - Correct the EU AI Act high-risk application dates in the safety guide and public product overview,
   with matching Turkish text and primary EUR-Lex citations. Distinguish the Annex III / Annex I
   schedules from transparency and general-purpose AI obligations and their transition provisions;

@@ -2,6 +2,9 @@
 
 import json
 import os
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
@@ -414,6 +417,119 @@ class TestModelIntegrity:
 
 
 # --- Deployer Instructions ---
+
+
+class TestFinalizedModelIntegrity:
+    """A fresh model bundle must verify, including its Article 13 document."""
+
+    @staticmethod
+    def _finalize(tmp_path, monkeypatch, minimal_config, *, require_approval=False):
+        from forgelm.results import TrainResult
+        from forgelm.trainer import ForgeTrainer
+
+        monkeypatch.setenv("FORGELM_OPERATOR", "test-operator")
+        monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        source = tmp_path / "tiny.jsonl"
+        source.write_text('{"text": "Local training row."}\n', encoding="utf-8")
+        output_dir = tmp_path / "output"
+        config = ForgeConfig(
+            **minimal_config(
+                training={"output_dir": str(output_dir)},
+                data={"dataset_name_or_path": str(source)},
+                evaluation={"auto_revert": False, "require_human_approval": require_approval},
+            )
+        )
+        trainer = ForgeTrainer.__new__(ForgeTrainer)
+        trainer.config = config
+        trainer.checkpoint_dir = str(output_dir)
+        trainer.dataset = {"train": [{"text": "Local training row."}]}
+        trainer.audit = AuditLogger(str(output_dir), run_id="fg-finalization-test")
+        trainer.audit.log_event("pipeline.initialized", trainer_type="sft")
+        prefix = Path(trainer.audit.log_path).read_bytes()
+        trainer.notifier = MagicMock()
+        trainer.run_name = "finalization-test"
+        name = "final_model.staging.fg-finalization-test" if require_approval else "final_model"
+        model_dir = output_dir / name
+        model_dir.mkdir()
+        # Stand in for the external model/tokenizer save; all artifact writers are real.
+        (model_dir / "adapter_model.safetensors").write_bytes(b"local adapter bytes")
+        (model_dir / "tokenizer_config.json").write_text("{}", encoding="utf-8")
+        result = TrainResult(success=True, metrics={"train_loss": 0.5}, final_model_path=str(model_dir))
+        trainer._finalize_artifacts(str(model_dir), result.metrics, result)
+        return trainer, model_dir, prefix, result
+
+    @pytest.mark.parametrize("require_approval", [False, True], ids=["final", "staged"])
+    def test_fresh_bundle_verifies_and_keeps_audit_append_only(
+        self, tmp_path, monkeypatch, minimal_config, capsys, require_approval
+    ):
+        from forgelm.cli.subcommands._approve import _atomic_rename_or_move
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+        from forgelm.compliance import verify_audit_log
+        from forgelm.verify import verify_integrity
+
+        trainer, model_dir, prefix, result = self._finalize(
+            tmp_path, monkeypatch, minimal_config, require_approval=require_approval
+        )
+        manifest = json.loads((model_dir / "model_integrity.json").read_text(encoding="utf-8"))
+        assert {entry["file"] for entry in manifest["artifacts"]} == {
+            "adapter_model.safetensors",
+            "tokenizer_config.json",
+            "README.md",
+            "deployer_instructions.md",
+        }
+        audit_path = Path(trainer.audit.log_path)
+        audit_before_verification = audit_path.read_bytes()
+        assert audit_before_verification.startswith(prefix)
+        with pytest.raises(SystemExit) as exc:
+            _run_verify_integrity_cmd(SimpleNamespace(path=str(model_dir)), output_format="json")
+        assert exc.value.code == 0
+        envelope = json.loads(capsys.readouterr().out)
+        assert envelope["valid"] is True
+        assert envelope["verified_count"] == 4
+        assert envelope["changed"] == envelope["removed"] == envelope["added"] == []
+        assert audit_path.read_bytes() == audit_before_verification
+
+        if require_approval:
+            bundle = {path.name: path.read_bytes() for path in model_dir.iterdir()}
+            assert trainer._handle_human_approval_gate(str(model_dir), result, already_saved=True)
+            assert result.awaiting_approval is True
+            promoted = model_dir.parent / "final_model"
+            assert _atomic_rename_or_move(str(model_dir), str(promoted)) == "rename"
+            assert {path.name: path.read_bytes() for path in promoted.iterdir()} == bundle
+            assert verify_integrity(str(promoted)).valid is True
+        else:
+            trainer.audit.log_event("pipeline.completed", success=True)
+            assert verify_integrity(str(model_dir)).valid is True
+
+        assert audit_path.read_bytes().startswith(audit_before_verification)
+        events = [json.loads(line) for line in audit_path.read_bytes().splitlines()]
+        integrity_events = [event for event in events if event["event"] == "model.integrity_verified"]
+        assert len(integrity_events) == 1
+        assert integrity_events[0]["artifacts"] == 4
+        assert verify_audit_log(str(audit_path)).valid is True
+
+    @pytest.mark.parametrize("change", ["changed", "removed", "added"])
+    def test_finalized_bundle_still_reports_integrity_failures(
+        self, tmp_path, monkeypatch, minimal_config, capsys, change
+    ):
+        from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
+
+        _, model_dir, _, _ = self._finalize(tmp_path, monkeypatch, minimal_config)
+        document = model_dir / "deployer_instructions.md"
+        if change == "changed":
+            document.write_text(document.read_text(encoding="utf-8") + "\nChanged.\n", encoding="utf-8")
+        elif change == "removed":
+            document.unlink()
+        else:
+            (model_dir / "unexpected.txt").write_text("Added.\n", encoding="utf-8")
+        with pytest.raises(SystemExit) as exc:
+            _run_verify_integrity_cmd(SimpleNamespace(path=str(model_dir)), output_format="json")
+        assert exc.value.code == 6
+        envelope = json.loads(capsys.readouterr().out)
+        assert envelope["valid"] is False
+        for category in ("changed", "removed", "added"):
+            expected = ["unexpected.txt" if change == "added" else "deployer_instructions.md"]
+            assert envelope[category] == (expected if category == change else [])
 
 
 class TestDeployerInstructions:
