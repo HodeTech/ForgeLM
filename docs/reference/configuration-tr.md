@@ -84,6 +84,20 @@ Tam açıklamalı örnek için `config_template.yaml` dosyasına bakın.
 | `report_to` | string | `"tensorboard"` | `"tensorboard"`, `"wandb"`, `"mlflow"`, `"none"` |
 | `run_name` | string | `null` | W&B/MLflow çalışma adı (null ise otomatik üretilir) |
 
+#### Model çıktı yolu politikası
+
+`final_model_dir`, `output_dir` altında ayrı bir göreli alt dizin belirtmelidir; `final_model` ve
+`models/final` geçerlidir. Değer yazıldığı gibi korunur. Boş değerler, çıktı kökünün kendisi (`.`),
+üst dizine geçiş (`..`), mutlak veya sürücü belirten yollar, ters eğik çizgi ayırıcıları, sonda `/` veya `/.`, mevcut
+dosyalar ve çıktı kökü altındaki sembolik bağlantı bileşenleri reddedilir. Her platformda iç içe yollar için `/` kullanın.
+
+İlk bileşen `compliance`, `benchmark`, `safety`, `judge`, `runs`, `audit_log.jsonl`,
+`audit_log.jsonl.manifest.json`, `data_audit_report.json` veya `checkpoint-*` olamaz (büyük/küçük harf duyarsız).
+Ayrılmış bir yolun önerilen model dizinine sembolik bağlantı üzerinden yönelmesi dahil, çözümlenen
+yolların bu çalışma kayıtlarıyla örtüşmesi de reddedilir. Böylece değişken kayıtlar bütünlük
+manifestinin dışında kalır ve auto-revert tarafından silinmez. Config yükleme ve `--dry-run`,
+geçersiz yerleşimleri `1` çıkış koduyla reddeder; trainer başlatma, kaydetme, sonlandırma ve silme öncesinde yeniden denetler.
+
 #### OOM Recovery (Bellek Hatası Kurtarma)
 
 CUDA bellek yetersizliği (out-of-memory) hatalarında `per_device_train_batch_size` değerini

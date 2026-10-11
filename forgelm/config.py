@@ -9,6 +9,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from pydantic import Field as PydField
 
+from ._artifact_paths import FinalModelDir
 from ._strict_json import dumps_strict
 
 logger = logging.getLogger("forgelm.config")
@@ -458,9 +459,7 @@ class TrainingConfig(BaseModel):
     output_dir: str = Field(
         default="./checkpoints", description="Directory for intermediate checkpoints + audit log + compliance bundle."
     )
-    final_model_dir: str = Field(
-        default="final_model", description="Subdirectory of `output_dir` where the final promoted model lands."
-    )
+    final_model_dir: FinalModelDir = Field(default="final_model", description="Isolated subdirectory of output_dir.")
     merge_adapters: bool = Field(
         default=False,
         description="When SFT finishes, merge LoRA adapters into the base model (writes a full-weight model).",

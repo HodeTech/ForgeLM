@@ -423,7 +423,7 @@ class TestFinalizedModelIntegrity:
     """A fresh model bundle must verify, including its Article 13 document."""
 
     @staticmethod
-    def _finalize(tmp_path, monkeypatch, minimal_config, *, require_approval=False):
+    def _finalize(tmp_path, monkeypatch, minimal_config, *, require_approval=False, final_model_dir="final_model"):
         from forgelm.results import TrainResult
         from forgelm.trainer import ForgeTrainer
 
@@ -434,7 +434,7 @@ class TestFinalizedModelIntegrity:
         output_dir = tmp_path / "output"
         config = ForgeConfig(
             **minimal_config(
-                training={"output_dir": str(output_dir)},
+                training={"output_dir": str(output_dir), "final_model_dir": final_model_dir},
                 data={"dataset_name_or_path": str(source)},
                 evaluation={"auto_revert": False, "require_human_approval": require_approval},
             )
@@ -448,9 +448,9 @@ class TestFinalizedModelIntegrity:
         prefix = Path(trainer.audit.log_path).read_bytes()
         trainer.notifier = MagicMock()
         trainer.run_name = "finalization-test"
-        name = "final_model.staging.fg-finalization-test" if require_approval else "final_model"
+        name = f"{final_model_dir}.staging.fg-finalization-test" if require_approval else final_model_dir
         model_dir = output_dir / name
-        model_dir.mkdir()
+        model_dir.mkdir(parents=True)
         # Stand in for the external model/tokenizer save; all artifact writers are real.
         (model_dir / "adapter_model.safetensors").write_bytes(b"local adapter bytes")
         (model_dir / "tokenizer_config.json").write_text("{}", encoding="utf-8")
@@ -459,8 +459,9 @@ class TestFinalizedModelIntegrity:
         return trainer, model_dir, prefix, result
 
     @pytest.mark.parametrize("require_approval", [False, True], ids=["final", "staged"])
+    @pytest.mark.parametrize("final_model_dir", ["final_model", "models/final"])
     def test_fresh_bundle_verifies_and_keeps_audit_append_only(
-        self, tmp_path, monkeypatch, minimal_config, capsys, require_approval
+        self, tmp_path, monkeypatch, minimal_config, capsys, require_approval, final_model_dir
     ):
         from forgelm.cli.subcommands._approve import _atomic_rename_or_move
         from forgelm.cli.subcommands._verify_integrity import _run_verify_integrity_cmd
@@ -468,7 +469,7 @@ class TestFinalizedModelIntegrity:
         from forgelm.verify import verify_integrity
 
         trainer, model_dir, prefix, result = self._finalize(
-            tmp_path, monkeypatch, minimal_config, require_approval=require_approval
+            tmp_path, monkeypatch, minimal_config, require_approval=require_approval, final_model_dir=final_model_dir
         )
         manifest = json.loads((model_dir / "model_integrity.json").read_text(encoding="utf-8"))
         assert {entry["file"] for entry in manifest["artifacts"]} == {
@@ -493,7 +494,7 @@ class TestFinalizedModelIntegrity:
             bundle = {path.name: path.read_bytes() for path in model_dir.iterdir()}
             assert trainer._handle_human_approval_gate(str(model_dir), result, already_saved=True)
             assert result.awaiting_approval is True
-            promoted = model_dir.parent / "final_model"
+            promoted = Path(trainer.config.training.output_dir) / final_model_dir
             assert _atomic_rename_or_move(str(model_dir), str(promoted)) == "rename"
             assert {path.name: path.read_bytes() for path in promoted.iterdir()} == bundle
             assert verify_integrity(str(promoted)).valid is True
@@ -507,6 +508,69 @@ class TestFinalizedModelIntegrity:
         assert len(integrity_events) == 1
         assert integrity_events[0]["artifacts"] == 4
         assert verify_audit_log(str(audit_path)).valid is True
+
+    @pytest.mark.parametrize("staged", [False, True])
+    def test_real_revert_preserves_run_records_and_siblings(self, tmp_path, monkeypatch, minimal_config, staged):
+        from forgelm.compliance import verify_audit_log
+
+        trainer, model_dir, _, _ = self._finalize(
+            tmp_path, monkeypatch, minimal_config, require_approval=staged, final_model_dir="models/final"
+        )
+        sibling = model_dir.parent / "keep"
+        sibling.mkdir()
+        sentinel = sibling / "sentinel.txt"
+        sentinel.write_bytes(b"keep sibling")
+        audit_path = Path(trainer.audit.log_path)
+        prefix = audit_path.read_bytes()
+        compliance = {p: p.read_bytes() for p in (tmp_path / "output/compliance").iterdir()}
+        assert trainer._revert_model(str(model_dir), "rejected", source="threshold") is True
+        assert not model_dir.exists()
+        assert sentinel.read_bytes() == b"keep sibling"
+        assert {p: p.read_bytes() for p in compliance} == compliance
+        assert audit_path.read_bytes().startswith(prefix)
+        assert verify_audit_log(str(audit_path)).valid is True
+
+    @pytest.mark.parametrize("operation", ["save_final_model", "_revert_model", "_finalize_artifacts"])
+    @pytest.mark.parametrize("destination", [".", "compliance", "../outside", "alias", "checkpoint-1"])
+    def test_runtime_guard_preserves_real_audit_before_write_or_delete(
+        self, tmp_path, monkeypatch, minimal_config, operation, destination
+    ):
+        from forgelm.compliance import verify_audit_log
+        from forgelm.config import ConfigError
+
+        trainer, _, _, _ = self._finalize(tmp_path, monkeypatch, minimal_config)
+        output = Path(trainer.config.training.output_dir)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        sentinel = outside / "sentinel.txt"
+        sentinel.write_bytes(b"keep outside")
+        (output / "alias").symlink_to(outside, target_is_directory=True)
+        audit_path = Path(trainer.audit.log_path)
+        prefix = audit_path.read_bytes()
+        files = {p: p.read_bytes() for p in output.rglob("*") if p.is_file()}
+        args = {
+            "save_final_model": (str(output / destination),),
+            "_revert_model": (str(output / destination), "bad"),
+            "_finalize_artifacts": (str(output / destination), {}, None),
+        }[operation]
+        with pytest.raises(ConfigError, match="final_model_dir"):
+            getattr(trainer, operation)(*args)
+        assert {p: p.read_bytes() for p in output.rglob("*") if p.is_file()} == files
+        assert sentinel.read_bytes() == b"keep outside"
+        assert audit_path.read_bytes() == prefix
+        assert verify_audit_log(str(audit_path)).valid is True
+
+    def test_trainer_rechecks_symlink_created_after_config_validation(self, tmp_path, minimal_config):
+        from forgelm.config import ConfigError
+        from forgelm.trainer import ForgeTrainer
+
+        output = tmp_path / "output"
+        config = ForgeConfig(**minimal_config(training={"output_dir": str(output)}))
+        output.mkdir()
+        (output / "final_model").symlink_to(output, target_is_directory=True)
+        with pytest.raises(ConfigError, match="final_model_dir"):
+            ForgeTrainer(None, None, config, {})
+        assert not (output / "audit_log.jsonl").exists()
 
     @pytest.mark.parametrize("change", ["changed", "removed", "added"])
     def test_finalized_bundle_still_reports_integrity_failures(

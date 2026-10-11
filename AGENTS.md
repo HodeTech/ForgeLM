@@ -46,7 +46,7 @@ Each skill's `SKILL.md` has the full checklist. Follow it; don't skip steps to s
 
 ```text
 ForgeLM/
-├── forgelm/                 # Source code: 28 single-file modules (not counting
+├── forgelm/                 # Source code: 29 single-file modules (not counting
 │                            # __init__ / __main__) + 5 code sub-packages
 │   ├── cli/                 # CLI package (Phase 15 split): _parser, _dispatch,
 │   │                        # _exit_codes, subcommands/{ingest, audit, chat,
@@ -73,6 +73,7 @@ ForgeLM/
 │   ├── webhook.py           # Slack/Teams notifications (8-event vocabulary)
 │   ├── grpo_rewards.py      # Built-in GRPO format/length shaping reward fallback
 │   ├── _http.py             # SSRF-guarded HTTP chokepoint (safe_post / safe_get)
+│   ├── _artifact_paths.py    # Isolated model-directory validation
 │   ├── _strict_json.py         # Strict JSON readers and writers
 │   ├── _trl_compat.py          # TRL preference-class export compatibility
 │   ├── _version.py          # `__version__` + `__api_version__` (decoupled)

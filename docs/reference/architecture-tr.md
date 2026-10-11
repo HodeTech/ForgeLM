@@ -42,7 +42,7 @@ forgelm --config job.yaml
 
 ```
 ForgeLM/
-├── forgelm/                  # Çekirdek Python paketi (__init__/__main__ dışında 28 tek-dosya modül + 5 alt-paket)
+├── forgelm/                  # Çekirdek Python paketi (__init__/__main__ dışında 29 tek-dosya modül + 5 alt-paket)
 │   ├── __init__.py           # Hızlı CLI başlatma için lazy import
 │   ├── cli/                  # CLI alt-paketi (Faz 15 split)
 │   │   ├── _parser.py            # 19 subcommand + global flag
@@ -86,6 +86,7 @@ ForgeLM/
 │   ├── wizard/               # Etkileşimli yapılandırma sihirbazı (alt-paket — Faz 22)
 │   ├── webhook.py            # Webhook bildirimleri (Slack/Teams)
 │   ├── _http.py              # SSRF-korumalı HTTP chokepoint
+│   ├── _artifact_paths.py    # Yalıtılmış model dizini doğrulaması
 │   ├── _strict_json.py       # Katı JSON okuma ve yazma
 │   ├── _trl_compat.py        # TRL tercih sınıflarının dışa aktarım uyumluluğu
 │   ├── _version.py           # __version__ + __api_version__ (decoupled)

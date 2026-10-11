@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 # NOTE: Heavy ML imports (torch, transformers.EarlyStoppingCallback, trl.SFTConfig/SFTTrainer)
 # are deferred to method bodies so `import forgelm.trainer` is cheap. Eagerly importing
 # torch here costs ~3-5s of CLI startup per invocation. See closure-plan F-performance-101.
+from ._artifact_paths import _check_model_destination, _final_model_path
 from ._strict_json import dumps_strict
 from ._trl_compat import _resolve_preference_symbol
 from .config import ConfigError
@@ -348,6 +349,7 @@ class ForgeTrainer:
         self.notifier = WebhookNotifier(config)
         self.run_name = config.model.name_or_path.split("/")[-1] + "_finetune"
 
+        _final_model_path(self.checkpoint_dir, self.config.training.final_model_dir)
         os.makedirs(self.checkpoint_dir, exist_ok=True)
 
         # Art. 12: Structured audit log
@@ -985,6 +987,7 @@ class ForgeTrainer:
                 "nan_inf", "threshold") for the audit-event ``reason`` field.
                 The webhook payload also includes this in the masked reason.
         """
+        _check_model_destination(self.checkpoint_dir, final_path)
         # Stash the operator-actionable reason so the returned TrainResult can
         # surface it on ``.error`` even for the eval-loss path, which returns a
         # freshly-built result that never saw the gate's computed reason
@@ -1518,6 +1521,7 @@ class ForgeTrainer:
         train_result: TrainResult,
     ) -> None:
         """Write model documentation before hashing the final model artifacts."""
+        _check_model_destination(self.checkpoint_dir, final_path)
         self._generate_model_card(final_path, metrics, train_result)
         self._generate_deployer_instructions(final_path, metrics)
         self._generate_model_integrity(final_path)
@@ -1605,10 +1609,7 @@ class ForgeTrainer:
         if self._trainer_type != "grpo" and self.dataset.get("validation"):
             metrics.update(self.trainer.evaluate())
 
-        final_path = os.path.join(
-            self.checkpoint_dir,
-            getattr(self.config.training, "final_model_dir", "final_model"),
-        )
+        final_path = _final_model_path(self.checkpoint_dir, self.config.training.final_model_dir)
 
         # Article 14 (honest path): when ``require_human_approval`` is on the
         # adapters land in ``final_model.staging.<run_id>/`` rather than the canonical
@@ -1733,6 +1734,7 @@ class ForgeTrainer:
 
     def save_final_model(self, final_path: str) -> None:
         """Saves final artifacts (adapter-only by default)."""
+        _check_model_destination(self.checkpoint_dir, final_path)
         os.makedirs(final_path, exist_ok=True)
         merge_adapters = bool(getattr(self.config.training, "merge_adapters", False))
 

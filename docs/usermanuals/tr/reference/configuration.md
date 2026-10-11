@@ -127,6 +127,14 @@ training:
   grpo_reward_model: null                     # GRPO: reward skorlama için HF yolu; null = built-in format/uzunluk shaping
 ```
 
+`final_model_dir`, `output_dir` altında yalıtılmış bir göreli alt dizin olmalıdır (örneğin `models/final`).
+Boş/kök yollar, `..`, mutlak/sürücü belirten yollar, ters eğik çizgiler, sonda `/` veya `/.`, mevcut dosyalar ve sembolik
+bağlantı bileşenleri config çıkış kodu `1` ile reddedilir. Ayrılmış ilk bileşenler `compliance`,
+`benchmark`, `safety`, `judge`, `runs`, `audit_log.jsonl`, `audit_log.jsonl.manifest.json`,
+`data_audit_report.json` ve `checkpoint-*` değerleridir (büyük/küçük harf duyarsız); çözümlenen yolların
+ayrılmış yollarla örtüşmesi de reddedilir. Trainer başlatma, kaydetme, sonlandırma ve auto-revert
+öncesinde yeniden denetleyerek çalışma kayıtlarını ayrı tutar.
+
 Nested `training.dpo:` / `training.simpo:` / `training.kto:` / `training.orpo:` / `training.grpo:` alt-bloğu yoktur — `TrainingConfig` bilinmeyen anahtarları reddeder (`extra="forbid"`), dolayısıyla nested blok `--dry-run`'da config hatasıyla başarısız olur. Her alignment-metodu parametresi, `rope_scaling` / `sliding_window_attention` (yukarıda gösterildi — bunlar `ModelConfig` değil `TrainingConfig` alanlarıdır, bkz. yukarıdaki [`model:`](#model) notu) ve NEFTune doğrudan `training:` üzerinde düz alanlardır. GaLore `galore_*` optimizer alanları, `oom_recovery` / `oom_recovery_min_batch_size`, `packing` için deprecated takma ad `sample_packing`, ve `gpu_cost_per_hour` da düz `training:` alanlarıdır, yukarıdaki kısaltılmış örnekte gösterilmemiştir — trainer-başı tam çalışan örnekler için bkz. [GaLore](#/training/galore) ve [YAML Şablonları](#/reference/yaml-templates).
 
 ## `evaluation:`

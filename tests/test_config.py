@@ -131,6 +131,103 @@ class TestTrainingConfig:
         assert TrainingConfig(oom_recovery_min_batch_size=1).oom_recovery_min_batch_size == 1
 
 
+class TestFinalModelDirectoryPolicy:
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "",
+            " ",
+            ".",
+            "..",
+            "../x",
+            "/abs/outside",
+            "sub/../..",
+            "sub/../model",
+            "final_model/",
+            "models/final/.",
+            "C:/outside",
+            "C:outside",
+            "\\\\server\\share",
+            "models\\final",
+            "bad\x00path",
+            "compliance",
+            "compliance/model",
+            "COMPLIANCE",
+            "audit_log.jsonl",
+            "audit_log.jsonl.manifest.json",
+            "data_audit_report.json",
+            "runs/model",
+            "checkpoint-10",
+            "benchmark",
+            "safety",
+            "judge",
+        ],
+    )
+    def test_rejects_unsafe_or_shared_destinations_without_writes(self, tmp_path, value):
+        output = tmp_path / "output"
+        with pytest.raises(ValidationError, match="final_model_dir"):
+            ForgeConfig(**minimal_config(training={"output_dir": str(output), "final_model_dir": value}))
+        assert not output.exists()
+
+    @pytest.mark.parametrize("value", ["final_model", "custom-model", "models/final"])
+    def test_accepts_isolated_relative_directories_without_normalizing(self, tmp_path, value):
+        output = tmp_path / "output"
+        config = ForgeConfig(**minimal_config(training={"output_dir": str(output), "final_model_dir": value}))
+        assert config.training.final_model_dir == value
+        assert not output.exists()
+
+    @pytest.mark.parametrize("target_name", ["root", "outside", "compliance"])
+    def test_rejects_symlink_destinations_including_default(self, tmp_path, target_name):
+        output = tmp_path / "output"
+        output.mkdir()
+        target = {"root": output, "outside": tmp_path / "outside", "compliance": output / "compliance"}[target_name]
+        target.mkdir(exist_ok=True)
+        (output / "final_model").symlink_to(target, target_is_directory=True)
+        with pytest.raises(ValidationError, match="final_model_dir"):
+            ForgeConfig(**minimal_config(training={"output_dir": str(output)}))
+
+    @pytest.mark.parametrize("reserved", ["compliance", "checkpoint-1"])
+    @pytest.mark.parametrize("destination", ["models", "models/reports/final"])
+    def test_rejects_symlink_parent_and_overlap_with_aliased_records(self, tmp_path, reserved, destination):
+        output = tmp_path / "output"
+        models = output / "models"
+        models.mkdir(parents=True)
+        (output / "alias").symlink_to(models, target_is_directory=True)
+        with pytest.raises(ValidationError, match="final_model_dir"):
+            TrainingConfig(output_dir=str(output), final_model_dir="alias/final")
+        (output / reserved).symlink_to(models / "reports", target_is_directory=True)
+        with pytest.raises(ValidationError, match="final_model_dir"):
+            TrainingConfig(output_dir=str(output), final_model_dir=destination)
+
+    def test_symlink_loop_is_reported_as_validation_error(self, tmp_path):
+        (tmp_path / "final_model").symlink_to(tmp_path / "final_model", target_is_directory=True)
+        with pytest.raises(ValidationError, match="final_model_dir"):
+            TrainingConfig(output_dir=str(tmp_path))
+
+    def test_rejects_existing_file_destination(self, tmp_path):
+        (tmp_path / "model").write_text("keep", encoding="utf-8")
+        with pytest.raises(ValidationError, match="final_model_dir"):
+            TrainingConfig(output_dir=str(tmp_path), final_model_dir="model")
+        assert (tmp_path / "model").read_text(encoding="utf-8") == "keep"
+
+    def test_dry_run_reports_config_exit_one_without_creating_output(self, tmp_path, monkeypatch):
+        import sys
+
+        from forgelm.cli import main
+
+        output = tmp_path / "output"
+        path = tmp_path / "invalid.yaml"
+        path.write_text(
+            yaml.safe_dump(minimal_config(training={"output_dir": str(output), "final_model_dir": "compliance"})),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(sys, "argv", ["forgelm", "--config", str(path), "--dry-run"])
+        with pytest.raises(SystemExit) as raised:
+            main()
+        assert raised.value.code == 1
+        assert not output.exists()
+
+
 # --- EvaluationConfig ---
 
 

@@ -508,6 +508,8 @@ class TestRevertedFlagIsDerivedNotAssumed:
         final = tmp_path / "model"
         final.mkdir()
         trainer = self._trainer(auto_revert=True)
+        trainer.config.training.output_dir = str(tmp_path)
+        trainer.checkpoint_dir = str(tmp_path)
         assert trainer.execute_evaluation_checks(str(final), {"eval_loss": 1.0}) is False
         assert trainer._loss_gate_reverted is True
         assert not final.exists(), "the flag claims a deletion that did not happen"

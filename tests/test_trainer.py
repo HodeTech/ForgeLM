@@ -111,32 +111,32 @@ class TestEvaluationChecks:
 
     def test_max_loss_exceeded(self):
         trainer = self._make_trainer(max_loss=2.0)
-        result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 3.0})
+        result = trainer.execute_evaluation_checks("/tmp/test_forge_eval/nonexistent", {"eval_loss": 3.0})
         assert result is False
 
     def test_max_loss_within_bounds(self):
         trainer = self._make_trainer(max_loss=2.0)
-        result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.5})
+        result = trainer.execute_evaluation_checks("/tmp/test_forge_eval/nonexistent", {"eval_loss": 1.5})
         assert result is True
 
     def test_baseline_regression(self):
         trainer = self._make_trainer(baseline_loss=1.0)
-        result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.5})
+        result = trainer.execute_evaluation_checks("/tmp/test_forge_eval/nonexistent", {"eval_loss": 1.5})
         assert result is False
 
     def test_baseline_improvement(self):
         trainer = self._make_trainer(baseline_loss=2.0)
-        result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.5})
+        result = trainer.execute_evaluation_checks("/tmp/test_forge_eval/nonexistent", {"eval_loss": 1.5})
         assert result is True
 
     def test_nan_eval_loss(self):
         trainer = self._make_trainer(max_loss=2.0)
-        result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": float("nan")})
+        result = trainer.execute_evaluation_checks("/tmp/test_forge_eval/nonexistent", {"eval_loss": float("nan")})
         assert result is False
 
     def test_inf_eval_loss(self):
         trainer = self._make_trainer(max_loss=2.0)
-        result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": float("inf")})
+        result = trainer.execute_evaluation_checks("/tmp/test_forge_eval/nonexistent", {"eval_loss": float("inf")})
         assert result is False
 
     def test_nan_baseline_is_refused_by_the_schema(self):
@@ -169,25 +169,25 @@ class TestEvaluationChecks:
         trainer = self._make_trainer(auto_revert=True)
         trainer.config.evaluation.baseline_loss = float("nan")
         with patch.object(trainer, "_revert_model") as revert, caplog.at_level("WARNING"):
-            result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.5})
+            result = trainer.execute_evaluation_checks("/tmp/test_forge_eval/nonexistent", {"eval_loss": 1.5})
         assert result is True
         revert.assert_not_called()
         assert any("NaN or Inf" in r.getMessage() for r in caplog.records)
 
     def test_missing_eval_loss(self):
         trainer = self._make_trainer(max_loss=2.0)
-        result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"train_loss": 0.5})
+        result = trainer.execute_evaluation_checks("/tmp/test_forge_eval/nonexistent", {"train_loss": 0.5})
         assert result is True  # Skip check when no eval_loss
 
     def test_no_validation_data(self):
         trainer = self._make_trainer(max_loss=2.0)
         trainer.dataset = {"train": []}  # No validation
-        result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 5.0})
+        result = trainer.execute_evaluation_checks("/tmp/test_forge_eval/nonexistent", {"eval_loss": 5.0})
         assert result is True  # Skip when no validation
 
     def test_auto_revert_disabled(self):
         trainer = self._make_trainer(auto_revert=False, max_loss=0.1)
-        result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 5.0})
+        result = trainer.execute_evaluation_checks("/tmp/test_forge_eval/nonexistent", {"eval_loss": 5.0})
         assert result is True  # auto_revert=False means always pass
 
     def test_auto_revert_disabled_still_detects_breach(self, caplog):
@@ -196,7 +196,7 @@ class TestEvaluationChecks:
         but the model is kept (no revert, return True)."""
         trainer = self._make_trainer(auto_revert=False, max_loss=0.1)
         with patch.object(trainer, "_revert_model") as revert, caplog.at_level("WARNING"):
-            result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 5.0})
+            result = trainer.execute_evaluation_checks("/tmp/test_forge_eval/nonexistent", {"eval_loss": 5.0})
         assert result is True  # detection-only, model kept
         revert.assert_not_called()
         assert "max_acceptable_loss" in caplog.text
@@ -208,7 +208,7 @@ class TestEvaluationChecks:
         no signal (but is also not reverted)."""
         trainer = self._make_trainer(auto_revert=False, max_loss=0.1)
         with patch.object(trainer, "_revert_model") as revert, caplog.at_level("ERROR"):
-            result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": float("nan")})
+            result = trainer.execute_evaluation_checks("/tmp/test_forge_eval/nonexistent", {"eval_loss": float("nan")})
         assert result is True
         revert.assert_not_called()
         assert "diverged" in caplog.text
@@ -217,7 +217,7 @@ class TestEvaluationChecks:
         """No threshold/baseline + auto_revert=false → nothing to detect, early True."""
         trainer = self._make_trainer(auto_revert=False)
         with patch.object(trainer, "_revert_model") as revert:
-            result = trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": float("nan")})
+            result = trainer.execute_evaluation_checks("/tmp/test_forge_eval/nonexistent", {"eval_loss": float("nan")})
         assert result is True
         revert.assert_not_called()
 
@@ -231,7 +231,7 @@ class TestEvaluationChecks:
         carrying ``passed=True`` and the thresholds it was checked against —
         symmetric with the benchmark/safety/judge gates."""
         trainer = self._make_trainer(max_loss=2.0, baseline_loss=3.0)
-        assert trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 1.5}) is True
+        assert trainer.execute_evaluation_checks("/tmp/test_forge_eval/nonexistent", {"eval_loss": 1.5}) is True
         calls = self._loss_gate_calls(trainer)
         assert len(calls) == 1
         kwargs = calls[0].kwargs
@@ -245,7 +245,7 @@ class TestEvaluationChecks:
         ``passed=False`` before the revert, so the accept/reject record exists
         independently of ``model.reverted``."""
         trainer = self._make_trainer(max_loss=2.0)
-        assert trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": 3.0}) is False
+        assert trainer.execute_evaluation_checks("/tmp/test_forge_eval/nonexistent", {"eval_loss": 3.0}) is False
         calls = self._loss_gate_calls(trainer)
         assert len(calls) == 1
         assert calls[0].kwargs["passed"] is False
@@ -255,7 +255,7 @@ class TestEvaluationChecks:
         """A NaN/Inf divergence records eval_loss as a string sentinel so the
         audit JSONL stays valid JSON (F-P4-OPUS-26)."""
         trainer = self._make_trainer(max_loss=2.0)
-        trainer.execute_evaluation_checks("/tmp/nonexistent", {"eval_loss": float("nan")})
+        trainer.execute_evaluation_checks("/tmp/test_forge_eval/nonexistent", {"eval_loss": float("nan")})
         calls = self._loss_gate_calls(trainer)
         assert len(calls) == 1
         assert calls[0].kwargs["passed"] is False
@@ -268,6 +268,8 @@ class TestEvaluationChecks:
         from forgelm.trainer import _EVT_REVERT_TRIGGERED
 
         trainer = self._make_trainer(max_loss=2.0)
+        trainer.config.training.output_dir = str(tmp_path)
+        trainer.checkpoint_dir = str(tmp_path)
         final_path = tmp_path / "final"
         final_path.mkdir()
         (final_path / "adapter.bin").write_text("weights")
@@ -291,7 +293,7 @@ class TestEvaluationChecks:
         error-handling.md row 0 / exit-codes.md documents (exit 0 does NOT imply
         every gate passed unless ``auto_revert`` is on)."""
         trainer = self._make_trainer(auto_revert=False)
-        train_result = TrainResult(success=True, metrics={}, final_model_path="/tmp/nonexistent/final")
+        train_result = TrainResult(success=True, metrics={}, final_model_path="/tmp/test_forge_eval/nonexistent/final")
         metrics: dict[str, float] = {}
         failing_benchmark = MagicMock()
         failing_benchmark.passed = False
@@ -300,7 +302,9 @@ class TestEvaluationChecks:
         failing_benchmark.failure_reason = "Benchmark score below threshold."
 
         with patch.object(trainer, "_revert_model") as revert:
-            result = trainer._apply_benchmark_result(failing_benchmark, train_result, metrics, "/tmp/nonexistent/final")
+            result = trainer._apply_benchmark_result(
+                failing_benchmark, train_result, metrics, "/tmp/test_forge_eval/nonexistent/final"
+            )
 
         assert result is True  # continue → run still exits 0
         assert train_result.benchmark_passed is False  # failure recorded
@@ -313,7 +317,7 @@ class TestEvaluationChecks:
         gate reverts the model and halts (returns False → exit 3), so exit 0
         legitimately means every gate passed on the auto_revert path."""
         trainer = self._make_trainer(auto_revert=True)
-        train_result = TrainResult(success=True, metrics={}, final_model_path="/tmp/nonexistent/final")
+        train_result = TrainResult(success=True, metrics={}, final_model_path="/tmp/test_forge_eval/nonexistent/final")
         metrics: dict[str, float] = {}
         failing_benchmark = MagicMock()
         failing_benchmark.passed = False
@@ -322,7 +326,9 @@ class TestEvaluationChecks:
         failing_benchmark.failure_reason = "Benchmark score below threshold."
 
         with patch.object(trainer, "_revert_model", return_value=True) as revert:
-            result = trainer._apply_benchmark_result(failing_benchmark, train_result, metrics, "/tmp/nonexistent/final")
+            result = trainer._apply_benchmark_result(
+                failing_benchmark, train_result, metrics, "/tmp/test_forge_eval/nonexistent/final"
+            )
 
         assert result is False  # halt → exit 3
         assert train_result.benchmark_passed is False
@@ -338,7 +344,7 @@ class TestEvaluationChecks:
         import logging
 
         trainer = self._make_trainer(auto_revert=False)
-        train_result = TrainResult(success=True, metrics={}, final_model_path="/tmp/nonexistent/final")
+        train_result = TrainResult(success=True, metrics={}, final_model_path="/tmp/test_forge_eval/nonexistent/final")
         metrics: dict[str, float] = {}
 
         failing = MagicMock()
@@ -364,7 +370,7 @@ class TestEvaluationChecks:
             apply = trainer._apply_judge_result
 
         with caplog.at_level(logging.WARNING, logger="forgelm.trainer"):
-            result = apply(failing, train_result, metrics, "/tmp/nonexistent/final")
+            result = apply(failing, train_result, metrics, "/tmp/test_forge_eval/nonexistent/final")
 
         assert result is True  # model kept, run continues
         warnings = [
@@ -1050,6 +1056,7 @@ class TestSaveFinalModelFallback:
         with patch("forgelm.trainer.WebhookNotifier"):
             trainer = ForgeTrainer.__new__(ForgeTrainer)
             trainer.config = config
+            trainer.checkpoint_dir = str(tmp_path)
             trainer.tokenizer = MagicMock()
             trainer.trainer = MagicMock()
         return trainer
