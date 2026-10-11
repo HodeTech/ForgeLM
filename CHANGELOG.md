@@ -6,6 +6,8 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Resolve dynamically exposed ORPO/SimPO classes even when omitted from a module's `dir()` listing;
+  preserve declared-export and transitive load failures, experimental warnings, and top-level preference.
 - Reject unsafe `training.final_model_dir` layouts at config load (exit `1`): require an isolated
   relative model directory, separate from audit, compliance, evaluation, logging, and checkpoint paths.
   Reject trailing separators/dot components that would put approval staging inside the final directory.

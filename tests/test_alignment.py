@@ -272,6 +272,54 @@ def test_preference_resolver_prefers_top_level(monkeypatch, caplog):
     assert not caplog.records
 
 
+def test_preference_resolver_accepts_patch_on_real_trl_module(monkeypatch):
+    from forgelm._trl_compat import _resolve_preference_symbol
+
+    trl = importlib.import_module("trl")
+    exported = type("PatchedTrainer", (), {})
+    monkeypatch.setattr(trl, "ORPOTrainer", exported, raising=False)
+    assert _resolve_preference_symbol("ORPOTrainer") is exported
+
+
+@pytest.mark.parametrize(("name", "experimental"), _PREFERENCE_SYMBOLS)
+@pytest.mark.parametrize("location", ["top", "experimental"])
+def test_preference_resolver_accepts_dynamic_export_missing_from_dir(monkeypatch, name, experimental, location):
+    from forgelm._trl_compat import _resolve_preference_symbol
+
+    top, fallback = _fake_trl_exports(monkeypatch, experimental)
+    module = top if location == "top" else fallback
+    exported = type(name, (), {})
+
+    def dynamic_export(attr):
+        if attr == name:
+            return exported
+        raise AttributeError(attr, name=attr, obj=module)
+
+    module.__getattr__ = dynamic_export
+    module.__dir__ = lambda: []
+    assert _resolve_preference_symbol(name) is exported
+
+
+@pytest.mark.parametrize("location", ["top", "experimental"])
+def test_preference_resolver_keeps_transitive_attribute_error_for_unlisted_export(monkeypatch, location):
+    from forgelm._trl_compat import _resolve_preference_symbol
+
+    top, fallback = _fake_trl_exports(monkeypatch, "trl.experimental.orpo")
+    module = top if location == "top" else fallback
+    error = AttributeError("dependency attribute missing", name="dependency_setting", obj=object())
+
+    def broken_export(attr):
+        if attr == "ORPOTrainer":
+            raise error
+        raise AttributeError(attr, name=attr, obj=module)
+
+    module.__getattr__ = broken_export
+    module.__dir__ = lambda: []
+    with pytest.raises(AttributeError, match="dependency attribute missing") as raised:
+        _resolve_preference_symbol("ORPOTrainer")
+    assert raised.value is error
+
+
 @pytest.mark.parametrize(("name", "experimental"), _PREFERENCE_SYMBOLS)
 def test_preference_resolver_fallback_keeps_warning_and_logs_version(monkeypatch, caplog, name, experimental):
     from forgelm._trl_compat import _resolve_preference_symbol

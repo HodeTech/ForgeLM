@@ -37,11 +37,15 @@ def _resolve_preference_symbol(name: str) -> Any:
             if exc.name is None or not (module_name == exc.name or module_name.startswith(exc.name + ".")):
                 raise
             continue
-        # TRL's lazy modules list their exports in __dir__. Inspect before
-        # loading so even an AttributeError inside a declared export propagates.
-        if name not in dir(module):
+        try:
+            symbol = getattr(module, name)
+        except AttributeError as exc:
+            # Dynamic exports need not appear in __dir__. Only an unlisted
+            # missing attribute on this module permits fallback; a declared
+            # lazy export or a transitive attribute-load failure must surface.
+            if name in dir(module) or exc.name != name or exc.obj is not module:
+                raise
             continue
-        symbol = getattr(module, name)
         if module_name == experimental:
             logger.info(
                 "Using %s.%s from TRL %s; this upstream experimental API may change or be removed without notice.",
