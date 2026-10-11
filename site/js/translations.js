@@ -408,7 +408,7 @@
     "home.cta.title":            "Ship your next fine-tune in <span class=\"text-gradient\">an afternoon.</span>",
     "home.cta.body":             "Pick a template, point it at your data, watch the audit report go green, and let ForgeLM forge the rest.",
     "home.cta.btn1":             "Quickstart in 5 minutes",
-    "home.cta.btn2":             "Contribute"
+    "home.cta.btn2":             "Star on GitHub"
   });
 
   Object.assign(T.tr, {
@@ -514,7 +514,7 @@
     "home.cta.title":             "Bir sonraki fine-tune'unuzu <span class=\"text-gradient\">bir öğleden sonrasında</span> gönderin.",
     "home.cta.body":              "Bir şablon seçin, verilerinize yönlendirin, denetim raporu yeşile dönsün — kalanını ForgeLM dövsün.",
     "home.cta.btn1":              "5 dakikada hızlı başlangıç",
-    "home.cta.btn2":              "Katkıda bulun"
+    "home.cta.btn2":              "GitHub'da yıldızla"
   });
 
   Object.assign(T.de, {
@@ -620,7 +620,7 @@
     "home.cta.title":             "Liefern Sie Ihren nächsten Fine-Tune <span class=\"text-gradient\">an einem Nachmittag</span> aus.",
     "home.cta.body":              "Wählen Sie eine Vorlage, richten Sie sie auf Ihre Daten, sehen Sie zu, wie der Audit-Bericht grün wird — den Rest schmiedet ForgeLM.",
     "home.cta.btn1":              "Schnellstart in 5 Minuten",
-    "home.cta.btn2":              "Mitwirken"
+    "home.cta.btn2":              "Auf GitHub starren"
   });
 
   Object.assign(T.fr, {
@@ -726,7 +726,7 @@
     "home.cta.title":             "Livrez votre prochain fine-tune en <span class=\"text-gradient\">un après-midi.</span>",
     "home.cta.body":              "Choisissez un modèle, pointez-le sur vos données, regardez le rapport d'audit passer au vert — laissez ForgeLM forger le reste.",
     "home.cta.btn1":              "Démarrage rapide en 5 minutes",
-    "home.cta.btn2":              "Contribuer"
+    "home.cta.btn2":              "Étoile sur GitHub"
   });
 
   Object.assign(T.es, {
@@ -832,7 +832,7 @@
     "home.cta.title":             "Despliegue su próximo fine-tune en <span class=\"text-gradient\">una tarde.</span>",
     "home.cta.body":              "Elija una plantilla, apúntela a sus datos, vea cómo el informe de auditoría se pone verde — y deje que ForgeLM forje el resto.",
     "home.cta.btn1":              "Inicio rápido en 5 minutos",
-    "home.cta.btn2":              "Contribuir"
+    "home.cta.btn2":              "Estrella en GitHub"
   });
 
   Object.assign(T.zh, {
@@ -938,7 +938,7 @@
     "home.cta.title":             "在<span class=\"text-gradient\">一个下午</span>内交付下一次微调。",
     "home.cta.body":              "选一个模板、对准你的数据、看着审计报告变绿 — 剩下的让 ForgeLM 来锻造。",
     "home.cta.btn1":              "5 分钟快速开始",
-    "home.cta.btn2":              "参与贡献"
+    "home.cta.btn2":              "在 GitHub 加星"
   });
 
   /* ── Features page (features.html) ───────────────────────── */
