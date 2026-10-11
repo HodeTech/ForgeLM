@@ -6,6 +6,8 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Align the EN/TR SimPO quick example with the schema's `simpo_gamma: 0.5` default and correct
+  the German GitHub star label while preserving the star action and contribution entry points.
 - Clarify that the CPU demo captures the pre-fix integrity failure; preserve its recorded outputs.
   Replace obsolete compliance evidence symbols in EN/TR references, and document integrity `model_path`
   as generation metadata preserved during promotion, with byte-preservation and promoted-CLI verification checks.

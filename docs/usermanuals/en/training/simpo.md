@@ -46,7 +46,7 @@ training:
   per_device_train_batch_size: 2
   learning_rate: 8.0e-7      # ~10× smaller than DPO
   simpo_beta: 2.0            # higher than DPO's 0.1 — flat field
-  simpo_gamma: 1.0           # margin term — flat field
+  simpo_gamma: 0.5           # margin term — flat field
   output_dir: "./checkpoints/simpo"
 ```
 

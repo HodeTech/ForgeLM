@@ -620,7 +620,7 @@
     "home.cta.title":             "Liefern Sie Ihren nächsten Fine-Tune <span class=\"text-gradient\">an einem Nachmittag</span> aus.",
     "home.cta.body":              "Wählen Sie eine Vorlage, richten Sie sie auf Ihre Daten, sehen Sie zu, wie der Audit-Bericht grün wird — den Rest schmiedet ForgeLM.",
     "home.cta.btn1":              "Schnellstart in 5 Minuten",
-    "home.cta.btn2":              "Auf GitHub starren"
+    "home.cta.btn2":              "GitHub mit Stern versehen"
   });
 
   Object.assign(T.fr, {
