@@ -25,7 +25,11 @@ Fine-tuning can degrade a model's safety properties — silently. ForgeLM treats
 
 ### 2. Compliance-Native
 
-As of August 2, 2026, EU AI Act applies to high-risk AI systems. ForgeLM is the only open-source fine-tuning tool that generates compliance evidence bundles automatically as a byproduct of a normal training run.
+The EU AI Act's Chapter III, Sections 1–3 (except Article 6(5)) apply from **2 December 2027** to
+Article 6(2) / Annex III high-risk systems and **2 August 2028** to Article 6(1) / Annex I systems
+([Regulation (EU) 2026/1744, Article 1(40)(b)](https://eur-lex.europa.eu/eli/reg/2026/1744/oj/eng)).
+Other obligations and transition rules have separate dates. ForgeLM generates documentation artifacts
+to support compliance review; these artifacts do not establish legal compliance.
 
 - **EU AI Act Articles 9-17 + Annex IV** — each article maps to a structured output artifact:
   - Art. 9 Risk Assessment → `risk_assessment.json`
@@ -136,7 +140,11 @@ Phase 2.5 (reliability hardening) was inserted before new feature development �
 
 ### 5. EU AI Act Compliance as the Time-Sensitive Moat
 
-EU AI Act full enforcement begins August 2, 2026. No other open-source fine-tuning tool generates compliance evidence bundles. This window — between now and when competitors add compliance features — is the primary enterprise sales opportunity.
+EU AI Act application must be assessed per obligation and system. The high-risk Chapter III dates are
+2 December 2027 for Annex III and 2 August 2028 for Annex I, subject to the scope and exceptions in
+[Regulation (EU) 2026/1744, Article 1(40)(b)](https://eur-lex.europa.eu/eli/reg/2026/1744/oj/eng).
+Article 50 transparency duties generally apply from 2 August 2026, with the Article 111(4) transition
+for Article 50(2) covering systems already on the market. There is no single full-enforcement date.
 
 **Implication:** Enterprise outreach must begin immediately, not after Phase 10+ is complete. The compliance moat is real but temporary; competitors will respond within 6-12 months of enforcement.
 
@@ -146,7 +154,7 @@ EU AI Act full enforcement begins August 2, 2026. No other open-source fine-tuni
 
 ### Short-Term (by October 2026 — 6 months)
 
-- EU AI Act enforcement (August 2) drives first qualified enterprise inquiries
+- Review the current EU AI Act application schedule against the intended deployment
 - v0.4.0 (Post-Training Completion — inference handoff, chat, export) shipped
 - v0.4.5 (Quickstart Layer — templates, wizard improvements) shipped
 - 1,000+ GitHub stars

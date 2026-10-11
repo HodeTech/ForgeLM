@@ -25,7 +25,12 @@ ForgeLM, LLM ince ayarını (fine-tuning) **güvenli, denetlenebilir ve tekrarla
 
 ### 2. Uyumluluk Yerleşik (Compliance-Native)
 
-2 Ağustos 2026 itibarıyla AB Yapay Zeka Yasası (EU AI Act) yüksek riskli YZ sistemlerine tam olarak uygulanıyor. ForgeLM, normal bir eğitim çalışmasının yan ürünü olarak compliance kanıt paketi otomatik üreten tek açık kaynak ince ayar aracıdır.
+AB Yapay Zekâ Yasası'nın Bölüm III, Kısım 1–3 hükümleri (Madde 6(5) hariç), Madde 6(2) / Ek III
+kapsamındaki yüksek riskli sistemlere **2 Aralık 2027**'den, Madde 6(1) / Ek I kapsamındakilere
+**2 Ağustos 2028**'den itibaren uygulanır
+([(AB) 2026/1744 sayılı Tüzük, Madde 1(40)(b)](https://eur-lex.europa.eu/eli/reg/2026/1744/oj/eng)).
+Diğer yükümlülükler ve geçiş hükümleri için ayrı tarihler geçerlidir. ForgeLM, uyumluluk incelemesini
+destekleyen dokümantasyon artefaktları üretir; bu artefaktlar hukuki uyumluluğu sağlamaz.
 
 - **EU AI Act Madde 9-17 + Ek IV** — her madde yapılandırılmış bir çıktı dosyasına karşılık gelir:
   - Mad. 9 Risk Değerlendirmesi → `risk_assessment.json`
@@ -136,7 +141,12 @@ Faz 2.5 (güvenilirlik sağlamlaştırma) yeni özellik geliştirmesinden önce 
 
 ### 5. EU AI Act Uyumluluğu Zaman Baskılı Hendek
 
-EU AI Act tam uygulaması 2 Ağustos 2026'da başlıyor. Başka hiçbir açık kaynak ince ayar aracı compliance kanıt paketi üretmiyor. Şimdiden rakipler compliance özellikleri ekleyene kadar geçen bu pencere — birincil enterprise satış fırsatıdır.
+EU AI Act'in uygulanabilirliği yükümlülüğe ve sisteme göre değerlendirilmelidir. Yüksek riskli sistemlere
+ilişkin Bölüm III tarihleri Ek III için 2 Aralık 2027, Ek I için 2 Ağustos 2028'dir;
+[(AB) 2026/1744 sayılı Tüzük, Madde 1(40)(b)](https://eur-lex.europa.eu/eli/reg/2026/1744/oj/eng)
+kapsamı ve istisnaları belirler. Madde 50'deki şeffaflık yükümlülükleri genel olarak 2 Ağustos 2026'dan
+itibaren uygulanır; Madde 111(4), piyasada mevcut sistemler için Madde 50(2)'ye ilişkin geçiş süresi tanır.
+Tüm hükümlerin uygulanmaya başladığı tek bir tarih yoktur.
 
 **Çıkarım:** Enterprise outreach hemen başlamalıdır, Phase 10+ tamamlanana kadar beklenemez. Compliance hendeği gerçek ama geçicidir; rakipler yürürlükten 6-12 ay içinde yanıt verecektir.
 
@@ -146,7 +156,7 @@ EU AI Act tam uygulaması 2 Ağustos 2026'da başlıyor. Başka hiçbir açık k
 
 ### Kısa Vade (Ekim 2026'ya kadar — 6 ay)
 
-- EU AI Act yürürlüğü (2 Ağustos) ilk nitelikli enterprise başvurularını getiriyor
+- EU AI Act'in güncel uygulama takvimini hedeflenen dağıtıma göre değerlendirin
 - v0.4.0 (Post-Training Completion — inference handoff, chat, export) yayınlandı
 - v0.4.5 (Quickstart Katmanı — şablonlar, sihirbaz iyileştirmeleri) yayınlandı
 - 1.000+ GitHub yıldızı

@@ -4,6 +4,13 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Correct the EU AI Act high-risk application dates in the safety guide and public product overview,
+  with matching Turkish text and primary EUR-Lex citations. Distinguish the Annex III / Annex I
+  schedules from transparency and general-purpose AI obligations and their transition provisions;
+  clarify that documentation artifacts do not establish legal compliance.
+
 ### Breaking
 
 - **A config carrying a non-finite or out-of-domain number now exits `1`.**

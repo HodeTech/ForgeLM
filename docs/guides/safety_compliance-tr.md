@@ -273,8 +273,22 @@ döndürür:
 
 ### Arka plan
 
-EU AI Act yüksek-riskli AI sistemleri için **Ağustos 2026**'da tam olarak
-yürürlüğe girer. Şunları gerektirir:
+EU AI Act'in uygulama tarihleri yükümlülüğe göre değişir.
+[(AB) 2026/1744 sayılı Tüzük, Madde 1(40)(b)](https://eur-lex.europa.eu/eli/reg/2026/1744/oj/eng)
+uyarınca Bölüm III, Kısım 1–3 (Madde 6(5) hariç), Madde 6(2) / Ek III kapsamındaki yüksek riskli
+sistemlere **2 Aralık 2027**'den, Madde 6(1) / Ek I kapsamındakilere **2 Ağustos 2028**'den itibaren uygulanır.
+Değişiklik 24 Temmuz 2026'da yayımlanmış ve 27 Temmuz 2026'da yürürlüğe girmiştir (Madde 4).
+
+Madde 50'deki şeffaflık yükümlülükleri genel olarak **2 Ağustos 2026**'dan itibaren uygulanır.
+Değişikliğin Madde 1(39)(b) hükmüyle eklenen Madde 111(4), bu tarihten önce piyasaya sunulmuş
+sistemlere Madde 50(2)'yi karşılamak için 2 Aralık 2026'ya kadar süre tanır. Bölüm V'teki genel amaçlı
+YZ modeli yükümlülükleri **2 Ağustos 2025**'ten itibaren uygulanır; bu tarihten önce piyasaya sunulmuş
+modeller için geçiş tarihi 2 Ağustos 2027'dir
+([(AB) 2024/1689 sayılı Tüzük, Madde 113 ve 111(3)](https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng)).
+Mevcut yüksek riskli sistemlere ilişkin Madde 111(2) dahil diğer geçiş hükümleri de uygulanabilirliği etkileyebilir.
+
+ForgeLM, incelemeyi destekleyen dokümantasyon artefaktları üretir; kullanılması **hukuki uyumluluğu sağlamaz**.
+Dağıtımınıza uygulanacak kuralları yetkin bir hukuk danışmanıyla değerlendirin. Dokümantasyon çalışmaları şunları içerir:
 
 - Belgelenmiş AI envanterleri
 - Makine-okunabilir uyumluluk kanıtı
