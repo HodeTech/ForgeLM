@@ -6,6 +6,10 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Restore configuration loading with the supported Pydantic 2.0 minimum by avoiding duplicate
+  `Field` metadata in finite-number and final-model directory types. Preserve non-finite rejection,
+  numeric bounds, optional nulls, and validation of the default model directory; explicitly reject
+  NaN in bounded float fields on the minimum version too.
 - Align the EN/TR SimPO quick example with the schema's `simpo_gamma: 0.5` default and correct
   the German GitHub star label while preserving the star action and contribution entry points.
 - Clarify that the CPU demo captures the pre-fix integrity failure; preserve its recorded outputs.
@@ -44,7 +48,7 @@ All notable changes to ForgeLM are documented here.
   (`training.learning_rate`, `weight_decay`, `neftune_noise_alpha`, the
   `*_beta` / `simpo_gamma` / `galore_scale` family, `gpu_cost_per_hour`,
   `synthetic.api_delay` / `temperature`, and each `rope_scaling` factor) rejects
-  NaN and ±inf — `gt=0` and `ge=0` reject NaN but accept `+inf`, so
+  NaN and ±inf — `gt=0` and `ge=0` accept `+inf`, so
   `learning_rate: .inf` loaded cleanly and `neftune_noise_alpha: .nan` reached
   `TrainingArguments`. `evaluation.benchmark.limit` must be `>= 1` and
   `num_fewshot` `>= 0`. **Why it matters:** `x > nan` is always False,

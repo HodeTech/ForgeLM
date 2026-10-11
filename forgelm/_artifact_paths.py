@@ -2,9 +2,8 @@
 
 import os
 from pathlib import Path, PureWindowsPath
-from typing import Annotated
 
-from pydantic import AfterValidator, Field, ValidationInfo
+from pydantic import ValidationInfo
 
 _RESERVED_ROOTS = frozenset(
     {
@@ -75,13 +74,10 @@ def _validate_layout(output_dir: str, value: str) -> str:
 
 
 def _validate_config_directory(value: str, info: ValidationInfo) -> str:
-    """Use the already-validated preceding output_dir field, including defaults."""
+    """Use a field validator so sibling data is available on Pydantic 2.0 too."""
     if "output_dir" in info.data:
         _validate_layout(info.data["output_dir"], value)
     return value
-
-
-FinalModelDir = Annotated[str, Field(validate_default=True), AfterValidator(_validate_config_directory)]
 
 
 def _final_model_path(output_dir: str, final_model_dir: str) -> str:
