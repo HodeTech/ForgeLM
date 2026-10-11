@@ -6,6 +6,8 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Qualify EN/TR EU AI Act summaries with the separate Annex I, Section B application regime
+  and the synthetic-content system scope and market-date condition of the Article 111(4) transition.
 - Reject enabled benchmarks whose custom output directory overlaps the final or staged model
   directory, including resolved aliases and containment in either direction. Validate sibling
   configuration fields together and recheck before model writes or auto-revert so benchmark

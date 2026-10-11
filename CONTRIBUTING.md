@@ -4,7 +4,7 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
 
 ## Your first pull request
 
-1. Pick an open, unassigned [`good first issue`](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+no%3Aassignee+label%3A%22good+first+issue%22).
+1. Pick an open, unassigned [`good first issue`][good-first-issue].
    Comment to claim it and confirm the problem on `development`; see [Working on an issue](#working-on-an-issue).
 2. [Fork and clone](#1-fork--clone), then [create a branch from `development`](#3-create-a-branch).
    Use Python **3.10, 3.11, 3.12 or 3.13** — CI tests all four versions. Create a virtual environment
@@ -47,6 +47,8 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
    and `Fixes #N` when it resolves the whole issue (`Refs #N` for a partial fix).
 6. A new contributor's first workflow run may wait for a maintainer to approve it; this is normal
    [GitHub workflow approval](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/approve-runs-from-forks).
+
+[good-first-issue]: https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+no%3Aassignee+label%3A%22good+first+issue%22
 
 ## Ways to Contribute
 

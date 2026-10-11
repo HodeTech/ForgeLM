@@ -28,6 +28,11 @@ Fine-tuning can degrade a model's safety properties — silently. ForgeLM treats
 The EU AI Act's Chapter III, Sections 1–3 (except Article 6(5)) apply from **2 December 2027** to
 Article 6(2) / Annex III high-risk systems and **2 August 2028** to Article 6(1) / Annex I systems
 ([Regulation (EU) 2026/1744, Article 1(40)(b)](https://eur-lex.europa.eu/eli/reg/2026/1744/oj/eng)).
+[Article 2(2)](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:02024R1689-20260727)
+sets a separate, limited regime for Article 6(1) systems related to products covered by Annex I,
+Section B legislation: Articles 6(1), 60a and 102–112 apply; Articles 57–59 apply only to the extent
+that high-risk requirements have been integrated into that product legislation. The general Chapter III
+schedule does not extend all of its provisions to these Section B systems.
 Other obligations and transition rules have separate dates. ForgeLM generates documentation artifacts
 to support compliance review; these artifacts do not establish legal compliance.
 
@@ -144,7 +149,10 @@ EU AI Act application must be assessed per obligation and system. The high-risk 
 2 December 2027 for Annex III and 2 August 2028 for Annex I, subject to the scope and exceptions in
 [Regulation (EU) 2026/1744, Article 1(40)(b)](https://eur-lex.europa.eu/eli/reg/2026/1744/oj/eng).
 Article 50 transparency duties generally apply from 2 August 2026, with the Article 111(4) transition
-for Article 50(2) covering systems already on the market. There is no single full-enforcement date.
+for Article 50(2) covering providers of systems generating synthetic audio, images, video or text
+(including general-purpose AI systems) placed on the market before 2 August 2026, with compliance due
+by 2 December 2026 and subject to Article 50(2)'s exceptions. Article 2(2)'s separate Annex I,
+Section B scope rule also applies. There is no single full-enforcement date.
 
 **Implication:** Enterprise outreach must begin immediately, not after Phase 10+ is complete. The compliance moat is real but temporary; competitors will respond within 6-12 months of enforcement.
 

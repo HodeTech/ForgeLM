@@ -29,6 +29,11 @@ AB Yapay Zekâ Yasası'nın Bölüm III, Kısım 1–3 hükümleri (Madde 6(5) h
 kapsamındaki yüksek riskli sistemlere **2 Aralık 2027**'den, Madde 6(1) / Ek I kapsamındakilere
 **2 Ağustos 2028**'den itibaren uygulanır
 ([(AB) 2026/1744 sayılı Tüzük, Madde 1(40)(b)](https://eur-lex.europa.eu/eli/reg/2026/1744/oj/eng)).
+[Madde 2(2)](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:02024R1689-20260727), Ek I,
+Kısım B mevzuatı kapsamındaki ürünlerle ilişkili Madde 6(1) sistemleri için ayrı ve sınırlı bir
+rejim belirler: Madde 6(1), 60a ve 102–112 uygulanır; Madde 57–59 ise yüksek riskli sistem
+gerekliliklerinin ilgili ürün mevzuatına dahil edildiği ölçüde uygulanır. Genel Bölüm III takvimi,
+tüm hükümlerinin bu Kısım B sistemlerine uygulanacağı anlamına gelmez.
 Diğer yükümlülükler ve geçiş hükümleri için ayrı tarihler geçerlidir. ForgeLM, uyumluluk incelemesini
 destekleyen dokümantasyon artefaktları üretir; bu artefaktlar hukuki uyumluluğu sağlamaz.
 
@@ -145,7 +150,10 @@ EU AI Act'in uygulanabilirliği yükümlülüğe ve sisteme göre değerlendiril
 ilişkin Bölüm III tarihleri Ek III için 2 Aralık 2027, Ek I için 2 Ağustos 2028'dir;
 [(AB) 2026/1744 sayılı Tüzük, Madde 1(40)(b)](https://eur-lex.europa.eu/eli/reg/2026/1744/oj/eng)
 kapsamı ve istisnaları belirler. Madde 50'deki şeffaflık yükümlülükleri genel olarak 2 Ağustos 2026'dan
-itibaren uygulanır; Madde 111(4), piyasada mevcut sistemler için Madde 50(2)'ye ilişkin geçiş süresi tanır.
+itibaren uygulanır; Madde 111(4), 2 Ağustos 2026'dan önce piyasaya sunulmuş, sentetik ses, görüntü,
+video veya metin üreten sistemlerin (genel amaçlı YZ sistemleri dahil) sağlayıcılarına Madde 50(2)'ye
+uyum için 2 Aralık 2026'ya kadar süre tanır; bu hükmün istisnaları saklıdır. Madde 2(2)'nin Ek I,
+Kısım B için belirlediği ayrı kapsam kuralı da geçerlidir.
 Tüm hükümlerin uygulanmaya başladığı tek bir tarih yoktur.
 
 **Çıkarım:** Enterprise outreach hemen başlamalıdır, Phase 10+ tamamlanana kadar beklenemez. Compliance hendeği gerçek ama geçicidir; rakipler yürürlükten 6-12 ay içinde yanıt verecektir.

@@ -279,9 +279,17 @@ uyarınca Bölüm III, Kısım 1–3 (Madde 6(5) hariç), Madde 6(2) / Ek III ka
 sistemlere **2 Aralık 2027**'den, Madde 6(1) / Ek I kapsamındakilere **2 Ağustos 2028**'den itibaren uygulanır.
 Değişiklik 24 Temmuz 2026'da yayımlanmış ve 27 Temmuz 2026'da yürürlüğe girmiştir (Madde 4).
 
+[Madde 2(2)](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:02024R1689-20260727), Ek I,
+Kısım B mevzuatı kapsamındaki ürünlerle ilişkili Madde 6(1) sistemleri için ayrı ve sınırlı bir
+rejim belirler: Madde 6(1), 60a ve 102–112 uygulanır; Madde 57–59 ise yüksek riskli sistem
+gerekliliklerinin ilgili ürün mevzuatına dahil edildiği ölçüde uygulanır. Yukarıdaki genel Bölüm III
+takvimi, tüm hükümlerinin bu Kısım B sistemlerine uygulanacağı anlamına gelmez.
+
 Madde 50'deki şeffaflık yükümlülükleri genel olarak **2 Ağustos 2026**'dan itibaren uygulanır.
-Değişikliğin Madde 1(39)(b) hükmüyle eklenen Madde 111(4), bu tarihten önce piyasaya sunulmuş
-sistemlere Madde 50(2)'yi karşılamak için 2 Aralık 2026'ya kadar süre tanır. Bölüm V'teki genel amaçlı
+Değişikliğin Madde 1(39)(b) hükmüyle eklenen Madde 111(4), **2 Ağustos 2026**'dan önce piyasaya
+sunulmuş, sentetik ses, görüntü, video veya metin üreten sistemlerin (genel amaçlı YZ sistemleri dahil)
+sağlayıcılarına, Madde 50(2)'deki istisnalar saklı kalmak üzere, hükme uyum için **2 Aralık 2026**'ya
+kadar süre tanır. Bölüm V'teki genel amaçlı
 YZ modeli yükümlülükleri **2 Ağustos 2025**'ten itibaren uygulanır; bu tarihten önce piyasaya sunulmuş
 modeller için geçiş tarihi 2 Ağustos 2027'dir
 ([(AB) 2024/1689 sayılı Tüzük, Madde 113 ve 111(3)](https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng)).
