@@ -6,6 +6,11 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Resolve ORPO and SimPO config/trainer classes from top-level TRL or its experimental ORPO/CPO modules,
+  restoring construction when TRL no longer exports them at the top level. Preserve upstream experimental
+  warnings and dependency-load errors, and report missing classes with the installed TRL version and
+  actionable guidance. Exercise real installed classes and local CPU trainer construction without skips;
+  document the experimental API boundary and SimPO's explicit loss configuration.
 - Write deployer instructions before the model-integrity manifest so a fresh, separate model
   directory passes `verify-integrity`. Include the Article 13 document in the checksums while
   preserving exit `6` for changed, removed, or added artifacts.

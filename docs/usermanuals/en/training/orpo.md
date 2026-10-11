@@ -7,6 +7,11 @@ description: Combine SFT and preference learning into a single training stage.
 
 ORPO collapses SFT and DPO into one training pass. The loss combines a standard SFT term (on `chosen`) with an odds-ratio penalty against `rejected`. The result: faster wall-clock, no separate stages, no reference model.
 
+ForgeLM prefers top-level `trl.ORPOConfig` / `trl.ORPOTrainer`, falling back to `trl.experimental.orpo`.
+The fallback is an **upstream experimental API** that can change or disappear without notice.
+ForgeLM preserves `TRLExperimentalWarning` and logs the selected path and TRL version; if neither location
+exports the required class, it raises an actionable config error.
+
 ## When to use ORPO
 
 | Use ORPO when... | Use SFT → DPO when... |

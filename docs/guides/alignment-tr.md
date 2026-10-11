@@ -17,6 +17,11 @@ ve nasıl kullanacağınızı açıklar.
 | **ORPO** | `"orpo"` | `chosen` / `rejected` çiftleri | SFT + hizalama tek aşamada |
 | **GRPO** | `"grpo"` | yalnız `prompt` | Reasoning RL — model üretip kendini iyileştirir |
 
+**Üst bağımlılık uyumluluğu:** ORPO ve SimPO, config/trainer sınıflarını önce üst düzey `trl` paketinden,
+orada yoksa `trl.experimental.orpo` veya `trl.experimental.cpo` yolundan çözümler. Experimental API'ler
+önceden haber verilmeden değişebilir veya kaldırılabilir; ForgeLM `TRLExperimentalWarning` uyarısını korur,
+seçilen experimental yolu ve TRL sürümünü loglar. Gerekli sınıf iki konumda da yoksa açıklayıcı bir config hatası verir.
+
 ---
 
 ## Modern eğitim-sonrası stack
@@ -115,6 +120,10 @@ data:
 
 SimPO 7B+ ölçekte DPO'dan daha iyi performans gösterir (AlpacaEval
 2'de +6.4 puan).
+
+ForgeLM, `CPOConfig` / `CPOTrainer` sınıflarını `loss_type="simpo"` ve `cpo_alpha=0` ile kullanır
+(NLL terimi yoktur); `simpo_beta` değerini `beta` olarak, `simpo_gamma` değerini doğrudan aktarır.
+CPO'nun varsayılan sigmoid loss'unu kullanmaz.
 
 ```yaml
 training:

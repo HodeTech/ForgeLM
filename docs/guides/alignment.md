@@ -15,6 +15,11 @@ ForgeLM supports the complete modern post-training stack: SFT → Preference Opt
 | **ORPO** | `"orpo"` | `chosen` / `rejected` pairs | SFT + alignment in one stage |
 | **GRPO** | `"grpo"` | `prompt` only | Reasoning RL — model generates and self-improves |
 
+**Upstream compatibility:** ORPO and SimPO first resolve their config/trainer classes from top-level `trl`,
+then from `trl.experimental.orpo` or `trl.experimental.cpo` if absent. The experimental APIs can change or
+disappear without notice; ForgeLM preserves `TRLExperimentalWarning` and logs the selected experimental
+path and TRL version. If neither location exports a required class, ForgeLM raises an actionable config error.
+
 ---
 
 ## The Modern Post-Training Stack
@@ -109,6 +114,9 @@ data:
 **Best for:** Same data as DPO, but you want lower memory (no reference model needed).
 
 SimPO outperforms DPO at 7B+ scale (+6.4 points on AlpacaEval 2).
+
+ForgeLM uses `CPOConfig` / `CPOTrainer` with `loss_type="simpo"` and `cpo_alpha=0` (no NLL term),
+passing `simpo_beta` as `beta` and forwarding `simpo_gamma`. It does not use CPO's default sigmoid loss.
 
 ```yaml
 training:

@@ -7,6 +7,11 @@ description: Reference-free preference learning — DPO without keeping a refere
 
 SimPO is a streamlined cousin of DPO that removes the reference model from the equation. The trade-off: roughly half the VRAM, slightly less stability.
 
+ForgeLM prefers top-level `trl.CPOConfig` / `trl.CPOTrainer`, falling back to `trl.experimental.cpo`.
+The fallback is an **upstream experimental API** that can change or disappear without notice.
+ForgeLM preserves `TRLExperimentalWarning` and logs the selected path and TRL version; if neither location
+exports the required class, it raises an actionable config error.
+
 ## When to use SimPO
 
 | Use SimPO when... | Use DPO instead when... |
@@ -59,7 +64,10 @@ SimPO knobs are flat fields under `training:` (no nested `training.simpo:` block
 | `training.simpo_gamma` | float | `0.5` | Margin term — the gap SimPO tries to maintain between chosen and rejected log-likelihoods. |
 | `training.trainer_type` | string | `"sft"` | Set to `"simpo"` to enable the SimPO training path. |
 
-ForgeLM does **not** expose `loss_type`, `length_normalize`, or `label_smoothing` as configurable fields — TRL's CPO/SimPO trainer runs with library defaults (sigmoid loss, length normalisation always on, no label smoothing).
+ForgeLM fixes `loss_type="simpo"` and `cpo_alpha=0` (pure SimPO, no NLL term), passing `simpo_beta` as `beta`
+and forwarding `simpo_gamma`. TRL length-normalises the response log-probabilities for this loss.
+ForgeLM does **not** expose `loss_type`, `length_normalize`, or `label_smoothing` as configurable fields;
+label smoothing stays at TRL's default `0`.
 
 ## Compute and memory
 

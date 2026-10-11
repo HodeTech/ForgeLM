@@ -180,6 +180,11 @@ Both gates previously printed their finding and exited `0`. `--allow-secrets` an
 | **Evaluation** | `lm-evaluation-harness` benchmarks, LLM-as-judge, Llama Guard safety scoring with S1–S14 categories; `--fit-check` reports `FITS / TIGHT / OOM / UNKNOWN` before you allocate a GPU |
 | **Out** | GGUF export (6 quant levels), Ollama / vLLM / TGI / HF Endpoints configs, model merging (TIES, DARE, SLERP, linear), auto-generated model cards, Slack / Teams webhooks, W&B / MLflow / TensorBoard |
 
+**ORPO and SimPO use upstream experimental APIs** when TRL does not export their classes at the top level:
+`trl.experimental.orpo` and `trl.experimental.cpo`, respectively. ForgeLM preserves `TRLExperimentalWarning`;
+these APIs may change or disappear without notice. SimPO uses `CPOTrainer` with `loss_type="simpo"` and
+`cpo_alpha=0`, without a reference model or NLL term.
+
 **Stable Python API** — `from forgelm import ForgeTrainer, audit_dataset, verify_audit_log, …`; training, dataset audit, and the artefact verifiers have typed, semver-protected entry points.
 
 Also here: multi-dataset mixing, and synthetic distillation from a teacher model into a smaller student.

@@ -40,7 +40,7 @@ def _seed_trainer(tmp_path, trainer_type: str, max_length: int = 4096):
 
 @pytest.mark.parametrize(
     ("trainer_type", "config_attr"),
-    [("dpo", "DPOConfig"), ("orpo", "ORPOConfig"), ("kto", "KTOConfig"), ("simpo", "CPOConfig")],
+    [("dpo", "DPOConfig"), ("kto", "KTOConfig")],
 )
 def test_preference_trainer_passes_max_length(tmp_path, trainer_type, config_attr):
     """Each preference trainer config must receive ``model.max_length``."""

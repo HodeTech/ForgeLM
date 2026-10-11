@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 # are deferred to method bodies so `import forgelm.trainer` is cheap. Eagerly importing
 # torch here costs ~3-5s of CLI startup per invocation. See closure-plan F-performance-101.
 from ._strict_json import dumps_strict
+from ._trl_compat import _resolve_preference_symbol
 from .config import ConfigError
 from .grpo_rewards import ANSWER_EXTRACT_PATTERN
 
@@ -723,11 +724,9 @@ class ForgeTrainer:
             return SFTConfig(**kwargs)
 
         elif tt == "orpo":
-            from trl import ORPOConfig
-
             kwargs["beta"] = self.config.training.orpo_beta
             self._apply_max_length(kwargs)
-            return ORPOConfig(**kwargs)
+            return _resolve_preference_symbol("ORPOConfig")(**kwargs)
 
         elif tt == "dpo":
             from trl import DPOConfig
@@ -737,15 +736,13 @@ class ForgeTrainer:
             return DPOConfig(**kwargs)
 
         elif tt == "simpo":
-            from trl import CPOConfig
-
             # SimPO is implemented via CPOTrainer with loss_type="simpo" in TRL
             kwargs["beta"] = self.config.training.simpo_beta
             kwargs["cpo_alpha"] = 0.0  # pure SimPO (no NLL term)
             kwargs["simpo_gamma"] = self.config.training.simpo_gamma
             kwargs["loss_type"] = "simpo"
             self._apply_max_length(kwargs)
-            return CPOConfig(**kwargs)
+            return _resolve_preference_symbol("CPOConfig")(**kwargs)
 
         elif tt == "kto":
             from trl import KTOConfig
@@ -1052,9 +1049,7 @@ class ForgeTrainer:
             return SFTTrainer(**trainer_kwargs)
         if tt == "orpo":
             logger.info("Initializing TRL ORPOTrainer (ORPO preference alignment)...")
-            from trl import ORPOTrainer
-
-            return ORPOTrainer(**trainer_kwargs)
+            return _resolve_preference_symbol("ORPOTrainer")(**trainer_kwargs)
         if tt == "dpo":
             logger.info("Initializing TRL DPOTrainer (DPO preference alignment)...")
             from trl import DPOTrainer
@@ -1062,9 +1057,7 @@ class ForgeTrainer:
             return DPOTrainer(**trainer_kwargs)
         if tt == "simpo":
             logger.info("Initializing TRL CPOTrainer (SimPO preference alignment)...")
-            from trl import CPOTrainer
-
-            return CPOTrainer(**trainer_kwargs)
+            return _resolve_preference_symbol("CPOTrainer")(**trainer_kwargs)
         if tt == "kto":
             logger.info("Initializing TRL KTOTrainer (binary feedback alignment)...")
             from trl import KTOTrainer
