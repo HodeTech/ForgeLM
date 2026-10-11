@@ -24,6 +24,11 @@ Gerçek tamper-evidence için manifest'in, model dizinine yazan tarafın erişem
 
 ## Nasıl çalışır
 
+Manifest içindeki `model_path`, manifest üretilirken yazıcıya verilen yolu kaydeder; onaydan sonra
+eski staging yolunu göstermeye devam edebilir. Bu alan, üretimi betimleyen metadata'dır.
+Doğrulayıcı verilen model dizinini ve göreli yapıt adlarını kullanır. Terfi veya taşıma
+sırasında manifest ve yapıt baytlarını değiştirmeyin.
+
 ```mermaid
 sequenceDiagram
     participant CI as CI / operatör

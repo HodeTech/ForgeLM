@@ -5,7 +5,14 @@
 
 `verify-integrity` alt komutu, Madde 15 `model_integrity.json` manifestinin tüketici karşılığıdır. Sonlandırma sırasında trainer, model dizinindeki dosyaları hash'leyip manifesti yazmadan önce model kartını (`README.md`) ve `deployer_instructions.md` dosyasını yazar. Manifest dosyasının kendisi doğrulamadan hariç tutulur. `verify-integrity` bu manifesti geri okur, her dosyanın SHA-256'sını yeniden hesaplar ve manifest üretildikten sonra **değiştirilen**, **silinen** veya **eklenen** her bir yapıtı raporlar. CLI, kütüphane giriş noktası `forgelm.verify.verify_integrity`'ye devreder (paket kökünde `forgelm.verify_integrity` olarak da erişilebilir) ve yapılandırılmış bir `VerifyIntegrityResult` döndürür.
 
-Bu sıra, yeni bir model dizinini kapsar. Model paketini değişmeye devam eden audit günlüğünden ve uyumluluk çıktılarından ayrı tutun; çakışan yolların ve tekrar çalıştırmalarda mevcut manifestlerin ayrıca ele alınması gerekir.
+Bu sıra, yeni bir model dizinini kapsar. [Model çıktı yolu politikası](configuration-tr.md#model-çıktı-yolu-politikası),
+model paketlerini değişken audit ve uyumluluk kayıtlarından ayrı tutar.
+
+Manifest içindeki `model_path`, üretimi betimleyen metadata'dır: yazıcıya verilen yolu kaydeder.
+İnsan onayı kullanıldığında, terfi sonrasında artık bulunmayan bir staging yolunu gösterebilir.
+Terfi, manifest baytlarını korur. Doğrulayıcı manifesti verilen model dizininden okur ve yapıt
+yollarını bu dizine göre çözümler; `model_path` doğrulama kökünü belirlemez.
+Yeni dağıtım konumunu göstermek için bu alanı yeniden yazmayın.
 
 ## Söz dizimi
 

@@ -5,7 +5,14 @@
 
 The `verify-integrity` subcommand is the consuming counterpart to the Article 15 `model_integrity.json` manifest. During finalization, the trainer writes the model card (`README.md`) and `deployer_instructions.md` before hashing the model-directory files and writing the manifest. The manifest itself is excluded from verification. `verify-integrity` reads that manifest back, recomputes each file's SHA-256, and reports any artifact that was **changed**, **removed**, or **added** since the manifest was generated. The CLI delegates to the library entry point `forgelm.verify.verify_integrity` (also exposed at the package root as `forgelm.verify_integrity`) and returns a structured `VerifyIntegrityResult`.
 
-This sequence covers a fresh model directory. Keep the model bundle separate from the mutable audit log and compliance output; overlapping paths and existing manifests on reruns require separate handling.
+This sequence covers a fresh model directory. The [model output path policy](configuration.md#model-output-path-policy)
+keeps model bundles separate from mutable audit and compliance records.
+
+The manifest's `model_path` is descriptive generation metadata: the path supplied to the writer.
+With human approval it can be a staging path that no longer exists after promotion. Promotion preserves
+the manifest bytes. Verification reads the manifest from the supplied model directory and resolves
+artifact paths relative to that directory; `model_path` does not select the verification root.
+Do not rewrite it to represent a new deployment location.
 
 ## Synopsis
 

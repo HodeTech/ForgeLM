@@ -72,6 +72,8 @@ uçtan uca model tesliminin doğrulanmış örneği değildir. Model paketi ve u
 - Kaynak eğitim `model.integrity_verified` olayını kaydetti; ancak son paketin ayrı `verify-integrity` kontrolü
   `6` çıkış koduyla bitti: `deployer_instructions.md`, bütünlük manifestinden sonra yazıldı.
   Örnek bu olayı değiştirmeden korur. Başarılı log kontrolü, başarılı model kontrolü olarak yorumlanmamalıdır.
+  Bu kayıt [#370](https://github.com/HodeTech/ForgeLM/issues/370) için yapılan sonlandırma sırası düzeltmesinden öncedir:
+  düzeltilmiş sonlandırma, yönergeleri manifestten önce yazar. Kaydedilen `6` çıkış kodu tarihsel bir sonuçtur.
 - Kaynak eğitim, eksik veri audit raporu için `compliance.governance_section_missing` olayını da kaydetti.
   Burada gösterilen sonraki bağımsız audit, o eğitim çalışmasını geriye dönük değiştirmez.
 - Bu ortamda `--output-format json` ile eğitim, JSON zarfından önce kütüphane çıktısı da üretti.

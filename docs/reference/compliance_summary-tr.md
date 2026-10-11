@@ -312,22 +312,22 @@ vs.). Deployer'ın ISMS duruşu için:
 
 ## Kanıt konumları (symbol referansları — satır-stabil)
 
-Wave 4 / Faz 26 temizliği: her link bir line anchor'a değil, dosya
-köküne işaret eder. Denetçi dosyayı açar ve cited symbol adını grep'ler;
-bu, önceki `#L33` formunun başaramadığı refactor'leri sağ atlatır.
+Referanslar kaynak satır numaraları yerine modül ve sembol adlarını kullanır.
+Belirtilen modülde ilgili sembolü arayın; çevresindeki kaynak satırları
+yer değiştirdiğinde de referans kullanılabilir kalır.
 
 - **Auto-revert + safety-eval kapısı**: `forgelm.trainer` (`_revert_model`,
-  `auto_revert`, `_run_safety_eval` ara).
-- **Güvenlik sınıflandırıcısı + 3-katman gate**: `forgelm.safety`
-  (`LlamaGuardClassifier`, `_evaluate_3_layer_gate` ara).
+  `auto_revert`, `_run_safety_if_configured` ara).
+- **Güvenlik sınıflandırıcıları + 3-katman gate**: `forgelm.safety._classifier`
+  (`_load_safety_classifier`, `_load_generative_guard` ara) ve `forgelm.safety._gates`
+  (`_evaluate_safety_gates` ara).
 - **Audit chain + HMAC + manifest**: `forgelm.compliance` (`AuditLogger`,
   `_check_genesis_manifest`, `generate_model_integrity` ara).
 - **Salted identifier hashing**: `forgelm.cli.subcommands._purge`
   (`_resolve_salt`, `_read_persistent_salt`, `_hash_target_id` ara).
 - **GDPR Madde 15 reverse-pii**: `forgelm.cli.subcommands._reverse_pii`.
 - **Madde 14 staging + approve / reject**:
-  `forgelm.cli.subcommands._approve`,
-  `forgelm.cli.subcommands._reject`,
+  `forgelm.cli.subcommands._approve` (`_run_approve_cmd`, `_run_reject_cmd` ara),
   `forgelm.cli.subcommands._approvals`.
 - **Webhook lifecycle**: `forgelm.webhook` (`notify_start`,
   `notify_success`, `notify_failure`, `notify_reverted`,

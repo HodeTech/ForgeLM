@@ -24,6 +24,11 @@ For real tamper-evidence you need the manifest to live somewhere the model direc
 
 ## How it works
 
+`model_path` in the manifest records the path supplied at generation time; after approval it can
+still name the former staging directory. It is descriptive generation metadata. The verifier
+uses the supplied model directory and relative artifact names. Keep manifest and artifact
+bytes unchanged during promotion or relocation.
+
 ```mermaid
 sequenceDiagram
     participant CI as CI / operator

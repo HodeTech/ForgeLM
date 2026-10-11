@@ -6,6 +6,9 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Clarify that the CPU demo captures the pre-fix integrity failure; preserve its recorded outputs.
+  Replace obsolete compliance evidence symbols in EN/TR references, and document integrity `model_path`
+  as generation metadata preserved during promotion, with byte-preservation and promoted-CLI verification checks.
 - Resolve dynamically exposed ORPO/SimPO classes even when omitted from a module's `dir()` listing;
   preserve declared-export and transitive load failures, experimental warnings, and top-level preference.
 - Reject unsafe `training.final_model_dir` layouts at config load (exit `1`): require an isolated

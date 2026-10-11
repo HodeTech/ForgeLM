@@ -492,12 +492,20 @@ class TestFinalizedModelIntegrity:
 
         if require_approval:
             bundle = {path.name: path.read_bytes() for path in model_dir.iterdir()}
+            # model_path records the writer's generation location, not a deployment pointer.
+            assert json.loads(bundle["model_integrity.json"])["model_path"] == str(model_dir)
             assert trainer._handle_human_approval_gate(str(model_dir), result, already_saved=True)
             assert result.awaiting_approval is True
             promoted = Path(trainer.config.training.output_dir) / final_model_dir
             assert _atomic_rename_or_move(str(model_dir), str(promoted)) == "rename"
             assert {path.name: path.read_bytes() for path in promoted.iterdir()} == bundle
             assert verify_integrity(str(promoted)).valid is True
+            with pytest.raises(SystemExit) as promoted_exit:
+                _run_verify_integrity_cmd(SimpleNamespace(path=str(promoted)), output_format="json")
+            assert promoted_exit.value.code == 0
+            promoted_envelope = json.loads(capsys.readouterr().out)
+            assert promoted_envelope["valid"] is True
+            assert promoted_envelope["path"] == str(promoted)
         else:
             trainer.audit.log_event("pipeline.completed", success=True)
             assert verify_integrity(str(model_dir)).valid is True

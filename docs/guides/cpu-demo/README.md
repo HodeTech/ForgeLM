@@ -72,6 +72,8 @@ end-to-end model-delivery example. The model bundle and compliance reports are n
 - The source training run logged `model.integrity_verified`, but the final bundle's separate
   `verify-integrity` check exited `6`: `deployer_instructions.md` was written after the integrity manifest.
   This sample preserves that event unchanged. A successful log check must not be read as a successful model check.
+  This recording predates the finalization-order fix for [#370](https://github.com/HodeTech/ForgeLM/issues/370):
+  corrected finalization writes the instructions before the manifest. The captured exit `6` is a historical result.
 - The source run also logged `compliance.governance_section_missing` for its absent data audit report.
   The later standalone audit shown here does not retroactively change that training run.
 - Training with `--output-format json` also emitted library output before its JSON envelope in this environment.
