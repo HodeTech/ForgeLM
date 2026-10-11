@@ -6,6 +6,10 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Reject enabled benchmarks whose custom output directory overlaps the final or staged model
+  directory, including resolved aliases and containment in either direction. Validate sibling
+  configuration fields together and recheck before model writes or auto-revert so benchmark
+  evidence remains outside deletable model bundles.
 - Preserve the configured warmup schedule with newer Transformers/TRL releases by passing the
   existing YAML `training.warmup_ratio` through fractional `warmup_steps`, supported throughout
   the declared Transformers range. Restore real ORPO/SimPO construction without changing

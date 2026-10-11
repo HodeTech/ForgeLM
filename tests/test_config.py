@@ -132,6 +132,95 @@ class TestTrainingConfig:
 
 
 class TestFinalModelDirectoryPolicy:
+    @pytest.mark.parametrize("benchmark_relative", ["models/final", "models/final/metrics", "models"])
+    @pytest.mark.parametrize("absolute", [False, True])
+    def test_rejects_custom_benchmark_overlap_without_writes(
+        self, tmp_path, minimal_config, monkeypatch, benchmark_relative, absolute
+    ):
+        monkeypatch.chdir(tmp_path)
+        output = tmp_path / "output"
+        benchmark = output / benchmark_relative if absolute else Path("output") / benchmark_relative
+        with pytest.raises(ValidationError, match=r"benchmark\.output_dir"):
+            ForgeConfig.model_validate(
+                minimal_config(
+                    training={"output_dir": str(output), "final_model_dir": "models/final"},
+                    evaluation={"benchmark": {"enabled": True, "tasks": ["arc_easy"], "output_dir": str(benchmark)}},
+                )
+            )
+        assert not output.exists()
+
+    @pytest.mark.parametrize("target", ["models/final", "models/final/metrics", "models"])
+    def test_rejects_benchmark_alias_overlap(self, tmp_path, minimal_config, target):
+        output = tmp_path / "output"
+        destination = output / target
+        destination.mkdir(parents=True)
+        alias = tmp_path / "benchmark-alias"
+        alias.symlink_to(destination, target_is_directory=True)
+        sentinel = destination / "keep.txt"
+        sentinel.write_bytes(b"keep benchmark evidence")
+        with pytest.raises(ValidationError, match=r"benchmark\.output_dir"):
+            ForgeConfig.model_validate(
+                minimal_config(
+                    training={"output_dir": str(output), "final_model_dir": "models/final"},
+                    evaluation={"benchmark": {"enabled": True, "tasks": ["arc_easy"], "output_dir": str(alias)}},
+                )
+            )
+        assert sentinel.read_bytes() == b"keep benchmark evidence"
+
+    @pytest.mark.parametrize("location", [None, "", "metrics", "external"])
+    def test_accepts_separate_benchmark_output(self, tmp_path, minimal_config, location):
+        output = tmp_path / "output"
+        benchmark = None if location is None else ""
+        if location:
+            benchmark = str(tmp_path / "external" if location == "external" else output / location)
+        config = ForgeConfig.model_validate(
+            minimal_config(
+                training={"output_dir": str(output), "final_model_dir": "models/final"},
+                evaluation={"benchmark": {"enabled": True, "tasks": ["arc_easy"], "output_dir": benchmark}},
+            )
+        )
+        assert config.evaluation.benchmark.output_dir == benchmark
+        assert not output.exists()
+
+    def test_disabled_benchmark_does_not_reserve_its_custom_output(self, tmp_path, minimal_config):
+        output = tmp_path / "output"
+        config = ForgeConfig.model_validate(
+            minimal_config(
+                training={"output_dir": str(output)},
+                evaluation={"benchmark": {"enabled": False, "output_dir": str(output / "final_model")}},
+            )
+        )
+        assert config.evaluation.benchmark.enabled is False
+        assert not output.exists()
+
+    def test_dry_run_rejects_benchmark_overlap_before_output_creation(self, tmp_path, minimal_config, monkeypatch):
+        import sys
+
+        from forgelm.cli import main
+
+        output = tmp_path / "output"
+        config_file = tmp_path / "overlap.yaml"
+        config_file.write_text(
+            yaml.safe_dump(
+                minimal_config(
+                    training={"output_dir": str(output)},
+                    evaluation={
+                        "benchmark": {
+                            "enabled": True,
+                            "tasks": ["arc_easy"],
+                            "output_dir": str(output / "final_model/metrics"),
+                        }
+                    },
+                )
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(sys, "argv", ["forgelm", "--config", str(config_file), "--dry-run"])
+        with pytest.raises(SystemExit) as raised:
+            main()
+        assert raised.value.code == 1
+        assert not output.exists()
+
     @pytest.mark.parametrize(
         "value",
         [

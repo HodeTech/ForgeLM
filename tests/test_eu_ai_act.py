@@ -580,6 +580,34 @@ class TestFinalizedModelIntegrity:
             ForgeTrainer(None, None, config, {})
         assert not (output / "audit_log.jsonl").exists()
 
+    @pytest.mark.parametrize("staged", [False, True])
+    @pytest.mark.parametrize("operation", ["save_final_model", "_revert_model", "_finalize_artifacts"])
+    def test_runtime_benchmark_overlap_preserves_evidence(
+        self, tmp_path, monkeypatch, minimal_config, staged, operation
+    ):
+        from forgelm.config import BenchmarkConfig, ConfigError
+
+        trainer, model_dir, _, _ = self._finalize(tmp_path, monkeypatch, minimal_config, require_approval=staged)
+        trainer.trainer = MagicMock()
+        trainer.tokenizer = MagicMock()
+        benchmark = model_dir / "metrics"
+        benchmark.mkdir()
+        evidence = benchmark / "benchmark_results.json"
+        evidence.write_bytes(b'{"passed": false}')
+        trainer.config.evaluation.benchmark = BenchmarkConfig(
+            enabled=True, tasks=["arc_easy"], output_dir=str(benchmark)
+        )
+        output = Path(trainer.checkpoint_dir)
+        before = {p: p.read_bytes() for p in output.rglob("*") if p.is_file()}
+        args = {
+            "save_final_model": (str(model_dir),),
+            "_revert_model": (str(model_dir), "rejected"),
+            "_finalize_artifacts": (str(model_dir), {}, None),
+        }[operation]
+        with pytest.raises(ConfigError, match=r"benchmark\.output_dir"):
+            getattr(trainer, operation)(*args)
+        assert {p: p.read_bytes() for p in output.rglob("*") if p.is_file()} == before
+
     @pytest.mark.parametrize("change", ["changed", "removed", "added"])
     def test_finalized_bundle_still_reports_integrity_failures(
         self, tmp_path, monkeypatch, minimal_config, capsys, change

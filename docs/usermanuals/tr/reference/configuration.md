@@ -134,6 +134,9 @@ bağlantı bileşenleri config çıkış kodu `1` ile reddedilir. Ayrılmış il
 `data_audit_report.json` ve `checkpoint-*` değerleridir (büyük/küçük harf duyarsız); çözümlenen yolların
 ayrılmış yollarla örtüşmesi de reddedilir. Trainer başlatma, kaydetme, sonlandırma ve auto-revert
 öncesinde yeniden denetleyerek çalışma kayıtlarını ayrı tutar.
+Etkin benchmark'ın özel `evaluation.benchmark.output_dir` yolu da nihai veya staged model dizininden
+ayrı olmalıdır; çözümlenen yolların aynı olması veya birinin diğerini içermesi reddedilir. Göreli benchmark
+yolları, sonuçları yazan kodla aynı şekilde sürecin çalışma dizininden çözümlenir.
 
 Nested `training.dpo:` / `training.simpo:` / `training.kto:` / `training.orpo:` / `training.grpo:` alt-bloğu yoktur — `TrainingConfig` bilinmeyen anahtarları reddeder (`extra="forbid"`), dolayısıyla nested blok `--dry-run`'da config hatasıyla başarısız olur. Her alignment-metodu parametresi, `rope_scaling` / `sliding_window_attention` (yukarıda gösterildi — bunlar `ModelConfig` değil `TrainingConfig` alanlarıdır, bkz. yukarıdaki [`model:`](#model) notu) ve NEFTune doğrudan `training:` üzerinde düz alanlardır. GaLore `galore_*` optimizer alanları, `oom_recovery` / `oom_recovery_min_batch_size`, `packing` için deprecated takma ad `sample_packing`, ve `gpu_cost_per_hour` da düz `training:` alanlarıdır, yukarıdaki kısaltılmış örnekte gösterilmemiştir — trainer-başı tam çalışan örnekler için bkz. [GaLore](#/training/galore) ve [YAML Şablonları](#/reference/yaml-templates).
 

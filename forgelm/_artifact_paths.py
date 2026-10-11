@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path, PureWindowsPath
+from typing import Any, Optional
 
 from pydantic import ValidationInfo
 
@@ -19,16 +20,18 @@ _RESERVED_ROOTS = frozenset(
 )
 _POLICY = (
     "training.final_model_dir must name an isolated relative subdirectory of training.output_dir; "
-    "use '/' separators without trailing '/' or '/.'; no '..', symlinks, reserved run paths, or checkpoint-* roots"
+    "use '/' separators without trailing '/' or '/.'; no '..', symlinks, reserved run paths, or checkpoint-* roots; "
+    "keep enabled evaluation.benchmark.output_dir separate from the model directory"
 )
 
 
-def _validate_layout(output_dir: str, value: str) -> str:
+def _validate_layout(output_dir: str, value: str, benchmark_output_dir: Optional[str] = None) -> str:
     """Validate without creating directories or rewriting the requested path.
 
     Args:
         output_dir: Run root containing mutable audit and compliance records.
         value: Relative model-directory value from config or a runtime check.
+        benchmark_output_dir: Enabled benchmark's custom destination, relative to the process working directory.
 
     Returns:
         The joined path, retaining the operator's original spelling.
@@ -64,6 +67,8 @@ def _validate_layout(output_dir: str, value: str) -> str:
         # A reserved directory can itself be an alias into an otherwise valid
         # model tree. Reject both overlap directions before hashing or deletion.
         reserved_paths = [root / name for name in _RESERVED_ROOTS] + list(root.glob("checkpoint-*"))
+        if benchmark_output_dir:
+            reserved_paths.append(Path(benchmark_output_dir))
         for reserved_path in reserved_paths:
             reserved = reserved_path.resolve()
             if candidate == reserved or candidate in reserved.parents or reserved in candidate.parents:
@@ -80,23 +85,35 @@ def _validate_config_directory(value: str, info: ValidationInfo) -> str:
     return value
 
 
-def _final_model_path(output_dir: str, final_model_dir: str) -> str:
+def _benchmark_output_dir(config: Any) -> Optional[str]:
+    """Reserve custom benchmark evidence only when the benchmark is enabled."""
+    benchmark = config.evaluation.benchmark if config.evaluation else None
+    return benchmark.output_dir if benchmark and benchmark.enabled else None
+
+
+def _validate_config_layout(config: Any) -> Any:
+    """Check sibling evaluation destinations after the full config is validated."""
+    _validate_layout(config.training.output_dir, config.training.final_model_dir, _benchmark_output_dir(config))
+    return config
+
+
+def _final_model_path(output_dir: str, config: Any) -> str:
     """Recheck mutable config/filesystem state before trainer initialization/save."""
     from .config import ConfigError
 
     try:
-        return _validate_layout(output_dir, final_model_dir)
+        return _validate_layout(output_dir, config.training.final_model_dir, _benchmark_output_dir(config))
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
 
 
-def _check_model_destination(output_dir: str, final_path: str) -> None:
+def _check_model_destination(output_dir: str, final_path: str, config: Any) -> None:
     """Recheck the actual final/staging destination before writing or reverting."""
     from .config import ConfigError
 
     try:
         relative = os.path.relpath(final_path, output_dir)
-        expected = _validate_layout(output_dir, relative)
+        expected = _validate_layout(output_dir, relative, _benchmark_output_dir(config))
         # relpath is lexical; do not let normalization conceal a symlink/..
         # path whose actual destination differs from the checked directory.
         if Path(final_path).resolve() != Path(expected).resolve():

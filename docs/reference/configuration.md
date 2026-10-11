@@ -96,6 +96,9 @@ Resolved overlap with these run records is also rejected, including when a reser
 into a proposed model directory. This keeps mutable records out of the integrity manifest and
 prevents auto-revert from deleting them. Config loading and `--dry-run` reject invalid layouts with
 exit `1`; the trainer rechecks before initialization, saving, finalization, and deletion.
+When benchmarks are enabled, a custom `evaluation.benchmark.output_dir` must also remain separate
+from the final or staged model directory: equal, ancestor, and descendant resolved paths are rejected.
+Relative benchmark paths resolve from the process working directory, matching the benchmark writer.
 
 #### OOM Recovery
 

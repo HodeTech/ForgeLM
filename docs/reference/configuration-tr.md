@@ -97,6 +97,9 @@ Ayrılmış bir yolun önerilen model dizinine sembolik bağlantı üzerinden y�
 yolların bu çalışma kayıtlarıyla örtüşmesi de reddedilir. Böylece değişken kayıtlar bütünlük
 manifestinin dışında kalır ve auto-revert tarafından silinmez. Config yükleme ve `--dry-run`,
 geçersiz yerleşimleri `1` çıkış koduyla reddeder; trainer başlatma, kaydetme, sonlandırma ve silme öncesinde yeniden denetler.
+Benchmark etkinse özel `evaluation.benchmark.output_dir` yolu da nihai veya staged model dizininden
+ayrı kalmalıdır: çözümlenen yolların aynı olması veya birinin diğerini içermesi reddedilir.
+Göreli benchmark yolları, sonuçları yazan kodla aynı şekilde sürecin çalışma dizininden çözümlenir.
 
 #### OOM Recovery (Bellek Hatası Kurtarma)
 

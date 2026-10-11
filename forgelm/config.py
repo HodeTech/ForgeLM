@@ -8,7 +8,7 @@ from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, ValidationError, field_validator, model_validator
 
-from ._artifact_paths import _validate_config_directory
+from ._artifact_paths import _validate_config_directory, _validate_config_layout
 from ._strict_json import dumps_strict
 
 logger = logging.getLogger("forgelm.config")
@@ -1975,7 +1975,7 @@ class ForgeConfig(BaseModel):
         # bespoke `_validate_trainer_type` runtime check became redundant.
         self._validate_galore()
         self._validate_distributed()
-        return self
+        return _validate_config_layout(self)
 
 
 class ConfigError(Exception):
