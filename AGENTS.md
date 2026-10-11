@@ -46,7 +46,7 @@ Each skill's `SKILL.md` has the full checklist. Follow it; don't skip steps to s
 
 ```text
 ForgeLM/
-├── forgelm/                 # Source code: 27 single-file modules (not counting
+├── forgelm/                 # Source code: 28 single-file modules (not counting
 │                            # __init__ / __main__) + 5 code sub-packages
 │   ├── cli/                 # CLI package (Phase 15 split): _parser, _dispatch,
 │   │                        # _exit_codes, subcommands/{ingest, audit, chat,
@@ -73,6 +73,8 @@ ForgeLM/
 │   ├── webhook.py           # Slack/Teams notifications (8-event vocabulary)
 │   ├── grpo_rewards.py      # Built-in GRPO format/length shaping reward fallback
 │   ├── _http.py             # SSRF-guarded HTTP chokepoint (safe_post / safe_get)
+│   ├── _strict_json.py         # Strict JSON readers and writers
+│   ├── _trl_compat.py          # TRL preference-class export compatibility
 │   ├── _version.py          # `__version__` + `__api_version__` (decoupled)
 │   ├── verify/              # Verification package (Phase 16 S1 split):
 │   │                        # _annex_iv, _pipeline_evidence, _gguf,
@@ -80,7 +82,7 @@ ForgeLM/
 │   └── ...                  # benchmark, judge, merging, synthetic,
 │                            # quickstart, model_card, fit_check, deploy, chat,
 │                            # export, inference, results, utils, __main__,
-│                            # _pypdf_normalise, _script_sanity, _strict_json,
+│                            # _pypdf_normalise, _script_sanity,
 │                            # _strip_pattern
 ├── tests/                   # 128 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
 ├── tools/                   # CI guards: check_anchor_resolution,

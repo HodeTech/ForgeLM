@@ -6,6 +6,8 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Derive current top-level module inventories from the source tree in the numerical-claims guard;
+  correct the agent and EN/TR architecture inventories and list the TRL compatibility and strict JSON helpers.
 - Resolve ORPO and SimPO config/trainer classes from top-level TRL or its experimental ORPO/CPO modules,
   restoring construction when TRL no longer exports them at the top level. Preserve upstream experimental
   warnings and dependency-load errors, and report missing classes with the installed TRL version and

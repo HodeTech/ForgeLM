@@ -42,7 +42,7 @@ forgelm --config job.yaml
 
 ```
 ForgeLM/
-├── forgelm/                # Core Python package (27 single-file modules besides __init__/__main__, + 5 sub-packages)
+├── forgelm/                # Core Python package (28 single-file modules besides __init__/__main__, + 5 sub-packages)
 │   ├── __init__.py         # Lazy imports for fast CLI startup
 │   ├── cli/                # CLI sub-package (Phase 15 split)
 │   │   ├── _parser.py          # 19 subcommands + global flags
@@ -86,6 +86,8 @@ ForgeLM/
 │   ├── wizard/             # Interactive configuration wizard (sub-package — Phase 22)
 │   ├── webhook.py          # Webhook notifications (Slack/Teams)
 │   ├── _http.py            # SSRF-guarded HTTP chokepoint
+│   ├── _strict_json.py     # Strict JSON readers and writers
+│   ├── _trl_compat.py      # TRL preference-class export compatibility
 │   ├── _version.py         # __version__ + __api_version__ (decoupled)
 │   └── utils.py            # Authentication + checkpoint management
 ├── forgelm/templates/      # 5 quickstart template bundles
