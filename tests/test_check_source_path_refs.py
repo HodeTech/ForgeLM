@@ -29,10 +29,12 @@ as its noise on dead references.
 from __future__ import annotations
 
 import importlib.util
+import re
 import statistics
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -503,6 +505,68 @@ class TestPatternLinearity:
     body quantifier — the mandatory root alternation sits between them. Pinned
     empirically per the standard: 1K/5K/10K, median of 5, ~linear growth."""
 
+    _MAX_REPETITIONS = 262_144
+
+    @staticmethod
+    def _median_scan_time(pattern, payload, repetitions=1, max_repetitions=_MAX_REPETITIONS):
+        """Return the per-scan median and the calibrated number of scans."""
+        while True:
+            runs = []
+            for _ in range(5):
+                start = time.perf_counter()
+                for _ in range(repetitions):
+                    list(pattern.finditer(payload))
+                runs.append(time.perf_counter() - start)
+            elapsed = statistics.median(runs)
+            # Batch short scans so timer resolution and scheduler jitter do not
+            # dominate the median. Normalize back to the time of one scan.
+            if elapsed >= 0.025 or repetitions >= max_repetitions:
+                return elapsed / repetitions, repetitions
+            repetitions *= 2
+
+    def test_quadratic_scan_is_still_rejected(self):
+        # Deliberately quadratic negative control: each starting position retries
+        # the remaining run of "a" before discovering that "b" is absent.
+        tool = SimpleNamespace(_PATH_RE=re.compile(r"a+b"))
+        with pytest.raises(AssertionError, match="super-linear|10K input took"):
+            self._assert_linear_growth(
+                tool._PATH_RE, "quadratic negative control", lambda n: "a" * n, max_repetitions=1
+            )
+
+    def test_calibrated_quadratic_scan_is_rejected(self, monkeypatch):
+        clock = 0.0
+        scans = {}
+
+        class QuadraticPattern:
+            def finditer(self, payload):
+                nonlocal clock
+                size = len(payload)
+                scans[size] = scans.get(size, 0) + 1
+                clock += (size / 1000) ** 2 * 1e-5
+                return iter(())
+
+        monkeypatch.setattr(time, "perf_counter", lambda: clock)
+        with pytest.raises(AssertionError, match=r"100\.0x time \(super-linear\)"):
+            self._assert_linear_growth(QuadraticPattern(), "calibrated quadratic scan", lambda n: "a" * n)
+        assert scans[1_000] > scans[5_000] > scans[10_000] > 5
+
+    def test_scheduler_jitter_does_not_reject_linear_scan(self, monkeypatch):
+        clock = 0.0
+        large_scans = 0
+
+        class LinearPattern:
+            def finditer(self, payload):
+                nonlocal clock, large_scans
+                clock += len(payload) * 1e-8
+                if len(payload) == 10_000:
+                    large_scans += 1
+                    if 2 <= large_scans <= 4:
+                        clock += 0.00011
+                return iter(())
+
+        monkeypatch.setattr(time, "perf_counter", lambda: clock)
+        self._assert_linear_growth(LinearPattern(), "linear scan with scheduler jitter", lambda n: "a" * n)
+
     @pytest.mark.parametrize(
         "label,build",
         [
@@ -513,15 +577,14 @@ class TestPatternLinearity:
         ],
     )
     def test_growth_is_approximately_linear(self, tool, label, build):
+        self._assert_linear_growth(tool._PATH_RE, label, build)
+
+    def _assert_linear_growth(self, pattern, label, build, max_repetitions=_MAX_REPETITIONS):
         timings = {}
         for n in (1_000, 5_000, 10_000):
             payload = build(n)
-            runs = []
-            for _ in range(5):
-                start = time.perf_counter()
-                list(tool._PATH_RE.finditer(payload))
-                runs.append(time.perf_counter() - start)
-            timings[n] = statistics.median(runs)
+            # Calibrate each size independently to bound the sampling cost.
+            timings[n], _ = self._median_scan_time(pattern, payload, 1, max_repetitions)
 
         # Safety floor: a real ReDoS blows past this by orders of magnitude.
         assert timings[10_000] < 1.0, f"{label}: 10K input took {timings[10_000]:.3f}s"
