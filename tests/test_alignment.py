@@ -150,7 +150,7 @@ class TestConfigTemplateAlignment:
     ("trainer_type", "config_name", "trainer_name", "beta"),
     [("orpo", "ORPOConfig", "ORPOTrainer", 0.17), ("simpo", "CPOConfig", "CPOTrainer", 2.7)],
 )
-@pytest.mark.parametrize(("warmup_ratio", "expected_warmup_steps"), [(0.0, 0), (0.03, 4), (0.4, 41), (1.0, 1)])
+@pytest.mark.parametrize(("warmup_ratio", "expected_warmup_steps"), [(0.0, 0), (0.03, 4), (0.4, 41), (1.0, 101)])
 def test_real_preference_trainer_construction(
     tmp_path,
     minimal_config,
@@ -228,6 +228,7 @@ def test_real_preference_trainer_construction(
     assert actual.args.max_length == 64
     assert actual.args.beta == pytest.approx(beta)
     assert actual.args.warmup_steps == pytest.approx(warmup_ratio)
+    assert 0.0 <= actual.args.warmup_steps < 1.0
     assert actual.args.get_warmup_steps(101) == expected_warmup_steps
     assert len(actual.train_dataset) == 1
     if trainer_type == "simpo":

@@ -6,6 +6,8 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Make `training.warmup_ratio: 1.0` warm up over all training steps instead of one absolute step,
+  preserving the configured fraction across all six trainer types with supported Transformers versions.
 - Qualify EN/TR EU AI Act summaries with the separate Annex I, Section B application regime
   and the synthetic-content system scope and market-date condition of the Article 111(4) transition.
 - Reject enabled benchmarks whose custom output directory overlaps the final or staged model

@@ -518,9 +518,20 @@ class TestWarmupArguments:
     """Exercise the shared warmup mapping through real Transformers scheduling."""
 
     @pytest.mark.parametrize("trainer_type", ["sft", "dpo", "orpo", "simpo", "kto", "grpo"])
-    @pytest.mark.parametrize(("ratio", "expected_steps"), [(0.0, 0), (0.03, 4), (0.4, 41), (1.0, 1)])
-    def test_warmup_steps_preserve_upstream_schedule(
-        self, tmp_path, minimal_config, monkeypatch, trainer_type, ratio, expected_steps
+    @pytest.mark.parametrize(
+        ("ratio", "total_steps", "expected_steps"),
+        [
+            (0.0, 101, 0),
+            (0.03, 101, 4),
+            (0.4, 101, 41),
+            (0.9999999999999999, 101, 101),
+            (1.0, 1, 1),
+            (1.0, 101, 101),
+            (1.0, 1_000_000, 1_000_000),
+        ],
+    )
+    def test_warmup_steps_preserve_configured_fraction(
+        self, tmp_path, minimal_config, monkeypatch, trainer_type, ratio, total_steps, expected_steps
     ):
         import torch
         from transformers import TrainingArguments
@@ -547,8 +558,10 @@ class TestWarmupArguments:
         kwargs = trainer._get_common_training_kwargs()
         assert "warmup_ratio" not in kwargs
         args = TrainingArguments(**kwargs)
+        assert trainer.config.training.warmup_ratio == ratio
         assert args.warmup_steps == pytest.approx(ratio)
-        assert args.get_warmup_steps(101) == expected_steps
+        assert 0.0 <= args.warmup_steps < 1.0
+        assert args.get_warmup_steps(total_steps) == expected_steps
 
 
 class TestGateRunnerImportContract:
