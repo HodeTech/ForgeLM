@@ -8,12 +8,13 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
    Comment to claim it and confirm the problem on `development`; see [Working on an issue](#working-on-an-issue).
 2. [Fork and clone](#1-fork--clone), then [create a branch from `development`](#3-create-a-branch).
    Use Python **3.10, 3.11, 3.12 or 3.13** — CI tests all four versions. Create a virtual environment
-   with that interpreter, activate it, and install the development extra:
+   with that interpreter (replace `python3.13` below if you selected another supported version),
+   activate it, and install the development extra:
 
    ```bash
-   python3 -m venv .venv
+   python3.13 -m venv .venv
    source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
-   python3 -m pip install -e ".[dev]"
+   python -m pip install -e ".[dev]"
    ```
 
 3. Make the change and, for a code fix, add a regression test that reproduces the issue;
