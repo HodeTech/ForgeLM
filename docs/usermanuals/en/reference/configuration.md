@@ -126,6 +126,16 @@ training:
   grpo_reward_model: null                     # GRPO: HF path for reward scoring; null = built-in format/length shaping
 ```
 
+`final_model_dir` must be an isolated relative subdirectory of `output_dir` (for example `models/final`).
+Empty/root paths, `..`, absolute/drive-qualified paths, backslashes, trailing `/` or `/.`, existing files, and symlink
+components are rejected with config exit `1`. Reserved first components are `compliance`, `benchmark`,
+`safety`, `judge`, `runs`, `audit_log.jsonl`, `audit_log.jsonl.manifest.json`, `data_audit_report.json`,
+and `checkpoint-*` (case-insensitive); resolved overlap with reserved paths is also rejected.
+The trainer rechecks before initialization, saving, finalization, and auto-revert so run records remain separate.
+An enabled benchmark's custom `evaluation.benchmark.output_dir` must also be separate from the final or staged
+model directory; resolved equality or containment in either direction is rejected. Relative benchmark paths
+resolve from the process working directory, matching the benchmark writer.
+
 There is no nested `training.dpo:` / `training.simpo:` / `training.kto:` / `training.orpo:` / `training.grpo:` sub-block — `TrainingConfig` rejects unknown keys (`extra="forbid"`), so a nested block fails `--dry-run` with a config error. Every alignment-method parameter, `rope_scaling` / `sliding_window_attention` (shown above — these are `TrainingConfig` fields, not `ModelConfig` fields, see the [`model:`](#model) note above), and NEFTune are flat fields directly on `training:`. The GaLore `galore_*` optimizer knobs, `oom_recovery` / `oom_recovery_min_batch_size`, the deprecated `sample_packing` alias for `packing`, and `gpu_cost_per_hour` are also flat `training:` fields, not shown in the abbreviated example above — see [GaLore](#/training/galore) and [YAML Templates](#/reference/yaml-templates) for full per-trainer worked examples.
 
 ## `evaluation:`

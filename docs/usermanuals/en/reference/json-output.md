@@ -806,17 +806,19 @@ Wave 2b Phase 36 — GGUF model file integrity check.
 
 Wave 2b Phase 36 / Art. 15 — model-directory artifact integrity check.
 
+For a fresh, separate model directory, training finalization hashes the model card and `deployer_instructions.md` along with the saved model/tokenizer files before writing the manifest. The success example illustrates six recorded artifacts; the count depends on the saved files. Manifest generation emits `model.integrity_verified`; this read-only verifier emits no audit event.
+
 **Success envelope** (`forgelm verify-integrity MODEL_DIR`):
 
 ```json
 {
   "success": true,
   "valid": true,
-  "reason": "All 12 recorded artifact(s) present and unchanged.",
+  "reason": "All 6 recorded artifact(s) present and unchanged.",
   "changed": [],
   "removed": [],
   "added": [],
-  "verified_count": 12,
+  "verified_count": 6,
   "path": "/work/output/my-model"
 }
 ```

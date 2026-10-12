@@ -241,7 +241,29 @@ ForgeLM uses a default rubric that scores on Helpfulness, Accuracy, Clarity, and
 
 ### Background
 
-The EU AI Act becomes fully enforceable for high-risk AI systems in **August 2026**. It requires:
+The EU AI Act has obligation-specific application dates. Under
+[Regulation (EU) 2026/1744, Article 1(40)(b)](https://eur-lex.europa.eu/eli/reg/2026/1744/oj/eng),
+Chapter III, Sections 1–3 (except Article 6(5)) apply from **2 December 2027** for high-risk systems
+under Article 6(2) / Annex III, and **2 August 2028** for those under Article 6(1) / Annex I.
+The amendment was published on 24 July 2026 and entered into force on 27 July 2026 (Article 4).
+
+[Article 2(2)](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:02024R1689-20260727)
+sets a separate, limited regime for Article 6(1) systems related to products covered by Annex I,
+Section B legislation: Articles 6(1), 60a and 102–112 apply; Articles 57–59 apply only to the extent
+that high-risk requirements have been integrated into that product legislation. The general Chapter III
+schedule above does not make all of its provisions applicable to these Section B systems.
+
+Article 50 transparency duties generally apply from **2 August 2026**. Article 111(4), inserted by
+the amendment's Article 1(39)(b), gives providers of systems generating synthetic audio, images,
+video or text (including general-purpose AI systems) placed on the market before **2 August 2026**
+until **2 December 2026** to meet Article 50(2), subject to that provision's exceptions.
+Chapter V general-purpose AI model obligations apply from
+**2 August 2025**, with a 2 August 2027 transition for models already on the market before that date
+([Regulation (EU) 2024/1689, Articles 113 and 111(3)](https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng)).
+Other transition rules, including Article 111(2) for existing high-risk systems, can affect applicability.
+
+ForgeLM produces documentation artifacts to support review; using it does **not** establish legal compliance.
+Have qualified legal counsel assess the rules for your deployment. Documentation work includes:
 
 - Documented AI inventories
 - Machine-readable compliance evidence

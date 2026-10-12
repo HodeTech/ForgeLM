@@ -5,7 +5,7 @@ description: Eğitilmiş bir model dizinini SHA-256 bütünlük manifest'ine (mo
 
 # Model Bütünlüğünü Doğrula
 
-`forgelm verify-integrity`, Madde 15 model-bütünlük manifest'iyle eşleşen salt-okunur doğrulayıcıdır. Compliance export, eğitim sırasında final modelin yanına `model_integrity.json` yazar ve her artefaktın SHA-256'sını ve byte boyutunu kaydeder. `verify-integrity` dizini yeniden gezer, her hash'i yeniden hesaplar ve manifest oluşturulduğundan beri **değişen**, **kaldırılan** veya **eklenen** her dosyayı raporlar. Bu komut, audit *log*'unu doğrulayan [`verify-audit`](#/compliance/verify-audit)'in model *ağırlıkları* karşılığıdır.
+`forgelm verify-integrity`, Madde 15 model-bütünlük manifest'iyle eşleşen salt-okunur doğrulayıcıdır. Yeni bir model dizininde trainer, model kartını ve `deployer_instructions.md` dosyasını yazdıktan sonra `model_integrity.json` üretir; manifest bu belgelerin ve kaydedilen model/tokenizer dosyalarının SHA-256'sını ve byte boyutunu kaydeder. Manifest dosyasının kendisi hariç tutulur. Model paketini değişmeye devam eden audit günlüğünden ve uyumluluk çıktılarından ayrı tutun. `verify-integrity` dizini yeniden gezer, her hash'i yeniden hesaplar ve manifest oluşturulduğundan beri **değişen**, **kaldırılan** veya **eklenen** her dosyayı raporlar. Bu komut, audit *log*'unu doğrulayan [`verify-audit`](#/compliance/verify-audit)'in model *ağırlıkları* karşılığıdır.
 
 ## Ne zaman kullanılır
 
@@ -23,6 +23,11 @@ Gerçek tamper-evidence için manifest'in, model dizinine yazan tarafın erişem
 :::
 
 ## Nasıl çalışır
+
+Manifest içindeki `model_path`, manifest üretilirken yazıcıya verilen yolu kaydeder; onaydan sonra
+eski staging yolunu göstermeye devam edebilir. Bu alan, üretimi betimleyen metadata'dır.
+Doğrulayıcı verilen model dizinini ve göreli yapıt adlarını kullanır. Terfi veya taşıma
+sırasında manifest ve yapıt baytlarını değiştirmeyin.
 
 ```mermaid
 sequenceDiagram
@@ -43,9 +48,12 @@ sequenceDiagram
 
 ## Hızlı başlangıç
 
+Bu örnekler altı yapıttan oluşan bir paketi gösterir; sayı kaydedilen dosyalara bağlıdır.
+
 ```shell
 $ forgelm verify-integrity ./checkpoints/final_model
-OK: all 12 recorded artifact(s) present and unchanged.
+OK: ./checkpoints/final_model
+  All 6 recorded artifact(s) present and unchanged.
 ```
 
 CI için makine-okunur çıktı:
@@ -58,11 +66,11 @@ $ forgelm verify-integrity ./checkpoints/final_model --output-format json
 {
   "success": true,
   "valid": true,
-  "reason": "All 12 recorded artifact(s) present and unchanged.",
+  "reason": "All 6 recorded artifact(s) present and unchanged.",
   "changed": [],
   "removed": [],
   "added": [],
-  "verified_count": 12,
+  "verified_count": 6,
   "path": "/work/checkpoints/final_model"
 }
 ```
@@ -108,7 +116,7 @@ Runtime-hatası zarfı (çıkış `2`) yalnızca `{"success": false, "error": "�
 ## Sık yapılan hatalar
 
 :::warn
-**Eksik bir `model_integrity.json`'ı zararsız saymak.** Manifest olmadan karşılaştırılacak bir şey yoktur — `verify-integrity` `0` değil `1` ile çıkar. Bu kapıya güvenmeden önce compliance export'un manifest'i yazdığını doğrulayın.
+**Eksik bir `model_integrity.json`'ı zararsız saymak.** Manifest olmadan karşılaştırılacak bir şey yoktur — `verify-integrity` `0` değil `1` ile çıkar. Bu kapıya güvenmeden önce eğitim sonlandırmasının manifest'i yazdığını doğrulayın. `model.integrity_verified` audit olayı üretimi kaydeder; bağımsız karşılaştırma için doğrulayıcıyı çalıştırın.
 :::
 
 :::warn

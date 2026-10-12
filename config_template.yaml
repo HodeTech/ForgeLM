@@ -29,6 +29,7 @@ lora:
 
 training:
   output_dir: "./checkpoints"
+  # Isolated relative subdirectory; no traversal, symlinks, or reserved run paths (e.g. compliance).
   final_model_dir: "final_model"
   merge_adapters: false
   trainer_type: "sft"  # "sft", "dpo", "simpo", "kto", "orpo", "grpo"

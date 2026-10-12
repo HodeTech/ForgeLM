@@ -3,7 +3,16 @@
 > **Hedef kitle:** Eğitilmiş bir model dizininin, eğitim sırasında kaydedilen SHA-256 manifestiyle hâlâ eşleştiğini doğrulayan uyumluluk operatörleri ve CI kapıları (AB YZ Yasası Madde 15).
 > **Ayna:** [verify_integrity_subcommand.md](verify_integrity_subcommand.md)
 
-`verify-integrity` alt komutu, Madde 15 `model_integrity.json` manifestinin tüketici karşılığıdır. Uyumluluk export'u, model dizinindeki her dosyanın SHA-256 özetini yazar; `verify-integrity` bu manifesti geri okur, her dosyanın SHA-256'sını yeniden hesaplar ve manifest üretildikten sonra **değiştirilen**, **silinen** veya **eklenen** her bir yapıtı raporlar. CLI, kütüphane giriş noktası `forgelm.verify.verify_integrity`'ye devreder (paket kökünde `forgelm.verify_integrity` olarak da erişilebilir) ve yapılandırılmış bir `VerifyIntegrityResult` döndürür.
+`verify-integrity` alt komutu, Madde 15 `model_integrity.json` manifestinin tüketici karşılığıdır. Sonlandırma sırasında trainer, model dizinindeki dosyaları hash'leyip manifesti yazmadan önce model kartını (`README.md`) ve `deployer_instructions.md` dosyasını yazar. Manifest dosyasının kendisi doğrulamadan hariç tutulur. `verify-integrity` bu manifesti geri okur, her dosyanın SHA-256'sını yeniden hesaplar ve manifest üretildikten sonra **değiştirilen**, **silinen** veya **eklenen** her bir yapıtı raporlar. CLI, kütüphane giriş noktası `forgelm.verify.verify_integrity`'ye devreder (paket kökünde `forgelm.verify_integrity` olarak da erişilebilir) ve yapılandırılmış bir `VerifyIntegrityResult` döndürür.
+
+Bu sıra, yeni bir model dizinini kapsar. [Model çıktı yolu politikası](configuration-tr.md#model-çıktı-yolu-politikası),
+model paketlerini değişken audit ve uyumluluk kayıtlarından ayrı tutar.
+
+Manifest içindeki `model_path`, üretimi betimleyen metadata'dır: yazıcıya verilen yolu kaydeder.
+İnsan onayı kullanıldığında, terfi sonrasında artık bulunmayan bir staging yolunu gösterebilir.
+Terfi, manifest baytlarını korur. Doğrulayıcı manifesti verilen model dizininden okur ve yapıt
+yollarını bu dizine göre çözümler; `model_path` doğrulama kökünü belirlemez.
+Yeni dağıtım konumunu göstermek için bu alanı yeniden yazmayın.
 
 ## Söz dizimi
 
@@ -46,16 +55,18 @@ Kodlar `forgelm/cli/subcommands/_verify_integrity.py::_run_verify_integrity_cmd`
 
 ## Emit edilen audit event'leri
 
-`forgelm verify-integrity` **salt-okunur bir doğrulayıcıdır** ve `audit_log.jsonl`'a **hiçbir** girdi emit etmez. Bütünlük-manifestinin *üretimini* (doğrulamasını değil) işaret eden olaylar çalıştırma düzeyindeki eğitim olaylarına biner; bkz. [audit_event_catalog-tr.md](audit_event_catalog-tr.md).
+`forgelm verify-integrity` **salt-okunur bir doğrulayıcıdır** ve `audit_log.jsonl`'a **hiçbir** girdi emit etmez. Trainer, yapıtları hash'leyip manifesti yazdıktan sonra bir kez `model.integrity_verified` olayını üretir. Adına rağmen bu olay bağımsız bir doğrulama geçişini değil, manifestin *üretimini* kaydeder; bkz. [audit_event_catalog-tr.md](audit_event_catalog-tr.md). Sonraki audit kayıtları model paketinin dışına eklenir.
 
 ## Örnekler
+
+Başarı örnekleri altı yapıttan oluşan bir paketi gösterir. Sayı, model ve tokenizer tarafından kaydedilen dosyalara bağlıdır.
 
 ### Metin çıktısı (varsayılan)
 
 ```shell
 $ forgelm verify-integrity checkpoints/run/final_model
 OK: checkpoints/run/final_model
-  All 7 recorded artifact(s) present and unchanged.
+  All 6 recorded artifact(s) present and unchanged.
 ```
 
 ### JSON çıktısı (CI tüketicileri için)
@@ -66,11 +77,11 @@ $ forgelm verify-integrity --output-format json \
 {
   "success": true,
   "valid": true,
-  "reason": "All 7 recorded artifact(s) present and unchanged.",
+  "reason": "All 6 recorded artifact(s) present and unchanged.",
   "changed": [],
   "removed": [],
   "added": [],
-  "verified_count": 7,
+  "verified_count": 6,
   "path": "/abs/path/checkpoints/run/final_model"
 }
 ```

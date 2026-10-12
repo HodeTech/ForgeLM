@@ -20,12 +20,11 @@ while those tests stayed green:
    traceback would satisfy every unit test and still break the contract.  The
    assertion is therefore on ``SystemExit.code`` out of the CLI's real loader.
 
-Two constraints do this work jointly and the split is not obvious, so it is
-recorded here: on a ``ge=0.0``-bounded field the range check already rejects
-``.nan`` and ``-.inf`` (both comparisons are False), and ``allow_inf_nan=False``
-is what rejects ``+inf`` — which ``>= 0.0`` happily accepts.  Mutating either
-one alone therefore turns only part of this matrix red.  Both are asserted
-because dropping either leaves a live hole.
+Finiteness and domain bounds serve separate purposes. Even a bounded float
+can accept NaN on the supported Pydantic 2.0 floor; a lower bound also admits
+``+inf``. Explicit finiteness rejects NaN and ±inf across supported versions,
+while range checks reject finite values outside the documented domain.
+Both are asserted because dropping either accepts invalid configuration.
 """
 
 from __future__ import annotations
@@ -73,6 +72,19 @@ MERGE_SCALAR_MATRIX = [
 # mapping, so they cannot ride the append-a-fragment path above without a duplicate
 # YAML key silently replacing the base section.  ``value`` is substituted verbatim.
 OTHER_FIELD_MATRIX = [
+    ("lora.dropout", ".nan", "a bounded rate still needs explicit finiteness on Pydantic 2.0"),
+    ("training.warmup_ratio", ".nan", "a bounded rate still needs explicit finiteness on Pydantic 2.0"),
+    ("evaluation.benchmark.min_score", ".nan", "a bounded score still needs explicit finiteness on Pydantic 2.0"),
+    ("evaluation.llm_judge.min_score", ".nan", "a bounded score still needs explicit finiteness on Pydantic 2.0"),
+    (
+        "evaluation.safety.max_safety_regression",
+        ".nan",
+        "a bounded rate still needs explicit finiteness on Pydantic 2.0",
+    ),
+    ("evaluation.safety.min_safety_score", ".nan", "a bounded score still needs explicit finiteness on Pydantic 2.0"),
+    ("evaluation.safety.min_classifier_confidence", ".nan", "a confidence bound still needs explicit finiteness"),
+    ("synthetic.min_success_rate", ".nan", "a bounded rate still needs explicit finiteness on Pydantic 2.0"),
+    ("synthetic.sanity_failure_rate", ".nan", "a bounded rate still needs explicit finiteness on Pydantic 2.0"),
     ("training.learning_rate", ".inf", "+inf passes `gt=0` and reaches the optimiser"),
     ("training.weight_decay", ".inf", "+inf passes `ge=0`"),
     ("training.dpo_beta", ".inf", "+inf passes `gt=0`"),
@@ -101,6 +113,9 @@ def _write_raw(tmp_path, dotted: str, raw: str) -> str:
     node = config
     for key in parents:
         node = node.setdefault(key, {})
+    if dotted == "evaluation.safety.min_safety_score":
+        # Isolate finiteness from the unrelated binary-scoring incompatibility.
+        node["scoring"] = "confidence_weighted"
     node[field] = _RAW
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(config).replace(_RAW, raw), encoding="utf-8")
@@ -218,6 +233,34 @@ class TestTheMatrixCanStillLoadAGoodConfig:
     same files load when the values are ordinary.
     """
 
+    @pytest.mark.parametrize(
+        ("section", "field", "value"),
+        [
+            ("training", "learning_rate", 0.0003),
+            ("training", "weight_decay", 0.0),
+            ("training", "orpo_beta", 0.1),
+            ("training", "dpo_beta", 0.1),
+            ("training", "simpo_gamma", 0.0),
+            ("training", "simpo_beta", 2.0),
+            ("training", "kto_beta", 0.1),
+            ("training", "galore_scale", 0.25),
+            ("training", "neftune_noise_alpha", 5.0),
+            ("training", "neftune_noise_alpha", None),
+            ("training", "gpu_cost_per_hour", 0.0),
+            ("training", "gpu_cost_per_hour", None),
+            ("synthetic", "api_delay", 0.0),
+            ("synthetic", "temperature", 0.0),
+        ],
+    )
+    def test_finite_fields_preserve_zero_bounds_and_optional_values(
+        self, section, field, value, tmp_path, minimal_config
+    ):
+        """The Pydantic-floor fix must preserve valid numbers and optional nulls."""
+        config = minimal_config(training={"output_dir": str(tmp_path / "output")})
+        config.setdefault(section, {})[field] = value
+        loaded = _load_config_or_exit(_write(tmp_path, config), False)
+        assert getattr(getattr(loaded, section), field) == value
+
     def test_finite_thresholds_load(self, tmp_path):
         fragment = "evaluation:\n  max_acceptable_loss: 2.0\n  baseline_loss: 1.5\n"
         config = _load_config_or_exit(_write(tmp_path, _base_config(tmp_path), fragment), False)
@@ -227,6 +270,15 @@ class TestTheMatrixCanStillLoadAGoodConfig:
     @pytest.mark.parametrize(
         ("dotted", "value"),
         [
+            ("lora.dropout", "0.0"),
+            ("training.warmup_ratio", "0.0"),
+            ("evaluation.benchmark.min_score", "0.0"),
+            ("evaluation.llm_judge.min_score", "1.0"),
+            ("evaluation.safety.max_safety_regression", "0.0"),
+            ("evaluation.safety.min_safety_score", "0.0"),
+            ("evaluation.safety.min_classifier_confidence", "0.0"),
+            ("synthetic.min_success_rate", "0.0"),
+            ("synthetic.sanity_failure_rate", "0.0"),
             ("training.learning_rate", "0.0003"),
             ("training.neftune_noise_alpha", "5.0"),
             ("training.rope_scaling", "{type: linear, factor: 4.0}"),
@@ -237,7 +289,10 @@ class TestTheMatrixCanStillLoadAGoodConfig:
     )
     def test_ordinary_values_of_the_other_numeric_fields_load(self, dotted, value, tmp_path):
         """The negative control for ``OTHER_FIELD_MATRIX``: same keys, ordinary values."""
-        _load_config_or_exit(_write_raw(tmp_path, dotted, value), False)
+        loaded = _load_config_or_exit(_write_raw(tmp_path, dotted, value), False)
+        for key in dotted.split("."):
+            loaded = getattr(loaded, key)
+        assert loaded == yaml.safe_load(value)
 
     def test_ordinary_merge_block_loads(self, tmp_path):
         fragment = (

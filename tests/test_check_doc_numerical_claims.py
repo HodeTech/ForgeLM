@@ -128,3 +128,39 @@ class TestGuardPassesOnRepo:
         # The shipped docs are correct (webhook_events == 8 everywhere);
         # the hardened guard must NOT start false-failing on them.
         assert guard.main([]) == 0
+
+
+class TestCoreModuleInventory:
+    def test_count_excludes_entry_points_and_subpackages(self, tmp_path, monkeypatch):
+        package = tmp_path / "forgelm"
+        package.mkdir()
+        for name in ("__init__.py", "__main__.py", "config.py", "_trl_compat.py"):
+            (package / name).touch()
+        (package / "cli").mkdir()
+        (package / "cli" / "_parser.py").touch()
+        monkeypatch.setattr(guard, "FORGELM", package)
+        assert guard.canonical_core_modules() == 2
+
+    @pytest.mark.parametrize("claim", ["28 single-file modules", "28 tek-dosya modül"])
+    def test_english_and_turkish_inventory_claims_are_read(self, claim):
+        assert _reads("core_modules", claim) == 28
+
+    def test_stale_inventory_fails_on_each_current_surface(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(guard, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(guard, "DOCS", tmp_path / "docs")
+        surfaces = [
+            tmp_path / "AGENTS.md",
+            tmp_path / "CLAUDE.md",
+            tmp_path / "docs/reference/architecture.md",
+            tmp_path / "docs/reference/architecture-tr.md",
+        ]
+        for path in surfaces:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("27 single-file modules", encoding="utf-8")
+        historical = tmp_path / "docs/roadmap/old.md"
+        historical.parent.mkdir()
+        historical.write_text("12 single-file modules", encoding="utf-8")
+        scope = next(scope for _p, label, scope in guard.build_rules() if label == "core_modules")
+        failures = guard.search_doc_claims(_rule("core_modules"), 28, "core_modules", scope=scope)
+        assert {m.file for m in failures} == set(surfaces)
+        assert all(m.found_value == 27 and m.canonical_value == 28 for m in failures)

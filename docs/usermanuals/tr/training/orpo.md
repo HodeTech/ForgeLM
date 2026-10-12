@@ -7,6 +7,11 @@ description: SFT ve tercih öğrenmesini tek bir eğitim aşamasında birleştir
 
 ORPO, SFT ve DPO'yu tek bir eğitim geçişinde toplar. Loss, standart bir SFT terimini (`chosen` üzerinde) `rejected`'a karşı odds-ratio cezasıyla birleştirir. Sonuç: daha hızlı wall-clock, ayrı aşama yok, referans model yok.
 
+ForgeLM önce üst düzey `trl.ORPOConfig` / `trl.ORPOTrainer` sınıflarını, yoksa `trl.experimental.orpo` yolunu kullanır.
+Bu alternatif, önceden haber verilmeden değişebilen veya kaldırılabilen bir **üst bağımlılık experimental API'sidir**.
+ForgeLM `TRLExperimentalWarning` uyarısını korur, seçilen yolu ve TRL sürümünü loglar; gerekli sınıf iki konumda da
+yoksa açıklayıcı bir config hatası verir.
+
 ## Ne zaman ORPO
 
 | ORPO kullan: | SFT → DPO kullan: |

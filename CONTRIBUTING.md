@@ -2,6 +2,55 @@
 
 Thanks for your interest in contributing! ForgeLM is an open-source project and we welcome contributions of all kinds.
 
+## Your first pull request
+
+1. Pick an open, unassigned [`good first issue`][good-first-issue].
+   Comment to claim it and confirm the problem on `development`; see [Working on an issue](#working-on-an-issue).
+2. [Fork and clone](#1-fork--clone), then [create a branch from `development`](#3-create-a-branch).
+   Use Python **3.10, 3.11, 3.12 or 3.13** — CI tests all four versions. Create a virtual environment
+   with that interpreter (replace `python3.13` below if you selected another supported version),
+   activate it, and install the development extra:
+
+   ```bash
+   python3.13 -m venv .venv
+   source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
+   python -m pip install -e ".[dev]"
+   ```
+
+3. Make the change and, for a code fix, add a regression test that reproduces the issue;
+   follow the [testing standard](docs/standards/testing.md).
+   Documentation changes update the English page and its Turkish mirror together.
+4. Run fast checks before pushing (replace the example test module with the one you touched):
+
+   ```bash
+   ruff format .
+   ruff check .
+   pytest tests/test_config.py --no-cov
+   python3 -m forgelm --config config_template.yaml --dry-run
+   ```
+
+   `--no-cov` keeps a focused test run from applying the whole-suite coverage floor.
+   When documentation changes, also run:
+
+   ```bash
+   python3 tools/check_bilingual_parity.py --strict
+   python3 tools/check_bilingual_code_blocks.py --strict
+   python3 tools/check_tr_links_prefer_mirror.py --strict
+   python3 tools/check_anchor_resolution.py --strict
+   python3 tools/check_readme_links.py --strict
+   python3 tools/check_cli_help_consistency.py --strict
+   ```
+
+   CI runs the complete guard set and full test suite, including coverage; you do not have to run
+   the [full local gauntlet](#4-make-your-changes) before every push. `tests/test_guard_wiring.py`
+   checks that CI and the documented gauntlets contain the same guards and flags.
+5. Push to your fork and [open the PR against `development`](#5-submit-a-pr), using the PR template
+   and `Fixes #N` when it resolves the whole issue (`Refs #N` for a partial fix).
+6. A new contributor's first workflow run may wait for a maintainer to approve it; this is normal
+   [GitHub workflow approval](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/approve-runs-from-forks).
+
+[good-first-issue]: https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+no%3Aassignee+label%3A%22good+first+issue%22
+
 ## Ways to Contribute
 
 - **Bug reports** — found something broken? [Open a bug report](https://github.com/HodeTech/ForgeLM/issues/new?template=bug_report.yml)
@@ -106,8 +155,11 @@ Branch naming: `feat/`, `fix/`, `docs/`, `test/`, `chore/` + short description.
 
 ### 4. Make your changes
 
-Edit the code, then run the full validation gauntlet (every guard CI also
-enforces — passing locally means CI will too):
+Use the [first-PR checklist](#your-first-pull-request) for fast local feedback.
+The full validation gauntlet below is available when you want to reproduce
+the complete local guard set; CI runs it regardless of which checks you run
+locally. A local pass covers your environment, while CI also tests the
+supported Python matrix:
 
 <!-- gauntlet:begin -->
 ```bash

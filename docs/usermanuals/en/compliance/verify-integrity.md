@@ -5,7 +5,7 @@ description: Re-hash a trained model directory against its SHA-256 integrity man
 
 # Verify Model Integrity
 
-`forgelm verify-integrity` is the read-only verifier paired with the Article 15 model-integrity manifest. The compliance export writes `model_integrity.json` next to the final model at training time, recording the SHA-256 and byte size of every artifact. `verify-integrity` re-walks the directory, re-computes each hash, and reports any file that was **changed**, **removed**, or **added** since the manifest was generated. It is the model-artifact counterpart to [`verify-audit`](#/compliance/verify-audit), which verifies the audit *log* rather than the model *weights*.
+`forgelm verify-integrity` is the read-only verifier paired with the Article 15 model-integrity manifest. In a fresh model directory, the trainer writes the model card and `deployer_instructions.md` before generating `model_integrity.json`, which records the SHA-256 and byte size of those documents and the saved model/tokenizer files. The manifest itself is excluded. Keep the model bundle separate from the mutable audit log and compliance output. `verify-integrity` re-walks the directory, re-computes each hash, and reports any file that was **changed**, **removed**, or **added** since the manifest was generated. It is the model-artifact counterpart to [`verify-audit`](#/compliance/verify-audit), which verifies the audit *log* rather than the model *weights*.
 
 ## When to use it
 
@@ -23,6 +23,11 @@ For real tamper-evidence you need the manifest to live somewhere the model direc
 :::
 
 ## How it works
+
+`model_path` in the manifest records the path supplied at generation time; after approval it can
+still name the former staging directory. It is descriptive generation metadata. The verifier
+uses the supplied model directory and relative artifact names. Keep manifest and artifact
+bytes unchanged during promotion or relocation.
 
 ```mermaid
 sequenceDiagram
@@ -43,9 +48,12 @@ sequenceDiagram
 
 ## Quick start
 
+These examples illustrate a six-artifact bundle; the count depends on the saved files.
+
 ```shell
 $ forgelm verify-integrity ./checkpoints/final_model
-OK: all 12 recorded artifact(s) present and unchanged.
+OK: ./checkpoints/final_model
+  All 6 recorded artifact(s) present and unchanged.
 ```
 
 Machine-readable output for CI:
@@ -58,11 +66,11 @@ $ forgelm verify-integrity ./checkpoints/final_model --output-format json
 {
   "success": true,
   "valid": true,
-  "reason": "All 12 recorded artifact(s) present and unchanged.",
+  "reason": "All 6 recorded artifact(s) present and unchanged.",
   "changed": [],
   "removed": [],
   "added": [],
-  "verified_count": 12,
+  "verified_count": 6,
   "path": "/work/checkpoints/final_model"
 }
 ```
@@ -108,7 +116,7 @@ An **empty** `artifacts` list is on `1` for the same reason, with its own messag
 ## Common pitfalls
 
 :::warn
-**Treating a missing `model_integrity.json` as benign.** Without the manifest there is nothing to verify against — `verify-integrity` exits `1`, not `0`. Confirm the compliance export wrote the manifest before relying on this gate.
+**Treating a missing `model_integrity.json` as benign.** Without the manifest there is nothing to verify against — `verify-integrity` exits `1`, not `0`. Confirm training finalization wrote the manifest before relying on this gate. The `model.integrity_verified` audit event records generation; run the verifier for an independent comparison.
 :::
 
 :::warn

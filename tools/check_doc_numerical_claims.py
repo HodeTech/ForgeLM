@@ -116,6 +116,11 @@ def canonical_test_modules() -> int:
     return sum(1 for _ in (REPO_ROOT / "tests").glob("test_*.py"))
 
 
+def canonical_core_modules() -> int:
+    """Count top-level Python modules, excluding package and CLI entry points."""
+    return sum(1 for p in FORGELM.glob("*.py") if p.is_file() and p.name not in {"__init__.py", "__main__.py"})
+
+
 def canonical_ci_guards() -> int:
     """Count ``tools/check_*.py`` CI guards.
 
@@ -259,10 +264,25 @@ def _scanned_docs(scope: str) -> List[Path]:
     figures ("+4 CI guards this wave") that are correct as written and must not
     be rewritten to the current total. README is the one place they mean "how
     many exist now", so it is the one place the guard enforces them.
+
+    ``"module_inventory"`` — agent instructions and EN/TR architecture trees,
+    whose top-level module counts describe the current checkout.
     """
     readme = REPO_ROOT / "README.md"
     if scope == "toplevel":
         return [readme] if readme.exists() else []
+    if scope == "module_inventory":
+        # Current inventories only: historical roadmap counts remain records.
+        return [
+            p
+            for p in (
+                REPO_ROOT / "AGENTS.md",
+                REPO_ROOT / "CLAUDE.md",
+                DOCS / "reference/architecture.md",
+                DOCS / "reference/architecture-tr.md",
+            )
+            if p.exists()
+        ]
     files = list(DOCS.rglob("*.md"))
     if readme.exists():
         files.append(readme)
@@ -285,6 +305,14 @@ def build_rules() -> List[Tuple[re.Pattern[str], str, str]]:
     ``five``.
     """
     return [
+        (
+            re.compile(
+                r"\b(?P<count>\d{1,4})[ \t]{1,20}(?:single-file[ \t]{1,20}modules|tek-dosya[ \t]{1,20}modül)\b",
+                re.IGNORECASE,
+            ),
+            "core_modules",
+            "module_inventory",
+        ),
         # "9 secret families", "nine secret families", "9 secret patterns"
         (
             re.compile(
@@ -378,6 +406,7 @@ def main(argv=None) -> int:
         "webhook_events": canonical_webhook_events(),
         "test_modules": canonical_test_modules(),
         "ci_guards": canonical_ci_guards(),
+        "core_modules": canonical_core_modules(),
     }
 
     rules = build_rules()

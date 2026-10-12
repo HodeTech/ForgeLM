@@ -131,6 +131,192 @@ class TestTrainingConfig:
         assert TrainingConfig(oom_recovery_min_batch_size=1).oom_recovery_min_batch_size == 1
 
 
+class TestFinalModelDirectoryPolicy:
+    @pytest.mark.parametrize("benchmark_relative", ["models/final", "models/final/metrics", "models"])
+    @pytest.mark.parametrize("absolute", [False, True])
+    def test_rejects_custom_benchmark_overlap_without_writes(
+        self, tmp_path, minimal_config, monkeypatch, benchmark_relative, absolute
+    ):
+        monkeypatch.chdir(tmp_path)
+        output = tmp_path / "output"
+        benchmark = output / benchmark_relative if absolute else Path("output") / benchmark_relative
+        with pytest.raises(ValidationError, match=r"benchmark\.output_dir"):
+            ForgeConfig.model_validate(
+                minimal_config(
+                    training={"output_dir": str(output), "final_model_dir": "models/final"},
+                    evaluation={"benchmark": {"enabled": True, "tasks": ["arc_easy"], "output_dir": str(benchmark)}},
+                )
+            )
+        assert not output.exists()
+
+    @pytest.mark.parametrize("target", ["models/final", "models/final/metrics", "models"])
+    def test_rejects_benchmark_alias_overlap(self, tmp_path, minimal_config, target):
+        output = tmp_path / "output"
+        destination = output / target
+        destination.mkdir(parents=True)
+        alias = tmp_path / "benchmark-alias"
+        alias.symlink_to(destination, target_is_directory=True)
+        sentinel = destination / "keep.txt"
+        sentinel.write_bytes(b"keep benchmark evidence")
+        with pytest.raises(ValidationError, match=r"benchmark\.output_dir"):
+            ForgeConfig.model_validate(
+                minimal_config(
+                    training={"output_dir": str(output), "final_model_dir": "models/final"},
+                    evaluation={"benchmark": {"enabled": True, "tasks": ["arc_easy"], "output_dir": str(alias)}},
+                )
+            )
+        assert sentinel.read_bytes() == b"keep benchmark evidence"
+
+    @pytest.mark.parametrize("location", [None, "", "metrics", "external"])
+    def test_accepts_separate_benchmark_output(self, tmp_path, minimal_config, location):
+        output = tmp_path / "output"
+        benchmark = None if location is None else ""
+        if location:
+            benchmark = str(tmp_path / "external" if location == "external" else output / location)
+        config = ForgeConfig.model_validate(
+            minimal_config(
+                training={"output_dir": str(output), "final_model_dir": "models/final"},
+                evaluation={"benchmark": {"enabled": True, "tasks": ["arc_easy"], "output_dir": benchmark}},
+            )
+        )
+        assert config.evaluation.benchmark.output_dir == benchmark
+        assert not output.exists()
+
+    def test_disabled_benchmark_does_not_reserve_its_custom_output(self, tmp_path, minimal_config):
+        output = tmp_path / "output"
+        config = ForgeConfig.model_validate(
+            minimal_config(
+                training={"output_dir": str(output)},
+                evaluation={"benchmark": {"enabled": False, "output_dir": str(output / "final_model")}},
+            )
+        )
+        assert config.evaluation.benchmark.enabled is False
+        assert not output.exists()
+
+    def test_dry_run_rejects_benchmark_overlap_before_output_creation(self, tmp_path, minimal_config, monkeypatch):
+        import sys
+
+        from forgelm.cli import main
+
+        output = tmp_path / "output"
+        config_file = tmp_path / "overlap.yaml"
+        config_file.write_text(
+            yaml.safe_dump(
+                minimal_config(
+                    training={"output_dir": str(output)},
+                    evaluation={
+                        "benchmark": {
+                            "enabled": True,
+                            "tasks": ["arc_easy"],
+                            "output_dir": str(output / "final_model/metrics"),
+                        }
+                    },
+                )
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(sys, "argv", ["forgelm", "--config", str(config_file), "--dry-run"])
+        with pytest.raises(SystemExit) as raised:
+            main()
+        assert raised.value.code == 1
+        assert not output.exists()
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "",
+            " ",
+            ".",
+            "..",
+            "../x",
+            "/abs/outside",
+            "sub/../..",
+            "sub/../model",
+            "final_model/",
+            "models/final/.",
+            "C:/outside",
+            "C:outside",
+            "\\\\server\\share",
+            "models\\final",
+            "bad\x00path",
+            "compliance",
+            "compliance/model",
+            "COMPLIANCE",
+            "audit_log.jsonl",
+            "audit_log.jsonl.manifest.json",
+            "data_audit_report.json",
+            "runs/model",
+            "checkpoint-10",
+            "benchmark",
+            "safety",
+            "judge",
+        ],
+    )
+    def test_rejects_unsafe_or_shared_destinations_without_writes(self, tmp_path, value):
+        output = tmp_path / "output"
+        with pytest.raises(ValidationError, match="final_model_dir"):
+            ForgeConfig(**minimal_config(training={"output_dir": str(output), "final_model_dir": value}))
+        assert not output.exists()
+
+    @pytest.mark.parametrize("value", ["final_model", "custom-model", "models/final"])
+    def test_accepts_isolated_relative_directories_without_normalizing(self, tmp_path, value):
+        output = tmp_path / "output"
+        config = ForgeConfig(**minimal_config(training={"output_dir": str(output), "final_model_dir": value}))
+        assert config.training.final_model_dir == value
+        assert not output.exists()
+
+    @pytest.mark.parametrize("target_name", ["root", "outside", "compliance"])
+    def test_rejects_symlink_destinations_including_default(self, tmp_path, target_name):
+        output = tmp_path / "output"
+        output.mkdir()
+        target = {"root": output, "outside": tmp_path / "outside", "compliance": output / "compliance"}[target_name]
+        target.mkdir(exist_ok=True)
+        (output / "final_model").symlink_to(target, target_is_directory=True)
+        with pytest.raises(ValidationError, match="final_model_dir"):
+            ForgeConfig(**minimal_config(training={"output_dir": str(output)}))
+
+    @pytest.mark.parametrize("reserved", ["compliance", "checkpoint-1"])
+    @pytest.mark.parametrize("destination", ["models", "models/reports/final"])
+    def test_rejects_symlink_parent_and_overlap_with_aliased_records(self, tmp_path, reserved, destination):
+        output = tmp_path / "output"
+        models = output / "models"
+        models.mkdir(parents=True)
+        (output / "alias").symlink_to(models, target_is_directory=True)
+        with pytest.raises(ValidationError, match="final_model_dir"):
+            TrainingConfig(output_dir=str(output), final_model_dir="alias/final")
+        (output / reserved).symlink_to(models / "reports", target_is_directory=True)
+        with pytest.raises(ValidationError, match="final_model_dir"):
+            TrainingConfig(output_dir=str(output), final_model_dir=destination)
+
+    def test_symlink_loop_is_reported_as_validation_error(self, tmp_path):
+        (tmp_path / "final_model").symlink_to(tmp_path / "final_model", target_is_directory=True)
+        with pytest.raises(ValidationError, match="final_model_dir"):
+            TrainingConfig(output_dir=str(tmp_path))
+
+    def test_rejects_existing_file_destination(self, tmp_path):
+        (tmp_path / "model").write_text("keep", encoding="utf-8")
+        with pytest.raises(ValidationError, match="final_model_dir"):
+            TrainingConfig(output_dir=str(tmp_path), final_model_dir="model")
+        assert (tmp_path / "model").read_text(encoding="utf-8") == "keep"
+
+    def test_dry_run_reports_config_exit_one_without_creating_output(self, tmp_path, monkeypatch):
+        import sys
+
+        from forgelm.cli import main
+
+        output = tmp_path / "output"
+        path = tmp_path / "invalid.yaml"
+        path.write_text(
+            yaml.safe_dump(minimal_config(training={"output_dir": str(output), "final_model_dir": "compliance"})),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(sys, "argv", ["forgelm", "--config", str(path), "--dry-run"])
+        with pytest.raises(SystemExit) as raised:
+            main()
+        assert raised.value.code == 1
+        assert not output.exists()
+
+
 # --- EvaluationConfig ---
 
 

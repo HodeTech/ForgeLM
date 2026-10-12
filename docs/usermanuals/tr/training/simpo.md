@@ -7,6 +7,11 @@ description: Referans modelsiz tercih öğrenmesi — bellekte ikinci model olma
 
 SimPO, DPO'nun sadeleştirilmiş kuzenidir; referans modeli denklemden çıkarır. Ödünleşim: yaklaşık yarı VRAM, biraz daha az kararlılık.
 
+ForgeLM önce üst düzey `trl.CPOConfig` / `trl.CPOTrainer` sınıflarını, yoksa `trl.experimental.cpo` yolunu kullanır.
+Bu alternatif, önceden haber verilmeden değişebilen veya kaldırılabilen bir **üst bağımlılık experimental API'sidir**.
+ForgeLM `TRLExperimentalWarning` uyarısını korur, seçilen yolu ve TRL sürümünü loglar; gerekli sınıf iki konumda da
+yoksa açıklayıcı bir config hatası verir.
+
 ## Ne zaman SimPO
 
 | SimPO kullan: | DPO tercih et: |
@@ -60,7 +65,11 @@ SimPO knob'ları `training:` altında flat alanlardır (nested `training.simpo:`
 | `training.simpo_gamma` | float | `0.5` | Margin — chosen ve rejected log-likelihood arasında SimPO'nun korumaya çalıştığı boşluk. |
 | `training.trainer_type` | string | `"sft"` | SimPO eğitim yolunu açmak için `"simpo"` olarak set edin. |
 
-ForgeLM `loss_type`, `length_normalize` veya `label_smoothing`'i yapılandırılabilir alan olarak **sunmaz** — TRL'in CPO/SimPO trainer'ı kütüphane varsayılanlarıyla çalışır (sigmoid loss, length normalisation her zaman açık, label smoothing yok).
+ForgeLM `loss_type="simpo"` ve `cpo_alpha=0` değerlerini sabitler (saf SimPO, NLL terimi yoktur);
+`simpo_beta` değerini `beta` olarak, `simpo_gamma` değerini doğrudan aktarır.
+TRL bu loss için yanıt log-olasılıklarını uzunluğa göre normalize eder.
+ForgeLM `loss_type`, `length_normalize` veya `label_smoothing` alanlarını yapılandırmaya **açmaz**;
+label smoothing, TRL'in varsayılan `0` değerinde kalır.
 
 ## Bellek
 

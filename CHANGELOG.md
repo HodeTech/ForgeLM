@@ -4,6 +4,51 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Make `training.warmup_ratio: 1.0` warm up over all training steps instead of one absolute step,
+  preserving the configured fraction across all six trainer types with supported Transformers versions.
+- Qualify EN/TR EU AI Act summaries with the separate Annex I, Section B application regime
+  and the synthetic-content system scope and market-date condition of the Article 111(4) transition.
+- Reject enabled benchmarks whose custom output directory overlaps the final or staged model
+  directory, including resolved aliases and containment in either direction. Validate sibling
+  configuration fields together and recheck before model writes or auto-revert so benchmark
+  evidence remains outside deletable model bundles.
+- Preserve the configured warmup schedule with newer Transformers/TRL releases by passing the
+  existing YAML `training.warmup_ratio` through fractional `warmup_steps`, supported throughout
+  the declared Transformers range. Restore real ORPO/SimPO construction without changing
+  dependency floors or suppressing compatibility tests.
+- Restore configuration loading with the supported Pydantic 2.0 minimum by avoiding duplicate
+  `Field` metadata in finite-number and final-model directory types. Preserve non-finite rejection,
+  numeric bounds, optional nulls, and validation of the default model directory; explicitly reject
+  NaN in bounded float fields on the minimum version too.
+- Align the EN/TR SimPO quick example with the schema's `simpo_gamma: 0.5` default and correct
+  the German GitHub star label while preserving the star action and contribution entry points.
+- Clarify that the CPU demo captures the pre-fix integrity failure; preserve its recorded outputs.
+  Replace obsolete compliance evidence symbols in EN/TR references, and document integrity `model_path`
+  as generation metadata preserved during promotion, with byte-preservation and promoted-CLI verification checks.
+- Resolve dynamically exposed ORPO/SimPO classes even when omitted from a module's `dir()` listing;
+  preserve declared-export and transitive load failures, experimental warnings, and top-level preference.
+- Reject unsafe `training.final_model_dir` layouts at config load (exit `1`): require an isolated
+  relative model directory, separate from audit, compliance, evaluation, logging, and checkpoint paths.
+  Reject trailing separators/dot components that would put approval staging inside the final directory.
+  Recheck destinations before initialization, saving, finalization, and auto-revert; preserve run records
+  when deleting a rejected final or staged model, including nested custom model directories.
+- Derive current top-level module inventories from the source tree in the numerical-claims guard;
+  correct the agent and EN/TR architecture inventories and list the TRL compatibility and strict JSON helpers.
+- Resolve ORPO and SimPO config/trainer classes from top-level TRL or its experimental ORPO/CPO modules,
+  restoring construction when TRL no longer exports them at the top level. Preserve upstream experimental
+  warnings and dependency-load errors, and report missing classes with the installed TRL version and
+  actionable guidance. Exercise real installed classes and local CPU trainer construction without skips;
+  document the experimental API boundary and SimPO's explicit loss configuration.
+- Write deployer instructions before the model-integrity manifest so a fresh, separate model
+  directory passes `verify-integrity`. Include the Article 13 document in the checksums while
+  preserving exit `6` for changed, removed, or added artifacts.
+- Correct the EU AI Act high-risk application dates in the safety guide and public product overview,
+  with matching Turkish text and primary EUR-Lex citations. Distinguish the Annex III / Annex I
+  schedules from transparency and general-purpose AI obligations and their transition provisions;
+  clarify that documentation artifacts do not establish legal compliance.
+
 ### Breaking
 
 - **A config carrying a non-finite or out-of-domain number now exits `1`.**
@@ -15,7 +60,7 @@ All notable changes to ForgeLM are documented here.
   (`training.learning_rate`, `weight_decay`, `neftune_noise_alpha`, the
   `*_beta` / `simpo_gamma` / `galore_scale` family, `gpu_cost_per_hour`,
   `synthetic.api_delay` / `temperature`, and each `rope_scaling` factor) rejects
-  NaN and ±inf — `gt=0` and `ge=0` reject NaN but accept `+inf`, so
+  NaN and ±inf — `gt=0` and `ge=0` accept `+inf`, so
   `learning_rate: .inf` loaded cleanly and `neftune_noise_alpha: .nan` reached
   `TrainingArguments`. `evaluation.benchmark.limit` must be `>= 1` and
   `num_fewshot` `>= 0`. **Why it matters:** `x > nan` is always False,
@@ -94,6 +139,12 @@ All notable changes to ForgeLM are documented here.
 
 ### Added
 
+- Add a recorded CPU validation, data audit, and audit-log verification sample with EN/TR provenance
+  and limitations; link it from the README and website, expose installation and dry-run quickstart
+  commands in the hero, and make contributor entry points visible.
+
+- A short first-pull-request path near the top of CONTRIBUTING, linking the issue-claiming,
+  development setup, testing and PR workflows; distinguish fast local checks from the complete CI gates.
 - **Private security reporting and a security policy.** Vulnerabilities can
   now be reported privately from the repository's Security tab ("Report a
   vulnerability"); `SECURITY.md` explains what to include, what counts as a

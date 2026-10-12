@@ -32,8 +32,9 @@ ForgeLM ships out-of-the-box:
 - **EU AI Act Article 14** human-oversight gate via
   `forgelm approve` / `reject` Article 14 staging.
 - **EU AI Act Article 15** model-integrity via
-  `compute_artefact_sha256` + `model_integrity.json`; post-deployment
-  verification via `forgelm verify-integrity`.
+  `generate_model_integrity` + `model_integrity.json`, generated after
+  the model card and deployer instructions in a fresh model directory;
+  post-deployment verification via `forgelm verify-integrity`.
 - **EU AI Act Article 17** QMS templates in `docs/qms/` (Wave 0
   baseline + Wave 4 ISO additions).
 - **GDPR Article 15** right-of-access via `forgelm reverse-pii`.
@@ -312,14 +313,15 @@ ISMS posture:
 
 ## Evidence locations (symbol references — line-stable)
 
-Wave 4 / Faz 26 cleanup: each link points at the file root, not a
-line anchor.  The auditor opens the file and greps the cited symbol
-name; this survives refactors that the prior `#L33` form did not.
+References use module and symbol names rather than source line numbers.
+Search the named module for the cited symbol; the reference remains useful
+when surrounding source lines move.
 
 - **Auto-revert + safety-eval gate**: `forgelm.trainer` (search for
-  `_revert_model`, `auto_revert`, `_run_safety_eval`).
-- **Safety classifier + 3-layer gate**: `forgelm.safety` (search for
-  `LlamaGuardClassifier`, `_evaluate_3_layer_gate`).
+  `_revert_model`, `auto_revert`, `_run_safety_if_configured`).
+- **Safety classifiers + 3-layer gate**: `forgelm.safety._classifier` (search for
+  `_load_safety_classifier`, `_load_generative_guard`) and `forgelm.safety._gates`
+  (search for `_evaluate_safety_gates`).
 - **Audit chain + HMAC + manifest**: `forgelm.compliance` (search
   for `AuditLogger`, `_check_genesis_manifest`,
   `generate_model_integrity`).
@@ -328,8 +330,7 @@ name; this survives refactors that the prior `#L33` form did not.
   `_hash_target_id`).
 - **GDPR Article 15 reverse-pii**: `forgelm.cli.subcommands._reverse_pii`.
 - **Article 14 staging + approve / reject**:
-  `forgelm.cli.subcommands._approve`,
-  `forgelm.cli.subcommands._reject`,
+  `forgelm.cli.subcommands._approve` (search for `_run_approve_cmd`, `_run_reject_cmd`),
   `forgelm.cli.subcommands._approvals`.
 - **Webhook lifecycle**: `forgelm.webhook` (search for
   `notify_start`, `notify_success`, `notify_failure`,

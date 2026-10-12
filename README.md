@@ -7,6 +7,8 @@
 
 **The config-driven LLM fine-tuning toolkit for teams that ship models into regulated environments.** YAML in — fine-tuned model, safety report, and EU AI Act audit artefacts out, with stable exit codes so a failed safety gate fails your pipeline instead of your launch.
 
+Want to contribute? Start with [your first pull request](https://github.com/HodeTech/ForgeLM/blob/development/CONTRIBUTING.md#your-first-pull-request) or an [unassigned good first issue](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee).
+
 New to fine-tuning? `forgelm quickstart customer-support` generates a config and seed dataset sized for a 12 GB GPU, trains it, and drops you into a chat REPL with the result — and you can ignore everything below until you need it.
 
 ---
@@ -71,12 +73,31 @@ forgelm deploy ./checkpoints/final_model --target ollama
 
 ---
 
+## Try it without a GPU
+
+Validate a configuration, audit eight synthetic rows, and check a recorded audit-log chain on CPU.
+The [CPU sample](https://github.com/HodeTech/ForgeLM/blob/development/docs/guides/cpu-demo/README.md)
+contains the exact commands, unedited outputs, original log, version, date, and limitations.
+This is its real audit-log verification recording:
+
+```text
++ python3 -m forgelm verify-audit recorded-output/audit_log.jsonl
+OK: 7 entries verified
+```
+
+These checks do not establish model quality, safety, or legal compliance. The sample also documents
+why its source training bundle did not pass the separate model-integrity check.
+
+---
+
 ## What comes out
 
 ```text
 checkpoints/
 ├── final_model/
-│   └── model_integrity.json          # SHA-256 of every artefact in this directory
+│   ├── README.md                     # Model card
+│   ├── deployer_instructions.md      # Article 13 — deployer instructions
+│   └── model_integrity.json          # SHA-256 of saved files, including both documents
 ├── compliance/
 │   ├── annex_iv_metadata.json        # EU AI Act Annex IV technical documentation
 │   ├── data_governance_report.json   # Article 10 — inlines the dataset audit report
@@ -158,6 +179,11 @@ Both gates previously printed their finding and exited `0`. `--allow-secrets` an
 | **Data in** | `forgelm ingest` turns PDF / DOCX / EPUB / TXT / Markdown into SFT-ready JSONL, with PII and secrets masking before chunks are written |
 | **Evaluation** | `lm-evaluation-harness` benchmarks, LLM-as-judge, Llama Guard safety scoring with S1–S14 categories; `--fit-check` reports `FITS / TIGHT / OOM / UNKNOWN` before you allocate a GPU |
 | **Out** | GGUF export (6 quant levels), Ollama / vLLM / TGI / HF Endpoints configs, model merging (TIES, DARE, SLERP, linear), auto-generated model cards, Slack / Teams webhooks, W&B / MLflow / TensorBoard |
+
+**ORPO and SimPO use upstream experimental APIs** when TRL does not export their classes at the top level:
+`trl.experimental.orpo` and `trl.experimental.cpo`, respectively. ForgeLM preserves `TRLExperimentalWarning`;
+these APIs may change or disappear without notice. SimPO uses `CPOTrainer` with `loss_type="simpo"` and
+`cpo_alpha=0`, without a reference model or NLL term.
 
 **Stable Python API** — `from forgelm import ForgeTrainer, audit_dataset, verify_audit_log, …`; training, dataset audit, and the artefact verifiers have typed, semver-protected entry points.
 

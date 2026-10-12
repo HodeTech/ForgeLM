@@ -620,7 +620,7 @@
     "home.cta.title":             "Liefern Sie Ihren nächsten Fine-Tune <span class=\"text-gradient\">an einem Nachmittag</span> aus.",
     "home.cta.body":              "Wählen Sie eine Vorlage, richten Sie sie auf Ihre Daten, sehen Sie zu, wie der Audit-Bericht grün wird — den Rest schmiedet ForgeLM.",
     "home.cta.btn1":              "Schnellstart in 5 Minuten",
-    "home.cta.btn2":              "Auf GitHub starren"
+    "home.cta.btn2":              "GitHub mit Stern versehen"
   });
 
   Object.assign(T.fr, {
@@ -4666,6 +4666,32 @@
   Object.assign(T.zh, {
     "wizard.training.max_length.label": "最大序列长度",
     "wizard.training.max_length.hint": "每个训练样本的 token 数。2048 是安全的默认值;长上下文模型可调高 (超过 4096 时 RoPE 缩放生效)。",
+  });
+
+  // CPU sample copy: code and recorded command output stay language-neutral.
+  Object.assign(T.en, {
+    "common.footer.contribute": "Contribute",
+    "home.demo.install": "Install and generate a config without training:",
+    "home.demo.recorded": "Recorded CPU log check · 11 October 2026",
+    "home.demo.scope": "This checks a recorded audit-log chain. It does not verify model files or establish model quality, safety, or legal compliance.",
+    "home.demo.guide": "Try the CPU sample: commands, raw outputs, and limitations →",
+    "home.demo.guide_href": "https://github.com/HodeTech/ForgeLM/blob/development/docs/guides/cpu-demo/README.md",
+    "home.contribute.title": "Contribute to ForgeLM",
+    "home.contribute.body": "Start with the first pull request guide and an unassigned good first issue. Documentation, translations, tests, and small fixes all help.",
+    "home.contribute.guide": "Your first pull request",
+    "home.contribute.issues": "Browse good first issues"
+  });
+  Object.assign(T.tr, {
+    "common.footer.contribute": "Katkıda bulun",
+    "home.demo.install": "Kurun ve eğitim başlatmadan yapılandırma oluşturun:",
+    "home.demo.recorded": "Kaydedilmiş CPU log kontrolü · 11 Ekim 2026",
+    "home.demo.scope": "Bu kontrol, kaydedilmiş audit log zincirini denetler. Model dosyalarını doğrulamaz; model kalitesi, güvenliği veya hukuki uyumluluk kanıtı değildir.",
+    "home.demo.guide": "CPU örneğini deneyin: komutlar, ham çıktılar ve sınırlamalar →",
+    "home.demo.guide_href": "https://github.com/HodeTech/ForgeLM/blob/development/docs/guides/cpu-demo/README-tr.md",
+    "home.contribute.title": "ForgeLM'e katkıda bulunun",
+    "home.contribute.body": "İlk pull request rehberiyle ve henüz atanmamış bir başlangıç işiyle başlayın. Belgeler, çeviriler, testler ve küçük düzeltmeler katkı sağlar.",
+    "home.contribute.guide": "İlk pull request'iniz",
+    "home.contribute.issues": "Başlangıç işlerine göz atın"
   });
 
   window.ForgeLMTranslations = T;

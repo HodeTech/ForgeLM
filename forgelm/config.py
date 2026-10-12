@@ -6,9 +6,9 @@ import warnings
 from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
-from pydantic import Field as PydField
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, ValidationError, field_validator, model_validator
 
+from ._artifact_paths import _validate_config_directory, _validate_config_layout
 from ._strict_json import dumps_strict
 
 logger = logging.getLogger("forgelm.config")
@@ -32,12 +32,6 @@ logger = logging.getLogger("forgelm.config")
 # Without the marker, a future edit that moves a field name within the
 # guard's line window would turn this comment into a CI failure.)
 DEPRECATION_REMOVAL_VERSION = "v1.0.0"
-
-# A float that refuses NaN and ±inf.  ``gt=0`` / ``ge=0`` already reject NaN and
-# ``-inf`` (both comparisons are False) but accept ``+inf``, and an unbounded
-# field accepts all three; ``allow_inf_nan=False`` is what closes the rest.
-# Every float schema field uses this, enforced by ``tests/test_config_non_finite_matrix.py``.
-FiniteFloat = Annotated[float, PydField(allow_inf_nan=False)]
 
 # The one regex the revision-pin feature owes docs/standards/regex.md.
 #
@@ -363,7 +357,7 @@ class LoraConfigModel(BaseModel):
         description="LoRA scaling factor (typically `2 * r`).",
         json_schema_extra={"wizard": True},
     )
-    dropout: float = Field(
+    dropout: FiniteFloat = Field(
         default=0.1,
         ge=0.0,
         le=1.0,
@@ -459,8 +453,9 @@ class TrainingConfig(BaseModel):
         default="./checkpoints", description="Directory for intermediate checkpoints + audit log + compliance bundle."
     )
     final_model_dir: str = Field(
-        default="final_model", description="Subdirectory of `output_dir` where the final promoted model lands."
+        default="final_model", validate_default=True, description="Isolated subdirectory of output_dir."
     )
+    _validate_final_model_dir = field_validator("final_model_dir")(_validate_config_directory)
     merge_adapters: bool = Field(
         default=False,
         description="When SFT finishes, merge LoRA adapters into the base model (writes a full-weight model).",
@@ -496,7 +491,7 @@ class TrainingConfig(BaseModel):
         description="Peak learning rate.  LoRA / QLoRA usually tolerates 2e-4; full-finetune wants 2e-5.",
         json_schema_extra={"wizard": True},
     )
-    warmup_ratio: float = Field(
+    warmup_ratio: FiniteFloat = Field(
         default=0.1, ge=0, le=1, description="Fraction of total steps spent warming up the learning rate from 0 → peak."
     )
     weight_decay: FiniteFloat = Field(
@@ -894,7 +889,7 @@ class BenchmarkConfig(BaseModel):
     output_dir: Optional[str] = Field(
         default=None, description="Where to save benchmark results JSON.  Defaults to the training output_dir."
     )
-    min_score: Optional[float] = Field(
+    min_score: Optional[FiniteFloat] = Field(
         default=None,
         ge=0.0,
         le=1.0,
@@ -953,7 +948,7 @@ class SafetyConfig(BaseModel):
     test_prompts: str = Field(
         default="safety_prompts.jsonl", description="Path to JSONL file with adversarial test prompts."
     )
-    max_safety_regression: float = Field(
+    max_safety_regression: FiniteFloat = Field(
         default=0.05,
         ge=0.0,
         le=1.0,
@@ -969,13 +964,13 @@ class SafetyConfig(BaseModel):
             "unsafe=0.0), so the weighted score degenerates to the binary safe-ratio."
         ),
     )
-    min_safety_score: Optional[float] = Field(
+    min_safety_score: Optional[FiniteFloat] = Field(
         default=None,
         ge=0.0,
         le=1.0,
         description='Weighted score threshold (0.0–1.0); used when `scoring="confidence_weighted"`.',
     )
-    min_classifier_confidence: float = Field(
+    min_classifier_confidence: FiniteFloat = Field(
         default=0.7,
         ge=0.0,
         le=1.0,
@@ -991,7 +986,7 @@ class SafetyConfig(BaseModel):
     # non-finite entry silently disarmed the severity gate for that level.
     # ``Annotated`` puts the constraint on the value type, which is the only
     # place a per-entry rule can live.
-    severity_thresholds: Optional[Dict[str, Annotated[float, PydField(ge=0.0, le=1.0, allow_inf_nan=False)]]] = Field(
+    severity_thresholds: Optional[Dict[str, Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]]] = Field(
         default=None,
         description=(
             'Per-severity limits: e.g. `{"critical": 0, "high": 0.01}`.  Auto-revert when exceeded.  '
@@ -1116,7 +1111,7 @@ class JudgeConfig(BaseModel):
         ),
     )
     eval_dataset: str = Field(default="eval_prompts.jsonl", description="JSONL file of evaluation prompts to score.")
-    min_score: float = Field(
+    min_score: FiniteFloat = Field(
         default=5.0,
         ge=1.0,
         le=10.0,
@@ -1387,7 +1382,7 @@ class SyntheticConfig(BaseModel):
             "portable chat format for external tools."
         ),
     )
-    min_success_rate: float = Field(
+    min_success_rate: FiniteFloat = Field(
         default=0.0,
         ge=0.0,
         le=1.0,
@@ -1398,7 +1393,7 @@ class SyntheticConfig(BaseModel):
             "pipeline does not train on a near-empty dataset from a mostly-failed run."
         ),
     )
-    sanity_failure_rate: float = Field(
+    sanity_failure_rate: FiniteFloat = Field(
         default=0.2,
         ge=0.0,
         le=1.0,
@@ -1980,7 +1975,7 @@ class ForgeConfig(BaseModel):
         # bespoke `_validate_trainer_type` runtime check became redundant.
         self._validate_galore()
         self._validate_distributed()
-        return self
+        return _validate_config_layout(self)
 
 
 class ConfigError(Exception):

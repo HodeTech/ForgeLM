@@ -10,7 +10,9 @@ from typing import Any, Dict, Optional
 # NOTE: Heavy ML imports (torch, transformers.EarlyStoppingCallback, trl.SFTConfig/SFTTrainer)
 # are deferred to method bodies so `import forgelm.trainer` is cheap. Eagerly importing
 # torch here costs ~3-5s of CLI startup per invocation. See closure-plan F-performance-101.
+from ._artifact_paths import _check_model_destination, _final_model_path
 from ._strict_json import dumps_strict
+from ._trl_compat import _resolve_preference_symbol
 from .config import ConfigError
 from .grpo_rewards import ANSWER_EXTRACT_PATTERN
 
@@ -347,6 +349,7 @@ class ForgeTrainer:
         self.notifier = WebhookNotifier(config)
         self.run_name = config.model.name_or_path.split("/")[-1] + "_finetune"
 
+        _final_model_path(self.checkpoint_dir, self.config)
         os.makedirs(self.checkpoint_dir, exist_ok=True)
 
         # Art. 12: Structured audit log
@@ -503,7 +506,8 @@ class ForgeTrainer:
             "per_device_train_batch_size": self.config.training.per_device_train_batch_size,
             "gradient_accumulation_steps": self.config.training.gradient_accumulation_steps,
             "learning_rate": self.config.training.learning_rate,
-            "warmup_ratio": self.config.training.warmup_ratio,
+            # Keep 100% warmup fractional: Transformers treats values >=1 as absolute steps.
+            "warmup_steps": min(self.config.training.warmup_ratio, math.nextafter(1.0, 0.0)),
             "weight_decay": self.config.training.weight_decay,
             "eval_steps": self.config.training.eval_steps,
             "save_steps": self.config.training.save_steps,
@@ -723,11 +727,9 @@ class ForgeTrainer:
             return SFTConfig(**kwargs)
 
         elif tt == "orpo":
-            from trl import ORPOConfig
-
             kwargs["beta"] = self.config.training.orpo_beta
             self._apply_max_length(kwargs)
-            return ORPOConfig(**kwargs)
+            return _resolve_preference_symbol("ORPOConfig")(**kwargs)
 
         elif tt == "dpo":
             from trl import DPOConfig
@@ -737,15 +739,13 @@ class ForgeTrainer:
             return DPOConfig(**kwargs)
 
         elif tt == "simpo":
-            from trl import CPOConfig
-
             # SimPO is implemented via CPOTrainer with loss_type="simpo" in TRL
             kwargs["beta"] = self.config.training.simpo_beta
             kwargs["cpo_alpha"] = 0.0  # pure SimPO (no NLL term)
             kwargs["simpo_gamma"] = self.config.training.simpo_gamma
             kwargs["loss_type"] = "simpo"
             self._apply_max_length(kwargs)
-            return CPOConfig(**kwargs)
+            return _resolve_preference_symbol("CPOConfig")(**kwargs)
 
         elif tt == "kto":
             from trl import KTOConfig
@@ -988,6 +988,7 @@ class ForgeTrainer:
                 "nan_inf", "threshold") for the audit-event ``reason`` field.
                 The webhook payload also includes this in the masked reason.
         """
+        _check_model_destination(self.checkpoint_dir, final_path, self.config)
         # Stash the operator-actionable reason so the returned TrainResult can
         # surface it on ``.error`` even for the eval-loss path, which returns a
         # freshly-built result that never saw the gate's computed reason
@@ -1052,9 +1053,7 @@ class ForgeTrainer:
             return SFTTrainer(**trainer_kwargs)
         if tt == "orpo":
             logger.info("Initializing TRL ORPOTrainer (ORPO preference alignment)...")
-            from trl import ORPOTrainer
-
-            return ORPOTrainer(**trainer_kwargs)
+            return _resolve_preference_symbol("ORPOTrainer")(**trainer_kwargs)
         if tt == "dpo":
             logger.info("Initializing TRL DPOTrainer (DPO preference alignment)...")
             from trl import DPOTrainer
@@ -1062,9 +1061,7 @@ class ForgeTrainer:
             return DPOTrainer(**trainer_kwargs)
         if tt == "simpo":
             logger.info("Initializing TRL CPOTrainer (SimPO preference alignment)...")
-            from trl import CPOTrainer
-
-            return CPOTrainer(**trainer_kwargs)
+            return _resolve_preference_symbol("CPOTrainer")(**trainer_kwargs)
         if tt == "kto":
             logger.info("Initializing TRL KTOTrainer (binary feedback alignment)...")
             from trl import KTOTrainer
@@ -1524,10 +1521,11 @@ class ForgeTrainer:
         metrics: Dict[str, float],
         train_result: TrainResult,
     ) -> None:
-        """Generate model card / integrity / deployer instructions / compliance bundle."""
+        """Write model documentation before hashing the final model artifacts."""
+        _check_model_destination(self.checkpoint_dir, final_path, self.config)
         self._generate_model_card(final_path, metrics, train_result)
-        self._generate_model_integrity(final_path)
         self._generate_deployer_instructions(final_path, metrics)
+        self._generate_model_integrity(final_path)
         self._export_compliance_if_needed(metrics, train_result)
 
     def _handle_human_approval_gate(
@@ -1612,10 +1610,7 @@ class ForgeTrainer:
         if self._trainer_type != "grpo" and self.dataset.get("validation"):
             metrics.update(self.trainer.evaluate())
 
-        final_path = os.path.join(
-            self.checkpoint_dir,
-            getattr(self.config.training, "final_model_dir", "final_model"),
-        )
+        final_path = _final_model_path(self.checkpoint_dir, self.config)
 
         # Article 14 (honest path): when ``require_human_approval`` is on the
         # adapters land in ``final_model.staging.<run_id>/`` rather than the canonical
@@ -1740,6 +1735,7 @@ class ForgeTrainer:
 
     def save_final_model(self, final_path: str) -> None:
         """Saves final artifacts (adapter-only by default)."""
+        _check_model_destination(self.checkpoint_dir, final_path, self.config)
         os.makedirs(final_path, exist_ok=True)
         merge_adapters = bool(getattr(self.config.training, "merge_adapters", False))
 

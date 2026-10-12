@@ -810,17 +810,19 @@ Wave 2b Phase 36 — GGUF model dosyası bütünlük kontrolü.
 
 Wave 2b Phase 36 / Madde 15 — model dizini artefakt bütünlük kontrolü.
 
+Yeni ve ayrı bir model dizininde eğitim sonlandırması, manifest'i yazmadan önce model kartını ve `deployer_instructions.md` dosyasını kaydedilen model/tokenizer dosyalarıyla birlikte hash'ler. Başarı örneği altı kayıtlı artefaktı gösterir; sayı kaydedilen dosyalara bağlıdır. Manifest üretimi `model.integrity_verified` olayını üretir; bu salt-okunur doğrulayıcı audit olayı üretmez.
+
 **Başarı zarfı** (`forgelm verify-integrity MODEL_DIR`):
 
 ```json
 {
   "success": true,
   "valid": true,
-  "reason": "All 12 recorded artifact(s) present and unchanged.",
+  "reason": "All 6 recorded artifact(s) present and unchanged.",
   "changed": [],
   "removed": [],
   "added": [],
-  "verified_count": 12,
+  "verified_count": 6,
   "path": "/work/output/my-model"
 }
 ```

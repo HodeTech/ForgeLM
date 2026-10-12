@@ -1,0 +1,60 @@
+{
+  "success": true,
+  "report_path": "audit/data_audit_report.json",
+  "generated_at": "2026-10-11T10:05:29.087726+00:00",
+  "source_input": "tiny.jsonl",
+  "total_samples": 8,
+  "splits": {
+    "train": 8
+  },
+  "pii_summary": {},
+  "pii_severity": {
+    "total": 0,
+    "by_tier": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0
+    },
+    "by_type": {},
+    "worst_tier": null
+  },
+  "secrets_summary": {},
+  "secrets_gate": {
+    "status": "passed",
+    "severity": null,
+    "critical_total": 0,
+    "critical_types": {},
+    "allow_secrets": false
+  },
+  "pii_gate": {
+    "status": "passed",
+    "severity": null,
+    "critical_total": 0,
+    "critical_types": {},
+    "advisory_total": 0,
+    "advisory_types": {},
+    "allow_pii": false
+  },
+  "quality_summary": {
+    "samples_flagged": 0,
+    "samples_evaluated": 8,
+    "by_check": {},
+    "overall_quality_score": 1.0
+  },
+  "near_duplicate_pairs_per_split": {
+    "train": 0
+  },
+  "near_duplicate_summary": {
+    "method": "simhash",
+    "pairs_per_split": {
+      "train": 0
+    },
+    "hamming_threshold": 3
+  },
+  "cross_split_leakage_pairs": [],
+  "croissant": {},
+  "notes": [
+    "No PII flagged. (Regex-based detector — false negatives possible.)"
+  ]
+}

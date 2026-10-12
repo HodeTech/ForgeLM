@@ -1025,6 +1025,17 @@ section { padding: 5rem 0; }
   .hero-slider-dot.is-active .dot-fill { animation: none; }
 }
 
+/* Keep installation and recorded evidence visible outside the rotating slides. */
+.hero-demo { min-width: 0; }
+.hero-install { margin-bottom: 1.25rem; }
+.hero-install p, .hero-demo-note { color: var(--text-secondary); font-size: 0.9rem; }
+.hero-install .code-block { margin: 0.6rem 0 0; }
+.hero-install pre { overflow-x: auto; }
+.hero-demo-note { margin: 1rem 0 0.6rem; }
+.hero-demo > a { font-size: 0.9rem; }
+.hero-terminal pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.contribute-actions { justify-content: center; margin: 1.5rem 0 0; }
+
 /* Hero terminal */
 .hero-terminal {
   background: var(--code-bg);

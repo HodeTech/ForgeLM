@@ -3,7 +3,16 @@
 > **Audience:** Compliance operators and CI gates verifying that a trained model directory still matches the SHA-256 manifest recorded at training time (EU AI Act Article 15).
 > **Mirror:** [verify_integrity_subcommand-tr.md](verify_integrity_subcommand-tr.md)
 
-The `verify-integrity` subcommand is the consuming counterpart to the Article 15 `model_integrity.json` manifest. The compliance export writes a SHA-256 hash of every file in the model directory; `verify-integrity` reads that manifest back, recomputes each file's SHA-256, and reports any artifact that was **changed**, **removed**, or **added** since the manifest was generated. The CLI delegates to the library entry point `forgelm.verify.verify_integrity` (also exposed at the package root as `forgelm.verify_integrity`) and returns a structured `VerifyIntegrityResult`.
+The `verify-integrity` subcommand is the consuming counterpart to the Article 15 `model_integrity.json` manifest. During finalization, the trainer writes the model card (`README.md`) and `deployer_instructions.md` before hashing the model-directory files and writing the manifest. The manifest itself is excluded from verification. `verify-integrity` reads that manifest back, recomputes each file's SHA-256, and reports any artifact that was **changed**, **removed**, or **added** since the manifest was generated. The CLI delegates to the library entry point `forgelm.verify.verify_integrity` (also exposed at the package root as `forgelm.verify_integrity`) and returns a structured `VerifyIntegrityResult`.
+
+This sequence covers a fresh model directory. The [model output path policy](configuration.md#model-output-path-policy)
+keeps model bundles separate from mutable audit and compliance records.
+
+The manifest's `model_path` is descriptive generation metadata: the path supplied to the writer.
+With human approval it can be a staging path that no longer exists after promotion. Promotion preserves
+the manifest bytes. Verification reads the manifest from the supplied model directory and resolves
+artifact paths relative to that directory; `model_path` does not select the verification root.
+Do not rewrite it to represent a new deployment location.
 
 ## Synopsis
 
@@ -46,16 +55,18 @@ The codes are emitted by `forgelm/cli/subcommands/_verify_integrity.py::_run_ver
 
 ## Audit events emitted
 
-`forgelm verify-integrity` is a **read-only verifier** and emits **no** entries to `audit_log.jsonl`. The events that signal integrity-manifest *production* (not verification) ride the run-level training events; see [audit_event_catalog.md](audit_event_catalog.md).
+`forgelm verify-integrity` is a **read-only verifier** and emits **no** entries to `audit_log.jsonl`. The trainer emits `model.integrity_verified` once after hashing the artifacts and writing the manifest. Despite its name, this event records manifest *production*, not an independent verification pass; see [audit_event_catalog.md](audit_event_catalog.md). Later audit entries are appended outside the model bundle.
 
 ## Examples
+
+The success examples illustrate a six-artifact bundle. The count depends on the files saved by the model and tokenizer.
 
 ### Text output (default)
 
 ```shell
 $ forgelm verify-integrity checkpoints/run/final_model
 OK: checkpoints/run/final_model
-  All 7 recorded artifact(s) present and unchanged.
+  All 6 recorded artifact(s) present and unchanged.
 ```
 
 ### JSON output (CI consumers)
@@ -66,11 +77,11 @@ $ forgelm verify-integrity --output-format json \
 {
   "success": true,
   "valid": true,
-  "reason": "All 7 recorded artifact(s) present and unchanged.",
+  "reason": "All 6 recorded artifact(s) present and unchanged.",
   "changed": [],
   "removed": [],
   "added": [],
-  "verified_count": 7,
+  "verified_count": 6,
   "path": "/abs/path/checkpoints/run/final_model"
 }
 ```

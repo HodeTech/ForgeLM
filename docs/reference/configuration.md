@@ -65,7 +65,7 @@ See `config_template.yaml` for a complete annotated example.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `output_dir` | string | `"./checkpoints"` | Checkpoint save directory |
-| `final_model_dir` | string | `"final_model"` | Subdirectory for final artifacts |
+| `final_model_dir` | string | `"final_model"` | Isolated relative model subdirectory; see the path policy below |
 | `merge_adapters` | bool | `false` | Merge adapters into base model before saving |
 | `trainer_type` | string | `"sft"` | `"sft"`, `"dpo"`, `"simpo"`, `"kto"`, `"orpo"`, `"grpo"` |
 | `max_steps` | int | `-1` | Hard step cap. `-1` = use `num_train_epochs`; a positive value overrides epochs. |
@@ -82,6 +82,23 @@ See `config_template.yaml` for a complete annotated example.
 | `packing` | bool | `false` | Sequence packing (SFT only) |
 | `report_to` | string | `"tensorboard"` | `"tensorboard"`, `"wandb"`, `"mlflow"`, `"none"` |
 | `run_name` | string | `null` | W&B/MLflow run name (auto-generated if null) |
+
+#### Model output path policy
+
+`final_model_dir` must name a separate relative subdirectory of `output_dir`; `final_model` and
+`models/final` are valid. The value is preserved as written. Empty values, the output root itself
+(`.`), parent traversal (`..`), absolute or drive-qualified paths, backslash separators, trailing `/` or `/.`, existing
+files, and symlink components below the output root are rejected. Use `/` for nested paths on every platform.
+
+The first component cannot be `compliance`, `benchmark`, `safety`, `judge`, `runs`, `audit_log.jsonl`,
+`audit_log.jsonl.manifest.json`, `data_audit_report.json`, or `checkpoint-*` (case-insensitive).
+Resolved overlap with these run records is also rejected, including when a reserved path aliases
+into a proposed model directory. This keeps mutable records out of the integrity manifest and
+prevents auto-revert from deleting them. Config loading and `--dry-run` reject invalid layouts with
+exit `1`; the trainer rechecks before initialization, saving, finalization, and deletion.
+When benchmarks are enabled, a custom `evaluation.benchmark.output_dir` must also remain separate
+from the final or staged model directory: equal, ancestor, and descendant resolved paths are rejected.
+Relative benchmark paths resolve from the process working directory, matching the benchmark writer.
 
 #### OOM Recovery
 
