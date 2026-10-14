@@ -409,7 +409,7 @@ install ile uyumlu kalır.
 Varsayılan regex detector, EU AI Act Madde 10'un önemsediği yapılandırılmış
 identifier'ları (email, telefon, IBAN, kredi kartı, ulusal kimlik) kapsar.
 Faz 12.5, regex'in doğal olarak kaçırdığı yapılandırılmamış identifier
-kategorilerini ekleyen opt-in **Presidio** ([microsoft/presidio](https://github.com/microsoft/presidio))
+kategorilerini ekleyen opt-in **Presidio** ([data-privacy-stack/presidio](https://github.com/data-privacy-stack/presidio))
 adaptörünü ML-NER olarak üstüne ekler: `person`, `organization`,
 `location`.
 
