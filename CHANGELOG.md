@@ -48,6 +48,10 @@ All notable changes to ForgeLM are documented here.
   with matching Turkish text and primary EUR-Lex citations. Distinguish the Annex III / Annex I
   schedules from transparency and general-purpose AI obligations and their transition provisions;
   clarify that documentation artifacts do not establish legal compliance.
+- **Presidio documentation links**: the `--pii-ml` language error messages and the data-audit guides
+  (EN + TR) now point to the current Presidio docs and repository
+  (`presidio.dataprivacystack.org`, `data-privacy-stack/presidio`); the old `microsoft.github.io`
+  page returns 404. (TECH-T06-004, #491)
 
 ### Breaking
 
