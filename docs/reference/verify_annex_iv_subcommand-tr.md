@@ -163,12 +163,14 @@ Doğrulayıcı statik bir katalogu (`_ANNEX_IV_REQUIRED_FIELDS`) yürür; böyle
 | `system_identification` | §1 — sistem tanıtımı (ad, sürüm, sağlayıcı, intended_purpose). |
 | `intended_purpose` | §1 — amaçlanan kullanım beyanı. |
 | `system_components` | §2 — yazılım / donanım bileşenleri + tedarikçi listesi. |
-| `computational_resources` | §2(g) — eğitim sırasında kullanılan hesaplama kaynakları. |
+| `computational_resources` | Annex IV point 2(c) — eğitim sırasında kullanılan hesaplama kaynakları. |
 | `data_governance` | §2(d) — veri kaynakları, yönetişim, doğrulama metodolojisi. |
 | `technical_documentation` | §3-5 — tasarım + geliştirme metodolojisi. |
 | `monitoring_and_logging` | Annex IV madde 9 (Madde 72(3)) — Beyan edilen harici izleme planı (`declarative_only: true`) veya audit log referansı; çalışan izleme kanıtı değildir. |
-| `performance_metrics` | §7 — doğruluk / dayanıklılık / siber güvenlik metrikleri. |
-| `risk_management` | §5 — risk yönetim sistemi referansı (Madde 9 hizalaması). |
+| `performance_metrics` | Annex IV points 2(g) / 4 — doğruluk / dayanıklılık / siber güvenlik metrikleri. |
+| `risk_management` | Annex IV point 5 — risk yönetim sistemi referansı (Madde 9 hizalaması). |
+
+Bu tablo kısmi metadata eşlemelerini gösterir; tam bir Annex IV belgesi değildir. Diğer eski bölüm etiketlerinin düzeltilmesi [#539](https://github.com/HodeTech/ForgeLM/issues/539), doğrulayıcının tamlık iddiaları [#573](https://github.com/HodeTech/ForgeLM/issues/573) kapsamında takip edilir.
 
 ## Emit edilen audit event'leri
 

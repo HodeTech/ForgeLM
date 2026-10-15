@@ -72,19 +72,21 @@ A field is considered missing when the key is absent OR the value is `None`, an 
 
 `system_identification` is additionally validated **at sub-field depth**: `provider_name`, `system_name` and `intended_purpose` must each be non-empty, otherwise a populated-looking container of blank placeholders would pass. When one of those is empty, `missing_fields` carries a **dotted path** rather than a bare key — e.g. `["system_identification.provider_name", "system_identification.system_name"]`. Tooling that assumes `missing_fields` entries are always top-level keys will mis-handle these.
 
-The nine required keys map onto Annex IV §1-9:
+The verifier requires nine ForgeLM metadata keys; these do not represent nine complete Annex IV sections:
 
 | Top-level key | Annex IV section |
 |---|---|
 | `system_identification` | §1 — `provider_name`, `system_name`, `intended_purpose` (each validated non-empty), plus `provider_contact`, `system_version`, `risk_classification`. |
 | `intended_purpose` | §1 — intended purpose statement. |
 | `system_components` | §2 — software / hardware components + supplier list. |
-| `computational_resources` | §2(g) — compute resources used during training. |
+| `computational_resources` | Annex IV point 2(c) — compute resources used during training. |
 | `data_governance` | §2(d) — data sources, governance, validation methodology. |
 | `technical_documentation` | §3-5 — design + development methodology. |
 | `monitoring_and_logging` | Annex IV point 9 (Art. 72(3)) — Declared external monitoring-plan metadata (`declarative_only: true`), or an audit-log reference; no runtime monitoring evidence. |
-| `performance_metrics` | §7 — accuracy / robustness / cybersecurity metrics. |
-| `risk_management` | §5 — risk management system reference (Article 9 alignment). |
+| `performance_metrics` | Annex IV points 2(g) / 4 — accuracy / robustness / cybersecurity metrics. |
+| `risk_management` | Annex IV point 5 — risk management system reference (Article 9 alignment). |
+
+This table maps partial metadata, not complete Annex IV sections. Remaining legacy section labels are tracked in [#539](https://github.com/HodeTech/ForgeLM/issues/539); verifier completeness claims are tracked in [#573](https://github.com/HodeTech/ForgeLM/issues/573).
 
 ### What "manifest hash mismatch" means
 

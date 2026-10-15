@@ -238,13 +238,12 @@ forgelm --config my_config.yaml --dry-run
 
 ### Config doğrulama hatası: Field type uyumsuzluğu
 
-ForgeLM doğrulama için Pydantic v2 kullanır. Hata mesajları tam
-field'ı gösterir:
+ForgeLM doğrulama için Pydantic v2 kullanır. Tüm `ForgeConfig` doğrulama hatalarının metin çıktısında Pydantic'in `input_value` / `input_type` alıntıları gizlenir; alan yolları ve hata nedenleri korunur. `MonitoringConfig` dışındaki alt modellerin tek başına kurulumu (örneğin `WebhookConfig` veya `AuthConfig`) mevcut Pydantic hata çıktısını korur. Hata mesajları tam alanı gösterir:
 
 ```text
 Configuration validation failed: 1 validation error for ForgeConfig
-training -> learning_rate
-  Input should be a valid number [type=float_parsing, input_value='not_a_number']
+training.learning_rate
+  Input should be a valid number, unable to parse string as a number [type=float_parsing]
 ```
 
 YAML değerini beklenen tipe uyacak şekilde düzeltin.
@@ -258,7 +257,7 @@ Typo'lar ya da desteklenmeyen alanlar net bir hata atar:
 ```text
 ConfigError: Configuration validation failed: 1 validation error for ForgeConfig
 training.lerning_rate
-  Extra inputs are not permitted [type=extra_forbidden, input_value=2e-5]
+  Extra inputs are not permitted [type=extra_forbidden]
 ```
 
 Bu kasıtlıdır: sessiz typo'lar (örn. `learning_rate` yerine

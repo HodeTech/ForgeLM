@@ -157,7 +157,7 @@ Each row classifies coverage as one of:
 | A.5.5 Contact with authorities | OOS | — | Establish regulator contact for serious-incident reporting (EU AI Act Art. 73) | ForgeLM cannot interface with regulators |
 | A.5.6 Contact with special interest groups | OOS | — | ML safety / red-team community engagement | Out of scope |
 | A.5.7 Threat intelligence | OOS | — | Subscribe to ML supply-chain CVE feeds, model-poisoning advisories | Out of scope |
-| A.5.8 Information security in project management | FL-helps | `risk_assessment` config block; F-compliance-110 strict gate; Annex IV §9 metadata | Embed ForgeLM dry-run + safety-eval gates in project sign-off checklist | Project methodology deployer-side |
+| A.5.8 Information security in project management | FL-helps | `risk_assessment` config block; F-compliance-110 strict gate; Annex IV point 5 metadata | Embed ForgeLM dry-run + safety-eval gates in project sign-off checklist | Project methodology deployer-side |
 | A.5.9 Inventory of information & associated assets | FL-helps | `data_provenance.json`, `model_integrity.json`, SBOM | Maintain corporate asset register linking model SHA + data fingerprint | Org asset registry deployer-side |
 | A.5.10 Acceptable use of information | OOS | — | Acceptable-use policy for trained-model outputs | Out of scope |
 | A.5.11 Return of assets | OOS | — | Decommissioning of deployed models | Out of scope |

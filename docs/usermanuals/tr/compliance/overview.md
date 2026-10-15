@@ -122,19 +122,21 @@ evaluation:
 
 ## Annex IV neyi içerir
 
-Artefact, eğitim manifestinden ve `compliance:` bloğunuzdan doldurulan, Annex IV §1-9'a eşlenmiş **dokuz** üst düzey anahtar taşır:
+Artefact, eğitim manifestinden ve `compliance:` bloğunuzdan doldurulan **dokuz** ForgeLM metadata anahtarı taşır; bunlar dokuz eksiksiz Annex IV bölümünü temsil etmez:
 
 | Üst düzey anahtar | Annex IV bölümü |
 |---|---|
 | `system_identification` | §1 — provider_name, system_name, system_version, provider_contact, intended_purpose, risk_classification. |
 | `intended_purpose` | §1 — kullanım amacı beyanı. |
 | `system_components` | §2 — model soyağacı + eğitim parametreleri. |
-| `computational_resources` | §2(g) — eğitim sırasında kullanılan hesaplama kaynağı. |
+| `computational_resources` | Annex IV point 2(c) — eğitim sırasında kullanılan hesaplama kaynağı. |
 | `data_governance` | §2(d) — veri kökeni ve doğrulama metodolojisi. |
 | `technical_documentation` | §3-5 — ForgeLM sürümü, üretim zaman damgası, bilinen sınırlamalar. |
 | `monitoring_and_logging` | Annex IV madde 9 (Madde 72(3)) — Beyan edilen harici izleme planı (`declarative_only: true`) veya audit log referansı; çalışan izleme kanıtı değildir. |
-| `performance_metrics` | §7 — değerlendirme sonuçlarından doğruluk / sağlamlık metrikleri. |
-| `risk_management` | §5 — top-level `risk_assessment:` bloğu ya da açık bir "no risk_assessment block configured" işareti. |
+| `performance_metrics` | Annex IV points 2(g) / 4 — değerlendirme sonuçlarından doğruluk / sağlamlık metrikleri. |
+| `risk_management` | Annex IV point 5 — top-level `risk_assessment:` bloğu ya da açık bir "no risk_assessment block configured" işareti. |
+
+Bu tablo kısmi metadata eşlemelerini gösterir; tam bir Annex IV belgesi değildir. Diğer eski bölüm etiketlerinin düzeltilmesi [#539](https://github.com/HodeTech/ForgeLM/issues/539), doğrulayıcının tamlık iddiaları [#573](https://github.com/HodeTech/ForgeLM/issues/573) kapsamında takip edilir.
 
 Dağıtım coğrafyası, yaşam döngüsü, standartlar listesi, uygunluk beyanı bölümü yoktur — bu sayfanın eski taslakları bunları listeliyordu, hiçbiri üretilmez. Yukarıdaki izleme kaydı metadata özetidir; Annex IV madde 9’un gerektirdiği ayrıntılı pazar sonrası izleme planı değildir. Bu tablonun tek doğruluk kaynağı [Annex IV](#/compliance/annex-iv) sayfasıdır.
 

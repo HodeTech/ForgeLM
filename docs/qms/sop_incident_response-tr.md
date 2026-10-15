@@ -29,7 +29,7 @@ yanında kapsar.
 
 Olaylar şunlardan tespit edilebilir:
 - Harici servis/izleme altyapınızdan gelen runtime uyarıları (`monitoring.*` uyumluluk manifestine
-  yalnızca bir plan kaydeder; ForgeLM model sapması tespit etmez veya izleme uyarısı göndermez)
+  yalnızca bir plan kaydeder; ForgeLM drift tespit etmez veya izleme uyarısı göndermez)
 - Kullanıcı/operatör raporları
 - Periyodik kalite denetimleri
 - ForgeLM webhook arıza bildirimleri

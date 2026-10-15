@@ -61,7 +61,7 @@ ERROR: model "meta-llama/Llama-Guard-3-8B" not in local cache.
 | HuggingFace Hub downloads | `--offline` sets the HF offline flags; pre-cache the required artifacts. |
 | W&B / MLflow / Comet | Disable reporting or configure local-only MLflow with a file URI; `--offline` does not disable these integrations. |
 | OpenAI / Anthropic judges | Disable API-backed evaluation or use a local judge; `--offline` does not disable API clients. |
-| Webhooks | `--offline` does not disable configured delivery. Set `webhook.enabled: false` to disable it; `allow_private_destinations` permits private destinations in addition to public ones. |
+| Webhooks | `--offline` does not disable configured delivery. Omit the `webhook:` block, or leave `url` / `url_env` unset, to disable it; `allow_private_destinations` permits private destinations in addition to public ones. |
 | pip install (during runtime) | Install required dependencies before disconnecting; `--offline` does not control pip. |
 | Telemetry | ForgeLM has no own telemetry service; configure external integrations separately. |
 
@@ -76,7 +76,7 @@ synthetic:
   teacher_backend: "local"                    # not "api" — no network call
 ```
 
-There is no nested `synthetic.teacher:` sub-block (`provider` / `model` / `load_in_4bit`) — `teacher_model` and `teacher_backend` are flat fields on `synthetic:`. An API-backed teacher (`teacher_backend: "api"`, e.g. OpenAI / Anthropic) fails on `--offline`.
+There is no nested `synthetic.teacher:` sub-block (`provider` / `model` / `load_in_4bit`) — `teacher_model` and `teacher_backend` are flat fields on `synthetic:`. An API-backed teacher (`teacher_backend: "api"`, e.g. OpenAI / Anthropic) requires network access and is not disabled by `--offline`; use `teacher_backend: "local"` or `"file"` in an air-gap.
 
 ## Local LLM-as-judge
 

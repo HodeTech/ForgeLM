@@ -72,19 +72,21 @@ Bir alan; anahtar yoksa VEYA değer `None`, boş string, boş liste ya da boş d
 
 `system_identification` ayrıca **alt-alan derinliğinde** doğrulanır: `provider_name`, `system_name` ve `intended_purpose` her biri boş olmamalıdır; aksi halde boş placeholder'lardan oluşan, dolu görünen bir kapsayıcı testi geçerdi. Bunlardan biri boş olduğunda `missing_fields` düz bir anahtar değil, **noktalı yol** taşır — örn. `["system_identification.provider_name", "system_identification.system_name"]`. `missing_fields` girdilerinin daima üst düzey anahtar olduğunu varsayan araçlar bunları yanlış işler.
 
-Dokuz gerekli anahtar Annex IV §1-9 ile eşleşir:
+Doğrulayıcı dokuz ForgeLM metadata anahtarı gerektirir; bunlar dokuz eksiksiz Annex IV bölümünü temsil etmez:
 
 | Üst-seviye anahtar | Annex IV bölümü |
 |---|---|
 | `system_identification` | §1 — `provider_name`, `system_name`, `intended_purpose` (her biri boş-olmama koşuluyla doğrulanır), ayrıca `provider_contact`, `system_version`, `risk_classification`. |
 | `intended_purpose` | §1 — amaçlanan kullanım beyanı. |
 | `system_components` | §2 — yazılım / donanım bileşenleri + tedarikçi listesi. |
-| `computational_resources` | §2(g) — eğitim sırasında kullanılan hesaplama kaynakları. |
+| `computational_resources` | Annex IV point 2(c) — eğitim sırasında kullanılan hesaplama kaynakları. |
 | `data_governance` | §2(d) — veri kaynakları, yönetişim, doğrulama metodolojisi. |
 | `technical_documentation` | §3-5 — tasarım + geliştirme metodolojisi. |
 | `monitoring_and_logging` | Annex IV madde 9 (Madde 72(3)) — Beyan edilen harici izleme planı (`declarative_only: true`) veya audit log referansı; çalışan izleme kanıtı değildir. |
-| `performance_metrics` | §7 — doğruluk / dayanıklılık / siber güvenlik metrikleri. |
-| `risk_management` | §5 — risk yönetim sistemi referansı (Madde 9 hizalaması). |
+| `performance_metrics` | Annex IV points 2(g) / 4 — doğruluk / dayanıklılık / siber güvenlik metrikleri. |
+| `risk_management` | Annex IV point 5 — risk yönetim sistemi referansı (Madde 9 hizalaması). |
+
+Bu tablo kısmi metadata eşlemelerini gösterir; tam bir Annex IV belgesi değildir. Diğer eski bölüm etiketlerinin düzeltilmesi [#539](https://github.com/HodeTech/ForgeLM/issues/539), doğrulayıcının tamlık iddiaları [#573](https://github.com/HodeTech/ForgeLM/issues/573) kapsamında takip edilir.
 
 ### "Manifest hash uyuşmazlığı" ne demek
 
