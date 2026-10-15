@@ -819,24 +819,36 @@ class TestComplianceExportAtomicity:
 class TestManifestAnnexIV:
     @pytest.mark.parametrize("env_value", [None, "https://secret.example.com/private"], ids=["env-unset", "env-set"])
     @pytest.mark.parametrize(
-        "endpoint_fields,expected",
+        "endpoint_fields,expected,expected_defaults",
         [
-            ({}, None),
-            ({"endpoint": "https://monitor.example.com"}, "https://monitor.example.com"),
+            ({}, None, ["endpoint"]),
+            ({"endpoint": "https://monitor.example.com"}, "https://monitor.example.com", []),
             (
                 {"endpoint": " https://user:password@monitor.example.com/secret?token=credential#fragment "},
                 "https://monitor.example.com",
+                [],
             ),
-            ({"endpoint_env": "MON_URL"}, "$MON_URL"),
-            ({"endpoint": "https://monitor.example.com", "endpoint_env": "MON_URL"}, "$MON_URL"),
-            ({"endpoint_env": ""}, None),
-            ({"endpoint_env": "   ", "endpoint": "   "}, None),
-            ({"endpoint_env": " MON_URL "}, "$MON_URL"),
+            ({"endpoint_env": "MON_URL"}, "$MON_URL", []),
+            ({"endpoint": "https://monitor.example.com", "endpoint_env": "MON_URL"}, "$MON_URL", []),
+            ({"endpoint_env": ""}, None, ["endpoint"]),
+            ({"endpoint_env": " \t\n "}, None, ["endpoint"]),
+            ({"endpoint_env": "   ", "endpoint": "   "}, None, []),
+            ({"endpoint_env": " MON_URL "}, "$MON_URL", []),
         ],
-        ids=["absent", "literal", "masked-literal", "env", "env-precedence", "blank-env", "whitespace", "trimmed-env"],
+        ids=[
+            "absent",
+            "literal",
+            "masked-literal",
+            "env",
+            "env-precedence",
+            "blank-env",
+            "whitespace-env",
+            "explicit-blank-endpoint",
+            "trimmed-env",
+        ],
     )
     def test_monitoring_declaration_survives_export(
-        self, tmp_path, minimal_config, monkeypatch, endpoint_fields, expected, env_value
+        self, tmp_path, minimal_config, monkeypatch, endpoint_fields, expected, expected_defaults, env_value
     ):
         """A plan is labelled as metadata and never resolves endpoint secrets."""
         if env_value is None:
@@ -863,7 +875,7 @@ class TestManifestAnnexIV:
             "metrics_export": "prometheus",
             "alert_on_drift": True,
             "check_interval_hours": 12,
-            "defaulted_fields": ["endpoint"] if "endpoint" not in endpoint_fields and expected is None else [],
+            "defaulted_fields": expected_defaults,
         }
         assert manifest["monitoring"] == declaration
         export_compliance_artifacts(manifest, str(tmp_path))
