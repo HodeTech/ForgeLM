@@ -82,12 +82,40 @@ function textOf(node) {
   return (node.textContent || '') + (node.children || []).map(textOf).join('');
 }
 
-// Render one step into a fresh pane, the way the controller's render() does.
+// Render one step into a fresh pane the way the controller's render() does.
+// The rerender callback rebuilds the same pane, so a toggle that re-renders
+// the step (benchmark, judge, webhook, ...) behaves as it does in the page.
 function renderStep(wizard, value, stepId) {
   const pane = element('div');
-  wizard.coerceForRisk(value);
-  wizard.STEP_RENDERERS[stepId](pane, value, () => {}, () => {});
+  const rerender = () => {
+    pane.children = [];
+    wizard.coerceForRisk(value);
+    wizard.STEP_RENDERERS[stepId](pane, value, rerender, () => {});
+  };
+  rerender();
   return pane;
 }
 
-module.exports = { root, element, loadWizard, state, descendants, textOf, renderStep };
+const RISK_TIERS = ['unknown', 'minimal-risk', 'limited-risk', 'high-risk', 'unacceptable'];
+
+// State overrides that jointly take every conditional branch of every
+// renderer: optional gates on and off, both detail modes, the custom-model
+// and GaLore paths, and all six trainers.
+function scenarios() {
+  const out = [];
+  for (const riskClassification of RISK_TIERS) {
+    for (const detailsVisible of [true, false]) {
+      for (const on of [false, true]) {
+        out.push({
+          riskClassification, detailsVisible, autoRevert: on, benchmarkEnabled: on, judgeEnabled: on,
+          webhookEnabled: on, monitoringEnabled: on, syntheticEnabled: on, galoreEnabled: on,
+          modelPreset: on ? 'custom' : 'llama3-8b', trainerType: on ? 'grpo' : 'sft'
+        });
+      }
+    }
+  }
+  for (const trainerType of ['sft', 'dpo', 'orpo', 'simpo', 'kto', 'grpo']) out.push({ trainerType });
+  return out;
+}
+
+module.exports = { root, element, loadWizard, state, descendants, textOf, renderStep, RISK_TIERS, scenarios };

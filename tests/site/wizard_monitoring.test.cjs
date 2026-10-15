@@ -87,7 +87,7 @@ test('operations renderer clears corrected endpoint and interval errors', () => 
   endpoint.events.input();
   assert.doesNotMatch(endpoint.className, /is-invalid/);
   assert.equal(descendants(pane).filter(node => node.attrs.role === 'alert').length, 1);
-  const interval = nodes.find(node => node.attrs.id === 'wizard-monitoring-interval');
+  const interval = nodes.find(node => node.attrs.id === 'wizard-field-monitoring-check-interval-hours');
   interval.value = '48';
   interval.events.input();
   assert.doesNotMatch(interval.className, /is-invalid/);

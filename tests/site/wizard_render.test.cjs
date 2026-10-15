@@ -9,28 +9,7 @@
 
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { loadWizard, state, descendants, textOf, renderStep } = require('./wizard_harness.cjs');
-
-const TIERS = ['unknown', 'minimal-risk', 'limited-risk', 'high-risk', 'unacceptable'];
-
-// Every conditional branch a renderer can take: optional gates on and off,
-// both detail modes, the custom-model and GaLore paths and all six trainers.
-function scenarios() {
-  const out = [];
-  for (const riskClassification of TIERS) {
-    for (const detailsVisible of [true, false]) {
-      for (const on of [false, true]) {
-        out.push({
-          riskClassification, detailsVisible, autoRevert: on, benchmarkEnabled: on, judgeEnabled: on,
-          webhookEnabled: on, monitoringEnabled: on, syntheticEnabled: on, galoreEnabled: on,
-          modelPreset: on ? 'custom' : 'llama3-8b', trainerType: on ? 'grpo' : 'sft'
-        });
-      }
-    }
-  }
-  for (const trainerType of ['sft', 'dpo', 'orpo', 'simpo', 'kto', 'grpo']) out.push({ trainerType });
-  return out;
-}
+const { loadWizard, state, descendants, textOf, renderStep, RISK_TIERS, scenarios } = require('./wizard_harness.cjs');
 
 // Text nodes carry no classList; only elements can match a class.
 function hasClass(node, value) {
@@ -71,7 +50,7 @@ test('every step renders in every tier, detail mode and gate combination', () =>
   }
 });
 
-for (const tier of TIERS) {
+for (const tier of RISK_TIERS) {
   for (const detailsVisible of [true, false]) {
     test(`compliance step renders its risk-assessment and evaluation controls at ${tier} (details ${detailsVisible ? 'on' : 'off'})`, () => {
       const wizard = loadWizard();

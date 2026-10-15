@@ -1466,6 +1466,17 @@
     }
   }
 
+  // Id of the control that edits ``field``; its caption points at it with
+  // ``for`` so the caption is the control's accessible name and a click on
+  // it focuses the control (#950). Field names make the ids stable and
+  // unique: each captioned control writes exactly one state field, and a
+  // step renders each field at most once, so re-rendering a step or an
+  // accordion rebuilds the same ids rather than adding second copies.
+  // Checkboxes need no id — their <label> wraps them.
+  function controlId(field) {
+    return 'wizard-field-' + field.replace(/[A-Z]/g, function (c) { return '-' + c.toLowerCase(); });
+  }
+
   /* Step 1: Welcome / experience level */
   STEP_RENDERERS['welcome'] = function (pane, state, rerender, persist) {
     pane.appendChild(el('h2', { class: 'wizard-step-title', id: 'wizard-title', text: tr('wizard.step.welcome.title') }));
@@ -1623,6 +1634,7 @@
     if (state.modelPreset === 'custom') {
       var modelErrKey = fieldHasError(state, 'model', 'model');
       var input = el('input', {
+        id: controlId('model'),
         type: 'text',
         class: 'wizard-input' + (modelErrKey ? ' is-invalid' : ''),
         placeholder: 'huggingface-org/your-model',
@@ -1649,7 +1661,7 @@
         if (yamlOutput) yamlOutput.innerHTML = tintYaml(buildYaml(state));
       });
       var rowChildren = [
-        el('label', { class: 'wizard-row-label', text: tr('wizard.model.custom.label') }),
+        el('label', { for: controlId('model'), class: 'wizard-row-label', text: tr('wizard.model.custom.label') }),
         input,
         el('span', { class: 'wizard-row-hint', text: tr('wizard.model.custom.hint') })
       ];
@@ -1691,6 +1703,7 @@
 
     var datasetErrKey = fieldHasError(state, 'dataset', 'datasetName');
     var nameInput = el('input', {
+      id: controlId('datasetName'),
       type: 'text',
       class: 'wizard-input' + (datasetErrKey ? ' is-invalid' : ''),
       placeholder: state.datasetKind === 'huggingface'
@@ -1712,7 +1725,7 @@
       if (yamlOutput) yamlOutput.innerHTML = tintYaml(buildYaml(state));
     });
     var dsRowChildren = [
-      el('label', { class: 'wizard-row-label', text: tr('wizard.dataset.name.label') }),
+      el('label', { for: controlId('datasetName'), class: 'wizard-row-label', text: tr('wizard.dataset.name.label') }),
       nameInput,
       el('span', { class: 'wizard-row-hint', text: tr('wizard.dataset.name.hint') })
     ];
@@ -1754,13 +1767,14 @@
       function makeTextarea(field, labelKey, hintKey, placeholderKey, detailKey, rows, errorKey) {
         var errKey = errorKey ? fieldHasError(state, 'dataset', field) : null;
         var ta = el('textarea', {
+          id: controlId(field),
           class: 'wizard-input' + (errKey ? ' is-invalid' : ''),
           rows: String(rows || 2),
           placeholder: tr(placeholderKey)
         });
         ta.value = state[field] || '';
         var rowChildren = [
-          el('label', { class: 'wizard-row-label', text: tr(labelKey) }),
+          el('label', { for: controlId(field), class: 'wizard-row-label', text: tr(labelKey) }),
           ta,
           el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
         ];
@@ -1862,14 +1876,22 @@
     // method choice is irrelevant. Emits to lora.method in YAML.
     if (!state.galoreEnabled) {
       var methodRow = el('div', { class: 'wizard-row' });
-      methodRow.appendChild(el('span', { class: 'wizard-row-label', text: tr('wizard.training.lora_method.label') }));
+      // The method cards are buttons, which a <label> cannot name; the
+      // caption names their group instead.
+      var methodCaptionId = controlId('loraMethod') + '-label';
+      methodRow.appendChild(el('span', { id: methodCaptionId, class: 'wizard-row-label', text: tr('wizard.training.lora_method.label') }));
       var methods = [
         { id: 'lora',    titleKey: 'wizard.training.lora_method.standard.title',    descKey: 'wizard.training.lora_method.standard.desc' },
         { id: 'dora',    titleKey: 'wizard.training.lora_method.dora.title',        descKey: 'wizard.training.lora_method.dora.desc' },
         { id: 'pissa',   titleKey: 'wizard.training.lora_method.pissa.title',       descKey: 'wizard.training.lora_method.pissa.desc' },
         { id: 'rslora',  titleKey: 'wizard.training.lora_method.rslora.title',      descKey: 'wizard.training.lora_method.rslora.desc' }
       ];
-      var methodGrid = el('div', { class: 'wizard-cards', style: 'grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.6rem;' });
+      var methodGrid = el('div', {
+        role: 'group',
+        'aria-labelledby': methodCaptionId,
+        class: 'wizard-cards',
+        style: 'grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.6rem;'
+      });
       methods.forEach(function (m) {
         var card = el('button', {
           type: 'button',
@@ -1918,7 +1940,7 @@
 
     // GaLore variant select — only when GaLore is enabled.
     if (state.galoreEnabled) {
-      var galoreSelect = el('select', { class: 'wizard-select' });
+      var galoreSelect = el('select', { id: controlId('galoreOptim'), class: 'wizard-select' });
       [
         { id: 'galore_adamw',                 labelKey: 'wizard.training.galore_optim.adamw' },
         { id: 'galore_adamw_8bit',            labelKey: 'wizard.training.galore_optim.adamw_8bit' },
@@ -1937,7 +1959,7 @@
         liveYaml();
       });
       var galoreOptimRow = el('div', { class: 'wizard-row' }, [
-        el('label', { class: 'wizard-row-label', text: tr('wizard.training.galore_optim.label') }),
+        el('label', { for: controlId('galoreOptim'), class: 'wizard-row-label', text: tr('wizard.training.galore_optim.label') }),
         galoreSelect,
         el('span', { class: 'wizard-row-hint', text: tr('wizard.training.galore_optim.hint') })
       ]);
@@ -1948,6 +1970,7 @@
     // LoRA r / alpha sliders
     function makeSlider(field, min, max, hintKey, labelKey, detailKey) {
       var slider = el('input', {
+        id: controlId(field),
         type: 'range',
         class: 'wizard-slider',
         min: String(min),
@@ -1963,7 +1986,7 @@
         liveYaml();
       });
       var row = el('div', { class: 'wizard-row' }, [
-        el('label', { class: 'wizard-row-label', text: tr(labelKey) }),
+        el('label', { for: controlId(field), class: 'wizard-row-label', text: tr(labelKey) }),
         el('div', { class: 'wizard-slider-row' }, [slider, valueOut]),
         el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
       ]);
@@ -1981,6 +2004,7 @@
 
     // Epochs
     var epochsInput = el('input', {
+      id: controlId('epochs'),
       type: 'number',
       class: 'wizard-input',
       min: '1',
@@ -1996,7 +2020,7 @@
       }
     });
     var epochsRow = el('div', { class: 'wizard-row' }, [
-      el('label', { class: 'wizard-row-label', text: tr('wizard.training.epochs.label') }),
+      el('label', { for: controlId('epochs'), class: 'wizard-row-label', text: tr('wizard.training.epochs.label') }),
       epochsInput,
       el('span', { class: 'wizard-row-hint', text: tr('wizard.training.epochs.hint') })
     ]);
@@ -2007,7 +2031,7 @@
     // cycle 2 / C1+I3) so an operator who wants byte-for-byte parity
     // with ``ForgeConfig()`` can pick it from the dropdown rather than
     // hand-edit the YAML afterwards.
-    var lrSelect = el('select', { class: 'wizard-select' });
+    var lrSelect = el('select', { id: controlId('learningRate'), class: 'wizard-select' });
     ['1e-4', '5e-5', '3e-5', '2e-5', '1e-5'].forEach(function (lr) {
       var option = el('option', { value: lr, text: lr });
       if (state.learningRate === lr) option.selected = true;
@@ -2019,7 +2043,7 @@
       liveYaml();
     });
     var lrRow = el('div', { class: 'wizard-row' }, [
-      el('label', { class: 'wizard-row-label', text: tr('wizard.training.lr.label') }),
+      el('label', { for: controlId('learningRate'), class: 'wizard-row-label', text: tr('wizard.training.lr.label') }),
       lrSelect,
       el('span', { class: 'wizard-row-hint', text: tr('wizard.training.lr.hint') })
     ]);
@@ -2027,7 +2051,7 @@
     pane.appendChild(lrRow);
 
     // Batch size
-    var batchSelect = el('select', { class: 'wizard-select' });
+    var batchSelect = el('select', { id: controlId('batchSize'), class: 'wizard-select' });
     [1, 2, 4, 8].forEach(function (bs) {
       var option = el('option', { value: String(bs), text: String(bs) });
       if (state.batchSize === bs) option.selected = true;
@@ -2039,7 +2063,7 @@
       liveYaml();
     });
     var batchRow = el('div', { class: 'wizard-row' }, [
-      el('label', { class: 'wizard-row-label', text: tr('wizard.training.batch.label') }),
+      el('label', { for: controlId('batchSize'), class: 'wizard-row-label', text: tr('wizard.training.batch.label') }),
       batchSelect,
       el('span', { class: 'wizard-row-hint', text: tr('wizard.training.batch.hint') })
     ]);
@@ -2053,6 +2077,7 @@
     // prompts.  Surface as a number input clamped to the schema's
     // [64, 131072] range.
     var maxLengthInput = el('input', {
+      id: controlId('maxLength'),
       type: 'number', class: 'wizard-input', value: String(state.maxLength || 2048),
       min: '64', max: '131072', step: '64'
     });
@@ -2069,7 +2094,7 @@
       }
     });
     var maxLengthRow = el('div', { class: 'wizard-row' }, [
-      el('label', { class: 'wizard-row-label', text: tr('wizard.training.max_length.label') }),
+      el('label', { for: controlId('maxLength'), class: 'wizard-row-label', text: tr('wizard.training.max_length.label') }),
       maxLengthInput,
       el('span', { class: 'wizard-row-hint', text: tr('wizard.training.max_length.hint') })
     ]);
@@ -2093,6 +2118,7 @@
       // Helper for a numeric param row with a slider + live value
       function makeParamSlider(field, min, max, step, labelKey, hintKey, detailKey) {
         var slider = el('input', {
+          id: controlId(field),
           type: 'range',
           class: 'wizard-slider',
           min: String(min),
@@ -2112,7 +2138,7 @@
           liveYaml();
         });
         var row = el('div', { class: 'wizard-row' }, [
-          el('label', { class: 'wizard-row-label', text: tr(labelKey) }),
+          el('label', { for: controlId(field), class: 'wizard-row-label', text: tr(labelKey) }),
           el('div', { class: 'wizard-slider-row' }, [slider, valueOut]),
           el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
         ]);
@@ -2123,6 +2149,7 @@
       // Helper for an integer param input
       function makeParamNumber(field, min, max, step, labelKey, hintKey, detailKey) {
         var input = el('input', {
+          id: controlId(field),
           type: 'number',
           class: 'wizard-input',
           min: String(min),
@@ -2139,7 +2166,7 @@
           }
         });
         var row = el('div', { class: 'wizard-row' }, [
-          el('label', { class: 'wizard-row-label', text: tr(labelKey) }),
+          el('label', { for: controlId(field), class: 'wizard-row-label', text: tr(labelKey) }),
           input,
           el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
         ]);
@@ -2170,6 +2197,7 @@
         // the YAML and TRL falls back to the built-in
         // format/length-shaping reward.
         var rewardInput = el('input', {
+          id: controlId('grpoRewardModel'),
           type: 'text',
           class: 'wizard-input',
           value: state.grpoRewardModel || '',
@@ -2181,7 +2209,7 @@
           liveYaml();
         });
         var rewardRow = el('div', { class: 'wizard-row' }, [
-          el('label', { class: 'wizard-row-label', text: tr('wizard.training.grpo_reward_model.label') }),
+          el('label', { for: controlId('grpoRewardModel'), class: 'wizard-row-label', text: tr('wizard.training.grpo_reward_model.label') }),
           rewardInput,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.training.grpo_reward_model.hint') })
         ]);
@@ -2202,7 +2230,7 @@
     }
 
     // Risk classification
-    var riskSelect = el('select', { class: 'wizard-select' });
+    var riskSelect = el('select', { id: controlId('riskClassification'), class: 'wizard-select' });
     [
       { id: 'unknown',       labelKey: 'wizard.risk.unknown' },
       { id: 'minimal-risk',  labelKey: 'wizard.risk.minimal' },
@@ -2221,7 +2249,7 @@
       rerender();
     });
     pane.appendChild(el('div', { class: 'wizard-row' }, [
-      el('label', { class: 'wizard-row-label', text: tr('wizard.risk.label') }),
+      el('label', { for: controlId('riskClassification'), class: 'wizard-row-label', text: tr('wizard.risk.label') }),
       riskSelect,
       el('span', { class: 'wizard-row-hint', text: tr('wizard.risk.hint') })
     ]));
@@ -2273,6 +2301,7 @@
 
     if (state.autoRevert) {
       var lossInput = el('input', {
+        id: controlId('maxAcceptableLoss'),
         type: 'number',
         class: 'wizard-input',
         min: '0.1',
@@ -2288,7 +2317,7 @@
         }
       });
       var lossRowChildren = [
-        el('label', { class: 'wizard-row-label', text: tr('wizard.eval.max_loss.label') }),
+        el('label', { for: controlId('maxAcceptableLoss'), class: 'wizard-row-label', text: tr('wizard.eval.max_loss.label') }),
         lossInput,
         el('span', { class: 'wizard-row-hint', text: tr('wizard.eval.max_loss.hint') })
       ];
@@ -2323,13 +2352,14 @@
     function makeMetaInput(field, labelKey, hintKey, placeholderKey, errorKey) {
       var errKey = errorKey ? fieldHasError(state, 'compliance', field) : null;
       var input = el('input', {
+        id: controlId(field),
         type: 'text',
         class: 'wizard-input' + (errKey ? ' is-invalid' : ''),
         value: state[field] || '',
         placeholder: tr(placeholderKey)
       });
       var rowChildren = [
-        el('label', { class: 'wizard-row-label' }, [
+        el('label', { for: controlId(field), class: 'wizard-row-label' }, [
           tr(labelKey),
           highRisk ? el('span', { class: 'badge', text: tr('wizard.locked.badge'), style: 'margin-left: 0.4rem;' }) : null
         ]),
@@ -2378,13 +2408,14 @@
       function makeRequiredTextarea(field, rows, labelKey, hintKey, placeholderKey, detailKey, errorKey) {
         var errKey = errorKey ? fieldHasError(state, 'compliance', field) : null;
         var ta = el('textarea', {
+          id: controlId(field),
           class: 'wizard-input' + (errKey ? ' is-invalid' : ''),
           rows: String(rows),
           placeholder: tr(placeholderKey)
         });
         ta.value = state[field] || '';
         var rowChildren = [
-          el('label', { class: 'wizard-row-label', text: tr(labelKey) }),
+          el('label', { for: controlId(field), class: 'wizard-row-label', text: tr(labelKey) }),
           ta,
           el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
         ];
@@ -2483,13 +2514,14 @@
         // explains this so the operator knows why they can't advance.
         var benchTasksErrKey = fieldHasError(state, 'compliance', 'benchmarkTasks');
         var tasksTextarea = el('textarea', {
+          id: controlId('benchmarkTasks'),
           class: 'wizard-input' + (benchTasksErrKey ? ' is-invalid' : ''),
           rows: '3',
           placeholder: 'arc_easy\nhellaswag\nmmlu'
         });
         tasksTextarea.value = state.benchmarkTasks || '';
         var tasksRowChildren = [
-          el('label', { class: 'wizard-row-label', text: tr('wizard.benchmark.tasks.label') }),
+          el('label', { for: controlId('benchmarkTasks'), class: 'wizard-row-label', text: tr('wizard.benchmark.tasks.label') }),
           tasksTextarea,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.benchmark.tasks.hint') })
         ];
@@ -2511,6 +2543,7 @@
         body.appendChild(tasksRow);
 
         var minScoreInput = el('input', {
+          id: controlId('benchmarkMinScore'),
           type: 'number',
           class: 'wizard-input',
           min: '0',
@@ -2525,7 +2558,7 @@
           liveYaml();
         });
         body.appendChild(el('div', { class: 'wizard-row' }, [
-          el('label', { class: 'wizard-row-label', text: tr('wizard.benchmark.min_score.label') }),
+          el('label', { for: controlId('benchmarkMinScore'), class: 'wizard-row-label', text: tr('wizard.benchmark.min_score.label') }),
           minScoreInput,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.benchmark.min_score.hint') })
         ]));
@@ -2551,6 +2584,7 @@
 
       if (state.judgeEnabled) {
         var judgeModelInput = el('input', {
+          id: controlId('judgeModel'),
           type: 'text',
           class: 'wizard-input',
           placeholder: 'gpt-4o',
@@ -2562,7 +2596,7 @@
           liveYaml();
         });
         body.appendChild(el('div', { class: 'wizard-row' }, [
-          el('label', { class: 'wizard-row-label', text: tr('wizard.judge.model.label') }),
+          el('label', { for: controlId('judgeModel'), class: 'wizard-row-label', text: tr('wizard.judge.model.label') }),
           judgeModelInput,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.judge.model.hint') })
         ]));
@@ -2571,13 +2605,14 @@
         // without it the runtime can't authenticate to the judge model.
         var judgeApiErrKey = fieldHasError(state, 'compliance', 'judgeApiKeyEnv');
         var judgeApiInput = el('input', {
+          id: controlId('judgeApiKeyEnv'),
           type: 'text',
           class: 'wizard-input' + (judgeApiErrKey ? ' is-invalid' : ''),
           placeholder: 'OPENAI_API_KEY',
           value: state.judgeApiKeyEnv || ''
         });
         var judgeApiRowChildren = [
-          el('label', { class: 'wizard-row-label', text: tr('wizard.judge.api_key_env.label') }),
+          el('label', { for: controlId('judgeApiKeyEnv'), class: 'wizard-row-label', text: tr('wizard.judge.api_key_env.label') }),
           judgeApiInput,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.judge.api_key_env.hint') })
         ];
@@ -2599,6 +2634,7 @@
         body.appendChild(judgeApiRow);
 
         var judgeScoreInput = el('input', {
+          id: controlId('judgeMinScore'),
           type: 'number',
           class: 'wizard-input',
           min: '1',
@@ -2615,7 +2651,7 @@
           }
         });
         body.appendChild(el('div', { class: 'wizard-row' }, [
-          el('label', { class: 'wizard-row-label', text: tr('wizard.judge.min_score.label') }),
+          el('label', { for: controlId('judgeMinScore'), class: 'wizard-row-label', text: tr('wizard.judge.min_score.label') }),
           judgeScoreInput,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.judge.min_score.hint') })
         ]));
@@ -2671,6 +2707,7 @@
       // only after the operator tried to advance past this step.
       var webhookUrlErrKey = fieldHasError(state, 'operations', 'webhookUrl');
       var urlInput = el('input', {
+        id: controlId('webhookUrl'),
         type: 'text',
         class: 'wizard-input' + (webhookUrlErrKey ? ' is-invalid' : ''),
         placeholder: tr('wizard.webhook.url.placeholder'),
@@ -2689,7 +2726,7 @@
         }
       });
       var urlRowChildren = [
-        el('label', { class: 'wizard-row-label', text: tr('wizard.webhook.url.label') }),
+        el('label', { for: controlId('webhookUrl'), class: 'wizard-row-label', text: tr('wizard.webhook.url.label') }),
         urlInput,
         el('span', { class: 'wizard-row-hint', text: tr('wizard.webhook.url.hint') })
       ];
@@ -2742,13 +2779,14 @@
       if (endpointShown) {
         var monEndpointErr = fieldHasError(state, 'operations', 'monitoringEndpoint');
         var epInput = el('input', {
+          id: controlId('monitoringEndpoint'),
           type: 'text',
           class: 'wizard-input' + (monEndpointErr ? ' is-invalid' : ''),
           placeholder: tr('wizard.monitoring.endpoint.placeholder'),
           value: state.monitoringEndpoint || ''
         });
         var epRowChildren = [
-          el('label', { class: 'wizard-row-label', text: tr('wizard.monitoring.endpoint.label') }),
+          el('label', { for: controlId('monitoringEndpoint'), class: 'wizard-row-label', text: tr('wizard.monitoring.endpoint.label') }),
           epInput,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.monitoring.endpoint.hint') })
         ];
@@ -2768,7 +2806,7 @@
 
         var intervalError = fieldHasError(state, 'operations', 'monitoringCheckIntervalHours');
         var intervalInput = el('input', {
-          id: 'wizard-monitoring-interval', type: 'number', min: '1', max: '720', step: '1',
+          id: controlId('monitoringCheckIntervalHours'), type: 'number', min: '1', max: '720', step: '1',
           class: 'wizard-input' + (intervalError ? ' is-invalid' : ''),
           value: String(state.monitoringCheckIntervalHours)
         });
@@ -2783,13 +2821,13 @@
           }
         });
         var intervalRow = el('div', { class: 'wizard-row' }, [
-          el('label', { for: 'wizard-monitoring-interval', class: 'wizard-row-label', text: tr('wizard.monitoring.interval.label') }),
+          el('label', { for: controlId('monitoringCheckIntervalHours'), class: 'wizard-row-label', text: tr('wizard.monitoring.interval.label') }),
           intervalInput
         ]);
         if (intervalError) intervalRow.appendChild(el('div', { class: 'wizard-error', role: 'alert', text: tr(intervalError) }));
         body.appendChild(intervalRow);
 
-        var meSelect = el('select', { class: 'wizard-select' });
+        var meSelect = el('select', { id: controlId('metricsExport'), class: 'wizard-select' });
         [
           { id: 'none',           labelKey: 'wizard.monitoring.metrics_export.none' },
           { id: 'prometheus',     labelKey: 'wizard.monitoring.metrics_export.prometheus' },
@@ -2806,7 +2844,7 @@
           liveYaml();
         });
         body.appendChild(el('div', { class: 'wizard-row' }, [
-          el('label', { class: 'wizard-row-label', text: tr('wizard.monitoring.metrics_export.label') }),
+          el('label', { for: controlId('metricsExport'), class: 'wizard-row-label', text: tr('wizard.monitoring.metrics_export.label') }),
           meSelect
         ]));
 
@@ -2857,13 +2895,14 @@
         function makeRequiredText(field, labelKey, hintKey, placeholderKey, errorKey) {
           var errKey = fieldHasError(state, 'operations', field);
           var inp = el('input', {
+            id: controlId(field),
             type: 'text',
             class: 'wizard-input' + (errKey ? ' is-invalid' : ''),
             placeholder: placeholderKey ? tr(placeholderKey) : '',
             value: state[field] || ''
           });
           var rowChildren = [
-            el('label', { class: 'wizard-row-label', text: tr(labelKey) }),
+            el('label', { for: controlId(field), class: 'wizard-row-label', text: tr(labelKey) }),
             inp,
             el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
           ];
@@ -2907,6 +2946,7 @@
       'wizard.retention.title', 'wizard.retention.hint', function (body) {
       function makeNumberRow(field, labelKey, hintKey) {
         var inp = el('input', {
+          id: controlId(field),
           type: 'number',
           class: 'wizard-input',
           min: '0',
@@ -2922,7 +2962,7 @@
           }
         });
         return el('div', { class: 'wizard-row' }, [
-          el('label', { class: 'wizard-row-label', text: tr(labelKey) }),
+          el('label', { for: controlId(field), class: 'wizard-row-label', text: tr(labelKey) }),
           inp,
           el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
         ]);
@@ -2941,7 +2981,7 @@
       // is the safe choice; ``block_on_excess`` is for regulated CI
       // gates where silent extension of retention horizons is the
       // bug we're trying to prevent.
-      var enforceSelect = el('select', { class: 'wizard-select' });
+      var enforceSelect = el('select', { id: controlId('retentionEnforce'), class: 'wizard-select' });
       [
         { id: 'log_only',        labelKey: 'wizard.retention.enforce.log_only' },
         { id: 'warn_on_excess',  labelKey: 'wizard.retention.enforce.warn' },
@@ -2957,7 +2997,7 @@
         liveYaml();
       });
       body.appendChild(el('div', { class: 'wizard-row' }, [
-        el('label', { class: 'wizard-row-label', text: tr('wizard.retention.enforce.label') }),
+        el('label', { for: controlId('retentionEnforce'), class: 'wizard-row-label', text: tr('wizard.retention.enforce.label') }),
         enforceSelect,
         el('span', { class: 'wizard-row-hint', text: tr('wizard.retention.enforce.hint') })
       ]));

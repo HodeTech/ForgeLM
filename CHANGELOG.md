@@ -43,6 +43,10 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Name every browser-wizard field by its visible caption. Text, number, slider, select and textarea
+  captions now point at their control through unique, stable `id`/`for` pairs, so screen readers
+  no longer announce a placeholder or nothing, and clicking a caption focuses its field. The LoRA
+  method caption names its group of method buttons; checkbox labels keep wrapping their toggles (#950).
 - Render the browser wizard's Compliance step again. It called a helper that only three other step
   renderers declared, so every visit threw a `ReferenceError` before the Article 9 risk-assessment,
   benchmark and LLM-judge controls appeared, and strict risk tiers could not complete the step.
