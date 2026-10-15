@@ -43,6 +43,10 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Render the browser wizard's Compliance step again. It called a helper that only three other step
+  renderers declared, so every visit threw a `ReferenceError` before the Article 9 risk-assessment,
+  benchmark and LLM-judge controls appeared, and strict risk tiers could not complete the step.
+  The helper is now shared, and every step has DOM-level render coverage (#879).
 - Restore the monitoring-plan evidence contract: `monitoring.*` declares an external plan,
   labelled `declarative_only: true`; ForgeLM runs no exporter, drift detector, alert, or scheduler.
   Warn once per config-file load for an enabled exporter declaration, without repeating during

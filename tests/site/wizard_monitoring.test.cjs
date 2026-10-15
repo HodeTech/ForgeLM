@@ -6,51 +6,11 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { test } = require('node:test');
 const vm = require('node:vm');
+const { root, element, loadWizard, state, descendants } = require('./wizard_harness.cjs');
 
-const root = path.resolve(__dirname, '../..');
 const pythonBin = process.platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python'];
 const venvPython = path.join(process.env.VIRTUAL_ENV || path.join(root, '.venv'), ...pythonBin);
 const python = process.env.FORGELM_TEST_PYTHON || (fs.existsSync(venvPython) ? venvPython : 'python3');
-function element(tag) {
-  const node = {
-    tag, children: [], attrs: {}, events: {},
-    appendChild(child) { this.children.push(child); child.parent = this; },
-    setAttribute(key, value) { this.attrs[key] = value; },
-    addEventListener(key, handler) { this.events[key] = handler; },
-    remove() { this.parent.children = this.parent.children.filter(child => child !== this); },
-    querySelector(selector) {
-      return descendants(this).find(child => (child.className || '').split(' ').includes(selector.slice(1))) || null;
-    }
-  };
-  node.classList = {
-    add() {}, toggle() {},
-    remove(value) { node.className = (node.className || '').split(' ').filter(item => item !== value).join(' '); }
-  };
-  return node;
-}
-function loadWizard() {
-  const document = {
-    readyState: 'loading', addEventListener() {}, querySelector() { return null; }, createElement: element,
-    createElementNS: (_, tag) => element(tag), createTextNode: text => ({ text })
-  };
-  const context = vm.createContext({ window: {}, document, URL });
-  for (const file of ['wizard_defaults.js', 'translations.js']) {
-    vm.runInContext(fs.readFileSync(path.join(root, 'site/js', file), 'utf8'), context);
-  }
-  const marker = '  /* ── Boot ─';
-  const source = fs.readFileSync(path.join(root, 'site/js/wizard.js'), 'utf8');
-  assert.equal(source.split(marker).length, 2, 'test seam must identify the boot boundary exactly once');
-  // Expose closure functions only in the VM; production has no test-only API.
-  vm.runInContext(source.replace(marker,
-    '  window.testWizard = {defaultState, buildYaml, validateStep, coerceForRisk, parseEnvRef, STEP_RENDERERS};\n' + marker), context);
-  return { ...context.window.testWizard, translations: context.window.ForgeLMTranslations };
-}
-function state(wizard, overrides = {}) {
-  return Object.assign(wizard.defaultState(), { model: 'org/model', datasetName: 'org/dataset' }, overrides);
-}
-function descendants(node) {
-  return [node, ...(node.children || []).flatMap(descendants)];
-}
 
 for (const tier of ['minimal-risk', 'limited-risk', 'high-risk', 'unacceptable']) {
   test(`monitoring remains opt-in at ${tier}; empty endpoint is valid`, () => {

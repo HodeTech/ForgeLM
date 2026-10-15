@@ -1454,6 +1454,18 @@
     return nodes;
   }
 
+  // Append a per-field detail paragraph beneath a row while the operator
+  // has details enabled (state.detailsVisible). The paragraph expands what
+  // the hint glosses: 2-3 sentences on what the value MEANS, not just what
+  // range to pick. Shared by every step renderer — it used to be a local
+  // helper in three of them, and the compliance renderer, which had none,
+  // threw a ReferenceError before its risk and evaluation controls (#879).
+  function appendDetail(state, rowEl, detailKey) {
+    if (state.detailsVisible && detailKey) {
+      rowEl.appendChild(el('p', { class: 'wizard-row-detail', text: tr(detailKey) }));
+    }
+  }
+
   /* Step 1: Welcome / experience level */
   STEP_RENDERERS['welcome'] = function (pane, state, rerender, persist) {
     pane.appendChild(el('h2', { class: 'wizard-step-title', id: 'wizard-title', text: tr('wizard.step.welcome.title') }));
@@ -1730,11 +1742,6 @@
       var yamlOutput = document.querySelector('[data-wizard-yaml-output]');
       if (yamlOutput) yamlOutput.innerHTML = tintYaml(buildYaml(state));
     }
-    function appendDetail(rowEl, detailKey) {
-      if (state.detailsVisible && detailKey) {
-        rowEl.appendChild(el('p', { class: 'wizard-row-detail', text: tr(detailKey) }));
-      }
-    }
 
     // Data Governance accordion (EU AI Act Article 10).
     pane.appendChild(makeAccordion(state, persist, 'governance',
@@ -1774,7 +1781,7 @@
             }
           }
         });
-        appendDetail(row, detailKey);
+        appendDetail(state, row, detailKey);
         return row;
       }
 
@@ -1832,16 +1839,6 @@
       if (yamlOutput) yamlOutput.innerHTML = tintYaml(buildYaml(state));
     }
 
-    // Append a per-field detail paragraph beneath a row when the
-    // operator is in beginner mode (state.detailsVisible). The paragraph
-    // expands what the hint glosses — 2-3 sentences explaining what the
-    // value MEANS, not just what range to pick.
-    function appendDetail(rowEl, detailKey) {
-      if (state.detailsVisible && detailKey) {
-        rowEl.appendChild(el('p', { class: 'wizard-row-detail', text: tr(detailKey) }));
-      }
-    }
-
     // QLoRA toggle (4-bit base model quantization)
     var qloraInput = el('input', { type: 'checkbox' });
     qloraInput.checked = state.qlora;
@@ -1857,7 +1854,7 @@
       ]),
       el('span', { class: 'wizard-row-hint', text: tr('wizard.training.qlora.hint') })
     ]);
-    appendDetail(qloraRow, 'wizard.training.qlora.detail');
+    appendDetail(state, qloraRow, 'wizard.training.qlora.detail');
     pane.appendChild(qloraRow);
 
     // PEFT method radio (Standard LoRA / DoRA / PiSSA / RSLoRA).
@@ -1894,7 +1891,7 @@
       });
       methodRow.appendChild(methodGrid);
       methodRow.appendChild(el('span', { class: 'wizard-row-hint', text: tr('wizard.training.lora_method.hint') }));
-      appendDetail(methodRow, 'wizard.training.lora_method.detail');
+      appendDetail(state, methodRow, 'wizard.training.lora_method.detail');
       pane.appendChild(methodRow);
     }
 
@@ -1916,7 +1913,7 @@
       ]),
       el('span', { class: 'wizard-row-hint', text: tr('wizard.training.galore.hint') })
     ]);
-    appendDetail(galoreRow, 'wizard.training.galore.detail');
+    appendDetail(state, galoreRow, 'wizard.training.galore.detail');
     pane.appendChild(galoreRow);
 
     // GaLore variant select — only when GaLore is enabled.
@@ -1944,7 +1941,7 @@
         galoreSelect,
         el('span', { class: 'wizard-row-hint', text: tr('wizard.training.galore_optim.hint') })
       ]);
-      appendDetail(galoreOptimRow, 'wizard.training.galore_optim.detail');
+      appendDetail(state, galoreOptimRow, 'wizard.training.galore_optim.detail');
       pane.appendChild(galoreOptimRow);
     }
 
@@ -1970,7 +1967,7 @@
         el('div', { class: 'wizard-slider-row' }, [slider, valueOut]),
         el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
       ]);
-      appendDetail(row, detailKey);
+      appendDetail(state, row, detailKey);
       return row;
     }
     // LoRA rank / alpha — only meaningful when LoRA-style adapters
@@ -2003,7 +2000,7 @@
       epochsInput,
       el('span', { class: 'wizard-row-hint', text: tr('wizard.training.epochs.hint') })
     ]);
-    appendDetail(epochsRow, 'wizard.training.epochs.detail');
+    appendDetail(state, epochsRow, 'wizard.training.epochs.detail');
     pane.appendChild(epochsRow);
 
     // Learning rate. Includes the schema default ``2e-5`` (review-
@@ -2026,7 +2023,7 @@
       lrSelect,
       el('span', { class: 'wizard-row-hint', text: tr('wizard.training.lr.hint') })
     ]);
-    appendDetail(lrRow, 'wizard.training.lr.detail');
+    appendDetail(state, lrRow, 'wizard.training.lr.detail');
     pane.appendChild(lrRow);
 
     // Batch size
@@ -2046,7 +2043,7 @@
       batchSelect,
       el('span', { class: 'wizard-row-hint', text: tr('wizard.training.batch.hint') })
     ]);
-    appendDetail(batchRow, 'wizard.training.batch.detail');
+    appendDetail(state, batchRow, 'wizard.training.batch.detail');
     pane.appendChild(batchRow);
 
     // Max sequence length (P3 / review-cycle 2).  Was previously
@@ -2119,7 +2116,7 @@
           el('div', { class: 'wizard-slider-row' }, [slider, valueOut]),
           el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
         ]);
-        appendDetail(row, detailKey);
+        appendDetail(state, row, detailKey);
         return row;
       }
 
@@ -2146,7 +2143,7 @@
           input,
           el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
         ]);
-        appendDetail(row, detailKey);
+        appendDetail(state, row, detailKey);
         return row;
       }
 
@@ -2188,7 +2185,7 @@
           rewardInput,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.training.grpo_reward_model.hint') })
         ]);
-        appendDetail(rewardRow, 'wizard.training.grpo_reward_model.detail');
+        appendDetail(state, rewardRow, 'wizard.training.grpo_reward_model.detail');
         pane.appendChild(rewardRow);
       }
     }
@@ -2408,7 +2405,7 @@
             }
           }
         });
-        appendDetail(row, detailKey);
+        appendDetail(state, row, detailKey);
         return row;
       }
 
@@ -2450,7 +2447,7 @@
         ]),
         el('span', { class: 'wizard-row-hint', text: tr('wizard.risk_assessment.vulnerable_groups.hint') })
       ]);
-      appendDetail(vgRow, 'wizard.risk_assessment.vulnerable_groups.detail');
+      appendDetail(state, vgRow, 'wizard.risk_assessment.vulnerable_groups.detail');
       body.appendChild(vgRow);
     }));
 
@@ -2477,7 +2474,7 @@
         ]),
         el('span', { class: 'wizard-row-hint', text: tr('wizard.benchmark.enabled.hint') })
       ]);
-      appendDetail(benchToggleRow, 'wizard.benchmark.enabled.detail');
+      appendDetail(state, benchToggleRow, 'wizard.benchmark.enabled.detail');
       body.appendChild(benchToggleRow);
 
       if (state.benchmarkEnabled) {
@@ -2549,7 +2546,7 @@
         ]),
         el('span', { class: 'wizard-row-hint', text: tr('wizard.judge.enabled.hint') })
       ]);
-      appendDetail(judgeToggleRow, 'wizard.judge.enabled.detail');
+      appendDetail(state, judgeToggleRow, 'wizard.judge.enabled.detail');
       body.appendChild(judgeToggleRow);
 
       if (state.judgeEnabled) {
@@ -2642,16 +2639,6 @@
       if (yamlOutput) yamlOutput.innerHTML = tintYaml(buildYaml(state));
     }
 
-    // Same per-row tutorial-paragraph helper as the other steps.
-    // Adds a wizard-row-detail block beneath the row when the operator
-    // is in beginner mode (state.detailsVisible). The detail block
-    // gives 2-3 sentences of plain-language context the hint glosses.
-    function appendDetail(rowEl, detailKey) {
-      if (state.detailsVisible && detailKey) {
-        rowEl.appendChild(el('p', { class: 'wizard-row-detail', text: tr(detailKey) }));
-      }
-    }
-
     // Webhook (Slack/Teams/Discord) accordion.
     pane.appendChild(makeAccordion(state, persist, 'webhook',
       'wizard.webhook.title', 'wizard.webhook.hint', function (body) {
@@ -2674,7 +2661,7 @@
         ]),
         el('span', { class: 'wizard-row-hint', text: tr('wizard.webhook.enabled.hint') })
       ]);
-      appendDetail(enabledRow, 'wizard.webhook.enabled.detail');
+      appendDetail(state, enabledRow, 'wizard.webhook.enabled.detail');
       body.appendChild(enabledRow);
 
       if (!state.webhookEnabled) return;
@@ -2710,7 +2697,7 @@
         urlRowChildren.push(el('div', { class: 'wizard-error', role: 'alert', text: tr(webhookUrlErrKey) }));
       }
       var urlRow = el('div', { class: 'wizard-row' }, urlRowChildren);
-      appendDetail(urlRow, 'wizard.webhook.url.detail');
+      appendDetail(state, urlRow, 'wizard.webhook.url.detail');
       body.appendChild(urlRow);
 
       function makeWebhookToggle(field, labelKey) {
@@ -2748,7 +2735,7 @@
         el('label', { class: 'wizard-toggle' }, [monInput, monLabelEl]),
         el('span', { class: 'wizard-row-hint', text: tr('wizard.monitoring.enabled.hint') })
       ]);
-      appendDetail(monRow, 'wizard.monitoring.enabled.detail');
+      appendDetail(state, monRow, 'wizard.monitoring.enabled.detail');
       body.appendChild(monRow);
 
       var endpointShown = !!state.monitoringEnabled;
@@ -2857,7 +2844,7 @@
         ]),
         el('span', { class: 'wizard-row-hint', text: tr('wizard.synthetic.enabled.hint') })
       ]);
-      appendDetail(synRow, 'wizard.synthetic.enabled.detail');
+      appendDetail(state, synRow, 'wizard.synthetic.enabled.detail');
       body.appendChild(synRow);
 
       if (state.syntheticEnabled) {

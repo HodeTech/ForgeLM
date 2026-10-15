@@ -68,8 +68,9 @@ Python environment available. The harness uses the active virtual environment, t
 CI runs them on Node 24 in the validation job after installing the Python development dependencies.
 They use Node's built-in test runner and a VM to execute the actual wizard;
 generated YAML is also parsed by the real `ForgeConfig`. No npm packages,
-browser download, GPU, or network calls are needed. DOM shims exercise the
-Operations renderer only; they do not replace browser or native-language review.
+browser download, GPU, or network calls are needed. The shared harness
+(`tests/site/wizard_harness.cjs`) renders every step through a minimal DOM
+shim; it does not replace browser or native-language review.
 
 ## Fixtures
 
