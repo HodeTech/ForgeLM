@@ -1091,10 +1091,19 @@
 
       coerceForRisk(state);
 
+      // Rebuilding the pane drops the focused control, so a keyboard user who
+      // toggled a field that reveals others would restart at the top of the
+      // dialog. Controls have stable ids (controlId): focus the rebuilt one.
+      // After a step change the id is gone and focus is left alone.
+      var active = document.activeElement;
+      var focusedId = active && active.id && pane.contains(active) ? active.id : null;
+
       var stepDef = STEPS[idx];
       pane.innerHTML = '';
       var renderer = STEP_RENDERERS[stepDef.id];
       if (renderer) renderer(pane, state, render, persist);
+      var refocus = focusedId ? document.getElementById(focusedId) : null;
+      if (refocus && pane.contains(refocus)) refocus.focus();
 
       // Progress + counter
       var pct = Math.round(((idx + 1) / STEPS.length) * 100);
@@ -1457,22 +1466,24 @@
   // Append a per-field detail paragraph beneath a row while the operator
   // has details enabled (state.detailsVisible). The paragraph expands what
   // the hint glosses: 2-3 sentences on what the value MEANS, not just what
-  // range to pick. Shared by every step renderer — it used to be a local
-  // helper in three of them, and the compliance renderer, which had none,
-  // threw a ReferenceError before its risk and evaluation controls (#879).
+  // range to pick. Shared by every renderer that shows per-field details —
+  // it used to be a local helper in three of them, and the compliance
+  // renderer, which had none, threw a ReferenceError before its risk and
+  // evaluation controls (#879).
   function appendDetail(state, rowEl, detailKey) {
     if (state.detailsVisible && detailKey) {
       rowEl.appendChild(el('p', { class: 'wizard-row-detail', text: tr(detailKey) }));
     }
   }
 
-  // Id of the control that edits ``field``; its caption points at it with
+  // Id of the control that edits ``field``; a caption points at it with
   // ``for`` so the caption is the control's accessible name and a click on
-  // it focuses the control (#950). Field names make the ids stable and
-  // unique: each captioned control writes exactly one state field, and a
-  // step renders each field at most once, so re-rendering a step or an
-  // accordion rebuilds the same ids rather than adding second copies.
-  // Checkboxes need no id — their <label> wraps them.
+  // it focuses the control (#950). Checkboxes keep their wrapping <label>;
+  // their ids, and ``controlId(field) + '-' + option`` on option cards, let
+  // render() return focus to the control that re-rendered the step. Field
+  // names make the ids stable and unique: each control writes one state
+  // field and a step renders each field at most once, so a re-render
+  // rebuilds the same ids rather than adding second copies.
   function controlId(field) {
     return 'wizard-field-' + field.replace(/[A-Z]/g, function (c) { return '-' + c.toLowerCase(); });
   }
@@ -1490,6 +1501,7 @@
     ].forEach(function (opt) {
       var card = el('button', {
         type: 'button',
+        id: controlId('experience') + '-' + opt.id,
         class: 'wizard-card' + (state.experience === opt.id ? ' is-selected' : ''),
         on: {
           click: function () {
@@ -1528,6 +1540,7 @@
       }
       var card = el('button', {
         type: 'button',
+        id: controlId('useCase') + '-' + opt.id,
         class: 'wizard-card' + (state.useCase === opt.id ? ' is-selected' : ''),
         on: {
           click: function () {
@@ -1573,6 +1586,7 @@
       }
       var card = el('button', {
         type: 'button',
+        id: controlId('trainerType') + '-' + def.id,
         class: 'wizard-card' + (state.trainerType === def.id ? ' is-selected' : ''),
         on: {
           click: function () {
@@ -1614,6 +1628,7 @@
       if (preset.badgeKey) titleNode.appendChild(el('span', { class: 'badge', text: tr(preset.badgeKey) }));
       var card = el('button', {
         type: 'button',
+        id: controlId('modelPreset') + '-' + preset.id,
         class: 'wizard-card' + (state.modelPreset === preset.id ? ' is-selected' : ''),
         on: {
           click: function () {
@@ -1685,6 +1700,7 @@
     ].forEach(function (opt) {
       var card = el('button', {
         type: 'button',
+        id: controlId('datasetKind') + '-' + opt.id,
         class: 'wizard-card' + (state.datasetKind === opt.id ? ' is-selected' : ''),
         on: {
           click: function () {
@@ -1819,7 +1835,7 @@
         requireGov ? 'wizard.error.governance.known_biases.required' : null));
 
       function makeCheckbox(field, labelKey, hintKey) {
-        var cb = el('input', { type: 'checkbox' });
+        var cb = el('input', { id: controlId(field), type: 'checkbox' });
         cb.checked = !!state[field];
         cb.addEventListener('change', function () {
           state[field] = cb.checked;
@@ -1854,7 +1870,7 @@
     }
 
     // QLoRA toggle (4-bit base model quantization)
-    var qloraInput = el('input', { type: 'checkbox' });
+    var qloraInput = el('input', { id: controlId('qlora'), type: 'checkbox' });
     qloraInput.checked = state.qlora;
     qloraInput.addEventListener('change', function () {
       state.qlora = qloraInput.checked;
@@ -1895,6 +1911,7 @@
       methods.forEach(function (m) {
         var card = el('button', {
           type: 'button',
+          id: controlId('loraMethod') + '-' + m.id,
           class: 'wizard-card' + (state.loraMethod === m.id ? ' is-selected' : ''),
           on: {
             click: function () {
@@ -1919,7 +1936,7 @@
 
     // GaLore toggle (full-parameter training via gradient projection).
     // Mutually exclusive with LoRA-style adapters at runtime.
-    var galoreInput = el('input', { type: 'checkbox' });
+    var galoreInput = el('input', { id: controlId('galoreEnabled'), type: 'checkbox' });
     galoreInput.checked = state.galoreEnabled;
     galoreInput.addEventListener('change', function () {
       state.galoreEnabled = galoreInput.checked;
@@ -2271,7 +2288,7 @@
     // tier" badge — used for fields the EU AI Act forces under high-risk
     // / unacceptable tiers (Articles 9-17).
     function makeToggle(field, labelKey, hintKey, locked, detailKey) {
-      var input = el('input', { type: 'checkbox' });
+      var input = el('input', { id: controlId(field), type: 'checkbox' });
       input.checked = state[field];
       if (locked) input.disabled = true;
       input.addEventListener('change', function () {
@@ -2281,20 +2298,21 @@
       });
       var labelEl = el('span', { class: 'wizard-toggle-label', text: tr(labelKey) });
       if (locked) {
+        // The space keeps the badge a separate word in the accessible name;
+        // the CSS margin alone does not.
+        labelEl.appendChild(document.createTextNode(' '));
         labelEl.appendChild(el('span', {
           class: 'badge',
           text: tr('wizard.locked.badge'),
           style: 'margin-left: 0.4rem;'
         }));
       }
-      var children = [
+      var row = el('div', { class: 'wizard-row' }, [
         el('label', { class: 'wizard-toggle' }, [input, labelEl]),
         el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
-      ];
-      if (detailKey && state.detailsVisible) {
-        children.push(el('p', { class: 'wizard-row-detail', text: tr(detailKey) }));
-      }
-      return el('div', { class: 'wizard-row' }, children);
+      ]);
+      appendDetail(state, row, detailKey);
+      return row;
     }
     var highRisk = isStrictRisk(state);
     pane.appendChild(makeToggle('autoRevert', 'wizard.eval.auto_revert.label', 'wizard.eval.auto_revert.hint', false, 'wizard.eval.auto_revert.detail'));
@@ -2316,15 +2334,13 @@
           liveYaml();
         }
       });
-      var lossRowChildren = [
+      var lossRow = el('div', { class: 'wizard-row' }, [
         el('label', { for: controlId('maxAcceptableLoss'), class: 'wizard-row-label', text: tr('wizard.eval.max_loss.label') }),
         lossInput,
         el('span', { class: 'wizard-row-hint', text: tr('wizard.eval.max_loss.hint') })
-      ];
-      if (state.detailsVisible) {
-        lossRowChildren.push(el('p', { class: 'wizard-row-detail', text: tr('wizard.eval.max_loss.detail') }));
-      }
-      pane.appendChild(el('div', { class: 'wizard-row' }, lossRowChildren));
+      ]);
+      appendDetail(state, lossRow, 'wizard.eval.max_loss.detail');
+      pane.appendChild(lossRow);
     }
 
     pane.appendChild(makeToggle('safetyEval', 'wizard.eval.safety.label', 'wizard.eval.safety.hint', highRisk, 'wizard.eval.safety.detail'));
@@ -2361,6 +2377,8 @@
       var rowChildren = [
         el('label', { for: controlId(field), class: 'wizard-row-label' }, [
           tr(labelKey),
+          // A separate word in the accessible name whatever the label's display.
+          highRisk ? ' ' : null,
           highRisk ? el('span', { class: 'badge', text: tr('wizard.locked.badge'), style: 'margin-left: 0.4rem;' }) : null
         ]),
         input,
@@ -2464,7 +2482,7 @@
         requireRA ? 'wizard.error.risk_assessment.mitigation_measures.required' : null));
 
       // vulnerable_groups_considered: checkbox
-      var vgInput = el('input', { type: 'checkbox' });
+      var vgInput = el('input', { id: controlId('vulnerableGroupsConsidered'), type: 'checkbox' });
       vgInput.checked = !!state.vulnerableGroupsConsidered;
       vgInput.addEventListener('change', function () {
         state.vulnerableGroupsConsidered = vgInput.checked;
@@ -2491,7 +2509,7 @@
       'wizard.eval_gates.title', 'wizard.eval_gates.hint', function (body) {
 
       // ── Benchmark sub-section ──
-      var benchInput = el('input', { type: 'checkbox' });
+      var benchInput = el('input', { id: controlId('benchmarkEnabled'), type: 'checkbox' });
       benchInput.checked = !!state.benchmarkEnabled;
       benchInput.addEventListener('change', function () {
         state.benchmarkEnabled = benchInput.checked;
@@ -2565,7 +2583,7 @@
       }
 
       // ── LLM Judge sub-section ──
-      var judgeInput = el('input', { type: 'checkbox' });
+      var judgeInput = el('input', { id: controlId('judgeEnabled'), type: 'checkbox' });
       judgeInput.checked = !!state.judgeEnabled;
       judgeInput.addEventListener('change', function () {
         state.judgeEnabled = judgeInput.checked;
@@ -2683,7 +2701,7 @@
       // stay collapsed and the YAML omits the webhook block entirely.
       // When on, the URL is required (validateStep paints an inline
       // error if blank when the operator hits Next).
-      var enabledInput = el('input', { type: 'checkbox' });
+      var enabledInput = el('input', { id: controlId('webhookEnabled'), type: 'checkbox' });
       enabledInput.checked = !!state.webhookEnabled;
       enabledInput.addEventListener('change', function () {
         state.webhookEnabled = enabledInput.checked;
@@ -2738,7 +2756,7 @@
       body.appendChild(urlRow);
 
       function makeWebhookToggle(field, labelKey) {
-        var cb = el('input', { type: 'checkbox' });
+        var cb = el('input', { id: controlId(field), type: 'checkbox' });
         cb.checked = !!state[field];
         cb.addEventListener('change', function () {
           state[field] = cb.checked;
@@ -2760,7 +2778,7 @@
     // Declarative external monitoring plan (Article 72 / 17(1)(h)).
     pane.appendChild(makeAccordion(state, persist, 'monitoring',
       'wizard.monitoring.title', 'wizard.monitoring.hint', function (body) {
-      var monInput = el('input', { type: 'checkbox' });
+      var monInput = el('input', { id: controlId('monitoringEnabled'), type: 'checkbox' });
       monInput.checked = !!state.monitoringEnabled;
       monInput.addEventListener('change', function () {
         state.monitoringEnabled = monInput.checked;
@@ -2848,7 +2866,7 @@
           meSelect
         ]));
 
-        var driftCb = el('input', { type: 'checkbox' });
+        var driftCb = el('input', { id: controlId('alertOnDrift'), type: 'checkbox' });
         driftCb.checked = !!state.alertOnDrift;
         driftCb.addEventListener('change', function () {
           state.alertOnDrift = driftCb.checked;
@@ -2868,7 +2886,7 @@
     // Synthetic data generation accordion.
     pane.appendChild(makeAccordion(state, persist, 'synthetic',
       'wizard.synthetic.title', 'wizard.synthetic.hint', function (body) {
-      var synInput = el('input', { type: 'checkbox' });
+      var synInput = el('input', { id: controlId('syntheticEnabled'), type: 'checkbox' });
       synInput.checked = !!state.syntheticEnabled;
       synInput.addEventListener('change', function () {
         state.syntheticEnabled = synInput.checked;

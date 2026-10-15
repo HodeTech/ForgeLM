@@ -9,12 +9,7 @@
 
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { loadWizard, state, descendants, textOf, renderStep, RISK_TIERS, scenarios } = require('./wizard_harness.cjs');
-
-// Text nodes carry no classList; only elements can match a class.
-function hasClass(node, value) {
-  return Boolean(node.classList && node.classList.contains(value));
-}
+const { loadWizard, state, descendants, textOf, hasClass, renderStep, RISK_TIERS, scenarios } = require('./wizard_harness.cjs');
 
 function rows(pane) {
   return descendants(pane).filter(node => node.tag === 'div' && hasClass(node, 'wizard-row'));
@@ -94,7 +89,7 @@ test('compliance controls still write the operator\'s answers into the YAML', ()
 });
 
 for (const tier of ['high-risk', 'unacceptable']) {
-  test(`a ${tier} configuration passes the compliance step once its rendered fields are filled`, () => {
+  test(`${tier === 'unacceptable' ? 'an' : 'a'} ${tier} configuration passes the compliance step once its rendered fields are filled`, () => {
     const wizard = loadWizard();
     // Both gate inputs ship with defaults; blank them so all eight required answers start missing.
     const value = state(wizard, { riskClassification: tier, benchmarkEnabled: true, judgeEnabled: true,

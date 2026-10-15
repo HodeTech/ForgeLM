@@ -63,7 +63,7 @@ tests/
 
 Browser wizard regressions live in `tests/site/*.test.cjs`. Run
 `node --test tests/site/*.test.cjs` with Node 22 or newer and the development
-Python environment available. The harness uses the active virtual environment, then the checkout's
+Python environment available. The YAML round-trip test uses the active virtual environment, then the checkout's
 `.venv`, then `python3`; set `FORGELM_TEST_PYTHON` to an explicit interpreter path if needed.
 CI runs them on Node 24 in the validation job after installing the Python development dependencies.
 They use Node's built-in test runner and a VM to execute the actual wizard;

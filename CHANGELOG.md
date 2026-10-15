@@ -56,7 +56,10 @@ All notable changes to ForgeLM are documented here.
 - Name every browser-wizard field by its visible caption. Text, number, slider, select and textarea
   captions now point at their control through unique, stable `id`/`for` pairs, so screen readers
   no longer announce a placeholder or nothing, and clicking a caption focuses its field. The LoRA
-  method caption names its group of method buttons; checkbox labels keep wrapping their toggles (#950).
+  method caption names its group of method buttons; checkbox labels keep wrapping their toggles.
+  Keyboard focus now stays on a toggle, select or option card that re-renders the step, so the
+  fields it reveals are the next Tab stop, and "required for risk tier" badges read as a separate
+  word (#950).
 - Render the browser wizard's Compliance step again. It called a helper that only three other step
   renderers declared, so every visit threw a `ReferenceError` before the Article 9 risk-assessment,
   benchmark and LLM-judge controls appeared, and strict risk tiers could not complete the step.

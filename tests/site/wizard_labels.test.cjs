@@ -10,7 +10,7 @@
 
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { loadWizard, state, descendants, textOf, renderStep, scenarios } = require('./wizard_harness.cjs');
+const { loadWizard, state, descendants, textOf, hasClass, isElement, renderStep, scenarios } = require('./wizard_harness.cjs');
 
 // Every captioned control, by the state field it edits, with the i18n key of
 // its caption. Outside a browser `tr()` has no table, so captions render as
@@ -67,9 +67,6 @@ const CAPTIONS = {
 const idFor = field => 'wizard-field-' + field.replace(/[A-Z]/g, c => '-' + c.toLowerCase());
 const FIELD_BY_ID = new Map(Object.keys(CAPTIONS).map(field => [idFor(field), field]));
 
-const isElement = node => !Object.hasOwn(node, 'text');
-const hasClass = (node, value) => Boolean(node.classList && node.classList.contains(value));
-
 function ancestors(node) {
   const out = [];
   for (let cur = node.parent; cur; cur = cur.parent) out.push(cur);
@@ -103,6 +100,10 @@ function auditPane(pane, where) {
     assert.equal(captions.length, 1, `${where}: exactly one caption names ${id}`);
     const caption = captions[0];
     assert.ok(hasClass(caption, 'wizard-row-label'), `${where}: ${id} is named by its visible row caption`);
+    // Either attribute would override the <label> in the accessible-name computation.
+    for (const attribute of ['aria-label', 'aria-labelledby']) {
+      assert.equal(control.getAttribute(attribute), null, `${where}: ${attribute} on ${id} would hide its caption`);
+    }
     assert.ok(textOf(caption).startsWith(CAPTIONS[field]), `${where}: ${id} is captioned ${textOf(caption)}`);
     const row = ancestors(control).find(node => hasClass(node, 'wizard-row'));
     assert.ok(row && descendants(row).includes(caption), `${where}: ${id} and its caption share a row`);
@@ -164,7 +165,7 @@ test('ids are stable across renders and re-renders', () => {
   }
 });
 
-test('toggles that re-render a step or an accordion keep one id per control', () => {
+test('toggles that re-render a step, and accordion toggles, keep one id per control', () => {
   const wizard = loadWizard();
   const value = state(wizard, { riskClassification: 'high-risk' });
   const pane = renderStep(wizard, value, 'compliance');
@@ -185,4 +186,26 @@ test('toggles that re-render a step or an accordion keep one id per control', ()
   }
   assert.deepEqual(descendants(pane).filter(isElement).map(node => node.getAttribute('id')).filter(Boolean), before);
   auditPane(pane, 'compliance after toggling every accordion twice');
+});
+
+test('every control that can re-render a step keeps a stable id, so focus can return to it', () => {
+  const wizard = loadWizard();
+  for (const overrides of scenarios()) {
+    for (const step of wizard.STEPS) {
+      const pane = renderStep(wizard, state(wizard, overrides), step.id);
+      for (const node of descendants(pane).filter(isElement)) {
+        const reRenders = node.getAttribute('type') === 'checkbox' || node.tag === 'select' || hasClass(node, 'wizard-card');
+        if (reRenders) assert.match(node.getAttribute('id') || '', /^wizard-field-[a-z0-9-]+$/, `${step.id}: ${node.tag} needs an id`);
+      }
+    }
+  }
+});
+
+test('a "required for risk tier" badge stays a separate word in the caption', () => {
+  const wizard = loadWizard();
+  const pane = renderStep(wizard, state(wizard, { riskClassification: 'high-risk' }), 'compliance');
+  const texts = descendants(pane).filter(node => node.tag === 'label').map(textOf);
+  for (const caption of ['wizard.compliance.provider_name.label', 'wizard.eval.safety.label', 'wizard.compliance.approval.label']) {
+    assert.ok(texts.includes(`${caption} wizard.locked.badge`), `${caption} is followed by a space before its badge`);
+  }
 });

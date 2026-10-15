@@ -45,8 +45,13 @@ function classes(node) {
   return (node.className || '').split(' ').filter(Boolean);
 }
 
+// Text nodes (`{ text }`) have no class; an element may have several.
 function hasClass(node, value) {
   return classes(node).includes(value);
+}
+
+function isElement(node) {
+  return !Object.hasOwn(node, 'text');
 }
 
 function loadWizard() {
@@ -115,7 +120,19 @@ function scenarios() {
     }
   }
   for (const trainerType of ['sft', 'dpo', 'orpo', 'simpo', 'kto', 'grpo']) out.push({ trainerType });
+  // After a failed Next: every validated field is invalid, so the error rows render too.
+  for (const riskClassification of ['limited-risk', 'high-risk']) {
+    out.push({
+      riskClassification, attemptedSteps: ['model', 'dataset', 'compliance', 'operations'],
+      modelPreset: 'custom', model: '', datasetName: '', benchmarkEnabled: true, benchmarkTasks: '',
+      judgeEnabled: true, judgeApiKeyEnv: '', webhookEnabled: true, webhookUrl: '', monitoringEnabled: true,
+      monitoringEndpoint: 'env:', monitoringCheckIntervalHours: 0, syntheticEnabled: true,
+      syntheticTeacherModel: '', syntheticSeedFile: '', syntheticApiKeyEnv: ''
+    });
+  }
   return out;
 }
 
-module.exports = { root, element, loadWizard, state, descendants, textOf, renderStep, RISK_TIERS, scenarios };
+module.exports = {
+  root, element, loadWizard, state, descendants, textOf, hasClass, isElement, renderStep, RISK_TIERS, scenarios
+};
