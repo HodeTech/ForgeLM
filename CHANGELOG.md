@@ -4,6 +4,15 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- Redesign the root README around a GPU-free first run, a concise capability overview,
+  optional evidence controls, and clear contribution and documentation paths. Reuse the
+  site's ForgeLM mark and distinguish the Apache-licensed code from CC-BY-SA seed datasets.
+- Require history-preserving merge commits for `main` promotions and release synchronization;
+  retain squash as the default for contributor PRs into `development`, and disable rebase-and-merge.
+  Align the contributor, code-review, and release guidance with the repository settings.
+
 ### Fixed
 
 - Rework the homepage terminal into a first-run guide with separately copyable installation and

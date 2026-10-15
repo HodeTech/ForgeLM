@@ -229,7 +229,13 @@ keep this list and that one in sync if either changes.
 
 Push your branch to your fork and open a Pull Request against `development` (the default base). Link the issue it addresses (`Fixes #123`, or `Refs #123` for part of a grouped issue) and quote any finding IDs — see [Working on an issue](#working-on-an-issue).
 
-**Before a pull request can merge**, branch protection on `development` (and on `main`) requires three things: the six CI checks — `lint`, `test (3.10)`, `test (3.11)`, `test (3.12)`, `test (3.13)` and `validate` — passing; the branch up to date with `development` (use *Update branch* or rebase); and every review conversation resolved, including the comments of the automated reviewers. Maintainers squash- or rebase-merge, so `development` keeps a linear history.
+**Before a pull request can merge**, branch protection on `development` (and on `main`) requires three things: the six CI checks — `lint`, `test (3.10)`, `test (3.11)`, `test (3.12)`, `test (3.13)` and `validate` — passing; the branch up to date with its target (use *Update branch*); and every review conversation resolved, including the comments of the automated reviewers.
+
+Maintainers **squash contributor PRs into `development` by default**. Releases into
+`main` and synchronization PRs from `main` back into `development` use **merge
+commits**, preserving the shared history. Rebase-and-merge is disabled; contributors
+do not need to rewrite their commits during review. See the
+[merge policy](docs/standards/code-review.md#merging).
 
 ## Development Setup
 
@@ -367,4 +373,6 @@ Small, self-contained tasks also include single findings in a `wave: 3` or `wave
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
+Code contributions are licensed under the [Apache License 2.0](LICENSE).
+Bundled seed datasets use **CC-BY-SA 4.0**; dataset contributions must follow the
+attribution and licensing requirements in [the template dataset license guide](forgelm/templates/LICENSES.md).
