@@ -32,7 +32,9 @@ All notable changes to ForgeLM are documented here.
   labelled `declarative_only: true`; ForgeLM runs no exporter, drift detector, alert, or scheduler.
   Warn once per config-file load for an enabled exporter declaration, without repeating during
   pipeline stage validation. Align CLI/web wizards and EN/TR guidance, correct Annex IV monitoring
-  point 9 / risk-management point 5 labels, and verify exported declarations end to end (#93).
+  point 9 / risk-management point 5 labels, and verify exported declarations end to end. Hide
+  Pydantic raw-input excerpts in monitoring/root-config diagnostics while preserving field paths
+  and validation reasons (#93).
 - Correct webhook troubleshooting in the site and EN/TR manuals: delivery failures appear as
   `forgelm.webhook` warnings, never `webhook_failed` audit events; use the actual
   `allow_private_destinations` setting (#231).

@@ -120,6 +120,32 @@ class TestMonitoringConfig:
         with pytest.raises(ValidationError, match="ASCII environment-variable name"):
             MonitoringConfig(endpoint_env=value)
 
+    @pytest.mark.parametrize("root", [False, True], ids=["monitoring-model", "root-model"])
+    def test_invalid_env_reference_diagnostics_omit_raw_input(self, root):
+        monitoring = {
+            "enabled": True,
+            "endpoint_env": "https://user:fake-password@private.example/path?token=fake-token",
+        }
+        with pytest.raises(ValidationError) as exc:
+            if root:
+                ForgeConfig(**minimal_config(monitoring=monitoring))
+            else:
+                MonitoringConfig(**monitoring)
+        message = str(exc.value)
+        assert "endpoint_env" in message
+        assert "ASCII environment-variable name" in message
+        for secret in ("private.example", "fake-password", "fake-token"):
+            assert secret not in message
+
+    def test_config_load_error_omits_invalid_env_reference(self, tmp_path):
+        config_data = minimal_config(monitoring={"enabled": True, "endpoint_env": "https://private.example/token"})
+        path = _write_yaml(config_data, str(tmp_path / "monitoring.yaml"))
+        with pytest.raises(ConfigError) as exc:
+            load_config(path)
+        assert "monitoring.endpoint_env" in str(exc.value)
+        assert "ASCII environment-variable name" in str(exc.value)
+        assert "private.example" not in str(exc.value)
+
     @pytest.mark.parametrize("value,expected", [("   ", ""), (" https://host/path\n", "https://host/path")])
     def test_literal_endpoint_is_trimmed(self, value, expected):
         assert MonitoringConfig(endpoint=value).endpoint == expected

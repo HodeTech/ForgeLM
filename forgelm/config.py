@@ -1290,7 +1290,7 @@ class RiskAssessmentConfig(BaseModel):
 class MonitoringConfig(BaseModel):
     """Art. 72 / 17(1)(h): declarative external monitoring plan, without runtime hooks."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     enabled: bool = Field(
         default=False, description="Record external monitoring-plan metadata in the compliance manifest."
@@ -1646,7 +1646,8 @@ _tier_disagreement_warned: set[frozenset[str]] = set()
 
 
 class ForgeConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # Nested validation errors otherwise repeat secret-bearing raw inputs in CLI logs.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     model: ModelConfig = Field(description="Base-model + quantisation + backend block (required).")
     lora: LoraConfigModel = Field(description="PEFT / LoRA configuration block (required).")
