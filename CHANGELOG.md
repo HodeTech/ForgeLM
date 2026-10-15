@@ -4,6 +4,12 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- Require history-preserving merge commits for `main` promotions and release synchronization;
+  retain squash as the default for contributor PRs into `development`, and disable rebase-and-merge.
+  Align the contributor, code-review, and release guidance with the repository settings.
+
 ### Fixed
 
 - Rework the homepage terminal into a first-run guide with separately copyable installation and
