@@ -251,12 +251,12 @@
       webhookNotifyStart: false,
       webhookNotifySuccess: true,
       webhookNotifyFailure: true,
-      // Article 12+17 post-market monitoring. Auto-coerced to true
-      // for high-risk tiers.
+      // External monitoring-plan metadata; opt-in for every risk tier.
       monitoringEnabled: false,
       monitoringEndpoint: '',
       metricsExport: 'none',  // 'none' | 'prometheus' | 'datadog' | 'custom_webhook'
-      alertOnDrift: true,
+      alertOnDrift: false,
+      monitoringCheckIntervalHours: 24,
       // Synthetic data generation (teacher → student). Optional
       // pre-training stage; ``syntheticTeacherModel`` is the API
       // name or local path for the teacher.
@@ -362,6 +362,28 @@
     }
   }
 
+  // Shared ASCII env-reference syntax for monitoring metadata and webhook secrets.
+  function parseEnvRef(value) {
+    var raw = (value || '').trim();
+    if (raw.slice(0, 4).toLowerCase() !== 'env:') return { literal: raw };
+    var name = raw.slice(4).trim();
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? { name: name } : { invalid: true };
+  }
+
+  function validMonitoringUrl(value) {
+    if (!value) return true;
+    var lower = value.toLowerCase();
+    if (!lower.startsWith('http://') && !lower.startsWith('https://')) return false;
+    for (var i = 0; i < value.length; i++) {
+      if (value.charCodeAt(i) <= 32 || value.charCodeAt(i) === 127 || value[i] === '\\') return false;
+    }
+    try {
+      return !!new URL(value).hostname;
+    } catch (e) {
+      return false;
+    }
+  }
+
   /* ── Required-field validation ────────────────────────── */
   // Some steps require operator input that has no sensible default —
   // e.g. a custom HuggingFace model ID, or a dataset path / Hub name.
@@ -447,9 +469,17 @@
       // Off → skip; the operator opted out of the whole feature.
       if (state.webhookEnabled && blank(state.webhookUrl)) {
         errors.push({ field: 'webhookUrl', key: 'wizard.error.webhook.required' });
+      } else if (state.webhookEnabled && parseEnvRef(state.webhookUrl).invalid) {
+        errors.push({ field: 'webhookUrl', key: 'wizard.error.env_ref.invalid' });
       }
-      if (state.monitoringEnabled && blank(state.monitoringEndpoint)) {
-        errors.push({ field: 'monitoringEndpoint', key: 'wizard.error.monitoring.endpoint.required' });
+      if (state.monitoringEnabled && parseEnvRef(state.monitoringEndpoint).invalid) {
+        errors.push({ field: 'monitoringEndpoint', key: 'wizard.error.env_ref.invalid' });
+      } else if (state.monitoringEnabled && !validMonitoringUrl(parseEnvRef(state.monitoringEndpoint).literal)) {
+        errors.push({ field: 'monitoringEndpoint', key: 'wizard.error.monitoring.endpoint.invalid' });
+      }
+      if (state.monitoringEnabled && (!Number.isInteger(state.monitoringCheckIntervalHours) ||
+          state.monitoringCheckIntervalHours < 1 || state.monitoringCheckIntervalHours > 720)) {
+        errors.push({ field: 'monitoringCheckIntervalHours', key: 'wizard.error.monitoring.interval.invalid' });
       }
       if (state.syntheticEnabled) {
         if (blank(state.syntheticTeacherModel)) {
@@ -806,11 +836,11 @@
     // is a secret.
     if (state.webhookEnabled && state.webhookUrl) {
       header(0, 'webhook');
-      var raw = state.webhookUrl.trim();
-      if (raw.indexOf('env:') === 0) {
-        k(1, 'url_env', JSON.stringify(raw.slice(4)));
-      } else {
-        k(1, 'url', JSON.stringify(raw));
+      var webhookRef = parseEnvRef(state.webhookUrl);
+      if (webhookRef.name) {
+        k(1, 'url_env', JSON.stringify(webhookRef.name));
+      } else if (!webhookRef.invalid) {
+        k(1, 'url', JSON.stringify(webhookRef.literal));
       }
       if (state.webhookNotifyStart)   k(1, 'notify_on_start', 'true');
       if (!state.webhookNotifySuccess) k(1, 'notify_on_success', 'false');
@@ -818,24 +848,25 @@
       blank();
     }
 
-    // Article 12+17 post-market monitoring. Auto-coerced enabled for
-    // strict tiers (operator can't disable it under high-risk).
-    var monitoringActive = state.monitoringEnabled || isStrictRisk(state);
-    if (monitoringActive || state.monitoringEndpoint) {
+    // Record an external plan without activating monitoring hooks.
+    if (state.monitoringEnabled) {
+      comment('External monitoring plan metadata only; ForgeLM runs no exporters, drift alerts, or scheduled checks.');
       header(0, 'monitoring');
-      k(1, 'enabled', monitoringActive ? 'true' : 'false');
+      k(1, 'enabled', 'true');
       if (state.monitoringEndpoint) {
-        var rawM = state.monitoringEndpoint.trim();
-        if (rawM.indexOf('env:') === 0) {
-          k(1, 'endpoint_env', JSON.stringify(rawM.slice(4)));
-        } else {
-          k(1, 'endpoint', JSON.stringify(rawM));
+        var monitoringRef = parseEnvRef(state.monitoringEndpoint);
+        if (monitoringRef.name) {
+          k(1, 'endpoint_env', JSON.stringify(monitoringRef.name));
+        } else if (!monitoringRef.invalid && monitoringRef.literal && validMonitoringUrl(monitoringRef.literal)) {
+          k(1, 'endpoint', JSON.stringify(monitoringRef.literal));
         }
       }
-      if (state.metricsExport && state.metricsExport !== 'none') {
-        k(1, 'metrics_export', JSON.stringify(state.metricsExport));
+      k(1, 'metrics_export', JSON.stringify(state.metricsExport || 'none'));
+      k(1, 'alert_on_drift', state.alertOnDrift ? 'true' : 'false');
+      if (Number.isInteger(state.monitoringCheckIntervalHours) && state.monitoringCheckIntervalHours >= 1 &&
+          state.monitoringCheckIntervalHours <= 720) {
+        k(1, 'check_interval_hours', String(state.monitoringCheckIntervalHours));
       }
-      if (!state.alertOnDrift) k(1, 'alert_on_drift', 'false');
       blank();
     }
 
@@ -1120,6 +1151,7 @@
       judgeApiKeyEnv:         'eval_gates',
       webhookUrl:             'webhook',
       monitoringEndpoint:     'monitoring',
+      monitoringCheckIntervalHours: 'monitoring',
       syntheticTeacherModel:  'synthetic',
       syntheticSeedFile:      'synthetic',
       syntheticApiKeyEnv:     'synthetic'
@@ -2701,26 +2733,17 @@
       body.appendChild(makeWebhookToggle('webhookNotifyFailure', 'wizard.webhook.notify_failure.label'));
     }));
 
-    // Post-market monitoring (Article 12+17) accordion.
+    // Declarative external monitoring plan (Article 72 / 17(1)(h)).
     pane.appendChild(makeAccordion(state, persist, 'monitoring',
       'wizard.monitoring.title', 'wizard.monitoring.hint', function (body) {
-      var monLocked = isStrictRisk(state);
       var monInput = el('input', { type: 'checkbox' });
-      monInput.checked = !!state.monitoringEnabled || monLocked;
-      if (monLocked) monInput.disabled = true;
+      monInput.checked = !!state.monitoringEnabled;
       monInput.addEventListener('change', function () {
         state.monitoringEnabled = monInput.checked;
         persist();
         rerender();
       });
       var monLabelEl = el('span', { class: 'wizard-toggle-label', text: tr('wizard.monitoring.enabled.label') });
-      if (monLocked) {
-        monLabelEl.appendChild(el('span', {
-          class: 'badge',
-          text: tr('wizard.locked.badge'),
-          style: 'margin-left: 0.4rem;'
-        }));
-      }
       var monRow = el('div', { class: 'wizard-row' }, [
         el('label', { class: 'wizard-toggle' }, [monInput, monLabelEl]),
         el('span', { class: 'wizard-row-hint', text: tr('wizard.monitoring.enabled.hint') })
@@ -2728,15 +2751,12 @@
       appendDetail(monRow, 'wizard.monitoring.enabled.detail');
       body.appendChild(monRow);
 
-      var endpointShown = !!state.monitoringEnabled || monLocked;
+      var endpointShown = !!state.monitoringEnabled;
       if (endpointShown) {
-        // Endpoint is required when monitoring is enabled — same
-        // pattern as webhook.url. fieldHasError gates the visual so
-        // the error appears only after a failed Next attempt.
-        var monEndpointErrKey = fieldHasError(state, 'operations', 'monitoringEndpoint');
+        var monEndpointErr = fieldHasError(state, 'operations', 'monitoringEndpoint');
         var epInput = el('input', {
           type: 'text',
-          class: 'wizard-input' + (monEndpointErrKey ? ' is-invalid' : ''),
+          class: 'wizard-input' + (monEndpointErr ? ' is-invalid' : ''),
           placeholder: tr('wizard.monitoring.endpoint.placeholder'),
           value: state.monitoringEndpoint || ''
         });
@@ -2745,22 +2765,42 @@
           epInput,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.monitoring.endpoint.hint') })
         ];
-        if (monEndpointErrKey) {
-          epRowChildren.push(el('div', { class: 'wizard-error', role: 'alert', text: tr(monEndpointErrKey) }));
-        }
         var epRow = el('div', { class: 'wizard-row' }, epRowChildren);
+        if (monEndpointErr) epRow.appendChild(el('div', { class: 'wizard-error', role: 'alert', text: tr(monEndpointErr) }));
         epInput.addEventListener('input', function () {
           state.monitoringEndpoint = epInput.value.trim();
           persist();
           liveYaml();
-          var stillErr = validateStep(state, 'operations').some(function (e) { return e.field === 'monitoringEndpoint'; });
-          if (!stillErr) {
+          if (!fieldHasError(state, 'operations', 'monitoringEndpoint')) {
             epInput.classList.remove('is-invalid');
-            var errEl = epRow.querySelector('.wizard-error');
-            if (errEl) errEl.remove();
+            var error = epRow.querySelector('.wizard-error');
+            if (error) error.remove();
           }
         });
         body.appendChild(epRow);
+
+        var intervalError = fieldHasError(state, 'operations', 'monitoringCheckIntervalHours');
+        var intervalInput = el('input', {
+          id: 'wizard-monitoring-interval', type: 'number', min: '1', max: '720', step: '1',
+          class: 'wizard-input' + (intervalError ? ' is-invalid' : ''),
+          value: String(state.monitoringCheckIntervalHours)
+        });
+        intervalInput.addEventListener('input', function () {
+          state.monitoringCheckIntervalHours = Number(intervalInput.value);
+          persist();
+          liveYaml();
+          if (!fieldHasError(state, 'operations', 'monitoringCheckIntervalHours')) {
+            intervalInput.classList.remove('is-invalid');
+            var error = intervalRow.querySelector('.wizard-error');
+            if (error) error.remove();
+          }
+        });
+        var intervalRow = el('div', { class: 'wizard-row' }, [
+          el('label', { for: 'wizard-monitoring-interval', class: 'wizard-row-label', text: tr('wizard.monitoring.interval.label') }),
+          intervalInput
+        ]);
+        if (intervalError) intervalRow.appendChild(el('div', { class: 'wizard-error', role: 'alert', text: tr(intervalError) }));
+        body.appendChild(intervalRow);
 
         var meSelect = el('select', { class: 'wizard-select' });
         [

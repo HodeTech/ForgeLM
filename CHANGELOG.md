@@ -4,7 +4,35 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
+### Breaking
+
+- Tighten `monitoring.endpoint_env` to trimmed ASCII identifiers; URLs, `$`/`env:` prefixes,
+  internal whitespace, and non-ASCII names now fail validation. Blank names remain absent.
+  This changes acceptance of previously valid YAML; use a variable name, such as `MONITORING_PLAN_URL`.
+- Require non-blank `monitoring.endpoint` literals to be absolute HTTP(S) URLs with a host
+  and valid port; schemeless addresses are rejected instead of silently becoming `<malformed-url>`
+  in evidence. Use `https://monitor.example.com:8443/plan` or an `endpoint_env` name (#93).
+
 ### Changed
+
+- Record monitoring default provenance in `defaulted_fields` and mark literal URL projection with
+  `endpoint_redacted` (also true when the URL already contains only scheme/host/port). Literal
+  endpoints retain scheme/host/port in JSON evidence, including IPv6 brackets; userinfo, path,
+  query and fragment are removed. Env references remain unresolved. Absent endpoints record `null`
+  instead of the legacy `"$None"`, and non-empty `endpoint_env` takes precedence.
+  Monitoring metadata is exported to `compliance_report.json` and, when emitted,
+  `annex_iv_metadata.json`; the flattened `training_manifest.yaml` summary does not contain it.
+  Monitoring declarations remain optional in ForgeLM at every risk tier, including strict tiers;
+  providers’ Article 72 obligations apply independently. Treat legacy monitoring blocks without
+  `declarative_only` as declarations; their default provenance was not recorded (#93).
+- Default CLI/browser wizard drift-alert answers to No / unchecked; only declare alerts when
+  the operator confirms them. Preserve the schema's `true` default with `defaulted_fields`
+  provenance. Both wizards explicitly record the selected `none` exporter (#93).
+- Accept case-insensitive `env:` references with surrounding whitespace, lowercase letters and
+  initial underscores in both CLI wizard monitoring and webhook inputs; reject malformed names.
+- Omit Pydantic `input_value` / `input_type` excerpts from all rendered `ForgeConfig` validation
+  errors, preserving field paths and reasons. `MonitoringConfig` also applies this protection
+  standalone; other standalone submodels retain their existing diagnostics (#93).
 
 - Redesign the root README around a GPU-free first run, a concise capability overview,
   optional evidence controls, and clear contribution and documentation paths. Reuse the
@@ -15,6 +43,15 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Restore the monitoring-plan evidence contract: `monitoring.*` declares an external plan,
+  labelled `declarative_only: true`; ForgeLM runs no exporter, drift detector, alert, or scheduler.
+  Warn once per config-file load for an enabled exporter declaration, without repeating during
+  pipeline stage validation. Align CLI/web wizards and EN/TR guidance, correct Annex IV monitoring
+  point 9 / risk-management point 5 labels, and verify exported declarations end to end (#93).
+- Correct webhook troubleshooting in the site and EN/TR manuals: delivery failures appear as
+  `forgelm.webhook` warnings, never `webhook_failed` audit events; use the actual
+  `allow_private_destinations` setting (#231). Clarify that `--offline` sets HF offline flags;
+  reporting, API judges, and webhooks require separate disconnected-run configuration (refs #100).
 - Rework the homepage terminal into a first-run guide with separately copyable installation and
   config-generation commands, an optional training step, and readable code in both themes and on
   narrow screens, with interface copy in all six site languages. Keep the dated CPU recording and

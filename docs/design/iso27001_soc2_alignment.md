@@ -157,7 +157,7 @@ Each row classifies coverage as one of:
 | A.5.5 Contact with authorities | OOS | — | Establish regulator contact for serious-incident reporting (EU AI Act Art. 73) | ForgeLM cannot interface with regulators |
 | A.5.6 Contact with special interest groups | OOS | — | ML safety / red-team community engagement | Out of scope |
 | A.5.7 Threat intelligence | OOS | — | Subscribe to ML supply-chain CVE feeds, model-poisoning advisories | Out of scope |
-| A.5.8 Information security in project management | FL-helps | `risk_assessment` config block; F-compliance-110 strict gate; Annex IV §9 metadata | Embed ForgeLM dry-run + safety-eval gates in project sign-off checklist | Project methodology deployer-side |
+| A.5.8 Information security in project management | FL-helps | `risk_assessment` config block; F-compliance-110 strict gate; Annex IV point 5 metadata | Embed ForgeLM dry-run + safety-eval gates in project sign-off checklist | Project methodology deployer-side |
 | A.5.9 Inventory of information & associated assets | FL-helps | `data_provenance.json`, `model_integrity.json`, SBOM | Maintain corporate asset register linking model SHA + data fingerprint | Org asset registry deployer-side |
 | A.5.10 Acceptable use of information | OOS | — | Acceptable-use policy for trained-model outputs | Out of scope |
 | A.5.11 Return of assets | OOS | — | Decommissioning of deployed models | Out of scope |
@@ -244,7 +244,7 @@ ForgeLM contributes nothing here.
 | A.8.13 Information backup | FL-helps | `audit_log.jsonl` + `.manifest.json` form a backupable unit; Annex IV bundle (`forgelm --compliance-export`) | Off-site backup with encryption |
 | A.8.14 Redundancy of information processing facilities | OOS | — | Multi-AZ infra |
 | A.8.15 Logging | FL | `audit_log.jsonl` JSON Lines + HMAC chain + genesis manifest; `forgelm verify-audit` validates | Ship to SIEM |
-| A.8.16 Monitoring activities | FL-helps | Webhook lifecycle events; `safety_trend.jsonl` cross-run trend tracking | Define alert thresholds |
+| A.8.16 Monitoring activities | FL-helps | Webhook lifecycle notifications and `safety_trend.jsonl` evaluation trends; external monitoring-plan metadata only | Operate monitoring and define alert thresholds |
 | A.8.17 Clock synchronisation | FL-helps | All audit entries ISO-8601 UTC | NTP on training hosts |
 | A.8.18 Use of privileged utility programs | OOS | — | OS-level privilege management |
 | A.8.19 Installation of software on operational systems | FL-helps | `forgelm doctor` reports installed packages + versions; `pyproject.toml` pins; `pip install forgelm==X.Y.Z` | Package allowlist |

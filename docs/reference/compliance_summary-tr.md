@@ -52,7 +52,7 @@ Düzenleyicinin sorduğu vs ForgeLM'in cevapladığı:
 | Veri kaynağı | `data_provenance.json`; `compute_dataset_fingerprint` (SHA-256 + size + mtime); `hf_revision_source` ile derecelendirilmiş dataset Hub commit SHA'sı |
 | Teknik dokümantasyon | `annex_iv_metadata.json`; Annex IV §§1-9 kanonik düzen |
 | Uygunluk kanıtı | `compliance_report.json`; `model_card.md`; `model_integrity.json` |
-| İzleme + post-market gözetim | Webhook lifecycle (`notify_*`); `safety_trend.jsonl` cross-run trend |
+| Harici izleme planı beyanı | `monitoring:` yalnızca metadata kaydeder; Madde 72 izleme sistemini ayrıca işletin. Webhook’lar yaşam döngüsü bildirimleridir; `safety_trend.jsonl` koşular arası değerlendirme eğilimlerini kaydeder. |
 | İnsan gözetimi | Madde 14 staging gate; `human_approval.required/granted/rejected` |
 
 ## ForgeLM her gereksinimi nerede karşılar

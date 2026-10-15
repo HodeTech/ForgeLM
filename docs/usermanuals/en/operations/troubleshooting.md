@@ -152,11 +152,11 @@ audit:
 ## Webhooks not firing
 
 **Causes:**
-- Webhook URL points at a private IP and `webhook.allow_private` is false.
+- Webhook URL points at a private IP and `webhook.allow_private_destinations` is false.
 - TLS certificate validation fails.
-- Endpoint returns 4xx (silent in logs by default).
+- Endpoint returns 4xx (reported at WARNING level; training continues).
 
-**Fix:** Check `audit_log.jsonl` for `webhook_failed` events; they include the response status and body.
+**Fix:** Search stderr or captured CI logs for `WARNING` lines from `forgelm.webhook`. Failed deliveries are non-fatal and are not written to `audit_log.jsonl`; there is no `webhook_failed` event. Response bodies are suppressed to avoid exposing secrets.
 
 ## Where to file a bug
 

@@ -59,6 +59,18 @@ tests/
 - `conftest.py` holds shared fixtures only. Domain-specific helpers live in the test files that need them.
 - A new feature PR adds the matching `test_*.py` in the **same** PR. No "tests in next PR."
 
+## Browser wizard regressions
+
+Browser wizard regressions live in `tests/site/*.test.cjs`. Run
+`node --test tests/site/*.test.cjs` with Node 22 or newer and the development
+Python environment available. The harness uses the active virtual environment, then the checkout's
+`.venv`, then `python3`; set `FORGELM_TEST_PYTHON` to an explicit interpreter path if needed.
+CI runs them on Node 24 in the validation job after installing the Python development dependencies.
+They use Node's built-in test runner and a VM to execute the actual wizard;
+generated YAML is also parsed by the real `ForgeConfig`. No npm packages,
+browser download, GPU, or network calls are needed. DOM shims exercise the
+Operations renderer only; they do not replace browser or native-language review.
+
 ## Fixtures
 
 The canonical factory lives in

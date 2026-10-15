@@ -28,7 +28,8 @@ yanında kapsar.
 ### 3.1 Tespit
 
 Olaylar şunlardan tespit edilebilir:
-- Runtime izleme alarmları (`monitoring.alert_on_drift: true` ise)
+- Harici servis/izleme altyapınızdan gelen runtime uyarıları (`monitoring.*` uyumluluk manifestine
+  yalnızca bir plan kaydeder; ForgeLM drift tespit etmez veya izleme uyarısı göndermez)
 - Kullanıcı/operatör raporları
 - Periyodik kalite denetimleri
 - ForgeLM webhook arıza bildirimleri

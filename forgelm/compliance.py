@@ -19,6 +19,7 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
+from urllib.parse import urlsplit
 
 from ._strict_json import dumps_strict, sanitize_non_finite
 from ._version import __version__ as _forgelm_version
@@ -1488,6 +1489,17 @@ def _component_revisions_block(_config: Any = None) -> List[Dict[str, Any]]:
     ]
 
 
+def _redact_monitoring_endpoint(endpoint: str) -> str:
+    """Project a validated URL into evidence without losing its port or IPv6 brackets."""
+    parts = urlsplit(endpoint)
+    host = parts.hostname
+    assert host is not None  # MonitoringConfig has already validated this URL.
+    if ":" in host:
+        host = f"[{host}]"
+    port = f":{parts.port}" if parts.port is not None else ""
+    return f"{parts.scheme}://{host}{port}"
+
+
 def generate_training_manifest(
     config: Any,
     metrics: Dict[str, float],
@@ -1578,14 +1590,28 @@ def generate_training_manifest(
             {"path": p, "fingerprint": compute_dataset_fingerprint(p, offline=_offline)} for p in extra_datasets
         ]
 
-    # Monitoring config
+    # Record the operator's plan, not evidence of an active monitoring system.
+    # Reconstruct library configs with exclude_unset=True to preserve this
+    # provenance; a full model_dump() makes schema defaults look explicit.
     mon_cfg = getattr(config, "monitoring", None)
     if mon_cfg and mon_cfg.enabled:
         manifest["monitoring"] = {
-            "endpoint": mon_cfg.endpoint or f"${mon_cfg.endpoint_env}",
+            "declarative_only": True,
+            "endpoint": (
+                f"${mon_cfg.endpoint_env}"
+                if mon_cfg.endpoint_env
+                else (_redact_monitoring_endpoint(mon_cfg.endpoint) if mon_cfg.endpoint else None)
+            ),
+            "endpoint_redacted": bool(mon_cfg.endpoint and not mon_cfg.endpoint_env),
             "metrics_export": mon_cfg.metrics_export,
             "alert_on_drift": mon_cfg.alert_on_drift,
             "check_interval_hours": mon_cfg.check_interval_hours,
+            "defaulted_fields": [
+                name
+                for name in ("endpoint", "metrics_export", "alert_on_drift", "check_interval_hours")
+                if ("endpoint_env" if name == "endpoint" and mon_cfg.endpoint_env else name)
+                not in mon_cfg.model_fields_set
+            ],
         }
 
     # Webhook config — preserved into the compliance report so the
@@ -1853,11 +1879,11 @@ def build_annex_iv_artifact(manifest: Dict[str, Any]) -> Optional[Dict[str, Any]
             "generated_at": manifest.get("generated_at", ""),
             "known_limitations": operator_block.get("known_limitations", ""),
         },
-        # Annex IV §6: post-market monitoring + audit-log presence.
+        # Annex IV point 9 (Art. 72(3)): external plan metadata, not the full plan.
         "monitoring_and_logging": (manifest.get("monitoring") or {"audit_log": "audit_log.jsonl"}),
         # Annex IV §7: accuracy / robustness metrics.
         "performance_metrics": manifest.get("evaluation_results", {}).get("metrics", {}),
-        # Annex IV §9: risk management system reference.
+        # Annex IV point 5: risk management system reference.
         "risk_management": manifest.get("risk_assessment")
         or {
             "art9_reference": "no risk_assessment block configured",
