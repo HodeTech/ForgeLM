@@ -660,6 +660,9 @@ class TestCroissantFileIdReflectsRealFilename:
         assert crois["url"] == "policies_jsonl"
 
 
+_LANGUAGES_DOC_URL = "https://presidio.dataprivacystack.org/analyzer/languages/"
+
+
 class TestPresidioLanguagePreflight:
     """Pre-flight rejects unsupported ``--pii-ml-language`` instead of swallowing.
 
@@ -692,6 +695,8 @@ class TestPresidioLanguagePreflight:
         msg = str(exc_info.value)
         assert "xx" in msg
         assert "en" in msg  # registered list shows what is available
+        assert _LANGUAGES_DOC_URL in msg  # points at the live Presidio docs
+        assert "microsoft.github.io" not in msg  # stale URL must not resurface
 
     def test_default_english_language_passes_preflight(self):
         from forgelm.data_audit import _get_presidio_analyzer, _require_presidio
@@ -729,6 +734,8 @@ class TestPresidioLanguagePreflight:
         msg = str(exc_info.value)
         assert "qq" in msg
         assert "xx" in msg  # message points at the multilingual fallback
+        assert _LANGUAGES_DOC_URL in msg  # points at the live Presidio docs
+        assert "microsoft.github.io" not in msg  # stale URL must not resurface
 
 
 class TestPresidioPerRowErrorLogging:

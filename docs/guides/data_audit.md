@@ -402,7 +402,7 @@ the audit reproducible (Annex IV requirement) and bare-install-friendly.
 
 The default regex detector covers the structured identifiers EU AI Act
 Article 10 cares about (email, phone, IBAN, credit card, national IDs).
-Phase 12.5 adds an opt-in **Presidio** ([microsoft/presidio](https://github.com/microsoft/presidio))
+Phase 12.5 adds an opt-in **Presidio** ([data-privacy-stack/presidio](https://github.com/data-privacy-stack/presidio))
 adapter that layers ML-NER on top — adding the unstructured-identifier
 categories regex inherently misses: `person`, `organization`, `location`.
 

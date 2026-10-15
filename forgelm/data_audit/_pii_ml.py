@@ -106,7 +106,7 @@ def _get_presidio_analyzer(language: str = "en") -> Any:
             "For other languages, use 'xx' (multilingual fallback, install "
             "'xx_ent_wiki_sm') or configure a custom Presidio AnalyzerEngine "
             "via the Python API (see "
-            "https://microsoft.github.io/presidio/analyzer/languages/)."
+            "https://presidio.dataprivacystack.org/analyzer/languages/)."
         )
     # Local import: NlpEngineProvider is part of presidio-analyzer, so
     # gating on ``_HAS_PRESIDIO`` above is sufficient. Importing here
@@ -175,7 +175,7 @@ def _require_presidio(language: str = "en") -> None:
             "Use one of the codes in forgelm.data_audit._SPACY_MODEL_FOR_LANGUAGE, "
             "use 'xx' for the multilingual fallback (install 'xx_ent_wiki_sm'), or "
             "configure a custom Presidio analyzer via the Python API (see "
-            "https://microsoft.github.io/presidio/analyzer/languages/)."
+            "https://presidio.dataprivacystack.org/analyzer/languages/)."
         )
 
 

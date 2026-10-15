@@ -4668,13 +4668,23 @@
     "wizard.training.max_length.hint": "每个训练样本的 token 数。2048 是安全的默认值;长上下文模型可调高 (超过 4096 时 RoPE 缩放生效)。",
   });
 
-  // CPU sample copy: code and recorded command output stay language-neutral.
+  // First-run guide and CPU walkthrough links; commands stay language-neutral.
   Object.assign(T.en, {
     "common.footer.contribute": "Contribute",
-    "home.demo.install": "Install and generate a config without training:",
-    "home.demo.recorded": "Recorded CPU log check · 11 October 2026",
-    "home.demo.scope": "This checks a recorded audit-log chain. It does not verify model files or establish model quality, safety, or legal compliance.",
-    "home.demo.guide": "Try the CPU sample: commands, raw outputs, and limitations →",
+    "home.demo.eyebrow": "Your first run",
+    "home.demo.title": "Start in your terminal.",
+    "home.demo.intro": "A starter config and sample data. Yours to inspect, edit, and train.",
+    "home.demo.install": "Install ForgeLM",
+    "home.demo.generate": "Generate your config",
+    "home.demo.train": "Train when you're ready",
+    "home.demo.training_note": "Review configs/support.yaml and replace the sample data with your own. Training downloads the selected model and needs suitable hardware.",
+    "home.demo.run_config": "Run your config",
+    "home.demo.setup_note": "Steps 1–2 need no GPU and do not start training.",
+    "home.demo.copy_install": "Copy installation command",
+    "home.demo.copy_generate": "Copy config generation command",
+    "home.demo.copy_train": "Copy training command",
+    "home.demo.quickstart": "Explore the quickstart guide →",
+    "home.demo.guide": "Try the CPU walkthrough →",
     "home.demo.guide_href": "https://github.com/HodeTech/ForgeLM/blob/development/docs/guides/cpu-demo/README.md",
     "home.contribute.title": "Contribute to ForgeLM",
     "home.contribute.body": "Start with the first pull request guide and an unassigned good first issue. Documentation, translations, tests, and small fixes all help.",
@@ -4683,15 +4693,94 @@
   });
   Object.assign(T.tr, {
     "common.footer.contribute": "Katkıda bulun",
-    "home.demo.install": "Kurun ve eğitim başlatmadan yapılandırma oluşturun:",
-    "home.demo.recorded": "Kaydedilmiş CPU log kontrolü · 11 Ekim 2026",
-    "home.demo.scope": "Bu kontrol, kaydedilmiş audit log zincirini denetler. Model dosyalarını doğrulamaz; model kalitesi, güvenliği veya hukuki uyumluluk kanıtı değildir.",
-    "home.demo.guide": "CPU örneğini deneyin: komutlar, ham çıktılar ve sınırlamalar →",
+    "home.demo.eyebrow": "İlk çalıştırma",
+    "home.demo.title": "Terminalden başlayın.",
+    "home.demo.intro": "Başlangıç yapılandırması ve örnek veri. İnceleyin, düzenleyin, eğitin.",
+    "home.demo.install": "ForgeLM'i kurun",
+    "home.demo.generate": "Yapılandırmanızı oluşturun",
+    "home.demo.train": "Hazır olduğunuzda eğitin",
+    "home.demo.training_note": "configs/support.yaml dosyasını inceleyin ve örnek veriyi kendi verinizle değiştirin. Eğitim, seçilen modeli indirir ve uygun donanım gerektirir.",
+    "home.demo.run_config": "Yapılandırmanızı çalıştırın",
+    "home.demo.setup_note": "1–2. adımlar GPU gerektirmez ve eğitim başlatmaz.",
+    "home.demo.copy_install": "Kurulum komutunu kopyala",
+    "home.demo.copy_generate": "Yapılandırma oluşturma komutunu kopyala",
+    "home.demo.copy_train": "Eğitim komutunu kopyala",
+    "home.demo.quickstart": "Hızlı başlangıç rehberine göz atın →",
+    "home.demo.guide": "CPU rehberini deneyin →",
     "home.demo.guide_href": "https://github.com/HodeTech/ForgeLM/blob/development/docs/guides/cpu-demo/README-tr.md",
     "home.contribute.title": "ForgeLM'e katkıda bulunun",
     "home.contribute.body": "İlk pull request rehberiyle ve henüz atanmamış bir başlangıç işiyle başlayın. Belgeler, çeviriler, testler ve küçük düzeltmeler katkı sağlar.",
     "home.contribute.guide": "İlk pull request'iniz",
     "home.contribute.issues": "Başlangıç işlerine göz atın"
+  });
+
+  Object.assign(T.de, {
+    "home.demo.eyebrow": "Erste Schritte",
+    "home.demo.title": "Starten Sie im Terminal.",
+    "home.demo.intro": "Eine Startkonfiguration mit Beispieldaten. Prüfen, anpassen und trainieren.",
+    "home.demo.install": "ForgeLM installieren",
+    "home.demo.generate": "Konfiguration erstellen",
+    "home.demo.train": "Trainieren, sobald Sie bereit sind",
+    "home.demo.training_note": "Prüfen Sie configs/support.yaml und ersetzen Sie die Beispieldaten durch Ihre eigenen Daten. Das Training lädt das gewählte Modell herunter und erfordert geeignete Hardware.",
+    "home.demo.run_config": "Konfiguration ausführen",
+    "home.demo.setup_note": "Schritte 1–2 benötigen keine GPU und starten kein Training.",
+    "home.demo.copy_install": "Installationsbefehl kopieren",
+    "home.demo.copy_generate": "Befehl zum Erstellen der Konfiguration kopieren",
+    "home.demo.copy_train": "Trainingsbefehl kopieren",
+    "home.demo.quickstart": "Zur Schnellstartanleitung →",
+    "home.demo.guide": "CPU-Anleitung (Englisch) →",
+    "home.demo.guide_href": "https://github.com/HodeTech/ForgeLM/blob/development/docs/guides/cpu-demo/README.md"
+  });
+  Object.assign(T.fr, {
+    "home.demo.eyebrow": "Votre première exécution",
+    "home.demo.title": "Commencez dans votre terminal.",
+    "home.demo.intro": "Une configuration de départ et des données d’exemple. À examiner, adapter et utiliser pour entraîner votre modèle.",
+    "home.demo.install": "Installer ForgeLM",
+    "home.demo.generate": "Générer votre configuration",
+    "home.demo.train": "Lancez l’entraînement quand vous êtes prêt",
+    "home.demo.training_note": "Vérifiez configs/support.yaml et remplacez les données d’exemple par les vôtres. L’entraînement télécharge le modèle sélectionné et nécessite un matériel adapté.",
+    "home.demo.run_config": "Exécuter votre configuration",
+    "home.demo.setup_note": "Les étapes 1 et 2 ne nécessitent pas de GPU et ne lancent pas d’entraînement.",
+    "home.demo.copy_install": "Copier la commande d’installation",
+    "home.demo.copy_generate": "Copier la commande de génération de configuration",
+    "home.demo.copy_train": "Copier la commande d’entraînement",
+    "home.demo.quickstart": "Consulter le guide de démarrage rapide →",
+    "home.demo.guide": "Guide CPU (en anglais) →",
+    "home.demo.guide_href": "https://github.com/HodeTech/ForgeLM/blob/development/docs/guides/cpu-demo/README.md"
+  });
+  Object.assign(T.es, {
+    "home.demo.eyebrow": "Tu primera ejecución",
+    "home.demo.title": "Empieza en tu terminal.",
+    "home.demo.intro": "Una configuración inicial y datos de ejemplo. Revísalos, adáptalos y entrena tu modelo.",
+    "home.demo.install": "Instala ForgeLM",
+    "home.demo.generate": "Genera tu configuración",
+    "home.demo.train": "Entrena cuando estés listo",
+    "home.demo.training_note": "Revisa configs/support.yaml y sustituye los datos de ejemplo por los tuyos. El entrenamiento descarga el modelo seleccionado y requiere un hardware adecuado.",
+    "home.demo.run_config": "Ejecuta tu configuración",
+    "home.demo.setup_note": "Los pasos 1 y 2 no necesitan GPU ni inician el entrenamiento.",
+    "home.demo.copy_install": "Copiar el comando de instalación",
+    "home.demo.copy_generate": "Copiar el comando para generar la configuración",
+    "home.demo.copy_train": "Copiar el comando de entrenamiento",
+    "home.demo.quickstart": "Consulta la guía de inicio rápido →",
+    "home.demo.guide": "Guía para CPU (en inglés) →",
+    "home.demo.guide_href": "https://github.com/HodeTech/ForgeLM/blob/development/docs/guides/cpu-demo/README.md"
+  });
+  Object.assign(T.zh, {
+    "home.demo.eyebrow": "首次运行",
+    "home.demo.title": "从终端开始。",
+    "home.demo.intro": "从初始配置和示例数据开始：检查、修改，再训练。",
+    "home.demo.install": "安装 ForgeLM",
+    "home.demo.generate": "生成配置",
+    "home.demo.train": "准备好后开始训练",
+    "home.demo.training_note": "检查 configs/support.yaml，并将示例数据替换为自己的数据。训练会下载所选模型，并需要合适的硬件。",
+    "home.demo.run_config": "运行配置",
+    "home.demo.setup_note": "第 1–2 步无需 GPU，也不会启动训练。",
+    "home.demo.copy_install": "复制安装命令",
+    "home.demo.copy_generate": "复制配置生成命令",
+    "home.demo.copy_train": "复制训练命令",
+    "home.demo.quickstart": "查看快速入门指南 →",
+    "home.demo.guide": "CPU 操作指南（英文）→",
+    "home.demo.guide_href": "https://github.com/HodeTech/ForgeLM/blob/development/docs/guides/cpu-demo/README.md"
   });
 
   window.ForgeLMTranslations = T;

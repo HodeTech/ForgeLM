@@ -6,6 +6,10 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Rework the homepage terminal into a first-run guide with separately copyable installation and
+  config-generation commands, an optional training step, and readable code in both themes and on
+  narrow screens, with interface copy in all six site languages. Keep the dated CPU recording and
+  its provenance in the linked EN/TR walkthrough.
 - Make `training.warmup_ratio: 1.0` warm up over all training steps instead of one absolute step,
   preserving the configured fraction across all six trainer types with supported Transformers versions.
 - Qualify EN/TR EU AI Act summaries with the separate Annex I, Section B application regime
@@ -48,6 +52,10 @@ All notable changes to ForgeLM are documented here.
   with matching Turkish text and primary EUR-Lex citations. Distinguish the Annex III / Annex I
   schedules from transparency and general-purpose AI obligations and their transition provisions;
   clarify that documentation artifacts do not establish legal compliance.
+- **Presidio documentation links**: the `--pii-ml` language error messages and the data-audit guides
+  (EN + TR) now point to the current Presidio docs and repository
+  (`presidio.dataprivacystack.org`, `data-privacy-stack/presidio`); the old `microsoft.github.io`
+  page returns 404. (TECH-T06-004, #491)
 
 ### Breaking
 
