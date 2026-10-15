@@ -316,16 +316,27 @@ uzatmasını engeller.
 
 > **Sıkı kapı:** yukarıdaki [`compliance.risk_classification`](#compliance-isteğe-bağlı--eu-ai-act-madde-11--annex-iv) ile aynı — `risk_category`'i `"high-risk"` veya `"unacceptable"` olarak ayarlamak `evaluation.safety.enabled: true` gerektirir, aksi halde config-load `ConfigError` (çıkış kodu 1) fırlatır. Kapı her iki alan üzerinden OR'lanır: ikisinden biri sıkı bir tier'daysa kapı tetiklenir.
 
-## `monitoring` (İsteğe bağlı — EU AI Act Madde 12+17)
+## `monitoring` (İsteğe bağlı — Harici izleme planı, Madde 72 / 17(1)(h))
+
+Bu blok **yalnızca beyan niteliğinde metadata** içerir. `enabled: true` olduğunda ForgeLM, harici
+pazar sonrası izleme planınızı uyumluluk manifestine ve Annex IV `monitoring_and_logging` bölümüne
+`declarative_only: true` etiketiyle kaydeder. Endpoint'e bağlanmaz, metrik aktarmaz, model sapması
+tespit etmez, sapma uyarısı göndermez veya kontrol zamanlamaz. İzleme altyapınızı ayrıca işletin;
+bu beyan izlemenin çalıştığını kanıtlamaz ve izleme yükümlülüğünü tek başına karşılamaz.
+Pazar sonrası izleme planı [Madde 72](https://ai-act-service-desk.ec.europa.eu/en/ai-act/article-72),
+QMS ise [Madde 17(1)(h)](https://ai-act-service-desk.ec.europa.eu/en/ai-act/article-17) kapsamındadır.
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
-| `enabled` | bool | `false` | İzleme hook'larını etkinleştir |
-| `endpoint` | string | `""` | İzleme webhook URL'si |
-| `endpoint_env` | string | `null` | Endpoint için ortam değişkeni adı |
-| `metrics_export` | string | `"none"` | `"none"`, `"prometheus"`, `"datadog"`, `"custom_webhook"` |
-| `alert_on_drift` | bool | `true` | Model sapmasında uyar |
-| `check_interval_hours` | int | `24` | İzleme kontrol aralığı (saat) |
+| `enabled` | bool | `false` | Harici planı manifeste kaydet; tüm risk seviyelerinde isteğe bağlıdır |
+| `endpoint` | string | `""` | Beyan edilen harici izleme URL'si; isteğe bağlıdır, bağlantı kurulmaz |
+| `endpoint_env` | string | `null` | Boş olmayan değişken adı `endpoint`'ten önceliklidir; `$NAME` olarak kaydedilir, değeri okunmaz |
+| `metrics_export` | string | `"none"` | Beyan edilen harici aktarım sistemi: `"none"`, `"prometheus"`, `"datadog"`, `"custom_webhook"`; etkin planda `none` dışındaki seçim yapılandırma yüklenirken uyarı üretir |
+| `alert_on_drift` | bool | `true` | Harici planda sapma uyarısı öngörülüp öngörülmediği; uyarıları etkinleştirmez |
+| `check_interval_hours` | int | `24` | Beyan edilen harici kontrol aralığı, saat (en az 1); kontrol zamanlamaz |
+
+Her iki endpoint alanı da boşsa manifeste `endpoint: null` yazılır. Adlandırılan ortam değişkeni
+tanımlı olsa bile referansı çözümlenmez. Kapalı veya belirtilmemiş planlar kaydedilmez.
 
 ## `distributed` (İsteğe bağlı)
 

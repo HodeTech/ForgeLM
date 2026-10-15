@@ -82,7 +82,7 @@ Dokuz gerekli anahtar Annex IV §1-9 ile eşleşir:
 | `computational_resources` | §2(g) — eğitim sırasında kullanılan hesaplama kaynakları. |
 | `data_governance` | §2(d) — veri kaynakları, yönetişim, doğrulama metodolojisi. |
 | `technical_documentation` | §3-5 — tasarım + geliştirme metodolojisi. |
-| `monitoring_and_logging` | §6 — pazara-sonrası izleme + audit-log varlığı. |
+| `monitoring_and_logging` | Beyan edilen harici izleme planı (`declarative_only: true`) veya audit log referansı; çalışan izleme kanıtı değildir. |
 | `performance_metrics` | §7 — doğruluk / dayanıklılık / siber güvenlik metrikleri. |
 | `risk_management` | §9 — risk yönetim sistemi referansı (Madde 9 hizalaması). |
 

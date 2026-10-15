@@ -879,28 +879,27 @@ def _collect_retention() -> Optional[Dict[str, Any]]:
 
 
 def _collect_monitoring() -> Optional[Dict[str, Any]]:
-    """Article 12+17: post-market monitoring hooks.
+    """Collect declarative external monitoring metadata for the compliance manifest.
 
-    Endpoint accepts either a literal URL or ``env:VAR_NAME`` to source
-    the URL from the environment — mirrors the webhook collector's
-    convention so the same syntax works in both places.
+    Endpoint accepts a literal URL or ``env:VAR_NAME`` recorded by name only.
     """
-    if not _prompt_yes_no("Configure post-market monitoring?", default=False):
+    if not _prompt_yes_no("Record an external post-market monitoring plan (metadata only)?", default=False):
         return None
+    _print("  Metadata only: ForgeLM does not export metrics, detect drift, send drift alerts, or schedule checks.")
     endpoint_raw = _prompt(
-        "Monitoring endpoint URL (or `env:VAR_NAME` to source from environment)",
+        "Declared monitoring URL (optional; `env:VAR_NAME` is recorded without reading the variable)",
         "",
     )
     metrics_export = _prompt_choice(
-        "metrics_export:",
+        "Declared external metrics_export:",
         ["none", "prometheus", "datadog", "custom_webhook"],
         default=1,
     )
     monitoring: Dict[str, Any] = {
         "enabled": True,
         "metrics_export": metrics_export,
-        "alert_on_drift": _prompt_yes_no("alert_on_drift?", default=True),
-        "check_interval_hours": _prompt_int("check_interval_hours", 24, min_val=1, max_val=720),
+        "alert_on_drift": _prompt_yes_no("External monitoring plan: alert_on_drift?", default=True),
+        "check_interval_hours": _prompt_int("Declared external check_interval_hours", 24, min_val=1, max_val=720),
     }
     # P9: support env:VAR_NAME indirection for the monitoring endpoint
     # the same way the webhook collector does.  ``MonitoringConfig`` has

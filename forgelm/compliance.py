@@ -1578,11 +1578,12 @@ def generate_training_manifest(
             {"path": p, "fingerprint": compute_dataset_fingerprint(p, offline=_offline)} for p in extra_datasets
         ]
 
-    # Monitoring config
+    # Record the operator's plan, not evidence of an active monitoring system.
     mon_cfg = getattr(config, "monitoring", None)
     if mon_cfg and mon_cfg.enabled:
         manifest["monitoring"] = {
-            "endpoint": mon_cfg.endpoint or f"${mon_cfg.endpoint_env}",
+            "declarative_only": True,
+            "endpoint": f"${mon_cfg.endpoint_env}" if mon_cfg.endpoint_env else (mon_cfg.endpoint or None),
             "metrics_export": mon_cfg.metrics_export,
             "alert_on_drift": mon_cfg.alert_on_drift,
             "check_interval_hours": mon_cfg.check_interval_hours,
@@ -1853,7 +1854,7 @@ def build_annex_iv_artifact(manifest: Dict[str, Any]) -> Optional[Dict[str, Any]
             "generated_at": manifest.get("generated_at", ""),
             "known_limitations": operator_block.get("known_limitations", ""),
         },
-        # Annex IV §6: post-market monitoring + audit-log presence.
+        # Declared external monitoring metadata, or the audit-log reference.
         "monitoring_and_logging": (manifest.get("monitoring") or {"audit_log": "audit_log.jsonl"}),
         # Annex IV §7: accuracy / robustness metrics.
         "performance_metrics": manifest.get("evaluation_results", {}).get("metrics", {}),

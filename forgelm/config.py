@@ -1288,25 +1288,41 @@ class RiskAssessmentConfig(BaseModel):
 
 
 class MonitoringConfig(BaseModel):
-    """Art. 12+17: Post-market monitoring hooks."""
+    """Art. 72 / 17(1)(h): declarative external monitoring plan, without runtime hooks."""
 
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = Field(default=False, description="Enable Article 12 post-market monitoring hooks.")
+    enabled: bool = Field(
+        default=False, description="Record external monitoring-plan metadata in the compliance manifest."
+    )
     endpoint: str = Field(
-        default="", description="Monitoring-system webhook URL (Prometheus push gateway / Datadog / custom)."
+        default="", description="Declared external monitoring URL; recorded only, never contacted by ForgeLM."
     )
     endpoint_env: Optional[str] = Field(
-        default=None, description="Env var name carrying the endpoint URL (overrides `endpoint` when set)."
+        default=None,
+        description="Env var name recorded as `$NAME`, overriding `endpoint` when non-empty; never resolved.",
     )
     metrics_export: Literal["none", "prometheus", "datadog", "custom_webhook"] = Field(
         default="none",
-        description="Metrics exporter: `none`, `prometheus`, `datadog`, or `custom_webhook`.",
+        description="Declared external exporter: `none`, `prometheus`, `datadog`, or `custom_webhook`; no metrics are exported.",
     )
     alert_on_drift: bool = Field(
-        default=True, description="Emit a webhook alert when drift detector flags a regression."
+        default=True,
+        description="Declared external drift-alert policy; ForgeLM does not detect drift or send these alerts.",
     )
-    check_interval_hours: int = Field(default=24, ge=1, description="Monitoring check cadence in hours.")
+    check_interval_hours: int = Field(
+        default=24, ge=1, description="Declared external check cadence in hours; ForgeLM does not schedule checks."
+    )
+
+    @model_validator(mode="after")
+    def _warn_declarative_exporter(self) -> "MonitoringConfig":
+        if self.enabled and self.metrics_export != "none":
+            logger.warning(
+                "monitoring.metrics_export is declarative metadata only: ForgeLM does not export metrics, "
+                "contact the endpoint, detect drift, send drift alerts, or schedule checks. "
+                "Operate your external monitoring stack separately."
+            )
+        return self
 
 
 class ComplianceMetadataConfig(BaseModel):
@@ -1642,7 +1658,7 @@ class ForgeConfig(BaseModel):
         description="EU AI Act Article 9 risk-management block (intended use, foreseeable misuse, risk tier).",
     )
     monitoring: Optional[MonitoringConfig] = Field(
-        default=None, description="EU AI Act Article 12 + 17 post-market monitoring block."
+        default=None, description="EU AI Act Art. 72 / 17(1)(h) external monitoring-plan metadata; no runtime hooks."
     )
     synthetic: Optional[SyntheticConfig] = Field(
         default=None, description="Teacher→student synthetic-data generation block."

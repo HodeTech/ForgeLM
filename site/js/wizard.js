@@ -251,8 +251,7 @@
       webhookNotifyStart: false,
       webhookNotifySuccess: true,
       webhookNotifyFailure: true,
-      // Article 12+17 post-market monitoring. Auto-coerced to true
-      // for high-risk tiers.
+      // External monitoring-plan metadata; opt-in for every risk tier.
       monitoringEnabled: false,
       monitoringEndpoint: '',
       metricsExport: 'none',  // 'none' | 'prometheus' | 'datadog' | 'custom_webhook'
@@ -447,9 +446,6 @@
       // Off → skip; the operator opted out of the whole feature.
       if (state.webhookEnabled && blank(state.webhookUrl)) {
         errors.push({ field: 'webhookUrl', key: 'wizard.error.webhook.required' });
-      }
-      if (state.monitoringEnabled && blank(state.monitoringEndpoint)) {
-        errors.push({ field: 'monitoringEndpoint', key: 'wizard.error.monitoring.endpoint.required' });
       }
       if (state.syntheticEnabled) {
         if (blank(state.syntheticTeacherModel)) {
@@ -818,10 +814,10 @@
       blank();
     }
 
-    // Article 12+17 post-market monitoring. Auto-coerced enabled for
-    // strict tiers (operator can't disable it under high-risk).
-    var monitoringActive = state.monitoringEnabled || isStrictRisk(state);
+    // Record an external plan without activating monitoring hooks.
+    var monitoringActive = state.monitoringEnabled;
     if (monitoringActive || state.monitoringEndpoint) {
+      comment('External monitoring plan metadata only; ForgeLM runs no exporters, drift alerts, or scheduled checks.');
       header(0, 'monitoring');
       k(1, 'enabled', monitoringActive ? 'true' : 'false');
       if (state.monitoringEndpoint) {
@@ -2701,26 +2697,17 @@
       body.appendChild(makeWebhookToggle('webhookNotifyFailure', 'wizard.webhook.notify_failure.label'));
     }));
 
-    // Post-market monitoring (Article 12+17) accordion.
+    // Declarative external monitoring plan (Article 72 / 17(1)(h)).
     pane.appendChild(makeAccordion(state, persist, 'monitoring',
       'wizard.monitoring.title', 'wizard.monitoring.hint', function (body) {
-      var monLocked = isStrictRisk(state);
       var monInput = el('input', { type: 'checkbox' });
-      monInput.checked = !!state.monitoringEnabled || monLocked;
-      if (monLocked) monInput.disabled = true;
+      monInput.checked = !!state.monitoringEnabled;
       monInput.addEventListener('change', function () {
         state.monitoringEnabled = monInput.checked;
         persist();
         rerender();
       });
       var monLabelEl = el('span', { class: 'wizard-toggle-label', text: tr('wizard.monitoring.enabled.label') });
-      if (monLocked) {
-        monLabelEl.appendChild(el('span', {
-          class: 'badge',
-          text: tr('wizard.locked.badge'),
-          style: 'margin-left: 0.4rem;'
-        }));
-      }
       var monRow = el('div', { class: 'wizard-row' }, [
         el('label', { class: 'wizard-toggle' }, [monInput, monLabelEl]),
         el('span', { class: 'wizard-row-hint', text: tr('wizard.monitoring.enabled.hint') })
@@ -2728,15 +2715,11 @@
       appendDetail(monRow, 'wizard.monitoring.enabled.detail');
       body.appendChild(monRow);
 
-      var endpointShown = !!state.monitoringEnabled || monLocked;
+      var endpointShown = !!state.monitoringEnabled;
       if (endpointShown) {
-        // Endpoint is required when monitoring is enabled — same
-        // pattern as webhook.url. fieldHasError gates the visual so
-        // the error appears only after a failed Next attempt.
-        var monEndpointErrKey = fieldHasError(state, 'operations', 'monitoringEndpoint');
         var epInput = el('input', {
           type: 'text',
-          class: 'wizard-input' + (monEndpointErrKey ? ' is-invalid' : ''),
+          class: 'wizard-input',
           placeholder: tr('wizard.monitoring.endpoint.placeholder'),
           value: state.monitoringEndpoint || ''
         });
@@ -2745,20 +2728,11 @@
           epInput,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.monitoring.endpoint.hint') })
         ];
-        if (monEndpointErrKey) {
-          epRowChildren.push(el('div', { class: 'wizard-error', role: 'alert', text: tr(monEndpointErrKey) }));
-        }
         var epRow = el('div', { class: 'wizard-row' }, epRowChildren);
         epInput.addEventListener('input', function () {
           state.monitoringEndpoint = epInput.value.trim();
           persist();
           liveYaml();
-          var stillErr = validateStep(state, 'operations').some(function (e) { return e.field === 'monitoringEndpoint'; });
-          if (!stillErr) {
-            epInput.classList.remove('is-invalid');
-            var errEl = epRow.querySelector('.wizard-error');
-            if (errEl) errEl.remove();
-          }
         });
         body.appendChild(epRow);
 

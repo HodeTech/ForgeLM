@@ -79,6 +79,31 @@ class TestModelConfig:
         assert m.backend == "unsloth"
 
 
+class TestMonitoringConfig:
+    @pytest.mark.parametrize("exporter", ["prometheus", "datadog", "custom_webhook"])
+    def test_exporter_declaration_warns_at_config_load(self, tmp_path, caplog, exporter):
+        config_data = minimal_config(
+            monitoring={"enabled": True, "metrics_export": exporter, "endpoint": "https://secret.example.com/private"}
+        )
+        path = _write_yaml(config_data, str(tmp_path / "monitoring.yaml"))
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            config = load_config(path)
+        assert config.monitoring.metrics_export == exporter
+        assert "monitoring.metrics_export" in caplog.text
+        assert "declarative metadata only" in caplog.text
+        assert "does not export metrics" in caplog.text
+        assert "secret.example.com" not in caplog.text
+
+    @pytest.mark.parametrize(
+        "monitoring",
+        [None, {"enabled": False, "metrics_export": "prometheus"}, {"enabled": True, "metrics_export": "none"}],
+    )
+    def test_no_exporter_warning_for_inactive_export(self, caplog, monitoring):
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            ForgeConfig(**minimal_config(monitoring=monitoring))
+        assert "monitoring.metrics_export" not in caplog.text
+
+
 # --- LoraConfigModel ---
 
 

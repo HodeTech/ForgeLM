@@ -11,6 +11,7 @@ import yaml
 
 from forgelm.compliance import (
     AuditLogger,
+    compute_annex_iv_manifest_hash,
     export_compliance_artifacts,
     export_evidence_bundle,
     generate_deployer_instructions,
@@ -815,6 +816,60 @@ class TestComplianceExportAtomicity:
 
 
 class TestManifestAnnexIV:
+    @pytest.mark.parametrize("env_value", [None, "https://secret.example.com/private"])
+    @pytest.mark.parametrize(
+        "endpoint_fields,expected",
+        [
+            ({}, None),
+            ({"endpoint": "https://monitor.example.com"}, "https://monitor.example.com"),
+            ({"endpoint_env": "MON_URL"}, "$MON_URL"),
+            ({"endpoint": "https://monitor.example.com", "endpoint_env": "MON_URL"}, "$MON_URL"),
+            ({"endpoint_env": ""}, None),
+        ],
+    )
+    def test_monitoring_declaration_survives_export(
+        self, tmp_path, minimal_config, monkeypatch, endpoint_fields, expected, env_value
+    ):
+        """A plan is labelled as metadata and never resolves endpoint secrets."""
+        if env_value is None:
+            monkeypatch.delenv("MON_URL", raising=False)
+        else:
+            monkeypatch.setenv("MON_URL", env_value)
+        config = ForgeConfig(
+            **minimal_config(
+                compliance={"provider_name": "Corp", "system_name": "Bot", "intended_purpose": "Testing"},
+                monitoring={
+                    "enabled": True,
+                    "metrics_export": "prometheus",
+                    "alert_on_drift": True,
+                    "check_interval_hours": 12,
+                    **endpoint_fields,
+                },
+            )
+        )
+        manifest = generate_training_manifest(config, {"eval_loss": 0.5})
+        declaration = {
+            "declarative_only": True,
+            "endpoint": expected,
+            "metrics_export": "prometheus",
+            "alert_on_drift": True,
+            "check_interval_hours": 12,
+        }
+        assert manifest["monitoring"] == declaration
+        export_compliance_artifacts(manifest, str(tmp_path))
+        report = json.loads((tmp_path / "compliance_report.json").read_text(encoding="utf-8"))
+        annex = json.loads((tmp_path / "annex_iv_metadata.json").read_text(encoding="utf-8"))
+        assert report["monitoring"] == declaration
+        assert annex["monitoring_and_logging"] == declaration
+        assert "secret.example.com" not in json.dumps(report)
+        assert "secret.example.com" not in json.dumps(annex)
+        assert annex["metadata"]["manifest_hash"] == compute_annex_iv_manifest_hash(annex)
+
+    @pytest.mark.parametrize("monitoring", [None, {"enabled": False, "metrics_export": "datadog"}])
+    def test_disabled_monitoring_is_not_declared(self, minimal_config, monitoring):
+        config = ForgeConfig(**minimal_config(monitoring=monitoring))
+        assert "monitoring" not in generate_training_manifest(config, {})
+
     def test_includes_annex_iv(self, minimal_config):
         config = ForgeConfig(
             **minimal_config(

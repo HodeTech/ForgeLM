@@ -374,16 +374,27 @@ silently extend the retention horizon by re-using a stale workspace.
 
 ---
 
-## `monitoring` (Optional — EU AI Act Art. 12+17)
+## `monitoring` (Optional — External monitoring plan, Art. 72 / 17(1)(h))
+
+This block is **declarative metadata only**. With `enabled: true`, ForgeLM records your external
+post-market monitoring plan in the compliance manifest and Annex IV `monitoring_and_logging` section,
+labelled `declarative_only: true`. It does not contact the endpoint, export metrics, detect drift,
+send drift alerts, or schedule checks. Operate your monitoring stack separately; this declaration
+does not establish that monitoring is running or satisfy the monitoring obligation by itself.
+The post-market monitoring plan is covered by [Article 72](https://ai-act-service-desk.ec.europa.eu/en/ai-act/article-72)
+and the QMS by [Article 17(1)(h)](https://ai-act-service-desk.ec.europa.eu/en/ai-act/article-17).
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `false` | Enable monitoring hooks |
-| `endpoint` | string | `""` | Monitoring webhook URL |
-| `endpoint_env` | string | `null` | Env var name for endpoint |
-| `metrics_export` | string | `"none"` | `"none"`, `"prometheus"`, `"datadog"`, `"custom_webhook"` |
-| `alert_on_drift` | bool | `true` | Alert on model drift |
-| `check_interval_hours` | int | `24` | Monitoring check interval |
+| `enabled` | bool | `false` | Record the external plan in the manifest; opt-in for every risk tier |
+| `endpoint` | string | `""` | Declared external monitoring URL; optional, never contacted |
+| `endpoint_env` | string | `null` | Non-empty variable name takes precedence over `endpoint`; recorded as `$NAME`, never read |
+| `metrics_export` | string | `"none"` | Declared external exporter: `"none"`, `"prometheus"`, `"datadog"`, `"custom_webhook"`; an enabled non-`none` declaration emits a config-load warning |
+| `alert_on_drift` | bool | `true` | Whether the external plan calls for drift alerts; does not activate alerts |
+| `check_interval_hours` | int | `24` | Declared external cadence in hours (minimum 1); does not schedule checks |
+
+If both endpoint fields are empty, the manifest records `endpoint: null`. Environment-variable
+references remain unresolved even if the named variable is set. Disabled or omitted plans are not recorded.
 
 ---
 

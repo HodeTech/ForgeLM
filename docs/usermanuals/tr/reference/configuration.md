@@ -202,7 +202,7 @@ synthetic:
   sanity_failure_rate: 0.2                    # üzerinde bir WARNING loglanan başarısızlık oranı (yalnızca uyarı)
 ```
 
-Nested `synthetic.teacher:` alt-bloğu ve `rate_limit:` bloğu yoktur — `teacher_model`, `teacher_backend`, `api_base`, `api_delay`, `api_timeout` doğrudan `synthetic:` üzerinde düz alanlardır. Secret'ları commit etmemek için inline `api_key` alanı yerine `api_key_env` (bir ortam-değişkeni adı) tercih edin. ForgeLM'in YAML loader'ında hiçbir yerde `${VAR}` interpolasyon mekanizması yoktur — `*_env` alanları doğrudan `os.environ` ile okunan bir ortam değişkeni adlandırır, bir string içine substitüe edilmez.
+Nested `synthetic.teacher:` alt-bloğu ve `rate_limit:` bloğu yoktur — `teacher_model`, `teacher_backend`, `api_base`, `api_delay`, `api_timeout` doğrudan `synthetic:` üzerinde düz alanlardır. Secret'ları commit etmemek için inline `api_key` alanı yerine `api_key_env` (bir ortam-değişkeni adı) tercih edin. ForgeLM'in YAML loader'ında hiçbir yerde `${VAR}` interpolasyon mekanizması yoktur — `*_env` alanları doğrudan `os.environ` ile okunan bir ortam değişkeni adlandırır, bir string içine substitüe edilmez; istisna `monitoring.endpoint_env` alanıdır: bu ad yalnızca çözümlenmemiş bir `$NAME` referansı olarak kaydedilir.
 
 `teacher_backend: "local"` altında ayrıca `teacher_revision` ayarlayarak teacher checkpoint'ini bir Hub commit SHA'sına veya ref'ine sabitleyebilirsiniz; teacher'ın ürettikleri eğitim verisi hâline gelir, dolayısıyla sabitlenmemiş bir teacher bir veri-kökeni boşluğudur. `teacher_backend: "api"` veya `"file"` ile — ki bunlar Hub'dan hiç yüklemez — doğrudan reddedilir.
 
@@ -288,15 +288,25 @@ risk_assessment:
 
 ## `monitoring:`
 
+Bu blok harici bir pazar sonrası izleme planını beyan eder (Madde 72 / 17(1)(h)). `enabled: true`
+olduğunda değerleri uyumluluk manifestine ve Annex IV `monitoring_and_logging` bölümüne
+`declarative_only: true` etiketiyle kaydedilir. ForgeLM endpoint'e bağlanmaz, metrik aktarmaz,
+model sapması tespit etmez, sapma uyarısı göndermez veya kontrol zamanlamaz. İzleme altyapınızı ayrıca
+işletin; bu beyan izlemenin çalıştığını kanıtlamaz. Blok tüm risk seviyelerinde isteğe bağlıdır.
+
 ```yaml
 monitoring:
-  enabled: false                              # Madde 12 pazar-sonrası izlemeyi etkinleştir
-  endpoint: ""                               # İzleme webhook URL'si (Prometheus / Datadog / özel)
-  endpoint_env: null                          # endpoint'i geçersiz kılan env değişkeni
-  metrics_export: "none"                     # none | prometheus | datadog | custom_webhook
-  alert_on_drift: true                       # drift tespitinde webhook uyarısı
-  check_interval_hours: 24                   # izleme periyodu (saat)
+  enabled: false                            # Record external plan metadata only
+  endpoint: ""                              # Optional external URL; never contacted
+  endpoint_env: null                        # Non-empty name overrides endpoint as "$NAME"; never read
+  metrics_export: "none"                    # Declared only: none | prometheus | datadog | custom_webhook
+  alert_on_drift: true                      # Declared external drift-alert policy; no alerts sent
+  check_interval_hours: 24                  # Declared external cadence; no checks scheduled
 ```
+
+Etkin planda `none` dışındaki aktarım sistemi seçimi yapılandırma yüklenirken uyarı üretir. Her iki
+endpoint alanı da boşsa manifeste `null` yazılır. Ortam değişkeni tanımlı olsa bile yalnızca adı
+kaydedilir; kapalı veya belirtilmemiş planlar kaydedilmez.
 
 ## `retention:`
 

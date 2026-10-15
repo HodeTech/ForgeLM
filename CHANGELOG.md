@@ -15,6 +15,12 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Restore the monitoring-plan evidence contract: `monitoring.*` declares an external plan,
+  labelled `declarative_only: true` in the compliance manifest and Annex IV; ForgeLM runs no
+  exporter, drift detector, alert, or scheduler. Warn when an enabled plan names an exporter,
+  record absent endpoints as `null`, and honor unresolved `endpoint_env` references over literal
+  endpoints. Align CLI/web wizards, six site locales, and EN/TR references and QMS guidance;
+  correct the site's claim that webhook delivery attempts are recorded in the audit log (#93).
 - Rework the homepage terminal into a first-run guide with separately copyable installation and
   config-generation commands, an optional training step, and readable code in both themes and on
   narrow screens, with interface copy in all six site languages. Keep the dated CPU recording and

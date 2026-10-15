@@ -132,7 +132,7 @@ Artefact, eğitim manifestinden ve `compliance:` bloğunuzdan doldurulan, Annex 
 | `computational_resources` | §2(g) — eğitim sırasında kullanılan hesaplama kaynağı. |
 | `data_governance` | §2(d) — veri kökeni ve doğrulama metodolojisi. |
 | `technical_documentation` | §3-5 — ForgeLM sürümü, üretim zaman damgası, bilinen sınırlamalar. |
-| `monitoring_and_logging` | §6 — pazar-sonrası izleme + audit log referansı. |
+| `monitoring_and_logging` | Beyan edilen harici izleme planı (`declarative_only: true`) veya audit log referansı; çalışan izleme kanıtı değildir. |
 | `performance_metrics` | §7 — değerlendirme sonuçlarından doğruluk / sağlamlık metrikleri. |
 | `risk_management` | §9 — top-level `risk_assessment:` bloğu ya da açık bir "no risk_assessment block configured" işareti. |
 

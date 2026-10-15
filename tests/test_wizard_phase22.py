@@ -1190,6 +1190,15 @@ class TestPreflightChecklist:
 class TestMonitoringEnvPrefix:
     """P9 — monitoring collector accepts env:VAR_NAME like the webhook collector."""
 
+    def test_metadata_plan_accepts_no_endpoint(self, capsys):
+        with patch("builtins.input", side_effect=_input_returning("y", "", "1", "y", "24")):
+            result = wizard._collect_monitoring()
+        assert result == {"enabled": True, "metrics_export": "none", "alert_on_drift": True, "check_interval_hours": 24}
+        output = capsys.readouterr().out
+        assert "Metadata only" in output
+        assert "does not export metrics" in output
+        assert "schedule checks" in output
+
     def test_env_prefix_routes_to_endpoint_env(self):
         with patch(
             "builtins.input",

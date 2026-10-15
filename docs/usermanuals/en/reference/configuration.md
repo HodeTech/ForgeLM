@@ -200,7 +200,7 @@ synthetic:
   sanity_failure_rate: 0.2                    # failure rate above which a WARNING is logged (warn-only)
 ```
 
-There is no nested `synthetic.teacher:` sub-block and no `rate_limit:` block — `teacher_model`, `teacher_backend`, `api_base`, `api_delay`, and `api_timeout` are flat fields on `synthetic:` directly. Prefer `api_key_env` (an environment-variable name) over the inline `api_key` field to avoid committing secrets. ForgeLM's YAML loader has no `${VAR}` interpolation mechanism anywhere — `*_env` fields name an environment variable that is read directly via `os.environ`, never substituted into a string.
+There is no nested `synthetic.teacher:` sub-block and no `rate_limit:` block — `teacher_model`, `teacher_backend`, `api_base`, `api_delay`, and `api_timeout` are flat fields on `synthetic:` directly. Prefer `api_key_env` (an environment-variable name) over the inline `api_key` field to avoid committing secrets. ForgeLM's YAML loader has no `${VAR}` interpolation mechanism anywhere — `*_env` fields name an environment variable that is read directly via `os.environ`, never substituted into a string, except `monitoring.endpoint_env`: that name is recorded as an unresolved `$NAME` reference only.
 
 Under `teacher_backend: "local"` you may also set `teacher_revision` to pin the teacher checkpoint to a Hub commit SHA or ref; the teacher's generations become training data, so an unpinned teacher is a data-provenance gap. It is rejected outright with `teacher_backend: "api"` or `"file"`, which never load from the Hub.
 
@@ -286,15 +286,25 @@ risk_assessment:
 
 ## `monitoring:`
 
+This block declares an external post-market monitoring plan (Art. 72 / 17(1)(h)). With `enabled: true`,
+its values are recorded in the compliance manifest and Annex IV `monitoring_and_logging` section with
+`declarative_only: true`. ForgeLM does not contact the endpoint, export metrics, detect drift, send
+drift alerts, or schedule checks. Operate your monitoring stack separately; the declaration is not
+proof that monitoring is running. The block remains optional for every risk tier.
+
 ```yaml
 monitoring:
-  enabled: false                              # Enable Article 12 post-market monitoring
-  endpoint: ""                               # Monitoring webhook URL (Prometheus / Datadog / custom)
-  endpoint_env: null                          # env var overriding endpoint
-  metrics_export: "none"                     # none | prometheus | datadog | custom_webhook
-  alert_on_drift: true                       # webhook alert on drift-detector regression
-  check_interval_hours: 24                   # monitoring cadence in hours
+  enabled: false                            # Record external plan metadata only
+  endpoint: ""                              # Optional external URL; never contacted
+  endpoint_env: null                        # Non-empty name overrides endpoint as "$NAME"; never read
+  metrics_export: "none"                    # Declared only: none | prometheus | datadog | custom_webhook
+  alert_on_drift: true                      # Declared external drift-alert policy; no alerts sent
+  check_interval_hours: 24                  # Declared external cadence; no checks scheduled
 ```
+
+An enabled non-`none` exporter declaration emits a config-load warning. If neither endpoint field
+is set, the manifest endpoint is `null`. Environment references are recorded by name even when the
+variable is set; disabled or omitted plans are not recorded.
 
 ## `retention:`
 

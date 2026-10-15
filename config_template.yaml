@@ -256,10 +256,12 @@ data:
 #     - "Human review required for policy-related responses"
 #   vulnerable_groups_considered: true
 
-# Post-Market Monitoring (Art. 12+17)
+# External post-market monitoring plan (Art. 72 / 17(1)(h)) — declarative metadata only.
+# Recorded in the compliance manifest / Annex IV; ForgeLM does not contact the endpoint,
+# export metrics, detect drift, send drift alerts, or schedule checks. Operate your own stack.
 # monitoring:
 #   enabled: true
-#   endpoint_env: "MONITORING_WEBHOOK_URL"
+#   endpoint_env: "MONITORING_WEBHOOK_URL"  # recorded as "$NAME", never read; overrides endpoint
 #   metrics_export: "prometheus"  # "none", "prometheus", "datadog", "custom_webhook"
 #   alert_on_drift: true
 #   check_interval_hours: 24

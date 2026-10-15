@@ -132,7 +132,7 @@ The artifact carries **nine** top-level keys mapped onto Annex IV §1-9, populat
 | `computational_resources` | §2(g) — compute used during training. |
 | `data_governance` | §2(d) — data provenance and validation methodology. |
 | `technical_documentation` | §3-5 — ForgeLM version, generation timestamp, known limitations. |
-| `monitoring_and_logging` | §6 — post-market monitoring + audit-log reference. |
+| `monitoring_and_logging` | Declared external monitoring-plan metadata (`declarative_only: true`), or an audit-log reference; no runtime monitoring evidence. |
 | `performance_metrics` | §7 — accuracy / robustness metrics from the evaluation results. |
 | `risk_management` | §9 — the top-level `risk_assessment:` block, or an explicit "no risk_assessment block configured" marker. |
 
