@@ -302,7 +302,7 @@ Dağıtımınıza uygulanacak kuralları yetkin bir hukuk danışmanıyla değer
 - Makine-okunabilir uyumluluk kanıtı
 - Eğitim verisi kaynağı (provenance) takibi
 - Risk sınıflandırması
-- Pazar sonrası izleme sistemini işletin; ForgeLM yalnızca harici plan metadata’sını kaydeder
+- Pazar sonrası izleme sistemini işletin; ForgeLM yalnızca harici plan metadata'sını kaydeder
 
 ### Uyumluluk artefaktları
 

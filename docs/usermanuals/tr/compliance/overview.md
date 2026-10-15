@@ -141,7 +141,7 @@ Bu tablo kısmi metadata eşlemelerini gösterir; tam bir Annex IV belgesi deği
 düzeltilmesi [#539](https://github.com/HodeTech/ForgeLM/issues/539), doğrulayıcının tamlık iddiaları
 [#573](https://github.com/HodeTech/ForgeLM/issues/573) kapsamında takip edilir.
 
-Dağıtım coğrafyası, yaşam döngüsü, standartlar listesi, uygunluk beyanı bölümü yoktur — bu sayfanın eski taslakları bunları listeliyordu, hiçbiri üretilmez. Yukarıdaki izleme kaydı metadata özetidir; Annex IV madde 9’un gerektirdiği ayrıntılı pazar sonrası izleme planı değildir. Bu tablonun tek doğruluk kaynağı [Annex IV](#/compliance/annex-iv) sayfasıdır.
+Dağıtım coğrafyası, yaşam döngüsü, standartlar listesi, uygunluk beyanı bölümü yoktur — bu sayfanın eski taslakları bunları listeliyordu, hiçbiri üretilmez. Yukarıdaki izleme kaydı metadata özetidir; Annex IV madde 9'un gerektirdiği ayrıntılı pazar sonrası izleme planı değildir. Bu tablonun tek doğruluk kaynağı [Annex IV](#/compliance/annex-iv) sayfasıdır.
 
 ## Operasyonel sorumluluklar (siz, ForgeLM değil)
 
@@ -150,7 +150,7 @@ Toolkit kanıt üretir; insanlar sertifikasyonu üretir. Ekibiniz şunlardan sor
 - Üretime giden her koşunun audit paketini incelemek.
 - Audit log'u tamper-evidence için write-once depoya göndermek.
 - Gerektiğinde notified-body ile uygunluk değerlendirmesi yapmak.
-- Model deploy edildikten sonra post-market monitoring'i sürdürmek.
+- Model deploy edildikten sonra pazar sonrası izlemeyi sürdürmek.
 - Veri sahibi taleplerini (GDPR Madde 15-22) ele almak.
 
 `docs/qms/`'deki ForgeLM QMS SOP'ları operasyonel tarafı kapsar.

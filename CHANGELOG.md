@@ -43,6 +43,14 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Use the Regulation's own Article 72 terms for post-market monitoring in the German and Spanish
+  wizard copy ("Beobachtung nach dem Inverkehrbringen", "vigilancia poscomercialización"), and restore
+  the "metadata" the French and Spanish hints had dropped. The hint again separates ForgeLM's optional
+  record from the provider's monitoring system and the Annex IV point 9 plan. Make the monitoring and
+  webhook copy use one German term for the external stack, straight apostrophes in French and Turkish,
+  and full-width punctuation with 端点 in Chinese. Record the Turkish terms the guides use (Yasası versus
+  Tüzük, post-market monitoring, drift) in the localization glossary. The new validation keys keep their
+  English fallback; native review of the deferred locales remains open (refs #948).
 - Name every browser-wizard field by its visible caption. Text, number, slider, select and textarea
   captions now point at their control through unique, stable `id`/`for` pairs, so screen readers
   no longer announce a placeholder or nothing, and clicking a caption focuses its field. The LoRA

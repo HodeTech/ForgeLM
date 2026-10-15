@@ -156,7 +156,7 @@ audit:
 - TLS sertifika doğrulaması başarısız.
 - Endpoint 4xx döndürüyor (WARNING düzeyinde bildirilir; eğitim devam eder).
 
-**Çözüm:** stderr veya kaydedilen CI log’larında `forgelm.webhook` kaynaklı `WARNING` satırlarını arayın. Başarısız teslimatlar eğitimi durdurmaz ve `audit_log.jsonl` dosyasına yazılmaz; `webhook_failed` olayı yoktur. Sırların açığa çıkmasını önlemek için yanıt gövdeleri gösterilmez.
+**Çözüm:** stderr veya kaydedilen CI log'larında `forgelm.webhook` kaynaklı `WARNING` satırlarını arayın. Başarısız teslimatlar eğitimi durdurmaz ve `audit_log.jsonl` dosyasına yazılmaz; `webhook_failed` olayı yoktur. Sırların açığa çıkmasını önlemek için yanıt gövdeleri gösterilmez.
 
 ## Bug bildirimi nereye
 

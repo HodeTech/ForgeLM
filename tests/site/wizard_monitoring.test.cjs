@@ -122,6 +122,37 @@ test('active locales cover all keys; deferred locales use the real English fallb
   }
 });
 
+test('every locale keeps metadata, the Art. 72 system and the Annex IV plan apart, in the Regulation\'s own terms', () => {
+  const { translations } = loadWizard();
+  // Art. 72's term in each official EU language version; TR follows the localization glossary, ZH the existing copy.
+  const postMarket = { en: 'post-market monitoring', tr: 'pazar sonrası izleme', de: 'Beobachtung nach dem Inverkehrbringen',
+    fr: 'surveillance après commercialisation', es: 'vigilancia poscomercialización', zh: '上市后监控' };
+  const metadata = { en: 'metadata', tr: 'metadata', de: 'Metadaten', fr: 'métadonnées', es: 'metadatos', zh: '元数据' };
+  for (const locale of Object.keys(postMarket)) {
+    const hint = translations[locale]['wizard.monitoring.enabled.hint'];
+    const detail = translations[locale]['wizard.monitoring.enabled.detail'];
+    assert.ok(hint.includes(postMarket[locale]) && detail.includes(postMarket[locale]),
+      `${locale}: the provider's obligation is named "${postMarket[locale]}"`);
+    assert.ok(hint.includes(metadata[locale]), `${locale}: ForgeLM's optional record is called metadata`);
+    assert.match(hint, /72/, `${locale}: cites Art. 72`);
+    assert.match(hint, /Annex IV[^0-9]{1,12}9/, `${locale}: cites the detailed plan in Annex IV point 9`);
+  }
+});
+
+test('monitoring and webhook copy keeps one apostrophe style, and Chinese punctuation and endpoint term', () => {
+  const { translations } = loadWizard();
+  const scoped = key => key.startsWith('wizard.monitoring.') || key.startsWith('wizard.step.operations.') ||
+    key === 'wizard.webhook.enabled.detail';
+  for (const locale of ['en', 'tr', 'de', 'fr', 'es', 'zh']) {
+    for (const [key, value] of Object.entries(translations[locale]).filter(([name]) => scoped(name))) {
+      assert.doesNotMatch(value, /’/, `${locale} ${key}: the site writes the straight apostrophe`);
+      if (locale !== 'zh') continue;
+      assert.doesNotMatch(value, /[一-鿿][,(]|[,)][一-鿿]/, `zh ${key}: full-width punctuation in Chinese text`);
+      assert.doesNotMatch(value, /endpoint/i, `zh ${key}: the copy's term for an endpoint is 端点`);
+    }
+  }
+});
+
 test('generated YAML preserves monitoring and webhook values through the real ForgeConfig schema', () => {
   const wizard = loadWizard();
   const configs = [];
