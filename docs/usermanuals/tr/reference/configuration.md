@@ -313,7 +313,7 @@ ForgeLM'de metadata kaydı isteğe bağlıdır; Madde 72, yüksek riskli yapay z
 sonrası izleme sistemi kurmasını ve belgelemesini gerektirir. Bu alanlar bir özettir; Annex IV madde 9'un (Madde
 72(3)) gerektirdiği ayrıntılı plan değildir.
 
-`load_config`, etkin ve `none` dışında exporter beyan eden plan için uyarı verir; doğrudan `ForgeConfig(...)` kurulumu
+`load_config`, etkin ve `none` dışında aktarım sistemi beyan eden plan için uyarı verir; doğrudan `ForgeConfig(...)` kurulumu
 bu dosya yükleme uyarısını vermez.
 
 İzleme kanıtı dosyaları (`compliance_report.json` ve üretildiğinde `annex_iv_metadata.json`) düz metindir.

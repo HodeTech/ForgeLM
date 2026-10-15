@@ -130,10 +130,11 @@ For the parts we do translate, keep terminology consistent. A small glossary:
 | layer (ML) | katman | |
 | tokenizer | tokenleştirici / tokenizer | Either; technical audiences prefer "tokenizer" |
 | LoRA / PEFT / etc. | unchanged | Acronyms |
-| EU AI Act | AB Yapay Zekâ Yasası / EU AI Act | The short title: "Act" is *Yasası*. First mention spell it out, then abbreviate; most pages keep "EU AI Act" after that |
+| EU AI Act | EU AI Act / AB Yapay Zekâ Yasası | TR pages name it "EU AI Act"; when prose spells the short title out in Turkish, "Act" is *Yasası* |
 | Regulation (EU) 2024/1689, regulation (as an instrument) | (AB) 2024/1689 sayılı Tüzük | Formal citations name the instrument, and an EU regulation is a *Tüzük*: the GDPR is the *Genel Veri Koruma Tüzüğü* |
 | post-market monitoring | pazar sonrası izleme | The provider's Article 72 system and plan; market surveillance by authorities is *piyasa gözetimi*, a different duty |
-| drift (model / data) | drift | Kept in English, as in the guides and the site; *kayma* only for schema drift |
+| drift (model / data) | drift | Kept in English, as in the guides and the site; *kayma* only for a schema or threshold shift |
+| metrics exporter | aktarım sistemi | The site's and the configuration reference's term for `monitoring.metrics_export` |
 
 When in doubt, look at sibling TR docs and match the most frequent choice. Don't invent new terminology mid-series.
 
