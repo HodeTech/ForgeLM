@@ -27,11 +27,13 @@ from forgelm.config import (
     MergeConfig,
     ModelConfig,
     MonitoringConfig,
+    PipelineStage,
     SafetyConfig,
     SyntheticConfig,
     TrainingConfig,
     WebhookConfig,
     load_config,
+    merge_pipeline_stage_config,
 )
 from tests._helpers.factories import minimal_config
 
@@ -83,7 +85,12 @@ class TestMonitoringConfig:
     @pytest.mark.parametrize("exporter", ["prometheus", "datadog", "custom_webhook"])
     def test_exporter_declaration_warns_at_config_load(self, tmp_path, caplog, exporter):
         config_data = minimal_config(
-            monitoring={"enabled": True, "metrics_export": exporter, "endpoint": "https://secret.example.com/private"}
+            monitoring={
+                "enabled": True,
+                "metrics_export": exporter,
+                "endpoint": "https://secret.example.com/private",
+                "endpoint_env": "PRIVATE_MONITORING_NAME",
+            }
         )
         path = _write_yaml(config_data, str(tmp_path / "monitoring.yaml"))
         with caplog.at_level(logging.WARNING, logger="forgelm.config"):
@@ -93,6 +100,29 @@ class TestMonitoringConfig:
         assert "declarative metadata only" in caplog.text
         assert "does not export metrics" in caplog.text
         assert "secret.example.com" not in caplog.text
+        assert "PRIVATE_MONITORING_NAME" not in caplog.text
+        assert sum("monitoring.metrics_export" in record.message for record in caplog.records) == 1
+        for name in ("first", "second", "third"):
+            merge_pipeline_stage_config(config, PipelineStage(name=name))
+        assert sum("monitoring.metrics_export" in record.message for record in caplog.records) == 1
+
+    @pytest.mark.parametrize("value", ["MON_URL", " _mon_url ", "A1"])
+    def test_env_reference_is_normalized_without_resolution(self, value, monkeypatch):
+        monkeypatch.setenv(value.strip(), "https://secret.example.com/token")
+        assert MonitoringConfig(endpoint_env=value).endpoint_env == value.strip()
+
+    @pytest.mark.parametrize("value", [None, "", "   ", "\t\n"])
+    def test_blank_env_reference_is_absent(self, value):
+        assert MonitoringConfig(endpoint_env=value).endpoint_env is None
+
+    @pytest.mark.parametrize("value", ["env:MON_URL", "$MON_URL", "https://host/token", "MON URL", "1MON", "MÖN"])
+    def test_invalid_env_reference_is_rejected(self, value):
+        with pytest.raises(ValidationError, match="ASCII environment-variable name"):
+            MonitoringConfig(endpoint_env=value)
+
+    @pytest.mark.parametrize("value,expected", [("   ", ""), (" https://host/path\n", "https://host/path")])
+    def test_literal_endpoint_is_trimmed(self, value, expected):
+        assert MonitoringConfig(endpoint=value).endpoint == expected
 
     @pytest.mark.parametrize(
         "monitoring",

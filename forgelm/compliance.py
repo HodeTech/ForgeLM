@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from ._http import _mask_netloc
 from ._strict_json import dumps_strict, sanitize_non_finite
 from ._version import __version__ as _forgelm_version
 from .config import ConfigError, WebhookConfig
@@ -1583,10 +1584,21 @@ def generate_training_manifest(
     if mon_cfg and mon_cfg.enabled:
         manifest["monitoring"] = {
             "declarative_only": True,
-            "endpoint": f"${mon_cfg.endpoint_env}" if mon_cfg.endpoint_env else (mon_cfg.endpoint or None),
+            "endpoint": (
+                f"${mon_cfg.endpoint_env}"
+                if mon_cfg.endpoint_env
+                else (_mask_netloc(mon_cfg.endpoint) if mon_cfg.endpoint else None)
+            ),
+            "endpoint_redacted": bool(mon_cfg.endpoint and not mon_cfg.endpoint_env),
             "metrics_export": mon_cfg.metrics_export,
             "alert_on_drift": mon_cfg.alert_on_drift,
             "check_interval_hours": mon_cfg.check_interval_hours,
+            "defaulted_fields": [
+                name
+                for name in ("endpoint", "metrics_export", "alert_on_drift", "check_interval_hours")
+                if ("endpoint_env" if name == "endpoint" and mon_cfg.endpoint_env else name)
+                not in mon_cfg.model_fields_set
+            ],
         }
 
     # Webhook config — preserved into the compliance report so the
@@ -1854,11 +1866,11 @@ def build_annex_iv_artifact(manifest: Dict[str, Any]) -> Optional[Dict[str, Any]
             "generated_at": manifest.get("generated_at", ""),
             "known_limitations": operator_block.get("known_limitations", ""),
         },
-        # Declared external monitoring metadata, or the audit-log reference.
+        # Annex IV point 9 (Art. 72(3)): external plan metadata, not the full plan.
         "monitoring_and_logging": (manifest.get("monitoring") or {"audit_log": "audit_log.jsonl"}),
         # Annex IV §7: accuracy / robustness metrics.
         "performance_metrics": manifest.get("evaluation_results", {}).get("metrics", {}),
-        # Annex IV §9: risk management system reference.
+        # Annex IV point 5: risk management system reference.
         "risk_management": manifest.get("risk_assessment")
         or {
             "art9_reference": "no risk_assessment block configured",

@@ -354,6 +354,7 @@ def test_gauntlet_non_guard_steps_are_wired_into_ci():
         "ruff check .",
         "ruff format",
         "pytest",
+        "node --test tests/site/*.test.cjs",
         "--config config_template.yaml --dry-run",
         # The FULL mypy argv, including the probe. A fragment stopping one
         # argument short was the bug: deleting ` tests/typing/public_surface_probe.py`

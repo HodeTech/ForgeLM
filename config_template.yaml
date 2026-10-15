@@ -261,8 +261,9 @@ data:
 # export metrics, detect drift, send drift alerts, or schedule checks. Operate your own stack.
 # monitoring:
 #   enabled: true
-#   endpoint_env: "MONITORING_WEBHOOK_URL"  # recorded as "$NAME", never read; overrides endpoint
-#   metrics_export: "prometheus"  # "none", "prometheus", "datadog", "custom_webhook"
+#   endpoint: ""  # optional literal URL; evidence keeps scheme/host only
+#   endpoint_env: "MONITORING_PLAN_URL"  # recorded as "$NAME", never read; overrides endpoint
+#   metrics_export: "none"  # other exporters emit a metadata-only warning at config load
 #   alert_on_drift: true
 #   check_interval_hours: 24
 

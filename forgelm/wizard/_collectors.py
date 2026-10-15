@@ -10,7 +10,6 @@ running config) or ``None`` (which the orchestrator interprets as
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -90,13 +89,9 @@ def _default_safety_probes_path() -> str:
 # ---------------------------------------------------------------------------
 # Shared ``env:VAR_NAME`` reference parsing — the webhook URL prompt and
 # the monitoring-endpoint prompt both accept this indirection syntax.
-# Centralised here so the accepted env-var-name shape (POSIX: uppercase
-# letters / digits / underscores, must start with a letter) only needs
+# Centralised here so the accepted ASCII-identifier shape only needs
 # updating in one place.
 # ---------------------------------------------------------------------------
-
-
-_ENV_VAR_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$", flags=re.ASCII)
 
 
 def _parse_env_ref(raw: str) -> Optional[str]:
@@ -116,10 +111,9 @@ def _parse_env_ref(raw: str) -> Optional[str]:
     var_name = raw[4:].strip()
     if not var_name:
         raise ValueError("`env:` prefix needs a non-empty variable name (e.g. `env:SLACK_WEBHOOK_URL`).")
-    if not _ENV_VAR_NAME_RE.match(var_name):
+    if not var_name.isascii() or not var_name.isidentifier():
         raise ValueError(
-            f"`env:{var_name}` is not a POSIX environment-variable name "
-            "(uppercase letters / digits / underscores, must start with a letter)."
+            "Not a POSIX environment-variable name: use ASCII letters, digits, or underscores; no initial digit."
         )
     return var_name
 
@@ -887,7 +881,7 @@ def _collect_monitoring() -> Optional[Dict[str, Any]]:
         return None
     _print("  Metadata only: ForgeLM does not export metrics, detect drift, send drift alerts, or schedule checks.")
     endpoint_raw = _prompt(
-        "Declared monitoring URL (optional; `env:VAR_NAME` is recorded without reading the variable)",
+        "External plan URL (optional; literal evidence keeps scheme/host only; prefer `env:VAR_NAME` for secrets)",
         "",
     )
     metrics_export = _prompt_choice(
@@ -898,8 +892,10 @@ def _collect_monitoring() -> Optional[Dict[str, Any]]:
     monitoring: Dict[str, Any] = {
         "enabled": True,
         "metrics_export": metrics_export,
-        "alert_on_drift": _prompt_yes_no("External monitoring plan: alert_on_drift?", default=True),
-        "check_interval_hours": _prompt_int("Declared external check_interval_hours", 24, min_val=1, max_val=720),
+        "alert_on_drift": _prompt_yes_no("Does your external monitoring stack alert on drift?", default=True),
+        "check_interval_hours": _prompt_int(
+            "How often does your external stack check the model (hours)?", 24, min_val=1, max_val=720
+        ),
     }
     # P9: support env:VAR_NAME indirection for the monitoring endpoint
     # the same way the webhook collector does.  ``MonitoringConfig`` has
@@ -910,7 +906,7 @@ def _collect_monitoring() -> Optional[Dict[str, Any]]:
         try:
             monitoring["endpoint_env"] = _parse_env_ref(endpoint_stripped)
         except ValueError:
-            _print(f"  '{endpoint_stripped}' is not a valid env-var reference — monitoring endpoint left unset.")
+            _print("  Input is not a valid env-var reference — monitoring endpoint left unset.")
     elif endpoint_stripped:
         monitoring["endpoint"] = endpoint_stripped
     return monitoring

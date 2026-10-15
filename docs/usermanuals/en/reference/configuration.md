@@ -295,8 +295,8 @@ proof that monitoring is running. The block remains optional for every risk tier
 ```yaml
 monitoring:
   enabled: false                            # Record external plan metadata only
-  endpoint: ""                              # Optional external URL; never contacted
-  endpoint_env: null                        # Non-empty name overrides endpoint as "$NAME"; never read
+  endpoint: ""                              # Optional URL; evidence keeps scheme/host only
+  endpoint_env: null                        # ASCII name overrides endpoint as "$NAME"; never read
   metrics_export: "none"                    # Declared only: none | prometheus | datadog | custom_webhook
   alert_on_drift: true                      # Declared external drift-alert policy; no alerts sent
   check_interval_hours: 24                  # Declared external cadence; no checks scheduled
@@ -305,6 +305,34 @@ monitoring:
 An enabled non-`none` exporter declaration emits a config-load warning. If neither endpoint field
 is set, the manifest endpoint is `null`. Environment references are recorded by name even when the
 variable is set; disabled or omitted plans are not recorded.
+
+Recording metadata in ForgeLM is optional; Article 72 requires providers of high-risk AI systems to establish and document a post-market monitoring system. These fields are a summary, not the detailed plan required by Annex IV point 9 (Article 72(3)).
+
+Evidence files (`compliance_report.json`, `training_manifest.yaml`, and, when emitted, `annex_iv_metadata.json`) are plain text. A literal `endpoint` is trimmed and reduced to scheme/host; userinfo, port, path, query, and fragment are removed and `endpoint_redacted: true` marks that reduction. Do not put credentials in either field; use `endpoint_env` for a secret-bearing URL. Its name is trimmed, must be an ASCII identifier (letters or underscore first, then letters, digits, or underscores), and is recorded verbatim as `$NAME` without reading the variable. A blank name falls back to the literal endpoint.
+
+`defaulted_fields` lists recorded fields whose values came from schema defaults, rather than explicit operator input. An enabled plan alone therefore does not declare a 24-hour check cadence or a drift-alert policy. For example, `monitoring: {enabled: true}` produces this entry in `compliance_report.json`:
+
+```json
+{
+  "monitoring": {
+    "declarative_only": true,
+    "endpoint": null,
+    "endpoint_redacted": false,
+    "metrics_export": "none",
+    "alert_on_drift": true,
+    "check_interval_hours": 24,
+    "defaulted_fields": [
+      "endpoint",
+      "metrics_export",
+      "alert_on_drift",
+      "check_interval_hours"
+    ]
+  }
+}
+```
+
+An absent endpoint is `null` in evidence; in input YAML omit `endpoint` or use `endpoint: ""` (not `null`). Annex IV output is emitted when `compliance:` contains at least one non-blank provider name, system name, or intended purpose; verification requires all three. Legacy monitoring blocks without `declarative_only` must also be treated as declarations, never proof of runtime monitoring. Missing `defaulted_fields` in old evidence means the provenance of defaults was not recorded.
+
 
 ## `retention:`
 

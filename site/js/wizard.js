@@ -256,6 +256,7 @@
       monitoringEndpoint: '',
       metricsExport: 'none',  // 'none' | 'prometheus' | 'datadog' | 'custom_webhook'
       alertOnDrift: true,
+      monitoringCheckIntervalHours: 24,
       // Synthetic data generation (teacher → student). Optional
       // pre-training stage; ``syntheticTeacherModel`` is the API
       // name or local path for the teacher.
@@ -361,6 +362,14 @@
     }
   }
 
+  // Shared ASCII env-reference syntax for monitoring metadata and webhook secrets.
+  function parseEnvRef(value) {
+    var raw = (value || '').trim();
+    if (raw.slice(0, 4).toLowerCase() !== 'env:') return { literal: raw };
+    var name = raw.slice(4).trim();
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? { name: name } : { invalid: true };
+  }
+
   /* ── Required-field validation ────────────────────────── */
   // Some steps require operator input that has no sensible default —
   // e.g. a custom HuggingFace model ID, or a dataset path / Hub name.
@@ -446,6 +455,15 @@
       // Off → skip; the operator opted out of the whole feature.
       if (state.webhookEnabled && blank(state.webhookUrl)) {
         errors.push({ field: 'webhookUrl', key: 'wizard.error.webhook.required' });
+      } else if (state.webhookEnabled && parseEnvRef(state.webhookUrl).invalid) {
+        errors.push({ field: 'webhookUrl', key: 'wizard.error.env_ref.invalid' });
+      }
+      if (state.monitoringEnabled && parseEnvRef(state.monitoringEndpoint).invalid) {
+        errors.push({ field: 'monitoringEndpoint', key: 'wizard.error.env_ref.invalid' });
+      }
+      if (state.monitoringEnabled && (!Number.isInteger(state.monitoringCheckIntervalHours) ||
+          state.monitoringCheckIntervalHours < 1 || state.monitoringCheckIntervalHours > 720)) {
+        errors.push({ field: 'monitoringCheckIntervalHours', key: 'wizard.error.monitoring.interval.invalid' });
       }
       if (state.syntheticEnabled) {
         if (blank(state.syntheticTeacherModel)) {
@@ -802,11 +820,11 @@
     // is a secret.
     if (state.webhookEnabled && state.webhookUrl) {
       header(0, 'webhook');
-      var raw = state.webhookUrl.trim();
-      if (raw.indexOf('env:') === 0) {
-        k(1, 'url_env', JSON.stringify(raw.slice(4)));
-      } else {
-        k(1, 'url', JSON.stringify(raw));
+      var webhookRef = parseEnvRef(state.webhookUrl);
+      if (webhookRef.name) {
+        k(1, 'url_env', JSON.stringify(webhookRef.name));
+      } else if (!webhookRef.invalid) {
+        k(1, 'url', JSON.stringify(webhookRef.literal));
       }
       if (state.webhookNotifyStart)   k(1, 'notify_on_start', 'true');
       if (!state.webhookNotifySuccess) k(1, 'notify_on_success', 'false');
@@ -815,23 +833,26 @@
     }
 
     // Record an external plan without activating monitoring hooks.
-    var monitoringActive = state.monitoringEnabled;
-    if (monitoringActive || state.monitoringEndpoint) {
+    if (state.monitoringEnabled) {
       comment('External monitoring plan metadata only; ForgeLM runs no exporters, drift alerts, or scheduled checks.');
       header(0, 'monitoring');
-      k(1, 'enabled', monitoringActive ? 'true' : 'false');
+      k(1, 'enabled', 'true');
       if (state.monitoringEndpoint) {
-        var rawM = state.monitoringEndpoint.trim();
-        if (rawM.indexOf('env:') === 0) {
-          k(1, 'endpoint_env', JSON.stringify(rawM.slice(4)));
-        } else {
-          k(1, 'endpoint', JSON.stringify(rawM));
+        var monitoringRef = parseEnvRef(state.monitoringEndpoint);
+        if (monitoringRef.name) {
+          k(1, 'endpoint_env', JSON.stringify(monitoringRef.name));
+        } else if (!monitoringRef.invalid && monitoringRef.literal) {
+          k(1, 'endpoint', JSON.stringify(monitoringRef.literal));
         }
       }
       if (state.metricsExport && state.metricsExport !== 'none') {
         k(1, 'metrics_export', JSON.stringify(state.metricsExport));
       }
-      if (!state.alertOnDrift) k(1, 'alert_on_drift', 'false');
+      k(1, 'alert_on_drift', state.alertOnDrift ? 'true' : 'false');
+      if (Number.isInteger(state.monitoringCheckIntervalHours) && state.monitoringCheckIntervalHours >= 1 &&
+          state.monitoringCheckIntervalHours <= 720) {
+        k(1, 'check_interval_hours', String(state.monitoringCheckIntervalHours));
+      }
       blank();
     }
 
@@ -1116,6 +1137,7 @@
       judgeApiKeyEnv:         'eval_gates',
       webhookUrl:             'webhook',
       monitoringEndpoint:     'monitoring',
+      monitoringCheckIntervalHours: 'monitoring',
       syntheticTeacherModel:  'synthetic',
       syntheticSeedFile:      'synthetic',
       syntheticApiKeyEnv:     'synthetic'
@@ -2717,9 +2739,10 @@
 
       var endpointShown = !!state.monitoringEnabled;
       if (endpointShown) {
+        var monEndpointErr = fieldHasError(state, 'operations', 'monitoringEndpoint');
         var epInput = el('input', {
           type: 'text',
-          class: 'wizard-input',
+          class: 'wizard-input' + (monEndpointErr ? ' is-invalid' : ''),
           placeholder: tr('wizard.monitoring.endpoint.placeholder'),
           value: state.monitoringEndpoint || ''
         });
@@ -2729,12 +2752,31 @@
           el('span', { class: 'wizard-row-hint', text: tr('wizard.monitoring.endpoint.hint') })
         ];
         var epRow = el('div', { class: 'wizard-row' }, epRowChildren);
+        if (monEndpointErr) epRow.appendChild(el('div', { class: 'wizard-error', role: 'alert', text: tr(monEndpointErr) }));
         epInput.addEventListener('input', function () {
           state.monitoringEndpoint = epInput.value.trim();
           persist();
           liveYaml();
         });
         body.appendChild(epRow);
+
+        var intervalError = fieldHasError(state, 'operations', 'monitoringCheckIntervalHours');
+        var intervalInput = el('input', {
+          id: 'wizard-monitoring-interval', type: 'number', min: '1', max: '720', step: '1',
+          class: 'wizard-input' + (intervalError ? ' is-invalid' : ''),
+          value: String(state.monitoringCheckIntervalHours)
+        });
+        intervalInput.addEventListener('input', function () {
+          state.monitoringCheckIntervalHours = Number(intervalInput.value);
+          persist();
+          liveYaml();
+        });
+        var intervalRow = el('div', { class: 'wizard-row' }, [
+          el('label', { for: 'wizard-monitoring-interval', class: 'wizard-row-label', text: tr('wizard.monitoring.interval.label') }),
+          intervalInput
+        ]);
+        if (intervalError) intervalRow.appendChild(el('div', { class: 'wizard-error', role: 'alert', text: tr(intervalError) }));
+        body.appendChild(intervalRow);
 
         var meSelect = el('select', { class: 'wizard-select' });
         [

@@ -4,7 +4,20 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
+### Breaking
+
+- Tighten `monitoring.endpoint_env` to trimmed ASCII identifiers; URLs, `$`/`env:` prefixes,
+  internal whitespace, and non-ASCII names now fail validation. Blank names remain absent.
+  This changes acceptance of previously valid YAML; use a variable name, such as `MONITORING_PLAN_URL`.
+
 ### Changed
+
+- Record monitoring default provenance in `defaulted_fields` and mark reduced literal URLs with
+  `endpoint_redacted`. Literal endpoints now retain only scheme/host in evidence; env references
+  remain unresolved. Empty endpoints record `null`, and non-empty `endpoint_env` takes precedence.
+  Monitoring declarations remain optional in ForgeLM at every risk tier, including strict tiers;
+  providers’ Article 72 obligations apply independently. Treat legacy monitoring blocks without
+  `declarative_only` as declarations; their default provenance was not recorded (#93).
 
 - Redesign the root README around a GPU-free first run, a concise capability overview,
   optional evidence controls, and clear contribution and documentation paths. Reuse the
@@ -16,11 +29,13 @@ All notable changes to ForgeLM are documented here.
 ### Fixed
 
 - Restore the monitoring-plan evidence contract: `monitoring.*` declares an external plan,
-  labelled `declarative_only: true` in the compliance manifest and Annex IV; ForgeLM runs no
-  exporter, drift detector, alert, or scheduler. Warn when an enabled plan names an exporter,
-  record absent endpoints as `null`, and honor unresolved `endpoint_env` references over literal
-  endpoints. Align CLI/web wizards, six site locales, and EN/TR references and QMS guidance;
-  correct the site's claim that webhook delivery attempts are recorded in the audit log (#93).
+  labelled `declarative_only: true`; ForgeLM runs no exporter, drift detector, alert, or scheduler.
+  Warn once per config-file load for an enabled exporter declaration, without repeating during
+  pipeline stage validation. Align CLI/web wizards and EN/TR guidance, correct Annex IV monitoring
+  point 9 / risk-management point 5 labels, and verify exported declarations end to end (#93).
+- Correct webhook troubleshooting in the site and EN/TR manuals: delivery failures appear as
+  `forgelm.webhook` warnings, never `webhook_failed` audit events; use the actual
+  `allow_private_destinations` setting (#231).
 - Rework the homepage terminal into a first-run guide with separately copyable installation and
   config-generation commands, an optional training step, and readable code in both themes and on
   narrow screens, with interface copy in all six site languages. Keep the dated CPU recording and

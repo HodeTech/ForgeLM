@@ -263,7 +263,7 @@ class _DeferredSplit:
 # _validate_entries() sees a raise without reading the diff.
 _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
     "forgelm/compliance.py": _DeferredSplit(
-        budget=2493,
+        budget=2505,
         deferred_at_loc=2147,
         reason=(
             "EU AI Act Art. 9-17 + Annex IV builder + hash-chained audit log + "
@@ -271,6 +271,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "_annex_iv, _provenance, _gdpr."
         ),
         budget_history=(
+            "2026-10-15 (#93 review, 2493 -> 2505, +12): Persist monitoring default provenance and masked endpoint metadata at the existing writer; an unrelated compliance split would obscure this evidence-contract correction.",
             "2026-10-15 (#93, 2492 -> 2493, +1): label the persisted monitoring plan "
             "declarative_only so neither the manifest nor its Annex IV projection implies "
             "runtime monitoring. Keep the label with the existing writer; the one-line "
@@ -317,9 +318,10 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/config.py": _DeferredSplit(
-        budget=1870,
+        budget=1887,
         deferred_at_loc=1795,
         budget_history=(
+            "2026-10-15 (#93 review, 1870 -> 1887, +17): Normalize and validate monitoring endpoints beside their schema and emit the exporter warning at load_config, avoiding pipeline revalidation duplicates without mutable state.",
             "2026-10-15 (#93, 1855 -> 1870, +15): describe MonitoringConfig as external-plan "
             "metadata and warn when an enabled plan declares an exporter ForgeLM does not run. "
             "The validator belongs beside its schema; the remaining growth is required field "

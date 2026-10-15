@@ -1296,11 +1296,12 @@ class MonitoringConfig(BaseModel):
         default=False, description="Record external monitoring-plan metadata in the compliance manifest."
     )
     endpoint: str = Field(
-        default="", description="Declared external monitoring URL; recorded only, never contacted by ForgeLM."
+        default="",
+        description="External plan URL; evidence records only scheme/host. Never contacted. Use endpoint_env for credentials.",
     )
     endpoint_env: Optional[str] = Field(
         default=None,
-        description="Env var name recorded as `$NAME`, overriding `endpoint` when non-empty; never resolved.",
+        description="ASCII env name recorded as `$NAME` in plain-JSON evidence, overriding endpoint; never resolved. No credentials.",
     )
     metrics_export: Literal["none", "prometheus", "datadog", "custom_webhook"] = Field(
         default="none",
@@ -1314,15 +1315,31 @@ class MonitoringConfig(BaseModel):
         default=24, ge=1, description="Declared external check cadence in hours; ForgeLM does not schedule checks."
     )
 
-    @model_validator(mode="after")
-    def _warn_declarative_exporter(self) -> "MonitoringConfig":
+    @field_validator("endpoint")
+    @classmethod
+    def _strip_endpoint(cls, value: str) -> str:
+        """Normalize an optional literal URL before its evidence projection."""
+        return value.strip()
+
+    @field_validator("endpoint_env")
+    @classmethod
+    def _validate_endpoint_env(cls, value: Optional[str]) -> Optional[str]:
+        """Accept an unresolved ASCII identifier, with surrounding whitespace removed."""
+        if value is None or not value.strip():
+            return None
+        value = value.strip()
+        if not value.isascii() or not value.isidentifier():
+            raise ValueError("monitoring.endpoint_env must be an ASCII environment-variable name, without env: or $.")
+        return value
+
+    def _warn_declarative_exporter(self) -> None:
+        """Warn once at the file-load boundary, never during pipeline stage validation."""
         if self.enabled and self.metrics_export != "none":
             logger.warning(
                 "monitoring.metrics_export is declarative metadata only: ForgeLM does not export metrics, "
                 "contact the endpoint, detect drift, send drift alerts, or schedule checks. "
                 "Operate your external monitoring stack separately."
             )
-        return self
 
 
 class ComplianceMetadataConfig(BaseModel):
@@ -2295,4 +2312,6 @@ def load_config(config_path: str) -> ForgeConfig:
         # / TypeError outside Pydantic's wrapper. Same message shape.
         raise ConfigError(f"Configuration validation failed: {e}") from e
 
+    if config.monitoring is not None:
+        config.monitoring._warn_declarative_exporter()
     return config

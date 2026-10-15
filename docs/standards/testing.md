@@ -61,6 +61,14 @@ tests/
 
 ## Fixtures
 
+Browser wizard regressions live in `tests/site/*.test.cjs`. Run
+`node --test tests/site/*.test.cjs` with Node 22 or newer and the development
+Python environment activated. CI runs them on Node 24 in the validation job.
+They use Node's built-in test runner and a VM to execute the actual wizard;
+generated YAML is also parsed by the real `ForgeConfig`. No npm packages,
+browser download, GPU, or network calls are needed. DOM shims exercise the
+Operations renderer only; they do not replace browser or native-language review.
+
 The canonical factory lives in
 [`tests/_helpers/factories.py`](../../tests/_helpers/factories.py) and is
 re-exported via [`tests/conftest.py`](../../tests/conftest.py) (both as the

@@ -78,11 +78,8 @@ class TestParseWebhookValue:
         with pytest.raises(ValueError, match="non-empty variable name"):
             wizard._parse_webhook_value("env:")
 
-    def test_env_prefix_lowercase_var_name_rejected(self):
-        # POSIX env-var convention enforces uppercase letters; lower-
-        # case names break ``${VAR}`` shell expansion in CI.
-        with pytest.raises(ValueError, match="POSIX environment-variable name"):
-            wizard._parse_webhook_value("env:lowercase_var")
+    def test_env_prefix_lowercase_var_name_accepted(self):
+        assert wizard._parse_webhook_value("env:lowercase_var") == {"url_env": "lowercase_var"}
 
     def test_bare_string_no_scheme_rejected(self):
         with pytest.raises(ValueError, match="not a valid URL"):
@@ -1011,11 +1008,13 @@ class TestParseEnvRef:
         with pytest.raises(ValueError, match="non-empty variable name"):
             _parse_env_ref("env:")
 
-    def test_lowercase_var_name_raises(self):
+    @pytest.mark.parametrize(
+        "reference,expected", [("env:lowercase_var", "lowercase_var"), ("ENV: _MON_URL ", "_MON_URL")]
+    )
+    def test_ascii_identifiers_are_accepted(self, reference, expected):
         from forgelm.wizard._collectors import _parse_env_ref
 
-        with pytest.raises(ValueError, match="POSIX environment-variable name"):
-            _parse_env_ref("env:lowercase_var")
+        assert _parse_env_ref(reference) == expected
 
     def test_monitoring_collector_reuses_shared_helper(self, capsys):
         # _collect_monitoring's soft-fail policy (warn + drop the field,
@@ -1199,7 +1198,7 @@ class TestMonitoringEnvPrefix:
         assert "does not export metrics" in output
         assert "schedule checks" in output
 
-    def test_env_prefix_routes_to_endpoint_env(self):
+    def test_env_prefix_routes_to_endpoint_env(self, capsys):
         with patch(
             "builtins.input",
             side_effect=_input_returning(
@@ -1213,6 +1212,7 @@ class TestMonitoringEnvPrefix:
             result = wizard._collect_monitoring()
         assert result["endpoint_env"] == "DATADOG_URL"
         assert "endpoint" not in result
+        assert "Metadata only" in capsys.readouterr().out
 
     def test_literal_url_routes_to_endpoint(self):
         with patch(

@@ -25,6 +25,7 @@ from forgelm.config import (
     RiskAssessmentConfig,
     load_config,
 )
+from forgelm.verify import verify_annex_iv_artifact
 
 # --- Config Models ---
 
@@ -816,16 +817,23 @@ class TestComplianceExportAtomicity:
 
 
 class TestManifestAnnexIV:
-    @pytest.mark.parametrize("env_value", [None, "https://secret.example.com/private"])
+    @pytest.mark.parametrize("env_value", [None, "https://secret.example.com/private"], ids=["env-unset", "env-set"])
     @pytest.mark.parametrize(
         "endpoint_fields,expected",
         [
             ({}, None),
             ({"endpoint": "https://monitor.example.com"}, "https://monitor.example.com"),
+            (
+                {"endpoint": " https://user:password@monitor.example.com/secret?token=credential#fragment "},
+                "https://monitor.example.com",
+            ),
             ({"endpoint_env": "MON_URL"}, "$MON_URL"),
             ({"endpoint": "https://monitor.example.com", "endpoint_env": "MON_URL"}, "$MON_URL"),
             ({"endpoint_env": ""}, None),
+            ({"endpoint_env": "   ", "endpoint": "   "}, None),
+            ({"endpoint_env": " MON_URL "}, "$MON_URL"),
         ],
+        ids=["absent", "literal", "masked-literal", "env", "env-precedence", "blank-env", "whitespace", "trimmed-env"],
     )
     def test_monitoring_declaration_survives_export(
         self, tmp_path, minimal_config, monkeypatch, endpoint_fields, expected, env_value
@@ -851,9 +859,11 @@ class TestManifestAnnexIV:
         declaration = {
             "declarative_only": True,
             "endpoint": expected,
+            "endpoint_redacted": expected == "https://monitor.example.com",
             "metrics_export": "prometheus",
             "alert_on_drift": True,
             "check_interval_hours": 12,
+            "defaulted_fields": ["endpoint"] if "endpoint" not in endpoint_fields and expected is None else [],
         }
         assert manifest["monitoring"] == declaration
         export_compliance_artifacts(manifest, str(tmp_path))
@@ -863,7 +873,40 @@ class TestManifestAnnexIV:
         assert annex["monitoring_and_logging"] == declaration
         assert "secret.example.com" not in json.dumps(report)
         assert "secret.example.com" not in json.dumps(annex)
+        for secret in ("password", "credential", "/secret", "#fragment"):
+            assert secret not in json.dumps(report)
+            assert secret not in json.dumps(annex)
+            assert secret not in (tmp_path / "training_manifest.yaml").read_text(encoding="utf-8")
         assert annex["metadata"]["manifest_hash"] == compute_annex_iv_manifest_hash(annex)
+        assert verify_annex_iv_artifact(str(tmp_path / "annex_iv_metadata.json")).valid
+
+    def test_monitoring_defaults_are_not_operator_declarations(self, minimal_config):
+        from forgelm.config import PipelineStage, merge_pipeline_stage_config
+
+        config = ForgeConfig(**minimal_config(monitoring={"enabled": True}))
+        for effective in (config, merge_pipeline_stage_config(config, PipelineStage(name="first"))):
+            declaration = generate_training_manifest(effective, {})["monitoring"]
+            assert declaration["defaulted_fields"] == [
+                "endpoint",
+                "metrics_export",
+                "alert_on_drift",
+                "check_interval_hours",
+            ]
+            assert declaration["alert_on_drift"] is True
+            assert declaration["check_interval_hours"] == 24
+
+        explicit = ForgeConfig(
+            **minimal_config(
+                monitoring={
+                    "enabled": True,
+                    "endpoint": "",
+                    "metrics_export": "none",
+                    "alert_on_drift": True,
+                    "check_interval_hours": 24,
+                }
+            )
+        )
+        assert generate_training_manifest(explicit, {})["monitoring"]["defaulted_fields"] == []
 
     @pytest.mark.parametrize("monitoring", [None, {"enabled": False, "metrics_export": "datadog"}])
     def test_disabled_monitoring_is_not_declared(self, minimal_config, monitoring):
