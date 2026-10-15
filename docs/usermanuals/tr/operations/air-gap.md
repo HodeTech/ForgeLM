@@ -47,23 +47,23 @@ $ export HF_DATASETS_OFFLINE=1
 $ forgelm --config configs/run.yaml --offline
 ```
 
-`--offline` bayrağı ForgeLM'e ağ çağrısı yapmamasını söyler. Config'iniz cache'lenmemiş bir modele referans verirse eğitim açık bir hata mesajıyla başarısız olur:
+`--offline` bayrağı HuggingFace çevrimdışı ortam değişkenlerini ayarlar. Diğer ağ istemcilerini ayrıca yapılandırın; bayrak bunları kapatmaz. Gerekli model, tokenizer ve veri kümelerini bağlantıyı kesmeden önce önbelleğe alın:
 
 ```text
 ERROR: model "meta-llama/Llama-Guard-3-8B" not in local cache.
        Bağlı bir makineden önceden cache'leyin: forgelm cache-models --safety meta-llama/Llama-Guard-3-8B
 ```
 
-## `--offline`'ın zorladığı
+## `--offline` kapsamı ve bağlantısız koşu hazırlığı
 
-| Alt sistem | `--offline` ile davranış |
+| Alt sistem | Bayrağın etkisi veya operatörün yapması gereken hazırlık |
 |---|---|
-| HuggingFace Hub indirmeleri | Devre dışı. Model/tokenizer cache'de yoksa hızlı başarısız. |
-| W&B / MLflow / Comet | Devre dışı (veya MLflow için file URI ile sadece-yerel). |
-| OpenAI / Anthropic judge'lar | Devre dışı. Yerel judge model kullanın. |
-| Webhook'lar | Devre dışı (veya `webhook.allow_private_destinations` ile iç host'larla sınırlı). |
-| Runtime'da pip install | Devre dışı. |
-| Telemetry | Yok — ForgeLM zaten asla eve telefon etmez. |
+| HuggingFace Hub indirmeleri | `--offline`, HF çevrimdışı ayarlarını yapar; gerekli artefaktları önceden önbelleğe alın. |
+| W&B / MLflow / Comet | Raporlamayı kapatın veya MLflow’u file URI ile yalnızca yerel çalışacak şekilde yapılandırın; `--offline` bu entegrasyonları kapatmaz. |
+| OpenAI / Anthropic judge’lar | API tabanlı değerlendirmeyi kapatın veya yerel judge kullanın; `--offline` API istemcilerini kapatmaz. |
+| Webhook’lar | `--offline`, yapılandırılmış teslimatları kapatmaz. Kapatmak için `webhook.enabled: false` kullanın; `allow_private_destinations`, genel hedeflerin yanında özel hedeflere de izin verir. |
+| Runtime’da pip install | Gerekli bağımlılıkları bağlantıyı kesmeden kurun; `--offline`, pip’i yönetmez. |
+| Telemetry | ForgeLM’in kendi telemetri servisi yoktur; harici entegrasyonları ayrıca yapılandırın. |
 
 ## Yerel sentetik veri
 

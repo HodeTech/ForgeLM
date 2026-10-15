@@ -37,7 +37,8 @@ All notable changes to ForgeLM are documented here.
   and validation reasons (#93).
 - Correct webhook troubleshooting in the site and EN/TR manuals: delivery failures appear as
   `forgelm.webhook` warnings, never `webhook_failed` audit events; use the actual
-  `allow_private_destinations` setting (#231).
+  `allow_private_destinations` setting (#231). Clarify that `--offline` sets HF offline flags;
+  reporting, API judges, and webhooks require separate disconnected-run configuration (refs #100).
 - Rework the homepage terminal into a first-run guide with separately copyable installation and
   config-generation commands, an optional training step, and readable code in both themes and on
   narrow screens, with interface copy in all six site languages. Keep the dated CPU recording and
