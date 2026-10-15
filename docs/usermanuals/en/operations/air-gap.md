@@ -61,7 +61,7 @@ ERROR: model "meta-llama/Llama-Guard-3-8B" not in local cache.
 | HuggingFace Hub downloads | Disabled. Fail-fast if a model/tokeniser isn't cached. |
 | W&B / MLflow / Comet | Disabled (or local-only for MLflow with file URI). |
 | OpenAI / Anthropic judges | Disabled. Use a local judge model. |
-| Webhooks | Disabled (or restricted to internal hosts via `webhook.allow_private`). |
+| Webhooks | Disabled (or restricted to internal hosts via `webhook.allow_private_destinations`). |
 | pip install (during runtime) | Disabled. |
 | Telemetry | None — ForgeLM never phones home regardless. |
 

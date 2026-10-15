@@ -152,11 +152,11 @@ audit:
 ## Webhook'lar fırlamıyor
 
 **Sebepler:**
-- Webhook URL özel IP'ye işaret ediyor ve `webhook.allow_private` false.
+- Webhook URL özel IP'ye işaret ediyor ve `webhook.allow_private_destinations` false.
 - TLS sertifika doğrulaması başarısız.
-- Endpoint 4xx döndürüyor (varsayılan log'da sessiz).
+- Endpoint 4xx döndürüyor (WARNING düzeyinde bildirilir; eğitim devam eder).
 
-**Çözüm:** `audit_log.jsonl` içinde `webhook_failed` olaylarına bakın; yanıt durumu ve gövdeyi içerirler.
+**Çözüm:** stderr veya kaydedilen CI log’larında `forgelm.webhook` kaynaklı `WARNING` satırlarını arayın. Başarısız teslimatlar eğitimi durdurmaz ve `audit_log.jsonl` dosyasına yazılmaz; `webhook_failed` olayı yoktur. Sırların açığa çıkmasını önlemek için yanıt gövdeleri gösterilmez.
 
 ## Bug bildirimi nereye
 

@@ -61,7 +61,7 @@ ERROR: model "meta-llama/Llama-Guard-3-8B" not in local cache.
 | HuggingFace Hub indirmeleri | Devre dışı. Model/tokenizer cache'de yoksa hızlı başarısız. |
 | W&B / MLflow / Comet | Devre dışı (veya MLflow için file URI ile sadece-yerel). |
 | OpenAI / Anthropic judge'lar | Devre dışı. Yerel judge model kullanın. |
-| Webhook'lar | Devre dışı (veya `webhook.allow_private` ile iç host'larla sınırlı). |
+| Webhook'lar | Devre dışı (veya `webhook.allow_private_destinations` ile iç host'larla sınırlı). |
 | Runtime'da pip install | Devre dışı. |
 | Telemetry | Yok — ForgeLM zaten asla eve telefon etmez. |
 

@@ -82,9 +82,9 @@ The nine required keys map onto Annex IV §1-9:
 | `computational_resources` | §2(g) — compute resources used during training. |
 | `data_governance` | §2(d) — data sources, governance, validation methodology. |
 | `technical_documentation` | §3-5 — design + development methodology. |
-| `monitoring_and_logging` | Declared external monitoring-plan metadata (`declarative_only: true`), or an audit-log reference; no runtime monitoring evidence. |
+| `monitoring_and_logging` | Annex IV point 9 (Art. 72(3)) — Declared external monitoring-plan metadata (`declarative_only: true`), or an audit-log reference; no runtime monitoring evidence. |
 | `performance_metrics` | §7 — accuracy / robustness / cybersecurity metrics. |
-| `risk_management` | §9 — risk management system reference (Article 9 alignment). |
+| `risk_management` | §5 — risk management system reference (Article 9 alignment). |
 
 ### What "manifest hash mismatch" means
 

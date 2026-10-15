@@ -132,11 +132,11 @@ The artifact carries **nine** top-level keys mapped onto Annex IV §1-9, populat
 | `computational_resources` | §2(g) — compute used during training. |
 | `data_governance` | §2(d) — data provenance and validation methodology. |
 | `technical_documentation` | §3-5 — ForgeLM version, generation timestamp, known limitations. |
-| `monitoring_and_logging` | Declared external monitoring-plan metadata (`declarative_only: true`), or an audit-log reference; no runtime monitoring evidence. |
+| `monitoring_and_logging` | Annex IV point 9 (Art. 72(3)) — Declared external monitoring-plan metadata (`declarative_only: true`), or an audit-log reference; no runtime monitoring evidence. |
 | `performance_metrics` | §7 — accuracy / robustness metrics from the evaluation results. |
-| `risk_management` | §9 — the top-level `risk_assessment:` block, or an explicit "no risk_assessment block configured" marker. |
+| `risk_management` | §5 — the top-level `risk_assessment:` block, or an explicit "no risk_assessment block configured" marker. |
 
-There is no deployment-geography, lifecycle, standards-list, declaration-of-conformity or post-market-monitoring-plan section — earlier drafts of this page listed those, and none is emitted. [Annex IV](#/compliance/annex-iv) is the single source of truth for this table.
+There is no deployment-geography, lifecycle, standards-list, declaration-of-conformity section — earlier drafts of this page listed those, and none is emitted. The monitoring entry above is a metadata summary, not the detailed post-market monitoring plan required by Annex IV point 9. [Annex IV](#/compliance/annex-iv) is the single source of truth for this table.
 
 ## Operational responsibilities (you, not ForgeLM)
 
