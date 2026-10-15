@@ -238,7 +238,10 @@ forgelm --config my_config.yaml --dry-run
 
 ### Config doğrulama hatası: Field type uyumsuzluğu
 
-ForgeLM doğrulama için Pydantic v2 kullanır. Tüm `ForgeConfig` doğrulama hatalarının metin çıktısında Pydantic'in `input_value` / `input_type` alıntıları gizlenir; alan yolları ve hata nedenleri korunur. `MonitoringConfig` dışındaki alt modellerin tek başına kurulumu (örneğin `WebhookConfig` veya `AuthConfig`) mevcut Pydantic hata çıktısını korur. Hata mesajları tam alanı gösterir:
+ForgeLM doğrulama için Pydantic v2 kullanır. Tüm `ForgeConfig` doğrulama hatalarının metin çıktısında Pydantic'in
+`input_value` / `input_type` alıntıları gizlenir; alan yolları ve hata nedenleri korunur. `MonitoringConfig` dışındaki
+alt modellerin tek başına kurulumu (örneğin `WebhookConfig` veya `AuthConfig`) mevcut Pydantic hata çıktısını korur.
+Hata mesajları tam alanı gösterir:
 
 ```text
 Configuration validation failed: 1 validation error for ForgeConfig

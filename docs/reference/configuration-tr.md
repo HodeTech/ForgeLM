@@ -338,17 +338,33 @@ QMS ise [Madde 17(1)(h)](https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng#art_
 Her iki endpoint alanı da boşsa manifeste `endpoint: null` yazılır. Adlandırılan ortam değişkeni
 tanımlı olsa bile referansı çözümlenmez. Kapalı veya belirtilmemiş planlar kaydedilmez.
 
-ForgeLM'de metadata kaydı isteğe bağlıdır; Madde 72, yüksek riskli yapay zekâ sistemlerinin sağlayıcılarının pazar sonrası izleme sistemi kurmasını ve belgelemesini gerektirir. Bu alanlar bir özettir; Annex IV madde 9'un (Madde 72(3)) gerektirdiği ayrıntılı plan değildir.
+ForgeLM'de metadata kaydı isteğe bağlıdır; Madde 72, yüksek riskli yapay zekâ sistemlerinin sağlayıcılarının pazar
+sonrası izleme sistemi kurmasını ve belgelemesini gerektirir. Bu alanlar bir özettir; Annex IV madde 9'un (Madde
+72(3)) gerektirdiği ayrıntılı plan değildir.
 
-`load_config`, etkin ve `none` dışında exporter beyan eden plan için uyarı verir; doğrudan `ForgeConfig(...)` kurulumu bu dosya yükleme uyarısını vermez.
+`load_config`, etkin ve `none` dışında exporter beyan eden plan için uyarı verir; doğrudan `ForgeConfig(...)` kurulumu
+bu dosya yükleme uyarısını vermez.
 
-İzleme kanıtı dosyaları (`compliance_report.json` ve üretildiğinde `annex_iv_metadata.json`) düz metindir. Düzleştirilmiş `training_manifest.yaml` özeti izleme metadatası içermez.
+İzleme kanıtı dosyaları (`compliance_report.json` ve üretildiğinde `annex_iv_metadata.json`) düz metindir.
+Düzleştirilmiş `training_manifest.yaml` özeti izleme metadatası içermez.
 
-Literal `endpoint` kırpılır; `https://monitor.example.com:8443/plan` gibi host ve geçerli port içeren mutlak bir HTTP(S) URL olmalıdır. Şemasız değerler reddedilir. Kanıtta scheme, host ve varsa port korunur; IPv6 köşeli parantezleri kalır, kullanıcı bilgisi, path, query ve fragment çıkarılır. `endpoint_redacted: true`, URL zaten yalnızca scheme/host/port içerse bile literal endpoint'e bu işlemin uygulandığını belirtir. Kopyalanan girdi YAML'ı, tarayıcı önizlemesi ve yerel depolama tam URL'yi korur; bu nedenle URL'ye kimlik bilgisi yazmayın. Sır içeren URL için `endpoint_env` tercih edin.
+Literal `endpoint` kırpılır; `https://monitor.example.com:8443/plan` gibi host ve geçerli port içeren mutlak bir
+HTTP(S) URL olmalıdır. Şemasız değerler reddedilir. Kanıtta scheme, host ve varsa port korunur; IPv6 köşeli
+parantezleri kalır, kullanıcı bilgisi, path, query ve fragment çıkarılır. `endpoint_redacted: true`, URL zaten
+yalnızca scheme/host/port içerse bile literal endpoint'e bu işlemin uygulandığını belirtir. Kopyalanan girdi YAML'ı,
+tarayıcı önizlemesi ve yerel depolama tam URL'yi korur; bu nedenle URL'ye kimlik bilgisi yazmayın. Sır içeren URL için
+`endpoint_env` tercih edin.
 
-`endpoint_env` adının çevresindeki boşluklar kırpılır; ASCII tanımlayıcısı olmalıdır (önce harf veya alt çizgi, ardından harf, rakam veya alt çizgi). Değişkenin değeri okunmadan adı `$NAME` olarak aynen kaydedilir. Boş ad literal endpoint'e geri döner. Doğrulama mesajları, Pydantic'in ham girdi alıntılarını göstermeden alan yolunu ve hata nedenini korur.
+`endpoint_env` adının çevresindeki boşluklar kırpılır; ASCII tanımlayıcısı olmalıdır (önce harf veya alt çizgi,
+ardından harf, rakam veya alt çizgi). Değişkenin değeri okunmadan adı `$NAME` olarak aynen kaydedilir. Boş ad literal
+endpoint'e geri döner. Doğrulama mesajları, Pydantic'in ham girdi alıntılarını göstermeden alan yolunu ve hata
+nedenini korur.
 
-`defaulted_fields`, operatörün açıkça yazdığı değerler yerine şema varsayılanlarından gelen kayıt alanlarını listeler. Kütüphane kullanıcıları, yapılandırmayı yeniden kurarken bu ayrımı korumak için `model_dump(exclude_unset=True)` kullanmalıdır; tam döküm varsayılanları açık girdiye dönüştürür. Yalnızca planı etkinleştirmek, 24 saatlik kontrol aralığı veya drift uyarısı politikası beyan etmez. Örneğin `monitoring: {enabled: true}`, `compliance_report.json` içinde şu kaydı üretir:
+`defaulted_fields`, operatörün açıkça yazdığı değerler yerine şema varsayılanlarından gelen kayıt alanlarını listeler.
+Kütüphane kullanıcıları, yapılandırmayı yeniden kurarken bu ayrımı korumak için `model_dump(exclude_unset=True)`
+kullanmalıdır; tam döküm varsayılanları açık girdiye dönüştürür. Yalnızca planı etkinleştirmek, 24 saatlik kontrol
+aralığı veya drift uyarısı politikası beyan etmez. Örneğin `monitoring: {enabled: true}`, `compliance_report.json`
+içinde şu kaydı üretir:
 
 ```json
 {
@@ -369,7 +385,11 @@ Literal `endpoint` kırpılır; `https://monitor.example.com:8443/plan` gibi hos
 }
 ```
 
-Endpoint yoksa kanıta `null` yazılır; girdi YAML'ında `endpoint` alanını atlayın veya `endpoint: ""` kullanın (`null` değil). `compliance:` içindeki sağlayıcı adı, sistem adı veya kullanım amacından en az biri doluysa Annex IV dosyası üretilir; doğrulama üçünün de dolu olmasını gerektirir. `declarative_only` anahtarı bulunmayan eski izleme kayıtlarını da beyan olarak değerlendirin; çalışan izleme kanıtı saymayın. Eski kanıtta `defaulted_fields` yoksa varsayılanların kaynağı kaydedilmemiştir.
+Endpoint yoksa kanıta `null` yazılır; girdi YAML'ında `endpoint` alanını atlayın veya `endpoint: ""` kullanın (`null`
+değil). `compliance:` içindeki sağlayıcı adı, sistem adı veya kullanım amacından en az biri doluysa Annex IV dosyası
+üretilir; doğrulama üçünün de dolu olmasını gerektirir. `declarative_only` anahtarı bulunmayan eski izleme kayıtlarını
+da beyan olarak değerlendirin; çalışan izleme kanıtı saymayın. Eski kanıtta `defaulted_fields` yoksa varsayılanların
+kaynağı kaydedilmemiştir.
 
 
 ## `distributed` (İsteğe bağlı)

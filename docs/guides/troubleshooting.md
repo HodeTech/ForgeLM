@@ -228,7 +228,10 @@ forgelm --config my_config.yaml --dry-run
 
 ### Config Validation Error: Field Type Mismatch
 
-ForgeLM uses Pydantic v2 for validation. All rendered `ForgeConfig` validation errors omit Pydantic's `input_value` / `input_type` excerpts, while preserving field paths and reasons. Standalone submodels other than `MonitoringConfig` (for example, `WebhookConfig` or `AuthConfig`) retain their existing Pydantic diagnostics. Error messages show the exact field:
+ForgeLM uses Pydantic v2 for validation. All rendered `ForgeConfig` validation errors omit Pydantic's `input_value` /
+`input_type` excerpts, while preserving field paths and reasons. Standalone submodels other than `MonitoringConfig`
+(for example, `WebhookConfig` or `AuthConfig`) retain their existing Pydantic diagnostics. Error messages show the
+exact field:
 
 ```text
 Configuration validation failed: 1 validation error for ForgeConfig

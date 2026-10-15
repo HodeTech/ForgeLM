@@ -76,7 +76,10 @@ synthetic:
   teacher_backend: "local"                    # not "api" — no network call
 ```
 
-There is no nested `synthetic.teacher:` sub-block (`provider` / `model` / `load_in_4bit`) — `teacher_model` and `teacher_backend` are flat fields on `synthetic:`. An API-backed teacher (`teacher_backend: "api"`, e.g. OpenAI / Anthropic) requires network access and is not disabled by `--offline`; use `teacher_backend: "local"` or `"file"` in an air-gap.
+There is no nested `synthetic.teacher:` sub-block (`provider` / `model` / `load_in_4bit`) — `teacher_model` and
+`teacher_backend` are flat fields on `synthetic:`. An API-backed teacher (`teacher_backend: "api"`, e.g. OpenAI /
+Anthropic) requires network access and is not disabled by `--offline`; use `teacher_backend: "local"` or `"file"` in
+an air-gap.
 
 ## Local LLM-as-judge
 

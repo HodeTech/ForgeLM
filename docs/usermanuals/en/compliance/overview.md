@@ -122,7 +122,8 @@ Every field from `compliance:` flows into `annex_iv_metadata.json`. Required fie
 
 ## What goes into Annex IV
 
-The artifact carries **nine** ForgeLM metadata keys, populated from the training manifest and your `compliance:` block; these do not represent nine complete Annex IV sections:
+The artifact carries **nine** ForgeLM metadata keys, populated from the training manifest and your `compliance:`
+block; these do not represent nine complete Annex IV sections:
 
 | Top-level key | Annex IV section |
 |---|---|
@@ -136,7 +137,9 @@ The artifact carries **nine** ForgeLM metadata keys, populated from the training
 | `performance_metrics` | Annex IV points 2(g) / 4 — accuracy / robustness metrics from the evaluation results. |
 | `risk_management` | Annex IV point 5 — the top-level `risk_assessment:` block, or an explicit "no risk_assessment block configured" marker. |
 
-This table maps partial metadata, not complete Annex IV sections. Remaining legacy section labels are tracked in [#539](https://github.com/HodeTech/ForgeLM/issues/539); verifier completeness claims are tracked in [#573](https://github.com/HodeTech/ForgeLM/issues/573).
+This table maps partial metadata, not complete Annex IV sections. Remaining legacy section labels are tracked in
+[#539](https://github.com/HodeTech/ForgeLM/issues/539); verifier completeness claims are tracked in
+[#573](https://github.com/HodeTech/ForgeLM/issues/573).
 
 There is no deployment-geography, lifecycle, standards-list, declaration-of-conformity section — earlier drafts of this page listed those, and none is emitted. The monitoring entry above is a metadata summary, not the detailed post-market monitoring plan required by Annex IV point 9. [Annex IV](#/compliance/annex-iv) is the single source of truth for this table.
 

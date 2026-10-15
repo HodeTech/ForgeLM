@@ -86,7 +86,9 @@ The verifier requires nine ForgeLM metadata keys; these do not represent nine co
 | `performance_metrics` | Annex IV points 2(g) / 4 — accuracy / robustness / cybersecurity metrics. |
 | `risk_management` | Annex IV point 5 — risk management system reference (Article 9 alignment). |
 
-This table maps partial metadata, not complete Annex IV sections. Remaining legacy section labels are tracked in [#539](https://github.com/HodeTech/ForgeLM/issues/539); verifier completeness claims are tracked in [#573](https://github.com/HodeTech/ForgeLM/issues/573).
+This table maps partial metadata, not complete Annex IV sections. Remaining legacy section labels are tracked in
+[#539](https://github.com/HodeTech/ForgeLM/issues/539); verifier completeness claims are tracked in
+[#573](https://github.com/HodeTech/ForgeLM/issues/573).
 
 ### What "manifest hash mismatch" means
 

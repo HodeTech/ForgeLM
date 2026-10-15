@@ -122,7 +122,8 @@ evaluation:
 
 ## Annex IV neyi içerir
 
-Artefact, eğitim manifestinden ve `compliance:` bloğunuzdan doldurulan **dokuz** ForgeLM metadata anahtarı taşır; bunlar dokuz eksiksiz Annex IV bölümünü temsil etmez:
+Artefact, eğitim manifestinden ve `compliance:` bloğunuzdan doldurulan **dokuz** ForgeLM metadata anahtarı taşır;
+bunlar dokuz eksiksiz Annex IV bölümünü temsil etmez:
 
 | Üst düzey anahtar | Annex IV bölümü |
 |---|---|
@@ -136,7 +137,9 @@ Artefact, eğitim manifestinden ve `compliance:` bloğunuzdan doldurulan **dokuz
 | `performance_metrics` | Annex IV points 2(g) / 4 — değerlendirme sonuçlarından doğruluk / sağlamlık metrikleri. |
 | `risk_management` | Annex IV point 5 — top-level `risk_assessment:` bloğu ya da açık bir "no risk_assessment block configured" işareti. |
 
-Bu tablo kısmi metadata eşlemelerini gösterir; tam bir Annex IV belgesi değildir. Diğer eski bölüm etiketlerinin düzeltilmesi [#539](https://github.com/HodeTech/ForgeLM/issues/539), doğrulayıcının tamlık iddiaları [#573](https://github.com/HodeTech/ForgeLM/issues/573) kapsamında takip edilir.
+Bu tablo kısmi metadata eşlemelerini gösterir; tam bir Annex IV belgesi değildir. Diğer eski bölüm etiketlerinin
+düzeltilmesi [#539](https://github.com/HodeTech/ForgeLM/issues/539), doğrulayıcının tamlık iddiaları
+[#573](https://github.com/HodeTech/ForgeLM/issues/573) kapsamında takip edilir.
 
 Dağıtım coğrafyası, yaşam döngüsü, standartlar listesi, uygunluk beyanı bölümü yoktur — bu sayfanın eski taslakları bunları listeliyordu, hiçbiri üretilmez. Yukarıdaki izleme kaydı metadata özetidir; Annex IV madde 9’un gerektirdiği ayrıntılı pazar sonrası izleme planı değildir. Bu tablonun tek doğruluk kaynağı [Annex IV](#/compliance/annex-iv) sayfasıdır.
 

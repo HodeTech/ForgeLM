@@ -76,7 +76,10 @@ synthetic:
   teacher_backend: "local"                    # "api" değil — network çağrısı yok
 ```
 
-Nested `synthetic.teacher:` alt-bloğu (`provider` / `model` / `load_in_4bit`) yoktur — `teacher_model` ve `teacher_backend` `synthetic:` üzerinde düz alanlardır. API tabanlı teacher (`teacher_backend: "api"`, örn. OpenAI / Anthropic) ağ erişimi gerektirir ve `--offline` ile kapatılmaz; air-gap'te `teacher_backend: "local"` veya `"file"` kullanın.
+Nested `synthetic.teacher:` alt-bloğu (`provider` / `model` / `load_in_4bit`) yoktur — `teacher_model` ve
+`teacher_backend` `synthetic:` üzerinde düz alanlardır. API tabanlı teacher (`teacher_backend: "api"`, örn. OpenAI /
+Anthropic) ağ erişimi gerektirir ve `--offline` ile kapatılmaz; air-gap'te `teacher_backend: "local"` veya `"file"`
+kullanın.
 
 ## Yerel LLM-as-judge
 

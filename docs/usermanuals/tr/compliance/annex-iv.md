@@ -86,7 +86,9 @@ Doğrulayıcı dokuz ForgeLM metadata anahtarı gerektirir; bunlar dokuz eksiksi
 | `performance_metrics` | Annex IV points 2(g) / 4 — doğruluk / dayanıklılık / siber güvenlik metrikleri. |
 | `risk_management` | Annex IV point 5 — risk yönetim sistemi referansı (Madde 9 hizalaması). |
 
-Bu tablo kısmi metadata eşlemelerini gösterir; tam bir Annex IV belgesi değildir. Diğer eski bölüm etiketlerinin düzeltilmesi [#539](https://github.com/HodeTech/ForgeLM/issues/539), doğrulayıcının tamlık iddiaları [#573](https://github.com/HodeTech/ForgeLM/issues/573) kapsamında takip edilir.
+Bu tablo kısmi metadata eşlemelerini gösterir; tam bir Annex IV belgesi değildir. Diğer eski bölüm etiketlerinin
+düzeltilmesi [#539](https://github.com/HodeTech/ForgeLM/issues/539), doğrulayıcının tamlık iddiaları
+[#573](https://github.com/HodeTech/ForgeLM/issues/573) kapsamında takip edilir.
 
 ### "Manifest hash uyuşmazlığı" ne demek
 
