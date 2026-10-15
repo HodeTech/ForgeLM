@@ -246,24 +246,48 @@
     </div>
 
     <div class="hero-demo">
-      <div class="hero-install">
-        <p data-i18n="home.demo.install">Install and generate a config without training:</p>
-        <div class="code-block"><pre><code>pip install forgelm
-forgelm quickstart customer-support --dry-run</code></pre></div>
-      </div>
+      <p class="eyebrow" data-i18n="home.demo.eyebrow">Your first run</p>
+      <h2 class="hero-demo-title" data-i18n="home.demo.title">Start in your terminal.</h2>
+      <p class="hero-demo-intro" data-i18n="home.demo.intro">A starter config and sample data. Yours to inspect, edit, and train.</p>
       <div class="hero-terminal">
         <div class="terminal-bar">
           <div class="dots" aria-hidden="true">
             <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
           </div>
-          <span data-i18n="home.demo.recorded">Recorded CPU log check · 11 October 2026</span>
+          <span>~/forgelm — shell</span>
         </div>
-        <pre class="terminal-body"><code>+ python3 -m forgelm verify-audit recorded-output/audit_log.jsonl
-OK: 7 entries verified
-</code></pre>
+        <div class="code-block hero-command">
+          <div class="code-block-header">
+            <span class="hero-command-label"><span class="hero-step-number" aria-hidden="true">01</span><span data-i18n="home.demo.install">Install ForgeLM</span></span>
+            <button class="copy-btn" type="button" data-i18n="common.copy.idle" data-i18n-attr="aria-label:home.demo.copy_install" aria-label="Copy installation command">copy</button>
+          </div>
+          <pre class="code-block-body"><span class="prompt">$ </span>python3 -m pip install forgelm</pre>
+        </div>
+        <div class="code-block hero-command">
+          <div class="code-block-header">
+            <span class="hero-command-label"><span class="hero-step-number" aria-hidden="true">02</span><span data-i18n="home.demo.generate">Generate your config</span></span>
+            <button class="copy-btn" type="button" data-i18n="common.copy.idle" data-i18n-attr="aria-label:home.demo.copy_generate" aria-label="Copy config generation command">copy</button>
+          </div>
+          <pre class="code-block-body"><span class="prompt">$ </span>forgelm quickstart customer-support \
+    <span class="flag">--output</span> configs/support.yaml <span class="flag">--dry-run</span></pre>
+        </div>
+        <details class="hero-training">
+          <summary><span class="hero-step-number" aria-hidden="true">03</span><span data-i18n="home.demo.train">Train when you're ready</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>
+          <p data-i18n="home.demo.training_note">Review configs/support.yaml and replace the sample data with your own. Training downloads the selected model and needs suitable hardware.</p>
+          <div class="code-block hero-command">
+            <div class="code-block-header">
+              <span data-i18n="home.demo.run_config">Run your config</span>
+              <button class="copy-btn" type="button" data-i18n="common.copy.idle" data-i18n-attr="aria-label:home.demo.copy_train" aria-label="Copy training command">copy</button>
+            </div>
+            <pre class="code-block-body"><span class="prompt">$ </span>forgelm <span class="flag">--config</span> configs/support.yaml</pre>
+          </div>
+        </details>
       </div>
-      <p class="hero-demo-note" data-i18n="home.demo.scope">This checks a recorded audit-log chain. It does not verify model files or establish model quality, safety, or legal compliance.</p>
-      <a href="https://github.com/HodeTech/ForgeLM/blob/development/docs/guides/cpu-demo/README.md" data-i18n="home.demo.guide" data-i18n-attr="href:home.demo.guide_href">Try the CPU sample: commands, raw outputs, and limitations →</a>
+      <p class="hero-demo-note" data-i18n="home.demo.setup_note">Steps 1–2 need no GPU and do not start training.</p>
+      <div class="hero-demo-links">
+        <a href="quickstart.html" data-i18n="home.demo.quickstart">Explore the quickstart guide →</a>
+        <a href="https://github.com/HodeTech/ForgeLM/blob/development/docs/guides/cpu-demo/README.md" data-i18n="home.demo.guide" data-i18n-attr="href:home.demo.guide_href">Try the CPU walkthrough →</a>
+      </div>
     </div>
   </div>
 </section>
