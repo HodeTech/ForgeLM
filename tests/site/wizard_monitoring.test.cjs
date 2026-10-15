@@ -150,7 +150,7 @@ test('monitoring and webhook-delivery copy keeps one apostrophe style, and Chine
   const prose = value => value.replace(/\d+(?:\(\w+\))+/g, ' ').replace(/\b[a-z]+(?:_[a-z]+)+\b/g, ' ');
   for (const locale of ['en', 'tr', 'de', 'fr', 'es', 'zh']) {
     for (const [key, value] of Object.entries(translations[locale]).filter(([name]) => scoped(name))) {
-      assert.doesNotMatch(value, /’/, `${locale} ${key}: the site writes the straight apostrophe`);
+      assert.doesNotMatch(value, /’/, `${locale} ${key}: the monitoring copy writes the straight apostrophe`);
       if (locale !== 'zh') continue;
       assert.doesNotMatch(prose(value), /[一-鿿][,(]|[,)][一-鿿]/, `zh ${key}: full-width punctuation in Chinese text`);
       assert.doesNotMatch(prose(value), /endpoint/i, `zh ${key}: the copy's term for an endpoint is 端点`);

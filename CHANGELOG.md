@@ -214,16 +214,17 @@ All notable changes to ForgeLM are documented here.
 
 ### Added
 
-- **`tools/check_ci_failure_masking.py`** (32nd CI guard) rejects every way a required CI command's
-  failure could be lost. The only failure-masking check read the three documented gauntlets, and only
-  for the literal `|| true`, so appending `|| true` to the validation job's `node --test` step left CI
-  green. The guard parses every workflow `run:` block and the gauntlets with a small shell lexer that
-  ignores comments, quoted prose and here-documents, and fails when `pytest`, `node --test`, `ruff`,
-  `mypy`, the `forgelm` CLI or a `tools/` guard can fail without failing its step. This catches
-  fallbacks that can exit 0, pipes without `pipefail`, `set +e`, `continue-on-error`, and failures
-  errexit ignores inside `&&` / `||` lists. Bandit and pip-audit keep `|| true` only when the next command
-  is their severity helper reading the same report. A gauntlet `{ pytest tests/ || true; }`, which the
-  old check accepted, now fails too (#951).
+- **`tools/check_ci_failure_masking.py`** (32nd CI guard) fails CI when a required command's failure
+  would not fail its step. The only failure-masking check read the three documented gauntlets, and
+  only for the literal `|| true`, so appending `|| true` to the validation job's `node --test` step left
+  CI green. The guard parses every workflow `run:` block and the gauntlets with a small shell lexer that
+  ignores comments and quoted prose, models bash's errexit and pipefail rules, and fails when `pytest`,
+  `node --test`, `ruff`, `mypy`, the `forgelm` CLI or a `tools/` guard can fail unnoticed: fallbacks
+  that can exit 0, pipes without `pipefail`, `set +e`, `continue-on-error`, failures errexit ignores
+  inside `&&` / `||` lists or `{ … }` groups, and wrappers or `${{ }}` expressions it cannot follow. It
+  accepts only shapes it can prove, so keep required commands plain. Bandit and pip-audit keep
+  `|| true` only when the next command is their severity helper reading the same report. A gauntlet
+  `{ pytest tests/ || true; }`, which the old check accepted, now fails too (#951).
 - Add a recorded CPU validation, data audit, and audit-log verification sample with EN/TR provenance
   and limitations; link it from the README and website, expose installation and dry-run quickstart
   commands in the hero, and make contributor entry points visible.

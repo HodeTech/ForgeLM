@@ -45,32 +45,35 @@ class TestMaskedRequiredCommands:
     """Each script runs a required command whose failure would not fail the step."""
 
     @pytest.mark.parametrize(
-        "script",
+        "script,reason",
         [
-            "node --test tests/site/*.test.cjs || true",
-            "pytest -q --tb=short || true",
-            "pytest || :",
-            "pytest || exit 0",
-            "pytest || exit 256",
-            "pytest || echo 'tests failed'",
-            "pytest && echo ok || echo failed",
-            "ruff check \\\n  . \\\n  || true",
-            "python3 tools/check_site_claims.py --strict || true",
-            "python -m pytest || true",
-            "python -mpytest || true",
-            "python3 -I -m mypy --strict forgelm/__init__.py || true",
-            "./tools/check_anchor_resolution.py --strict || true",
-            "timeout 600 env CI=1 pytest || true",
-            "uv run pytest || true",
-            "forgelm --config config_template.yaml --dry-run || true",
-            "{ pytest; echo done; } || true",
-            "( pytest ) || true",
-            "bash -c 'pytest || true'",
-            "bash <<'EOF'\npytest || true\nEOF",
+            ("node --test tests/site/*.test.cjs || true", "is masked by `|| true`"),
+            ("pytest -q --tb=short || true", "is masked by `|| true`"),
+            ("pytest || :", "is masked by `|| :`"),
+            ("pytest || exit 0", "is masked by `|| exit 0`"),
+            ("pytest || exit 256", "is masked by `|| exit 256`"),
+            ("pytest || echo 'tests failed'", "is masked by `|| echo 'tests failed'`"),
+            ("pytest && echo ok || echo failed", "is masked by `|| echo failed`"),
+            ("ruff check \\\n  . \\\n  || true", "is masked by `|| true`"),
+            ("python3 tools/check_site_claims.py --strict || true", "is masked by"),
+            ("python -m pytest || true", "is masked by"),
+            ("python -mpytest || true", "is masked by"),
+            ("python3 -I -m mypy --strict forgelm/__init__.py || true", "is masked by"),
+            ("./tools/check_anchor_resolution.py --strict || true", "is masked by"),
+            ("timeout 600 env CI=1 pytest || true", "is masked by"),
+            ("uv run pytest || true", "is masked by"),
+            ("forgelm --config config_template.yaml --dry-run || true", "is masked by"),
+            ("python -m forgelm.cli --version || true", "is masked by"),
+            ("{ pytest; echo done; } || true", "can fail without stopping the script"),
+            ("( pytest ) || true", "is masked by `|| true`"),
+            ("bash -c 'pytest || true'", "is masked by `|| true`"),
+            ("bash <<'EOF'\npytest || true\nEOF", "is masked by `|| true`"),
         ],
     )
-    def test_or_fallbacks_that_can_succeed(self, guard, script):
-        assert _findings(guard, script)
+    def test_or_fallbacks_that_can_succeed(self, guard, script, reason):
+        findings = _findings(guard, script)
+        assert findings and reason in findings[0], findings
+        assert not any("could not parse" in finding for finding in findings)
 
     @pytest.mark.parametrize(
         "script,reason",
@@ -146,6 +149,105 @@ class TestSafeShapes:
     )
     def test_not_reported(self, guard, script):
         assert not _findings(guard, script)
+
+
+class TestReviewedShapes:
+    """Shapes from the guard's review, each checked against bash 5.2 before being pinned here."""
+
+    @pytest.mark.parametrize(
+        "script,reason",
+        [
+            # `$?` inside a group is the previous command's status, not the failure's.
+            ("pytest || { echo failed; exit $?; }\necho after", "is masked by"),
+            ("pytest || ( echo failed; exit $? )\necho after", "is masked by"),
+            ("pytest || { echo flaky; exit 0; exit 1; }", "is masked by"),
+            ('pytest || { [ "$X" = 1 ] && exit 0; exit 1; }', "is masked by"),
+            ('pytest || exit "${ALLOW_FAILURE_RC:-0}"', "is masked by"),
+            # Flag clusters that take an option name.
+            ("bash -eo pipefail -c 'pytest || true'", "is masked by `|| true`"),
+            ("bash --noprofile --norc -euo pipefail -c 'pytest || true'", "is masked by `|| true`"),
+            ("echo 'pytest || true' | bash", "standard input"),
+            # bash does not exit on a `{ … }` group's status when the failure inside it was ignored.
+            ("{ ruff check . && ruff format --check .; }\necho done", "errexit ignores"),
+            ("{ set +e; pytest; }\necho next", "errexit is off or ignored"),
+            ("{ set -e; pytest; echo inner; } || exit 1\necho after", "errexit is off or ignored"),
+            ("set +e && pytest\necho done", "errexit is off or ignored"),
+            ("command set +e\npytest\necho done", "errexit is off or ignored"),
+            ("builtin set +e\npytest\necho done", "errexit is off or ignored"),
+            ("shopt -u -o errexit\npytest\necho done", "errexit is off or ignored"),
+            ("eval 'pytest || true'", "is masked by `|| true`"),
+            ("trap 'exit 0' EXIT\npytest", "EXIT/ERR trap"),
+            ("trap 'rm -f /tmp/x; exit $X' ERR\npytest", "EXIT/ERR trap"),
+            ("bash -c 'echo \"$(pytest)\"'", "command substitution"),
+            ('echo "${X:-$(pytest)}"', "command substitution"),
+            ('[[ -n "$(pytest)" ]] || echo empty', "command substitution"),
+            ("cat <<EOF\n$(pytest)\nEOF", "command substitution"),
+            ("find . -exec sh -c 'pytest || true' sh {} +", "is masked by `|| true`"),
+            ('shopt -s nullglob\nfor f in tests/*.py; do pytest "$f"; done', "fixed word list"),
+            ("for ((i=0; i<2; i++)); do pytest; done", "fixed word list"),
+            # Wrappers the guard models: the pipe still needs pipefail.
+            ("coverage run -m pytest | tee log", "pipefail"),
+            ("stdbuf -oL pytest | tee log", "pipefail"),
+            ("xvfb-run -a pytest | tee log", "pipefail"),
+            ("uv run --with pytest-xdist pytest -n 4 | tee log", "pipefail"),
+            ("env --chdir /tmp pytest | tee log", "pipefail"),
+            # Wrappers and commands it cannot follow fail closed.
+            ("$PY -m pytest | tee log", "names pytest"),
+            ("retry pytest", "names pytest"),
+            ("pytest -q ${{ matrix.experimental && '|| true' || '' }}", "pastes shell syntax"),
+            ("${{ matrix.test_cmd }}", "`${{ }}` expression"),
+        ],
+    )
+    def test_masking_shapes(self, guard, script, reason):
+        findings = _findings(guard, script)
+        assert any(reason in finding for finding in findings), findings
+
+    @pytest.mark.parametrize(
+        "script",
+        [
+            'pytest || { rc=$?; echo failed; exit "$rc"; }\necho after',
+            "pytest || exit $?\necho after",
+            "{ pytest && echo ok; } || false\necho after",
+            "echo start\n{ ruff check . && ruff format --check .; }",
+            "bash -euo pipefail -c 'pytest | tee /tmp/log'",
+            "eval 'pytest'\necho after",
+            "trap 'rm -f \"$x\"' EXIT\npytest",
+            "trap 'exit $?' EXIT\npytest",
+            "cat <<'EOF'\n$(pytest)\nEOF",
+            "coverage run -m pytest",
+            "xvfb-run -a pytest",
+            "pip install pytest ruff\npython -m pip install mypy",
+            "cd forgelm\nls forgelm",
+            'for tpl in a b; do forgelm --config "$tpl" --dry-run; done 2>&1',
+            "(( x = 1 << 2 ))\npytest",
+            "case x in x) echo a ;& y) echo b ;; esac\npytest",
+            "v=$(case x in x) echo y;; esac)\npytest",
+            "( cd forgelm && pytest ) 2>&1",
+        ],
+    )
+    def test_shapes_that_propagate(self, guard, script):
+        assert not _findings(guard, script)
+
+    def test_compound_redirections_parse(self, guard):
+        assert not _findings(guard, "{ ruff check .; pytest -q; } 2>&1 | tee ci.log", guard.ShellOptions(True, True))
+
+    def test_a_script_file_from_the_repository_is_read(self, guard, tmp_path):
+        (tmp_path / "ci").mkdir()
+        (tmp_path / "ci" / "test.sh").write_text("pytest -q || true\n", encoding="utf-8")
+        findings, required = guard.scan_script("bash ci/test.sh", "run", guard.GITHUB_DEFAULT, tmp_path)
+        assert findings and "is masked by `|| true`" in findings[0] and required == ["pytest"]
+        missing, _ = guard.scan_script("bash ci/missing.sh", "run", guard.GITHUB_DEFAULT, tmp_path)
+        assert missing and "cannot read" in missing[0]
+
+    def test_deep_nesting_is_a_finding_not_a_crash(self, guard):
+        script = "{ " * 400 + "pytest" + "; }" * 400
+        findings = _findings(guard, script)
+        assert findings and "nests too deeply" in findings[0]
+
+    def test_unparseable_steps_fail_closed_only_when_they_name_a_required_command(self, guard):
+        lenient = guard.scan_steps([{"run": "echo 'unterminated"}], "w", {"runs-on": "ubuntu-latest"}, None)[0]
+        strict = guard.scan_steps([{"run": "pytest 'unterminated"}], "w", {"runs-on": "ubuntu-latest"}, None)[0]
+        assert lenient == [] and strict and "could not parse" in strict[0]
 
 
 class TestOrTrueOutsideRequiredCommands:
@@ -261,6 +363,18 @@ class TestWorkflows:
         assert guard.scan_workflow(default, "w.yml")[0]
         assert guard.scan_workflow(explicit, "w.yml")[0] == []
 
+    def test_malformed_yaml_and_shapes_are_findings(self, guard):
+        assert "could not parse the YAML" in guard.scan_workflow("jobs: [unclosed", "w.yml")[0][0]
+        assert "`jobs` is not a mapping" in guard.scan_workflow("jobs: [a, b]", "w.yml")[0][0]
+        assert "has no list of steps" in guard.scan_workflow("jobs:\n  j: 3\n", "w.yml")[0][0]
+
+    def test_the_windows_default_shell_covers_every_required_command(self, guard):
+        text = _workflow(
+            "      - run: |\n          python tools/update_site_version.py --check\n          echo done\n",
+            runs_on="windows-latest",
+        )
+        assert guard.scan_workflow(text, "w.yml")[0]
+
     def test_composite_action_steps_are_scanned(self, guard):
         text = "name: a\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      run: pytest || true\n"
         assert guard.scan_workflow(text, "action.yml")[0]
@@ -359,6 +473,36 @@ class TestRealRepository:
                 root / doc, "ruff check . && pytest tests/ && \\", "ruff check . && { pytest tests/ || true; } && \\"
             )
         assert guard.main(["--root", str(root), "--quiet"]) == 1
+
+    def test_yaml_workflows_and_local_actions_are_scanned(self, guard, tmp_path):
+        root = _copy_repo_surfaces(tmp_path)
+        (root / ".github/workflows/extra.yaml").write_text(
+            "on: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pytest -q || true\n",
+            encoding="utf-8",
+        )
+        assert guard.main(["--root", str(root), "--quiet"]) == 1
+        (root / ".github/workflows/extra.yaml").unlink()
+        action = root / ".github/actions/tests"
+        action.mkdir(parents=True)
+        (action / "action.yml").write_text(
+            "runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: pytest -q\n", encoding="utf-8"
+        )
+        (root / ".github/workflows/uses.yml").write_text(
+            "on: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n"
+            "      - uses: ./.github/actions/tests\n        continue-on-error: true\n",
+            encoding="utf-8",
+        )
+        assert guard.main(["--root", str(root), "--quiet"]) == 1
+
+    def test_a_masked_only_invocation_is_not_also_reported_as_missing(self, guard, tmp_path, capsys):
+        root = _copy_repo_surfaces(tmp_path)
+        _mutate(
+            root / ".github/workflows/ci.yml",
+            "run: pytest -q --tb=short --cov-report=xml:coverage.xml\n",
+            "run: pytest -q --tb=short --cov-report=xml:coverage.xml || true\n",
+        )
+        assert guard.main(["--root", str(root)]) == 1
+        assert "the scan is broken" not in capsys.readouterr().out
 
     def test_a_scan_that_recognises_no_required_command_fails(self, guard, tmp_path, capsys):
         root = _copy_repo_surfaces(tmp_path)

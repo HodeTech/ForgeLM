@@ -356,12 +356,12 @@ Default workflow for a non-trivial change:
    `cmd && echo ok` followed by another line (bash's errexit ignores a
    failure inside an `&&` / `||` list). The guard parses every workflow
    `run:` block and this block with a small POSIX-shell lexer, so comments,
-   quoted prose, `python -c` programs and here-documents are never read as
-   commands, and proves that a failing required command — `pytest`,
-   `node --test`, `ruff`, `mypy`, the `forgelm` CLI or a `tools/` guard —
-   still fails its step. The bandit / pip-audit `|| true` exception holds
-   only when the very next command is the severity helper reading the same
-   report.
+   quoted prose and `python -c` programs are never read as commands, and
+   checks that a failing required command — `pytest`, `node --test`,
+   `ruff`, `mypy`, the `forgelm` CLI or a `tools/` guard — still fails its
+   step. It accepts only shapes it can prove, so keep required commands
+   plain. The bandit / pip-audit `|| true` exception holds only when the
+   very next command is the severity helper reading the same report.
 
 ## Branches, issues and the project board
 

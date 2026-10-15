@@ -129,7 +129,8 @@ def _ci_guards() -> set[tuple[str, tuple[str, ...]]]:
 
 def _workflow_guard_names() -> set[str]:
     names: set[str] = set()
-    for workflow in sorted(_WORKFLOWS.glob("*.yml")):
+    # GitHub runs `.yaml` workflows too; a guard wired only there is still wired.
+    for workflow in sorted([*_WORKFLOWS.glob("*.yml"), *_WORKFLOWS.glob("*.yaml")]):
         for name, _flags in _invocations("\n".join(_run_scalars(workflow))):
             names.add(name)
     return names

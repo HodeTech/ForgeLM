@@ -12,18 +12,25 @@ command.
 
 This guard parses every GitHub Actions `run:` block (workflows and composite
 actions) and the three gauntlet blocks with a small POSIX-shell lexer, so
-comments, quoted prose, `python -c` programs and here-documents are never
-mistaken for commands. For every *required* command — `pytest`, `node --test`,
-`ruff`, `mypy`, the `forgelm` CLI and the `tools/` guards — it proves that a
-non-zero exit fails the step (or the gauntlet chain):
+comments, quoted prose, `python -c` programs and quoted here-documents are
+never mistaken for commands. For every *required* command — `pytest`,
+`node --test`, `ruff`, `mypy`, the `forgelm` CLI and the `tools/` guards, also
+behind wrappers such as `env`, `timeout`, `xvfb-run`, `uv run` or
+`coverage run` — it checks that a non-zero exit still fails the step (or the
+gauntlet chain). It models errexit and pipefail as bash applies them, including
+the contexts where errexit is ignored (`&&` / `||` lists, `{ … }` groups placed
+there, conditions), `set` / `shopt -o` changes, `bash -c`, scripts the step
+runs from the repository, and `eval`.
 
-- the command is not followed by an `||` fallback that can exit 0, does not feed
-  a pipe without `pipefail`, is not negated, backgrounded, wrapped in a command
-  substitution or a shell function, and is not run conditionally;
-- where its failure does not end the shell (errexit is off, or ignored inside an
-  `&&` / `||` list), nothing after it decides the exit status instead;
-- the step has no `continue-on-error` and runs under a shell this guard can
-  model (bash or sh).
+It accepts only shapes it can prove and fails closed on the rest, so some
+correct but indirect forms are rejected too: capturing a status with `set +e`
+or `|| rc=$?` and re-raising it later, `${PIPESTATUS[0]}`, `wait "$pid"`,
+`out=$(cmd)`, the same command in every `if` / `case` branch, loops that may
+skip it, shell functions, and unknown wrappers or commands taken from a `${{ }}`
+expression. Keep required commands plain; a fallback may report, then must end
+with `exit 1` or re-raise a captured status (`|| { rc=$?; …; exit "$rc"; }`).
+It also rejects `continue-on-error` on a step that runs a required command, an
+EXIT/ERR trap that exits 0, and a `${{ }}` expression that pastes shell syntax.
 
 Independently of required commands, a `|| true` / `|| :` / `|| exit 0` fallback
 is refused everywhere except the documented scanner + severity-helper pattern:
@@ -43,7 +50,7 @@ import re
 import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Iterator, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
 import yaml
 
@@ -51,10 +58,13 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _GAUNTLET_DOCS = ("CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md")
 
 # Same guard-name grammar as tests/test_guard_wiring.py's _GUARD_NAME_RE.
-_GUARD_SCRIPT_RE = re.compile(r"(?:^|/)tools/(check_[a-z0-9_]+\.py|update_site_version\.py)$")
+_GUARD_SCRIPT_RE = re.compile(r"(?:^|/)tools/(check_[a-z0-9_]{1,64}\.py|update_site_version\.py)$")
 _PYTHON_RE = re.compile(r"python(?:3(?:\.\d{1,2})?)?")
 _ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}(?:\[[^\]\n]{0,64}\])?\+?=")
+_STATUS_CAPTURE_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]{0,63})=\$\?")
 _GATE_MODULES = ("pytest", "mypy", "ruff", "forgelm")
+# Commands that may name a required program without running it (`pip install pytest`).
+_MENTION_OK = ("pip", "pip3", "pipx", "conda", "mamba", "apt-get", "brew", "echo", "printf", "which", "type", "hash")
 # Each scanner's severity helper, with the helper's value-taking options so its
 # positional report argument is found wherever the options are placed.
 _SCANNER_HELPERS = {
@@ -66,13 +76,15 @@ _SHELLS = ("bash", "sh", "dash", "ksh", "zsh")
 # contain. A scan that recognises none of them is broken, not clean.
 _EXPECTED_KINDS = ("pytest", "node --test", "ruff", "tools/check_")
 
-_OPERATORS = ("&&", "||", ";;", "|&", ";", "|", "&", "(", ")")
+_OPERATORS = ("&&", "||", ";;&", ";;", ";&", "|&", ";", "|", "&", "(", ")")
+_CASE_TERMINATORS = (";;", ";&", ";;&")
 _REDIRECTIONS = ("&>>", "&>", "<<<", "<<-", "<<", ">>", ">|", "<>", ">&", "<&", "<", ">")
 _METACHARACTERS = frozenset(" \t\n;&|()<>")
 _NOOP_FALLBACKS = (("true",), (":",), ("/bin/true",), ("/usr/bin/true",), ("exit", "0"))
 
 TERMINATES = "terminates"  # every failure of a required command inside ends the shell
-STATUS = "status"  # some failure only leaves a non-zero exit status behind
+STATUS = "status"  # some failure leaves a non-zero exit status that errexit acts on
+RETURNS = "returns"  # a `{ … }` group's non-zero status, which errexit never acts on
 
 
 class ShellParseError(Exception):
@@ -113,12 +125,13 @@ class _Lexer:
         self.i = start
         self.line = line
         self.tokens: List[_Token] = []
-        self.pending_heredocs: List[Tuple[_Token, str, bool]] = []
+        self.pending_heredocs: List[Tuple[_Token, str, bool, _Word]] = []
         self.heredoc_delimiter: Optional[Tuple[_Token, bool]] = None
 
     def run(self, closing_paren: bool = False) -> int:
         """Tokenise to the end, or to the ``)`` closing a ``$(`` substitution."""
         depth = 0
+        cases = 0  # open `case` statements, whose pattern `)` closes no parenthesis
         while True:
             self._skip_blanks()
             if self.i >= len(self.src):
@@ -137,19 +150,26 @@ class _Lexer:
             elif char == "#":
                 while self.i < len(self.src) and self.src[self.i] != "\n":
                     self.i += 1
-            elif closing_paren and char == ")" and depth == 0:
+            elif closing_paren and char == ")" and depth == 0 and not cases:
                 self._emit("eof", "", self.i, self.i)
                 return self.i + 1
             elif self.src.startswith(("<(", ">("), self.i):
                 self._read_word()
+            elif self.src.startswith("((", self.i):
+                # An arithmetic command or a C-style `for` header: one opaque word.
+                start, line = self.i, self.line
+                text = self._balanced(self.i, "(", ")")
+                self._emit("word", text, start, self.i, _Word(text, text, line))
             else:
                 matched = self._operator()
                 if matched == "(":
                     depth += 1
-                elif matched == ")":
+                elif matched == ")" and depth:
                     depth -= 1
                 elif matched is None:
                     self._read_word()
+                    raw = self.tokens[-1].word.raw  # type: ignore[union-attr]
+                    cases += 1 if raw == "case" else -1 if raw == "esac" and cases else 0
 
     def _emit(self, kind: str, value: str, start: int, end: int, word: Optional[_Word] = None) -> _Token:
         token = _Token(kind, value, self.line, start, end, word)
@@ -182,8 +202,9 @@ class _Lexer:
         return None
 
     def _read_heredoc_bodies(self) -> None:
-        for token, delimiter, strip_tabs in self.pending_heredocs:
+        for token, delimiter, strip_tabs, word in self.pending_heredocs:
             body: List[str] = []
+            first_line = self.line
             while True:
                 if self.i >= len(self.src):
                     raise ShellParseError(f"here-document {delimiter!r} has no closing line", self.line)
@@ -196,7 +217,24 @@ class _Lexer:
                     break
                 body.append(text)
             token.heredoc = "\n".join(body) + "\n"
+            if not any(mark in word.raw for mark in "'\"\\"):
+                # An unquoted delimiter: the body is expanded, so its `$(...)` commands run.
+                _Lexer(token.heredoc, 0, first_line).expansions(word.subs)
         self.pending_heredocs = []
+
+    def expansions(self, subs: List["_Script"]) -> None:
+        """Parse the command substitutions of text that is only expanded, such as a here-document body."""
+        scratch: List[str] = []
+        while self.i < len(self.src):
+            char = self.src[self.i]
+            if char == "\\":
+                self.i += 2
+            elif char in "$`":
+                self._expansion(scratch, subs)
+            else:
+                if char == "\n":
+                    self.line += 1
+                self.i += 1
 
     def _read_word(self) -> None:
         start, line = self.i, self.line
@@ -239,7 +277,7 @@ class _Lexer:
         self._emit("word", word.text, start, self.i, word)
         if self.heredoc_delimiter is not None:
             redirection, strip_tabs = self.heredoc_delimiter
-            self.pending_heredocs.append((redirection, word.text, strip_tabs))
+            self.pending_heredocs.append((redirection, word.text, strip_tabs, word))
             self.heredoc_delimiter = None
 
     def _double_quoted(self, text: List[str], subs: List["_Script"], line: int) -> None:
@@ -274,7 +312,7 @@ class _Lexer:
             subs.append(self._substitution(start + 2))
             text.append(src[start : self.i])
         elif src.startswith("${", start):
-            text.append(self._balanced(start + 1, "{", "}", prefix="$"))
+            self._parameter(text, subs)
         elif src.startswith("$'", start):
             end = start + 2
             while end < len(src) and src[end] != "'":
@@ -297,6 +335,41 @@ class _Lexer:
         else:
             text.append("$")
             self.i += 1
+
+    def _parameter(self, text: List[str], subs: List["_Script"]) -> None:
+        """Consume ``${...}``, parsing any command substitution inside it (``${X:-$(cmd)}``)."""
+        src, start, line = self.src, self.i, self.line
+        self.i += 2
+        depth = 1
+        scratch: List[str] = []
+        while self.i < len(src):
+            char = src[self.i]
+            if char == "\\":
+                self.i += 2
+            elif char == "'":
+                end = src.find("'", self.i + 1)
+                if end < 0:
+                    raise ShellParseError("unterminated single quote", line)
+                self.line += src.count("\n", self.i, end)
+                self.i = end + 1
+            elif char == '"':
+                self._double_quoted(scratch, subs, line)
+            elif src.startswith("${", self.i):
+                depth += 1
+                self.i += 2
+            elif char in "$`":
+                self._expansion(scratch, subs)
+            elif char == "}":
+                depth -= 1
+                self.i += 1
+                if depth == 0:
+                    text.append(src[start : self.i])
+                    return
+            else:
+                if char == "\n":
+                    self.line += 1
+                self.i += 1
+        raise ShellParseError("unterminated ${", line)
 
     def _substitution(self, body_start: int) -> "_Script":
         """Parse the script inside ``$( ... )`` / ``<( ... )``; leave ``self.i`` after its ``)``."""
@@ -387,8 +460,9 @@ class _Function:
 
 
 @dataclass
-class _Test:  # [[ ... ]] and (( ... )): expressions, never commands
+class _Test:  # [[ ... ]] and (( ... )): expressions, never commands, whose words may hold substitutions
     line: int
+    words: List[_Word] = field(default_factory=list)
 
 
 _Command = Union[_Simple, _Group, _If, _Loop, _Case, _Function, _Test]
@@ -507,10 +581,10 @@ class _Parser:
 
     def _command(self) -> _Command:
         token = self._peek()
+        if token.kind == "word" and token.word is not None and token.word.raw.startswith("(("):
+            self.k += 1  # an arithmetic command, lexed as one word
+            return self._redirected(_Test(token.line, [token.word]))
         if self._is_op(token, "("):
-            following = self._peek(1)
-            if self._is_op(following, "(") and following.start == token.end:
-                return self._arithmetic()
             self.k += 1
             body = self._script((), (")",))
             self._expect_op(")")
@@ -527,10 +601,13 @@ class _Parser:
         if self._is_reserved(token, "case"):
             return self._case()
         if self._is_reserved(token, "[["):
+            words: List[_Word] = []
             while not self._is_reserved(self._next(), "]]"):
+                if self.tokens[self.k - 1].word is not None:
+                    words.append(self.tokens[self.k - 1].word)  # type: ignore[arg-type]
                 if self._peek().kind == "eof":
                     raise ShellParseError("unterminated [[", token.line)
-            return _Test(token.line)
+            return _Test(token.line, words)
         if self._is_reserved(token, "function"):
             self.k += 1
             name = self._next()
@@ -546,20 +623,24 @@ class _Parser:
             return _Function(token.value, self._command(), token.line)
         return self._simple()
 
-    def _arithmetic(self) -> _Test:
-        line, depth = self._peek().line, 0
-        while True:
-            token = self._next()
-            if token.kind == "eof":
-                raise ShellParseError("unterminated ((", line)
-            depth += 1 if self._is_op(token, "(") else -1 if self._is_op(token, ")") else 0
-            if depth == 0:
-                return _Test(line)
+    def _fd_prefix(self) -> Optional[str]:
+        """The file descriptor of a ``2>&1``-style redirection starting here, if any."""
+        token, following = self._peek(), self._peek(1)
+        if token.kind == "word" and token.word is not None and token.word.raw.isdigit():
+            if following.kind == "redir" and following.start == token.end:
+                return token.word.raw
+        return None
 
     def _redirected(self, command: _Command) -> _Command:
-        while self._peek().kind == "redir":
-            self._redirect(None)
-        return command
+        while True:
+            fd = self._fd_prefix()
+            if fd is not None:
+                self.k += 1
+                self._redirect(fd)
+            elif self._peek().kind == "redir":
+                self._redirect(None)
+            else:
+                return command
 
     def _redirect(self, fd: Optional[str]) -> _Redirect:
         operator = self._next()
@@ -575,14 +656,13 @@ class _Parser:
         redirects: List[_Redirect] = []
         while True:
             token = self._peek()
-            if token.kind == "redir":
+            fd = self._fd_prefix()
+            if fd is not None:
+                self.k += 1
+                redirects.append(self._redirect(fd))
+            elif token.kind == "redir":
                 redirects.append(self._redirect(None))
             elif token.kind == "word" and token.word is not None:
-                following = self._peek(1)
-                if token.word.raw.isdigit() and following.kind == "redir" and following.start == token.end:
-                    self.k += 1
-                    redirects.append(self._redirect(token.word.raw))
-                    continue
                 self.k += 1
                 if not words and _ASSIGNMENT_RE.match(token.word.raw):
                     assignments.append(token.word)
@@ -617,9 +697,9 @@ class _Parser:
         condition: Optional[_Script] = None
         words: List[_Word] = []
         if keyword.value == "for":
-            self._next()  # loop variable
+            header = self._next()  # the loop variable, or a C-style ((init; test; step)) header
             self._skip_newlines()
-            if self._is_reserved(self._peek(), "in"):
+            if not header.value.startswith("((") and self._is_reserved(self._peek(), "in"):
                 self.k += 1
                 while self._peek().kind == "word":
                     words.append(self._next().word)  # type: ignore[arg-type]
@@ -655,8 +735,8 @@ class _Parser:
                     break
                 self.k += 1
             self._expect_op(")")
-            bodies.append(self._script(("esac",), (";;",)))
-            if self._is_op(self._peek(), ";;"):
+            bodies.append(self._script(("esac",), _CASE_TERMINATORS))
+            if self._is_op(self._peek(), *_CASE_TERMINATORS):
                 self.k += 1
 
 
@@ -665,10 +745,21 @@ class _Parser:
 
 @dataclass(frozen=True)
 class ShellOptions:
-    """The two shell options that decide whether a failure ends the step."""
+    """The shell state that decides whether a failing command ends the step.
+
+    ``ignored`` marks a context where bash ignores errexit: every command of an
+    ``&&`` / ``||`` list but the last, and everything inside a compound placed
+    there. A ``set -e`` inside such a context does not switch errexit back on.
+    """
 
     errexit: bool
     pipefail: bool
+    ignored: bool = False
+
+    @property
+    def stops(self) -> bool:
+        """Whether a failing command ends the script here."""
+        return self.errexit and not self.ignored
 
 
 GITHUB_DEFAULT = ShellOptions(errexit=True, pipefail=False)  # `bash -e {0}` when no shell is set
@@ -677,13 +768,27 @@ INTERACTIVE = ShellOptions(errexit=False, pipefail=False)  # a gauntlet pasted i
 
 _WRAPPER_VALUE_OPTIONS = {
     "timeout": ("-s", "-k", "--signal", "--kill-after"),
-    "nice": ("-n",),
-    "env": ("-u", "-C", "-S"),
-    "sudo": ("-u", "-g", "-C", "-h", "-p"),
-    "xargs": ("-a", "-d", "-E", "-I", "-L", "-n", "-P"),
+    "nice": ("-n", "--adjustment"),
+    "env": ("-u", "-C", "-S", "--unset", "--chdir", "--split-string"),
+    "sudo": ("-u", "-g", "-C", "-h", "-p", "--user", "--group"),
+    "xargs": ("-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s"),
+    "stdbuf": ("-i", "-o", "-e"),
+    "xvfb-run": ("-n", "-s", "-f", "-e", "-p", "-w", "--server-num", "--server-args", "--auth-file"),
 }
-_WRAPPERS = ("env", "time", "timeout", "nice", "command", "exec", "nohup", "sudo", "xargs")
-_RUNNERS = ("uv", "poetry", "pipenv", "hatch", "pdm")  # `<runner> run CMD` propagates CMD's status
+_WRAPPERS = tuple(_WRAPPER_VALUE_OPTIONS) + ("time", "command", "builtin", "exec", "nohup")
+# `<runner> run CMD` propagates CMD's exit status; these are the run options that take a value.
+_RUNNERS = ("uv", "poetry", "pipenv", "hatch", "pdm")
+_RUNNER_VALUE_OPTIONS = (
+    "-p", "--python", "-w", "--with", "--with-requirements", "--with-editable", "--project",
+    "--directory", "--package", "--extra", "--group", "--env-file", "--index", "--index-url",
+    "--extra-index-url", "-f", "--find-links",
+)  # fmt: skip
+
+
+def _drop_options(argv: List[str], value_options: Tuple[str, ...], assignments: bool = False) -> List[str]:
+    while argv and (argv[0].startswith("-") or (assignments and "=" in argv[0])):
+        argv = argv[2:] if argv[0] in value_options else argv[1:]
+    return argv
 
 
 def _argv(command: _Simple) -> List[str]:
@@ -692,18 +797,15 @@ def _argv(command: _Simple) -> List[str]:
     while argv:
         program = posixpath.basename(argv[0])
         if program in _RUNNERS and argv[1:2] == ["run"]:
-            argv = argv[2:]
-            while argv and argv[0].startswith("-"):
-                argv = argv[1:]
+            argv = _drop_options(argv[2:], _RUNNER_VALUE_OPTIONS)
             continue
+        if program == "coverage" and argv[1:2] == ["run"]:
+            return ["python"] + argv[2:]  # `coverage run` takes Python's `-m module` or `script.py`
         if program not in _WRAPPERS:
             return argv
         if program == "command" and argv[1:2] in (["-v"], ["-V"]):
             return []  # a lookup: `command -v pytest` runs nothing
-        argv = argv[1:]
-        while argv and (argv[0].startswith("-") or (program == "env" and "=" in argv[0])):
-            consumes = argv[0] in _WRAPPER_VALUE_OPTIONS.get(program, ())
-            argv = argv[2:] if consumes else argv[1:]
+        argv = _drop_options(argv[1:], _WRAPPER_VALUE_OPTIONS.get(program, ()), assignments=program == "env")
         if program == "timeout" and argv:
             argv = argv[1:]  # the duration
     return argv
@@ -732,6 +834,11 @@ def _python_target(args: List[str]) -> Tuple[str, str]:
     return "code", ""
 
 
+def _gate_module(module: str) -> Optional[str]:
+    root = module.split(".")[0]
+    return root if root in _GATE_MODULES and (module == root or root == "forgelm") else None
+
+
 def _required_argv(argv: List[str]) -> Optional[str]:
     if not argv:
         return None
@@ -747,8 +854,8 @@ def _required_argv(argv: List[str]) -> Optional[str]:
         return "node --test"
     if _PYTHON_RE.fullmatch(program):
         kind, target = _python_target(argv[1:])
-        if kind == "module" and target in _GATE_MODULES:
-            return target
+        if kind == "module":
+            return _gate_module(target)
         if kind == "script":
             guard = _GUARD_SCRIPT_RE.search(target)
             return "tools/" + guard.group(1) if guard else None
@@ -773,6 +880,36 @@ def _required(command: _Simple) -> Optional[str]:
     argv = _argv(command)
     found = _find_exec(argv)
     return _required_argv(found[0] if found else argv)
+
+
+def _installs(argv: List[str]) -> bool:
+    """Whether *argv* installs packages, so naming `pytest` or `ruff` in it runs nothing."""
+    program = posixpath.basename(argv[0])
+    if _PYTHON_RE.fullmatch(program):
+        kind, target = _python_target(argv[1:])
+        return kind == "module" and target in ("pip", "pipx")
+    if program == "uv":
+        return argv[1:2] in (["pip"], ["add"], ["tool"])
+    return program == "poetry" and argv[1:2] in (["add"], ["install"])
+
+
+def _mentioned(argv: List[str]) -> Optional[str]:
+    """A required command *argv* seems to run although this guard does not model how.
+
+    Strong signals only: ``-m <module>``, a ``tools/`` guard path, or `pytest`,
+    `ruff` or `mypy` where an unknown wrapper puts the program it runs. Not
+    ``forgelm``, which is also this repository's package directory.
+    """
+    program = next((word for word in argv[1:] if not word.startswith("-")), "")
+    if posixpath.basename(program) in ("pytest", "py.test", "ruff", "mypy"):
+        return posixpath.basename(program)
+    for index, word in enumerate(argv[1:], start=1):
+        guard = _GUARD_SCRIPT_RE.search(word)
+        if guard:
+            return "tools/" + guard.group(1)
+        if word == "-m" and index + 1 < len(argv) and _gate_module(argv[index + 1]):
+            return argv[index + 1]
+    return None
 
 
 def _scanner(command: _Simple) -> Optional[str]:
@@ -842,17 +979,42 @@ def _apply_set(options: ShellOptions, args: List[str]) -> ShellOptions:
                     elif args[index] == "pipefail":
                         pipefail = enable
         index += 1
-    return ShellOptions(errexit, pipefail)
+    return replace(options, errexit=errexit, pipefail=pipefail)
+
+
+def _option_args(command: Any) -> Optional[List[str]]:
+    """``set``-style arguments when *command* changes shell options, else None.
+
+    Covers ``set …`` (also through ``command`` / ``builtin``) and ``shopt -s|-u -o …``.
+    """
+    if not isinstance(command, _Simple):
+        return None
+    argv = _argv(command)
+    if argv[:1] == ["set"]:
+        return argv[1:]
+    if argv[:1] == ["shopt"] and "-o" in argv[1:] and ("-s" in argv[1:] or "-u" in argv[1:]):
+        flag = "+o" if "-u" in argv[1:] else "-o"
+        return [part for name in argv[1:] if not name.startswith("-") for part in (flag, name)]
+    return None
 
 
 def _set_args(item: _Item) -> Optional[List[str]]:
-    """The arguments of a bare ``set`` builtin item, else None."""
+    """The option arguments of an item that only changes shell options, else None."""
+    pipelines = item.and_or.pipelines
+    if len(pipelines) != 1 or len(pipelines[0].commands) != 1:
+        return None
+    return _option_args(pipelines[0].commands[0])
+
+
+def _captured_status(item: _Item) -> Optional[str]:
+    """``rc`` when *item* is exactly ``rc=$?``, capturing the status of the command before it."""
     pipelines = item.and_or.pipelines
     if len(pipelines) != 1 or len(pipelines[0].commands) != 1:
         return None
     command = pipelines[0].commands[0]
-    if isinstance(command, _Simple) and command.words and command.words[0].text == "set":
-        return [word.text for word in command.words[1:]]
+    if isinstance(command, _Simple) and not command.words and len(command.assignments) == 1:
+        match = _STATUS_CAPTURE_RE.fullmatch(command.assignments[0].text)
+        return match.group(1) if match else None
     return None
 
 
@@ -880,18 +1042,36 @@ def _children(node: Any) -> Iterator[Any]:
         yield node.body
 
 
-def _words(node: Any) -> Iterator[_Word]:
-    """Every word in *node*, including assignment values and redirection targets."""
+def _own_words(node: Any) -> List[_Word]:
+    """The words *node* itself holds (not those of the commands nested in it)."""
     if isinstance(node, _Simple):
-        yield from node.assignments
-        yield from node.words
-        yield from (redirect.target for redirect in node.redirects)
-    elif isinstance(node, _Loop):
-        yield from node.words
-    elif isinstance(node, _Case):
-        yield node.subject
-    for child in _children(node):
-        yield from _words(child)
+        return node.assignments + node.words + [redirect.target for redirect in node.redirects]
+    if isinstance(node, _Loop):
+        return node.words
+    if isinstance(node, _Case):
+        return [node.subject]
+    if isinstance(node, _Test):
+        return node.words
+    return []
+
+
+def _exit_kind(command: _Simple, failed_status: bool, captured: Optional[str]) -> str:
+    """``exits`` (leaves non-zero), ``fails`` (``false``) or ``succeeds`` (may leave 0) for one command.
+
+    A bare ``exit`` / ``exit $?`` re-raises only when ``$?`` still holds the failed
+    command's status (*failed_status*): right after ``||``. Inside a group it holds
+    the previous command's status, so only a literal code or a status captured
+    first (``rc=$?``, then ``exit "$rc"``) re-raises there.
+    """
+    argv = [word.text for word in command.words]
+    if argv[:1] == ["exit"]:
+        code = argv[1] if len(argv) > 1 else "$?"
+        if code in ("$?", "${?}"):
+            return "exits" if failed_status else "succeeds"
+        if code.isdigit():
+            return "exits" if int(code) % 256 else "succeeds"
+        return "exits" if captured and code in ("$" + captured, "${" + captured + "}") else "succeeds"
+    return "fails" if argv in (["false"], ["/bin/false"], ["/usr/bin/false"]) else "succeeds"
 
 
 def _text(node: Any, limit: int = 90) -> str:
@@ -908,71 +1088,113 @@ def _text(node: Any, limit: int = 90) -> str:
 
 
 class _Analysis:
-    """Walk one parsed script and record every way a required command's failure can be lost."""
+    """Walk one parsed script and record the ways a required command's failure can be lost."""
 
-    def __init__(self, where: str) -> None:
+    def __init__(self, where: str, root: Optional[Path]) -> None:
         self.where = where
+        self.root = root
         self.findings: List[str] = []
-        self.required: List[str] = []
-        self._nested: dict = {}
+        self._nested: Dict[int, Optional[Tuple[_Script, Optional[ShellOptions], bool]]] = {}
+        self._has: Dict[int, bool] = {}
 
     def report(self, node: Any, reason: str) -> None:
         line = getattr(node, "line", None)
         if isinstance(node, _Pipeline):
             line = getattr(node.commands[0], "line", None)
-        at = f" (line {line})" if line else ""
+        at = f" (script line {line})" if line else ""
         self.findings.append(f"{self.where}{at}: `{_text(node)}` {reason}")
 
     # -- what a node contains --------------------------------------------
 
-    def nested_shell(self, command: _Simple) -> Optional[Tuple[_Script, ShellOptions]]:
-        """The script and options of ``bash -c '...'`` / ``sh <<'EOF'`` style invocations."""
+    def nested(self, command: _Simple) -> Optional[Tuple[_Script, Optional[ShellOptions], bool]]:
+        """The script a command runs: ``(script, options, current_shell)``.
+
+        ``bash -c '…'``, ``sh <<'EOF'`` and ``bash ci/x.sh`` (read from the
+        repository) run in a new shell with their own options; ``eval`` runs in
+        the current shell, so its options are the caller's (None).
+        """
         if id(command) not in self._nested:
-            self._nested[id(command)] = self._nested_shell(command)
+            self._nested[id(command)] = self._nested_script(command)
         return self._nested[id(command)]
 
-    def _nested_shell(self, command: _Simple) -> Optional[Tuple[_Script, ShellOptions]]:
+    def _nested_script(self, command: _Simple) -> Optional[Tuple[_Script, Optional[ShellOptions], bool]]:
         argv = _argv(command)
-        if not argv or posixpath.basename(argv[0]) not in _SHELLS:
+        found = _find_exec(argv)
+        argv = found[0] if found else argv
+        if not argv:
             return None
-        options, script, index = INTERACTIVE, None, 1
+        program = posixpath.basename(argv[0])
+        if program == "eval":
+            return self._parse_nested(command, " ".join(argv[1:]), command.line, None, True)
+        if program not in _SHELLS:
+            return None
+        options, reads_command, index = INTERACTIVE, False, 1
         while index < len(argv):
             arg = argv[index]
-            if arg in ("-o", "+o"):
-                options = _apply_set(options, argv[index : index + 2])
-                index += 2
-                continue
+            if arg == "--":
+                index += 1
+                break
+            if arg in ("--version", "--help"):
+                return None
             if arg.startswith("--"):
                 index += 1
                 continue
-            if not arg.startswith(("-", "+")):
-                return None  # a script file this guard cannot read
-            options = _apply_set(options, [arg])
-            if "c" in arg[1:]:
-                script = argv[index + 1] if index + 1 < len(argv) else ""
+            if len(arg) < 2 or arg[0] not in "-+":
                 break
+            for letter in arg[1:]:
+                if letter == "c":
+                    reads_command = True
+                elif letter == "e":
+                    options = replace(options, errexit=arg[0] == "-")
+                elif letter in "oO":
+                    index += 1  # the option name: `-o pipefail`, `-eo pipefail`, `+O shopt`
+                    if letter == "o" and index < len(argv):
+                        options = _apply_set(options, [arg[0] + "o", argv[index]])
             index += 1
-        if script is None:
-            for redirect in command.redirects:
-                if redirect.heredoc is not None:
-                    script = redirect.heredoc
-                elif redirect.op == "<<<":
-                    script = redirect.target.text
-        if script is None:
-            return None
+        operands = argv[index:]
+        if reads_command:
+            return self._parse_nested(command, operands[0] if operands else "", command.line, options, False)
+        if operands:
+            return self._script_file(command, operands[0], options)
+        for redirect in command.redirects:
+            if redirect.heredoc is not None:
+                return self._parse_nested(command, redirect.heredoc, command.line + 1, options, False)
+            if redirect.op == "<<<":
+                return self._parse_nested(command, redirect.target.text, command.line, options, False)
+        self.report(command, "reads its script from standard input, which this guard cannot inspect; use `-c`")
+        return None
+
+    def _script_file(
+        self, command: _Simple, path: str, options: ShellOptions
+    ) -> Optional[Tuple[_Script, Optional[ShellOptions], bool]]:
+        if self.root is not None and not posixpath.isabs(path):
+            file = (self.root / path).resolve()
+            if file.is_relative_to(self.root.resolve()) and file.is_file():
+                try:
+                    return self._parse_nested(command, file.read_text(encoding="utf-8"), 1, options, False)
+                except (OSError, UnicodeDecodeError):
+                    pass
+        self.report(command, f"runs {path}, which this guard cannot read; keep the script in the repository")
+        return None
+
+    def _parse_nested(
+        self, command: _Simple, text: str, line: int, options: Optional[ShellOptions], current_shell: bool
+    ) -> Optional[Tuple[_Script, Optional[ShellOptions], bool]]:
         try:
-            return _parse(script, command.line), options
+            return _parse(text, line), options, current_shell
         except ShellParseError as exc:
             self.report(command, f"runs a nested shell script this guard cannot parse ({exc})")
             return None
 
     def has_required(self, node: Any) -> bool:
-        if isinstance(node, _Simple):
-            if _required(node):
-                return True
-            nested = self.nested_shell(node)
-            return nested is not None and self.has_required(nested[0])
-        return any(self.has_required(child) for child in _children(node))
+        if id(node) not in self._has:
+            if isinstance(node, _Simple):
+                nested = self.nested(node)
+                found = bool(_required(node)) or (nested is not None and self.has_required(nested[0]))
+            else:
+                found = any(self.has_required(child) for child in _children(node))
+            self._has[id(node)] = found
+        return self._has[id(node)]
 
     def first_required(self, node: Any) -> Any:
         if isinstance(node, _Simple):
@@ -981,6 +1203,33 @@ class _Analysis:
             if self.has_required(child):
                 return self.first_required(child)
         return node
+
+    def walk(self, node: Any) -> Iterator[Any]:
+        """Every node in *node*, including command substitutions and nested scripts."""
+        yield node
+        for word in _own_words(node):
+            for sub in word.subs:
+                yield from self.walk(sub)
+        if isinstance(node, _Simple):
+            nested = self.nested(node)
+            if nested is not None:
+                yield from self.walk(nested[0])
+        for child in _children(node):
+            yield from self.walk(child)
+
+    @staticmethod
+    def literal_list(loop: _Loop) -> bool:
+        """Whether a `for` loop iterates a fixed, non-empty word list (no glob, variable or substitution)."""
+        return bool(loop.words) and not any(mark in word.raw for word in loop.words for mark in "*?[$`")
+
+    def exits_in(self, node: Any) -> Iterator[_Simple]:
+        """The ``exit`` commands that would end the shell running *node*."""
+        if isinstance(node, _Simple):
+            if node.words and node.words[0].text == "exit":
+                yield node
+        elif not isinstance(node, _Function) and not (isinstance(node, _Group) and node.subshell):
+            for child in _children(node):
+                yield from self.exits_in(child)
 
     # -- does a failure reach the exit status? ---------------------------
 
@@ -998,13 +1247,13 @@ class _Analysis:
             if set_args is not None:
                 options = _apply_set(options, set_args)
                 continue
+            options = self.weakened(item, options)  # a `set +e` in the item may run before its command
             result = self.and_or(item.and_or, options)
-            options = self.weakened(item, options)
             if result is None:
                 continue
             culprit = self.first_required(item.and_or)
             if item.background:
-                self.report(culprit, "runs in the background (`&`), so nothing waits for its exit status")
+                self.report(culprit, "runs in the background (`&`); run required commands in the foreground")
             elif result == STATUS and not (last and tail_counts):
                 self.report(culprit, tail_reason if last else self.lost_reason(options))
             elif result == STATUS:
@@ -1014,10 +1263,10 @@ class _Analysis:
         return None if len(self.findings) > reported else outcome
 
     def lost_reason(self, options: ShellOptions) -> str:
-        if options.errexit:
+        if options.stops:
             return (
-                "can fail inside a `&&` / `||` list, which errexit ignores, while a later command "
-                "decides the exit status"
+                "can fail without stopping the script, because errexit ignores a failure inside an `&&` / `||` "
+                "list or a `{ … }` group, while a later command decides the exit status"
             )
         return (
             "can fail without stopping the script: errexit is off or ignored here, so a later command "
@@ -1025,11 +1274,14 @@ class _Analysis:
         )
 
     def weakened(self, item: _Item, options: ShellOptions) -> ShellOptions:
-        """Options after *item*: any nested ``set +e`` / ``set +o pipefail`` may have run."""
+        """*options* with any ``set +e`` / ``set +o pipefail`` inside *item* applied."""
         for command in self.commands_in(item):
-            if isinstance(command, _Simple) and command.words and command.words[0].text == "set":
-                turned = _apply_set(ShellOptions(True, True), [word.text for word in command.words[1:]])
-                options = ShellOptions(options.errexit and turned.errexit, options.pipefail and turned.pipefail)
+            args = _option_args(command)
+            if args is not None:
+                turned = _apply_set(ShellOptions(True, True), args)
+                options = replace(
+                    options, errexit=options.errexit and turned.errexit, pipefail=options.pipefail and turned.pipefail
+                )
         return options
 
     def commands_in(self, node: Any) -> Iterator[Any]:
@@ -1047,8 +1299,8 @@ class _Analysis:
         for position, pipeline in enumerate(and_or.pipelines):
             if not self.has_required(pipeline):
                 continue
-            # errexit is ignored inside a compound placed anywhere but last in the list.
-            inner = replace(options, errexit=options.errexit and position == count - 1)
+            # bash ignores errexit for every command of the list but the last, and inside compounds placed there.
+            inner = replace(options, ignored=options.ignored or position != count - 1)
             outcome = self.pipeline(pipeline, inner)
             result = result or TERMINATES
             if outcome is None:
@@ -1057,41 +1309,45 @@ class _Analysis:
             if position and and_or.operators[position - 1] == "||":
                 self.report(culprit, "runs only when the command before `||` fails, so it is usually skipped")
                 continue
-            # Its own failure (unless it already ends the shell), and a predecessor's
+            # Its own failure (unless that already ends the shell), and a predecessor's
             # failure that skips it: either must still fail the list.
             paths = [] if outcome == TERMINATES else [(self.after_failure(and_or, position), "")]
             if position:
                 skipped = "is skipped when the command before `&&` fails, and "
                 paths.append((self.after_failure(and_or, position - 1), skipped))
-            for (kind, fallback), prefix in paths:
+            for (kind, fallback, fallback_ran), prefix in paths:
                 if kind == "masked":
                     self.report(culprit, f"{prefix}is masked by `|| {fallback}`, which can exit 0")
                     break
-                if kind == "terminates" or (kind == "errexit" and options.errexit):
+                # errexit acts on the list only when its last command failed in its own right: a
+                # failing fallback, or this command - unless it is a `{ … }` group returning a
+                # status errexit already ignored inside it.
+                acts = options.stops and (fallback_ran or outcome != RETURNS)
+                if kind == "terminates" or (kind == "errexit" and acts):
                     continue
                 result = STATUS
         return None if len(self.findings) > reported else result
 
-    def after_failure(self, and_or: _AndOr, failed: int) -> Tuple[str, str]:
+    def after_failure(self, and_or: _AndOr, failed: int) -> Tuple[str, str, bool]:
         """Follow the list after pipeline *failed* exits non-zero.
 
-        Returns ``("masked", fallback)``, ``("terminates", "")`` when an ``exit``
-        ends the shell, ``("errexit", "")`` when the list's last command is the
-        one that fails (errexit applies), or ``("silent", "")`` when only the
-        list's exit status records the failure.
+        Returns ``(kind, fallback, fallback_ran)``. *kind* is ``masked`` (a
+        fallback that can exit 0 ran), ``terminates`` (an ``exit`` ended the
+        shell), ``errexit`` (the list's last command is the one that failed) or
+        ``silent`` (only the list's exit status records the failure).
         """
-        last = failed
+        last, ran = failed, False
         for index in range(failed, len(and_or.operators)):
             if and_or.operators[index] == "&&":
                 continue
             fallback = and_or.pipelines[index + 1]
             kind = self.fallback(fallback)
             if kind == "succeeds":
-                return "masked", _text(fallback)
+                return "masked", _text(fallback), True
             if kind == "exits":
-                return "terminates", ""
-            last = index + 1
-        return ("errexit" if last == len(and_or.pipelines) - 1 else "silent"), ""
+                return "terminates", "", True
+            last, ran = index + 1, True
+        return ("errexit" if last == len(and_or.pipelines) - 1 else "silent"), "", ran
 
     def fallback(self, pipeline: _Pipeline) -> str:
         """``exits`` (ends the shell non-zero), ``fails`` (exits non-zero) or ``succeeds`` (may exit 0)."""
@@ -1099,21 +1355,26 @@ class _Analysis:
             return "succeeds"
         command = pipeline.commands[0]
         if isinstance(command, _Simple):
-            argv = [word.text for word in command.words]
-            if argv[:1] == ["exit"]:
-                # A bare `exit`, `exit $?` or `exit "$rc"` re-raises; only a literal 0 (mod 256) succeeds.
-                code = argv[1] if len(argv) > 1 else "$?"
-                return "succeeds" if code.isdigit() and int(code) % 256 == 0 else "exits"
-            return "fails" if argv in (["false"], ["/bin/false"], ["/usr/bin/false"]) else "succeeds"
-        if isinstance(command, _Group) and command.body.items:
-            last = command.body.items[-1].and_or
-            if all(operator == "&&" for operator in last.operators):
-                tail = self.fallback(last.pipelines[-1])
-                if tail == "exits" and not command.subshell and len(last.pipelines) == 1:
-                    return "exits"
-                if tail in ("exits", "fails"):
-                    return "fails"
-        return "succeeds"
+            return _exit_kind(command, failed_status=True, captured=None)
+        if not isinstance(command, _Group) or not command.body.items:
+            return "succeeds"
+        items = command.body.items
+        captured = _captured_status(items[0])
+        last = items[-1].and_or
+        tail = last.pipelines[-1]
+        # An earlier `exit` that may leave with 0 ends the shell before the group's last command runs.
+        for node in items[:-1] + last.pipelines[:-1]:
+            if any(_exit_kind(exit_command, False, captured) == "succeeds" for exit_command in self.exits_in(node)):
+                return "succeeds"
+        if any(operator != "&&" for operator in last.operators):
+            return "succeeds"
+        if tail.negated or len(tail.commands) != 1 or not isinstance(tail.commands[0], _Simple):
+            return "succeeds"
+        alone = len(items) == 1 and len(last.pipelines) == 1
+        kind = _exit_kind(tail.commands[0], failed_status=alone, captured=captured)
+        if kind == "exits" and not command.subshell and len(last.pipelines) == 1:
+            return "exits"
+        return "succeeds" if kind == "succeeds" else "fails"
 
     def pipeline(self, pipeline: _Pipeline, options: ShellOptions) -> Optional[str]:
         culprit = self.first_required(pipeline)
@@ -1132,37 +1393,51 @@ class _Analysis:
             outcome = self.command(command, options)
             if outcome is None:
                 return None
-            # Each element of a multi-command pipeline runs in a subshell: an exit ends only that subshell.
+            # Each element of a multi-command pipeline runs in a subshell: an exit ends only that
+            # subshell, and errexit sees the pipeline's own status.
             outcomes.append(STATUS if len(pipeline.commands) > 1 else outcome)
-        return STATUS if STATUS in outcomes else TERMINATES
+        return next((kind for kind in (STATUS, RETURNS) if kind in outcomes), TERMINATES)
 
     def command(self, command: _Command, options: ShellOptions) -> Optional[str]:
         if isinstance(command, _Simple):
-            kind = _required(command)
-            if kind:
-                self.required.append(kind)
-                found = _find_exec(_argv(command))
-                if found and found[1] != "+":
-                    self.report(command, "runs under `find -exec … ;`, which ignores the command's exit status")
-                    return None
+            found = _find_exec(_argv(command))
+            if found and found[1] != "+":
+                self.report(command, "runs under `find -exec … ;`, which ignores the command's exit status")
+                return None
+            if _required(command):
                 return STATUS
-            nested = self.nested_shell(command)
-            if nested is not None and self.scope(nested[0], nested[1], True, ""):
-                return STATUS  # the nested shell's exit status carries the failure
-            return None
+            nested = self.nested(command)
+            if nested is None:
+                return None
+            script, nested_options, current_shell = nested
+            outcome = self.scope(script, options if nested_options is None else nested_options, True, "")
+            if outcome is None:
+                return None
+            # `eval` and a nested shell are simple commands: errexit acts on their status. Only an
+            # exit inside `eval`, which runs in this shell, ends the step itself.
+            return TERMINATES if current_shell and outcome == TERMINATES else STATUS
         if isinstance(command, _Group):
             outcome = self.scope(command.body, options, True, "")
-            return STATUS if command.subshell and outcome else outcome
+            if outcome is None:
+                return None
+            if command.subshell:
+                return STATUS
+            # A failure ignored inside a `{ … }` group leaves a status errexit does not act on.
+            return TERMINATES if outcome == TERMINATES else RETURNS
         culprit = self.first_required(command)
         if isinstance(command, _If):
             if any(self.has_required(condition) for condition in command.conditions):
                 self.report(culprit, "is an `if`/`elif` condition, so the test consumes its exit status")
             else:
                 self.report(culprit, "runs on one branch of an `if` only; gate the whole step with `if:` instead")
+        elif isinstance(command, _Loop) and command.kind == "for" and not self.literal_list(command):
+            self.report(culprit, "runs inside a `for` loop without a fixed word list, which may run it zero times")
         elif isinstance(command, _Loop) and command.kind == "for":
-            reason = "is the last command of a `for` loop body without errexit, so only the final iteration counts"
-            self.scope(command.body, options, False, reason)
-            return TERMINATES
+            reason = (
+                "is the last command of a `for` loop body and its failure does not stop the loop, so only "
+                "the final iteration's status counts"
+            )
+            return TERMINATES if self.scope(command.body, options, False, reason) == TERMINATES else None
         elif isinstance(command, _Loop):
             self.report(culprit, f"runs inside a `{command.kind}` loop, which may run it zero times")
         elif isinstance(command, _Case):
@@ -1196,16 +1471,12 @@ class _Analysis:
                 for command in pipeline.commands:
                     if isinstance(command, _Group):
                         chained = position < len(and_or.operators) and and_or.operators[position] == "&&"
-                        follows = (
-                            and_or.pipelines[position + 1]
-                            if chained
-                            else after
-                            if position == len(and_or.operators)
-                            else None
+                        last = position == len(and_or.operators)
+                        self.noop_fallbacks(
+                            command.body, and_or.pipelines[position + 1] if chained else after if last else None
                         )
-                        self.noop_fallbacks(command.body, follows)
                     elif isinstance(command, _Simple):
-                        nested = self.nested_shell(command)
+                        nested = self.nested(command)
                         if nested is not None:
                             self.noop_fallbacks(nested[0], None)
                     else:
@@ -1247,27 +1518,69 @@ class _Analysis:
             self.report(scanned, f"`|| true` is sanctioned only when the severity helper gates this report: {problem}")
         return True
 
+    # -- shapes this guard cannot follow -----------------------------------
+
     def substitutions(self, script: _Script) -> None:
-        for word in _words(script):
-            for sub in word.subs:
-                if self.has_required(sub):
+        for node in self.walk(script):
+            for word in _own_words(node):
+                for sub in word.subs:
+                    if self.has_required(sub):
+                        self.report(
+                            self.first_required(sub),
+                            "runs inside a command substitution, which discards its exit status",
+                        )
+
+    def traps(self, script: _Script) -> None:
+        for node in self.walk(script):
+            argv = _argv(node) if isinstance(node, _Simple) else []
+            if argv[:1] != ["trap"] or len(argv) < 3 or argv[1].startswith("-"):
+                continue
+            if not any(signal.upper() in ("EXIT", "0", "ERR", "SIGEXIT") for signal in argv[2:]):
+                continue
+            try:
+                action = _parse(argv[1], node.line)
+            except ShellParseError as exc:
+                self.report(node, f"sets an EXIT/ERR trap this guard cannot parse ({exc})")
+                continue
+            for exit_command in self.exits_in(action):
+                code = ([word.text for word in exit_command.words] + ["$?"])[1]
+                if code not in ("$?", "${?}") and not (code.isdigit() and int(code) % 256):
+                    self.report(node, f"sets an EXIT/ERR trap that runs `exit {code}`, replacing the step's status")
+                    break
+
+    def opaque_commands(self, script: _Script) -> None:
+        for node in self.walk(script):
+            if not isinstance(node, _Simple) or _required(node) or self.nested(node) is not None:
+                continue
+            argv = _argv(node)
+            if not argv:
+                continue
+            if "GITHUB_EXPRESSION" in argv[0]:
+                self.report(node, "runs a command taken from a `${{ }}` expression, which this guard cannot check")
+            elif posixpath.basename(argv[0]) not in _MENTION_OK and not _installs(argv):
+                named = _mentioned(argv)
+                if named:
                     self.report(
-                        self.first_required(sub), "runs inside a command substitution, which discards its exit status"
+                        node,
+                        f"names {named} but runs it through `{argv[0]}`, which this guard does not model; "
+                        "run the required command directly",
                     )
-                self.substitutions(sub)
 
 
-def scan_script(text: str, where: str, options: ShellOptions) -> Tuple[List[str], List[str]]:
-    """Analyse one shell script; return ``(findings, required command kinds seen)``."""
-    try:
-        script = _parse(_github_expressions(text))
-    except ShellParseError as exc:
-        return [f"{where}: could not parse the shell script ({exc}); simplify it or extend this guard"], []
-    analysis = _Analysis(where)
-    analysis.scope(script, options, True, "")
-    analysis.noop_fallbacks(script, None)
-    analysis.substitutions(script)
-    return analysis.findings, analysis.required
+def _expression_injections(text: str) -> List[str]:
+    """``${{ }}`` expressions whose string literals paste shell syntax into the script."""
+    found: List[str] = []
+    position = 0
+    while True:
+        start = text.find("${{", position)
+        end = text.find("}}", start + 3) if start >= 0 else -1
+        if start < 0 or end < 0:
+            return found
+        expression = text[start + 3 : end].strip()
+        literals = re.findall(r"'((?:[^']|'')*)'", expression)
+        if any(token in literal for literal in literals for token in ("|", "&", ";", "\n", "`", "$(")):
+            found.append(expression)
+        position = end + 2
 
 
 def _github_expressions(text: str) -> str:
@@ -1284,7 +1597,53 @@ def _github_expressions(text: str) -> str:
         position = end + 2
 
 
+_REQUIRED_WORD_RE = re.compile(
+    r"\b(?:pytest|py\.test|ruff|mypy|forgelm)\b|node +--test|tools[/\\](?:check_\w{1,64}|update_site_version)\.py",
+    re.ASCII,
+)
+
+
+def scan_script(
+    text: str, where: str, options: ShellOptions, root: Optional[Path] = None, strict_parse: bool = True
+) -> Tuple[List[str], List[str]]:
+    """Analyse one shell script; return ``(findings, required command kinds it names)``.
+
+    A script that does not parse is a finding (fail closed) when *strict_parse*
+    is set or the text names a required command.
+    """
+    findings = [
+        f"{where}: the expression `${{{{ {expression} }}}}` pastes shell syntax into the script, which this "
+        "guard cannot check; pass the value through `env:` instead"
+        for expression in _expression_injections(text)
+    ]
+    analysis = _Analysis(where, root)
+    try:
+        script = _parse(_github_expressions(text))
+        analysis.scope(script, options, True, "")
+        analysis.noop_fallbacks(script, None)
+        analysis.substitutions(script)
+        analysis.traps(script)
+        analysis.opaque_commands(script)
+        required = [
+            kind for kind in (_required(node) for node in analysis.walk(script) if isinstance(node, _Simple)) if kind
+        ]
+    except ShellParseError as exc:
+        if strict_parse or _REQUIRED_WORD_RE.search(text):
+            findings.append(f"{where}: could not parse the shell script ({exc}); simplify it or extend this guard")
+        return findings, []
+    except RecursionError:
+        return findings + [f"{where}: the script nests too deeply for this guard to analyse; simplify it"], []
+    return findings + analysis.findings, required
+
+
 # ── Workflows and gauntlets ──────────────────────────────────────────────
+
+
+def _default_shell(container: Any) -> Optional[str]:
+    defaults = container.get("defaults") if isinstance(container, dict) else None
+    run = defaults.get("run") if isinstance(defaults, dict) else None
+    shell = run.get("shell") if isinstance(run, dict) else None
+    return shell if isinstance(shell, str) else None
 
 
 def _shell_options(shell: Optional[str], runner: str) -> Tuple[Optional[ShellOptions], str]:
@@ -1299,7 +1658,7 @@ def _shell_options(shell: Optional[str], runner: str) -> Tuple[Optional[ShellOpt
     if spelling == "sh":
         return ShellOptions(errexit=True, pipefail=False), spelling  # sh -e {0}
     parts = spelling.split()
-    if parts and posixpath.basename(parts[0]) in _SHELLS and "{0}" in parts:
+    if parts and posixpath.basename(parts[0]) in ("bash", "sh", "dash") and "{0}" in parts:
         return _apply_set(INTERACTIVE, parts[1:]), spelling
     return None, f"`shell: {spelling}`"
 
@@ -1308,15 +1667,19 @@ def _runner(job: dict) -> str:
     """``posix``, or ``other`` when runs-on may name a Windows runner or cannot be resolved."""
     runs_on = job.get("runs-on")
     labels = runs_on if isinstance(runs_on, list) else [runs_on]
-    matrix = (job.get("strategy") or {}).get("matrix") or {}
+    strategy = job.get("strategy")
+    matrix = strategy.get("matrix") if isinstance(strategy, dict) else None
+    matrix = matrix if isinstance(matrix, dict) else {}
+    include = matrix.get("include") if isinstance(matrix.get("include"), list) else []
     resolved: List[str] = []
     for label in labels:
         if not isinstance(label, str):
             return "other"
-        match = re.fullmatch(r"\$\{\{ ?matrix\.([\w-]{1,64}) ?\}\}", label.strip())
-        if match and isinstance(matrix, dict) and isinstance(matrix.get(match.group(1)), list):
-            resolved += [str(value) for value in matrix[match.group(1)]]
-            resolved += [str(row[match.group(1)]) for row in matrix.get("include") or [] if match.group(1) in row]
+        match = re.fullmatch(r"\$\{\{ ?matrix\.([\w-]{1,64}) ?\}\}", label.strip(), re.ASCII)
+        if match and isinstance(matrix.get(match.group(1)), list):
+            key = match.group(1)
+            resolved += [str(value) for value in matrix[key]]
+            resolved += [str(row[key]) for row in include if isinstance(row, dict) and key in row]
         elif "${{" in label:
             return "other"
         else:
@@ -1328,52 +1691,83 @@ def _truthy_flag(value: Any) -> bool:
     return value is True or (isinstance(value, str) and value.strip() not in ("", "false"))
 
 
-_REQUIRED_WORD_RE = re.compile(r"\b(?:pytest|ruff|mypy|forgelm|node --test|tools/check_\w{1,64}\.py)\b")
-
-
-def scan_steps(steps: List[Any], where: str, job: dict, defaults: Optional[str]) -> Tuple[List[str], List[str]]:
+def scan_steps(
+    steps: List[Any],
+    where: str,
+    job: dict,
+    defaults: Optional[str],
+    root: Optional[Path] = None,
+    local_actions: Optional[Dict[str, List[str]]] = None,
+) -> Tuple[List[str], List[str]]:
     """Check every ``run:`` step of one job (or composite action)."""
     findings: List[str] = []
     required: List[str] = []
-    job_defaults = ((job.get("defaults") or {}).get("run") or {}).get("shell")
+    job_defaults = _default_shell(job)
     runner = _runner(job) if "runs-on" in job else "posix"
-    for index, step in enumerate(steps or []):
-        if not isinstance(step, dict) or not isinstance(step.get("run"), str):
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            findings.append(f"{where}: step #{index + 1} is not a mapping")
             continue
         name = step.get("name") or step.get("id") or f"#{index + 1}"
         label = f"{where}, step {name!r}"
-        options, shell = _shell_options(step.get("shell") or job_defaults or defaults, runner)
+        masked = _truthy_flag(step.get("continue-on-error")) or _truthy_flag(job.get("continue-on-error"))
+        uses = step.get("uses")
+        if isinstance(uses, str) and uses.startswith("./"):
+            runs = (local_actions or {}).get(uses[2:].rstrip("/"))
+            if runs and masked:
+                findings.append(
+                    f"{label}: `continue-on-error` lets {uses}, which runs {runs[0]}, fail the job silently"
+                )
+            continue
+        if not isinstance(step.get("run"), str):
+            continue
+        shell = step.get("shell") if isinstance(step.get("shell"), str) else None
+        options, spelling = _shell_options(shell or job_defaults or defaults, runner)
         if options is None:
             if _REQUIRED_WORD_RE.search(step["run"]):
                 findings.append(
-                    f"{label}: runs a required command under {shell}; use `shell: bash` so its exit status is checked"
+                    f"{label}: runs a required command under {spelling}; use `shell: bash` so its exit status is "
+                    "checked"
                 )
             continue
-        step_findings, step_required = scan_script(step["run"], label, options)
+        step_findings, step_required = scan_script(step["run"], label, options, root, strict_parse=False)
         findings += step_findings
         required += step_required
-        if step_required and (
-            _truthy_flag(step.get("continue-on-error")) or _truthy_flag(job.get("continue-on-error"))
-        ):
+        if step_required and masked:
             findings.append(f"{label}: `continue-on-error` lets {step_required[0]} fail without failing the job")
     return findings, required
 
 
-def scan_workflow(text: str, name: str) -> Tuple[List[str], List[str]]:
-    doc = yaml.safe_load(text) or {}
-    defaults = ((doc.get("defaults") or {}).get("run") or {}).get("shell")
+def scan_workflow(
+    text: str, name: str, root: Optional[Path] = None, local_actions: Optional[Dict[str, List[str]]] = None
+) -> Tuple[List[str], List[str]]:
+    """Check one workflow or composite-action file; return ``(findings, required command kinds)``."""
+    try:
+        doc = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        return [f"{name}: could not parse the YAML ({exc})"], []
+    if doc is None:
+        return [], []
+    if not isinstance(doc, dict):
+        return [f"{name}: the file is not a YAML mapping"], []
     findings: List[str] = []
     required: List[str] = []
-    for job_id, job in (doc.get("jobs") or {}).items():
-        job = job or {}
-        job_findings, job_required = scan_steps(job.get("steps") or [], f"{name}: job {job_id!r}", job, defaults)
-        findings += job_findings
-        required += job_required
-    runs = (doc.get("runs") or {}) if isinstance(doc.get("runs"), dict) else {}
-    if runs.get("steps"):
-        action_findings, action_required = scan_steps(runs["steps"], f"{name}: composite action", {}, None)
-        findings += action_findings
-        required += action_required
+    jobs = doc.get("jobs") or {}
+    if not isinstance(jobs, dict):
+        return [f"{name}: `jobs` is not a mapping"], []
+    for job_id, job in jobs.items():
+        steps = job.get("steps") or [] if isinstance(job, dict) else None
+        if not isinstance(steps, list):
+            findings.append(f"{name}: job {job_id!r} has no list of steps")
+            continue
+        found, kinds = scan_steps(steps, f"{name}: job {job_id!r}", job, _default_shell(doc), root, local_actions)
+        findings += found
+        required += kinds
+    runs = doc.get("runs")
+    if isinstance(runs, dict) and isinstance(runs.get("steps"), list):
+        found, kinds = scan_steps(runs["steps"], f"{name}: composite action", {}, None, root, local_actions)
+        findings += found
+        required += kinds
     return findings, required
 
 
@@ -1398,14 +1792,22 @@ def _missing_kinds(required: List[str]) -> List[str]:
 def scan_repo(root: Path) -> Tuple[List[str], int, int]:
     """Scan *root*'s workflows, composite actions and gauntlets; return ``(findings, surfaces, required)``."""
     findings: List[str] = []
-    workflows = sorted((root / ".github" / "workflows").glob("*.yml"))
+    workflow_dir = root / ".github" / "workflows"
+    workflows = sorted([*workflow_dir.glob("*.yml"), *workflow_dir.glob("*.yaml")])
     actions = sorted((root / ".github" / "actions").glob("*/action.y*ml"))
     if not workflows:
-        findings.append(f"no workflows under {root / '.github' / 'workflows'}; a scan of nothing would pass")
+        findings.append(f"no workflows under {workflow_dir}; a scan of nothing would pass")
     total = 0
-    for path in workflows + actions:
-        surface_findings, required = scan_workflow(path.read_text(encoding="utf-8"), str(path.relative_to(root)))
-        findings += surface_findings
+    local_actions: Dict[str, List[str]] = {}
+    for path in actions:
+        found, required = scan_workflow(path.read_text(encoding="utf-8"), str(path.relative_to(root)), root)
+        findings += found
+        total += len(required)
+        local_actions[path.parent.relative_to(root).as_posix()] = required
+    for path in workflows:
+        text = path.read_text(encoding="utf-8")
+        found, required = scan_workflow(text, str(path.relative_to(root)), root, local_actions)
+        findings += found
         total += len(required)
         if path.name == "ci.yml" and _missing_kinds(required):
             findings.append(
@@ -1416,8 +1818,8 @@ def scan_repo(root: Path) -> Tuple[List[str], int, int]:
         if script is None:
             findings.append(f"{doc}: no ```bash fence between the gauntlet:begin/end markers")
             continue
-        surface_findings, required = scan_script(script, f"{doc} gauntlet", INTERACTIVE)
-        findings += surface_findings
+        found, required = scan_script(script, f"{doc} gauntlet", INTERACTIVE, root)
+        findings += found
         total += len(required)
         if _missing_kinds(required):
             findings.append(f"{doc} gauntlet: no {', '.join(_missing_kinds(required))} invocation recognised")
@@ -1441,14 +1843,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         for finding in findings:
             print(f"  ✗ {finding}")
         print(
-            "\nRun required commands as plain commands, or end any fallback with `exit 1`. "
-            "`|| true` is reserved for bandit/pip-audit followed by their severity helper "
-            "(docs/standards/testing.md, '`|| true` discipline')."
+            "\nRun required commands as plain commands. A fallback must end with `exit 1`, or capture the "
+            'status first: `|| { rc=$?; echo …; exit "$rc"; }`. `|| true` is reserved for bandit/pip-audit '
+            "followed by their severity helper (docs/standards/testing.md, '`|| true` discipline')."
         )
         return 1
     if not args.quiet:
         print(
-            f"OK: {required} required command invocation(s) across {surfaces} workflow/gauntlet surface(s) propagate failure."
+            f"OK: {required} required command invocation(s) across {surfaces} workflow/gauntlet surface(s) "
+            "propagate failure."
         )
     return 0
 

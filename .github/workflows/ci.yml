@@ -194,8 +194,9 @@ jobs:
       # mypy, the forgelm CLI, a tools/ guard) can fail without failing its
       # step: an `||` fallback that can exit 0, a pipe without pipefail,
       # set +e, continue-on-error, or a failure errexit ignores inside an
-      # &&/|| list. bandit and pip-audit keep `|| true` only when the next
-      # command is their severity helper reading the same report.
+      # &&/|| list or a { } group. bandit and pip-audit keep `|| true` only
+      # when the next command is their severity helper reading the same
+      # report.
       - name: CI failure-masking guard (strict)
         run: python3 tools/check_ci_failure_masking.py --strict
 
