@@ -373,4 +373,6 @@ Small, self-contained tasks also include single findings in a `wave: 3` or `wave
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
+Code contributions are licensed under the [Apache License 2.0](LICENSE).
+Bundled seed datasets use **CC-BY-SA 4.0**; dataset contributions must follow the
+attribution and licensing requirements in [the template dataset license guide](forgelm/templates/LICENSES.md).
