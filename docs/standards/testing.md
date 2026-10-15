@@ -236,8 +236,11 @@ In this shape, `|| true` only captures the scanner's exit code so the helper can
 1. The `|| true` is on the immediately preceding scanner line (not on a `pytest`, `ruff`, or test command).
 2. The next line in the same `run:` block invokes a `tools/check_*.py` helper that does its own severity-tiered exit code.
 3. Both lines live in the same step (so the helper truly gates the scanner output).
+4. The helper reads the report that scanner wrote — its `-o` / `--output` path or `>` target.
 
-The canonical examples are [`tools/check_pip_audit.py`](../../tools/check_pip_audit.py) (CVE severity tier) and [`tools/check_bandit.py`](../../tools/check_bandit.py) (issue-severity tier). Any other `|| true` in CI must be replaced with `continue-on-error: true` at the YAML step level, and that step must explicitly document the rationale in a YAML `# comment:`.
+The canonical examples are [`tools/check_pip_audit.py`](../../tools/check_pip_audit.py) (CVE severity tier) and [`tools/check_bandit.py`](../../tools/check_bandit.py) (issue-severity tier). Any other `|| true` in CI must be replaced with `continue-on-error: true` at the YAML step level, and that step must explicitly document the rationale in a YAML `# comment:`. Never use it on a step that runs a required command: `pytest`, `node --test`, `ruff`, `mypy`, the `forgelm` CLI or a `tools/` guard.
+
+[`tools/check_ci_failure_masking.py`](../../tools/check_ci_failure_masking.py) enforces these rules on every workflow `run:` block and on the documented gauntlets. It treats `|| :` and `|| exit 0` like `|| true`, and also rejects any other way a required command's failure can be lost: an `||` fallback that can exit 0, a pipe without `pipefail`, `set +e`, `!`, `&`, a command substitution, a conditional branch, a shell other than bash or sh, and a non-final command of an `&&` / `||` list when later commands follow, because errexit ignores failures there. End a fallback with `exit 1` (or `exit $?`) when a step must report before failing.
 
 ## Writing a new test
 

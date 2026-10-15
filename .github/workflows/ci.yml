@@ -186,6 +186,19 @@ jobs:
       - name: Import-origin guard
         run: python3 tools/check_import_origin.py --strict
 
+      # testing.md forbids `|| true` in CI, but only the documented gauntlets
+      # were checked, and only for the literal `|| true`: appending it to the
+      # Node test command below left every wiring test green. This guard
+      # parses every run: block and the three gauntlets with a small shell
+      # lexer, and fails when a required command (pytest, node --test, ruff,
+      # mypy, the forgelm CLI, a tools/ guard) can fail without failing its
+      # step: an `||` fallback that can exit 0, a pipe without pipefail,
+      # set +e, continue-on-error, or a failure errexit ignores inside an
+      # &&/|| list. bandit and pip-audit keep `|| true` only when the next
+      # command is their severity helper reading the same report.
+      - name: CI failure-masking guard (strict)
+        run: python3 tools/check_ci_failure_masking.py --strict
+
       - name: Browser wizard regression tests
         run: node --test tests/site/*.test.cjs
 

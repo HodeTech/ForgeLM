@@ -172,6 +172,7 @@ python3 tools/check_import_origin.py --strict && \
   python3 tools/check_http_discipline.py && \
   python3 tools/check_no_mutation_artifacts.py --strict && \
   python3 tools/check_strict_json_writers.py --strict && \
+  python3 tools/check_ci_failure_masking.py --strict && \
   python3 tools/check_bilingual_parity.py --strict && \
   python3 tools/check_bilingual_code_blocks.py --strict && \
   python3 tools/check_anchor_resolution.py --strict && \
@@ -214,7 +215,7 @@ every later step depends on — that the `forgelm` being imported is the one
 you just edited — and `-m` alone does not cover the `tools/check_*.py`
 guards that import `forgelm` with `sys.path[0] == tools/`.
 
-All 31 must pass — the exact set `.github/workflows/ci.yml` runs.
+All 32 must pass — the exact set `.github/workflows/ci.yml` runs.
 `tests/test_guard_wiring.py` compares the two inventories in **both**
 directions across this file, `CLAUDE.md` and `AGENTS.md`, so wiring a new
 guard into CI without listing it here fails the build. The four after the
