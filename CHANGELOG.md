@@ -6,6 +6,10 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Rework the homepage terminal into a first-run guide with separately copyable installation and
+  config-generation commands, an optional training step, and readable code in both themes and on
+  narrow screens, with interface copy in all six site languages. Keep the dated CPU recording and
+  its provenance in the linked EN/TR walkthrough.
 - Make `training.warmup_ratio: 1.0` warm up over all training steps instead of one absolute step,
   preserving the configured fraction across all six trainer types with supported Transformers versions.
 - Qualify EN/TR EU AI Act summaries with the separate Annex I, Section B application regime

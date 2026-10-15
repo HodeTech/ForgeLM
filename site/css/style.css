@@ -1025,15 +1025,64 @@ section { padding: 5rem 0; }
   .hero-slider-dot.is-active .dot-fill { animation: none; }
 }
 
-/* Keep installation and recorded evidence visible outside the rotating slides. */
+/* Keep the first-run guide visible outside the rotating slides. */
 .hero-demo { min-width: 0; }
-.hero-install { margin-bottom: 1.25rem; }
-.hero-install p, .hero-demo-note { color: var(--text-secondary); font-size: 0.9rem; }
-.hero-install .code-block { margin: 0.6rem 0 0; }
-.hero-install pre { overflow-x: auto; }
-.hero-demo-note { margin: 1rem 0 0.6rem; }
-.hero-demo > a { font-size: 0.9rem; }
+.hero-demo > .eyebrow {
+  margin-bottom: 0.5rem;
+  color: var(--ember-bright);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.hero-demo .hero-demo-title { font-size: 1.45rem; margin: 0; }
+.hero-demo-intro { margin: 0.65rem 0 1.15rem; font-size: 0.95rem; }
+.hero-demo-note { margin: 1rem 0 0.6rem; color: var(--text-secondary); font-size: 0.85rem; }
+.hero-demo-links { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 0.85rem; }
+.hero-demo-links a + a { color: var(--text-secondary); }
+.hero-demo-links a:hover { color: var(--text); }
+[data-theme="light"] .hero-demo > .eyebrow,
+[data-theme="light"] .hero-demo-links a:first-child { color: var(--ember-deep); }
 .hero-terminal pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.hero-terminal .hero-command {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.hero-command + .hero-command { border-top: 1px solid var(--code-border); }
+.hero-command .code-block-header {
+  gap: 0.75rem;
+  padding: 0.9rem 1.2rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--code-text);
+}
+.hero-command-label { display: flex; align-items: center; gap: 0.65rem; }
+.hero-step-number { color: var(--steel-bright); font: 500 0.72rem var(--font-mono); }
+.hero-command .code-block-body { padding: 0.65rem 1.2rem 1.2rem; }
+.hero-command .flag { white-space: nowrap; }
+.hero-command .copy-btn { flex-shrink: 0; color: var(--code-text); }
+.hero-command .copy-btn.copied { color: var(--success); }
+.hero-training { border-top: 1px solid var(--code-border); }
+.hero-training summary {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 52px;
+  padding: 0.85rem 1.2rem;
+  color: var(--code-text);
+  font-size: 0.85rem;
+  cursor: pointer;
+  list-style: none;
+}
+.hero-training summary::-webkit-details-marker { display: none; }
+.hero-training summary svg { width: 16px; height: 16px; margin-left: auto; flex-shrink: 0; }
+.hero-training[open] summary svg { transform: rotate(180deg); }
+.hero-training summary:hover { background: rgba(255,255,255,.03); }
+.hero-training summary:focus-visible { outline: 2px solid var(--steel-bright); outline-offset: -3px; }
+.hero-training > p { padding: 0 1.2rem; color: var(--code-text); font-size: 0.8rem; }
+.hero-demo .terminal-bar { color: var(--code-text); }
 .contribute-actions { justify-content: center; margin: 1.5rem 0 0; }
 
 /* Hero terminal */
