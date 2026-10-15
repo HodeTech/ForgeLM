@@ -255,7 +255,7 @@
       monitoringEnabled: false,
       monitoringEndpoint: '',
       metricsExport: 'none',  // 'none' | 'prometheus' | 'datadog' | 'custom_webhook'
-      alertOnDrift: true,
+      alertOnDrift: false,
       monitoringCheckIntervalHours: 24,
       // Synthetic data generation (teacher → student). Optional
       // pre-training stage; ``syntheticTeacherModel`` is the API
@@ -370,6 +370,20 @@
     return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? { name: name } : { invalid: true };
   }
 
+  function validMonitoringUrl(value) {
+    if (!value) return true;
+    var lower = value.toLowerCase();
+    if (!lower.startsWith('http://') && !lower.startsWith('https://')) return false;
+    for (var i = 0; i < value.length; i++) {
+      if (value.charCodeAt(i) <= 32 || value.charCodeAt(i) === 127 || value[i] === '\\') return false;
+    }
+    try {
+      return !!new URL(value).hostname;
+    } catch (e) {
+      return false;
+    }
+  }
+
   /* ── Required-field validation ────────────────────────── */
   // Some steps require operator input that has no sensible default —
   // e.g. a custom HuggingFace model ID, or a dataset path / Hub name.
@@ -460,6 +474,8 @@
       }
       if (state.monitoringEnabled && parseEnvRef(state.monitoringEndpoint).invalid) {
         errors.push({ field: 'monitoringEndpoint', key: 'wizard.error.env_ref.invalid' });
+      } else if (state.monitoringEnabled && !validMonitoringUrl(parseEnvRef(state.monitoringEndpoint).literal)) {
+        errors.push({ field: 'monitoringEndpoint', key: 'wizard.error.monitoring.endpoint.invalid' });
       }
       if (state.monitoringEnabled && (!Number.isInteger(state.monitoringCheckIntervalHours) ||
           state.monitoringCheckIntervalHours < 1 || state.monitoringCheckIntervalHours > 720)) {
@@ -841,13 +857,11 @@
         var monitoringRef = parseEnvRef(state.monitoringEndpoint);
         if (monitoringRef.name) {
           k(1, 'endpoint_env', JSON.stringify(monitoringRef.name));
-        } else if (!monitoringRef.invalid && monitoringRef.literal) {
+        } else if (!monitoringRef.invalid && monitoringRef.literal && validMonitoringUrl(monitoringRef.literal)) {
           k(1, 'endpoint', JSON.stringify(monitoringRef.literal));
         }
       }
-      if (state.metricsExport && state.metricsExport !== 'none') {
-        k(1, 'metrics_export', JSON.stringify(state.metricsExport));
-      }
+      k(1, 'metrics_export', JSON.stringify(state.metricsExport || 'none'));
       k(1, 'alert_on_drift', state.alertOnDrift ? 'true' : 'false');
       if (Number.isInteger(state.monitoringCheckIntervalHours) && state.monitoringCheckIntervalHours >= 1 &&
           state.monitoringCheckIntervalHours <= 720) {
@@ -2757,6 +2771,11 @@
           state.monitoringEndpoint = epInput.value.trim();
           persist();
           liveYaml();
+          if (!fieldHasError(state, 'operations', 'monitoringEndpoint')) {
+            epInput.classList.remove('is-invalid');
+            var error = epRow.querySelector('.wizard-error');
+            if (error) error.remove();
+          }
         });
         body.appendChild(epRow);
 
@@ -2770,6 +2789,11 @@
           state.monitoringCheckIntervalHours = Number(intervalInput.value);
           persist();
           liveYaml();
+          if (!fieldHasError(state, 'operations', 'monitoringCheckIntervalHours')) {
+            intervalInput.classList.remove('is-invalid');
+            var error = intervalRow.querySelector('.wizard-error');
+            if (error) error.remove();
+          }
         });
         var intervalRow = el('div', { class: 'wizard-row' }, [
           el('label', { for: 'wizard-monitoring-interval', class: 'wizard-row-label', text: tr('wizard.monitoring.interval.label') }),

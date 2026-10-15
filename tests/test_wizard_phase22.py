@@ -1016,14 +1016,15 @@ class TestParseEnvRef:
 
         assert _parse_env_ref(reference) == expected
 
-    def test_monitoring_collector_reuses_shared_helper(self, capsys):
+    @pytest.mark.parametrize("raw", ["env:not valid", "env:1MON", "env:MÖN", "env:https://private.example/fake-token"])
+    def test_monitoring_collector_reuses_shared_helper(self, capsys, raw):
         # _collect_monitoring's soft-fail policy (warn + drop the field,
         # not raise) must still hold with the shared helper.
         with patch(
             "builtins.input",
             side_effect=_input_returning(
                 "y",  # configure post-market monitoring
-                "env:not valid",  # malformed env ref
+                raw,  # malformed env ref
                 "1",  # metrics_export = none
                 "n",  # alert_on_drift
                 "24",  # check_interval_hours
@@ -1034,6 +1035,9 @@ class TestParseEnvRef:
         assert "endpoint" not in monitoring
         out = capsys.readouterr().out
         assert "not a valid env-var reference" in out
+        assert raw not in out
+        assert "private.example" not in out
+        assert "fake-token" not in out
 
 
 class TestUniqueFilenamePrompt:
@@ -1197,6 +1201,27 @@ class TestMonitoringEnvPrefix:
         assert "Metadata only" in output
         assert "does not export metrics" in output
         assert "schedule checks" in output
+
+    def test_accepting_wizard_defaults_declares_no_drift_alerts(self):
+        with patch("builtins.input", side_effect=_input_returning("y", "", "", "", "")):
+            result = wizard._collect_monitoring()
+        assert result == {
+            "enabled": True,
+            "metrics_export": "none",
+            "alert_on_drift": False,
+            "check_interval_hours": 24,
+        }
+
+    def test_malformed_literal_url_is_reprompted_without_echo(self, capsys):
+        with patch(
+            "builtins.input",
+            side_effect=_input_returning("y", "private.example/fake-token", "http://[::1]:9090/m", "1", "n", "24"),
+        ):
+            result = wizard._collect_monitoring()
+        assert result["endpoint"] == "http://[::1]:9090/m"
+        output = capsys.readouterr().out
+        assert "Use an http(s)://host URL" in output
+        assert "private.example/fake-token" not in output
 
     def test_env_prefix_routes_to_endpoint_env(self, capsys):
         with patch(

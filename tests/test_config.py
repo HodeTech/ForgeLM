@@ -3,6 +3,8 @@
 import logging
 import os
 import re
+import subprocess
+import sys
 import warnings
 from pathlib import Path
 
@@ -151,13 +153,79 @@ class TestMonitoringConfig:
         assert MonitoringConfig(endpoint=value).endpoint == expected
 
     @pytest.mark.parametrize(
+        "value",
+        [
+            "prometheus.internal:9090",
+            "localhost:8080",
+            "monitor.example.com/x",
+            "https:host",
+            "ftp://host",
+            "https://",
+            "https://host:bad",
+            "https://host:65536",
+            "http://[::1",
+            "https://host/a b",
+            "https://host/a\tb",
+            "https://host\\path",
+        ],
+    )
+    def test_literal_endpoint_requires_absolute_http_url(self, value):
+        with pytest.raises(ValidationError, match=r"http\(s\)://host") as exc:
+            MonitoringConfig(endpoint=value)
+        assert "input_value" not in str(exc.value)
+
+    @pytest.mark.parametrize(
+        "value", ["http://localhost:8080/m", "http://[::1]:9090/m", "https://user:fake@host:8443/p?q=fake#fragment"]
+    )
+    def test_literal_endpoint_keeps_valid_input_for_evidence_projection(self, value):
+        assert MonitoringConfig(endpoint=value).endpoint == value
+
+    @pytest.mark.parametrize(
         "monitoring",
         [None, {"enabled": False, "metrics_export": "prometheus"}, {"enabled": True, "metrics_export": "none"}],
     )
-    def test_no_exporter_warning_for_inactive_export(self, caplog, monitoring):
+    def test_no_exporter_warning_for_inactive_export(self, tmp_path, caplog, monitoring):
+        path = _write_yaml(minimal_config(monitoring=monitoring), str(tmp_path / "monitoring.yaml"))
         with caplog.at_level(logging.WARNING, logger="forgelm.config"):
-            ForgeConfig(**minimal_config(monitoring=monitoring))
+            load_config(path)
         assert "monitoring.metrics_export" not in caplog.text
+
+    def test_direct_construction_does_not_emit_file_load_warning(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
+            config = ForgeConfig(**minimal_config(monitoring={"enabled": True, "metrics_export": "prometheus"}))
+        assert config.monitoring.metrics_export == "prometheus"
+        assert "monitoring.metrics_export" not in caplog.text
+
+    def test_null_literal_endpoint_is_rejected_in_yaml(self, tmp_path):
+        path = _write_yaml(minimal_config(monitoring={"enabled": True, "endpoint": None}), str(tmp_path / "null.yaml"))
+        with pytest.raises(ConfigError, match="monitoring.endpoint") as exc:
+            load_config(path)
+        assert "type=string_type" in str(exc.value)
+        assert "input_value" not in str(exc.value)
+
+    def test_pipeline_cli_dry_run_warns_once_without_endpoint_name(self, tmp_path):
+        data = minimal_config(
+            model={"name_or_path": "org/model", "offline": True},
+            training={"output_dir": str(tmp_path / "output")},
+            monitoring={"enabled": True, "metrics_export": "prometheus", "endpoint_env": "PRIVATE_MONITORING_NAME"},
+            pipeline={
+                "stages": [
+                    {"name": name, "training": {"trainer_type": "sft", "output_dir": str(tmp_path / "output" / name)}}
+                    for name in ("first", "second", "third")
+                ]
+            },
+        )
+        path = _write_yaml(data, str(tmp_path / "pipeline.yaml"))
+        result = subprocess.run(
+            [sys.executable, "-m", "forgelm", "--config", path, "--dry-run"],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stderr.count("monitoring.metrics_export is declarative metadata only") == 1
+        assert "PRIVATE_MONITORING_NAME" not in result.stderr
 
 
 # --- LoraConfigModel ---

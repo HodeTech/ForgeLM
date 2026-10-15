@@ -824,6 +824,12 @@ class TestManifestAnnexIV:
             ({}, None, ["endpoint"]),
             ({"endpoint": "https://monitor.example.com"}, "https://monitor.example.com", []),
             (
+                {"endpoint": "https://user:password@monitor.example.com:8443/secret?token=credential#fragment"},
+                "https://monitor.example.com:8443",
+                [],
+            ),
+            ({"endpoint": "http://[::1]:9090/secret?token=credential#fragment"}, "http://[::1]:9090", []),
+            (
                 {"endpoint": " https://user:password@monitor.example.com/secret?token=credential#fragment "},
                 "https://monitor.example.com",
                 [],
@@ -838,6 +844,8 @@ class TestManifestAnnexIV:
         ids=[
             "absent",
             "literal",
+            "literal-port",
+            "literal-ipv6",
             "masked-literal",
             "env",
             "env-precedence",
@@ -871,7 +879,7 @@ class TestManifestAnnexIV:
         declaration = {
             "declarative_only": True,
             "endpoint": expected,
-            "endpoint_redacted": expected == "https://monitor.example.com",
+            "endpoint_redacted": bool(config.monitoring.endpoint and not config.monitoring.endpoint_env),
             "metrics_export": "prometheus",
             "alert_on_drift": True,
             "check_interval_hours": 12,
@@ -883,6 +891,8 @@ class TestManifestAnnexIV:
         annex = json.loads((tmp_path / "annex_iv_metadata.json").read_text(encoding="utf-8"))
         assert report["monitoring"] == declaration
         assert annex["monitoring_and_logging"] == declaration
+        training_summary = yaml.safe_load((tmp_path / "training_manifest.yaml").read_text(encoding="utf-8"))
+        assert "monitoring" not in training_summary
         assert "secret.example.com" not in json.dumps(report)
         assert "secret.example.com" not in json.dumps(annex)
         for secret in ("password", "credential", "/secret", "#fragment"):

@@ -165,7 +165,7 @@ supported Python matrix:
 ```bash
 python3 tools/check_import_origin.py --strict && \
   ruff format . && ruff check . && pytest tests/ && \
-     node --test tests/site/*.test.cjs && \
+  node --test tests/site/*.test.cjs && \
   python3 -m forgelm --config config_template.yaml --dry-run && \
   python3 -m mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py tests/typing/public_surface_probe.py && \
   python3 tools/check_field_descriptions.py --strict forgelm/config.py && \

@@ -880,10 +880,22 @@ def _collect_monitoring() -> Optional[Dict[str, Any]]:
     if not _prompt_yes_no("Record an external post-market monitoring plan (metadata only)?", default=False):
         return None
     _print("  Metadata only: ForgeLM does not export metrics, detect drift, send drift alerts, or schedule checks.")
-    endpoint_raw = _prompt(
-        "External plan URL (optional; literal evidence keeps scheme/host only; prefer `env:VAR_NAME` for secrets)",
-        "",
-    )
+    from pydantic import ValidationError
+
+    from ..config import MonitoringConfig
+
+    while True:
+        endpoint_raw = _prompt(
+            "External plan http(s) URL (optional; evidence keeps scheme/host/port; YAML keeps the full URL; prefer env:NAME)",
+            "",
+        )
+        if endpoint_raw.strip().lower().startswith("env:"):
+            break
+        try:
+            MonitoringConfig(endpoint=endpoint_raw)
+            break
+        except ValidationError:
+            _print("  Use an http(s)://host URL with a valid port, env:NAME, or leave the endpoint empty.")
     metrics_export = _prompt_choice(
         "Declared external metrics_export:",
         ["none", "prometheus", "datadog", "custom_webhook"],
@@ -892,7 +904,7 @@ def _collect_monitoring() -> Optional[Dict[str, Any]]:
     monitoring: Dict[str, Any] = {
         "enabled": True,
         "metrics_export": metrics_export,
-        "alert_on_drift": _prompt_yes_no("Does your external monitoring stack alert on drift?", default=True),
+        "alert_on_drift": _prompt_yes_no("Does your external monitoring stack alert on drift?", default=False),
         "check_interval_hours": _prompt_int(
             "How often does your external stack check the model (hours)?", 24, min_val=1, max_val=720
         ),

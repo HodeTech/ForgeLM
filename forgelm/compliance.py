@@ -19,8 +19,8 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
+from urllib.parse import urlsplit
 
-from ._http import _mask_netloc
 from ._strict_json import dumps_strict, sanitize_non_finite
 from ._version import __version__ as _forgelm_version
 from .config import ConfigError, WebhookConfig
@@ -1489,6 +1489,17 @@ def _component_revisions_block(_config: Any = None) -> List[Dict[str, Any]]:
     ]
 
 
+def _redact_monitoring_endpoint(endpoint: str) -> str:
+    """Project a validated URL into evidence without losing its port or IPv6 brackets."""
+    parts = urlsplit(endpoint)
+    host = parts.hostname
+    assert host is not None  # MonitoringConfig has already validated this URL.
+    if ":" in host:
+        host = f"[{host}]"
+    port = f":{parts.port}" if parts.port is not None else ""
+    return f"{parts.scheme}://{host}{port}"
+
+
 def generate_training_manifest(
     config: Any,
     metrics: Dict[str, float],
@@ -1580,6 +1591,8 @@ def generate_training_manifest(
         ]
 
     # Record the operator's plan, not evidence of an active monitoring system.
+    # Reconstruct library configs with exclude_unset=True to preserve this
+    # provenance; a full model_dump() makes schema defaults look explicit.
     mon_cfg = getattr(config, "monitoring", None)
     if mon_cfg and mon_cfg.enabled:
         manifest["monitoring"] = {
@@ -1587,7 +1600,7 @@ def generate_training_manifest(
             "endpoint": (
                 f"${mon_cfg.endpoint_env}"
                 if mon_cfg.endpoint_env
-                else (_mask_netloc(mon_cfg.endpoint) if mon_cfg.endpoint else None)
+                else (_redact_monitoring_endpoint(mon_cfg.endpoint) if mon_cfg.endpoint else None)
             ),
             "endpoint_redacted": bool(mon_cfg.endpoint and not mon_cfg.endpoint_env),
             "metrics_export": mon_cfg.metrics_export,

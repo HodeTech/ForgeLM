@@ -4,6 +4,7 @@ import os
 import re
 import warnings
 from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple
+from urllib.parse import urlsplit
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, ValidationError, field_validator, model_validator
@@ -1297,7 +1298,7 @@ class MonitoringConfig(BaseModel):
     )
     endpoint: str = Field(
         default="",
-        description="External plan URL; evidence records only scheme/host. Never contacted. Use endpoint_env for credentials.",
+        description="Optional http(s)://host plan URL; evidence keeps scheme/host/port only. Never contacted. Prefer endpoint_env.",
     )
     endpoint_env: Optional[str] = Field(
         default=None,
@@ -1318,8 +1319,23 @@ class MonitoringConfig(BaseModel):
     @field_validator("endpoint")
     @classmethod
     def _strip_endpoint(cls, value: str) -> str:
-        """Normalize an optional literal URL before its evidence projection."""
-        return value.strip()
+        """Validate an optional literal URL without echoing secret-bearing input."""
+        value = value.strip()
+        if not value:
+            return value
+        try:
+            parts = urlsplit(value)
+            if (
+                parts.scheme not in ("http", "https")
+                or not parts.hostname
+                or "\\" in value
+                or any(ord(char) <= 32 or ord(char) == 127 for char in value)
+            ):
+                raise ValueError
+            _ = parts.port  # Access validates malformed and out-of-range ports.
+        except ValueError:
+            raise ValueError("monitoring.endpoint must be an http(s)://host URL with a valid port, or empty.") from None
+        return value
 
     @field_validator("endpoint_env")
     @classmethod

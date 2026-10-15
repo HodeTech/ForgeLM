@@ -387,7 +387,7 @@ and the QMS by [Article 17(1)(h)](https://eur-lex.europa.eu/eli/reg/2024/1689/oj
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `false` | Record the external plan in the manifest; optional metadata recording; legal obligations apply separately |
-| `endpoint` | string | `""` | Optional URL; evidence keeps scheme/host only, never contacted |
+| `endpoint` | string | `""` | Optional URL; evidence keeps scheme/host/port only, never contacted |
 | `endpoint_env` | string | `null` | ASCII identifier takes precedence over `endpoint`; recorded as `$NAME` in plain-text evidence, never read; no credentials |
 | `metrics_export` | string | `"none"` | Declared external exporter: `"none"`, `"prometheus"`, `"datadog"`, `"custom_webhook"`; an enabled non-`none` declaration emits a config-load warning |
 | `alert_on_drift` | bool | `true` | Whether the external plan calls for drift alerts; does not activate alerts |
@@ -396,11 +396,17 @@ and the QMS by [Article 17(1)(h)](https://eur-lex.europa.eu/eli/reg/2024/1689/oj
 If both endpoint fields are empty, the manifest records `endpoint: null`. Environment-variable
 references remain unresolved even if the named variable is set. Disabled or omitted plans are not recorded.
 
+An enabled non-`none` exporter declaration emits a warning at `load_config`; direct `ForgeConfig(...)` construction does not emit this file-load warning.
+
 Recording metadata in ForgeLM is optional; Article 72 requires providers of high-risk AI systems to establish and document a post-market monitoring system. These fields are a summary, not the detailed plan required by Annex IV point 9 (Article 72(3)).
 
-Evidence files (`compliance_report.json`, `training_manifest.yaml`, and, when emitted, `annex_iv_metadata.json`) are plain text. A literal `endpoint` is trimmed and reduced to scheme/host; userinfo, port, path, query, and fragment are removed and `endpoint_redacted: true` marks that reduction. Do not put credentials in either field; use `endpoint_env` for a secret-bearing URL. Its name is trimmed, must be an ASCII identifier (letters or underscore first, then letters, digits, or underscores), and is recorded verbatim as `$NAME` without reading the variable. A blank name falls back to the literal endpoint. Validation diagnostics preserve field paths and reasons without Pydantic raw-input excerpts.
+Monitoring evidence files (`compliance_report.json` and, when emitted, `annex_iv_metadata.json`) are plain text. The flattened `training_manifest.yaml` summary does not contain monitoring metadata.
 
-`defaulted_fields` lists recorded fields whose values came from schema defaults, rather than explicit operator input. An enabled plan alone therefore does not declare a 24-hour check cadence or a drift-alert policy. For example, `monitoring: {enabled: true}` produces this entry in `compliance_report.json`:
+A literal `endpoint` is trimmed and must be an absolute HTTP(S) URL with a host and valid port, such as `https://monitor.example.com:8443/plan`; schemeless values are rejected. Evidence retains scheme, host and optional port, preserving IPv6 brackets; userinfo, path, query and fragment are removed. `endpoint_redacted: true` means the literal endpoint passed through this projection, even if it already contained only scheme/host/port. The copied input YAML, browser preview and local storage retain the full URL, so never put credentials in it. Prefer `endpoint_env` for a secret-bearing URL.
+
+The `endpoint_env` name is trimmed, must be an ASCII identifier (letters or underscore first, then letters, digits, or underscores), and is recorded verbatim as `$NAME` without reading the variable. A blank name falls back to the literal endpoint. Validation diagnostics preserve field paths and reasons without Pydantic raw-input excerpts.
+
+`defaulted_fields` lists recorded fields whose values came from schema defaults, rather than explicit operator input. Library callers must use `model_dump(exclude_unset=True)` when rebuilding a config to preserve that distinction; a full dump makes defaults explicit. An enabled plan alone therefore does not declare a 24-hour check cadence or a drift-alert policy. For example, `monitoring: {enabled: true}` produces this entry in `compliance_report.json`:
 
 ```json
 {

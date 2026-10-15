@@ -259,9 +259,10 @@ data:
 # External post-market monitoring plan (Art. 72 / 17(1)(h)) — declarative metadata only.
 # Recorded in the compliance manifest / Annex IV; ForgeLM does not contact the endpoint,
 # export metrics, detect drift, send drift alerts, or schedule checks. Operate your own stack.
+# Uncommented values are explicit declarations about your external stack; review them before use.
 # monitoring:
 #   enabled: true
-#   endpoint: ""  # optional literal URL; evidence keeps scheme/host only
+#   endpoint: ""  # optional literal URL; evidence keeps scheme/host/port only; must be http(s)://host
 #   endpoint_env: "MONITORING_PLAN_URL"  # recorded as "$NAME", never read; overrides endpoint
 #   metrics_export: "none"  # other exporters emit a metadata-only warning at config load
 #   alert_on_drift: true
