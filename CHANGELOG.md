@@ -63,7 +63,9 @@ All notable changes to ForgeLM are documented here.
   limitations it holds, instead of §3-5 "design and development methodology", in the verifier's field
   table, the writer's comment and the EN/TR reference and user-manual tables. The Annex IV page no
   longer calls `performance_metrics` the bundle's §7: no key holds the copy of the EU declaration of
-  conformity that §8 asks for, which the provider draws up under Article 47 (refs #539).
+  conformity that §8 asks for, which the provider draws up under Article 47. Only descriptions and
+  comments change, here and in the `§N` citations above: no output of the verifier or the writer does
+  (refs #539).
 - Apply the owner's Turkish terminology across the site and the Turkish docs: "piyasaya arz sonrası
   izleme" (and "piyasaya arz" for placing on the market), "AB" and the Regulation as "(AB) 2024/1689
   sayılı Tüzük", "Annex IV §N" (never "Ek IV"), "exporter" kept in English, "alarm" for a monitoring
