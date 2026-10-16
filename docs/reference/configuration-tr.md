@@ -346,7 +346,7 @@ sonrası izleme sistemi kurmasını ve belgelemesini gerektirir. Bu alanlar bir 
 bu dosya yükleme uyarısını vermez.
 
 İzleme kanıtı dosyaları (`compliance_report.json` ve üretildiğinde `annex_iv_metadata.json`) düz metindir.
-Düzleştirilmiş `training_manifest.yaml` özeti izleme metadatası içermez.
+Düzleştirilmiş `training_manifest.yaml` özeti izleme metadata'sı içermez.
 
 Literal `endpoint` kırpılır; `https://monitor.example.com:8443/plan` gibi host ve geçerli port içeren mutlak bir
 HTTP(S) URL olmalıdır. Şemasız değerler reddedilir. Kanıtta scheme, host ve varsa port korunur; IPv6 köşeli

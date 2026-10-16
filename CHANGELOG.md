@@ -49,10 +49,12 @@ All notable changes to ForgeLM are documented here.
   optional record from the provider's monitoring system and the Annex IV point 9 plan. Correct annex
   citation, article and gender slips in the touched German, French and Spanish strings, use one German
   term for the external stack, straight apostrophes in the French and Turkish monitoring copy, and
-  full-width punctuation with 端点 in the Chinese webhook-delivery note. Turkish guides now write
-  "pazar sonrası izleme", "AB" and, for the metrics exporter, "aktarım sistemi" throughout. The new
-  validation and interval keys keep their English fallback; native review of the deferred locales
-  remains open (refs #948).
+  full-width punctuation with 端点 in the Chinese webhook toggle copy. Turkish guides now write
+  "pazar sonrası izleme", "AB" and, for the metrics exporter, "aktarım sistemi" throughout, and the
+  Turkish site cites the Regulation as "(AB) 2024/1689 sayılı Tüzük". The English and Turkish hints
+  now say that Annex IV point 9 asks for a detailed description of the monitoring system, including
+  its plan. The new validation and interval keys keep their English fallback; native review of the
+  deferred locales remains open (refs #948).
 - Name every browser-wizard field by its visible caption. Text, number, slider, select and textarea
   captions now point at their control through unique, stable `id`/`for` pairs, so screen readers
   no longer announce a placeholder or nothing, and clicking a caption focuses its field. The LoRA

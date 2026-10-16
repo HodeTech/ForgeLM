@@ -1,6 +1,6 @@
 # `forgelm verify-integrity` — Referans
 
-> **Hedef kitle:** Eğitilmiş bir model dizininin, eğitim sırasında kaydedilen SHA-256 manifestiyle hâlâ eşleştiğini doğrulayan uyumluluk operatörleri ve CI kapıları (AB YZ Yasası Madde 15).
+> **Hedef kitle:** Eğitilmiş bir model dizininin, eğitim sırasında kaydedilen SHA-256 manifestiyle hâlâ eşleştiğini doğrulayan uyumluluk operatörleri ve CI kapıları (EU AI Act Madde 15).
 > **Ayna:** [verify_integrity_subcommand.md](verify_integrity_subcommand.md)
 
 `verify-integrity` alt komutu, Madde 15 `model_integrity.json` manifestinin tüketici karşılığıdır. Sonlandırma sırasında trainer, model dizinindeki dosyaları hash'leyip manifesti yazmadan önce model kartını (`README.md`) ve `deployer_instructions.md` dosyasını yazar. Manifest dosyasının kendisi doğrulamadan hariç tutulur. `verify-integrity` bu manifesti geri okur, her dosyanın SHA-256'sını yeniden hesaplar ve manifest üretildikten sonra **değiştirilen**, **silinen** veya **eklenen** her bir yapıtı raporlar. CLI, kütüphane giriş noktası `forgelm.verify.verify_integrity`'ye devreder (paket kökünde `forgelm.verify_integrity` olarak da erişilebilir) ve yapılandırılmış bir `VerifyIntegrityResult` döndürür.

@@ -133,7 +133,7 @@ For the parts we do translate, keep terminology consistent. A small glossary:
 | EU AI Act | EU AI Act / AB Yapay Zekâ Yasası | TR pages name it "EU AI Act"; when prose spells the short title out in Turkish, "Act" is *Yasası* |
 | Regulation (EU) 2024/1689, regulation (as an instrument) | (AB) 2024/1689 sayılı Tüzük | Formal citations name the instrument, and an EU regulation is a *Tüzük*: the GDPR is the *Genel Veri Koruma Tüzüğü* |
 | post-market monitoring | pazar sonrası izleme | The provider's Article 72 system and plan; market surveillance by authorities is *piyasa gözetimi*, a different duty |
-| drift (model / data) | drift | Kept in English, as in the guides and the site; *kayma* only for a schema or threshold shift |
+| drift (model / data) | drift | Kept in English, as in the guides and the site. *Kayma* names a schema drift (*şema kayması*) or a threshold or preference shift |
 | metrics exporter | aktarım sistemi | The site's and the configuration reference's term for `monitoring.metrics_export` |
 
 When in doubt, look at sibling TR docs and match the most frequent choice. Don't invent new terminology mid-series.

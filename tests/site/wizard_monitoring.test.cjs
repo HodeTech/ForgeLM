@@ -142,10 +142,10 @@ test('every locale\'s monitoring hint still names the optional metadata, the Art
   }
 });
 
-test('monitoring and webhook-delivery copy keeps one apostrophe style, and Chinese punctuation and endpoint term', () => {
+test('monitoring and webhook copy keeps one apostrophe style, and Chinese punctuation and endpoint term', () => {
   const { translations } = loadWizard();
   const scoped = key => key.startsWith('wizard.monitoring.') || key.startsWith('wizard.step.operations.') ||
-    key === 'wizard.webhook.enabled.detail';
+    key === 'wizard.webhook.enabled.hint' || key === 'wizard.webhook.enabled.detail';
   // Citations such as 17(1)(h) and code tokens such as endpoint_env are not prose.
   const prose = value => value.replace(/\d+(?:\(\w+\))+/g, ' ').replace(/\b[a-z]+(?:_[a-z]+)+\b/g, ' ');
   for (const locale of ['en', 'tr', 'de', 'fr', 'es', 'zh']) {
