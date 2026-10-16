@@ -188,7 +188,7 @@ Güvenlik sonuçları `checkpoints/safety/safety_results.json`'a kaydedilir:
 }
 ```
 
-### Cross-run trend takibi
+### Cross-run trend izleme
 
 Her güvenlik değerlendirmesi `checkpoints/safety/safety_trend.jsonl`'a
 eklenir:
@@ -290,7 +290,7 @@ Değişikliğin Madde 1(39)(b) hükmüyle eklenen Madde 111(4), **2 Ağustos 202
 sunulmuş, sentetik ses, görüntü, video veya metin üreten sistemlerin (genel amaçlı YZ sistemleri dahil)
 sağlayıcılarına, Madde 50(2)'deki istisnalar saklı kalmak üzere, hükme uyum için **2 Aralık 2026**'ya
 kadar süre tanır. Bölüm V'teki genel amaçlı
-YZ modeli yükümlülükleri **2 Ağustos 2025**'ten itibaren uygulanır; bu tarihten önce piyasaya sunulmuş
+YZ modeli yükümlülükleri **2 Ağustos 2025**'ten itibaren uygulanır; bu tarihten önce piyasaya arz edilmiş
 modeller için geçiş tarihi 2 Ağustos 2027'dir
 ([(AB) 2024/1689 sayılı Tüzük, Madde 113 ve 111(3)](https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng)).
 Mevcut yüksek riskli sistemlere ilişkin Madde 111(2) dahil diğer geçiş hükümleri de uygulanabilirliği etkileyebilir.
@@ -302,7 +302,7 @@ Dağıtımınıza uygulanacak kuralları yetkin bir hukuk danışmanıyla değer
 - Makine-okunabilir uyumluluk kanıtı
 - Eğitim verisi kaynağı (provenance) takibi
 - Risk sınıflandırması
-- Sürekli izleme
+- Piyasaya arz sonrası izleme sistemini işletin; ForgeLM yalnızca harici plan metadata'sını kaydeder
 
 ### Uyumluluk artefaktları
 

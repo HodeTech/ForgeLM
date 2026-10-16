@@ -217,6 +217,7 @@ h1, h2, h3, h4, h5 {
   line-height: 1.2;
   letter-spacing: -0.02em;
   color: var(--text);
+  overflow-wrap: break-word; /* a long compound ("Datenschutzerklärung") must not widen a phone's page */
 }
 
 h1 { font-size: clamp(2rem, 5vw, 3.25rem); }
@@ -669,6 +670,18 @@ section { padding: 5rem 0; }
   transition: background-color var(--transition), border-color var(--transition), color var(--transition), transform var(--transition), box-shadow var(--transition), opacity var(--transition);
   white-space: nowrap;
   line-height: 1.2;
+  max-width: 100%;
+}
+/* A long translated label ("Voir la matrice complète des fonctionnalités")
+   wraps on a phone instead of widening the page, and a long path or event
+   name in code may break anywhere, so the column holding it can shrink to the
+   screen. Wider screens keep code whole: "、/system" has no break before the
+   slash, so breaking there would split the command. */
+@media (max-width: 560px) {
+  .btn { white-space: normal; text-align: center; }
+  code:not(pre code),
+  .article-card .article-evidence,
+  .wizard-spotlight-stage-snippet { overflow-wrap: anywhere; }
 }
 
 .btn-primary {
@@ -1207,16 +1220,16 @@ section { padding: 5rem 0; }
 
 .pipeline-flow {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 1rem;
   margin-top: 2.5rem;
   position: relative;
 }
 @media (max-width: 880px) {
-  .pipeline-flow { grid-template-columns: repeat(3, 1fr); }
+  .pipeline-flow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 480px) {
-  .pipeline-flow { grid-template-columns: repeat(2, 1fr); }
+  .pipeline-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .pipeline-stage {
@@ -1225,6 +1238,7 @@ section { padding: 5rem 0; }
   border-radius: var(--radius);
   padding: 1.2rem 1rem;
   text-align: center;
+  overflow-wrap: break-word; /* German compounds in two narrow columns on a phone */
   position: relative;
   transition: background-color var(--transition), border-color var(--transition), color var(--transition), transform var(--transition), box-shadow var(--transition), opacity var(--transition);
   cursor: default;
@@ -1369,7 +1383,7 @@ section { padding: 5rem 0; }
 }
 .use-case {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 1rem;
   padding: 1.5rem;
   background: var(--bg-card);
@@ -1412,6 +1426,8 @@ section { padding: 5rem 0; }
 }
 .code-block-header {
   display: flex;
+  flex-wrap: wrap; /* a long translated copy label drops below the language tag on a phone */
+  row-gap: 0.4rem;
   align-items: center;
   justify-content: space-between;
   padding: 0.55rem 1rem;
@@ -1480,14 +1496,16 @@ section { padding: 5rem 0; }
 }
 
 /* ── Compliance grid (Articles) ──────────────────────────── */
+/* ``minmax(0, 1fr)``: a ``1fr`` track grows to its longest unbreakable word, and
+   the file paths in these cards made the page wider than a phone. */
 .articles-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1.2rem;
   margin-top: 2rem;
 }
-@media (max-width: 880px) { .articles-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 560px) { .articles-grid { grid-template-columns: 1fr; } }
+@media (max-width: 880px) { .articles-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .articles-grid { grid-template-columns: minmax(0, 1fr); } }
 
 .article-card {
   background: var(--bg-card);
@@ -1554,7 +1572,10 @@ section { padding: 5rem 0; }
 }
 .step {
   display: grid;
-  grid-template-columns: auto 1fr;
+  /* ``minmax(0, 1fr)``, not ``1fr``: a ``1fr`` track cannot shrink below its
+     content, so a long terminal line widened the page on phones instead of
+     scrolling inside its code block. */
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 1.5rem;
   position: relative;
 }
@@ -1583,6 +1604,8 @@ section { padding: 5rem 0; }
 .step-content h3 { font-size: 1.1rem; margin-bottom: 0.4rem; }
 .step-content p { font-size: 0.95rem; margin-bottom: 0.8rem; }
 .step-content .code-block { margin: 0.6rem 0 0; }
+/* A phone gives a step's terminal block the card's padding back. */
+@media (max-width: 560px) { .step-content { padding: 1.2rem 1rem; } }
 
 /* ── CTA ─────────────────────────────────────────────────── */
 .cta {
@@ -1768,7 +1791,7 @@ section { padding: 5rem 0; }
 }
 .wizard-spotlight-stage {
   display: grid;
-  grid-template-columns: 36px 1fr;
+  grid-template-columns: 36px minmax(0, 1fr);
   gap: 0.8rem;
   padding: 0.8rem 1rem;
   background: var(--bg-card);
@@ -1849,7 +1872,7 @@ section { padding: 5rem 0; }
 
 @media (max-width: 900px) {
   .wizard-spotlight {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 1.6rem;
     padding: 1.6rem 1.4rem;
   }
@@ -2286,14 +2309,23 @@ section { padding: 5rem 0; }
   align-items: center;
   gap: 0.4rem;
 }
-.wizard-card-title .badge {
+/* The badges in captions say a field is required for the risk tier: the same
+   pill as on the cards, in a colour that reads at this size (4.5:1). */
+.wizard-card-title .badge,
+.wizard-row-label .badge,
+.wizard-toggle-label .badge {
   font-size: 0.7rem;
   font-weight: 500;
   padding: 0.1rem 0.5rem;
   background: var(--bg-elev);
   border: 1px solid var(--border-strong);
   border-radius: 999px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
+}
+.wizard-row-label .badge,
+.wizard-toggle-label .badge {
+  display: inline-block;
+  white-space: nowrap;
 }
 .wizard-card-desc {
   font-size: 0.82rem;
@@ -2365,6 +2397,21 @@ section { padding: 5rem 0; }
 .wizard-input.is-invalid {
   border-color: var(--danger);
 }
+/* An invalid field keeps its red border while focused, and Next moves focus
+   to it, so focus needs a mark of its own there. */
+.wizard-input.is-invalid:focus {
+  outline: 2px solid var(--ember-bright);
+  outline-offset: 2px;
+}
+/* On the light theme's white the ember-bright focus colour is 2.3:1, under the
+   3:1 a focus indicator needs; the deep shade is 5.2:1. The red of an error
+   message is 3.8:1 there, so it takes the darker red the contact form uses. */
+[data-theme="light"] .wizard-input:not(.is-invalid):focus,
+[data-theme="light"] .wizard-select:focus { border-color: var(--ember-deep); }
+[data-theme="light"] .wizard-input.is-invalid:focus,
+[data-theme="light"] .wizard-slider:focus-visible,
+[data-theme="light"] .wizard-accordion-header:focus-visible { outline-color: var(--ember-deep); }
+[data-theme="light"] .wizard-error { color: #b91c1c; } /* red-700 */
 
 /* Slider row (LoRA r / alpha, etc.). The numeric output sits to the
    right of the slider so the user can see the value without polling
@@ -2383,6 +2430,11 @@ section { padding: 5rem 0; }
   background: var(--border-strong);
   border-radius: 999px;
   outline: none;
+}
+/* ``outline: none`` above hides the browser's ring; keyboard focus still needs one. */
+.wizard-slider:focus-visible {
+  outline: 2px solid var(--ember-bright);
+  outline-offset: 4px;
 }
 .wizard-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -2420,6 +2472,7 @@ section { padding: 5rem 0; }
   user-select: none;
 }
 .wizard-toggle input[type="checkbox"] {
+  flex: none; /* a long caption must not squeeze the switch */
   appearance: none;
   -webkit-appearance: none;
   width: 36px;
@@ -2759,13 +2812,13 @@ section { padding: 5rem 0; }
 /* ── Contact ─────────────────────────────────────────────── */
 .contact-grid {
   display: grid;
-  grid-template-columns: 1.2fr 1fr;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
   gap: 2rem;
   max-width: 980px;
   margin: 0 auto;
 }
 @media (max-width: 880px) {
-  .contact-grid { grid-template-columns: 1fr; }
+  .contact-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 .contact-form-card,

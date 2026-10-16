@@ -1,6 +1,6 @@
 # GDPR Silinme Hakkı Rehberi (`forgelm purge`)
 
-> **EU Genel Veri Koruma Tüzüğü Madde 17** ("unutulma hakkı") veri
+> **AB Genel Veri Koruma Tüzüğü Madde 17** ("unutulma hakkı") veri
 > sahibine, sorumlunun kendisi hakkında tuttuğu kişisel verilerin
 > silinmesini isteme hakkı verir. ForgeLM'in `forgelm purge`
 > subcommand'ı, bir ForgeLM dağıtımının ürettiği veya tükettiği eğitim

@@ -61,15 +61,15 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 | `model.integrity_verified`     | Model kartı ve deployer talimatları dahil model yapıtları hash'lendi ve `model_integrity.json` yazıldı. Bağımsız doğrulamayı değil, üretimi kaydeder. | `artifacts` (hash'lenen dosya sayısı)                         | 15    |
 | `audit.classifier_load_failed` | Güvenlik sınıflandırıcısı (örn. Llama Guard) yüklenemedi. Koşu yine `passed=False` kaydeder.                       | `classifier`, `reason`                                        | 15    |
 
-### Madde 11 + Ek IV — Uyumluluk artefaktları
+### Madde 11 + Annex IV — Uyumluluk artefaktları
 
 | Event                            | Ne zaman emit edilir                                                          | Payload                                          | Madde         |
 |----------------------------------|-------------------------------------------------------------------------------|--------------------------------------------------|---------------|
 | `compliance.governance_exported` | Madde 10 veri yönetişim raporu diske yazıldı.                                 | `output_path`, `dataset_count`                   | 10            |
 | `compliance.governance_section_missing` | Yönetişim raporu yazıldı ancak Madde 10 veri-kalitesi bölümü eksikti (`data_audit_report.json` yok). | `section`, `expected_path`              | 10            |
 | `compliance.governance_failed`   | Yönetişim raporu üretimi iptal edildi (örn. şema uyumsuzluğu).                | `reason`                                          | 10            |
-| `compliance.artifacts_exported`  | Ek IV teknik dokümantasyon paketi (manifest, model card, audit zip) yazıldı.  | `output_dir`, `files`, `governance_ok`           | 11, Ek IV     |
-| `compliance.artifacts_export_failed` | Ek IV / Madde 11 manifest export'u başarısız oldu veya yarım kaldı (disk dolu, SIGKILL, serileştirme hatası). | `reason`                                          | 11, Ek IV     |
+| `compliance.artifacts_exported`  | Annex IV teknik dokümantasyon paketi (manifest, model card, audit zip) yazıldı. | `output_dir`, `files`, `governance_ok`           | 11, Annex IV  |
+| `compliance.artifacts_export_failed` | Annex IV / Madde 11 manifest export'u başarısız oldu veya yarım kaldı (disk dolu, SIGKILL, serileştirme hatası). | `reason`                                          | 11, Annex IV  |
 
 ### Madde 17 — GDPR Silinme Hakkı (Phase 21 — `forgelm purge`)
 

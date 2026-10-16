@@ -36,7 +36,7 @@ Model eğitimi, validation ve değerlendirme için kullanılan tüm veri kümele
   ```yaml
   data:
     governance:
-      known_biases: "Veri kümesi EU bölgesindeki İngilizce konuşan müşterilere meyilli"
+      known_biases: "Veri kümesi AB bölgesindeki İngilizce konuşan müşterilere meyilli"
   ```
 
 ### 4.2 Kişisel Veri

@@ -17,7 +17,7 @@ ForgeLM'in CI/CD-yerlisi tasarımı şunları sağlar:
 - **JSON çıktı**: Makine-okunabilir sonuçlar için `--output-format json`
 - **Dry-run doğrulama**: GPU olmadan `--dry-run` doğrular
 - **Webhook bildirimleri**: Başlangıç/başarı/hata için gerçek-zamanlı
-  Slack/Teams alarmları
+  Slack/Teams bildirimleri
 
 ---
 

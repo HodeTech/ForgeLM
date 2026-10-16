@@ -269,7 +269,7 @@ Have qualified legal counsel assess the rules for your deployment. Documentation
 - Machine-readable compliance evidence
 - Training data provenance tracking
 - Risk classification
-- Continuous monitoring
+- Operate a post-market monitoring system; ForgeLM records external-plan metadata only
 
 ### Compliance Artifacts
 

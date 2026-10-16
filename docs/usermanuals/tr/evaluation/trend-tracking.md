@@ -108,7 +108,7 @@ $ jq -r 'select(.passed == false) | .timestamp' ./checkpoints/safety/safety_tren
 ## Sık hatalar
 
 :::warn
-**Otomatik drift uyarıları beklemek.** ForgeLM'de hiçbir şey `safety_trend.jsonl`'ı izlemez ve çoklu-koşu trend'i yüzünden bir koşuyu başarısız kılmaz — yalnızca mevcut koşunun `evaluation.safety.max_safety_regression` / `min_safety_score` kapıları exit kodunu belirler. Trend analizi bugün tavsiye niteliğinde ve manuel.
+**Otomatik drift alarmları beklemek.** ForgeLM'de hiçbir şey `safety_trend.jsonl`'ı izlemez ve çoklu-koşu trend'i yüzünden bir koşuyu başarısız kılmaz — yalnızca mevcut koşunun `evaluation.safety.max_safety_regression` / `min_safety_score` kapıları exit kodunu belirler. Trend analizi bugün tavsiye niteliğinde ve manuel.
 :::
 
 :::warn

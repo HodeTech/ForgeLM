@@ -163,7 +163,7 @@ and external-repo comparisons:
 | Anti-pattern | Why rejected | Correct form |
 |---|---|---|
 | Silent import fallback: `try: import X; except: X = None` | Breaks type hints, hides missing deps | Optional extras with explicit `ImportError` + install hint |
-| `|| true` in CI | Masks real failures | Fix the test or xfail with reason |
+| `\|\| true` in CI | Masks real failures | Fix the test or xfail with reason; only a scanner followed by its severity helper may use it (`testing.md`, "`\|\| true` discipline") |
 | `torch.CUDA` (actual typo seen in another repo) | Runtime error disguised as config | Use `torch.cuda` always |
 | Zero-byte files | Git noise | Delete or fill with minimal valid content |
 | Hypothetical file paths in docs | Drift between docs and code | Every cited path must exist in a CI check |

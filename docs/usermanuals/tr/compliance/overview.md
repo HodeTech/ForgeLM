@@ -82,7 +82,7 @@ Tam kod referansları için [GitHub'daki Compliance özeti](https://github.com/H
 ## ForgeLM'in iddia *etmediği*
 
 :::warn
-ForgeLM Annex IV tarzı teknik dokümantasyon **üretir**. Sisteminizi AI Act kapsamında bir yüksek-riskli AI sistemi olarak **sertifikalandırmaz** — bu, herhangi bir toolkit'in kapsamı dışındaki bir notified-body veya öz-değerlendirme faaliyetidir.
+ForgeLM Annex IV tarzı teknik dokümantasyon **üretir**. Sisteminizi EU AI Act kapsamında bir yüksek-riskli AI sistemi olarak **sertifikalandırmaz** — bu, herhangi bir toolkit'in kapsamı dışındaki bir notified-body veya öz-değerlendirme faaliyetidir.
 
 Audit log konvansiyonel olarak append-only ve SHA-256-anchored. Gerçek tamper-evidence için log'u ayrı, write-once depoya (S3 Object Lock, ledger DB) göndermeniz gerekir. Toolkit artifact'ı üretebilir; chain-of-custody operasyonel sorumluluğunuzdur.
 
@@ -122,21 +122,26 @@ evaluation:
 
 ## Annex IV neyi içerir
 
-Artefact, eğitim manifestinden ve `compliance:` bloğunuzdan doldurulan, Annex IV §1-9'a eşlenmiş **dokuz** üst düzey anahtar taşır:
+Artefact, eğitim manifestinden ve `compliance:` bloğunuzdan doldurulan **dokuz** ForgeLM metadata anahtarı taşır;
+bunlar dokuz eksiksiz Annex IV bölümünü temsil etmez:
 
 | Üst düzey anahtar | Annex IV bölümü |
 |---|---|
 | `system_identification` | §1 — provider_name, system_name, system_version, provider_contact, intended_purpose, risk_classification. |
 | `intended_purpose` | §1 — kullanım amacı beyanı. |
 | `system_components` | §2 — model soyağacı + eğitim parametreleri. |
-| `computational_resources` | §2(g) — eğitim sırasında kullanılan hesaplama kaynağı. |
+| `computational_resources` | Annex IV §2(c) — eğitim sırasında kullanılan hesaplama kaynağı. |
 | `data_governance` | §2(d) — veri kökeni ve doğrulama metodolojisi. |
-| `technical_documentation` | §3-5 — ForgeLM sürümü, üretim zaman damgası, bilinen sınırlamalar. |
-| `monitoring_and_logging` | §6 — pazar-sonrası izleme + audit log referansı. |
-| `performance_metrics` | §7 — değerlendirme sonuçlarından doğruluk / sağlamlık metrikleri. |
-| `risk_management` | §9 — top-level `risk_assessment:` bloğu ya da açık bir "no risk_assessment block configured" işareti. |
+| `technical_documentation` | §1(c) / §3 — ForgeLM sürümü, üretim zaman damgası, bilinen sınırlamalar. |
+| `monitoring_and_logging` | Annex IV §9 (Madde 72(3)) — Beyan edilen harici izleme planı (`declarative_only: true`) veya audit log referansı; çalışan izleme kanıtı değildir. |
+| `performance_metrics` | Annex IV §2(g) / §4 — değerlendirme sonuçlarından doğruluk / sağlamlık metrikleri. |
+| `risk_management` | Annex IV §5 — top-level `risk_assessment:` bloğu ya da açık bir "no risk_assessment block configured" işareti. |
 
-Dağıtım coğrafyası, yaşam döngüsü, standartlar listesi, uygunluk beyanı veya pazar-sonrası izleme planı bölümü yoktur — bu sayfanın eski taslakları bunları listeliyordu, hiçbiri emit edilmiyor. Bu tablonun tek doğruluk kaynağı [Annex IV](#/compliance/annex-iv) sayfasıdır.
+Bu tablo kısmi metadata eşlemelerini gösterir; tam bir Annex IV belgesi değildir. Diğer eski bölüm etiketlerinin
+düzeltilmesi [#539](https://github.com/HodeTech/ForgeLM/issues/539), doğrulayıcının tamlık iddiaları
+[#573](https://github.com/HodeTech/ForgeLM/issues/573) kapsamında takip edilir.
+
+Dağıtım coğrafyası, yaşam döngüsü, standartlar listesi, uygunluk beyanı bölümü yoktur — bu sayfanın eski taslakları bunları listeliyordu, hiçbiri üretilmez. Yukarıdaki izleme kaydı bir metadata özetidir; Annex IV §9'un istediği, piyasaya arz sonrası izleme planını da içeren ayrıntılı açıklama değildir. Bu tablonun tek doğruluk kaynağı [Annex IV](#/compliance/annex-iv) sayfasıdır.
 
 ## Operasyonel sorumluluklar (siz, ForgeLM değil)
 
@@ -145,7 +150,7 @@ Toolkit kanıt üretir; insanlar sertifikasyonu üretir. Ekibiniz şunlardan sor
 - Üretime giden her koşunun audit paketini incelemek.
 - Audit log'u tamper-evidence için write-once depoya göndermek.
 - Gerektiğinde notified-body ile uygunluk değerlendirmesi yapmak.
-- Model deploy edildikten sonra post-market monitoring'i sürdürmek.
+- Model deploy edildikten sonra piyasaya arz sonrası izlemeyi sürdürmek.
 - Veri sahibi taleplerini (GDPR Madde 15-22) ele almak.
 
 `docs/qms/`'deki ForgeLM QMS SOP'ları operasyonel tarafı kapsar.

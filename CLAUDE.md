@@ -85,7 +85,7 @@ ForgeLM/
 │                            # export, inference, results, utils, __main__,
 │                            # _pypdf_normalise, _script_sanity,
 │                            # _strip_pattern
-├── tests/                   # 128 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
+├── tests/                   # 130 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
 ├── tools/                   # CI guards: check_anchor_resolution,
 │                            # check_bilingual_parity, check_cli_help_consistency,
 │                            # check_field_descriptions, check_no_analysis_refs,
@@ -166,12 +166,14 @@ Default workflow for a non-trivial change:
    ```bash
    python3 tools/check_import_origin.py --strict && \
      ruff format . && ruff check . && pytest tests/ && \
+     node --test tests/site/*.test.cjs && \
      python3 -m forgelm --config config_template.yaml --dry-run && \
      python3 -m mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py tests/typing/public_surface_probe.py && \
      python3 tools/check_field_descriptions.py --strict forgelm/config.py && \
      python3 tools/check_http_discipline.py && \
      python3 tools/check_no_mutation_artifacts.py --strict && \
      python3 tools/check_strict_json_writers.py --strict && \
+     python3 tools/check_ci_failure_masking.py --strict && \
      python3 tools/check_bilingual_parity.py --strict && \
      python3 tools/check_bilingual_code_blocks.py --strict && \
      python3 tools/check_anchor_resolution.py --strict && \
@@ -215,7 +217,7 @@ Default workflow for a non-trivial change:
    does not cover the `tools/check_*.py` guards that import `forgelm`
    with `sys.path[0] == tools/`.
 
-   All 31 must pass — the exact set `.github/workflows/ci.yml`
+   All 32 must pass — the exact set `.github/workflows/ci.yml`
    runs, held there by `tests/test_guard_wiring.py`, which now compares the
    two inventories in **both** directions (the usermanual-schema-drift guard —
    `check_usermanual_schema_drift.py --strict` — validates that every
@@ -346,6 +348,25 @@ Default workflow for a non-trivial change:
    in-repo `blob/main/<path>` URL is checked by stripping the prefix, so
    converting a link to absolute form cannot trade a PyPI 404 for a
    universal one.
+   The CI failure-masking guard (`check_ci_failure_masking.py --strict`)
+   closes the gap the gauntlet's own `|| true` check left open. That check,
+   `test_no_gauntlet_short_circuits_on_failure` in
+   `tests/test_guard_wiring.py`, read only the three gauntlet blocks (in
+   CLAUDE.md, AGENTS.md and CONTRIBUTING.md), and only for the literal
+   `|| true`, so appending `|| true` to `ci.yml`'s `node --test` step left
+   every wiring test green — as did `|| :`, `|| exit 0`, `| tee` without
+   `pipefail`, `set +e`, a step-level `continue-on-error`, or
+   `cmd && echo ok` followed by another line (bash's errexit ignores a
+   failure inside an `&&` / `||` list). The guard parses every workflow
+   `run:` block and this block with a small POSIX-shell parser
+   (`tools/_shell_syntax.py`), so comments, quoted prose and `python -c`
+   programs are never read as commands, and checks that a failing required
+   command — `pytest`, `node --test`, `ruff`, `mypy`, the `forgelm` CLI or a
+   `tools/` guard — still fails its step. It accepts only the shapes it
+   models, so keep required commands plain. It catches accidental masking,
+   not deliberate evasion; `docs/standards/testing.md` lists what is beyond
+   it. The bandit / pip-audit `|| true` exception holds only when the very
+   next command is the severity helper reading the same report.
 
 ## Branches, issues and the project board
 

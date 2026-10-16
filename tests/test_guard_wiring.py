@@ -129,7 +129,8 @@ def _ci_guards() -> set[tuple[str, tuple[str, ...]]]:
 
 def _workflow_guard_names() -> set[str]:
     names: set[str] = set()
-    for workflow in sorted(_WORKFLOWS.glob("*.yml")):
+    # GitHub runs `.yaml` workflows too; a guard wired only there is still wired.
+    for workflow in sorted([*_WORKFLOWS.glob("*.yml"), *_WORKFLOWS.glob("*.yaml")]):
         for name, _flags in _invocations("\n".join(_run_scalars(workflow))):
             names.add(name)
     return names
@@ -220,6 +221,17 @@ def test_every_guard_is_wired_or_allowlisted():
         f"these guards are wired into no workflow and not allowlisted: {unwired}. "
         "Wire each into ci.yml (or nightly.yml) or add it to _UNWIRED_ALLOWLIST with a rationale."
     )
+
+
+def test_a_guard_wired_only_in_a_yaml_workflow_counts(tmp_path, monkeypatch):
+    """This repository has no `.yaml` workflow, so only this test notices if the inventory stops reading them."""
+    (tmp_path / "extra.yaml").write_text(
+        "on: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - run: python3 tools/check_example.py --strict\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(globals(), "_WORKFLOWS", tmp_path)
+    assert _workflow_guard_names() == {"check_example.py"}
 
 
 def test_allowlist_entries_still_exist():
@@ -354,6 +366,7 @@ def test_gauntlet_non_guard_steps_are_wired_into_ci():
         "ruff check .",
         "ruff format",
         "pytest",
+        "node --test tests/site/*.test.cjs",
         "--config config_template.yaml --dry-run",
         # The FULL mypy argv, including the probe. A fragment stopping one
         # argument short was the bug: deleting ` tests/typing/public_surface_probe.py`
@@ -395,7 +408,9 @@ def test_no_gauntlet_short_circuits_on_failure():
 
     ``|| true`` stays legitimate for a scanner that exits non-zero on any
     finding (bandit) when a tiering helper owns the policy — but only inside a
-    ``{ …; }`` group, so the escape cannot leak to its neighbours.
+    ``{ …; }`` group, so the escape cannot leak to its neighbours. This test
+    checks that shape; ``tools/check_ci_failure_masking.py`` checks that the
+    wrapped command is such a scanner and that its helper reads the report.
     """
     for doc in _GAUNTLET_DOCS:
         # Deliberately NOT joining line continuations: the defect is per-line
@@ -411,7 +426,8 @@ def test_no_gauntlet_short_circuits_on_failure():
             stripped = line.strip().rstrip("\\").strip().removesuffix("&&").strip()
             assert stripped.startswith("{") and stripped.endswith("}") and "; }" in stripped, (
                 f"{doc}'s gauntlet has a bare '|| true' in {stripped!r}. It binds to the whole "
-                "preceding chain and swallows every earlier failure — wrap it as '{ cmd || true; }'."
+                "preceding chain and swallows every earlier failure. Only a scanner followed by its severity "
+                "helper may use it, wrapped as '{ bandit … || true; }'."
             )
 
 
