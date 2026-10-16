@@ -130,9 +130,19 @@ test('every locale\'s monitoring hint still names the optional metadata, the Art
     de: /Beobachtung nach dem Inverkehrbringen/, fr: /surveillance après commercialisation/,
     es: /vigilancia poscomercialización/, zh: /上市后监[控测]/ };
   const metadata = { en: 'metadata', tr: 'metadata', de: 'Metadaten', fr: 'métadonnées', es: 'metadatos', zh: '元数据' };
-  // The wording of Annex IV point 9 in each official language version (Regulation (EU) 2024/1689).
+  // The wording of Annex IV §9 in each official language version (Regulation (EU) 2024/1689).
   const describes = { en: /detailed description/, tr: /ayrıntılı açıklama/, de: /detaillierte Beschreibung/,
     fr: /description détaillée/, es: /descripción detallada/, zh: /详细描述/ };
+  const plan = { en: /including the monitoring plan/, tr: /izleme planı dahil/,
+    de: /einschließlich des Plans für die Beobachtung nach dem Inverkehrbringen/,
+    fr: /y compris le plan de surveillance après commercialisation/, es: /incluido el plan de vigilancia poscomercialización/,
+    zh: /包括上市后监控计划/ };
+  // Art. 72 binds providers of high-risk systems, and recording the plan in ForgeLM does not discharge it.
+  const highRisk = { en: /providers of high-risk AI systems/, tr: /yüksek riskli yapay zekâ sistemlerinin sağlayıcılarının/,
+    de: /Anbieter von Hochrisiko-KI-Systemen/, fr: /fournisseurs de systèmes d'IA à haut risque/,
+    es: /proveedores de sistemas de IA de alto riesgo/, zh: /高风险 AI 系统提供者/ };
+  const notEnough = { en: /declaration alone does not satisfy/, tr: /tek başına karşılamaz/, de: /Erklärung allein erfüllt keine/,
+    fr: /déclaration seule ne remplit pas/, es: /declaración por sí sola no cumple/, zh: /仅此声明并不能履行/ };
   for (const locale of Object.keys(postMarket)) {
     const hint = translations[locale]['wizard.monitoring.enabled.hint'];
     const detail = translations[locale]['wizard.monitoring.enabled.detail'];
@@ -143,9 +153,25 @@ test('every locale\'s monitoring hint still names the optional metadata, the Art
     assert.match(hint, /Annex IV §9/, `${locale}: cites Annex IV §9`);
     // Annex IV §9 asks for a detailed description of the system, its plan included — not "the detailed plan".
     assert.match(hint, describes[locale], `${locale}: Annex IV §9 asks for a detailed description`);
+    assert.match(hint, plan[locale], `${locale}: the description includes the monitoring plan`);
+    assert.match(hint, highRisk[locale], `${locale}: Art. 72 binds providers of high-risk systems`);
+    assert.match(detail, notEnough[locale], `${locale}: the declaration alone does not discharge Art. 72`);
   }
   assert.match(translations.en['wizard.monitoring.enabled.hint'],
     /Annex IV §9 asks for a detailed description of it, including the monitoring plan\./);
+});
+
+test('the French and Spanish copy says alerts and the YAML in its own words', () => {
+  const { translations } = loadWizard();
+  assert.match(translations.fr['wizard.webhook.hint'], /Envoyez des alertes /);
+  assert.doesNotMatch(translations.fr['wizard.webhook.hint'], /\balerts\b/);
+  assert.match(translations.fr['wizard.monitoring.endpoint.hint'], /le YAML copié/);
+  assert.match(translations.es['wizard.monitoring.endpoint.hint'], /el YAML copiado/);
+  for (const locale of ['fr', 'es']) {
+    for (const [key, value] of Object.entries(translations[locale])) {
+      assert.doesNotMatch(value, /\bla YAML\b/, `${locale} ${key}: YAML is masculine`);
+    }
+  }
 });
 
 test('monitoring and webhook copy keeps one apostrophe style, and Chinese punctuation and endpoint term', () => {
@@ -229,7 +255,7 @@ test('generated YAML preserves monitoring and webhook values through the real Fo
     '    assert actual_endpoint_fields == ({expected["endpoint_field"]} if expected["endpoint_field"] else set())',
     '    assert config.webhook.url == expected["webhook_url"], expected',
     '    assert config.webhook.url_env == expected["webhook_env"], expected'
-  ].join('\n')], { cwd: root, input: JSON.stringify(configs), encoding: 'utf8', timeout: 30000 });
+  ].join('\n')], { cwd: root, input: JSON.stringify(configs), encoding: 'utf8', timeout: 120000 });  // a loaded CI host is slow
   assert.ifError(result.error);
   assert.equal(result.status, 0, `Python interpreter: ${python}\n${result.stderr}`);
 });

@@ -1,9 +1,12 @@
-"""The Turkish docs follow the owner's glossary decisions in docs/standards/localization.md.
+"""The Turkish docs keep out the spellings the owner's glossary decisions replaced.
 
-The site's Turkish strings are pinned by tests/site/wizard_monitoring.test.cjs; this
-pins the same decisions across the Turkish docs, where the superseded terms
-otherwise come back with every copied paragraph. Only the public Turkish trees
-are read, by name.
+docs/standards/localization.md records the decisions, and
+tests/site/wizard_monitoring.test.cjs pins them in the site's Turkish strings.
+This keeps their superseded spellings out of the Turkish docs, where they
+otherwise come back with every copied paragraph. A decision that needs judgement
+in general prose, such as *uyarı* for a warning, is left to review; only the
+spellings that are wrong wherever they appear are pinned. Only the public
+Turkish trees are read, by name.
 """
 
 from __future__ import annotations
@@ -33,6 +36,17 @@ _SUPERSEDED = [
     (re.compile(r"aktarım sistemi", re.IGNORECASE), "a metrics exporter is 'exporter'"),
     (re.compile(r"trend takib", re.IGNORECASE), "trend tracking is 'trend izleme', the user manual's term"),
     (re.compile("’"), "a suffix takes the straight apostrophe (')"),
+    (re.compile(r"\bEk IV\b"), "Annex IV keeps its name, as in 'Annex IV §N'"),
+    (re.compile(r"piyasaya sunul", re.IGNORECASE), "placing on the market is 'piyasaya arz'"),
+    (
+        re.compile(r"\b(?:drift|eşik|maliyet|bütçe|webhook)\w* uyarı", re.IGNORECASE),
+        "a drift, threshold or cost alert is 'alarm', and a webhook's message 'bildirim'",
+    ),
+    (
+        re.compile(r"Yapay Zeka (?:Yasası|Kanunu)|Yapay Zekâ Kanunu|\bAB YZ\b"),
+        "the Act is 'EU AI Act' or 'AB Yapay Zekâ Yasası'",
+    ),
+    (re.compile(r"2024/1689 sayılı (?!Tüzü)"), "Regulation (EU) 2024/1689 is '(AB) 2024/1689 sayılı Tüzük'"),
 ]
 
 

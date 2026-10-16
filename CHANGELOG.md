@@ -65,11 +65,12 @@ All notable changes to ForgeLM are documented here.
   longer calls `performance_metrics` the bundle's §7: no key holds the copy of the EU declaration of
   conformity that §8 asks for, which the provider draws up under Article 47 (refs #539).
 - Apply the owner's Turkish terminology across the site and the Turkish docs: "piyasaya arz sonrası
-  izleme", "AB" and the Regulation as "(AB) 2024/1689 sayılı Tüzük", "Annex IV §N", "exporter" kept in
-  English, "alarm" for a monitoring or threshold alert, "bildirim" for a webhook message and "uyarı"
-  for a log warning, "EU AI Act" in full, and the straight apostrophe throughout; "trend izleme",
-  the user manual's term, replaces "trend takibi". The `localization.md` glossary records the
-  owner's decisions, and tests pin them in the site strings and the Turkish docs (refs #948).
+  izleme" (and "piyasaya arz" for placing on the market), "AB" and the Regulation as "(AB) 2024/1689
+  sayılı Tüzük", "Annex IV §N" (never "Ek IV"), "exporter" kept in English, "alarm" for a monitoring
+  or threshold alert, "bildirim" for a webhook message and "uyarı" for a log warning, "EU AI Act" in
+  full, and the straight apostrophe throughout; "trend izleme", the user manual's term, replaces
+  "trend takibi". The `localization.md` glossary records the owner's decisions; tests pin them in the
+  site strings and keep their superseded spellings out of the Turkish docs (refs #948).
 - Name every browser-wizard field by its visible caption. Text, number, slider, select and textarea
   captions now point at their control through unique, stable `id`/`for` pairs, so screen readers
   no longer announce a placeholder or nothing, and clicking a caption focuses its field. The LoRA
