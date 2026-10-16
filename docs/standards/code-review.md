@@ -153,7 +153,7 @@ Referencing the internal "what we don't build" strategy doc (public summary unde
 
 | Anti-pattern | Why rejected | Fix |
 |---|---|---|
-| Disabling CI with `\|\| true`, or `continue-on-error` on a step that runs a required check | Masks failures; fake safety | Fix the underlying issue; `testing.md` lists the one sanctioned `\|\| true` |
+| Disabling CI with `\|\| true`, or `continue-on-error` on a step that runs a required command | Masks failures; fake safety | Fix the underlying issue; `testing.md` lists the one sanctioned `\|\| true` |
 | `--amend` + force-push after reviewer started commenting | Destroys review history | New commits only until merge |
 | Merging "docs-only" PRs that reference not-yet-written code | Creates permanent drift | Docs follow code, same PR or later |
 | Bundled refactor + feature PRs | Hides logic changes in formatting noise | Split into separate PRs |

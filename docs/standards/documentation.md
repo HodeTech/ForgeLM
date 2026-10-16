@@ -1,7 +1,7 @@
 # Documentation Standard
 
 > **Scope:** All markdown under [`docs/`](../), plus `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, and docstrings in [`forgelm/`](../../forgelm/).
-> **Enforced by:** Review + four `--strict` CI guards under [`tools/`](../../tools/):
+> **Enforced by:** Review + `--strict` CI guards under [`tools/`](../../tools/), among them:
 > - [`tools/check_bilingual_parity.py`](../../tools/check_bilingual_parity.py) — H2/H3/H4 spine sync between `*.md` and `*-tr.md` mirrors (Wave 3 / Faz 24).
 > - [`tools/check_anchor_resolution.py`](../../tools/check_anchor_resolution.py) — every relative markdown link with a `#anchor` fragment resolves to a real heading in the target file (Wave 4 / Faz 26; flipped to `--strict` in Wave 5 after the 36-baseline cleanup).
 > - [`tools/check_cli_help_consistency.py`](../../tools/check_cli_help_consistency.py) — every flag in CLI `--help` output appears in [`docs/usermanuals/{en,tr}/reference/cli.md`](../usermanuals/en/reference/cli.md) and vice-versa (Wave 5 / Faz 30 Task J).
