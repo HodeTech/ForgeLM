@@ -15,12 +15,13 @@ actions) and the three gauntlet blocks with a small POSIX-shell lexer, so
 comments, quoted prose, `python -c` programs and quoted here-documents are
 never mistaken for commands. For every *required* command — `pytest`,
 `node --test`, `ruff`, `mypy`, the `forgelm` CLI and the `tools/` guards, also
-behind wrappers such as `env`, `timeout`, `xvfb-run`, `uv run` or
+behind wrappers such as `env`, `timeout`, `xvfb-run`, `uv run`, `uvx` or
 `coverage run` — it checks that a non-zero exit still fails the step (or the
 gauntlet chain). It models errexit and pipefail as bash applies them, including
 the contexts where errexit is ignored (`&&` / `||` lists, `{ … }` groups placed
-there, conditions), `set` / `shopt -o` changes, `bash -c`, scripts the step
-runs from the repository, and `eval`.
+there, conditions), `set` / `shopt -o` changes, `bash -c`, `eval`, and the
+shell scripts a step runs or sources from the repository (`bash ci/x.sh`,
+`./ci/x.sh`, `source ci/x.sh`).
 
 It accepts only shapes it can prove and fails closed on the rest, so some
 correct but indirect forms are rejected too: capturing a status with `set +e`
@@ -29,11 +30,18 @@ or `|| rc=$?` and re-raising it later, `${PIPESTATUS[0]}`, `wait "$pid"`,
 skip it, shell functions, and unknown wrappers or commands taken from a `${{ }}`
 expression. Keep required commands plain; a fallback may report, then must end
 with `exit 1` or re-raise a captured status (`|| { rc=$?; …; exit "$rc"; }`).
-It also rejects `continue-on-error` on a step that runs a required command, an
-EXIT/ERR trap that exits 0, and a `${{ }}` expression that pastes shell syntax.
+It also rejects `continue-on-error` on a step that runs a required command; an
+EXIT/ERR trap that can exit 0 or runs a required command; a function, alias or
+`hash -p` that takes over a required command or one this guard relies on
+(`exit`, `set`, a wrapper or a shell); a required command that an earlier
+unconditional `exit` or `exec` keeps from running; and a `${{ }}` expression or
+matrix value that pastes shell syntax. It reads shell text, not the file
+system: a program replaced on disk or put first on `PATH`, a script generated
+while the step runs, and an installer piped from `curl` / `wget` are beyond it.
 
 Independently of required commands, a `|| true` / `|| :` / `|| exit 0` fallback
-is refused everywhere except the documented scanner + severity-helper pattern:
+is refused everywhere, command substitutions and trap actions included, except
+the documented scanner + severity-helper pattern:
 `bandit` or `pip-audit` writing a report, `|| true`, and immediately after it
 `tools/check_bandit.py` / `tools/check_pip_audit.py` reading that same report,
 itself a required command. A helper that reads another file — or is missing —
@@ -59,12 +67,19 @@ _GAUNTLET_DOCS = ("CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md")
 
 # Same guard-name grammar as tests/test_guard_wiring.py's _GUARD_NAME_RE.
 _GUARD_SCRIPT_RE = re.compile(r"(?:^|/)tools/(check_[a-z0-9_]{1,64}\.py|update_site_version\.py)$")
-_PYTHON_RE = re.compile(r"python(?:3(?:\.\d{1,2})?)?")
+_PYTHON_RE = re.compile(r"python(?:3(?:\.[0-9]{1,2})?)?")
 _ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}(?:\[[^\]\n]{0,64}\])?\+?=")
 _STATUS_CAPTURE_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]{0,63})=\$\?")
 _GATE_MODULES = ("pytest", "mypy", "ruff", "forgelm")
-# Commands that may name a required program without running it (`pip install pytest`).
-_MENTION_OK = ("pip", "pip3", "pipx", "conda", "mamba", "apt-get", "brew", "echo", "printf", "which", "type", "hash")
+# Commands that may name a required program without running it (`pip install pytest`, `grep -q ruff x`).
+_MENTION_OK = frozenset(
+    ("pip", "pip3", "pipx", "conda", "mamba", "apt", "apt-get", "brew", "echo", "printf", "which", "type", "hash",
+     "cd", "pushd", "popd", "ls", "cat", "grep", "egrep", "fgrep", "rg", "sed", "awk", "head", "tail", "wc", "sort",
+     "uniq", "cut", "tr", "tee", "mkdir", "rm", "rmdir", "cp", "mv", "ln", "touch", "chmod", "chown", "stat", "file",
+     "du", "test", "[", "export", "unset", "local", "declare", "typeset", "readonly", "read", "basename", "dirname",
+     "realpath", "readlink", "diff", "cmp", "tar", "zip", "unzip", "curl", "wget", "git", "jq", "yq", "sha256sum",
+     "shasum", "date", "sleep")
+)  # fmt: skip
 # Each scanner's severity helper, with the helper's value-taking options so its
 # positional report argument is found wherever the options are placed.
 _SCANNER_HELPERS = {
@@ -73,7 +88,8 @@ _SCANNER_HELPERS = {
 }
 _SHELLS = ("bash", "sh", "dash", "ksh", "zsh")
 # The fragment of each required command kind that ci.yml and every gauntlet must
-# contain. A scan that recognises none of them is broken, not clean.
+# contain. A surface missing one has stopped running that check, or this guard
+# no longer recognises it; either way a clean result would mean nothing.
 _EXPECTED_KINDS = ("pytest", "node --test", "ruff", "tools/check_")
 
 _OPERATORS = ("&&", "||", ";;&", ";;", ";&", "|&", ";", "|", "&", "(", ")")
@@ -155,11 +171,13 @@ class _Lexer:
                 return self.i + 1
             elif self.src.startswith(("<(", ">("), self.i):
                 self._read_word()
-            elif self.src.startswith("((", self.i):
-                # An arithmetic command or a C-style `for` header: one opaque word.
+            elif self.src.startswith("((", self.i) and self._arithmetic(self.i):
+                # An arithmetic command or a C-style `for` header: one word, whose `$(…)` still run.
                 start, line = self.i, self.line
                 text = self._balanced(self.i, "(", ")")
-                self._emit("word", text, start, self.i, _Word(text, text, line))
+                word = _Word(text, text, line)
+                _Lexer(text[2:-2], 0, line).expansions(word.subs, quoted=True)
+                self._emit("word", text, start, self.i, word)
             else:
                 matched = self._operator()
                 if matched == "(":
@@ -169,7 +187,47 @@ class _Lexer:
                 elif matched is None:
                     self._read_word()
                     raw = self.tokens[-1].word.raw  # type: ignore[union-attr]
-                    cases += 1 if raw == "case" else -1 if raw == "esac" and cases else 0
+                    if raw in ("case", "esac") and self._command_position(raw):
+                        cases += 1 if raw == "case" else -1 if cases else 0
+
+    def _command_position(self, raw: str) -> bool:
+        """Whether the word just read starts a command, so ``case`` / ``esac`` is a keyword there."""
+        if len(self.tokens) < 2:
+            return True
+        previous = self.tokens[-2]
+        if previous.kind in ("nl", "op"):
+            return True
+        starters = ("then", "do", "else", "elif", "if", "while", "until", "{", "!", "time") + (
+            ("in",) if raw == "esac" else ()
+        )
+        return previous.word is not None and previous.word.raw in starters
+
+    def _matching(self, open_at: int) -> int:
+        """Index of the ``)`` closing the ``(`` at *open_at*, skipping quoted text; -1 when there is none."""
+        src, depth, pos = self.src, 0, open_at
+        while pos < len(src):
+            char = src[pos]
+            if char in "'\"":
+                end = src.find(char, pos + 1)
+                pos = len(src) if end < 0 else end
+            elif char == "\\":
+                pos += 1
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    return pos
+            pos += 1
+        return -1
+
+    def _arithmetic(self, open_at: int) -> bool:
+        """Whether the ``((`` at *open_at* is arithmetic: its inner ``(`` closes right before the outer one.
+
+        Otherwise bash reads two nested subshells, as in ``((pytest) || true)``.
+        """
+        outer = self._matching(open_at)
+        return outer > 0 and self._matching(open_at + 1) == outer - 1
 
     def _emit(self, kind: str, value: str, start: int, end: int, word: Optional[_Word] = None) -> _Token:
         token = _Token(kind, value, self.line, start, end, word)
@@ -222,13 +280,19 @@ class _Lexer:
                 _Lexer(token.heredoc, 0, first_line).expansions(word.subs)
         self.pending_heredocs = []
 
-    def expansions(self, subs: List["_Script"]) -> None:
-        """Parse the command substitutions of text that is only expanded, such as a here-document body."""
+    def expansions(self, subs: List["_Script"], quoted: bool = False) -> None:
+        """Parse the command substitutions of text that is only expanded, such as a here-document body.
+
+        *quoted* skips single-quoted text, which a here-document body does not have.
+        """
         scratch: List[str] = []
         while self.i < len(self.src):
             char = self.src[self.i]
             if char == "\\":
                 self.i += 2
+            elif char == "'" and quoted:
+                end = self.src.find("'", self.i + 1)
+                self.i = len(self.src) if end < 0 else end + 1
             elif char in "$`":
                 self._expansion(scratch, subs)
             else:
@@ -248,7 +312,9 @@ class _Lexer:
                 text.append(src[start : self.i])
                 continue
             if char == "(" and _ASSIGNMENT_RE.fullmatch(src[start : self.i]):
-                text.append(self._balanced(self.i, "(", ")"))  # bash array assignment: NAME=(...)
+                value = self._balanced(self.i, "(", ")")  # bash array assignment: NAME=(...)
+                _Lexer(value[1:-1], 0, line).expansions(subs, quoted=True)
+                text.append(value)
                 continue
             if char in _METACHARACTERS:
                 break
@@ -306,8 +372,11 @@ class _Lexer:
 
     def _expansion(self, text: List[str], subs: List["_Script"]) -> None:
         src, start = self.src, self.i
-        if src.startswith("$((", start):
-            text.append(self._balanced(start + 1, "(", ")", prefix="$"))
+        if src.startswith("$((", start) and self._arithmetic(start + 1):
+            line = self.line
+            value = self._balanced(start + 1, "(", ")", prefix="$")
+            _Lexer(value[3:-2], 0, line).expansions(subs, quoted=True)
+            text.append(value)
         elif src.startswith("$(", start):
             subs.append(self._substitution(start + 2))
             text.append(src[start : self.i])
@@ -443,6 +512,7 @@ class _Loop:
     body: "_Script"
     words: List[_Word]
     line: int
+    header: Optional[_Word] = None  # a C-style `for ((…))` header
 
 
 @dataclass
@@ -569,6 +639,12 @@ class _Parser:
         return _AndOr(pipelines, operators)
 
     def _pipeline(self) -> _Pipeline:
+        if self._is_reserved(self._peek(), "time") and (
+            self._peek(1).kind == "word" or self._is_op(self._peek(1), "(")
+        ):
+            self.k += 1  # `time [-p] PIPELINE` reports the pipeline's own status
+            if self._is_reserved(self._peek(), "-p"):
+                self.k += 1
         negated = self._is_reserved(self._peek(), "!")
         if negated:
             self.k += 1
@@ -696,6 +772,7 @@ class _Parser:
         keyword = self._next()
         condition: Optional[_Script] = None
         words: List[_Word] = []
+        header = keyword
         if keyword.value == "for":
             header = self._next()  # the loop variable, or a C-style ((init; test; step)) header
             self._skip_newlines()
@@ -711,7 +788,8 @@ class _Parser:
         self._expect_reserved("do")
         body = self._script(("done",), ())
         self._expect_reserved("done")
-        return self._redirected(_Loop(keyword.value, condition, body, words, keyword.line))
+        arithmetic = header.word if keyword.value == "for" and header.value.startswith("((") else None
+        return self._redirected(_Loop(keyword.value, condition, body, words, keyword.line, arithmetic))
 
     def _case(self) -> _Case:
         line = self._next().line
@@ -769,26 +847,54 @@ INTERACTIVE = ShellOptions(errexit=False, pipefail=False)  # a gauntlet pasted i
 _WRAPPER_VALUE_OPTIONS = {
     "timeout": ("-s", "-k", "--signal", "--kill-after"),
     "nice": ("-n", "--adjustment"),
-    "env": ("-u", "-C", "-S", "--unset", "--chdir", "--split-string"),
+    "env": ("-u", "-C", "--unset", "--chdir"),
     "sudo": ("-u", "-g", "-C", "-h", "-p", "--user", "--group"),
     "xargs": ("-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s"),
     "stdbuf": ("-i", "-o", "-e"),
+    "ionice": ("-c", "-n", "-p", "-P", "-u", "--class", "--classdata"),
     "xvfb-run": ("-n", "-s", "-f", "-e", "-p", "-w", "--server-num", "--server-args", "--auth-file"),
 }
-_WRAPPERS = tuple(_WRAPPER_VALUE_OPTIONS) + ("time", "command", "builtin", "exec", "nohup")
+_WRAPPERS = tuple(_WRAPPER_VALUE_OPTIONS) + ("time", "command", "builtin", "exec", "nohup", "setsid", "taskset")
+# Wrappers whose first operand is not the command: `timeout DURATION cmd`, `taskset MASK cmd`.
+_WRAPPER_OPERANDS = ("timeout", "taskset")
 # `<runner> run CMD` propagates CMD's exit status; these are the run options that take a value.
 _RUNNERS = ("uv", "poetry", "pipenv", "hatch", "pdm")
 _RUNNER_VALUE_OPTIONS = (
     "-p", "--python", "-w", "--with", "--with-requirements", "--with-editable", "--project",
     "--directory", "--package", "--extra", "--group", "--env-file", "--index", "--index-url",
-    "--extra-index-url", "-f", "--find-links",
+    "--extra-index-url", "-f", "--find-links", "--from", "--spec", "--pip-args",
+)  # fmt: skip
+# Commands a function, alias or `hash -p` must not take over: the required
+# programs, every command this guard reads through or relies on, and bash's
+# hook for a command it cannot find.
+_PROTECTED = frozenset(
+    ("pytest", "py.test", "ruff", "mypy", "forgelm", "node", "coverage", "find", "eval", "exit", "false", "set",
+     "shopt", "command_not_found_handle")
+    + tuple(_SCANNER_HELPERS) + _WRAPPERS + _RUNNERS + _SHELLS
 )  # fmt: skip
 
 
-def _drop_options(argv: List[str], value_options: Tuple[str, ...], assignments: bool = False) -> List[str]:
-    while argv and (argv[0].startswith("-") or (assignments and "=" in argv[0])):
+def _drop_options(argv: List[str], value_options: Tuple[str, ...]) -> List[str]:
+    while argv and argv[0].startswith("-"):
         argv = argv[2:] if argv[0] in value_options else argv[1:]
     return argv
+
+
+def _env_argv(args: List[str]) -> List[str]:
+    """The command ``env`` runs: options and ``NAME=value`` dropped, ``-S STRING`` split into words."""
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg in ("-S", "--split-string") and index + 1 < len(args):
+            return args[index + 1].split() + args[index + 2 :]
+        if arg.startswith("--split-string="):
+            return arg.split("=", 1)[1].split() + args[index + 1 :]
+        if arg.startswith("-S") and len(arg) > 2:
+            return arg[2:].split() + args[index + 1 :]
+        if not (arg.startswith("-") or "=" in arg):
+            break
+        index += 2 if arg in _WRAPPER_VALUE_OPTIONS["env"] else 1
+    return args[index:]
 
 
 def _argv(command: _Simple) -> List[str]:
@@ -799,15 +905,25 @@ def _argv(command: _Simple) -> List[str]:
         if program in _RUNNERS and argv[1:2] == ["run"]:
             argv = _drop_options(argv[2:], _RUNNER_VALUE_OPTIONS)
             continue
+        # Tool runners: `uvx ruff`, `uv tool run ruff`, `pipx run ruff`.
+        tool_run = 1 if program == "uvx" else 0
+        tool_run = 3 if program == "uv" and argv[1:3] == ["tool", "run"] else tool_run
+        tool_run = 2 if program == "pipx" and argv[1:2] == ["run"] else tool_run
+        if tool_run:
+            argv = _drop_options(argv[tool_run:], _RUNNER_VALUE_OPTIONS)
+            continue
         if program == "coverage" and argv[1:2] == ["run"]:
             return ["python"] + argv[2:]  # `coverage run` takes Python's `-m module` or `script.py`
+        if program == "env":
+            argv = _env_argv(argv[1:])
+            continue
         if program not in _WRAPPERS:
             return argv
         if program == "command" and argv[1:2] in (["-v"], ["-V"]):
             return []  # a lookup: `command -v pytest` runs nothing
-        argv = _drop_options(argv[1:], _WRAPPER_VALUE_OPTIONS.get(program, ()), assignments=program == "env")
-        if program == "timeout" and argv:
-            argv = argv[1:]  # the duration
+        argv = _drop_options(argv[1:], _WRAPPER_VALUE_OPTIONS.get(program, ()))
+        if program in _WRAPPER_OPERANDS and argv:
+            argv = argv[1:]  # the duration or the CPU mask
     return argv
 
 
@@ -896,14 +1012,17 @@ def _installs(argv: List[str]) -> bool:
 def _mentioned(argv: List[str]) -> Optional[str]:
     """A required command *argv* seems to run although this guard does not model how.
 
-    Strong signals only: ``-m <module>``, a ``tools/`` guard path, or `pytest`,
-    `ruff` or `mypy` where an unknown wrapper puts the program it runs. Not
-    ``forgelm``, which is also this repository's package directory.
+    Any argument that is `pytest`, `ruff` or `mypy`, `node --test`, a ``tools/``
+    guard path or ``-m <module>``: an unknown wrapper may put it anywhere
+    (``ionice -c 3 pytest``). Not ``forgelm``, which is also this repository's
+    package directory. Commands in ``_MENTION_OK`` never run their arguments.
     """
-    program = next((word for word in argv[1:] if not word.startswith("-")), "")
-    if posixpath.basename(program) in ("pytest", "py.test", "ruff", "mypy"):
-        return posixpath.basename(program)
     for index, word in enumerate(argv[1:], start=1):
+        program = posixpath.basename(word)
+        if program in ("pytest", "py.test", "ruff", "mypy"):
+            return program
+        if program == "node" and "--test" in argv[index + 1 :]:
+            return "node --test"
         guard = _GUARD_SCRIPT_RE.search(word)
         if guard:
             return "tools/" + guard.group(1)
@@ -967,6 +1086,12 @@ def _apply_set(options: ShellOptions, args: List[str]) -> ShellOptions:
     index = 0
     while index < len(args):
         arg = args[index]
+        if arg in ("--", "-"):
+            break  # the remaining words are positional parameters
+        if "$" in arg:
+            errexit = pipefail = False  # `set $OPTS`: assume the worst
+            index += 1
+            continue
         if arg[:1] in ("-", "+") and not arg.startswith("--") and len(arg) > 1:
             enable = arg[0] == "-"
             for letter in arg[1:]:
@@ -992,8 +1117,9 @@ def _option_args(command: Any) -> Optional[List[str]]:
     argv = _argv(command)
     if argv[:1] == ["set"]:
         return argv[1:]
-    if argv[:1] == ["shopt"] and "-o" in argv[1:] and ("-s" in argv[1:] or "-u" in argv[1:]):
-        flag = "+o" if "-u" in argv[1:] else "-o"
+    flags = "".join(arg[1:] for arg in argv[1:] if arg.startswith("-")) if argv[:1] == ["shopt"] else ""
+    if "o" in flags and ("s" in flags or "u" in flags):  # `shopt -u -o errexit`, `shopt -uo errexit`
+        flag = "+o" if "u" in flags else "-o"
         return [part for name in argv[1:] if not name.startswith("-") for part in (flag, name)]
     return None
 
@@ -1047,7 +1173,7 @@ def _own_words(node: Any) -> List[_Word]:
     if isinstance(node, _Simple):
         return node.assignments + node.words + [redirect.target for redirect in node.redirects]
     if isinstance(node, _Loop):
-        return node.words
+        return node.words + ([node.header] if node.header is not None else [])
     if isinstance(node, _Case):
         return [node.subject]
     if isinstance(node, _Test):
@@ -1074,6 +1200,80 @@ def _exit_kind(command: _Simple, failed_status: bool, captured: Optional[str]) -
     return "fails" if argv in (["false"], ["/bin/false"], ["/usr/bin/false"]) else "succeeds"
 
 
+def _variable_only(text: str) -> bool:
+    """Whether *text* is one parameter expansion (``$CMD``, ``${CMD}``), whose value this guard cannot see."""
+    name = text.strip()
+    if name.startswith("${") and name.endswith("}"):
+        name = name[2:-1]
+    elif name.startswith("$"):
+        name = name[1:]
+    else:
+        return False
+    return name.isidentifier() or name.isdigit() or name in ("@", "*")
+
+
+def _redefined(command: _Simple) -> Tuple[List[str], str]:
+    """The command names an ``alias`` or ``hash -p`` command redefines, and how."""
+    argv = _argv(command)
+    if argv[:1] == ["alias"]:
+        return [arg.split("=", 1)[0] for arg in argv[1:] if "=" in arg], "an alias"
+    if argv[:1] == ["hash"] and "-p" in argv:
+        return argv[argv.index("-p") + 2 :], "a hashed path"
+    return [], ""
+
+
+def _ends_script(item: _Item) -> Optional[_Simple]:
+    """An unconditional ``exit`` that can leave 0, or an ``exec`` that replaces the shell."""
+    pipelines = item.and_or.pipelines
+    if item.background or len(pipelines) != 1 or pipelines[0].negated or len(pipelines[0].commands) != 1:
+        return None
+    command = pipelines[0].commands[0]
+    if not isinstance(command, _Simple) or not command.words:
+        return None
+    program = command.words[0].text
+    if program == "exit" and _exit_kind(command, failed_status=False, captured=None) == "succeeds":
+        return command
+    return command if program == "exec" and len(command.words) > 1 else None
+
+
+def _reraising_exits(action: _Script, entry_status: bool) -> set:
+    """Ids of the ``exit`` commands in a trap action that leave with the status the trap was entered with.
+
+    ``$?`` holds that status only in the action's first command (when
+    *entry_status*); after ``||`` it holds the failed command's non-zero status;
+    and ``rc=$?`` as the first command keeps it for a later ``exit "$rc"``.
+    """
+    found: set = set()
+    if not action.items:
+        return found
+    status = ("$?", "${?}")
+    captured = _captured_status(action.items[0]) if entry_status else None
+    if captured:
+        status += ("$" + captured, "${" + captured + "}")
+    first = action.items[0].and_or.pipelines[0].commands[0]
+    stack: List[Any] = [action]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, _Function) or (isinstance(node, _Group) and node.subshell):
+            continue
+        if isinstance(node, _Simple) and node.words and node.words[0].text == "exit":
+            code = node.words[1].text if len(node.words) > 1 else None
+            if code in status[2:] or (code in status[:2] and node is first and entry_status):
+                found.add(id(node))
+        if isinstance(node, _AndOr):
+            for position, operator in enumerate(node.operators):
+                following = node.pipelines[position + 1].commands
+                exit_words = following[0].words if len(following) == 1 and isinstance(following[0], _Simple) else []
+                if (
+                    operator == "||"
+                    and [word.text for word in exit_words][:1] == ["exit"]
+                    and (len(exit_words) == 2 and exit_words[1].text in status[:2])
+                ):
+                    found.add(id(following[0]))
+        stack.extend(_children(node))
+    return found
+
+
 def _text(node: Any, limit: int = 90) -> str:
     """A short source-like rendering of a command, for messages."""
     if isinstance(node, _Simple):
@@ -1082,8 +1282,19 @@ def _text(node: Any, limit: int = 90) -> str:
         text = ("! " if node.negated else "") + " | ".join(_text(command, limit) for command in node.commands)
     elif isinstance(node, _Group):
         text = "( … )" if node.subshell else "{ … }"
+    elif isinstance(node, _Function):
+        text = node.name + "() { … }"
+    elif isinstance(node, _Loop):
+        text = f"{node.kind} …; done"
+    elif isinstance(node, _If):
+        text = "if …; fi"
+    elif isinstance(node, _Case):
+        text = "case …; esac"
+    elif isinstance(node, _Test):
+        text = "[[ … ]]"
     else:
         text = type(node).__name__.strip("_").lower()
+    text = text.replace("GITHUB_EXPRESSION", "${{ … }}")
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
@@ -1096,13 +1307,25 @@ class _Analysis:
         self.findings: List[str] = []
         self._nested: Dict[int, Optional[Tuple[_Script, Optional[ShellOptions], bool]]] = {}
         self._has: Dict[int, bool] = {}
+        self._downloaded: set = set()  # shells reading an installer piped from curl / wget
+        self._origin: Dict[int, str] = {}  # node id -> the repository script it was read from
 
     def report(self, node: Any, reason: str) -> None:
-        line = getattr(node, "line", None)
-        if isinstance(node, _Pipeline):
-            line = getattr(node.commands[0], "line", None)
-        at = f" (script line {line})" if line else ""
+        first = node.commands[0] if isinstance(node, _Pipeline) else node
+        line = getattr(first, "line", None)
+        origin = self._origin.get(id(first), "script")
+        at = f" ({origin} line {line})" if line else ""
         self.findings.append(f"{self.where}{at}: `{_text(node)}` {reason}")
+
+    def _label(self, script: _Script, path: str) -> None:
+        """Record that every command of *script* comes from the repository file *path*."""
+        stack: List[Any] = [script]
+        while stack:
+            node = stack.pop()
+            self._origin[id(node)] = path
+            for word in _own_words(node):
+                stack.extend(word.subs)
+            stack.extend(_children(node))
 
     # -- what a node contains --------------------------------------------
 
@@ -1126,9 +1349,12 @@ class _Analysis:
         program = posixpath.basename(argv[0])
         if program == "eval":
             return self._parse_nested(command, " ".join(argv[1:]), command.line, None, True)
+        if program in ("source", ".") and len(argv) > 1:
+            # Runs in this shell. A file outside the repository (`.venv/bin/activate`) is not ours to check.
+            return self._script_file(command, argv[1], None, current_shell=True, missing_ok=True)
         if program not in _SHELLS:
-            return None
-        options, reads_command, index = INTERACTIVE, False, 1
+            return self._executable(command, argv[0]) if "/" in argv[0] else None
+        options, reads_command, reads_stdin, index = INTERACTIVE, False, False, 1
         while index < len(argv):
             arg = argv[index]
             if arg == "--":
@@ -1144,6 +1370,10 @@ class _Analysis:
             for letter in arg[1:]:
                 if letter == "c":
                     reads_command = True
+                elif letter == "s":
+                    reads_stdin = True  # the operands are positional parameters
+                elif letter == "n" and arg[0] == "-":
+                    return None  # noexec: the shell only parses the script
                 elif letter == "e":
                     options = replace(options, errexit=arg[0] == "-")
                 elif letter in "oO":
@@ -1154,34 +1384,90 @@ class _Analysis:
         operands = argv[index:]
         if reads_command:
             return self._parse_nested(command, operands[0] if operands else "", command.line, options, False)
-        if operands:
+        if operands and not reads_stdin:
             return self._script_file(command, operands[0], options)
         for redirect in command.redirects:
             if redirect.heredoc is not None:
                 return self._parse_nested(command, redirect.heredoc, command.line + 1, options, False)
             if redirect.op == "<<<":
                 return self._parse_nested(command, redirect.target.text, command.line, options, False)
+        if id(command) in self._downloaded:
+            return None  # an installer piped from curl / wget runs nothing of this repository
         self.report(command, "reads its script from standard input, which this guard cannot inspect; use `-c`")
         return None
 
+    def _repository_text(self, path: str) -> Optional[str]:
+        """The text of *path* when it is a readable file inside the scanned repository."""
+        if self.root is None or posixpath.isabs(path):
+            return None
+        file = (self.root / path).resolve()
+        if not (file.is_relative_to(self.root.resolve()) and file.is_file()):
+            return None
+        try:
+            return file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+
     def _script_file(
-        self, command: _Simple, path: str, options: ShellOptions
+        self,
+        command: _Simple,
+        path: str,
+        options: Optional[ShellOptions],
+        current_shell: bool = False,
+        missing_ok: bool = False,
     ) -> Optional[Tuple[_Script, Optional[ShellOptions], bool]]:
-        if self.root is not None and not posixpath.isabs(path):
-            file = (self.root / path).resolve()
-            if file.is_relative_to(self.root.resolve()) and file.is_file():
-                try:
-                    return self._parse_nested(command, file.read_text(encoding="utf-8"), 1, options, False)
-                except (OSError, UnicodeDecodeError):
-                    pass
-        self.report(command, f"runs {path}, which this guard cannot read; keep the script in the repository")
+        text = self._repository_text(path)
+        if text is not None:
+            return self._labelled(self._parse_nested(command, text, 1, options, current_shell), path)
+        if not missing_ok:
+            self.report(command, f"runs {path}, which this guard cannot read; keep the script in the repository")
         return None
+
+    def _executable(self, command: _Simple, path: str) -> Optional[Tuple[_Script, Optional[ShellOptions], bool]]:
+        """A repository shell script run by its path (``./ci/test.sh``), with its shebang's options."""
+        text = self._repository_text(path)
+        if text is None:
+            return None
+        words = text.split("\n", 1)[0][2:].split() if text.startswith("#!") else ["sh"]
+        if words[:1] and posixpath.basename(words[0]) == "env":
+            words = _env_argv(words[1:])  # `#!/usr/bin/env bash`, `#!/usr/bin/env -S bash -e`
+        if not words or posixpath.basename(words[0]) not in _SHELLS:
+            return None  # a Python or other interpreter: nothing this guard can follow
+        return self._labelled(self._parse_nested(command, text, 1, _apply_set(INTERACTIVE, words[1:]), False), path)
+
+    def _labelled(
+        self, nested: Optional[Tuple[_Script, Optional[ShellOptions], bool]], path: str
+    ) -> Optional[Tuple[_Script, Optional[ShellOptions], bool]]:
+        if nested is not None:
+            self._label(nested[0], posixpath.normpath(path))
+        return nested
+
+    def mark_downloads(self, node: Any) -> None:
+        """Remember shells fed by ``curl`` / ``wget``: a downloaded installer is no script of this repository."""
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if isinstance(current, _Pipeline):
+                for left, right in zip(current.commands, current.commands[1:]):
+                    program = _argv(left)[:1] if isinstance(left, _Simple) else []
+                    if program and posixpath.basename(program[0]) in ("curl", "wget"):
+                        self._downloaded.add(id(right))
+            for word in _own_words(current):
+                stack.extend(word.subs)
+            stack.extend(_children(current))
 
     def _parse_nested(
         self, command: _Simple, text: str, line: int, options: Optional[ShellOptions], current_shell: bool
     ) -> Optional[Tuple[_Script, Optional[ShellOptions], bool]]:
+        if _variable_only(text):
+            self.report(
+                command, f"runs a script taken from the variable `{text.strip()}`, which this guard cannot check"
+            )
+            return None
         try:
-            return _parse(text, line), options, current_shell
+            script = _parse(text, line)
+            self.mark_downloads(script)
+            return script, options, current_shell
         except ShellParseError as exc:
             self.report(command, f"runs a nested shell script this guard cannot parse ({exc})")
             return None
@@ -1241,8 +1527,17 @@ class _Analysis:
         """
         outcome: Optional[str] = None
         reported = len(self.findings)
+        ended: Optional[_Simple] = None
         for index, item in enumerate(script.items):
             last = index == len(script.items) - 1
+            if ended is not None:
+                if self.has_required(item.and_or):
+                    self.report(
+                        self.first_required(item.and_or),
+                        f"never runs: `{_text(ended)}` (script line {ended.line}) ends the script first",
+                    )
+                continue
+            ended = _ends_script(item)
             set_args = _set_args(item)
             if set_args is not None:
                 options = _apply_set(options, set_args)
@@ -1274,8 +1569,8 @@ class _Analysis:
         )
 
     def weakened(self, item: _Item, options: ShellOptions) -> ShellOptions:
-        """*options* with any ``set +e`` / ``set +o pipefail`` inside *item* applied."""
-        for command in self.commands_in(item):
+        """*options* with any ``set +e`` / ``set +o pipefail`` inside *item* applied, also through ``eval`` / ``source``."""
+        for command in self.option_commands(item):
             args = _option_args(command)
             if args is not None:
                 turned = _apply_set(ShellOptions(True, True), args)
@@ -1283,6 +1578,14 @@ class _Analysis:
                     options, errexit=options.errexit and turned.errexit, pipefail=options.pipefail and turned.pipefail
                 )
         return options
+
+    def option_commands(self, node: Any) -> Iterator[Any]:
+        """The commands of *node* that run in this shell, including those of ``eval`` and ``source``."""
+        for command in self.commands_in(node):
+            yield command
+            nested = self.nested(command) if isinstance(command, _Simple) else None
+            if nested is not None and nested[2]:
+                yield from self.option_commands(nested[0])
 
     def commands_in(self, node: Any) -> Iterator[Any]:
         for child in _children(node):
@@ -1439,7 +1742,8 @@ class _Analysis:
             )
             return TERMINATES if self.scope(command.body, options, False, reason) == TERMINATES else None
         elif isinstance(command, _Loop):
-            self.report(culprit, f"runs inside a `{command.kind}` loop, which may run it zero times")
+            article = "an" if command.kind == "until" else "a"
+            self.report(culprit, f"runs inside {article} `{command.kind}` loop, which may run it zero times")
         elif isinstance(command, _Case):
             self.report(culprit, "runs on one `case` branch only")
         elif isinstance(command, _Function):
@@ -1469,6 +1773,9 @@ class _Analysis:
                 )
             for position, pipeline in enumerate(and_or.pipelines):
                 for command in pipeline.commands:
+                    for word in _own_words(command):
+                        for sub_script in word.subs:
+                            self.noop_fallbacks(sub_script, None)
                     if isinstance(command, _Group):
                         chained = position < len(and_or.operators) and and_or.operators[position] == "&&"
                         last = position == len(and_or.operators)
@@ -1515,7 +1822,10 @@ class _Analysis:
         elif _helper_report(after.commands[0], value_options) != report:
             problem = f"writes {report} but {helper} reads {_helper_report(after.commands[0], value_options)}"
         if problem:
-            self.report(scanned, f"`|| true` is sanctioned only when the severity helper gates this report: {problem}")
+            self.report(
+                scanned,
+                f"is followed by `|| true`, which is sanctioned only when the severity helper gates its report: {problem}",
+            )
         return True
 
     # -- shapes this guard cannot follow -----------------------------------
@@ -1527,26 +1837,74 @@ class _Analysis:
                     if self.has_required(sub):
                         self.report(
                             self.first_required(sub),
-                            "runs inside a command substitution, which discards its exit status",
+                            "runs inside a command substitution, which can lose its exit status (`local`, "
+                            "`export`, an argument); run it as a command of its own",
                         )
 
     def traps(self, script: _Script) -> None:
+        functions = {node.name: node.body for node in self.walk(script) if isinstance(node, _Function)}
         for node in self.walk(script):
             argv = _argv(node) if isinstance(node, _Simple) else []
-            if argv[:1] != ["trap"] or len(argv) < 3 or argv[1].startswith("-"):
+            args = argv[2:] if argv[1:2] == ["--"] else argv[1:]
+            if argv[:1] != ["trap"] or len(args) < 2 or args[0].startswith("-"):
                 continue
-            if not any(signal.upper() in ("EXIT", "0", "ERR", "SIGEXIT") for signal in argv[2:]):
+            if not any(signal.upper() in ("EXIT", "0", "ERR", "SIGEXIT") for signal in args[1:]):
+                continue
+            if _variable_only(args[0]):
+                self.report(
+                    node, "sets an EXIT/ERR trap whose action comes from a variable, which this guard cannot check"
+                )
                 continue
             try:
-                action = _parse(argv[1], node.line)
+                action = _parse(args[0], node.line)
             except ShellParseError as exc:
                 self.report(node, f"sets an EXIT/ERR trap this guard cannot parse ({exc})")
                 continue
-            for exit_command in self.exits_in(action):
-                code = ([word.text for word in exit_command.words] + ["$?"])[1]
-                if code not in ("$?", "${?}") and not (code.isdigit() and int(code) % 256):
-                    self.report(node, f"sets an EXIT/ERR trap that runs `exit {code}`, replacing the step's status")
-                    break
+            self.noop_fallbacks(action, None)
+            problem = self.trap_problem(action, functions, frozenset(), entry_status=True)
+            if problem:
+                self.report(node, problem)
+
+    def trap_problem(
+        self, handler: Any, functions: Dict[str, Any], seen: frozenset, entry_status: bool
+    ) -> Optional[str]:
+        """Why an EXIT/ERR trap action, or a function it calls, can change a failing step's status.
+
+        *entry_status* says whether ``$?`` still holds the status the trap was
+        entered with when *handler* starts: true for the action itself and for a
+        function it calls first.
+        """
+        if self.has_required(handler):
+            return "runs a required command inside an EXIT/ERR trap, whose failure does not reach the step's status"
+        if isinstance(handler, _Group):
+            if handler.subshell:
+                return None  # an `exit` there ends only the subshell
+            handler = handler.body
+        if not isinstance(handler, _Script):
+            return None
+        reraises = _reraising_exits(handler, entry_status)
+        for exit_command in self.exits_in(handler):
+            argv = [word.text for word in exit_command.words]
+            code = argv[1] if len(argv) > 1 else None
+            # A bare `exit` keeps the status the trap was entered with; a non-zero literal fails anyway.
+            if id(exit_command) in reraises or code is None or (code.isdigit() and int(code) % 256):
+                continue
+            if code in ("$?", "${?}"):
+                return (
+                    f"sets an EXIT/ERR trap that runs `exit {code}` after another command, so it exits with that "
+                    "command's status instead of the step's"
+                )
+            return f"sets an EXIT/ERR trap that runs `exit {code}`, which can replace a failing step's status"
+        first = handler.items[0].and_or.pipelines[0].commands[0] if handler.items else None
+        for command in self.commands_in(handler):
+            name = command.words[0].text if isinstance(command, _Simple) and command.words else ""
+            if name in functions and name not in seen:
+                problem = self.trap_problem(
+                    functions[name], functions, seen | {name}, entry_status and command is first
+                )
+                if problem:
+                    return problem
+        return None
 
     def opaque_commands(self, script: _Script) -> None:
         for node in self.walk(script):
@@ -1555,7 +1913,7 @@ class _Analysis:
             argv = _argv(node)
             if not argv:
                 continue
-            if "GITHUB_EXPRESSION" in argv[0]:
+            if "GITHUB_EXPRESSION" in posixpath.basename(argv[0]):
                 self.report(node, "runs a command taken from a `${{ }}` expression, which this guard cannot check")
             elif posixpath.basename(argv[0]) not in _MENTION_OK and not _installs(argv):
                 named = _mentioned(argv)
@@ -1566,21 +1924,77 @@ class _Analysis:
                         "run the required command directly",
                     )
 
+    def redefinitions(self, script: _Script) -> None:
+        for node in self.walk(script):
+            if isinstance(node, _Function):
+                names, how = [node.name], "a shell function"
+            elif isinstance(node, _Simple):
+                names, how = _redefined(node)
+            else:
+                continue
+            for name in names:
+                if name == "command_not_found_handle":
+                    self.report(
+                        node, "defines bash's `command_not_found_handle`, which can turn a missing command into success"
+                    )
+                elif name in _PROTECTED or _PYTHON_RE.fullmatch(name):
+                    self.report(node, f"redefines `{name}` as {how}, so a later `{name}` may not run the real command")
 
-def _expression_injections(text: str) -> List[str]:
-    """``${{ }}`` expressions whose string literals paste shell syntax into the script."""
-    found: List[str] = []
+
+_SHELL_SYNTAX = ("|", "&", ";", "\n", "`", "$(")
+_MATRIX_REF_RE = re.compile(r"\bmatrix\.([A-Za-z_][A-Za-z0-9_-]{0,63})", re.ASCII)
+
+
+def _expressions(text: str) -> Iterator[str]:
+    """The contents of every ``${{ }}`` expression in *text*."""
     position = 0
     while True:
         start = text.find("${{", position)
         end = text.find("}}", start + 3) if start >= 0 else -1
         if start < 0 or end < 0:
-            return found
-        expression = text[start + 3 : end].strip()
-        literals = re.findall(r"'((?:[^']|'')*)'", expression)
-        if any(token in literal for literal in literals for token in ("|", "&", ";", "\n", "`", "$(")):
-            found.append(expression)
+            return
+        yield text[start + 3 : end].strip()
         position = end + 2
+
+
+def _expression_injections(text: str) -> List[str]:
+    """``${{ }}`` expressions whose string literals paste shell syntax into the script."""
+    found: List[str] = []
+    for expression in _expressions(text):
+        literals = re.findall(r"'((?:[^']|'')*)'", expression)
+        if any(token in literal for literal in literals for token in _SHELL_SYNTAX):
+            found.append(expression)
+    return found
+
+
+def _matrix_values(job: dict) -> Dict[str, List[str]]:
+    """Every value each ``strategy.matrix`` key can take, ``include`` rows too."""
+    strategy = job.get("strategy")
+    matrix = strategy.get("matrix") if isinstance(strategy, dict) else None
+    values: Dict[str, List[str]] = {}
+    if not isinstance(matrix, dict):
+        return values
+    include = matrix.get("include")
+    rows = [row for row in include if isinstance(row, dict)] if isinstance(include, list) else []
+    for key, value in matrix.items():
+        if key not in ("include", "exclude") and isinstance(value, list):
+            values.setdefault(str(key), []).extend(str(item) for item in value)
+    for row in rows:
+        for key, value in row.items():
+            values.setdefault(str(key), []).append(str(value))
+    return values
+
+
+def _matrix_injections(text: str, job: dict) -> List[Tuple[str, str]]:
+    """``(key, value)`` for each ``matrix.key`` the script pastes whose value holds shell syntax."""
+    values = _matrix_values(job)
+    found: List[Tuple[str, str]] = []
+    for expression in _expressions(text):
+        for key in _MATRIX_REF_RE.findall(expression):
+            bad = next((value for value in values.get(key, []) if any(token in value for token in _SHELL_SYNTAX)), None)
+            if bad is not None and (key, bad) not in found:
+                found.append((key, bad))
+    return found
 
 
 def _github_expressions(text: str) -> str:
@@ -1619,11 +2033,13 @@ def scan_script(
     analysis = _Analysis(where, root)
     try:
         script = _parse(_github_expressions(text))
+        analysis.mark_downloads(script)
         analysis.scope(script, options, True, "")
         analysis.noop_fallbacks(script, None)
         analysis.substitutions(script)
         analysis.traps(script)
         analysis.opaque_commands(script)
+        analysis.redefinitions(script)
         required = [
             kind for kind in (_required(node) for node in analysis.walk(script) if isinstance(node, _Simple)) if kind
         ]
@@ -1691,6 +2107,11 @@ def _truthy_flag(value: Any) -> bool:
     return value is True or (isinstance(value, str) and value.strip() not in ("", "false"))
 
 
+def _disabled(value: Any) -> bool:
+    """Whether an ``if:`` is literally false, so the step or job never runs."""
+    return value is False or (isinstance(value, str) and "".join(value.split()) in ("false", "${{false}}"))
+
+
 def scan_steps(
     steps: List[Any],
     where: str,
@@ -1708,6 +2129,8 @@ def scan_steps(
         if not isinstance(step, dict):
             findings.append(f"{where}: step #{index + 1} is not a mapping")
             continue
+        if _disabled(step.get("if")):
+            continue  # it never runs, so it counts for nothing
         name = step.get("name") or step.get("id") or f"#{index + 1}"
         label = f"{where}, step {name!r}"
         masked = _truthy_flag(step.get("continue-on-error")) or _truthy_flag(job.get("continue-on-error"))
@@ -1731,6 +2154,11 @@ def scan_steps(
                 )
             continue
         step_findings, step_required = scan_script(step["run"], label, options, root, strict_parse=False)
+        findings += [
+            f"{label}: `${{{{ matrix.{key} }}}}` pastes {value!r} into the script, which this guard cannot check; "
+            "pass the value through `env:` instead"
+            for key, value in _matrix_injections(step["run"], job)
+        ]
         findings += step_findings
         required += step_required
         if step_required and masked:
@@ -1744,8 +2172,8 @@ def scan_workflow(
     """Check one workflow or composite-action file; return ``(findings, required command kinds)``."""
     try:
         doc = yaml.safe_load(text)
-    except yaml.YAMLError as exc:
-        return [f"{name}: could not parse the YAML ({exc})"], []
+    except (yaml.YAMLError, ValueError, RecursionError) as exc:
+        return [f"{name}: could not parse the YAML ({exc.__class__.__name__}: {exc})"], []
     if doc is None:
         return [], []
     if not isinstance(doc, dict):
@@ -1756,6 +2184,8 @@ def scan_workflow(
     if not isinstance(jobs, dict):
         return [f"{name}: `jobs` is not a mapping"], []
     for job_id, job in jobs.items():
+        if isinstance(job, dict) and _disabled(job.get("if")):
+            continue
         steps = job.get("steps") or [] if isinstance(job, dict) else None
         if not isinstance(steps, list):
             findings.append(f"{name}: job {job_id!r} has no list of steps")
@@ -1781,12 +2211,66 @@ def gauntlet_script(text: str) -> Optional[str]:
     if fence < 0:
         return None
     body = block[fence + len("```bash") :]
-    close = body.rfind("```")
+    close = body.find("```")
     return body[:close] if close >= 0 else None
 
 
-def _missing_kinds(required: List[str]) -> List[str]:
-    return [kind for kind in _EXPECTED_KINDS if not any(item.startswith(kind) for item in required)]
+def _missing_kinds(where: str, required: List[str]) -> List[str]:
+    missing = [kind for kind in _EXPECTED_KINDS if not any(item.startswith(kind) for item in required)]
+    if not missing:
+        return []
+    return [
+        f"{where}: no {', '.join(missing)} invocation recognised; either it no longer runs one, or this guard "
+        "no longer recognises it"
+    ]
+
+
+def _read(path: Path, root: Path, findings: List[str]) -> Optional[str]:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        findings.append(
+            f"{path.relative_to(root)}: could not be read ({exc.__class__.__name__}), so it was not checked"
+        )
+        return None
+
+
+def _local_uses(text: str) -> List[str]:
+    """The local actions (``uses: ./path``) a workflow or composite action runs, as repository paths."""
+    try:
+        doc = yaml.safe_load(text)
+    except (yaml.YAMLError, ValueError, RecursionError):
+        return []  # reported when the file itself is scanned
+    steps: List[Any] = []
+    if isinstance(doc, dict):
+        jobs = doc.get("jobs")
+        for job in jobs.values() if isinstance(jobs, dict) else []:
+            steps += job.get("steps") or [] if isinstance(job, dict) and isinstance(job.get("steps"), list) else []
+        runs = doc.get("runs")
+        steps += runs.get("steps") or [] if isinstance(runs, dict) and isinstance(runs.get("steps"), list) else []
+    uses = [step.get("uses") for step in steps if isinstance(step, dict)]
+    return [posixpath.normpath(use[2:] or ".") for use in uses if isinstance(use, str) and use.startswith("./")]
+
+
+def _local_actions(root: Path, texts: List[str], findings: List[str]) -> List[Path]:
+    """Every composite action under ``.github`` plus each one a ``uses: ./path`` names, wherever it lives."""
+    actions = set((root / ".github").glob("**/action.y*ml"))
+    pending = [key for text in texts for key in _local_uses(text)]
+    seen: set = set()
+    while pending:
+        key = pending.pop()
+        if key in seen:
+            continue
+        seen.add(key)
+        directory = (root / key).resolve()
+        files = [directory / name for name in ("action.yml", "action.yaml") if (directory / name).is_file()]
+        if not directory.is_relative_to(root.resolve()) or not files:
+            findings.append(f"`uses: ./{key}` names no action.yml or action.yaml in this repository")
+            continue
+        actions.add(files[0])
+        text = _read(files[0], root, findings)
+        pending += _local_uses(text) if text is not None else []
+    return sorted(actions)
 
 
 def scan_repo(root: Path) -> Tuple[List[str], int, int]:
@@ -1794,35 +2278,36 @@ def scan_repo(root: Path) -> Tuple[List[str], int, int]:
     findings: List[str] = []
     workflow_dir = root / ".github" / "workflows"
     workflows = sorted([*workflow_dir.glob("*.yml"), *workflow_dir.glob("*.yaml")])
-    actions = sorted((root / ".github" / "actions").glob("*/action.y*ml"))
     if not workflows:
         findings.append(f"no workflows under {workflow_dir}; a scan of nothing would pass")
+    texts = {path: _read(path, root, findings) for path in workflows}
+    actions = _local_actions(root, [text for text in texts.values() if text is not None], findings)
+    action_texts = {path: _read(path, root, findings) for path in actions}
+    # What each local action runs, so a `continue-on-error` on the step that uses it is caught.
+    local_actions = {
+        path.parent.resolve().relative_to(root.resolve()).as_posix(): scan_workflow(text, path.name, root)[1]
+        for path, text in action_texts.items()
+        if text is not None
+    }
     total = 0
-    local_actions: Dict[str, List[str]] = {}
-    for path in actions:
-        found, required = scan_workflow(path.read_text(encoding="utf-8"), str(path.relative_to(root)), root)
-        findings += found
-        total += len(required)
-        local_actions[path.parent.relative_to(root).as_posix()] = required
-    for path in workflows:
-        text = path.read_text(encoding="utf-8")
+    for path, text in [*action_texts.items(), *texts.items()]:
+        if text is None:
+            continue
         found, required = scan_workflow(text, str(path.relative_to(root)), root, local_actions)
         findings += found
         total += len(required)
-        if path.name == "ci.yml" and _missing_kinds(required):
-            findings.append(
-                f"ci.yml: no {', '.join(_missing_kinds(required))} invocation recognised; the scan is broken"
-            )
+        if path in texts and path.stem == "ci":
+            findings += _missing_kinds(path.name, required)
     for doc in _GAUNTLET_DOCS:
-        script = gauntlet_script((root / doc).read_text(encoding="utf-8"))
-        if script is None:
+        text = _read(root / doc, root, findings)
+        script = gauntlet_script(text) if text is not None else None
+        if text is not None and script is None:
             findings.append(f"{doc}: no ```bash fence between the gauntlet:begin/end markers")
+        if script is None:
             continue
         found, required = scan_script(script, f"{doc} gauntlet", INTERACTIVE, root)
-        findings += found
+        findings += found + _missing_kinds(f"{doc} gauntlet", required)
         total += len(required)
-        if _missing_kinds(required):
-            findings.append(f"{doc} gauntlet: no {', '.join(_missing_kinds(required))} invocation recognised")
     return findings, len(workflows) + len(actions) + len(_GAUNTLET_DOCS), total
 
 
