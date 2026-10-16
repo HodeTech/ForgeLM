@@ -130,18 +130,18 @@ block; these do not represent nine complete Annex IV sections:
 | `system_identification` | §1 — provider_name, system_name, system_version, provider_contact, intended_purpose, risk_classification. |
 | `intended_purpose` | §1 — intended purpose statement. |
 | `system_components` | §2 — model lineage + training parameters. |
-| `computational_resources` | Annex IV point 2(c) — compute used during training. |
+| `computational_resources` | Annex IV §2(c) — compute used during training. |
 | `data_governance` | §2(d) — data provenance and validation methodology. |
 | `technical_documentation` | §3-5 — ForgeLM version, generation timestamp, known limitations. |
-| `monitoring_and_logging` | Annex IV point 9 (Art. 72(3)) — Declared external monitoring-plan metadata (`declarative_only: true`), or an audit-log reference; no runtime monitoring evidence. |
-| `performance_metrics` | Annex IV points 2(g) / 4 — accuracy / robustness metrics from the evaluation results. |
-| `risk_management` | Annex IV point 5 — the top-level `risk_assessment:` block, or an explicit "no risk_assessment block configured" marker. |
+| `monitoring_and_logging` | Annex IV §9 (Art. 72(3)) — Declared external monitoring-plan metadata (`declarative_only: true`), or an audit-log reference; no runtime monitoring evidence. |
+| `performance_metrics` | Annex IV §2(g) / §4 — accuracy / robustness metrics from the evaluation results. |
+| `risk_management` | Annex IV §5 — the top-level `risk_assessment:` block, or an explicit "no risk_assessment block configured" marker. |
 
 This table maps partial metadata, not complete Annex IV sections. Remaining legacy section labels are tracked in
 [#539](https://github.com/HodeTech/ForgeLM/issues/539); verifier completeness claims are tracked in
 [#573](https://github.com/HodeTech/ForgeLM/issues/573).
 
-There is no deployment-geography, lifecycle, standards-list, declaration-of-conformity section — earlier drafts of this page listed those, and none is emitted. The monitoring entry above is a metadata summary, not the detailed post-market monitoring plan required by Annex IV point 9. [Annex IV](#/compliance/annex-iv) is the single source of truth for this table.
+There is no deployment-geography, lifecycle, standards-list, declaration-of-conformity section — earlier drafts of this page listed those, and none is emitted. The monitoring entry above is a metadata summary, not the detailed description Annex IV §9 requires, which includes the post-market monitoring plan. [Annex IV](#/compliance/annex-iv) is the single source of truth for this table.
 
 ## Operational responsibilities (you, not ForgeLM)
 

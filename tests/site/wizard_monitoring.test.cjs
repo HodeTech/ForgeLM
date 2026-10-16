@@ -130,6 +130,9 @@ test('every locale\'s monitoring hint still names the optional metadata, the Art
     de: /Beobachtung nach dem Inverkehrbringen/, fr: /surveillance après commercialisation/,
     es: /vigilancia poscomercialización/, zh: /上市后监[控测]/ };
   const metadata = { en: 'metadata', tr: 'metadata', de: 'Metadaten', fr: 'métadonnées', es: 'metadatos', zh: '元数据' };
+  // The wording of Annex IV point 9 in each official language version (Regulation (EU) 2024/1689).
+  const describes = { en: /detailed description/, tr: /ayrıntılı açıklama/, de: /detaillierte Beschreibung/,
+    fr: /description détaillée/, es: /descripción detallada/, zh: /详细描述/ };
   for (const locale of Object.keys(postMarket)) {
     const hint = translations[locale]['wizard.monitoring.enabled.hint'];
     const detail = translations[locale]['wizard.monitoring.enabled.detail'];
@@ -137,22 +140,25 @@ test('every locale\'s monitoring hint still names the optional metadata, the Art
     assert.match(detail, postMarket[locale], `${locale}: the detail names the provider's Art. 72 obligation`);
     assert.ok(hint.includes(metadata[locale]), `${locale}: ForgeLM's optional record is called metadata`);
     assert.match(hint, /72/, `${locale}: cites Art. 72`);
-    assert.match(hint, /Annex IV|Anhang IV|annexe IV|anexo IV|附件\s*(?:IV|四)|Ek IV/i, `${locale}: cites Annex IV`);
-    assert.match(hint, /(?:^|\D)9(?:\D|$)/, `${locale}: cites Annex IV point 9`);
+    assert.match(hint, /Annex IV §9/, `${locale}: cites Annex IV §9`);
+    // Annex IV §9 asks for a detailed description of the system, its plan included — not "the detailed plan".
+    assert.match(hint, describes[locale], `${locale}: Annex IV §9 asks for a detailed description`);
   }
+  assert.match(translations.en['wizard.monitoring.enabled.hint'],
+    /Annex IV §9 asks for a detailed description of it, including the monitoring plan\./);
 });
 
 test('monitoring and webhook copy keeps one apostrophe style, and Chinese punctuation and endpoint term', () => {
   const { translations } = loadWizard();
   const scoped = key => key.startsWith('wizard.monitoring.') || key.startsWith('wizard.step.operations.') ||
-    key === 'wizard.webhook.enabled.hint' || key === 'wizard.webhook.enabled.detail';
+    key.startsWith('wizard.webhook.');
   // Citations such as 17(1)(h) and code tokens such as endpoint_env are not prose.
   const prose = value => value.replace(/\d+(?:\(\w+\))+/g, ' ').replace(/\b[a-z]+(?:_[a-z]+)+\b/g, ' ');
   for (const locale of ['en', 'tr', 'de', 'fr', 'es', 'zh']) {
     for (const [key, value] of Object.entries(translations[locale]).filter(([name]) => scoped(name))) {
       assert.doesNotMatch(value, /’/, `${locale} ${key}: the monitoring copy writes the straight apostrophe`);
       if (locale !== 'zh') continue;
-      assert.doesNotMatch(prose(value), /[一-鿿][,(]|[,)][一-鿿]/, `zh ${key}: full-width punctuation in Chinese text`);
+      assert.doesNotMatch(prose(value), /[一-鿿][,(:;!?]|[,);!?][一-鿿]/, `zh ${key}: full-width punctuation in Chinese text`);
       assert.doesNotMatch(prose(value), /endpoint/i, `zh ${key}: the copy's term for an endpoint is 端点`);
     }
   }
@@ -175,6 +181,10 @@ test('Turkish copy follows the glossary: monitoring terms, alarm / bildirim / uy
   assert.match(tr['wizard.monitoring.alert_on_drift.label'], /alarm/);
   assert.match(tr['wizard.webhook.hint'], /bildirim/);
   assert.match(tr['wizard.webhook.enabled.detail'], /uyarı/, 'a delivery failure is still a log warning');
+  // Neighbouring corrections: the Regulation's Turkish citation, one term for trend tracking, a possessive.
+  assert.match(tr['compliance.mapping.lead'], /\(AB\) 2024\/1689 sayılı Tüzüğün bir maddesini, onu /);
+  assert.match(tr['compliance.art9.body'], /trend izleme/);
+  assert.match(tr['wizard.error.governance.annotation_process.required'], /SFT'si için/);
 });
 
 test('generated YAML preserves monitoring and webhook values through the real ForgeConfig schema', () => {

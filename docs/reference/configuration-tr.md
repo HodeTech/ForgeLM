@@ -339,8 +339,8 @@ Her iki endpoint alanı da boşsa manifeste `endpoint: null` yazılır. Adlandı
 tanımlı olsa bile referansı çözümlenmez. Kapalı veya belirtilmemiş planlar kaydedilmez.
 
 ForgeLM'de metadata kaydı isteğe bağlıdır; Madde 72, yüksek riskli yapay zekâ sistemlerinin sağlayıcılarının piyasaya arz
-sonrası izleme sistemi kurmasını ve belgelemesini gerektirir. Bu alanlar bir özettir; Annex IV §9'un (Madde
-72(3)) gerektirdiği ayrıntılı plan değildir.
+sonrası izleme sistemi kurmasını ve belgelemesini gerektirir. Bu alanlar bir özettir; Annex IV §9'un istediği,
+izleme planını (Madde 72(3)) da içeren ayrıntılı açıklama değildir.
 
 `load_config`, etkin ve `none` dışında exporter beyan eden plan için uyarı verir; doğrudan `ForgeConfig(...)` kurulumu
 bu dosya yükleme uyarısını vermez.

@@ -96,7 +96,7 @@ ForgeLM/
 │   ├── deepspeed/            # ZeRO-2, ZeRO-3, ZeRO-3+Offload ön ayarları
 │   └── safety_prompts/       # Yerleşik adversarial prompt kütüphanesi (140 prompt, 6 kategori)
 ├── notebooks/                # 10 Colab-uyumlu Jupyter notebook
-├── tests/                    # 129 test modülü
+├── tests/                    # 130 test modülü
 ├── tools/                    # CI guard'ları: bilingual_parity, anchor_resolution,
 │                              # cli_help_consistency, yaml_snippets,
 │                              # audit_event_catalog, library_api_doc,
@@ -133,7 +133,7 @@ Hafif `TrainResult` dataclass — torch/transformers olmadan import edilebilir. 
 EleutherAI `lm-evaluation-harness`'i sarar. Yapılandırılabilir benchmark görevleri çalıştırır, accuracy metriklerini çıkarır, `min_score` eşiğini uygular ve sonuçları kaydeder. Opsiyonel bağımlılık: `pip install forgelm[eval]`.
 
 ### `safety/`
-İki puanlama modu: binary (güvenli/güvensiz oranı) ve confidence-weighted (sınıflandırıcı güven skoru). 3 katmanlı güvenlik kapısı: binary oran → confidence skoru → ciddiyet eşiği. Llama Guard S1-S14 zarar kategorileri, ciddiyet seviyeleri (kritik/yüksek/orta/düşük), düşük güven uyarıları, çalışmalar arası trend takibi (safety_trend.jsonl).
+İki puanlama modu: binary (güvenli/güvensiz oranı) ve confidence-weighted (sınıflandırıcı güven skoru). 3 katmanlı güvenlik kapısı: binary oran → confidence skoru → ciddiyet eşiği. Llama Guard S1-S14 zarar kategorileri, ciddiyet seviyeleri (kritik/yüksek/orta/düşük), düşük güven uyarıları, çalışmalar arası trend izleme (safety_trend.jsonl).
 
 ### `judge.py`
 LLM-as-Judge değerlendirme: API tabanlı hakimler (OpenAI-uyumlu endpoint) ve yerel model hakimleri destekler. Markdown code block çıkarmalı sağlam JSON parse'i içerir. 1-10 ölçeğinde puanlar; yapılandırılabilir minimum eşik.

@@ -28,7 +28,7 @@
 | A.5.5 Yetkililerle iletişim | OOS | — |
 | A.5.6 Özel ilgi gruplarıyla iletişim | OOS | — |
 | A.5.7 Tehdit istihbaratı | OOS | — |
-| A.5.8 Proje yönetiminde bilgi güvenliği | FL-helps | `risk_assessment` config; F-compliance-110 strict gate; Annex IV point 5 |
+| A.5.8 Proje yönetiminde bilgi güvenliği | FL-helps | `risk_assessment` config; F-compliance-110 strict gate; Annex IV §5 |
 | A.5.9 Bilgi ve ilişkili varlık envanteri | FL-helps | `data_provenance.json`; `model_integrity.json`; SBOM |
 | A.5.10 Bilginin kabul edilebilir kullanımı | OOS | — |
 | A.5.11 Varlıkların iadesi | OOS | — |

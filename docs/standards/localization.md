@@ -136,7 +136,7 @@ For the parts we do translate, keep terminology consistent. A small glossary:
 | Annex IV point N | Annex IV §N | *Madde* is an Article (*Madde 72*), so an Annex point is §N, as in *Annex IV §1* |
 | drift (model / data) | drift | Kept in English, as in the guides and the site. *Kayma* names a schema drift (*şema kayması*) or a threshold or preference shift |
 | metrics exporter | exporter | Kept in English, like *endpoint* and *webhook*; suffixes take an apostrophe (*exporter'ı*) |
-| alert / notification / warning | alarm / bildirim / uyarı | A monitoring alert is *alarm*; a webhook's chat message is *bildirim*, even where English calls it an alert; a log warning is *uyarı* |
+| alert / notification / warning | alarm / bildirim / uyarı | A monitoring or threshold alert (drift, cost) is *alarm*; a webhook's chat message is *bildirim*, even where English calls it an alert; a log warning is *uyarı* |
 
 When in doubt, look at sibling TR docs and match the most frequent choice. Don't invent new terminology mid-series.
 

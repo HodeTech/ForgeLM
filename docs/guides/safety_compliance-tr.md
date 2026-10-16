@@ -188,7 +188,7 @@ Güvenlik sonuçları `checkpoints/safety/safety_results.json`'a kaydedilir:
 }
 ```
 
-### Cross-run trend takibi
+### Cross-run trend izleme
 
 Her güvenlik değerlendirmesi `checkpoints/safety/safety_trend.jsonl`'a
 eklenir:

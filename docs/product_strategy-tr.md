@@ -20,7 +20,7 @@ ForgeLM, LLM ince ayarını (fine-tuning) **güvenli, denetlenebilir ve tekrarla
 - **Llama Guard 3** güvenlik değerlendirmesi eğitim pipeline'ının içinde çalışır; eğitim sonrası değil
 - **3 katmanlı güvenlik kapısı**: ikili geçer/kalır + güven ağırlıklı skor + 14 zarar kategorisinde (S1-S14) önem analizi
 - **Otomatik geri alma (auto-revert)**: güvenlik regresyonu tespit edilirse, çıktılar yazılmadan önce eğitim sonucu otomatik olarak reddedilir
-- **Çalıştırmalar arası trend takibi**: güvenlik skorları her çalıştırmada loglanır; zamanla oluşan kayan bozulma yakalanır
+- **Çalıştırmalar arası trend izleme**: güvenlik skorları her çalıştırmada loglanır; zamanla oluşan kayan bozulma yakalanır
 - **`auto_revert_on_safety_failure`** config alanı doğrudan YAML'a yazılır — CI'da güvenlik kapısı uygulamak için özel script gerekmez
 
 ### 2. Uyumluluk Yerleşik (Compliance-Native)
@@ -69,7 +69,7 @@ ForgeLM'in temel mimari kimliği: bir YAML dosyası bir eğitim çalışmasını
 
 **ForgeLM'i neden seçerler:** Anlamlı çıkış kodları doğrudan pipeline dallanma mantığına karşılık gelir. `--dry-run`, GPU kuyruğuna alınmadan config'i doğrular. Yapılandırılmış JSON çıktı, gözlemlenebilirlik platformlarıyla entegre olur. Webhook bildirimleri (Slack/Teams) mevcut olay yönetimi akışlarına bağlanır.
 
-**Temsili iş akışı:** `git push → GitHub Actions tetiklenir → forgelm --config job.yaml → çıkış kodu → dağıt veya uyarı ver`
+**Temsili iş akışı:** `git push → GitHub Actions tetiklenir → forgelm --config job.yaml → çıkış kodu → dağıt veya alarm ver`
 
 ### İkincil: Düzenlemeye Tabi Sektörlerdeki ML Mühendisleri
 

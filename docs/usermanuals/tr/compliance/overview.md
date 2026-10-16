@@ -82,7 +82,7 @@ Tam kod referansları için [GitHub'daki Compliance özeti](https://github.com/H
 ## ForgeLM'in iddia *etmediği*
 
 :::warn
-ForgeLM Annex IV tarzı teknik dokümantasyon **üretir**. Sisteminizi AI Act kapsamında bir yüksek-riskli AI sistemi olarak **sertifikalandırmaz** — bu, herhangi bir toolkit'in kapsamı dışındaki bir notified-body veya öz-değerlendirme faaliyetidir.
+ForgeLM Annex IV tarzı teknik dokümantasyon **üretir**. Sisteminizi EU AI Act kapsamında bir yüksek-riskli AI sistemi olarak **sertifikalandırmaz** — bu, herhangi bir toolkit'in kapsamı dışındaki bir notified-body veya öz-değerlendirme faaliyetidir.
 
 Audit log konvansiyonel olarak append-only ve SHA-256-anchored. Gerçek tamper-evidence için log'u ayrı, write-once depoya (S3 Object Lock, ledger DB) göndermeniz gerekir. Toolkit artifact'ı üretebilir; chain-of-custody operasyonel sorumluluğunuzdur.
 
@@ -130,18 +130,18 @@ bunlar dokuz eksiksiz Annex IV bölümünü temsil etmez:
 | `system_identification` | §1 — provider_name, system_name, system_version, provider_contact, intended_purpose, risk_classification. |
 | `intended_purpose` | §1 — kullanım amacı beyanı. |
 | `system_components` | §2 — model soyağacı + eğitim parametreleri. |
-| `computational_resources` | Annex IV point 2(c) — eğitim sırasında kullanılan hesaplama kaynağı. |
+| `computational_resources` | Annex IV §2(c) — eğitim sırasında kullanılan hesaplama kaynağı. |
 | `data_governance` | §2(d) — veri kökeni ve doğrulama metodolojisi. |
 | `technical_documentation` | §3-5 — ForgeLM sürümü, üretim zaman damgası, bilinen sınırlamalar. |
 | `monitoring_and_logging` | Annex IV §9 (Madde 72(3)) — Beyan edilen harici izleme planı (`declarative_only: true`) veya audit log referansı; çalışan izleme kanıtı değildir. |
-| `performance_metrics` | Annex IV points 2(g) / 4 — değerlendirme sonuçlarından doğruluk / sağlamlık metrikleri. |
-| `risk_management` | Annex IV point 5 — top-level `risk_assessment:` bloğu ya da açık bir "no risk_assessment block configured" işareti. |
+| `performance_metrics` | Annex IV §2(g) / §4 — değerlendirme sonuçlarından doğruluk / sağlamlık metrikleri. |
+| `risk_management` | Annex IV §5 — top-level `risk_assessment:` bloğu ya da açık bir "no risk_assessment block configured" işareti. |
 
 Bu tablo kısmi metadata eşlemelerini gösterir; tam bir Annex IV belgesi değildir. Diğer eski bölüm etiketlerinin
 düzeltilmesi [#539](https://github.com/HodeTech/ForgeLM/issues/539), doğrulayıcının tamlık iddiaları
 [#573](https://github.com/HodeTech/ForgeLM/issues/573) kapsamında takip edilir.
 
-Dağıtım coğrafyası, yaşam döngüsü, standartlar listesi, uygunluk beyanı bölümü yoktur — bu sayfanın eski taslakları bunları listeliyordu, hiçbiri üretilmez. Yukarıdaki izleme kaydı metadata özetidir; Annex IV §9'un gerektirdiği ayrıntılı piyasaya arz sonrası izleme planı değildir. Bu tablonun tek doğruluk kaynağı [Annex IV](#/compliance/annex-iv) sayfasıdır.
+Dağıtım coğrafyası, yaşam döngüsü, standartlar listesi, uygunluk beyanı bölümü yoktur — bu sayfanın eski taslakları bunları listeliyordu, hiçbiri üretilmez. Yukarıdaki izleme kaydı bir metadata özetidir; Annex IV §9'un istediği, piyasaya arz sonrası izleme planını da içeren ayrıntılı açıklama değildir. Bu tablonun tek doğruluk kaynağı [Annex IV](#/compliance/annex-iv) sayfasıdır.
 
 ## Operasyonel sorumluluklar (siz, ForgeLM değil)
 
