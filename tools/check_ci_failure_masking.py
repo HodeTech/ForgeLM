@@ -23,39 +23,47 @@ ignored (`&&` / `||` lists, `{ … }` groups placed there, conditions), `set` /
 `shopt -o` changes, noexec, `bash -c`, `eval`, a script a shell reads from a
 here-document, and the shell scripts a step runs or sources from the
 repository (`bash ci/x.sh`, `./ci/x.sh`, `source ci/x.sh`,
-`$GITHUB_WORKSPACE/ci/x.sh`), from the step's `working-directory:`. ci.yml and
-each gauntlet must still run `pytest`, `node --test`, `ruff` and a `tools/`
-guard, so a scan that recognises nothing cannot pass.
+`$GITHUB_WORKSPACE/ci/x.sh`, `$PWD/ci/x.sh`), from the step's
+`working-directory:`. ci.yml and each gauntlet must still run `pytest`,
+`node --test`, `ruff` and a `tools/` guard, so a scan that recognises nothing
+cannot pass.
 
-It accepts only shapes it can prove and fails closed on the rest, so some
+It accepts only the shapes it models and fails closed on the rest, so some
 correct but indirect forms are rejected too: re-raising a status captured with
 `set +e` or `|| rc=$?` later, `${PIPESTATUS[0]}`, `wait "$pid"`, `out=$(cmd)`, a
 required command inside a `case` or an `if` branch, `while` / `until` loops,
-`for` loops over a variable or with a `continue` / `break`, shell functions,
-and unknown wrappers or commands taken from a `${{ }}` expression. An `if`
-that tests a required command is accepted when the branch its failure takes
-ends with a non-zero `exit` and nothing else in it can leave early
-(`if ! cmd; then echo …; exit 1; fi`). Keep required commands plain; a fallback
-may report, then must end with `exit 1` or re-raise a captured status
-(`|| { rc=$?; …; exit "$rc"; }`). It also rejects `continue-on-error` or
-`if: false` on a step or job that runs a required command, directly or through
-local actions; `ruff --exit-zero`; an EXIT/ERR trap that can exit 0 or runs a
-required command, and an ERR trap that turns errexit off; a function, alias or
-`hash -p` that takes over a required command or one this guard relies on
-(`exit`, `set`, a wrapper or a shell); a required command that an earlier
-unconditional `exit`, `exec` or `set -n`, also in a sourced or `eval`'d
-script, keeps from running; a repository
-script it cannot find; and a `${{ }}` expression or matrix value that pastes
-shell syntax.
+`for` loops over a variable or with a `continue` / `break` before the required
+command, shell functions, and unknown wrappers or commands taken from a `${{ }}`
+expression. An `if` that tests a required command is accepted when the branch
+its failure takes ends with a non-zero `exit` and nothing else in it can leave
+early (`if ! cmd; then echo …; exit 1; fi`). Keep required commands plain; a
+fallback may report, then must end with `exit 1` or re-raise a captured status
+(`|| { rc=$?; …; exit "$rc"; }`), with nothing before that which can leave the
+group. It also rejects `continue-on-error`, `if: false`, `if: failure()` or
+`if: cancelled()` on a step or job that runs a required command, directly or
+through local actions; `ruff --exit-zero` and `--fix-only`; an EXIT/ERR trap
+that can exit 0, runs `exec` or runs a required command, an ERR trap that
+turns errexit off, and a DEBUG or RETURN trap that can exit or turn errexit
+off; a function, alias or `hash -p` that takes over a required command or one
+this guard relies on (`exit`, `set`, a wrapper or a shell); a required command
+that an `exit`, `exec` or `set -n` bash always reaches first keeps from running
+(also behind `!` or `x=1 &&`, in a `{ … }` group, a function, or a sourced or
+`eval`'d script); a repository script it cannot find, such as one named from
+`$(dirname "$0")`, or that runs itself; and a `${{ }}` expression or matrix
+value that pastes shell syntax.
 
 It catches accidental masking, not deliberate evasion: whoever can edit a
 workflow can delete its test step. Beyond it are a required command run under
 another name (`$CMD`), by another program (`make`, `tox`, a Python script) or
-on another machine or container (`docker exec`, `ssh`); a script generated or
-downloaded while the step runs (`eval "$(…)"`, `curl … | sh`); a program
-replaced on disk or put first on `PATH`; a remote action; a job condition other
-than `if: false`, such as `if: always()` on a job that needs the tests; and options other than
-`--exit-zero` that empty a check (`pytest --collect-only`).
+on another machine or container, whose script it never reads
+(`docker exec c sh -c '…'`, `ssh host '…'`); a script generated or downloaded
+while the step runs (`eval "$(…)"`, `curl … | sh`); a program replaced on disk
+or put first on `PATH`; a captured status changed by a script it cannot
+follow; a DEBUG trap that skips commands under `extdebug`; a remote action;
+any other condition, such as `if: always()` on a job that needs the tests,
+`${{ 1 == 2 }}`, or an `if:` on a job that calls a reusable workflow; and
+options other than `--exit-zero` and `--fix-only` that empty a check
+(`pytest --collect-only`).
 
 Independently of required commands, a `|| true` / `|| :` / `|| exit 0` fallback
 is refused everywhere, command substitutions and trap actions included, except
@@ -77,9 +85,13 @@ import sys
 from dataclasses import dataclass, replace
 from itertools import islice
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
 
-import yaml
+try:
+    import yaml
+except ImportError as exc:  # pragma: no cover
+    print(f"check_ci_failure_masking: PyYAML is not importable ({exc}); `pip install pyyaml`.", file=sys.stderr)
+    sys.exit(1)
 
 # The shell lexer and parser live in a sibling module, imported the way the other guards share code.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -116,7 +128,7 @@ _STATUS_CAPTURE_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]{0,63})=\$\?")
 # The name a tool runner's package spec starts with: `ruff@0.8.0`, `ruff>=0.8`, `ruff[extra]`.
 _PACKAGE_RE = re.compile(r"[A-Za-z0-9._-]{1,128}")
 # ruff's flags that make it exit 0 whatever it finds; its one-letter flags combine (`-ne`, `-qe`).
-_RUFF_EXIT_ZERO_RE = re.compile(r"--exit-zero|-[nqsvw]{0,5}e[enqsvw]{0,5}")
+_RUFF_EXIT_ZERO_RE = re.compile(r"--exit-zero|--fix-only|-[nqsvw]{0,5}e[enqsvw]{0,5}")
 # The required programs run by name, and those also run as `python -m <module>`.
 _REQUIRED_PROGRAMS = ("pytest", "py.test", "ruff", "mypy", "forgelm")
 _GATE_MODULES = ("pytest", "mypy", "ruff", "forgelm")
@@ -143,6 +155,9 @@ _STDIN_PATHS = ("/dev/stdin", "/dev/fd/0", "/proc/self/fd/0")
 # A script path taken from the repository root, and the suffixes of a script this guard must be able to read.
 _WORKSPACE_PREFIXES = ("$GITHUB_WORKSPACE/", "${GITHUB_WORKSPACE}/")
 _SCRIPT_SUFFIXES = (".sh", ".bash")
+# A script path taken from the working directory, and the start of one taken from the running script's own.
+_CWD_PREFIXES = ("$PWD/", "${PWD}/", "$(pwd)/")
+_SCRIPT_DIR_PREFIXES = ("$(dirname ", "$(cd ", "${0%/*}/", "${BASH_SOURCE")
 # The fragment of each required command kind that ci.yml and every gauntlet must
 # contain. A surface missing one has stopped running that check, or this guard
 # no longer recognises it; either way a clean result would mean nothing.
@@ -525,28 +540,43 @@ def _captured_status(item: Item) -> Optional[str]:
     return None
 
 
-# Commands that set the variables named in their arguments: `read rc`, `local rc=0`, `printf -v rc …`.
+# Commands that set the variables named in their arguments: `read rc`, `local rc=0`, `printf -v rc …`, `getopts o rc`.
 _VARIABLE_SETTERS = ("declare", "local", "export", "typeset", "readonly", "read", "unset", "let", "printf", "mapfile",
-                     "readarray")  # fmt: skip
+                     "readarray", "getopts", "wait")  # fmt: skip
+
+# The script a command runs in this shell (``eval``, ``source``), for code that must look inside it.
+Nested = Callable[[Simple], Optional[Script]]
 
 
-def _assigned(nodes: List[Any], name: str) -> bool:
-    """Whether a command in *nodes* may change the variable *name*: ``rc=0``, ``read rc``, ``((rc++))``, ``for rc``."""
+def _no_nested(command: Simple) -> Optional[Script]:
+    return None
+
+
+def _assigned(nodes: List[Any], name: str, nested: Nested = _no_nested) -> bool:
+    """Whether a command in *nodes* may change the variable *name*: ``rc=0``, ``read rc``, ``((rc++))``, ``for rc``,
+    a nameref to it (``declare -n ref=rc``), also in a script *nested* runs in this shell (``eval rc=0``)."""
     arithmetic = re.compile(
         r"(?<![A-Za-z0-9_$])" + re.escape(name) + r" {0,8}(?:[-+*/%&|^]?=(?!=)|\+\+|--)|(?:\+\+|--)" + re.escape(name)
     )
     stack = list(nodes)
+    seen: set = set()
     while stack:
         node = stack.pop()
         if isinstance(node, Simple):
-            argv = [word.text for word in node.words]
+            argv = _argv(node)  # `command read rc` and `builtin read rc` too
             names = [word.text.split("=", 1)[0].rstrip("+") for word in node.assignments]
             if argv[:1] and argv[0] in _VARIABLE_SETTERS:
                 names += [arg.split("=", 1)[0].strip().rstrip("+") for arg in argv[1:]]  # `let "rc = 0"` too
+                if any(arg.startswith("-") and "n" in arg for arg in argv[1:]):  # `declare -n ref=rc`
+                    names += [arg.split("=", 1)[1] for arg in argv[1:] if "=" in arg]
             if name in (assigned.split("[", 1)[0] for assigned in names):
                 return True
             if any(arithmetic.search(word.raw) for word in node.words if argv[:1] == ["let"] or "((" in word.raw):
                 return True
+            script = nested(node)
+            if script is not None and id(script) not in seen:
+                seen.add(id(script))
+                stack.append(script)
         elif isinstance(node, Loop) and node.variable is not None and node.variable.text == name:
             return True
         elif isinstance(node, Expression) and any(arithmetic.search(word.raw) for word in node.words):
@@ -555,10 +585,15 @@ def _assigned(nodes: List[Any], name: str) -> bool:
     return False
 
 
-def _kept_capture(items: List[Item]) -> Optional[str]:
+def _kept_capture(items: List[Item], nested: Nested = _no_nested) -> Optional[str]:
     """``rc`` when *items* start with ``rc=$?`` and nothing after it changes ``rc``."""
     captured = _captured_status(items[0]) if items else None
-    return None if captured is None or _assigned(list(items[1:]), captured) else captured
+    return None if captured is None or _assigned(list(items[1:]), captured, nested) else captured
+
+
+def _number(text: str) -> Optional[int]:
+    """*text* as a number when it is one in bash: ASCII digits only (``exit ²`` is no exit code)."""
+    return int(text) if text.isascii() and text.isdigit() else None
 
 
 def _exit_kind(command: Simple, failed_status: bool, captured: Optional[str]) -> str:
@@ -574,8 +609,9 @@ def _exit_kind(command: Simple, failed_status: bool, captured: Optional[str]) ->
         code = argv[1] if len(argv) > 1 else "$?"
         if code in ("$?", "${?}"):
             return "exits" if failed_status else "succeeds"
-        if code.isdigit():
-            return "exits" if int(code) % 256 else "succeeds"
+        number = _number(code)
+        if number is not None:
+            return "exits" if number % 256 else "succeeds"
         return "exits" if captured and code in ("$" + captured, "${" + captured + "}") else "succeeds"
     return "fails" if argv in (["false"], ["/bin/false"], ["/usr/bin/false"]) else "succeeds"
 
@@ -589,7 +625,7 @@ def _variable_only(text: str) -> bool:
         name = name[1:]
     else:
         return False
-    return name.isidentifier() or name.isdigit() or name in ("@", "*")
+    return name.isidentifier() or _number(name) is not None or name in ("@", "*")
 
 
 def _redefined(command: Simple) -> Tuple[List[str], str]:
@@ -602,24 +638,28 @@ def _redefined(command: Simple) -> Tuple[List[str], str]:
     return [], ""
 
 
-def _ends_script(item: Item) -> Optional[Simple]:
-    """An unconditional ``exit`` that can leave 0, an ``exec`` that replaces the shell, or ``set -n``."""
-    pipelines = item.and_or.pipelines
-    if item.background or len(pipelines) != 1 or pipelines[0].negated or len(pipelines[0].commands) != 1:
+def _constant_status(pipeline: Pipeline) -> Optional[bool]:
+    """True when *pipeline* always succeeds (``x=1``, ``true``, ``:``), False when it always fails (``false``)."""
+    command = pipeline.commands[0] if len(pipeline.commands) == 1 else None
+    if not isinstance(command, Simple) or command.redirects:
         return None
-    command = pipelines[0].commands[0]
-    if not isinstance(command, Simple) or not command.words:
+    argv = [word.text for word in command.words]
+    if not argv and not any(word.subs for word in command.assignments):
+        status = True
+    elif argv in (["true"], [":"], ["false"]):
+        status = argv != ["false"]
+    else:
         return None
-    args = _option_args(command)
-    if args is not None and _noexec(args):
-        return command
-    program = command.words[0].text
-    if program == "exit" and _exit_kind(command, failed_status=False, captured=None) == "succeeds":
-        return command
-    return command if program == "exec" and len(command.words) > 1 else None
+    return status != pipeline.negated
 
 
-def _reraising_exits(action: Script, entry_status: bool, bare_is_status: bool = False) -> set:
+def _trap_label(kind: str) -> str:
+    return f"a {kind} trap" if kind in ("DEBUG", "RETURN") else "an EXIT/ERR trap"
+
+
+def _reraising_exits(
+    action: Script, entry_status: bool, bare_is_status: bool = False, nested: Nested = _no_nested
+) -> set:
     """Ids of the ``exit`` commands in a trap action that leave with the status the trap was entered with.
 
     ``$?`` holds that status only in the action's first command (when
@@ -632,7 +672,7 @@ def _reraising_exits(action: Script, entry_status: bool, bare_is_status: bool = 
     if not action.items:
         return found
     status = ("$?", "${?}")
-    captured = _kept_capture(action.items) if entry_status else None
+    captured = _kept_capture(action.items, nested) if entry_status else None
     if captured:
         status += ("$" + captured, "${" + captured + "}")
     first = action.items[0].and_or.pipelines[0].commands[0]
@@ -695,8 +735,11 @@ def _downloaded_operand(command: Simple, operand: str) -> bool:
 
 
 def _repository_path(path: str) -> bool:
-    """Whether *path* names a file of the repository: relative, or under ``$GITHUB_WORKSPACE``."""
-    return path.startswith(_WORKSPACE_PREFIXES) or not (posixpath.isabs(path) or path.startswith(("~", "$")))
+    """Whether *path* names a file of the repository: relative, under ``$GITHUB_WORKSPACE``, or taken from the
+    working directory or the running script's own (``"$PWD/ci/x.sh"``, ``"$(dirname "$0")/lib.sh"``)."""
+    if path.startswith(_WORKSPACE_PREFIXES + _CWD_PREFIXES + _SCRIPT_DIR_PREFIXES):
+        return True
+    return not (posixpath.isabs(path) or path.startswith(("~", "$")))
 
 
 _NOT_IN_REPOSITORY = (
@@ -726,8 +769,11 @@ class _Analysis:
         self._downloaded: set = set()  # shells reading an installer piped from curl / wget
         self._origin: Dict[int, str] = {}  # node id -> the repository script it was read from
         self._skipped: Dict[int, str] = {}  # `&&` list id -> the command whose failure skips its required one
+        self._includers: Dict[
+            str, Optional[str]
+        ] = {}  # repository script -> the one that first ran it (None: the step)
         self._nullglob: Optional[bool] = None
-        self._functions: Optional[set] = None
+        self._functions: Optional[Dict[str, Any]] = None
 
     def report(self, node: Any, reason: str) -> None:
         first = node.commands[0] if isinstance(node, Pipeline) else node
@@ -837,13 +883,15 @@ class _Analysis:
         """The resolved file and text of *path* when it is a readable file inside the scanned repository.
 
         A path under ``$GITHUB_WORKSPACE`` starts at the repository root, a relative
-        one at the step's working directory.
+        one or one under ``$PWD`` at the step's working directory.
         """
         if self.root is None:
             return None
         if path.startswith(_WORKSPACE_PREFIXES):
             base, path = self.root, path.split("/", 1)[1]
-        elif self.cwd is None or posixpath.isabs(path):
+        elif self.cwd is not None and path.startswith(_CWD_PREFIXES):
+            base, path = self.root / self.cwd, path.split("/", 1)[1]
+        elif self.cwd is None or posixpath.isabs(path) or path.startswith("$"):
             return None
         else:
             base = self.root / self.cwd
@@ -866,10 +914,26 @@ class _Analysis:
         """A script a shell runs (``bash ci/x.sh``) or sources (*missing_ok*: ``source .venv/bin/activate``)."""
         found = self._repository_file(path)
         if found is not None:
+            if self._runs_itself(command, path, found[0]):
+                return None
             return self._labelled(self._parse_file(command, found, options, current_shell), found[0])
         if not missing_ok or (path.endswith(_SCRIPT_SUFFIXES) and _repository_path(path)):
             self.report(command, f"runs {path}, {_NOT_IN_REPOSITORY}")
         return None
+
+    def _runs_itself(self, command: Simple, path: str, file: Path) -> bool:
+        """Report *command* when the script it runs is already running it (a script that sources itself)."""
+        shown = _shown(file, self.root.resolve()) if self.root is not None else file.as_posix()
+        running = self._origin.get(id(command))
+        chain: set = set()
+        while running is not None and running not in chain:
+            if running == shown:
+                self.report(command, f"runs {path} again from inside it, a loop this guard cannot follow")
+                return True
+            chain.add(running)
+            running = self._includers.get(running)
+        self._includers.setdefault(shown, self._origin.get(id(command)))
+        return False
 
     def _executable(self, command: Simple, path: str) -> Optional[Tuple[Script, Optional[ShellOptions], bool]]:
         """A repository shell script run by its path (``./ci/test.sh``), with its shebang's options."""
@@ -877,6 +941,8 @@ class _Analysis:
         if found is None:
             if path.endswith(_SCRIPT_SUFFIXES) and _repository_path(path):
                 self.report(command, f"runs {path}, {_NOT_IN_REPOSITORY}")
+            return None
+        if self._runs_itself(command, path, found[0]):
             return None
         text = found[1]
         words = text.split("\n", 1)[0][2:].split() if text.startswith("#!") else ["sh"]
@@ -984,33 +1050,121 @@ class _Analysis:
         return not (any(mark in word.raw for word in loop.words for mark in "*?[") and self.nullglob())
 
     def skips_iterations(self, body: Script) -> bool:
-        """Whether a loop body can ``continue`` or ``break`` before its later commands run."""
-        return any(
-            isinstance(command, Simple) and command.words and command.words[0].text in ("continue", "break")
-            for command in self.option_commands(body)
-        )
+        """Whether a loop body can ``continue`` or ``break`` before its first required command runs."""
+        for item in body.items:
+            pipelines = item.and_or.pipelines
+            first = next((index for index, pipeline in enumerate(pipelines) if self.has_required(pipeline)), None)
+            if any(self.breaks_out(pipeline) for pipeline in pipelines[:first]):
+                return True
+            if first is not None:
+                group = pipelines[first].commands[0]
+                return isinstance(group, Group) and not group.subshell and self.skips_iterations(group.body)
+        return False
 
-    def functions(self) -> set:
-        """The names of the shell functions the script defines."""
-        if self._functions is None:
-            self._functions = (
-                {node.name for node in self.walk(self.script) if isinstance(node, Function)} if self.script else set()
+    def breaks_out(self, node: Any, levels: int = 1, seen: frozenset = frozenset()) -> bool:
+        """Whether *node* can run a ``continue`` or ``break`` that leaves the loop *levels* out, also in a
+        function it calls or a script it runs in this shell (a nested loop's own ``continue`` does not)."""
+        if isinstance(node, Simple):
+            words = [word.text for word in node.words]
+            if words[:1] in (["continue"], ["break"]):
+                count = _number(words[1]) if len(words) > 1 else 1
+                return count is None or count >= levels
+            body = self.functions().get(words[0]) if words else None
+            if body is not None and words[0] not in seen:
+                return self.breaks_out(body, levels, seen | {words[0]})
+            script = self._current_shell_script(node)
+            return (
+                script is not None and id(script) not in seen and self.breaks_out(script, levels, seen | {id(script)})
             )
+        if isinstance(node, Function) or (isinstance(node, Group) and node.subshell):
+            return False
+        inner = levels + 1 if isinstance(node, Loop) else levels
+        return any(self.breaks_out(child, inner, seen) for child in children(node))
+
+    def functions(self) -> Dict[str, Any]:
+        """The shell functions the script defines, by name: the body of the last definition of each."""
+        if self._functions is None:
+            nodes = self.walk(self.script) if self.script else iter(())
+            self._functions = {node.name: node.body for node in nodes if isinstance(node, Function)}
         return self._functions
 
-    def may_leave(self, node: Any) -> bool:
+    def _current_shell_script(self, command: Simple) -> Optional[Script]:
+        """The script *command* runs in this shell (``eval``, ``source``), if any."""
+        nested = self.nested(command)
+        return nested[0] if nested is not None and nested[2] else None
+
+    def may_leave(self, node: Any, captured: Optional[str] = None, failing_exits: bool = False) -> bool:
         """Whether *node* can leave its block early: ``exit``, ``exec``, ``return``, ``break``, ``continue``,
-        ``set -n``, or a call to a shell function, which may run any of them."""
+        ``set -n``, or a call to a shell function, which may run any of them.
+
+        With *failing_exits*, an ``exit`` that always leaves non-zero (``exit 1``, or
+        ``exit "$rc"`` after ``rc=$?`` as *captured*) is no early way out.
+        """
         for command in self.option_commands(node):
             if not isinstance(command, Simple) or not command.words:
                 continue
             words = [word.text for word in command.words]
+            if words[0] == "exit" and failing_exits and _exit_kind(command, False, captured) == "exits":
+                continue
             if words[0] in ("exit", "return", "break", "continue") or (words[0] == "exec" and len(words) > 1):
                 return True
             args = _option_args(command)
             if (args is not None and _noexec(args)) or words[0] in self.functions():
                 return True
         return False
+
+    def ends(self, item: Item, seen: frozenset = frozenset()) -> Optional[Simple]:
+        """The command that always stops the script at *item* without failing it: an ``exit`` that can
+        leave 0, an ``exec`` that replaces the shell, or ``set -n``.
+
+        It counts wherever bash always reaches it: behind ``!``, after ``&&`` behind a
+        command that always succeeds (``x=1 && exit``), after ``||`` behind ``false``, in
+        a ``{ … }`` group, in a function the item calls, or in a script ``eval`` or
+        ``source`` runs in this shell.
+        """
+        if item.background:
+            return None
+        and_or = item.and_or
+        status: Optional[bool] = True
+        for position, pipeline in enumerate(and_or.pipelines):
+            after_failure = False
+            if position:
+                if status is None:
+                    return None  # whether bash runs the rest depends on what the commands find
+                operator = and_or.operators[position - 1]
+                if status != (operator == "&&"):
+                    continue  # bash skips it, and the list keeps its status
+                after_failure = operator == "||"
+            ended = self._ends_pipeline(pipeline, after_failure, seen)
+            if ended is not None:
+                return ended
+            status = _constant_status(pipeline)
+        return None
+
+    def _ends_pipeline(self, pipeline: Pipeline, after_failure: bool, seen: frozenset) -> Optional[Simple]:
+        if len(pipeline.commands) != 1:
+            return None  # each command of a longer pipeline runs in a subshell
+        command = pipeline.commands[0]
+        if isinstance(command, Group) and not command.subshell:
+            return next((ended for inner in command.body.items if (ended := self.ends(inner, seen))), None)
+        if not isinstance(command, Simple) or not command.words:
+            return None
+        args = _option_args(command)
+        program = command.words[0].text
+        if args is not None and _noexec(args):
+            return command
+        if program == "exit":
+            return command if _exit_kind(command, failed_status=after_failure, captured=None) == "succeeds" else None
+        if program == "exec":
+            return command if len(command.words) > 1 else None
+        body = self.functions().get(program)
+        if body is not None and program not in seen:
+            call = Item(AndOr([Pipeline([body], False)], []), False)
+            return command if self.ends(call, seen | {program}) else None
+        script = self._current_shell_script(command)
+        if script is not None and id(script) not in seen:
+            return command if any(self.ends(inner, seen | {id(script)}) for inner in script.items) else None
+        return None
 
     def nullglob(self) -> bool:
         """Whether the script may turn on ``nullglob``, under which a glob matching nothing disappears."""
@@ -1053,7 +1207,7 @@ class _Analysis:
                         f"never runs: `{_text(ended)}`{self.at(ended)} stops the script before it",
                     )
                 continue
-            ended = _ends_script(item) or self.ends_through(item)
+            ended = self.ends(item)
             set_args = _set_args(item)
             if set_args is not None:
                 options = _apply_set(options, set_args)
@@ -1082,17 +1236,6 @@ class _Analysis:
             else:
                 outcome = outcome or TERMINATES
         return None if len(self.findings) > reported else outcome
-
-    def ends_through(self, item: Item) -> Optional[Simple]:
-        """An ``eval`` or ``source`` whose script, run in this shell, stops it (``exit 0``, ``exec``, ``set -n``)."""
-        pipelines = item.and_or.pipelines
-        if item.background or len(pipelines) != 1 or len(pipelines[0].commands) != 1:
-            return None
-        command = pipelines[0].commands[0]
-        nested = self.nested(command) if isinstance(command, Simple) else None
-        if nested is None or not nested[2]:
-            return None
-        return command if any(_ends_script(inner) or self.ends_through(inner) for inner in nested[0].items) else None
 
     def lost_reason(self, options: ShellOptions) -> str:
         if options.stops:
@@ -1206,12 +1349,13 @@ class _Analysis:
         if not isinstance(command, Group) or not command.body.items:
             return "succeeds"
         items = command.body.items
-        captured = _kept_capture(items)
+        captured = _kept_capture(items, self._current_shell_script)
         last = items[-1].and_or
         tail = last.pipelines[-1]
-        # An earlier `exit` that may leave with 0 ends the shell before the group's last command runs.
+        # Whatever can leave the group before its last command (`exit 0`, `eval 'exit 0'`, a function call,
+        # `return`) may end it with 0; an `exit` that always leaves non-zero still fails the step.
         for node in items[:-1] + last.pipelines[:-1]:
-            if any(_exit_kind(exit_command, False, captured) == "succeeds" for exit_command in self.exits_in(node)):
+            if self.may_leave(node, captured, failing_exits=True):
                 return "succeeds"
         if any(operator != "&&" for operator in last.operators):
             return "succeeds"
@@ -1252,7 +1396,8 @@ class _Analysis:
                 self.report(command, "runs under `find -exec … ;`, which ignores the command's exit status")
                 return None
             if _required(command) == "ruff" and any(_RUFF_EXIT_ZERO_RE.fullmatch(arg) for arg in _argv(command)[1:]):
-                self.report(command, "is told to exit 0 whatever it finds (`--exit-zero`)")
+                flag = "--fix-only" if "--fix-only" in _argv(command) else "--exit-zero"
+                self.report(command, f"is told to exit 0 whatever it finds (`{flag}`)")
                 return None
             if _required(command):
                 return STATUS
@@ -1276,15 +1421,11 @@ class _Analysis:
             return TERMINATES if outcome == TERMINATES else RETURNS
         culprit = self.first_required(command)
         if isinstance(command, If):
-            gate = self.gate(command, options)
+            gate, why = self.gate(command, options)
             if gate is not None:
                 return gate or None
             if any(self.has_required(condition) for condition in command.conditions):
-                self.report(
-                    culprit,
-                    "is an `if`/`elif` condition, so the test consumes its exit status; end the branch its failure "
-                    "takes with `exit 1`, as in `if ! cmd; then …; exit 1; fi`",
-                )
+                self.report(culprit, why)
             else:
                 self.report(culprit, "runs on one branch of an `if` only; gate the whole step with `if:` instead")
         elif isinstance(command, Loop) and command.kind == "for" and self.skips_iterations(command.body):
@@ -1306,33 +1447,43 @@ class _Analysis:
             self.report(culprit, "is wrapped in a shell function; call required commands directly")
         return None
 
-    def gate(self, command: If, options: ShellOptions) -> Optional[str]:
-        """TERMINATES for ``if ! cmd; then …; exit 1; fi`` and ``if cmd; then …; else …; exit 1; fi``.
+    def gate(self, command: If, options: ShellOptions) -> Tuple[Optional[str], str]:
+        """``(TERMINATES, "")`` for ``if ! cmd; then …; exit 1; fi`` and ``if cmd; then …; else …; exit 1; fi``.
 
         The condition is one required command; the branch its failure takes ends the
         shell with a non-zero status (a literal, or in an ``else``, entered with the
         failure's status, ``exit``/``exit $?`` first or ``exit "$rc"`` after ``rc=$?``);
-        no branch runs another required command. Returns "" when the command itself
-        was reported, and None for any other ``if``.
+        no branch runs another required command. Returns ``("", "")`` when the command
+        itself was reported, and for any other ``if`` None with the reason to report
+        when its condition runs a required command.
         """
+        why = (
+            "is an `if`/`elif` condition, so the test consumes its exit status; end the branch its failure takes "
+            "with `exit 1`, as in `if ! cmd; then …; exit 1; fi`"
+        )
         if len(command.conditions) != 1:
-            return None
+            return None, why
         items = command.conditions[0].items
         if len(items) != 1 or items[0].background or len(items[0].and_or.pipelines) != 1:
-            return None
+            return None, why
         pipeline = items[0].and_or.pipelines[0]
         tested = pipeline.commands[0] if len(pipeline.commands) == 1 else None
         if not isinstance(tested, Simple) or not _required(tested):
-            return None
+            return None, why
         failing = 0 if pipeline.negated else 1  # `if ! cmd` fails into `then`, `if cmd` into `else`
-        if failing >= len(command.bodies) or any(self.has_required(body) for body in command.bodies):
-            return None
+        if any(self.has_required(body) for body in command.bodies):
+            return None, "is an `if` condition whose branches run another required command; run that one on its own"
+        if failing >= len(command.bodies):
+            return None, why
         # An `exit 0` on the passing branch would end the step before the commands after the `if`.
         if any(self.may_leave(body) for index, body in enumerate(command.bodies) if index != failing):
-            return None
+            return None, (
+                "is an `if` condition whose passing branch can leave the script early (`exit`, `return`, a function "
+                "call), so the commands after the `if` may never run"
+            )
         if not self.exits_failing(command.bodies[failing], status_is_failure=not pipeline.negated):
-            return None
-        return TERMINATES if self.command(tested, options) is not None else ""
+            return None, why
+        return (TERMINATES if self.command(tested, options) is not None else ""), ""
 
     def exits_failing(self, body: Script, status_is_failure: bool) -> bool:
         """Whether *body* always ends the shell with a non-zero status (see ``gate``)."""
@@ -1345,7 +1496,7 @@ class _Analysis:
         exit_command = tail.commands[0]
         if not isinstance(exit_command, Simple) or [word.text for word in exit_command.words][:1] != ["exit"]:
             return False
-        captured = _kept_capture(body.items) if status_is_failure else None
+        captured = _kept_capture(body.items, self._current_shell_script) if status_is_failure else None
         for item in body.items[:-1]:
             if any(_exit_kind(other, False, captured) == "succeeds" for other in self.exits_in(item)):
                 return False
@@ -1444,78 +1595,90 @@ class _Analysis:
                         )
 
     def traps(self, script: Script) -> None:
-        functions = {node.name: node.body for node in self.walk(script) if isinstance(node, Function)}
         for node in self.walk(script):
             argv = _argv(node) if isinstance(node, Simple) else []
             args = argv[2:] if argv[1:2] == ["--"] else argv[1:]
             if argv[:1] != ["trap"] or len(args) < 2 or args[0].startswith("-"):
                 continue
-            signals = [signal.upper() for signal in args[1:]]
-            if not any(signal in ("EXIT", "0", "ERR", "SIGEXIT") for signal in signals):
+            signals = {signal.upper() for signal in args[1:]}
+            # EXIT and ERR decide how the step ends; DEBUG runs before each command, RETURN after a sourced script.
+            kinds = ["ERR" if "ERR" in signals else "EXIT"] if signals & {"EXIT", "0", "SIGEXIT", "ERR"} else []
+            kinds += sorted(signals & {"DEBUG", "RETURN"})
+            if not kinds:
                 continue
+            label = _trap_label(kinds[0])
             if _variable_only(args[0]):
-                self.report(
-                    node, "sets an EXIT/ERR trap whose action comes from a variable, which this guard cannot check"
-                )
+                self.report(node, f"sets {label} whose action comes from a variable, which this guard cannot check")
                 continue
             try:
                 action = self.parse(args[0], node.line)
             except ShellParseError as exc:
-                self.report(node, f"sets an EXIT/ERR trap this guard cannot parse ({exc})")
+                self.report(node, f"sets {label} this guard cannot parse ({exc})")
                 continue
             self.noop_fallbacks(action, None)
-            problem = self.trap_problem(action, functions, frozenset(), entry_status=True, err="ERR" in signals)
-            if problem:
-                self.report(node, problem)
+            self.substitutions(action)
+            for kind in kinds:
+                problem = self.trap_problem(action, self.functions(), frozenset(), kind in ("EXIT", "ERR"), kind)
+                if problem:
+                    self.report(node, problem)
+                    break
 
     def trap_problem(
-        self, handler: Any, functions: Dict[str, Any], seen: frozenset, entry_status: bool, err: bool = False
+        self, handler: Any, functions: Dict[str, Any], seen: frozenset, entry_status: bool, kind: str = "EXIT"
     ) -> Optional[str]:
-        """Why an EXIT/ERR trap action, or a function it calls, can change a failing step's status.
+        """Why a trap action for *kind*, or a function it calls, can change a failing step's status.
 
         *entry_status* says whether ``$?`` still holds the status the trap was
-        entered with when *handler* starts: true for the action itself and for a
-        function it calls first. *err* marks an action that runs on ERR, where bash
-        reads a bare ``exit`` as ``exit $?`` (on EXIT it keeps the entry status), and
-        where turning errexit off keeps the failing command from stopping the step.
+        entered with when *handler* starts: true for an EXIT/ERR action itself and
+        for a function it calls first. Except on EXIT, where it keeps the entry
+        status, bash reads a bare ``exit`` as ``exit $?``, and turning errexit off
+        keeps a failing command from stopping the step. DEBUG and RETURN run between
+        the script's commands, so ``set -n`` there stops it.
         """
+        label = _trap_label(kind)
         if self.has_required(handler):
-            return "runs a required command inside an EXIT/ERR trap, whose failure does not reach the step's status"
+            return f"runs a required command inside {label}, whose failure does not reach the step's status"
         if isinstance(handler, Group):
             if handler.subshell:
                 return None  # an `exit` there ends only the subshell
             handler = handler.body
         if not isinstance(handler, Script):
             return None
-        for command in self.option_commands(handler) if err else ():
+        specific = "an ERR trap" if kind == "ERR" else label
+        for command in self.option_commands(handler):
             args = _option_args(command)
-            if args is not None and not _apply_set(ShellOptions(True, True), args).errexit:
-                return "sets an ERR trap that turns errexit off, so the failing command no longer stops the step"
-        reraises = _reraising_exits(handler, entry_status, bare_is_status=err)
+            if kind != "EXIT" and args is not None and not _apply_set(ShellOptions(True, True), args).errexit:
+                return f"sets {specific} that turns errexit off, so the failing command no longer stops the step"
+            if kind in ("DEBUG", "RETURN") and args is not None and _noexec(args):
+                return f"sets {label} that turns on noexec (`set -n`), so no later command runs"
+            if isinstance(command, Simple) and len(command.words) > 1 and command.words[0].text == "exec":
+                return f"sets {label} that runs `{_text(command, 40)}`, which replaces the shell and its exit status"
+        reraises = _reraising_exits(handler, entry_status, kind != "EXIT", self._current_shell_script)
         for exit_command in self.exits_in(handler):
             argv = [word.text for word in exit_command.words]
             code = argv[1] if len(argv) > 1 else None
+            number = _number(code) if code is not None else None
             # On EXIT a bare `exit` keeps the status the trap was entered with; a non-zero literal fails anyway.
-            literal = (code or "").isdigit() and int(code or "0") % 256
-            if id(exit_command) in reraises or (code is None and not err) or literal:
+            if id(exit_command) in reraises or (code is None and kind == "EXIT") or (number or 0) % 256:
                 continue
             if code is None:
+                where = "on ERR it exits" if kind == "ERR" else "it exits"
                 return (
-                    "sets an ERR trap that runs a bare `exit` after another command; on ERR it exits with that "
-                    "command's status instead of the step's"
+                    f"sets {specific} that runs a bare `exit` after another command; {where} with that command's "
+                    "status instead of the step's"
                 )
             if code in ("$?", "${?}"):
                 return (
-                    f"sets an EXIT/ERR trap that runs `exit {code}` after another command, so it exits with that "
+                    f"sets {label} that runs `exit {code}` after another command, so it exits with that "
                     "command's status instead of the step's"
                 )
-            return f"sets an EXIT/ERR trap that runs `exit {code}`, which can replace a failing step's status"
+            return f"sets {label} that runs `exit {code}`, which can replace a failing step's status"
         first = handler.items[0].and_or.pipelines[0].commands[0] if handler.items else None
         for command in self.commands_in(handler):
             name = command.words[0].text if isinstance(command, Simple) and command.words else ""
             if name in functions and name not in seen:
                 problem = self.trap_problem(
-                    functions[name], functions, seen | {name}, entry_status and command is first, err
+                    functions[name], functions, seen | {name}, entry_status and command is first, kind
                 )
                 if problem:
                     return problem
@@ -1581,7 +1744,7 @@ def _expression_injections(text: str) -> List[str]:
     """``${{ }}`` expressions whose string literals paste shell syntax into the script."""
     found: List[str] = []
     for expression in _expressions(text):
-        literals = re.findall(r"'((?:[^']|'')*)'", expression)
+        literals = expression.split("'")[1::2]  # the text inside quotes; `''` only splits a literal in two
         if any(token in literal for literal in literals for token in _SHELL_SYNTAX):
             found.append(expression)
     return found
@@ -1771,13 +1934,34 @@ def _runner(job: dict) -> str:
     return "other" if any("windows" in label.lower() for label in resolved) else "posix"
 
 
+def _expression_text(value: str) -> str:
+    """*value* without whitespace and without one ``${{ }}`` around it: ``${{ failure() }}`` is ``failure()``."""
+    text = "".join(value.split())
+    return text[3:-2] if text.startswith("${{") and text.endswith("}}") else text
+
+
 def _truthy_flag(value: Any) -> bool:
-    return value is True or (isinstance(value, str) and value.strip() not in ("", "false"))
+    return value is True or (isinstance(value, str) and _expression_text(value) not in ("", "false"))
 
 
-def _disabled(value: Any) -> bool:
-    """Whether an ``if:`` is literally false, so the step or job never runs."""
-    return value is False or (isinstance(value, str) and "".join(value.split()) in ("false", "${{false}}"))
+# Conditions under which a step or job never runs while the run passes.
+_NEVER_ON_SUCCESS = {
+    "false": "keeps {kind} from ever running",
+    "failure()": "runs {kind} only after an earlier step has failed",
+    "!success()": "runs {kind} only after an earlier step has failed",
+    "cancelled()": "runs {kind} only when the run is cancelled",
+}
+
+
+def _disabled(value: Any) -> Optional[str]:
+    """How an ``if:`` keeps a step or job from running while the run passes (``false``, ``failure()``), or None."""
+    if value is False:
+        return _NEVER_ON_SUCCESS["false"]
+    return _NEVER_ON_SUCCESS.get(_expression_text(value)) if isinstance(value, str) else None
+
+
+def _condition(value: Any) -> str:
+    return "false" if value is False else _expression_text(str(value))
 
 
 def scan_steps(
@@ -1811,11 +1995,13 @@ def scan_steps(
         local = isinstance(uses, str) and uses.startswith("./")
         runs = (local_actions or {}).get(posixpath.normpath(uses[2:] or ".")) if local else None
         run = step.get("run") if isinstance(step.get("run"), str) else None
-        if _disabled(step.get("if")):
+        never = _disabled(step.get("if"))
+        if never:
             kinds = runs or (scan_script(run, label, GITHUB_DEFAULT, root, strict_parse=False)[1] if run else [])
             if kinds:
                 findings.append(
-                    f"{label}: `if: false` keeps {kinds[0]} from ever running; remove the condition or the step"
+                    f"{label}: `if: {_condition(step.get('if'))}` {never.format(kind=kinds[0])}; remove the "
+                    "condition or the step"
                 )
             continue
         masked = _truthy_flag(step.get("continue-on-error")) or _truthy_flag(job.get("continue-on-error"))
@@ -1883,11 +2069,12 @@ def scan_workflow(
             findings.append(f"{name}: job {job_id!r} has no list of steps")
             continue
         found, kinds = scan_steps(steps, f"{name}: job {job_id!r}", job, shell, root, local_actions, directory)
-        if _disabled(job.get("if")):
+        never = _disabled(job.get("if"))
+        if never:
             if kinds:
                 findings.append(
-                    f"{name}: job {job_id!r}: `if: false` keeps {kinds[0]} from ever running; remove the condition "
-                    "or the job"
+                    f"{name}: job {job_id!r}: `if: {_condition(job.get('if'))}` {never.format(kind=kinds[0])}; "
+                    "remove the condition or the job"
                 )
             continue
         findings += found

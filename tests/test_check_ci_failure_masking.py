@@ -45,6 +45,34 @@ def _findings(guard, script, options=None):
     return findings
 
 
+def _symlink(link: Path, target: Path) -> None:
+    """Create *link*, or skip: Windows lets only privileged accounts and developer mode create symlinks."""
+    try:
+        link.symlink_to(target)
+    except OSError as exc:
+        pytest.skip(f"cannot create a symlink here ({exc})")
+
+
+# Accepted shapes that run no required command: prose, lookups, installs and a tool's version.
+# Every other accepted shape must be recognised, or its clean result would prove nothing.
+_NAMES_NO_REQUIRED_COMMAND = {
+    "command -v pytest || pip install pytest",
+    "# pytest || true\necho hi",
+    'echo "pytest || true" > notes.txt',
+    "python3 - <<'PY'\nprint('pytest || true')\nPY\necho after",
+    'python -c "\nimport x\nassert x, \'pytest || true\'\nprint(f\'{x}: {getattr(x, \\"v\\", \\"u\\")}\')\n"',
+    'test -f LICENSE || (echo "LICENSE file missing" && exit 1)',
+    'test -f "site/js/${lang}.js" || { echo "missing ${lang}.js"; exit 1; }',
+    "echo ${v:-'$(pytest || true)'}",
+    "cat <<'EOF'\n$(pytest)\nEOF",
+    "pip install pytest ruff\npython -m pip install mypy",
+    "cd forgelm\nls forgelm",
+    "pytest --version | head -1",
+    "python3 -m pytest --version | head -1",
+    "python3 -m py_compile tools/check_bandit.py",
+}
+
+
 class TestMaskedRequiredCommands:
     """Each script runs a required command whose failure would not fail the step."""
 
@@ -149,10 +177,14 @@ class TestSafeShapes:
             # bash arrays and parameter expansion (nightly.yml's wheel smoke test).
             'set -euo pipefail\nwheels=(dist/forgelm-*.whl)\nif [ "${#wheels[@]}" -ne 1 ]; then\n'
             '  echo "found ${wheels[*]:-(none)}" >&2\n  exit 1\nfi\nforgelm quickstart --list | tee /tmp/q.txt',
+            # Outside double quotes the single quotes in `${…}` do quote, so nothing runs.
+            "echo ${v:-'$(pytest || true)'}",
         ],
     )
     def test_not_reported(self, guard, script):
-        assert not _findings(guard, script)
+        findings, required = guard.scan_script(script, "run", guard.GITHUB_DEFAULT)
+        assert findings == []
+        assert bool(required) != (script in _NAMES_NO_REQUIRED_COMMAND), required
 
 
 class TestReviewedShapes:
@@ -316,6 +348,41 @@ class TestReviewedShapes:
             ('msgs=("don\'t" "$(pytest || true)")\necho done', "command substitution"),
             # In a here-document `$'` is no quote, so a substitution after it still runs.
             ("cat <<EOF\nit costs $'5 $(pytest)\nEOF", "command substitution"),
+            # Inside a double-quoted `${…}` and a here-document bash keeps single quotes, so the substitution runs.
+            ("echo \"${v:-'$(pytest || true)'}\"\necho done", "command substitution"),
+            ("cat <<EOF\n${v:-'$(pytest || true)'}\nEOF\necho done", "command substitution"),
+            # A trap action's substitutions run too, and a lone carriage return is part of a word, not a blank.
+            ("trap 'x=$(pytest || true)' EXIT\necho start", "command substitution"),
+            ("pytest \r# x || true\necho done", "is masked by `|| true`"),
+            # A fallback group that can leave through `eval` or a function before its `exit 1`.
+            ("pytest || { eval 'exit 0'; exit 1; }\necho done", "is masked by"),
+            ("ok() { exit 0; }\npytest || { ok; exit 1; }\necho done", "is masked by"),
+            # A captured status changed through `eval`, `command read` or a nameref.
+            ("trap 'rc=$?; eval rc=0; exit $rc' EXIT\npytest", "runs `exit $rc`"),
+            ("trap 'rc=$?; command read rc <<< 0; exit $rc' EXIT\npytest", "runs `exit $rc`"),
+            ("trap 'rc=$?; declare -n r=rc; r=0; exit $rc' EXIT\npytest", "runs `exit $rc`"),
+            # DEBUG runs before each command and RETURN after a sourced script; `exec` replaces the shell.
+            ("trap 'exit 0' DEBUG\npytest\necho done", "DEBUG trap that runs `exit 0`"),
+            ("bye() { exit 0; }\ntrap bye DEBUG\npytest\necho done", "DEBUG trap that runs `exit 0`"),
+            ("trap 'set +e' DEBUG\npytest\necho done", "DEBUG trap that turns errexit off"),
+            ("trap 'exit 0' RETURN\nsource /dev/null\npytest\necho done", "RETURN trap that runs `exit 0`"),
+            ("trap 'exec true' EXIT\npytest", "replaces the shell"),
+            # An exit that bash always reaches, however it is written.
+            ("x=1 && exit\npytest", "never runs: `exit`"),
+            ("true && exit 0\npytest", "never runs"),
+            ("false || exit 0\npytest", "never runs"),
+            ("! exit 0\npytest", "never runs"),
+            ("{ echo bye; exit 0; }\npytest", "never runs: `exit 0`"),
+            ("die() { exit 0; }\ndie\npytest", "never runs: `die`"),
+            # Only ASCII digits make an exit code; ruff's `--fix-only` exits 0 like `--exit-zero`.
+            ("pytest || exit ²\necho done", "is masked by"),
+            ("ruff check --fix-only .", "`--fix-only`"),
+            # `continue 2` from a nested loop, or a function that may `continue` (bash 3.2 lets it), skips a pass.
+            ('for f in a b; do for g in c; do continue 2; done; pytest "$f"; done', "`continue` or `break`"),
+            ('skip() { continue; }\nfor f in a b; do skip; pytest "$f"; done', "`continue` or `break`"),
+            # A rejected `if` gate says what disqualifies it.
+            ("if ! pytest; then exit 1; else echo ok; exit 0; fi\nruff check .", "passing branch can leave"),
+            ("if ! pytest; then ruff check .; exit 1; fi", "run another required command"),
         ],
     )
     def test_masking_shapes(self, guard, script, reason):
@@ -400,10 +467,23 @@ class TestReviewedShapes:
             # A loop whose `exit 1` only reports, and an `if` gate whose passing branch only reports.
             'for t in a b; do forgelm --config "$t" --dry-run || exit 1; done',
             "if pytest; then echo '::notice::tests passed'; else exit 1; fi\necho done",
+            # A `continue` or `break` after the required command, or one that leaves only a nested loop.
+            'for f in a b; do pytest "$f"; continue; done\necho done',
+            'for f in a b; do pytest "$f"; break; done\necho done',
+            'for f in a b; do for g in c; do continue; done; pytest "$f"; done\necho done',
+            # An exit that ends only a subshell or fails the step, a trap that only logs, and `exec` that redirects.
+            "(exit 0)\npytest",
+            "{ echo bye; exit 1; }\npytest",
+            "trap 'echo \"+ $BASH_COMMAND\"' DEBUG\npytest",
+            "trap 'exec >&2' EXIT\npytest",
+            "pytest || { echo failed >&2; exit 1; }\necho done",
         ],
     )
     def test_shapes_that_propagate(self, guard, script):
-        assert not _findings(guard, script)
+        findings, required = guard.scan_script(script, "run", guard.GITHUB_DEFAULT)
+        assert findings == []
+        # A shape that names no required command proves nothing about one; only prose may name none.
+        assert bool(required) != (script in _NAMES_NO_REQUIRED_COMMAND), required
 
     def test_compound_redirections_parse(self, guard):
         assert not _findings(guard, "{ ruff check .; pytest -q; } 2>&1 | tee ci.log", guard.ShellOptions(True, True))
@@ -450,8 +530,25 @@ class TestReviewedShapes:
         assert findings and "(ci/test.sh line 2)" in findings[0] and "is masked by" in findings[0]
         assert required == ["pytest"]
 
+    @pytest.mark.parametrize("path", ['"$PWD/ci/env.sh"', '"${PWD}/ci/env.sh"', '"$(pwd)/ci/env.sh"'])
+    def test_a_script_named_from_the_working_directory_is_read(self, guard, tmp_path, path):
+        (tmp_path / "docs" / "ci").mkdir(parents=True)
+        (tmp_path / "docs" / "ci" / "env.sh").write_text("set +e\n", encoding="utf-8")
+        script = f"source {path}\npytest\necho done"
+        findings, _ = guard.scan_script(script, "run", guard.GITHUB_DEFAULT, tmp_path, cwd="docs")
+        assert findings and "errexit is off" in findings[0], findings
+
     @pytest.mark.parametrize(
-        "command", ["cd ci && ./test.sh", "./scripts/missing.sh", "source scripts/env.sh\npytest", "./x.bash"]
+        "command",
+        [
+            "cd ci && ./test.sh",
+            "./scripts/missing.sh",
+            "source scripts/env.sh\npytest",
+            "./x.bash",
+            'source "$(dirname "$0")/lib.sh"\npytest',
+            '. "${BASH_SOURCE%/*}/lib.sh"\npytest',
+            'source "$PWD/missing.sh"\npytest',
+        ],
     )
     def test_a_repository_script_the_guard_cannot_find_is_a_finding(self, guard, tmp_path, command):
         (tmp_path / "ci").mkdir()
@@ -495,9 +592,19 @@ class TestReviewedShapes:
 
     @pytest.mark.parametrize("path", ["a" * 300 + ".sh", "a\x00b.sh", "loop/x.sh"])
     def test_an_unreadable_script_name_is_a_finding_not_a_crash(self, guard, tmp_path, path):
-        (tmp_path / "loop").symlink_to(tmp_path / "loop")
+        if path.startswith("loop/"):
+            _symlink(tmp_path / "loop", tmp_path / "loop")
         findings, _ = guard.scan_script(f"bash '{path}'", "run", guard.GITHUB_DEFAULT, tmp_path)
         assert findings and "cannot find in the repository" in findings[0]
+
+    @pytest.mark.parametrize("command", ["source ci/a.sh", "bash ci/a.sh", "./ci/self.sh"])
+    def test_a_script_that_runs_itself_is_a_finding_not_a_crash(self, guard, tmp_path, command):
+        (tmp_path / "ci").mkdir()
+        (tmp_path / "ci" / "a.sh").write_text("source ci/b.sh\n", encoding="utf-8")
+        (tmp_path / "ci" / "b.sh").write_text("source ci/a.sh\npytest\n", encoding="utf-8")
+        (tmp_path / "ci" / "self.sh").write_text("#!/bin/bash\n./ci/self.sh\npytest\n", encoding="utf-8")
+        findings, _ = guard.scan_script(command, "run", guard.GITHUB_DEFAULT, tmp_path)
+        assert any("again from inside it" in finding for finding in findings), findings
 
     def test_deep_nesting_is_a_finding_not_a_crash(self, guard):
         script = "{ " * 400 + "pytest" + "; }" * 400
@@ -678,6 +785,28 @@ class TestWorkflows:
         findings, required = guard.scan_workflow(job, "w.yml")
         assert required == [] and len(findings) == 1 and "job 'j': `if: false` keeps pytest" in findings[0]
         assert guard.scan_workflow(prose, "w.yml") == ([], [])
+
+    @pytest.mark.parametrize(
+        "condition,effect",
+        [
+            ("failure()", "`if: failure()` runs pytest only after an earlier step has failed"),
+            ("${{ !success() }}", "`if: !success()` runs pytest only after an earlier step has failed"),
+            ("${{ cancelled() }}", "`if: cancelled()` runs pytest only when the run is cancelled"),
+        ],
+    )
+    def test_a_condition_that_never_holds_while_the_run_passes(self, guard, condition, effect):
+        for text in (
+            _workflow(f"      - if: {condition}\n        run: pytest\n"),
+            _workflow("      - run: pytest\n", job_extra=f"    if: {condition}\n"),
+        ):
+            findings, _ = guard.scan_workflow(text, "w.yml")
+            assert len(findings) == 1 and effect in findings[0], findings
+        assert guard.scan_workflow(_workflow("      - if: always()\n        run: pytest\n"), "w.yml")[0] == []
+
+    @pytest.mark.parametrize("value", ["false", "${{ false }}", "''"])
+    def test_continue_on_error_that_is_false_is_allowed(self, guard, value):
+        text = _workflow(f"      - continue-on-error: {value}\n        run: pytest\n")
+        assert guard.scan_workflow(text, "w.yml") == ([], ["pytest"])
 
     def test_a_matrix_value_that_pastes_shell_syntax(self, guard):
         matrix = "    strategy:\n      matrix:\n        include:\n          - extra: '|| true'\n"
@@ -1001,7 +1130,7 @@ class TestRealRepository:
             "on: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./acts\n", encoding="utf-8"
         )
         if spelling == "symlink":
-            (tmp_path / "link").symlink_to(root)
+            _symlink(tmp_path / "link", root)
             given = str(tmp_path / "link")
         else:
             monkeypatch.chdir(tmp_path)
@@ -1027,9 +1156,9 @@ def _bash5() -> Optional[str]:
 _BASH = _bash5()
 
 # Shapes where the guard's verdict must equal bash's. Each required program is a
-# stub that exits 1, and ci/t.sh masks `pytest`. A masked shape leaves the step
-# with status 0 and the guard reports the expected text; any other shape exits
-# with the stub's 1 and the guard reports nothing.
+# stub that exits 1, ci/t.sh masks `pytest` and ci/env.sh turns errexit off. A
+# masked shape leaves the step with status 0 and the guard reports the expected
+# text; any other shape exits with the stub's 1 and the guard reports nothing.
 _AGAINST_BASH = [
     ("pytest || true", "is masked by `|| true`"),
     ("pytest || exit 1", None),
@@ -1092,6 +1221,26 @@ _AGAINST_BASH = [
     ("bash - <<'EOF'\npytest || true\nEOF", "is masked by `|| true`"),
     ('"$GITHUB_WORKSPACE/ci/t.sh"', "(ci/t.sh line 2): `pytest` is masked"),
     ("cd ci && ./t.sh", "cannot find in the repository"),
+    ('source "$PWD/ci/env.sh"\npytest\necho done', "errexit is off"),
+    # Single quotes kept in a double-quoted `${…}`, trap substitutions, and a carriage return inside a word.
+    ("echo \"${v:-'$(pytest || true)'}\"\necho done", "command substitution"),
+    ("cat <<EOF\n${v:-'$(pytest || true)'}\nEOF\necho done", "command substitution"),
+    ("trap 'x=$(pytest || true)' EXIT\necho start", "command substitution"),
+    ("pytest \r# x || true\necho done", "is masked by `|| true`"),
+    # Ways out of a fallback, a trap and the script that are not a plain `exit 0`.
+    ("pytest || { eval 'exit 0'; exit 1; }\necho done", "is masked by"),
+    ("trap 'rc=$?; eval rc=0; exit $rc' EXIT\npytest", "runs `exit $rc`"),
+    ("trap 'exit 0' DEBUG\npytest\necho done", "DEBUG trap"),
+    ("trap 'set +e' DEBUG\npytest\necho done", "turns errexit off"),
+    ("trap 'exit 0' RETURN\nsource ci/env.sh\npytest\necho done", "RETURN trap"),
+    ("trap 'exec true' EXIT\npytest", "replaces the shell"),
+    ("x=1 && exit\npytest", "never runs"),
+    ("! exit 0\npytest", "never runs"),
+    ("{ echo bye; exit 0; }\npytest", "never runs"),
+    ("die() { exit 0; }\ndie\npytest", "never runs"),
+    # A `continue` after the required command, or one that leaves only an inner loop, skips nothing.
+    ('for f in a b; do pytest "$f"; continue; done\necho done', None),
+    ('for f in a b; do for g in c; do continue; done; pytest "$f"; done\necho done', None),
 ]
 
 
@@ -1107,6 +1256,7 @@ def test_verdicts_match_bash(guard, tmp_path, script, expected):
     (tmp_path / "ci").mkdir()
     (tmp_path / "ci" / "t.sh").write_text("#!/bin/bash\npytest || true\n", encoding="utf-8", newline="\n")
     (tmp_path / "ci" / "t.sh").chmod(0o755)
+    (tmp_path / "ci" / "env.sh").write_text("set +e\n", encoding="utf-8", newline="\n")
     step = tmp_path / "step.sh"
     step.write_text(script + "\n", encoding="utf-8", newline="\n")
     env = {

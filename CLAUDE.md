@@ -362,8 +362,8 @@ Default workflow for a non-trivial change:
    (`tools/_shell_syntax.py`), so comments, quoted prose and `python -c`
    programs are never read as commands, and checks that a failing required
    command — `pytest`, `node --test`, `ruff`, `mypy`, the `forgelm` CLI or a
-   `tools/` guard — still fails its step. It accepts only shapes it can
-   prove, so keep required commands plain. It catches accidental masking,
+   `tools/` guard — still fails its step. It accepts only the shapes it
+   models, so keep required commands plain. It catches accidental masking,
    not deliberate evasion; `docs/standards/testing.md` lists what is beyond
    it. The bandit / pip-audit `|| true` exception holds only when the very
    next command is the severity helper reading the same report.

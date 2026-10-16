@@ -158,7 +158,7 @@ class Lexer:
 
     def _skip_blanks(self) -> None:
         while self.i < len(self.src):
-            if self.src[self.i] in " \t\r":
+            if self.src[self.i] in " \t":  # not `\r`: bash reads a carriage return as part of a word
                 self.i += 1
             elif self.src.startswith("\\\n", self.i):
                 self.i += 2
@@ -331,7 +331,11 @@ class Lexer:
             self.i += 1
 
     def _parameter(self, text: List[str], subs: List["Script"], ansi_c: bool = True) -> None:
-        """Consume ``${...}``, parsing any command substitution inside it (``${X:-$(cmd)}``)."""
+        """Consume ``${...}``, parsing any command substitution inside it (``${X:-$(cmd)}``).
+
+        *ansi_c* is false inside ``"…"`` and a here-document, where bash keeps single
+        quotes as they are, so ``"${X:-'$(cmd)'}"`` still runs ``cmd``.
+        """
         src, start, line = self.src, self.i, self.line
         self.i += 2
         depth = 1
@@ -344,6 +348,8 @@ class Lexer:
                 end = src.find("'", self.i + 1)
                 if end < 0:
                     raise ShellParseError("unterminated single quote", line)
+                if not ansi_c:
+                    Lexer(src[self.i + 1 : end], 0, self.line).expansions(subs)
                 self.line += src.count("\n", self.i, end)
                 self.i = end + 1
             elif char == '"':
@@ -640,9 +646,10 @@ class Parser:
         """The descriptor of a ``2>&1`` or ``{fd}>file`` redirection starting here, if any."""
         token, following = self._peek(), self._peek(1)
         if token.kind == "word" and token.word is not None:
-            descriptor = token.word.raw.isdigit() or _FD_VARIABLE_RE.fullmatch(token.word.raw)
+            raw = token.word.raw
+            descriptor = (raw.isascii() and raw.isdigit()) or _FD_VARIABLE_RE.fullmatch(raw)
             if descriptor and following.kind == "redir" and following.start == token.end:
-                return token.word.raw
+                return raw
         return None
 
     def _redirected(self, command: _Compound) -> _Compound:

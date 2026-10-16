@@ -263,19 +263,13 @@ All notable changes to ForgeLM are documented here.
   would not fail its step. The only failure-masking check read the three documented gauntlets, and
   only for the literal `|| true`, so appending `|| true` to the validation job's `node --test` step left
   CI green. The guard parses every workflow `run:` block, the repository shell scripts those blocks run
-  or source, and the gauntlets with a small shell lexer that ignores comments and quoted prose, models
-  bash's errexit and pipefail rules, and fails when `pytest`, `node --test`, `ruff`, `mypy`, the
-  `forgelm` CLI or a `tools/` guard can fail unnoticed: fallbacks that can exit 0, pipes without
-  `pipefail`, `set +e`, `continue-on-error`, failures errexit ignores inside `&&` / `||` lists or
-  `{ … }` groups, EXIT/ERR traps that can exit 0 (and ERR traps that turn errexit off), `ruff
-  --exit-zero`, `set -n`, an `if: false` on a step or job that runs one, functions or aliases that
-  take over a required command, and wrappers or `${{ }}` expressions it cannot follow. It follows
-  runners such as `uvx ruff@0.8` and `conda run`, a step's `working-directory:`, scripts under
-  `$GITHUB_WORKSPACE`, and local actions nested in local actions. It accepts only shapes it can
-  prove, so keep required commands plain; an `if` whose failure branch ends with `exit 1` is
-  accepted. It targets accidental masking: `testing.md` lists what is beyond it. Bandit and pip-audit
-  keep `|| true` only when the next command is their severity helper reading the same report. A
-  gauntlet `{ pytest tests/ || true; }`, which the old check accepted, now fails too. Its shell
+  or source, and the gauntlets, models bash's errexit and pipefail rules, and fails when `pytest`,
+  `node --test`, `ruff`, `mypy`, the `forgelm` CLI or a `tools/` guard can fail unnoticed: a fallback
+  that can exit 0, a pipe without `pipefail`, `set +e`, `continue-on-error`, a trap or an earlier
+  `exit 0` that decides the step's status, and a step that never runs on a passing build among them.
+  It accepts only the shapes it models, so keep required commands plain; `docs/standards/testing.md`
+  lists them, and what is beyond a guard that targets accidental masking. Bandit and pip-audit keep
+  `|| true` only when the next command is their severity helper reading the same report. Its shell
   parser lives in `tools/_shell_syntax.py` (#951).
 - Add a recorded CPU validation, data audit, and audit-log verification sample with EN/TR provenance
   and limitations; link it from the README and website, expose installation and dry-run quickstart

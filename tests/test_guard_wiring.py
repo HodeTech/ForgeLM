@@ -223,6 +223,17 @@ def test_every_guard_is_wired_or_allowlisted():
     )
 
 
+def test_a_guard_wired_only_in_a_yaml_workflow_counts(tmp_path, monkeypatch):
+    """This repository has no `.yaml` workflow, so only this test notices if the inventory stops reading them."""
+    (tmp_path / "extra.yaml").write_text(
+        "on: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - run: python3 tools/check_example.py --strict\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(globals(), "_WORKFLOWS", tmp_path)
+    assert _workflow_guard_names() == {"check_example.py"}
+
+
 def test_allowlist_entries_still_exist():
     """An allowlisted guard that was deleted leaves a stale rationale — flag it."""
     missing = [g for g in _UNWIRED_ALLOWLIST if not (_TOOLS / g).exists()]
