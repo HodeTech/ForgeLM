@@ -39,7 +39,7 @@ _SUPERSEDED = [
 def test_the_turkish_trees_are_found():
     """A renamed or deleted tree must fail here, not silently drop out of the scan."""
     names = {path.relative_to(_DOCS).as_posix() for path in _turkish_docs()}
-    for tree in ("guides/", "reference/", "qms/", "usermanuals/tr/", "roadmap-tr.md"):
+    for tree in ("guides/", "reference/", "qms/", "usermanuals/tr/", "roadmap-tr.md", "product_strategy-tr.md"):
         assert any(name.startswith(tree) for name in names), f"no Turkish page found under docs/{tree}"
     for expected in (
         "qms/sop_incident_response-tr.md",
