@@ -70,7 +70,22 @@ They use Node's built-in test runner and a VM to execute the actual wizard;
 generated YAML is also parsed by the real `ForgeConfig`. No npm packages,
 browser download, GPU, or network calls are needed. The shared harness
 (`tests/site/wizard_harness.cjs`) renders every step through a minimal DOM
-shim; it does not replace browser or native-language review.
+shim and boots the wizard controller for step and focus checks; it does not
+replace browser or native-language review.
+
+A shim cannot compute accessible names, follow the Tab order or apply CSS. A
+change to the wizard's markup, focus handling or styles is also checked in a
+real browser, on desktop and phone widths and in at least English and
+Turkish, and the pull request records what was checked:
+
+- Every step and conditional branch renders without a console error,
+  including the Compliance step at each risk tier.
+- Each field's accessible name, in the browser's accessibility tree, is its
+  visible caption, and clicking a caption focuses its field.
+- Tab reaches every control in order, and focus shows a visible ring.
+- Toggling a gate, changing the risk tier or choosing an option card keeps
+  focus on that control, and the fields it reveals appear at once.
+- Next on an invalid step focuses its first invalid field.
 
 ## Fixtures
 

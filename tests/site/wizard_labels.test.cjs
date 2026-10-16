@@ -153,7 +153,7 @@ test('the LoRA method caption names its group of method buttons', () => {
   assert.deepEqual(group.children.map(card => card.tag), ['button', 'button', 'button', 'button']);
 });
 
-test('ids are stable across renders and re-renders', () => {
+test('every render of a step builds the same ids in the same order', () => {
   const wizard = loadWizard();
   const idsOf = pane => descendants(pane).filter(isElement).map(node => node.getAttribute('id')).filter(Boolean);
   for (const overrides of scenarios()) {
@@ -170,12 +170,16 @@ test('toggles that re-render a step, and accordion toggles, keep one id per cont
   const value = state(wizard, { riskClassification: 'high-risk' });
   const pane = renderStep(wizard, value, 'compliance');
   const toggle = labelKey => descendants(pane).find(node => node.tag === 'label' && textOf(node) === labelKey).children[0];
-  // Turning a gate on re-renders the whole step with its new controls.
-  for (const labelKey of ['wizard.benchmark.enabled.label', 'wizard.judge.enabled.label']) {
+  // Each gate re-renders the whole step with its own new controls.
+  const enable = labelKey => {
     const checkbox = toggle(labelKey);
     checkbox.checked = true;
     checkbox.events.change();
-  }
+  };
+  enable('wizard.benchmark.enabled.label');
+  assert.deepEqual(auditPane(pane, 'compliance after enabling the benchmark').filter(field =>
+    ['benchmarkTasks', 'judgeApiKeyEnv'].includes(field)), ['benchmarkTasks']);
+  enable('wizard.judge.enabled.label');
   assert.deepEqual(auditPane(pane, 'compliance after enabling both gates').filter(field =>
     ['benchmarkTasks', 'judgeApiKeyEnv'].includes(field)), ['benchmarkTasks', 'judgeApiKeyEnv']);
   // Collapsing and reopening an accordion flips its class in place; it must not rebuild controls.

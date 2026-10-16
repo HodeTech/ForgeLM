@@ -52,6 +52,10 @@ for (const tier of RISK_TIERS) {
       const value = state(wizard, { riskClassification: tier, detailsVisible, benchmarkEnabled: true, judgeEnabled: true });
       const pane = renderStep(wizard, value, 'compliance');
       const expected = [
+        ['wizard.eval.auto_revert.label', 'input', 'wizard.eval.auto_revert.detail'],
+        ['wizard.eval.max_loss.label', 'input', 'wizard.eval.max_loss.detail'],
+        ['wizard.eval.safety.label', 'input', 'wizard.eval.safety.detail'],
+        ['wizard.compliance.approval.label', 'input', 'wizard.compliance.approval.detail'],
         ['wizard.risk_assessment.intended_use.label', 'textarea', 'wizard.risk_assessment.intended_use.detail'],
         ['wizard.risk_assessment.foreseeable_misuse.label', 'textarea', 'wizard.risk_assessment.foreseeable_misuse.detail'],
         ['wizard.risk_assessment.mitigation_measures.label', 'textarea', 'wizard.risk_assessment.mitigation_measures.detail'],
@@ -117,3 +121,47 @@ for (const tier of ['high-risk', 'unacceptable']) {
     assert.deepEqual(Array.from(wizard.validateStep(value, 'compliance'), error => error.field), []);
   });
 }
+
+test('after a failed Next every invalid field is marked and shows its error', () => {
+  const wizard = loadWizard();
+  const idFor = field => 'wizard-field-' + field.replace(/[A-Z]/g, c => '-' + c.toLowerCase());
+  const failed = scenarios().filter(overrides => overrides.attemptedSteps);
+  assert.ok(failed.length, 'the harness has error-state scenarios');
+  for (const overrides of failed) {
+    for (const step of ['model', 'dataset', 'compliance', 'operations']) {
+      const value = state(wizard, overrides);
+      const pane = renderStep(wizard, value, step);
+      const errors = Array.from(wizard.validateStep(value, step));
+      assert.ok(errors.length, `${step}: the scenario leaves fields invalid`);
+      for (const { field, key } of errors) {
+        const control = descendants(pane).find(node => node.getAttribute && node.getAttribute('id') === idFor(field));
+        assert.ok(control && hasClass(control, 'is-invalid'), `${step}: ${field} is marked invalid`);
+        const row = rows(pane).find(candidate => descendants(candidate).includes(control));
+        assert.ok(descendants(row).some(node => node.getAttribute && node.getAttribute('role') === 'alert' && node.textContent === key),
+          `${step}: ${field} shows ${key}`);
+      }
+    }
+  }
+});
+
+test('toggles that reveal fields show and hide them at once', () => {
+  const wizard = loadWizard();
+  const has = (pane, id) => descendants(pane).some(node => node.getAttribute && node.getAttribute('id') === id);
+  const flip = (pane, id) => {
+    const toggle = descendants(pane).find(node => node.getAttribute && node.getAttribute('id') === id);
+    toggle.checked = !toggle.checked;
+    toggle.events.change();
+  };
+  const compliance = renderStep(wizard, state(wizard, { autoRevert: false }), 'compliance');
+  assert.ok(!has(compliance, 'wizard-field-max-acceptable-loss'));
+  flip(compliance, 'wizard-field-auto-revert');
+  assert.ok(has(compliance, 'wizard-field-max-acceptable-loss'), 'auto-revert on shows the loss threshold');
+  flip(compliance, 'wizard-field-auto-revert');
+  assert.ok(!has(compliance, 'wizard-field-max-acceptable-loss'), 'auto-revert off hides it');
+
+  const training = renderStep(wizard, state(wizard, { galoreEnabled: false }), 'training');
+  assert.ok(has(training, 'wizard-field-lora-r') && !has(training, 'wizard-field-galore-optim'));
+  flip(training, 'wizard-field-galore-enabled');
+  assert.ok(has(training, 'wizard-field-galore-optim') && !has(training, 'wizard-field-lora-r'),
+    'GaLore replaces the LoRA rank with its optimiser choice');
+});

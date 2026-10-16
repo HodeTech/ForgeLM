@@ -57,13 +57,15 @@ All notable changes to ForgeLM are documented here.
   captions now point at their control through unique, stable `id`/`for` pairs, so screen readers
   no longer announce a placeholder or nothing, and clicking a caption focuses its field. The LoRA
   method caption names its group of method buttons; checkbox labels keep wrapping their toggles.
-  Keyboard focus now stays on a toggle, select or option card that re-renders the step, so the
-  fields it reveals are the next Tab stop, and "required for risk tier" badges read as a separate
-  word (#950).
+  Keyboard focus now stays on the toggle, select or option card that re-renders a step, and on the
+  field being edited, caret included, when another tab's change re-renders it, instead of falling
+  back to the page body. "Required for risk tier" badges read as a separate word, and sliders show
+  a keyboard focus ring (#950).
 - Render the browser wizard's Compliance step again. It called a helper that only three other step
   renderers declared, so every visit threw a `ReferenceError` before the Article 9 risk-assessment,
   benchmark and LLM-judge controls appeared, and strict risk tiers could not complete the step.
-  The helper is now shared, and every step has DOM-level render coverage (#879).
+  The helper is now shared, and every step has DOM-level render coverage. Turning auto-revert on or
+  off now shows or hides its loss threshold at once (#879).
 - Restore the monitoring-plan evidence contract: `monitoring.*` declares an external plan,
   labelled `declarative_only: true`; ForgeLM runs no exporter, drift detector, alert, or scheduler.
   Warn once per config-file load for an enabled exporter declaration, without repeating during

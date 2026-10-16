@@ -1097,13 +1097,21 @@
       // After a step change the id is gone and focus is left alone.
       var active = document.activeElement;
       var focusedId = active && active.id && pane.contains(active) ? active.id : null;
+      // A sibling tab's update re-renders under the caret: keep its position too.
+      var caret = focusedId && typeof active.selectionStart === 'number'
+        ? [active.selectionStart, active.selectionEnd] : null;
 
       var stepDef = STEPS[idx];
       pane.innerHTML = '';
       var renderer = STEP_RENDERERS[stepDef.id];
       if (renderer) renderer(pane, state, render, persist);
       var refocus = focusedId ? document.getElementById(focusedId) : null;
-      if (refocus && pane.contains(refocus)) refocus.focus();
+      if (refocus && pane.contains(refocus)) {
+        refocus.focus();
+        if (caret && typeof refocus.setSelectionRange === 'function') {
+          try { refocus.setSelectionRange(caret[0], caret[1]); } catch (e) { /* number inputs have no caret */ }
+        }
+      }
 
       // Progress + counter
       var pct = Math.round(((idx + 1) / STEPS.length) * 100);
@@ -1892,8 +1900,8 @@
     // method choice is irrelevant. Emits to lora.method in YAML.
     if (!state.galoreEnabled) {
       var methodRow = el('div', { class: 'wizard-row' });
-      // The method cards are buttons, which a <label> cannot name; the
-      // caption names their group instead.
+      // One caption for four method buttons: a <label for> would replace a
+      // button's own name, so the caption names their group instead.
       var methodCaptionId = controlId('loraMethod') + '-label';
       methodRow.appendChild(el('span', { id: methodCaptionId, class: 'wizard-row-label', text: tr('wizard.training.lora_method.label') }));
       var methods = [
@@ -2286,15 +2294,17 @@
 
     // Toggles. ``locked`` disables the input and adds a "required for risk
     // tier" badge — used for fields the EU AI Act forces under high-risk
-    // / unacceptable tiers (Articles 9-17).
-    function makeToggle(field, labelKey, hintKey, locked, detailKey) {
+    // / unacceptable tiers (Articles 9-17). ``reveals`` re-renders the step
+    // for a toggle that shows or hides other fields.
+    function makeToggle(field, labelKey, hintKey, locked, detailKey, reveals) {
       var input = el('input', { id: controlId(field), type: 'checkbox' });
       input.checked = state[field];
       if (locked) input.disabled = true;
       input.addEventListener('change', function () {
         state[field] = input.checked;
         persist();
-        liveYaml();
+        if (reveals) rerender();
+        else liveYaml();
       });
       var labelEl = el('span', { class: 'wizard-toggle-label', text: tr(labelKey) });
       if (locked) {
@@ -2315,7 +2325,7 @@
       return row;
     }
     var highRisk = isStrictRisk(state);
-    pane.appendChild(makeToggle('autoRevert', 'wizard.eval.auto_revert.label', 'wizard.eval.auto_revert.hint', false, 'wizard.eval.auto_revert.detail'));
+    pane.appendChild(makeToggle('autoRevert', 'wizard.eval.auto_revert.label', 'wizard.eval.auto_revert.hint', false, 'wizard.eval.auto_revert.detail', true));
 
     if (state.autoRevert) {
       var lossInput = el('input', {
