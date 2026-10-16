@@ -1,15 +1,13 @@
 'use strict';
 
-// Every rebuilt control must show the state it was built from: a re-render
-// after a toggle, a sibling tab's update or a step change rebuilds the whole
-// step, so a control that read the wrong field, or none, would silently show
-// a value the YAML preview does not use.
+// Every control must show the state it is built from: a re-render after a
+// toggle, a sibling tab's update or a step change builds the whole step again
+// from the state, so a control that read the wrong field, or none, would
+// silently show a value the YAML preview does not use.
 
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { loadWizard, state, descendants, isElement, hasClass, renderStep, scenarios } = require('./wizard_harness.cjs');
-
-const idFor = field => 'wizard-field-' + field.replace(/[A-Z]/g, c => '-' + c.toLowerCase());
+const { loadWizard, state, descendants, isElement, hasClass, renderStep, scenarios, idFor } = require('./wizard_harness.cjs');
 
 // Beyond the scenarios: every boolean the other way round, and options other
 // than the first, so a control that ignores the state cannot pass by showing
@@ -21,10 +19,28 @@ function counterpoints(wizard) {
     learningRate: '1e-5', batchSize: 8, galoreEnabled: true, galoreOptim: 'galore_adafactor', monitoringEnabled: true,
     metricsExport: 'datadog', retentionEnforce: 'block_on_excess', riskClassification: 'limited-risk', loraR: 32,
     loraAlpha: 64, epochs: 5, maxLength: 4096
-  }];
+  }, sentinels(wizard)];
 }
 
-test('every rebuilt control shows the state it was built from', () => {
+// Every free-text field set to a value of its own, the empty-by-default ones included, so a text
+// control that shows another field's value, or none, cannot pass by showing the default.
+function sentinels(wizard) {
+  const gates = { riskClassification: 'high-risk', benchmarkEnabled: true, judgeEnabled: true, webhookEnabled: true,
+    monitoringEnabled: true, syntheticEnabled: true, modelPreset: 'custom', trainerType: 'grpo' };
+  const value = state(wizard, gates);
+  const text = new Set();
+  for (const step of wizard.STEPS) {
+    for (const node of descendants(renderStep(wizard, value, step.id)).filter(isElement)) {
+      const field = Object.keys(value).find(name => idFor(name) === node.getAttribute('id'));
+      const type = node.getAttribute('type');
+      if (field && (node.tag === 'textarea' || (node.tag === 'input' && (type === null || type === 'text')))) text.add(field);
+    }
+  }
+  assert.ok(text.size >= 20, `${text.size} free-text fields`);
+  return { ...gates, ...Object.fromEntries([...text].map(field => [field, `sentinel ${field}`])) };
+}
+
+test('every control shows the state it is built from', () => {
   const wizard = loadWizard();
   let audited = 0;
   for (const overrides of [...scenarios(), ...counterpoints(wizard)]) {

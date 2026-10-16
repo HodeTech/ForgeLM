@@ -6,7 +6,7 @@
 
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { loadWizard, bootWizard, state, descendants, hasClass } = require('./wizard_harness.cjs');
+const { loadWizard, bootWizard, state, descendants, hasClass, isElement, idFor, closest } = require('./wizard_harness.cjs');
 
 const defaults = loadWizard();
 
@@ -143,10 +143,17 @@ test('a sibling tab\'s update keeps this tab\'s open sections, flagged errors an
   assert.ok(!('attemptedSteps' in page.saved()), 'the flagged steps stay in this tab');
 });
 
-test('open sections survive a reload', () => {
-  const page = bootWizard(saved({ step: 6, riskClassification: 'minimal-risk', openAccordions: { eval_gates: true } }));
-  assert.equal(page.byId('wizard-accordion-eval-gates').getAttribute('aria-expanded'), 'true');
-  assert.equal(page.byId('wizard-accordion-risk-assessment').getAttribute('aria-expanded'), 'false');
+test('open sections stay with their tab: another tab\'s state neither closes nor opens them', () => {
+  const page = bootWizard(saved({ step: 6, riskClassification: 'minimal-risk' }));
+  page.byId('wizard-accordion-eval-gates').events.click();
+  // The other tab's own state, not a copy of this one: another answer, and other sections open.
+  const other = { ...saved({ step: 6, riskClassification: 'minimal-risk', trainerType: 'kto' }), openAccordions: { risk_assessment: true } };
+  page.storage.set('forgelm.wizard.state', JSON.stringify(other));
+  page.listeners.storage({ key: 'forgelm.wizard.state', newValue: page.storage.get('forgelm.wizard.state') });
+  assert.equal(page.saved().trainerType, 'kto', 'the other tab\'s answer is taken');
+  assert.equal(page.byId('wizard-accordion-eval-gates').getAttribute('aria-expanded'), 'true', 'this tab\'s section stays open');
+  assert.equal(page.byId('wizard-accordion-risk-assessment').getAttribute('aria-expanded'), 'false', 'the other\'s does not open');
+  assert.ok(!('openAccordions' in page.saved()), 'open sections are not saved, so no tab overwrites another\'s');
 });
 
 test('a focused section header keeps focus, and a control the update removes leaves it in the dialog', () => {
@@ -183,4 +190,153 @@ test('reopening keeps this tab\'s answers when storage refuses to save them', ()
   // The rebuilt input carries its value as an attribute in the DOM shim.
   assert.equal(page.byId('wizard-field-model').getAttribute('value'), 'org/typed', 'the stored copy is older, not newer');
   assert.match(page.yamlOutput.innerHTML, /org\/typed/);
+});
+
+// Every field validateStep checks: its step, the state that shows it, a value it rejects and one it accepts.
+const VALIDATED = [
+  [3, { modelPreset: 'custom', model: '' }, 'model', '', 'org/model'],
+  [4, { datasetName: '' }, 'datasetName', '', 'org/data'],
+  ...['collectionMethod', 'annotationProcess', 'knownBiases']
+    .map(field => [4, { riskClassification: 'high-risk' }, field, '', 'Documented.']),
+  ...['providerName', 'systemName', 'intendedPurpose', 'intendedUse', 'foreseeableMisuse', 'mitigationMeasures']
+    .map(field => [6, { riskClassification: 'high-risk' }, field, '', 'Documented.']),
+  [6, { benchmarkEnabled: true, benchmarkTasks: '' }, 'benchmarkTasks', '', 'arc_easy'],
+  [6, { judgeEnabled: true, judgeApiKeyEnv: '' }, 'judgeApiKeyEnv', '', 'OPENAI_API_KEY'],
+  [7, { webhookEnabled: true, webhookUrl: '' }, 'webhookUrl', 'env:', 'env:SLACK_WEBHOOK'],
+  [7, { monitoringEnabled: true, monitoringEndpoint: 'env:' }, 'monitoringEndpoint', 'env:', 'https://monitor.example.com/p'],
+  [7, { monitoringEnabled: true, monitoringCheckIntervalHours: 0 }, 'monitoringCheckIntervalHours', '0', '24'],
+  ...['syntheticTeacherModel', 'syntheticSeedFile', 'syntheticApiKeyEnv']
+    .map(field => [7, { syntheticEnabled: true, [field]: '' }, field, '', 'value'])
+];
+
+test('every validated field drops its error once it validates, and shows it again once it does not (#952)', () => {
+  assert.equal(VALIDATED.length, 19);
+  for (const [step, overrides, field, invalid, valid] of VALIDATED) {
+    const page = bootWizard(saved({ step, ...overrides }));
+    page.next.events.click();
+    const control = page.byId(idFor(field));
+    const row = closest(control, 'wizard-row');
+    const errors = () => row.children.filter(node => isElement(node) && hasClass(node, 'wizard-error'));
+    const shape = () => row.children.map(node => `${node.tag}.${node.className}`);
+    assert.ok(hasClass(control, 'is-invalid') && errors().length === 1, `${field}: flagged by Next`);
+    const rendered = shape();
+
+    control.value = valid;
+    control.events.input();
+    assert.equal(page.byId(idFor(field)), control, `${field}: corrected in place`);
+    assert.ok(!hasClass(control, 'is-invalid') && errors().length === 0, `${field}: the error clears`);
+    assert.equal(String(page.saved()[field]), valid, `${field}: the value is saved`);
+
+    control.value = invalid;
+    control.events.input();
+    assert.ok(hasClass(control, 'is-invalid') && errors().length === 1, `${field}: broken again, flagged again`);
+    assert.match(errors()[0].textContent, /^wizard\.error\./, `${field}: the error names its check`);
+    assert.deepEqual(shape(), rendered, `${field}: the error row comes back where a render puts it`);
+    if (control.getAttribute('aria-invalid') !== null) assert.equal(control.getAttribute('aria-invalid'), 'true');
+  }
+});
+
+test('Next opens the section that hosts each invalid field, and a section header toggles it', () => {
+  let sections = 0;
+  for (const [step, overrides, field] of VALIDATED) {
+    const page = bootWizard(saved({ step, ...overrides }));
+    page.next.events.click();
+    const section = closest(page.byId(idFor(field)), 'wizard-accordion');
+    if (!section) continue;
+    sections += 1;
+    const header = section.children.find(node => hasClass(node, 'wizard-accordion-header'));
+    assert.ok(hasClass(section, 'is-open'), `${field}: its section is open`);
+    assert.equal(header.getAttribute('aria-expanded'), 'true', `${field}: its header says so`);
+  }
+  assert.ok(sections >= 14, `${sections} fields sit in a section`);
+  const page = bootWizard(saved({ step: 7 }));
+  const header = page.byId('wizard-accordion-webhook');
+  for (const open of [true, false]) {
+    header.events.click();
+    assert.equal(header.getAttribute('aria-expanded'), String(open));
+    assert.equal(hasClass(closest(header, 'wizard-accordion'), 'is-open'), open);
+  }
+});
+
+test('every control saves what it sets', () => {
+  const shown = { riskClassification: 'limited-risk', benchmarkEnabled: true, judgeEnabled: true, webhookEnabled: true,
+    monitoringEnabled: true, syntheticEnabled: true, modelPreset: 'custom', trainerType: 'grpo', autoRevert: true };
+  const fields = Object.keys(defaults.defaultState());
+  let checked = 0;
+  for (const [index, step] of defaults.STEPS.entries()) {
+    const page = bootWizard(saved({ ...shown, step: index }));
+    for (const node of descendants(page.pane).filter(isElement)) {
+      const id = node.getAttribute('id') || '';
+      // A control is `<field id>`, an option card `<field id>-<option>`: the longest field prefix names it.
+      const field = fields.filter(name => id === idFor(name) || id.startsWith(idFor(name) + '-'))
+        .sort((a, b) => b.length - a.length)[0];
+      if (!field || node.disabled) continue;
+      const before = JSON.stringify(page.saved()[field]);
+      const type = node.getAttribute('type');
+      if (node.tag === 'input' && type === 'checkbox') {
+        node.checked = !node.checked;
+        node.events.change();
+      } else if (node.tag === 'select') {
+        const option = node.children.filter(isElement).find(item => item.getAttribute('value') !== String(page.saved()[field]));
+        node.value = option.getAttribute('value');
+        node.events.change();
+      } else if (node.tag === 'button' && hasClass(node, 'wizard-card')) {
+        if (hasClass(node, 'is-selected')) continue;
+        node.events.click();
+      } else if (node.tag === 'input' && (type === 'number' || type === 'range')) {
+        // A bound the field is not at, so the value changes and stays valid.
+        const current = String(page.saved()[field]);
+        node.value = [node.getAttribute('max'), node.getAttribute('min')].find(bound => bound !== null && bound !== current);
+        (node.events.input || node.events.change)();
+      } else if (['input', 'textarea'].includes(node.tag)) {
+        node.value = `saved ${field}`;
+        (node.events.input || node.events.change)();
+      } else {
+        continue;
+      }
+      assert.notEqual(JSON.stringify(page.saved()[field]), before, `${step.id}: ${id} saves what it sets`);
+      checked += 1;
+    }
+  }
+  assert.ok(checked > 60, `checked ${checked} controls`);
+});
+
+test('a re-render leaves focus outside the step alone, and refocuses a control without scrolling', () => {
+  const page = bootWizard(saved({ step: 6, riskClassification: 'high-risk' }));
+  page.next.focus();
+  siblingWrites(page, { trainerType: 'dpo' });
+  assert.equal(page.document.activeElement, page.next, 'focus stays on Next');
+  page.byId('wizard-field-provider-name').focus();
+  siblingWrites(page, { trainerType: 'orpo' });
+  assert.equal(page.document.activeElement, page.byId('wizard-field-provider-name'));
+  assert.deepEqual({ ...page.byId('wizard-field-provider-name').focusOptions }, { preventScroll: true });
+});
+
+test('another tab resetting the wizard, or clearing storage, resets this one; other keys change nothing', () => {
+  for (const key of ['forgelm.wizard.state', null]) {
+    const page = bootWizard(saved({ step: 4, trainerType: 'dpo' }));
+    page.listeners.storage({ key: 'forgelm.theme', newValue: 'dark' });
+    assert.equal(page.counterCurrent.textContent, '5', 'another key changes nothing');
+    page.storage.clear();
+    page.listeners.storage({ key, newValue: null });
+    assert.equal(page.counterCurrent.textContent, '1', `${key}: back to the first step`);
+    assert.equal(page.saved().trainerType, defaults.defaultState().trainerType, `${key}: the defaults are saved`);
+  }
+});
+
+test('a saved step that is no step number starts over instead of leaving the pane blank', () => {
+  for (const [step, counter] of [[null, '1'], ['3', '1'], [1.5, '1'], [-3, '1'], [99, '9']]) {
+    const page = bootWizard(saved({ step }));
+    assert.ok(page.pane.children.length > 0, `${JSON.stringify(step)}: the pane renders`);
+    assert.equal(page.counterCurrent.textContent, counter, `${JSON.stringify(step)}: the counter`);
+  }
+});
+
+test('Reset on the review step starts over and saves the defaults', () => {
+  const page = bootWizard(saved({ step: 8, trainerType: 'dpo' }));
+  const reset = descendants(page.pane).find(node => node.tag === 'button' &&
+    descendants(node).some(child => child.textContent === 'wizard.review.reset'));
+  reset.events.click();
+  assert.equal(page.counterCurrent.textContent, '1');
+  assert.equal(page.saved().trainerType, defaults.defaultState().trainerType);
 });

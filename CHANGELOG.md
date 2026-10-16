@@ -75,11 +75,12 @@ All notable changes to ForgeLM are documented here.
   behind it. "Required for risk tier" badges read as a separate word, and sliders show a keyboard
   focus ring (#950).
 - Keep the browser wizard's open sections and flagged errors when another tab updates it. The update
-  reloaded a state without the open sections, which were missing from the saved fields, and without
-  the steps this tab had flagged, so the Compliance step's sections closed and its errors vanished.
-  Open sections are now saved, so they also survive a reload, and the flagged steps stay with their
-  tab. A wizard reopened in a tab whose copy is older starts from the newer saved answers instead of
-  writing its own copy over them (refs #557, #683).
+  replaced this tab's state with the saved one, which holds neither, so the Compliance step's sections
+  closed and its errors vanished. Open sections and flagged steps now stay with their tab and are never
+  saved, so two open tabs cannot overwrite each other's. A wizard reopened in a tab whose copy is older
+  starts from the newer saved answers instead of writing its own copy over them; another tab clearing
+  all site storage resets it like the wizard's own Reset; and a saved step that is not a step number
+  starts the wizard over instead of leaving it blank (refs #557, #683).
 - Render the browser wizard's Compliance step again. It called a helper that only three other step
   renderers declared, so every visit threw a `ReferenceError` before the Article 9 risk-assessment,
   benchmark and LLM-judge controls appeared, and strict risk tiers could not complete the step.
@@ -88,9 +89,10 @@ All notable changes to ForgeLM are documented here.
 - Clear the browser wizard's error on a model id or dataset name as soon as the corrected value
   validates. The input handlers read the "before" state after storing the new value, so the red
   border, `aria-invalid="true"` and the error message stayed until something else re-rendered the
-  step. The error now clears in place, keeping focus and the caret in the field, and while the value
-  is still invalid the message names the check it fails now (`abc` reads "format", not "required");
-  every validated field shares this behaviour (#952).
+  step. The error now clears in place, keeping focus and the caret in the field, and comes back in
+  place when a corrected value is broken again; while the value is invalid the message names the
+  check it fails now (`abc` reads "format", not "required"). All 19 validated fields share this
+  behaviour (#952).
 - Show the code in the browser wizard's GRPO reward-model tip as code; its `<code>` tags appeared as
   text in every language.
 - Stop `quickstart.html` from scrolling sideways on phones and tablets. A step's grid column could

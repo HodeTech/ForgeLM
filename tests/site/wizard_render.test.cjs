@@ -8,8 +8,10 @@
 // crash shipped. These tests render every step through the real renderers.
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { test } = require('node:test');
-const { loadWizard, state, descendants, textOf, hasClass, renderStep, RISK_TIERS, scenarios } = require('./wizard_harness.cjs');
+const { root, loadWizard, state, descendants, textOf, hasClass, renderStep, RISK_TIERS, scenarios } = require('./wizard_harness.cjs');
 
 function rows(pane) {
   return descendants(pane).filter(node => node.tag === 'div' && hasClass(node, 'wizard-row'));
@@ -183,6 +185,30 @@ test('toggles that reveal fields show and hide them at once', () => {
     flip(pane, toggle);
     assert.deepEqual(ids.filter(id => has(pane, id)), [], `${field} off again hides them`);
   }
+
+  // The custom-model card shows the model id field, and another preset hides it.
+  const model = renderStep(wizard, state(wizard, { modelPreset: 'llama3-8b' }), 'model');
+  const click = id => descendants(model).find(node => node.getAttribute && node.getAttribute('id') === id).events.click();
+  assert.ok(!has(model, 'wizard-field-model'));
+  click('wizard-field-model-preset-custom');
+  assert.ok(has(model, 'wizard-field-model'), 'the custom card shows the model id');
+  click('wizard-field-model-preset-llama3-8b');
+  assert.ok(!has(model, 'wizard-field-model'), 'a preset hides it');
+});
+
+test('with details on, every detail paragraph a renderer names is shown', () => {
+  const source = fs.readFileSync(path.join(root, 'site/js/wizard.js'), 'utf8');
+  const named = [...source.matchAll(/appendDetail\(state, \w+, '([\w.]+)'\)/g)].map(match => match[1]);
+  assert.ok(named.length >= 15, `${named.length} detail keys`);
+  const wizard = loadWizard();
+  const shown = new Set();
+  for (const overrides of scenarios()) {
+    for (const step of wizard.STEPS) {
+      const pane = renderStep(wizard, state(wizard, { ...overrides, detailsVisible: true }), step.id);
+      for (const node of descendants(pane).filter(node => hasClass(node, 'wizard-row-detail'))) shown.add(textOf(node));
+    }
+  }
+  assert.deepEqual(named.filter(key => !shown.has(key)), []);
 });
 
 test('a detail line names code as code, never as literal tags', () => {
@@ -193,4 +219,7 @@ test('a detail line names code as code, never as literal tags', () => {
   assert.deepEqual(details.filter(node => textOf(node).includes('<code>')), [], 'no tag shows as text');
   const codes = details.flatMap(node => descendants(node).filter(child => child.tag === 'code')).map(textOf);
   assert.deepEqual(codes.sort(), ['combined_format_length_reward', 'gold_answer']);
+  // The text around the code survives too: the line reads as the translation without its tags.
+  const copy = wizard.translations.en['wizard.training.grpo_reward_model.detail'];
+  assert.ok(details.some(node => textOf(node) === copy.replace(/<\/?code>/g, '')), 'the whole line, in order');
 });

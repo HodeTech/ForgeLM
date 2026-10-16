@@ -24,6 +24,18 @@ function element(tag) {
   const node = {
     tag, children: [], attrs: {}, events: {}, className: '',
     appendChild(child) { this.children.push(child); child.parent = this; return child; },
+    insertBefore(child, before) {
+      const at = before ? this.children.indexOf(before) : this.children.length;
+      assert.ok(at >= 0, 'insertBefore: the reference node is not a child, which a browser rejects');
+      this.children.splice(at, 0, child);
+      child.parent = this;
+      return child;
+    },
+    get parentNode() { return this.parent || null; },
+    get nextSibling() {
+      const siblings = this.parent ? this.parent.children : [];
+      return siblings[siblings.indexOf(this) + 1] || null;
+    },
     setAttribute(key, value) { this.attrs[key] = String(value); },
     getAttribute(key) { return Object.hasOwn(this.attrs, key) ? this.attrs[key] : null; },
     addEventListener(key, handler) { this.events[key] = handler; },
@@ -103,7 +115,7 @@ function bootWizard(saved) {
   let active = null;
   const make = tag => {
     const node = element(tag);
-    node.focus = () => { active = node; };
+    node.focus = options => { active = node; node.focusOptions = options; };
     node.setSelectionRange = (start, end) => { node.selectionStart = start; node.selectionEnd = end; };
     node.contains = other => { for (let cur = other; cur; cur = cur.parent) if (cur === node) return true; return false; };
     Object.defineProperty(node, 'id', { get: () => node.getAttribute('id') || '' });
@@ -159,7 +171,8 @@ function bootWizard(saved) {
       removeItem: key => storage.delete(key)
     },
     location: { search: '', pathname: '/quickstart.html' }, history: { replaceState() {} },
-    addEventListener: (type, handler) => { listeners[type] = handler; }
+    addEventListener: (type, handler) => { listeners[type] = handler; },
+    confirm: () => true  // the review step's Reset asks first
   };
   const wizard = runWizard(vm.createContext({ window, document, URL, URLSearchParams, setTimeout: () => 0 }));
   wizard.initWizard();
@@ -177,6 +190,15 @@ function state(wizard, overrides = {}) {
 
 function descendants(node) {
   return [node, ...(node.children || []).flatMap(descendants)];
+}
+
+// The id a renderer gives a field's control: `wizard-field-` and the field in kebab case.
+const idFor = field => 'wizard-field-' + field.replace(/[A-Z]/g, c => '-' + c.toLowerCase());
+
+// The nearest ancestor of *node* with class *name*, or null.
+function closest(node, name) {
+  for (let current = node; current; current = current.parent) if (hasClass(current, name)) return current;
+  return null;
 }
 
 // Visible text of a node: text nodes, `text:` attributes and nested children.
@@ -241,5 +263,5 @@ function scenarios() {
 
 module.exports = {
   root, element, loadWizard, bootWizard, state, descendants, textOf, hasClass, isElement, renderStep, RISK_TIERS,
-  scenarios
+  scenarios, idFor, closest
 };

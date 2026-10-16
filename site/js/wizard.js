@@ -21,8 +21,9 @@
  * - Accessibility: role=dialog, aria-modal, focus trap, Esc to
  *   close, return-focus to trigger button on close, aria-live on
  *   the step pane so screen readers announce step transitions.
- * - Reduced-motion: detected once at init and used to skip step
- *   slide animations + progress-bar transitions.
+ * - Reduced motion: style.css drops the dialog animation and the
+ *   accordion and progress-bar transitions under
+ *   ``prefers-reduced-motion``; the script does not check it.
  */
 (function () {
   'use strict';
@@ -281,9 +282,9 @@
       // visit to a step is clean (no errors shown), and only after
       // hitting Next on an invalid step do the errors appear.
       attemptedSteps: [],
-      // Which accordions the operator opened. loadState only keeps the
-      // fields listed here, so without this one a reload, or a sibling
-      // tab's update, closed every accordion.
+      // Which accordions the operator opened in this tab. Like
+      // ``attemptedSteps`` it is never saved, so a sibling tab's update
+      // does not close them, and it survives that update's re-render.
       openAccordions: {}
     };
   }
@@ -304,17 +305,13 @@
       // pre-painted validation errors from a prior session. The error
       // surface only fires once they hit Next on an invalid step.
       merged.attemptedSteps = [];
+      merged.openAccordions = {};
       return merged;
     } catch (e) {
       return null;
     }
   }
 
-  // Track storage failures so the renderer can surface a banner.
-  // We only flag once per modal session — repeated failures are
-  // expected once the bucket is full and would otherwise spam the
-  // user. ``window.ForgeLMWizardStorageWarn`` survives across saves
-  // so a refresh of the wizard pane carries the warning forward.
   // The saved state as stored, or null when there is none or storage is unreadable.
   function savedText() {
     try {
@@ -325,12 +322,15 @@
   }
 
   // Save the state; return the stored text, or null when storage refused it.
+  // A refused save shows a banner once: repeated failures are expected once
+  // the bucket is full and would otherwise spam the user.
   function saveState(state) {
     try {
-      // ``attemptedSteps`` belongs to this tab: saving it would make two open
-      // tabs overwrite each other's in turn, and loadState drops it anyway.
+      // ``attemptedSteps`` and ``openAccordions`` belong to this tab: saving
+      // them would make two open tabs overwrite each other's in turn.
       var saved = Object.assign({}, state);
       delete saved.attemptedSteps;
+      delete saved.openAccordions;
       var text = JSON.stringify(saved);
       window.localStorage.setItem(STORAGE_KEY, text);
       return text;
@@ -338,7 +338,6 @@
       /* Private mode + quota-exceeded both land here. In-memory state
          keeps the operator going within the current modal session;
          the banner tells them their progress isn't persisted. */
-      window.ForgeLMWizardStorageWarn = true;
       try {
         var msg = (window.ForgeLMShared && window.ForgeLMShared.tr)
           ? window.ForgeLMShared.tr('wizard.storage.unavailable')
@@ -527,14 +526,24 @@
   }
 
   // Keep a flagged field's error row in step with its value, in place: drop
-  // it once the value validates, or name the check the value fails now (an
-  // empty model id is "required", ``abc`` is "format"). A re-render would
-  // rebuild the step under the caret and re-announce it.
+  // it once the value validates, name the check the value fails now (an
+  // empty model id is "required", ``abc`` is "format"), and bring it back
+  // when a corrected value is broken again. A re-render would rebuild the
+  // step under the caret and re-announce it.
   function syncFieldError(state, stepId, field, input, row) {
     var key = fieldHasError(state, stepId, field);
     var error = row.querySelector('.wizard-error');
     if (key) {
-      if (error) error.textContent = tr(key);
+      input.classList.add('is-invalid');
+      if (input.getAttribute('aria-invalid') === 'false') input.setAttribute('aria-invalid', 'true');
+      if (!error) {
+        // Where the renderers put it: after the field's hint, or after the field.
+        error = el('div', { class: 'wizard-error', role: 'alert' });
+        var hint = row.querySelector('.wizard-row-hint');
+        var after = hint && hint.parentNode === row ? hint : input;
+        row.insertBefore(error, after.nextSibling);
+      }
+      error.textContent = tr(key);
       return;
     }
     input.classList.remove('is-invalid');
@@ -1140,16 +1149,20 @@
 
     // Take another tab's saved answers into this tab's state, in place so the
     // closures (persist, render) keep their reference. The steps this tab
-    // flagged stay with it, so their errors stay on screen.
+    // flagged and the sections it opened stay with it.
     function adopt(fresh) {
       var attempted = state.attemptedSteps || [];
+      var opened = state.openAccordions || {};
       Object.keys(state).forEach(function (k) { delete state[k]; });
       Object.keys(fresh).forEach(function (k) { state[k] = fresh[k]; });
       state.attemptedSteps = attempted;
+      state.openAccordions = opened;
     }
 
     function render() {
-      var idx = state.step;
+      // A saved step that is not a step number (a hand-edited or damaged save)
+      // would leave the pane blank, with no way to reach Reset: start over.
+      var idx = Number.isInteger(state.step) ? state.step : 0;
       if (idx < 0) idx = 0;
       if (idx >= STEPS.length) idx = STEPS.length - 1;
       state.step = idx;
@@ -1373,7 +1386,7 @@
     // (operator is comparing two configs) and recoverable for the
     // edge case (operator is mid-edit in BOTH tabs simultaneously).
     window.addEventListener('storage', function (e) {
-      if (e.key !== STORAGE_KEY) return;
+      if (e.key !== STORAGE_KEY && e.key !== null) return; // null: another tab cleared all storage
       if (modal.hasAttribute('hidden')) return; // not visible — nothing to refresh
       try {
         // Cross-tab reset: a sibling tab cleared the wizard
@@ -2951,8 +2964,9 @@
         // and the API key env var. None have a sensible default that
         // ForgeLM can guess, so all three are validated here. The
         // factory below mirrors the validateStep ↔ inline-error
-        // wiring used by webhook.url and monitoring.endpoint.
-        function makeRequiredText(field, labelKey, hintKey, placeholderKey, errorKey) {
+        // wiring used by webhook.url and monitoring.endpoint; the
+        // message comes from validateStep.
+        function makeRequiredText(field, labelKey, hintKey, placeholderKey) {
           var errKey = fieldHasError(state, 'operations', field);
           var inp = el('input', {
             id: controlId(field),
@@ -2981,18 +2995,15 @@
         body.appendChild(makeRequiredText('syntheticTeacherModel',
           'wizard.synthetic.teacher_model.label',
           'wizard.synthetic.teacher_model.hint',
-          null,
-          'wizard.error.synthetic.teacher_model.required'));
+          null));
         body.appendChild(makeRequiredText('syntheticSeedFile',
           'wizard.synthetic.seed_file.label',
           'wizard.synthetic.seed_file.hint',
-          'wizard.synthetic.seed_file.placeholder',
-          'wizard.error.synthetic.seed_file.required'));
+          'wizard.synthetic.seed_file.placeholder'));
         body.appendChild(makeRequiredText('syntheticApiKeyEnv',
           'wizard.synthetic.api_key_env.label',
           'wizard.synthetic.api_key_env.hint',
-          null,
-          'wizard.error.synthetic.api_key_env.required'));
+          null));
       }
     }));
 
