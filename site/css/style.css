@@ -1554,7 +1554,10 @@ section { padding: 5rem 0; }
 }
 .step {
   display: grid;
-  grid-template-columns: auto 1fr;
+  /* ``minmax(0, 1fr)``, not ``1fr``: a ``1fr`` track cannot shrink below its
+     content, so a long terminal line widened the page on phones instead of
+     scrolling inside its code block. */
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 1.5rem;
   position: relative;
 }

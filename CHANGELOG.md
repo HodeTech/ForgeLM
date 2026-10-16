@@ -73,6 +73,10 @@ All notable changes to ForgeLM are documented here.
   validates. The input handlers read the "before" state after storing the new value, so the red
   border, `aria-invalid="true"` and the error message stayed until something else re-rendered the
   step. The error now clears in place, keeping focus and the caret in the field (#952).
+- Stop `quickstart.html` from scrolling sideways on phones and tablets. A step's grid column could
+  not shrink below its longest terminal line, so from 320 to 768 px wide the page laid out about
+  990 px wide, with the menu button off screen; on desktop one step card overflowed its container.
+  Long lines now scroll inside their code block (#953).
 - Restore the monitoring-plan evidence contract: `monitoring.*` declares an external plan,
   labelled `declarative_only: true`; ForgeLM runs no exporter, drift detector, alert, or scheduler.
   Warn once per config-file load for an enabled exporter declaration, without repeating during
