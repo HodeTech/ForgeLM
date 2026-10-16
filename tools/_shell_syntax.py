@@ -215,6 +215,8 @@ class Lexer:
             elif char == "'" and quoted:
                 end = self.src.find("'", self.i + 1)
                 self.i = len(self.src) if end < 0 else end + 1
+            elif char == '"' and quoted:
+                self._double_quoted(scratch, subs, self.line)  # `("don't" "$(cmd)")`: its `'` is literal
             elif char in "$`":
                 self._expansion(scratch, subs, ansi_c=quoted)
             else:

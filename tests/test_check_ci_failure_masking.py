@@ -312,6 +312,8 @@ class TestReviewedShapes:
             ("trap 'rc=$?; let rc--; exit $rc' EXIT\npytest", "runs `exit $rc`"),
             ("trap 'rc=$?; printf -v rc %s 0; exit $rc' EXIT\npytest", "runs `exit $rc`"),
             ("trap 'rc=$?; for rc in 0; do :; done; exit $rc' EXIT\npytest", "runs `exit $rc`"),
+            # A `'` inside a double-quoted array element is literal, so a later substitution still runs.
+            ('msgs=("don\'t" "$(pytest || true)")\necho done', "command substitution"),
             # In a here-document `$'` is no quote, so a substitution after it still runs.
             ("cat <<EOF\nit costs $'5 $(pytest)\nEOF", "command substitution"),
         ],
@@ -1081,6 +1083,7 @@ _AGAINST_BASH = [
     ("trap 'rc=$?; : $((rc=0)); exit $rc' EXIT\npytest", "runs `exit $rc`"),
     ("eval 'set -n'\npytest", "never runs"),
     ('for t in a b; do pytest "$t" || exit 1; done', None),
+    ('msgs=("don\'t" "$(pytest || true)")\necho done', "command substitution"),
     # Runners, process substitutions, standard input, and scripts under the workspace.
     ("uvx ruff@0.8.0 check . | tee /dev/null", "feeds a pipe without `pipefail`"),
     ("micromamba run -n env pytest | tee /dev/null", "feeds a pipe without `pipefail`"),

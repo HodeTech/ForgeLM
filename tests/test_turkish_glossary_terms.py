@@ -19,8 +19,8 @@ _DOCS = _REPO_ROOT / "docs"
 
 
 def _turkish_docs() -> List[Path]:
-    files = [*_DOCS.glob("*-tr.md")]
-    for tree in ("guides", "reference", "qms", "roadmap"):
+    files = [*_DOCS.glob("*-tr.md")]  # roadmap-tr.md and product_strategy-tr.md; docs/roadmap/ has no mirrors
+    for tree in ("guides", "reference", "qms"):
         files += (_DOCS / tree).rglob("*-tr.md")  # docs/guides/cpu-demo/README-tr.md too
     files += (_DOCS / "usermanuals" / "tr").rglob("*.md")
     return sorted(files)
@@ -37,7 +37,10 @@ _SUPERSEDED = [
 
 
 def test_the_turkish_trees_are_found():
+    """A renamed or deleted tree must fail here, not silently drop out of the scan."""
     names = {path.relative_to(_DOCS).as_posix() for path in _turkish_docs()}
+    for tree in ("guides/", "reference/", "qms/", "usermanuals/tr/", "roadmap-tr.md"):
+        assert any(name.startswith(tree) for name in names), f"no Turkish page found under docs/{tree}"
     for expected in (
         "qms/sop_incident_response-tr.md",
         "usermanuals/tr/operations/gpu-cost.md",

@@ -53,8 +53,8 @@ workflow can delete its test step. Beyond it are a required command run under
 another name (`$CMD`), by another program (`make`, `tox`, a Python script) or
 on another machine or container (`docker exec`, `ssh`); a script generated or
 downloaded while the step runs (`eval "$(…)"`, `curl … | sh`); a program
-replaced on disk or put first on `PATH`; a remote action; job-level conditions
-such as `if: always()` on a job that needs the tests; and options other than
+replaced on disk or put first on `PATH`; a remote action; a job condition other
+than `if: false`, such as `if: always()` on a job that needs the tests; and options other than
 `--exit-zero` that empty a check (`pytest --collect-only`).
 
 Independently of required commands, a `|| true` / `|| :` / `|| exit 0` fallback
