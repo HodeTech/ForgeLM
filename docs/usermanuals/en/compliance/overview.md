@@ -132,7 +132,7 @@ block; these do not represent nine complete Annex IV sections:
 | `system_components` | §2 — model lineage + training parameters. |
 | `computational_resources` | Annex IV §2(c) — compute used during training. |
 | `data_governance` | §2(d) — data provenance and validation methodology. |
-| `technical_documentation` | §3-5 — ForgeLM version, generation timestamp, known limitations. |
+| `technical_documentation` | §1(c) / §3 — ForgeLM version, generation timestamp, known limitations. |
 | `monitoring_and_logging` | Annex IV §9 (Art. 72(3)) — Declared external monitoring-plan metadata (`declarative_only: true`), or an audit-log reference; no runtime monitoring evidence. |
 | `performance_metrics` | Annex IV §2(g) / §4 — accuracy / robustness metrics from the evaluation results. |
 | `risk_management` | Annex IV §5 — the top-level `risk_assessment:` block, or an explicit "no risk_assessment block configured" marker. |

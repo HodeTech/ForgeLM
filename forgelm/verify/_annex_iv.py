@@ -37,7 +37,7 @@ _ANNEX_IV_REQUIRED_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("system_components", "Annex IV §2 — software / hardware components + supplier list"),
     ("computational_resources", "Annex IV §2(c) — compute resources used during training"),
     ("data_governance", "Annex IV §2(d) — data sources, governance, validation methodology"),
-    ("technical_documentation", "Annex IV §3-5 — design + development methodology"),
+    ("technical_documentation", "Annex IV §1(c) / §3 — software version and known limitations"),
     (
         "monitoring_and_logging",
         "Annex IV §9 (Art. 72(3)) — declared external plan metadata or audit-log reference",

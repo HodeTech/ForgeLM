@@ -165,7 +165,7 @@ The verifier walks a static catalog (`_ANNEX_IV_REQUIRED_FIELDS`) so a future sc
 | `system_components` | §2 — software / hardware components + supplier list. |
 | `computational_resources` | Annex IV §2(c) — compute resources used during training. |
 | `data_governance` | §2(d) — data sources, governance, validation methodology. |
-| `technical_documentation` | §3-5 — design + development methodology. |
+| `technical_documentation` | §1(c) / §3 — the software version and the known limitations (`forgelm_version`, `known_limitations`). |
 | `monitoring_and_logging` | Annex IV §9 (Art. 72(3)) — Declared external monitoring-plan metadata (`declarative_only: true`), or an audit-log reference; no runtime monitoring evidence. |
 | `performance_metrics` | Annex IV §2(g) / §4 — accuracy / robustness / cybersecurity metrics. |
 | `risk_management` | Annex IV §5 — risk management system reference (Article 9 alignment). |

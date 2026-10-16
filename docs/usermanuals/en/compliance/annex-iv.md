@@ -81,7 +81,7 @@ The verifier requires nine ForgeLM metadata keys; these do not represent nine co
 | `system_components` | §2 — software / hardware components + supplier list. |
 | `computational_resources` | Annex IV §2(c) — compute resources used during training. |
 | `data_governance` | §2(d) — data sources, governance, validation methodology. |
-| `technical_documentation` | §3-5 — design + development methodology. |
+| `technical_documentation` | §1(c) / §3 — the software version and the known limitations (`forgelm_version`, `known_limitations`). |
 | `monitoring_and_logging` | Annex IV §9 (Art. 72(3)) — Declared external monitoring-plan metadata (`declarative_only: true`), or an audit-log reference; no runtime monitoring evidence. |
 | `performance_metrics` | Annex IV §2(g) / §4 — accuracy / robustness / cybersecurity metrics. |
 | `risk_management` | Annex IV §5 — risk management system reference (Article 9 alignment). |
@@ -184,7 +184,7 @@ Integrity is evaluated first, so a weaker finding can never mask a stronger one.
 :::
 
 :::warn
-**Expecting a declaration of conformity in the bundle.** ForgeLM does not generate one — §7 in this artefact is `performance_metrics` (accuracy / robustness), not a conformity declaration. Article 16 conformity is the deployer's signed deliverable and must be authored and signed outside the toolkit, regardless of what `verify-annex-iv` reports.
+**Expecting a declaration of conformity in the bundle.** ForgeLM does not generate one: none of the nine keys holds the copy of the EU declaration of conformity that Annex IV §8 asks for, and `performance_metrics` carries the §2(g) / §4 metrics. The declaration (Article 47) is the provider's signed deliverable and must be drawn up and signed outside the toolkit, regardless of what `verify-annex-iv` reports.
 :::
 
 :::warn

@@ -59,6 +59,11 @@ All notable changes to ForgeLM are documented here.
   it "includes the detailed plan"; German, French and Spanish now follow the Regulation's wording, and
   the Chinese line awaits native review. French webhook copy says "alertes", and the Chinese webhook
   card uses full-width punctuation and 端点 throughout (refs #948).
+- Label the Annex IV `technical_documentation` key §1(c) / §3, the software version and the known
+  limitations it holds, instead of §3-5 "design and development methodology", in the verifier's field
+  table, the writer's comment and the EN/TR reference and user-manual tables. The Annex IV page no
+  longer calls `performance_metrics` the bundle's §7: no key holds the copy of the EU declaration of
+  conformity that §8 asks for, which the provider draws up under Article 47 (refs #539).
 - Apply the owner's Turkish terminology across the site and the Turkish docs: "piyasaya arz sonrası
   izleme", "AB" and the Regulation as "(AB) 2024/1689 sayılı Tüzük", "Annex IV §N", "exporter" kept in
   English, "alarm" for a monitoring or threshold alert, "bildirim" for a webhook message and "uyarı"

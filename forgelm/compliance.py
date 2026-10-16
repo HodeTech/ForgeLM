@@ -1873,7 +1873,7 @@ def build_annex_iv_artifact(manifest: Dict[str, Any]) -> Optional[Dict[str, Any]
         ),
         # Annex IV §2(d): data sources, governance, validation methodology.
         "data_governance": manifest.get("data_provenance", {}),
-        # Annex IV §3-5: design + development methodology.
+        # Annex IV §1(c) / §3: the software version and the known limitations.
         "technical_documentation": {
             "forgelm_version": manifest.get("forgelm_version", ""),
             "generated_at": manifest.get("generated_at", ""),

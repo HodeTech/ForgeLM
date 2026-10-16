@@ -132,7 +132,7 @@ bunlar dokuz eksiksiz Annex IV bölümünü temsil etmez:
 | `system_components` | §2 — model soyağacı + eğitim parametreleri. |
 | `computational_resources` | Annex IV §2(c) — eğitim sırasında kullanılan hesaplama kaynağı. |
 | `data_governance` | §2(d) — veri kökeni ve doğrulama metodolojisi. |
-| `technical_documentation` | §3-5 — ForgeLM sürümü, üretim zaman damgası, bilinen sınırlamalar. |
+| `technical_documentation` | §1(c) / §3 — ForgeLM sürümü, üretim zaman damgası, bilinen sınırlamalar. |
 | `monitoring_and_logging` | Annex IV §9 (Madde 72(3)) — Beyan edilen harici izleme planı (`declarative_only: true`) veya audit log referansı; çalışan izleme kanıtı değildir. |
 | `performance_metrics` | Annex IV §2(g) / §4 — değerlendirme sonuçlarından doğruluk / sağlamlık metrikleri. |
 | `risk_management` | Annex IV §5 — top-level `risk_assessment:` bloğu ya da açık bir "no risk_assessment block configured" işareti. |

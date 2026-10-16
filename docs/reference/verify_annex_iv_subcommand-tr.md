@@ -165,7 +165,7 @@ Doğrulayıcı statik bir katalogu (`_ANNEX_IV_REQUIRED_FIELDS`) yürür; böyle
 | `system_components` | §2 — yazılım / donanım bileşenleri + tedarikçi listesi. |
 | `computational_resources` | Annex IV §2(c) — eğitim sırasında kullanılan hesaplama kaynakları. |
 | `data_governance` | §2(d) — veri kaynakları, yönetişim, doğrulama metodolojisi. |
-| `technical_documentation` | §3-5 — tasarım + geliştirme metodolojisi. |
+| `technical_documentation` | §1(c) / §3 — yazılım sürümü ve bilinen sınırlamalar (`forgelm_version`, `known_limitations`). |
 | `monitoring_and_logging` | Annex IV §9 (Madde 72(3)) — Beyan edilen harici izleme planı (`declarative_only: true`) veya audit log referansı; çalışan izleme kanıtı değildir. |
 | `performance_metrics` | Annex IV §2(g) / §4 — doğruluk / dayanıklılık / siber güvenlik metrikleri. |
 | `risk_management` | Annex IV §5 — risk yönetim sistemi referansı (Madde 9 hizalaması). |
