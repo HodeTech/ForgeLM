@@ -31,8 +31,9 @@ All notable changes to ForgeLM are documented here.
 - Accept case-insensitive `env:` references with surrounding whitespace, lowercase letters and
   initial underscores in both CLI wizard monitoring and webhook inputs; reject malformed names.
 - Cite Annex IV points as `§N` throughout, as the Turkish pages and most English ones already did:
-  `forgelm verify-annex-iv` now describes its fields as `Annex IV §2(c)`, `§9`, `§2(g) / §4` and
-  `§5`, and the EN/TR references, user manual, ISO 27001 mappings and wizard hint follow (refs #948).
+  the EN/TR `verify-annex-iv` reference and user-manual field tables (`Annex IV §2(c)`, `§9`,
+  `§2(g) / §4`, `§5`), the ISO 27001 mappings, the wizard hint, and the verify module's own field
+  table and comments (refs #948).
 - Omit Pydantic `input_value` / `input_type` excerpts from all rendered `ForgeConfig` validation
   errors, preserving field paths and reasons. `MonitoringConfig` also applies this protection
   standalone; other standalone submodels retain their existing diagnostics (#93).
@@ -61,9 +62,9 @@ All notable changes to ForgeLM are documented here.
 - Apply the owner's Turkish terminology across the site and the Turkish docs: "piyasaya arz sonrası
   izleme", "AB" and the Regulation as "(AB) 2024/1689 sayılı Tüzük", "Annex IV §N", "exporter" kept in
   English, "alarm" for a monitoring or threshold alert, "bildirim" for a webhook message and "uyarı"
-  for a log warning, "trend izleme", "EU AI Act" in full, and the straight apostrophe throughout. The
-  `localization.md` glossary records each decision, and tests pin them in the site strings and the
-  Turkish docs (refs #948).
+  for a log warning, "EU AI Act" in full, and the straight apostrophe throughout; "trend izleme",
+  the user manual's term, replaces "trend takibi". The `localization.md` glossary records the
+  owner's decisions, and tests pin them in the site strings and the Turkish docs (refs #948).
 - Name every browser-wizard field by its visible caption. Text, number, slider, select and textarea
   captions now point at their control through unique, stable `id`/`for` pairs, so screen readers
   no longer announce a placeholder or nothing, and clicking a caption focuses its field. The LoRA
@@ -97,10 +98,13 @@ All notable changes to ForgeLM are documented here.
   990 px wide, with the menu button off screen; on desktop one step card overflowed its container.
   The column can now shrink, so a long line scrolls inside its code block, which already allowed it
   (#953).
-- Stop `compliance.html` from laying out wider than a phone: its article cards grew to their longest
-  file path and long inline code could not break. The contact grid, the quickstart spotlight and the
-  use-case rows get the same shrinkable columns; at 320 and 375 px no page is wider than the screen
-  in any site language.
+- Stop the site from laying out wider than a phone. `compliance.html`'s article cards grew to their
+  longest file path and long inline code could not break; on the German, French and Spanish home
+  pages a button label and the pipeline stages, and on the German privacy and terms pages the title,
+  did the same, and the quickstart spotlight cut off its German and Turkish text. Columns now shrink
+  (`minmax(0, 1fr)`), inline code and headings wrap long words, and buttons wrap their labels on
+  narrow screens; the contact grid and use-case rows get the same columns. At 320 and 375 px no page
+  is wider than the screen in any of the six site languages.
 - Make the browser wizard easier to read and operate: a focused invalid field gets an outline instead
   of keeping only its red border, the light theme's focus colour (2.3:1 on white) and error text
   (3.8:1) give way to darker shades that pass, locked toggles keep their size beside long captions,

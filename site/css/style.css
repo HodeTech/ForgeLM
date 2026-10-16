@@ -217,6 +217,7 @@ h1, h2, h3, h4, h5 {
   line-height: 1.2;
   letter-spacing: -0.02em;
   color: var(--text);
+  overflow-wrap: break-word; /* a long compound ("Datenschutzerklärung") must not widen a phone's page */
 }
 
 h1 { font-size: clamp(2rem, 5vw, 3.25rem); }
@@ -670,6 +671,12 @@ section { padding: 5rem 0; }
   transition: background-color var(--transition), border-color var(--transition), color var(--transition), transform var(--transition), box-shadow var(--transition), opacity var(--transition);
   white-space: nowrap;
   line-height: 1.2;
+  max-width: 100%;
+}
+/* A long translated label ("Voir la matrice complète des fonctionnalités")
+   wraps on a phone instead of widening the page. */
+@media (max-width: 560px) {
+  .btn { white-space: normal; text-align: center; }
 }
 
 .btn-primary {
@@ -1208,16 +1215,16 @@ section { padding: 5rem 0; }
 
 .pipeline-flow {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 1rem;
   margin-top: 2.5rem;
   position: relative;
 }
 @media (max-width: 880px) {
-  .pipeline-flow { grid-template-columns: repeat(3, 1fr); }
+  .pipeline-flow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 480px) {
-  .pipeline-flow { grid-template-columns: repeat(2, 1fr); }
+  .pipeline-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .pipeline-stage {
@@ -1226,6 +1233,7 @@ section { padding: 5rem 0; }
   border-radius: var(--radius);
   padding: 1.2rem 1rem;
   text-align: center;
+  overflow-wrap: break-word; /* German compounds in two narrow columns on a phone */
   position: relative;
   transition: background-color var(--transition), border-color var(--transition), color var(--transition), transform var(--transition), box-shadow var(--transition), opacity var(--transition);
   cursor: default;
@@ -1857,7 +1865,7 @@ section { padding: 5rem 0; }
 
 @media (max-width: 900px) {
   .wizard-spotlight {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 1.6rem;
     padding: 1.6rem 1.4rem;
   }

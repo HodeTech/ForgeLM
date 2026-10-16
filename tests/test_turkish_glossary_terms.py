@@ -20,9 +20,8 @@ _DOCS = _REPO_ROOT / "docs"
 
 def _turkish_docs() -> List[Path]:
     files = [*_DOCS.glob("*-tr.md")]
-    for tree in ("guides", "reference", "qms"):
-        files += (_DOCS / tree).glob("*-tr.md")
-    files += (_DOCS / "roadmap").rglob("*-tr.md")
+    for tree in ("guides", "reference", "qms", "roadmap"):
+        files += (_DOCS / tree).rglob("*-tr.md")  # docs/guides/cpu-demo/README-tr.md too
     files += (_DOCS / "usermanuals" / "tr").rglob("*.md")
     return sorted(files)
 
@@ -32,13 +31,19 @@ _SUPERSEDED = [
     (re.compile(r"pazar sonrası", re.IGNORECASE), "post-market monitoring is 'piyasaya arz sonrası izleme'"),
     (re.compile(r"Annex IV,? (?:madde|point)s? \d", re.IGNORECASE), "an Annex IV point is 'Annex IV §N'"),
     (re.compile(r"aktarım sistemi", re.IGNORECASE), "a metrics exporter is 'exporter'"),
+    (re.compile(r"trend takib", re.IGNORECASE), "trend tracking is 'trend izleme', the user manual's term"),
     (re.compile("’"), "a suffix takes the straight apostrophe (')"),
 ]
 
 
 def test_the_turkish_trees_are_found():
     names = {path.relative_to(_DOCS).as_posix() for path in _turkish_docs()}
-    assert "qms/sop_incident_response-tr.md" in names and "usermanuals/tr/operations/gpu-cost.md" in names
+    for expected in (
+        "qms/sop_incident_response-tr.md",
+        "usermanuals/tr/operations/gpu-cost.md",
+        "guides/cpu-demo/README-tr.md",
+    ):
+        assert expected in names
 
 
 @pytest.mark.parametrize("pattern,decision", _SUPERSEDED, ids=[decision for _, decision in _SUPERSEDED])
