@@ -30,6 +30,9 @@ All notable changes to ForgeLM are documented here.
   provenance. Both wizards explicitly record the selected `none` exporter (#93).
 - Accept case-insensitive `env:` references with surrounding whitespace, lowercase letters and
   initial underscores in both CLI wizard monitoring and webhook inputs; reject malformed names.
+- Cite Annex IV points as `§N` throughout, as the Turkish pages and most English ones already did:
+  `forgelm verify-annex-iv` now describes its fields as `Annex IV §2(c)`, `§9`, `§2(g) / §4` and
+  `§5`, and the EN/TR references, user manual, ISO 27001 mappings and wizard hint follow (refs #948).
 - Omit Pydantic `input_value` / `input_type` excerpts from all rendered `ForgeConfig` validation
   errors, preserving field paths and reasons. `MonitoringConfig` also applies this protection
   standalone; other standalone submodels retain their existing diagnostics (#93).
@@ -46,37 +49,61 @@ All notable changes to ForgeLM are documented here.
 - Use the Regulation's own Article 72 terms for post-market monitoring in the German and Spanish
   wizard copy ("Beobachtung nach dem Inverkehrbringen", "vigilancia poscomercialización"), and restore
   the "metadata" the French and Spanish hints had dropped, so every locale again separates ForgeLM's
-  optional record from the provider's monitoring system and the Annex IV point 9 plan. Correct annex
-  citation, article and gender slips in the touched German, French and Spanish strings, use one German
-  term for the external stack, straight apostrophes in the French and Turkish monitoring copy, and
-  full-width punctuation with 端点 in the Chinese webhook toggle copy. Turkish copy now writes
-  "piyasaya arz sonrası izleme", "AB" and "Annex IV §9", keeps "exporter" in English, separates a
-  drift "alarm" from a webhook "bildirim" and a log "uyarı", and uses the straight apostrophe
-  throughout; the Turkish site cites the Regulation as "(AB) 2024/1689 sayılı Tüzük". The English
-  and Turkish hints now say that Annex IV point 9 asks for a detailed description of the monitoring
-  system, including its plan. The new validation and interval keys keep their English fallback;
-  native review of the deferred locales remains open (refs #948).
+  optional record from the provider's monitoring system and the Annex IV material. Correct citation,
+  article and gender slips in the touched German, French and Spanish strings, and use one German term
+  for the external stack. The new validation and interval keys keep their English fallback; native
+  review of the deferred locales remains open (refs #948).
+- Say what Annex IV §9 asks for: a detailed description of the post-market monitoring system, its
+  plan included. The wizard hint in every locale and the EN/TR configuration and compliance pages said
+  it "includes the detailed plan"; German, French and Spanish now follow the Regulation's wording, and
+  the Chinese line awaits native review. French webhook copy says "alertes", and the Chinese webhook
+  card uses full-width punctuation and 端点 throughout (refs #948).
+- Apply the owner's Turkish terminology across the site and the Turkish docs: "piyasaya arz sonrası
+  izleme", "AB" and the Regulation as "(AB) 2024/1689 sayılı Tüzük", "Annex IV §N", "exporter" kept in
+  English, "alarm" for a monitoring or threshold alert, "bildirim" for a webhook message and "uyarı"
+  for a log warning, "trend izleme", "EU AI Act" in full, and the straight apostrophe throughout. The
+  `localization.md` glossary records each decision, and tests pin them in the site strings and the
+  Turkish docs (refs #948).
 - Name every browser-wizard field by its visible caption. Text, number, slider, select and textarea
   captions now point at their control through unique, stable `id`/`for` pairs, so screen readers
   no longer announce a placeholder or nothing, and clicking a caption focuses its field. The LoRA
   method caption names its group of method buttons; checkbox labels keep wrapping their toggles.
-  Keyboard focus now stays on the toggle, select or option card that re-renders a step, and on the
-  field being edited, caret included, when another tab's change re-renders it, instead of falling
-  back to the page body. "Required for risk tier" badges read as a separate word, and sliders show
-  a keyboard focus ring (#950).
+  Keyboard focus now stays on the toggle, select, option card or section header that re-renders a
+  step, and on the field being edited, caret included, when another tab's change re-renders it,
+  without scrolling; a control the re-render removes leaves focus in the dialog instead of the page
+  behind it. "Required for risk tier" badges read as a separate word, and sliders show a keyboard
+  focus ring (#950).
+- Keep the browser wizard's open sections and flagged errors when another tab updates it. The update
+  reloaded a state without the open sections, which were missing from the saved fields, and without
+  the steps this tab had flagged, so the Compliance step's sections closed and its errors vanished.
+  Open sections are now saved, so they also survive a reload, and the flagged steps stay with their
+  tab (refs #557, #683).
 - Render the browser wizard's Compliance step again. It called a helper that only three other step
   renderers declared, so every visit threw a `ReferenceError` before the Article 9 risk-assessment,
   benchmark and LLM-judge controls appeared, and strict risk tiers could not complete the step.
   The helper is now shared, and every step has DOM-level render coverage. Turning auto-revert on or
-  off now shows or hides its loss threshold at once (#879).
+  off now shows or hides its loss threshold at once (F-W1-SITE-01, #879).
 - Clear the browser wizard's error on a model id or dataset name as soon as the corrected value
   validates. The input handlers read the "before" state after storing the new value, so the red
   border, `aria-invalid="true"` and the error message stayed until something else re-rendered the
-  step. The error now clears in place, keeping focus and the caret in the field (#952).
+  step. The error now clears in place, keeping focus and the caret in the field, and while the value
+  is still invalid the message names the check it fails now (`abc` reads "format", not "required");
+  all eleven validated fields share this behaviour (#952).
+- Show the code in the browser wizard's GRPO reward-model tip as code; its `<code>` tags appeared as
+  text in every language.
 - Stop `quickstart.html` from scrolling sideways on phones and tablets. A step's grid column could
   not shrink below its longest terminal line, so from 320 to 768 px wide the page laid out about
   990 px wide, with the menu button off screen; on desktop one step card overflowed its container.
-  Long lines now scroll inside their code block (#953).
+  The column can now shrink, so a long line scrolls inside its code block, which already allowed it
+  (#953).
+- Stop `compliance.html` from laying out wider than a phone: its article cards grew to their longest
+  file path and long inline code could not break. The contact grid, the quickstart spotlight and the
+  use-case rows get the same shrinkable columns; at 320 and 375 px no page is wider than the screen
+  in any site language.
+- Make the browser wizard easier to read and operate: a focused invalid field gets an outline instead
+  of keeping only its red border, the light theme's focus colour (2.3:1 on white) and error text
+  (3.8:1) give way to darker shades that pass, locked toggles keep their size beside long captions,
+  and the "required for risk tier" badge is styled as a pill.
 - Restore the monitoring-plan evidence contract: `monitoring.*` declares an external plan,
   labelled `declarative_only: true`; ForgeLM runs no exporter, drift detector, alert, or scheduler.
   Warn once per config-file load for an enabled exporter declaration, without repeating during
@@ -235,11 +262,16 @@ All notable changes to ForgeLM are documented here.
   bash's errexit and pipefail rules, and fails when `pytest`, `node --test`, `ruff`, `mypy`, the
   `forgelm` CLI or a `tools/` guard can fail unnoticed: fallbacks that can exit 0, pipes without
   `pipefail`, `set +e`, `continue-on-error`, failures errexit ignores inside `&&` / `||` lists or
-  `{ … }` groups, EXIT/ERR traps that can exit 0, functions or aliases that take over a required
-  command, and wrappers or `${{ }}` expressions it cannot follow. It
-  accepts only shapes it can prove, so keep required commands plain. Bandit and pip-audit keep
-  `|| true` only when the next command is their severity helper reading the same report. A gauntlet
-  `{ pytest tests/ || true; }`, which the old check accepted, now fails too (#951).
+  `{ … }` groups, EXIT/ERR traps that can exit 0 (and ERR traps that turn errexit off), `ruff
+  --exit-zero`, `set -n`, an `if: false` on a step or job that runs one, functions or aliases that
+  take over a required command, and wrappers or `${{ }}` expressions it cannot follow. It follows
+  runners such as `uvx ruff@0.8` and `conda run`, a step's `working-directory:`, scripts under
+  `$GITHUB_WORKSPACE`, and local actions nested in local actions. It accepts only shapes it can
+  prove, so keep required commands plain; an `if` whose failure branch ends with `exit 1` is
+  accepted. It targets accidental masking: `testing.md` lists what is beyond it. Bandit and pip-audit
+  keep `|| true` only when the next command is their severity helper reading the same report. A
+  gauntlet `{ pytest tests/ || true; }`, which the old check accepted, now fails too. Its shell
+  parser lives in `tools/_shell_syntax.py` (#951).
 - Add a recorded CPU validation, data audit, and audit-log verification sample with EN/TR provenance
   and limitations; link it from the README and website, expose installation and dry-run quickstart
   commands in the hero, and make contributor entry points visible.
