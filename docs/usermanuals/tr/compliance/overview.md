@@ -133,7 +133,7 @@ bunlar dokuz eksiksiz Annex IV bölümünü temsil etmez:
 | `computational_resources` | Annex IV point 2(c) — eğitim sırasında kullanılan hesaplama kaynağı. |
 | `data_governance` | §2(d) — veri kökeni ve doğrulama metodolojisi. |
 | `technical_documentation` | §3-5 — ForgeLM sürümü, üretim zaman damgası, bilinen sınırlamalar. |
-| `monitoring_and_logging` | Annex IV madde 9 (Madde 72(3)) — Beyan edilen harici izleme planı (`declarative_only: true`) veya audit log referansı; çalışan izleme kanıtı değildir. |
+| `monitoring_and_logging` | Annex IV §9 (Madde 72(3)) — Beyan edilen harici izleme planı (`declarative_only: true`) veya audit log referansı; çalışan izleme kanıtı değildir. |
 | `performance_metrics` | Annex IV points 2(g) / 4 — değerlendirme sonuçlarından doğruluk / sağlamlık metrikleri. |
 | `risk_management` | Annex IV point 5 — top-level `risk_assessment:` bloğu ya da açık bir "no risk_assessment block configured" işareti. |
 
@@ -141,7 +141,7 @@ Bu tablo kısmi metadata eşlemelerini gösterir; tam bir Annex IV belgesi deği
 düzeltilmesi [#539](https://github.com/HodeTech/ForgeLM/issues/539), doğrulayıcının tamlık iddiaları
 [#573](https://github.com/HodeTech/ForgeLM/issues/573) kapsamında takip edilir.
 
-Dağıtım coğrafyası, yaşam döngüsü, standartlar listesi, uygunluk beyanı bölümü yoktur — bu sayfanın eski taslakları bunları listeliyordu, hiçbiri üretilmez. Yukarıdaki izleme kaydı metadata özetidir; Annex IV madde 9'un gerektirdiği ayrıntılı pazar sonrası izleme planı değildir. Bu tablonun tek doğruluk kaynağı [Annex IV](#/compliance/annex-iv) sayfasıdır.
+Dağıtım coğrafyası, yaşam döngüsü, standartlar listesi, uygunluk beyanı bölümü yoktur — bu sayfanın eski taslakları bunları listeliyordu, hiçbiri üretilmez. Yukarıdaki izleme kaydı metadata özetidir; Annex IV §9'un gerektirdiği ayrıntılı piyasaya arz sonrası izleme planı değildir. Bu tablonun tek doğruluk kaynağı [Annex IV](#/compliance/annex-iv) sayfasıdır.
 
 ## Operasyonel sorumluluklar (siz, ForgeLM değil)
 
@@ -150,7 +150,7 @@ Toolkit kanıt üretir; insanlar sertifikasyonu üretir. Ekibiniz şunlardan sor
 - Üretime giden her koşunun audit paketini incelemek.
 - Audit log'u tamper-evidence için write-once depoya göndermek.
 - Gerektiğinde notified-body ile uygunluk değerlendirmesi yapmak.
-- Model deploy edildikten sonra pazar sonrası izlemeyi sürdürmek.
+- Model deploy edildikten sonra piyasaya arz sonrası izlemeyi sürdürmek.
 - Veri sahibi taleplerini (GDPR Madde 15-22) ele almak.
 
 `docs/qms/`'deki ForgeLM QMS SOP'ları operasyonel tarafı kapsar.

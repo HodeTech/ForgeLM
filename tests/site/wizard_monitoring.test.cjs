@@ -124,9 +124,9 @@ test('active locales cover all keys; deferred locales use the real English fallb
 
 test('every locale\'s monitoring hint still names the optional metadata, the Art. 72 system and the Annex IV plan', () => {
   const { translations } = loadWizard();
-  // The Art. 72 term of each official EU language version; TR and ZH accept their established alternatives,
-  // so a native review can choose between them without editing this test.
-  const postMarket = { en: /post-market monitoring/, tr: /(?:pazar|piyasa(?:ya arz)?) sonrası izleme/,
+  // The Art. 72 term of each official EU language version and of the Turkish glossary; ZH accepts its
+  // established alternatives, so a native review can choose between them without editing this test.
+  const postMarket = { en: /post-market monitoring/, tr: /piyasaya arz sonrası izleme/,
     de: /Beobachtung nach dem Inverkehrbringen/, fr: /surveillance après commercialisation/,
     es: /vigilancia poscomercialización/, zh: /上市后监[控测]/ };
   const metadata = { en: 'metadata', tr: 'metadata', de: 'Metadaten', fr: 'métadonnées', es: 'metadatos', zh: '元数据' };
@@ -156,6 +156,25 @@ test('monitoring and webhook copy keeps one apostrophe style, and Chinese punctu
       assert.doesNotMatch(prose(value), /endpoint/i, `zh ${key}: the copy's term for an endpoint is 端点`);
     }
   }
+});
+
+test('Turkish copy follows the glossary: monitoring terms, alarm / bildirim / uyarı, annex points, apostrophes', () => {
+  const { translations } = loadWizard();
+  const { en, tr } = translations;
+  for (const [key, value] of Object.entries(tr)) {
+    assert.doesNotMatch(value, /’/, `tr ${key}: Turkish writes the straight apostrophe`);
+    assert.doesNotMatch(value, /pazar sonrası|Annex IV madde|aktarım sistemi/i, `tr ${key}: a superseded term`);
+    // An alert is an *alarm*, or a webhook's *bildirim*; *uyarı* is a warning.
+    const english = en[key] || '';
+    if (/\balerts?\b/i.test(english) && !/\bwarn/i.test(english)) {
+      assert.doesNotMatch(value, /uyarı|alert/i, `tr ${key}: an alert is an alarm or a bildirim`);
+    }
+  }
+  assert.match(tr['wizard.monitoring.enabled.hint'], /Annex IV §9/);
+  assert.match(tr['wizard.monitoring.metrics_export.label'], /exporter/);
+  assert.match(tr['wizard.monitoring.alert_on_drift.label'], /alarm/);
+  assert.match(tr['wizard.webhook.hint'], /bildirim/);
+  assert.match(tr['wizard.webhook.enabled.detail'], /uyarı/, 'a delivery failure is still a log warning');
 });
 
 test('generated YAML preserves monitoring and webhook values through the real ForgeConfig schema', () => {
