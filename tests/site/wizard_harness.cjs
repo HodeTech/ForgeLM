@@ -130,7 +130,14 @@ function bootWizard(saved) {
     }
   });
   modal.querySelector = selector => parts[Object.keys(selectors).find(name => selectors[name] === selector)] || null;
-  Object.assign(modal, { querySelectorAll: () => [], hasAttribute: () => false, removeAttribute() {}, setAttribute() {} });
+  // The page ships the dialog hidden; openModal() and closeModal() toggle the attribute.
+  const closeButton = modal.appendChild(make('button'));
+  Object.assign(modal, {
+    querySelectorAll: selector => (selector === '[data-wizard-close]' ? [closeButton] : []),
+    hasAttribute: key => Object.hasOwn(modal.attrs, key),
+    removeAttribute: key => { delete modal.attrs[key]; }
+  });
+  modal.setAttribute('hidden', '');
   modal.dataset = {};
   const body = make('body');
   body.style = {};
@@ -158,7 +165,10 @@ function bootWizard(saved) {
   wizard.initWizard();
   opener.events.click();
   const byId = id => document.getElementById(id);
-  return { ...parts, wizard, document, storage, listeners, byId, saved: () => JSON.parse(storage.get('forgelm.wizard.state')) };
+  return {
+    ...parts, wizard, document, storage, listeners, byId, opener, closeButton, modal,
+    saved: () => JSON.parse(storage.get('forgelm.wizard.state'))
+  };
 }
 
 function state(wizard, overrides = {}) {

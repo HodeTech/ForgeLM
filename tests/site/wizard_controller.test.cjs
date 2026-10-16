@@ -160,3 +160,14 @@ test('a focused section header keeps focus, and a control the update removes lea
   assert.equal(page.byId('wizard-field-provider-name'), null, 'minimal risk drops the provider fields');
   assert.equal(page.document.activeElement, page.dialog, 'focus stays in the dialog');
 });
+
+test('reopening the wizard starts from answers another tab saved while it was closed', () => {
+  const page = bootWizard(saved({ step: 2, trainerType: 'sft' }));
+  page.closeButton.events.click();
+  // While this tab's wizard is closed the storage handler ignores updates; another tab moves on.
+  siblingWrites(page, { step: 4, trainerType: 'dpo', datasetName: 'org/newer' });
+  page.opener.events.click();
+  assert.equal(page.counterCurrent.textContent, '5', 'the newer step');
+  assert.equal(page.saved().trainerType, 'dpo', 'the newer answers are not overwritten');
+  assert.equal(page.saved().datasetName, 'org/newer');
+});

@@ -1047,6 +1047,11 @@
         });
       }
       document.body.style.overflow = 'hidden';
+      // The storage handler skips a closed wizard, so another tab may have
+      // saved newer answers since this one last rendered: start from them, or
+      // the save in render() would overwrite them with this tab's older copy.
+      var saved = loadState();
+      if (saved) adopt(saved);
       render();
       // Push ?wizard=open onto the URL without reloading so a refresh /
       // share-link round-trips back into the wizard at the same step.
@@ -1106,6 +1111,16 @@
     /* ── State + render ───────────────────────────────── */
 
     function persist() { saveState(state); }
+
+    // Take another tab's saved answers into this tab's state, in place so the
+    // closures (persist, render) keep their reference. The steps this tab
+    // flagged stay with it, so their errors stay on screen.
+    function adopt(fresh) {
+      var attempted = state.attemptedSteps || [];
+      Object.keys(state).forEach(function (k) { delete state[k]; });
+      Object.keys(fresh).forEach(function (k) { state[k] = fresh[k]; });
+      state.attemptedSteps = attempted;
+    }
 
     function render() {
       var idx = state.step;
@@ -1351,13 +1366,7 @@
         }
         var fresh = loadState();
         if (fresh) {
-          // Mutate state in place so closures (persist, render) keep
-          // their reference.  Re-render with the new values, keeping the
-          // steps this tab flagged so their errors stay on screen.
-          var attempted = state.attemptedSteps || [];
-          Object.keys(state).forEach(function (k) { delete state[k]; });
-          Object.keys(fresh).forEach(function (k) { state[k] = fresh[k]; });
-          state.attemptedSteps = attempted;
+          adopt(fresh);
           render();
         }
       } catch (err) {

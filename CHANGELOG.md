@@ -77,7 +77,8 @@ All notable changes to ForgeLM are documented here.
   reloaded a state without the open sections, which were missing from the saved fields, and without
   the steps this tab had flagged, so the Compliance step's sections closed and its errors vanished.
   Open sections are now saved, so they also survive a reload, and the flagged steps stay with their
-  tab (refs #557, #683).
+  tab. A wizard reopened in a tab whose copy is older starts from the newer saved answers instead of
+  writing its own copy over them (refs #557, #683).
 - Render the browser wizard's Compliance step again. It called a helper that only three other step
   renderers declared, so every visit threw a `ReferenceError` before the Article 9 risk-assessment,
   benchmark and LLM-judge controls appeared, and strict risk tiers could not complete the step.
@@ -88,7 +89,7 @@ All notable changes to ForgeLM are documented here.
   border, `aria-invalid="true"` and the error message stayed until something else re-rendered the
   step. The error now clears in place, keeping focus and the caret in the field, and while the value
   is still invalid the message names the check it fails now (`abc` reads "format", not "required");
-  all eleven validated fields share this behaviour (#952).
+  every validated field shares this behaviour (#952).
 - Show the code in the browser wizard's GRPO reward-model tip as code; its `<code>` tags appeared as
   text in every language.
 - Stop `quickstart.html` from scrolling sideways on phones and tablets. A step's grid column could
