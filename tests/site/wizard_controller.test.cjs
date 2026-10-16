@@ -171,3 +171,16 @@ test('reopening the wizard starts from answers another tab saved while it was cl
   assert.equal(page.saved().trainerType, 'dpo', 'the newer answers are not overwritten');
   assert.equal(page.saved().datasetName, 'org/newer');
 });
+
+test('reopening keeps this tab\'s answers when storage refuses to save them', () => {
+  const page = bootWizard(saved({ step: 3, modelPreset: 'custom', model: 'org/first' }));
+  page.storage.set = () => { throw new Error('QuotaExceededError'); };
+  const field = page.byId('wizard-field-model');
+  field.value = 'org/typed';
+  field.events.input();
+  page.closeButton.events.click();
+  page.opener.events.click();
+  // The rebuilt input carries its value as an attribute in the DOM shim.
+  assert.equal(page.byId('wizard-field-model').getAttribute('value'), 'org/typed', 'the stored copy is older, not newer');
+  assert.match(page.yamlOutput.innerHTML, /org\/typed/);
+});

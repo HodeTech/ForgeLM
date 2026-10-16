@@ -315,13 +315,25 @@
   // expected once the bucket is full and would otherwise spam the
   // user. ``window.ForgeLMWizardStorageWarn`` survives across saves
   // so a refresh of the wizard pane carries the warning forward.
+  // The saved state as stored, or null when there is none or storage is unreadable.
+  function savedText() {
+    try {
+      return window.localStorage.getItem(STORAGE_KEY);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Save the state; return the stored text, or null when storage refused it.
   function saveState(state) {
     try {
       // ``attemptedSteps`` belongs to this tab: saving it would make two open
       // tabs overwrite each other's in turn, and loadState drops it anyway.
       var saved = Object.assign({}, state);
       delete saved.attemptedSteps;
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+      var text = JSON.stringify(saved);
+      window.localStorage.setItem(STORAGE_KEY, text);
+      return text;
     } catch (e) {
       /* Private mode + quota-exceeded both land here. In-memory state
          keeps the operator going within the current modal session;
@@ -343,6 +355,7 @@
           if (modal) modal.appendChild(banner);
         }
       } catch (_) { /* defensive — never let the banner crash a save */ }
+      return null;
     }
   }
 
@@ -1050,8 +1063,14 @@
       // The storage handler skips a closed wizard, so another tab may have
       // saved newer answers since this one last rendered: start from them, or
       // the save in render() would overwrite them with this tab's older copy.
-      var saved = loadState();
-      if (saved) adopt(saved);
+      // When storage refuses writes it still holds the old copy: then nothing
+      // newer exists, and this tab's unsaved answers are the ones to keep.
+      var text = savedText();
+      var saved = text !== null && text !== synced ? loadState() : null;
+      if (saved) {
+        adopt(saved);
+        synced = text;
+      }
       render();
       // Push ?wizard=open onto the URL without reloading so a refresh /
       // share-link round-trips back into the wizard at the same step.
@@ -1110,7 +1129,14 @@
 
     /* ── State + render ───────────────────────────────── */
 
-    function persist() { saveState(state); }
+    // The stored text this tab is in step with: what it last saved, loaded or
+    // adopted. Storage holding anything else means another tab saved since.
+    var synced = savedText();
+
+    function persist() {
+      var written = saveState(state);
+      if (written !== null) synced = written;
+    }
 
     // Take another tab's saved answers into this tab's state, in place so the
     // closures (persist, render) keep their reference. The steps this tab
@@ -1358,6 +1384,7 @@
         // re-render so this tab's UI doesn't drift into a config that
         // no longer exists.
         if (e.newValue === null) {
+          synced = null;
           var fallback = defaultState();
           Object.keys(state).forEach(function (k) { delete state[k]; });
           Object.keys(fallback).forEach(function (k) { state[k] = fallback[k]; });
@@ -1367,6 +1394,7 @@
         var fresh = loadState();
         if (fresh) {
           adopt(fresh);
+          synced = e.newValue;
           render();
         }
       } catch (err) {
