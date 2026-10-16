@@ -1656,6 +1656,7 @@
 
     if (state.modelPreset === 'custom') {
       var modelErrKey = fieldHasError(state, 'model', 'model');
+      var modelError = modelErrKey ? el('div', { class: 'wizard-error', role: 'alert', text: tr(modelErrKey) }) : null;
       var input = el('input', {
         id: controlId('model'),
         type: 'text',
@@ -1667,19 +1668,16 @@
       input.addEventListener('input', function () {
         state.model = input.value.trim();
         persist();
-        // If the operator was previously blocked on this field but
-        // their new value now validates, drop the error visual on
-        // next render (handled by re-running validation in render()).
-        var prevErr = fieldHasError(state, 'model', 'model');
-        var stillErr = validateStep(state, 'model').some(function (e) { return e.field === 'model'; });
-        if (prevErr && !stillErr) {
-          // Re-render to clear the error state cleanly. Cheap because
-          // the only thing that changes is the .is-invalid class.
-          rerender();
-          return;
+        // A field Next flagged drops its error, in place, once the new value
+        // validates; a re-render would rebuild and re-announce the step.
+        if (modelError && !validateStep(state, 'model').some(function (e) { return e.field === 'model'; })) {
+          input.classList.remove('is-invalid');
+          input.setAttribute('aria-invalid', 'false');
+          modelError.remove();
+          modelError = null;
         }
-        // Otherwise just refresh the YAML preview — keeps focus +
-        // caret position on the input.
+        // Refresh the YAML preview in place — keeps focus + caret
+        // position on the input.
         var yamlOutput = document.querySelector('[data-wizard-yaml-output]');
         if (yamlOutput) yamlOutput.innerHTML = tintYaml(buildYaml(state));
       });
@@ -1688,9 +1686,7 @@
         input,
         el('span', { class: 'wizard-row-hint', text: tr('wizard.model.custom.hint') })
       ];
-      if (modelErrKey) {
-        rowChildren.push(el('div', { class: 'wizard-error', role: 'alert', text: tr(modelErrKey) }));
-      }
+      if (modelError) rowChildren.push(modelError);
       pane.appendChild(el('div', { class: 'wizard-row' }, rowChildren));
     }
   };
@@ -1726,6 +1722,7 @@
     pane.appendChild(grid);
 
     var datasetErrKey = fieldHasError(state, 'dataset', 'datasetName');
+    var datasetError = datasetErrKey ? el('div', { class: 'wizard-error', role: 'alert', text: tr(datasetErrKey) }) : null;
     var nameInput = el('input', {
       id: controlId('datasetName'),
       type: 'text',
@@ -1739,11 +1736,11 @@
     nameInput.addEventListener('input', function () {
       state.datasetName = nameInput.value.trim();
       persist();
-      var prevErr = fieldHasError(state, 'dataset', 'datasetName');
-      var stillErr = validateStep(state, 'dataset').some(function (e) { return e.field === 'datasetName'; });
-      if (prevErr && !stillErr) {
-        rerender();
-        return;
+      if (datasetError && !validateStep(state, 'dataset').some(function (e) { return e.field === 'datasetName'; })) {
+        nameInput.classList.remove('is-invalid');
+        nameInput.setAttribute('aria-invalid', 'false');
+        datasetError.remove();
+        datasetError = null;
       }
       var yamlOutput = document.querySelector('[data-wizard-yaml-output]');
       if (yamlOutput) yamlOutput.innerHTML = tintYaml(buildYaml(state));
@@ -1753,9 +1750,7 @@
       nameInput,
       el('span', { class: 'wizard-row-hint', text: tr('wizard.dataset.name.hint') })
     ];
-    if (datasetErrKey) {
-      dsRowChildren.push(el('div', { class: 'wizard-error', role: 'alert', text: tr(datasetErrKey) }));
-    }
+    if (datasetError) dsRowChildren.push(datasetError);
     pane.appendChild(el('div', { class: 'wizard-row' }, dsRowChildren));
 
     // Trainer-aware shape guidance. SFT auto-detects messages or

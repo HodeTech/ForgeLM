@@ -6,7 +6,7 @@
 
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { loadWizard, bootWizard, state } = require('./wizard_harness.cjs');
+const { loadWizard, bootWizard, state, descendants, hasClass } = require('./wizard_harness.cjs');
 
 const defaults = loadWizard();
 
@@ -81,4 +81,31 @@ test('a sibling tab\'s update keeps focus and the caret in the field being edite
   assert.notEqual(rebuilt, field, 'the step was rebuilt');
   assert.equal(page.document.activeElement, rebuilt);
   assert.deepEqual([rebuilt.selectionStart, rebuilt.selectionEnd], [3, 5]);
+});
+
+test('a field Next flagged drops its error, in place, once its value validates (#952)', () => {
+  const cases = [
+    { step: 3, overrides: { modelPreset: 'custom', model: '' }, id: 'wizard-field-model', valid: 'org/model' },
+    { step: 4, overrides: { datasetName: '' }, id: 'wizard-field-dataset-name', valid: 'org/data' }
+  ];
+  for (const { step, overrides, id, valid } of cases) {
+    const page = bootWizard(saved({ step, ...overrides }));
+    const alerts = () => descendants(page.pane).filter(node => node.getAttribute && node.getAttribute('role') === 'alert');
+    page.next.events.click();
+    const field = page.byId(id);
+    assert.ok(hasClass(field, 'is-invalid') && field.getAttribute('aria-invalid') === 'true', `${id}: flagged by Next`);
+    assert.equal(alerts().length, 1, `${id}: one error row`);
+
+    field.value = '  ';
+    field.events.input();
+    assert.ok(hasClass(field, 'is-invalid') && alerts().length === 1, `${id}: a value that is still invalid keeps the error`);
+
+    field.value = valid;
+    field.events.input();
+    assert.equal(page.byId(id), field, `${id}: cleared in place, not rebuilt`);
+    assert.ok(!hasClass(field, 'is-invalid'), `${id}: no invalid class`);
+    assert.equal(field.getAttribute('aria-invalid'), 'false', `${id}: aria-invalid cleared`);
+    assert.equal(alerts().length, 0, `${id}: error row removed`);
+    assert.equal(page.document.activeElement, field, `${id}: focus stays in the field`);
+  }
 });

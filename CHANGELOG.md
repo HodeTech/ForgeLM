@@ -69,6 +69,10 @@ All notable changes to ForgeLM are documented here.
   benchmark and LLM-judge controls appeared, and strict risk tiers could not complete the step.
   The helper is now shared, and every step has DOM-level render coverage. Turning auto-revert on or
   off now shows or hides its loss threshold at once (#879).
+- Clear the browser wizard's error on a model id or dataset name as soon as the corrected value
+  validates. The input handlers read the "before" state after storing the new value, so the red
+  border, `aria-invalid="true"` and the error message stayed until something else re-rendered the
+  step. The error now clears in place, keeping focus and the caret in the field (#952).
 - Restore the monitoring-plan evidence contract: `monitoring.*` declares an external plan,
   labelled `declarative_only: true`; ForgeLM runs no exporter, drift detector, alert, or scheduler.
   Warn once per config-file load for an enabled exporter declaration, without repeating during
