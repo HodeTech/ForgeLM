@@ -56,11 +56,36 @@ import argparse
 import posixpath
 import re
 import sys
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import yaml
+
+# The shell lexer and parser live in a sibling module, imported the way the other guards share code.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from _shell_syntax import (  # type: ignore
+        AndOr,
+        Case,
+        Command,
+        Expression,
+        Function,
+        Group,
+        If,
+        Item,
+        Loop,
+        Pipeline,
+        Script,
+        ShellParseError,
+        Simple,
+        children,
+        own_words,
+        parse,
+    )
+except ImportError as exc:  # pragma: no cover
+    print(f"check_ci_failure_masking: cannot import tools/_shell_syntax.py ({exc}).", file=sys.stderr)
+    sys.exit(1)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _GAUNTLET_DOCS = ("CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md")
@@ -68,7 +93,6 @@ _GAUNTLET_DOCS = ("CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md")
 # Same guard-name grammar as tests/test_guard_wiring.py's _GUARD_NAME_RE.
 _GUARD_SCRIPT_RE = re.compile(r"(?:^|/)tools/(check_[a-z0-9_]{1,64}\.py|update_site_version\.py)$")
 _PYTHON_RE = re.compile(r"python(?:3(?:\.[0-9]{1,2})?)?")
-_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}(?:\[[^\]\n]{0,64}\])?\+?=")
 _STATUS_CAPTURE_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]{0,63})=\$\?")
 _GATE_MODULES = ("pytest", "mypy", "ruff", "forgelm")
 # Commands that may name a required program without running it (`pip install pytest`, `grep -q ruff x`).
@@ -92,730 +116,11 @@ _SHELLS = ("bash", "sh", "dash", "ksh", "zsh")
 # no longer recognises it; either way a clean result would mean nothing.
 _EXPECTED_KINDS = ("pytest", "node --test", "ruff", "tools/check_")
 
-_OPERATORS = ("&&", "||", ";;&", ";;", ";&", "|&", ";", "|", "&", "(", ")")
-_CASE_TERMINATORS = (";;", ";&", ";;&")
-_REDIRECTIONS = ("&>>", "&>", "<<<", "<<-", "<<", ">>", ">|", "<>", ">&", "<&", "<", ">")
-_METACHARACTERS = frozenset(" \t\n;&|()<>")
 _NOOP_FALLBACKS = (("true",), (":",), ("/bin/true",), ("/usr/bin/true",), ("exit", "0"))
 
 TERMINATES = "terminates"  # every failure of a required command inside ends the shell
 STATUS = "status"  # some failure leaves a non-zero exit status that errexit acts on
 RETURNS = "returns"  # a `{ … }` group's non-zero status, which errexit never acts on
-
-
-class ShellParseError(Exception):
-    """A run block this guard cannot parse, reported as a finding (fail closed)."""
-
-    def __init__(self, message: str, line: int) -> None:
-        super().__init__(f"line {line}: {message}")
-
-
-# ── Lexer ────────────────────────────────────────────────────────────────
-
-
-@dataclass
-class _Word:
-    text: str  # value after quote removal; expansions are kept as written
-    raw: str  # source spelling, used to tell `NAME=value` from `"NAME=value"`
-    line: int
-    subs: List["_Script"] = field(default_factory=list)  # $(...), `...`, <(...)
-
-
-@dataclass
-class _Token:
-    kind: str  # word | op | redir | nl | eof
-    value: str
-    line: int
-    start: int
-    end: int
-    word: Optional[_Word] = None
-    heredoc: Optional[str] = None
-
-
-class _Lexer:
-    """Tokenise a POSIX-shell subset: quoting, escapes, line continuations,
-    comments, operators, redirections, here-documents and nested substitutions."""
-
-    def __init__(self, src: str, start: int = 0, line: int = 1) -> None:
-        self.src = src
-        self.i = start
-        self.line = line
-        self.tokens: List[_Token] = []
-        self.pending_heredocs: List[Tuple[_Token, str, bool, _Word]] = []
-        self.heredoc_delimiter: Optional[Tuple[_Token, bool]] = None
-
-    def run(self, closing_paren: bool = False) -> int:
-        """Tokenise to the end, or to the ``)`` closing a ``$(`` substitution."""
-        depth = 0
-        cases = 0  # open `case` statements, whose pattern `)` closes no parenthesis
-        while True:
-            self._skip_blanks()
-            if self.i >= len(self.src):
-                if closing_paren:
-                    raise ShellParseError("unterminated $( command substitution", self.line)
-                if self.pending_heredocs:
-                    raise ShellParseError("unterminated here-document", self.line)
-                self._emit("eof", "", self.i, self.i)
-                return self.i
-            char = self.src[self.i]
-            if char == "\n":
-                self._emit("nl", "\n", self.i, self.i + 1)
-                self.i += 1
-                self.line += 1
-                self._read_heredoc_bodies()
-            elif char == "#":
-                while self.i < len(self.src) and self.src[self.i] != "\n":
-                    self.i += 1
-            elif closing_paren and char == ")" and depth == 0 and not cases:
-                self._emit("eof", "", self.i, self.i)
-                return self.i + 1
-            elif self.src.startswith(("<(", ">("), self.i):
-                self._read_word()
-            elif self.src.startswith("((", self.i) and self._arithmetic(self.i):
-                # An arithmetic command or a C-style `for` header: one word, whose `$(…)` still run.
-                start, line = self.i, self.line
-                text = self._balanced(self.i, "(", ")")
-                word = _Word(text, text, line)
-                _Lexer(text[2:-2], 0, line).expansions(word.subs, quoted=True)
-                self._emit("word", text, start, self.i, word)
-            else:
-                matched = self._operator()
-                if matched == "(":
-                    depth += 1
-                elif matched == ")" and depth:
-                    depth -= 1
-                elif matched is None:
-                    self._read_word()
-                    raw = self.tokens[-1].word.raw  # type: ignore[union-attr]
-                    if raw in ("case", "esac") and self._command_position(raw):
-                        cases += 1 if raw == "case" else -1 if cases else 0
-
-    def _command_position(self, raw: str) -> bool:
-        """Whether the word just read starts a command, so ``case`` / ``esac`` is a keyword there."""
-        if len(self.tokens) < 2:
-            return True
-        previous = self.tokens[-2]
-        if previous.kind in ("nl", "op"):
-            return True
-        starters = ("then", "do", "else", "elif", "if", "while", "until", "{", "!", "time") + (
-            ("in",) if raw == "esac" else ()
-        )
-        return previous.word is not None and previous.word.raw in starters
-
-    def _matching(self, open_at: int) -> int:
-        """Index of the ``)`` closing the ``(`` at *open_at*, skipping quoted text; -1 when there is none."""
-        src, depth, pos = self.src, 0, open_at
-        while pos < len(src):
-            char = src[pos]
-            if char in "'\"":
-                end = src.find(char, pos + 1)
-                pos = len(src) if end < 0 else end
-            elif char == "\\":
-                pos += 1
-            elif char == "(":
-                depth += 1
-            elif char == ")":
-                depth -= 1
-                if depth == 0:
-                    return pos
-            pos += 1
-        return -1
-
-    def _arithmetic(self, open_at: int) -> bool:
-        """Whether the ``((`` at *open_at* is arithmetic: its inner ``(`` closes right before the outer one.
-
-        Otherwise bash reads two nested subshells, as in ``((pytest) || true)``.
-        """
-        outer = self._matching(open_at)
-        return outer > 0 and self._matching(open_at + 1) == outer - 1
-
-    def _emit(self, kind: str, value: str, start: int, end: int, word: Optional[_Word] = None) -> _Token:
-        token = _Token(kind, value, self.line, start, end, word)
-        self.tokens.append(token)
-        return token
-
-    def _skip_blanks(self) -> None:
-        while self.i < len(self.src):
-            if self.src[self.i] in " \t\r":
-                self.i += 1
-            elif self.src.startswith("\\\n", self.i):
-                self.i += 2
-                self.line += 1
-            else:
-                return
-
-    def _operator(self) -> Optional[str]:
-        for redirection in _REDIRECTIONS:
-            if self.src.startswith(redirection, self.i):
-                token = self._emit("redir", redirection, self.i, self.i + len(redirection))
-                self.i += len(redirection)
-                if redirection in ("<<", "<<-"):
-                    self.heredoc_delimiter = (token, redirection == "<<-")
-                return redirection
-        for operator in _OPERATORS:
-            if self.src.startswith(operator, self.i):
-                self._emit("op", operator, self.i, self.i + len(operator))
-                self.i += len(operator)
-                return operator
-        return None
-
-    def _read_heredoc_bodies(self) -> None:
-        for token, delimiter, strip_tabs, word in self.pending_heredocs:
-            body: List[str] = []
-            first_line = self.line
-            while True:
-                if self.i >= len(self.src):
-                    raise ShellParseError(f"here-document {delimiter!r} has no closing line", self.line)
-                end = self.src.find("\n", self.i)
-                end = len(self.src) if end < 0 else end
-                text = self.src[self.i : end]
-                self.i = min(end + 1, len(self.src))
-                self.line += 1
-                if (text.lstrip("\t") if strip_tabs else text) == delimiter:
-                    break
-                body.append(text)
-            token.heredoc = "\n".join(body) + "\n"
-            if not any(mark in word.raw for mark in "'\"\\"):
-                # An unquoted delimiter: the body is expanded, so its `$(...)` commands run.
-                _Lexer(token.heredoc, 0, first_line).expansions(word.subs)
-        self.pending_heredocs = []
-
-    def expansions(self, subs: List["_Script"], quoted: bool = False) -> None:
-        """Parse the command substitutions of text that is only expanded, such as a here-document body.
-
-        *quoted* skips single-quoted text, which a here-document body does not have.
-        """
-        scratch: List[str] = []
-        while self.i < len(self.src):
-            char = self.src[self.i]
-            if char == "\\":
-                self.i += 2
-            elif char == "'" and quoted:
-                end = self.src.find("'", self.i + 1)
-                self.i = len(self.src) if end < 0 else end + 1
-            elif char in "$`":
-                self._expansion(scratch, subs)
-            else:
-                if char == "\n":
-                    self.line += 1
-                self.i += 1
-
-    def _read_word(self) -> None:
-        start, line = self.i, self.line
-        text: List[str] = []
-        subs: List[_Script] = []
-        src = self.src
-        while self.i < len(src):
-            char = src[self.i]
-            if src.startswith(("<(", ">("), self.i) and self.i == start:
-                subs.append(self._substitution(self.i + 2))
-                text.append(src[start : self.i])
-                continue
-            if char == "(" and _ASSIGNMENT_RE.fullmatch(src[start : self.i]):
-                value = self._balanced(self.i, "(", ")")  # bash array assignment: NAME=(...)
-                _Lexer(value[1:-1], 0, line).expansions(subs, quoted=True)
-                text.append(value)
-                continue
-            if char in _METACHARACTERS:
-                break
-            if char == "\\":
-                if src.startswith("\\\n", self.i):
-                    self.line += 1
-                else:
-                    text.append(src[self.i + 1 : self.i + 2])
-                self.i += 2
-            elif char == "'":
-                end = src.find("'", self.i + 1)
-                if end < 0:
-                    raise ShellParseError("unterminated single quote", line)
-                text.append(src[self.i + 1 : end])
-                self.line += src.count("\n", self.i, end)
-                self.i = end + 1
-            elif char == '"':
-                self._double_quoted(text, subs, line)
-            elif char == "$" or char == "`":
-                self._expansion(text, subs)
-            else:
-                text.append(char)
-                self.i += 1
-        raw = src[start : self.i]
-        word = _Word("".join(text), raw, line, subs)
-        self._emit("word", word.text, start, self.i, word)
-        if self.heredoc_delimiter is not None:
-            redirection, strip_tabs = self.heredoc_delimiter
-            self.pending_heredocs.append((redirection, word.text, strip_tabs, word))
-            self.heredoc_delimiter = None
-
-    def _double_quoted(self, text: List[str], subs: List["_Script"], line: int) -> None:
-        src = self.src
-        self.i += 1
-        while True:
-            if self.i >= len(src):
-                raise ShellParseError("unterminated double quote", line)
-            char = src[self.i]
-            if char == '"':
-                self.i += 1
-                return
-            if char == "\\" and src[self.i + 1 : self.i + 2] in ("$", "`", '"', "\\", "\n"):
-                if src[self.i + 1] == "\n":
-                    self.line += 1
-                else:
-                    text.append(src[self.i + 1])
-                self.i += 2
-            elif char == "$" or char == "`":
-                self._expansion(text, subs)
-            else:
-                if char == "\n":
-                    self.line += 1
-                text.append(char)
-                self.i += 1
-
-    def _expansion(self, text: List[str], subs: List["_Script"]) -> None:
-        src, start = self.src, self.i
-        if src.startswith("$((", start) and self._arithmetic(start + 1):
-            line = self.line
-            value = self._balanced(start + 1, "(", ")", prefix="$")
-            _Lexer(value[3:-2], 0, line).expansions(subs, quoted=True)
-            text.append(value)
-        elif src.startswith("$(", start):
-            subs.append(self._substitution(start + 2))
-            text.append(src[start : self.i])
-        elif src.startswith("${", start):
-            self._parameter(text, subs)
-        elif src.startswith("$'", start):
-            end = start + 2
-            while end < len(src) and src[end] != "'":
-                end += 2 if src[end] == "\\" else 1
-            if end >= len(src):
-                raise ShellParseError("unterminated $'...' quote", self.line)
-            text.append(src[start + 2 : end])
-            self.i = end + 1
-        elif src[start] == "`":
-            end = start + 1
-            while end < len(src) and src[end] != "`":
-                end += 2 if src[end] == "\\" else 1
-            if end >= len(src):
-                raise ShellParseError("unterminated backquote", self.line)
-            inner = re.sub(r"\\([`$\\])", r"\1", src[start + 1 : end])
-            subs.append(_parse(inner, self.line))
-            self.line += src.count("\n", start, end)
-            self.i = end + 1
-            text.append(src[start : self.i])
-        else:
-            text.append("$")
-            self.i += 1
-
-    def _parameter(self, text: List[str], subs: List["_Script"]) -> None:
-        """Consume ``${...}``, parsing any command substitution inside it (``${X:-$(cmd)}``)."""
-        src, start, line = self.src, self.i, self.line
-        self.i += 2
-        depth = 1
-        scratch: List[str] = []
-        while self.i < len(src):
-            char = src[self.i]
-            if char == "\\":
-                self.i += 2
-            elif char == "'":
-                end = src.find("'", self.i + 1)
-                if end < 0:
-                    raise ShellParseError("unterminated single quote", line)
-                self.line += src.count("\n", self.i, end)
-                self.i = end + 1
-            elif char == '"':
-                self._double_quoted(scratch, subs, line)
-            elif src.startswith("${", self.i):
-                depth += 1
-                self.i += 2
-            elif char in "$`":
-                self._expansion(scratch, subs)
-            elif char == "}":
-                depth -= 1
-                self.i += 1
-                if depth == 0:
-                    text.append(src[start : self.i])
-                    return
-            else:
-                if char == "\n":
-                    self.line += 1
-                self.i += 1
-        raise ShellParseError("unterminated ${", line)
-
-    def _substitution(self, body_start: int) -> "_Script":
-        """Parse the script inside ``$( ... )`` / ``<( ... )``; leave ``self.i`` after its ``)``."""
-        inner = _Lexer(self.src, body_start, self.line)
-        self.i = inner.run(closing_paren=True)
-        self.line = inner.line
-        return _Parser(inner.tokens).parse()
-
-    def _balanced(self, open_at: int, opening: str, closing: str, prefix: str = "") -> str:
-        """Consume a bracketed run (``$((..))``, ``${..}``, ``NAME=(..)``), skipping quoted text."""
-        src, depth, pos = self.src, 0, open_at
-        while pos < len(src):
-            char = src[pos]
-            if char in "'\"":
-                end = src.find(char, pos + 1)
-                pos = len(src) if end < 0 else end
-            elif char == "\\":
-                pos += 1
-            elif char == opening:
-                depth += 1
-            elif char == closing:
-                depth -= 1
-                if depth == 0:
-                    break
-            pos += 1
-        if pos >= len(src):
-            raise ShellParseError(f"unterminated {prefix}{opening}", self.line)
-        self.line += src.count("\n", self.i, pos)
-        value = src[self.i : pos + 1]
-        self.i = pos + 1
-        return value
-
-
-# ── Parser ───────────────────────────────────────────────────────────────
-
-
-@dataclass
-class _Redirect:
-    op: str
-    target: _Word
-    fd: Optional[str]
-    heredoc: Optional[str]
-
-
-@dataclass
-class _Simple:
-    words: List[_Word]
-    assignments: List[_Word]
-    redirects: List[_Redirect]
-    line: int
-
-
-@dataclass
-class _Group:
-    body: "_Script"
-    subshell: bool
-    line: int
-
-
-@dataclass
-class _If:
-    conditions: List["_Script"]
-    bodies: List["_Script"]
-    line: int
-
-
-@dataclass
-class _Loop:
-    kind: str  # for | while | until
-    condition: Optional["_Script"]
-    body: "_Script"
-    words: List[_Word]
-    line: int
-    header: Optional[_Word] = None  # a C-style `for ((…))` header
-
-
-@dataclass
-class _Case:
-    subject: _Word
-    bodies: List["_Script"]
-    line: int
-
-
-@dataclass
-class _Function:
-    name: str
-    body: "_Command"
-    line: int
-
-
-@dataclass
-class _Test:  # [[ ... ]] and (( ... )): expressions, never commands, whose words may hold substitutions
-    line: int
-    words: List[_Word] = field(default_factory=list)
-
-
-_Command = Union[_Simple, _Group, _If, _Loop, _Case, _Function, _Test]
-
-
-@dataclass
-class _Pipeline:
-    commands: List[_Command]
-    negated: bool
-
-
-@dataclass
-class _AndOr:
-    pipelines: List[_Pipeline]
-    operators: List[str]
-
-
-@dataclass
-class _Item:
-    and_or: _AndOr
-    background: bool
-
-
-@dataclass
-class _Script:
-    items: List[_Item]
-
-
-def _parse(src: str, line: int = 1) -> _Script:
-    lexer = _Lexer(src, 0, line)
-    lexer.run()
-    return _Parser(lexer.tokens).parse()
-
-
-class _Parser:
-    """Recursive descent over the POSIX shell grammar (lists, pipelines, compounds)."""
-
-    _RESERVED = ("then", "elif", "else", "fi", "do", "done", "esac", "}", "in")
-
-    def __init__(self, tokens: List[_Token]) -> None:
-        self.tokens = tokens
-        self.k = 0
-
-    def parse(self) -> _Script:
-        script = self._script((), ())
-        token = self._peek()
-        if token.kind != "eof":
-            raise ShellParseError(f"unexpected {token.value!r}", token.line)
-        return script
-
-    def _peek(self, offset: int = 0) -> _Token:
-        return self.tokens[min(self.k + offset, len(self.tokens) - 1)]
-
-    def _next(self) -> _Token:
-        token = self._peek()
-        self.k += 1
-        return token
-
-    def _is_reserved(self, token: _Token, *values: str) -> bool:
-        return token.kind == "word" and token.word is not None and token.word.raw in values
-
-    def _is_op(self, token: _Token, *values: str) -> bool:
-        return token.kind == "op" and token.value in values
-
-    def _skip_newlines(self) -> None:
-        while self._peek().kind == "nl":
-            self.k += 1
-
-    def _expect_reserved(self, value: str) -> None:
-        token = self._next()
-        if not self._is_reserved(token, value):
-            raise ShellParseError(f"expected {value!r}, found {token.value!r}", token.line)
-
-    def _expect_op(self, value: str) -> None:
-        token = self._next()
-        if not self._is_op(token, value):
-            raise ShellParseError(f"expected {value!r}, found {token.value!r}", token.line)
-
-    def _script(self, stop_words: Tuple[str, ...], stop_ops: Tuple[str, ...]) -> _Script:
-        items: List[_Item] = []
-        while True:
-            self._skip_newlines()
-            token = self._peek()
-            if token.kind == "eof" or self._is_op(token, *stop_ops) or self._is_reserved(token, *stop_words):
-                return _Script(items)
-            and_or = self._and_or()
-            token = self._peek()
-            background = self._is_op(token, "&")
-            if background or self._is_op(token, ";"):
-                self.k += 1
-            elif not (
-                token.kind in ("nl", "eof") or self._is_op(token, *stop_ops) or self._is_reserved(token, *stop_words)
-            ):
-                raise ShellParseError(f"unexpected {token.value!r}", token.line)
-            items.append(_Item(and_or, background))
-
-    def _and_or(self) -> _AndOr:
-        pipelines = [self._pipeline()]
-        operators: List[str] = []
-        while self._is_op(self._peek(), "&&", "||"):
-            operators.append(self._next().value)
-            self._skip_newlines()
-            pipelines.append(self._pipeline())
-        return _AndOr(pipelines, operators)
-
-    def _pipeline(self) -> _Pipeline:
-        if self._is_reserved(self._peek(), "time") and (
-            self._peek(1).kind == "word" or self._is_op(self._peek(1), "(")
-        ):
-            self.k += 1  # `time [-p] PIPELINE` reports the pipeline's own status
-            if self._is_reserved(self._peek(), "-p"):
-                self.k += 1
-        negated = self._is_reserved(self._peek(), "!")
-        if negated:
-            self.k += 1
-        commands = [self._command()]
-        while self._is_op(self._peek(), "|", "|&"):
-            self.k += 1
-            self._skip_newlines()
-            commands.append(self._command())
-        return _Pipeline(commands, negated)
-
-    def _command(self) -> _Command:
-        token = self._peek()
-        if token.kind == "word" and token.word is not None and token.word.raw.startswith("(("):
-            self.k += 1  # an arithmetic command, lexed as one word
-            return self._redirected(_Test(token.line, [token.word]))
-        if self._is_op(token, "("):
-            self.k += 1
-            body = self._script((), (")",))
-            self._expect_op(")")
-            return self._redirected(_Group(body, True, token.line))
-        if self._is_reserved(token, "{"):
-            self.k += 1
-            body = self._script(("}",), ())
-            self._expect_reserved("}")
-            return self._redirected(_Group(body, False, token.line))
-        if self._is_reserved(token, "if"):
-            return self._if()
-        if self._is_reserved(token, "while", "until", "for"):
-            return self._loop()
-        if self._is_reserved(token, "case"):
-            return self._case()
-        if self._is_reserved(token, "[["):
-            words: List[_Word] = []
-            while not self._is_reserved(self._next(), "]]"):
-                if self.tokens[self.k - 1].word is not None:
-                    words.append(self.tokens[self.k - 1].word)  # type: ignore[arg-type]
-                if self._peek().kind == "eof":
-                    raise ShellParseError("unterminated [[", token.line)
-            return _Test(token.line, words)
-        if self._is_reserved(token, "function"):
-            self.k += 1
-            name = self._next()
-            if self._is_op(self._peek(), "(") and self._is_op(self._peek(1), ")"):
-                self.k += 2
-            self._skip_newlines()
-            return _Function(name.value, self._command(), token.line)
-        if self._is_reserved(token, *self._RESERVED):
-            raise ShellParseError(f"unexpected {token.value!r}", token.line)
-        if token.kind == "word" and self._is_op(self._peek(1), "(") and self._is_op(self._peek(2), ")"):
-            self.k += 3
-            self._skip_newlines()
-            return _Function(token.value, self._command(), token.line)
-        return self._simple()
-
-    def _fd_prefix(self) -> Optional[str]:
-        """The file descriptor of a ``2>&1``-style redirection starting here, if any."""
-        token, following = self._peek(), self._peek(1)
-        if token.kind == "word" and token.word is not None and token.word.raw.isdigit():
-            if following.kind == "redir" and following.start == token.end:
-                return token.word.raw
-        return None
-
-    def _redirected(self, command: _Command) -> _Command:
-        while True:
-            fd = self._fd_prefix()
-            if fd is not None:
-                self.k += 1
-                self._redirect(fd)
-            elif self._peek().kind == "redir":
-                self._redirect(None)
-            else:
-                return command
-
-    def _redirect(self, fd: Optional[str]) -> _Redirect:
-        operator = self._next()
-        target = self._next()
-        if target.kind != "word" or target.word is None:
-            raise ShellParseError(f"redirection {operator.value!r} has no target", operator.line)
-        return _Redirect(operator.value, target.word, fd, operator.heredoc)
-
-    def _simple(self) -> _Simple:
-        line = self._peek().line
-        words: List[_Word] = []
-        assignments: List[_Word] = []
-        redirects: List[_Redirect] = []
-        while True:
-            token = self._peek()
-            fd = self._fd_prefix()
-            if fd is not None:
-                self.k += 1
-                redirects.append(self._redirect(fd))
-            elif token.kind == "redir":
-                redirects.append(self._redirect(None))
-            elif token.kind == "word" and token.word is not None:
-                self.k += 1
-                if not words and _ASSIGNMENT_RE.match(token.word.raw):
-                    assignments.append(token.word)
-                else:
-                    words.append(token.word)
-            else:
-                break
-        if not (words or assignments or redirects):
-            raise ShellParseError(f"expected a command, found {self._peek().value!r}", line)
-        return _Simple(words, assignments, redirects, line)
-
-    def _if(self) -> _If:
-        line = self._next().line
-        conditions: List[_Script] = []
-        bodies: List[_Script] = []
-        while True:
-            conditions.append(self._script(("then",), ()))
-            self._expect_reserved("then")
-            bodies.append(self._script(("elif", "else", "fi"), ()))
-            token = self._next()
-            if self._is_reserved(token, "elif"):
-                continue
-            if self._is_reserved(token, "else"):
-                bodies.append(self._script(("fi",), ()))
-                self._expect_reserved("fi")
-            elif not self._is_reserved(token, "fi"):
-                raise ShellParseError(f"expected 'fi', found {token.value!r}", token.line)
-            return self._redirected(_If(conditions, bodies, line))
-
-    def _loop(self) -> _Loop:
-        keyword = self._next()
-        condition: Optional[_Script] = None
-        words: List[_Word] = []
-        header = keyword
-        if keyword.value == "for":
-            header = self._next()  # the loop variable, or a C-style ((init; test; step)) header
-            self._skip_newlines()
-            if not header.value.startswith("((") and self._is_reserved(self._peek(), "in"):
-                self.k += 1
-                while self._peek().kind == "word":
-                    words.append(self._next().word)  # type: ignore[arg-type]
-            if self._is_op(self._peek(), ";"):
-                self.k += 1
-            self._skip_newlines()
-        else:
-            condition = self._script(("do",), ())
-        self._expect_reserved("do")
-        body = self._script(("done",), ())
-        self._expect_reserved("done")
-        arithmetic = header.word if keyword.value == "for" and header.value.startswith("((") else None
-        return self._redirected(_Loop(keyword.value, condition, body, words, keyword.line, arithmetic))
-
-    def _case(self) -> _Case:
-        line = self._next().line
-        subject = self._next()
-        if subject.word is None:
-            raise ShellParseError("case needs a subject word", line)
-        self._skip_newlines()
-        self._expect_reserved("in")
-        bodies: List[_Script] = []
-        while True:
-            self._skip_newlines()
-            if self._is_reserved(self._peek(), "esac"):
-                self.k += 1
-                return self._redirected(_Case(subject.word, bodies, line))
-            if self._is_op(self._peek(), "("):
-                self.k += 1
-            while True:
-                if self._next().kind != "word":
-                    raise ShellParseError("case pattern expected", line)
-                if not self._is_op(self._peek(), "|"):
-                    break
-                self.k += 1
-            self._expect_op(")")
-            bodies.append(self._script(("esac",), _CASE_TERMINATORS))
-            if self._is_op(self._peek(), *_CASE_TERMINATORS):
-                self.k += 1
 
 
 # ── Analysis ─────────────────────────────────────────────────────────────
@@ -897,7 +202,7 @@ def _env_argv(args: List[str]) -> List[str]:
     return args[index:]
 
 
-def _argv(command: _Simple) -> List[str]:
+def _argv(command: Simple) -> List[str]:
     """Words of *command* with transparent wrappers (``env``, ``timeout``, ``uv run``, ...) removed."""
     argv = [word.text for word in command.words]
     while argv:
@@ -991,7 +296,7 @@ def _find_exec(argv: List[str]) -> Optional[Tuple[List[str], str]]:
     return None
 
 
-def _required(command: _Simple) -> Optional[str]:
+def _required(command: Simple) -> Optional[str]:
     """The kind of required command *command* runs, or None."""
     argv = _argv(command)
     found = _find_exec(argv)
@@ -1031,7 +336,7 @@ def _mentioned(argv: List[str]) -> Optional[str]:
     return None
 
 
-def _scanner(command: _Simple) -> Optional[str]:
+def _scanner(command: Simple) -> Optional[str]:
     argv = _argv(command)
     if not argv:
         return None
@@ -1045,7 +350,7 @@ def _scanner(command: _Simple) -> Optional[str]:
     return None
 
 
-def _report_path(command: _Simple) -> Optional[str]:
+def _report_path(command: Simple) -> Optional[str]:
     """Where a scanner writes its report: ``-o``/``--output`` or a stdout redirection."""
     args = _argv(command)[1:]
     for index, arg in enumerate(args):
@@ -1061,7 +366,7 @@ def _report_path(command: _Simple) -> Optional[str]:
     return None
 
 
-def _helper_report(command: _Simple, value_options: Tuple[str, ...]) -> Optional[str]:
+def _helper_report(command: Simple, value_options: Tuple[str, ...]) -> Optional[str]:
     """The first positional argument of a severity helper: the report it reads."""
     argv = _argv(command)
     script = argv[0]
@@ -1112,7 +417,7 @@ def _option_args(command: Any) -> Optional[List[str]]:
 
     Covers ``set …`` (also through ``command`` / ``builtin``) and ``shopt -s|-u -o …``.
     """
-    if not isinstance(command, _Simple):
+    if not isinstance(command, Simple):
         return None
     argv = _argv(command)
     if argv[:1] == ["set"]:
@@ -1124,7 +429,7 @@ def _option_args(command: Any) -> Optional[List[str]]:
     return None
 
 
-def _set_args(item: _Item) -> Optional[List[str]]:
+def _set_args(item: Item) -> Optional[List[str]]:
     """The option arguments of an item that only changes shell options, else None."""
     pipelines = item.and_or.pipelines
     if len(pipelines) != 1 or len(pipelines[0].commands) != 1:
@@ -1132,56 +437,19 @@ def _set_args(item: _Item) -> Optional[List[str]]:
     return _option_args(pipelines[0].commands[0])
 
 
-def _captured_status(item: _Item) -> Optional[str]:
+def _captured_status(item: Item) -> Optional[str]:
     """``rc`` when *item* is exactly ``rc=$?``, capturing the status of the command before it."""
     pipelines = item.and_or.pipelines
     if len(pipelines) != 1 or len(pipelines[0].commands) != 1:
         return None
     command = pipelines[0].commands[0]
-    if isinstance(command, _Simple) and not command.words and len(command.assignments) == 1:
+    if isinstance(command, Simple) and not command.words and len(command.assignments) == 1:
         match = _STATUS_CAPTURE_RE.fullmatch(command.assignments[0].text)
         return match.group(1) if match else None
     return None
 
 
-def _children(node: Any) -> Iterator[Any]:
-    if isinstance(node, _Script):
-        yield from node.items
-    elif isinstance(node, _Item):
-        yield node.and_or
-    elif isinstance(node, _AndOr):
-        yield from node.pipelines
-    elif isinstance(node, _Pipeline):
-        yield from node.commands
-    elif isinstance(node, _Group):
-        yield node.body
-    elif isinstance(node, _If):
-        yield from node.conditions
-        yield from node.bodies
-    elif isinstance(node, _Loop):
-        if node.condition is not None:
-            yield node.condition
-        yield node.body
-    elif isinstance(node, _Case):
-        yield from node.bodies
-    elif isinstance(node, _Function):
-        yield node.body
-
-
-def _own_words(node: Any) -> List[_Word]:
-    """The words *node* itself holds (not those of the commands nested in it)."""
-    if isinstance(node, _Simple):
-        return node.assignments + node.words + [redirect.target for redirect in node.redirects]
-    if isinstance(node, _Loop):
-        return node.words + ([node.header] if node.header is not None else [])
-    if isinstance(node, _Case):
-        return [node.subject]
-    if isinstance(node, _Test):
-        return node.words
-    return []
-
-
-def _exit_kind(command: _Simple, failed_status: bool, captured: Optional[str]) -> str:
+def _exit_kind(command: Simple, failed_status: bool, captured: Optional[str]) -> str:
     """``exits`` (leaves non-zero), ``fails`` (``false``) or ``succeeds`` (may leave 0) for one command.
 
     A bare ``exit`` / ``exit $?`` re-raises only when ``$?`` still holds the failed
@@ -1212,7 +480,7 @@ def _variable_only(text: str) -> bool:
     return name.isidentifier() or name.isdigit() or name in ("@", "*")
 
 
-def _redefined(command: _Simple) -> Tuple[List[str], str]:
+def _redefined(command: Simple) -> Tuple[List[str], str]:
     """The command names an ``alias`` or ``hash -p`` command redefines, and how."""
     argv = _argv(command)
     if argv[:1] == ["alias"]:
@@ -1222,13 +490,13 @@ def _redefined(command: _Simple) -> Tuple[List[str], str]:
     return [], ""
 
 
-def _ends_script(item: _Item) -> Optional[_Simple]:
+def _ends_script(item: Item) -> Optional[Simple]:
     """An unconditional ``exit`` that can leave 0, or an ``exec`` that replaces the shell."""
     pipelines = item.and_or.pipelines
     if item.background or len(pipelines) != 1 or pipelines[0].negated or len(pipelines[0].commands) != 1:
         return None
     command = pipelines[0].commands[0]
-    if not isinstance(command, _Simple) or not command.words:
+    if not isinstance(command, Simple) or not command.words:
         return None
     program = command.words[0].text
     if program == "exit" and _exit_kind(command, failed_status=False, captured=None) == "succeeds":
@@ -1236,7 +504,7 @@ def _ends_script(item: _Item) -> Optional[_Simple]:
     return command if program == "exec" and len(command.words) > 1 else None
 
 
-def _reraising_exits(action: _Script, entry_status: bool) -> set:
+def _reraising_exits(action: Script, entry_status: bool) -> set:
     """Ids of the ``exit`` commands in a trap action that leave with the status the trap was entered with.
 
     ``$?`` holds that status only in the action's first command (when
@@ -1254,43 +522,43 @@ def _reraising_exits(action: _Script, entry_status: bool) -> set:
     stack: List[Any] = [action]
     while stack:
         node = stack.pop()
-        if isinstance(node, _Function) or (isinstance(node, _Group) and node.subshell):
+        if isinstance(node, Function) or (isinstance(node, Group) and node.subshell):
             continue
-        if isinstance(node, _Simple) and node.words and node.words[0].text == "exit":
+        if isinstance(node, Simple) and node.words and node.words[0].text == "exit":
             code = node.words[1].text if len(node.words) > 1 else None
             if code in status[2:] or (code in status[:2] and node is first and entry_status):
                 found.add(id(node))
-        if isinstance(node, _AndOr):
+        if isinstance(node, AndOr):
             for position, operator in enumerate(node.operators):
                 following = node.pipelines[position + 1].commands
-                exit_words = following[0].words if len(following) == 1 and isinstance(following[0], _Simple) else []
+                exit_words = following[0].words if len(following) == 1 and isinstance(following[0], Simple) else []
                 if (
                     operator == "||"
                     and [word.text for word in exit_words][:1] == ["exit"]
                     and (len(exit_words) == 2 and exit_words[1].text in status[:2])
                 ):
                     found.add(id(following[0]))
-        stack.extend(_children(node))
+        stack.extend(children(node))
     return found
 
 
 def _text(node: Any, limit: int = 90) -> str:
     """A short source-like rendering of a command, for messages."""
-    if isinstance(node, _Simple):
+    if isinstance(node, Simple):
         text = " ".join([word.raw for word in node.assignments + node.words])
-    elif isinstance(node, _Pipeline):
+    elif isinstance(node, Pipeline):
         text = ("! " if node.negated else "") + " | ".join(_text(command, limit) for command in node.commands)
-    elif isinstance(node, _Group):
+    elif isinstance(node, Group):
         text = "( … )" if node.subshell else "{ … }"
-    elif isinstance(node, _Function):
+    elif isinstance(node, Function):
         text = node.name + "() { … }"
-    elif isinstance(node, _Loop):
+    elif isinstance(node, Loop):
         text = f"{node.kind} …; done"
-    elif isinstance(node, _If):
+    elif isinstance(node, If):
         text = "if …; fi"
-    elif isinstance(node, _Case):
+    elif isinstance(node, Case):
         text = "case …; esac"
-    elif isinstance(node, _Test):
+    elif isinstance(node, Expression):
         text = "[[ … ]]"
     else:
         text = type(node).__name__.strip("_").lower()
@@ -1305,31 +573,31 @@ class _Analysis:
         self.where = where
         self.root = root
         self.findings: List[str] = []
-        self._nested: Dict[int, Optional[Tuple[_Script, Optional[ShellOptions], bool]]] = {}
+        self._nested: Dict[int, Optional[Tuple[Script, Optional[ShellOptions], bool]]] = {}
         self._has: Dict[int, bool] = {}
         self._downloaded: set = set()  # shells reading an installer piped from curl / wget
         self._origin: Dict[int, str] = {}  # node id -> the repository script it was read from
 
     def report(self, node: Any, reason: str) -> None:
-        first = node.commands[0] if isinstance(node, _Pipeline) else node
+        first = node.commands[0] if isinstance(node, Pipeline) else node
         line = getattr(first, "line", None)
         origin = self._origin.get(id(first), "script")
         at = f" ({origin} line {line})" if line else ""
         self.findings.append(f"{self.where}{at}: `{_text(node)}` {reason}")
 
-    def _label(self, script: _Script, path: str) -> None:
+    def _label(self, script: Script, path: str) -> None:
         """Record that every command of *script* comes from the repository file *path*."""
         stack: List[Any] = [script]
         while stack:
             node = stack.pop()
             self._origin[id(node)] = path
-            for word in _own_words(node):
+            for word in own_words(node):
                 stack.extend(word.subs)
-            stack.extend(_children(node))
+            stack.extend(children(node))
 
     # -- what a node contains --------------------------------------------
 
-    def nested(self, command: _Simple) -> Optional[Tuple[_Script, Optional[ShellOptions], bool]]:
+    def nested(self, command: Simple) -> Optional[Tuple[Script, Optional[ShellOptions], bool]]:
         """The script a command runs: ``(script, options, current_shell)``.
 
         ``bash -c '…'``, ``sh <<'EOF'`` and ``bash ci/x.sh`` (read from the
@@ -1340,7 +608,7 @@ class _Analysis:
             self._nested[id(command)] = self._nested_script(command)
         return self._nested[id(command)]
 
-    def _nested_script(self, command: _Simple) -> Optional[Tuple[_Script, Optional[ShellOptions], bool]]:
+    def _nested_script(self, command: Simple) -> Optional[Tuple[Script, Optional[ShellOptions], bool]]:
         argv = _argv(command)
         found = _find_exec(argv)
         argv = found[0] if found else argv
@@ -1410,12 +678,12 @@ class _Analysis:
 
     def _script_file(
         self,
-        command: _Simple,
+        command: Simple,
         path: str,
         options: Optional[ShellOptions],
         current_shell: bool = False,
         missing_ok: bool = False,
-    ) -> Optional[Tuple[_Script, Optional[ShellOptions], bool]]:
+    ) -> Optional[Tuple[Script, Optional[ShellOptions], bool]]:
         text = self._repository_text(path)
         if text is not None:
             return self._labelled(self._parse_nested(command, text, 1, options, current_shell), path)
@@ -1423,7 +691,7 @@ class _Analysis:
             self.report(command, f"runs {path}, which this guard cannot read; keep the script in the repository")
         return None
 
-    def _executable(self, command: _Simple, path: str) -> Optional[Tuple[_Script, Optional[ShellOptions], bool]]:
+    def _executable(self, command: Simple, path: str) -> Optional[Tuple[Script, Optional[ShellOptions], bool]]:
         """A repository shell script run by its path (``./ci/test.sh``), with its shebang's options."""
         text = self._repository_text(path)
         if text is None:
@@ -1436,8 +704,8 @@ class _Analysis:
         return self._labelled(self._parse_nested(command, text, 1, _apply_set(INTERACTIVE, words[1:]), False), path)
 
     def _labelled(
-        self, nested: Optional[Tuple[_Script, Optional[ShellOptions], bool]], path: str
-    ) -> Optional[Tuple[_Script, Optional[ShellOptions], bool]]:
+        self, nested: Optional[Tuple[Script, Optional[ShellOptions], bool]], path: str
+    ) -> Optional[Tuple[Script, Optional[ShellOptions], bool]]:
         if nested is not None:
             self._label(nested[0], posixpath.normpath(path))
         return nested
@@ -1447,25 +715,25 @@ class _Analysis:
         stack = [node]
         while stack:
             current = stack.pop()
-            if isinstance(current, _Pipeline):
+            if isinstance(current, Pipeline):
                 for left, right in zip(current.commands, current.commands[1:]):
-                    program = _argv(left)[:1] if isinstance(left, _Simple) else []
+                    program = _argv(left)[:1] if isinstance(left, Simple) else []
                     if program and posixpath.basename(program[0]) in ("curl", "wget"):
                         self._downloaded.add(id(right))
-            for word in _own_words(current):
+            for word in own_words(current):
                 stack.extend(word.subs)
-            stack.extend(_children(current))
+            stack.extend(children(current))
 
     def _parse_nested(
-        self, command: _Simple, text: str, line: int, options: Optional[ShellOptions], current_shell: bool
-    ) -> Optional[Tuple[_Script, Optional[ShellOptions], bool]]:
+        self, command: Simple, text: str, line: int, options: Optional[ShellOptions], current_shell: bool
+    ) -> Optional[Tuple[Script, Optional[ShellOptions], bool]]:
         if _variable_only(text):
             self.report(
                 command, f"runs a script taken from the variable `{text.strip()}`, which this guard cannot check"
             )
             return None
         try:
-            script = _parse(text, line)
+            script = parse(text, line)
             self.mark_downloads(script)
             return script, options, current_shell
         except ShellParseError as exc:
@@ -1474,18 +742,18 @@ class _Analysis:
 
     def has_required(self, node: Any) -> bool:
         if id(node) not in self._has:
-            if isinstance(node, _Simple):
+            if isinstance(node, Simple):
                 nested = self.nested(node)
                 found = bool(_required(node)) or (nested is not None and self.has_required(nested[0]))
             else:
-                found = any(self.has_required(child) for child in _children(node))
+                found = any(self.has_required(child) for child in children(node))
             self._has[id(node)] = found
         return self._has[id(node)]
 
     def first_required(self, node: Any) -> Any:
-        if isinstance(node, _Simple):
+        if isinstance(node, Simple):
             return node
-        for child in _children(node):
+        for child in children(node):
             if self.has_required(child):
                 return self.first_required(child)
         return node
@@ -1493,33 +761,33 @@ class _Analysis:
     def walk(self, node: Any) -> Iterator[Any]:
         """Every node in *node*, including command substitutions and nested scripts."""
         yield node
-        for word in _own_words(node):
+        for word in own_words(node):
             for sub in word.subs:
                 yield from self.walk(sub)
-        if isinstance(node, _Simple):
+        if isinstance(node, Simple):
             nested = self.nested(node)
             if nested is not None:
                 yield from self.walk(nested[0])
-        for child in _children(node):
+        for child in children(node):
             yield from self.walk(child)
 
     @staticmethod
-    def literal_list(loop: _Loop) -> bool:
+    def literal_list(loop: Loop) -> bool:
         """Whether a `for` loop iterates a fixed, non-empty word list (no glob, variable or substitution)."""
         return bool(loop.words) and not any(mark in word.raw for word in loop.words for mark in "*?[$`")
 
-    def exits_in(self, node: Any) -> Iterator[_Simple]:
+    def exits_in(self, node: Any) -> Iterator[Simple]:
         """The ``exit`` commands that would end the shell running *node*."""
-        if isinstance(node, _Simple):
+        if isinstance(node, Simple):
             if node.words and node.words[0].text == "exit":
                 yield node
-        elif not isinstance(node, _Function) and not (isinstance(node, _Group) and node.subshell):
-            for child in _children(node):
+        elif not isinstance(node, Function) and not (isinstance(node, Group) and node.subshell):
+            for child in children(node):
                 yield from self.exits_in(child)
 
     # -- does a failure reach the exit status? ---------------------------
 
-    def scope(self, script: _Script, options: ShellOptions, tail_counts: bool, tail_reason: str) -> Optional[str]:
+    def scope(self, script: Script, options: ShellOptions, tail_counts: bool, tail_reason: str) -> Optional[str]:
         """Check a command list; return STATUS when its exit status carries a failure, else TERMINATES.
 
         Returns None when the list runs no required command, or when a problem
@@ -1527,7 +795,7 @@ class _Analysis:
         """
         outcome: Optional[str] = None
         reported = len(self.findings)
-        ended: Optional[_Simple] = None
+        ended: Optional[Simple] = None
         for index, item in enumerate(script.items):
             last = index == len(script.items) - 1
             if ended is not None:
@@ -1568,7 +836,7 @@ class _Analysis:
             "decides the exit status"
         )
 
-    def weakened(self, item: _Item, options: ShellOptions) -> ShellOptions:
+    def weakened(self, item: Item, options: ShellOptions) -> ShellOptions:
         """*options* with any ``set +e`` / ``set +o pipefail`` inside *item* applied, also through ``eval`` / ``source``."""
         for command in self.option_commands(item):
             args = _option_args(command)
@@ -1583,19 +851,19 @@ class _Analysis:
         """The commands of *node* that run in this shell, including those of ``eval`` and ``source``."""
         for command in self.commands_in(node):
             yield command
-            nested = self.nested(command) if isinstance(command, _Simple) else None
+            nested = self.nested(command) if isinstance(command, Simple) else None
             if nested is not None and nested[2]:
                 yield from self.option_commands(nested[0])
 
     def commands_in(self, node: Any) -> Iterator[Any]:
-        for child in _children(node):
-            if isinstance(child, _Group) and child.subshell:
+        for child in children(node):
+            if isinstance(child, Group) and child.subshell:
                 continue
-            if not isinstance(child, (_Script, _Item, _AndOr, _Pipeline)):
+            if not isinstance(child, (Script, Item, AndOr, Pipeline)):
                 yield child
             yield from self.commands_in(child)
 
-    def and_or(self, and_or: _AndOr, options: ShellOptions) -> Optional[str]:
+    def and_or(self, and_or: AndOr, options: ShellOptions) -> Optional[str]:
         count = len(and_or.pipelines)
         result: Optional[str] = None
         reported = len(self.findings)
@@ -1631,7 +899,7 @@ class _Analysis:
                 result = STATUS
         return None if len(self.findings) > reported else result
 
-    def after_failure(self, and_or: _AndOr, failed: int) -> Tuple[str, str, bool]:
+    def after_failure(self, and_or: AndOr, failed: int) -> Tuple[str, str, bool]:
         """Follow the list after pipeline *failed* exits non-zero.
 
         Returns ``(kind, fallback, fallback_ran)``. *kind* is ``masked`` (a
@@ -1652,14 +920,14 @@ class _Analysis:
             last, ran = index + 1, True
         return ("errexit" if last == len(and_or.pipelines) - 1 else "silent"), "", ran
 
-    def fallback(self, pipeline: _Pipeline) -> str:
+    def fallback(self, pipeline: Pipeline) -> str:
         """``exits`` (ends the shell non-zero), ``fails`` (exits non-zero) or ``succeeds`` (may exit 0)."""
         if pipeline.negated or len(pipeline.commands) != 1:
             return "succeeds"
         command = pipeline.commands[0]
-        if isinstance(command, _Simple):
+        if isinstance(command, Simple):
             return _exit_kind(command, failed_status=True, captured=None)
-        if not isinstance(command, _Group) or not command.body.items:
+        if not isinstance(command, Group) or not command.body.items:
             return "succeeds"
         items = command.body.items
         captured = _captured_status(items[0])
@@ -1671,7 +939,7 @@ class _Analysis:
                 return "succeeds"
         if any(operator != "&&" for operator in last.operators):
             return "succeeds"
-        if tail.negated or len(tail.commands) != 1 or not isinstance(tail.commands[0], _Simple):
+        if tail.negated or len(tail.commands) != 1 or not isinstance(tail.commands[0], Simple):
             return "succeeds"
         alone = len(items) == 1 and len(last.pipelines) == 1
         kind = _exit_kind(tail.commands[0], failed_status=alone, captured=captured)
@@ -1679,7 +947,7 @@ class _Analysis:
             return "exits"
         return "succeeds" if kind == "succeeds" else "fails"
 
-    def pipeline(self, pipeline: _Pipeline, options: ShellOptions) -> Optional[str]:
+    def pipeline(self, pipeline: Pipeline, options: ShellOptions) -> Optional[str]:
         culprit = self.first_required(pipeline)
         if pipeline.negated:
             self.report(culprit, "is negated with `!`, so its failure counts as success")
@@ -1701,8 +969,8 @@ class _Analysis:
             outcomes.append(STATUS if len(pipeline.commands) > 1 else outcome)
         return next((kind for kind in (STATUS, RETURNS) if kind in outcomes), TERMINATES)
 
-    def command(self, command: _Command, options: ShellOptions) -> Optional[str]:
-        if isinstance(command, _Simple):
+    def command(self, command: Command, options: ShellOptions) -> Optional[str]:
+        if isinstance(command, Simple):
             found = _find_exec(_argv(command))
             if found and found[1] != "+":
                 self.report(command, "runs under `find -exec … ;`, which ignores the command's exit status")
@@ -1719,7 +987,7 @@ class _Analysis:
             # `eval` and a nested shell are simple commands: errexit acts on their status. Only an
             # exit inside `eval`, which runs in this shell, ends the step itself.
             return TERMINATES if current_shell and outcome == TERMINATES else STATUS
-        if isinstance(command, _Group):
+        if isinstance(command, Group):
             outcome = self.scope(command.body, options, True, "")
             if outcome is None:
                 return None
@@ -1728,31 +996,31 @@ class _Analysis:
             # A failure ignored inside a `{ … }` group leaves a status errexit does not act on.
             return TERMINATES if outcome == TERMINATES else RETURNS
         culprit = self.first_required(command)
-        if isinstance(command, _If):
+        if isinstance(command, If):
             if any(self.has_required(condition) for condition in command.conditions):
                 self.report(culprit, "is an `if`/`elif` condition, so the test consumes its exit status")
             else:
                 self.report(culprit, "runs on one branch of an `if` only; gate the whole step with `if:` instead")
-        elif isinstance(command, _Loop) and command.kind == "for" and not self.literal_list(command):
+        elif isinstance(command, Loop) and command.kind == "for" and not self.literal_list(command):
             self.report(culprit, "runs inside a `for` loop without a fixed word list, which may run it zero times")
-        elif isinstance(command, _Loop) and command.kind == "for":
+        elif isinstance(command, Loop) and command.kind == "for":
             reason = (
                 "is the last command of a `for` loop body and its failure does not stop the loop, so only "
                 "the final iteration's status counts"
             )
             return TERMINATES if self.scope(command.body, options, False, reason) == TERMINATES else None
-        elif isinstance(command, _Loop):
+        elif isinstance(command, Loop):
             article = "an" if command.kind == "until" else "a"
             self.report(culprit, f"runs inside {article} `{command.kind}` loop, which may run it zero times")
-        elif isinstance(command, _Case):
+        elif isinstance(command, Case):
             self.report(culprit, "runs on one `case` branch only")
-        elif isinstance(command, _Function):
+        elif isinstance(command, Function):
             self.report(culprit, "is wrapped in a shell function; call required commands directly")
         return None
 
     # -- `|| true` outside required commands, and the scanner exception ----
 
-    def noop_fallbacks(self, script: _Script, follower: Optional[_Pipeline]) -> None:
+    def noop_fallbacks(self, script: Script, follower: Optional[Pipeline]) -> None:
         for index, item in enumerate(script.items):
             after = script.items[index + 1].and_or.pipelines[0] if index + 1 < len(script.items) else follower
             and_or = item.and_or
@@ -1773,35 +1041,35 @@ class _Analysis:
                 )
             for position, pipeline in enumerate(and_or.pipelines):
                 for command in pipeline.commands:
-                    for word in _own_words(command):
+                    for word in own_words(command):
                         for sub_script in word.subs:
                             self.noop_fallbacks(sub_script, None)
-                    if isinstance(command, _Group):
+                    if isinstance(command, Group):
                         chained = position < len(and_or.operators) and and_or.operators[position] == "&&"
                         last = position == len(and_or.operators)
                         self.noop_fallbacks(
                             command.body, and_or.pipelines[position + 1] if chained else after if last else None
                         )
-                    elif isinstance(command, _Simple):
+                    elif isinstance(command, Simple):
                         nested = self.nested(command)
                         if nested is not None:
                             self.noop_fallbacks(nested[0], None)
                     else:
-                        for child in _children(command):
-                            if isinstance(child, _Script):
+                        for child in children(command):
+                            if isinstance(child, Script):
                                 self.noop_fallbacks(child, None)
-                            elif isinstance(child, _Group):
+                            elif isinstance(child, Group):
                                 self.noop_fallbacks(child.body, None)
 
     @staticmethod
-    def is_noop(pipeline: _Pipeline) -> bool:
-        if pipeline.negated or len(pipeline.commands) != 1 or not isinstance(pipeline.commands[0], _Simple):
+    def is_noop(pipeline: Pipeline) -> bool:
+        if pipeline.negated or len(pipeline.commands) != 1 or not isinstance(pipeline.commands[0], Simple):
             return False
         return tuple(word.text for word in pipeline.commands[0].words) in _NOOP_FALLBACKS
 
-    def scanner_exception(self, and_or: _AndOr, after: Optional[_Pipeline]) -> bool:
+    def scanner_exception(self, and_or: AndOr, after: Optional[Pipeline]) -> bool:
         scanned = and_or.pipelines[0]
-        if scanned.negated or len(scanned.commands) != 1 or not isinstance(scanned.commands[0], _Simple):
+        if scanned.negated or len(scanned.commands) != 1 or not isinstance(scanned.commands[0], Simple):
             return False
         scanner_command = scanned.commands[0]
         scanner = _scanner(scanner_command)
@@ -1815,7 +1083,7 @@ class _Analysis:
             problem = f"use exactly `|| true` before {helper}"
         elif report is None:
             problem = f"writes no report (`-o`/`--output` or `> FILE`) for {helper} to read"
-        elif after is None or after.negated or len(after.commands) != 1 or not isinstance(after.commands[0], _Simple):
+        elif after is None or after.negated or len(after.commands) != 1 or not isinstance(after.commands[0], Simple):
             problem = f"is not immediately followed by `python3 {helper} {report}`"
         elif _required(after.commands[0]) != helper:
             problem = f"is followed by `{_text(after)}` instead of `python3 {helper} {report}`"
@@ -1830,9 +1098,9 @@ class _Analysis:
 
     # -- shapes this guard cannot follow -----------------------------------
 
-    def substitutions(self, script: _Script) -> None:
+    def substitutions(self, script: Script) -> None:
         for node in self.walk(script):
-            for word in _own_words(node):
+            for word in own_words(node):
                 for sub in word.subs:
                     if self.has_required(sub):
                         self.report(
@@ -1841,10 +1109,10 @@ class _Analysis:
                             "`export`, an argument); run it as a command of its own",
                         )
 
-    def traps(self, script: _Script) -> None:
-        functions = {node.name: node.body for node in self.walk(script) if isinstance(node, _Function)}
+    def traps(self, script: Script) -> None:
+        functions = {node.name: node.body for node in self.walk(script) if isinstance(node, Function)}
         for node in self.walk(script):
-            argv = _argv(node) if isinstance(node, _Simple) else []
+            argv = _argv(node) if isinstance(node, Simple) else []
             args = argv[2:] if argv[1:2] == ["--"] else argv[1:]
             if argv[:1] != ["trap"] or len(args) < 2 or args[0].startswith("-"):
                 continue
@@ -1856,7 +1124,7 @@ class _Analysis:
                 )
                 continue
             try:
-                action = _parse(args[0], node.line)
+                action = parse(args[0], node.line)
             except ShellParseError as exc:
                 self.report(node, f"sets an EXIT/ERR trap this guard cannot parse ({exc})")
                 continue
@@ -1876,11 +1144,11 @@ class _Analysis:
         """
         if self.has_required(handler):
             return "runs a required command inside an EXIT/ERR trap, whose failure does not reach the step's status"
-        if isinstance(handler, _Group):
+        if isinstance(handler, Group):
             if handler.subshell:
                 return None  # an `exit` there ends only the subshell
             handler = handler.body
-        if not isinstance(handler, _Script):
+        if not isinstance(handler, Script):
             return None
         reraises = _reraising_exits(handler, entry_status)
         for exit_command in self.exits_in(handler):
@@ -1897,7 +1165,7 @@ class _Analysis:
             return f"sets an EXIT/ERR trap that runs `exit {code}`, which can replace a failing step's status"
         first = handler.items[0].and_or.pipelines[0].commands[0] if handler.items else None
         for command in self.commands_in(handler):
-            name = command.words[0].text if isinstance(command, _Simple) and command.words else ""
+            name = command.words[0].text if isinstance(command, Simple) and command.words else ""
             if name in functions and name not in seen:
                 problem = self.trap_problem(
                     functions[name], functions, seen | {name}, entry_status and command is first
@@ -1906,9 +1174,9 @@ class _Analysis:
                     return problem
         return None
 
-    def opaque_commands(self, script: _Script) -> None:
+    def opaque_commands(self, script: Script) -> None:
         for node in self.walk(script):
-            if not isinstance(node, _Simple) or _required(node) or self.nested(node) is not None:
+            if not isinstance(node, Simple) or _required(node) or self.nested(node) is not None:
                 continue
             argv = _argv(node)
             if not argv:
@@ -1924,11 +1192,11 @@ class _Analysis:
                         "run the required command directly",
                     )
 
-    def redefinitions(self, script: _Script) -> None:
+    def redefinitions(self, script: Script) -> None:
         for node in self.walk(script):
-            if isinstance(node, _Function):
+            if isinstance(node, Function):
                 names, how = [node.name], "a shell function"
-            elif isinstance(node, _Simple):
+            elif isinstance(node, Simple):
                 names, how = _redefined(node)
             else:
                 continue
@@ -2032,7 +1300,7 @@ def scan_script(
     ]
     analysis = _Analysis(where, root)
     try:
-        script = _parse(_github_expressions(text))
+        script = parse(_github_expressions(text))
         analysis.mark_downloads(script)
         analysis.scope(script, options, True, "")
         analysis.noop_fallbacks(script, None)
@@ -2041,7 +1309,7 @@ def scan_script(
         analysis.opaque_commands(script)
         analysis.redefinitions(script)
         required = [
-            kind for kind in (_required(node) for node in analysis.walk(script) if isinstance(node, _Simple)) if kind
+            kind for kind in (_required(node) for node in analysis.walk(script) if isinstance(node, Simple)) if kind
         ]
     except ShellParseError as exc:
         if strict_parse or _REQUIRED_WORD_RE.search(text):
