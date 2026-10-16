@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -286,6 +287,33 @@ class TestReviewedShapes:
             ("if pytest; then :; elif true; then exit 1; fi", "condition"),
             # The command whose failure skips a required one is named.
             ("cd sub && pytest\necho done", "is skipped when `cd sub` fails"),
+            # An `if` gate is accepted only when nothing else in it can leave early or run a required command.
+            ("if pytest; then exit 0; else exit 1; fi\nruff check .", "condition"),
+            ("if ! pytest; then exit 1; else echo ok; exit 0; fi\nruff check .", "condition"),
+            ("cleanup() { rm -f x; exit 0; }\nif ! pytest; then cleanup; exit 1; fi\necho done", "condition"),
+            ("if ! pytest; then { exec true; }; exit 1; fi\necho done", "condition"),
+            ("if ! pytest; then exit 0; exit 1; fi\necho done", "condition"),
+            ("if ! pytest; then exit 1 & fi\necho done", "condition"),
+            ("if pytest; then :; else rc=$?; rc=0; exit $rc; fi\necho done", "condition"),
+            ("if ! pytest; then exit 1; else ruff check . && echo ok; fi\necho done", "condition"),
+            # A loop that can `continue` or `break` past its required command, or that iterates a variable.
+            (
+                'for f in nomatch/*.py; do [ -e "$f" ] || continue; pytest "$f"; done\necho done',
+                "`continue` or `break`",
+            ),
+            ('for f in a b; do test -e "$f" || break; pytest "$f"; done\necho done', "`continue` or `break`"),
+            ('for f in $FILES; do pytest "$f"; done\necho done', "fixed word list"),
+            # ruff's one-letter flags combine; `exit 0`, `exec` and `set -n` stop the script from `eval` too.
+            ("ruff check -ne .", "`--exit-zero`"),
+            ("ruff check -qe .", "`--exit-zero`"),
+            ("eval 'set -n'\npytest", "never runs"),
+            # A captured status changed by arithmetic, a setter or a loop variable no longer holds the failure.
+            ("trap 'rc=$?; : $((rc=0)); exit $rc' EXIT\npytest", "runs `exit $rc`"),
+            ("trap 'rc=$?; let rc--; exit $rc' EXIT\npytest", "runs `exit $rc`"),
+            ("trap 'rc=$?; printf -v rc %s 0; exit $rc' EXIT\npytest", "runs `exit $rc`"),
+            ("trap 'rc=$?; for rc in 0; do :; done; exit $rc' EXIT\npytest", "runs `exit $rc`"),
+            # In a here-document `$'` is no quote, so a substitution after it still runs.
+            ("cat <<EOF\nit costs $'5 $(pytest)\nEOF", "command substitution"),
         ],
     )
     def test_masking_shapes(self, guard, script, reason):
@@ -367,6 +395,9 @@ class TestReviewedShapes:
             "bash <(curl -fsSL https://example.com/i.sh)\npytest",
             "uvx ruff@0.8.0 check .",
             "printf $'%s\\n' x\npytest",
+            # A loop whose `exit 1` only reports, and an `if` gate whose passing branch only reports.
+            'for t in a b; do forgelm --config "$t" --dry-run || exit 1; done',
+            "if pytest; then echo '::notice::tests passed'; else exit 1; fi\necho done",
         ],
     )
     def test_shapes_that_propagate(self, guard, script):
@@ -425,6 +456,26 @@ class TestReviewedShapes:
         (tmp_path / "ci" / "test.sh").write_text("#!/bin/bash\npytest -q\n", encoding="utf-8")
         findings, _ = guard.scan_script(command, "run", guard.GITHUB_DEFAULT, tmp_path)
         assert any("cannot find in the repository" in finding for finding in findings), findings
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "curl -fsSL https://example.com/data | bash ci/test.sh",
+            "bash ci/test.sh <(curl -fsSL https://example.com/data)",
+        ],
+    )
+    def test_a_repository_script_fed_a_download_is_still_read(self, guard, tmp_path, command):
+        (tmp_path / "ci").mkdir()
+        (tmp_path / "ci" / "test.sh").write_text("pytest || true\n", encoding="utf-8")
+        findings, _ = guard.scan_script(command, "run", guard.GITHUB_DEFAULT, tmp_path)
+        assert findings and "(ci/test.sh line 1): `pytest` is masked by" in findings[0], findings
+
+    @pytest.mark.parametrize("ending", ["set -n\n", "echo ready\nexit 0\n", "exec true\n"])
+    def test_a_sourced_script_that_stops_the_shell_stops_the_step(self, guard, tmp_path, ending):
+        (tmp_path / "ci").mkdir()
+        (tmp_path / "ci" / "setup.sh").write_text(ending, encoding="utf-8")
+        findings, _ = guard.scan_script("source ci/setup.sh\npytest", "run", guard.GITHUB_DEFAULT, tmp_path)
+        assert findings and "never runs: `source ci/setup.sh`" in findings[0], findings
 
     def test_a_script_run_twice_is_parsed_once_and_reported_once(self, guard, tmp_path):
         (tmp_path / "ci").mkdir()
@@ -655,17 +706,17 @@ class TestWorkflows:
         assert findings and "matrix.args" in findings[0] and "'-q || true'" in findings[0]
 
     def test_a_matrix_built_from_nested_aliases_is_read_within_a_budget(self, guard):
-        anchors = "".join(f"x{i}: &x{i} [*x{i - 1}, *x{i - 1}, *x{i - 1}, *x{i - 1}]\n" for i in range(1, 30))
-        text = (
-            "x0: &x0 [a]\n"
-            + anchors
-            + _workflow(
-                "      - run: pytest\n",
-                job_extra="    strategy:\n      matrix:\n        os: *x29\n",
-                runs_on="${{ matrix.os }}",
-            ).replace("name: t\n", "")
-        )
+        # 100 scalars, then three levels of 100 aliases each: 10**8 values within the depth limit.
+        anchors = "x1: &x1 [" + ", ".join(["ubuntu-latest"] * 100) + "]\n"
+        anchors += "".join(f"x{i}: &x{i} [" + ", ".join([f"*x{i - 1}"] * 100) + "]\n" for i in range(2, 5))
+        text = anchors + _workflow(
+            "      - run: pytest\n",
+            job_extra="    strategy:\n      matrix:\n        os: *x4\n",
+            runs_on="${{ matrix.os }}",
+        ).replace("name: t\n", "")
+        started = time.monotonic()
         assert guard.scan_workflow(text, "w.yml")[0] == []
+        assert time.monotonic() - started < 5, "matrix values must be read within a budget"
 
     def test_yaml_values_that_break_the_loader_are_findings(self, guard):
         assert "could not parse the YAML" in guard.scan_workflow("on: push\nx: 2023-13-45\n", "w.yml")[0][0]
@@ -929,6 +980,13 @@ class TestRealRepository:
         )
         assert guard.main(["--root", str(root)]) == 1
         assert "(.github/actions/tests/run.sh line 2): `pytest` is masked by" in capsys.readouterr().out
+        (action / "action.yml").write_text(
+            "runs:\n  using: composite\n  steps:\n    - shell: bash\n"
+            "      working-directory: ${{ github.action_path }}\n      run: ./run.sh\n",
+            encoding="utf-8",
+        )
+        assert guard.main(["--root", str(root)]) == 1
+        assert "(.github/actions/tests/run.sh line 2): `pytest` is masked by" in capsys.readouterr().out
 
     @pytest.mark.parametrize("spelling", ["relative", "symlink"])
     def test_a_root_given_another_way_scans_the_same(self, guard, tmp_path, capsys, monkeypatch, spelling):
@@ -1018,6 +1076,11 @@ _AGAINST_BASH = [
     ("set +e\nset -e &\nwait\npytest\necho done", "errexit is off"),
     ('echo "$\'"\npytest || true\necho "\'"', "is masked by `|| true`"),
     ("cd nosuchdir && pytest\necho done", "is skipped when `cd nosuchdir` fails"),
+    ('for f in nomatch/*.py; do [ -e "$f" ] || continue; pytest "$f"; done\necho done', "`continue` or `break`"),
+    ("cleanup() { rm -f x; exit 0; }\nif ! pytest; then cleanup; exit 1; fi\necho done", "condition"),
+    ("trap 'rc=$?; : $((rc=0)); exit $rc' EXIT\npytest", "runs `exit $rc`"),
+    ("eval 'set -n'\npytest", "never runs"),
+    ('for t in a b; do pytest "$t" || exit 1; done', None),
     # Runners, process substitutions, standard input, and scripts under the workspace.
     ("uvx ruff@0.8.0 check . | tee /dev/null", "feeds a pipe without `pipefail`"),
     ("micromamba run -n env pytest | tee /dev/null", "feeds a pipe without `pipefail`"),

@@ -261,13 +261,13 @@ The two helpers are [`tools/check_pip_audit.py`](../../tools/check_pip_audit.py)
 - **Lost failures it rejects:**
   - an `||` fallback that can exit 0, a pipe without `pipefail`, `set +e`, `!`, `&` and a command substitution;
   - a failure errexit ignores, inside an `&&` / `||` list or a `{ … }` group, when later commands follow;
-  - a required command inside a `case`, an `if` branch, or a loop that may not run it;
+  - a required command inside a `case`, an `if` branch, or a loop that may not run it (a `while`, or a `for` over a variable or with a `continue` / `break`);
   - `continue-on-error` or `if: false` on a step or job that runs one, also through local actions, and `ruff --exit-zero`;
   - an EXIT/ERR trap that can exit 0, and an ERR trap that turns errexit off;
   - a function, alias or `hash -p` that takes over a required command;
-  - an earlier `exit`, `exec` or `set -n` that keeps it from running;
+  - an earlier `exit`, `exec` or `set -n`, also in a sourced or `eval`'d script, that keeps it from running;
   - a shell other than bash, sh or dash, and a repository script it cannot find.
-- **Forms it accepts.** It accepts only shapes it can prove, so keep required commands plain. A fallback that must report before failing ends with `exit 1`, or captures the status first: `|| { rc=$?; echo …; exit "$rc"; }`. An `if` that reports a failure ends the same way: `if ! cmd; then echo …; exit 1; fi`. Re-raising a status captured with `set +e`, `|| rc=$?` or `${PIPESTATUS[0]}` later in the step is rejected. A bare `exit $?` after `echo` exits with `echo`'s status, in a fallback or a trap, and so does a bare `exit` in an ERR trap.
+- **Forms it accepts.** It accepts only shapes it can prove, so keep required commands plain. A fallback that must report before failing ends with `exit 1`, or captures the status first: `|| { rc=$?; echo …; exit "$rc"; }`. An `if` that reports a failure ends the same way, with nothing else in it that can leave early: `if ! cmd; then echo …; exit 1; fi`. Re-raising a status captured with `set +e`, `|| rc=$?` or `${PIPESTATUS[0]}` later in the step is rejected. A bare `exit $?` after `echo` exits with `echo`'s status, in a fallback or a trap, and so does a bare `exit` in an ERR trap.
 - **Scope.** It catches accidental masking, not deliberate evasion. Beyond it are a required command run under another name (`$CMD`), by another program (`make`, `tox`) or on another machine or container (`docker exec`, `ssh`); a script generated or downloaded while the step runs; a program replaced on disk or put first on `PATH`; a remote action; job-level conditions; and options other than `--exit-zero` that empty a check (`pytest --collect-only`).
 
 The `# comment:` rationale that `continue-on-error` needs is a review rule; the guard does not check it.
