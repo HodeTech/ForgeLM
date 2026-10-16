@@ -397,7 +397,9 @@ def test_no_gauntlet_short_circuits_on_failure():
 
     ``|| true`` stays legitimate for a scanner that exits non-zero on any
     finding (bandit) when a tiering helper owns the policy — but only inside a
-    ``{ …; }`` group, so the escape cannot leak to its neighbours.
+    ``{ …; }`` group, so the escape cannot leak to its neighbours. This test
+    checks that shape; ``tools/check_ci_failure_masking.py`` checks that the
+    wrapped command is such a scanner and that its helper reads the report.
     """
     for doc in _GAUNTLET_DOCS:
         # Deliberately NOT joining line continuations: the defect is per-line
@@ -413,7 +415,8 @@ def test_no_gauntlet_short_circuits_on_failure():
             stripped = line.strip().rstrip("\\").strip().removesuffix("&&").strip()
             assert stripped.startswith("{") and stripped.endswith("}") and "; }" in stripped, (
                 f"{doc}'s gauntlet has a bare '|| true' in {stripped!r}. It binds to the whole "
-                "preceding chain and swallows every earlier failure — wrap it as '{ cmd || true; }'."
+                "preceding chain and swallows every earlier failure. Only a scanner followed by its severity "
+                "helper may use it, wrapped as '{ bandit … || true; }'."
             )
 
 
