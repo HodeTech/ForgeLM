@@ -549,14 +549,23 @@ class TestGauntlets:
         assert _findings(guard, script, guard.INTERACTIVE)
 
 
-def _copy_repo_surfaces(tmp_path: Path) -> Path:
-    """Copy the scanned surfaces of the real repository into *tmp_path*."""
+def _copy_repo_surfaces(guard, tmp_path: Path) -> Path:
+    """Copy the scanned surfaces of the real repository into *tmp_path*.
+
+    The copy must scan exactly like the checkout before a test mutates it, or a
+    finding the copy alone causes (a repository script a workflow runs but the
+    copy lacks) would satisfy a test that expects the mutation to be caught.
+    """
     for path in (_REPO_ROOT / ".github").rglob("*.y*ml"):
         target = tmp_path / path.relative_to(_REPO_ROOT)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(path, target)
     for doc in ("CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md"):
         shutil.copy(_REPO_ROOT / doc, tmp_path / doc)
+    findings, _surfaces, required = guard.scan_repo(tmp_path)
+    assert findings == [] and required == guard.scan_repo(_REPO_ROOT)[2], (
+        f"the copy scans differently from the checkout; copy what the workflows read: {findings}"
+    )
     return tmp_path
 
 
@@ -573,7 +582,7 @@ class TestRealRepository:
 
     def test_the_issue_reproduction_is_caught(self, guard, tmp_path, capsys):
         """Appending `|| true` to the validation job's Node test command (issue #951)."""
-        root = _copy_repo_surfaces(tmp_path)
+        root = _copy_repo_surfaces(guard, tmp_path)
         _mutate(
             root / ".github/workflows/ci.yml",
             "run: node --test tests/site/*.test.cjs\n",
@@ -615,27 +624,31 @@ class TestRealRepository:
         ids=["pipe-without-pipefail", "or-exit-0", "continue-on-error", "helper-reads-another-report", "set-plus-e"],
     )
     def test_workflow_mutations_are_caught(self, guard, tmp_path, capsys, path, old, new, expected):
-        root = _copy_repo_surfaces(tmp_path)
+        root = _copy_repo_surfaces(guard, tmp_path)
         _mutate(root / path, old, new)
         assert guard.main(["--root", str(root)]) == 1
         assert expected in capsys.readouterr().out
 
-    def test_a_gauntlet_mutation_applied_to_all_three_documents_is_caught(self, guard, tmp_path):
+    def test_a_gauntlet_mutation_applied_to_all_three_documents_is_caught(self, guard, tmp_path, capsys):
         """The meta-test compares the three blocks; a consistent mutation needs this guard."""
-        root = _copy_repo_surfaces(tmp_path)
+        root = _copy_repo_surfaces(guard, tmp_path)
         for doc in ("CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md"):
             _mutate(
                 root / doc, "ruff check . && pytest tests/ && \\", "ruff check . && { pytest tests/ || true; } && \\"
             )
-        assert guard.main(["--root", str(root), "--quiet"]) == 1
+        assert guard.main(["--root", str(root)]) == 1
+        out = capsys.readouterr().out
+        for doc in ("CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md"):
+            assert f"{doc} gauntlet" in out and "`pytest tests/` is masked by `|| true`" in out
 
-    def test_yaml_workflows_and_local_actions_are_scanned(self, guard, tmp_path):
-        root = _copy_repo_surfaces(tmp_path)
+    def test_yaml_workflows_and_local_actions_are_scanned(self, guard, tmp_path, capsys):
+        root = _copy_repo_surfaces(guard, tmp_path)
         (root / ".github/workflows/extra.yaml").write_text(
             "on: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pytest -q || true\n",
             encoding="utf-8",
         )
-        assert guard.main(["--root", str(root), "--quiet"]) == 1
+        assert guard.main(["--root", str(root)]) == 1
+        assert "extra.yaml" in capsys.readouterr().out
         (root / ".github/workflows/extra.yaml").unlink()
         action = root / ".github/actions/tests"
         action.mkdir(parents=True)
@@ -647,10 +660,11 @@ class TestRealRepository:
             "      - uses: ./.github/actions/tests\n        continue-on-error: true\n",
             encoding="utf-8",
         )
-        assert guard.main(["--root", str(root), "--quiet"]) == 1
+        assert guard.main(["--root", str(root)]) == 1
+        assert "`continue-on-error` lets ./.github/actions/tests, which runs pytest" in capsys.readouterr().out
 
     def test_a_masked_only_invocation_is_not_also_reported_as_missing(self, guard, tmp_path, capsys):
-        root = _copy_repo_surfaces(tmp_path)
+        root = _copy_repo_surfaces(guard, tmp_path)
         _mutate(
             root / ".github/workflows/ci.yml",
             "run: pytest -q --tb=short --cov-report=xml:coverage.xml\n",
@@ -660,20 +674,20 @@ class TestRealRepository:
         assert "invocation recognised" not in capsys.readouterr().out
 
     def test_a_scan_that_recognises_no_required_command_fails(self, guard, tmp_path, capsys):
-        root = _copy_repo_surfaces(tmp_path)
+        root = _copy_repo_surfaces(guard, tmp_path)
         (root / ".github/workflows/ci.yml").write_text("name: t\non: push\njobs: {}\n", encoding="utf-8")
         assert guard.main(["--root", str(root)]) == 1
         assert "ci.yml: no pytest, node --test, ruff, tools/check_ invocation recognised" in capsys.readouterr().out
 
     def test_a_renamed_ci_workflow_keeps_its_inventory_check(self, guard, tmp_path, capsys):
-        root = _copy_repo_surfaces(tmp_path)
+        root = _copy_repo_surfaces(guard, tmp_path)
         (root / ".github/workflows/ci.yml").unlink()
         (root / ".github/workflows/ci.yaml").write_text("name: t\non: push\njobs: {}\n", encoding="utf-8")
         assert guard.main(["--root", str(root)]) == 1
         assert "ci.yaml: no pytest" in capsys.readouterr().out
 
     def test_a_gauntlet_that_stops_running_a_kind_is_a_finding(self, guard, tmp_path, capsys):
-        root = _copy_repo_surfaces(tmp_path)
+        root = _copy_repo_surfaces(guard, tmp_path)
         _mutate(root / "CLAUDE.md", "ruff check . && pytest tests/ && \\", "ruff check . && \\")
         assert guard.main(["--root", str(root)]) == 1
         assert "CLAUDE.md gauntlet: no pytest invocation recognised" in capsys.readouterr().out
@@ -685,7 +699,7 @@ class TestRealRepository:
         assert "a scan of nothing would pass" in capsys.readouterr().out
 
     def test_unreadable_and_missing_surfaces_are_findings_not_crashes(self, guard, tmp_path, capsys):
-        root = _copy_repo_surfaces(tmp_path)
+        root = _copy_repo_surfaces(guard, tmp_path)
         (root / ".github/workflows/broken.yml").write_bytes(b"on: push\n\xff\xfe\n")
         (root / "AGENTS.md").unlink()
         assert guard.main(["--root", str(root)]) == 1
@@ -695,14 +709,14 @@ class TestRealRepository:
 
     def test_local_actions_are_scanned_wherever_they_live(self, guard, tmp_path, capsys):
         masked = "runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: pytest -q || true\n"
-        root = _copy_repo_surfaces(tmp_path)
+        root = _copy_repo_surfaces(guard, tmp_path)
         nested = root / ".github/actions/group/tests"
         nested.mkdir(parents=True)
         (nested / "action.yml").write_text(masked, encoding="utf-8")
         assert guard.main(["--root", str(root)]) == 1
         assert ".github/actions/group/tests/action.yml" in capsys.readouterr().out
 
-        root = _copy_repo_surfaces(tmp_path / "outside")
+        root = _copy_repo_surfaces(guard, tmp_path / "outside")
         (root / "ci-action").mkdir()
         (root / "ci-action/action.yml").write_text(masked, encoding="utf-8")
         (root / ".github/workflows/uses.yml").write_text(
