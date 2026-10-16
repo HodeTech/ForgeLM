@@ -308,8 +308,8 @@ references are recorded by name even when the
 variable is set; disabled or omitted plans are not recorded.
 
 Recording metadata in ForgeLM is optional; Article 72 requires providers of high-risk AI systems to establish and
-document a post-market monitoring system. These fields are a summary, not the detailed plan required by Annex IV point
-9 (Article 72(3)).
+document a post-market monitoring system. These fields are a summary, not the detailed description Annex IV §9
+requires, which includes the monitoring plan (Article 72(3)).
 
 Monitoring evidence files (`compliance_report.json` and, when emitted, `annex_iv_metadata.json`) are plain text. The
 flattened `training_manifest.yaml` summary does not contain monitoring metadata.

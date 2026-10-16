@@ -288,10 +288,10 @@ risk_assessment:
 
 ## `monitoring:`
 
-Bu blok harici bir pazar sonrası izleme planını beyan eder (Madde 72 / 17(1)(h)). `enabled: true`
+Bu blok harici bir piyasaya arz sonrası izleme planını beyan eder (Madde 72 / 17(1)(h)). `enabled: true`
 olduğunda değerleri uyumluluk manifestine ve Annex IV `monitoring_and_logging` bölümüne
 `declarative_only: true` etiketiyle kaydedilir. ForgeLM endpoint'e bağlanmaz, metrikleri dışa aktarmaz,
-drift tespit etmez, drift uyarısı göndermez veya kontrol zamanlamaz. İzleme altyapınızı ayrıca
+drift tespit etmez, drift alarmı göndermez veya kontrol zamanlamaz. İzleme altyapınızı ayrıca
 işletin; bu beyan izlemenin çalıştığını kanıtlamaz. ForgeLM'de metadata kaydı isteğe bağlıdır; yasal yükümlülükler
 ayrıca geçerlidir.
 
@@ -301,23 +301,23 @@ monitoring:
   endpoint: ""                              # İsteğe bağlı URL; kanıtta yalnızca scheme/host/port
   endpoint_env: null                        # ASCII ad endpoint'ten öncelikli; "$NAME" yazılır, okunmaz
   metrics_export: "none"                    # Yalnızca beyan: none | prometheus | datadog | custom_webhook
-  alert_on_drift: true                      # Harici drift uyarısı politikası; uyarı gönderilmez
+  alert_on_drift: true                      # Harici drift alarmı politikası; alarm gönderilmez
   check_interval_hours: 24                  # Harici kontrol aralığı; kontrol zamanlanmaz
 ```
 
-Etkin planda `none` dışındaki aktarım sistemi seçimi yapılandırma yüklenirken uyarı üretir. Her iki
+Etkin planda `none` dışındaki exporter seçimi yapılandırma yüklenirken uyarı üretir. Her iki
 endpoint alanı da boşsa manifeste `null` yazılır. Ortam değişkeni tanımlı olsa bile yalnızca adı
 kaydedilir; kapalı veya belirtilmemiş planlar kaydedilmez.
 
-ForgeLM'de metadata kaydı isteğe bağlıdır; Madde 72, yüksek riskli yapay zekâ sistemlerinin sağlayıcılarının pazar
-sonrası izleme sistemi kurmasını ve belgelemesini gerektirir. Bu alanlar bir özettir; Annex IV madde 9'un (Madde
-72(3)) gerektirdiği ayrıntılı plan değildir.
+ForgeLM'de metadata kaydı isteğe bağlıdır; Madde 72, yüksek riskli yapay zekâ sistemlerinin sağlayıcılarının piyasaya arz
+sonrası izleme sistemi kurmasını ve belgelemesini gerektirir. Bu alanlar bir özettir; Annex IV §9'un istediği,
+izleme planını (Madde 72(3)) da içeren ayrıntılı açıklama değildir.
 
 `load_config`, etkin ve `none` dışında exporter beyan eden plan için uyarı verir; doğrudan `ForgeConfig(...)` kurulumu
 bu dosya yükleme uyarısını vermez.
 
 İzleme kanıtı dosyaları (`compliance_report.json` ve üretildiğinde `annex_iv_metadata.json`) düz metindir.
-Düzleştirilmiş `training_manifest.yaml` özeti izleme metadatası içermez.
+Düzleştirilmiş `training_manifest.yaml` özeti izleme metadata'sı içermez.
 
 Literal `endpoint` kırpılır; `https://monitor.example.com:8443/plan` gibi host ve geçerli port içeren mutlak bir
 HTTP(S) URL olmalıdır. Şemasız değerler reddedilir. Kanıtta scheme, host ve varsa port korunur; IPv6 köşeli
@@ -334,7 +334,7 @@ nedenini korur.
 `defaulted_fields`, operatörün açıkça yazdığı değerler yerine şema varsayılanlarından gelen kayıt alanlarını listeler.
 Kütüphane kullanıcıları, yapılandırmayı yeniden kurarken bu ayrımı korumak için `model_dump(exclude_unset=True)`
 kullanmalıdır; tam döküm varsayılanları açık girdiye dönüştürür. Yalnızca planı etkinleştirmek, 24 saatlik kontrol
-aralığı veya drift uyarısı politikası beyan etmez. Örneğin `monitoring: {enabled: true}`, `compliance_report.json`
+aralığı veya drift alarmı politikası beyan etmez. Örneğin `monitoring: {enabled: true}`, `compliance_report.json`
 içinde şu kaydı üretir:
 
 ```json

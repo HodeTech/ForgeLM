@@ -319,11 +319,11 @@ uzatmasını engeller.
 ## `monitoring` (İsteğe bağlı — Harici izleme planı, Madde 72 / 17(1)(h))
 
 Bu blok **yalnızca beyan niteliğinde metadata** içerir. `enabled: true` olduğunda ForgeLM, harici
-pazar sonrası izleme planınızı uyumluluk manifestine ve Annex IV `monitoring_and_logging` bölümüne
+piyasaya arz sonrası izleme planınızı uyumluluk manifestine ve Annex IV `monitoring_and_logging` bölümüne
 `declarative_only: true` etiketiyle kaydeder. Endpoint'e bağlanmaz, metrikleri dışa aktarmaz, drift
-tespit etmez, drift uyarısı göndermez veya kontrol zamanlamaz. İzleme altyapınızı ayrıca işletin;
+tespit etmez, drift alarmı göndermez veya kontrol zamanlamaz. İzleme altyapınızı ayrıca işletin;
 bu beyan izlemenin çalıştığını kanıtlamaz ve izleme yükümlülüğünü tek başına karşılamaz.
-Pazar sonrası izleme planı [Madde 72](https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng#art_72),
+Piyasaya arz sonrası izleme planı [Madde 72](https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng#art_72),
 QMS ise [Madde 17(1)(h)](https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng#art_17) kapsamındadır.
 
 | Alan | Tip | Varsayılan | Açıklama |
@@ -331,22 +331,22 @@ QMS ise [Madde 17(1)(h)](https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng#art_
 | `enabled` | bool | `false` | Harici planı manifeste kaydet; metadata kaydı isteğe bağlıdır; yasal yükümlülükler ayrıca geçerlidir |
 | `endpoint` | string | `""` | İsteğe bağlı URL; kanıta yalnızca scheme/host/port yazılır, bağlantı kurulmaz |
 | `endpoint_env` | string | `null` | ASCII tanımlayıcısı `endpoint`'ten önceliklidir; düz metin kanıta `$NAME` yazılır, değeri okunmaz; kimlik bilgisi yazmayın |
-| `metrics_export` | string | `"none"` | Beyan edilen harici aktarım sistemi: `"none"`, `"prometheus"`, `"datadog"`, `"custom_webhook"`; etkin planda `none` dışındaki seçim yapılandırma yüklenirken uyarı üretir |
-| `alert_on_drift` | bool | `true` | Harici planda drift uyarısı öngörülüp öngörülmediği; uyarıları etkinleştirmez |
+| `metrics_export` | string | `"none"` | Beyan edilen harici exporter: `"none"`, `"prometheus"`, `"datadog"`, `"custom_webhook"`; etkin planda `none` dışındaki seçim yapılandırma yüklenirken uyarı üretir |
+| `alert_on_drift` | bool | `true` | Harici planda drift alarmı öngörülüp öngörülmediği; alarmları etkinleştirmez |
 | `check_interval_hours` | int | `24` | Beyan edilen harici kontrol aralığı, saat (en az 1); kontrol zamanlamaz |
 
 Her iki endpoint alanı da boşsa manifeste `endpoint: null` yazılır. Adlandırılan ortam değişkeni
 tanımlı olsa bile referansı çözümlenmez. Kapalı veya belirtilmemiş planlar kaydedilmez.
 
-ForgeLM'de metadata kaydı isteğe bağlıdır; Madde 72, yüksek riskli yapay zekâ sistemlerinin sağlayıcılarının pazar
-sonrası izleme sistemi kurmasını ve belgelemesini gerektirir. Bu alanlar bir özettir; Annex IV madde 9'un (Madde
-72(3)) gerektirdiği ayrıntılı plan değildir.
+ForgeLM'de metadata kaydı isteğe bağlıdır; Madde 72, yüksek riskli yapay zekâ sistemlerinin sağlayıcılarının piyasaya arz
+sonrası izleme sistemi kurmasını ve belgelemesini gerektirir. Bu alanlar bir özettir; Annex IV §9'un istediği,
+izleme planını (Madde 72(3)) da içeren ayrıntılı açıklama değildir.
 
 `load_config`, etkin ve `none` dışında exporter beyan eden plan için uyarı verir; doğrudan `ForgeConfig(...)` kurulumu
 bu dosya yükleme uyarısını vermez.
 
 İzleme kanıtı dosyaları (`compliance_report.json` ve üretildiğinde `annex_iv_metadata.json`) düz metindir.
-Düzleştirilmiş `training_manifest.yaml` özeti izleme metadatası içermez.
+Düzleştirilmiş `training_manifest.yaml` özeti izleme metadata'sı içermez.
 
 Literal `endpoint` kırpılır; `https://monitor.example.com:8443/plan` gibi host ve geçerli port içeren mutlak bir
 HTTP(S) URL olmalıdır. Şemasız değerler reddedilir. Kanıtta scheme, host ve varsa port korunur; IPv6 köşeli
@@ -363,7 +363,7 @@ nedenini korur.
 `defaulted_fields`, operatörün açıkça yazdığı değerler yerine şema varsayılanlarından gelen kayıt alanlarını listeler.
 Kütüphane kullanıcıları, yapılandırmayı yeniden kurarken bu ayrımı korumak için `model_dump(exclude_unset=True)`
 kullanmalıdır; tam döküm varsayılanları açık girdiye dönüştürür. Yalnızca planı etkinleştirmek, 24 saatlik kontrol
-aralığı veya drift uyarısı politikası beyan etmez. Örneğin `monitoring: {enabled: true}`, `compliance_report.json`
+aralığı veya drift alarmı politikası beyan etmez. Örneğin `monitoring: {enabled: true}`, `compliance_report.json`
 içinde şu kaydı üretir:
 
 ```json

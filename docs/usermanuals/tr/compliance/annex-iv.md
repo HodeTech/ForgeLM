@@ -79,12 +79,12 @@ Doğrulayıcı dokuz ForgeLM metadata anahtarı gerektirir; bunlar dokuz eksiksi
 | `system_identification` | §1 — `provider_name`, `system_name`, `intended_purpose` (her biri boş-olmama koşuluyla doğrulanır), ayrıca `provider_contact`, `system_version`, `risk_classification`. |
 | `intended_purpose` | §1 — amaçlanan kullanım beyanı. |
 | `system_components` | §2 — yazılım / donanım bileşenleri + tedarikçi listesi. |
-| `computational_resources` | Annex IV point 2(c) — eğitim sırasında kullanılan hesaplama kaynakları. |
+| `computational_resources` | Annex IV §2(c) — eğitim sırasında kullanılan hesaplama kaynakları. |
 | `data_governance` | §2(d) — veri kaynakları, yönetişim, doğrulama metodolojisi. |
-| `technical_documentation` | §3-5 — tasarım + geliştirme metodolojisi. |
-| `monitoring_and_logging` | Annex IV madde 9 (Madde 72(3)) — Beyan edilen harici izleme planı (`declarative_only: true`) veya audit log referansı; çalışan izleme kanıtı değildir. |
-| `performance_metrics` | Annex IV points 2(g) / 4 — doğruluk / dayanıklılık / siber güvenlik metrikleri. |
-| `risk_management` | Annex IV point 5 — risk yönetim sistemi referansı (Madde 9 hizalaması). |
+| `technical_documentation` | §1(c) / §3 — yazılım sürümü ve bilinen sınırlamalar (`forgelm_version`, `known_limitations`). |
+| `monitoring_and_logging` | Annex IV §9 (Madde 72(3)) — Beyan edilen harici izleme planı (`declarative_only: true`) veya audit log referansı; çalışan izleme kanıtı değildir. |
+| `performance_metrics` | Annex IV §2(g) / §4 — doğruluk / dayanıklılık / siber güvenlik metrikleri. |
+| `risk_management` | Annex IV §5 — risk yönetim sistemi referansı (Madde 9 hizalaması). |
 
 Bu tablo kısmi metadata eşlemelerini gösterir; tam bir Annex IV belgesi değildir. Diğer eski bölüm etiketlerinin
 düzeltilmesi [#539](https://github.com/HodeTech/ForgeLM/issues/539), doğrulayıcının tamlık iddiaları
@@ -184,7 +184,7 @@ $ forgelm verify-annex-iv checkpoints/pipeline_run --pipeline --output-format js
 :::
 
 :::warn
-**Pakette bir uygunluk beyanı beklemek.** ForgeLM böyle bir belge üretmez — bu artefaktta §7, uygunluk beyanı değil `performance_metrics`'tir (doğruluk / dayanıklılık). Madde 16 uygunluğu deployer'ın imzaladığı teslim edilebilirdir ve `verify-annex-iv` ne raporlarsa raporlasın toolkit dışında yazılıp imzalanmalıdır.
+**Pakette bir uygunluk beyanı beklemek.** ForgeLM böyle bir belge üretmez: dokuz anahtarın hiçbiri Annex IV §8'in istediği AB uygunluk beyanı kopyasını taşımaz; `performance_metrics` §2(g) / §4 metriklerini taşır. Beyan (Madde 47) sağlayıcının imzaladığı teslim edilebilirdir ve `verify-annex-iv` ne raporlarsa raporlasın toolkit dışında hazırlanıp imzalanmalıdır.
 :::
 
 :::warn

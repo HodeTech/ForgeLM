@@ -34,7 +34,7 @@ contribution → deployer-side action.
 | A.5.5 Contact with authorities | YES | EU AI Act Art. 73 serious-incident reporting | Maintain regulator contact list |
 | A.5.6 Contact with special interest groups | YES | ML safety / red-team community | Subscribe to relevant threat intel |
 | A.5.7 Threat intelligence | YES | ML supply-chain CVE feeds, model-poisoning advisories | Subscribe to relevant feeds |
-| A.5.8 Information security in project management | YES | `risk_assessment` config + F-compliance-110 strict gate; Annex IV point 5 metadata | Embed in project sign-off |
+| A.5.8 Information security in project management | YES | `risk_assessment` config + F-compliance-110 strict gate; Annex IV §5 metadata | Embed in project sign-off |
 | A.5.9 Inventory of information and other associated assets | YES | `data_provenance.json`, `model_integrity.json`, SBOM | Maintain corporate asset register |
 | A.5.10 Acceptable use of information | YES | Standard corporate AUP | Adopt |
 | A.5.11 Return of assets | YES | Decommissioning of deployed models / training hosts | Adopt |

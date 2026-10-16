@@ -35,7 +35,7 @@ operatör-tarafı eylem.
 | A.5.5 Yetkililerle iletişim | YES | EU AI Act Md. 73 ciddi-olay raporlama | Düzenleyici contact listesi tut |
 | A.5.6 Özel ilgi gruplarıyla iletişim | YES | ML safety / red-team topluluğu | İlgili threat intel'e abone ol |
 | A.5.7 Tehdit istihbaratı | YES | ML supply-chain CVE feed'leri, model-poisoning advisory'leri | İlgili feed'lere abone ol |
-| A.5.8 Proje yönetiminde bilgi güvenliği | YES | `risk_assessment` config + F-compliance-110 strict gate; Annex IV point 5 metadata | Proje sign-off'unda göm |
+| A.5.8 Proje yönetiminde bilgi güvenliği | YES | `risk_assessment` config + F-compliance-110 strict gate; Annex IV §5 metadata | Proje sign-off'unda göm |
 | A.5.9 Bilgi ve diğer ilişkili varlıkların envanteri | YES | `data_provenance.json`, `model_integrity.json`, SBOM | Kurumsal asset register tut |
 | A.5.10 Bilginin kabul edilebilir kullanımı | YES | Standart kurumsal AUP | Benimse |
 | A.5.11 Varlıkların iadesi | YES | Dağıtılan modellerin / eğitim host'larının decommissioning'i | Benimse |

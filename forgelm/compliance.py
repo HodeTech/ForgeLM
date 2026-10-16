@@ -1873,17 +1873,17 @@ def build_annex_iv_artifact(manifest: Dict[str, Any]) -> Optional[Dict[str, Any]
         ),
         # Annex IV §2(d): data sources, governance, validation methodology.
         "data_governance": manifest.get("data_provenance", {}),
-        # Annex IV §3-5: design + development methodology.
+        # Annex IV §1(c) / §3: the software version and the known limitations.
         "technical_documentation": {
             "forgelm_version": manifest.get("forgelm_version", ""),
             "generated_at": manifest.get("generated_at", ""),
             "known_limitations": operator_block.get("known_limitations", ""),
         },
-        # Annex IV point 9 (Art. 72(3)): external plan metadata, not the full plan.
+        # Annex IV §9 (Art. 72(3)): external plan metadata, not the full plan.
         "monitoring_and_logging": (manifest.get("monitoring") or {"audit_log": "audit_log.jsonl"}),
-        # Annex IV §7: accuracy / robustness metrics.
+        # Annex IV §2(g) / §4: accuracy / robustness metrics.
         "performance_metrics": manifest.get("evaluation_results", {}).get("metrics", {}),
-        # Annex IV point 5: risk management system reference.
+        # Annex IV §5: risk management system reference.
         "risk_management": manifest.get("risk_assessment")
         or {
             "art9_reference": "no risk_assessment block configured",
