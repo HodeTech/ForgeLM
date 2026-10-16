@@ -239,7 +239,6 @@ code:not(pre code) {
   border-radius: 4px;
   color: var(--ember-bright);
   font-size: 0.85em;
-  overflow-wrap: anywhere; /* a long path or event name must not widen the page on a phone */
 }
 
 kbd {
@@ -674,9 +673,15 @@ section { padding: 5rem 0; }
   max-width: 100%;
 }
 /* A long translated label ("Voir la matrice complète des fonctionnalités")
-   wraps on a phone instead of widening the page. */
+   wraps on a phone instead of widening the page, and a long path or event
+   name in code may break anywhere, so the column holding it can shrink to the
+   screen. Wider screens keep code whole: "、/system" has no break before the
+   slash, so breaking there would split the command. */
 @media (max-width: 560px) {
   .btn { white-space: normal; text-align: center; }
+  code:not(pre code),
+  .article-card .article-evidence,
+  .wizard-spotlight-stage-snippet { overflow-wrap: anywhere; }
 }
 
 .btn-primary {
@@ -1421,6 +1426,8 @@ section { padding: 5rem 0; }
 }
 .code-block-header {
   display: flex;
+  flex-wrap: wrap; /* a long translated copy label drops below the language tag on a phone */
+  row-gap: 0.4rem;
   align-items: center;
   justify-content: space-between;
   padding: 0.55rem 1rem;
@@ -1538,7 +1545,6 @@ section { padding: 5rem 0; }
   font-family: var(--font-mono);
   font-size: 0.74rem;
   color: var(--text-muted);
-  overflow-wrap: anywhere;
 }
 .article-card .article-evidence b {
   color: var(--ember-bright);
@@ -1598,6 +1604,8 @@ section { padding: 5rem 0; }
 .step-content h3 { font-size: 1.1rem; margin-bottom: 0.4rem; }
 .step-content p { font-size: 0.95rem; margin-bottom: 0.8rem; }
 .step-content .code-block { margin: 0.6rem 0 0; }
+/* A phone gives a step's terminal block the card's padding back. */
+@media (max-width: 560px) { .step-content { padding: 1.2rem 1rem; } }
 
 /* ── CTA ─────────────────────────────────────────────────── */
 .cta {
@@ -1817,7 +1825,6 @@ section { padding: 5rem 0; }
   font-size: 0.74rem;
   color: var(--text-muted);
   margin-top: 0.15rem;
-  overflow-wrap: anywhere;
 }
 .wizard-spotlight-arrow {
   margin: -0.4rem 0;
@@ -2402,7 +2409,8 @@ section { padding: 5rem 0; }
 [data-theme="light"] .wizard-input:not(.is-invalid):focus,
 [data-theme="light"] .wizard-select:focus { border-color: var(--ember-deep); }
 [data-theme="light"] .wizard-input.is-invalid:focus,
-[data-theme="light"] .wizard-slider:focus-visible { outline-color: var(--ember-deep); }
+[data-theme="light"] .wizard-slider:focus-visible,
+[data-theme="light"] .wizard-accordion-header:focus-visible { outline-color: var(--ember-deep); }
 [data-theme="light"] .wizard-error { color: #b91c1c; } /* red-700 */
 
 /* Slider row (LoRA r / alpha, etc.). The numeric output sits to the

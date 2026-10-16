@@ -94,7 +94,9 @@ All notable changes to ForgeLM are documented here.
   check it fails now (`abc` reads "format", not "required"). All 19 validated fields share this
   behaviour (#952).
 - Show the code in the browser wizard's GRPO reward-model tip as code; its `<code>` tags appeared as
-  text in every language.
+  text in every language. The same happened on the home, features, quickstart and compliance pages,
+  whose strings with `<code>` or `&amp;` were set as plain text; they now render as markup, and a test
+  keeps markup out of the strings a page shows as plain text.
 - Stop `quickstart.html` from scrolling sideways on phones and tablets. A step's grid column could
   not shrink below its longest terminal line, so from 320 to 768 px wide the page laid out about
   990 px wide, with the menu button off screen; on desktop one step card overflowed its container.
@@ -103,13 +105,17 @@ All notable changes to ForgeLM are documented here.
 - Stop the site from laying out wider than a phone. `compliance.html`'s article cards grew to their
   longest file path and long inline code could not break; on the German, French and Spanish home
   pages a button label and the pipeline stages, and on the German privacy and terms pages the title,
-  did the same, and the quickstart spotlight cut off its German and Turkish text. Columns now shrink
-  (`minmax(0, 1fr)`), inline code and headings wrap long words, and buttons wrap their labels on
-  narrow screens; the contact grid and use-case rows get the same columns. At 320 and 375 px no page
-  is wider than the screen in any of the six site languages.
+  did the same, the quickstart spotlight cut off its German and Turkish text, and at 320 px a terminal
+  block's copy button was clipped. Columns now shrink (`minmax(0, 1fr)`), headings wrap long words,
+  and on phones inline code may break anywhere and buttons wrap their labels; wider screens keep code
+  whole. The contact grid and use-case rows get the same columns. At 320, 375, 768 and 1280 px no page
+  is wider than the screen or cuts content off in any of the six site languages; on desktop only the
+  quickstart steps, whose long lines now scroll inside their code blocks, and the compliance cards'
+  equal columns change.
 - Make the browser wizard easier to read and operate: a focused invalid field gets an outline instead
-  of keeping only its red border, the light theme's focus colour (2.3:1 on white) and error text
-  (3.8:1) give way to darker shades that pass, locked toggles keep their size beside long captions,
+  of keeping only its red border, the light theme's focus colour (2.3:1 on white) on fields, sliders
+  and section headers and its error text (3.8:1) give way to darker shades that pass, locked toggles
+  keep their size beside long captions,
   and the "required for risk tier" badge is styled as a pill.
 - Restore the monitoring-plan evidence contract: `monitoring.*` declares an external plan,
   labelled `declarative_only: true`; ForgeLM runs no exporter, drift detector, alert, or scheduler.
