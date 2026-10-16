@@ -280,7 +280,11 @@
       // decide whether to paint inline error messages — so the FIRST
       // visit to a step is clean (no errors shown), and only after
       // hitting Next on an invalid step do the errors appear.
-      attemptedSteps: []
+      attemptedSteps: [],
+      // Which accordions the operator opened. loadState only keeps the
+      // fields listed here, so without this one a reload, or a sibling
+      // tab's update, closed every accordion.
+      openAccordions: {}
     };
   }
 
@@ -313,7 +317,11 @@
   // so a refresh of the wizard pane carries the warning forward.
   function saveState(state) {
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      // ``attemptedSteps`` belongs to this tab: saving it would make two open
+      // tabs overwrite each other's in turn, and loadState drops it anyway.
+      var saved = Object.assign({}, state);
+      delete saved.attemptedSteps;
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
     } catch (e) {
       /* Private mode + quota-exceeded both land here. In-memory state
          keeps the operator going within the current modal session;
@@ -503,6 +511,22 @@
       if (errs[i].field === fieldName) return errs[i].key;
     }
     return null;
+  }
+
+  // Keep a flagged field's error row in step with its value, in place: drop
+  // it once the value validates, or name the check the value fails now (an
+  // empty model id is "required", ``abc`` is "format"). A re-render would
+  // rebuild the step under the caret and re-announce it.
+  function syncFieldError(state, stepId, field, input, row) {
+    var key = fieldHasError(state, stepId, field);
+    var error = row.querySelector('.wizard-error');
+    if (key) {
+      if (error) error.textContent = tr(key);
+      return;
+    }
+    input.classList.remove('is-invalid');
+    if (input.getAttribute('aria-invalid') === 'true') input.setAttribute('aria-invalid', 'false');
+    if (error) error.remove();
   }
 
   /* ── Use-case templates (Step 2 → preselect Step 3-5) ─── */
@@ -1096,7 +1120,8 @@
       // dialog. Controls have stable ids (controlId): focus the rebuilt one.
       // After a step change the id is gone and focus is left alone.
       var active = document.activeElement;
-      var focusedId = active && active.id && pane.contains(active) ? active.id : null;
+      var hadFocus = !!(active && pane.contains(active));
+      var focusedId = hadFocus && active.id ? active.id : null;
       // A sibling tab's update re-renders under the caret: keep its position too.
       var caret = focusedId && typeof active.selectionStart === 'number'
         ? [active.selectionStart, active.selectionEnd] : null;
@@ -1107,11 +1132,15 @@
       if (renderer) renderer(pane, state, render, persist);
       var refocus = focusedId ? document.getElementById(focusedId) : null;
       if (refocus && pane.contains(refocus)) {
-        refocus.focus();
+        // The control is where the operator left it: do not scroll to it.
+        refocus.focus({ preventScroll: true });
         if (caret && typeof refocus.setSelectionRange === 'function') {
           try { refocus.setSelectionRange(caret[0], caret[1]); } catch (e) { /* number inputs have no caret */ }
         }
       }
+      // A focused control the step no longer shows (a sibling tab turned its
+      // section off) leaves focus in the dialog, not on the page behind it.
+      if (hadFocus && !pane.contains(document.activeElement) && dialog) dialog.focus({ preventScroll: true });
 
       // Progress + counter
       var pct = Math.round(((idx + 1) / STEPS.length) * 100);
@@ -1323,9 +1352,12 @@
         var fresh = loadState();
         if (fresh) {
           // Mutate state in place so closures (persist, render) keep
-          // their reference.  Re-render with the new values.
+          // their reference.  Re-render with the new values, keeping the
+          // steps this tab flagged so their errors stay on screen.
+          var attempted = state.attemptedSteps || [];
           Object.keys(state).forEach(function (k) { delete state[k]; });
           Object.keys(fresh).forEach(function (k) { state[k] = fresh[k]; });
+          state.attemptedSteps = attempted;
           render();
         }
       } catch (err) {
@@ -1412,6 +1444,7 @@
 
     var header = el('button', {
       type: 'button',
+      id: 'wizard-accordion-' + accordionId.replace(/_/g, '-'),
       class: 'wizard-accordion-header',
       'aria-expanded': isOpen ? 'true' : 'false',
       on: {
@@ -1480,8 +1513,30 @@
   // evaluation controls (#879).
   function appendDetail(state, rowEl, detailKey) {
     if (state.detailsVisible && detailKey) {
-      rowEl.appendChild(el('p', { class: 'wizard-row-detail', text: tr(detailKey) }));
+      var text = tr(detailKey);
+      rowEl.appendChild(text.indexOf('<code>') < 0
+        ? el('p', { class: 'wizard-row-detail', text: text })
+        : el('p', { class: 'wizard-row-detail' }, codeSpans(text)));
     }
+  }
+
+  // Text whose ``<code>…</code>`` spans become code elements; everything else
+  // stays text, so the copy is never parsed as HTML.
+  function codeSpans(text) {
+    var nodes = [];
+    var rest = text;
+    while (rest) {
+      var open = rest.indexOf('<code>');
+      var close = open < 0 ? -1 : rest.indexOf('</code>', open);
+      if (close < 0) {
+        nodes.push(rest);
+        break;
+      }
+      if (open > 0) nodes.push(rest.slice(0, open));
+      nodes.push(el('code', { text: rest.slice(open + 6, close) }));
+      rest = rest.slice(close + 7);
+    }
+    return nodes;
   }
 
   // Id of the control that edits ``field``; a caption points at it with
@@ -1668,14 +1723,7 @@
       input.addEventListener('input', function () {
         state.model = input.value.trim();
         persist();
-        // A field Next flagged drops its error, in place, once the new value
-        // validates; a re-render would rebuild and re-announce the step.
-        if (modelError && !validateStep(state, 'model').some(function (e) { return e.field === 'model'; })) {
-          input.classList.remove('is-invalid');
-          input.setAttribute('aria-invalid', 'false');
-          modelError.remove();
-          modelError = null;
-        }
+        syncFieldError(state, 'model', 'model', input, modelRow);
         // Refresh the YAML preview in place — keeps focus + caret
         // position on the input.
         var yamlOutput = document.querySelector('[data-wizard-yaml-output]');
@@ -1687,7 +1735,8 @@
         el('span', { class: 'wizard-row-hint', text: tr('wizard.model.custom.hint') })
       ];
       if (modelError) rowChildren.push(modelError);
-      pane.appendChild(el('div', { class: 'wizard-row' }, rowChildren));
+      var modelRow = el('div', { class: 'wizard-row' }, rowChildren);
+      pane.appendChild(modelRow);
     }
   };
 
@@ -1736,12 +1785,7 @@
     nameInput.addEventListener('input', function () {
       state.datasetName = nameInput.value.trim();
       persist();
-      if (datasetError && !validateStep(state, 'dataset').some(function (e) { return e.field === 'datasetName'; })) {
-        nameInput.classList.remove('is-invalid');
-        nameInput.setAttribute('aria-invalid', 'false');
-        datasetError.remove();
-        datasetError = null;
-      }
+      syncFieldError(state, 'dataset', 'datasetName', nameInput, dsRow);
       var yamlOutput = document.querySelector('[data-wizard-yaml-output]');
       if (yamlOutput) yamlOutput.innerHTML = tintYaml(buildYaml(state));
     });
@@ -1751,7 +1795,8 @@
       el('span', { class: 'wizard-row-hint', text: tr('wizard.dataset.name.hint') })
     ];
     if (datasetError) dsRowChildren.push(datasetError);
-    pane.appendChild(el('div', { class: 'wizard-row' }, dsRowChildren));
+    var dsRow = el('div', { class: 'wizard-row' }, dsRowChildren);
+    pane.appendChild(dsRow);
 
     // Trainer-aware shape guidance. SFT auto-detects messages or
     // prompt+response, but preference / KTO / GRPO trainers expect
@@ -1805,14 +1850,7 @@
           state[field] = ta.value;
           persist();
           liveYaml();
-          if (errorKey) {
-            var stillErr = validateStep(state, 'dataset').some(function (e) { return e.field === field; });
-            if (!stillErr) {
-              ta.classList.remove('is-invalid');
-              var errEl = row.querySelector('.wizard-error');
-              if (errEl) errEl.remove();
-            }
-          }
+          if (errorKey) syncFieldError(state, 'dataset', field, ta, row);
         });
         appendDetail(state, row, detailKey);
         return row;
@@ -2397,14 +2435,7 @@
         state[field] = input.value;
         persist();
         liveYaml();
-        if (errorKey) {
-          var stillErr = validateStep(state, 'compliance').some(function (e) { return e.field === field; });
-          if (!stillErr) {
-            input.classList.remove('is-invalid');
-            var errEl = row.querySelector('.wizard-error');
-            if (errEl) errEl.remove();
-          }
-        }
+        if (errorKey) syncFieldError(state, 'compliance', field, input, row);
       });
       return row;
     }
@@ -2450,14 +2481,7 @@
           state[field] = ta.value;
           persist();
           liveYaml();
-          if (errorKey) {
-            var stillErr = validateStep(state, 'compliance').some(function (e) { return e.field === field; });
-            if (!stillErr) {
-              ta.classList.remove('is-invalid');
-              var errEl = row.querySelector('.wizard-error');
-              if (errEl) errEl.remove();
-            }
-          }
+          if (errorKey) syncFieldError(state, 'compliance', field, ta, row);
         });
         appendDetail(state, row, detailKey);
         return row;
@@ -2556,12 +2580,7 @@
           state.benchmarkTasks = tasksTextarea.value;
           persist();
           liveYaml();
-          var stillErr = validateStep(state, 'compliance').some(function (e) { return e.field === 'benchmarkTasks'; });
-          if (!stillErr) {
-            tasksTextarea.classList.remove('is-invalid');
-            var errEl = tasksRow.querySelector('.wizard-error');
-            if (errEl) errEl.remove();
-          }
+          syncFieldError(state, 'compliance', 'benchmarkTasks', tasksTextarea, tasksRow);
         });
         body.appendChild(tasksRow);
 
@@ -2647,12 +2666,7 @@
           state.judgeApiKeyEnv = judgeApiInput.value.trim();
           persist();
           liveYaml();
-          var stillErr = validateStep(state, 'compliance').some(function (e) { return e.field === 'judgeApiKeyEnv'; });
-          if (!stillErr) {
-            judgeApiInput.classList.remove('is-invalid');
-            var errEl = judgeApiRow.querySelector('.wizard-error');
-            if (errEl) errEl.remove();
-          }
+          syncFieldError(state, 'compliance', 'judgeApiKeyEnv', judgeApiInput, judgeApiRow);
         });
         body.appendChild(judgeApiRow);
 
@@ -2740,13 +2754,7 @@
         state.webhookUrl = urlInput.value.trim();
         persist();
         liveYaml();
-        // Drop the error visual once the field becomes non-empty.
-        var stillErr = validateStep(state, 'operations').some(function (e) { return e.field === 'webhookUrl'; });
-        if (!stillErr) {
-          urlInput.classList.remove('is-invalid');
-          var errEl = urlRow.querySelector('.wizard-error');
-          if (errEl) errEl.remove();
-        }
+        syncFieldError(state, 'operations', 'webhookUrl', urlInput, urlRow);
       });
       var urlRowChildren = [
         el('label', { for: controlId('webhookUrl'), class: 'wizard-row-label', text: tr('wizard.webhook.url.label') }),
@@ -2819,11 +2827,7 @@
           state.monitoringEndpoint = epInput.value.trim();
           persist();
           liveYaml();
-          if (!fieldHasError(state, 'operations', 'monitoringEndpoint')) {
-            epInput.classList.remove('is-invalid');
-            var error = epRow.querySelector('.wizard-error');
-            if (error) error.remove();
-          }
+          syncFieldError(state, 'operations', 'monitoringEndpoint', epInput, epRow);
         });
         body.appendChild(epRow);
 
@@ -2837,11 +2841,7 @@
           state.monitoringCheckIntervalHours = Number(intervalInput.value);
           persist();
           liveYaml();
-          if (!fieldHasError(state, 'operations', 'monitoringCheckIntervalHours')) {
-            intervalInput.classList.remove('is-invalid');
-            var error = intervalRow.querySelector('.wizard-error');
-            if (error) error.remove();
-          }
+          syncFieldError(state, 'operations', 'monitoringCheckIntervalHours', intervalInput, intervalRow);
         });
         var intervalRow = el('div', { class: 'wizard-row' }, [
           el('label', { for: controlId('monitoringCheckIntervalHours'), class: 'wizard-row-label', text: tr('wizard.monitoring.interval.label') }),
@@ -2937,12 +2937,7 @@
             state[field] = inp.value.trim();
             persist();
             liveYaml();
-            var stillErr = validateStep(state, 'operations').some(function (e) { return e.field === field; });
-            if (!stillErr) {
-              inp.classList.remove('is-invalid');
-              var errEl = row.querySelector('.wizard-error');
-              if (errEl) errEl.remove();
-            }
+            syncFieldError(state, 'operations', field, inp, row);
           });
           return row;
         }

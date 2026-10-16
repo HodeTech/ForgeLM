@@ -6,6 +6,12 @@
 // It runs the shipped site/js/wizard.js in a VM against a minimal DOM shim
 // and exposes the wizard's closure functions through a test-only seam, so the
 // tests exercise the real renderers and YAML builder rather than a copy.
+//
+// The shim is not a browser. It has no CSS, so nothing is hidden or laid out;
+// an element keeps one handler per event type, called without an Event; text
+// nodes are `{ text }` objects without attributes; `querySelector` takes class
+// selectors only; and `bootWizard` replaces `setTimeout` with a no-op. Focus,
+// layout and real events are checked in a browser (docs/standards/testing.md).
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -71,12 +77,23 @@ function runWizard(context) {
   return { ...context.window.testWizard, translations: context.window.ForgeLMTranslations };
 }
 
-function loadWizard() {
+// Without a *locale* every string renders as its i18n key, which the tests
+// assert on; with one, the wizard renders that locale's real copy.
+function loadWizard(locale) {
   const document = {
     readyState: 'loading', addEventListener() {}, querySelector() { return null; }, createElement: element,
     createElementNS: (_, tag) => element(tag), createTextNode: text => ({ text })
   };
-  return runWizard(vm.createContext({ window: {}, document, URL }));
+  const window = {};
+  if (locale) {
+    window.ForgeLMShared = {
+      tr: key => {
+        const table = window.ForgeLMTranslations[locale];
+        return Object.hasOwn(table, key) ? table[key] : key;
+      }
+    };
+  }
+  return runWizard(vm.createContext({ window, document, URL }));
 }
 
 // The controller: the real initWizard() against the modal skeleton it looks up, with
@@ -175,9 +192,10 @@ function renderStep(wizard, value, stepId) {
 
 const RISK_TIERS = ['unknown', 'minimal-risk', 'limited-risk', 'high-risk', 'unacceptable'];
 
-// State overrides that jointly take every conditional branch of every
+// State overrides that jointly take the conditional branches of every
 // renderer: optional gates on and off, both detail modes, the custom-model
-// and GaLore paths, and all six trainers.
+// and GaLore paths, all six trainers, and every option card of the
+// experience, use-case, dataset-kind and LoRA-method choices.
 function scenarios() {
   const out = [];
   for (const riskClassification of RISK_TIERS) {
@@ -192,6 +210,12 @@ function scenarios() {
     }
   }
   for (const trainerType of ['sft', 'dpo', 'orpo', 'simpo', 'kto', 'grpo']) out.push({ trainerType });
+  for (const experience of ['beginner', 'expert']) out.push({ experience });
+  for (const useCase of ['customer-support', 'code-assistant', 'domain-expert', 'grpo-math', 'medical-qa-tr', 'custom']) {
+    out.push({ useCase });
+  }
+  for (const datasetKind of ['huggingface', 'local-jsonl', 'local-pdf']) out.push({ datasetKind, detailsVisible: true });
+  for (const loraMethod of ['lora', 'dora', 'pissa', 'rslora']) out.push({ loraMethod, galoreEnabled: false });
   // After a failed Next: every validated field is invalid, so the error rows render too.
   for (const riskClassification of ['limited-risk', 'high-risk']) {
     out.push({

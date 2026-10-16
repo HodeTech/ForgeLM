@@ -164,4 +164,33 @@ test('toggles that reveal fields show and hide them at once', () => {
   flip(training, 'wizard-field-galore-enabled');
   assert.ok(has(training, 'wizard-field-galore-optim') && !has(training, 'wizard-field-lora-r'),
     'GaLore replaces the LoRA rank with its optimiser choice');
+
+  // Each optional gate shows its own fields while it is on, and only then.
+  const gates = [
+    ['compliance', 'benchmarkEnabled', ['wizard-field-benchmark-tasks', 'wizard-field-benchmark-min-score']],
+    ['compliance', 'judgeEnabled', ['wizard-field-judge-model', 'wizard-field-judge-api-key-env', 'wizard-field-judge-min-score']],
+    ['operations', 'webhookEnabled', ['wizard-field-webhook-url']],
+    ['operations', 'monitoringEnabled', ['wizard-field-monitoring-endpoint', 'wizard-field-monitoring-check-interval-hours']],
+    ['operations', 'syntheticEnabled',
+      ['wizard-field-synthetic-teacher-model', 'wizard-field-synthetic-seed-file', 'wizard-field-synthetic-api-key-env']]
+  ];
+  for (const [step, field, ids] of gates) {
+    const toggle = 'wizard-field-' + field.replace(/[A-Z]/g, c => '-' + c.toLowerCase());
+    const pane = renderStep(wizard, state(wizard, { [field]: false }), step);
+    assert.deepEqual(ids.filter(id => has(pane, id)), [], `${field} off`);
+    flip(pane, toggle);
+    assert.deepEqual(ids.filter(id => !has(pane, id)), [], `${field} on shows its fields`);
+    flip(pane, toggle);
+    assert.deepEqual(ids.filter(id => has(pane, id)), [], `${field} off again hides them`);
+  }
+});
+
+test('a detail line names code as code, never as literal tags', () => {
+  const wizard = loadWizard('en');
+  const pane = renderStep(wizard, state(wizard, { trainerType: 'grpo', detailsVisible: true }), 'training');
+  const details = descendants(pane).filter(node => hasClass(node, 'wizard-row-detail'));
+  assert.ok(details.length > 0);
+  assert.deepEqual(details.filter(node => textOf(node).includes('<code>')), [], 'no tag shows as text');
+  const codes = details.flatMap(node => descendants(node).filter(child => child.tag === 'code')).map(textOf);
+  assert.deepEqual(codes.sort(), ['combined_format_length_reward', 'gold_answer']);
 });

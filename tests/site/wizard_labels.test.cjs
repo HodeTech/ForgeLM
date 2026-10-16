@@ -114,7 +114,8 @@ function auditPane(pane, where) {
   for (const label of labels) {
     const target = label.getAttribute('for');
     if (target === null) {
-      assert.ok(descendants(label).some(node => node.tag === 'input'), `${where}: a label without for must wrap a control`);
+      assert.ok(descendants(label).some(node => ['input', 'select', 'textarea'].includes(node.tag)),
+        `${where}: a label without for must wrap a control`);
     } else {
       assert.ok(byId.has(target) && ['input', 'select', 'textarea'].includes(byId.get(target).tag),
         `${where}: label for=${target} points at no control`);
@@ -142,6 +143,14 @@ test('every caption names its control on every step and conditional branch', () 
   }
   assert.deepEqual(Object.keys(CAPTIONS).filter(field => !covered.has(field)), [],
     'the scenarios must render every captioned control at least once');
+});
+
+test('every caption key is translated in the maintained locales', () => {
+  const { translations } = loadWizard();
+  for (const locale of ['en', 'tr']) {
+    const missing = Object.values(CAPTIONS).filter(key => typeof translations[locale][key] !== 'string');
+    assert.deepEqual(missing, [], `${locale}: captions with no translation render as their key`);
+  }
 });
 
 test('the LoRA method caption names its group of method buttons', () => {
