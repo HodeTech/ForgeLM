@@ -15,13 +15,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Iterator, List, Optional, Tuple, Union
+from typing import Any, Iterator, List, Optional, Tuple, TypeVar, Union
 
 _ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}(?:\[[^\]\n]{0,64}\])?\+?=")
 _OPERATORS = ("&&", "||", ";;&", ";;", ";&", "|&", ";", "|", "&", "(", ")")
 _CASE_TERMINATORS = (";;", ";&", ";;&")
 _REDIRECTIONS = ("&>>", "&>", "<<<", "<<-", "<<", ">>", ">|", "<>", ">&", "<&", "<", ">")
 _METACHARACTERS = frozenset(" \t\n;&|()<>")
+_FD_VARIABLE_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]{0,63}\}")  # bash's `{fd}>file` allocates a descriptor
 
 
 class ShellParseError(Exception):
@@ -215,7 +216,7 @@ class Lexer:
                 end = self.src.find("'", self.i + 1)
                 self.i = len(self.src) if end < 0 else end + 1
             elif char in "$`":
-                self._expansion(scratch, subs)
+                self._expansion(scratch, subs, ansi_c=quoted)
             else:
                 if char == "\n":
                     self.line += 1
@@ -284,14 +285,15 @@ class Lexer:
                     text.append(src[self.i + 1])
                 self.i += 2
             elif char == "$" or char == "`":
-                self._expansion(text, subs)
+                self._expansion(text, subs, ansi_c=False)
             else:
                 if char == "\n":
                     self.line += 1
                 text.append(char)
                 self.i += 1
 
-    def _expansion(self, text: List[str], subs: List["Script"]) -> None:
+    def _expansion(self, text: List[str], subs: List["Script"], ansi_c: bool = True) -> None:
+        """Consume one ``$…`` or backquote expansion; *ansi_c* is false where ``$'`` is not a quote (in ``"…"``)."""
         src, start = self.src, self.i
         if src.startswith("$((", start) and self._arithmetic(start + 1):
             line = self.line
@@ -302,8 +304,8 @@ class Lexer:
             subs.append(self._substitution(start + 2))
             text.append(src[start : self.i])
         elif src.startswith("${", start):
-            self._parameter(text, subs)
-        elif src.startswith("$'", start):
+            self._parameter(text, subs, ansi_c)
+        elif ansi_c and src.startswith("$'", start):
             end = start + 2
             while end < len(src) and src[end] != "'":
                 end += 2 if src[end] == "\\" else 1
@@ -326,7 +328,7 @@ class Lexer:
             text.append("$")
             self.i += 1
 
-    def _parameter(self, text: List[str], subs: List["Script"]) -> None:
+    def _parameter(self, text: List[str], subs: List["Script"], ansi_c: bool = True) -> None:
         """Consume ``${...}``, parsing any command substitution inside it (``${X:-$(cmd)}``)."""
         src, start, line = self.src, self.i, self.line
         self.i += 2
@@ -348,7 +350,7 @@ class Lexer:
                 depth += 1
                 self.i += 2
             elif char in "$`":
-                self._expansion(scratch, subs)
+                self._expansion(scratch, subs, ansi_c)
             elif char == "}":
                 depth -= 1
                 self.i += 1
@@ -412,11 +414,16 @@ class Simple:
     line: int
 
 
+# A compound command keeps the redirections written after it (`done < <(cmd)`),
+# because their targets can hold command substitutions that run.
+
+
 @dataclass
 class Group:
     body: "Script"
     subshell: bool
     line: int
+    redirects: List[Redirect] = field(default_factory=list)
 
 
 @dataclass
@@ -424,6 +431,7 @@ class If:
     conditions: List["Script"]
     bodies: List["Script"]
     line: int
+    redirects: List[Redirect] = field(default_factory=list)
 
 
 @dataclass
@@ -434,6 +442,8 @@ class Loop:
     words: List[Word]
     line: int
     header: Optional[Word] = None  # a C-style `for ((…))` header
+    variable: Optional[Word] = None  # the NAME of `for NAME in …`
+    redirects: List[Redirect] = field(default_factory=list)
 
 
 @dataclass
@@ -441,6 +451,8 @@ class Case:
     subject: Word
     bodies: List["Script"]
     line: int
+    patterns: List[Word] = field(default_factory=list)  # expanded while matching, so they may run substitutions
+    redirects: List[Redirect] = field(default_factory=list)
 
 
 @dataclass
@@ -454,9 +466,11 @@ class Function:
 class Expression:  # [[ ... ]] and (( ... )): expressions, never commands, whose words may hold substitutions
     line: int
     words: List[Word] = field(default_factory=list)
+    redirects: List[Redirect] = field(default_factory=list)
 
 
 Command = Union[Simple, Group, If, Loop, Case, Function, Expression]
+_Compound = TypeVar("_Compound", Group, If, Loop, Case, Expression)
 
 
 @dataclass
@@ -604,7 +618,7 @@ class Parser:
                     words.append(self.tokens[self.k - 1].word)  # type: ignore[arg-type]
                 if self._peek().kind == "eof":
                     raise ShellParseError("unterminated [[", token.line)
-            return Expression(token.line, words)
+            return self._redirected(Expression(token.line, words))
         if self._is_reserved(token, "function"):
             self.k += 1
             name = self._next()
@@ -621,21 +635,23 @@ class Parser:
         return self._simple()
 
     def _fd_prefix(self) -> Optional[str]:
-        """The file descriptor of a ``2>&1``-style redirection starting here, if any."""
+        """The descriptor of a ``2>&1`` or ``{fd}>file`` redirection starting here, if any."""
         token, following = self._peek(), self._peek(1)
-        if token.kind == "word" and token.word is not None and token.word.raw.isdigit():
-            if following.kind == "redir" and following.start == token.end:
+        if token.kind == "word" and token.word is not None:
+            descriptor = token.word.raw.isdigit() or _FD_VARIABLE_RE.fullmatch(token.word.raw)
+            if descriptor and following.kind == "redir" and following.start == token.end:
                 return token.word.raw
         return None
 
-    def _redirected(self, command: Command) -> Command:
+    def _redirected(self, command: _Compound) -> _Compound:
+        """Attach the redirections that follow a compound command to it."""
         while True:
             fd = self._fd_prefix()
             if fd is not None:
                 self.k += 1
-                self._redirect(fd)
+                command.redirects.append(self._redirect(fd))
             elif self._peek().kind == "redir":
-                self._redirect(None)
+                command.redirects.append(self._redirect(None))
             else:
                 return command
 
@@ -710,7 +726,8 @@ class Parser:
         body = self._script(("done",), ())
         self._expect_reserved("done")
         arithmetic = header.word if keyword.value == "for" and header.value.startswith("((") else None
-        return self._redirected(Loop(keyword.value, condition, body, words, keyword.line, arithmetic))
+        variable = header.word if keyword.value == "for" and arithmetic is None else None
+        return self._redirected(Loop(keyword.value, condition, body, words, keyword.line, arithmetic, variable))
 
     def _case(self) -> Case:
         line = self._next().line
@@ -720,16 +737,19 @@ class Parser:
         self._skip_newlines()
         self._expect_reserved("in")
         bodies: List[Script] = []
+        patterns: List[Word] = []
         while True:
             self._skip_newlines()
             if self._is_reserved(self._peek(), "esac"):
                 self.k += 1
-                return self._redirected(Case(subject.word, bodies, line))
+                return self._redirected(Case(subject.word, bodies, line, patterns))
             if self._is_op(self._peek(), "("):
                 self.k += 1
             while True:
-                if self._next().kind != "word":
+                pattern = self._next()
+                if pattern.kind != "word" or pattern.word is None:
                     raise ShellParseError("case pattern expected", line)
+                patterns.append(pattern.word)
                 if not self._is_op(self._peek(), "|"):
                     break
                 self.k += 1
@@ -768,13 +788,15 @@ def children(node: Any) -> Iterator[Any]:
 
 
 def own_words(node: Any) -> List[Word]:
-    """The words *node* itself holds (not those of the commands nested in it)."""
+    """The words *node* itself holds (not those of the commands nested in it), redirection targets included."""
+    targets = [redirect.target for redirect in getattr(node, "redirects", [])]
     if isinstance(node, Simple):
-        return node.assignments + node.words + [redirect.target for redirect in node.redirects]
+        return node.assignments + node.words + targets
     if isinstance(node, Loop):
-        return node.words + ([node.header] if node.header is not None else [])
+        header = [word for word in (node.variable, node.header) if word is not None]
+        return header + node.words + targets
     if isinstance(node, Case):
-        return [node.subject]
+        return [node.subject] + node.patterns + targets
     if isinstance(node, Expression):
-        return node.words
-    return []
+        return node.words + targets
+    return targets

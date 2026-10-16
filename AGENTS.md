@@ -348,20 +348,25 @@ Default workflow for a non-trivial change:
    in-repo `blob/main/<path>` URL is checked by stripping the prefix, so
    converting a link to absolute form cannot trade a PyPI 404 for a
    universal one.
-   The CI failure-masking guard closes the gap the gauntlet's own `|| true`
-   check left open. That check read only these three blocks, and only for
-   the literal `|| true`, so appending `|| true` to `ci.yml`'s `node --test`
-   step left every wiring test green — as did `|| :`, `|| exit 0`, `| tee`
-   without `pipefail`, `set +e`, a step-level `continue-on-error`, or
+   The CI failure-masking guard (`check_ci_failure_masking.py --strict`)
+   closes the gap the gauntlet's own `|| true` check left open. That check,
+   `test_no_gauntlet_short_circuits_on_failure` in
+   `tests/test_guard_wiring.py`, read only the three gauntlet blocks (in
+   CLAUDE.md, AGENTS.md and CONTRIBUTING.md), and only for the literal
+   `|| true`, so appending `|| true` to `ci.yml`'s `node --test` step left
+   every wiring test green — as did `|| :`, `|| exit 0`, `| tee` without
+   `pipefail`, `set +e`, a step-level `continue-on-error`, or
    `cmd && echo ok` followed by another line (bash's errexit ignores a
    failure inside an `&&` / `||` list). The guard parses every workflow
-   `run:` block and this block with a small POSIX-shell lexer, so comments,
-   quoted prose and `python -c` programs are never read as commands, and
-   checks that a failing required command — `pytest`, `node --test`,
-   `ruff`, `mypy`, the `forgelm` CLI or a `tools/` guard — still fails its
-   step. It accepts only shapes it can prove, so keep required commands
-   plain. The bandit / pip-audit `|| true` exception holds only when the
-   very next command is the severity helper reading the same report.
+   `run:` block and this block with a small POSIX-shell parser
+   (`tools/_shell_syntax.py`), so comments, quoted prose and `python -c`
+   programs are never read as commands, and checks that a failing required
+   command — `pytest`, `node --test`, `ruff`, `mypy`, the `forgelm` CLI or a
+   `tools/` guard — still fails its step. It accepts only shapes it can
+   prove, so keep required commands plain. It catches accidental masking,
+   not deliberate evasion; `docs/standards/testing.md` lists what is beyond
+   it. The bandit / pip-audit `|| true` exception holds only when the very
+   next command is the severity helper reading the same report.
 
 ## Branches, issues and the project board
 

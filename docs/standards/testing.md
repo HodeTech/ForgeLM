@@ -251,11 +251,26 @@ In this shape, `|| true` only captures the scanner's exit code so the helper can
 1. The `|| true` is on the immediately preceding scanner line (not on a `pytest`, `ruff`, or test command).
 2. The next line in the same `run:` block runs that scanner's own severity helper — `tools/check_bandit.py` for `bandit`, `tools/check_pip_audit.py` for `pip-audit` — which exits non-zero on the severities it gates. A new scanner needs its own helper and an entry in the guard's `_SCANNER_HELPERS` table.
 3. Both lines live in the same step (so the helper truly gates the scanner output).
-4. The helper reads the report that scanner wrote — its `-o` / `--output` path or `>` target.
+4. The helper is given the report that scanner wrote — its `-o` / `--output` path or `>` target — as one of its arguments.
 
 The two helpers are [`tools/check_pip_audit.py`](../../tools/check_pip_audit.py) (CVE severity tier) and [`tools/check_bandit.py`](../../tools/check_bandit.py) (issue-severity tier). Any other `|| true` in CI must be replaced with `continue-on-error: true` at the YAML step level, and that step must explicitly document the rationale in a YAML `# comment:`. Never use it on a step that runs a required command: `pytest`, `node --test`, `ruff`, `mypy`, the `forgelm` CLI or a `tools/` guard.
 
-[`tools/check_ci_failure_masking.py`](../../tools/check_ci_failure_masking.py) enforces the exception's conditions on every workflow `run:` block, on the shell scripts those blocks run or source from the repository, and on the documented gauntlets, and treats `|| :` and `|| exit 0` like `|| true`, inside command substitutions and trap actions too. It also rejects the common ways a required command's failure is lost: an `||` fallback that can exit 0, a pipe without `pipefail`, `set +e`, `!`, `&`, a command substitution, a conditional branch, `continue-on-error`, a shell other than bash, sh or dash, a failure errexit ignores — inside an `&&` / `||` list or a `{ … }` group — when later commands follow, an EXIT/ERR trap that can exit 0, and a function, alias or `hash -p` that takes over a required command. It accepts only shapes it can prove, so keep required commands plain: re-raising a status captured with `set +e`, `|| rc=$?` or `${PIPESTATUS[0]}` later in the step is rejected too. A fallback that must report before failing ends with `exit 1`, or captures the status first: `|| { rc=$?; echo …; exit "$rc"; }`. A bare `exit $?` after `echo` exits with `echo`'s status, in a fallback or in a trap. The guard reads shell text, so a program replaced on disk or put first on `PATH` is beyond it. The `# comment:` rationale that `continue-on-error` needs is a review rule; the guard does not check it.
+[`tools/check_ci_failure_masking.py`](../../tools/check_ci_failure_masking.py) enforces these rules on every workflow `run:` block and composite action, on the shell scripts they run or source from the repository, and on the documented gauntlets. Its shell parser is [`tools/_shell_syntax.py`](../../tools/_shell_syntax.py).
+
+- **Fallbacks.** `|| :` and `|| exit 0` count as `|| true`, inside command substitutions and trap actions too.
+- **Lost failures it rejects:**
+  - an `||` fallback that can exit 0, a pipe without `pipefail`, `set +e`, `!`, `&` and a command substitution;
+  - a failure errexit ignores, inside an `&&` / `||` list or a `{ … }` group, when later commands follow;
+  - a required command inside a `case`, an `if` branch, or a loop that may not run it;
+  - `continue-on-error` or `if: false` on a step or job that runs one, also through local actions, and `ruff --exit-zero`;
+  - an EXIT/ERR trap that can exit 0, and an ERR trap that turns errexit off;
+  - a function, alias or `hash -p` that takes over a required command;
+  - an earlier `exit`, `exec` or `set -n` that keeps it from running;
+  - a shell other than bash, sh or dash, and a repository script it cannot find.
+- **Forms it accepts.** It accepts only shapes it can prove, so keep required commands plain. A fallback that must report before failing ends with `exit 1`, or captures the status first: `|| { rc=$?; echo …; exit "$rc"; }`. An `if` that reports a failure ends the same way: `if ! cmd; then echo …; exit 1; fi`. Re-raising a status captured with `set +e`, `|| rc=$?` or `${PIPESTATUS[0]}` later in the step is rejected. A bare `exit $?` after `echo` exits with `echo`'s status, in a fallback or a trap, and so does a bare `exit` in an ERR trap.
+- **Scope.** It catches accidental masking, not deliberate evasion. Beyond it are a required command run under another name (`$CMD`), by another program (`make`, `tox`) or on another machine or container (`docker exec`, `ssh`); a script generated or downloaded while the step runs; a program replaced on disk or put first on `PATH`; a remote action; job-level conditions; and options other than `--exit-zero` that empty a check (`pytest --collect-only`).
+
+The `# comment:` rationale that `continue-on-error` needs is a review rule; the guard does not check it.
 
 ## Writing a new test
 
