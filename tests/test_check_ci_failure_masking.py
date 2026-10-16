@@ -637,9 +637,12 @@ class TestRealRepository:
                 root / doc, "ruff check . && pytest tests/ && \\", "ruff check . && { pytest tests/ || true; } && \\"
             )
         assert guard.main(["--root", str(root)]) == 1
-        out = capsys.readouterr().out
+        findings = capsys.readouterr().out.splitlines()
         for doc in ("CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md"):
-            assert f"{doc} gauntlet" in out and "`pytest tests/` is masked by `|| true`" in out
+            assert any(
+                f"{doc} gauntlet" in finding and "`pytest tests/` is masked by `|| true`" in finding
+                for finding in findings
+            ), f"{doc}: {findings}"
 
     def test_yaml_workflows_and_local_actions_are_scanned(self, guard, tmp_path, capsys):
         root = _copy_repo_surfaces(guard, tmp_path)
