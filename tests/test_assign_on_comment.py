@@ -25,6 +25,11 @@ REPO = "HodeTech/ForgeLM"
 GFI = ["good first issue"]
 
 
+@pytest.fixture(autouse=True)
+def _no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tool.time, "sleep", lambda seconds: None)
+
+
 class FakeGitHub:
     """A small stand-in for the REST API: one issue, the issues assigned to each login, and a call log."""
 
@@ -44,6 +49,10 @@ class FakeGitHub:
         self.fail: Dict[tuple, str] = {}  # (method, endpoint prefix) -> reason
         self.drop_assignment = False  # accept the POST but do not apply it (an assignee GitHub refuses)
         self.after_first_read: Optional[Callable[[], None]] = None
+        self.after_assign: Optional[Callable[[], None]] = None  # runs right after our POST landed
+        self.human_comments: List[str] = []  # comments by people (the bot's own are in `comments`)
+        self.assigned_pages: Optional[List[List[Dict[str, Any]]]] = None  # overrides the count answer, page by page
+        self.refuse_delete = False  # accept the DELETE but keep the assignee
         self._reads = 0
 
     def _issue(self) -> Dict[str, Any]:
@@ -66,15 +75,25 @@ class FakeGitHub:
             return answer
         if method == "GET" and "?assignee=" in endpoint:
             login = endpoint.split("assignee=")[1].split("&")[0]
+            if self.assigned_pages is not None:
+                page = int(endpoint.rsplit("page=", 1)[1])
+                return self.assigned_pages[page - 1] if page <= len(self.assigned_pages) else []
             return [{"number": 100 + i} for i in range(self.held.get(login, 0))] + [
                 {"number": 999, "pull_request": {}}  # a PR assigned to them must not count
+            ]
+        if method == "GET" and "/comments?" in endpoint:
+            return [{"user": {"type": "Bot"}, "body": b} for b in self.comments] + [
+                {"user": {"type": "User"}, "body": b} for b in self.human_comments
             ]
         if method == "POST" and endpoint.endswith("/assignees"):
             if not self.drop_assignment:
                 self.assignees += [a for a in payload["assignees"] if a not in self.assignees]
+            if self.after_assign:
+                self.after_assign()
             return self._issue()
         if method == "DELETE" and endpoint.endswith("/assignees"):
-            self.assignees = [a for a in self.assignees if a not in payload["assignees"]]
+            if not self.refuse_delete:
+                self.assignees = [a for a in self.assignees if a not in payload["assignees"]]
             return self._issue()
         if method == "POST" and endpoint.endswith("/comments"):
             self.comments.append(payload["body"])
@@ -114,9 +133,9 @@ def run(gh: FakeGitHub, body: str = "/assign", **kwargs: Any) -> int:
     [
         ("/assign", "/assign"),
         ("/ASSIGN", "/assign"),
-        ("  /assign  ", "/assign"),
+        ("  /assign  ", None),  # leading whitespace: the workflow's startsWith gate would not let it through either
         ("/assign I would like to fix this", "/assign"),
-        ("\n\n/unassign", "/unassign"),
+        ("\n\n/unassign", None),
         ("/unassign please", "/unassign"),
         ("/assigned", None),
         ("/assigning", None),
@@ -128,7 +147,7 @@ def run(gh: FakeGitHub, body: str = "/assign", **kwargs: Any) -> int:
         ("   \n  ", None),
     ],
 )
-def test_parse_command_reads_only_the_first_word_of_the_first_line(body: str, expected: Optional[str]) -> None:
+def test_parse_command_reads_only_the_first_word_at_the_very_start(body: str, expected: Optional[str]) -> None:
     assert tool.parse_command(body) == expected
 
 
@@ -370,7 +389,9 @@ def test_the_count_asks_for_open_issues_of_that_login_only() -> None:
     gh = FakeGitHub()
     run(gh, login="newcomer")
     counts = [c for c in gh.calls if "?assignee=" in c[1]]
-    assert counts == [("GET", f"repos/{REPO}/issues?assignee=newcomer&state=open&per_page=100", None)]
+    # the first count decides; the second, after the write, checks that a simultaneous claim did not break the limit
+    assert counts[0] == ("GET", f"repos/{REPO}/issues?assignee=newcomer&state=open&per_page=100&page=1", None)
+    assert all("assignee=newcomer&" in c[1] for c in counts)
 
 
 # --- races and the second read --------------------------------------------------------------------------------
@@ -631,3 +652,182 @@ def test_contributing_documents_the_commands_the_limit_and_who_can_reassign() ->
     assert "never changes an assignment" in section and "reassign" in section
     for label in (*tool.EXCLUDED_LABELS, "help wanted"):
         assert f"`{label}`" in section  # every label the tool keeps for a maintainer is named for the contributor
+
+
+# --- review round: repeats, pages, the second decision, settling after the write --------------------------------
+
+
+def test_the_maintainer_is_mentioned_once_per_issue_not_on_every_repeat() -> None:
+    gh = FakeGitHub(labels=["bug"])
+    assert run(gh) == 0
+    assert tool.MAINTAINER_MENTION in gh.comments[0]
+    assert run(gh, login="another") == 0
+    assert gh.comments[1] == tool.MSG_NOT_OPEN_AGAIN
+    assert tool.MAINTAINER_MENTION not in gh.comments[1]
+
+
+def test_a_person_cannot_silence_the_maintainer_notice_by_pasting_the_marker() -> None:
+    gh = FakeGitHub(labels=["bug"])
+    gh.human_comments = [tool.NOT_OPEN_MARKER]  # a User, not a Bot: it must not count
+    assert run(gh) == 0
+    assert tool.MAINTAINER_MENTION in gh.comments[0]
+
+
+def test_a_failing_notice_check_still_replies_and_mentions(capsys: pytest.CaptureFixture[str]) -> None:
+    gh = FakeGitHub(labels=["bug"])
+    gh.fail[("GET", f"repos/{REPO}/issues/7/comments")] = "boom"
+    assert run(gh) == 0
+    assert tool.MAINTAINER_MENTION in gh.comments[0]
+    assert "could not check for an earlier notice" in capsys.readouterr().err
+
+
+def test_the_count_follows_pages_so_pull_requests_cannot_hide_issues() -> None:
+    first_page = [{"number": n, "pull_request": {}} for n in range(100)]  # a full page with no issue on it
+    gh = FakeGitHub()
+    gh.assigned_pages = [first_page, [{"number": 500}, {"number": 501}]]
+    assert tool.count_open_assignments(gh, REPO, "newcomer") == 2
+    assert run(gh) == 0
+    assert gh.assignees == [] and "limit at a time" in gh.comments[0]
+
+
+def test_the_count_stops_as_soon_as_it_knows() -> None:
+    gh = FakeGitHub()
+    gh.assigned_pages = [[{"number": n} for n in range(100)], [{"number": 1000}]]
+    assert tool.count_open_assignments(gh, REPO, "newcomer", stop_at=2) == 100
+    assert len([c for c in gh.calls if "?assignee=" in c[1]]) == 1
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda gh: setattr(gh, "state", "closed"),
+        lambda gh: gh.labels.append("security"),
+        lambda gh: gh.labels.remove("good first issue"),
+    ],
+    ids=["closed", "became-security", "lost-the-label"],
+)
+def test_an_issue_that_stops_qualifying_between_the_two_reads_is_not_assigned(
+    change: Callable[[FakeGitHub], None],
+) -> None:
+    gh = FakeGitHub()
+    gh.after_first_read = lambda: change(gh)
+    assert run(gh) == 0
+    assert gh.assignees == [] and gh.writes() == []
+    assert "did not complete" not in gh.comments[0]
+
+
+def test_a_claim_steps_back_when_a_maintainer_was_assigned_at_the_same_moment() -> None:
+    gh = FakeGitHub()
+    gh.after_assign = lambda: gh.assignees.insert(0, "cemililik")
+    assert run(gh) == 0
+    assert gh.assignees == ["cemililik"]
+    assert gh.comments == [tool.MSG_LOST_RACE.format(front_door=tool.FRONT_DOOR_URL)]
+    assert gh.writes()[-1] == ("DELETE", f"repos/{REPO}/issues/7/assignees", {"assignees": ["newcomer"]})
+
+
+def test_a_maintainer_wins_a_simultaneous_claim_even_when_the_contributors_login_sorts_earlier() -> None:
+    gh = FakeGitHub()
+    gh.after_assign = lambda: gh.assignees.append(
+        "cemililik"
+    )  # "aaron" < "cemililik": only the maintainer rule releases
+    assert run(gh, login="aaron") == 0
+    assert gh.assignees == ["cemililik"]
+    assert gh.comments == [tool.MSG_LOST_RACE.format(front_door=tool.FRONT_DOOR_URL)]
+
+
+def test_between_two_contributors_the_earlier_login_stays_and_the_other_steps_back() -> None:
+    later = FakeGitHub()
+    later.after_assign = lambda: later.assignees.append("amy")  # the rival "amy" landed too; we are "zed"
+    assert run(later, login="zed") == 0
+    assert later.assignees == ["amy"] and later.comments == [tool.MSG_LOST_RACE.format(front_door=tool.FRONT_DOOR_URL)]
+
+    earlier = FakeGitHub()
+    earlier.after_assign = lambda: earlier.assignees.append("zed")  # we are "amy": we stay, the maintainer is told
+    assert run(earlier, login="amy") == 0
+    assert sorted(earlier.assignees) == ["amy", "zed"] and "More than one person" in earlier.comments[0]
+
+
+def test_two_racing_runs_that_both_wrote_end_with_exactly_one_assignee() -> None:
+    gh = FakeGitHub(assignees=["amy", "zed"])  # both POSTs have landed; now each run settles, in either order
+    for order in (("zed", "amy"), ("amy", "zed")):
+        gh.assignees = ["amy", "zed"]
+        for login in order:
+            ctx = tool.Context(REPO, 7, login, False, "/assign", False)
+            tool._settle_after_write(ctx, gh, tuple(gh.assignees), "assigned")
+        assert gh.assignees == ["amy"]
+
+
+def test_a_maintainers_own_claim_never_steps_back() -> None:
+    gh = FakeGitHub()
+    gh.after_assign = lambda: gh.assignees.insert(0, "aaa-contributor")
+    assert run(gh, login="cemililik") == 0
+    assert "cemililik" in gh.assignees and "More than one person" in gh.comments[0]
+    assert not [w for w in gh.writes() if w[0] == "DELETE"]
+
+
+def test_a_claim_that_pushed_its_author_over_the_limit_steps_back() -> None:
+    gh = FakeGitHub(held={"newcomer": tool.MAX_OPEN_ASSIGNMENTS - 1})
+    gh.after_assign = lambda: gh.held.__setitem__("newcomer", tool.MAX_OPEN_ASSIGNMENTS + 1)  # other claims landed too
+    assert run(gh) == 0
+    assert gh.assignees == []
+    assert gh.comments == [tool.MSG_LIMIT_RACE.format(limit=tool.MAX_OPEN_ASSIGNMENTS)]
+
+
+def test_stepping_back_that_github_does_not_confirm_is_a_reported_failure() -> None:
+    gh = FakeGitHub()
+    gh.after_assign = lambda: gh.assignees.insert(0, "cemililik")
+    gh.refuse_delete = True
+    assert run(gh) == 1
+    assert gh.comments == [tool.MSG_FAILED.format(mention=tool.MAINTAINER_MENTION)]
+
+
+def test_a_reply_is_retried_once_before_giving_up() -> None:
+    gh = FakeGitHub()
+    attempts = {"posts": 0}
+
+    def flaky(method: str, endpoint: str, payload: Any = None) -> Any:
+        if method == "POST" and endpoint.endswith("/comments"):
+            attempts["posts"] += 1
+            if attempts["posts"] == 1:
+                raise tool.GhError("transient")
+        return gh(method, endpoint, payload)
+
+    assert tool.run(event("/assign"), REPO, flaky) == 0
+    assert attempts["posts"] == 2 and len(gh.comments) == 1
+
+
+def test_a_failed_release_promises_a_release_not_an_assignment() -> None:
+    gh = FakeGitHub(assignees=["newcomer"])
+    gh.refuse_delete = True
+    assert run(gh, "/unassign") == 1
+    assert gh.comments == [tool.MSG_RELEASE_FAILED.format(mention=tool.MAINTAINER_MENTION)]
+    assert "assign this issue" not in gh.comments[0]
+
+
+@pytest.mark.parametrize(
+    "method, endpoint",
+    [
+        ("PUT", "repos/o/r/issues/1"),
+        ("GET", "-X"),
+        ("GET", "user"),
+        ("GET", "/repos/o/r"),
+        ("GET", "repos/o/r/issues/1 --hostname evil"),
+        ("POST", "repos/o/r/issues/1/comments\n--input"),
+    ],
+)
+def test_gh_api_refuses_anything_but_the_fixed_repos_endpoints(
+    monkeypatch: pytest.MonkeyPatch, method: str, endpoint: str
+) -> None:
+    monkeypatch.setattr(tool.subprocess, "run", lambda *a, **k: pytest.fail("the command must not run"))
+    with pytest.raises(tool.GhError):
+        tool.gh_api(method, endpoint)
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["/assign", "/ASSIGN", "/Unassign", "/assign please", " /assign", "\n/assign", "\t/unassign", "x /assign", ""],
+)
+def test_the_workflow_gate_lets_through_everything_the_script_accepts(body: str) -> None:
+    gate = body.lower().startswith(("/assign", "/unassign"))  # startsWith ignores case and trims nothing
+    if tool.parse_command(body) is not None:
+        assert gate

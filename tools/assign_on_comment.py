@@ -19,6 +19,13 @@ Rules (see ``CONTRIBUTING.md``, "Working on an issue"):
 Changing an assignment is a maintainer's decision, made in the issue's sidebar. This script reacts to
 comments only: it never re-reads an issue later to "correct" an assignment a maintainer made.
 
+GitHub has no "assign only if nobody is" call, so two commands that land in the same second can both pass the
+checks. After writing, the script therefore looks at what is true and steps back **only itself**: a claim is
+released when a maintainer or (between two contributors) a login that sorts earlier is also assigned, or when
+it pushed its author over the limit. Nobody else's assignment is ever removed by a command, so the invariant
+"a later ``/assign`` never changes an existing assignment" holds; the worst case left is two assignees, which
+the reply reports to a maintainer.
+
 Trust boundary. The comment is written by anyone, so the script never executes or prints it. The workflow
 passes nothing through the shell: this script reads the event file itself, every subprocess call is a list
 without a shell, and the only text written to the log is a fixed message, an issue number or a validated
@@ -39,6 +46,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence
 from urllib.parse import quote
@@ -57,11 +65,22 @@ COMMANDS = ("/assign", "/unassign")
 FRONT_DOOR_URL = "https://github.com/orgs/HodeTech/projects/5/views/16"
 _GH_TIMEOUT_SECONDS = 60
 _MAX_LOGIN_LENGTH = 39
+_PAGE_SIZE = 100
+_MAX_PAGES = 10  # bounds every paginated read; far above what a contributor with a 2-issue limit can reach
+_COMMENT_ATTEMPTS = 2
+_RETRY_DELAY_SECONDS = 2.0
+_ALLOWED_METHODS = frozenset({"GET", "POST", "DELETE"})
+# Hidden marker in the "needs a maintainer" reply. Only a comment by a bot counts, so a contributor cannot forge it.
+NOT_OPEN_MARKER = "<!-- assign-on-comment:needs-maintainer -->"
 
 MSG_CLOSED = "This issue is closed, so it cannot be assigned."
 MSG_NOT_OPEN = (
     "Only `good first issue` issues can be claimed with `/assign`; this one needs a maintainer's decision. "
-    "{mention}, could you take a look?"
+    "{mention}, could you take a look?\n\n" + NOT_OPEN_MARKER
+)
+MSG_NOT_OPEN_AGAIN = (
+    "Only `good first issue` issues can be claimed with `/assign`; this one needs a maintainer's decision, "
+    "and a maintainer has already been notified on this issue.\n\n" + NOT_OPEN_MARKER
 )
 MSG_TAKEN = (
     "This issue is already assigned to [{owner}](https://github.com/{owner}), so nothing was changed. You can "
@@ -93,6 +112,15 @@ MSG_SEVERAL_ASSIGNEES = " More than one person is assigned now ({names}). {menti
 MSG_RELEASED = "Released. Thank you for letting us know, @{login}; the issue is open for others again."
 MSG_NOT_YOURS = "This issue is not assigned to you, so there is nothing to release."
 MSG_FAILED = "Automatic assignment did not complete. {mention} will assign this issue by hand."
+MSG_RELEASE_FAILED = "Automatic release did not complete. {mention} will remove the assignment by hand."
+MSG_LOST_RACE = (
+    "Someone else was assigned to this issue at the same moment, so your claim was released and nothing else was "
+    "changed. Pick another issue from the [Front door view]({front_door}), or leave a comment here."
+)
+MSG_LIMIT_RACE = (
+    "Your claims landed at the same moment and would have gone over the limit of {limit} open assignments, so this "
+    "one was released. Try again once one of your issues is done or released."
+)
 
 
 class EventError(Exception):
@@ -134,17 +162,26 @@ class Decision:
 
     action: str
     message: str = ""
+    pings: bool = False  # the reply mentions a maintainer; the caller may soften a repeat of it
+
+
+def _first_line(body: str) -> str:
+    """The first line of the comment, exactly as written."""
+    lines = body.splitlines()
+    return lines[0] if lines else ""
 
 
 def parse_command(body: str) -> Optional[str]:
-    """Return ``/assign`` or ``/unassign`` when the first word of the comment is that command, else ``None``.
+    """Return ``/assign`` or ``/unassign`` when the comment starts with that command, else ``None``.
 
-    Only the first word of the first non-empty line counts, case-insensitively; the rest is ignored.
+    The command must be the first word at the very start of the comment, case-insensitively; the rest is ignored.
+    The workflow's ``if:`` reads it the same way (``startsWith`` ignores case, and Actions has no ``trim``), so a
+    comment the gate lets through is one this accepts, and the other way round.
     """
-    lines = body.strip().splitlines()
-    if not lines:
+    line = _first_line(body)
+    if line != line.lstrip():
         return None
-    words = lines[0].split()
+    words = line.split()
     if not words:
         return None
     word = words[0].lower()
@@ -153,8 +190,7 @@ def parse_command(body: str) -> Optional[str]:
 
 def names_someone_else(body: str) -> bool:
     """True when the command line carries an ``@name``: the commenter meant to act on somebody else."""
-    lines = body.strip().splitlines()
-    return bool(lines) and any(word.startswith("@") for word in lines[0].split()[1:])
+    return any(word.startswith("@") for word in _first_line(body).split()[1:])
 
 
 def valid_login(login: str) -> bool:
@@ -187,7 +223,7 @@ def decide(ctx: Context, issue: IssueFacts, count_open_assignments: Callable[[],
     if issue.state != "open":
         return Decision("reply", MSG_CLOSED)
     if issue.labels & EXCLUDED_LABELS or not issue.labels & ELIGIBLE_LABELS:
-        return Decision("reply", MSG_NOT_OPEN.format(mention=MAINTAINER_MENTION))
+        return Decision("reply", MSG_NOT_OPEN.format(mention=MAINTAINER_MENTION), pings=True)
     if login in issue.assignees:
         return Decision("reply", MSG_ALREADY_YOURS)
     if issue.assignees:
@@ -231,6 +267,8 @@ def context_from_event(event: Mapping[str, Any], repo: str) -> Optional[Context]
 
 def gh_api(method: str, endpoint: str, payload: Optional[Mapping[str, Any]] = None) -> Any:
     """Call the GitHub REST API through the ``gh`` CLI (authenticated by ``GH_TOKEN``); no shell is involved."""
+    if method not in _ALLOWED_METHODS or not endpoint.startswith("repos/") or any(c.isspace() for c in endpoint):
+        raise GhError("refusing an API call outside the fixed repos/ endpoints")
     command = ["gh", "api", "--method", method, endpoint]
     stdin = None
     if payload is not None:
@@ -238,7 +276,9 @@ def gh_api(method: str, endpoint: str, payload: Optional[Mapping[str, Any]] = No
         stdin = json.dumps(payload)
     label = f"{method} {endpoint.split('?')[0]}"
     try:
-        proc = subprocess.run(
+        # A list without a shell; the method and endpoint were validated above (so neither can start with "-" or
+        # carry whitespace), and the endpoint is built only from integers and a validated login.
+        proc = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
             command, input=stdin, capture_output=True, text=True, timeout=_GH_TIMEOUT_SECONDS, check=False
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -271,47 +311,120 @@ def fetch_issue(gh: GhApi, repo: str, number: int) -> IssueFacts:
         raise GhError("the issue answer lacks labels, state or assignees") from exc
 
 
-def count_open_assignments(gh: GhApi, repo: str, login: str) -> int:
-    """Open issues (not pull requests) assigned to ``login`` in this repository."""
-    raw = gh("GET", f"repos/{repo}/issues?assignee={quote(login)}&state=open&per_page=100", None)
-    if not isinstance(raw, list):
-        raise GhError("the assigned-issues answer is not a list")
-    return sum(1 for item in raw if isinstance(item, dict) and "pull_request" not in item)
+def count_open_assignments(gh: GhApi, repo: str, login: str, stop_at: Optional[int] = None) -> int:
+    """Open issues (not pull requests) assigned to ``login`` in this repository, across pages.
+
+    Pull requests share the endpoint, so a page can hold none of the issues; the count follows the pages until one
+    is short, ``stop_at`` is reached (the caller only needs to know it was), or ``_MAX_PAGES`` is hit.
+    """
+    held = 0
+    for page in range(1, _MAX_PAGES + 1):
+        raw = gh(
+            "GET", f"repos/{repo}/issues?assignee={quote(login)}&state=open&per_page={_PAGE_SIZE}&page={page}", None
+        )
+        if not isinstance(raw, list):
+            raise GhError("the assigned-issues answer is not a list")
+        held += sum(1 for item in raw if isinstance(item, dict) and "pull_request" not in item)
+        if len(raw) < _PAGE_SIZE or (stop_at is not None and held >= stop_at):
+            break
+    return held
 
 
-def _perform(ctx: Context, gh: GhApi) -> str:
-    """Read, decide, change the assignment. Returns the reply text ('' for none)."""
-    issue = fetch_issue(gh, ctx.repo, ctx.number)
+def _already_pinged(gh: GhApi, repo: str, number: int) -> bool:
+    """True when the bot has already asked a maintainer to look at this issue (so a repeat need not mention them)."""
+    try:
+        for page in range(1, 4):
+            raw = gh("GET", f"repos/{repo}/issues/{number}/comments?per_page={_PAGE_SIZE}&page={page}", None)
+            if not isinstance(raw, list):
+                return False
+            for comment in raw:
+                user = comment.get("user") if isinstance(comment, dict) else None
+                if isinstance(user, dict) and user.get("type") == "Bot" and NOT_OPEN_MARKER in str(comment.get("body")):
+                    return True
+            if len(raw) < _PAGE_SIZE:
+                break
+    except GhError as exc:  # optional: if it fails, mention the maintainer again rather than stay quiet
+        print(f"warning: issue #{number}: could not check for an earlier notice: {exc}", file=sys.stderr)
+    return False
 
-    def held() -> int:
-        return count_open_assignments(gh, ctx.repo, ctx.login)
 
-    decision = decide(ctx, issue, held)
-    if decision.action in ("ignore", "reply"):
-        return decision.message
-    if decision.action == "unassign":
-        result = gh("DELETE", f"repos/{ctx.repo}/issues/{ctx.number}/assignees", {"assignees": [ctx.login]})
-        if ctx.login in _logins(result.get("assignees") if isinstance(result, dict) else None):
-            raise GhError("GitHub still lists the commenter as assignee after the release")
-        return decision.message
-    # Assign. GitHub has no "assign only if nobody is" call, so read again right before writing: this narrows the
-    # window in which a maintainer's own assignment could be missed to the time between this read and the POST.
-    latest = fetch_issue(gh, ctx.repo, ctx.number)
-    if latest.assignees:
-        return decide(ctx, latest, held).message
-    result = gh("POST", f"repos/{ctx.repo}/issues/{ctx.number}/assignees", {"assignees": [ctx.login]})
-    assignees = _logins(result.get("assignees") if isinstance(result, dict) else None)
-    if ctx.login not in assignees:
-        raise GhError("GitHub did not confirm the assignment")
-    message = decision.message
-    if len(assignees) > 1:
+def _release_self(ctx: Context, gh: GhApi) -> None:
+    """Remove the commenter, and only the commenter, from the issue; fail loudly if GitHub still lists them."""
+    result = gh("DELETE", f"repos/{ctx.repo}/issues/{ctx.number}/assignees", {"assignees": [ctx.login]})
+    remaining = _logins(result.get("assignees") if isinstance(result, dict) else None)
+    if ctx.login.lower() in {a.lower() for a in remaining}:
+        raise GhError("GitHub still lists the commenter as assignee after the release")
+
+
+def _reply_text(decision: Decision, ctx: Context, gh: GhApi) -> str:
+    """The reply for a refusal; a repeat of the "needs a maintainer" notice no longer mentions the maintainer."""
+    if decision.pings and _already_pinged(gh, ctx.repo, ctx.number):
+        return MSG_NOT_OPEN_AGAIN
+    return decision.message
+
+
+def _settle_after_write(ctx: Context, gh: GhApi, assignees: tuple[str, ...], message: str) -> str:
+    """Look at what is true after the assignment landed and step back, if needed, only ourselves.
+
+    Two commands in the same second can both pass the earlier checks. A contributor's claim is released when a
+    maintainer is also assigned (the maintainer's decision stands), when another contributor whose login sorts
+    earlier is (a rule both racing runs apply identically, so exactly one stays), or when it pushed its author over
+    the limit. A maintainer's own claim is never released. Nobody else's assignment is touched.
+    """
+    me = ctx.login.lower()
+    others = [a for a in assignees if a.lower() != me]
+    if not ctx.is_maintainer:
+        if any(a.lower() in MAINTAINER_LOGINS or a.lower() < me for a in others):
+            _release_self(ctx, gh)
+            return MSG_LOST_RACE.format(front_door=FRONT_DOOR_URL)
+        if count_open_assignments(gh, ctx.repo, ctx.login, stop_at=MAX_OPEN_ASSIGNMENTS + 1) > MAX_OPEN_ASSIGNMENTS:
+            _release_self(ctx, gh)
+            return MSG_LIMIT_RACE.format(limit=MAX_OPEN_ASSIGNMENTS)
+    if others:
         names = ", ".join(f"@{a}" for a in assignees if valid_login(a))
         message += MSG_SEVERAL_ASSIGNEES.format(names=names, mention=MAINTAINER_MENTION)
     return message
 
 
+def _perform(ctx: Context, gh: GhApi) -> str:
+    """Read, decide, change the assignment. Returns the reply text ('' for none)."""
+    issue = fetch_issue(gh, ctx.repo, ctx.number)
+    counted: list[int] = []
+
+    def held() -> int:  # asked for at most once per run, and only if the answer depends on it
+        if not counted:
+            counted.append(count_open_assignments(gh, ctx.repo, ctx.login, stop_at=MAX_OPEN_ASSIGNMENTS))
+        return counted[0]
+
+    decision = decide(ctx, issue, held)
+    if decision.action in ("ignore", "reply"):
+        return _reply_text(decision, ctx, gh)
+    if decision.action == "unassign":
+        _release_self(ctx, gh)
+        return decision.message
+    # Assign. GitHub has no "assign only if nobody is" call, so decide again on a fresh read right before writing:
+    # the issue may have been assigned, closed or relabelled since the first read.
+    latest = decide(ctx, fetch_issue(gh, ctx.repo, ctx.number), held)
+    if latest.action != "assign":
+        return _reply_text(latest, ctx, gh)
+    result = gh("POST", f"repos/{ctx.repo}/issues/{ctx.number}/assignees", {"assignees": [ctx.login]})
+    assignees = _logins(result.get("assignees") if isinstance(result, dict) else None)
+    if ctx.login.lower() not in {a.lower() for a in assignees}:
+        raise GhError("GitHub did not confirm the assignment")
+    return _settle_after_write(ctx, gh, assignees, latest.message)
+
+
 def _comment(gh: GhApi, repo: str, number: int, body: str) -> None:
-    gh("POST", f"repos/{repo}/issues/{number}/comments", {"body": body})
+    """Post a reply; one retry, because the change it reports has already been made."""
+    for attempt in range(1, _COMMENT_ATTEMPTS + 1):
+        try:
+            gh("POST", f"repos/{repo}/issues/{number}/comments", {"body": body})
+            return
+        except GhError as exc:
+            if attempt == _COMMENT_ATTEMPTS:
+                raise
+            print(f"warning: issue #{number}: reply failed, retrying: {exc}", file=sys.stderr)
+            time.sleep(_RETRY_DELAY_SECONDS)
 
 
 def run(event: Mapping[str, Any], repo: str, gh: GhApi) -> int:
@@ -323,8 +436,9 @@ def run(event: Mapping[str, Any], repo: str, gh: GhApi) -> int:
         reply = _perform(ctx, gh)
     except GhError as exc:
         print(f"error: issue #{ctx.number}: {exc}", file=sys.stderr)
+        failed = MSG_RELEASE_FAILED if ctx.command == "/unassign" else MSG_FAILED
         try:
-            _comment(gh, ctx.repo, ctx.number, MSG_FAILED.format(mention=MAINTAINER_MENTION))
+            _comment(gh, ctx.repo, ctx.number, failed.format(mention=MAINTAINER_MENTION))
         except GhError as comment_exc:
             print(f"error: issue #{ctx.number}: could not tell the contributor: {comment_exc}", file=sys.stderr)
         return 1

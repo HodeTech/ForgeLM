@@ -106,9 +106,9 @@ Useful starting points:
 
 ### Working on an issue
 
-1. **Claim it first.** Comment `/assign` on the issue and it is assigned to you at once, so nobody duplicates the work. This works on an issue labelled `good first issue` that nobody holds yet, and you can hold at most 2 open issues at a time. Comment `/unassign` to give one back. A few rules keep it predictable:
+1. **Claim it first.** Start a comment on the issue with `/assign` and it is assigned to you at once, so nobody duplicates the work. This works on an issue labelled `good first issue` that nobody holds yet, and you can hold at most 2 open issues at a time. Comment `/unassign` to give one back. A few rules keep it predictable:
    - It is first come, first served. A later `/assign` never changes an assignment that exists, whoever wrote it and however it was made. Only a maintainer can reassign an issue, in the issue's sidebar, and a maintainer's decision always stands.
-   - `/assign` and `/unassign` act on the person who writes them; they cannot name someone else.
+   - `/assign` and `/unassign` act on the person who writes them, and the command must be the first thing in the comment; they cannot name someone else. If two people claim an issue in the same second, the maintainer's claim wins, and between two contributors one claim is released again and its author is told so.
    - Anything the automation does not cover stays a maintainer's call: an issue labelled `help wanted` without `good first issue` (grouped sweeps are taken one finding ID at a time, see below), an issue labelled `needs-triage`, `deferred`, `security`, `epic` or `phase: 16`, and a request for more than 2 open issues. Comment on the issue, say what you would take on and mention a maintainer ([MAINTAINERS.md](MAINTAINERS.md)). A plain comment such as "I would like to work on this" is read by a maintainer too, who assigns it by hand.
    - Skip issues labelled `needs-triage`, and check the recorded condition of an issue labelled `deferred` before you start.
 2. **Re-check against `development`.** Issues from the review link code at the commit they were found on; the links stay valid, but line numbers may have moved. Confirm the problem still exists on `development` before fixing it.

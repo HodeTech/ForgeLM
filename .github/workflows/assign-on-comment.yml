@@ -12,8 +12,9 @@ name: Assign on comment
 #   - the checkout takes the default branch (what `issue_comment` runs on), one file, no stored credentials,
 #     and is pinned to a full commit SHA;
 #   - there is no `concurrency:` group: GitHub cancels a *pending* run when a newer one joins the group, which
-#     would drop a claim without a word. The script re-reads the issue before it writes and tells a maintainer
-#     if two people ended up assigned.
+#     would drop a claim without a word. Instead the script decides again on a fresh read right before it
+#     writes, and after writing steps back only itself if a simultaneous claim collided (a maintainer wins;
+#     between two contributors the earlier login stays; a claim that would exceed the limit is released).
 #
 # Maintainers: to switch the feature off at once, open Actions > "Assign on comment" > the "..." menu >
 # "Disable workflow". Assignments already made stay as they are. Changing who an issue is assigned to is a
