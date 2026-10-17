@@ -54,6 +54,10 @@ All notable changes to ForgeLM are documented here.
   article and gender slips in the touched German, French and Spanish strings, and use one German term
   for the external stack. The new validation and interval keys keep their English fallback; native
   review of the deferred locales remains open (refs #948).
+- Name the right columns for KTO in the EN/TR "Choosing a Trainer" user manual: its data-shape table
+  said `{prompt, response, label: bool}`, but the loader requires `{prompt, completion, label}` and
+  rejects the old shape with a `KeyError` (F-W1-DOCS-TRAIN-02, #885). The table's SFT row is a separate
+  defect, tracked in #403, and is unchanged here.
 - Say what Annex IV §9 asks for: a detailed description of the post-market monitoring system, its
   plan included. The wizard hint in every locale and the EN/TR configuration and compliance pages said
   it "includes the detailed plan"; German, French and Spanish now follow the Regulation's wording, and
