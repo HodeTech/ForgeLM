@@ -48,7 +48,7 @@ flowchart TD
 |---|---|
 | Sadece `{prompt, completion}` satırları | [SFT](#/training/sft) |
 | `{prompt, chosen, rejected}` satırları | [DPO](#/training/dpo) (VRAM dar ise [SimPO](#/training/simpo)) |
-| `{prompt, response, label: bool}` satırları | [KTO](#/training/kto) |
+| `{prompt, completion, label: bool}` satırları | [KTO](#/training/kto) |
 | SFT ve tercih satırlarının karışımı | [SFT](#/training/sft) → [DPO](#/training/dpo) sıralı, veya tek aşama için [ORPO](#/training/orpo) |
 | Programatik reward (math grader, kod testi) | [GRPO](#/training/grpo) |
 
