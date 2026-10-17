@@ -85,7 +85,11 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 # ``CONTRIBUTING.md`` is invisible to CI without this entry.
 _SURFACES: Tuple[Tuple[str, bool], ...] = (
     ("README.md", True),
+    ("CODE_OF_CONDUCT.md", False),
     ("CONTRIBUTING.md", False),
+    ("GOVERNANCE.md", False),
+    ("MAINTAINERS.md", False),
+    ("SECURITY.md", False),
 )
 
 _REPO_BLOB_PREFIX_RE = re.compile(r"^https://github\.com/HodeTech/ForgeLM/(?:blob|tree)/main/(?P<path>[^#?]+)")

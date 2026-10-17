@@ -6,16 +6,19 @@ body:
     attributes:
       value: |
         Thanks for improving the docs! One correction per issue is easiest to review.
-        If a command or example is wrong, telling us the page you were reading makes
-        it much faster to find. Documentation pull requests are welcome directly
-        (see [CONTRIBUTING.md](https://github.com/HodeTech/ForgeLM/blob/development/CONTRIBUTING.md)).
+
+        User-facing documentation is kept as an English page **and** a Turkish
+        mirror, and the two are updated together — see
+        [CONTRIBUTING.md](https://github.com/HodeTech/ForgeLM/blob/development/CONTRIBUTING.md).
+        Tell us below which copy you were reading. Documentation pull requests are
+        welcome directly.
 
   - type: input
     id: page
     attributes:
       label: Page or file
-      description: The docs-site URL or the repository path you were reading.
-      placeholder: docs/guides/quickstart.md — or https://hodetech.github.io/ForgeLM/
+      description: The repository path or the documentation-site page you were reading.
+      placeholder: docs/guides/quickstart.md — or the Quick start page on the docs site
     validations:
       required: true
 
@@ -37,10 +40,10 @@ body:
     id: language
     attributes:
       label: Which copy is affected?
-      description: User-facing docs are maintained as an English page and a Turkish mirror.
+      description: User-facing docs are maintained as an English page and a Turkish mirror. An issue that needs mirror work is labelled `i18n` when it is triaged.
       options:
         - English
-        - Turkish (or another mirror)
+        - Turkish
         - Both
         - Not sure
     validations:

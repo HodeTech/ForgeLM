@@ -3,7 +3,7 @@ message: "If you use ForgeLM in your work, please cite it using the metadata bel
 title: "ForgeLM"
 abstract: >-
   Config-driven LLM fine-tuning: validated YAML in, a fine-tuned model and an
-  evidence trail out. Covers SFT, DPO, SimPO, KTO, ORPO and GRPO, with optional
+  audit trail out. Covers SFT, DPO, SimPO, KTO, ORPO and GRPO, with optional
   dataset auditing, safety evaluation, evaluation gates, human approval and
   EU AI Act compliance artifacts. The same configuration runs from a terminal,
   a notebook, or a CI/CD pipeline.
@@ -26,8 +26,12 @@ keywords:
   - mlops
   - eu-ai-act
   - ai-governance
-# `version` and `date-released` are intentionally omitted. They would be a
-# second copy of the release version, which `forgelm/_version.py`, `pyproject.toml`
-# and CHANGELOG.md already carry, and nothing would keep the copies in sync.
-# Add them together with a release-checklist step (or a guard) if citations
-# need to name a specific release.
+# `version` and `date-released` are intentionally omitted for now: the released
+# version is single-sourced in `pyproject.toml` (read at runtime by
+# `forgelm/_version.py` via `importlib.metadata`, which carries no literal of its
+# own) and the site's displayed version is derived from `CHANGELOG.md` by
+# `tools/update_site_version.py --check`. This file is not one of that tool's
+# targets, so a version here would be an un-guarded copy that no check keeps in
+# sync — exactly what `docs/standards/release.md` exists to prevent. Extending the
+# tool to rewrite this file (and adding a Zenodo DOI for citable releases) is
+# tracked separately.

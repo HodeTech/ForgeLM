@@ -13,17 +13,17 @@ are accountable for the code, the standards and the releases — today, one
 committee; the goal of this document is not to describe a large organisation but
 to make the path into one explicit.
 
-Three principles shape every decision:
+The project's product principles — reliability before features, enterprise
+differentiation over feature parity, every capability config-driven and testable
+— are recorded in [`docs/roadmap.md`](docs/roadmap.md) and are not restated here.
+How decisions get made rests on two rules:
 
 1. **The standards are the rulebook.** `docs/standards/` holds the engineering
    standards, `docs/roadmap/` holds what ships next, and the
    [CHANGELOG.md](CHANGELOG.md) records what shipped. A decision that changes
    behaviour is written into one of them; a decision that exists only in a chat
    is not a decision.
-2. **Reliability before features.** A capability ships with tests, docs and CI
-   coverage, or it does not ship. See
-   [docs/standards/testing.md](docs/standards/testing.md).
-3. **Public reasoning.** Non-trivial proposals, breaking changes and anything
+2. **Public reasoning.** Non-trivial proposals, breaking changes and anything
    that changes a documented contract are discussed in an **issue** before a
    pull request is opened, so the reasoning is reviewable and linkable.
 
@@ -42,7 +42,12 @@ Everyone contributing is bound by the
 ## How decisions are made
 
 - **Routine changes** — bug fixes, documentation and mirror updates, dependency
-  bumps — are decided in the pull request. One maintainer approval merges them.
+  bumps — are decided in the pull request. A pull request merges once the
+  required status checks pass, every review conversation is resolved, and a
+  maintainer has reviewed it. The exact gate is a branch-protection setting, not
+  this document. While the project has one maintainer, that maintainer merges
+  their own pull requests under the same conditions, which is what
+  [docs/standards/code-review.md](docs/standards/code-review.md) records.
 - **Non-trivial changes** — a new config field, a new module, a new optional
   dependency, a change to an exit code, the audit-event vocabulary or a
   documented guarantee — start as an issue. Work that has no issue may be asked
@@ -92,10 +97,3 @@ releases.
 
 This document is a normal file in the repository: propose a change with a pull
 request, and explain the reasoning in the pull request description.
-
-## Attribution
-
-The shape of this document — a written role ladder, area ownership, and the
-"decide in an issue, record in the standards" rule — follows common practice in
-established open-source projects; it is adapted, not copied, to ForgeLM's
-config-driven and evidence-first way of working.

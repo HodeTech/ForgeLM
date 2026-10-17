@@ -1,12 +1,25 @@
 # Code owners for ForgeLM.
 #
-# CODEOWNERS asks the owner of a changed path for a review when a pull request
-# is opened. It does not block a merge on its own: branch protection for
-# `development` does not require code-owner reviews, so an unresponsive owner
-# cannot stall a contribution. See docs/standards/code-review.md for the review
+# When a pull request is opened, GitHub requests a review from the owner of each
+# path it changes. This file only routes those review requests: whether a review
+# is *required* before merging is a branch-protection setting, not anything an
+# entry here can turn on. See docs/standards/code-review.md for the review
 # standard and GOVERNANCE.md for how ownership is granted.
 #
-# The project currently has one maintainer; each area gets its own owner once a
-# co-maintainer takes responsibility for it (see MAINTAINERS.md).
+# These rules are evaluated last-match-wins, so a more specific pattern placed
+# below `*` overrides it. When an area gets its own owner, add their line below
+# the default rather than replacing it, so the default owner stays on every path
+# an area owner does not name. GitHub does not request a review for a draft or a
+# draft pull request.
 
-*       @cemililik
+*                       @cemililik
+
+# Repository scaffolding and policy files stay with the default owner even after
+# an area owner is added, because these paths define the rules the area owners
+# work under.
+/.github/               @cemililik
+/CONTRIBUTING.md        @cemililik
+/GOVERNANCE.md          @cemililik
+/MAINTAINERS.md         @cemililik
+/SECURITY.md            @cemililik
+/pyproject.toml         @cemililik
