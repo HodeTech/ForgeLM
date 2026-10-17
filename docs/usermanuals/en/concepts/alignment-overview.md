@@ -53,7 +53,7 @@ After SFT, the model produces well-formatted outputs but quality varies — some
 The differences:
 - **DPO** — learns from `(chosen, rejected)` pairs against a reference model. Best-studied, most stable.
 - **SimPO** — same as DPO but skips the reference model. Lower memory, slightly less stable.
-- **KTO** — learns from binary `(prompt, response, good?)` signals. Use when you only have thumbs-up/down feedback.
+- **KTO** — learns from binary `(prompt, completion, label)` rows, where `label` is `true` for a desirable response and `false` for an undesirable one. Use when you only have thumbs-up/down feedback.
 - **ORPO** — combines SFT and preference loss in a single pass. Faster wall-clock; less flexible than separate stages.
 
 ### Problem 3: Reasoning
