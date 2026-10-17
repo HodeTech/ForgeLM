@@ -1,14 +1,27 @@
 # Dependabot configuration for ForgeLM.
 #
-# Dependabot opens a pull request when a pinned dependency has a newer release.
-# It is the upstream half of the supply-chain story: `tools/check_pip_audit.py`
-# and the nightly CVE job catch known advisories, and these pull requests make
-# the fix reachable. Minor and patch bumps for Python are grouped to keep the
-# noise low; major bumps stay individual so they get a deliberate review.
+# Dependabot opens a pull request when a dependency's declared range no longer
+# covers the newest release. It is the upstream half of the supply-chain story:
+# `tools/check_pip_audit.py` and the nightly CVE job catch known advisories, and
+# these pull requests make a fix reachable.
 #
-# The `dependencies` label is already part of the backlog vocabulary
-# (see CONTRIBUTING.md); `area: packaging-ci` routes the pull request to the
-# right area.
+# `versioning-strategy: widen` matters here. ForgeLM declares bounded ranges
+# (`>=floor,<next-major`) with no lockfile and no pins, so Dependabot's default
+# `increase` strategy would try to raise a floor the ceiling already covers — a
+# no-op — instead of admitting a new major. `widen` keeps the declared floor and
+# raises the ceiling, which is the change the ranges actually need.
+#
+# `ruff`, `mypy` and `bandit` are ignored on purpose. They are blocking CI gates
+# and `tests/test_packaging.py` requires their `[dev]` range to equal the one
+# `ci.yml`'s lint job installs. Dependabot edits only `pyproject.toml`, so a bump
+# would fail that test the moment it arrived. Those three are raised deliberately,
+# in one commit, with the CI pin moved in step.
+#
+# Note: `requirements.txt`, `requirements-eval.txt` and `requirements-linux.txt`
+# are stale and referenced by nothing — the Dockerfile, CI and the tests all use
+# `pyproject.toml` extras. Dependabot will still raise their floors; those pull
+# requests should be closed, and the files removed, when the tracked cleanup
+# lands.
 
 version: 2
 updates:
@@ -18,11 +31,16 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    versioning-strategy: "widen"
     labels:
       - "dependencies"
       - "area: packaging-ci"
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      - dependency-name: "ruff"
+      - dependency-name: "mypy"
+      - dependency-name: "bandit"
     groups:
       python-minor-and-patch:
         patterns:
@@ -42,3 +60,10 @@ updates:
       - "area: packaging-ci"
     commit-message:
       prefix: "chore(ci)"
+    groups:
+      actions-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

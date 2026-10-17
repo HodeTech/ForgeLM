@@ -32,7 +32,6 @@ How decisions get made rests on two rules:
 | Role | What they do | How it is granted |
 |---|---|---|
 | **Contributor** | Reports bugs, opens pull requests, reviews others' changes, improves docs | Anyone; no appointment |
-| **Reviewer** | Reviews pull requests in an area and confirms findings | A maintainer says so in an issue, after several helpful reviews |
 | **Maintainer** | Sets direction, merges to `development`, cuts releases, holds the standards | A maintainer invites them (see below) |
 
 Everyone contributing is bound by the
@@ -68,9 +67,10 @@ Everyone contributing is bound by the
 
 ## Becoming a maintainer
 
-There is no exam and no vote. A **reviewer** becomes a **maintainer** when a
-current maintainer invites them, and that invitation is normally offered when
-all of the following hold:
+There is no exam and no vote — and no promise. A maintainer role is offered when
+the project needs a second maintainer and someone has earned it, not
+automatically after a number of merged pull requests. The invitation is normally
+made when all of the following hold:
 
 - they have landed a handful of pull requests across more than one area;
 - they have reviewed other people's pull requests with useful, specific
@@ -80,11 +80,34 @@ all of the following hold:
 - they are willing to be reachable, and to triage issues and review pull
   requests on a predictable cadence rather than only when they feel like it.
 
-Area ownership follows the same idea: `MAINTAINERS.md` names who owns which
-area, and `.github/CODEOWNERS` routes reviews there. A maintainer who becomes
-unavailable is asked whether they want to step back; the project prefers an
-accurate list over a flattering one, and stepping back is not held against
-anyone.
+Area ownership follows the same idea: `MAINTAINERS.md` names who owns which area,
+and `.github/CODEOWNERS` routes reviews there. The list is kept accurate rather
+than flattering, and a maintainer who needs to step back can say so; that is not
+held against them.
+
+## Access and continuity
+
+GitHub permissions are granted per role, and the smallest permission that does
+the job is the default:
+
+| Role | Repository permission | Why |
+|---|---|---|
+| Contributor | None — fork and pull request | Every contribution arrives as a pull request, so no repository access is needed |
+| Maintainer | *Write* | Can merge to `development`, push branches and manage issues |
+| Owner | *Admin* | Also carries branch protection, the tag ruleset and the release workflow's environment approval |
+
+*Admin* is not the next rung of the contribution ladder — it is the ability to
+change the rules the other roles work under, so it stays with the project owner
+and moves only on a deliberate decision, with two-factor authentication required
+on any account that holds it.
+
+**Continuity: a known gap, recorded rather than promised.** There is one owner
+today, and nothing in the release path is asynchronous — the same single account
+holds the tag ruleset and approves the release workflow's `pypi` environment. An
+unplanned absence therefore stops merges, releases and security advisories at
+once. The fix is a second organisation owner (or an organisation-level owner with
+the release environment's approval); it is not scheduled, and this paragraph is
+what says so.
 
 ## Releases
 

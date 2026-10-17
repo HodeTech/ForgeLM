@@ -20,6 +20,8 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
 3. Make the change and, for a code fix, add a regression test that reproduces the issue;
    follow the [testing standard](docs/standards/testing.md).
    Documentation changes update the English page and its Turkish mirror together.
+   If you do not write Turkish, open the pull request with the English change and say
+   so in the description — a maintainer will complete the mirror for you.
 4. Run fast checks before pushing (replace the example test module with the one you touched):
 
    ```bash
