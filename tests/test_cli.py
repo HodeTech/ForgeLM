@@ -281,6 +281,61 @@ class TestNonTrainingModeMutualExclusion:
         assert exc_info.value.code == EXIT_SUCCESS
 
 
+class TestSharedSubcommandFlags:
+    @pytest.mark.parametrize(
+        "command,extra,flag,value,expected",
+        [
+            ("purge", [], "--dry-run", [], True),
+            ("purge", [], "--config", ["policy.yaml"], "policy.yaml"),
+            ("quickstart", [], "--dry-run", [], True),
+            ("doctor", [], "--offline", [], True),
+            ("deploy", ["model", "--target", "ollama"], "--output", ["serving"], "serving"),
+            ("quickstart", [], "--output", ["config.yaml"], "config.yaml"),
+            ("cache-models", ["--model", "org/model"], "--output", ["cache"], "cache"),
+            ("cache-tasks", ["--tasks", "hellaswag"], "--output", ["cache"], "cache"),
+        ],
+    )
+    @pytest.mark.parametrize("before", [True, False], ids=["before-subcommand", "after-subcommand"])
+    def test_explicit_flag_is_preserved(self, command, extra, flag, value, expected, before):
+        from forgelm.cli._parser import parse_args
+
+        option = [flag, *value]
+        args = [*option, command, *extra] if before else [command, *extra, *option]
+        with patch("sys.argv", ["forgelm", *args]):
+            result = parse_args()
+
+        assert getattr(result, flag.removeprefix("--").replace("-", "_")) == expected
+
+    @pytest.mark.parametrize(
+        "args,attribute,expected",
+        [
+            (["purge"], "dry_run", False),
+            (["purge"], "config", None),
+            (["quickstart"], "dry_run", False),
+            (["doctor"], "offline", False),
+            (["deploy", "model", "--target", "ollama"], "output", None),
+            (["quickstart"], "output", None),
+            (["cache-models", "--model", "org/model"], "output", None),
+            (["cache-tasks", "--tasks", "hellaswag"], "output", None),
+        ],
+    )
+    def test_omitted_flags_keep_their_defaults(self, args, attribute, expected):
+        from forgelm.cli._parser import parse_args
+
+        with patch("sys.argv", ["forgelm", *args]):
+            result = parse_args()
+
+        assert getattr(result, attribute) == expected
+
+    def test_subcommand_value_overrides_root_value(self):
+        from forgelm.cli._parser import parse_args
+
+        with patch("sys.argv", ["forgelm", "--output", "root.yaml", "quickstart", "--output", "local.yaml"]):
+            result = parse_args()
+
+        assert result.output == "local.yaml"
+
+
 class TestParserPublicApi:
     def test_parse_args_has_namespace_return_annotation(self):
         """Finding 8: ``parse_args`` is the one function in _parser imported and

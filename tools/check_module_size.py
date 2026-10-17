@@ -449,7 +449,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/cli/_parser.py": _DeferredSplit(
-        budget=1372,
+        budget=1375,
         deferred_at_loc=1320,
         reason=(
             "Argparse wiring for the full CLI surface. Split candidates: _train, "
@@ -457,6 +457,11 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "--help text is pinned by check_cli_help_consistency.py."
         ),
         budget_history=(
+            "2026-10-18 (#414, 1372 -> 1375, +3): Preserve explicit root flags when "
+            "a subcommand omits them. The three boolean flags need SUPPRESS defaults "
+            "and deploy's longer output default wraps under ruff. Keep these defaults "
+            "beside their existing argument declarations; the deferred CLI split is "
+            "a separate concern.",
             "2026-07-20: 1320 -> 1332 (+12) for `safety-eval "
             "--max-safety-regression` plus the import of its default constant. The "
             "safety gate this flag drives was already live and already reachable at "
