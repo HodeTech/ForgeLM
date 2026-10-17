@@ -47,6 +47,12 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Make the site's code comments readable: `--code-comment` was `#6a6f80`, 3.8:1 on the dark code
+  surface, below the 4.5:1 AA floor, and it colours code comments, terminal and code-block title bars,
+  language tags, copy buttons and the wizard's YAML pane header and comment lines. It is now `#8f96a8`,
+  6.43:1 on the code surface and at least 5.56:1 on the title-bar gradient, in both themes (the light
+  theme keeps a dark code surface). Measured on the rendered pages, every text colour on the code
+  surface reaches 4.5:1 (F-W1-SITE-06, #887).
 - Use the Regulation's own Article 72 terms for post-market monitoring in the German and Spanish
   wizard copy ("Beobachtung nach dem Inverkehrbringen", "vigilancia poscomercialización"), and restore
   the "metadata" the French and Spanish hints had dropped, so every locale again separates ForgeLM's
