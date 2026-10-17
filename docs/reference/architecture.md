@@ -96,7 +96,7 @@ ForgeLM/
 │   ├── deepspeed/          # ZeRO-2, ZeRO-3, ZeRO-3+Offload presets
 │   └── safety_prompts/     # Built-in adversarial prompt library (140 prompts, 6 categories)
 ├── notebooks/              # 10 Colab-ready Jupyter notebooks
-├── tests/                  # 128 test modules
+├── tests/                  # 130 test modules
 ├── tools/                  # CI guards: bilingual_parity, anchor_resolution,
 │                            # cli_help_consistency, yaml_snippets,
 │                            # audit_event_catalog, library_api_doc,
@@ -169,7 +169,7 @@ Synthetic data generation via teacher-to-student distillation. The `SyntheticDat
 
 ### `wizard/`
 
-Interactive CLI wizard for generating valid YAML configs. Phase 22 modernisation (2026-05-08) brought the CLI to parity with `site/js/wizard.js`: 9-step state machine (welcome / use-case / model / strategy / trainer / dataset / training-params / compliance / operations), per-trainer hyperparameters (`dpo_beta` / `simpo_beta` + `simpo_gamma` / `kto_beta` / `orpo_beta` / `grpo_*`), full PEFT method coverage (`lora` / `dora` / `pissa` / `rslora`) plus GaLore axis, EU AI Act Article 9 + 10 + 11 + 12+17 compliance accordions, F-compliance-110 strict-tier auto-coercion, `back` / `reset` navigation, XDG-aware persistence at `$XDG_CACHE_HOME/forgelm/wizard_state.yaml`, step-diff preview, beginner / expert toggle, and the Phase 11.5 / 12.5 BYOD inline ingest + audit helpers (`_offer_ingest_for_directory`, `_offer_audit_for_jsonl`).
+Interactive CLI wizard for generating valid YAML configs. Phase 22 modernisation (2026-05-08) brought the CLI to parity with `site/js/wizard.js`: 9-step state machine (welcome / use-case / model / strategy / trainer / dataset / training-params / compliance / operations), per-trainer hyperparameters (`dpo_beta` / `simpo_beta` + `simpo_gamma` / `kto_beta` / `orpo_beta` / `grpo_*`), full PEFT method coverage (`lora` / `dora` / `pissa` / `rslora`) plus GaLore axis, EU AI Act Article 9 + 10 + 11 + 12 / 17(1)(h) / 72 compliance accordions, F-compliance-110 strict-tier auto-coercion, `back` / `reset` navigation, XDG-aware persistence at `$XDG_CACHE_HOME/forgelm/wizard_state.yaml`, step-diff preview, beginner / expert toggle, and the Phase 11.5 / 12.5 BYOD inline ingest + audit helpers (`_offer_ingest_for_directory`, `_offer_audit_for_jsonl`).
 
 ### `webhook.py`
 Sends structured JSON payloads to Slack/Teams/generic webhooks on training start, success, and failure. Supports URL from config or environment variable. Graceful error handling with configurable timeout.

@@ -96,7 +96,7 @@ ForgeLM/
 │   ├── deepspeed/            # ZeRO-2, ZeRO-3, ZeRO-3+Offload ön ayarları
 │   └── safety_prompts/       # Yerleşik adversarial prompt kütüphanesi (140 prompt, 6 kategori)
 ├── notebooks/                # 10 Colab-uyumlu Jupyter notebook
-├── tests/                    # 128 test modülü
+├── tests/                    # 130 test modülü
 ├── tools/                    # CI guard'ları: bilingual_parity, anchor_resolution,
 │                              # cli_help_consistency, yaml_snippets,
 │                              # audit_event_catalog, library_api_doc,
@@ -133,7 +133,7 @@ Hafif `TrainResult` dataclass — torch/transformers olmadan import edilebilir. 
 EleutherAI `lm-evaluation-harness`'i sarar. Yapılandırılabilir benchmark görevleri çalıştırır, accuracy metriklerini çıkarır, `min_score` eşiğini uygular ve sonuçları kaydeder. Opsiyonel bağımlılık: `pip install forgelm[eval]`.
 
 ### `safety/`
-İki puanlama modu: binary (güvenli/güvensiz oranı) ve confidence-weighted (sınıflandırıcı güven skoru). 3 katmanlı güvenlik kapısı: binary oran → confidence skoru → ciddiyet eşiği. Llama Guard S1-S14 zarar kategorileri, ciddiyet seviyeleri (kritik/yüksek/orta/düşük), düşük güven uyarıları, çalışmalar arası trend takibi (safety_trend.jsonl).
+İki puanlama modu: binary (güvenli/güvensiz oranı) ve confidence-weighted (sınıflandırıcı güven skoru). 3 katmanlı güvenlik kapısı: binary oran → confidence skoru → ciddiyet eşiği. Llama Guard S1-S14 zarar kategorileri, ciddiyet seviyeleri (kritik/yüksek/orta/düşük), düşük güven uyarıları, çalışmalar arası trend izleme (safety_trend.jsonl).
 
 ### `judge.py`
 LLM-as-Judge değerlendirme: API tabanlı hakimler (OpenAI-uyumlu endpoint) ve yerel model hakimleri destekler. Markdown code block çıkarmalı sağlam JSON parse'i içerir. 1-10 ölçeğinde puanlar; yapılandırılabilir minimum eşik.
@@ -167,7 +167,7 @@ HuggingFace-uyumlu README.md üretir: YAML front-matter, eğitim parametreleri t
 
 ### `wizard/`
 
-Etkileşimli CLI sihirbazı. Faz 22 modernizasyonu (2026-05-08) ile `site/js/wizard.js`'e parite getirildi: 9-adımlı state machine (welcome / use-case / model / strategy / trainer / dataset / training-params / compliance / operations), trainer-spesifik hyperparam'lar (`dpo_beta` / `simpo_beta` + `simpo_gamma` / `kto_beta` / `orpo_beta` / `grpo_*`), tam PEFT method kapsamı (`lora` / `dora` / `pissa` / `rslora`) + GaLore ayrı axis, EU AI Act Madde 9 + 10 + 11 + 12+17 uyumluluk akordeon'ları, F-compliance-110 strict-tier auto-coercion, `back` / `reset` navigasyon, XDG-aware persistence (`$XDG_CACHE_HOME/forgelm/wizard_state.yaml`), step-diff preview, beginner / expert toggle ve Phase 11.5 / 12.5 BYOD inline ingest + audit helper'ları (`_offer_ingest_for_directory`, `_offer_audit_for_jsonl`).
+Etkileşimli CLI sihirbazı. Faz 22 modernizasyonu (2026-05-08) ile `site/js/wizard.js`'e parite getirildi: 9-adımlı state machine (welcome / use-case / model / strategy / trainer / dataset / training-params / compliance / operations), trainer-spesifik hyperparam'lar (`dpo_beta` / `simpo_beta` + `simpo_gamma` / `kto_beta` / `orpo_beta` / `grpo_*`), tam PEFT method kapsamı (`lora` / `dora` / `pissa` / `rslora`) + GaLore ayrı axis, EU AI Act Madde 9 + 10 + 11 + 12 / 17(1)(h) / 72 uyumluluk akordeon'ları, F-compliance-110 strict-tier auto-coercion, `back` / `reset` navigasyon, XDG-aware persistence (`$XDG_CACHE_HOME/forgelm/wizard_state.yaml`), step-diff preview, beginner / expert toggle ve Phase 11.5 / 12.5 BYOD inline ingest + audit helper'ları (`_offer_ingest_for_directory`, `_offer_audit_for_jsonl`).
 
 ### `webhook.py`
 Eğitim başlangıcı/başarı/başarısızlık durumlarında yapılandırılmış JSON payload gönderir. Yapılandırılabilir timeout ile güvenilir hata yönetimi.

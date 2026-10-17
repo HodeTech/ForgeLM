@@ -263,7 +263,7 @@ class _DeferredSplit:
 # _validate_entries() sees a raise without reading the diff.
 _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
     "forgelm/compliance.py": _DeferredSplit(
-        budget=2492,
+        budget=2514,
         deferred_at_loc=2147,
         reason=(
             "EU AI Act Art. 9-17 + Annex IV builder + hash-chained audit log + "
@@ -271,6 +271,12 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "_annex_iv, _provenance, _gdpr."
         ),
         budget_history=(
+            "2026-10-15 (#93 re-review, 2505 -> 2514, +9): Project validated monitoring URLs with stdlib parsing so evidence preserves ports and IPv6 brackets without importing the HTTP/requests stack; keep log masking unchanged.",
+            "2026-10-15 (#93 review, 2493 -> 2505, +12): Persist monitoring default provenance and masked endpoint metadata at the existing writer; an unrelated compliance split would obscure this evidence-contract correction.",
+            "2026-10-15 (#93, 2492 -> 2493, +1): label the persisted monitoring plan "
+            "declarative_only so neither the manifest nor its Annex IV projection implies "
+            "runtime monitoring. Keep the label with the existing writer; the one-line "
+            "evidence correction does not warrant an unrelated compliance-package split.",
             "2026-10-09 (Phase 16 S1-S3 review, 2473 -> 2492, +19): "
             "`match_annex_iv_manifest_hash`. Hashing the Annex IV / pipeline manifest over "
             "the strict-JSON form (so a fresh artefact holding a NaN verifies) meant an "
@@ -313,9 +319,16 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/config.py": _DeferredSplit(
-        budget=1855,
+        budget=1903,
         deferred_at_loc=1795,
         budget_history=(
+            "2026-10-15 (#93 re-review, 1887 -> 1903, +16): Reject malformed literal monitoring URLs before evidence export, with static diagnostics and no network access; validation belongs beside the existing endpoint field.",
+            "2026-10-15 (#93 review, 1870 -> 1887, +17): Normalize and validate monitoring endpoints beside their schema and emit the exporter warning at load_config, avoiding pipeline revalidation duplicates without mutable state.",
+            "2026-10-15 (#93, 1855 -> 1870, +15): describe MonitoringConfig as external-plan "
+            "metadata and warn when an enabled plan declares an exporter ForgeLM does not run. "
+            "The validator belongs beside its schema; the remaining growth is required field "
+            "description wrapping. Keep this contract repair separate from the deferred "
+            "schema split, whose import-time validation order needs its own review.",
             "2026-10-09 (Phase 16 S1-S3 review, 1846 -> 1855, +9): the `FiniteFloat` alias "
             "(`Annotated[float, allow_inf_nan=False]`, 7 lines with its rationale) and its "
             "application to the twelve float fields S2 left open — `learning_rate`, "

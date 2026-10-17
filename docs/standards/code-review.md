@@ -100,16 +100,28 @@ For PR authors:
 
 ## Merging
 
-**Default: squash merge.**
+Choose the merge method by the lifetime of the branches:
 
-- Keeps history linear and readable.
-- Commit message = PR title. Edit it to be good *before* clicking merge.
-- Trailers: `Co-authored-by:` for multi-author PRs, `Fixes #N` for issue closure.
+| Pull request | Method | Reason |
+|---|---|---|
+| Short-lived feature or contribution branch → `development` | **Squash** by default | One reviewed change becomes one readable commit. |
+| `development` → `main`, or a hotfix → `main` | **Merge commit** (required by the `Main: preserve branch history` ruleset) | Preserve the commits and ancestry used by future releases. |
+| `main` → `development` after a release or hotfix | **Merge commit** through a synchronization PR | Bring the release history back without replacing commit identities. |
 
-**Exception: merge commit** for:
+For squash merges, the commit title defaults to the PR title and the body to
+the PR description. Edit both before merging; retain issue references and
+`Co-authored-by:` trailers for all contributors. A feature PR may use a merge
+commit when its individual commits are meaningful, reviewed units.
 
-- Multi-commit PRs where each commit is a meaningful, reviewed unit (rare).
-- Dependabot bulk updates.
+Never squash or rebase a synchronization between `development` and `main`.
+[GitHub documents](https://docs.github.com/en/pull-requests/reference/pull-request-merges)
+how squashing a long-running head branch leaves its common ancestor unchanged,
+causing old commits and conflicts to recur in later pull requests.
+
+`development` permits merge commits so release synchronization can preserve
+history; routine feature PRs still use squash. Both branches retain their
+required CI checks, pull-request review settings, and conversation resolution.
+See [the release branching policy](release.md#branching).
 
 Don't rebase-and-merge. Don't disable CI checks. Don't bypass branch protection.
 
@@ -141,7 +153,7 @@ Referencing the internal "what we don't build" strategy doc (public summary unde
 
 | Anti-pattern | Why rejected | Fix |
 |---|---|---|
-| Disabling CI with `\|\| true` or `continue-on-error` | Masks failures; fake safety | Fix the underlying issue |
+| Disabling CI with `\|\| true`, or `continue-on-error` on a step that runs a required command | Masks failures; fake safety | Fix the underlying issue; `testing.md` lists the one sanctioned `\|\| true` |
 | `--amend` + force-push after reviewer started commenting | Destroys review history | New commits only until merge |
 | Merging "docs-only" PRs that reference not-yet-written code | Creates permanent drift | Docs follow code, same PR or later |
 | Bundled refactor + feature PRs | Hides logic changes in formatting noise | Split into separate PRs |

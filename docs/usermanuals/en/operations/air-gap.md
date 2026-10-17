@@ -47,23 +47,23 @@ $ export HF_DATASETS_OFFLINE=1
 $ forgelm --config configs/run.yaml --offline
 ```
 
-The `--offline` flag tells ForgeLM to refuse any network call. If your config references a model that isn't cached, training fails with a clear error message:
+The `--offline` flag sets HuggingFace offline environment variables. Configure other network clients separately; the flag does not disable them. Required models, tokenisers, and datasets must be cached before disconnecting:
 
 ```text
 ERROR: model "meta-llama/Llama-Guard-3-8B" not in local cache.
        Pre-cache from a connected machine: forgelm cache-models --safety meta-llama/Llama-Guard-3-8B
 ```
 
-## What `--offline` enforces
+## `--offline` scope and disconnected-run preparation
 
-| Subsystem | Behaviour with `--offline` |
+| Subsystem | Flag effect or required operator preparation |
 |---|---|
-| HuggingFace Hub downloads | Disabled. Fail-fast if a model/tokeniser isn't cached. |
-| W&B / MLflow / Comet | Disabled (or local-only for MLflow with file URI). |
-| OpenAI / Anthropic judges | Disabled. Use a local judge model. |
-| Webhooks | Disabled (or restricted to internal hosts via `webhook.allow_private`). |
-| pip install (during runtime) | Disabled. |
-| Telemetry | None — ForgeLM never phones home regardless. |
+| HuggingFace Hub downloads | `--offline` sets the HF offline flags; pre-cache the required artifacts. |
+| W&B / MLflow / Comet | Disable reporting or configure local-only MLflow with a file URI; `--offline` does not disable these integrations. |
+| OpenAI / Anthropic judges | Disable API-backed evaluation or use a local judge; `--offline` does not disable API clients. |
+| Webhooks | `--offline` does not disable configured delivery. Omit the `webhook:` block, or leave `url` / `url_env` unset, to disable it; `allow_private_destinations` permits private destinations in addition to public ones. |
+| pip install (during runtime) | Install required dependencies before disconnecting; `--offline` does not control pip. |
+| Telemetry | ForgeLM has no own telemetry service; configure external integrations separately. |
 
 ## Local synthetic data
 
@@ -76,7 +76,10 @@ synthetic:
   teacher_backend: "local"                    # not "api" — no network call
 ```
 
-There is no nested `synthetic.teacher:` sub-block (`provider` / `model` / `load_in_4bit`) — `teacher_model` and `teacher_backend` are flat fields on `synthetic:`. An API-backed teacher (`teacher_backend: "api"`, e.g. OpenAI / Anthropic) fails on `--offline`.
+There is no nested `synthetic.teacher:` sub-block (`provider` / `model` / `load_in_4bit`) — `teacher_model` and
+`teacher_backend` are flat fields on `synthetic:`. An API-backed teacher (`teacher_backend: "api"`, e.g. OpenAI /
+Anthropic) requires network access and is not disabled by `--offline`; use `teacher_backend: "local"` or `"file"` in
+an air-gap.
 
 ## Local LLM-as-judge
 

@@ -35,12 +35,15 @@ _ANNEX_IV_REQUIRED_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("system_identification", "Annex IV §1 — system identification (name, version, provider, intended_purpose)"),
     ("intended_purpose", "Annex IV §1 — intended purpose statement"),
     ("system_components", "Annex IV §2 — software / hardware components + supplier list"),
-    ("computational_resources", "Annex IV §2(g) — compute resources used during training"),
+    ("computational_resources", "Annex IV §2(c) — compute resources used during training"),
     ("data_governance", "Annex IV §2(d) — data sources, governance, validation methodology"),
-    ("technical_documentation", "Annex IV §3-5 — design + development methodology"),
-    ("monitoring_and_logging", "Annex IV §6 — post-market monitoring + audit-log presence"),
-    ("performance_metrics", "Annex IV §7 — accuracy / robustness / cybersecurity metrics"),
-    ("risk_management", "Annex IV §9 — risk management system reference (Art. 9 alignment)"),
+    ("technical_documentation", "Annex IV §1(c) / §3 — software version and known limitations"),
+    (
+        "monitoring_and_logging",
+        "Annex IV §9 (Art. 72(3)) — declared external plan metadata or audit-log reference",
+    ),
+    ("performance_metrics", "Annex IV §2(g) / §4 — accuracy / robustness / cybersecurity metrics"),
+    ("risk_management", "Annex IV §5 — risk management system reference (Art. 9 alignment)"),
 )
 
 

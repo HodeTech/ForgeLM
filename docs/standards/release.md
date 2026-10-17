@@ -326,11 +326,19 @@ One integration branch, one release branch:
 
 - **`development`** is the default branch and the integration branch. Every change lands there first: contributors branch from it and open pull requests against it; maintainers may also commit to it directly. CI runs the full gauntlet on every push and pull request, and the branch requires the same status checks as `main` before a merge.
 - **`main`** holds released code only and is always releasable. It changes through a release pull request `development` → `main` (then the tag is cut on `main`, see the [`cut-release` skill](../../.claude/skills/cut-release/SKILL.md)) or through a hotfix (below).
-- **Feature branches** are short-lived and merged into `development` via pull request.
-- **After every release or hotfix, `development` is brought up to `main`** (fast-forward, or merge `main` into `development`), so `main` never carries a commit that `development` lacks.
+- **Feature branches** are short-lived and normally squash-merged into `development` via pull request.
+- **Pull requests targeting `main` require merge commits.** The `Main: preserve branch history` ruleset forbids squash and rebase merges, including releases and hotfixes.
+- **After every release or hotfix, bring `main` back into `development` through a synchronization PR and merge it with a merge commit**, so `main` never carries a commit that `development` lacks. `development` permits merge commits for this purpose; its CI and review requirements still apply. A local checkout can fast-forward to the resulting remote branch with `git pull --ff-only`.
 - **No long-lived release branches** (`release/v0.4`). If a hotfix is needed for an old version that has diverged, create a branch at that tag and cherry-pick — rare.
 
 Why an integration branch: a release bundles a roadmap wave of fixes that are reviewed and released together, and contributor pull requests need a target that is not the released code.
+
+Do not squash or rebase either direction between the long-lived branches: those
+methods replace commit identities and make subsequent promotions compare against
+an outdated common ancestor. See [Merging](code-review.md#merging) for the complete
+policy. If older releases were squashed, reconcile the existing history in a
+reviewed synchronization PR; changing merge settings does not repair ancestry
+retroactively, and force-pushing either protected branch is not a repair strategy.
 
 ## Hotfixes
 

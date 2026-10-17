@@ -53,7 +53,7 @@ What the regulator asks vs. how ForgeLM answers:
 | Data provenance | `data_provenance.json`; `compute_dataset_fingerprint` (SHA-256 + size + mtime); dataset Hub commit SHA graded by `hf_revision_source` |
 | Technical documentation | `annex_iv_metadata.json`; Annex IV §§1-9 canonical layout |
 | Conformity evidence | `compliance_report.json`; `model_card.md`; `model_integrity.json` |
-| Monitoring + post-market surveillance | Webhook lifecycle (`notify_*`); `safety_trend.jsonl` cross-run trend |
+| External monitoring-plan declaration | `monitoring:` metadata only; operate the Art. 72 monitoring system separately. Webhooks notify lifecycle events; `safety_trend.jsonl` records cross-run evaluation trends. |
 | Human oversight | Article 14 staging gate; `human_approval.required/granted/rejected` |
 
 ## Where ForgeLM meets each requirement

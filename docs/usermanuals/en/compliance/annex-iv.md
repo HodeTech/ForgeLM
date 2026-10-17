@@ -72,19 +72,23 @@ A field is considered missing when the key is absent OR the value is `None`, an 
 
 `system_identification` is additionally validated **at sub-field depth**: `provider_name`, `system_name` and `intended_purpose` must each be non-empty, otherwise a populated-looking container of blank placeholders would pass. When one of those is empty, `missing_fields` carries a **dotted path** rather than a bare key — e.g. `["system_identification.provider_name", "system_identification.system_name"]`. Tooling that assumes `missing_fields` entries are always top-level keys will mis-handle these.
 
-The nine required keys map onto Annex IV §1-9:
+The verifier requires nine ForgeLM metadata keys; these do not represent nine complete Annex IV sections:
 
 | Top-level key | Annex IV section |
 |---|---|
 | `system_identification` | §1 — `provider_name`, `system_name`, `intended_purpose` (each validated non-empty), plus `provider_contact`, `system_version`, `risk_classification`. |
 | `intended_purpose` | §1 — intended purpose statement. |
 | `system_components` | §2 — software / hardware components + supplier list. |
-| `computational_resources` | §2(g) — compute resources used during training. |
+| `computational_resources` | Annex IV §2(c) — compute resources used during training. |
 | `data_governance` | §2(d) — data sources, governance, validation methodology. |
-| `technical_documentation` | §3-5 — design + development methodology. |
-| `monitoring_and_logging` | §6 — post-market monitoring + audit-log presence. |
-| `performance_metrics` | §7 — accuracy / robustness / cybersecurity metrics. |
-| `risk_management` | §9 — risk management system reference (Article 9 alignment). |
+| `technical_documentation` | §1(c) / §3 — the software version and the known limitations (`forgelm_version`, `known_limitations`). |
+| `monitoring_and_logging` | Annex IV §9 (Art. 72(3)) — Declared external monitoring-plan metadata (`declarative_only: true`), or an audit-log reference; no runtime monitoring evidence. |
+| `performance_metrics` | Annex IV §2(g) / §4 — accuracy / robustness / cybersecurity metrics. |
+| `risk_management` | Annex IV §5 — risk management system reference (Article 9 alignment). |
+
+This table maps partial metadata, not complete Annex IV sections. Remaining legacy section labels are tracked in
+[#539](https://github.com/HodeTech/ForgeLM/issues/539); verifier completeness claims are tracked in
+[#573](https://github.com/HodeTech/ForgeLM/issues/573).
 
 ### What "manifest hash mismatch" means
 
@@ -180,7 +184,7 @@ Integrity is evaluated first, so a weaker finding can never mask a stronger one.
 :::
 
 :::warn
-**Expecting a declaration of conformity in the bundle.** ForgeLM does not generate one — §7 in this artefact is `performance_metrics` (accuracy / robustness), not a conformity declaration. Article 16 conformity is the deployer's signed deliverable and must be authored and signed outside the toolkit, regardless of what `verify-annex-iv` reports.
+**Expecting a declaration of conformity in the bundle.** ForgeLM does not generate one: none of the nine keys holds the copy of the EU declaration of conformity that Annex IV §8 asks for, and `performance_metrics` carries the §2(g) / §4 metrics. The declaration (Article 47) is the provider's signed deliverable and must be drawn up and signed outside the toolkit, regardless of what `verify-annex-iv` reports.
 :::
 
 :::warn

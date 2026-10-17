@@ -20,7 +20,7 @@ ForgeLM, LLM ince ayarını (fine-tuning) **güvenli, denetlenebilir ve tekrarla
 - **Llama Guard 3** güvenlik değerlendirmesi eğitim pipeline'ının içinde çalışır; eğitim sonrası değil
 - **3 katmanlı güvenlik kapısı**: ikili geçer/kalır + güven ağırlıklı skor + 14 zarar kategorisinde (S1-S14) önem analizi
 - **Otomatik geri alma (auto-revert)**: güvenlik regresyonu tespit edilirse, çıktılar yazılmadan önce eğitim sonucu otomatik olarak reddedilir
-- **Çalıştırmalar arası trend takibi**: güvenlik skorları her çalıştırmada loglanır; zamanla oluşan kayan bozulma yakalanır
+- **Çalıştırmalar arası trend izleme**: güvenlik skorları her çalıştırmada loglanır; zamanla oluşan kayan bozulma yakalanır
 - **`auto_revert_on_safety_failure`** config alanı doğrudan YAML'a yazılır — CI'da güvenlik kapısı uygulamak için özel script gerekmez
 
 ### 2. Uyumluluk Yerleşik (Compliance-Native)
@@ -37,7 +37,7 @@ tüm hükümlerinin bu Kısım B sistemlerine uygulanacağı anlamına gelmez.
 Diğer yükümlülükler ve geçiş hükümleri için ayrı tarihler geçerlidir. ForgeLM, uyumluluk incelemesini
 destekleyen dokümantasyon artefaktları üretir; bu artefaktlar hukuki uyumluluğu sağlamaz.
 
-- **EU AI Act Madde 9-17 + Ek IV** — her madde yapılandırılmış bir çıktı dosyasına karşılık gelir:
+- **EU AI Act Madde 9-17 + Annex IV** — her madde yapılandırılmış bir çıktı dosyasına karşılık gelir:
   - Mad. 9 Risk Değerlendirmesi → `risk_assessment.json`
   - Mad. 10 Veri Yönetişimi → `data_governance_report.json`
   - Mad. 11 Teknik Dokümantasyon → `annex_iv_metadata.json`
@@ -69,7 +69,7 @@ ForgeLM'in temel mimari kimliği: bir YAML dosyası bir eğitim çalışmasını
 
 **ForgeLM'i neden seçerler:** Anlamlı çıkış kodları doğrudan pipeline dallanma mantığına karşılık gelir. `--dry-run`, GPU kuyruğuna alınmadan config'i doğrular. Yapılandırılmış JSON çıktı, gözlemlenebilirlik platformlarıyla entegre olur. Webhook bildirimleri (Slack/Teams) mevcut olay yönetimi akışlarına bağlanır.
 
-**Temsili iş akışı:** `git push → GitHub Actions tetiklenir → forgelm --config job.yaml → çıkış kodu → dağıt veya uyarı ver`
+**Temsili iş akışı:** `git push → GitHub Actions tetiklenir → forgelm --config job.yaml → çıkış kodu → dağıt veya alarm ver`
 
 ### İkincil: Düzenlemeye Tabi Sektörlerdeki ML Mühendisleri
 
@@ -102,7 +102,7 @@ Açıkça kapsam dışı — şimdi ve uzun vadede:
 | Boyut | ForgeLM | LLaMA-Factory | Unsloth | Axolotl |
 |---|---|---|---|---|
 | Güvenlik değerlendirmesi (entegre) | ✅ Llama Guard S1-S14 | ❌ | ❌ | ❌ |
-| EU AI Act uyumluluğu | ✅ Mad. 9-17 + Ek IV | ❌ | ❌ | ❌ |
+| EU AI Act uyumluluğu | ✅ Mad. 9-17 + Annex IV | ❌ | ❌ | ❌ |
 | CI/CD-native çıkış kodları | ✅ 0/1/2/3/4/5/6 | Kısmi | ❌ | Kısmi |
 | Web UI | ❌ (kasıtlı) | ✅ | ✅ Studio | ❌ |
 | Hız optimizasyonu | Standart | Standart | ✅ 2-5x | Standart |
@@ -150,7 +150,7 @@ EU AI Act'in uygulanabilirliği yükümlülüğe ve sisteme göre değerlendiril
 ilişkin Bölüm III tarihleri Ek III için 2 Aralık 2027, Ek I için 2 Ağustos 2028'dir;
 [(AB) 2026/1744 sayılı Tüzük, Madde 1(40)(b)](https://eur-lex.europa.eu/eli/reg/2026/1744/oj/eng)
 kapsamı ve istisnaları belirler. Madde 50'deki şeffaflık yükümlülükleri genel olarak 2 Ağustos 2026'dan
-itibaren uygulanır; Madde 111(4), 2 Ağustos 2026'dan önce piyasaya sunulmuş, sentetik ses, görüntü,
+itibaren uygulanır; Madde 111(4), 2 Ağustos 2026'dan önce piyasaya arz edilmiş, sentetik ses, görüntü,
 video veya metin üreten sistemlerin (genel amaçlı YZ sistemleri dahil) sağlayıcılarına Madde 50(2)'ye
 uyum için 2 Aralık 2026'ya kadar süre tanır; bu hükmün istisnaları saklıdır. Madde 2(2)'nin Ek I,
 Kısım B için belirlediği ayrı kapsam kuralı da geçerlidir.

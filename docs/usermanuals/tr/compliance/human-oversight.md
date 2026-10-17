@@ -156,4 +156,4 @@ Granted / rejected bir koşu üzerinde `--show` çalıştırıldığında tam za
 
 - [Audit Log](#/compliance/audit-log) — imzaların kaydedildiği yer.
 - [Annex IV](#/compliance/annex-iv) — Bölüm 7 beyanı insanlar tarafından imzalanır, toolkit tarafından değil.
-- [Webhook'lar](#/operations/webhooks) — onay istekleri Slack/Teams uyarıları fırlatabilir.
+- [Webhook'lar](#/operations/webhooks) — onay istekleri Slack/Teams bildirimleri gönderebilir.

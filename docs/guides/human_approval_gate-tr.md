@@ -173,7 +173,7 @@ Yazdırılan herhangi bir satır ihlaldir. Temiz bir koşumda hiçbir şey yazd�
 
 ## 7. Timeout politikası
 
-ForgeLM bugün kapıda otomatik timeout zorunlu kılmaz (Phase 9 kapıyı ship eder; Phase 9.5 / v0.6.0+ auto-fail timer'ını ekler). Bugün CI kuran operatörler bekleyen koşumları stale durumdayken uyarmak için §3'teki polling deseni kullanmalı:
+ForgeLM bugün kapıda otomatik timeout zorunlu kılmaz (Phase 9 kapıyı ship eder; Phase 9.5 / v0.6.0+ auto-fail timer'ını ekler). Bugün CI kuran operatörler, stale kalan bekleyen koşumlar için alarm vermek üzere §3'teki polling desenini kullanmalı:
 
 ```bash
 # CI cron — herhangi bir onay 24h+ pending ise eskalasyon.

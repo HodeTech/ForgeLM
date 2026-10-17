@@ -130,7 +130,13 @@ For the parts we do translate, keep terminology consistent. A small glossary:
 | layer (ML) | katman | |
 | tokenizer | tokenleştirici / tokenizer | Either; technical audiences prefer "tokenizer" |
 | LoRA / PEFT / etc. | unchanged | Acronyms |
-| EU AI Act | AB Yapay Zekâ Yasası / EU AI Act | First mention spell it out, then abbreviate |
+| EU AI Act | EU AI Act / AB Yapay Zekâ Yasası | TR pages name it "EU AI Act"; when prose spells the short title out in Turkish, "Act" is *Yasası* |
+| Regulation (EU) 2024/1689, regulation (as an instrument) | (AB) 2024/1689 sayılı Tüzük | Formal citations name the instrument, and an EU regulation is a *Tüzük*: the GDPR is the *Genel Veri Koruma Tüzüğü* |
+| post-market monitoring | piyasaya arz sonrası izleme | The provider's Article 72 system and plan; *piyasaya arz* is the Turkish legal term for placing on the market. Market surveillance by authorities is *piyasa gözetimi*, a different duty |
+| Annex IV point N | Annex IV §N | *Madde* is an Article (*Madde 72*), so an Annex point is §N, as in *Annex IV §1* |
+| drift (model / data) | drift | Kept in English, as in the guides and the site. *Kayma* names a schema drift (*şema kayması*) or a threshold or preference shift |
+| metrics exporter | exporter | Kept in English, like *endpoint* and *webhook*; suffixes take an apostrophe (*exporter'ı*) |
+| alert / notification / warning | alarm / bildirim / uyarı | A monitoring or threshold alert (drift, cost) is *alarm*; a webhook's chat message is *bildirim*, even where English calls it an alert; a log warning is *uyarı* |
 
 When in doubt, look at sibling TR docs and match the most frequent choice. Don't invent new terminology mid-series.
 
@@ -142,6 +148,7 @@ The audience is technical. Priorities:
 2. **Plain, technical Turkish.** Not literary. Not Osmanlı.
 3. **Transliterated technical terms where Turkish equivalents are awkward.** "Pipeline çalıştır" reads better than "boru hattını çalıştırın" in a CLI doc.
 4. **No machine-translation output.** Google Translate / DeepL output pasted without review is worse than English only. If you can't rewrite a machine-translated passage into natural Turkish, don't add it.
+5. **Straight apostrophes.** A suffix after a name, code or abbreviation takes the straight apostrophe (`ForgeLM'in`, `URL'si`), never the curly ’, in the docs and in the site's Turkish strings.
 
 ## When a Turkish reader encounters English content
 

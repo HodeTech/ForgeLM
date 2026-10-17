@@ -36,7 +36,7 @@ The dry-run validates YAML without loading the model or downloading its weights.
 | [audit_log.jsonl](recorded-output/audit_log.jsonl) | Original seven-entry log from the source CPU training run |
 | [audit_log.jsonl.manifest.json](recorded-output/audit_log.jsonl.manifest.json) | Original genesis sidecar, kept beside the log |
 
-The README and website embed this exact terminal recording:
+The project README embeds this exact terminal recording; the website links to this walkthrough:
 
 ```text
 + python3 -m forgelm verify-audit recorded-output/audit_log.jsonl

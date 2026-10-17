@@ -1,239 +1,200 @@
-# ForgeLM
+<p align="center">
+  <img src="https://raw.githubusercontent.com/HodeTech/ForgeLM/development/docs/assets/forgelm-mark.svg" alt="ForgeLM logo" width="72" height="72">
+</p>
 
-[![PyPI](https://img.shields.io/pypi/v/forgelm.svg)](https://pypi.org/project/forgelm/)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![CI](https://github.com/HodeTech/ForgeLM/actions/workflows/ci.yml/badge.svg)](https://github.com/HodeTech/ForgeLM/actions/workflows/ci.yml)
+<h1 align="center">ForgeLM</h1>
 
-**The config-driven LLM fine-tuning toolkit for teams that ship models into regulated environments.** YAML in — fine-tuned model, safety report, and EU AI Act audit artefacts out, with stable exit codes so a failed safety gate fails your pipeline instead of your launch.
+<p align="center">
+  <strong>Fine-tune LLMs. Keep the evidence.</strong><br>
+  YAML-driven training, evaluation gates, and audit artifacts — from your terminal, Python, or CI.
+</p>
 
-Want to contribute? Start with [your first pull request](https://github.com/HodeTech/ForgeLM/blob/development/CONTRIBUTING.md#your-first-pull-request) or an [unassigned good first issue](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee).
+<p align="center">
+  <a href="https://pypi.org/project/forgelm/"><img src="https://img.shields.io/pypi/v/forgelm.svg" alt="PyPI version"></a>
+  <a href="https://github.com/HodeTech/ForgeLM/actions/workflows/ci.yml"><img src="https://github.com/HodeTech/ForgeLM/actions/workflows/ci.yml/badge.svg?branch=development" alt="CI on development"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%E2%80%933.13-blue.svg" alt="Tested with Python 3.10–3.13"></a>
+  <a href="https://github.com/HodeTech/ForgeLM/blob/main/LICENSE"><img src="https://img.shields.io/badge/code-Apache_2.0-blue.svg" alt="Code license: Apache 2.0"></a>
+</p>
 
-New to fine-tuning? `forgelm quickstart customer-support` generates a config and seed dataset sized for a 12 GB GPU, trains it, and drops you into a chat REPL with the result — and you can ignore everything below until you need it.
+<p align="center">
+  <a href="https://hodetech.github.io/ForgeLM/">Website</a> ·
+  <a href="#try-it-without-a-gpu">Quick start</a> ·
+  <a href="#documentation">Documentation</a> ·
+  <a href="#contribute">Contribute</a> ·
+  <a href="https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/quickstart-tr.md">Türkçe</a>
+</p>
 
----
+ForgeLM turns a validated YAML configuration into a fine-tuning run, a saved model,
+and an audit trail. Start with SFT, use preference or reasoning methods when you need
+them, and opt into safety evaluation, human approval, and EU AI Act documentation.
+The same configuration works locally and in a CI/CD pipeline.
 
-## The config
+**Here to contribute?** Pick an [unassigned good first issue](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee)
+and follow [your first pull request](https://github.com/HodeTech/ForgeLM/blob/development/CONTRIBUTING.md#your-first-pull-request).
+Documentation, Turkish translations, examples, and tests are welcome alongside code.
 
-This is the whole interface. No hidden env-var flags, no imperative glue script:
+## Why ForgeLM
+
+| You need to… | ForgeLM provides |
+|---|---|
+| Keep training reproducible | Validated YAML, model revision pins, and a typed [Python API](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/library_api.md). |
+| Move beyond a single SFT run | **SFT · DPO · SimPO · KTO · ORPO · GRPO**, plus sequential [pipelines](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/pipeline.md) such as SFT → DPO → GRPO. |
+| Check data before training | Dataset audits for PII, secrets, duplicates, leakage, and quality; document-to-JSONL ingestion with masking. |
+| Make promotion conditional | Opt-in loss, benchmark, safety, and judge gates; human-approval staging and stable CLI exit codes. |
+| Keep reviewable evidence | Hash-chained audit logs, model-integrity manifests, model cards, and optional compliance exports. |
+| Use your own infrastructure | LoRA/QLoRA, optional Unsloth and distributed backends, plus export and serving configuration generation. |
+
+ForgeLM fine-tunes existing Hugging Face models. Serving is handed off to tools such
+as Ollama, vLLM, TGI, or llama.cpp. See the [architecture](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/architecture.md)
+for how the pieces fit together.
+ORPO and SimPO may use experimental TRL APIs; see
+[alignment compatibility](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/alignment.md).
+
+## Try it without a GPU
+
+Use **Python 3.10–3.13** in a virtual environment. Install the core package, then
+generate a starter configuration and a tiny customer-support dataset:
+
+```bash
+python -m pip install forgelm
+python -m forgelm quickstart customer-support --output configs/support.yaml --dry-run
+```
+
+This writes `configs/support.yaml`, `configs/customer-support.jsonl`, and a
+quickstart audit record. **The generation step downloads no model and starts no
+training.** Use a fresh output directory when repeating it, so your edited dataset
+is not overwritten. The bundled data is a demonstration seed, not a production corpus.
+
+Validate the generated YAML and audit the seed dataset:
+
+```bash
+python -m forgelm --config configs/support.yaml --dry-run
+python -m forgelm audit ./configs/customer-support.jsonl
+```
+
+List other templates with `python -m forgelm quickstart --list`, or generate a
+configuration interactively with `python -m forgelm --wizard`.
+For a recorded CPU walkthrough of configuration validation, dataset auditing, and
+audit-log verification, see the [CPU sample and its limitations](https://github.com/HodeTech/ForgeLM/blob/development/docs/guides/cpu-demo/README.md).
+
+### When you are ready to train
+
+Review the generated model, dataset, and output paths first. The bundled templates
+enable 4-bit loading: on **Linux + CUDA**, install the QLoRA extra, estimate memory,
+and start training explicitly:
+
+```bash
+python -m pip install "forgelm[qlora]"
+python -m forgelm --config configs/support.yaml --fit-check
+python -m forgelm --config configs/support.yaml
+```
+
+The memory estimate is guidance, not a guarantee that a run will fit. For Apple
+Silicon or another unquantized setup, set `model.load_in_4bit: false` and choose a
+model that fits your hardware. Intel Macs are unsupported by the required PyTorch
+versions. See [installation and platform support](https://github.com/HodeTech/ForgeLM/blob/main/docs/usermanuals/en/getting-started/installation.md)
+for optional backends and extras.
+
+## One configuration, a reviewable workflow
+
+The generated YAML is yours to edit. For example, this standalone SFT configuration
+uses the seed dataset created above and saves to `./checkpoints/customer-support`:
 
 ```yaml
 model:
   name_or_path: "Qwen/Qwen2.5-7B-Instruct"
-  load_in_4bit: true                      # QLoRA — 4-bit base weights
-  # revision: "<40-hex commit SHA>"       # pin the exact Hub commit for reproducibility
+  load_in_4bit: true
 
 data:
-  dataset_name_or_path: "./data/support.jsonl"
+  dataset_name_or_path: "./configs/customer-support.jsonl"
 
 training:
-  trainer_type: "sft"                     # sft | dpo | simpo | kto | orpo | grpo
-  output_dir: "./checkpoints"
+  trainer_type: "sft"
+  output_dir: "./checkpoints/customer-support"
   num_train_epochs: 3
 
 lora:
-  r: 16
-  alpha: 32
-
-evaluation:
-  auto_revert: true                       # off by default — see the caveat below
-  max_acceptable_loss: 0.8
-  safety:
-    enabled: true
-    classifier: "meta-llama/Llama-Guard-3-8B"
-    max_safety_regression: 0.02           # >2% unsafe responses fails the gate
+  r: 8
+  alpha: 16
 ```
 
-Every key is a validated Pydantic field — a typo or an unenforceable threshold is a startup error, not a silent no-op three hours into a run. The full surface is in the [Configuration Reference](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/configuration.md).
+Configuration keys and cross-field constraints are validated before training.
+Add safety, compliance, or a multi-stage pipeline when your workflow needs them:
+[configuration reference](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/configuration.md) ·
+[alignment methods](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/alignment.md) ·
+[pipeline guide](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/pipeline.md).
 
----
+**Data → configure → train → evaluate → review → export.**
+Audit your own corpus before committing GPU time. After training, use
+`python -m forgelm chat ./checkpoints/customer-support/final_model`
+to inspect the result, then follow the [post-training examples](https://github.com/HodeTech/ForgeLM/tree/main/notebooks)
+for export and deployment. K-quant GGUF export also requires a separate llama.cpp
+quantization step; see the [CLI reference](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/usage.md).
 
-## Quick Start
+## Evidence and gates
 
-```bash
-pip install forgelm
-pip install "forgelm[qlora]"   # Linux + CUDA: the bundled templates load the base model in 4-bit
-
-# Zero-to-trained-model on a bundled template (5 available: forgelm quickstart --list).
-# This generates the config AND trains it; add --dry-run to stop at the config.
-forgelm quickstart customer-support
-
-# Or, from a config of your own — validate, estimate VRAM, then train
-forgelm --config my_config.yaml --dry-run
-forgelm --config my_config.yaml --fit-check
-forgelm --config my_config.yaml
-
-# After training: chat, export to GGUF, generate a serving config
-forgelm chat ./checkpoints/final_model
-forgelm export ./checkpoints/final_model --output model-q4.gguf --quant q4_k_m
-forgelm deploy ./checkpoints/final_model --target ollama
-```
-
-`python -m forgelm …` is equivalent and is what CI should use: a console script's `sys.path[0]` is its own `bin/`, so `forgelm …` runs whatever is in site-packages rather than the checkout you just built. `forgelm --wizard` generates a config interactively. Full walkthrough: [Quick Start Guide](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/quickstart.md).
-
----
-
-## Try it without a GPU
-
-Validate a configuration, audit eight synthetic rows, and check a recorded audit-log chain on CPU.
-The [CPU sample](https://github.com/HodeTech/ForgeLM/blob/development/docs/guides/cpu-demo/README.md)
-contains the exact commands, unedited outputs, original log, version, date, and limitations.
-This is its real audit-log verification recording:
-
-```text
-+ python3 -m forgelm verify-audit recorded-output/audit_log.jsonl
-OK: 7 entries verified
-```
-
-These checks do not establish model quality, safety, or legal compliance. The sample also documents
-why its source training bundle did not pass the separate model-integrity check.
-
----
-
-## What comes out
-
-```text
-checkpoints/
-├── final_model/
-│   ├── README.md                     # Model card
-│   ├── deployer_instructions.md      # Article 13 — deployer instructions
-│   └── model_integrity.json          # SHA-256 of saved files, including both documents
-├── compliance/
-│   ├── annex_iv_metadata.json        # EU AI Act Annex IV technical documentation
-│   ├── data_governance_report.json   # Article 10 — inlines the dataset audit report
-│   ├── compliance_report.json        # Article 11 manifest
-│   └── …                             # data_provenance.json, training_manifest.yaml
-└── audit_log.jsonl                   # Article 12 — append-only, hash-chained
-```
-
-Every decision gate appends one line to `audit_log.jsonl`. Here is a real safety gate failing:
-
-```json
-{"timestamp": "2026-07-20T18:41:00.356441+00:00", "run_id": "fg-13f28267fe1c", "operator": "ci-runner@build-07", "event": "safety.evaluation_completed", "prev_hash": "f39b5678b9ccf3ebf259da457fdea175d4046f5d6479a6f9916cf0963a21246b", "passed": false, "safe_ratio": 0.91, "total_count": 200, "evaluation_completed": true, "scored_unsafe_count": 18, "unscored_count": 0, "safety_score": 0.91, "categories": {"S1": 4, "S9": 14}}
-```
-
-`prev_hash` chains each line to the one before it. Every event is catalogued in the [Audit Event Catalog](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md).
-
----
-
-## Exit codes
-
-CI/CD branches on these. They are a public contract; any other value is clamped to 2 rather than leaking a signal-derived code.
-
-| Code | Meaning |
+| Artifact or control | What it does |
 |---|---|
-| 0 | Success |
-| 1 | Config error — invalid YAML, bad path, failed schema validation |
-| 2 | Training/runtime error |
-| 3 | Evaluation gate failed — loss, benchmark, safety, judge, or a critical secrets / PII finding |
-| 4 | Awaiting human approval (Article 14 gate; the model is staged, not promoted) |
-| 5 | Wizard cancelled before writing a config |
-| 6 | Integrity failure — an artefact was read and its hash did not match |
+| Saved model and model card | Records the trained output and its configuration. |
+| Model-integrity manifest | Detects changed, missing, or added files with `verify-integrity`. |
+| Append-only audit log | Records decisions in a hash chain, checked with `verify-audit`. |
+| Optional evaluation gates | Apply configured loss, benchmark, safety, or judge thresholds. |
+| Optional human approval | Stages a model for review before promotion; the CLI exits `4`. |
+| Optional compliance export | Produces Annex IV metadata, data-governance reports, and training provenance. |
 
-1 and 6 are deliberately distinct: a mistyped path is an operator typo (1 — fix the command), whereas a hash that no longer matches is a security event (6 — page whoever owns the artefact).
+CLI exit codes let your pipeline distinguish configuration errors (`1`), runtime
+errors (`2`), evaluation failures (`3`), pending approval (`4`), wizard cancellation
+(`5`), and integrity mismatches (`6`); success is `0`. See the
+[CLI contract](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/usage.md).
 
----
+Safety evaluation, compliance export, human approval, and auto-revert are opt-in.
+With `evaluation.auto_revert: true`, a failed evaluation can delete the saved model
+directory; review the [gate behavior](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/safety_compliance.md)
+before enabling it. Evidence artifacts support a review process; they do not
+certify model safety or legal compliance. For adversarial tamper-evidence, configure
+`FORGELM_AUDIT_SECRET` and protect storage — an unkeyed hash alone is insufficient.
 
-## Compliance & safety
+## Documentation
 
-- **EU AI Act** — Annex IV technical documentation, Article 10 data governance, Article 12 audit log, Article 14 human-oversight staging gate (`forgelm approve`, exit 4).
-- **GDPR** — `forgelm purge` (Article 17 erasure) and `forgelm reverse-pii` (Article 15 access).
-- **Auto-revert** *(opt-in: `evaluation.auto_revert: true`, off by default)* — when a run breaches a loss, benchmark, safety, or judge threshold, the saved model directory is **deleted** and the failure is recorded in the audit log. Left off, a breach is logged and the model is kept. Withheld regardless of the setting when the safety evaluation produced no usable evidence (classifier load failure, unanswered probes) — an unread verdict fails the run but does not delete the model.
-- **Model & log integrity** — a SHA-256 manifest per trained model (`forgelm verify-integrity`) detects changed, removed, or added artefacts, and `forgelm verify-audit` validates the audit-log hash chain (HMAC-authenticated when `FORGELM_AUDIT_SECRET` is set). Both exit **6** on mismatch. Neither is keyed unless you set `FORGELM_AUDIT_SECRET`: without it the manifest can be re-stamped by anyone who can write the model directory, and editing the audit log's *last* line leaves the chain self-consistent. Both catch corruption and accidental drift; for adversarial tamper-evidence, set the secret and pair with write-once storage.
-- **Reproducibility** — five optional `revision` fields pin the base model, safety classifier, LLM judge, distillation teacher, and GRPO reward model to exact Hub commits (the tokenizer shares the base model's pin). A 40-hex SHA pins; a branch or tag is accepted with a warning, because upstream can repoint it.
-- **Supply chain** — CycloneDX SBOM per release, nightly `pip-audit` + `bandit`, `gitleaks` pre-commit.
-
-[Safety & Compliance Guide](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/safety_compliance.md) · [Deployer Audit Guide (ISO 27001 / SOC 2)](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/iso_soc2_deployer_guide.md) · [Supply-Chain Security](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/supply_chain_security.md)
-
----
-
-## `forgelm audit` — before you spend a GPU-hour
-
-One command, no model download, no training commitment. It scans a corpus for length and language distribution, near-duplicates (SimHash, optional MinHash LSH), cross-split leakage, quality flags, PII across 8 categories (email, phone, IBAN, credit card, and TR / DE / FR / US-SSN national IDs — with checksum validation on cards (issuer-prefix + Luhn), IBANs (mod-97) and TR IDs; the rest are shape-matched and deliberately over-report), and a 9-family secrets scan.
-
-**Two gates exit 3.** These are the ones that stop a build:
-
-```console
-$ forgelm audit ./corpus.jsonl
-[ERROR] Secrets gate FAILED (critical): 2 credential/secret span(s) detected
-(aws_access_key=1, github_token=1). Do not train on this corpus — a credential
-in training data is memorised and re-emitted at inference time. Scrub it with
-`forgelm ingest --secrets-mask`, or re-run `forgelm audit --allow-secrets` to
-record the findings without failing the pipeline. Exiting 3.
-```
-
-The **PII gate** is the second, and it is deliberately narrower: only critical-tier findings — credit-card numbers and IBANs — fail a run. Both clear a checksum — a card needs a real issuer prefix (IIN) plus Luhn, an IBAN the mod-97 check — so a hit is indistinguishable from a genuine card or account number, not an IMEI or order number that merely happens to pass Luhn. Government IDs, emails and phone numbers are reported and never gate: most are shape-matched and deliberately over-report, and a gate that fires on a clean corpus is a gate somebody switches off. The tier decides, not the detector — a TC national ID is checksum-validated too, but sits below critical.
-
-Both gates previously printed their finding and exited `0`. `--allow-secrets` and `--allow-pii` record the findings without failing the pipeline — for auditing a corpus before scrubbing it, or fixtures with known dummy values — and are independent of each other. `--croissant` embeds a Croissant 1.0 dataset card under the `croissant` key of `data_audit_report.json`; that report is inlined into `data_governance_report.json` at compliance-export time. [Dataset Audit Guide](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/data_audit.md)
-
----
-
-## Training & deployment
-
-| | |
+| Start here | Go deeper |
 |---|---|
-| **Trainers** | 6 types: SFT, DPO, SimPO, KTO, ORPO, GRPO — one schema |
-| **Memory** | 4-bit QLoRA, DoRA, PiSSA, rsLoRA, GaLore; on CUDA OOM the batch is halved and gradient accumulation doubled, preserving the effective batch, then the step retries |
-| **Backends** | Transformers (default) or Unsloth — Linux + CUDA only, and incompatible with `lora.method: pissa` |
-| **Scale** | DeepSpeed ZeRO-2/3, FSDP, multi-GPU, MoE-aware (Qwen3, Mixtral, DeepSeek); RoPE scaling, NEFTune, sliding-window attention, sequence packing |
-| **Data in** | `forgelm ingest` turns PDF / DOCX / EPUB / TXT / Markdown into SFT-ready JSONL, with PII and secrets masking before chunks are written |
-| **Evaluation** | `lm-evaluation-harness` benchmarks, LLM-as-judge, Llama Guard safety scoring with S1–S14 categories; `--fit-check` reports `FITS / TIGHT / OOM / UNKNOWN` before you allocate a GPU |
-| **Out** | GGUF export (6 quant levels), Ollama / vLLM / TGI / HF Endpoints configs, model merging (TIES, DARE, SLERP, linear), auto-generated model cards, Slack / Teams webhooks, W&B / MLflow / TensorBoard |
+| [Quick start](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/quickstart.md) | [Configuration reference](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/configuration.md) |
+| [Dataset auditing](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/data_audit.md) | [Safety and compliance](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/safety_compliance.md) |
+| [Document ingestion](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/ingestion.md) | [Enterprise deployment](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/enterprise_deployment.md) |
+| [Python API](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/library_api.md) | [CI/CD integration](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/cicd_pipeline.md) |
+| [Troubleshooting](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/troubleshooting.md) | [Public roadmap](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md) |
 
-**ORPO and SimPO use upstream experimental APIs** when TRL does not export their classes at the top level:
-`trl.experimental.orpo` and `trl.experimental.cpo`, respectively. ForgeLM preserves `TRLExperimentalWarning`;
-these APIs may change or disappear without notice. SimPO uses `CPOTrainer` with `loss_type="simpo"` and
-`cpo_alpha=0`, without a reference model or NLL term.
+**Türkçe:** [Hızlı başlangıç](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/quickstart-tr.md) ·
+[Yapılandırma](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/configuration-tr.md) ·
+[Veri denetimi](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/data_audit-tr.md) ·
+[Güvenlik ve uyumluluk](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/safety_compliance-tr.md).
 
-**Stable Python API** — `from forgelm import ForgeTrainer, audit_dataset, verify_audit_log, …`; training, dataset audit, and the artefact verifiers have typed, semver-protected entry points.
+**Learn in a notebook:** [SFT fine-tuning in Colab](https://colab.research.google.com/github/HodeTech/ForgeLM/blob/main/notebooks/quickstart_sft.ipynb) ·
+[GRPO reasoning in Colab](https://colab.research.google.com/github/HodeTech/ForgeLM/blob/main/notebooks/grpo_reasoning.ipynb) ·
+[all notebooks](https://github.com/HodeTech/ForgeLM/tree/main/notebooks).
+Model access, dependencies, and hardware requirements are documented in each notebook.
 
-Also here: multi-dataset mixing, and synthetic distillation from a teacher model into a smaller student.
+## Contribute
 
-**What it is not:** no web UI, no custom inference engine (hand off to Ollama, vLLM, TGI, llama.cpp), no custom architectures or quantization kernels, no pretraining. Fine-tuning, evaluation, and the evidence trail, only — backed by 128 test modules and 31 CI guards that fail the build on documentation and schema drift. **No telemetry:** ForgeLM makes no outbound call you did not configure.
+Help make fine-tuning easier to reproduce and review. You can improve a guide,
+translate an example, reproduce a bug, add a regression test, or work on a planned
+feature. Start small; you do not need a GPU to run the unit tests or documentation checks.
 
----
+1. Find an [unassigned good first issue](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee)
+   or browse the [project plan](https://github.com/orgs/HodeTech/projects/5).
+2. Follow [your first pull request](https://github.com/HodeTech/ForgeLM/blob/development/CONTRIBUTING.md#your-first-pull-request)
+   to set up the environment and run the relevant checks.
+3. Open a PR against **`development`** and link its issue. Keep English/Turkish
+   documentation mirrors together where they exist.
 
-## Install
+[Report a bug](https://github.com/HodeTech/ForgeLM/issues/new?template=bug_report.yml) ·
+[Suggest a feature](https://github.com/HodeTech/ForgeLM/issues/new?template=feature_request.yml) ·
+[Engineering standards](https://github.com/HodeTech/ForgeLM/tree/development/docs/standards).
+Report vulnerabilities privately using [SECURITY.md](https://github.com/HodeTech/ForgeLM/blob/main/SECURITY.md).
 
-```bash
-pip install forgelm                     # core
-pip install "forgelm[qlora]"            # 4-bit quantization (Linux)
-pip install "forgelm[ingestion]"        # PDF / DOCX / EPUB / Markdown
+## License
 
-# From source, for contributors
-git clone https://github.com/HodeTech/ForgeLM.git && cd ForgeLM && pip install -e ".[dev]"
-```
-
-**Prerequisites:** Python 3.10+, `torch>=2.4.0` (required by `transformers>=5.3.0`). Intel Macs (x86_64) are not supported — PyPI has no `torch>=2.4` wheel for that platform. Heavy backends ship as optional extras; the [installation guide](https://github.com/HodeTech/ForgeLM/blob/main/docs/usermanuals/en/getting-started/installation.md) lists each one with its platform constraints.[^1]
-
-Docker — no image is published, so build it locally first (`ENTRYPOINT` is `forgelm`):
-
-```bash
-docker build -t forgelm --build-arg INSTALL_EVAL=true .
-docker run --gpus all -v $(pwd)/my_config.yaml:/workspace/config.yaml \
-  -v $(pwd)/output:/workspace/output forgelm --config /workspace/config.yaml
-```
-
-Multi-GPU and air-gapped patterns: [Enterprise Deployment Guide](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/enterprise_deployment.md).
-
----
-
-## Documentation & notebooks
-
-[Quick Start](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/quickstart.md) · [Configuration Reference](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/configuration.md) · [Architecture](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/architecture.md) · [Safety & Compliance](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/safety_compliance.md) · [Troubleshooting & FAQ](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/troubleshooting.md) · [all guides](https://github.com/HodeTech/ForgeLM/tree/main/docs/guides) · [roadmap](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap.md)
-
-**Türkçe** — 15 of the 16 guides have a Turkish mirror: [Hızlı Başlangıç](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/quickstart-tr.md) · [Konfigürasyon Referansı](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/configuration-tr.md) · [Güvenlik ve Uyumluluk](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/safety_compliance-tr.md) · [Sorun Giderme](https://github.com/HodeTech/ForgeLM/blob/main/docs/guides/troubleshooting-tr.md)
-
-- [Quick Start — SFT Fine-Tuning](https://github.com/HodeTech/ForgeLM/blob/main/notebooks/quickstart_sft.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/HodeTech/ForgeLM/blob/main/notebooks/quickstart_sft.ipynb)
-- [GRPO Reasoning RL](https://github.com/HodeTech/ForgeLM/blob/main/notebooks/grpo_reasoning.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/HodeTech/ForgeLM/blob/main/notebooks/grpo_reasoning.ipynb)
-- [Safety Evaluation & Red-Teaming](https://github.com/HodeTech/ForgeLM/blob/main/notebooks/safety_evaluation.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/HodeTech/ForgeLM/blob/main/notebooks/safety_evaluation.ipynb)
-
-The first two run on a free Colab T4. The safety notebook needs a gated Llama-Guard-3-8B licence (`HF_TOKEN`) and more VRAM than a free T4 provides. [11 notebooks in total](https://github.com/HodeTech/ForgeLM/tree/main/notebooks) (DPO, KTO, multi-dataset, GaLore, synthetic data, data curation, post-training workflow).
-
----
-
-## Contributing & license
-
-Work is tracked as issues on the [ForgeLM Project Plan](https://github.com/orgs/HodeTech/projects/5), and pull requests target the `development` branch. Start with [CONTRIBUTING.md](https://github.com/HodeTech/ForgeLM/blob/main/CONTRIBUTING.md) and the engineering standards in [docs/standards/](https://github.com/HodeTech/ForgeLM/tree/main/docs/standards). Report security vulnerabilities privately, as [SECURITY.md](https://github.com/HodeTech/ForgeLM/blob/main/SECURITY.md) describes — never in a public issue. Licensed under [Apache 2.0](https://github.com/HodeTech/ForgeLM/blob/main/LICENSE).
-
-[^1]: Extras whose upstream wheels do not exist for a platform are marked, so the install succeeds and the backend is simply absent rather than taking the whole install down with a failed source build: `qlora` and `unsloth` are `sys_platform == 'linux'`; `export` (`llama-cpp-python`) and `distributed` (DeepSpeed) are `sys_platform != 'win32'`. Reaching a backend that is absent raises an `ImportError` naming the extra to install. All other extras are cross-platform.
+**Code:** [Apache 2.0](https://github.com/HodeTech/ForgeLM/blob/main/LICENSE).
+**Bundled seed datasets:** [CC-BY-SA 4.0](https://github.com/HodeTech/ForgeLM/blob/main/forgelm/templates/LICENSES.md),
+with attribution and share-alike requirements. Models and datasets you bring retain
+their respective licenses; review them before training or distributing artifacts.
