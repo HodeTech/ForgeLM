@@ -13,6 +13,18 @@ All notable changes to ForgeLM are documented here.
   and valid port; schemeless addresses are rejected instead of silently becoming `<malformed-url>`
   in evidence. Use `https://monitor.example.com:8443/plan` or an `endpoint_env` name (#93).
 
+### Added
+
+- `CITATION.cff`, so the repository can be cited through GitHub's "Cite this
+  repository" panel (#964).
+- `GOVERNANCE.md` and `MAINTAINERS.md` at the repository root, recording how
+  decisions are made, how the maintainer roles work, and which areas the current
+  maintainer owns (#964).
+- `.github/dependabot.yml`, so dependency updates arrive as reviewed pull requests
+  rather than waiting for a manual version check; `.github/CODEOWNERS` to route
+  review requests without gating a merge; and a Documentation issue template, since
+  the issue chooser previously offered only a bug and a feature form (#964).
+
 ### Changed
 
 - Record monitoring default provenance in `defaulted_fields` and mark literal URL projection with

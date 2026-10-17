@@ -306,7 +306,18 @@ _EXEMPT: dict[str, frozenset[str]] = {
 }
 
 # Files scanned outside the directory globs below.
-_TOP_LEVEL_SURFACES: frozenset[str] = frozenset({"CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md", "README.md"})
+_TOP_LEVEL_SURFACES: frozenset[str] = frozenset(
+    {
+        "AGENTS.md",
+        "CLAUDE.md",
+        "CODE_OF_CONDUCT.md",
+        "CONTRIBUTING.md",
+        "GOVERNANCE.md",
+        "MAINTAINERS.md",
+        "README.md",
+        "SECURITY.md",
+    }
+)
 
 
 @dataclass(frozen=True)
