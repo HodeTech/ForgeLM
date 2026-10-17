@@ -36,7 +36,7 @@ Dry-run, modeli yüklemeden veya ağırlıklarını indirmeden YAML'ı doğrular
 | [audit_log.jsonl](recorded-output/audit_log.jsonl) | Kaynak CPU eğitiminden alınan özgün yedi kayıtlı log |
 | [audit_log.jsonl.manifest.json](recorded-output/audit_log.jsonl.manifest.json) | Logun yanında tutulan özgün genesis yan dosyası |
 
-README ve web sitesi bu terminal kaydını aynen gösterir:
+Projenin README dosyası bu terminal kaydını aynen gösterir; web sitesi bu rehbere bağlantı verir:
 
 ```text
 + python3 -m forgelm verify-audit recorded-output/audit_log.jsonl

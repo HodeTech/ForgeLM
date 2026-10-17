@@ -59,6 +59,34 @@ tests/
 - `conftest.py` holds shared fixtures only. Domain-specific helpers live in the test files that need them.
 - A new feature PR adds the matching `test_*.py` in the **same** PR. No "tests in next PR."
 
+## Browser wizard regressions
+
+Browser wizard regressions live in `tests/site/*.test.cjs`. Run
+`node --test tests/site/*.test.cjs` with Node 22 or newer and the development
+Python environment available. The YAML round-trip test uses the active virtual environment, then the checkout's
+`.venv`, then `python3`; set `FORGELM_TEST_PYTHON` to an explicit interpreter path if needed.
+CI runs them on Node 24 in the validation job after installing the Python development dependencies.
+They use Node's built-in test runner and a VM to execute the actual wizard;
+generated YAML is also parsed by the real `ForgeConfig`. No npm packages,
+browser download, GPU, or network calls are needed. The shared harness
+(`tests/site/wizard_harness.cjs`) renders every step through a minimal DOM
+shim and boots the wizard controller for step and focus checks; it does not
+replace browser or native-language review.
+
+A shim cannot compute accessible names, follow the Tab order or apply CSS. A
+change to the wizard's markup, focus handling or styles is also checked in a
+real browser, on desktop and phone widths and in at least English and
+Turkish, and the pull request records what was checked:
+
+- Every step and conditional branch renders without a console error,
+  including the Compliance step at each risk tier.
+- Each field's accessible name, in the browser's accessibility tree, is its
+  visible caption, and clicking a caption focuses its field.
+- Tab reaches every control in order, and focus shows a visible ring.
+- Toggling a gate, changing the risk tier or choosing an option card keeps
+  focus on that control, and the fields it reveals appear at once.
+- Next on an invalid step focuses its first invalid field.
+
 ## Fixtures
 
 The canonical factory lives in
@@ -221,10 +249,28 @@ Bare `<command> || true` in CI is forbidden — it converts non-zero exits into 
 In this shape, `|| true` only captures the scanner's exit code so the helper can read its JSON output; the helper itself enforces the actual severity gate. Allowed only when:
 
 1. The `|| true` is on the immediately preceding scanner line (not on a `pytest`, `ruff`, or test command).
-2. The next line in the same `run:` block invokes a `tools/check_*.py` helper that does its own severity-tiered exit code.
+2. The next line in the same `run:` block runs that scanner's own severity helper — `tools/check_bandit.py` for `bandit`, `tools/check_pip_audit.py` for `pip-audit` — which exits non-zero on the severities it gates. A new scanner needs its own helper and an entry in the guard's `_SCANNER_HELPERS` table.
 3. Both lines live in the same step (so the helper truly gates the scanner output).
+4. The helper is given the report that scanner wrote — its `-o` / `--output` path or `>` target — as one of its arguments.
 
-The canonical examples are [`tools/check_pip_audit.py`](../../tools/check_pip_audit.py) (CVE severity tier) and [`tools/check_bandit.py`](../../tools/check_bandit.py) (issue-severity tier). Any other `|| true` in CI must be replaced with `continue-on-error: true` at the YAML step level, and that step must explicitly document the rationale in a YAML `# comment:`.
+The two helpers are [`tools/check_pip_audit.py`](../../tools/check_pip_audit.py) (CVE severity tier) and [`tools/check_bandit.py`](../../tools/check_bandit.py) (issue-severity tier). Any other `|| true` in CI must be replaced with `continue-on-error: true` at the YAML step level, and that step must explicitly document the rationale in a YAML `# comment:`. Never use it on a step that runs a required command: `pytest`, `node --test`, `ruff`, `mypy`, the `forgelm` CLI or a `tools/` guard.
+
+[`tools/check_ci_failure_masking.py`](../../tools/check_ci_failure_masking.py) enforces these rules on every workflow `run:` block and composite action, on the shell scripts they run or source from the repository, and on the documented gauntlets. Its shell parser is [`tools/_shell_syntax.py`](../../tools/_shell_syntax.py).
+
+- **Fallbacks.** `|| :` and `|| exit 0` count as `|| true`, inside command substitutions and trap actions too.
+- **Lost failures it rejects:**
+  - an `||` fallback that can exit 0, a pipe without `pipefail`, `set +e`, `!`, `&` and a command substitution;
+  - a failure errexit ignores, inside an `&&` / `||` list or a `{ … }` group, when later commands follow;
+  - a required command inside a `case`, an `if` branch, or a loop that may not run it (a `while`, or a `for` over a variable or with a `continue` / `break` before it);
+  - `continue-on-error`, `if: false`, `if: failure()` or `if: cancelled()` on a step or job that runs one, also through local actions, and `ruff --exit-zero` or `--fix-only`;
+  - an EXIT/ERR trap that can exit 0 or runs `exec`, an ERR trap that turns errexit off, and a DEBUG or RETURN trap that can exit or turn errexit off;
+  - a function, alias or `hash -p` that takes over a required command;
+  - an `exit`, `exec` or `set -n` that bash always reaches first and that keeps it from running: also behind `!` or `x=1 &&`, in a `{ … }` group or a function, and in a sourced or `eval`'d script;
+  - a step `shell:` other than bash, sh or dash, and a repository script it cannot find (one named from `$(dirname "$0")` too) or that runs itself.
+- **Forms it accepts.** It accepts only the shapes it models, so keep required commands plain. A fallback that must report before failing ends with `exit 1`, or captures the status first: `|| { rc=$?; echo …; exit "$rc"; }`, with nothing before that which can leave the group (`eval 'exit 0'`, a function call). An `if` that reports a failure ends the same way, with nothing else in it that can leave early: `if ! cmd; then echo …; exit 1; fi`. Re-raising a status captured with `set +e`, `|| rc=$?` or `${PIPESTATUS[0]}` later in the step is rejected. A bare `exit $?` after `echo` exits with `echo`'s status, in a fallback or a trap, and so does a bare `exit` in an ERR trap.
+- **Scope.** It catches accidental masking, not deliberate evasion. Beyond it are a required command run under another name (`$CMD`), by another program (`make`, `tox`) or on another machine or container, whose script it never reads (`docker exec c sh -c '…'`, `ssh host '…'`); a script generated or downloaded while the step runs; a program replaced on disk or put first on `PATH`; a captured status changed by a script it cannot follow; a DEBUG trap that skips commands under `extdebug`; a remote action; any other condition, such as `if: always()` on a job that needs the tests, `${{ 1 == 2 }}`, or an `if:` on a job that calls a reusable workflow; and options other than `--exit-zero` and `--fix-only` that empty a check (`pytest --collect-only`).
+
+The `# comment:` rationale that `continue-on-error` needs is a review rule; the guard does not check it.
 
 ## Writing a new test
 

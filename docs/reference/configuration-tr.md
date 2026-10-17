@@ -316,16 +316,81 @@ uzatmasını engeller.
 
 > **Sıkı kapı:** yukarıdaki [`compliance.risk_classification`](#compliance-isteğe-bağlı--eu-ai-act-madde-11--annex-iv) ile aynı — `risk_category`'i `"high-risk"` veya `"unacceptable"` olarak ayarlamak `evaluation.safety.enabled: true` gerektirir, aksi halde config-load `ConfigError` (çıkış kodu 1) fırlatır. Kapı her iki alan üzerinden OR'lanır: ikisinden biri sıkı bir tier'daysa kapı tetiklenir.
 
-## `monitoring` (İsteğe bağlı — EU AI Act Madde 12+17)
+## `monitoring` (İsteğe bağlı — Harici izleme planı, Madde 72 / 17(1)(h))
+
+Bu blok **yalnızca beyan niteliğinde metadata** içerir. `enabled: true` olduğunda ForgeLM, harici
+piyasaya arz sonrası izleme planınızı uyumluluk manifestine ve Annex IV `monitoring_and_logging` bölümüne
+`declarative_only: true` etiketiyle kaydeder. Endpoint'e bağlanmaz, metrikleri dışa aktarmaz, drift
+tespit etmez, drift alarmı göndermez veya kontrol zamanlamaz. İzleme altyapınızı ayrıca işletin;
+bu beyan izlemenin çalıştığını kanıtlamaz ve izleme yükümlülüğünü tek başına karşılamaz.
+Piyasaya arz sonrası izleme planı [Madde 72](https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng#art_72),
+QMS ise [Madde 17(1)(h)](https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng#art_17) kapsamındadır.
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
-| `enabled` | bool | `false` | İzleme hook'larını etkinleştir |
-| `endpoint` | string | `""` | İzleme webhook URL'si |
-| `endpoint_env` | string | `null` | Endpoint için ortam değişkeni adı |
-| `metrics_export` | string | `"none"` | `"none"`, `"prometheus"`, `"datadog"`, `"custom_webhook"` |
-| `alert_on_drift` | bool | `true` | Model sapmasında uyar |
-| `check_interval_hours` | int | `24` | İzleme kontrol aralığı (saat) |
+| `enabled` | bool | `false` | Harici planı manifeste kaydet; metadata kaydı isteğe bağlıdır; yasal yükümlülükler ayrıca geçerlidir |
+| `endpoint` | string | `""` | İsteğe bağlı URL; kanıta yalnızca scheme/host/port yazılır, bağlantı kurulmaz |
+| `endpoint_env` | string | `null` | ASCII tanımlayıcısı `endpoint`'ten önceliklidir; düz metin kanıta `$NAME` yazılır, değeri okunmaz; kimlik bilgisi yazmayın |
+| `metrics_export` | string | `"none"` | Beyan edilen harici exporter: `"none"`, `"prometheus"`, `"datadog"`, `"custom_webhook"`; etkin planda `none` dışındaki seçim yapılandırma yüklenirken uyarı üretir |
+| `alert_on_drift` | bool | `true` | Harici planda drift alarmı öngörülüp öngörülmediği; alarmları etkinleştirmez |
+| `check_interval_hours` | int | `24` | Beyan edilen harici kontrol aralığı, saat (en az 1); kontrol zamanlamaz |
+
+Her iki endpoint alanı da boşsa manifeste `endpoint: null` yazılır. Adlandırılan ortam değişkeni
+tanımlı olsa bile referansı çözümlenmez. Kapalı veya belirtilmemiş planlar kaydedilmez.
+
+ForgeLM'de metadata kaydı isteğe bağlıdır; Madde 72, yüksek riskli yapay zekâ sistemlerinin sağlayıcılarının piyasaya arz
+sonrası izleme sistemi kurmasını ve belgelemesini gerektirir. Bu alanlar bir özettir; Annex IV §9'un istediği,
+izleme planını (Madde 72(3)) da içeren ayrıntılı açıklama değildir.
+
+`load_config`, etkin ve `none` dışında exporter beyan eden plan için uyarı verir; doğrudan `ForgeConfig(...)` kurulumu
+bu dosya yükleme uyarısını vermez.
+
+İzleme kanıtı dosyaları (`compliance_report.json` ve üretildiğinde `annex_iv_metadata.json`) düz metindir.
+Düzleştirilmiş `training_manifest.yaml` özeti izleme metadata'sı içermez.
+
+Literal `endpoint` kırpılır; `https://monitor.example.com:8443/plan` gibi host ve geçerli port içeren mutlak bir
+HTTP(S) URL olmalıdır. Şemasız değerler reddedilir. Kanıtta scheme, host ve varsa port korunur; IPv6 köşeli
+parantezleri kalır, kullanıcı bilgisi, path, query ve fragment çıkarılır. `endpoint_redacted: true`, URL zaten
+yalnızca scheme/host/port içerse bile literal endpoint'e bu işlemin uygulandığını belirtir. Kopyalanan girdi YAML'ı,
+tarayıcı önizlemesi ve yerel depolama tam URL'yi korur; bu nedenle URL'ye kimlik bilgisi yazmayın. Sır içeren URL için
+`endpoint_env` tercih edin.
+
+`endpoint_env` adının çevresindeki boşluklar kırpılır; ASCII tanımlayıcısı olmalıdır (önce harf veya alt çizgi,
+ardından harf, rakam veya alt çizgi). Değişkenin değeri okunmadan adı `$NAME` olarak aynen kaydedilir. Boş ad literal
+endpoint'e geri döner. Doğrulama mesajları, Pydantic'in ham girdi alıntılarını göstermeden alan yolunu ve hata
+nedenini korur.
+
+`defaulted_fields`, operatörün açıkça yazdığı değerler yerine şema varsayılanlarından gelen kayıt alanlarını listeler.
+Kütüphane kullanıcıları, yapılandırmayı yeniden kurarken bu ayrımı korumak için `model_dump(exclude_unset=True)`
+kullanmalıdır; tam döküm varsayılanları açık girdiye dönüştürür. Yalnızca planı etkinleştirmek, 24 saatlik kontrol
+aralığı veya drift alarmı politikası beyan etmez. Örneğin `monitoring: {enabled: true}`, `compliance_report.json`
+içinde şu kaydı üretir:
+
+```json
+{
+  "monitoring": {
+    "declarative_only": true,
+    "endpoint": null,
+    "endpoint_redacted": false,
+    "metrics_export": "none",
+    "alert_on_drift": true,
+    "check_interval_hours": 24,
+    "defaulted_fields": [
+      "endpoint",
+      "metrics_export",
+      "alert_on_drift",
+      "check_interval_hours"
+    ]
+  }
+}
+```
+
+Endpoint yoksa kanıta `null` yazılır; girdi YAML'ında `endpoint` alanını atlayın veya `endpoint: ""` kullanın (`null`
+değil). `compliance:` içindeki sağlayıcı adı, sistem adı veya kullanım amacından en az biri doluysa Annex IV dosyası
+üretilir; doğrulama üçünün de dolu olmasını gerektirir. `declarative_only` anahtarı bulunmayan eski izleme kayıtlarını
+da beyan olarak değerlendirin; çalışan izleme kanıtı saymayın. Eski kanıtta `defaulted_fields` yoksa varsayılanların
+kaynağı kaydedilmemiştir.
+
 
 ## `distributed` (İsteğe bağlı)
 

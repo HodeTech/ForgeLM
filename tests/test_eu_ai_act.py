@@ -11,6 +11,7 @@ import yaml
 
 from forgelm.compliance import (
     AuditLogger,
+    compute_annex_iv_manifest_hash,
     export_compliance_artifacts,
     export_evidence_bundle,
     generate_deployer_instructions,
@@ -24,6 +25,7 @@ from forgelm.config import (
     RiskAssessmentConfig,
     load_config,
 )
+from forgelm.verify import verify_annex_iv_artifact
 
 # --- Config Models ---
 
@@ -815,6 +817,124 @@ class TestComplianceExportAtomicity:
 
 
 class TestManifestAnnexIV:
+    @pytest.mark.parametrize("env_value", [None, "https://secret.example.com/private"], ids=["env-unset", "env-set"])
+    @pytest.mark.parametrize(
+        "endpoint_fields,expected,expected_defaults",
+        [
+            ({}, None, ["endpoint"]),
+            ({"endpoint": "https://monitor.example.com"}, "https://monitor.example.com", []),
+            (
+                {"endpoint": "https://user:password@monitor.example.com:8443/secret?token=credential#fragment"},
+                "https://monitor.example.com:8443",
+                [],
+            ),
+            ({"endpoint": "http://[::1]:9090/secret?token=credential#fragment"}, "http://[::1]:9090", []),
+            (
+                {"endpoint": " https://user:password@monitor.example.com/secret?token=credential#fragment "},
+                "https://monitor.example.com",
+                [],
+            ),
+            ({"endpoint_env": "MON_URL"}, "$MON_URL", []),
+            ({"endpoint": "https://monitor.example.com", "endpoint_env": "MON_URL"}, "$MON_URL", []),
+            ({"endpoint_env": ""}, None, ["endpoint"]),
+            ({"endpoint_env": " \t\n "}, None, ["endpoint"]),
+            ({"endpoint_env": "   ", "endpoint": "   "}, None, []),
+            ({"endpoint_env": " MON_URL "}, "$MON_URL", []),
+        ],
+        ids=[
+            "absent",
+            "literal",
+            "literal-port",
+            "literal-ipv6",
+            "masked-literal",
+            "env",
+            "env-precedence",
+            "blank-env",
+            "whitespace-env",
+            "explicit-blank-endpoint",
+            "trimmed-env",
+        ],
+    )
+    def test_monitoring_declaration_survives_export(
+        self, tmp_path, minimal_config, monkeypatch, endpoint_fields, expected, expected_defaults, env_value
+    ):
+        """A plan is labelled as metadata and never resolves endpoint secrets."""
+        if env_value is None:
+            monkeypatch.delenv("MON_URL", raising=False)
+        else:
+            monkeypatch.setenv("MON_URL", env_value)
+        config = ForgeConfig(
+            **minimal_config(
+                compliance={"provider_name": "Corp", "system_name": "Bot", "intended_purpose": "Testing"},
+                monitoring={
+                    "enabled": True,
+                    "metrics_export": "prometheus",
+                    "alert_on_drift": True,
+                    "check_interval_hours": 12,
+                    **endpoint_fields,
+                },
+            )
+        )
+        manifest = generate_training_manifest(config, {"eval_loss": 0.5})
+        declaration = {
+            "declarative_only": True,
+            "endpoint": expected,
+            "endpoint_redacted": bool(config.monitoring.endpoint and not config.monitoring.endpoint_env),
+            "metrics_export": "prometheus",
+            "alert_on_drift": True,
+            "check_interval_hours": 12,
+            "defaulted_fields": expected_defaults,
+        }
+        assert manifest["monitoring"] == declaration
+        export_compliance_artifacts(manifest, str(tmp_path))
+        report = json.loads((tmp_path / "compliance_report.json").read_text(encoding="utf-8"))
+        annex = json.loads((tmp_path / "annex_iv_metadata.json").read_text(encoding="utf-8"))
+        assert report["monitoring"] == declaration
+        assert annex["monitoring_and_logging"] == declaration
+        training_summary = yaml.safe_load((tmp_path / "training_manifest.yaml").read_text(encoding="utf-8"))
+        assert "monitoring" not in training_summary
+        assert "secret.example.com" not in json.dumps(report)
+        assert "secret.example.com" not in json.dumps(annex)
+        for secret in ("password", "credential", "/secret", "#fragment"):
+            assert secret not in json.dumps(report)
+            assert secret not in json.dumps(annex)
+            assert secret not in (tmp_path / "training_manifest.yaml").read_text(encoding="utf-8")
+        assert annex["metadata"]["manifest_hash"] == compute_annex_iv_manifest_hash(annex)
+        assert verify_annex_iv_artifact(str(tmp_path / "annex_iv_metadata.json")).valid
+
+    def test_monitoring_defaults_are_not_operator_declarations(self, minimal_config):
+        from forgelm.config import PipelineStage, merge_pipeline_stage_config
+
+        config = ForgeConfig(**minimal_config(monitoring={"enabled": True}))
+        for effective in (config, merge_pipeline_stage_config(config, PipelineStage(name="first"))):
+            declaration = generate_training_manifest(effective, {})["monitoring"]
+            assert declaration["defaulted_fields"] == [
+                "endpoint",
+                "metrics_export",
+                "alert_on_drift",
+                "check_interval_hours",
+            ]
+            assert declaration["alert_on_drift"] is True
+            assert declaration["check_interval_hours"] == 24
+
+        explicit = ForgeConfig(
+            **minimal_config(
+                monitoring={
+                    "enabled": True,
+                    "endpoint": "",
+                    "metrics_export": "none",
+                    "alert_on_drift": True,
+                    "check_interval_hours": 24,
+                }
+            )
+        )
+        assert generate_training_manifest(explicit, {})["monitoring"]["defaulted_fields"] == []
+
+    @pytest.mark.parametrize("monitoring", [None, {"enabled": False, "metrics_export": "datadog"}])
+    def test_disabled_monitoring_is_not_declared(self, minimal_config, monitoring):
+        config = ForgeConfig(**minimal_config(monitoring=monitoring))
+        assert "monitoring" not in generate_training_manifest(config, {})
+
     def test_includes_annex_iv(self, minimal_config):
         config = ForgeConfig(
             **minimal_config(

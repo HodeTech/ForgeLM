@@ -202,7 +202,7 @@ synthetic:
   sanity_failure_rate: 0.2                    # üzerinde bir WARNING loglanan başarısızlık oranı (yalnızca uyarı)
 ```
 
-Nested `synthetic.teacher:` alt-bloğu ve `rate_limit:` bloğu yoktur — `teacher_model`, `teacher_backend`, `api_base`, `api_delay`, `api_timeout` doğrudan `synthetic:` üzerinde düz alanlardır. Secret'ları commit etmemek için inline `api_key` alanı yerine `api_key_env` (bir ortam-değişkeni adı) tercih edin. ForgeLM'in YAML loader'ında hiçbir yerde `${VAR}` interpolasyon mekanizması yoktur — `*_env` alanları doğrudan `os.environ` ile okunan bir ortam değişkeni adlandırır, bir string içine substitüe edilmez.
+Nested `synthetic.teacher:` alt-bloğu ve `rate_limit:` bloğu yoktur — `teacher_model`, `teacher_backend`, `api_base`, `api_delay`, `api_timeout` doğrudan `synthetic:` üzerinde düz alanlardır. Secret'ları commit etmemek için inline `api_key` alanı yerine `api_key_env` (bir ortam-değişkeni adı) tercih edin. ForgeLM'in YAML loader'ında hiçbir yerde `${VAR}` interpolasyon mekanizması yoktur — `*_env` alanları doğrudan `os.environ` ile okunan bir ortam değişkeni adlandırır, bir string içine substitüe edilmez; istisna `monitoring.endpoint_env` alanıdır: bu ad yalnızca çözümlenmemiş bir `$NAME` referansı olarak kaydedilir.
 
 `teacher_backend: "local"` altında ayrıca `teacher_revision` ayarlayarak teacher checkpoint'ini bir Hub commit SHA'sına veya ref'ine sabitleyebilirsiniz; teacher'ın ürettikleri eğitim verisi hâline gelir, dolayısıyla sabitlenmemiş bir teacher bir veri-kökeni boşluğudur. `teacher_backend: "api"` veya `"file"` ile — ki bunlar Hub'dan hiç yüklemez — doğrudan reddedilir.
 
@@ -288,15 +288,80 @@ risk_assessment:
 
 ## `monitoring:`
 
+Bu blok harici bir piyasaya arz sonrası izleme planını beyan eder (Madde 72 / 17(1)(h)). `enabled: true`
+olduğunda değerleri uyumluluk manifestine ve Annex IV `monitoring_and_logging` bölümüne
+`declarative_only: true` etiketiyle kaydedilir. ForgeLM endpoint'e bağlanmaz, metrikleri dışa aktarmaz,
+drift tespit etmez, drift alarmı göndermez veya kontrol zamanlamaz. İzleme altyapınızı ayrıca
+işletin; bu beyan izlemenin çalıştığını kanıtlamaz. ForgeLM'de metadata kaydı isteğe bağlıdır; yasal yükümlülükler
+ayrıca geçerlidir.
+
 ```yaml
 monitoring:
-  enabled: false                              # Madde 12 pazar-sonrası izlemeyi etkinleştir
-  endpoint: ""                               # İzleme webhook URL'si (Prometheus / Datadog / özel)
-  endpoint_env: null                          # endpoint'i geçersiz kılan env değişkeni
-  metrics_export: "none"                     # none | prometheus | datadog | custom_webhook
-  alert_on_drift: true                       # drift tespitinde webhook uyarısı
-  check_interval_hours: 24                   # izleme periyodu (saat)
+  enabled: false                            # Yalnızca harici plan metadata'sını kaydet
+  endpoint: ""                              # İsteğe bağlı URL; kanıtta yalnızca scheme/host/port
+  endpoint_env: null                        # ASCII ad endpoint'ten öncelikli; "$NAME" yazılır, okunmaz
+  metrics_export: "none"                    # Yalnızca beyan: none | prometheus | datadog | custom_webhook
+  alert_on_drift: true                      # Harici drift alarmı politikası; alarm gönderilmez
+  check_interval_hours: 24                  # Harici kontrol aralığı; kontrol zamanlanmaz
 ```
+
+Etkin planda `none` dışındaki exporter seçimi yapılandırma yüklenirken uyarı üretir. Her iki
+endpoint alanı da boşsa manifeste `null` yazılır. Ortam değişkeni tanımlı olsa bile yalnızca adı
+kaydedilir; kapalı veya belirtilmemiş planlar kaydedilmez.
+
+ForgeLM'de metadata kaydı isteğe bağlıdır; Madde 72, yüksek riskli yapay zekâ sistemlerinin sağlayıcılarının piyasaya arz
+sonrası izleme sistemi kurmasını ve belgelemesini gerektirir. Bu alanlar bir özettir; Annex IV §9'un istediği,
+izleme planını (Madde 72(3)) da içeren ayrıntılı açıklama değildir.
+
+`load_config`, etkin ve `none` dışında exporter beyan eden plan için uyarı verir; doğrudan `ForgeConfig(...)` kurulumu
+bu dosya yükleme uyarısını vermez.
+
+İzleme kanıtı dosyaları (`compliance_report.json` ve üretildiğinde `annex_iv_metadata.json`) düz metindir.
+Düzleştirilmiş `training_manifest.yaml` özeti izleme metadata'sı içermez.
+
+Literal `endpoint` kırpılır; `https://monitor.example.com:8443/plan` gibi host ve geçerli port içeren mutlak bir
+HTTP(S) URL olmalıdır. Şemasız değerler reddedilir. Kanıtta scheme, host ve varsa port korunur; IPv6 köşeli
+parantezleri kalır, kullanıcı bilgisi, path, query ve fragment çıkarılır. `endpoint_redacted: true`, URL zaten
+yalnızca scheme/host/port içerse bile literal endpoint'e bu işlemin uygulandığını belirtir. Kopyalanan girdi YAML'ı,
+tarayıcı önizlemesi ve yerel depolama tam URL'yi korur; bu nedenle URL'ye kimlik bilgisi yazmayın. Sır içeren URL için
+`endpoint_env` tercih edin.
+
+`endpoint_env` adının çevresindeki boşluklar kırpılır; ASCII tanımlayıcısı olmalıdır (önce harf veya alt çizgi,
+ardından harf, rakam veya alt çizgi). Değişkenin değeri okunmadan adı `$NAME` olarak aynen kaydedilir. Boş ad literal
+endpoint'e geri döner. Doğrulama mesajları, Pydantic'in ham girdi alıntılarını göstermeden alan yolunu ve hata
+nedenini korur.
+
+`defaulted_fields`, operatörün açıkça yazdığı değerler yerine şema varsayılanlarından gelen kayıt alanlarını listeler.
+Kütüphane kullanıcıları, yapılandırmayı yeniden kurarken bu ayrımı korumak için `model_dump(exclude_unset=True)`
+kullanmalıdır; tam döküm varsayılanları açık girdiye dönüştürür. Yalnızca planı etkinleştirmek, 24 saatlik kontrol
+aralığı veya drift alarmı politikası beyan etmez. Örneğin `monitoring: {enabled: true}`, `compliance_report.json`
+içinde şu kaydı üretir:
+
+```json
+{
+  "monitoring": {
+    "declarative_only": true,
+    "endpoint": null,
+    "endpoint_redacted": false,
+    "metrics_export": "none",
+    "alert_on_drift": true,
+    "check_interval_hours": 24,
+    "defaulted_fields": [
+      "endpoint",
+      "metrics_export",
+      "alert_on_drift",
+      "check_interval_hours"
+    ]
+  }
+}
+```
+
+Endpoint yoksa kanıta `null` yazılır; girdi YAML'ında `endpoint` alanını atlayın veya `endpoint: ""` kullanın (`null`
+değil). `compliance:` içindeki sağlayıcı adı, sistem adı veya kullanım amacından en az biri doluysa Annex IV dosyası
+üretilir; doğrulama üçünün de dolu olmasını gerektirir. `declarative_only` anahtarı bulunmayan eski izleme kayıtlarını
+da beyan olarak değerlendirin; çalışan izleme kanıtı saymayın. Eski kanıtta `defaulted_fields` yoksa varsayılanların
+kaynağı kaydedilmemiştir.
+
 
 ## `retention:`
 

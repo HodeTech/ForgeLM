@@ -29,7 +29,7 @@
 | A.5.5 Contact with authorities | OOS | — |
 | A.5.6 Contact with special interest groups | OOS | — |
 | A.5.7 Threat intelligence | OOS | — |
-| A.5.8 Information security in project management | FL-helps | `risk_assessment` config; F-compliance-110 strict gate; Annex IV §9 |
+| A.5.8 Information security in project management | FL-helps | `risk_assessment` config; F-compliance-110 strict gate; Annex IV §5 |
 | A.5.9 Inventory of information and other associated assets | FL-helps | `data_provenance.json`; `model_integrity.json`; SBOM |
 | A.5.10 Acceptable use of information | OOS | — |
 | A.5.11 Return of assets | OOS | — |

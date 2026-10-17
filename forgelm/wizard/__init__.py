@@ -7,7 +7,7 @@ training-params / compliance / evaluation), trainer-specific
 hyperparameters (``dpo_beta``, ``simpo_beta`` / ``simpo_gamma``,
 ``kto_beta``, ``orpo_beta``, ``grpo_*``), full PEFT method coverage
 (``lora`` / ``dora`` / ``pissa`` / ``rslora``) plus GaLore as a
-separate axis, EU AI Act Article 9 / 10 / 11 / 12+17 compliance
+separate axis, EU AI Act Article 9 / 10 / 11 / 12 / 17(1)(h) / 72 compliance
 accordions, F-compliance-110 strict-tier auto-coercion, ``back`` /
 ``reset`` navigation, XDG-aware persistence at
 ``$XDG_CACHE_HOME/forgelm/wizard_state.yaml``, step-diff preview,

@@ -4,6 +4,7 @@ import os
 import re
 import warnings
 from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple
+from urllib.parse import urlsplit
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, ValidationError, field_validator, model_validator
@@ -1288,25 +1289,73 @@ class RiskAssessmentConfig(BaseModel):
 
 
 class MonitoringConfig(BaseModel):
-    """Art. 12+17: Post-market monitoring hooks."""
+    """Art. 72 / 17(1)(h): declarative external monitoring plan, without runtime hooks."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
-    enabled: bool = Field(default=False, description="Enable Article 12 post-market monitoring hooks.")
+    enabled: bool = Field(
+        default=False, description="Record external monitoring-plan metadata in the compliance manifest."
+    )
     endpoint: str = Field(
-        default="", description="Monitoring-system webhook URL (Prometheus push gateway / Datadog / custom)."
+        default="",
+        description="Optional http(s)://host plan URL; evidence keeps scheme/host/port only. Never contacted. Prefer endpoint_env.",
     )
     endpoint_env: Optional[str] = Field(
-        default=None, description="Env var name carrying the endpoint URL (overrides `endpoint` when set)."
+        default=None,
+        description="ASCII env name recorded as `$NAME` in plain-JSON evidence, overriding endpoint; never resolved. No credentials.",
     )
     metrics_export: Literal["none", "prometheus", "datadog", "custom_webhook"] = Field(
         default="none",
-        description="Metrics exporter: `none`, `prometheus`, `datadog`, or `custom_webhook`.",
+        description="Declared external exporter: `none`, `prometheus`, `datadog`, or `custom_webhook`; no metrics are exported.",
     )
     alert_on_drift: bool = Field(
-        default=True, description="Emit a webhook alert when drift detector flags a regression."
+        default=True,
+        description="Declared external drift-alert policy; ForgeLM does not detect drift or send these alerts.",
     )
-    check_interval_hours: int = Field(default=24, ge=1, description="Monitoring check cadence in hours.")
+    check_interval_hours: int = Field(
+        default=24, ge=1, description="Declared external check cadence in hours; ForgeLM does not schedule checks."
+    )
+
+    @field_validator("endpoint")
+    @classmethod
+    def _strip_endpoint(cls, value: str) -> str:
+        """Validate an optional literal URL without echoing secret-bearing input."""
+        value = value.strip()
+        if not value:
+            return value
+        try:
+            parts = urlsplit(value)
+            if (
+                parts.scheme not in ("http", "https")
+                or not parts.hostname
+                or "\\" in value
+                or any(ord(char) <= 32 or ord(char) == 127 for char in value)
+            ):
+                raise ValueError
+            _ = parts.port  # Access validates malformed and out-of-range ports.
+        except ValueError:
+            raise ValueError("monitoring.endpoint must be an http(s)://host URL with a valid port, or empty.") from None
+        return value
+
+    @field_validator("endpoint_env")
+    @classmethod
+    def _validate_endpoint_env(cls, value: Optional[str]) -> Optional[str]:
+        """Accept an unresolved ASCII identifier, with surrounding whitespace removed."""
+        if value is None or not value.strip():
+            return None
+        value = value.strip()
+        if not value.isascii() or not value.isidentifier():
+            raise ValueError("monitoring.endpoint_env must be an ASCII environment-variable name, without env: or $.")
+        return value
+
+    def _warn_declarative_exporter(self) -> None:
+        """Warn once at the file-load boundary, never during pipeline stage validation."""
+        if self.enabled and self.metrics_export != "none":
+            logger.warning(
+                "monitoring.metrics_export is declarative metadata only: ForgeLM does not export metrics, "
+                "contact the endpoint, detect drift, send drift alerts, or schedule checks. "
+                "Operate your external monitoring stack separately."
+            )
 
 
 class ComplianceMetadataConfig(BaseModel):
@@ -1613,7 +1662,8 @@ _tier_disagreement_warned: set[frozenset[str]] = set()
 
 
 class ForgeConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # Nested validation errors otherwise repeat secret-bearing raw inputs in CLI logs.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     model: ModelConfig = Field(description="Base-model + quantisation + backend block (required).")
     lora: LoraConfigModel = Field(description="PEFT / LoRA configuration block (required).")
@@ -1642,7 +1692,7 @@ class ForgeConfig(BaseModel):
         description="EU AI Act Article 9 risk-management block (intended use, foreseeable misuse, risk tier).",
     )
     monitoring: Optional[MonitoringConfig] = Field(
-        default=None, description="EU AI Act Article 12 + 17 post-market monitoring block."
+        default=None, description="EU AI Act Art. 72 / 17(1)(h) external monitoring-plan metadata; no runtime hooks."
     )
     synthetic: Optional[SyntheticConfig] = Field(
         default=None, description="Teacher→student synthetic-data generation block."
@@ -2279,4 +2329,6 @@ def load_config(config_path: str) -> ForgeConfig:
         # / TypeError outside Pydantic's wrapper. Same message shape.
         raise ConfigError(f"Configuration validation failed: {e}") from e
 
+    if config.monitoring is not None:
+        config.monitoring._warn_declarative_exporter()
     return config

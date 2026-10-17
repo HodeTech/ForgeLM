@@ -228,12 +228,15 @@ forgelm --config my_config.yaml --dry-run
 
 ### Config Validation Error: Field Type Mismatch
 
-ForgeLM uses Pydantic v2 for validation. Error messages show the exact field:
+ForgeLM uses Pydantic v2 for validation. All rendered `ForgeConfig` validation errors omit Pydantic's `input_value` /
+`input_type` excerpts, while preserving field paths and reasons. Standalone submodels other than `MonitoringConfig`
+(for example, `WebhookConfig` or `AuthConfig`) retain their existing Pydantic diagnostics. Error messages show the
+exact field:
 
 ```text
 Configuration validation failed: 1 validation error for ForgeConfig
-training -> learning_rate
-  Input should be a valid number [type=float_parsing, input_value='not_a_number']
+training.learning_rate
+  Input should be a valid number, unable to parse string as a number [type=float_parsing]
 ```
 
 Fix the YAML value to match the expected type.
@@ -245,7 +248,7 @@ ForgeLM now **rejects unknown fields** in YAML configs — all sub-models enforc
 ```text
 ConfigError: Configuration validation failed: 1 validation error for ForgeConfig
 training.lerning_rate
-  Extra inputs are not permitted [type=extra_forbidden, input_value=2e-5]
+  Extra inputs are not permitted [type=extra_forbidden]
 ```
 
 This is intentional: silent typos (like `lerning_rate` instead of `learning_rate`) previously caused training to run with wrong defaults. Now they fail fast with a clear message.

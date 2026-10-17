@@ -72,19 +72,23 @@ Bir alan; anahtar yoksa VEYA değer `None`, boş string, boş liste ya da boş d
 
 `system_identification` ayrıca **alt-alan derinliğinde** doğrulanır: `provider_name`, `system_name` ve `intended_purpose` her biri boş olmamalıdır; aksi halde boş placeholder'lardan oluşan, dolu görünen bir kapsayıcı testi geçerdi. Bunlardan biri boş olduğunda `missing_fields` düz bir anahtar değil, **noktalı yol** taşır — örn. `["system_identification.provider_name", "system_identification.system_name"]`. `missing_fields` girdilerinin daima üst düzey anahtar olduğunu varsayan araçlar bunları yanlış işler.
 
-Dokuz gerekli anahtar Annex IV §1-9 ile eşleşir:
+Doğrulayıcı dokuz ForgeLM metadata anahtarı gerektirir; bunlar dokuz eksiksiz Annex IV bölümünü temsil etmez:
 
 | Üst-seviye anahtar | Annex IV bölümü |
 |---|---|
 | `system_identification` | §1 — `provider_name`, `system_name`, `intended_purpose` (her biri boş-olmama koşuluyla doğrulanır), ayrıca `provider_contact`, `system_version`, `risk_classification`. |
 | `intended_purpose` | §1 — amaçlanan kullanım beyanı. |
 | `system_components` | §2 — yazılım / donanım bileşenleri + tedarikçi listesi. |
-| `computational_resources` | §2(g) — eğitim sırasında kullanılan hesaplama kaynakları. |
+| `computational_resources` | Annex IV §2(c) — eğitim sırasında kullanılan hesaplama kaynakları. |
 | `data_governance` | §2(d) — veri kaynakları, yönetişim, doğrulama metodolojisi. |
-| `technical_documentation` | §3-5 — tasarım + geliştirme metodolojisi. |
-| `monitoring_and_logging` | §6 — pazara-sonrası izleme + audit-log varlığı. |
-| `performance_metrics` | §7 — doğruluk / dayanıklılık / siber güvenlik metrikleri. |
-| `risk_management` | §9 — risk yönetim sistemi referansı (Madde 9 hizalaması). |
+| `technical_documentation` | §1(c) / §3 — yazılım sürümü ve bilinen sınırlamalar (`forgelm_version`, `known_limitations`). |
+| `monitoring_and_logging` | Annex IV §9 (Madde 72(3)) — Beyan edilen harici izleme planı (`declarative_only: true`) veya audit log referansı; çalışan izleme kanıtı değildir. |
+| `performance_metrics` | Annex IV §2(g) / §4 — doğruluk / dayanıklılık / siber güvenlik metrikleri. |
+| `risk_management` | Annex IV §5 — risk yönetim sistemi referansı (Madde 9 hizalaması). |
+
+Bu tablo kısmi metadata eşlemelerini gösterir; tam bir Annex IV belgesi değildir. Diğer eski bölüm etiketlerinin
+düzeltilmesi [#539](https://github.com/HodeTech/ForgeLM/issues/539), doğrulayıcının tamlık iddiaları
+[#573](https://github.com/HodeTech/ForgeLM/issues/573) kapsamında takip edilir.
 
 ### "Manifest hash uyuşmazlığı" ne demek
 
@@ -180,7 +184,7 @@ $ forgelm verify-annex-iv checkpoints/pipeline_run --pipeline --output-format js
 :::
 
 :::warn
-**Pakette bir uygunluk beyanı beklemek.** ForgeLM böyle bir belge üretmez — bu artefaktta §7, uygunluk beyanı değil `performance_metrics`'tir (doğruluk / dayanıklılık). Madde 16 uygunluğu deployer'ın imzaladığı teslim edilebilirdir ve `verify-annex-iv` ne raporlarsa raporlasın toolkit dışında yazılıp imzalanmalıdır.
+**Pakette bir uygunluk beyanı beklemek.** ForgeLM böyle bir belge üretmez: dokuz anahtarın hiçbiri Annex IV §8'in istediği AB uygunluk beyanı kopyasını taşımaz; `performance_metrics` §2(g) / §4 metriklerini taşır. Beyan (Madde 47) sağlayıcının imzaladığı teslim edilebilirdir ve `verify-annex-iv` ne raporlarsa raporlasın toolkit dışında hazırlanıp imzalanmalıdır.
 :::
 
 :::warn

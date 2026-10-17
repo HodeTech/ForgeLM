@@ -200,7 +200,7 @@ synthetic:
   sanity_failure_rate: 0.2                    # failure rate above which a WARNING is logged (warn-only)
 ```
 
-There is no nested `synthetic.teacher:` sub-block and no `rate_limit:` block — `teacher_model`, `teacher_backend`, `api_base`, `api_delay`, and `api_timeout` are flat fields on `synthetic:` directly. Prefer `api_key_env` (an environment-variable name) over the inline `api_key` field to avoid committing secrets. ForgeLM's YAML loader has no `${VAR}` interpolation mechanism anywhere — `*_env` fields name an environment variable that is read directly via `os.environ`, never substituted into a string.
+There is no nested `synthetic.teacher:` sub-block and no `rate_limit:` block — `teacher_model`, `teacher_backend`, `api_base`, `api_delay`, and `api_timeout` are flat fields on `synthetic:` directly. Prefer `api_key_env` (an environment-variable name) over the inline `api_key` field to avoid committing secrets. ForgeLM's YAML loader has no `${VAR}` interpolation mechanism anywhere — `*_env` fields name an environment variable that is read directly via `os.environ`, never substituted into a string, except `monitoring.endpoint_env`: that name is recorded as an unresolved `$NAME` reference only.
 
 Under `teacher_backend: "local"` you may also set `teacher_revision` to pin the teacher checkpoint to a Hub commit SHA or ref; the teacher's generations become training data, so an unpinned teacher is a data-provenance gap. It is rejected outright with `teacher_backend: "api"` or `"file"`, which never load from the Hub.
 
@@ -286,15 +286,74 @@ risk_assessment:
 
 ## `monitoring:`
 
+This block declares an external post-market monitoring plan (Art. 72 / 17(1)(h)). With `enabled: true`,
+its values are recorded in the compliance manifest and Annex IV `monitoring_and_logging` section with
+`declarative_only: true`. ForgeLM does not contact the endpoint, export metrics, detect drift, send
+drift alerts, or schedule checks. Operate your monitoring stack separately; the declaration is not
+proof that monitoring is running. The block remains optional for every risk tier.
+
 ```yaml
 monitoring:
-  enabled: false                              # Enable Article 12 post-market monitoring
-  endpoint: ""                               # Monitoring webhook URL (Prometheus / Datadog / custom)
-  endpoint_env: null                          # env var overriding endpoint
-  metrics_export: "none"                     # none | prometheus | datadog | custom_webhook
-  alert_on_drift: true                       # webhook alert on drift-detector regression
-  check_interval_hours: 24                   # monitoring cadence in hours
+  enabled: false                            # Record external plan metadata only
+  endpoint: ""                              # Optional URL; evidence keeps scheme/host/port only
+  endpoint_env: null                        # ASCII name overrides endpoint as "$NAME"; never read
+  metrics_export: "none"                    # Declared only: none | prometheus | datadog | custom_webhook
+  alert_on_drift: true                      # Declared external drift-alert policy; no alerts sent
+  check_interval_hours: 24                  # Declared external cadence; no checks scheduled
 ```
+
+An enabled non-`none` exporter declaration emits a warning at `load_config`; direct `ForgeConfig(...)` construction
+does not emit this file-load warning. If neither endpoint field is set, the manifest endpoint is `null`. Environment
+references are recorded by name even when the
+variable is set; disabled or omitted plans are not recorded.
+
+Recording metadata in ForgeLM is optional; Article 72 requires providers of high-risk AI systems to establish and
+document a post-market monitoring system. These fields are a summary, not the detailed description Annex IV §9
+requires, which includes the monitoring plan (Article 72(3)).
+
+Monitoring evidence files (`compliance_report.json` and, when emitted, `annex_iv_metadata.json`) are plain text. The
+flattened `training_manifest.yaml` summary does not contain monitoring metadata.
+
+A literal `endpoint` is trimmed and must be an absolute HTTP(S) URL with a host and valid port, such as
+`https://monitor.example.com:8443/plan`; schemeless values are rejected. Evidence retains scheme, host and optional
+port, preserving IPv6 brackets; userinfo, path, query and fragment are removed. `endpoint_redacted: true` means the
+literal endpoint passed through this projection, even if it already contained only scheme/host/port. The copied input
+YAML, browser preview and local storage retain the full URL, so never put credentials in it. Prefer `endpoint_env` for
+a secret-bearing URL.
+
+The `endpoint_env` name is trimmed, must be an ASCII identifier (letters or underscore first, then letters, digits, or
+underscores), and is recorded verbatim as `$NAME` without reading the variable. A blank name falls back to the literal
+endpoint. Validation diagnostics preserve field paths and reasons without Pydantic raw-input excerpts.
+
+`defaulted_fields` lists recorded fields whose values came from schema defaults, rather than explicit operator input.
+Library callers must use `model_dump(exclude_unset=True)` when rebuilding a config to preserve that distinction; a
+full dump makes defaults explicit. An enabled plan alone therefore does not declare a 24-hour check cadence or a
+drift-alert policy. For example, `monitoring: {enabled: true}` produces this entry in `compliance_report.json`:
+
+```json
+{
+  "monitoring": {
+    "declarative_only": true,
+    "endpoint": null,
+    "endpoint_redacted": false,
+    "metrics_export": "none",
+    "alert_on_drift": true,
+    "check_interval_hours": 24,
+    "defaulted_fields": [
+      "endpoint",
+      "metrics_export",
+      "alert_on_drift",
+      "check_interval_hours"
+    ]
+  }
+}
+```
+
+An absent endpoint is `null` in evidence; in input YAML omit `endpoint` or use `endpoint: ""` (not `null`). Annex IV
+output is emitted when `compliance:` contains at least one non-blank provider name, system name, or intended purpose;
+verification requires all three. Legacy monitoring blocks without `declarative_only` must also be treated as
+declarations, never proof of runtime monitoring. Missing `defaulted_fields` in old evidence means the provenance of
+defaults was not recorded.
 
 ## `retention:`
 

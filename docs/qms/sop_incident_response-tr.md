@@ -28,7 +28,8 @@ yanında kapsar.
 ### 3.1 Tespit
 
 Olaylar şunlardan tespit edilebilir:
-- Runtime izleme alarmları (`monitoring.alert_on_drift: true` ise)
+- Harici servis/izleme altyapınızdan gelen runtime alarmları (`monitoring.*` uyumluluk manifestine
+  yalnızca bir plan kaydeder; ForgeLM drift tespit etmez veya izleme alarmı göndermez)
 - Kullanıcı/operatör raporları
 - Periyodik kalite denetimleri
 - ForgeLM webhook arıza bildirimleri
@@ -261,7 +262,7 @@ olabilir.
 
 **Tetik:** Sahip silme talebi gönderir.
 
-**Önem:** Medium (regülasyon deadline 30 gün; bazı EU üye
+**Önem:** Medium (regülasyon deadline 30 gün; bazı AB üye
 ülkeleri daha kısa yanıt gerektirir).
 
 **Runbook:**
@@ -289,7 +290,7 @@ otoritelerine raporlamalıdır. "Ciddi bir olay" şunları içerir:
 - Temel haklara ciddi ihlal
 - Kritik altyapıya ciddi aksaklık
 
-**Rapor:** Etkilenen EU üye ülkesinin ulusal piyasa gözetim otoritesi
+**Rapor:** Etkilenen AB üye ülkesinin ulusal piyasa gözetim otoritesi
 **Süre:** Farkına varıldıktan sonraki 15 gün içinde
 
 ## 6. İnceleme

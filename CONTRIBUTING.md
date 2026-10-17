@@ -165,12 +165,14 @@ supported Python matrix:
 ```bash
 python3 tools/check_import_origin.py --strict && \
   ruff format . && ruff check . && pytest tests/ && \
+  node --test tests/site/*.test.cjs && \
   python3 -m forgelm --config config_template.yaml --dry-run && \
   python3 -m mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py tests/typing/public_surface_probe.py && \
   python3 tools/check_field_descriptions.py --strict forgelm/config.py && \
   python3 tools/check_http_discipline.py && \
   python3 tools/check_no_mutation_artifacts.py --strict && \
   python3 tools/check_strict_json_writers.py --strict && \
+  python3 tools/check_ci_failure_masking.py --strict && \
   python3 tools/check_bilingual_parity.py --strict && \
   python3 tools/check_bilingual_code_blocks.py --strict && \
   python3 tools/check_anchor_resolution.py --strict && \
@@ -213,7 +215,7 @@ every later step depends on — that the `forgelm` being imported is the one
 you just edited — and `-m` alone does not cover the `tools/check_*.py`
 guards that import `forgelm` with `sys.path[0] == tools/`.
 
-All 31 must pass — the exact set `.github/workflows/ci.yml` runs.
+All 32 must pass — the exact set `.github/workflows/ci.yml` runs.
 `tests/test_guard_wiring.py` compares the two inventories in **both**
 directions across this file, `CLAUDE.md` and `AGENTS.md`, so wiring a new
 guard into CI without listing it here fails the build. The four after the
@@ -229,7 +231,13 @@ keep this list and that one in sync if either changes.
 
 Push your branch to your fork and open a Pull Request against `development` (the default base). Link the issue it addresses (`Fixes #123`, or `Refs #123` for part of a grouped issue) and quote any finding IDs — see [Working on an issue](#working-on-an-issue).
 
-**Before a pull request can merge**, branch protection on `development` (and on `main`) requires three things: the six CI checks — `lint`, `test (3.10)`, `test (3.11)`, `test (3.12)`, `test (3.13)` and `validate` — passing; the branch up to date with `development` (use *Update branch* or rebase); and every review conversation resolved, including the comments of the automated reviewers. Maintainers squash- or rebase-merge, so `development` keeps a linear history.
+**Before a pull request can merge**, branch protection on `development` (and on `main`) requires three things: the six CI checks — `lint`, `test (3.10)`, `test (3.11)`, `test (3.12)`, `test (3.13)` and `validate` — passing; the branch up to date with its target (use *Update branch*); and every review conversation resolved, including the comments of the automated reviewers.
+
+Maintainers **squash contributor PRs into `development` by default**. Releases into
+`main` and synchronization PRs from `main` back into `development` use **merge
+commits**, preserving the shared history. Rebase-and-merge is disabled; contributors
+do not need to rewrite their commits during review. See the
+[merge policy](docs/standards/code-review.md#merging).
 
 ## Development Setup
 
@@ -239,7 +247,7 @@ ForgeLM is a single-package layout: a mix of single-file modules and five
 focused sub-packages (`forgelm/cli/` post-Phase-15 split,
 `forgelm/data_audit/` post-Phase-14 split, `forgelm/wizard/` from Phase 22,
 `forgelm/safety/` from the post-v0.9.1 split and `forgelm/verify/` from
-Phase 16 S1) under `forgelm/`, 128 test files
+Phase 16 S1) under `forgelm/`, 130 test files
 under `tests/` (collected-test count grows over time — run
 `pytest --collect-only -q` for current), plus `configs/`, `docs/`, `tools/`
 (CI guards), and `notebooks/`. For the authoritative module-by-module map
@@ -367,4 +375,6 @@ Small, self-contained tasks also include single findings in a `wave: 3` or `wave
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
+Code contributions are licensed under the [Apache License 2.0](LICENSE).
+Bundled seed datasets use **CC-BY-SA 4.0**; dataset contributions must follow the
+attribution and licensing requirements in [the template dataset license guide](forgelm/templates/LICENSES.md).

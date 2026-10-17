@@ -7,7 +7,7 @@ description: 16 GPU profilinde otomatik tespit ve saatlik tarifenize göre koşu
 
 > **Durum:** GPU tespiti + koşu süresi + audit-log damgalama bugün
 > gönderiliyor; konfigürasyon-tabanlı `cost_tracking:` bloğu (tarife
-> tabloları, uyarı / durdurma eşikleri) **yol haritasında ve henüz
+> tabloları, alarm / durdurma eşikleri) **yol haritasında ve henüz
 > uygulanmadı** — `forgelm/config.py`'de `output.cost_tracking` yüzeyi
 > yok. Aşağıdaki `cost_tracking:` örnekleri ileriye dönük yer
 > tutuculardır — YAML yüzeyi inene kadar saatlik tarifeleri manuel
@@ -103,10 +103,10 @@ output:
 
 4×A100 koşusu 2 saat = 4 × 2 × $1.10 = $8.80; ZeRO veya FSDP kullanmak fark etmez.
 
-## Maliyet uyarıları (yol haritası — henüz uygulanmadı)
+## Maliyet alarmları (yol haritası — henüz uygulanmadı)
 
 Kontrolden çıkabilecek koşular için planlanan `cost_tracking` bloğu eşik
-tabanlı uyarı + durdurma destekleyecek:
+tabanlı alarm + durdurma destekleyecek:
 
 ```yaml
 # yol haritası yer tutucusu — forgelm/config.py tarafından henüz honure edilmez
@@ -116,7 +116,7 @@ output:
     halt_threshold_usd: 200.0          # eğitim durur
 ```
 
-İmplemente edildiğinde, uyarı konfigüre webhook'u fırlatır (bkz. [Webhook'lar](#/operations/webhooks)) — yanlış konfigüre koşunun gece bütçeyi haftalık bitirmesini CI'da yakalamak için faydalı. O zamana kadar maliyeti audit log + zamanlayıcınızdaki bütçe-tarafı koruyucu ile manuel izleyin.
+İmplemente edildiğinde, alarm konfigüre webhook'u fırlatır (bkz. [Webhook'lar](#/operations/webhooks)) — yanlış konfigüre koşunun gece bütçeyi haftalık bitirmesini CI'da yakalamak için faydalı. O zamana kadar maliyeti audit log + zamanlayıcınızdaki bütçe-tarafı koruyucu ile manuel izleyin.
 
 ## Özel GPU profilleri
 
@@ -151,5 +151,5 @@ Bunu proje kökünüze `gpu_profiles.local.yaml` olarak bırakın; ForgeLM otoma
 ## Bkz.
 
 - [VRAM Fit-Check](#/operations/vram-fit-check) — maliyet tahmini ile birlikte koşar.
-- [CI/CD Hatları](#/operations/cicd) — CI'da maliyet uyarıları.
+- [CI/CD Hatları](#/operations/cicd) — CI'da maliyet alarmları.
 - [Konfigürasyon Referansı](#/reference/configuration) — tam `cost_tracking` bloğu.

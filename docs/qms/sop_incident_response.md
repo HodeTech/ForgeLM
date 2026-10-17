@@ -28,7 +28,8 @@ existing AI-safety incident flow.
 ### 3.1 Detection
 
 Incidents may be detected by:
-- Runtime monitoring alerts (if `monitoring.alert_on_drift: true`)
+- Runtime alerts from your external serving/monitoring stack (`monitoring.*` only records a plan
+  in the compliance manifest; ForgeLM does not detect drift or send monitoring alerts)
 - User/deployer reports
 - Periodic quality audits
 - ForgeLM webhook failure notifications

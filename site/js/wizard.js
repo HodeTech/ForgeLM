@@ -21,8 +21,9 @@
  * - Accessibility: role=dialog, aria-modal, focus trap, Esc to
  *   close, return-focus to trigger button on close, aria-live on
  *   the step pane so screen readers announce step transitions.
- * - Reduced-motion: detected once at init and used to skip step
- *   slide animations + progress-bar transitions.
+ * - Reduced motion: style.css drops the dialog animation and the
+ *   accordion and progress-bar transitions under
+ *   ``prefers-reduced-motion``; the script does not check it.
  */
 (function () {
   'use strict';
@@ -251,12 +252,12 @@
       webhookNotifyStart: false,
       webhookNotifySuccess: true,
       webhookNotifyFailure: true,
-      // Article 12+17 post-market monitoring. Auto-coerced to true
-      // for high-risk tiers.
+      // External monitoring-plan metadata; opt-in for every risk tier.
       monitoringEnabled: false,
       monitoringEndpoint: '',
       metricsExport: 'none',  // 'none' | 'prometheus' | 'datadog' | 'custom_webhook'
-      alertOnDrift: true,
+      alertOnDrift: false,
+      monitoringCheckIntervalHours: 24,
       // Synthetic data generation (teacher → student). Optional
       // pre-training stage; ``syntheticTeacherModel`` is the API
       // name or local path for the teacher.
@@ -280,7 +281,11 @@
       // decide whether to paint inline error messages — so the FIRST
       // visit to a step is clean (no errors shown), and only after
       // hitting Next on an invalid step do the errors appear.
-      attemptedSteps: []
+      attemptedSteps: [],
+      // Which accordions the operator opened in this tab. Like
+      // ``attemptedSteps`` it is never saved, so a sibling tab's update
+      // does not close them, and it survives that update's re-render.
+      openAccordions: {}
     };
   }
 
@@ -300,25 +305,39 @@
       // pre-painted validation errors from a prior session. The error
       // surface only fires once they hit Next on an invalid step.
       merged.attemptedSteps = [];
+      merged.openAccordions = {};
       return merged;
     } catch (e) {
       return null;
     }
   }
 
-  // Track storage failures so the renderer can surface a banner.
-  // We only flag once per modal session — repeated failures are
-  // expected once the bucket is full and would otherwise spam the
-  // user. ``window.ForgeLMWizardStorageWarn`` survives across saves
-  // so a refresh of the wizard pane carries the warning forward.
+  // The saved state as stored, or null when there is none or storage is unreadable.
+  function savedText() {
+    try {
+      return window.localStorage.getItem(STORAGE_KEY);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Save the state; return the stored text, or null when storage refused it.
+  // A refused save shows a banner once: repeated failures are expected once
+  // the bucket is full and would otherwise spam the user.
   function saveState(state) {
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      // ``attemptedSteps`` and ``openAccordions`` belong to this tab: saving
+      // them would make two open tabs overwrite each other's in turn.
+      var saved = Object.assign({}, state);
+      delete saved.attemptedSteps;
+      delete saved.openAccordions;
+      var text = JSON.stringify(saved);
+      window.localStorage.setItem(STORAGE_KEY, text);
+      return text;
     } catch (e) {
       /* Private mode + quota-exceeded both land here. In-memory state
          keeps the operator going within the current modal session;
          the banner tells them their progress isn't persisted. */
-      window.ForgeLMWizardStorageWarn = true;
       try {
         var msg = (window.ForgeLMShared && window.ForgeLMShared.tr)
           ? window.ForgeLMShared.tr('wizard.storage.unavailable')
@@ -335,6 +354,7 @@
           if (modal) modal.appendChild(banner);
         }
       } catch (_) { /* defensive — never let the banner crash a save */ }
+      return null;
     }
   }
 
@@ -359,6 +379,28 @@
     if (isStrictRisk(state)) {
       state.humanApproval = true;
       state.safetyEval = true;
+    }
+  }
+
+  // Shared ASCII env-reference syntax for monitoring metadata and webhook secrets.
+  function parseEnvRef(value) {
+    var raw = (value || '').trim();
+    if (raw.slice(0, 4).toLowerCase() !== 'env:') return { literal: raw };
+    var name = raw.slice(4).trim();
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? { name: name } : { invalid: true };
+  }
+
+  function validMonitoringUrl(value) {
+    if (!value) return true;
+    var lower = value.toLowerCase();
+    if (!lower.startsWith('http://') && !lower.startsWith('https://')) return false;
+    for (var i = 0; i < value.length; i++) {
+      if (value.charCodeAt(i) <= 32 || value.charCodeAt(i) === 127 || value[i] === '\\') return false;
+    }
+    try {
+      return !!new URL(value).hostname;
+    } catch (e) {
+      return false;
     }
   }
 
@@ -447,9 +489,17 @@
       // Off → skip; the operator opted out of the whole feature.
       if (state.webhookEnabled && blank(state.webhookUrl)) {
         errors.push({ field: 'webhookUrl', key: 'wizard.error.webhook.required' });
+      } else if (state.webhookEnabled && parseEnvRef(state.webhookUrl).invalid) {
+        errors.push({ field: 'webhookUrl', key: 'wizard.error.env_ref.invalid' });
       }
-      if (state.monitoringEnabled && blank(state.monitoringEndpoint)) {
-        errors.push({ field: 'monitoringEndpoint', key: 'wizard.error.monitoring.endpoint.required' });
+      if (state.monitoringEnabled && parseEnvRef(state.monitoringEndpoint).invalid) {
+        errors.push({ field: 'monitoringEndpoint', key: 'wizard.error.env_ref.invalid' });
+      } else if (state.monitoringEnabled && !validMonitoringUrl(parseEnvRef(state.monitoringEndpoint).literal)) {
+        errors.push({ field: 'monitoringEndpoint', key: 'wizard.error.monitoring.endpoint.invalid' });
+      }
+      if (state.monitoringEnabled && (!Number.isInteger(state.monitoringCheckIntervalHours) ||
+          state.monitoringCheckIntervalHours < 1 || state.monitoringCheckIntervalHours > 720)) {
+        errors.push({ field: 'monitoringCheckIntervalHours', key: 'wizard.error.monitoring.interval.invalid' });
       }
       if (state.syntheticEnabled) {
         if (blank(state.syntheticTeacherModel)) {
@@ -473,6 +523,32 @@
       if (errs[i].field === fieldName) return errs[i].key;
     }
     return null;
+  }
+
+  // Keep a flagged field's error row in step with its value, in place: drop
+  // it once the value validates, name the check the value fails now (an
+  // empty model id is "required", ``abc`` is "format"), and bring it back
+  // when a corrected value is broken again. A re-render would rebuild the
+  // step under the caret and re-announce it.
+  function syncFieldError(state, stepId, field, input, row) {
+    var key = fieldHasError(state, stepId, field);
+    var error = row.querySelector('.wizard-error');
+    if (key) {
+      input.classList.add('is-invalid');
+      if (input.getAttribute('aria-invalid') === 'false') input.setAttribute('aria-invalid', 'true');
+      if (!error) {
+        // Where the renderers put it: after the field's hint, or after the field.
+        error = el('div', { class: 'wizard-error', role: 'alert' });
+        var hint = row.querySelector('.wizard-row-hint');
+        var after = hint && hint.parentNode === row ? hint : input;
+        row.insertBefore(error, after.nextSibling);
+      }
+      error.textContent = tr(key);
+      return;
+    }
+    input.classList.remove('is-invalid');
+    if (input.getAttribute('aria-invalid') === 'true') input.setAttribute('aria-invalid', 'false');
+    if (error) error.remove();
   }
 
   /* ── Use-case templates (Step 2 → preselect Step 3-5) ─── */
@@ -806,11 +882,11 @@
     // is a secret.
     if (state.webhookEnabled && state.webhookUrl) {
       header(0, 'webhook');
-      var raw = state.webhookUrl.trim();
-      if (raw.indexOf('env:') === 0) {
-        k(1, 'url_env', JSON.stringify(raw.slice(4)));
-      } else {
-        k(1, 'url', JSON.stringify(raw));
+      var webhookRef = parseEnvRef(state.webhookUrl);
+      if (webhookRef.name) {
+        k(1, 'url_env', JSON.stringify(webhookRef.name));
+      } else if (!webhookRef.invalid) {
+        k(1, 'url', JSON.stringify(webhookRef.literal));
       }
       if (state.webhookNotifyStart)   k(1, 'notify_on_start', 'true');
       if (!state.webhookNotifySuccess) k(1, 'notify_on_success', 'false');
@@ -818,24 +894,25 @@
       blank();
     }
 
-    // Article 12+17 post-market monitoring. Auto-coerced enabled for
-    // strict tiers (operator can't disable it under high-risk).
-    var monitoringActive = state.monitoringEnabled || isStrictRisk(state);
-    if (monitoringActive || state.monitoringEndpoint) {
+    // Record an external plan without activating monitoring hooks.
+    if (state.monitoringEnabled) {
+      comment('External monitoring plan metadata only; ForgeLM runs no exporters, drift alerts, or scheduled checks.');
       header(0, 'monitoring');
-      k(1, 'enabled', monitoringActive ? 'true' : 'false');
+      k(1, 'enabled', 'true');
       if (state.monitoringEndpoint) {
-        var rawM = state.monitoringEndpoint.trim();
-        if (rawM.indexOf('env:') === 0) {
-          k(1, 'endpoint_env', JSON.stringify(rawM.slice(4)));
-        } else {
-          k(1, 'endpoint', JSON.stringify(rawM));
+        var monitoringRef = parseEnvRef(state.monitoringEndpoint);
+        if (monitoringRef.name) {
+          k(1, 'endpoint_env', JSON.stringify(monitoringRef.name));
+        } else if (!monitoringRef.invalid && monitoringRef.literal && validMonitoringUrl(monitoringRef.literal)) {
+          k(1, 'endpoint', JSON.stringify(monitoringRef.literal));
         }
       }
-      if (state.metricsExport && state.metricsExport !== 'none') {
-        k(1, 'metrics_export', JSON.stringify(state.metricsExport));
+      k(1, 'metrics_export', JSON.stringify(state.metricsExport || 'none'));
+      k(1, 'alert_on_drift', state.alertOnDrift ? 'true' : 'false');
+      if (Number.isInteger(state.monitoringCheckIntervalHours) && state.monitoringCheckIntervalHours >= 1 &&
+          state.monitoringCheckIntervalHours <= 720) {
+        k(1, 'check_interval_hours', String(state.monitoringCheckIntervalHours));
       }
-      if (!state.alertOnDrift) k(1, 'alert_on_drift', 'false');
       blank();
     }
 
@@ -992,6 +1069,17 @@
         });
       }
       document.body.style.overflow = 'hidden';
+      // The storage handler skips a closed wizard, so another tab may have
+      // saved newer answers since this one last rendered: start from them, or
+      // the save in render() would overwrite them with this tab's older copy.
+      // When storage refuses writes it still holds the old copy: then nothing
+      // newer exists, and this tab's unsaved answers are the ones to keep.
+      var text = savedText();
+      var saved = text !== null && text !== synced ? loadState() : null;
+      if (saved) {
+        adopt(saved);
+        synced = text;
+      }
       render();
       // Push ?wizard=open onto the URL without reloading so a refresh /
       // share-link round-trips back into the wizard at the same step.
@@ -1050,20 +1138,63 @@
 
     /* ── State + render ───────────────────────────────── */
 
-    function persist() { saveState(state); }
+    // The stored text this tab is in step with: what it last saved, loaded or
+    // adopted. Storage holding anything else means another tab saved since.
+    var synced = savedText();
+
+    function persist() {
+      var written = saveState(state);
+      if (written !== null) synced = written;
+    }
+
+    // Take another tab's saved answers into this tab's state, in place so the
+    // closures (persist, render) keep their reference. The steps this tab
+    // flagged and the sections it opened stay with it.
+    function adopt(fresh) {
+      var attempted = state.attemptedSteps || [];
+      var opened = state.openAccordions || {};
+      Object.keys(state).forEach(function (k) { delete state[k]; });
+      Object.keys(fresh).forEach(function (k) { state[k] = fresh[k]; });
+      state.attemptedSteps = attempted;
+      state.openAccordions = opened;
+    }
 
     function render() {
-      var idx = state.step;
+      // A saved step that is not a step number (a hand-edited or damaged save)
+      // would leave the pane blank, with no way to reach Reset: start over.
+      var idx = Number.isInteger(state.step) ? state.step : 0;
       if (idx < 0) idx = 0;
       if (idx >= STEPS.length) idx = STEPS.length - 1;
       state.step = idx;
 
       coerceForRisk(state);
 
+      // Rebuilding the pane drops the focused control, so a keyboard user who
+      // toggled a field that reveals others would restart at the top of the
+      // dialog. Controls have stable ids (controlId): focus the rebuilt one.
+      // After a step change the id is gone and focus is left alone.
+      var active = document.activeElement;
+      var hadFocus = !!(active && pane.contains(active));
+      var focusedId = hadFocus && active.id ? active.id : null;
+      // A sibling tab's update re-renders under the caret: keep its position too.
+      var caret = focusedId && typeof active.selectionStart === 'number'
+        ? [active.selectionStart, active.selectionEnd] : null;
+
       var stepDef = STEPS[idx];
       pane.innerHTML = '';
       var renderer = STEP_RENDERERS[stepDef.id];
       if (renderer) renderer(pane, state, render, persist);
+      var refocus = focusedId ? document.getElementById(focusedId) : null;
+      if (refocus && pane.contains(refocus)) {
+        // The control is where the operator left it: do not scroll to it.
+        refocus.focus({ preventScroll: true });
+        if (caret && typeof refocus.setSelectionRange === 'function') {
+          try { refocus.setSelectionRange(caret[0], caret[1]); } catch (e) { /* number inputs have no caret */ }
+        }
+      }
+      // A focused control the step no longer shows (a sibling tab turned its
+      // section off) leaves focus in the dialog, not on the page behind it.
+      if (hadFocus && !pane.contains(document.activeElement) && dialog) dialog.focus({ preventScroll: true });
 
       // Progress + counter
       var pct = Math.round(((idx + 1) / STEPS.length) * 100);
@@ -1120,6 +1251,7 @@
       judgeApiKeyEnv:         'eval_gates',
       webhookUrl:             'webhook',
       monitoringEndpoint:     'monitoring',
+      monitoringCheckIntervalHours: 'monitoring',
       syntheticTeacherModel:  'synthetic',
       syntheticSeedFile:      'synthetic',
       syntheticApiKeyEnv:     'synthetic'
@@ -1254,7 +1386,7 @@
     // (operator is comparing two configs) and recoverable for the
     // edge case (operator is mid-edit in BOTH tabs simultaneously).
     window.addEventListener('storage', function (e) {
-      if (e.key !== STORAGE_KEY) return;
+      if (e.key !== STORAGE_KEY && e.key !== null) return; // null: another tab cleared all storage
       if (modal.hasAttribute('hidden')) return; // not visible — nothing to refresh
       try {
         // Cross-tab reset: a sibling tab cleared the wizard
@@ -1265,6 +1397,7 @@
         // re-render so this tab's UI doesn't drift into a config that
         // no longer exists.
         if (e.newValue === null) {
+          synced = null;
           var fallback = defaultState();
           Object.keys(state).forEach(function (k) { delete state[k]; });
           Object.keys(fallback).forEach(function (k) { state[k] = fallback[k]; });
@@ -1273,10 +1406,8 @@
         }
         var fresh = loadState();
         if (fresh) {
-          // Mutate state in place so closures (persist, render) keep
-          // their reference.  Re-render with the new values.
-          Object.keys(state).forEach(function (k) { delete state[k]; });
-          Object.keys(fresh).forEach(function (k) { state[k] = fresh[k]; });
+          adopt(fresh);
+          synced = e.newValue;
           render();
         }
       } catch (err) {
@@ -1363,6 +1494,7 @@
 
     var header = el('button', {
       type: 'button',
+      id: 'wizard-accordion-' + accordionId.replace(/_/g, '-'),
       class: 'wizard-accordion-header',
       'aria-expanded': isOpen ? 'true' : 'false',
       on: {
@@ -1422,6 +1554,53 @@
     return nodes;
   }
 
+  // Append a per-field detail paragraph beneath a row while the operator
+  // has details enabled (state.detailsVisible). The paragraph expands what
+  // the hint glosses: 2-3 sentences on what the value MEANS, not just what
+  // range to pick. Shared by every renderer that shows per-field details —
+  // it used to be a local helper in three of them, and the compliance
+  // renderer, which had none, threw a ReferenceError before its risk and
+  // evaluation controls (#879).
+  function appendDetail(state, rowEl, detailKey) {
+    if (state.detailsVisible && detailKey) {
+      var text = tr(detailKey);
+      rowEl.appendChild(text.indexOf('<code>') < 0
+        ? el('p', { class: 'wizard-row-detail', text: text })
+        : el('p', { class: 'wizard-row-detail' }, codeSpans(text)));
+    }
+  }
+
+  // Text whose ``<code>…</code>`` spans become code elements; everything else
+  // stays text, so the copy is never parsed as HTML.
+  function codeSpans(text) {
+    var nodes = [];
+    var rest = text;
+    while (rest) {
+      var open = rest.indexOf('<code>');
+      var close = open < 0 ? -1 : rest.indexOf('</code>', open);
+      if (close < 0) {
+        nodes.push(rest);
+        break;
+      }
+      if (open > 0) nodes.push(rest.slice(0, open));
+      nodes.push(el('code', { text: rest.slice(open + 6, close) }));
+      rest = rest.slice(close + 7);
+    }
+    return nodes;
+  }
+
+  // Id of the control that edits ``field``; a caption points at it with
+  // ``for`` so the caption is the control's accessible name and a click on
+  // it focuses the control (#950). Checkboxes keep their wrapping <label>;
+  // their ids, and ``controlId(field) + '-' + option`` on option cards, let
+  // render() return focus to the control that re-rendered the step. Field
+  // names make the ids stable and unique: each control writes one state
+  // field and a step renders each field at most once, so a re-render
+  // rebuilds the same ids rather than adding second copies.
+  function controlId(field) {
+    return 'wizard-field-' + field.replace(/[A-Z]/g, function (c) { return '-' + c.toLowerCase(); });
+  }
+
   /* Step 1: Welcome / experience level */
   STEP_RENDERERS['welcome'] = function (pane, state, rerender, persist) {
     pane.appendChild(el('h2', { class: 'wizard-step-title', id: 'wizard-title', text: tr('wizard.step.welcome.title') }));
@@ -1435,6 +1614,7 @@
     ].forEach(function (opt) {
       var card = el('button', {
         type: 'button',
+        id: controlId('experience') + '-' + opt.id,
         class: 'wizard-card' + (state.experience === opt.id ? ' is-selected' : ''),
         on: {
           click: function () {
@@ -1473,6 +1653,7 @@
       }
       var card = el('button', {
         type: 'button',
+        id: controlId('useCase') + '-' + opt.id,
         class: 'wizard-card' + (state.useCase === opt.id ? ' is-selected' : ''),
         on: {
           click: function () {
@@ -1518,6 +1699,7 @@
       }
       var card = el('button', {
         type: 'button',
+        id: controlId('trainerType') + '-' + def.id,
         class: 'wizard-card' + (state.trainerType === def.id ? ' is-selected' : ''),
         on: {
           click: function () {
@@ -1559,6 +1741,7 @@
       if (preset.badgeKey) titleNode.appendChild(el('span', { class: 'badge', text: tr(preset.badgeKey) }));
       var card = el('button', {
         type: 'button',
+        id: controlId('modelPreset') + '-' + preset.id,
         class: 'wizard-card' + (state.modelPreset === preset.id ? ' is-selected' : ''),
         on: {
           click: function () {
@@ -1578,7 +1761,9 @@
 
     if (state.modelPreset === 'custom') {
       var modelErrKey = fieldHasError(state, 'model', 'model');
+      var modelError = modelErrKey ? el('div', { class: 'wizard-error', role: 'alert', text: tr(modelErrKey) }) : null;
       var input = el('input', {
+        id: controlId('model'),
         type: 'text',
         class: 'wizard-input' + (modelErrKey ? ' is-invalid' : ''),
         placeholder: 'huggingface-org/your-model',
@@ -1588,31 +1773,20 @@
       input.addEventListener('input', function () {
         state.model = input.value.trim();
         persist();
-        // If the operator was previously blocked on this field but
-        // their new value now validates, drop the error visual on
-        // next render (handled by re-running validation in render()).
-        var prevErr = fieldHasError(state, 'model', 'model');
-        var stillErr = validateStep(state, 'model').some(function (e) { return e.field === 'model'; });
-        if (prevErr && !stillErr) {
-          // Re-render to clear the error state cleanly. Cheap because
-          // the only thing that changes is the .is-invalid class.
-          rerender();
-          return;
-        }
-        // Otherwise just refresh the YAML preview — keeps focus +
-        // caret position on the input.
+        syncFieldError(state, 'model', 'model', input, modelRow);
+        // Refresh the YAML preview in place — keeps focus + caret
+        // position on the input.
         var yamlOutput = document.querySelector('[data-wizard-yaml-output]');
         if (yamlOutput) yamlOutput.innerHTML = tintYaml(buildYaml(state));
       });
       var rowChildren = [
-        el('label', { class: 'wizard-row-label', text: tr('wizard.model.custom.label') }),
+        el('label', { for: controlId('model'), class: 'wizard-row-label', text: tr('wizard.model.custom.label') }),
         input,
         el('span', { class: 'wizard-row-hint', text: tr('wizard.model.custom.hint') })
       ];
-      if (modelErrKey) {
-        rowChildren.push(el('div', { class: 'wizard-error', role: 'alert', text: tr(modelErrKey) }));
-      }
-      pane.appendChild(el('div', { class: 'wizard-row' }, rowChildren));
+      if (modelError) rowChildren.push(modelError);
+      var modelRow = el('div', { class: 'wizard-row' }, rowChildren);
+      pane.appendChild(modelRow);
     }
   };
 
@@ -1629,6 +1803,7 @@
     ].forEach(function (opt) {
       var card = el('button', {
         type: 'button',
+        id: controlId('datasetKind') + '-' + opt.id,
         class: 'wizard-card' + (state.datasetKind === opt.id ? ' is-selected' : ''),
         on: {
           click: function () {
@@ -1646,7 +1821,9 @@
     pane.appendChild(grid);
 
     var datasetErrKey = fieldHasError(state, 'dataset', 'datasetName');
+    var datasetError = datasetErrKey ? el('div', { class: 'wizard-error', role: 'alert', text: tr(datasetErrKey) }) : null;
     var nameInput = el('input', {
+      id: controlId('datasetName'),
       type: 'text',
       class: 'wizard-input' + (datasetErrKey ? ' is-invalid' : ''),
       placeholder: state.datasetKind === 'huggingface'
@@ -1658,24 +1835,18 @@
     nameInput.addEventListener('input', function () {
       state.datasetName = nameInput.value.trim();
       persist();
-      var prevErr = fieldHasError(state, 'dataset', 'datasetName');
-      var stillErr = validateStep(state, 'dataset').some(function (e) { return e.field === 'datasetName'; });
-      if (prevErr && !stillErr) {
-        rerender();
-        return;
-      }
+      syncFieldError(state, 'dataset', 'datasetName', nameInput, dsRow);
       var yamlOutput = document.querySelector('[data-wizard-yaml-output]');
       if (yamlOutput) yamlOutput.innerHTML = tintYaml(buildYaml(state));
     });
     var dsRowChildren = [
-      el('label', { class: 'wizard-row-label', text: tr('wizard.dataset.name.label') }),
+      el('label', { for: controlId('datasetName'), class: 'wizard-row-label', text: tr('wizard.dataset.name.label') }),
       nameInput,
       el('span', { class: 'wizard-row-hint', text: tr('wizard.dataset.name.hint') })
     ];
-    if (datasetErrKey) {
-      dsRowChildren.push(el('div', { class: 'wizard-error', role: 'alert', text: tr(datasetErrKey) }));
-    }
-    pane.appendChild(el('div', { class: 'wizard-row' }, dsRowChildren));
+    if (datasetError) dsRowChildren.push(datasetError);
+    var dsRow = el('div', { class: 'wizard-row' }, dsRowChildren);
+    pane.appendChild(dsRow);
 
     // Trainer-aware shape guidance. SFT auto-detects messages or
     // prompt+response, but preference / KTO / GRPO trainers expect
@@ -1698,11 +1869,6 @@
       var yamlOutput = document.querySelector('[data-wizard-yaml-output]');
       if (yamlOutput) yamlOutput.innerHTML = tintYaml(buildYaml(state));
     }
-    function appendDetail(rowEl, detailKey) {
-      if (state.detailsVisible && detailKey) {
-        rowEl.appendChild(el('p', { class: 'wizard-row-detail', text: tr(detailKey) }));
-      }
-    }
 
     // Data Governance accordion (EU AI Act Article 10).
     pane.appendChild(makeAccordion(state, persist, 'governance',
@@ -1715,13 +1881,14 @@
       function makeTextarea(field, labelKey, hintKey, placeholderKey, detailKey, rows, errorKey) {
         var errKey = errorKey ? fieldHasError(state, 'dataset', field) : null;
         var ta = el('textarea', {
+          id: controlId(field),
           class: 'wizard-input' + (errKey ? ' is-invalid' : ''),
           rows: String(rows || 2),
           placeholder: tr(placeholderKey)
         });
         ta.value = state[field] || '';
         var rowChildren = [
-          el('label', { class: 'wizard-row-label', text: tr(labelKey) }),
+          el('label', { for: controlId(field), class: 'wizard-row-label', text: tr(labelKey) }),
           ta,
           el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
         ];
@@ -1733,16 +1900,9 @@
           state[field] = ta.value;
           persist();
           liveYaml();
-          if (errorKey) {
-            var stillErr = validateStep(state, 'dataset').some(function (e) { return e.field === field; });
-            if (!stillErr) {
-              ta.classList.remove('is-invalid');
-              var errEl = row.querySelector('.wizard-error');
-              if (errEl) errEl.remove();
-            }
-          }
+          if (errorKey) syncFieldError(state, 'dataset', field, ta, row);
         });
-        appendDetail(row, detailKey);
+        appendDetail(state, row, detailKey);
         return row;
       }
 
@@ -1766,7 +1926,7 @@
         requireGov ? 'wizard.error.governance.known_biases.required' : null));
 
       function makeCheckbox(field, labelKey, hintKey) {
-        var cb = el('input', { type: 'checkbox' });
+        var cb = el('input', { id: controlId(field), type: 'checkbox' });
         cb.checked = !!state[field];
         cb.addEventListener('change', function () {
           state[field] = cb.checked;
@@ -1800,18 +1960,8 @@
       if (yamlOutput) yamlOutput.innerHTML = tintYaml(buildYaml(state));
     }
 
-    // Append a per-field detail paragraph beneath a row when the
-    // operator is in beginner mode (state.detailsVisible). The paragraph
-    // expands what the hint glosses — 2-3 sentences explaining what the
-    // value MEANS, not just what range to pick.
-    function appendDetail(rowEl, detailKey) {
-      if (state.detailsVisible && detailKey) {
-        rowEl.appendChild(el('p', { class: 'wizard-row-detail', text: tr(detailKey) }));
-      }
-    }
-
     // QLoRA toggle (4-bit base model quantization)
-    var qloraInput = el('input', { type: 'checkbox' });
+    var qloraInput = el('input', { id: controlId('qlora'), type: 'checkbox' });
     qloraInput.checked = state.qlora;
     qloraInput.addEventListener('change', function () {
       state.qlora = qloraInput.checked;
@@ -1825,7 +1975,7 @@
       ]),
       el('span', { class: 'wizard-row-hint', text: tr('wizard.training.qlora.hint') })
     ]);
-    appendDetail(qloraRow, 'wizard.training.qlora.detail');
+    appendDetail(state, qloraRow, 'wizard.training.qlora.detail');
     pane.appendChild(qloraRow);
 
     // PEFT method radio (Standard LoRA / DoRA / PiSSA / RSLoRA).
@@ -1833,17 +1983,26 @@
     // method choice is irrelevant. Emits to lora.method in YAML.
     if (!state.galoreEnabled) {
       var methodRow = el('div', { class: 'wizard-row' });
-      methodRow.appendChild(el('span', { class: 'wizard-row-label', text: tr('wizard.training.lora_method.label') }));
+      // One caption for four method buttons: a <label for> would replace a
+      // button's own name, so the caption names their group instead.
+      var methodCaptionId = controlId('loraMethod') + '-label';
+      methodRow.appendChild(el('span', { id: methodCaptionId, class: 'wizard-row-label', text: tr('wizard.training.lora_method.label') }));
       var methods = [
         { id: 'lora',    titleKey: 'wizard.training.lora_method.standard.title',    descKey: 'wizard.training.lora_method.standard.desc' },
         { id: 'dora',    titleKey: 'wizard.training.lora_method.dora.title',        descKey: 'wizard.training.lora_method.dora.desc' },
         { id: 'pissa',   titleKey: 'wizard.training.lora_method.pissa.title',       descKey: 'wizard.training.lora_method.pissa.desc' },
         { id: 'rslora',  titleKey: 'wizard.training.lora_method.rslora.title',      descKey: 'wizard.training.lora_method.rslora.desc' }
       ];
-      var methodGrid = el('div', { class: 'wizard-cards', style: 'grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.6rem;' });
+      var methodGrid = el('div', {
+        role: 'group',
+        'aria-labelledby': methodCaptionId,
+        class: 'wizard-cards',
+        style: 'grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.6rem;'
+      });
       methods.forEach(function (m) {
         var card = el('button', {
           type: 'button',
+          id: controlId('loraMethod') + '-' + m.id,
           class: 'wizard-card' + (state.loraMethod === m.id ? ' is-selected' : ''),
           on: {
             click: function () {
@@ -1862,13 +2021,13 @@
       });
       methodRow.appendChild(methodGrid);
       methodRow.appendChild(el('span', { class: 'wizard-row-hint', text: tr('wizard.training.lora_method.hint') }));
-      appendDetail(methodRow, 'wizard.training.lora_method.detail');
+      appendDetail(state, methodRow, 'wizard.training.lora_method.detail');
       pane.appendChild(methodRow);
     }
 
     // GaLore toggle (full-parameter training via gradient projection).
     // Mutually exclusive with LoRA-style adapters at runtime.
-    var galoreInput = el('input', { type: 'checkbox' });
+    var galoreInput = el('input', { id: controlId('galoreEnabled'), type: 'checkbox' });
     galoreInput.checked = state.galoreEnabled;
     galoreInput.addEventListener('change', function () {
       state.galoreEnabled = galoreInput.checked;
@@ -1884,12 +2043,12 @@
       ]),
       el('span', { class: 'wizard-row-hint', text: tr('wizard.training.galore.hint') })
     ]);
-    appendDetail(galoreRow, 'wizard.training.galore.detail');
+    appendDetail(state, galoreRow, 'wizard.training.galore.detail');
     pane.appendChild(galoreRow);
 
     // GaLore variant select — only when GaLore is enabled.
     if (state.galoreEnabled) {
-      var galoreSelect = el('select', { class: 'wizard-select' });
+      var galoreSelect = el('select', { id: controlId('galoreOptim'), class: 'wizard-select' });
       [
         { id: 'galore_adamw',                 labelKey: 'wizard.training.galore_optim.adamw' },
         { id: 'galore_adamw_8bit',            labelKey: 'wizard.training.galore_optim.adamw_8bit' },
@@ -1908,17 +2067,18 @@
         liveYaml();
       });
       var galoreOptimRow = el('div', { class: 'wizard-row' }, [
-        el('label', { class: 'wizard-row-label', text: tr('wizard.training.galore_optim.label') }),
+        el('label', { for: controlId('galoreOptim'), class: 'wizard-row-label', text: tr('wizard.training.galore_optim.label') }),
         galoreSelect,
         el('span', { class: 'wizard-row-hint', text: tr('wizard.training.galore_optim.hint') })
       ]);
-      appendDetail(galoreOptimRow, 'wizard.training.galore_optim.detail');
+      appendDetail(state, galoreOptimRow, 'wizard.training.galore_optim.detail');
       pane.appendChild(galoreOptimRow);
     }
 
     // LoRA r / alpha sliders
     function makeSlider(field, min, max, hintKey, labelKey, detailKey) {
       var slider = el('input', {
+        id: controlId(field),
         type: 'range',
         class: 'wizard-slider',
         min: String(min),
@@ -1934,11 +2094,11 @@
         liveYaml();
       });
       var row = el('div', { class: 'wizard-row' }, [
-        el('label', { class: 'wizard-row-label', text: tr(labelKey) }),
+        el('label', { for: controlId(field), class: 'wizard-row-label', text: tr(labelKey) }),
         el('div', { class: 'wizard-slider-row' }, [slider, valueOut]),
         el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
       ]);
-      appendDetail(row, detailKey);
+      appendDetail(state, row, detailKey);
       return row;
     }
     // LoRA rank / alpha — only meaningful when LoRA-style adapters
@@ -1952,6 +2112,7 @@
 
     // Epochs
     var epochsInput = el('input', {
+      id: controlId('epochs'),
       type: 'number',
       class: 'wizard-input',
       min: '1',
@@ -1967,18 +2128,18 @@
       }
     });
     var epochsRow = el('div', { class: 'wizard-row' }, [
-      el('label', { class: 'wizard-row-label', text: tr('wizard.training.epochs.label') }),
+      el('label', { for: controlId('epochs'), class: 'wizard-row-label', text: tr('wizard.training.epochs.label') }),
       epochsInput,
       el('span', { class: 'wizard-row-hint', text: tr('wizard.training.epochs.hint') })
     ]);
-    appendDetail(epochsRow, 'wizard.training.epochs.detail');
+    appendDetail(state, epochsRow, 'wizard.training.epochs.detail');
     pane.appendChild(epochsRow);
 
     // Learning rate. Includes the schema default ``2e-5`` (review-
     // cycle 2 / C1+I3) so an operator who wants byte-for-byte parity
     // with ``ForgeConfig()`` can pick it from the dropdown rather than
     // hand-edit the YAML afterwards.
-    var lrSelect = el('select', { class: 'wizard-select' });
+    var lrSelect = el('select', { id: controlId('learningRate'), class: 'wizard-select' });
     ['1e-4', '5e-5', '3e-5', '2e-5', '1e-5'].forEach(function (lr) {
       var option = el('option', { value: lr, text: lr });
       if (state.learningRate === lr) option.selected = true;
@@ -1990,15 +2151,15 @@
       liveYaml();
     });
     var lrRow = el('div', { class: 'wizard-row' }, [
-      el('label', { class: 'wizard-row-label', text: tr('wizard.training.lr.label') }),
+      el('label', { for: controlId('learningRate'), class: 'wizard-row-label', text: tr('wizard.training.lr.label') }),
       lrSelect,
       el('span', { class: 'wizard-row-hint', text: tr('wizard.training.lr.hint') })
     ]);
-    appendDetail(lrRow, 'wizard.training.lr.detail');
+    appendDetail(state, lrRow, 'wizard.training.lr.detail');
     pane.appendChild(lrRow);
 
     // Batch size
-    var batchSelect = el('select', { class: 'wizard-select' });
+    var batchSelect = el('select', { id: controlId('batchSize'), class: 'wizard-select' });
     [1, 2, 4, 8].forEach(function (bs) {
       var option = el('option', { value: String(bs), text: String(bs) });
       if (state.batchSize === bs) option.selected = true;
@@ -2010,11 +2171,11 @@
       liveYaml();
     });
     var batchRow = el('div', { class: 'wizard-row' }, [
-      el('label', { class: 'wizard-row-label', text: tr('wizard.training.batch.label') }),
+      el('label', { for: controlId('batchSize'), class: 'wizard-row-label', text: tr('wizard.training.batch.label') }),
       batchSelect,
       el('span', { class: 'wizard-row-hint', text: tr('wizard.training.batch.hint') })
     ]);
-    appendDetail(batchRow, 'wizard.training.batch.detail');
+    appendDetail(state, batchRow, 'wizard.training.batch.detail');
     pane.appendChild(batchRow);
 
     // Max sequence length (P3 / review-cycle 2).  Was previously
@@ -2024,6 +2185,7 @@
     // prompts.  Surface as a number input clamped to the schema's
     // [64, 131072] range.
     var maxLengthInput = el('input', {
+      id: controlId('maxLength'),
       type: 'number', class: 'wizard-input', value: String(state.maxLength || 2048),
       min: '64', max: '131072', step: '64'
     });
@@ -2040,7 +2202,7 @@
       }
     });
     var maxLengthRow = el('div', { class: 'wizard-row' }, [
-      el('label', { class: 'wizard-row-label', text: tr('wizard.training.max_length.label') }),
+      el('label', { for: controlId('maxLength'), class: 'wizard-row-label', text: tr('wizard.training.max_length.label') }),
       maxLengthInput,
       el('span', { class: 'wizard-row-hint', text: tr('wizard.training.max_length.hint') })
     ]);
@@ -2064,6 +2226,7 @@
       // Helper for a numeric param row with a slider + live value
       function makeParamSlider(field, min, max, step, labelKey, hintKey, detailKey) {
         var slider = el('input', {
+          id: controlId(field),
           type: 'range',
           class: 'wizard-slider',
           min: String(min),
@@ -2083,17 +2246,18 @@
           liveYaml();
         });
         var row = el('div', { class: 'wizard-row' }, [
-          el('label', { class: 'wizard-row-label', text: tr(labelKey) }),
+          el('label', { for: controlId(field), class: 'wizard-row-label', text: tr(labelKey) }),
           el('div', { class: 'wizard-slider-row' }, [slider, valueOut]),
           el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
         ]);
-        appendDetail(row, detailKey);
+        appendDetail(state, row, detailKey);
         return row;
       }
 
       // Helper for an integer param input
       function makeParamNumber(field, min, max, step, labelKey, hintKey, detailKey) {
         var input = el('input', {
+          id: controlId(field),
           type: 'number',
           class: 'wizard-input',
           min: String(min),
@@ -2110,11 +2274,11 @@
           }
         });
         var row = el('div', { class: 'wizard-row' }, [
-          el('label', { class: 'wizard-row-label', text: tr(labelKey) }),
+          el('label', { for: controlId(field), class: 'wizard-row-label', text: tr(labelKey) }),
           input,
           el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
         ]);
-        appendDetail(row, detailKey);
+        appendDetail(state, row, detailKey);
         return row;
       }
 
@@ -2141,6 +2305,7 @@
         // the YAML and TRL falls back to the built-in
         // format/length-shaping reward.
         var rewardInput = el('input', {
+          id: controlId('grpoRewardModel'),
           type: 'text',
           class: 'wizard-input',
           value: state.grpoRewardModel || '',
@@ -2152,11 +2317,11 @@
           liveYaml();
         });
         var rewardRow = el('div', { class: 'wizard-row' }, [
-          el('label', { class: 'wizard-row-label', text: tr('wizard.training.grpo_reward_model.label') }),
+          el('label', { for: controlId('grpoRewardModel'), class: 'wizard-row-label', text: tr('wizard.training.grpo_reward_model.label') }),
           rewardInput,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.training.grpo_reward_model.hint') })
         ]);
-        appendDetail(rewardRow, 'wizard.training.grpo_reward_model.detail');
+        appendDetail(state, rewardRow, 'wizard.training.grpo_reward_model.detail');
         pane.appendChild(rewardRow);
       }
     }
@@ -2173,7 +2338,7 @@
     }
 
     // Risk classification
-    var riskSelect = el('select', { class: 'wizard-select' });
+    var riskSelect = el('select', { id: controlId('riskClassification'), class: 'wizard-select' });
     [
       { id: 'unknown',       labelKey: 'wizard.risk.unknown' },
       { id: 'minimal-risk',  labelKey: 'wizard.risk.minimal' },
@@ -2192,7 +2357,7 @@
       rerender();
     });
     pane.appendChild(el('div', { class: 'wizard-row' }, [
-      el('label', { class: 'wizard-row-label', text: tr('wizard.risk.label') }),
+      el('label', { for: controlId('riskClassification'), class: 'wizard-row-label', text: tr('wizard.risk.label') }),
       riskSelect,
       el('span', { class: 'wizard-row-hint', text: tr('wizard.risk.hint') })
     ]));
@@ -2212,38 +2377,42 @@
 
     // Toggles. ``locked`` disables the input and adds a "required for risk
     // tier" badge — used for fields the EU AI Act forces under high-risk
-    // / unacceptable tiers (Articles 9-17).
-    function makeToggle(field, labelKey, hintKey, locked, detailKey) {
-      var input = el('input', { type: 'checkbox' });
+    // / unacceptable tiers (Articles 9-17). ``reveals`` re-renders the step
+    // for a toggle that shows or hides other fields.
+    function makeToggle(field, labelKey, hintKey, locked, detailKey, reveals) {
+      var input = el('input', { id: controlId(field), type: 'checkbox' });
       input.checked = state[field];
       if (locked) input.disabled = true;
       input.addEventListener('change', function () {
         state[field] = input.checked;
         persist();
-        liveYaml();
+        if (reveals) rerender();
+        else liveYaml();
       });
       var labelEl = el('span', { class: 'wizard-toggle-label', text: tr(labelKey) });
       if (locked) {
+        // The space keeps the badge a separate word in the accessible name;
+        // the CSS margin alone does not.
+        labelEl.appendChild(document.createTextNode(' '));
         labelEl.appendChild(el('span', {
           class: 'badge',
           text: tr('wizard.locked.badge'),
           style: 'margin-left: 0.4rem;'
         }));
       }
-      var children = [
+      var row = el('div', { class: 'wizard-row' }, [
         el('label', { class: 'wizard-toggle' }, [input, labelEl]),
         el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
-      ];
-      if (detailKey && state.detailsVisible) {
-        children.push(el('p', { class: 'wizard-row-detail', text: tr(detailKey) }));
-      }
-      return el('div', { class: 'wizard-row' }, children);
+      ]);
+      appendDetail(state, row, detailKey);
+      return row;
     }
     var highRisk = isStrictRisk(state);
-    pane.appendChild(makeToggle('autoRevert', 'wizard.eval.auto_revert.label', 'wizard.eval.auto_revert.hint', false, 'wizard.eval.auto_revert.detail'));
+    pane.appendChild(makeToggle('autoRevert', 'wizard.eval.auto_revert.label', 'wizard.eval.auto_revert.hint', false, 'wizard.eval.auto_revert.detail', true));
 
     if (state.autoRevert) {
       var lossInput = el('input', {
+        id: controlId('maxAcceptableLoss'),
         type: 'number',
         class: 'wizard-input',
         min: '0.1',
@@ -2258,15 +2427,13 @@
           liveYaml();
         }
       });
-      var lossRowChildren = [
-        el('label', { class: 'wizard-row-label', text: tr('wizard.eval.max_loss.label') }),
+      var lossRow = el('div', { class: 'wizard-row' }, [
+        el('label', { for: controlId('maxAcceptableLoss'), class: 'wizard-row-label', text: tr('wizard.eval.max_loss.label') }),
         lossInput,
         el('span', { class: 'wizard-row-hint', text: tr('wizard.eval.max_loss.hint') })
-      ];
-      if (state.detailsVisible) {
-        lossRowChildren.push(el('p', { class: 'wizard-row-detail', text: tr('wizard.eval.max_loss.detail') }));
-      }
-      pane.appendChild(el('div', { class: 'wizard-row' }, lossRowChildren));
+      ]);
+      appendDetail(state, lossRow, 'wizard.eval.max_loss.detail');
+      pane.appendChild(lossRow);
     }
 
     pane.appendChild(makeToggle('safetyEval', 'wizard.eval.safety.label', 'wizard.eval.safety.hint', highRisk, 'wizard.eval.safety.detail'));
@@ -2294,14 +2461,17 @@
     function makeMetaInput(field, labelKey, hintKey, placeholderKey, errorKey) {
       var errKey = errorKey ? fieldHasError(state, 'compliance', field) : null;
       var input = el('input', {
+        id: controlId(field),
         type: 'text',
         class: 'wizard-input' + (errKey ? ' is-invalid' : ''),
         value: state[field] || '',
         placeholder: tr(placeholderKey)
       });
       var rowChildren = [
-        el('label', { class: 'wizard-row-label' }, [
+        el('label', { for: controlId(field), class: 'wizard-row-label' }, [
           tr(labelKey),
+          // A separate word in the accessible name whatever the label's display.
+          highRisk ? ' ' : null,
           highRisk ? el('span', { class: 'badge', text: tr('wizard.locked.badge'), style: 'margin-left: 0.4rem;' }) : null
         ]),
         input,
@@ -2315,14 +2485,7 @@
         state[field] = input.value;
         persist();
         liveYaml();
-        if (errorKey) {
-          var stillErr = validateStep(state, 'compliance').some(function (e) { return e.field === field; });
-          if (!stillErr) {
-            input.classList.remove('is-invalid');
-            var errEl = row.querySelector('.wizard-error');
-            if (errEl) errEl.remove();
-          }
-        }
+        if (errorKey) syncFieldError(state, 'compliance', field, input, row);
       });
       return row;
     }
@@ -2349,13 +2512,14 @@
       function makeRequiredTextarea(field, rows, labelKey, hintKey, placeholderKey, detailKey, errorKey) {
         var errKey = errorKey ? fieldHasError(state, 'compliance', field) : null;
         var ta = el('textarea', {
+          id: controlId(field),
           class: 'wizard-input' + (errKey ? ' is-invalid' : ''),
           rows: String(rows),
           placeholder: tr(placeholderKey)
         });
         ta.value = state[field] || '';
         var rowChildren = [
-          el('label', { class: 'wizard-row-label', text: tr(labelKey) }),
+          el('label', { for: controlId(field), class: 'wizard-row-label', text: tr(labelKey) }),
           ta,
           el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
         ];
@@ -2367,16 +2531,9 @@
           state[field] = ta.value;
           persist();
           liveYaml();
-          if (errorKey) {
-            var stillErr = validateStep(state, 'compliance').some(function (e) { return e.field === field; });
-            if (!stillErr) {
-              ta.classList.remove('is-invalid');
-              var errEl = row.querySelector('.wizard-error');
-              if (errEl) errEl.remove();
-            }
-          }
+          if (errorKey) syncFieldError(state, 'compliance', field, ta, row);
         });
-        appendDetail(row, detailKey);
+        appendDetail(state, row, detailKey);
         return row;
       }
 
@@ -2404,7 +2561,7 @@
         requireRA ? 'wizard.error.risk_assessment.mitigation_measures.required' : null));
 
       // vulnerable_groups_considered: checkbox
-      var vgInput = el('input', { type: 'checkbox' });
+      var vgInput = el('input', { id: controlId('vulnerableGroupsConsidered'), type: 'checkbox' });
       vgInput.checked = !!state.vulnerableGroupsConsidered;
       vgInput.addEventListener('change', function () {
         state.vulnerableGroupsConsidered = vgInput.checked;
@@ -2418,7 +2575,7 @@
         ]),
         el('span', { class: 'wizard-row-hint', text: tr('wizard.risk_assessment.vulnerable_groups.hint') })
       ]);
-      appendDetail(vgRow, 'wizard.risk_assessment.vulnerable_groups.detail');
+      appendDetail(state, vgRow, 'wizard.risk_assessment.vulnerable_groups.detail');
       body.appendChild(vgRow);
     }));
 
@@ -2431,7 +2588,7 @@
       'wizard.eval_gates.title', 'wizard.eval_gates.hint', function (body) {
 
       // ── Benchmark sub-section ──
-      var benchInput = el('input', { type: 'checkbox' });
+      var benchInput = el('input', { id: controlId('benchmarkEnabled'), type: 'checkbox' });
       benchInput.checked = !!state.benchmarkEnabled;
       benchInput.addEventListener('change', function () {
         state.benchmarkEnabled = benchInput.checked;
@@ -2445,7 +2602,7 @@
         ]),
         el('span', { class: 'wizard-row-hint', text: tr('wizard.benchmark.enabled.hint') })
       ]);
-      appendDetail(benchToggleRow, 'wizard.benchmark.enabled.detail');
+      appendDetail(state, benchToggleRow, 'wizard.benchmark.enabled.detail');
       body.appendChild(benchToggleRow);
 
       if (state.benchmarkEnabled) {
@@ -2454,13 +2611,14 @@
         // explains this so the operator knows why they can't advance.
         var benchTasksErrKey = fieldHasError(state, 'compliance', 'benchmarkTasks');
         var tasksTextarea = el('textarea', {
+          id: controlId('benchmarkTasks'),
           class: 'wizard-input' + (benchTasksErrKey ? ' is-invalid' : ''),
           rows: '3',
           placeholder: 'arc_easy\nhellaswag\nmmlu'
         });
         tasksTextarea.value = state.benchmarkTasks || '';
         var tasksRowChildren = [
-          el('label', { class: 'wizard-row-label', text: tr('wizard.benchmark.tasks.label') }),
+          el('label', { for: controlId('benchmarkTasks'), class: 'wizard-row-label', text: tr('wizard.benchmark.tasks.label') }),
           tasksTextarea,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.benchmark.tasks.hint') })
         ];
@@ -2472,16 +2630,12 @@
           state.benchmarkTasks = tasksTextarea.value;
           persist();
           liveYaml();
-          var stillErr = validateStep(state, 'compliance').some(function (e) { return e.field === 'benchmarkTasks'; });
-          if (!stillErr) {
-            tasksTextarea.classList.remove('is-invalid');
-            var errEl = tasksRow.querySelector('.wizard-error');
-            if (errEl) errEl.remove();
-          }
+          syncFieldError(state, 'compliance', 'benchmarkTasks', tasksTextarea, tasksRow);
         });
         body.appendChild(tasksRow);
 
         var minScoreInput = el('input', {
+          id: controlId('benchmarkMinScore'),
           type: 'number',
           class: 'wizard-input',
           min: '0',
@@ -2496,14 +2650,14 @@
           liveYaml();
         });
         body.appendChild(el('div', { class: 'wizard-row' }, [
-          el('label', { class: 'wizard-row-label', text: tr('wizard.benchmark.min_score.label') }),
+          el('label', { for: controlId('benchmarkMinScore'), class: 'wizard-row-label', text: tr('wizard.benchmark.min_score.label') }),
           minScoreInput,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.benchmark.min_score.hint') })
         ]));
       }
 
       // ── LLM Judge sub-section ──
-      var judgeInput = el('input', { type: 'checkbox' });
+      var judgeInput = el('input', { id: controlId('judgeEnabled'), type: 'checkbox' });
       judgeInput.checked = !!state.judgeEnabled;
       judgeInput.addEventListener('change', function () {
         state.judgeEnabled = judgeInput.checked;
@@ -2517,11 +2671,12 @@
         ]),
         el('span', { class: 'wizard-row-hint', text: tr('wizard.judge.enabled.hint') })
       ]);
-      appendDetail(judgeToggleRow, 'wizard.judge.enabled.detail');
+      appendDetail(state, judgeToggleRow, 'wizard.judge.enabled.detail');
       body.appendChild(judgeToggleRow);
 
       if (state.judgeEnabled) {
         var judgeModelInput = el('input', {
+          id: controlId('judgeModel'),
           type: 'text',
           class: 'wizard-input',
           placeholder: 'gpt-4o',
@@ -2533,7 +2688,7 @@
           liveYaml();
         });
         body.appendChild(el('div', { class: 'wizard-row' }, [
-          el('label', { class: 'wizard-row-label', text: tr('wizard.judge.model.label') }),
+          el('label', { for: controlId('judgeModel'), class: 'wizard-row-label', text: tr('wizard.judge.model.label') }),
           judgeModelInput,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.judge.model.hint') })
         ]));
@@ -2542,13 +2697,14 @@
         // without it the runtime can't authenticate to the judge model.
         var judgeApiErrKey = fieldHasError(state, 'compliance', 'judgeApiKeyEnv');
         var judgeApiInput = el('input', {
+          id: controlId('judgeApiKeyEnv'),
           type: 'text',
           class: 'wizard-input' + (judgeApiErrKey ? ' is-invalid' : ''),
           placeholder: 'OPENAI_API_KEY',
           value: state.judgeApiKeyEnv || ''
         });
         var judgeApiRowChildren = [
-          el('label', { class: 'wizard-row-label', text: tr('wizard.judge.api_key_env.label') }),
+          el('label', { for: controlId('judgeApiKeyEnv'), class: 'wizard-row-label', text: tr('wizard.judge.api_key_env.label') }),
           judgeApiInput,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.judge.api_key_env.hint') })
         ];
@@ -2560,16 +2716,12 @@
           state.judgeApiKeyEnv = judgeApiInput.value.trim();
           persist();
           liveYaml();
-          var stillErr = validateStep(state, 'compliance').some(function (e) { return e.field === 'judgeApiKeyEnv'; });
-          if (!stillErr) {
-            judgeApiInput.classList.remove('is-invalid');
-            var errEl = judgeApiRow.querySelector('.wizard-error');
-            if (errEl) errEl.remove();
-          }
+          syncFieldError(state, 'compliance', 'judgeApiKeyEnv', judgeApiInput, judgeApiRow);
         });
         body.appendChild(judgeApiRow);
 
         var judgeScoreInput = el('input', {
+          id: controlId('judgeMinScore'),
           type: 'number',
           class: 'wizard-input',
           min: '1',
@@ -2586,7 +2738,7 @@
           }
         });
         body.appendChild(el('div', { class: 'wizard-row' }, [
-          el('label', { class: 'wizard-row-label', text: tr('wizard.judge.min_score.label') }),
+          el('label', { for: controlId('judgeMinScore'), class: 'wizard-row-label', text: tr('wizard.judge.min_score.label') }),
           judgeScoreInput,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.judge.min_score.hint') })
         ]));
@@ -2610,16 +2762,6 @@
       if (yamlOutput) yamlOutput.innerHTML = tintYaml(buildYaml(state));
     }
 
-    // Same per-row tutorial-paragraph helper as the other steps.
-    // Adds a wizard-row-detail block beneath the row when the operator
-    // is in beginner mode (state.detailsVisible). The detail block
-    // gives 2-3 sentences of plain-language context the hint glosses.
-    function appendDetail(rowEl, detailKey) {
-      if (state.detailsVisible && detailKey) {
-        rowEl.appendChild(el('p', { class: 'wizard-row-detail', text: tr(detailKey) }));
-      }
-    }
-
     // Webhook (Slack/Teams/Discord) accordion.
     pane.appendChild(makeAccordion(state, persist, 'webhook',
       'wizard.webhook.title', 'wizard.webhook.hint', function (body) {
@@ -2628,7 +2770,7 @@
       // stay collapsed and the YAML omits the webhook block entirely.
       // When on, the URL is required (validateStep paints an inline
       // error if blank when the operator hits Next).
-      var enabledInput = el('input', { type: 'checkbox' });
+      var enabledInput = el('input', { id: controlId('webhookEnabled'), type: 'checkbox' });
       enabledInput.checked = !!state.webhookEnabled;
       enabledInput.addEventListener('change', function () {
         state.webhookEnabled = enabledInput.checked;
@@ -2642,7 +2784,7 @@
         ]),
         el('span', { class: 'wizard-row-hint', text: tr('wizard.webhook.enabled.hint') })
       ]);
-      appendDetail(enabledRow, 'wizard.webhook.enabled.detail');
+      appendDetail(state, enabledRow, 'wizard.webhook.enabled.detail');
       body.appendChild(enabledRow);
 
       if (!state.webhookEnabled) return;
@@ -2652,6 +2794,7 @@
       // only after the operator tried to advance past this step.
       var webhookUrlErrKey = fieldHasError(state, 'operations', 'webhookUrl');
       var urlInput = el('input', {
+        id: controlId('webhookUrl'),
         type: 'text',
         class: 'wizard-input' + (webhookUrlErrKey ? ' is-invalid' : ''),
         placeholder: tr('wizard.webhook.url.placeholder'),
@@ -2661,16 +2804,10 @@
         state.webhookUrl = urlInput.value.trim();
         persist();
         liveYaml();
-        // Drop the error visual once the field becomes non-empty.
-        var stillErr = validateStep(state, 'operations').some(function (e) { return e.field === 'webhookUrl'; });
-        if (!stillErr) {
-          urlInput.classList.remove('is-invalid');
-          var errEl = urlRow.querySelector('.wizard-error');
-          if (errEl) errEl.remove();
-        }
+        syncFieldError(state, 'operations', 'webhookUrl', urlInput, urlRow);
       });
       var urlRowChildren = [
-        el('label', { class: 'wizard-row-label', text: tr('wizard.webhook.url.label') }),
+        el('label', { for: controlId('webhookUrl'), class: 'wizard-row-label', text: tr('wizard.webhook.url.label') }),
         urlInput,
         el('span', { class: 'wizard-row-hint', text: tr('wizard.webhook.url.hint') })
       ];
@@ -2678,11 +2815,11 @@
         urlRowChildren.push(el('div', { class: 'wizard-error', role: 'alert', text: tr(webhookUrlErrKey) }));
       }
       var urlRow = el('div', { class: 'wizard-row' }, urlRowChildren);
-      appendDetail(urlRow, 'wizard.webhook.url.detail');
+      appendDetail(state, urlRow, 'wizard.webhook.url.detail');
       body.appendChild(urlRow);
 
       function makeWebhookToggle(field, labelKey) {
-        var cb = el('input', { type: 'checkbox' });
+        var cb = el('input', { id: controlId(field), type: 'checkbox' });
         cb.checked = !!state[field];
         cb.addEventListener('change', function () {
           state[field] = cb.checked;
@@ -2701,68 +2838,69 @@
       body.appendChild(makeWebhookToggle('webhookNotifyFailure', 'wizard.webhook.notify_failure.label'));
     }));
 
-    // Post-market monitoring (Article 12+17) accordion.
+    // Declarative external monitoring plan (Article 72 / 17(1)(h)).
     pane.appendChild(makeAccordion(state, persist, 'monitoring',
       'wizard.monitoring.title', 'wizard.monitoring.hint', function (body) {
-      var monLocked = isStrictRisk(state);
-      var monInput = el('input', { type: 'checkbox' });
-      monInput.checked = !!state.monitoringEnabled || monLocked;
-      if (monLocked) monInput.disabled = true;
+      var monInput = el('input', { id: controlId('monitoringEnabled'), type: 'checkbox' });
+      monInput.checked = !!state.monitoringEnabled;
       monInput.addEventListener('change', function () {
         state.monitoringEnabled = monInput.checked;
         persist();
         rerender();
       });
       var monLabelEl = el('span', { class: 'wizard-toggle-label', text: tr('wizard.monitoring.enabled.label') });
-      if (monLocked) {
-        monLabelEl.appendChild(el('span', {
-          class: 'badge',
-          text: tr('wizard.locked.badge'),
-          style: 'margin-left: 0.4rem;'
-        }));
-      }
       var monRow = el('div', { class: 'wizard-row' }, [
         el('label', { class: 'wizard-toggle' }, [monInput, monLabelEl]),
         el('span', { class: 'wizard-row-hint', text: tr('wizard.monitoring.enabled.hint') })
       ]);
-      appendDetail(monRow, 'wizard.monitoring.enabled.detail');
+      appendDetail(state, monRow, 'wizard.monitoring.enabled.detail');
       body.appendChild(monRow);
 
-      var endpointShown = !!state.monitoringEnabled || monLocked;
+      var endpointShown = !!state.monitoringEnabled;
       if (endpointShown) {
-        // Endpoint is required when monitoring is enabled — same
-        // pattern as webhook.url. fieldHasError gates the visual so
-        // the error appears only after a failed Next attempt.
-        var monEndpointErrKey = fieldHasError(state, 'operations', 'monitoringEndpoint');
+        var monEndpointErr = fieldHasError(state, 'operations', 'monitoringEndpoint');
         var epInput = el('input', {
+          id: controlId('monitoringEndpoint'),
           type: 'text',
-          class: 'wizard-input' + (monEndpointErrKey ? ' is-invalid' : ''),
+          class: 'wizard-input' + (monEndpointErr ? ' is-invalid' : ''),
           placeholder: tr('wizard.monitoring.endpoint.placeholder'),
           value: state.monitoringEndpoint || ''
         });
         var epRowChildren = [
-          el('label', { class: 'wizard-row-label', text: tr('wizard.monitoring.endpoint.label') }),
+          el('label', { for: controlId('monitoringEndpoint'), class: 'wizard-row-label', text: tr('wizard.monitoring.endpoint.label') }),
           epInput,
           el('span', { class: 'wizard-row-hint', text: tr('wizard.monitoring.endpoint.hint') })
         ];
-        if (monEndpointErrKey) {
-          epRowChildren.push(el('div', { class: 'wizard-error', role: 'alert', text: tr(monEndpointErrKey) }));
-        }
         var epRow = el('div', { class: 'wizard-row' }, epRowChildren);
+        if (monEndpointErr) epRow.appendChild(el('div', { class: 'wizard-error', role: 'alert', text: tr(monEndpointErr) }));
         epInput.addEventListener('input', function () {
           state.monitoringEndpoint = epInput.value.trim();
           persist();
           liveYaml();
-          var stillErr = validateStep(state, 'operations').some(function (e) { return e.field === 'monitoringEndpoint'; });
-          if (!stillErr) {
-            epInput.classList.remove('is-invalid');
-            var errEl = epRow.querySelector('.wizard-error');
-            if (errEl) errEl.remove();
-          }
+          syncFieldError(state, 'operations', 'monitoringEndpoint', epInput, epRow);
         });
         body.appendChild(epRow);
 
-        var meSelect = el('select', { class: 'wizard-select' });
+        var intervalError = fieldHasError(state, 'operations', 'monitoringCheckIntervalHours');
+        var intervalInput = el('input', {
+          id: controlId('monitoringCheckIntervalHours'), type: 'number', min: '1', max: '720', step: '1',
+          class: 'wizard-input' + (intervalError ? ' is-invalid' : ''),
+          value: String(state.monitoringCheckIntervalHours)
+        });
+        intervalInput.addEventListener('input', function () {
+          state.monitoringCheckIntervalHours = Number(intervalInput.value);
+          persist();
+          liveYaml();
+          syncFieldError(state, 'operations', 'monitoringCheckIntervalHours', intervalInput, intervalRow);
+        });
+        var intervalRow = el('div', { class: 'wizard-row' }, [
+          el('label', { for: controlId('monitoringCheckIntervalHours'), class: 'wizard-row-label', text: tr('wizard.monitoring.interval.label') }),
+          intervalInput
+        ]);
+        if (intervalError) intervalRow.appendChild(el('div', { class: 'wizard-error', role: 'alert', text: tr(intervalError) }));
+        body.appendChild(intervalRow);
+
+        var meSelect = el('select', { id: controlId('metricsExport'), class: 'wizard-select' });
         [
           { id: 'none',           labelKey: 'wizard.monitoring.metrics_export.none' },
           { id: 'prometheus',     labelKey: 'wizard.monitoring.metrics_export.prometheus' },
@@ -2779,11 +2917,11 @@
           liveYaml();
         });
         body.appendChild(el('div', { class: 'wizard-row' }, [
-          el('label', { class: 'wizard-row-label', text: tr('wizard.monitoring.metrics_export.label') }),
+          el('label', { for: controlId('metricsExport'), class: 'wizard-row-label', text: tr('wizard.monitoring.metrics_export.label') }),
           meSelect
         ]));
 
-        var driftCb = el('input', { type: 'checkbox' });
+        var driftCb = el('input', { id: controlId('alertOnDrift'), type: 'checkbox' });
         driftCb.checked = !!state.alertOnDrift;
         driftCb.addEventListener('change', function () {
           state.alertOnDrift = driftCb.checked;
@@ -2803,7 +2941,7 @@
     // Synthetic data generation accordion.
     pane.appendChild(makeAccordion(state, persist, 'synthetic',
       'wizard.synthetic.title', 'wizard.synthetic.hint', function (body) {
-      var synInput = el('input', { type: 'checkbox' });
+      var synInput = el('input', { id: controlId('syntheticEnabled'), type: 'checkbox' });
       synInput.checked = !!state.syntheticEnabled;
       synInput.addEventListener('change', function () {
         state.syntheticEnabled = synInput.checked;
@@ -2817,7 +2955,7 @@
         ]),
         el('span', { class: 'wizard-row-hint', text: tr('wizard.synthetic.enabled.hint') })
       ]);
-      appendDetail(synRow, 'wizard.synthetic.enabled.detail');
+      appendDetail(state, synRow, 'wizard.synthetic.enabled.detail');
       body.appendChild(synRow);
 
       if (state.syntheticEnabled) {
@@ -2826,17 +2964,19 @@
         // and the API key env var. None have a sensible default that
         // ForgeLM can guess, so all three are validated here. The
         // factory below mirrors the validateStep ↔ inline-error
-        // wiring used by webhook.url and monitoring.endpoint.
-        function makeRequiredText(field, labelKey, hintKey, placeholderKey, errorKey) {
+        // wiring used by webhook.url and monitoring.endpoint; the
+        // message comes from validateStep.
+        function makeRequiredText(field, labelKey, hintKey, placeholderKey) {
           var errKey = fieldHasError(state, 'operations', field);
           var inp = el('input', {
+            id: controlId(field),
             type: 'text',
             class: 'wizard-input' + (errKey ? ' is-invalid' : ''),
             placeholder: placeholderKey ? tr(placeholderKey) : '',
             value: state[field] || ''
           });
           var rowChildren = [
-            el('label', { class: 'wizard-row-label', text: tr(labelKey) }),
+            el('label', { for: controlId(field), class: 'wizard-row-label', text: tr(labelKey) }),
             inp,
             el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
           ];
@@ -2848,30 +2988,22 @@
             state[field] = inp.value.trim();
             persist();
             liveYaml();
-            var stillErr = validateStep(state, 'operations').some(function (e) { return e.field === field; });
-            if (!stillErr) {
-              inp.classList.remove('is-invalid');
-              var errEl = row.querySelector('.wizard-error');
-              if (errEl) errEl.remove();
-            }
+            syncFieldError(state, 'operations', field, inp, row);
           });
           return row;
         }
         body.appendChild(makeRequiredText('syntheticTeacherModel',
           'wizard.synthetic.teacher_model.label',
           'wizard.synthetic.teacher_model.hint',
-          null,
-          'wizard.error.synthetic.teacher_model.required'));
+          null));
         body.appendChild(makeRequiredText('syntheticSeedFile',
           'wizard.synthetic.seed_file.label',
           'wizard.synthetic.seed_file.hint',
-          'wizard.synthetic.seed_file.placeholder',
-          'wizard.error.synthetic.seed_file.required'));
+          'wizard.synthetic.seed_file.placeholder'));
         body.appendChild(makeRequiredText('syntheticApiKeyEnv',
           'wizard.synthetic.api_key_env.label',
           'wizard.synthetic.api_key_env.hint',
-          null,
-          'wizard.error.synthetic.api_key_env.required'));
+          null));
       }
     }));
 
@@ -2880,6 +3012,7 @@
       'wizard.retention.title', 'wizard.retention.hint', function (body) {
       function makeNumberRow(field, labelKey, hintKey) {
         var inp = el('input', {
+          id: controlId(field),
           type: 'number',
           class: 'wizard-input',
           min: '0',
@@ -2895,7 +3028,7 @@
           }
         });
         return el('div', { class: 'wizard-row' }, [
-          el('label', { class: 'wizard-row-label', text: tr(labelKey) }),
+          el('label', { for: controlId(field), class: 'wizard-row-label', text: tr(labelKey) }),
           inp,
           el('span', { class: 'wizard-row-hint', text: tr(hintKey) })
         ]);
@@ -2914,7 +3047,7 @@
       // is the safe choice; ``block_on_excess`` is for regulated CI
       // gates where silent extension of retention horizons is the
       // bug we're trying to prevent.
-      var enforceSelect = el('select', { class: 'wizard-select' });
+      var enforceSelect = el('select', { id: controlId('retentionEnforce'), class: 'wizard-select' });
       [
         { id: 'log_only',        labelKey: 'wizard.retention.enforce.log_only' },
         { id: 'warn_on_excess',  labelKey: 'wizard.retention.enforce.warn' },
@@ -2930,7 +3063,7 @@
         liveYaml();
       });
       body.appendChild(el('div', { class: 'wizard-row' }, [
-        el('label', { class: 'wizard-row-label', text: tr('wizard.retention.enforce.label') }),
+        el('label', { for: controlId('retentionEnforce'), class: 'wizard-row-label', text: tr('wizard.retention.enforce.label') }),
         enforceSelect,
         el('span', { class: 'wizard-row-hint', text: tr('wizard.retention.enforce.hint') })
       ]));
