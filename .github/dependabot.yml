@@ -1,0 +1,44 @@
+# Dependabot configuration for ForgeLM.
+#
+# Dependabot opens a pull request when a pinned dependency has a newer release.
+# It is the upstream half of the supply-chain story: `tools/check_pip_audit.py`
+# and the nightly CVE job catch known advisories, and these pull requests make
+# the fix reachable. Minor and patch bumps for Python are grouped to keep the
+# noise low; major bumps stay individual so they get a deliberate review.
+#
+# The `dependencies` label is already part of the backlog vocabulary
+# (see CONTRIBUTING.md); `area: packaging-ci` routes the pull request to the
+# right area.
+
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "area: packaging-ci"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      python-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "area: packaging-ci"
+    commit-message:
+      prefix: "chore(ci)"

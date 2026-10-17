@@ -1,0 +1,12 @@
+# Code owners for ForgeLM.
+#
+# CODEOWNERS asks the owner of a changed path for a review when a pull request
+# is opened. It does not block a merge on its own: branch protection for
+# `development` does not require code-owner reviews, so an unresponsive owner
+# cannot stall a contribution. See docs/standards/code-review.md for the review
+# standard and GOVERNANCE.md for how ownership is granted.
+#
+# The project currently has one maintainer; each area gets its own owner once a
+# co-maintainer takes responsibility for it (see MAINTAINERS.md).
+
+*       @cemililik

@@ -1,0 +1,47 @@
+name: Documentation
+description: Report a documentation error, or propose an improvement to a guide or its Turkish mirror
+labels: ["documentation", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for improving the docs! One correction per issue is easiest to review.
+        If a command or example is wrong, telling us the page you were reading makes
+        it much faster to find. Documentation pull requests are welcome directly
+        (see [CONTRIBUTING.md](https://github.com/HodeTech/ForgeLM/blob/development/CONTRIBUTING.md)).
+
+  - type: input
+    id: page
+    attributes:
+      label: Page or file
+      description: The docs-site URL or the repository path you were reading.
+      placeholder: docs/guides/quickstart.md — or https://hodetech.github.io/ForgeLM/
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or missing?
+      description: What does the page say, and what does the reader need instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested wording (optional)
+      description: If you already know the fix, propose the text. We will tidy the language if needed.
+
+  - type: dropdown
+    id: language
+    attributes:
+      label: Which copy is affected?
+      description: User-facing docs are maintained as an English page and a Turkish mirror.
+      options:
+        - English
+        - Turkish (or another mirror)
+        - Both
+        - Not sure
+    validations:
+      required: true
