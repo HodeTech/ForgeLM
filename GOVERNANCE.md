@@ -55,8 +55,9 @@ Everyone contributing is bound by the
   change is larger than one issue, it becomes a roadmap phase under
   [docs/roadmap/](docs/roadmap/).
 - **Breaking changes** to the YAML schema or the CLI contract require a
-  deprecation period. Removing a YAML field is a MAJOR change; the target
-  release is single-sourced in `forgelm/config.py` and the
+  deprecation period. Removing a YAML field is a MAJOR change; the release a
+  removal lands in is named by a single constant,
+  `DEPRECATION_REMOVAL_VERSION` in `forgelm/config.py`, and the
   [release standard](docs/standards/release.md) governs the sequence.
 - **Disagreement** is resolved by discussion on the issue. If a consensus does
   not form, the maintainer decides and records the reasoning in the issue and,
