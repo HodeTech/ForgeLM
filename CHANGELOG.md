@@ -59,6 +59,12 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Make the site's code comments readable: `--code-comment` was `#6a6f80`, 3.8:1 on the dark code
+  surface, below the 4.5:1 AA floor, and it colours code comments, terminal and code-block title bars,
+  language tags, copy buttons and the wizard's YAML pane header and comment lines. It is now `#8f96a8`,
+  6.43:1 on the code surface and at least 5.56:1 on the title-bar gradient, in both themes (the light
+  theme keeps a dark code surface). Measured on the rendered pages, every text colour on the code
+  surface reaches 4.5:1 (F-W1-SITE-06, #887).
 - Use the Regulation's own Article 72 terms for post-market monitoring in the German and Spanish
   wizard copy ("Beobachtung nach dem Inverkehrbringen", "vigilancia poscomercialización"), and restore
   the "metadata" the French and Spanish hints had dropped, so every locale again separates ForgeLM's
@@ -66,6 +72,10 @@ All notable changes to ForgeLM are documented here.
   article and gender slips in the touched German, French and Spanish strings, and use one German term
   for the external stack. The new validation and interval keys keep their English fallback; native
   review of the deferred locales remains open (refs #948).
+- Name the right columns for KTO in the EN/TR "Choosing a Trainer" user manual: its data-shape table
+  said `{prompt, response, label: bool}`, but the loader requires `{prompt, completion, label}` and
+  rejects the old shape with a `KeyError` (F-W1-DOCS-TRAIN-02, #885). The table's SFT row is a separate
+  defect, tracked in #403, and is unchanged here.
 - Say what Annex IV §9 asks for: a detailed description of the post-market monitoring system, its
   plan included. The wizard hint in every locale and the EN/TR configuration and compliance pages said
   it "includes the detailed plan"; German, French and Spanish now follow the Regulation's wording, and

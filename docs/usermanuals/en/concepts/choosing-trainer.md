@@ -48,7 +48,7 @@ flowchart TD
 |---|---|
 | `{prompt, completion}` rows only | [SFT](#/training/sft) |
 | `{prompt, chosen, rejected}` rows | [DPO](#/training/dpo) (or [SimPO](#/training/simpo) if VRAM-tight) |
-| `{prompt, response, label: bool}` rows | [KTO](#/training/kto) |
+| `{prompt, completion, label: bool}` rows | [KTO](#/training/kto) |
 | Mix of SFT and preference rows | [SFT](#/training/sft) → [DPO](#/training/dpo) sequence, or [ORPO](#/training/orpo) for one-stage |
 | Programmatic reward (math grader, code tests) | [GRPO](#/training/grpo) |
 
