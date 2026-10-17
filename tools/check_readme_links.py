@@ -92,7 +92,14 @@ _SURFACES: Tuple[Tuple[str, bool], ...] = (
     ("SECURITY.md", False),
 )
 
-_REPO_BLOB_PREFIX_RE = re.compile(r"^https://github\.com/HodeTech/ForgeLM/(?:blob|tree)/main/(?P<path>[^#?]+)")
+# README points at in-repo targets with an absolute `blob/main/…` or
+# `blob/development/…` URL. Both are stripped back to a repo-relative path and
+# resolved on disk: a file added by an unreleased pull request is linked on
+# `development` until the release that puts it on `main`, and a typo in either
+# form should still fail.
+_REPO_BLOB_PREFIX_RE = re.compile(
+    r"^https://github\.com/HodeTech/ForgeLM/(?:blob|tree)/(?:main|development)/(?P<path>[^#?]+)"
+)
 
 # Markdown inline links and images: ``[text](href)`` / ``![alt](href)``.
 # The href stops at whitespace or the closing paren so that titles

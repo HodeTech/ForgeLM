@@ -192,10 +192,10 @@ feature. Start small; you do not need a GPU to run the unit tests or documentati
 [Engineering standards](https://github.com/HodeTech/ForgeLM/tree/development/docs/standards).
 Report vulnerabilities privately using [SECURITY.md](https://github.com/HodeTech/ForgeLM/blob/main/SECURITY.md).
 
-Who decides what, and who owns which area: [GOVERNANCE.md](https://github.com/HodeTech/ForgeLM/blob/main/GOVERNANCE.md) ·
-[MAINTAINERS.md](https://github.com/HodeTech/ForgeLM/blob/main/MAINTAINERS.md).
+Who decides what, and who owns which area: [GOVERNANCE.md](https://github.com/HodeTech/ForgeLM/blob/development/GOVERNANCE.md) ·
+[MAINTAINERS.md](https://github.com/HodeTech/ForgeLM/blob/development/MAINTAINERS.md).
 To cite ForgeLM, use GitHub's **Cite this repository** button or
-[`CITATION.cff`](https://github.com/HodeTech/ForgeLM/blob/main/CITATION.cff).
+[`CITATION.cff`](https://github.com/HodeTech/ForgeLM/blob/development/CITATION.cff).
 
 ## License
 
