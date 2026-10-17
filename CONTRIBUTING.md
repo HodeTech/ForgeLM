@@ -68,11 +68,11 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
 Work is tracked in two places that play different roles:
 
 - **Issues are where the work happens.** Each issue is one unit of work: it describes the problem, links the code, and lists acceptance criteria. Discussion, claiming and pull-request links all happen on the issue.
-- **The [ForgeLM Project Plan](https://github.com/orgs/HodeTech/projects/5) is where the work is planned.** It shows every issue with its priority, release target and iteration, in several views: *Backlog* (table), *Board* (by status), *Current iteration* and *Roadmap* (timeline), plus filtered views such as *Small tasks*, *Epics*, *Docs & TR mirror* and *Roadmap — Phase 16 & deferred*. Use it to choose what to work on; you never need to edit it — maintainers keep it current, and a card moves automatically when its issue is closed.
+- **The [ForgeLM Project Plan](https://github.com/orgs/HodeTech/projects/5) is where the work is planned.** It shows every issue with its priority, release target and iteration, in several views: *Backlog* (table), *Board* (by status), *Current iteration* and *Roadmap* (timeline), plus filtered views such as *Front door*, *Small tasks*, *Epics*, *Docs & TR mirror* and *Roadmap — Phase 16 & deferred*. Use it to choose what to work on; you never need to edit it — maintainers keep it current, and a card moves automatically when its issue is closed.
 
 ### Planned work lives here too
 
-Every piece of planned or deferred work has an issue and a project card, not only the defects: the remaining steps of [Phase 16](docs/roadmap/phase-16-trust-surface-hardening.md) are sub-issues of [#903](https://github.com/HodeTech/ForgeLM/issues/903), and the deferred items recorded in [risks-and-decisions.md](docs/roadmap/risks-and-decisions.md) are sub-issues of [#929](https://github.com/HodeTech/ForgeLM/issues/929). Each Phase 16 step, and each deferred row that has an issue, links that issue directly from the roadmap entry. New issues land in the project's *Intake — unplanned* view until a maintainer plans them. If you notice work that your pull request is not going to do, open an issue for it instead of leaving a `TODO` or a roadmap line.
+Every piece of planned or deferred work has an issue and a project card, not only the defects: the remaining steps of [Phase 16](docs/roadmap/phase-16-trust-surface-hardening.md) are sub-issues of [#903](https://github.com/HodeTech/ForgeLM/issues/903), and the deferred items recorded in [risks-and-decisions.md](docs/roadmap/risks-and-decisions.md) are sub-issues of [#929](https://github.com/HodeTech/ForgeLM/issues/929). Each Phase 16 step, and each deferred row that has an issue, links that issue directly from the roadmap entry. New issues land in the project's *Intake — unplanned* view until a maintainer plans them. If you notice work that your pull request is not going to do, open an issue for it instead of leaving a `TODO` or a roadmap line. Every item is an issue; which issues appear on the front door is decided by labels and views, never by closing them.
 
 ### How the backlog is organised
 
@@ -99,6 +99,7 @@ In the project, the **Wave**, **Severity**, **Theme**, **Kind**, **Area**, **Siz
 
 Useful starting points:
 
+- The project's [*Front door* view](https://github.com/orgs/HodeTech/projects/5/views/16) — open, unassigned `good first issue`s with their size and area, the place to start on a first contribution
 - [Open, unassigned wave 0–1 issues](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+no%3Aassignee+label%3A%22wave%3A+0%22%2C%22wave%3A+1%22) — the highest-priority work
 - [Documentation issues](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+label%3Adocumentation+no%3Aassignee) — often a good first contribution
 - The project's *Backlog* view, filtered by an **Area** you know or by **Size** `XS`/`S`

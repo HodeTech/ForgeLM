@@ -386,6 +386,7 @@ Work on ForgeLM is planned and tracked on GitHub, not in local notes:
   acceptance criteria) or tell the user so it can be filed. The exception is a
   security vulnerability — never a public issue; it goes to a private advisory
   as [SECURITY.md](SECURITY.md) describes.
+- **Closing is not triage.** Every item is an issue; which issues appear on the front door is decided by labels and views, never by closing them.
 - **Name what you resolved.** For a grouped issue, list in the pull request the
   finding IDs your change resolves, so each can be ticked.
 

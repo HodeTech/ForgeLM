@@ -180,8 +180,9 @@ Help make fine-tuning easier to reproduce and review. You can improve a guide,
 translate an example, reproduce a bug, add a regression test, or work on a planned
 feature. Start small; you do not need a GPU to run the unit tests or documentation checks.
 
-1. Find an [unassigned good first issue](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee)
-   or browse the [project plan](https://github.com/orgs/HodeTech/projects/5).
+1. Start at the [Front door](https://github.com/orgs/HodeTech/projects/5/views/16): the open, unassigned `good first issue`s
+   with their size and area. You can also [search by label](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee).
+   The rest of the planned work is in the [project plan](https://github.com/orgs/HodeTech/projects/5).
 2. Follow [your first pull request](https://github.com/HodeTech/ForgeLM/blob/development/CONTRIBUTING.md#your-first-pull-request)
    to set up the environment and run the relevant checks.
 3. Open a PR against **`development`** and link its issue. Keep English/Turkish
