@@ -59,6 +59,9 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
+  fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
+  `label` (#965).
 - Make the site's code comments readable: `--code-comment` was `#6a6f80`, 3.8:1 on the dark code
   surface, below the 4.5:1 AA floor, and it colours code comments, terminal and code-block title bars,
   language tags, copy buttons and the wizard's YAML pane header and comment lines. It is now `#8f96a8`,
