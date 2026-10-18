@@ -3,7 +3,7 @@
 > **Hedef kitle:** ForgeLM'in eğitim-hattı audit log'unu inceleyen ForgeLM operatörleri, denetçiler ve aşağı akış doğrulayıcıları.
 > **Ayna:** [audit_event_catalog.md](audit_event_catalog.md)
 
-Bu katalog, ForgeLM'in append-only ve hash-zincirli eğitim-hattı audit log'u olan `audit_log.jsonl`'a yazabileceği tüm event'leri sıralar. Bu log, teknik dokümantasyonu (Ek IV) ve kalite-yönetimi kayıt tutmayı destekleyebilecek geliştirme-zamanı kanıtıdır; tek başına EU AI Act Madde 12'yi karşılamaz, çünkü Madde 12 dağıtılmış yüksek-riskli sistemin ömrü boyunca olayları otomatik kaydetmesini ister. Her satır ortak bir zarf paylaşır; aşağıdaki satırlardan birini `event` alanı seçer.
+Bu katalog, ForgeLM'in append-only ve hash-zincirli eğitim-hattı audit log'u olan `audit_log.jsonl`'a yazabileceği tüm event'leri sıralar. Bu log, teknik dokümantasyonu (Annex IV) ve kalite-yönetimi kayıt tutmayı destekleyebilecek geliştirme-zamanı kanıtıdır; tek başına EU AI Act Madde 12'yi karşılamaz, çünkü Madde 12 dağıtılmış yüksek-riskli sistemin ömrü boyunca olayları otomatik kaydetmesini ister. Her satır ortak bir zarf paylaşır; aşağıdaki satırlardan birini `event` alanı seçer.
 
 ## Ortak zarf
 
