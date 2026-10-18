@@ -270,10 +270,10 @@ training:
 
 Uyumluluk, eğitim ve değerlendirme artefaktları için saklama ufuklarını
 belirler. Ufuklar GDPR Madde 5(1)(e) "saklama sınırlaması" ve Madde 17
-"silme hakkı" tarihlerini onurlandırır. `enforce` anahtarı yalnız-loglama,
-uyarı ve sert-engelleme modları arasında geçiş yaparak regüle edilen bir CI
-kapısının saklama ufkunu eski bir çalışma alanını yeniden kullanarak sessizce
-uzatmasını engeller.
+"silme hakkı" tarihlerini onurlandırır. Ufuklar **raporlanır**, zorlanmaz:
+`forgelm purge --check-policy` ufku aşanları listeler ve her zaman 0 ile çıkar;
+hiçbir şey otomatik silinmez, engellenmez ya da zamanlanmaz. `enforce` anahtarı
+ayrılmıştır: henüz hiçbir komut onu okumaz.
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
@@ -281,7 +281,7 @@ uzatmasını engeller.
 | `staging_ttl_days` | int | `7` | `forgelm reject` kararından sonra `final_model.staging.<run_id>/` dizininin planlı temizlenmeden önce saklanacağı gün sayısı. `0` süresiz saklama anlamına gelir. v0.8.0'da kaldırılan `evaluation.staging_ttl_days` yerine geçer. |
 | `ephemeral_artefact_retention_days` | int | `90` | Uyumluluk paketleri, veri denetim raporları ve diğer çalışma kapsamlı türetilmiş artefaktların saklanma süresi (gün). `0` süresiz saklama. |
 | `raw_documents_retention_days` | int | `90` | İngest edilmiş ham belgelerin (PDF / DOCX / EPUB / TXT / Markdown) operatörün ingestion-output dizininde saklanma süresi (gün). `0` süresiz saklama. |
-| `enforce` | string | `"log_only"` | Politika uygulama modu: `"log_only"` (yalnızca audit log), `"warn_on_excess"` (stderr'e yapılandırılmış uyarı), `"block_on_excess"` (`EXIT_EVAL_FAILURE` = 3 ile trainer ön-kontrolünü iptal eder). |
+| `enforce` | string | `"log_only"` | Ayrılmış politika modu. Henüz hiçbir komut onu okumaz: `"log_only"`, `"warn_on_excess"` ve `"block_on_excess"` kabul edilir ve aynı davranır; son ikisini ayarlayan bir config yüklenirken uyarı loglanır. |
 
 > **Kaldırıldı:** `evaluation.staging_ttl_days` (v0.5.5 itibarıyla kullanımdan
 > kaldırılmıştı) v0.8.0'da kaldırılmıştır. Artık geçerli tek form

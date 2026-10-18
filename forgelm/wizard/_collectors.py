@@ -855,11 +855,11 @@ def _collect_retention() -> Optional[Dict[str, Any]]:
     )
     raw_docs = _prompt_int("raw_documents_retention_days (0 = retain indefinitely)", 90, min_val=0, max_val=3650)
     enforce = _prompt_choice(
-        "enforcement mode:",
+        "enforcement mode (reserved: no command acts on it yet; `forgelm purge --check-policy` only reports):",
         [
-            "log_only (record violations only)",
-            "warn_on_excess (stderr warning, run continues)",
-            "block_on_excess (abort trainer with EXIT_EVAL_FAILURE)",
+            "log_only (default; the only mode with an effect to promise)",
+            "warn_on_excess (accepted, behaves like log_only)",
+            "block_on_excess (accepted, behaves like log_only)",
         ],
         default=1,
     )

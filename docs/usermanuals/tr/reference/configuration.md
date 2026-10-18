@@ -371,7 +371,7 @@ retention:
   staging_ttl_days: 7                        # forgelm reject sonrası staging modelini saklama süresi
   ephemeral_artefact_retention_days: 90      # uyumluluk paketleri, denetim raporları
   raw_documents_retention_days: 90           # ingest edilen PDF/DOCX/EPUB/TXT/Markdown
-  enforce: "log_only"                        # log_only | warn_on_excess | block_on_excess
+  enforce: "log_only"                        # ayrılmış: henüz hiçbir komut onu kullanmaz (log_only | warn_on_excess | block_on_excess)
 ```
 
 ## `pipeline:`

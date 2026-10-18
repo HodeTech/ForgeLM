@@ -363,7 +363,7 @@ retention:
   staging_ttl_days: 7                        # days to retain staging model after forgelm reject
   ephemeral_artefact_retention_days: 90      # compliance bundles, audit reports
   raw_documents_retention_days: 90           # ingested PDF/DOCX/EPUB/TXT/Markdown
-  enforce: "log_only"                        # log_only | warn_on_excess | block_on_excess
+  enforce: "log_only"                        # reserved: no command acts on it yet (log_only | warn_on_excess | block_on_excess)
 ```
 
 ## `pipeline:`

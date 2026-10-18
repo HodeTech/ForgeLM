@@ -68,6 +68,11 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- `retention.enforce` is documented for what it is: reserved. No command reads it, so `warn_on_excess` and
+  `block_on_excess` never warned or blocked anything and nothing was deleted automatically; retention is only reported,
+  read-only, by `forgelm purge --check-policy` (always exit 0). The config description, the wizard prompt, the
+  configuration reference, the GDPR erasure guide and `config_template.yaml` now say so (English and Turkish), and
+  loading a config that sets a non-default `enforce` logs a warning instead of staying silent (#92, #98).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).
