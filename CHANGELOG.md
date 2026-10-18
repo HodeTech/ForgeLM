@@ -66,8 +66,20 @@ All notable changes to ForgeLM are documented here.
   `CONTRIBUTING.md`, `CLAUDE.md` and `AGENTS.md` that the front door is chosen with labels and
   views, never by closing issues.
 
+### Removed
+
+- Delete the stale `requirements.txt`, `requirements-eval.txt` and `requirements-linux.txt`. Nothing
+  referenced them, their floors were far below `pyproject.toml`'s, and Dependabot would have opened weekly
+  pull requests against them; installation goes through the `pyproject.toml` extras (#968).
+
 ### Fixed
 
+- Correct claims in the roadmap and strategy documents: `forgelm chat` does not screen for safety and reads no YAML
+  config (#91), the live risk rows no longer name a past "August 2026" deadline (#75), and
+  `docs/product_strategy.md` (English and Turkish) names the real `evaluation.auto_revert` field instead of a
+  non-existent `auto_revert_on_safety_failure`.
+- Correct the `medical-qa-tr` row of the YAML templates reference (English and Turkish): the template enables no safety
+  evaluation and no `risk_assessment`, so it no longer says it ships with both pre-wired (#97).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).

@@ -16,12 +16,6 @@
 # `ci.yml`'s lint job installs. Dependabot edits only `pyproject.toml`, so a bump
 # would fail that test the moment it arrived. Those three are raised deliberately,
 # in one commit, with the CI pin moved in step.
-#
-# Note: `requirements.txt`, `requirements-eval.txt` and `requirements-linux.txt`
-# are stale and referenced by nothing — the Dockerfile, CI and the tests all use
-# `pyproject.toml` extras. Dependabot will still raise their floors; those pull
-# requests should be closed, and the files removed, when the tracked cleanup
-# lands.
 
 version: 2
 updates:
