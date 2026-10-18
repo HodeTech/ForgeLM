@@ -23,7 +23,7 @@ The five templates and the user journey each one optimises for:
 | `customer-support` | SFT | Multi-turn helpful + safe assistant — the most common production pattern. |
 | `code-assistant` | SFT | Code-completion / pair-programming model. |
 | `domain-expert` | SFT | BYOD (Bring Your Own Dataset) on a domain-specific corpus. |
-| `medical-qa-tr` | SFT | Turkish-language medical QA (regulated domain — ships with `risk_assessment` + safety eval pre-wired). |
+| `medical-qa-tr` | SFT | Turkish-language medical QA (regulated domain — the sample answers carry a safety disclaimer, but the template enables no safety evaluation and no `risk_assessment`; add an `evaluation.safety` block and a `risk_assessment:` block before any use beyond a demo). |
 | `grpo-math` | GRPO | Reward-model fine-tuning on math benchmarks (built-in format/length reward shaping). |
 
 The canonical template content is **the source of truth** — it is what
