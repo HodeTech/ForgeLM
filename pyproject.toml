@@ -187,7 +187,7 @@ dev = [
   # surface in CI instead of waiting for a Python micro-bump or runner
   # change to flip collection order.  Run locally via
   # ``pytest --randomly-seed=<n>`` to reproduce a failure.
-  "pytest-randomly>=3.15.0,<4.0.0",
+  "pytest-randomly>=3.15.0,<6.0.0",
   # Bounded on purpose.  ruff 0.16.0 began formatting Python blocks *inside
   # Markdown*, taking the format check from 277 files to 562 — on an unchanged
   # tree that is 32 newly "unformatted" documents and a red lint job nobody
