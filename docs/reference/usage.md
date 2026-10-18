@@ -145,7 +145,8 @@ forgelm chat ./checkpoints/final_model --adapter ./adapter
 forgelm chat ./checkpoints/final_model --system "You are a helpful assistant." --temperature 0.8
 
 # Export to GGUF (for Ollama, LM Studio, llama.cpp)
-# Requires: pip install forgelm[export]
+# Requires: pip install forgelm[export] AND FORGELM_GGUF_CONVERTER pointing at convert_hf_to_gguf.py
+# from a llama.cpp checkout (no llama-cpp-python wheel installs it where ForgeLM looks)
 forgelm export ./checkpoints/final_model --output model.gguf --quant q4_k_m
 forgelm export ./checkpoints/final_model --output model.gguf --quant q8_0 --adapter ./adapter
 

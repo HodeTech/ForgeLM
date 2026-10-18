@@ -167,7 +167,7 @@ data:
 #   strategy: "deepspeed"           # "deepspeed" or "fsdp"
 #   deepspeed_config: "zero2"       # preset: "zero2", "zero3", "zero3_offload" or path to JSON
 #   # --- FSDP options (when strategy: "fsdp") ---
-#   # fsdp_strategy: "full_shard"   # "full_shard", "shard_grad_op", "no_shard", "hybrid_shard"
+#   # fsdp_strategy: "full_shard"   # "full_shard" or "shard_grad_op" (FSDP2 supports no other)
 #   # fsdp_auto_wrap: true
 #   # fsdp_offload: false
 
@@ -276,7 +276,7 @@ data:
 #   staging_ttl_days: 7               # final_model.staging.<run_id>/ TTL after `forgelm reject`
 #   ephemeral_artefact_retention_days: 90   # compliance bundles + audit reports
 #   raw_documents_retention_days: 90        # ingested raw docs (PDF/DOCX/EPUB/TXT/MD)
-#   enforce: "log_only"               # "log_only" | "warn_on_excess" | "block_on_excess"
+#   enforce: "log_only"               # reserved: no command acts on it yet ("log_only" | "warn_on_excess" | "block_on_excess")
 
 # Phase 14 — Multi-stage training pipeline chains (SFT → DPO → GRPO).
 # Uncomment the ``pipeline:`` block below to run multiple training stages

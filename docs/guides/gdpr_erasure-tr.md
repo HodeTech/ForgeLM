@@ -19,7 +19,7 @@
 
 **Yapmaz:**
 
-- Modelleri yeniden eğitmez. Bir satırı corpus'tan kaldırmak onu zaten eğitilmiş ağırlıklardan unutturmaz — silinmiş satır olmadan tam yeniden eğitim tek doğru çözüm. Tool, corpus'u tüketen herhangi bir koşum için `final_model/` mevcut olduğunda `data.erasure_warning_memorisation` yayar; böylece operatör boşluğu görür.
+- Modelleri yeniden eğitmez. Bir satırı corpus'tan kaldırmak onu zaten eğitilmiş ağırlıklardan unutturmaz — silinmiş satır olmadan tam yeniden eğitim tek doğru çözüm. Tool, `--output-dir` altında doğrudan bir `final_model/` dizini mevcut olduğunda `data.erasure_warning_memorisation` yayar (`--output-dir` varsayılan olarak corpus'un dizinidir; bu yüzden eğitim çıktı dizininizi verin); böylece operatör boşluğu görür. Corpus'u hangi koşumların tükettiğini ayırt edemez.
 - Audit log'un kendisinden entry silmez. Madde 17(3)(b) audit / muhasebe kayıtlarını bir hukuki yükümlülük savunması olarak korur; tool silmeyi geçmişi yeniden yazmak yerine yeni bir event olarak kaydeder.
 - Downstream tüketicilere silme bildirimi göndermez. Webhook receiver'ları, dataset mirror'ları, deploy edilmiş model endpoint'leri ve yayınlanmış checkpoint'ten türetilmiş üçüncü-taraf fine-tune'lar operatörün runtime-katmanı sorumluluğudur (Madde 17(2)). Tool yüklü config webhook block'u içerdiğinde `data.erasure_warning_external_copies` yayar; böylece audit log'u sorgulayan downstream tüketici açık hatırlatmayı görür.
 - Yedekleri silmez. Operatörün `<output_dir>` sınırı dışındaki replikalar, snapshot'lar ve storage backup'lar altyapı tarafı endişelerdir.
@@ -78,10 +78,10 @@ retention:
   staging_ttl_days: 7                     # `forgelm reject` üzerine aksiyon almak için bir iş haftası
   ephemeral_artefact_retention_days: 90   # üç-aylık review cadence'i
   raw_documents_retention_days: 90        # data audit yeniden çalıştırmadan önce ingestion penceresi
-  enforce: log_only                       # log_only / warn_on_excess / block_on_excess
+  enforce: log_only                       # ayrılmış: henüz hiçbir komut onu kullanmaz (log_only / warn_on_excess / block_on_excess)
 ```
 
-Herhangi bir horizon'u `0` olarak ayarlamak o artefact kind'ı için policy'yi devre dışı bırakır (sınırsız tut). `enforce`, trainer pre-flight gate'inin ihlallere nasıl tepki vereceğini kontrol eder.
+Herhangi bir horizon'u `0` olarak ayarlamak o artefact kind'ı için policy'yi devre dışı bırakır (sınırsız tut). Horizon'lar `forgelm purge --check-policy` ile raporlanır (salt-okunur, her zaman 0 ile çıkar); hiçbir şey otomatik silinmez ya da engellenmez. `enforce` ayrılmıştır: henüz hiçbir komut onu kullanmaz, bu yüzden üç değer de `log_only` gibi davranır.
 
 ## Kaldırıldı: `evaluation.staging_ttl_days`
 
@@ -96,7 +96,7 @@ Herhangi bir horizon'u `0` olarak ayarlamak o artefact kind'ı için policy'yi d
 | `data.erasure_requested` | Herhangi bir `forgelm purge --row-id` / `--run-id` çağrısının ilk adımı, herhangi bir silmeden önce (`--check-policy` salt-okunur; audit event yaymaz) | `target_kind` ∈ `{row, staging, artefacts}`, `target_id` (row mode'da hash'lenmiş), `salt_source` (row mode), `corpus_path` (row), `output_dir` (run), `justification`, `dry_run` |
 | `data.erasure_completed` | Başarılı silme bittiğinde | Tüm `requested` field'ları + `bytes_freed`, `files_modified`, `pre_erasure_line_number` (row mode), `match_count` (row mode) |
 | `data.erasure_failed` | Disk operasyonu raise etti VEYA eşleşen satır/koşum bulunamadı VEYA çoklu-satır policy belirsizliği reddetti | Tüm `requested` field'ları + `error_class`, `error_message` |
-| `data.erasure_warning_memorisation` | **Yalnız row modunda.** Row erasure × corpus'u tüketen herhangi bir koşum için `final_model/` mevcut. (Run modu memorisation uyarısı emit etmez — run-scoped `staging` / `artefacts` türleri tanım gereği promote-öncesi.) | Tüm `completed` field'ları + `affected_run_ids` |
+| `data.erasure_warning_memorisation` | **Yalnız row modunda.** Row erasure × `--output-dir` altında doğrudan bir `final_model/` dizini mevcut. (Run modu memorisation uyarısı emit etmez — run-scoped `staging` / `artefacts` türleri tanım gereği promote-öncesi.) | Tüm `completed` field'ları + `affected_run_ids` |
 | `data.erasure_warning_synthetic_data_present` | **Yalnız row modunda.** Row erasure × `output_dir`'de `synthetic_data*.jsonl` mevcut. (Run modu bu uyarıyı yüzeylemez — synthetic veri corpus-scoped'dur, run-scoped değil.) | Tüm `completed` field'ları + `synthetic_files` |
 | `data.erasure_warning_external_copies` | Yüklü config webhook block'u içeriyor | Tüm `completed` field'ları + `webhook_targets` |
 

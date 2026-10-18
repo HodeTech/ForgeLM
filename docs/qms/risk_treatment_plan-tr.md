@@ -90,7 +90,7 @@ ekler.
 |---|---|
 | Açıklama | Operatör `forgelm purge --row-id alice@example.com` corpusa karşı çalıştırır, ama haftalar önce satırı eğiten model öğrenilen ağırlıklardan onu hala üretebilir |
 | L × I (inherent) | High × Med = HIGH |
-| Treatment | ForgeLM, silinen satırı tüketen koşum bir `final_model/` artefaktına sahipse `data.erasure_warning_memorisation` event'ı yayar — bu bir **detection** sinyalidir, mitigation değildir. Operatör residual riski kabul eder ve organizasyonel kontrolleri uygular (özne bildirimi, yüksek-stakes dağıtımlar için sıfırdan yeniden eğit, DPIA güncellemesi). |
+| Treatment | ForgeLM, purge'ün `--output-dir`'i altında doğrudan bir `final_model/` varsa `data.erasure_warning_memorisation` event'ı yayar (satırı hangi koşumun tükettiğini bilmez ve varsayılan dizin eğitim çıktısı değil corpus'unkidir) — bu bir **detection** sinyalidir, mitigation değildir. Operatör residual riski kabul eder ve organizasyonel kontrolleri uygular (özne bildirimi, yüksek-stakes dağıtımlar için sıfırdan yeniden eğit, DPIA güncellemesi). |
 | Residual L × I | High × Med = HIGH (risk **kabul edildi**, bkz. §5) |
 | Sahip | Data Protection Officer (DPO) |
 | Review cadence | Madde 17 talebi başına |

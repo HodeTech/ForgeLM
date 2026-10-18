@@ -714,6 +714,17 @@ def _run_purge_row_id(args, output_format: str) -> None:
     """
     _validate_row_id_args(args, output_format)
     output_dir = args.output_dir or os.path.dirname(os.path.abspath(args.corpus)) or "."
+    if not args.output_dir:
+        # The salt, the audit chain and the memorisation check (`<output_dir>/final_model/`) all live under the
+        # output directory.  Defaulting to the corpus directory is almost never where a training run wrote its model,
+        # so say what was resolved instead of letting the check pass quietly over the wrong directory.
+        logger.warning(
+            "--output-dir not given: using the corpus directory %s for the audit log, the salt and the memorisation "
+            "check (which looks for %s). Pass --output-dir <training output dir> to check your trained model and to "
+            "correlate with `forgelm reverse-pii`.",
+            output_dir,
+            os.path.join(output_dir, "final_model"),
+        )
     os.makedirs(output_dir, exist_ok=True)
 
     try:
