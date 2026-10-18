@@ -118,7 +118,9 @@ def _add_deploy_subcommand(subparsers) -> None:
         choices=["ollama", "vllm", "tgi", "hf-endpoints"],
         help="Target serving runtime.",
     )
-    p.add_argument("--output", type=str, default=None, metavar="FILE", help="Output file path (default: auto).")
+    p.add_argument(
+        "--output", type=str, default=argparse.SUPPRESS, metavar="FILE", help="Output file path (default: auto)."
+    )
     p.add_argument("--system", type=str, default=None, metavar="PROMPT", help="System prompt (Ollama only).")
     p.add_argument("--max-length", type=_positive_int, default=4096, help="Context window length (default: 4096).")
     p.add_argument(
@@ -174,13 +176,14 @@ def _add_quickstart_subcommand(subparsers) -> None:
     p.add_argument(
         "--output",
         type=str,
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="FILE",
         help="Where to write the generated YAML (default: ./configs/<template>-<timestamp>.yaml).",
     )
     p.add_argument(
         "--dry-run",
         action="store_true",
+        default=argparse.SUPPRESS,
         help="Generate the config and print next steps; do not invoke training.",
     )
     p.add_argument(
@@ -484,6 +487,7 @@ def _add_doctor_subcommand(subparsers) -> None:
     p.add_argument(
         "--offline",
         action="store_true",
+        default=argparse.SUPPRESS,
         help=(
             "Skip the HuggingFace Hub network probe.  Inspects the local HF cache "
             "(precedence: HF_HUB_CACHE > HF_HOME/hub > ~/.cache/huggingface/hub) "
@@ -1007,7 +1011,7 @@ def _add_cache_models_subcommand(subparsers) -> None:
     p.add_argument(
         "--output",
         type=str,
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="DIR",
         help="Cache directory override (default: HF_HUB_CACHE > HF_HOME/hub > ~/.cache/huggingface/hub).",
     )
@@ -1048,7 +1052,7 @@ def _add_cache_tasks_subcommand(subparsers) -> None:
     p.add_argument(
         "--output",
         type=str,
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="DIR",
         help=(
             "Cache directory override (default: HF_DATASETS_CACHE > HF_HOME/datasets > "
@@ -1144,7 +1148,7 @@ def _add_purge_subcommand(subparsers) -> None:
     p.add_argument(
         "--config",
         type=str,
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="PATH",
         help="YAML config (optional in row/run mode; required for --check-policy).  Detects the webhook block + retention horizons.",
     )
@@ -1158,6 +1162,7 @@ def _add_purge_subcommand(subparsers) -> None:
     p.add_argument(
         "--dry-run",
         action="store_true",
+        default=argparse.SUPPRESS,
         help="Show what would be deleted; do not modify disk.  Audit events still emit (with dry_run=True) so the chain reflects intent.",
     )
     _add_common_subparser_flags(p, include_output_format=True)
