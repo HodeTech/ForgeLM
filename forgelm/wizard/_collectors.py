@@ -857,7 +857,7 @@ def _collect_retention() -> Optional[Dict[str, Any]]:
     enforce = _prompt_choice(
         "enforcement mode (reserved: no command acts on it yet; `forgelm purge --check-policy` only reports):",
         [
-            "log_only (default; the only mode with an effect to promise)",
+            "log_only (default; behaves the same as the other two for now)",
             "warn_on_excess (accepted, behaves like log_only)",
             "block_on_excess (accepted, behaves like log_only)",
         ],
