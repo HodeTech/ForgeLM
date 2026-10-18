@@ -89,7 +89,7 @@ All notable changes to ForgeLM are documented here.
 
 - Make `.github/dependabot.yml` parse. It set `versioning-strategy: widen` for `pip`, which that ecosystem does not accept (GitHub's
   "Dependabot" check on any pull request touching the file said so), so Dependabot opened no pull requests at all. The setting is removed, the
-  header comment says why, and a test pins the accepted values.
+  header comment explains the restriction.
 - `training.rope_scaling` works on transformers 5 again. The setting was passed to `from_pretrained(rope_scaling=...)`,
   which no longer works: the documented `{type: linear, factor: 4}` raised `KeyError: 'rope_type'` while the model was
   built, and `{rope_type: ..., factor: ...}` replaced the whole parameter dict so `rope_theta` was lost (`TypeError`).
