@@ -37,6 +37,10 @@ All notable changes to ForgeLM are documented here.
 
 ### Changed
 
+- Admit newer majors of four optional or dev dependencies: `pypdf` 6 and `xxhash` 4 (the `ingestion` extra), `datasketch` 2 (the
+  `ingestion-scale` extra) and `pytest-randomly` 4 and 5 (the `dev` extra). The ingestion, data-audit and doctor test modules pass on pypdf
+  6.21.1, xxhash 4.0.1 and datasketch 2.0.0 with the same results as on the previous majors; CI installs datasketch 2.0.0 and
+  pytest-randomly 5.0.0 for the full suite. `huggingface_hub` stays below 2: ForgeLM has not been tested with it.
 - Raise the `transformers` floor from `>=5.3.0` to `>=5.10.1` (and `huggingface_hub` from `>=1.3.0` to `>=1.5.0`, which
   transformers 5.10 requires). `5.3.0` was described as the CVE fix floor but still admitted CVE-2026-5241 (a LightGlue
   `config.json` overrides `trust_remote_code: false`, fixed in 5.5.0) and CVE-2026-9856 (a `chat_template` name in
