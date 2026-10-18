@@ -770,17 +770,17 @@ class DistributedConfig(BaseModel):
         default=None,
         description="DeepSpeed config: filesystem path to a DS JSON.  The preset names (`zero2`, `zero3`, `zero3_offload`) resolve only from a source checkout, not a pip or Docker install.",
     )
-    fsdp_strategy: Literal["full_shard", "shard_grad_op", "no_shard", "hybrid_shard"] = Field(
+    fsdp_strategy: Literal["full_shard", "shard_grad_op"] = Field(
         default="full_shard",
-        description="FSDP sharding strategy.  `full_shard` is the production default; `hybrid_shard` for multi-node intra-node sharding.",
+        description="FSDP sharding strategy.  `full_shard` is the production default; `shard_grad_op` shards gradients and optimizer states only.  `no_shard` and `hybrid_shard` are not accepted: transformers 5.10+ runs FSDP2, which supports neither.",
     )
-    fsdp_auto_wrap: bool = Field(default=True, description="FSDP: auto-wrap transformer layers (recommended).")
+    fsdp_auto_wrap: bool = Field(default=True, description="FSDP auto-wrap; ignored by FSDP2 (transformers 5.10+).")
     fsdp_offload: bool = Field(
         default=False, description="FSDP: offload parameters to CPU between forward and backward (slower, less VRAM)."
     )
     fsdp_backward_prefetch: Literal["backward_pre", "backward_post"] = Field(
         default="backward_pre",
-        description="FSDP backward-prefetch policy.  `backward_pre` overlaps comm + compute; `backward_post` is more memory-conservative.",
+        description="FSDP backward-prefetch policy.  Not honoured by transformers 5.10+ (FSDP2 prefetches on its own); `backward_post` logs a warning.",
     )
     fsdp_state_dict_type: Literal["FULL_STATE_DICT", "SHARDED_STATE_DICT"] = Field(
         default="FULL_STATE_DICT",
@@ -1598,12 +1598,12 @@ class RetentionConfig(BaseModel):
     days (typical ingestion-window before re-running data audit).
 
     Setting any horizon to ``0`` disables the policy for that artefact
-    kind (retain indefinitely).  ``enforce`` controls how the trainer
-    pre-flight gate reacts to violations:  ``log_only`` records a
-    notice, ``warn_on_excess`` emits a structured warning, and
-    ``block_on_excess`` aborts training with EXIT_EVAL_FAILURE so a
-    regulated CI cannot accidentally extend the retention horizon by
-    re-using a stale workspace.
+    kind (retain indefinitely).  The horizons are *reported*, not enforced:
+    ``forgelm purge --check-policy`` lists artefacts past them and always
+    exits 0; nothing is deleted, blocked or scheduled automatically.
+    ``enforce`` is reserved: no command acts on it yet, so
+    ``warn_on_excess`` and ``block_on_excess`` behave like ``log_only``
+    (the CLI logs a warning when a config sets either).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1645,9 +1645,9 @@ class RetentionConfig(BaseModel):
     enforce: Literal["log_only", "warn_on_excess", "block_on_excess"] = Field(
         default="log_only",
         description=(
-            "Policy enforcement mode.  `log_only` records violations in the audit log without operator-visible output; "
-            "`warn_on_excess` adds a structured warning to stderr; `block_on_excess` aborts the trainer pre-flight with "
-            "EXIT_EVAL_FAILURE (3) so a regulated CI gate does not silently extend the retention horizon."
+            "Reserved: no command reads it yet.  Retention horizons are only reported, read-only, by `forgelm purge "
+            "--check-policy` (always exit 0); nothing is deleted, warned about or blocked automatically.  "
+            "`warn_on_excess` and `block_on_excess` are accepted but behave like `log_only`; the CLI warns when set."
         ),
     )
 

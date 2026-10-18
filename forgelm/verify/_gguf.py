@@ -192,7 +192,8 @@ def _maybe_parse_metadata(path: str) -> Dict[str, Any]:
     artefacts on a minimal install legitimately do not have it.
     Absent ``gguf`` package = ``parsed=False``, ``error=None`` and the
     caller treats this as "metadata check skipped" (the magic-header
-    + SHA-256-sidecar checks are the load-bearing integrity surface).
+    and SHA-256-sidecar checks then remain; with no sidecar either, a
+    clean result proves only the magic header).
     Raising ``ImportError`` here would break the subcommand for the
     optional-extra-not-installed path and contradict the project
     standard.  Genuine corruption (file present but reader crashes)

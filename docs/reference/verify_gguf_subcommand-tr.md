@@ -43,7 +43,7 @@ Kodlar `forgelm/cli/subcommands/_verify_gguf.py::_run_verify_gguf_cmd` tarafınd
 | **Meta veri bloğu** | İsteğe bağlı `gguf` paketi yüklüyse. Üst kaynak okuyucu ile meta veri + tensor tanımlarını ayrıştırır. | Okuyucu ayrıştırma sırasında istisna fırlatır → çıkış kodu sidecar'ın ne kanıtladığına bağlıdır; çünkü ayrıştırma hatası tek başına bozuk bir dosyayı, bu dosyanın format revizyonunu okuyamayacak kadar eski bir `gguf` paketinden ayırt edemez. **Sidecar yok** → çıkış `6` (bozulmayı eleyecek hiçbir şey yok; dosya kesilmiş / hasarlı sayılmalı). **Eşleşen sidecar** → çıkış `1` (dosya export edilenle bayt-bayt aynı — `gguf`'u yükseltip yeniden çalıştırın; artefakt sahibini çağırmayın). **Uyuşmayan sidecar** → çıkış `6`, sidecar uyuşmazlığı olarak raporlanır (checksum daha güçlü kanıttır ve baskın gelir). Paket yoksa → kontrol atlanır (magic + sidecar kontrolleri yük taşır). |
 | **SHA-256 sidecar** | `<path>.sha256` mevcutsa. Dosyanın SHA-256'sını yeniden hesaplar ve sidecar'ın ilk boşluk-ayrılı token'ı ile karşılaştırır (sha256sum formatı `<hex> *<filename>` desteklenir). | İyi-biçimli ama uyuşmayan digest → çıkış `6` (dosya export sonrası değişmiş). Sidecar mevcut ama içeriği 64 karakterlik hex digest değilse → çıkış `1` (bozuk-sidecar maskelenmesine karşı kapalı başarısızlık — hiçbir şey karşılaştırılmadı). Sidecar yoksa → kontrol sessizce atlanır. |
 
-Exporter sidecar'ı varsayılan olarak yazar (bkz. [`docs/usermanuals/tr/deployment/gguf-export.md`](../usermanuals/tr/deployment/gguf-export.md)); GGUF dosyalarını üçüncü taraflardan alan operatörler sidecar'ı da talep etmelidir.
+Exporter sidecar'ı varsayılan olarak yazar (K-quant isteğinde sidecar ara f16 dosyasına aittir; bkz. [`docs/usermanuals/tr/deployment/gguf-export.md`](../usermanuals/tr/deployment/gguf-export.md)); GGUF dosyalarını üçüncü taraflardan alan operatörler sidecar'ı da talep etmelidir.
 
 ## Emit edilen audit event'leri
 
@@ -142,7 +142,7 @@ Aynı dosyanın yanında **hiç** sidecar yoksa karar bunun yerine `6` olur — 
 
 ### İsteğe bağlı bağımlılık yok
 
-`gguf` paketi yüklü değilse meta veri ayrıştırma katmanı sessizce atlanır — magic + sidecar kontrolleri yük taşımaya devam eder:
+`gguf` paketi yüklü değilse meta veri ayrıştırma katmanı atlanır (`metadata_parsed: False`). O zaman denetlenen yalnızca magic ve sidecar'dır; sidecar da yoksa temiz bir çıkış yalnızca magic header'ı kanıtlar:
 
 ```shell
 $ pip uninstall -y gguf

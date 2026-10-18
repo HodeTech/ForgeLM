@@ -270,10 +270,10 @@ training:
 
 Uyumluluk, eğitim ve değerlendirme artefaktları için saklama ufuklarını
 belirler. Ufuklar GDPR Madde 5(1)(e) "saklama sınırlaması" ve Madde 17
-"silme hakkı" tarihlerini onurlandırır. `enforce` anahtarı yalnız-loglama,
-uyarı ve sert-engelleme modları arasında geçiş yaparak regüle edilen bir CI
-kapısının saklama ufkunu eski bir çalışma alanını yeniden kullanarak sessizce
-uzatmasını engeller.
+"silme hakkı" tarihlerini onurlandırır. Ufuklar **raporlanır**, zorlanmaz:
+`forgelm purge --check-policy` ufku aşanları listeler ve her zaman 0 ile çıkar;
+hiçbir şey otomatik silinmez, engellenmez ya da zamanlanmaz. `enforce` anahtarı
+ayrılmıştır: henüz hiçbir komut onu okumaz.
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
@@ -281,7 +281,7 @@ uzatmasını engeller.
 | `staging_ttl_days` | int | `7` | `forgelm reject` kararından sonra `final_model.staging.<run_id>/` dizininin planlı temizlenmeden önce saklanacağı gün sayısı. `0` süresiz saklama anlamına gelir. v0.8.0'da kaldırılan `evaluation.staging_ttl_days` yerine geçer. |
 | `ephemeral_artefact_retention_days` | int | `90` | Uyumluluk paketleri, veri denetim raporları ve diğer çalışma kapsamlı türetilmiş artefaktların saklanma süresi (gün). `0` süresiz saklama. |
 | `raw_documents_retention_days` | int | `90` | İngest edilmiş ham belgelerin (PDF / DOCX / EPUB / TXT / Markdown) operatörün ingestion-output dizininde saklanma süresi (gün). `0` süresiz saklama. |
-| `enforce` | string | `"log_only"` | Politika uygulama modu: `"log_only"` (yalnızca audit log), `"warn_on_excess"` (stderr'e yapılandırılmış uyarı), `"block_on_excess"` (`EXIT_EVAL_FAILURE` = 3 ile trainer ön-kontrolünü iptal eder). |
+| `enforce` | string | `"log_only"` | Ayrılmış politika modu. Henüz hiçbir komut onu okumaz: `"log_only"`, `"warn_on_excess"` ve `"block_on_excess"` kabul edilir ve aynı davranır; bir config son ikisinden birini ayarlarsa CLI uyarır. |
 
 > **Kaldırıldı:** `evaluation.staging_ttl_days` (v0.5.5 itibarıyla kullanımdan
 > kaldırılmıştı) v0.8.0'da kaldırılmıştır. Artık geçerli tek form
@@ -398,10 +398,10 @@ kaynağı kaydedilmemiştir.
 |------|-----|-----------|----------|
 | `strategy` | string | `null` | `"deepspeed"` veya `"fsdp"` (null = tek GPU) |
 | `deepspeed_config` | string | `null` | JSON yolu ya da yalnızca kaynak checkout'unda çözülen (pip veya Docker kurulumunda çözülmeyen) bir ön ayar adı (`"zero2"`, `"zero3"`, `"zero3_offload"`) |
-| `fsdp_strategy` | string | `"full_shard"` | `"full_shard"`, `"shard_grad_op"`, `"hybrid_shard"`, `"no_shard"` |
-| `fsdp_auto_wrap` | bool | `true` | Transformer katmanlarını otomatik sar |
+| `fsdp_strategy` | string | `"full_shard"` | `"full_shard"` veya `"shard_grad_op"` (`"hybrid_shard"` ve `"no_shard"` reddedilir: FSDP2 bunları desteklemez) |
+| `fsdp_auto_wrap` | bool | `true` | Transformer katmanlarını otomatik sar (transformers 5.10+'ta yok sayılır, katmanlar hep sarılır) |
 | `fsdp_offload` | bool | `false` | Parametreleri CPU'ya taşı |
-| `fsdp_backward_prefetch` | string | `"backward_pre"` | `"backward_pre"` veya `"backward_post"` |
+| `fsdp_backward_prefetch` | string | `"backward_pre"` | `"backward_pre"` veya `"backward_post"` (transformers 5.10+'ta yok sayılır; FSDP2 prefetch politikası almaz) |
 | `fsdp_state_dict_type` | string | `"FULL_STATE_DICT"` | `"FULL_STATE_DICT"` veya `"SHARDED_STATE_DICT"` |
 
 ## `synthetic` (İsteğe bağlı — Sentetik Veri Üretimi)

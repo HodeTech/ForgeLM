@@ -55,8 +55,7 @@ def _exit_on_critical_secrets(verdict: dict, *, allow_secrets: bool, defer_exit:
       chain, GGUF sidecar); training data was never signed.
     - ``3`` fits exactly: an evaluation gate examined an artefact and said
       no.  This is the same semantics as ``forgelm safety-eval``'s
-      non-passing branch (``subcommands/_safety_eval.py``) and the
-      retention ``block_on_excess`` gate.  A new public exit code is a
+      non-passing branch (``subcommands/_safety_eval.py``).  A new public exit code is a
       permanent contract addition and this incident does not need one.
 
     ``allow_secrets`` is an explicit per-invocation escape hatch for the

@@ -5,11 +5,11 @@ description: llama.cpp, Ollama, vLLM ya da LM Studio üzerinden servis etmeden �
 
 # GGUF Doğrulama
 
-`forgelm verify-gguf`, GGUF export adımıyla eşleşen salt-okunur doğrulayıcıdır. Bir GGUF model dosyası üzerinde üç katmanlı bütünlük kontrolü yapar: 4-baytlık `GGUF` magic header, isteğe bağlı `gguf` Python paketi yüklüyse meta veri bloğu ve mevcutsa `<path>.sha256` sidecar'ına karşı SHA-256 karşılaştırması. Bozulmuş veya tahrif edilmiş bir GGUF'un asla `llama.cpp`, Ollama, vLLM ya da LM Studio'ya ulaşmaması için son ön-servis kapısı olarak kullanın.
+`forgelm verify-gguf`, GGUF export adımıyla eşleşen salt-okunur doğrulayıcıdır. Bir GGUF model dosyası üzerinde üç katmanlı bütünlük kontrolü yapar: 4-baytlık `GGUF` magic header, isteğe bağlı `gguf` Python paketi yüklüyse meta veri bloğu ve mevcutsa `<path>.sha256` sidecar'ına karşı SHA-256 karşılaştırması. Bozulmuş veya kazara değişmiş bir GGUF'un `llama.cpp`, Ollama, vLLM ya da LM Studio'ya ulaşmaması için son ön-servis kapısı olarak kullanın. Sidecar dosyanın yanında durduğu için bu bir kurcalama kanıtı değildir (aşağıdaki tuzaklara bakın).
 
 ## Ne zaman kullanılır
 
-- **Bir GGUF'u servis runtime'ına yüklemeden önce.** Temiz bir `verify-gguf` çıkışı, dosyanın exporter'ın yazdığı şey olduğuna dair minimum sinyaldir.
+- **Bir GGUF'u servis runtime'ına yüklemeden önce.** Temiz bir `verify-gguf` çıkışı yalnızca çalışan kontrolü kanıtlar: ne `gguf` paketi ne de `.sha256` sidecar'ı varsa ilk dört baytın `GGUF` olduğunu kanıtlar, başka hiçbir şeyi değil; dosyanın eksiksiz ya da değiştirilmemiş olduğunu değil.
 - **GGUF export sonrası CI/CD yayın kapılarında.** Her `forgelm export` adımından sonra çalıştırın ve **sıfırdan farklı herhangi bir çıkış kodunda yayını başarısız sayın** (kamuya açık sözleşme `0/1/2/3/4/5/6` setidir; manuel içindeki [Çıkış Kodları](#/reference/exit-codes) referansına bakın. Bozuk bir yol veya bozuk sidecar için `1` en sık kapı tripi'dir — hiçbir şey karşılaştırılmadı ya da karşılaştırılan şey temiz çıktı — `6` ise dosyanın *gerçekten* bir GGUF olduğu ve bir karşılaştırmanın gerçekten uyuşmadığı anlamına gelir; `2` mevcut dosyalardaki gerçek I/O hatalarını kapsar, üst pipeline'lardan diğer sıfırdan farklı kodlar da iletilebilir).
 - **Üçüncü-taraf bir trainer'dan veya model hub'ından GGUF alındığında.** Gönderilen ile imzalanan arasındaki sapmayı tespit etmek için magic + meta veri + SHA-256 katmanlarını yeniden hesaplayın.
 - **Bir GGUF'u makineler arasında taşıdıktan sonra.** Aktarımda oluşan herhangi bir bayt-seviyesi bozulma SHA-256 uyuşmazlığı olarak ortaya çıkar.
@@ -100,7 +100,7 @@ $ forgelm verify-gguf --output-format json \
 | **Meta veri bloğu** | İsteğe bağlı `gguf` Python paketi yüklüyse. | Okuyucu ayrıştırma sırasında istisna fırlattı. Bu tek başına, kesilmiş bir dosyayı bu dosyanın format revizyonunu okuyamayacak kadar eski bir `gguf` paketinden ayırt edemez; dolayısıyla kararı sidecar'ın kanıtladığı şey belirler — aşağıdaki [üç meta veri sonucuna](#meta-veri-ayrıştırma-hatası-sidecara-bağlıdır) bakın. | `6` (sidecar yok) / `1` (eşleşen sidecar) / `6` (uyuşmayan sidecar) |
 | **SHA-256 sidecar** | Dosyanın yanında `<path>.sha256` mevcutsa. | Ya dosya export sonrası değiştirildi (uyuşmayan iyi-biçimli bir digest — bütünlük arızası) YA DA sidecar'ın kendisi bozuk (hex değil / yanlış uzunluk / `TODO` placeholder — hiçbir şey karşılaştırılmadı). Doğrulayıcı bozuk sidecar'da kapalı başarısız olur; böylece bozuk bir manifest asla "doğrulanmış" gibi sessizce maskelenemez. | `6` (değiştirilmiş) / `1` (bozuk sidecar) |
 
-Exporter sidecar'ı varsayılan olarak yazar. Üçüncü taraftan bir GGUF aldığınızda yanında sidecar'ı da talep edin; sidecar olmazsa yalnızca magic + meta veri katmanları çalışır.
+Exporter sidecar'ı varsayılan olarak yazar (K-quant isteğinde sidecar ara f16 dosyasına aittir; kuantize edilmiş dosya için `sha256sum model.gguf > model.gguf.sha256` ile bir tane oluşturun). Üçüncü taraftan bir GGUF aldığınızda yanında sidecar'ı da talep edin; sidecar olmazsa yalnızca magic + meta veri katmanları çalışır.
 
 ### Meta veri ayrıştırma hatası sidecar'a bağlıdır
 
@@ -116,7 +116,7 @@ CI'da içselleştirilmesi gereken satır ortadaki: çıkış `6` "artefakt sahib
 
 ### İsteğe bağlı bağımlılık: `gguf` paketi
 
-Meta veri ayrıştırması üst kaynak `gguf` Python paketini kullanır. Paket yüklü değilse katman sessizce atlanır — magic + sidecar kontrolleri yük taşımaya devam eder:
+Meta veri ayrıştırması üst kaynak `gguf` Python paketini kullanır. Paket yüklü değilse katman atlanır (metin çıktısı `metadata_parsed: False` gösterir). O zaman denetlenen yalnızca magic ve sidecar'dır; sidecar da yoksa temiz bir çıkış yalnızca dosyanın `GGUF` ile başladığı anlamına gelir:
 
 ```shell
 $ pip uninstall -y gguf

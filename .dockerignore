@@ -64,5 +64,4 @@ CODE_OF_CONDUCT.md
 # Build tooling not needed by the installed package
 tools/
 MANIFEST.in
-requirements*.txt
 docker-compose.yaml

@@ -111,11 +111,13 @@ FSDP shards similarly to ZeRO-3 but uses PyTorch's native FullyShardedDataParall
 ```yaml
 distributed:
   strategy: "fsdp"
-  fsdp_strategy: "full_shard"             # full_shard | shard_grad_op | no_shard | hybrid_shard
-  fsdp_auto_wrap: true                    # auto-wrap transformer layers (recommended)
+  fsdp_strategy: "full_shard"             # full_shard | shard_grad_op
+  fsdp_auto_wrap: true                    # ignored on transformers 5.10+ (FSDP2 always wraps transformer layers)
   fsdp_offload: false                     # offload parameters to CPU between forward/backward
   fsdp_state_dict_type: "FULL_STATE_DICT" # FULL_STATE_DICT | SHARDED_STATE_DICT
 ```
+
+`no_shard` and `hybrid_shard` are rejected when the config loads: transformers 5.10+, which ForgeLM requires, runs FSDP2, and FSDP2 supports neither. `fsdp_auto_wrap: false` and `fsdp_backward_prefetch: backward_post` are still accepted but change nothing under FSDP2, so ForgeLM logs a warning when either is set.
 
 `DistributedConfig` has no `fsdp_auto_wrap_policy` or `fsdp_offload_params` field — auto-wrap is the plain boolean `fsdp_auto_wrap`, and CPU offload is `fsdp_offload` (no `_params` suffix).
 
