@@ -87,6 +87,9 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Make `.github/dependabot.yml` parse. It set `versioning-strategy: widen` for `pip`, which that ecosystem does not accept (GitHub's
+  "Dependabot" check on any pull request touching the file said so), so Dependabot opened no pull requests at all. The setting is removed, the
+  header comment explains the restriction.
 - Stop saying that Microsoft Teams and Discord accept the webhook payload directly. The user manual (English and Turkish) and the
   `webhook` field descriptions said all three ingest it; the body is a Slack-style `attachments` block with no top-level `text`,
   `content` or `embeds`. Discord needs `content` or `embeds` and answers HTTP 400; Teams retired Office 365 Connectors in May 2026 and

@@ -244,6 +244,29 @@ def test_setuptools_security_floor_meets_pysec_2026_3447() -> None:
     )
 
 
+def test_dependabot_config_uses_only_values_the_pip_ecosystem_accepts() -> None:
+    """GitHub rejects the whole ``dependabot.yml`` for one bad value, and Dependabot then opens nothing.
+
+    ``versioning-strategy: widen`` is valid for npm and Composer but not for ``pip``; the file shipped with it and
+    the "Dependabot" check on every pull request that touched the file said so while the weekly run silently never
+    happened.  The accepted values are listed in GitHub's error message.
+    """
+    import yaml
+
+    config = yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    )
+    accepted = {"auto", "increase", "increase-if-necessary", "lockfile-only"}
+    for update in config["updates"]:
+        if update["package-ecosystem"] != "pip":
+            continue
+        strategy = update.get("versioning-strategy")
+        assert strategy is None or strategy in accepted, (
+            f"versioning-strategy {strategy!r} is not accepted for the pip ecosystem ({sorted(accepted)})"
+        )
+    assert any(u["package-ecosystem"] == "pip" for u in config["updates"]), "the pip update block is gone"
+
+
 def _load_runtime_dependencies() -> list:
     try:
         import tomllib  # type: ignore[import-not-found]
