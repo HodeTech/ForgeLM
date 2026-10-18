@@ -68,6 +68,13 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Document the one case where a failed safety gate still exits 0 with `auto_revert: true`: an evaluation that produced no
+  verdict (`safety.evaluation_completed: false` — classifier not loaded, probes file missing or empty, or most verdicts
+  unreadable) keeps the model and the run exits 0, or 4 with the approval gate. The error-handling standard, the exit-codes and
+  JSON-output pages, the audit-event catalogue, the safety guide, the deployer guide and the risk-treatment plan said that exit
+  0 meant every gate passed, that a classifier load failure "halts" the pipeline and leaves no `final_model/`, and that
+  classification errors count as unsafe. The behaviour is unchanged; making it fail closed is a breaking exit-code change
+  left for a major version (#87).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).

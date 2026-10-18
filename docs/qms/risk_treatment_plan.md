@@ -102,7 +102,7 @@ section §4.
 |---|---|
 | Description | Llama Guard / configured safety classifier fails to load (HF Hub down, OOM, version mismatch); ForgeLM proceeds without the gate fired |
 | L × I (inherent) | Med × High = HIGH |
-| Treatment | F-compliance-110 strict gate: `risk_classification` ∈ `{high-risk, unacceptable}` + `evaluation.safety.enabled: false` raises `ConfigError`; `audit.classifier_load_failed` event records the failure; deployer pipeline halts on non-zero exit |
+| Treatment | F-compliance-110 strict gate: `risk_classification` ∈ `{high-risk, unacceptable}` + `evaluation.safety.enabled: false` raises `ConfigError`; `audit.classifier_load_failed` event records the failure. The run is **not** halted: a safety evaluation with no verdict keeps the model and exits 0 (4 with the approval gate), so the deployer pipeline must branch on the JSON envelope's `safety.evaluation_completed` / `safety.passed` or on that audit event, not on the exit code alone |
 | Residual L × I | Low × Low = LOW |
 | Owner | ML Lead |
 | Review cadence | Per training run |
