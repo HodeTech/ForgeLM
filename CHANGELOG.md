@@ -68,6 +68,11 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Describe `--offline` / `model.offline` as what it does. It sets `HF_HUB_OFFLINE`, `TRANSFORMERS_OFFLINE` and `HF_DATASETS_OFFLINE`; it does not
+  stop webhooks, the LLM-judge and synthetic-data API clients, or W&B / MLflow. The `--offline` help text, the `model.offline` field
+  description, the configuration and CLI references (English and Turkish) and the enterprise deployment guide said "Air-gapped mode" and
+  "prevents any network calls"; the air-gap page no longer lists Comet, which `training.report_to` does not accept. Gating those clients
+  behind the flag is a code change and stays open (#74, #100, #893).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).

@@ -44,7 +44,7 @@ Run `forgelm <subcommand> --help` for any of these.
 | `--dry-run` | Validate configuration and check model/dataset access; no training. |
 | `--fit-check` | Estimate peak training VRAM; no model load. Requires `--config`. |
 | `--resume [PATH]` | Resume training. Bare `--resume` auto-detects last checkpoint; `--resume PATH` resumes from a specific one. |
-| `--offline` | Air-gapped mode: disable all HF Hub network calls. Models and datasets must be available locally. |
+| `--offline` | Offline mode: set the Hugging Face offline variables so Hub, transformers and datasets make no network calls. Models and datasets must be available locally. Does not stop webhooks, judge or synthetic-data API clients, or experiment trackers. |
 | `--benchmark-only MODEL_PATH` | Run benchmark evaluation on an existing model without training. Requires `evaluation.benchmark` config. |
 | `--merge` | Run model merging from the `merge:` config block. No training. |
 | `--stage NAME` | Multi-stage pipelines only: run a single named stage in isolation. Non-first stages need the previous stage's on-disk output, or `--input-model`. |
