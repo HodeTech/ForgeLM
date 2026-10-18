@@ -433,11 +433,11 @@ kaynağı kaydedilmemiştir.
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
-| `url` | string | `null` | Webhook hedef URL |
-| `url_env` | string | `null` | URL'yi içeren ortam değişkeni adı |
+| `url` | string | `null` | Webhook hedef URL'si: bir Slack incoming webhook'u ya da bir relay (Teams ve Discord payload'u doğrudan reddeder) |
+| `url_env` | string | `null` | URL'yi içeren ortam değişkeni adı; yalnızca `url` boşken okunur |
 | `notify_on_start` | bool | `true` | Eğitim başlangıcında bildir |
 | `notify_on_success` | bool | `true` | Başarıda bildir |
-| `notify_on_failure` | bool | `true` | Hata durumunda bildir |
+| `notify_on_failure` | bool | `true` | Eğitim hata verdiğinde ya da eğitim sonrası bir kapı modeli geri aldığında bildir |
 | `timeout` | int | `10` | HTTP istek zaman aşımı (saniye). Notifier ≥ 1s'ye clamp'ler. v0.5.5'te varsayılan 10s'ye çıkarıldı (önceden 5s'di) — Slack/Teams gateway gecikme atışları production'da düzenli olarak 5s'yi aşıyor ve bir webhook zaman aşımı audit chain'i sessizce zayıflatıyor (webhook arızası best-effort). |
 | `allow_private_destinations` | bool | `false` | RFC1918 / loopback / link-local hedeflere webhook gönderimine izin verir (cluster içi Slack proxy, on-prem Teams gateway gibi). Varsayılan yalnızca genel internet — SSRF koruması |
 | `require_https` | bool | `false` | TLS-only zorlama. `true`, plaintext bir `http://` URL'ini reddeder (SSRF chokepoint raise eder; POST atlanır), warn-and-send yerine. Varsayılan `false`, warn-then-send davranışını korur |
