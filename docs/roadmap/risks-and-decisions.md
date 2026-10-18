@@ -8,7 +8,7 @@
 | Risk | Impact | Likelihood | Mitigation |
 |------|--------|------------|------------|
 | **Dependency Breaking Changes** (TRL, PEFT, Unsloth) | Training pipeline breaks without warning | High | Version pinning with upper bounds, CI nightly builds against latest deps, compatibility matrix |
-| **EU AI Act Non-Compliance** (high-risk obligations apply from 2 December 2027 for Annex III and 2 August 2028 for Annex I; see [product_strategy.md](../product_strategy.md)) | Enterprise customers cannot adopt ForgeLM for high-risk AI | High | Phase 8 deep compliance: Annex IV docs, audit log, risk assessment, human gate, data governance |
+| **EU AI Act Non-Compliance** (Chapter III, Sections 1–3, except Article 6(5), apply from 2 December 2027 to high-risk AI systems under Article 6(2) and Annex III, and from 2 August 2028 to systems under Article 6(1) and Annex I; see [product_strategy.md](../product_strategy.md)) | Enterprise customers cannot adopt ForgeLM for high-risk AI | High | Phase 8 deep compliance: Annex IV docs, audit log, risk assessment, human gate, data governance |
 | **Safety Degradation from Fine-Tuning** | Fine-tuned models lose alignment, enterprise liability | High | Phase 6 safety evaluation pipeline, auto-revert on safety regression |
 | **Alignment Method Lock-In** | ForgeLM supports only ORPO while market demands DPO/GRPO | High | Phase 5 is top priority — critical market expectation |
 | **Compliance window** (Annex III from 2 December 2027, Annex I from 2 August 2028) | Enterprise leads not converted before competitors add compliance features | High | Enterprise outreach Day 1; Turkey market as first pilot; deep compliance features (Audit API, managed cloud) as moat |
