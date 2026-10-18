@@ -97,6 +97,11 @@ All notable changes to ForgeLM are documented here.
   rows. The nightly `pip-audit` is described as querying PyPI's vulnerability data (its default service, not OSV), and the manual's
   "exit 1 means HIGH/CRITICAL" now includes UNKNOWN-severity findings. English and Turkish. Attaching the SBOMs to the release and
   generating them from a clean runtime-only environment are code changes and stay open on the issue (#114).
+- Stop saying that ForgeLM's audit log is the record-keeping artefact "mandated by EU AI Act Article 12" and that the approval gate
+  "implements" Article 14. Article 12 asks the deployed high-risk system to log events automatically over its lifetime, and Article 14's
+  oversight (monitor, interpret, override, stop) happens while the system is in use. `audit_log.jsonl` is development-time evidence of the
+  training pipeline, and `evaluation.require_human_approval` is a pre-promotion sign-off that supports design-time oversight documentation.
+  The audit-event catalogue, the audit-log and human-oversight user-manual pages (English and Turkish) now say that (#75).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).
