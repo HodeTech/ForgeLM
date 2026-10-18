@@ -5,7 +5,7 @@ description: Data protection compliance — PII minimisation, data subject right
 
 # GDPR / KVKK
 
-GDPR (Europe) and KVKK (Türkiye) impose data protection requirements on personal data used in training. ForgeLM's role: prevent personal data from entering training in the first place, document what gets ingested, and produce evidence for data subject requests.
+GDPR (Europe) and KVKK (Türkiye) impose data protection requirements on personal data used in training. ForgeLM's role is narrower than keeping personal data out of training: it masks the identifier formats it can detect, reports what an audit found, and gives you commands for access and erasure requests. It does not decide your lawful basis, it does not find names or other free-text personal data, and it does not make a trained model anonymous.
 
 ## What GDPR / KVKK require for training data
 
@@ -25,40 +25,35 @@ KVKK (Türkiye) mirrors these principles closely.
 
 ### Data minimisation (Art. 5(1)(c))
 
-PII masking at ingest replaces personal identifiers with placeholders:
+PII masking at ingest replaces the identifier formats ForgeLM detects with a placeholder:
 
-```yaml
-ingestion:
-  pii_mask:
-    enabled: true
-    locale: "tr"
-    categories: ["email", "phone", "iban", "id_tr"]
+```shell
+$ forgelm ingest ./policies/ --recursive --strategy markdown --pii-mask --output data/policies.jsonl
 ```
 
-By the time data lands in JSONL, identifiable subjects are removed. See [PII Masking](#/data/pii-masking).
+The detectors cover email, phone, credit card, IBAN, and the Turkish, German, French and US national-ID formats; every match becomes `[REDACTED]`. **Names, addresses, dates of birth, health data and other free text are not detected**, and the patterns are tuned to miss a borderline match rather than redact ordinary prose. Masking reduces the personal data in the JSONL; it does not remove identifiable subjects from it. See [PII Masking](#/data/pii-masking).
 
 ### Accountability (Art. 5(2))
 
-Every audit produces `data_audit_report.json` documenting:
+Every `forgelm audit` run writes `data_audit_report.json`. It records:
 
-- Detected PII categories and counts (before masking).
-- Source attribution (which document each row came from).
-- Quality and language distribution.
-- SHA-256 manifest for tamper-evidence.
+- Detected PII and secret categories with their counts, for the data you audited. Audit the unmasked source to see what a masker has to catch; audit the masked output to see what got through.
+- Near-duplicate, quality and cross-split-overlap summaries, and an optional Croissant card.
+- The audit's own metadata: when it ran, and the path and literal input it was given.
 
-These reports flow into the Annex IV bundle. When a regulator asks "what personal data was in your training set?", you have a structured answer.
+The report does not attribute rows to source documents, carries no hash manifest, and is a plain JSON file: it is not itself written to the audit log. Erasure and access requests (`forgelm purge`, `forgelm reverse-pii`) are, in the hash-chained log that `forgelm verify-audit` checks. When the report sits in `training.output_dir`, it feeds the Article 10 data-governance section of the Annex IV bundle, so a regulator's "what personal data was in your training set?" has a structured answer: what the detectors found, not a statement that none exists.
 
 ### Storage limitation (Art. 5(1)(e))
 
-ForgeLM doesn't retain raw user data — it produces JSONL artifacts you control. For automated retention enforcement:
+ForgeLM doesn't retain raw user data — it produces JSONL artifacts you control. Retention horizons can be declared and are **reported, not enforced**:
 
 ```yaml
 retention:
-  raw_documents_retention_days: 90      # auto-delete originals after N days
+  raw_documents_retention_days: 90
   ephemeral_artefact_retention_days: 365
 ```
 
-(The actual deletion is your storage layer's responsibility; ForgeLM just records the intended TTL in the audit log.)
+`forgelm purge --check-policy --config config.yaml` lists artefacts that are past their horizon and always exits 0. Nothing is deleted automatically and nothing is written to the audit log for it; deleting what is overdue is your storage layer's job. (`retention.enforce` is reserved: no command acts on it yet.)
 
 ## Data subject requests
 
@@ -68,30 +63,29 @@ Most-common request types and how ForgeLM helps:
 
 "What personal data do you hold about me?"
 
-Run reverse-PII on your training data:
+Search your training data for the person's identifier:
 
 ```shell
 $ forgelm reverse-pii --query "ali@example.com" data/*.jsonl
-No matches found in masked data.
 ```
 
-Because PII was masked at ingest, no specific person's data is recoverable from the model. The audit report confirms this.
+The scan reports the lines where the identifier appears; zero matches is a valid answer. It finds what is literally in the files you point it at. Masking only removes the identifier formats it detects, so a name or an undetected variant can remain, and the raw source documents are not covered by a scan of the masked JSONL: search those separately. ForgeLM cannot tell you what a trained model remembers.
 
 ### Right to erasure (Art. 17)
 
 "Delete my data."
 
 If a person's data was in your training set:
-1. The masked JSONL doesn't contain their identifying info — already minimised.
-2. Source documents may still — drop them from your raw store and re-ingest if necessary.
+1. Find the rows with `forgelm reverse-pii`, then remove them with `forgelm purge --row-id <id> --corpus <file>`; every erasure is written to the audit log.
+2. Source documents may still hold it — drop them from your raw store and re-ingest if necessary.
 3. The model may have memorised some details — see "model-level erasure" below.
 
 ### Model-level erasure
 
 LLMs can memorise rare strings from training. Even with PII masking, removing all traces from a deployed model is hard. ForgeLM's defences:
 
-- **Prevent memorisation:** PII masking, deduplication (memorised data is usually duplicated data).
-- **Detect memorisation:** the audit step flags rows that overlap with known PII patterns.
+- **Reduce what goes in:** PII masking and deduplication (memorised data is usually duplicated data).
+- **Memorisation is not measured:** ForgeLM does not test whether a trained model reproduces a given string.
 - **Re-train as last resort:** if a specific subject's data leaked despite masking, re-train without that source.
 
 For zero-tolerance scenarios (medical, legal), pair PII masking with manual review before training.
@@ -122,7 +116,7 @@ ForgeLM has no YAML surface for GDPR legal metadata (lawful basis, data controll
 :::
 
 :::warn
-**International transfers.** If your training data crosses jurisdiction boundaries (Turkish data trained in EU, EU data trained in US), additional safeguards apply. Set `international_transfers.enabled: true` and document the safeguards.
+**International transfers.** If your training data crosses jurisdiction boundaries (Turkish data trained in EU, EU data trained in US), additional safeguards apply. ForgeLM has no setting for transfers; record the safeguards in your DPIA.
 :::
 
 :::tip
