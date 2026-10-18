@@ -107,7 +107,7 @@ ForgeLM-specific control inventory.
 | Control | Applicable? | ForgeLM evidence | Deployer-side action |
 |---|---|---|---|
 | A.8.1 User endpoint devices | YES | `forgelm doctor` — Python / CUDA / GPU / extras / HF auth / disk / `FORGELM_OPERATOR` checks | Endpoint hardening |
-| A.8.2 Privileged access rights | YES | Operator attribution; approval gate non-trainer operator | RBAC at IdP |
+| A.8.2 Privileged access rights | YES | Operator attribution; approval gate records the approver identity | RBAC at IdP |
 | A.8.3 Information access restriction | YES | Salted identifier hashing; `forgelm reverse-pii` Article 15 | DSAR workflow |
 | A.8.4 Access to source code | YES | `model.trust_remote_code=False` default; `model.revision` pins the base-model repo, bounding the repo-bundled code `trust_remote_code: true` would run.  `_fingerprint_hf_revision` covers the **dataset** repo only | VCS access control; require `model.revision` wherever `trust_remote_code: true` is approved |
 | A.8.5 Secure authentication | YES | `safe_post` rejects auth headers on non-HTTPS; webhook secret discipline | MFA + token rotation |

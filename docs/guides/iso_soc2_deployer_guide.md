@@ -25,8 +25,10 @@ direct ForgeLM evidence:
    `forgelm verify-audit` validates the chain end-to-end.
 2. **Change control** — Article 14 staging gate (`forgelm approve` /
    `reject`) + `human_approval.required/granted/rejected` audit
-   events + `config_hash` (per-run manifest sidecar field) stamped per run. Every
-   model promotion is dual-controlled and forensically attributed.
+   events + `config_hash` (per-run manifest sidecar field) stamped per run. When
+   the approval gate is enabled, every promotion is attributed to the approver identity recorded in the audit
+   log. ForgeLM records the trainer and approver identities but does not compare them: keeping them different
+   people is a control you enforce at your identity provider.
 3. **Data lineage** — `data_provenance.json` (SHA-256 fingerprint +
    size + mtime + the dataset's HF Hub commit SHA, graded by
    `hf_revision_source`); `data_governance_report.json`
@@ -63,7 +65,9 @@ Twelve items to land **before** the auditor asks.
 
 - [ ] **`evaluation.require_human_approval: true`** for every
       `risk_classification` ∈ `{high-risk, unacceptable}` run.
-      F-compliance-110 raises `ConfigError` if you forget.
+      ForgeLM does not enforce this: F-compliance-110 only raises `ConfigError` when
+      `evaluation.safety.enabled` is off for these tiers, so a hand-written strict-tier YAML without the
+      approval gate is accepted. The CLI wizard (`forgelm --wizard`) switches the gate on for these tiers.
 - [ ] **Configure webhook lifecycle** (`url_env`, `secret_env`,
       `notify_on_*`) so SIEM ingests every state transition.
 - [ ] **Enable `auto_revert: true`** for production training so
@@ -155,8 +159,9 @@ jq -r 'select(.run_id == "X" and (.event == "training.started" or .event == "hum
     ./outputs/audit_log.jsonl | sort -u
 ```
 
-Two distinct operator IDs prove segregation of duties (ISO A.5.3,
-SOC 2 CC1.5).
+Compare the operator on `training.started` with the approver on `human_approval.granted`. Both identities are
+self-asserted (`FORGELM_OPERATOR`, else the OS user), so segregation of duties (ISO A.5.3, SOC 2 CC1.5) holds only
+if your identity provider makes them different people.
 
 ### Q3: "Show me the data lineage"
 

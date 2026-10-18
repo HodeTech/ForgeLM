@@ -26,7 +26,7 @@ categories are scoped per-engagement.
 | CC | Title | ForgeLM evidence |
 |---|---|---|
 | CC1.1 | Demonstrates commitment to integrity | `roles_responsibilities.md` QMS template; AI Officer role |
-| CC1.2 | Independence of governance | Approval gate operator ≠ trainer |
+| CC1.2 | Independence of governance | The approval gate records the approver identity, so trainer ≠ approver is auditable; ForgeLM does not enforce it |
 | CC1.3 | Establishes structures, reporting lines | `roles_responsibilities.md` defines AI Officer / ML Lead / DPO |
 | CC1.4 | Demonstrates commitment to competence | Annual EU AI Act / GDPR training (deployer policy) |
 | CC1.5 | Enforces accountability | `FORGELM_OPERATOR` attribution + audit chain |
