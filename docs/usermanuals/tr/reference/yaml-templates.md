@@ -23,7 +23,7 @@ Beş şablon ve her birinin optimize ettiği kullanıcı yolu:
 | `customer-support` | SFT | Multi-turn yardımcı + güvenli asistan — en yaygın production pattern. |
 | `code-assistant` | SFT | Kod-tamamlama / pair-programming modeli. |
 | `domain-expert` | SFT | Domain-spesifik corpus üzerinde BYOD (Bring Your Own Dataset). |
-| `medical-qa-tr` | SFT | Türkçe tıbbi soru-cevap (regüle alan — örnek cevaplar bir güvenlik uyarısı taşır, ama şablon güvenlik değerlendirmesini ve `risk_assessment`'ı etkinleştirmez; demo dışındaki bir kullanımdan önce bir `evaluation.safety` bloğu ve bir `risk_assessment:` bloğu ekle). |
+| `medical-qa-tr` | SFT | Türkçe tıbbi soru-cevap (regüle alan — örnek cevaplar bir güvenlik uyarısı taşır, ama şablon güvenlik değerlendirmesini etkinleştirmez ve `risk_assessment` metadata'sı içermez. Klinik karar desteği için değildir ve bunları eklemek bunu değiştirmez; demo dışındaki bir kullanımdan önce `evaluation.safety.enabled: true` yap ve en üstteki `risk_assessment:` bloğunu doğru biçimde doldur). |
 | `grpo-math` | GRPO | Matematik benchmark'ları üzerinde reward-model fine-tuning (yerleşik format/length reward shaping). |
 
 Kanonik şablon içeriği **doğruluk kaynağıdır** — `forgelm quickstart`'ın
