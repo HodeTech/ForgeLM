@@ -84,6 +84,16 @@ All notable changes to ForgeLM are documented here.
   unverified "`zero3_offload` fits 70B on 8×24 GB" sentence is gone, and the `zero2` preset's own start-up failure is noted
   (#410). Shipping the presets in the package, and a test that resolves one from an installed wheel, are code changes and stay
   open on the issues (#110, #111, #115).
+- Show the real output directory on the first-run, project-layout and human-oversight pages (English and Turkish). They described a
+  `checkpoints/<name>/artifacts/` bundle with a `manifest.json` that hashes "every file inside … for tamper-evidence", a
+  `config_snapshot.yaml`, a `safety_report.json` and a `data_audit_report.json`. None of those exist: a run writes `audit_log.jsonl` with its
+  `.manifest.json` genesis pin, a `compliance/` directory (`compliance_report.json`, `training_manifest.yaml`, `data_provenance.json`,
+  `data_governance_report.json`, and `annex_iv_metadata.json` only when the YAML names a provider, system or purpose), `safety/` and
+  `benchmark/` only when enabled, and `final_model/` with the weights, model card, `deployer_instructions.md` and `model_integrity.json`.
+  Only the audit log and `final_model/` are tamper-checked; nothing hashes `compliance/`, and the pages now say so. The invented training log
+  (a DPO pass in an SFT-only template, `Llama Guard S1-S14: clean`) is replaced by a description of the real stages, the approval-gate
+  sample shows the two log lines the trainer prints, and the `forgelm doctor` sample uses the real renderer's format (ASCII header and
+  `[+ pass]` markers, "discoverable" wording, an abridged row list) (#96, #534).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).
