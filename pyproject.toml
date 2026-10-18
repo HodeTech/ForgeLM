@@ -159,7 +159,7 @@ ingestion = [
 # operators auditing larger datasets where MinHash's recall/precision
 # trade-off is the industry standard (NeMo Curator, Dolma, RedPajama).
 ingestion-scale = [
-  "datasketch>=1.6.0,<2.0.0",
+  "datasketch>=1.6.0,<3.0.0",
 ]
 
 # Optional Presidio ML-NER PII detector. Adds the unstructured-identifier
