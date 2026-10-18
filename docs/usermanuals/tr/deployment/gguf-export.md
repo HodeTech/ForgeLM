@@ -5,21 +5,20 @@ description: llama.cpp, Ollama veya LM Studio ile yerel inference için GGUF'a k
 
 # GGUF Export
 
-GGUF (GPT-Generated Unified Format), `llama.cpp` üzerinden yerel CPU/GPU inference için fiili dosya formatıdır. ForgeLM herhangi bir fine-tuned checkpoint'i altı kuantizasyon seviyesi ve SHA-256 manifest ile GGUF'a export eder.
+GGUF (GPT-Generated Unified Format), `llama.cpp` üzerinden yerel CPU/GPU inference için fiili dosya formatıdır. ForgeLM fine-tuned bir checkpoint'i GGUF'a export eder ve dosyanın yanına bir SHA-256 sidecar yazar. `f16` ve `q8_0` tek komutla çıkar; K-quant seviyeleri (`q2_k`, `q3_k_m`, `q4_k_m`, `q5_k_m`) aşağıda anlatılan bir `llama-quantize` adımı daha ister.
 
 ## Hızlı örnek
 
 ```shell
 $ forgelm export ./checkpoints/customer-support \
     --output model.gguf \
-    --quant q4_k_m
-✓ LoRA base'e merge edildi
-✓ GGUF'a dönüştürüldü
-✓ q4_k_m'a kuantize edildi (4.1 GB → 4.1 GB)
-✓ model.gguf ve model.gguf.sha256 yazıldı
+    --quant q8_0
+Export complete: model.gguf (quant=q8_0, sha256=3f2a91c0b4d7…)
 ```
 
-Çıktı tek `.gguf` dosyası artı `.sha256` manifest.
+(Log çıktısı, kısaltılmış.) Sonuç `model.gguf` ve yanında `model.gguf.sha256`'dır. Sidecar `sha256sum` formatındadır (`<digest> *model.gguf`); bu yüzden hem `sha256sum -c model.gguf.sha256` hem de [`forgelm verify-gguf`](#/deployment/verify-gguf) onu kabul eder. Checkpoint dizininde zaten bir `model_integrity.json` varsa digest oraya da `exported_artifacts` altında yazılır (`--no-integrity-update` bunu atlar).
+
+Sidecar bozulmayı ve kazara değişikliği yakalar. Dosyanın yanında durduğu için kurcalama kanıtı **değildir**: GGUF'u değiştirebilen sidecar'ı da değiştirebilir. Buna ihtiyacınız varsa dosyayı imzalayın ya da digest'i dosyanın yazarının erişemediği bir yerde tutun.
 
 ## Kuantizasyon seviyeleri
 
@@ -34,6 +33,20 @@ $ forgelm export ./checkpoints/customer-support \
 
 `q4_k_m` tatlı nokta — consumer donanıma rahat sığar, full precision'a karşı minimum kalite kaybı.
 
+### K-quant'lar bir adım daha ister
+
+ForgeLM'in çağırdığı dönüştürücü `f16` ve `q8_0`'ı doğrudan yazar. Bir K-quant için (`q2_k`, `q3_k_m`, `q4_k_m` — varsayılan — ve `q5_k_m`) `forgelm export`, kendi `.sha256`'sıyla birlikte `<output>.f16.gguf` adında ara bir `f16` GGUF yazar. Değişikliği bildirir (`--output-format json`'da `requested_quant`, `manual_step_required` ve tam `followup_command`) ve işi bitiren `llama-quantize` komutunu loglar:
+
+```shell
+$ forgelm export ./checkpoints/customer-support --output model.gguf --quant q4_k_m
+Export complete: model.f16.gguf (quant=f16, sha256=9c1e47ab02d5…)
+Manual quantization step required — run: llama-quantize model.f16.gguf model.gguf Q4_K_M
+$ llama-quantize model.f16.gguf model.gguf Q4_K_M
+$ sha256sum model.gguf > model.gguf.sha256
+```
+
+`llama-quantize` llama.cpp'den gelir; ForgeLM onu kurmaz. `forgelm export` kuantize edilmiş dosya için sidecar yazmaz; son komut onu oluşturur ve `forgelm verify-gguf model.gguf` karşılaştıracak bir digest bulur.
+
 GGUF export her zaman ayrı, açık bir `forgelm export` çağrısıdır — config-driven bir otomatik export toggle'ı yoktur. `forgelm/config.py`'de bir `output:` bloğu ve şemada hiçbir yerde `gguf` alanı yoktur, dolayısıyla bir eğitim YAML'ı eval kapısının geçmesinin yan etkisi olarak export'u tetikleyemez; eğitim bittiğinde `forgelm export`'u kendiniz çalıştırın.
 
 ## Çoklu-quant export
@@ -41,45 +54,48 @@ GGUF export her zaman ayrı, açık bir `forgelm export` çağrısıdır — con
 `forgelm export --quant` invocation başına tek değer kabul eder
 (seçenekler: `{q2_k, q3_k_m, q4_k_m, q5_k_m, q8_0, f16}`). Tek bir
 checkpoint'ten birden çok quantisation üretmek için komutu her
-quant için bir kez çalıştırın:
+quant için bir kez çalıştırın. Dönüştürücünün doğrudan yazdığı iki
+seviye için:
 
 ```shell
-$ for q in q4_k_m q5_k_m q8_0; do
+$ for q in q8_0 f16; do
     forgelm export ./checkpoints/run \
         --output "./gguf/model.${q}.gguf" \
         --quant "${q}"
   done
-✓ gguf/model.q4_k_m.gguf yazıldı  (4.1 GB)
-✓ gguf/model.q5_k_m.gguf yazıldı  (4.8 GB)
-✓ gguf/model.q8_0.gguf yazıldı    (7.2 GB)
+Export complete: ./gguf/model.q8_0.gguf (quant=q8_0, sha256=3f2a91c0b4d7…)
+Export complete: ./gguf/model.f16.gguf (quant=f16, sha256=b81d05e6c392…)
 ```
 
-Manifest:
+Her çalıştırma kendi sidecar'ını yazar (`model.q8_0.gguf.sha256`, `model.f16.gguf.sha256`). K-quant'lar için döngüyü K-quant adlarıyla çalıştırın ve her ara dosyayı yukarıdaki gibi `llama-quantize` ile tamamlayın.
+
+Checkpoint dizininde bir `model_integrity.json` varsa her çalıştırma onun `exported_artifacts` listesine bir kayıt ekler:
 
 ```json
 {
-  "base_model": "Qwen/Qwen2.5-7B-Instruct",
-  "fine_tune_run_id": "abc123",
-  "quants": {
-    "q4_k_m": {"size_bytes": 4100000000, "sha256": "..."},
-    "q5_k_m": {"size_bytes": 4800000000, "sha256": "..."},
-    "q8_0":   {"size_bytes": 7200000000, "sha256": "..."}
-  },
-  "exported_at": "2026-04-29T15:00:00Z"
+  "exported_artifacts": [
+    {"file": "model.q8_0.gguf", "format": "gguf", "quant": "q8_0", "sha256": "…", "size_bytes": 7200000000},
+    {"file": "model.f16.gguf", "format": "gguf", "quant": "f16", "sha256": "…", "size_bytes": 13000000000}
+  ]
 }
 ```
 
 ## GGUF bütünlük doğrulama
 
 ```shell
-$ forgelm verify-gguf model.q4_k_m.gguf
-✓ valid GGUF magic
-✓ vocab boyutu base ile eşleşiyor
-✓ sha256 manifest ile eşleşiyor
-✓ tokenizer round-trip OK
+$ forgelm verify-gguf model.q8_0.gguf
+OK: model.q8_0.gguf
+  GGUF magic OK, metadata parsed, SHA-256 sidecar match
+    magic_ok: True
+    metadata_parsed: True
+    sidecar_present: True
+    sidecar_match: True
+    tensor_count: 291
+    sha256_actual: a4c1f2…
+    sha256_expected: a4c1f2…
 ```
 
-Bu kötü transferden bozulmaları, sessiz disk hatalarını ve ara sıra `llama.cpp` upstream uyumsuzluklarını yakalar.
+Bu komut GGUF magic header'ını denetler, isteğe bağlı `gguf` paketi kuruluysa meta veri bloğunu ayrıştırır ve varsa `<dosya>.sha256` sidecar'ını karşılaştırır. Kelime dağarcığını ya da tokenizer'ı base modelle karşılaştırmaz. Kötü transferden bozulmaları, sessiz disk hatalarını ve export sonrası düzenlenmiş bir dosyayı yakalar; dosyayı kimin ürettiğini göstermez. Her katmanın neyi kanıtladığı için [Verify GGUF](#/deployment/verify-gguf) sayfasına bakın.
 
 ## Yaygın araçlarda GGUF yükleme
 
@@ -118,7 +134,7 @@ Sonuç full-precision GGUF, 7B model için ~13 GB.
 ## Sık hatalar
 
 :::warn
-**LoRA'yı merge etmeden export.** `forgelm export` her zaman LoRA adapter'ı kuantizasyondan önce base'e merge eder. Adapter-only inference istiyorsanız GGUF istemiyorsunuz — adapter'a karşı doğrudan `forgelm chat` kullanın veya PEFT ile yükleyin.
+**`--adapter`'ı unutmak.** `forgelm export` bir LoRA adapter'ı base modele yalnızca `--adapter <adapter-dir>` verdiğinizde merge eder; vermezseniz model yolu zaten tam bir model dizini olmalıdır. Adapter-only inference istiyorsanız GGUF istemiyorsunuz — adapter'a karşı doğrudan `forgelm chat` kullanın veya PEFT ile yükleyin.
 :::
 
 :::warn

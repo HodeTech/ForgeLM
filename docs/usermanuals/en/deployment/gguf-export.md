@@ -5,21 +5,20 @@ description: Quantise to GGUF for local inference with llama.cpp, Ollama, or LM 
 
 # GGUF Export
 
-GGUF (GPT-Generated Unified Format) is the de facto file format for local CPU/GPU inference via `llama.cpp`. ForgeLM exports any fine-tuned checkpoint to GGUF with six quantisation levels and a SHA-256 manifest.
+GGUF (GPT-Generated Unified Format) is the de facto file format for local CPU/GPU inference via `llama.cpp`. ForgeLM exports a fine-tuned checkpoint to GGUF and writes a SHA-256 sidecar next to the file. `f16` and `q8_0` come out of a single command; the K-quant levels (`q2_k`, `q3_k_m`, `q4_k_m`, `q5_k_m`) need one more `llama-quantize` step, described below.
 
 ## Quick example
 
 ```shell
 $ forgelm export ./checkpoints/customer-support \
     --output model.gguf \
-    --quant q4_k_m
-✓ merged LoRA into base
-✓ converted to GGUF
-✓ quantised to q4_k_m (4.1 GB → 4.1 GB)
-✓ wrote model.gguf and model.gguf.sha256
+    --quant q8_0
+Export complete: model.gguf (quant=q8_0, sha256=3f2a91c0b4d7…)
 ```
 
-The output is a single `.gguf` file plus a `.sha256` manifest.
+(Log output, abridged.) The result is `model.gguf` plus `model.gguf.sha256` next to it. The sidecar is in `sha256sum` format (`<digest> *model.gguf`), so both `sha256sum -c model.gguf.sha256` and [`forgelm verify-gguf`](#/deployment/verify-gguf) accept it. When the checkpoint directory already holds a `model_integrity.json`, the digest is also recorded there under `exported_artifacts` (`--no-integrity-update` skips this).
+
+The sidecar detects corruption and accidental change. It sits beside the file, so it is **not** tamper evidence: whoever can replace the GGUF can replace the sidecar too. If you need that, sign the file or keep the digest where the file's writer cannot reach it.
 
 ## Quantisation levels
 
@@ -34,51 +33,68 @@ The output is a single `.gguf` file plus a `.sha256` manifest.
 
 `q4_k_m` is the sweet spot — fits easily on consumer hardware, minimal quality loss versus full precision.
 
+### K-quants take one more step
+
+The converter ForgeLM calls writes `f16` and `q8_0` directly. For a K-quant (`q2_k`, `q3_k_m`, `q4_k_m` — the default — and `q5_k_m`) `forgelm export` writes an intermediate `f16` GGUF named `<output>.f16.gguf`, with its own `.sha256`. It reports the substitution (`requested_quant`, `manual_step_required` and the exact `followup_command` in `--output-format json`) and logs the `llama-quantize` command that finishes the job:
+
+```shell
+$ forgelm export ./checkpoints/customer-support --output model.gguf --quant q4_k_m
+Export complete: model.f16.gguf (quant=f16, sha256=9c1e47ab02d5…)
+Manual quantization step required — run: llama-quantize model.f16.gguf model.gguf Q4_K_M
+$ llama-quantize model.f16.gguf model.gguf Q4_K_M
+$ sha256sum model.gguf > model.gguf.sha256
+```
+
+`llama-quantize` comes from llama.cpp; ForgeLM does not install it. `forgelm export` writes no sidecar for the quantised file, so the last command creates one and `forgelm verify-gguf model.gguf` has a digest to compare.
+
 GGUF export is always a separate, explicit `forgelm export` invocation — there is no config-driven auto-export toggle. `forgelm/config.py` has no `output:` block and no `gguf` field anywhere in the schema, so a training YAML cannot trigger export as a side effect of a passing eval gate; run `forgelm export` yourself once training finishes.
 
 ## Multi-quant export
 
 `forgelm export --quant` accepts a single value per invocation (one
 of `{q2_k, q3_k_m, q4_k_m, q5_k_m, q8_0, f16}`). To produce several
-quantisations from one checkpoint, run the command once per quant:
+quantisations from one checkpoint, run the command once per quant. For
+the two levels the converter writes directly:
 
 ```shell
-$ for q in q4_k_m q5_k_m q8_0; do
+$ for q in q8_0 f16; do
     forgelm export ./checkpoints/run \
         --output "./gguf/model.${q}.gguf" \
         --quant "${q}"
   done
-✓ wrote gguf/model.q4_k_m.gguf  (4.1 GB)
-✓ wrote gguf/model.q5_k_m.gguf  (4.8 GB)
-✓ wrote gguf/model.q8_0.gguf    (7.2 GB)
+Export complete: ./gguf/model.q8_0.gguf (quant=q8_0, sha256=3f2a91c0b4d7…)
+Export complete: ./gguf/model.f16.gguf (quant=f16, sha256=b81d05e6c392…)
 ```
 
-The manifest:
+Each run writes its own sidecar (`model.q8_0.gguf.sha256`, `model.f16.gguf.sha256`). For K-quants, run the loop with the K-quant names and finish each intermediate file with `llama-quantize`, as above.
+
+When the checkpoint directory holds a `model_integrity.json`, each run appends an entry to its `exported_artifacts` list:
 
 ```json
 {
-  "base_model": "Qwen/Qwen2.5-7B-Instruct",
-  "fine_tune_run_id": "abc123",
-  "quants": {
-    "q4_k_m": {"size_bytes": 4100000000, "sha256": "..."},
-    "q5_k_m": {"size_bytes": 4800000000, "sha256": "..."},
-    "q8_0":   {"size_bytes": 7200000000, "sha256": "..."}
-  },
-  "exported_at": "2026-04-29T15:00:00Z"
+  "exported_artifacts": [
+    {"file": "model.q8_0.gguf", "format": "gguf", "quant": "q8_0", "sha256": "…", "size_bytes": 7200000000},
+    {"file": "model.f16.gguf", "format": "gguf", "quant": "f16", "sha256": "…", "size_bytes": 13000000000}
+  ]
 }
 ```
 
 ## Verifying GGUF integrity
 
 ```shell
-$ forgelm verify-gguf model.q4_k_m.gguf
-✓ valid GGUF magic
-✓ vocab size matches base
-✓ sha256 matches manifest
-✓ tokenizer round-trip OK
+$ forgelm verify-gguf model.q8_0.gguf
+OK: model.q8_0.gguf
+  GGUF magic OK, metadata parsed, SHA-256 sidecar match
+    magic_ok: True
+    metadata_parsed: True
+    sidecar_present: True
+    sidecar_match: True
+    tensor_count: 291
+    sha256_actual: a4c1f2…
+    sha256_expected: a4c1f2…
 ```
 
-This catches corruption from bad transfers, silent disk errors, and the occasional `llama.cpp` upstream incompatibility.
+This checks the GGUF magic header, parses the metadata block when the optional `gguf` package is installed, and compares the `<file>.sha256` sidecar when it exists. It does not compare the vocabulary or the tokenizer with the base model. It catches corruption from bad transfers, silent disk errors and a file edited after export; it does not show who produced the file. [Verify GGUF](#/deployment/verify-gguf) says what each layer proves.
 
 ## Loading GGUF in popular tools
 
@@ -117,7 +133,7 @@ The result is full-precision GGUF, ~13 GB for a 7B model.
 ## Common pitfalls
 
 :::warn
-**Exporting LoRA without merging.** `forgelm export` always merges LoRA adapters into the base before quantising. If you want adapter-only inference, you don't want GGUF — use `forgelm chat` against the adapter directly or load with PEFT.
+**Forgetting `--adapter`.** `forgelm export` merges a LoRA adapter into the base model only when you pass `--adapter <adapter-dir>`; without it, the model path must already be a full model directory. If you want adapter-only inference, you don't want GGUF — use `forgelm chat` against the adapter directly or load with PEFT.
 :::
 
 :::warn
