@@ -5,7 +5,7 @@ description: Veri koruma uyumluluğu — PII minimizasyonu, veri sahibi hakları
 
 # GDPR / KVKK
 
-GDPR (Avrupa) ve KVKK (Türkiye), eğitimde kullanılan kişisel verilere koruma gereklilikleri getirir. ForgeLM'in rolü: kişisel verinin eğitime girmesini en başta engellemek, ne girdiğini belgelemek ve veri sahibi talepleri için kanıt üretmek.
+GDPR (Avrupa) ve KVKK (Türkiye), eğitimde kullanılan kişisel verilere koruma gereklilikleri getirir. ForgeLM'in rolü, kişisel veriyi eğitimden uzak tutmaktan daha dardır: tespit edebildiği tanımlayıcı biçimlerini maskeler, bir audit'in bulduğunu raporlar ve erişim ile silme talepleri için size komutlar verir. Hukuki dayanağınızı belirlemez, isimleri ya da diğer serbest-metin kişisel verileri bulmaz ve eğitilmiş bir modeli anonim yapmaz.
 
 ## GDPR / KVKK eğitim verisinde ne ister
 
@@ -25,40 +25,35 @@ KVKK (Türkiye) bu ilkeleri yakından yansıtır.
 
 ### Veri minimizasyonu (Md. 5(1)(c))
 
-Ingest'te PII maskeleme kişisel tanımlayıcıları placeholder'larla değiştirir:
+Ingest'te PII maskeleme, ForgeLM'in tespit ettiği tanımlayıcı biçimlerini bir placeholder ile değiştirir:
 
-```yaml
-ingestion:
-  pii_mask:
-    enabled: true
-    locale: "tr"
-    categories: ["email", "phone", "iban", "id_tr"]
+```shell
+$ forgelm ingest ./policies/ --recursive --strategy markdown --pii-mask --output data/policies.jsonl
 ```
 
-Veri JSONL'a düştüğünde tanımlanabilir özneler kaldırılmıştır. Bkz. [PII Maskeleme](#/data/pii-masking).
+Dedektörler e-posta, telefon, kredi kartı, IBAN ile Türk, Alman, Fransız ve ABD ulusal kimlik biçimlerini kapsar; her eşleşme `[REDACTED]` olur. **İsimler, adresler, doğum tarihleri, sağlık verisi ve diğer serbest metin tespit edilmez**; desenler sıradan düzyazıyı maskelemek yerine sınırda bir eşleşmeyi kaçırmaya ayarlıdır. Maskeleme JSONL'daki kişisel veriyi azaltır; tanımlanabilir özneleri ondan kaldırmaz. Bkz. [PII Maskeleme](#/data/pii-masking).
 
 ### Hesap verebilirlik (Md. 5(2))
 
-Her audit aşağıdakileri belgeleyen `data_audit_report.json` üretir:
+Her `forgelm audit` çalıştırması `data_audit_report.json` yazar. İçeriği:
 
-- Tespit edilen PII kategorileri ve sayıları (maskelemeden önce).
-- Kaynak atfı (her satırın hangi dokümandan geldiği).
-- Kalite ve dil dağılımı.
-- Tamper-evidence için SHA-256 manifest.
+- Denetlediğiniz veri için tespit edilen PII ve gizli bilgi kategorileri ve sayıları. Bir maskelemenin neyi yakalaması gerektiğini görmek için maskelenmemiş kaynağı, neyin sızdığını görmek için maskelenmiş çıktıyı denetleyin.
+- Near-duplicate, kalite ve split-arası örtüşme özetleri ile isteğe bağlı bir Croissant kartı.
+- Audit'in kendi üst verisi: ne zaman çalıştığı, ona verilen yol ve girdi.
 
-Bu raporlar Annex IV paketine akar. Regülatör "eğitim setinizde hangi kişisel veriler vardı?" diye sorduğunda yapılandırılmış cevabınız olur.
+Rapor satırları kaynak dokümanlara atfetmez, hash manifest taşımaz ve düz bir JSON dosyasıdır: kendisi audit log'a yazılmaz. Silme ve erişim talepleri (`forgelm purge`, `forgelm reverse-pii`) ise `forgelm verify-audit`'in denetlediği hash-zincirli log'a yazılır. Rapor `training.output_dir` içindeyse Annex IV paketinin Madde 10 veri yönetişimi bölümünü besler; böylece regülatörün "eğitim setinizde hangi kişisel veriler vardı?" sorusunun yapılandırılmış bir cevabı olur: dedektörlerin bulduğu, hiç olmadığına dair bir beyan değil.
 
 ### Saklama sınırlaması (Md. 5(1)(e))
 
-ForgeLM ham kullanıcı verisini saklamaz — sizin kontrol ettiğiniz JSONL artifact'lar üretir. Otomatik saklama uygulanması için:
+ForgeLM ham kullanıcı verisini saklamaz — sizin kontrol ettiğiniz JSONL artifact'lar üretir. Saklama ufukları tanımlanabilir ve **raporlanır, zorlanmaz**:
 
 ```yaml
 retention:
-  raw_documents_retention_days: 90      # N gün sonra orijinalleri otomatik sil
+  raw_documents_retention_days: 90
   ephemeral_artefact_retention_days: 365
 ```
 
-(Asıl silme depolama katmanınızın sorumluluğu; ForgeLM sadece amaçlanan TTL'yi audit log'a kaydeder.)
+`forgelm purge --check-policy --config config.yaml` ufku aşmış artefaktları listeler ve her zaman 0 ile çıkar. Hiçbir şey otomatik silinmez ve bunun için audit log'a bir şey yazılmaz; süresi geçeni silmek depolama katmanınızın işidir. (`retention.enforce` ayrılmıştır: henüz hiçbir komut onu kullanmaz.)
 
 ## Veri sahibi talepleri
 
@@ -68,21 +63,20 @@ En sık talep tipleri ve ForgeLM nasıl yardım eder:
 
 "Hakkımda hangi kişisel verileri tutuyorsunuz?"
 
-Eğitim verinizde reverse-PII koşturun:
+Kişinin tanımlayıcısını eğitim verinizde arayın:
 
 ```shell
 $ forgelm reverse-pii --query "ali@example.com" data/*.jsonl
-Maskelenmiş veride eşleşme bulunamadı.
 ```
 
-PII ingest'te maskelendiği için modelden belirli birinin verisi geri çıkarılamaz. Audit raporu bunu teyit eder.
+Tarama, tanımlayıcının geçtiği satırları raporlar; sıfır eşleşme geçerli bir cevaptır. Yalnızca işaret ettiğiniz dosyalarda gerçekten bulunanı bulur. Maskeleme yalnızca tespit ettiği tanımlayıcı biçimlerini kaldırır; bir isim ya da tespit edilemeyen bir varyant kalabilir ve maskelenmiş JSONL taraması ham kaynak dokümanları kapsamaz: onları ayrıca arayın. ForgeLM eğitilmiş bir modelin neyi hatırladığını söyleyemez.
 
 ### Silme hakkı (Md. 17)
 
 "Verilerimi silin."
 
 Bir kişinin verisi eğitim setinizdeydi:
-1. Maskelenmiş JSONL kimlik bilgilerini içermiyor — zaten minimize edilmiş.
+1. Satırları `forgelm reverse-pii` ile bulun, sonra `forgelm purge --row-id <id> --corpus <dosya>` ile kaldırın; her silme audit log'a yazılır.
 2. Ham kaynak dokümanlar hâlâ içerebilir — ham deponuzdan düşürün ve gerekirse yeniden ingest edin.
 3. Model bazı detayları ezberlemiş olabilir — aşağıdaki "model-seviyesi silme"ye bakın.
 
@@ -90,8 +84,8 @@ Bir kişinin verisi eğitim setinizdeydi:
 
 LLM'ler eğitimden nadir string'leri ezberleyebilir. PII maskelemeyle bile deploy edilmiş bir modelden tüm izleri kaldırmak zordur. ForgeLM'in savunmaları:
 
-- **Ezberi önle:** PII maskeleme, deduplikasyon (ezberlenen veri genelde tekrarlanan veridir).
-- **Ezberi tespit et:** Audit aşaması bilinen PII pattern'leriyle örtüşen satırları flagler.
+- **Girenleri azalt:** PII maskeleme ve deduplikasyon (ezberlenen veri genelde tekrarlanan veridir).
+- **Ezber ölçülmez:** ForgeLM, eğitilmiş bir modelin belirli bir string'i üretip üretmediğini test etmez.
 - **Son çare yeniden eğitim:** Maskelemeye rağmen belirli bir öznenin verisi sızdıysa, o kaynak olmadan yeniden eğitin.
 
 Sıfır-tolerans senaryolarda (sağlık, hukuk) PII maskelemeyi eğitimden önce manuel inceleme ile birleştirin.
@@ -122,7 +116,7 @@ ForgeLM'in GDPR hukuki meta verisi (hukuki dayanak, veri sorumlusu vb.) için YA
 :::
 
 :::warn
-**Uluslararası transferler.** Eğitim veriniz yargı sınırlarını aşıyorsa (Türk verisi AB'de eğitiliyor, AB verisi ABD'de eğitiliyor), ek koruma önlemleri uygulanır. `international_transfers.enabled: true` ayarlayın ve koruma önlemlerini belgeleyin.
+**Uluslararası transferler.** Eğitim veriniz yargı sınırlarını aşıyorsa (Türk verisi AB'de eğitiliyor, AB verisi ABD'de eğitiliyor), ek koruma önlemleri uygulanır. ForgeLM'in transferler için bir ayarı yoktur; koruma önlemlerini DPIA'nıza kaydedin.
 :::
 
 :::tip

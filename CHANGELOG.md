@@ -73,6 +73,13 @@ All notable changes to ForgeLM are documented here.
   mappings, the Statement of Applicability, the change-management SOP, the deployer guide and the user manual now
   say what the gate records and that keeping the two people different is the deployer's control. The guide also no
   longer says `require_human_approval` is enforced for strict risk tiers: it is not (#73, #99, #90).
+- Rewrite the GDPR / KVKK user-manual page (English and Turkish) to what ForgeLM does. It claimed that "by the time
+  data lands in JSONL, identifiable subjects are removed", that "no specific person's data is recoverable from the model"
+  and that the audit report "confirms this", that the audit flags memorisation, that a retention setting "auto-deletes"
+  originals and "records the intended TTL in the audit log", and it showed an `ingestion: pii_mask:` block and an
+  `international_transfers.enabled` setting that do not exist. Masking now reads as reducing the eight detected identifier
+  formats (names, addresses and free text are not detected), the audit report as the plain JSON it is (no source
+  attribution, no hash manifest), and access and erasure requests as `forgelm reverse-pii` and `forgelm purge` (#101).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).
