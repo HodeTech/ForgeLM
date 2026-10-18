@@ -15,6 +15,11 @@ All notable changes to ForgeLM are documented here.
 
 ### Added
 
+- `forgelm export` now writes `<output>.sha256` next to the GGUF (`sha256sum` format), the file `forgelm verify-gguf`
+  and the documentation always expected. It had never been written, so a sidecar-based check had nothing to compare.
+  A sidecar that cannot be written fails the export (exit 2) instead of leaving a GGUF without it; for a K-quant
+  request it belongs to the intermediate `*.f16.gguf`. A `model_integrity.json` that cannot be updated is now logged
+  as a warning, not at debug level (#84).
 - `CITATION.cff`, so the repository can be cited through GitHub's "Cite this
   repository" panel (#964).
 - A contributor can claim a `good first issue` by commenting `/assign` and give it
@@ -74,6 +79,12 @@ All notable changes to ForgeLM are documented here.
   `CONTRIBUTING.md`, `CLAUDE.md` and `AGENTS.md` that the front door is chosen with labels and
   views, never by closing issues.
 
+### Removed
+
+- Delete the stale `requirements.txt`, `requirements-eval.txt` and `requirements-linux.txt`. Nothing
+  referenced them, their floors were far below `pyproject.toml`'s, and Dependabot would have opened weekly
+  pull requests against them; installation goes through the `pyproject.toml` extras (#968).
+
 ### Fixed
 
 - `training.rope_scaling` works on transformers 5 again. The setting was passed to `from_pretrained(rope_scaling=...)`,
@@ -106,6 +117,23 @@ All notable changes to ForgeLM are documented here.
   erasure guide, the user manual and the risk-treatment plan now state the real condition: a `final_model/` directly under
   `--output-dir`, not "any run that consumed the corpus" (English and Turkish). Reading `training.output_dir` from
   `--config` is still open (#102).
+- Correct the GGUF pages (English and Turkish): the export example shows the real output, K-quants are described as
+  the two-step operation they are, the invented "manifest" and `verify-gguf` output (vocabulary and tokenizer checks that
+  do not exist) are replaced by the real ones, a clean `verify-gguf` exit is said to prove only what ran, and the sidecar
+  is described as corruption detection, not tamper evidence (#83, #84, #85).
+- Stop saying that `pip install 'forgelm[export]'` brings the GGUF converter. `forgelm export` runs llama.cpp's `convert_hf_to_gguf.py`;
+  no `llama-cpp-python` wheel puts it where ForgeLM searches (0.2.90 installs it under `bin/`, 0.3.x does not ship it), so a plain
+  install ends with `convert_hf_to_gguf.py not found inside the llama-cpp-python installation` (exit 2) unless `FORGELM_GGUF_CONVERTER`
+  points at the script in a llama.cpp checkout. The installation page, the CLI reference, the usage and quickstart guides, the
+  post-training notebook, the `export` extra's comment in `pyproject.toml`, the module docstring and the error message (which advised
+  `pip install 'llama-cpp-python>=0.2.90'`) now say so. Searching the locations real wheels use, or bundling the script, is a code
+  change and stays open (#113).
+- Correct claims in the roadmap and strategy documents: `forgelm chat` does not screen for safety and reads no YAML
+  config (#91), the live risk rows no longer name a past "August 2026" deadline (#75), and
+  `docs/product_strategy.md` (English and Turkish) names the real `evaluation.auto_revert` field instead of a
+  non-existent `auto_revert_on_safety_failure`.
+- Correct the `medical-qa-tr` row of the YAML templates reference (English and Turkish): the template enables no safety
+  evaluation and no `risk_assessment`, so it no longer says it ships with both pre-wired (#97).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).

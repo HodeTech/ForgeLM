@@ -1,7 +1,7 @@
 """
 GGUF export for post-training model distribution.
 
-Wraps llama-cpp-python's ``convert_hf_to_gguf.py`` conversion script to
+Runs llama.cpp's ``convert_hf_to_gguf.py`` conversion script to
 produce quantised GGUF files that can be served by Ollama, llama.cpp, and
 compatible runtimes.
 
@@ -17,6 +17,7 @@ Usage (CLI):
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import os
@@ -30,7 +31,7 @@ logger = logging.getLogger("forgelm.export")
 SUPPORTED_FORMATS = frozenset({"gguf"})
 SUPPORTED_QUANTS = frozenset({"q2_k", "q3_k_m", "q4_k_m", "q5_k_m", "q8_0", "f16"})
 
-# Name of the HF→GGUF conversion script bundled with llama-cpp-python.
+# Name of the HF→GGUF conversion script (it lives in a llama.cpp checkout; no released llama-cpp-python wheel installs it where it is searched).
 _CONVERTER_SCRIPT = "convert_hf_to_gguf.py"
 
 # Quant types supported directly by convert_hf_to_gguf.py via --outtype.
@@ -87,11 +88,13 @@ class ExportResult:
 
 
 def _find_converter_script() -> str:
-    """Locate llama-cpp-python's HF → GGUF conversion script.
+    """Locate the HF → GGUF conversion script.
 
-    Checks the ``FORGELM_GGUF_CONVERTER`` environment variable first, allowing
-    users to pin a specific converter script (useful when the bundled version is
-    outdated or when using a standalone llama.cpp build).
+    Checks the ``FORGELM_GGUF_CONVERTER`` environment variable first.  In practice
+    that is the supported route: the script is not part of the llama-cpp-python
+    wheels (0.2.90 puts it in ``bin/``, 0.3.x does not ship it), so the
+    ``llama_cpp`` directories searched below are only a fallback for a layout that
+    no current wheel has.  Point the variable at the copy inside a llama.cpp checkout.
 
     Raises:
         ImportError: When llama-cpp-python is not installed.
@@ -141,9 +144,9 @@ def _find_converter_script() -> str:
             return path
 
     raise FileNotFoundError(
-        f"{_CONVERTER_SCRIPT} not found inside the llama-cpp-python installation.  "
-        "Try: pip install 'llama-cpp-python>=0.2.90'  "
-        f"Or set FORGELM_GGUF_CONVERTER=/path/to/{_CONVERTER_SCRIPT} to use a custom script."
+        f"{_CONVERTER_SCRIPT} not found inside the llama-cpp-python installation (no released wheel installs it "
+        "where ForgeLM looks).  "
+        f"Set FORGELM_GGUF_CONVERTER=/path/to/llama.cpp/{_CONVERTER_SCRIPT}, the script inside a llama.cpp checkout."
     )
 
 
@@ -189,6 +192,10 @@ def _merge_adapter(model_path: str, adapter_path: str, merged_dir: str) -> None:
 # SHA-256 helper
 # ---------------------------------------------------------------------------
 
+# Suffix of the digest file written next to the GGUF.  ``forgelm verify-gguf`` looks for
+# ``<path>.sha256`` (``forgelm.verify._gguf._SIDECAR_SUFFIX``); tests/test_export.py keeps the two equal.
+GGUF_SIDECAR_SUFFIX = ".sha256"
+
 
 def _sha256_file(path: str) -> str:
     """Compute the SHA-256 digest of a file."""
@@ -197,6 +204,29 @@ def _sha256_file(path: str) -> str:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _write_sha256_sidecar(gguf_path: str, digest: str) -> str:
+    """Write ``<gguf_path>.sha256`` in ``sha256sum`` binary-mode format (``<hex> *<name>``).
+
+    The file is written next to the GGUF through a temporary name and renamed into place, so a reader never
+    sees a half-written digest.  ``sha256sum -c`` accepts the result, and so does ``forgelm verify-gguf``.
+    The sidecar detects corruption and accidental change; it is not tamper evidence, because whoever can
+    replace the GGUF can replace the sidecar next to it.  Returns the sidecar path.
+    """
+    sidecar_path = gguf_path + GGUF_SIDECAR_SUFFIX
+    temporary_path = sidecar_path + ".tmp"
+    try:
+        with open(temporary_path, "w", encoding="utf-8") as fh:
+            fh.write(f"{digest} *{os.path.basename(gguf_path)}\n")
+        os.replace(temporary_path, sidecar_path)
+    except OSError:
+        with contextlib.suppress(
+            OSError
+        ):  # best-effort tidy-up of our own temporary file; the original error is re-raised
+            os.remove(temporary_path)
+        raise
+    return sidecar_path
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +271,7 @@ def _update_integrity_manifest(model_dir: str, export_result: ExportResult) -> N
         # ``json.JSONDecodeError`` since it subclasses ``ValueError``).
         # Updating the manifest is non-fatal: the artefact itself was already
         # exported successfully and its on-disk SHA-256 is recoverable.
-        logger.debug("Could not update model_integrity.json: %s", e)
+        logger.warning("Could not update model_integrity.json: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +437,9 @@ def export_model(
             converter can exceed one hour; raise this for large models.
 
     Returns:
-        :class:`ExportResult` with SHA-256, file size, and output path.
+        :class:`ExportResult` with SHA-256, file size, and output path.  The digest is also written next to the
+        GGUF as ``<output>.sha256`` (``sha256sum`` format), which ``forgelm verify-gguf`` compares against.  For
+        a K-quant request the file written is the intermediate f16 GGUF and the sidecar belongs to it.
     """
     fmt = output_format.lower()
     quant = quant.lower()
@@ -465,6 +497,20 @@ def export_model(
     # Compute artifact stats — reflect the file actually written, not the requested quant
     digest = _sha256_file(actual_output_path)
     size_bytes = os.path.getsize(actual_output_path)
+
+    try:
+        _write_sha256_sidecar(actual_output_path, digest)
+    except OSError as e:
+        return ExportResult(
+            success=False,
+            output_path=actual_output_path,
+            format=fmt,
+            quant=actual_quant,
+            sha256=digest,
+            size_bytes=size_bytes,
+            error=f"GGUF written to {actual_output_path} but its SHA-256 sidecar could not be written: {e}",
+            error_kind="runtime",
+        )
 
     # Structured substitution signal: a K-quant request is served as an
     # intermediate f16 GGUF and needs a manual llama-quantize follow-up.  Expose
