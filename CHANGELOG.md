@@ -37,7 +37,7 @@ All notable changes to ForgeLM are documented here.
   `config.json` overrides `trust_remote_code: false`, fixed in 5.5.0) and CVE-2026-9856 (a `chat_template` name in
   `tokenizer_config.json` is used unsanitised as a file name by `save_pretrained`, so `final_model/` saves, GGUF export
   and merges could write outside the output directory; fixed in 5.10.0, which PyPI yanked, hence 5.10.1). The nightly
-  minimum-versions job pins the new floor, and `tests/test_dependency_floor.py` keeps it from drifting from
+  minimum-versions job pins the new floor, and `tests/test_packaging.py` keeps it from drifting from
   `pyproject.toml` and checks that a traversal `chat_template` name cannot escape on save. Environments pinned to
   transformers 5.3 to 5.9 must upgrade (#109).
 - Record monitoring default provenance in `defaulted_fields` and mark literal URL projection with

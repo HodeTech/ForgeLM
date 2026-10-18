@@ -242,7 +242,7 @@ jobs:
           # them, was yanked); it requires huggingface_hub>=1.5 /
           # tokenizers>=0.22, and ForgeLM itself needs torch>=2.4; trl 1.0.0
           # pulls the accelerate>=1.4 and datasets>=4.7 floor. Keep 1:1 with the
-          # pyproject [project].dependencies minimums (tests/test_dependency_floor.py
+          # pyproject [project].dependencies minimums (tests/test_packaging.py
           # compares them).
           pip install \
             "torch==2.4.0" \
