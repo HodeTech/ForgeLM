@@ -35,7 +35,7 @@ JSONL eğitim corpus'undan `id` (veya `row_id`) field'ı ile tanımlanan tek bir
 | `--row-id ID` | evet | Silinecek identifier. Audit emisyonundan önce `forgelm.cli.subcommands._purge._hash_target_id` üzerinden hash'lenir. |
 | `--corpus PATH` | evet | Tek bir JSONL dosyası. Dizin modu reddedilir — operatörler kendi script'lerinde döngü kurar. |
 | `--row-matches {one,all}` | hayır (varsayılan `one`) | `one` >=2 eşleşmede reddeder; `all` her eşleşmeyi siler (operatör niyeti onaylar). |
-| `--output-dir DIR` | hayır | `--corpus`'un parent'ına default'lar. Per-output-dir salt `<output_dir>/.forgelm_audit_salt`'ta `target_id` hash'leme için okunur. Implicit fallback, `forgelm reverse-pii` ile cross-tool korelasyon için operatörün `--output-dir`'i sabitleyebilmesi adına çözülen dizini adlandıran bir WARNING yayar. |
+| `--output-dir DIR` | hayır | `--corpus`'un parent'ına default'lar. Per-output-dir salt `<output_dir>/.forgelm_audit_salt`'ta `target_id` hash'leme için okunur. Implicit fallback, operatörün `--output-dir`'i eğitim çıktı dizinine ve `forgelm reverse-pii` ile cross-tool korelasyon için sabitleyebilmesi adına çözülen dizini ve memorisation kontrolünün arayacağı `final_model/`'i adlandıran bir WARNING yayar. |
 | `--justification TEXT` | hayır | Operatör-sağlanan, her erasure event'ına yazılan sebep. Dahili ticket id'nizi referans verin; subject identifier yapıştırmayın. |
 | `--dry-run` | hayır | Silmeyi önizler + audit zincirini (`dry_run=true` ile) yayar; disk'e dokunmaz. |
 
@@ -80,7 +80,7 @@ Altı event de [`audit_event_catalog.md`](audit_event_catalog-tr.md)'deki ortak 
 | `data.erasure_requested` | Herhangi bir `--row-id` / `--run-id` çağrısının ilk adımı, herhangi bir silmeden ÖNCE. `--check-policy` salt-okunurdur ve event yaymaz. | `target_kind` ∈ `{row, staging, artefacts}`, `target_id` (row mode'da hash'li), `salt_source` (row mode), `corpus_path` (row), `output_dir` (run), `justification`, `dry_run` |
 | `data.erasure_completed` | Başarılı silme tamamlandı. | Tüm `requested` field'ları + `bytes_freed`, `files_modified`, `pre_erasure_line_number` (row mode), `match_count` (row mode) |
 | `data.erasure_failed` | Disk operasyonu raise etti VEYA eşleşen satır/koşum yok VEYA çoklu-satır policy belirsizliği reddetti. | Tüm `requested` field'ları + `error_class`, `error_message` |
-| `data.erasure_warning_memorisation` | Row erasure × bu corpus'u tüketen herhangi bir koşum için `final_model/` mevcut. | Tüm `completed` field'ları + `affected_run_ids` |
+| `data.erasure_warning_memorisation` | Row erasure × `--output-dir` altında doğrudan bir `final_model/` dizini mevcut (birebir ad; `--output-dir` varsayılan olarak corpus'un dizinidir, bu yüzden eğitim çıktı dizininizi verin). ForgeLM corpus'u hangi koşumların tükettiğini belirlemez. | Tüm `completed` field'ları + `affected_run_ids` |
 | `data.erasure_warning_synthetic_data_present` | Row erasure × `output_dir`'de `synthetic_data*.jsonl` mevcut. | Tüm `completed` field'ları + `synthetic_files` |
 | `data.erasure_warning_external_copies` | Yüklü config boş-olmayan `webhook` block'u içeriyor; downstream tüketiciler bildirim almış olabilir. | Tüm `completed` field'ları + `webhook_targets` (redact'li URL'ler) |
 

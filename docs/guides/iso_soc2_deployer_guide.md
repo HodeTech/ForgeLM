@@ -25,15 +25,20 @@ direct ForgeLM evidence:
    `forgelm verify-audit` validates the chain end-to-end.
 2. **Change control** — Article 14 staging gate (`forgelm approve` /
    `reject`) + `human_approval.required/granted/rejected` audit
-   events + `config_hash` (per-run manifest sidecar field) stamped per run. Every
-   model promotion is dual-controlled and forensically attributed.
+   events + `config_hash` (per-run manifest sidecar field) stamped per run. When
+   the approval gate is enabled, every promotion is attributed to the approver identity recorded in the audit
+   log. ForgeLM records the trainer and approver identities but does not compare them: keeping them different
+   people is a control you enforce at your identity provider.
 3. **Data lineage** — `data_provenance.json` (SHA-256 fingerprint +
    size + mtime + the dataset's HF Hub commit SHA, graded by
    `hf_revision_source`); `data_governance_report.json`
    (collection_method, annotation_process, known_biases,
    personal_data_included, dpia_completed).
 4. **Supply chain** — CycloneDX 1.5 SBOM emitted per release tag for
-   every (OS × Python-version) cell of the publish matrix. Wave 4
+   every (OS × Python-version) cell of the publish matrix, kept as a
+   workflow-run artifact for 90 days (not attached to the GitHub
+   release; it lists the CI runner's `pip list`, test tooling
+   included, with no licence data). Wave 4
    adds `pip-audit` nightly + `bandit` CI for static + dynamic
    security scanning.
 
@@ -63,7 +68,9 @@ Twelve items to land **before** the auditor asks.
 
 - [ ] **`evaluation.require_human_approval: true`** for every
       `risk_classification` ∈ `{high-risk, unacceptable}` run.
-      F-compliance-110 raises `ConfigError` if you forget.
+      ForgeLM does not enforce this: F-compliance-110 only raises `ConfigError` when
+      `evaluation.safety.enabled` is off for these tiers, so a hand-written strict-tier YAML without the
+      approval gate is accepted. The CLI wizard (`forgelm --wizard`) switches the gate on for these tiers.
 - [ ] **Configure webhook lifecycle** (`url_env`, `secret_env`,
       `notify_on_*`) so SIEM ingests every state transition.
 - [ ] **Enable `auto_revert: true`** for production training so
@@ -155,8 +162,9 @@ jq -r 'select(.run_id == "X" and (.event == "training.started" or .event == "hum
     ./outputs/audit_log.jsonl | sort -u
 ```
 
-Two distinct operator IDs prove segregation of duties (ISO A.5.3,
-SOC 2 CC1.5).
+Compare the operator on `training.started` with the approver on `human_approval.granted`. Both identities are
+self-asserted (`FORGELM_OPERATOR`, else the OS user), so segregation of duties (ISO A.5.3, SOC 2 CC1.5) holds only
+if your identity provider makes them different people.
 
 ### Q3: "Show me the data lineage"
 
@@ -198,19 +206,25 @@ corpus trained the model.
 ### Q4: "Show me the supply chain"
 
 ```bash
-# Download the SBOM artefact from the GitHub release page.
-gh release download v0.5.5 --pattern 'sbom-*'
+# Download one SBOM from the tag's publish run. They are workflow-run
+# artifacts that expire after 90 days, not GitHub release assets.
+gh run list --repo HodeTech/ForgeLM --workflow publish.yml --branch v0.11.0 --status success \
+    --json databaseId,createdAt
+gh run download <databaseId> --repo HodeTech/ForgeLM --name sbom-ubuntu-latest-py3.11
 
-# Or regenerate on demand.
+# Or describe your own environment: run this from a ForgeLM checkout in the
+# environment that trains or serves the model.
 python3 tools/generate_sbom.py > sbom.json
 
 # Diff against last release.
 diff <(jq -S . sbom-prev.json) <(jq -S . sbom.json)
 ```
 
-The CycloneDX 1.5 JSON lists every transitive dependency with its
-purl (`pkg:pypi/...`) and version. Dependency-Track ingests this
-natively for CVE correlation.
+The CycloneDX 1.5 JSON lists every installed package with its purl
+(`pkg:pypi/...`) and version; it has no dependency graph and no licence
+data. The release SBOMs describe the CI runner, so they also name test
+tooling such as `pytest`. Dependency-Track ingests the file natively for
+CVE correlation.
 
 ### Q5: "Show me the access controls — how do you prove only authorised reviewers approve models?"
 
@@ -248,9 +262,11 @@ Reference:
 
 - `docs/qms/sop_incident_response.md` §4 (Wave 4 / Faz 23 expansion)
   for the security-incident playbook.
-- The audit chain itself: `audit.classifier_load_failed` event fires
-  + `pipeline.failed` propagates + the run does NOT produce a
-  `final_model/` directory.
+- The audit chain itself: the `audit.classifier_load_failed` event fires
+  and `safety.evaluation_completed` records `evaluation_completed: false`.
+  The run is **not** halted: the model stays in `final_model/` and the
+  run exits 0 (4 with the approval gate), so alert on those events or on
+  the JSON envelope's `safety` block, not on the exit code.
 - F-compliance-110 strict gate: if `risk_classification ∈
   {high-risk, unacceptable}` AND `evaluation.safety.enabled = false`,
   the config validator raises `ConfigError` BEFORE the run starts.

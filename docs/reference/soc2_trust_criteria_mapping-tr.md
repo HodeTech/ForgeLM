@@ -26,7 +26,7 @@ kategoriler engagement-bazında scoplanır.
 | CC | Başlık | ForgeLM kanıtı |
 |---|---|---|
 | CC1.1 | Bütünlüğe bağlılık göstergesi | `roles_responsibilities.md` QMS template; AI Officer rolü |
-| CC1.2 | Yönetişim bağımsızlığı | Approval gate operator ≠ trainer |
+| CC1.2 | Yönetişim bağımsızlığı | Approval gate onaylayıcı kimliğini kaydeder, böylece eğitici ≠ onaylayıcı denetlenebilir; ForgeLM bunu zorlamaz |
 | CC1.3 | Yapı, raporlama hatları kurma | `roles_responsibilities.md` AI Officer / ML Lead / DPO tanımlar |
 | CC1.4 | Yetkinliğe bağlılık göstergesi | Yıllık EU AI Act / GDPR eğitimi (operatör politikası) |
 | CC1.5 | Hesap verebilirliği uygular | `FORGELM_OPERATOR` attribution + audit chain |
@@ -57,7 +57,7 @@ kategoriler engagement-bazında scoplanır.
 | CC7.5 | Düzeltici eylemleri tanımlar, geliştirir | `human_approval.rejected`; `sop_change_management.md` |
 | CC8.1 | Değişimleri yetkilendirir | `forgelm approve` Madde 14 gate; staging dir |
 | CC9.1 | Riskleri tanımlar, yönetir | `risk_assessment` config + safety eval; `risk_treatment_plan.md` |
-| CC9.2 | Tedarikçi + iş ortağı riskini yönetir | SBOM; `loaded` / `unverified` / `local_path` / `unresolved` olarak derecelendirilen dataset Hub commit SHA'sı; temel-model pin'i (`model.revision` → `model_lineage.base_model_revision`); lisans çıkarımı.  `model_lineage.component_revisions` altında **sabitlenen ve kaydedilen:** güvenlik sınıflandırıcısı, LLM judge, GRPO ödül modeli, sentetik teacher.  **Kapsanmayan:** merge kaynakları ve `forgelm safety-eval` (`--config` almaz) |
+| CC9.2 | Tedarikçi + iş ortağı riskini yönetir | SBOM; `loaded` / `unverified` / `local_path` / `unresolved` olarak derecelendirilen dataset Hub commit SHA'sı; temel-model pin'i (`model.revision` → `model_lineage.base_model_revision`).  `model_lineage.component_revisions` altında **sabitlenen ve kaydedilen:** güvenlik sınıflandırıcısı, LLM judge, GRPO ödül modeli, sentetik teacher.  **Kapsanmayan:** merge kaynakları ve `forgelm safety-eval` (`--config` almaz) |
 
 ## Availability (A1.x)
 

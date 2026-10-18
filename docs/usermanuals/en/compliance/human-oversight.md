@@ -5,7 +5,7 @@ description: Block model promotion until a human reviews and signs off — Artic
 
 # Human Oversight
 
-EU AI Act Article 14 requires high-risk AI systems to provide for human oversight. ForgeLM implements this as an optional config gate: when `evaluation.require_human_approval: true`, model promotion blocks until a human signs an approval.
+EU AI Act Article 14 requires high-risk AI systems to provide for human oversight. ForgeLM offers an optional pre-promotion approval gate (`evaluation.require_human_approval: true`) that blocks model promotion until a human signs an approval and records that sign-off. This supports design-time oversight documentation; it does not implement the in-use oversight measures Article 14 requires of the deployed system (monitoring, interpreting, overriding or stopping it), which remain the deployer's.
 
 ## How the gate works
 
@@ -48,12 +48,8 @@ There is **no** `compliance.human_approval` field, no `approval.*` block, no `si
 The trainer halts after eval and prints:
 
 ```text
-[2026-04-29 14:33:10] Human approval required.
-  Run ID: abc123
-  Bundle: checkpoints/run/artifacts/
-
-  To approve: forgelm approve abc123 --output-dir checkpoints/run --comment "..."
-  To reject:  forgelm reject  abc123 --output-dir checkpoints/run --comment "..."
+2026-04-29 14:33:10 [INFO] forgelm.trainer: Human approval required. Model staged at: checkpoints/run/final_model.staging.abc123
+2026-04-29 14:33:10 [INFO] forgelm.trainer: Review results in checkpoints/run/compliance/ and run `forgelm approve abc123 --output-dir checkpoints/run` to promote, or `forgelm reject abc123 --output-dir checkpoints/run` to preserve for forensic review.
 ```
 
 The reviewer runs the approval command from any machine with access to the audit-log + staging directory. ForgeLM resolves their identity from `FORGELM_OPERATOR`, HMAC-chains the decision event, and (on `approve`) renames the staging directory to the canonical `final_model/` path.

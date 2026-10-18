@@ -21,7 +21,7 @@ Fine-tuning can degrade a model's safety properties — silently. ForgeLM treats
 - **3-layer safety gate**: binary pass/fail + confidence-weighted score + per-category severity analysis covering 14 harm categories (S1-S14)
 - **Auto-revert**: if safety regression is detected against baseline, training output is automatically rejected before artifacts are written
 - **Cross-run trend tracking**: safety scores are logged per-run and trended over time to catch gradual drift
-- **`auto_revert_on_safety_failure`** is a first-class config field — teams can enforce safety gates in CI without any custom scripting
+- **`evaluation.auto_revert`** is a first-class config field — when a safety, benchmark or judge gate fails, the run can delete the trained artefacts and exit with code 3, so teams can enforce the gates in CI without any custom scripting
 
 ### 2. Compliance-Native
 

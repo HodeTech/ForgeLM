@@ -59,11 +59,11 @@ ERROR: model "meta-llama/Llama-Guard-3-8B" not in local cache.
 | Subsystem | Flag effect or required operator preparation |
 |---|---|
 | HuggingFace Hub downloads | `--offline` sets the HF offline flags; pre-cache the required artifacts. |
-| W&B / MLflow / Comet | Disable reporting or configure local-only MLflow with a file URI; `--offline` does not disable these integrations. |
+| W&B / MLflow | Set `training.report_to` to `none` (or `tensorboard`), or configure local-only MLflow with a file URI; `--offline` does not disable these integrations. |
 | OpenAI / Anthropic judges | Disable API-backed evaluation or use a local judge; `--offline` does not disable API clients. |
 | Webhooks | `--offline` does not disable configured delivery. Omit the `webhook:` block, or leave `url` / `url_env` unset, to disable it; `allow_private_destinations` permits private destinations in addition to public ones. |
 | pip install (during runtime) | Install required dependencies before disconnecting; `--offline` does not control pip. |
-| Telemetry | ForgeLM has no own telemetry service; configure external integrations separately. |
+| Telemetry | ForgeLM has no own telemetry service. The `forgelm` CLI sets `HF_HUB_DISABLE_TELEMETRY=1` (unless you set it yourself) so TRL and `huggingface_hub` send no anonymous usage ping; using ForgeLM as a library does not set it. Configure external integrations separately. |
 
 ## Local synthetic data
 

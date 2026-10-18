@@ -66,9 +66,9 @@ class TestForgeConfigDistributed:
         assert cfg.distributed.deepspeed_config == "zero3"
 
     def test_fsdp_config(self, minimal_config):
-        cfg = ForgeConfig(**minimal_config(distributed={"strategy": "fsdp", "fsdp_strategy": "hybrid_shard"}))
+        cfg = ForgeConfig(**minimal_config(distributed={"strategy": "fsdp", "fsdp_strategy": "shard_grad_op"}))
         assert cfg.distributed.strategy == "fsdp"
-        assert cfg.distributed.fsdp_strategy == "hybrid_shard"
+        assert cfg.distributed.fsdp_strategy == "shard_grad_op"
 
     def test_unsloth_distributed_raises(self, minimal_config):
         """Unsloth + distributed should raise ValueError."""
@@ -306,3 +306,113 @@ class TestDeepSpeedAvailabilityCheck:
         kwargs: dict = {}
         ForgeTrainer._apply_distributed_config(object.__new__(ForgeTrainer), kwargs, cfg.distributed)
         assert "deepspeed" not in kwargs
+
+
+# --- FSDP: strategies transformers' FSDP2 default cannot express (#104) ---
+
+
+class TestFsdp1OnlyStrategiesAreRejectedAtConfigTime:
+    """``no_shard`` and ``hybrid_shard`` used to pass ``--dry-run`` and exit 2 at trainer construction.
+
+    transformers 5.10+ runs FSDP2 by default and raises ``fsdp=hybrid_shard is only available with FSDP1`` when
+    ``TrainingArguments`` is built, so the config is refused up front (exit 1) instead of after the model is loaded.
+    """
+
+    @pytest.mark.parametrize("strategy", ["no_shard", "hybrid_shard"])
+    def test_the_schema_refuses_them(self, strategy):
+        with pytest.raises(ValidationError, match="fsdp_strategy"):
+            DistributedConfig(strategy="fsdp", fsdp_strategy=strategy)
+
+    @pytest.mark.parametrize("strategy", ["no_shard", "hybrid_shard"])
+    def test_dry_run_exits_with_a_config_error(self, tmp_path, minimal_config, strategy):
+        from unittest.mock import patch
+
+        from forgelm.cli import EXIT_CONFIG_ERROR, main
+
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(yaml.dump(minimal_config(distributed={"strategy": "fsdp", "fsdp_strategy": strategy})))
+        with patch("sys.argv", ["forgelm", "--config", str(cfg_path), "--dry-run"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == EXIT_CONFIG_ERROR
+
+    @pytest.mark.parametrize("strategy", ["full_shard", "shard_grad_op"])
+    @pytest.mark.parametrize("auto_wrap", [True, False])
+    @pytest.mark.parametrize("offload", [True, False])
+    @pytest.mark.parametrize("prefetch", ["backward_pre", "backward_post"])
+    @pytest.mark.parametrize("state_dict", ["FULL_STATE_DICT", "SHARDED_STATE_DICT"])
+    def test_every_accepted_variant_builds_training_arguments(
+        self, tmp_path, strategy, auto_wrap, offload, prefetch, state_dict
+    ):
+        """What the schema accepts must be what ``TrainingArguments`` accepts (no config that dies later)."""
+        from types import SimpleNamespace
+
+        from transformers import TrainingArguments
+
+        from forgelm.trainer import ForgeTrainer
+
+        dist_cfg = DistributedConfig(
+            strategy="fsdp",
+            fsdp_strategy=strategy,
+            fsdp_auto_wrap=auto_wrap,
+            fsdp_offload=offload,
+            fsdp_backward_prefetch=prefetch,
+            fsdp_state_dict_type=state_dict,
+        )
+        kwargs: dict = {}
+        ForgeTrainer._apply_distributed_config(SimpleNamespace(), kwargs, dist_cfg)
+        TrainingArguments(output_dir=str(tmp_path), use_cpu=True, report_to=[], **kwargs)
+
+
+class TestInertFsdpOptionsAreCalledOut:
+    """``fsdp_auto_wrap: false`` and ``fsdp_backward_prefetch: backward_post`` are ignored by FSDP2; say so (#104)."""
+
+    @staticmethod
+    def _config(**distributed):
+        from tests._helpers.factories import minimal_config
+
+        return ForgeConfig(**minimal_config(distributed={"strategy": "fsdp", **distributed}))
+
+    @staticmethod
+    def _warnings(config, caplog):
+        import logging
+
+        from forgelm.cli._config_load import _warn_inert_fsdp_options
+
+        with caplog.at_level(logging.WARNING):
+            _warn_inert_fsdp_options(config)
+        return [r.getMessage() for r in caplog.records if "distributed.fsdp_" in r.getMessage()]
+
+    def test_the_defaults_are_silent(self, caplog):
+        assert self._warnings(self._config(), caplog) == []
+
+    def test_turning_auto_wrap_off_is_called_out(self, caplog):
+        warned = self._warnings(self._config(fsdp_auto_wrap=False), caplog)
+        assert len(warned) == 1 and "fsdp_auto_wrap=false has no effect" in warned[0]
+
+    def test_backward_post_is_called_out(self, caplog):
+        warned = self._warnings(self._config(fsdp_backward_prefetch="backward_post"), caplog)
+        assert len(warned) == 1 and "backward_post" in warned[0]
+
+    def test_other_strategies_and_no_distributed_block_are_silent(self, caplog):
+        from tests._helpers.factories import minimal_config
+
+        deepspeed = ForgeConfig(**minimal_config(distributed={"strategy": "deepspeed", "fsdp_auto_wrap": False}))
+        plain = ForgeConfig(**minimal_config())
+        assert self._warnings(deepspeed, caplog) == []
+        assert self._warnings(plain, caplog) == []
+
+    def test_a_dry_run_reaches_the_warning(self, tmp_path, caplog, minimal_config):
+        import logging
+        from unittest.mock import patch
+
+        from forgelm.cli import EXIT_SUCCESS, main
+
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(yaml.dump(minimal_config(distributed={"strategy": "fsdp", "fsdp_auto_wrap": False})))
+        with caplog.at_level(logging.WARNING):
+            with patch("sys.argv", ["forgelm", "--config", str(cfg_path), "--dry-run"]):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code == EXIT_SUCCESS
+        assert any("fsdp_auto_wrap=false has no effect" in r.getMessage() for r in caplog.records)

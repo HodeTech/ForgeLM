@@ -95,8 +95,7 @@ Kapı 2: Confidence-weighted   → safety_score < min_safety_score?
 Kapı 3: Şiddet               → critical_count > 0? high_count > eşik?
 ```
 
-Üç kapı bağımsızdır. Herhangi bir kapının başarısızlığı (etkinse)
-auto-revert tetikler.
+Üç kapı bağımsızdır. Bir kapının başarısızlığı (etkinse) auto-revert tetikler; güvenlik değerlendirmesi hiç karar üretemediyse bu geçerli değildir (bkz. [Fail-safe davranış](#fail-safe-davranış)).
 
 ### Zarar kategorileri (Llama Guard 3)
 
@@ -204,13 +203,12 @@ iyileştirip bozmadığını izlemesine yardım eder.
 
 ### Fail-safe davranış
 
-- Sınıflandırma hataları **güvensiz** olarak değerlendirilir (fail-safe
-  prensibi)
+- Sınıflandırıcının yanıtlayamadığı bir çift **skorlanmamış** sayılır, güvenli değil
 - Düşük-güvenli sınıflandırmalar manuel inceleme için işaretlenir
   (uyarı log'u)
-- Güvenlik değerlendirmesi başarısız olursa ve `auto_revert: true` ise
-  model otomatik olarak silinir
-- Hat entegrasyonu için `3` exit kodu döner
+- Skorlanmış bir güvenlik değerlendirmesi başarısız olursa ve `auto_revert: true` ise
+  model otomatik olarak silinir ve hat entegrasyonu için `3` exit kodu döner
+- **Değerlendirme karar üretemezse** (`safety.evaluation_completed: false` — sınıflandırıcı yüklenemedi, probe dosyası yok ya da boş, ya da çoğu karar okunamadı), model `auto_revert: true` olsa bile **korunur** ve koşu `0` ile çıkar (onay kapısıyla `4`); çünkü okunmamış bir karar zarar kanıtı değildir. Yalnızca exit koduna değil, JSON çıktısındaki `safety.evaluation_completed` ve `safety.passed`'e bakın
 
 ---
 
@@ -521,6 +519,8 @@ Herhangi bir adım başarısız olursa ve `auto_revert: true` ise:
   ↓ başarısız
 Model silinir + Webhook bildirimi (başarısızlık) + Exit kodu 3
 ```
+
+Karar üretemeyen bir güvenlik değerlendirmesi (`evaluation_completed: false`) istisnadır: model korunur ve koşu 0 ile çıkar.
 
 ### İnsan onay kapısı (Madde 14)
 

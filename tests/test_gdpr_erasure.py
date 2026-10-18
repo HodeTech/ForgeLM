@@ -152,6 +152,56 @@ class TestRowErasure:
 # ---------------------------------------------------------------------------
 
 
+class TestImplicitOutputDirWarning:
+    """`--output-dir` defaults to the corpus directory; the user is told, because the memorisation check looks for
+    `<output_dir>/final_model/` and a training run rarely writes its model next to the corpus (#102)."""
+
+    def test_the_implicit_directory_is_named_in_a_warning(self, tmp_path: Path, caplog) -> None:
+        import logging
+
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        corpus = tmp_path / "data" / "train.jsonl"
+        corpus.parent.mkdir()
+        _seed_corpus(corpus, [{"id": "row-A", "text": "x"}])
+        args = _build_args(row_id="row-A", corpus=str(corpus), output_dir=None)
+        with caplog.at_level(logging.WARNING, logger="forgelm"):
+            with pytest.raises(SystemExit) as ei:
+                _run_purge_cmd(args, output_format="json")
+        assert ei.value.code == 0
+        warned = [r.getMessage() for r in caplog.records if "--output-dir not given" in r.getMessage()]
+        assert len(warned) == 1
+        assert str(corpus.parent) in warned[0] and os.path.join(str(corpus.parent), "final_model") in warned[0]
+
+    def test_an_explicit_output_dir_is_silent(self, tmp_path: Path, caplog) -> None:
+        import logging
+
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "row-A", "text": "x"}])
+        args = _build_args(row_id="row-A", corpus=str(corpus), output_dir=str(tmp_path))
+        with caplog.at_level(logging.WARNING, logger="forgelm"):
+            with pytest.raises(SystemExit):
+                _run_purge_cmd(args, output_format="json")
+        assert not [r for r in caplog.records if "--output-dir not given" in r.getMessage()]
+
+    def test_no_memorisation_event_without_a_final_model_in_the_resolved_directory(self, tmp_path: Path) -> None:
+        # The default directory is the corpus's; a model written elsewhere is invisible to the check. The warning
+        # above is what tells the operator.
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        corpus = tmp_path / "data" / "train.jsonl"
+        corpus.parent.mkdir()
+        _seed_corpus(corpus, [{"id": "row-A", "text": "x"}])
+        (tmp_path / "training_out" / "final_model").mkdir(parents=True)
+        args = _build_args(row_id="row-A", corpus=str(corpus), output_dir=None)
+        with pytest.raises(SystemExit):
+            _run_purge_cmd(args, output_format="json")
+        events = _read_audit_events(corpus.parent / "audit_log.jsonl")
+        assert "data.erasure_warning_memorisation" not in [e["event"] for e in events]
+
+
 class TestSaltPersistence:
     def test_salt_file_created_on_first_use_with_mode_0600(self, tmp_path: Path) -> None:
         from forgelm.cli.subcommands._purge import _resolve_salt

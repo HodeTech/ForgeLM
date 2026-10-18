@@ -14,16 +14,16 @@ ISO / SOC 2 denetçisinin en çok önem verdiği dört sütun, doğrudan ForgeLM
 1. **Denetim izi** — eğitim çalışması başına `audit_log.jsonl`, HMAC + SHA-256 hash chain + genesis manifest sidecar ile append-only. `forgelm verify-audit` zinciri uçtan uca doğrular.
 2. **Değişiklik kontrolü** — Article 14 staging gate'i (`forgelm approve` / `reject`) + `human_approval.required/granted/rejected` audit olayları + run başına damgalanmış `config_hash` (per-run manifest sidecar field).
 3. **Veri lineage** — `data_provenance.json` (SHA-256 fingerprint + size + mtime, ayrıca **`hf_revision_source` ile derecelendirilmiş** dataset HF Hub commit SHA'sı) + `data_governance_report.json` (collection_method, annotation_process, known_biases, personal_data_included, dpia_completed). Dereceyi SHA'dan önce okuyun: modeli eğiten korpusun kanıtı yalnızca `hf_revision_source: loaded`'dır.
-4. **Tedarik zinciri** — sürüm başına yayınlanan CycloneDX 1.5 SBOM, gecelik `pip-audit`, statik + dinamik güvenlik tarama için CI'da `bandit`.
+4. **Tedarik zinciri** — sürüm başına üretilen CycloneDX 1.5 SBOM (90 gün saklanan bir workflow-run artifact'ı, GitHub release asset'i değil), gecelik `pip-audit`, statik + dinamik güvenlik tarama için CI'da `bandit`.
 
 ## Sekiz denetim katı sorusu
 
 Derin rehber her birini tam `jq` / CLI komutu + döndürdüğü artefakt ile yanıtlar:
 
 1. "Son 90 gündeki her model promotion için audit trail'i göster" → `forgelm verify-audit` + `jq 'select(.event == "human_approval.granted")'`.
-2. "Bana change-control kanıtını göster — bu modeli kim onayladı?" → `training.started` + `human_approval.granted` olaylarını çapraz referans alın; iki farklı operator ID, görev ayrılığını (segregation of duties) kanıtlar (ISO A.5.3, SOC 2 CC1.5).
+2. "Bana change-control kanıtını göster — bu modeli kim onayladı?" → `training.started` + `human_approval.granted` olaylarını çapraz referans alın; iki kimliği karşılaştırın; ikisi de kendi beyanıdır (`FORGELM_OPERATOR`, yoksa OS kullanıcısı), dolayısıyla görev ayrılığı (segregation of duties; ISO A.5.3, SOC 2 CC1.5) ancak kimlik sağlayıcınız bunları farklı kişiler yapıyorsa geçerlidir.
 3. "Veri lineage'ını göster" → `data_provenance.json`; `sha256` + `hf_revision` corpus'u pinler — ancak yalnızca `hf_revision_source` `loaded` olduğunda. `unverified`, SHA'nın paket yazılırken yapılan ve yüklemeyle hiçbir bağı olmayan bir Hub sorgusu olduğu anlamına gelir; `unresolved` ise hiçbir SHA alınmadığı ve hiçbir iddiada bulunulmadığı anlamına gelir.
-4. "Tedarik zincirini göster" → `gh release download "$(gh release view --json tagName -q .tagName)" --pattern 'sbom-*'`; CycloneDX 1.5 JSON.
+4. "Tedarik zincirini göster" → `gh run list --repo HodeTech/ForgeLM --workflow publish.yml --branch v<X.Y.Z> --status success`, ardından 90 gün içinde `gh run download <id> --repo HodeTech/ForgeLM --pattern 'sbom-*'`; CycloneDX 1.5 JSON (CI runner'ının paket listesi, test araçları dahil, lisans verisi yok).
 5. "Erişim kontrollerini göster" → IdP audit log + `FORGELM_OPERATOR` çapraz referansı.
 6. "Şifreleme duruşunu göster" → operatör-tarafı substrate (KMS audit log + `data_governance_report.json`).
 7. "Olay müdahalesini göster" → `audit.classifier_load_failed` + F-compliance-110 strict gate.

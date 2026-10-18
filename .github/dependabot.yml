@@ -5,23 +5,19 @@
 # `tools/check_pip_audit.py` and the nightly CVE job catch known advisories, and
 # these pull requests make a fix reachable.
 #
-# `versioning-strategy: widen` matters here. ForgeLM declares bounded ranges
-# (`>=floor,<next-major`) with no lockfile and no pins, so Dependabot's default
-# `increase` strategy would try to raise a floor the ceiling already covers — a
-# no-op — instead of admitting a new major. `widen` keeps the declared floor and
-# raises the ceiling, which is the change the ranges actually need.
+# No `versioning-strategy` is set for `pip`. The `pip` ecosystem accepts only `auto`,
+# `increase`, `increase-if-necessary` and `lockfile-only`; a previous `widen` is not
+# among them, GitHub rejected the whole file ("did not match one of the following
+# values"), and while it did not parse Dependabot opened nothing. ForgeLM declares
+# bounded ranges (`>=floor,<next-major`) with no lockfile, so the default (`auto`) may
+# raise a floor the ceiling already covers instead of admitting a new major; look at the
+# first pull requests and tighten this then.
 #
 # `ruff`, `mypy` and `bandit` are ignored on purpose. They are blocking CI gates
 # and `tests/test_packaging.py` requires their `[dev]` range to equal the one
 # `ci.yml`'s lint job installs. Dependabot edits only `pyproject.toml`, so a bump
 # would fail that test the moment it arrived. Those three are raised deliberately,
 # in one commit, with the CI pin moved in step.
-#
-# Note: `requirements.txt`, `requirements-eval.txt` and `requirements-linux.txt`
-# are stale and referenced by nothing — the Dockerfile, CI and the tests all use
-# `pyproject.toml` extras. Dependabot will still raise their floors; those pull
-# requests should be closed, and the files removed, when the tracked cleanup
-# lands.
 
 version: 2
 updates:
@@ -31,7 +27,6 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
-    versioning-strategy: "widen"
     labels:
       - "dependencies"
       - "area: packaging-ci"

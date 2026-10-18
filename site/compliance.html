@@ -174,14 +174,14 @@
       <article class="article-card">
         <span class="article-num">Article 14</span>
         <h3 data-i18n="compliance.art14.title">Human oversight</h3>
-        <p data-i18n-html="compliance.art14.body">Optional <code>evaluation.require_human_approval: true</code> moves the trained checkpoint into a staging directory; <code>forgelm approve</code> / <code>reject</code> + <code>forgelm approvals</code> drive the dual-controlled sign-off, all stamped into the audit log.</p>
+        <p data-i18n-html="compliance.art14.body">Optional <code>evaluation.require_human_approval: true</code> moves the trained checkpoint into a staging directory; <code>forgelm approve</code> / <code>forgelm reject</code> + <code>forgelm approvals</code> record a human sign-off, with the approver identity stamped into the audit log. It supports design-time oversight documentation; oversight of the deployed system stays with the deployer.</p>
         <div class="article-evidence"><b>forgelm approve</b> · <b>forgelm reject</b> · <b>forgelm approvals</b></div>
       </article>
 
       <article class="article-card">
         <span class="article-num">Article 15</span>
         <h3 data-i18n-html="compliance.art15.title">Accuracy &amp; robustness</h3>
-        <p data-i18n="compliance.art15.body">Benchmark gates per-task floor; if the post-train number drops below the floor, the run fails (exit 3).</p>
+        <p data-i18n="compliance.art15.body">Benchmark gates per-task floor; with evaluation.auto_revert: true, a post-train number below the floor deletes the trained artefacts and the run exits 3. Cybersecurity: secrets / PII at ingest, dependency CVE awareness.</p>
         <div class="article-evidence"><b>forgelm/benchmark.py</b></div>
       </article>
 
@@ -195,14 +195,14 @@
       <article class="article-card">
         <span class="article-num">GDPR</span>
         <h3 data-i18n="compliance.gdpr.title">PII redaction at ingest</h3>
-        <p data-i18n-html="compliance.gdpr.body"><code>--pii-mask</code> redacts emails, phones, credit cards (Luhn-validated), IBAN, TR national ID, DE Personalausweis, FR SSN, US SSN before chunks land in JSONL.</p>
+        <p data-i18n-html="compliance.gdpr.body"><code>--pii-mask</code> redacts emails, phones, credit cards (Luhn), IBAN, national IDs (TR/DE/FR/US-SSN) before chunks land in JSONL. It reduces what reaches training and supports data minimisation (Article 5(1)(c)); names and free text are not detected, so it is an aid, not a guarantee.</p>
         <div class="article-evidence"><b>forgelm/data_audit/</b> · <b>forgelm/data_audit/_pii_regex.py</b></div>
       </article>
 
       <article class="article-card">
         <span class="article-num">GDPR Art. 15</span>
         <h3 data-i18n="compliance.gdpr15.title">Right of access</h3>
-        <p data-i18n-html="compliance.gdpr15.body"><code>forgelm reverse-pii</code> scans masked JSONL corpora for plaintext residuals or salted SHA-256 digests of a data-subject identifier and reports every row of every split where that subject appears, satisfying the access-request side of the GDPR's data-subject rights.</p>
+        <p data-i18n-html="compliance.gdpr15.body"><code>forgelm reverse-pii</code> scans masked JSONL corpora for plaintext residuals or salted SHA-256 digests of a data-subject identifier and reports every row of every split where that subject appears. It finds only what is literally in the files you scan: raw sources and the trained model are not searched, and handling an access request stays your process.</p>
         <div class="article-evidence"><b>forgelm reverse-pii</b></div>
       </article>
 
@@ -236,7 +236,7 @@
       <article class="article-card">
         <span class="article-num">Pillar 2</span>
         <h3 data-i18n="compliance.iso.change.title">Change control</h3>
-        <p data-i18n-html="compliance.iso.change.body">Article 14 staging gate (<code>forgelm approve</code> / <code>reject</code>) plus <code>human_approval.required/granted/rejected</code> audit events plus <code>forgelm verify-audit</code> chain integrity — every model promotion is dual-controlled and forensically attributed.</p>
+        <p data-i18n-html="compliance.iso.change.body">Article 14 staging gate (<code>forgelm approve</code> / <code>forgelm reject</code>) plus <code>human_approval.required/granted/rejected</code> audit events plus <code>forgelm verify-audit</code> chain integrity — with the gate on, every model promotion is attributed to the recorded approver identity; keeping trainer and approver different people is the deployer's control.</p>
         <div class="article-evidence"><b>forgelm approve</b> · <b>forgelm verify-audit</b></div>
       </article>
 

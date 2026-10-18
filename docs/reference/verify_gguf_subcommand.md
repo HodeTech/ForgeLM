@@ -43,7 +43,7 @@ The codes are emitted by `forgelm/cli/subcommands/_verify_gguf.py::_run_verify_g
 | **Metadata block** | When the optional `gguf` package is installed. Parses the metadata + tensor descriptors via the upstream reader. | Reader raises mid-parse → the exit code depends on what the sidecar can prove, because the parse error alone cannot tell a corrupted file apart from a `gguf` package too old for this file's format revision. **No sidecar** → exit `6` (nothing available to rule out corruption; treat the file as truncated / damaged). **Matching sidecar** → exit `1` (the file is byte-identical to what was exported — upgrade `gguf` and re-run; do not page the artifact owner). **Mismatching sidecar** → exit `6`, reported as the sidecar mismatch (the checksum is the stronger evidence and dominates). Package absent → check is skipped (the magic + sidecar checks remain load-bearing). |
 | **SHA-256 sidecar** | When `<path>.sha256` exists. Recomputes file SHA-256 and compares against the sidecar's first whitespace-separated token (sha256sum format `<hex> *<filename>` is supported). | Well-formed digest that disagrees → exit `6` (file changed after export). Sidecar present but contents are not a 64-character hex digest → exit `1` (fail closed against malformed-sidecar masquerade — nothing was compared). Sidecar absent → check is skipped silently. |
 
-The exporter writes the sidecar by default (see [`docs/usermanuals/en/deployment/gguf-export.md`](../usermanuals/en/deployment/gguf-export.md)); operators receiving GGUF files from third parties should request the sidecar alongside.
+The exporter writes the sidecar by default (for a K-quant request it belongs to the intermediate f16 file; see [`docs/usermanuals/en/deployment/gguf-export.md`](../usermanuals/en/deployment/gguf-export.md)); operators receiving GGUF files from third parties should request the sidecar alongside.
 
 ## Audit events emitted
 
@@ -142,7 +142,7 @@ With **no** sidecar beside the same file the verdict is `6` instead — nothing 
 
 ### Optional dependency absent
 
-When the `gguf` package is not installed, the metadata-parse layer is skipped silently — the magic + sidecar checks remain load-bearing:
+When the `gguf` package is not installed, the metadata-parse layer is skipped (`metadata_parsed: False`). Magic and sidecar are then all that is checked, and with no sidecar either, a clean exit proves only the magic header:
 
 ```shell
 $ pip uninstall -y gguf

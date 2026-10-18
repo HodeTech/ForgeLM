@@ -183,7 +183,7 @@
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></div>
         <h3 data-i18n-html="features.train.deepspeed.title">DeepSpeed &amp; FSDP</h3>
-        <p data-i18n="features.train.deepspeed.body">Multi-GPU distributed training. ZeRO presets, FSDP, Unsloth backend.</p>
+        <p data-i18n="features.train.deepspeed.body">Multi-GPU distributed training. DeepSpeed ZeRO-2 / ZeRO-3 (your own JSON; preset names need a source checkout), FSDP, Unsloth backend.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></div>
@@ -226,7 +226,7 @@
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></div>
         <h3 data-i18n="features.eval.revert.title">Auto-revert</h3>
-        <p data-i18n-html="features.eval.revert.body">With <code>evaluation.auto_revert: true</code>, a failed threshold makes ForgeLM delete the trained artefacts and exit 3. There is no rollback to an earlier checkpoint.</p>
+        <p data-i18n-html="features.eval.revert.body">With <code>evaluation.auto_revert: true</code>, a failed loss, benchmark, or safety threshold makes ForgeLM delete the trained artefacts, exit 3, and emit a structured incident record. There is no rollback to an earlier checkpoint — nothing is restored. One exception: a safety evaluation that produced no verdict (classifier not loaded, probes missing) keeps the model and exits 0.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
@@ -322,7 +322,7 @@
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
         <h3 data-i18n="features.ent.webhook.title">Webhook notifications</h3>
-        <p data-i18n="features.ent.webhook.body">Slack, Teams, Discord, or any HTTP webhook receiver alerts on training events.</p>
+        <p data-i18n="features.ent.webhook.body">Slack-format webhook alerts on training start, success, failure, auto-revert (Teams and Discord need a relay). Structured payloads — pipe to your incident tool.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
@@ -430,7 +430,7 @@
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="9 12 11 14 15 10"/></svg></div>
         <h3 data-i18n="features.gov.gguf.title">GGUF integrity verifier</h3>
-        <p data-i18n-html="features.gov.gguf.body"><code>forgelm verify-gguf</code> validates the GGUF magic header, parses the metadata block, and re-checks the SHA-256 sidecar (when present) before you ship a quantized model.</p>
+        <p data-i18n-html="features.gov.gguf.body"><code>forgelm verify-gguf</code> validates the GGUF magic header, parses the metadata block, and re-checks the <code>.sha256</code> sidecar written at export time (when present) before you ship a quantized model.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg></div>
