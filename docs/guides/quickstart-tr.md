@@ -204,7 +204,8 @@ Eğitilmiş modelinizle doğrudan etkileşim kurun ve deploy edin:
 forgelm chat ./checkpoints/final_model
 
 # GGUF'a export (Ollama, LM Studio, llama.cpp için)
-# Gerekli: pip install forgelm[export]
+# Gerekli: pip install forgelm[export] VE FORGELM_GGUF_CONVERTER'ın bir llama.cpp checkout'undaki
+# convert_hf_to_gguf.py'ye işaret etmesi (hiçbir llama-cpp-python wheel'i onu ForgeLM'in baktığı yere koymaz)
 forgelm export ./checkpoints/final_model --output model.gguf --quant q4_k_m
 
 # Deployment config'leri üret (sunucu başlatılmaz)

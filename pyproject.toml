@@ -123,9 +123,11 @@ distributed = [
 # benefit). Kept as a no-op extra so `pip install forgelm[merging]` still resolves.
 merging = []
 
-# GGUF export via llama-cpp-python's bundled convert_hf_to_gguf.py.
+# GGUF export. forgelm export runs llama.cpp's convert_hf_to_gguf.py, which no
+# llama-cpp-python wheel puts where ForgeLM searches: point FORGELM_GGUF_CONVERTER
+# at the copy in a llama.cpp checkout (docs/usermanuals/en/getting-started/installation.md).
 # Produces f16 and q8_0 GGUF directly. K-quants (q4_k_m etc.) require a
-# separate llama-quantize step; see docs/guides/export.md for the full flow.
+# separate llama-quantize step; see docs/usermanuals/en/deployment/gguf-export.md for the full flow.
 # Linux and macOS only; Windows builds are available but less reliable.
 export = [
   "llama-cpp-python>=0.2.90; sys_platform != 'win32'",

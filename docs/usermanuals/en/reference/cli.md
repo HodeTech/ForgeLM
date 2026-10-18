@@ -327,7 +327,7 @@ See [Exit Codes](#/reference/exit-codes) for the full contract.
 | `FORGELM_OPERATOR` | Operator identity recorded in audit events (overrides `getpass.getuser()@hostname`) |
 | `FORGELM_ALLOW_ANONYMOUS_OPERATOR` | When `1`, permit the audit log to record an anonymous operator (otherwise an unresolved identity is an error) |
 | `FORGELM_AUDIT_SECRET` | HMAC signing key for the audit log chain (enables tamper-detection) |
-| `FORGELM_GGUF_CONVERTER` | Path to a custom `convert-hf-to-gguf.py` script |
+| `FORGELM_GGUF_CONVERTER` | Path to `convert_hf_to_gguf.py` inside a llama.cpp checkout. In practice required: no `llama-cpp-python` wheel installs the script where ForgeLM searches (see [Installation](#/getting-started/installation)) |
 
 ## Common patterns
 
