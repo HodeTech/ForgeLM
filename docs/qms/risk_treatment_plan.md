@@ -89,7 +89,7 @@ section §4.
 |---|---|
 | Description | Operator runs `forgelm purge --row-id alice@example.com` against the corpus, but the model trained on the row weeks earlier may still reproduce it from learned weights |
 | L × I (inherent) | High × Med = HIGH |
-| Treatment | ForgeLM emits `data.erasure_warning_memorisation` when the run that consumed the deleted row has a `final_model/` artefact — this is a **detection** signal, not a mitigation. Deployer accepts the residual risk and applies organisational controls (subject notification, retrain from scratch for high-stakes deployments, DPIA update). |
+| Treatment | ForgeLM emits `data.erasure_warning_memorisation` when a `final_model/` exists directly under the purge's `--output-dir` (it does not know which run consumed the row, and the default directory is the corpus's, not the training output) — this is a **detection** signal, not a mitigation. Deployer accepts the residual risk and applies organisational controls (subject notification, retrain from scratch for high-stakes deployments, DPIA update). |
 | Residual L × I | High × Med = HIGH (risk **accepted**, see §5) |
 | Owner | Data Protection Officer (DPO) |
 | Review cadence | Per Article 17 request |

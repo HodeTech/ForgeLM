@@ -42,7 +42,7 @@ Audit zincirine altı event yazılır (bkz. [GitHub'daki Audit Event Kataloğu](
 - `data.erasure_requested` — herhangi bir silmeden ÖNCE, ilk yayılır.
 - `data.erasure_completed` — disk operasyonu başarılı sonra son yayılır.
 - `data.erasure_failed` — disk operasyonu raise ettiğinde veya eşleşen satır/koşum bulunmadığında bunun yerine yayılır.
-- `data.erasure_warning_memorisation` — corpus-satır silme × bu corpus'u tüketen herhangi bir koşum için `final_model/` mevcut (satır diskten gitti ama eğitilmiş ağırlıklarda hâlâ memorize edilmiş olabilir).
+- `data.erasure_warning_memorisation` — corpus-satır silme × `--output-dir` altında doğrudan bir `final_model/` mevcut (satır diskten gitti ama eğitilmiş ağırlıklarda hâlâ memorize edilmiş olabilir).
 - `data.erasure_warning_synthetic_data_present` — corpus-satır silme × `output_dir`'de `synthetic_data*.jsonl` mevcut.
 - `data.erasure_warning_external_copies` — yüklü config boş-olmayan `webhook` block'u içeriyor; downstream tüketiciler bildirim almış olabilir.
 
@@ -110,7 +110,7 @@ Kod 3 (`EXIT_EVAL_FAILURE`) ve 4 (`EXIT_AWAITING_APPROVAL`) iki subcommand'ın d
 :::
 
 :::warn
-**Memorization'ı kontrol etmeden `forgelm purge` çalıştırmak.** Corpus'u tüketen herhangi bir koşum için `final_model/` mevcutsa, satır diskten gitti ama ağırlıklarda hâlâ encoded olabilir. `data.erasure_warning_memorisation` event'ı boşluğu yüzeyselleştirir; harekete geçin (silinmiş satır olmadan yeniden eğitin veya DPIA'nızda residual riski belgeleyin).
+**Memorization'ı kontrol etmeden `forgelm purge` çalıştırmak.** Eğitilmiş bir model varsa, satır diskten gitti ama ağırlıklarda hâlâ encoded olabilir. `data.erasure_warning_memorisation` event'ı boşluğu yalnızca `--output-dir` altında doğrudan bir `final_model/` varsa yüzeyselleştirir — `--output-dir` varsayılan olarak corpus'un dizinidir, bu yüzden eğitim çıktı dizininizi verin; harekete geçin (silinmiş satır olmadan yeniden eğitin veya DPIA'nızda residual riski belgeleyin).
 :::
 
 :::tip
