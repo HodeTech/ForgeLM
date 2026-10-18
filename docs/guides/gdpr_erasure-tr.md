@@ -78,10 +78,10 @@ retention:
   staging_ttl_days: 7                     # `forgelm reject` üzerine aksiyon almak için bir iş haftası
   ephemeral_artefact_retention_days: 90   # üç-aylık review cadence'i
   raw_documents_retention_days: 90        # data audit yeniden çalıştırmadan önce ingestion penceresi
-  enforce: log_only                       # log_only / warn_on_excess / block_on_excess
+  enforce: log_only                       # ayrılmış: henüz hiçbir komut onu kullanmaz (log_only / warn_on_excess / block_on_excess)
 ```
 
-Herhangi bir horizon'u `0` olarak ayarlamak o artefact kind'ı için policy'yi devre dışı bırakır (sınırsız tut). `enforce`, trainer pre-flight gate'inin ihlallere nasıl tepki vereceğini kontrol eder.
+Herhangi bir horizon'u `0` olarak ayarlamak o artefact kind'ı için policy'yi devre dışı bırakır (sınırsız tut). Horizon'lar `forgelm purge --check-policy` ile raporlanır (salt-okunur, her zaman 0 ile çıkar); hiçbir şey otomatik silinmez ya da engellenmez. `enforce` ayrılmıştır: henüz hiçbir komut onu kullanmaz, bu yüzden üç değer de `log_only` gibi davranır.
 
 ## Kaldırıldı: `evaluation.staging_ttl_days`
 

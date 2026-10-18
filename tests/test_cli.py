@@ -392,3 +392,45 @@ class TestHubTelemetryDefault:
         )
         assert out.returncode == 0, out.stderr
         assert out.stdout.strip() == "True"
+
+
+class TestReservedRetentionEnforceWarning:
+    """`retention.enforce` is accepted but no command reads it; the CLI says so (#92)."""
+
+    @staticmethod
+    def _config(enforce):
+        from forgelm.config import ForgeConfig
+        from tests._helpers.factories import minimal_config
+
+        return ForgeConfig(**minimal_config(retention={"enforce": enforce}))
+
+    def test_the_default_is_silent(self, caplog):
+        import logging
+
+        from forgelm.cli._config_load import _warn_reserved_retention_enforce
+
+        with caplog.at_level(logging.WARNING):
+            _warn_reserved_retention_enforce(self._config("log_only"))
+        assert not [r for r in caplog.records if "retention.enforce" in r.getMessage()]
+
+    @pytest.mark.parametrize("mode", ["warn_on_excess", "block_on_excess"])
+    def test_a_gate_that_does_not_exist_is_called_out(self, caplog, mode):
+        import logging
+
+        from forgelm.cli._config_load import _warn_reserved_retention_enforce
+
+        with caplog.at_level(logging.WARNING):
+            _warn_reserved_retention_enforce(self._config(mode))
+        warned = [r.getMessage() for r in caplog.records if "retention.enforce" in r.getMessage()]
+        assert len(warned) == 1 and mode in warned[0] and "no command acts on it" in warned[0]
+
+    def test_loading_a_config_file_triggers_it(self, tmp_path, caplog, minimal_config):
+        import logging
+
+        from forgelm.cli._config_load import _load_config_or_exit
+
+        path = tmp_path / "c.yaml"
+        path.write_text(yaml.dump(minimal_config(retention={"enforce": "block_on_excess"})))
+        with caplog.at_level(logging.WARNING):
+            _load_config_or_exit(str(path), json_output=False)
+        assert any("retention.enforce" in r.getMessage() for r in caplog.records)

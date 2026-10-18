@@ -1598,12 +1598,12 @@ class RetentionConfig(BaseModel):
     days (typical ingestion-window before re-running data audit).
 
     Setting any horizon to ``0`` disables the policy for that artefact
-    kind (retain indefinitely).  ``enforce`` controls how the trainer
-    pre-flight gate reacts to violations:  ``log_only`` records a
-    notice, ``warn_on_excess`` emits a structured warning, and
-    ``block_on_excess`` aborts training with EXIT_EVAL_FAILURE so a
-    regulated CI cannot accidentally extend the retention horizon by
-    re-using a stale workspace.
+    kind (retain indefinitely).  The horizons are *reported*, not enforced:
+    ``forgelm purge --check-policy`` lists artefacts past them and always
+    exits 0; nothing is deleted, blocked or scheduled automatically.
+    ``enforce`` is reserved: no command acts on it yet, so
+    ``warn_on_excess`` and ``block_on_excess`` behave like ``log_only``
+    (the CLI logs a warning when a config sets either).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1645,9 +1645,9 @@ class RetentionConfig(BaseModel):
     enforce: Literal["log_only", "warn_on_excess", "block_on_excess"] = Field(
         default="log_only",
         description=(
-            "Policy enforcement mode.  `log_only` records violations in the audit log without operator-visible output; "
-            "`warn_on_excess` adds a structured warning to stderr; `block_on_excess` aborts the trainer pre-flight with "
-            "EXIT_EVAL_FAILURE (3) so a regulated CI gate does not silently extend the retention horizon."
+            "Reserved: no command reads it yet.  Retention horizons are only reported, read-only, by `forgelm purge "
+            "--check-policy` (always exit 0); nothing is deleted, warned about or blocked automatically.  "
+            "`warn_on_excess` and `block_on_excess` are accepted but behave like `log_only`; the CLI warns when set."
         ),
     )
 

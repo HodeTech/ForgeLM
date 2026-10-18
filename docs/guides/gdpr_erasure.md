@@ -78,10 +78,10 @@ retention:
   staging_ttl_days: 7                     # one work-week to act on a `forgelm reject`
   ephemeral_artefact_retention_days: 90   # quarterly review cadence
   raw_documents_retention_days: 90        # ingestion-window before re-running data audit
-  enforce: log_only                       # log_only / warn_on_excess / block_on_excess
+  enforce: log_only                       # reserved: no command acts on it yet (log_only / warn_on_excess / block_on_excess)
 ```
 
-Setting any horizon to `0` disables the policy for that artefact kind (retain indefinitely). `enforce` controls how the trainer pre-flight gate reacts to violations.
+Setting any horizon to `0` disables the policy for that artefact kind (retain indefinitely). The horizons are reported by `forgelm purge --check-policy` (read-only, always exits 0); nothing is deleted or blocked automatically. `enforce` is reserved: no command acts on it yet, so all three values behave like `log_only`.
 
 ## Removed: `evaluation.staging_ttl_days`
 

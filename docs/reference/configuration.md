@@ -270,9 +270,10 @@ across retries. Each retry attempt is logged to the audit trail.
 
 Defines maximum retention horizons for compliance, training, and evaluation
 artefacts. Horizons honour GDPR Article 5(1)(e) "storage limitation" and
-Article 17 "right to erasure" deadlines. The `enforce` knob switches between
-log-only, warning, and hard-block modes so a regulated CI gate cannot
-silently extend the retention horizon by re-using a stale workspace.
+Article 17 "right to erasure" deadlines. The horizons are **reported**, not
+enforced: `forgelm purge --check-policy` lists what is past them and always
+exits 0, and nothing is deleted, blocked or scheduled automatically. The
+`enforce` knob is reserved: no command reads it yet.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -280,7 +281,7 @@ silently extend the retention horizon by re-using a stale workspace.
 | `staging_ttl_days` | int | `7` | Days to retain `final_model.staging.<run_id>/` after a `forgelm reject` decision before scheduled cleanup. Set to `0` to retain indefinitely. Replaces the removed `evaluation.staging_ttl_days` (removed in v0.8.0). |
 | `ephemeral_artefact_retention_days` | int | `90` | Days to retain compliance bundles, data audit reports, and other run-scoped derived artefacts. Set to `0` to retain indefinitely. |
 | `raw_documents_retention_days` | int | `90` | Days to retain ingested raw documents (PDF / DOCX / EPUB / TXT / Markdown) under the operator's ingestion-output directory. Set to `0` to retain indefinitely. |
-| `enforce` | string | `"log_only"` | Policy enforcement mode: `"log_only"` (audit-log only), `"warn_on_excess"` (structured stderr warning), `"block_on_excess"` (abort trainer pre-flight with `EXIT_EVAL_FAILURE` = 3). |
+| `enforce` | string | `"log_only"` | Reserved policy mode. No command reads it yet: `"log_only"`, `"warn_on_excess"` and `"block_on_excess"` are all accepted and behave the same, and the CLI warns when a config sets either of the last two. |
 
 > **Removed:** `evaluation.staging_ttl_days` (deprecated as of v0.5.5) was
 > removed in v0.8.0. `retention.staging_ttl_days` is now the only accepted form.

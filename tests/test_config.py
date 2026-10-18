@@ -935,6 +935,17 @@ class TestStagingTtlLegacyFieldRemoved:
         with pytest.raises(ValidationError, match="staging_ttl_days"):
             ForgeConfig(**minimal_config(evaluation={"staging_ttl_days": 14}))
 
+
+class TestRetentionConfig:
+    """`retention` horizons are reported, not enforced; `enforce` is reserved (#92)."""
+
+    def test_the_description_does_not_promise_a_gate(self):
+        from forgelm.config import RetentionConfig
+
+        description = RetentionConfig.model_fields["enforce"].description or ""
+        assert "no command reads it" in description
+        assert "EXIT_EVAL_FAILURE" not in description and "aborts" not in description
+
     def test_canonical_retention_staging_ttl_days_still_works(self):
         cfg = ForgeConfig(**minimal_config(retention={"staging_ttl_days": 30}))
         assert cfg.retention.staging_ttl_days == 30

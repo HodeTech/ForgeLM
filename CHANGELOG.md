@@ -80,6 +80,11 @@ All notable changes to ForgeLM are documented here.
   privacy page ("does not send usage data anywhere"). `main()` now sets `HF_HUB_DISABLE_TELEMETRY=1` before anything imports
   `huggingface_hub`, and an operator's own value wins (`HF_HUB_DISABLE_TELEMETRY=0` opts back in). Using ForgeLM as a library
   does not set it (#95).
+- `retention.enforce` is documented for what it is: reserved. No command reads it, so `warn_on_excess` and
+  `block_on_excess` never warned or blocked anything and nothing was deleted automatically; retention is only reported,
+  read-only, by `forgelm purge --check-policy` (always exit 0). The config description, the wizard prompt, the
+  configuration reference, the GDPR erasure guide and `config_template.yaml` now say so (English and Turkish), and
+  the CLI logs a warning when a config sets a non-default `enforce` instead of staying silent (#92, #98).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).
