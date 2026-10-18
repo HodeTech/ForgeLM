@@ -63,7 +63,7 @@ ERROR: model "meta-llama/Llama-Guard-3-8B" not in local cache.
 | OpenAI / Anthropic judge'lar | API tabanlı değerlendirmeyi kapatın veya yerel judge kullanın; `--offline` API istemcilerini kapatmaz. |
 | Webhook'lar | `--offline`, yapılandırılmış teslimatları kapatmaz. Kapatmak için `webhook:` bloğunu çıkarın veya `url` / `url_env` değerlerini boş bırakın; `allow_private_destinations`, genel hedeflerin yanında özel hedeflere de izin verir. |
 | Runtime'da pip install | Gerekli bağımlılıkları bağlantıyı kesmeden kurun; `--offline`, pip'i yönetmez. |
-| Telemetry | ForgeLM'in kendi telemetri servisi yoktur; harici entegrasyonları ayrıca yapılandırın. |
+| Telemetry | ForgeLM'in kendi telemetri servisi yoktur. `forgelm` CLI'ı `HF_HUB_DISABLE_TELEMETRY=1`'i (siz ayarlamadıysanız) ayarlar; böylece TRL ve `huggingface_hub` anonim kullanım ping'i göndermez. ForgeLM'i kütüphane olarak kullanmak bunu ayarlamaz. Harici entegrasyonları ayrıca yapılandırın. |
 
 ## Yerel sentetik veri
 

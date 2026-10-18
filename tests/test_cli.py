@@ -319,3 +319,76 @@ class TestParserPublicApi:
         ]
         for name in registrars:
             assert callable(getattr(cli, name, None)), f"{name} is not re-exported from forgelm.cli"
+
+
+class TestHubTelemetryDefault:
+    """The CLI keeps TRL / huggingface_hub from sending the anonymous usage ping (#95)."""
+
+    @staticmethod
+    def _unset(monkeypatch):
+        """Make the variable absent *and* make monkeypatch restore that, so a later set does not leak."""
+        monkeypatch.setenv("HF_HUB_DISABLE_TELEMETRY", "placeholder")
+        monkeypatch.delenv("HF_HUB_DISABLE_TELEMETRY")
+
+    @staticmethod
+    def _clean_env():
+        env = {k: v for k, v in os.environ.items() if k != "HF_HUB_DISABLE_TELEMETRY"}
+        env["PYTHONPATH"] = os.getcwd() + os.pathsep + env.get("PYTHONPATH", "")
+        return env
+
+    def test_it_is_set_when_the_operator_did_not_choose(self, monkeypatch):
+        from forgelm.cli._config_load import _disable_hub_telemetry
+
+        self._unset(monkeypatch)
+        _disable_hub_telemetry()
+        assert os.environ["HF_HUB_DISABLE_TELEMETRY"] == "1"
+
+    @pytest.mark.parametrize("chosen", ["0", "1", "false"])
+    def test_an_operators_own_value_wins(self, monkeypatch, chosen):
+        from forgelm.cli._config_load import _disable_hub_telemetry
+
+        monkeypatch.setenv("HF_HUB_DISABLE_TELEMETRY", chosen)
+        _disable_hub_telemetry()
+        assert os.environ["HF_HUB_DISABLE_TELEMETRY"] == chosen
+
+    def test_main_sets_it_before_anything_else_runs(self, monkeypatch):
+        from forgelm.cli import _dispatch
+
+        self._unset(monkeypatch)
+        seen = {}
+
+        def fake_inner():
+            seen["at_dispatch"] = os.environ.get("HF_HUB_DISABLE_TELEMETRY")
+            return 0
+
+        with patch.object(_dispatch, "_main_inner", fake_inner):
+            _dispatch.main()
+        assert seen["at_dispatch"] == "1"
+
+    def test_importing_the_cli_does_not_import_huggingface_hub(self):
+        # huggingface_hub reads HF_HUB_DISABLE_TELEMETRY once, at import. main() sets the variable, so nothing the CLI
+        # module imports at load time may import it first (a top-level `import transformers` in forgelm.cli would).
+        import subprocess
+        import sys
+
+        code = "import sys, forgelm.cli; print(any(m == 'huggingface_hub' or m.startswith('huggingface_hub.') for m in sys.modules))"
+        out = subprocess.run(
+            [sys.executable, "-c", code], env=self._clean_env(), capture_output=True, text=True, timeout=120
+        )
+        assert out.returncode == 0, out.stderr
+        assert out.stdout.strip() == "False"
+
+    def test_a_fresh_process_that_calls_it_reads_the_variable_as_true(self):
+        pytest.importorskip("huggingface_hub")
+        import subprocess
+        import sys
+
+        code = (
+            "from forgelm.cli._config_load import _disable_hub_telemetry; _disable_hub_telemetry(); "
+            "import huggingface_hub.constants as c; print(c.HF_HUB_DISABLE_TELEMETRY)"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code], env=self._clean_env(), capture_output=True, text=True, timeout=120
+        )
+        assert out.returncode == 0, out.stderr
+        assert out.stdout.strip() == "True"
