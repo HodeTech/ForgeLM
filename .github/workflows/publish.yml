@@ -19,6 +19,8 @@ jobs:
       contents: read  # checkout reads the tagged ref
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@v7
         with:
@@ -52,6 +54,8 @@ jobs:
       contents: read  # checkout reads the tagged ref for tests/ + tools/
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@v7
         with:
