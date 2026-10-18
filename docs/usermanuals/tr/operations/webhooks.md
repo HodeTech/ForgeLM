@@ -1,11 +1,11 @@
 ---
 title: Webhook'lar
-description: Eğitim olaylarında Slack ve Teams bildirimleri — başlangıç, başarı, hata, otomatik geri alma.
+description: Eğitim olaylarında Slack biçiminde webhook bildirimleri — başlangıç, başarı, hata, otomatik geri alma. Teams ve Discord için relay gerekir.
 ---
 
 # Webhook'lar
 
-ForgeLM eğitim dönüm noktalarında yapılandırılmış webhook fırlatır. Bunları Slack, Teams veya JSON payload kabul eden herhangi bir incident aracına bağlayın — hiç kimsenin log izlemesine gerek kalmadan doğru bağlamı doğru insanlara getirin.
+ForgeLM eğitim dönüm noktalarında yapılandırılmış webhook fırlatır. Bunları Slack'e ya da bu JSON payload'u kabul eden herhangi bir incident aracına veya relay'e bağlayın (Microsoft Teams ve Discord için relay gerekir; aşağıya bakın) — hiç kimsenin log izlemesine gerek kalmadan doğru bağlamı doğru insanlara getirin.
 
 ## Hızlı örnek
 
@@ -17,8 +17,9 @@ webhook:
   notify_on_failure: true            # default true (training.failure + training.reverted'i kapsar)
 ```
 
-Notifier generic JSON payload yayar — Slack ve Teams bunu incoming-webhook
-uçlarından doğrudan kabul eder. Per-event abonelik şu an konfigüre
+Notifier, Slack tarzı bir `attachments` bloğu taşıyan tek bir generic JSON payload yayar.
+Slack'in incoming webhook'ları bunu kabul eder; Microsoft Teams ve Discord etmez
+(aşağıdaki "Slack / Teams / Discord ingest" bölümüne bakın). Per-event abonelik şu an konfigüre
 edilemiyor; üç `notify_on_*` flag'iyle hangi yaşam-döngüsü olaylarının
 fırlatılacağı kaba ayarlanır.
 
@@ -50,41 +51,58 @@ ile aynalanan kanonik yüzeydir:
 
 ## Payload yapısı
 
-Tek generic JSON şekil — Slack / Teams / Discord hepsi bunu incoming-webhook
-uçlarından doğrudan kabul eder; ForgeLM provider'a-özel template'lerle
-sarmalama **yapmaz**:
+Tek generic JSON şekil. Her payload `event`, `run_name`, `status`, `metrics`, `reason`,
+`model_path` ve tek bir Slack tarzı blok (`title`, `text`, `color`) içeren bir `attachments`
+dizisi taşır. ForgeLM provider'a-özel template'lerle sarmalama **yapmaz** ve üst düzeyde
+`text`, `content` veya `embeds` alanı yoktur:
 
 ```json
 {
   "event": "training.reverted",
-  "run_name": "customer-support-v1.2.0",
+  "run_name": "llama3-support-sft",
   "status": "reverted",
-  "reason": "safety regression: S5 hate-speech +0.18 over baseline"
+  "metrics": {},
+  "reason": "Safety gate failed: unsafe_rate 0.08 exceeds max_unsafe_rate 0.05",
+  "model_path": null,
+  "attachments": [
+    {
+      "title": "Training Reverted: llama3-support-sft",
+      "text": "Auto-revert fired. Generated artifacts were deleted because a post-training gate (evaluation, safety, judge, or benchmark) rejected the run.\n\nReason: Safety gate failed: unsafe_rate 0.08 exceeds max_unsafe_rate 0.05",
+      "color": "#ff9900"
+    }
+  ]
 }
 ```
 
-Payload anahtarları event'e göre değişir; tam per-event alan listesi
-[GitHub'daki Audit Event Kataloğu](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md)
-*Webhook lifecycle events* tablosundadır.
+`pipeline.*` event'leri birkaç alan ekler. Tam per-event alan listesi
+[GitHub'daki Webhook Payload Şeması](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/webhook_schema.md)
+sayfasındadır.
 
 ## Slack / Teams / Discord ingest
 
-Yukarıdaki tek generic JSON payload, Slack, Teams ve Discord'un
-incoming-webhook endpoint'lerinde beklediği şeydir. `WebhookConfig`'te
+Yukarıdaki payload Slack tarzı bir gövdedir. `WebhookConfig`'te
 **provider başına template yoktur** (no `template:`, no `events:`
 allow-list, no `channel:` / `mention_on_failure:` formatlama knob'ları,
 no per-destination fan-out array). Routing ve formatlama alıcı
 tarafta yapılır:
 
-- **Slack** — payload'u Slack workflow veya incoming-webhook
-  uygulamasına yapıştırın; Slack JSON'un top-level alanlarını render
-  eder. Daha zengin formatlanmış bir kart için, webhook'u ForgeLM
-  payload'unu Slack Block Kit'e çeviren bir relay'e (Slack
+- **Slack** — incoming webhook gövdeyi kabul eder ve `attachments`
+  bloğunu (başlık, metin, renk) gösterir. Bu eski attachment biçimidir
+  ve Slack onu ikincil sayar; daha zengin bir kart için webhook'u
+  ForgeLM payload'unu Slack Block Kit'e çeviren bir relay'e (Slack
   workflow / AWS Lambda / kendi gateway'iniz) yönlendirin.
-- **Microsoft Teams** — benzer pattern. Teams gelen JSON'u natively
-  render eder ama görsel düz; MessageCard / Adaptive Card
-  formatlama için bir relay çalıştırın.
-- **Discord** — JSON'u doğrudan bot/webhook URL üzerinden kabul eder.
+- **Microsoft Teams** — doğrudan kabul edilmez. Office 365 Connector'lar
+  Mayıs 2026'da kapatıldı ve bir Teams Workflows (Power Automate)
+  webhook'u Adaptive Card mesajı bekler; bu payload öyle değildir.
+  Payload'u Adaptive Card'a saran bir relay çalıştırın.
+- **Discord** — doğrudan kabul edilmez. Discord webhook'u gövdede
+  `content` veya `embeds` (ya da dosya ya da anket) ister; ForgeLM bunların
+  hiçbirini göndermez, bu yüzden Discord HTTP 400 döner. `attachments[0]`'ı
+  `content`'e veya bir embed'e eşleyen bir relay çalıştırın.
+
+Teslimatı reddeden bir alıcı run'ı başarısız etmez ve kimseye alarm gitmez:
+ret, run log'unda bir `WARNING`'dir (bkz. *Sık hatalar*). Yeni bir hedefe güvenmeden
+önce ona bir test event'i gönderin.
 
 Birden çok hedef için, her biri kendi `webhook.url_env`'ine
 pinlenmiş birden çok ayrı ForgeLM training config'i çalıştırın
@@ -99,7 +117,7 @@ Gerçek `WebhookConfig` (bkz. `forgelm/config.py::WebhookConfig`):
 | Alan | Vars. | Notlar |
 |---|---|---|
 | `url` | `null` | Inline URL — secret hijyeni için `url_env`'i tercih edin. |
-| `url_env` | `null` | URL'i taşıyan env var adı. Set edildiğinde `url`'i override eder. |
+| `url_env` | `null` | URL'i taşıyan env var adı. Yalnızca `url` boşken okunur; ikisi de set ise `url` kazanır. |
 | `notify_on_start` | `true` | `training.start` VE `pipeline.started`'ı gate'ler. |
 | `notify_on_success` | `true` | `training.success`, `approval.required` VE başarılı bir `pipeline.completed`'ı gate'ler. |
 | `notify_on_failure` | `true` | `training.failure`, `training.reverted`, `pipeline.stage_reverted` VE başarısız bir `pipeline.completed`'ı gate'ler. |
@@ -118,7 +136,7 @@ payload zaten curated), ve routing hepsi ForgeLM'in dışında yaşar.
 - **TLS şiddetle önerilir.** ForgeLM hem HTTPS hem HTTP webhook URL'lerine izin verir — HTTP hedefleri `Webhook URL uses HTTP (not HTTPS). Data will be sent unencrypted.` uyarısı loglar ama varsayılan olarak reddedilmez (bkz. `forgelm/webhook.py` `_send`). Regüle bir ortamda `webhook.require_https: true` ile plaintext bir `http://` URL'ini hard failure yapın (teslimat reddedilir, gönderilmez). Üretimde `https://` URL'leri pinleyin.
 - **Curated payload.** ForgeLM webhook payload'larına asla raw eğitim verisi, tam config'ler veya unredacted PII koymaz. Notifier sabit-şekilli bir JSON sarar; `webhook.redact` toggle'ı yoktur çünkü kullanıcı-kontrollü redakte edilecek bir şey yok.
 - **SSRF guard.** ForgeLM iç IP'lere işaret eden webhook URL'lerini engeller — RFC 1918, loopback, link-local (bulut IMDS `169.254.169.254` dahil), RFC 6598 Shared Address Space / Carrier-Grade-NAT (`100.64.0.0/10`; bu blok, Alibaba Cloud ECS'in IMDS'ini de kapsar — `100.100.100.200` — stdlib `ipaddress` predicate'leri bu bloğu kendiliğinden private veya reserved olarak işaretlemez), ayrıca reserved ve multicast hedefler — `webhook.allow_private_destinations: true` ile açıkça opt-in olmadıkça. Yanlış konfigüre koşuların iç ağınızı sondalamasını veya payload'ı bir bulut metadata servisine sızdırmasını önler.
-- **HMAC body imzalama yok.** ForgeLM webhook gövdelerini imzalamaz — hedef-tarafı authenticity TLS + `url_env` üzerinden URL gizliliği artı alıcı sistemin bearer-token / signed-request kontrollerine (Slack signing secret, Teams connector token) düşer.
+- **HMAC body imzalama yok.** ForgeLM webhook gövdelerini imzalamaz — hedef-tarafı authenticity TLS + `url_env` üzerinden URL gizliliği artı alıcının kendi uyguladığı kimlik doğrulamaya düşer. Bir Slack incoming webhook'unun gizli URL'sinden başka doğrulaması yoktur (Slack'in signing secret'ı Slack'ten *gelen* istekleri doğrular, bir webhook URL'sine gelenleri değil); bu yüzden özel bir relay'in önüne kendi kimlik doğrulamanızı koyun: ForgeLM imza göndermez.
 
 ## Sık hatalar
 

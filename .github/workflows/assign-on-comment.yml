@@ -1,0 +1,47 @@
+name: Assign on comment
+
+# A contributor claims an issue by commenting `/assign` and gives it back with `/unassign`.
+# The rules live in tools/assign_on_comment.py (documented in CONTRIBUTING.md, "Working on an issue").
+#
+# This is the one workflow that runs on text written by anyone, with permission to write to issues.
+# Keep it that way on purpose; tests/test_assign_on_comment.py pins each of these properties:
+#   - the trigger is `issue_comment` / `created` only (an edited comment cannot start a run);
+#   - the job `if:` reads event data only, never a shell: no `${{ }}` appears in a `run:` line,
+#     and the script reads the event file itself;
+#   - the token holds `contents: read` and `issues: write` and nothing else;
+#   - the checkout takes the default branch (what `issue_comment` runs on), one file, no stored credentials,
+#     and is pinned to a full commit SHA;
+#   - there is no `concurrency:` group: GitHub cancels a *pending* run when a newer one joins the group, which
+#     would drop a claim without a word. Instead the script decides again on a fresh read right before it
+#     writes, and after writing steps back only itself if a simultaneous claim collided (a maintainer wins;
+#     between two contributors the earlier login stays; a claim that would exceed the limit is released).
+#
+# Maintainers: to switch the feature off at once, open Actions > "Assign on comment" > the "..." menu >
+# "Disable workflow". Assignments already made stay as they are. Changing who an issue is assigned to is a
+# maintainer's decision, made in the issue's sidebar; nothing here ever overrides it.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  assign:
+    # Event data only. Skips pull-request comments and bots, and runs only for a comment that starts with a command.
+    if: ${{ !github.event.issue.pull_request && github.event.comment.user.type != 'Bot' && (startsWith(github.event.comment.body, '/assign') || startsWith(github.event.comment.body, '/unassign')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read  # the checkout reads one script from the default branch
+      issues: write   # add or remove the assignee, and post the reply
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/assign_on_comment.py
+          sparse-checkout-cone-mode: false
+      - name: Assign or release the issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 tools/assign_on_comment.py

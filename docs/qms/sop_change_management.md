@@ -104,8 +104,9 @@ in-pipeline CAB:
    in `final_model.staging.<run_id>/` for forensic review until
    retention expires (`retention.staging_ttl_days` in the config).
 
-This gives a deployer SOC 2 CC8.1 evidence: every model promotion is
-attributed, dual-controlled, and forensically recorded.
+This gives a deployer SOC 2 CC8.1 evidence: when the approval gate is
+enabled, every model promotion is attributed to the recorded approver identity and forensically recorded.
+Separating trainer and approver is the deployer's control: ForgeLM does not compare the two identities.
 
 ### 4.2 Configuration drift detection
 
@@ -129,9 +130,12 @@ CycloneDX 1.5 SBOM per (OS × Python-version) on every release tag
 (`publish.yml`). Wave 4 adds a determinism contract test
 (`tests/test_supply_chain_security.py::TestGenerateSbomDeterministic`).
 
-Drift detection: a release's SBOM is reproducible from its `git tag`.
-An auditor can re-emit it on demand and diff against the artefact
-attached to the GitHub release.
+Drift detection: the SBOM is a record of the environment the release was built in
+(`pip list` on the matrix runner), kept as a workflow-run artifact of the tag's
+`publish.yml` run for 90 days; it is not attached to the GitHub release. It is not
+reproducible from the `git tag` alone, because dependencies resolve from PyPI at build
+time. Compare two releases' SBOMs with `diff`; to evidence a deployed environment, emit
+a fresh one there with `python3 tools/generate_sbom.py`.
 
 ## 5. Version Tracking
 

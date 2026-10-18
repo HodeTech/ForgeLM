@@ -5,7 +5,7 @@ description: Append-only event log over training, evaluation, and revert decisio
 
 # Audit Log
 
-EU AI Act Article 12 requires high-risk AI systems to maintain logs of operationally relevant events. ForgeLM's `audit_log.jsonl` is an append-only, SHA-256-anchored sequence of events covering training start, evaluation gates, auto-revert decisions, and model export.
+EU AI Act Article 12 requires high-risk AI systems to maintain logs of operationally relevant events. ForgeLM's `audit_log.jsonl` is an append-only, SHA-256-anchored sequence of events covering training start, evaluation gates, auto-revert decisions, and model export. It records the training pipeline, which is development-time evidence that can support your technical documentation; the logging Article 12 asks for is a capability of the deployed system, which ForgeLM does not provide.
 
 ## Format
 

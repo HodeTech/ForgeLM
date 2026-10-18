@@ -3,8 +3,9 @@
 
 Reads the installed package set via ``pip list --format=json`` and renders a
 CycloneDX 1.5 JSON document on stdout. Pure stdlib, cross-platform — used by
-the ``publish.yml`` cross-OS matrix to attach a per-(os, python-version) SBOM
-artifact to every tagged release.
+the ``publish.yml`` cross-OS matrix, which uploads a per-(os, python-version) SBOM
+as a workflow-run artifact of every tag's publish run (it is not attached to the
+GitHub release, and run artifacts expire after the repository's retention period).
 
 This is intentionally a hand-rolled emitter rather than the optional
 ``cyclonedx-bom`` PyPI package: keeping the dependency footprint at zero means

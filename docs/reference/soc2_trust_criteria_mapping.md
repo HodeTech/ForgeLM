@@ -26,7 +26,7 @@ categories are scoped per-engagement.
 | CC | Title | ForgeLM evidence |
 |---|---|---|
 | CC1.1 | Demonstrates commitment to integrity | `roles_responsibilities.md` QMS template; AI Officer role |
-| CC1.2 | Independence of governance | Approval gate operator ≠ trainer |
+| CC1.2 | Independence of governance | The approval gate records the approver identity, so trainer ≠ approver is auditable; ForgeLM does not enforce it |
 | CC1.3 | Establishes structures, reporting lines | `roles_responsibilities.md` defines AI Officer / ML Lead / DPO |
 | CC1.4 | Demonstrates commitment to competence | Annual EU AI Act / GDPR training (deployer policy) |
 | CC1.5 | Enforces accountability | `FORGELM_OPERATOR` attribution + audit chain |
@@ -57,7 +57,7 @@ categories are scoped per-engagement.
 | CC7.5 | Identifies, develops corrective actions | `human_approval.rejected`; `sop_change_management.md` |
 | CC8.1 | Authorises changes | `forgelm approve` Article 14 gate; staging dir |
 | CC9.1 | Identifies, manages risks | `risk_assessment` config + safety eval; `risk_treatment_plan.md` |
-| CC9.2 | Manages vendor + business-partner risk | SBOM; dataset Hub commit SHA graded `loaded` / `unverified` / `local_path` / `unresolved`; base-model pin (`model.revision` → `model_lineage.base_model_revision`); license extraction.  **Pinned and recorded** under `model_lineage.component_revisions`: safety classifier, LLM judge, GRPO reward model, synthetic teacher.  **Not covered:** merge sources, and `forgelm safety-eval` (takes no `--config`) |
+| CC9.2 | Manages vendor + business-partner risk | SBOM; dataset Hub commit SHA graded `loaded` / `unverified` / `local_path` / `unresolved`; base-model pin (`model.revision` → `model_lineage.base_model_revision`).  **Pinned and recorded** under `model_lineage.component_revisions`: safety classifier, LLM judge, GRPO reward model, synthetic teacher.  **Not covered:** merge sources, and `forgelm safety-eval` (takes no `--config`) |
 
 ## Availability (A1.x)
 

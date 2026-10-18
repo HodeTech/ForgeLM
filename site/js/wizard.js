@@ -271,10 +271,11 @@
       retentionStaging: 7,
       retentionEphemeral: 90,
       retentionRawDocuments: 90,
-      // Policy enforcement: 'log_only' (default; logs to audit only),
-      // 'warn_on_excess' (stderr warning), 'block_on_excess' (aborts
-      // trainer with EXIT_EVAL_FAILURE). Schema Literal — must use
-      // one of these three values.
+      // Policy mode: 'log_only' (default), 'warn_on_excess' or
+      // 'block_on_excess'. Schema Literal — must use one of these three
+      // values. Reserved: no ForgeLM command reads it yet, so all three
+      // behave the same (retention is only reported by
+      // `forgelm purge --check-policy`).
       retentionEnforce: 'log_only',
       // Track which steps the operator tried to advance past while
       // failing required-field validation. The renderer reads this to

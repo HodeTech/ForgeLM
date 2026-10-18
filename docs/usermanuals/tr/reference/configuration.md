@@ -230,11 +230,11 @@ Merge alanı `algorithm` değil `method`'dur, `dare_ties` seçeneği, `base_mode
 ```yaml
 distributed:
   strategy: null                              # null (tek GPU, dağıtık sarmalama yok) | deepspeed | fsdp
-  deepspeed_config: null                      # bir DeepSpeed JSON'a yol, veya preset adı: zero2 | zero3 | zero3_offload
-  fsdp_strategy: "full_shard"                 # full_shard | shard_grad_op | no_shard | hybrid_shard
-  fsdp_auto_wrap: true                        # transformer katmanlarını otomatik sarmala (önerilir)
+  deepspeed_config: null                      # bir DeepSpeed JSON'a yol (preset adları zero2 | zero3 | zero3_offload kaynak checkout'u ister)
+  fsdp_strategy: "full_shard"                 # full_shard | shard_grad_op
+  fsdp_auto_wrap: true                        # transformers 5.10+'ta yok sayılır (FSDP2 transformer katmanlarını hep sarar)
   fsdp_offload: false                         # forward/backward arasında FSDP parametrelerini CPU'ya offload et
-  fsdp_backward_prefetch: "backward_pre"      # backward_pre | backward_post
+  fsdp_backward_prefetch: "backward_pre"      # backward_pre | backward_post; transformers 5.10+'ta yok sayılır
   fsdp_state_dict_type: "FULL_STATE_DICT"     # FULL_STATE_DICT | SHARDED_STATE_DICT
 ```
 
@@ -264,8 +264,8 @@ compliance:
 
 ```yaml
 webhook:
-  url: null                                   # Slack / Teams / Discord / özel; url_env tercihli
-  url_env: null                               # webhook URL'sini taşıyan env değişkeni
+  url: null                                   # Slack incoming webhook'u ya da Teams / Discord için relay; url_env tercihli
+  url_env: null                               # webhook URL'sini taşıyan env değişkeni; yalnızca url boşken okunur
   notify_on_start: true
   notify_on_success: true
   notify_on_failure: true
@@ -371,7 +371,7 @@ retention:
   staging_ttl_days: 7                        # forgelm reject sonrası staging modelini saklama süresi
   ephemeral_artefact_retention_days: 90      # uyumluluk paketleri, denetim raporları
   raw_documents_retention_days: 90           # ingest edilen PDF/DOCX/EPUB/TXT/Markdown
-  enforce: "log_only"                        # log_only | warn_on_excess | block_on_excess
+  enforce: "log_only"                        # ayrılmış: henüz hiçbir komut onu kullanmaz (log_only | warn_on_excess | block_on_excess)
 ```
 
 ## `pipeline:`

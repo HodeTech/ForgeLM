@@ -228,11 +228,11 @@ The merge field is `method` (not `algorithm`), and there is no `dare_ties` choic
 ```yaml
 distributed:
   strategy: null                              # null (single-GPU, no distributed wrapping) | deepspeed | fsdp
-  deepspeed_config: null                      # path to a DeepSpeed JSON, or preset name: zero2 | zero3 | zero3_offload
-  fsdp_strategy: "full_shard"                 # full_shard | shard_grad_op | no_shard | hybrid_shard
-  fsdp_auto_wrap: true                        # auto-wrap transformer layers (recommended)
+  deepspeed_config: null                      # path to a DeepSpeed JSON (preset names zero2 | zero3 | zero3_offload need a source checkout)
+  fsdp_strategy: "full_shard"                 # full_shard | shard_grad_op
+  fsdp_auto_wrap: true                        # ignored on transformers 5.10+ (FSDP2 always wraps transformer layers)
   fsdp_offload: false                         # offload FSDP parameters to CPU between forward/backward
-  fsdp_backward_prefetch: "backward_pre"      # backward_pre | backward_post
+  fsdp_backward_prefetch: "backward_pre"      # backward_pre | backward_post; ignored on transformers 5.10+
   fsdp_state_dict_type: "FULL_STATE_DICT"     # FULL_STATE_DICT | SHARDED_STATE_DICT
 ```
 
@@ -262,8 +262,8 @@ compliance:
 
 ```yaml
 webhook:
-  url: null                                   # Slack / Teams / Discord / custom; prefer url_env
-  url_env: null                               # env var carrying the webhook URL
+  url: null                                   # Slack incoming webhook, or a relay for Teams / Discord; prefer url_env
+  url_env: null                               # env var carrying the webhook URL; read only when url is empty
   notify_on_start: true
   notify_on_success: true
   notify_on_failure: true
@@ -363,7 +363,7 @@ retention:
   staging_ttl_days: 7                        # days to retain staging model after forgelm reject
   ephemeral_artefact_retention_days: 90      # compliance bundles, audit reports
   raw_documents_retention_days: 90           # ingested PDF/DOCX/EPUB/TXT/Markdown
-  enforce: "log_only"                        # log_only | warn_on_excess | block_on_excess
+  enforce: "log_only"                        # reserved: no command acts on it yet (log_only | warn_on_excess | block_on_excess)
 ```
 
 ## `pipeline:`

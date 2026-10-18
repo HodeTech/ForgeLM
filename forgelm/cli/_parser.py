@@ -1373,7 +1373,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--offline",
         action="store_true",
-        help="Air-gapped mode: disable all HF Hub network calls. Models and datasets must be available locally.",
+        help="Offline mode: set the Hugging Face offline variables so Hub, transformers and datasets make no network calls. Models and datasets must be available locally. Does not stop webhooks, judge or synthetic-data API clients, or experiment trackers.",
     )
     mode_group.add_argument(
         "--benchmark-only",

@@ -22,7 +22,7 @@ ForgeLM, PyPI'da tek bir paket olarak gelir; ağır özellikler için opsiyonel 
 :::
 
 :::note
-**Intel Mac'ler (x86_64) desteklenmiyor.** ForgeLM `torch>=2.4.0` gerektirir (`transformers>=5.3.0` üzerinden gelir) ve PyPI'da x86_64 macOS için `torch>=2.4` wheel'i yok. Apple Silicon, Linux veya Windows kullanın.
+**Intel Mac'ler (x86_64) desteklenmiyor.** ForgeLM `torch>=2.4.0` gerektirir (`transformers` 5'in desteklediği asgari sürüm) ve PyPI'da x86_64 macOS için `torch>=2.4` wheel'i yok. Apple Silicon, Linux veya Windows kullanın.
 :::
 
 ## Temel kurulum
@@ -75,7 +75,16 @@ $ pip install 'forgelm[ingestion-scale]'
 $ pip install 'forgelm[export]'
 ```
 
-Yerel inference için (Ollama, llama.cpp) kuantize GGUF export'u ekler. `gguf` writer'ı ve destekleyici kütüphaneleri kurar. Opsiyonel çünkü her iş akışı GGUF ile bitmez — birçok kullanıcı doğrudan vLLM veya TGI'a teslim eder.
+Yerel inference için (Ollama, llama.cpp) kuantize GGUF export'u ekler. `llama-cpp-python`'ı kurar. Opsiyonel çünkü her iş akışı GGUF ile bitmez — birçok kullanıcı doğrudan vLLM veya TGI'a teslim eder.
+
+**Dönüştürme script'i pakete dahil değildir.** `forgelm export`, llama.cpp'nin `convert_hf_to_gguf.py` script'ini ForgeLM'in kendi Python'uyla çalıştırır. Hiçbir `llama-cpp-python` wheel'i o script'i ForgeLM'in aradığı yere koymaz; bu yüzden yalnızca extra kuruluyken `forgelm export` `convert_hf_to_gguf.py not found inside the llama-cpp-python installation` hatasıyla (exit 2) durur. llama.cpp'yi klonlayın ve `FORGELM_GGUF_CONVERTER`'ı o checkout'taki script'e yöneltin:
+
+```shell
+$ git clone https://github.com/ggml-org/llama.cpp
+$ export FORGELM_GGUF_CONVERTER="$PWD/llama.cpp/convert_hf_to_gguf.py"
+```
+
+Checkout'un içindeki kopyayı kullanın: güncel sürümler yanında duran kardeş modülleri (`conversion`, `gguf`) import eder ve script, checkout'un `requirements/` klasöründe listelenen Python paketlerinin ForgeLM'in çalıştığı ortamda import edilebilir olmasını ister. K-quant seviyeleri ayrıca llama.cpp'nin `llama-quantize` binary'sini ister ([GGUF export](#/deployment/gguf-export) sayfasına bakın).
 
 ### Dağıtık eğitim (`[distributed]`)
 

@@ -5,11 +5,11 @@ description: Three-layer integrity check for exported GGUF model files before se
 
 # Verify GGUF
 
-`forgelm verify-gguf` is the read-only verifier paired with the GGUF export step. It runs a three-layer integrity check on a GGUF model file: the 4-byte `GGUF` magic header, the metadata block (when the optional `gguf` Python package is installed), and a SHA-256 comparison against the `<path>.sha256` sidecar (when present). Use it as the final pre-serve gate so a corrupted or tampered GGUF never reaches `llama.cpp`, Ollama, vLLM, or LM Studio.
+`forgelm verify-gguf` is the read-only verifier paired with the GGUF export step. It runs a three-layer integrity check on a GGUF model file: the 4-byte `GGUF` magic header, the metadata block (when the optional `gguf` Python package is installed), and a SHA-256 comparison against the `<path>.sha256` sidecar (when present). Use it as the final pre-serve gate so a corrupted or accidentally changed GGUF does not reach `llama.cpp`, Ollama, vLLM, or LM Studio. The sidecar sits next to the file, so this is not tamper evidence (see the pitfalls below).
 
 ## When to use it
 
-- **Before loading a GGUF into a serving runtime.** A clean `verify-gguf` exit is the minimum signal the file is what the exporter wrote.
+- **Before loading a GGUF into a serving runtime.** A clean `verify-gguf` exit proves only what ran: with neither the `gguf` package nor a `.sha256` sidecar it proves that the first four bytes are `GGUF` and nothing else, not that the file is complete or unmodified.
 - **In CI/CD release gates after GGUF export.** Run after every `forgelm export` step and **fail the release on any non-zero exit code** (the public contract is the `0/1/2/3/4/5/6` set; see the in-manual [Exit Codes](#/reference/exit-codes) reference. `1` is the most common gate trip for a bad path or malformed sidecar — nothing was compared, or what was compared came out clean — while `6` means the file *is* a GGUF and a comparison genuinely disagreed; `2` covers genuine I/O failures on existing files, and other non-zero codes propagate from upstream pipelines).
 - **When receiving a GGUF from a third-party trainer or model hub.** Recompute the magic + metadata + SHA-256 layers to detect drift between what they sent and what they signed.
 - **After moving a GGUF between machines.** Any byte-level corruption in transit shows up as a SHA-256 mismatch.
@@ -100,7 +100,7 @@ Pipe to `jq` to filter on the `valid` flag without parsing the human-readable te
 | **Metadata block** | When the optional `gguf` Python package is installed. | The reader raised mid-parse. That alone cannot tell a truncated file apart from a `gguf` package too old for this file's format revision, so the verdict is decided by what the sidecar can prove — see [the three metadata outcomes](#metadata-parse-failure-depends-on-the-sidecar) below. | `6` (no sidecar) / `1` (matching sidecar) / `6` (mismatching sidecar) |
 | **SHA-256 sidecar** | When `<path>.sha256` exists alongside the file. | Either the file was modified after export (a well-formed digest that disagrees — integrity failure), OR the sidecar itself is malformed (non-hex / wrong length / `TODO` placeholder — nothing was compared). The verifier fails closed on a malformed sidecar so a corrupted manifest can never silently masquerade as "verified". | `6` (modified) / `1` (malformed sidecar) |
 
-The exporter writes the sidecar by default. When you receive a GGUF from a third party, request the sidecar alongside it; without one, only the magic + metadata layers run.
+The exporter writes the sidecar by default (for a K-quant request it belongs to the intermediate f16 file; create one for the quantised file with `sha256sum model.gguf > model.gguf.sha256`). When you receive a GGUF from a third party, request the sidecar alongside it; without one, only the magic + metadata layers run.
 
 ### Metadata parse failure depends on the sidecar
 
@@ -116,7 +116,7 @@ The middle row is the one to internalise in CI: exit `6` means "page whoever own
 
 ### Optional dependency: the `gguf` package
 
-The metadata parse uses the upstream `gguf` Python package. When the package is not installed, the layer is skipped silently — the magic + sidecar checks remain load-bearing:
+The metadata parse uses the upstream `gguf` Python package. When the package is not installed, the layer is skipped (the text output shows `metadata_parsed: False`). The magic and the sidecar are then all that is checked, and with no sidecar either, a clean exit means only that the file starts with `GGUF`:
 
 ```shell
 $ pip uninstall -y gguf

@@ -89,7 +89,7 @@ section §4.
 |---|---|
 | Description | Operator runs `forgelm purge --row-id alice@example.com` against the corpus, but the model trained on the row weeks earlier may still reproduce it from learned weights |
 | L × I (inherent) | High × Med = HIGH |
-| Treatment | ForgeLM emits `data.erasure_warning_memorisation` when the run that consumed the deleted row has a `final_model/` artefact — this is a **detection** signal, not a mitigation. Deployer accepts the residual risk and applies organisational controls (subject notification, retrain from scratch for high-stakes deployments, DPIA update). |
+| Treatment | ForgeLM emits `data.erasure_warning_memorisation` when a `final_model/` exists directly under the purge's `--output-dir` (it does not know which run consumed the row, and the default directory is the corpus's, not the training output) — this is a **detection** signal, not a mitigation. Deployer accepts the residual risk and applies organisational controls (subject notification, retrain from scratch for high-stakes deployments, DPIA update). |
 | Residual L × I | High × Med = HIGH (risk **accepted**, see §5) |
 | Owner | Data Protection Officer (DPO) |
 | Review cadence | Per Article 17 request |
@@ -102,7 +102,7 @@ section §4.
 |---|---|
 | Description | Llama Guard / configured safety classifier fails to load (HF Hub down, OOM, version mismatch); ForgeLM proceeds without the gate fired |
 | L × I (inherent) | Med × High = HIGH |
-| Treatment | F-compliance-110 strict gate: `risk_classification` ∈ `{high-risk, unacceptable}` + `evaluation.safety.enabled: false` raises `ConfigError`; `audit.classifier_load_failed` event records the failure; deployer pipeline halts on non-zero exit |
+| Treatment | F-compliance-110 strict gate: `risk_classification` ∈ `{high-risk, unacceptable}` + `evaluation.safety.enabled: false` raises `ConfigError`; `audit.classifier_load_failed` event records the failure. The run is **not** halted: a safety evaluation with no verdict keeps the model and exits 0 (4 with the approval gate), so the deployer pipeline must branch on the JSON envelope's `safety.evaluation_completed` / `safety.passed` or on that audit event, not on the exit code alone |
 | Residual L × I | Low × Low = LOW |
 | Owner | ML Lead |
 | Review cadence | Per training run |

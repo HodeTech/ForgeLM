@@ -191,7 +191,8 @@ Interact with and deploy your trained model directly:
 forgelm chat ./checkpoints/final_model
 
 # Export to GGUF (for Ollama, LM Studio, llama.cpp)
-# Requires: pip install forgelm[export]
+# Requires: pip install forgelm[export] AND FORGELM_GGUF_CONVERTER pointing at convert_hf_to_gguf.py
+# from a llama.cpp checkout (no llama-cpp-python wheel installs it where ForgeLM looks)
 forgelm export ./checkpoints/final_model --output model.gguf --quant q4_k_m
 
 # Generate deployment configs (no server is started)

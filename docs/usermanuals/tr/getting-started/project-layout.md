@@ -22,10 +22,9 @@ my-finetune/
 │   └── data_audit_report.json
 ├── checkpoints/                   — model çıktıları (gitignored)
 │   └── customer-support/
-│       ├── adapter_model.safetensors
-│       ├── README.md              — model card (Article 13)
-│       ├── config_snapshot.yaml   — kullanılan config'in dondurulmuş kopyası
-│       └── artifacts/             — compliance kanıt paketi
+│       ├── audit_log.jsonl        — append-only, hash zincirli olay günlüğü
+│       ├── compliance/            — Article 10/11 kanıtı (JSON + YAML)
+│       └── final_model/           — ağırlıklar, model card (README.md), model_integrity.json
 ├── ingested/                      — `forgelm ingest` üzerinden ham döküman → JSONL
 └── .forgelm/                      — yerel cache (gitignored)
 ```
@@ -50,11 +49,11 @@ ForgeLM varsayılanları doğru şeyleri commit'leyip gerisini ignore'larsanız 
 **Commit:**
 - `configs/*.yaml` — koşularınız konfigürasyon; YAML kaynak doğrudur.
 - `audit/*.json` — küçük, makine-okunur, PR review'larında faydalı ("audit numaraları geriledi mi?").
-- `checkpoints/*/README.md` ve `checkpoints/*/artifacts/` (model card ve audit paketi, ikisi de küçük).
+- `checkpoints/*/final_model/README.md` ve `checkpoints/*/compliance/` (model card ve compliance kanıtı, ikisi de küçük).
 
 **Gitignore:**
 - `data/` — genelde fazla büyük; DVC veya tercih ettiğiniz dataset registry'sine alın.
-- `checkpoints/*/adapter_model.safetensors` ve diğer ağırlık dosyaları — git için fazla büyük; HuggingFace Hub veya model registry'ye gönderin.
+- `checkpoints/*/final_model/*.safetensors`, `checkpoint-*` dizinleri ve diğer ağırlık dosyaları — git için fazla büyük; HuggingFace Hub veya model registry'ye gönderin.
 - `ingested/` — ham dokümanlardan yeniden inşa edilebilir.
 - `.forgelm/` — yerel cache.
 
@@ -123,10 +122,10 @@ Geliştirme sırasında dev varyantı, release için tam olanını koşturun. CI
 
 ## Compliance artifact'ları nereye gider
 
-Her başarılı (veya başarısız) eğitim koşusu, [Compliance Genel Bakış](#/compliance/overview) bölümünde anlatılan kanıt paketini içeren bir `checkpoints/<isim>/artifacts/` dizini oluşturur. Regülatöre veya CI artifact'larında pinleyeceğiniz dizin budur.
+Bir eğitim koşusu kanıtını `training.output_dir` içine yazar: en üstte `audit_log.jsonl` (`.manifest.json` genesis pin'iyle) ve `final_model/` yanında bir `compliance/` dizini; tam ağacı ve hangi dosyaların YAML'a bağlı olduğunu [İlk Koşunuz](#/getting-started/first-run) gösterir. `artifacts/` dizini yoktur. `compliance/` ve `audit_log.jsonl`'i bir incelemeciye teslim edin ya da CI artifact'larında pinleyin.
 
 :::warn
-**`artifacts/` dizinini koşular arasında birleştirmeyin.** Her koşu ayrı bir kanıt paketidir; karıştırmak SHA-256 manifesti bozar ve tamper-evidence'ı baltalar.
+**Her koşunun çıktı dizinini ayrı tutun.** Her koşunun kendi audit zinciri ve run id'si vardır; iki koşunun dosyalarını tek dizine kopyalamak onları karıştırır. Yalnızca audit log (`forgelm verify-audit`) ve `final_model/` (`forgelm verify-integrity`) tamper-check'lidir; `compliance/`'ı hiçbir şey hash'lemez.
 :::
 
 ## Bkz.

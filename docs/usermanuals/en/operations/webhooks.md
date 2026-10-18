@@ -1,11 +1,11 @@
 ---
 title: Webhooks
-description: Slack and Teams notifications on training events — start, success, failure, auto-revert.
+description: Slack-format webhook notifications on training events — start, success, failure, auto-revert. Teams and Discord need a relay.
 ---
 
 # Webhooks
 
-ForgeLM fires structured webhooks on training milestones. Wire them into Slack, Teams, or any incident tool that accepts JSON payloads — get the right context to the right humans without anyone watching a log.
+ForgeLM fires structured webhooks on training milestones. Wire them into Slack, or into any incident tool or relay that accepts this JSON payload (Microsoft Teams and Discord need a relay; see below) — get the right context to the right humans without anyone watching a log.
 
 ## Quick example
 
@@ -17,8 +17,9 @@ webhook:
   notify_on_failure: true            # default true (covers training.failure + training.reverted)
 ```
 
-The notifier emits a generic JSON payload — Slack and Teams ingest it directly via
-their incoming-webhook endpoints. Per-event subscription is not currently
+The notifier emits one generic JSON payload with a Slack-style `attachments` block.
+Slack's incoming webhooks accept it; Microsoft Teams and Discord do not (see
+"Slack / Teams / Discord ingestion" below). Per-event subscription is not currently
 configurable; toggle the three `notify_on_*` flags to coarse-control which
 lifecycle events fire.
 
@@ -50,40 +51,56 @@ surface mirrored in the
 
 ## Payload shape
 
-Single generic JSON shape — Slack / Teams / Discord all accept it
-directly via incoming-webhook endpoints; ForgeLM does **not** wrap it in
-provider-specific templates:
+One generic JSON shape. Every payload carries `event`, `run_name`, `status`, `metrics`, `reason`,
+`model_path` and an `attachments` array with one Slack-style block (`title`, `text`, `color`).
+ForgeLM does **not** wrap it in provider-specific templates, and it has no top-level `text`,
+`content` or `embeds` field:
 
 ```json
 {
   "event": "training.reverted",
-  "run_name": "customer-support-v1.2.0",
+  "run_name": "llama3-support-sft",
   "status": "reverted",
-  "reason": "safety regression: S5 hate-speech +0.18 over baseline"
+  "metrics": {},
+  "reason": "Safety gate failed: unsafe_rate 0.08 exceeds max_unsafe_rate 0.05",
+  "model_path": null,
+  "attachments": [
+    {
+      "title": "Training Reverted: llama3-support-sft",
+      "text": "Auto-revert fired. Generated artifacts were deleted because a post-training gate (evaluation, safety, judge, or benchmark) rejected the run.\n\nReason: Safety gate failed: unsafe_rate 0.08 exceeds max_unsafe_rate 0.05",
+      "color": "#ff9900"
+    }
+  ]
 }
 ```
 
-Payload keys vary by event; the full per-event field list is in the
-[Audit Event Catalog on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/audit_event_catalog.md)
-under the *Webhook lifecycle events* table.
+The `pipeline.*` events add a few fields. The full per-event field list is in the
+[Webhook Payload Schema on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/reference/webhook_schema.md).
 
 ## Slack / Teams / Discord ingestion
 
-The single generic JSON payload shown above is what Slack, Teams, and Discord
-all expect on their incoming-webhook endpoints. There are **no per-provider
+The payload above is a Slack-style body. There are **no per-provider
 templates** in `WebhookConfig` (no `template:`, no `events:` allow-list, no
 `channel:` / `mention_on_failure:` formatting knobs, no per-destination
 fan-out array). Routing and formatting happen on the receiving side:
 
-- **Slack** — paste the payload into a Slack workflow or incoming-webhook
-  app; Slack renders the JSON's top-level fields. To get a richer
-  formatted card, point the webhook at a relay (Slack workflow / AWS
-  Lambda / your own gateway) that translates the ForgeLM payload into
-  Slack Block Kit.
-- **Microsoft Teams** — similar pattern. Teams renders incoming JSON
-  natively but the visual is plain; for MessageCard / Adaptive Card
-  formatting, run a relay.
-- **Discord** — accepts the JSON directly via the bot/webhook URL.
+- **Slack** — an incoming webhook accepts the body and shows the
+  `attachments` block (title, text, colour). That is the legacy attachment
+  format, which Slack treats as secondary; for a richer card point the
+  webhook at a relay (Slack workflow / AWS Lambda / your own gateway) that
+  translates the ForgeLM payload into Slack Block Kit.
+- **Microsoft Teams** — not accepted directly. Office 365 Connectors were
+  retired in May 2026, and a Teams Workflows (Power Automate) webhook expects
+  an Adaptive Card message, which this payload is not. Run a relay that wraps
+  the payload in an Adaptive Card.
+- **Discord** — not accepted directly. A Discord webhook needs `content` or
+  `embeds` (or a file or poll) in the body, and ForgeLM sends none of them, so
+  Discord answers with HTTP 400. Run a relay that maps `attachments[0]` to
+  `content` or an embed.
+
+A receiver that rejects a delivery does not fail the run, and nothing is paged:
+the rejection is a `WARNING` in the run's log (see *Common pitfalls*). Send a
+test event to a new destination before relying on it.
 
 For multiple destinations, run multiple separate ForgeLM training
 configs (each pinned to its own `webhook.url_env`) or fan out from a
@@ -97,7 +114,7 @@ Real `WebhookConfig` (see `forgelm/config.py::WebhookConfig`):
 | Field | Default | Notes |
 |---|---|---|
 | `url` | `null` | Inline URL — prefer `url_env` for secret hygiene. |
-| `url_env` | `null` | Env-var name carrying the URL. Overrides `url` when set. |
+| `url_env` | `null` | Env-var name carrying the URL. Read only when `url` is empty; when both are set, `url` wins. |
 | `notify_on_start` | `true` | Gates `training.start` AND `pipeline.started`. |
 | `notify_on_success` | `true` | Gates `training.success`, `approval.required`, AND a successful `pipeline.completed`. |
 | `notify_on_failure` | `true` | Gates `training.failure`, `training.reverted`, `pipeline.stage_reverted`, AND a failing `pipeline.completed`. |
@@ -117,7 +134,7 @@ live outside ForgeLM.
 - **TLS strongly recommended.** ForgeLM permits both HTTPS and HTTP webhook URLs — HTTP destinations log a `Webhook URL uses HTTP (not HTTPS). Data will be sent unencrypted.` warning but are not rejected by default (see `forgelm/webhook.py` `_send`). On a regulated estate set `webhook.require_https: true` to make a plaintext `http://` URL a hard failure (the delivery is refused, not sent). Pin `https://` URLs in production.
 - **Curated payload.** ForgeLM never includes raw training data, full configs, or unredacted PII in webhook payloads. The notifier wraps a fixed-shape JSON; there is no `webhook.redact` toggle because there's nothing user-controllable to redact.
 - **Server-Side Request Forgery (SSRF) guard.** ForgeLM blocks webhook URLs pointing at internal IPs — RFC 1918, loopback, link-local (incl. cloud IMDS at `169.254.169.254`), RFC 6598 Shared Address Space / Carrier-Grade-NAT (`100.64.0.0/10`, which also covers Alibaba Cloud ECS's IMDS at `100.100.100.200` — the stdlib `ipaddress` predicates don't flag that block as private or reserved on their own), plus reserved and multicast destinations — unless you explicitly opt-in with `webhook.allow_private_destinations: true`. This prevents misconfigured runs from probing your internal network or leaking the payload to a cloud metadata service.
-- **No HMAC body signing.** ForgeLM does not sign webhook bodies — destination-side authenticity falls to TLS + URL secrecy via `url_env` plus the receiving system's bearer-token / signed-request controls (Slack signing secret, Teams connector token).
+- **No HMAC body signing.** ForgeLM does not sign webhook bodies — destination-side authenticity falls to TLS + URL secrecy via `url_env` plus whatever authentication the receiver applies itself. A Slack incoming webhook has none beyond its secret URL (Slack's signing secret verifies requests *from* Slack, not requests to a webhook URL), so put your own authentication in front of a custom relay: ForgeLM sends no signature.
 
 ## Common pitfalls
 

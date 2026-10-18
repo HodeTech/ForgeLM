@@ -476,7 +476,7 @@
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></div>
         <h3 data-i18n="home.cap.dist.title">Distributed training</h3>
-        <p data-i18n="home.cap.dist.body">DeepSpeed ZeRO presets, FSDP, multi-GPU configs.</p>
+        <p data-i18n="home.cap.dist.body">DeepSpeed ZeRO-2 / ZeRO-3 (bring your own JSON; the preset names need a source checkout), FSDP, multi-GPU configs. MoE support (Qwen3, Mixtral, DeepSeek).</p>
         <div class="feature-tags">
           <span class="feature-tag">DeepSpeed</span>
           <span class="feature-tag">FSDP</span>
@@ -505,7 +505,7 @@
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>
         <h3 data-i18n-html="home.cap.export.title">Export &amp; deploy</h3>
-        <p data-i18n="home.cap.export.body">GGUF export with 6 quant levels.</p>
+        <p data-i18n="home.cap.export.body">GGUF export (f16 and q8_0 in one step; K-quants need llama.cpp's llama-quantize) with a SHA-256 sidecar. Generate Ollama / vLLM / TGI / HF-Endpoints deployment configs in one command.</p>
         <div class="feature-tags">
           <span class="feature-tag">GGUF</span>
           <span class="feature-tag">deploy</span>
@@ -592,7 +592,7 @@
   <span class="key">benchmark</span>:
     <span class="key">enabled</span>: <span class="number">true</span>
     <span class="key">tasks</span>: [<span class="string">"hellaswag"</span>, <span class="string">"arc_easy"</span>, <span class="string">"truthfulqa"</span>]
-    <span class="key">min_score</span>: <span class="number">0.65</span>          <span class="comment"># aggregate floor; run fails (exit 3) below this</span>
+    <span class="key">min_score</span>: <span class="number">0.65</span>          <span class="comment"># aggregate floor; with evaluation.auto_revert: true, below this the run exits 3</span>
   <span class="key">safety</span>:
     <span class="key">enabled</span>: <span class="number">true</span>
     <span class="key">classifier</span>: <span class="string">"meta-llama/Llama-Guard-3-8B"</span>
@@ -637,7 +637,7 @@
         </div>
         <div>
           <h3 data-i18n="home.use.domain.title">Domain expert from policy PDFs</h3>
-          <p data-i18n-html="home.use.domain.body">Drop your regulatory corpus into <code>forgelm ingest</code>.</p>
+          <p data-i18n-html="home.use.domain.body">Drop your regulatory corpus into <code>forgelm ingest</code>, audit it, and SFT a model that answers in your domain's voice — with common PII formats masked at ingest, before training.</p>
           <span class="use-case-tag">forgelm quickstart domain-expert</span>
         </div>
       </div>
@@ -659,7 +659,7 @@
         </div>
         <div>
           <h3 data-i18n="home.use.code.title">Code copilot fine-tune</h3>
-          <p data-i18n="home.use.code.body">Multi-dataset mix, SFT + ORPO, GGUF export.</p>
+          <p data-i18n="home.use.code.body">Multi-dataset mix (your repo + open code) with SFT (ORPO is a follow-up step you can chain), GGUF export for local inference. Synthetic data pipeline distils a teacher into your student.</p>
           <span class="use-case-tag">forgelm quickstart code-assistant</span>
         </div>
       </div>

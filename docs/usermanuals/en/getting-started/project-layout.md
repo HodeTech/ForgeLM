@@ -22,10 +22,9 @@ my-finetune/
 │   └── data_audit_report.json
 ├── checkpoints/                   — model outputs (gitignored)
 │   └── customer-support/
-│       ├── adapter_model.safetensors
-│       ├── README.md              — model card (Article 13)
-│       ├── config_snapshot.yaml   — frozen copy of the config used
-│       └── artifacts/             — compliance evidence bundle
+│       ├── audit_log.jsonl        — append-only, hash-chained event log
+│       ├── compliance/            — Article 10/11 evidence (JSON + YAML)
+│       └── final_model/           — weights, model card (README.md), model_integrity.json
 ├── ingested/                      — raw documents → JSONL via `forgelm ingest`
 └── .forgelm/                      — local cache (also gitignored)
 ```
@@ -50,11 +49,11 @@ ForgeLM's defaults play well with version control if you commit the right things
 **Commit:**
 - `configs/*.yaml` — your runs are configurations; the YAML is the source of truth.
 - `audit/*.json` — small, machine-readable, useful in PR reviews ("did the audit numbers regress?").
-- `checkpoints/*/README.md` and `checkpoints/*/artifacts/` (model card and audit bundle, both small).
+- `checkpoints/*/final_model/README.md` and `checkpoints/*/compliance/` (model card and compliance evidence, both small).
 
 **Gitignore:**
 - `data/` — usually too large; track via DVC or your preferred dataset registry instead.
-- `checkpoints/*/adapter_model.safetensors` and other weight files — too large for git, push to HuggingFace Hub or model registry.
+- `checkpoints/*/final_model/*.safetensors`, the `checkpoint-*` directories and other weight files — too large for git, push to HuggingFace Hub or model registry.
 - `ingested/` — re-buildable from raw documents.
 - `.forgelm/` — local cache.
 
@@ -125,10 +124,10 @@ Run the dev variant during development, the full one for release. CI runs the fu
 
 ## Where compliance artifacts go
 
-Every successful (or failed) training run creates a `checkpoints/<name>/artifacts/` directory containing the evidence bundle described in [Compliance Overview](#/compliance/overview). This is the directory you hand to a regulator or pin in your CI artifacts.
+A training run writes its evidence into `training.output_dir`: `audit_log.jsonl` (with its `.manifest.json` genesis pin) at the top level and a `compliance/` directory next to `final_model/`; [Your First Run](#/getting-started/first-run) shows the full tree and which files depend on the YAML. There is no `artifacts/` directory. Hand `compliance/` and `audit_log.jsonl` to a reviewer, or pin them in your CI artifacts.
 
 :::warn
-**Don't merge the artifacts/ directory across runs.** Each run is a separate evidence bundle; mixing them breaks the SHA-256 manifest and undermines tamper-evidence.
+**Keep each run's output directory separate.** Each run has its own audit chain and run id; copying two runs' files into one directory mixes them. Only the audit log (`forgelm verify-audit`) and `final_model/` (`forgelm verify-integrity`) are tamper-checked; nothing hashes `compliance/`.
 :::
 
 ## See also
