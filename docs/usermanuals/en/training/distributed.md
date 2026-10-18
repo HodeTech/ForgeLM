@@ -66,7 +66,7 @@ ZeRO-2 shards the optimiser state (the heaviest VRAM component for adaptive opti
 ```yaml
 distributed:
   strategy: "deepspeed"
-  deepspeed_config: "zero2"             # preset name (or a filesystem path to a DeepSpeed JSON)
+  deepspeed_config: "./ds_zero2.json"   # a filesystem path to a DeepSpeed JSON (preset names such as "zero2" need a source checkout)
 
 training:
   gradient_accumulation_steps: 4
@@ -95,7 +95,7 @@ training:
   gradient_accumulation_steps: 8
 ```
 
-The `zero3_offload` preset fits 70B on 8×24 GB by offloading optimiser state and parameters to CPU. ZeRO-Infinity's NVMe offload isn't a built-in preset — point `deepspeed_config` at a custom DeepSpeed JSON with `offload_param`/`offload_optimizer` set to `device: nvme` for that case.
+The `zero3_offload` preset offloads optimiser state and parameters to CPU, trading speed for GPU memory; whether a given model fits depends on your GPU memory and CPU RAM. The preset names `zero2`, `zero3` and `zero3_offload` resolve only from a source checkout (the JSON files live in the repository's `configs/deepspeed/` folder, not in the pip wheel or the Docker image), and the `zero2` preset is currently broken ([#410](https://github.com/HodeTech/ForgeLM/issues/410)), so give `deepspeed_config` the path of a JSON file you control. ZeRO-Infinity's NVMe offload isn't a preset — point `deepspeed_config` at a custom DeepSpeed JSON with `offload_param`/`offload_optimizer` set to `device: nvme` for that case.
 
 | Model | GPUs | ZeRO-3 + offload? |
 |---|---|---|

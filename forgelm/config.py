@@ -269,7 +269,7 @@ class ModelConfig(BaseModel):
     )
     offline: bool = Field(
         default=False,
-        description="Air-gapped mode: refuse HF Hub network calls.  Models/datasets/extras must be available locally.",
+        description="Offline mode: set the HF offline variables (Hub, transformers, datasets).  Models/datasets/extras must be available locally.  Webhooks, judge/synthetic API clients and trackers are not stopped.",
     )
     revision: Optional[str] = Field(
         default=None,
@@ -768,7 +768,7 @@ class DistributedConfig(BaseModel):
     )
     deepspeed_config: Optional[str] = Field(
         default=None,
-        description="DeepSpeed config: filesystem path to a DS JSON OR preset name (`zero2`, `zero3`, `zero3_offload`).",
+        description="DeepSpeed config: filesystem path to a DS JSON.  The preset names (`zero2`, `zero3`, `zero3_offload`) resolve only from a source checkout, not a pip or Docker install.",
     )
     fsdp_strategy: Literal["full_shard", "shard_grad_op"] = Field(
         default="full_shard",
@@ -1523,17 +1523,17 @@ class WebhookConfig(BaseModel):
 
     url: Optional[str] = Field(
         default=None,
-        description="Webhook URL (Slack / Teams / Discord / custom).  Use `url_env` to read from env to avoid committing secrets.",
+        description="Webhook URL (a Slack incoming webhook, or a relay that forwards to Teams / Discord / custom).  Use `url_env` to avoid committing secrets.",
     )
     url_env: Optional[str] = Field(
-        default=None, description="Env var name carrying the webhook URL (overrides `url` when set)."
+        default=None, description="Env var name carrying the webhook URL; read only when `url` is empty."
     )
     notify_on_start: bool = Field(default=True, description="POST a `notify_start` event when training begins.")
     notify_on_success: bool = Field(
         default=True, description="POST a `notify_success` event when training completes successfully."
     )
     notify_on_failure: bool = Field(
-        default=True, description="POST a `notify_failure` event when training fails (any non-zero exit)."
+        default=True, description="POST a failure event when training raises or a post-training gate reverts the model."
     )
     timeout: int = Field(
         default=10,
@@ -1677,7 +1677,7 @@ class ForgeConfig(BaseModel):
         description="Post-training evaluation block (loss / benchmark / safety / judge / human-approval gate).",
     )
     webhook: Optional[WebhookConfig] = Field(
-        default=None, description="Webhook notification block (Slack / Teams / Discord / custom)."
+        default=None, description="Webhook notification block (Slack-format JSON; Teams and Discord need a relay)."
     )
     distributed: Optional[DistributedConfig] = Field(
         default=None, description="DeepSpeed / FSDP multi-GPU configuration block."

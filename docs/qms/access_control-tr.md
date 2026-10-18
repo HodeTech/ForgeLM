@@ -230,20 +230,26 @@ webhook:
 
 ForgeLM webhook gövdelerini HMAC ile **imzalamaz** — `WebhookConfig`
 üzerinde `webhook.secret_env` alanı yoktur (bkz.
-`forgelm/config.py::WebhookConfig`). Hedef-tarafı atıf (a) HTTPS +
-`webhook.url_env` üzerinden URL-gizliliğine, (b) curated payload
-içinde taşınan `FORGELM_OPERATOR` kimliğine, ve (c) alıcı sistemin
-kendi bearer-token / imzalı-istek kontrollerine (Slack signing
-secret, Teams connector token) düşer.
+`forgelm/config.py::WebhookConfig`). Hedef-tarafı özgünlük (a) HTTPS +
+`webhook.url_env` üzerinden URL-gizliliğine ve (b) alıcı tarafın kendi
+uyguladığı kimlik doğrulamaya düşer. Bir Slack incoming webhook'unun gizli
+URL'sinden başka bir doğrulaması yoktur (Slack'in signing secret'ı Slack'ten
+*gelen* istekleri doğrular, bir webhook URL'sine gelenleri değil); bu yüzden
+özel bir relay kendi kimlik doğrulamasını istemelidir, çünkü ForgeLM imza
+göndermez. Webhook payload'u `FORGELM_OPERATOR`
+kimliğini **taşımaz**; bir modeli kimin çalıştırdığı veya onayladığı
+bildirimden değil, audit log'dan okunur.
 
-Webhook wire-format olay sözlüğü (5 olay): `training.start`,
-`training.success`, `training.failure`, `training.reverted`,
-`approval.required` — Phase 8. In-process notifier metot adları
-`notify_*` öneki kullanır (`notify_start`, `notify_success`,
-`notify_failure`, `notify_reverted`, `notify_awaiting_approval`)
-ve bu beş wire olayına dispatch eder. Her payload `FORGELM_OPERATOR`
-kimliğini taşır böylece alıcı sistem (Slack, Teams, custom
-incident-management) bildirimi attribute edebilir.
+Webhook wire-format olay sözlüğü sekiz olaydır: beş tek-aşamalı
+yaşam-döngüsü olayı `training.start`, `training.success`,
+`training.failure`, `training.reverted` ve `approval.required`, ayrıca
+çok-aşamalı bir koşunun bunlarla birlikte yaydığı üç `pipeline.*`
+olayı (`pipeline.started`, `pipeline.completed`,
+`pipeline.stage_reverted`). In-process notifier metotları `notify_*`
+öneki kullanır (`notify_start`, `notify_success`, `notify_failure`,
+`notify_reverted`, `notify_awaiting_approval`,
+`notify_pipeline_started`, `notify_pipeline_completed`,
+`notify_pipeline_reverted`) ve bu wire olaylarına dispatch eder.
 
 ## 8. Doğrulama checklist'i
 

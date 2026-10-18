@@ -121,7 +121,7 @@ ForgeLM sets `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `HF_DATASETS_OFFLINE=
 ```yaml
 distributed:
   strategy: "deepspeed"
-  deepspeed_config: "zero2"  # or "zero3", "zero3_offload"
+  deepspeed_config: "/etc/forgelm/ds_zero2.json"  # your own DeepSpeed JSON; the zero2/zero3/zero3_offload preset names need a source checkout
 ```
 
 ```bash
@@ -152,7 +152,7 @@ See the [Distributed Training Guide](../reference/distributed_training.md) for d
 | `trust_remote_code` | `false` | Prevents arbitrary code execution from model repos |
 | `auth.hf_token` | Use `HUGGINGFACE_TOKEN` env var | Don't hardcode tokens in YAML |
 | `webhook.url` | Always use `url_env` with environment variable | Webhook tokens excluded from model cards (v0.3.1rc1+), but avoid direct URLs for credential hygiene |
-| `offline` | `true` for air-gapped | Prevents any network calls |
+| `offline` | `true` for air-gapped | Blocks Hugging Face Hub, transformers and datasets network calls (it sets `HF_HUB_OFFLINE`, `TRANSFORMERS_OFFLINE`, `HF_DATASETS_OFFLINE`). It does **not** stop webhooks, judge or synthetic-data API clients, or W&B / MLflow: disable those (omit `webhook:`, use local judge and teacher models, set `report_to: none`) for a true air gap |
 
 ---
 
