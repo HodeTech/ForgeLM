@@ -1,6 +1,8 @@
 # Completed Phases — Archive
 
 > **Note:** Historical archive of ForgeLM's Phase 1-10 completed work. Kept for reference and onboarding. For active planning, see [../roadmap.md](../roadmap.md).
+>
+> **Dates.** Where this archive says the EU AI Act is "fully enforced" in "August 2026", that was the planning assumption when the phase was written and is kept as the record. The application dates have since changed and differ by obligation; the current statement is in [../product_strategy.md](../product_strategy.md), and there is no single full-enforcement date.
 
 ## Summary table
 
@@ -661,18 +663,18 @@ graph TD
    ```
 
 2. [x] **`forgelm chat` — interactive terminal loop**
-   Terminal REPL in `forgelm/chat.py`: streaming output (default), `/reset`, `/save [file]`, `/temperature 0.x`, `/system <prompt>`, `/help` commands. `rich` optional rendering. History management with 50-pair cap. The `--safety` per-turn screen flag is planned for v0.6.0+ Pro CLI (today's safety pipeline runs through the YAML `safety:` block during training/eval).
+   Terminal REPL in `forgelm/chat.py`: streaming output (default), `/reset`, `/save [file]`, `/temperature 0.x`, `/system <prompt>`, `/help` commands. `rich` optional rendering. History management with 50-pair cap. `forgelm chat` performs no safety screening and reads no YAML config; the `--safety` per-turn screen flag is not implemented. Screen a model with `forgelm safety-eval --model <path> --default-probes`, or with the `evaluation.safety` block during training, before exposing it.
    ```bash
    forgelm chat ./outputs/my_run
    ```
 
    `forgelm chat`'s shipping form takes a positional checkpoint path
-   plus optional `--adapter`. The per-turn Llama Guard screen via
-   `--safety` is planned for v0.6.0+ Pro CLI (see Phase 13 roadmap);
-   today operators get the same screening by enabling
-   `safety: enabled: true` in the YAML config the chat REPL reads.
-   The flag-form preview (`forgelm chat ... --safety`) is NOT
-   runnable today.
+   plus optional `--adapter`. It performs no safety screening and does
+   not read a YAML config: a per-turn Llama Guard screen via `--safety`
+   is not implemented, and the flag-form preview
+   (`forgelm chat ... --safety`) is NOT runnable. Screen a model with
+   `forgelm safety-eval --model <path> --default-probes` (or the
+   `evaluation.safety` block during training) before exposing it.
 
 3. [x] **`forgelm export` — HF → GGUF conversion**
    Wraps `llama-cpp-python`'s `convert_hf_to_gguf.py`; no reimplementation. Handles adapter merge (LoRA + base → merged fp16) before conversion. Supports quants: `q2_k`, `q3_k_m`, `q4_k_m`, `q5_k_m`, `q8_0`, `f16`. SHA-256 of output artifact appended to `model_integrity.json`. Optional dependency: `pip install forgelm[export]`.
