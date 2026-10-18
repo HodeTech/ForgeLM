@@ -237,14 +237,17 @@ jobs:
           # EXPLICITLY so this job tests the true documented minimum — trl puts
           # no upper bound on transformers, so an unpinned resolve would silently
           # pull the newest 5.x and stop exercising the floor. transformers
-          # 5.3.0 is the CVE-2026-4372 fix floor and requires torch>=2.4 /
-          # huggingface_hub>=1.3 / tokenizers>=0.22; trl 1.0.0 pulls the
-          # accelerate>=1.4 and datasets>=4.7 floor. Keep 1:1 with the pyproject
-          # [project].dependencies minimums.
+          # 5.10.1 is the first installable release past CVE-2026-4372,
+          # CVE-2026-5241 and CVE-2026-9856 (5.10.0, which carries the last of
+          # them, was yanked); it requires huggingface_hub>=1.5 /
+          # tokenizers>=0.22, and ForgeLM itself needs torch>=2.4; trl 1.0.0
+          # pulls the accelerate>=1.4 and datasets>=4.7 floor. Keep 1:1 with the
+          # pyproject [project].dependencies minimums (tests/test_dependency_floor.py
+          # compares them).
           pip install \
             "torch==2.4.0" \
-            "transformers==5.3.0" \
-            "huggingface_hub==1.3.0" \
+            "transformers==5.10.1" \
+            "huggingface_hub==1.5.0" \
             "peft==0.19.0" \
             "accelerate==1.4.0" \
             "datasets==4.7.0" \

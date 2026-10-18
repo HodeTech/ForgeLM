@@ -152,6 +152,47 @@ class TestLoadTokenizer:
         assert fake_tok.pad_token == "[PAD]"
 
 
+class TestChatTemplateNameCannotEscapeTheSaveDirectory:
+    """CVE-2026-9856: a ``chat_template`` name from a Hub repo was used as a file name by ``save_pretrained``.
+
+    ForgeLM loads a tokenizer from a Hub repo and saves it again to ``final_model/`` (trainer, GGUF export, merge), so
+    a crafted ``tokenizer_config.json`` could write a file outside the output directory. Fixed in transformers
+    5.10.0 (yanked) and 5.10.1, which is why the declared floor is ``>=5.10.1``. This uses the installed transformers
+    and a tiny local tokenizer, so it also fails on a floor install that predates the fix.
+    """
+
+    def _crafted_tokenizer_dir(self, root):
+        import json
+
+        from tokenizers import Tokenizer, models, pre_tokenizers
+        from transformers import PreTrainedTokenizerFast
+
+        tok = Tokenizer(models.WordLevel({"[UNK]": 0, "hello": 1, "</s>": 2}, unk_token="[UNK]"))
+        tok.pre_tokenizer = pre_tokenizers.Whitespace()
+        source = root / "hub_repo"
+        PreTrainedTokenizerFast(tokenizer_object=tok, unk_token="[UNK]", eos_token="</s>").save_pretrained(source)
+        config_file = source / "tokenizer_config.json"
+        config = json.loads(config_file.read_text(encoding="utf-8"))
+        config["chat_template"] = [
+            {"name": "../../../ESCAPED_BY_CHAT_TEMPLATE", "template": "{{ messages }}"},
+            {"name": "default", "template": "{{ messages }}"},
+        ]
+        config_file.write_text(json.dumps(config), encoding="utf-8")
+        return source
+
+    def test_a_traversal_name_is_refused_and_nothing_is_written_outside(self, tmp_path):
+        source = self._crafted_tokenizer_dir(tmp_path)
+        out = tmp_path / "run" / "final_model"
+        cfg = _cfg(model={"name_or_path": str(source)})
+
+        with pytest.raises(ValueError, match="Invalid chat template name"):
+            tokenizer = model_mod._load_tokenizer(cfg, trust_remote_code=False)
+            tokenizer.save_pretrained(out)
+
+        escaped = [p for p in tmp_path.rglob("*") if p.is_file() and "ESCAPED" in p.name]
+        assert escaped == [], f"a chat_template name wrote outside the save directory: {escaped}"
+
+
 class TestBuildLoraConfig:
     """``_build_lora_config`` resolves the PEFT method and target modules."""
 
