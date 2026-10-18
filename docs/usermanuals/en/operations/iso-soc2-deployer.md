@@ -21,7 +21,7 @@ Four pillars an ISO / SOC 2 auditor cares about most have direct ForgeLM evidenc
 The deep guide answers each with the exact `jq` / CLI command + the artefact it returns:
 
 1. "Show me the audit trail for every model promotion in the past 90 days" → `forgelm verify-audit` + `jq 'select(.event == "human_approval.granted")'`.
-2. "Show me the change-control evidence — who approved this model?" → cross-reference `training.started` + `human_approval.granted` events; two distinct operator IDs prove segregation of duties (ISO A.5.3, SOC 2 CC1.5).
+2. "Show me the change-control evidence — who approved this model?" → cross-reference `training.started` + `human_approval.granted` events; compare the two identities; they are self-asserted (`FORGELM_OPERATOR`, else the OS user), so segregation of duties (ISO A.5.3, SOC 2 CC1.5) holds only if your identity provider makes them different people.
 3. "Show me the data lineage" → `data_provenance.json`; `sha256` + `hf_revision` pin the corpus — but only when `hf_revision_source` reads `loaded`. `unverified` means the SHA is a Hub lookup made when the bundle was written, with no coupling to the load; `unresolved` means no SHA was obtained and none is claimed.
 4. "Show me the supply chain" → `gh release download "$(gh release view --json tagName -q .tagName)" --pattern 'sbom-*'`; CycloneDX 1.5 JSON.
 5. "Show me the access controls" → IdP audit log + `FORGELM_OPERATOR` cross-reference.

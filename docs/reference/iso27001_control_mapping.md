@@ -24,7 +24,7 @@
 |---|---|---|
 | A.5.1 Policies for information security | FL-helps | `audit_event_catalog.md` documents what's logged |
 | A.5.2 Information security roles and responsibilities | FL-helps | `FORGELM_OPERATOR` + `roles_responsibilities.md` |
-| A.5.3 Segregation of duties | FL-helps | `human_approval.required/granted` enforces trainer ≠ approver |
+| A.5.3 Segregation of duties | FL-helps | `human_approval.required/granted` **records** the approver identity (from `FORGELM_OPERATOR`, else the OS user) so trainer ≠ approver is auditable; ForgeLM does not reject self-approval. Keep the runner and reviewer identities disjoint at your identity provider |
 | A.5.4 Management responsibilities | FL-helps | `forgelm doctor`; `compliance_report.json`; `training_manifest.yaml` |
 | A.5.5 Contact with authorities | OOS | — |
 | A.5.6 Contact with special interest groups | OOS | — |

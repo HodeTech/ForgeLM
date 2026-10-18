@@ -26,7 +26,7 @@ kategoriler engagement-bazında scoplanır.
 | CC | Başlık | ForgeLM kanıtı |
 |---|---|---|
 | CC1.1 | Bütünlüğe bağlılık göstergesi | `roles_responsibilities.md` QMS template; AI Officer rolü |
-| CC1.2 | Yönetişim bağımsızlığı | Approval gate operator ≠ trainer |
+| CC1.2 | Yönetişim bağımsızlığı | Approval gate onaylayıcı kimliğini kaydeder, böylece eğitici ≠ onaylayıcı denetlenebilir; ForgeLM bunu zorlamaz |
 | CC1.3 | Yapı, raporlama hatları kurma | `roles_responsibilities.md` AI Officer / ML Lead / DPO tanımlar |
 | CC1.4 | Yetkinliğe bağlılık göstergesi | Yıllık EU AI Act / GDPR eğitimi (operatör politikası) |
 | CC1.5 | Hesap verebilirliği uygular | `FORGELM_OPERATOR` attribution + audit chain |

@@ -104,8 +104,9 @@ in-pipeline CAB:
    in `final_model.staging.<run_id>/` for forensic review until
    retention expires (`retention.staging_ttl_days` in the config).
 
-This gives a deployer SOC 2 CC8.1 evidence: every model promotion is
-attributed, dual-controlled, and forensically recorded.
+This gives a deployer SOC 2 CC8.1 evidence: when the approval gate is
+enabled, every model promotion is attributed to the recorded approver identity and forensically recorded.
+Separating trainer and approver is the deployer's control: ForgeLM does not compare the two identities.
 
 ### 4.2 Configuration drift detection
 

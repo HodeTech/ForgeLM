@@ -23,7 +23,7 @@
 |---|---|---|
 | A.5.1 Bilgi güvenliği için politikalar | FL-helps | `audit_event_catalog.md` neyin loglandığını dokümante eder |
 | A.5.2 Bilgi güvenliği rolleri ve sorumlulukları | FL-helps | `FORGELM_OPERATOR` + `roles_responsibilities.md` |
-| A.5.3 Görev ayrılığı | FL-helps | `human_approval.required/granted` trainer ≠ approver'ı zorlar |
+| A.5.3 Görev ayrılığı | FL-helps | `human_approval.required/granted` onaylayıcı kimliğini (`FORGELM_OPERATOR`'dan, yoksa OS kullanıcısından) **kaydeder**, böylece eğitici ≠ onaylayıcı denetlenebilir; ForgeLM kendisi self-approval'ı reddetmez. Runner ve reviewer kimliklerini kimlik sağlayıcınızda ayrık tutun |
 | A.5.4 Yönetim sorumlulukları | FL-helps | `forgelm doctor`; `compliance_report.json`; `training_manifest.yaml` |
 | A.5.5 Yetkililerle iletişim | OOS | — |
 | A.5.6 Özel ilgi gruplarıyla iletişim | OOS | — |

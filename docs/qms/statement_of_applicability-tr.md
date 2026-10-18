@@ -108,7 +108,7 @@ ForgeLM-spesifik kontrol envanteriyle ilgilidir.
 | Kontrol | Applicable? | ForgeLM kanıtı | Operatör-tarafı eylem |
 |---|---|---|---|
 | A.8.1 Kullanıcı uç cihazları | YES | `forgelm doctor` — Python / CUDA / GPU / extras / HF auth / disk / `FORGELM_OPERATOR` checks | Endpoint hardening |
-| A.8.2 Ayrıcalıklı erişim hakları | YES | Operatör attribution; approval gate non-trainer operator | IdP'de RBAC |
+| A.8.2 Ayrıcalıklı erişim hakları | YES | Operatör attribution; approval gate onaylayıcı kimliğini kaydeder | IdP'de RBAC |
 | A.8.3 Bilgi erişim kısıtlaması | YES | Salted identifier hashing; `forgelm reverse-pii` Md. 15 | DSAR workflow |
 | A.8.4 Kaynak koduna erişim | YES | `model.trust_remote_code=False` default; `model.revision` temel-model deposunu sabitler ve `trust_remote_code: true` ile çalıştırılacak depo-içi kodu sınırlar.  `_fingerprint_hf_revision` yalnızca **dataset** deposunu kapsar | VCS erişim kontrolü; `trust_remote_code: true` onaylanan her yerde `model.revision` zorunlu tutun |
 | A.8.5 Güvenli kimlik doğrulama | YES | `safe_post` non-HTTPS'de auth header reddeder; webhook secret discipline | MFA + token rotasyonu |

@@ -68,6 +68,11 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Stop describing the human-approval gate as enforcing segregation of duties (English and Turkish): it records the
+  trainer and approver identities and does not compare them, and both are self-asserted. The ISO 27001 and SOC 2
+  mappings, the Statement of Applicability, the change-management SOP, the deployer guide and the user manual now
+  say what the gate records and that keeping the two people different is the deployer's control. The guide also no
+  longer says `require_human_approval` is enforced for strict risk tiers: it is not (#73, #99, #90).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).

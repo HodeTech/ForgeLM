@@ -109,8 +109,9 @@ CAB'sıdır:
    retention süresi dolana kadar (`retention.staging_ttl_days` —
    config'te).
 
-Bu, operatöre SOC 2 CC8.1 kanıtı verir: her model promotion
-attribute, çift kontrollü ve forensic olarak kayıtlıdır.
+Bu, operatöre SOC 2 CC8.1 kanıtı verir: onay kapısı etkinleştirildiğinde her
+model promotion kaydedilen onaylayıcı kimliğine atfedilir ve forensic olarak kayıtlıdır. Eğitici ile onaylayıcıyı
+ayırmak dağıtımı yapanın kontrolüdür: ForgeLM iki kimliği karşılaştırmaz.
 
 ### 4.2 Yapılandırma drift tespiti
 

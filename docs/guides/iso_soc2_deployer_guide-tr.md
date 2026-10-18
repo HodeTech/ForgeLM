@@ -26,8 +26,10 @@ ForgeLM kanıtına sahip:
 2. **Change control** — Madde 14 staging gate (`forgelm approve` /
    `reject`) + `human_approval.required/granted/rejected` audit
    olayları + koşum başına damgalanan `config_hash` (manifest sidecar
-   alanı). Her model promotion çift kontrollü ve forensic olarak
-   attribute edilmiştir.
+   alanı). Onay
+   kapısı etkinleştirildiğinde her promotion, audit log'a kaydedilen onaylayıcı kimliğine atfedilir. ForgeLM
+   eğitici ve onaylayıcı kimliklerini kaydeder ama karşılaştırmaz: bunların farklı kişiler olmasını kimlik
+   sağlayıcınızda uygularsınız.
 3. **Data lineage** — `data_provenance.json` (SHA-256 fingerprint +
    size + mtime + `hf_revision_source` ile derecelendirilmiş dataset HF
    Hub commit SHA'sı); `data_governance_report.json`
@@ -65,7 +67,9 @@ Denetçi sormadan **önce** indirmeniz gereken on iki madde.
 
 - [ ] **`evaluation.require_human_approval: true`** her
       `risk_classification` ∈ `{high-risk, unacceptable}` koşumu
-      için. Unutursanız F-compliance-110 `ConfigError` raise eder.
+      için. ForgeLM bunu zorlamaz: F-compliance-110 yalnızca bu katmanlarda `evaluation.safety.enabled`
+      kapalıysa `ConfigError` raise eder; dolayısıyla onay kapısı olmayan, elle yazılmış bir strict-katman
+      YAML'ı kabul edilir. CLI sihirbazı (`forgelm --wizard`) bu katmanlarda kapıyı açar.
 - [ ] **Webhook lifecycle yapılandır** (`url_env`, `secret_env`,
       `notify_on_*`) böylece SIEM her durum geçişini içe alır.
 - [ ] **`auto_revert: true` etkinleştir** üretim eğitimi için —
@@ -155,8 +159,9 @@ jq -r 'select(.run_id == "X" and (.event == "training.started" or .event == "hum
     ./outputs/audit_log.jsonl | sort -u
 ```
 
-İki farklı operator ID görev ayrılığını kanıtlar (ISO A.5.3, SOC 2
-CC1.5).
+`training.started` üzerindeki operatörü `human_approval.granted` üzerindeki onaylayıcıyla karşılaştırın. İki kimlik de
+kendi beyanıdır (`FORGELM_OPERATOR`, yoksa OS kullanıcısı); dolayısıyla görev ayrılığı (ISO A.5.3, SOC 2 CC1.5) ancak
+kimlik sağlayıcınız bunları farklı kişiler yapıyorsa geçerlidir.
 
 ### S3: "Data lineage göster"
 
