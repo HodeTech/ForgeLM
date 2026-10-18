@@ -15,7 +15,7 @@ Tam açıklamalı örnek için `config_template.yaml` dosyasına bakın.
 | `load_in_4bit` | bool | `true` | QLoRA 4-bit NF4 kuantizasyon |
 | `backend` | string | `"transformers"` | `"transformers"` veya `"unsloth"` (desteklenen mimarilerde daha hızlı, Linux) |
 | `trust_remote_code` | bool | `false` | Model depolarından özel kod çalıştırma. **Güvenlik riski** |
-| `offline` | bool | `false` | İzole mod: HF Hub çağrısı yok. Modeller/veri setleri yerel olmalı |
+| `offline` | bool | `false` | HF offline değişkenlerini ayarlar; Hub, transformers ve datasets ağ çağrısı yapmaz. Modeller/veri setleri yerel olmalı. Webhook'ları, judge veya sentetik-veri API istemcilerini ve W&B / MLflow'u durdurmaz |
 | `revision` | string | `null` | Temel modeli + tokenizer'ı bir HF Hub commit SHA'sına (40-hex) veya branch/tag'e sabitle. **Bugün uygulanıyor.** Bkz. [Hub revision pinleme](#hub-revision-pinleme) |
 | `bnb_4bit_use_double_quant` | bool | `true` | Ekstra VRAM tasarrufu için çift kuantizasyon |
 | `bnb_4bit_quant_type` | string | `"nf4"` | Kuantizasyon tipi (`"nf4"` veya `"fp4"`) |

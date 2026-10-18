@@ -15,7 +15,7 @@ See `config_template.yaml` for a complete annotated example.
 | `load_in_4bit` | bool | `true` | Enable QLoRA 4-bit NF4 quantization |
 | `backend` | string | `"transformers"` | `"transformers"` or `"unsloth"` (faster on supported architectures, Linux only) |
 | `trust_remote_code` | bool | `false` | Allow custom code from model repos. **Security risk** — only enable for models that require it |
-| `offline` | bool | `false` | Air-gapped mode: no HF Hub calls. Models/datasets must be local |
+| `offline` | bool | `false` | Sets the HF offline variables, so Hub, transformers and datasets make no network calls. Models/datasets must be local. Does not stop webhooks, judge or synthetic-data API clients, or W&B / MLflow |
 | `revision` | string | `null` | Pin the base model + tokenizer to an HF Hub commit SHA (40-hex) or a branch/tag. **Honoured today.** See [Hub revision pinning](#hub-revision-pinning) |
 | `bnb_4bit_use_double_quant` | bool | `true` | Double quantization for extra VRAM savings |
 | `bnb_4bit_quant_type` | string | `"nf4"` | Quantization type (`"nf4"` or `"fp4"`) |

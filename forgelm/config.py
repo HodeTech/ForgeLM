@@ -269,7 +269,7 @@ class ModelConfig(BaseModel):
     )
     offline: bool = Field(
         default=False,
-        description="Air-gapped mode: refuse HF Hub network calls.  Models/datasets/extras must be available locally.",
+        description="Offline mode: set the HF offline variables (Hub, transformers, datasets).  Models/datasets/extras must be available locally.  Webhooks, judge/synthetic API clients and trackers are not stopped.",
     )
     revision: Optional[str] = Field(
         default=None,
