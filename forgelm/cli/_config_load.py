@@ -47,6 +47,20 @@ def _load_config_or_exit(config_path: str, json_output: bool):
     sys.exit(EXIT_CONFIG_ERROR)
 
 
+def _disable_hub_telemetry() -> None:
+    """Keep the ``forgelm`` CLI from sending Hugging Face's anonymous usage ping.
+
+    A training run makes ``huggingface_hub`` send a small usage ping to huggingface.co: TRL's trainers call
+    ``send_telemetry`` when they are built, and ``huggingface_hub`` skips it only when ``HF_HUB_DISABLE_TELEMETRY`` is
+    true or offline mode is on.  ForgeLM's privacy page says the tool sends no usage data anywhere, so the CLI sets
+    the variable by default.  ``setdefault`` leaves an operator's own value alone (``HF_HUB_DISABLE_TELEMETRY=0``
+    opts back in).  It must run before ``huggingface_hub`` is imported, which reads it once at import; importing
+    ``forgelm.cli`` does not import it, and ``main()`` calls this first.  Using ForgeLM as a library does not go
+    through ``main()``, so a library user sets the variable themselves.
+    """
+    os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+
+
 def _apply_offline_flag(config, offline_arg: bool) -> None:
     if offline_arg:
         config.model.offline = True

@@ -68,6 +68,11 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- The `forgelm` CLI no longer sends Hugging Face's anonymous usage ping. TRL's trainers call `send_telemetry` when they are
+  built, and `huggingface_hub` sends it unless `HF_HUB_DISABLE_TELEMETRY` is true or offline mode is on, which contradicted the
+  privacy page ("does not send usage data anywhere"). `main()` now sets `HF_HUB_DISABLE_TELEMETRY=1` before anything imports
+  `huggingface_hub`, and an operator's own value wins (`HF_HUB_DISABLE_TELEMETRY=0` opts back in). Using ForgeLM as a library
+  does not set it (#95).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).
