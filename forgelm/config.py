@@ -770,17 +770,17 @@ class DistributedConfig(BaseModel):
         default=None,
         description="DeepSpeed config: filesystem path to a DS JSON OR preset name (`zero2`, `zero3`, `zero3_offload`).",
     )
-    fsdp_strategy: Literal["full_shard", "shard_grad_op", "no_shard", "hybrid_shard"] = Field(
+    fsdp_strategy: Literal["full_shard", "shard_grad_op"] = Field(
         default="full_shard",
-        description="FSDP sharding strategy.  `full_shard` is the production default; `hybrid_shard` for multi-node intra-node sharding.",
+        description="FSDP sharding strategy.  `full_shard` is the production default; `shard_grad_op` shards gradients and optimizer states only.  `no_shard` and `hybrid_shard` are not accepted: transformers 5.10+ runs FSDP2, which supports neither.",
     )
-    fsdp_auto_wrap: bool = Field(default=True, description="FSDP: auto-wrap transformer layers (recommended).")
+    fsdp_auto_wrap: bool = Field(default=True, description="FSDP auto-wrap; ignored by FSDP2 (transformers 5.10+).")
     fsdp_offload: bool = Field(
         default=False, description="FSDP: offload parameters to CPU between forward and backward (slower, less VRAM)."
     )
     fsdp_backward_prefetch: Literal["backward_pre", "backward_post"] = Field(
         default="backward_pre",
-        description="FSDP backward-prefetch policy.  `backward_pre` overlaps comm + compute; `backward_post` is more memory-conservative.",
+        description="FSDP backward-prefetch policy.  Not honoured by transformers 5.10+ (FSDP2 prefetches on its own); `backward_post` logs a warning.",
     )
     fsdp_state_dict_type: Literal["FULL_STATE_DICT", "SHARDED_STATE_DICT"] = Field(
         default="FULL_STATE_DICT",

@@ -229,10 +229,10 @@ The merge field is `method` (not `algorithm`), and there is no `dare_ties` choic
 distributed:
   strategy: null                              # null (single-GPU, no distributed wrapping) | deepspeed | fsdp
   deepspeed_config: null                      # path to a DeepSpeed JSON, or preset name: zero2 | zero3 | zero3_offload
-  fsdp_strategy: "full_shard"                 # full_shard | shard_grad_op | no_shard | hybrid_shard
-  fsdp_auto_wrap: true                        # auto-wrap transformer layers (recommended)
+  fsdp_strategy: "full_shard"                 # full_shard | shard_grad_op
+  fsdp_auto_wrap: true                        # ignored on transformers 5.10+ (FSDP2 always wraps transformer layers)
   fsdp_offload: false                         # offload FSDP parameters to CPU between forward/backward
-  fsdp_backward_prefetch: "backward_pre"      # backward_pre | backward_post
+  fsdp_backward_prefetch: "backward_pre"      # backward_pre | backward_post; ignored on transformers 5.10+
   fsdp_state_dict_type: "FULL_STATE_DICT"     # FULL_STATE_DICT | SHARDED_STATE_DICT
 ```
 

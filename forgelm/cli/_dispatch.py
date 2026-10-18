@@ -10,7 +10,7 @@ from __future__ import annotations
 import sys
 
 from .._strict_json import dumps_strict
-from ._config_load import _apply_offline_flag, _disable_hub_telemetry, _load_config_or_exit
+from ._config_load import _apply_offline_flag, _disable_hub_telemetry, _load_config_or_exit, _warn_inert_fsdp_options
 from ._exit_codes import EXIT_CONFIG_ERROR, EXIT_SUCCESS, EXIT_TRAINING_ERROR, _clamp_exit_code
 from ._logging import _setup_logging, logger
 from ._no_train_modes import _maybe_run_no_train_mode
@@ -242,6 +242,7 @@ def _main_inner() -> None:
 
     config = _load_config_or_exit(args.config, json_output)
     _apply_offline_flag(config, args.offline)
+    _warn_inert_fsdp_options(config)
 
     if config.pipeline is not None:
         _dispatch_pipeline_mode(config, args, json_output)

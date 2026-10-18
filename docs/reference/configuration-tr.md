@@ -398,10 +398,10 @@ kaynağı kaydedilmemiştir.
 |------|-----|-----------|----------|
 | `strategy` | string | `null` | `"deepspeed"` veya `"fsdp"` (null = tek GPU) |
 | `deepspeed_config` | string | `null` | Ön ayar (`"zero2"`, `"zero3"`, `"zero3_offload"`) veya JSON yolu |
-| `fsdp_strategy` | string | `"full_shard"` | `"full_shard"`, `"shard_grad_op"`, `"hybrid_shard"`, `"no_shard"` |
-| `fsdp_auto_wrap` | bool | `true` | Transformer katmanlarını otomatik sar |
+| `fsdp_strategy` | string | `"full_shard"` | `"full_shard"` veya `"shard_grad_op"` (`"hybrid_shard"` ve `"no_shard"` reddedilir: FSDP2 bunları desteklemez) |
+| `fsdp_auto_wrap` | bool | `true` | Transformer katmanlarını otomatik sar (transformers 5.10+'ta yok sayılır, katmanlar hep sarılır) |
 | `fsdp_offload` | bool | `false` | Parametreleri CPU'ya taşı |
-| `fsdp_backward_prefetch` | string | `"backward_pre"` | `"backward_pre"` veya `"backward_post"` |
+| `fsdp_backward_prefetch` | string | `"backward_pre"` | `"backward_pre"` veya `"backward_post"` (transformers 5.10+'ta yok sayılır; FSDP2 prefetch politikası almaz) |
 | `fsdp_state_dict_type` | string | `"FULL_STATE_DICT"` | `"FULL_STATE_DICT"` veya `"SHARDED_STATE_DICT"` |
 
 ## `synthetic` (İsteğe bağlı — Sentetik Veri Üretimi)
