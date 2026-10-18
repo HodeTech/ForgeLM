@@ -17,6 +17,7 @@ Usage (CLI):
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import os
@@ -189,6 +190,10 @@ def _merge_adapter(model_path: str, adapter_path: str, merged_dir: str) -> None:
 # SHA-256 helper
 # ---------------------------------------------------------------------------
 
+# Suffix of the digest file written next to the GGUF.  ``forgelm verify-gguf`` looks for
+# ``<path>.sha256`` (``forgelm.verify._gguf._SIDECAR_SUFFIX``); tests/test_export.py keeps the two equal.
+GGUF_SIDECAR_SUFFIX = ".sha256"
+
 
 def _sha256_file(path: str) -> str:
     """Compute the SHA-256 digest of a file."""
@@ -197,6 +202,29 @@ def _sha256_file(path: str) -> str:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _write_sha256_sidecar(gguf_path: str, digest: str) -> str:
+    """Write ``<gguf_path>.sha256`` in ``sha256sum`` binary-mode format (``<hex> *<name>``).
+
+    The file is written next to the GGUF through a temporary name and renamed into place, so a reader never
+    sees a half-written digest.  ``sha256sum -c`` accepts the result, and so does ``forgelm verify-gguf``.
+    The sidecar detects corruption and accidental change; it is not tamper evidence, because whoever can
+    replace the GGUF can replace the sidecar next to it.  Returns the sidecar path.
+    """
+    sidecar_path = gguf_path + GGUF_SIDECAR_SUFFIX
+    temporary_path = sidecar_path + ".tmp"
+    try:
+        with open(temporary_path, "w", encoding="utf-8") as fh:
+            fh.write(f"{digest} *{os.path.basename(gguf_path)}\n")
+        os.replace(temporary_path, sidecar_path)
+    except OSError:
+        with contextlib.suppress(
+            OSError
+        ):  # best-effort tidy-up of our own temporary file; the original error is re-raised
+            os.remove(temporary_path)
+        raise
+    return sidecar_path
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +269,7 @@ def _update_integrity_manifest(model_dir: str, export_result: ExportResult) -> N
         # ``json.JSONDecodeError`` since it subclasses ``ValueError``).
         # Updating the manifest is non-fatal: the artefact itself was already
         # exported successfully and its on-disk SHA-256 is recoverable.
-        logger.debug("Could not update model_integrity.json: %s", e)
+        logger.warning("Could not update model_integrity.json: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +435,9 @@ def export_model(
             converter can exceed one hour; raise this for large models.
 
     Returns:
-        :class:`ExportResult` with SHA-256, file size, and output path.
+        :class:`ExportResult` with SHA-256, file size, and output path.  The digest is also written next to the
+        GGUF as ``<output>.sha256`` (``sha256sum`` format), which ``forgelm verify-gguf`` compares against.  For
+        a K-quant request the file written is the intermediate f16 GGUF and the sidecar belongs to it.
     """
     fmt = output_format.lower()
     quant = quant.lower()
@@ -465,6 +495,20 @@ def export_model(
     # Compute artifact stats — reflect the file actually written, not the requested quant
     digest = _sha256_file(actual_output_path)
     size_bytes = os.path.getsize(actual_output_path)
+
+    try:
+        _write_sha256_sidecar(actual_output_path, digest)
+    except OSError as e:
+        return ExportResult(
+            success=False,
+            output_path=actual_output_path,
+            format=fmt,
+            quant=actual_quant,
+            sha256=digest,
+            size_bytes=size_bytes,
+            error=f"GGUF written to {actual_output_path} but its SHA-256 sidecar could not be written: {e}",
+            error_kind="runtime",
+        )
 
     # Structured substitution signal: a K-quant request is served as an
     # intermediate f16 GGUF and needs a manual llama-quantize follow-up.  Expose
