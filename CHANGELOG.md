@@ -99,6 +99,13 @@ All notable changes to ForgeLM are documented here.
   ForgeLM now logs a warning when either is set, and the field descriptions, reference pages, user manuals and `config_template.yaml`
   say so. Moving to FSDP2 settings (`fsdp=True` plus an explicit `fsdp_config`) is not part of this change; the string form is
   deprecated in transformers and slated for removal in v5.20 (#104).
+- `forgelm purge --row-id` without `--output-dir` now logs a warning that names the directory it resolved (the corpus's)
+  and the `final_model/` the memorisation check will look for. The documentation promised that warning but the code never
+  logged it, and a default run looks for a model next to the corpus, where a training run rarely writes one, so it finished
+  with a completed-erasure record and no memorisation event. The audit-event catalogue, the purge reference, the GDPR
+  erasure guide, the user manual and the risk-treatment plan now state the real condition: a `final_model/` directly under
+  `--output-dir`, not "any run that consumed the corpus" (English and Turkish). Reading `training.output_dir` from
+  `--config` is still open (#102).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).

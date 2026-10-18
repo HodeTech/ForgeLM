@@ -35,7 +35,7 @@ Erases a single row identified by its `id` (or `row_id`) field from a JSONL trai
 | `--row-id ID` | yes | Identifier to erase. Hashed before audit emission via `forgelm.cli.subcommands._purge._hash_target_id`. |
 | `--corpus PATH` | yes | Single JSONL file. Directory mode is rejected — operators loop in their own script. |
 | `--row-matches {one,all}` | no (default `one`) | `one` refuses on >=2 matches; `all` deletes every match (operator confirms intent). |
-| `--output-dir DIR` | no | Defaults to the parent of `--corpus`. The per-output-dir salt at `<output_dir>/.forgelm_audit_salt` is read here for `target_id` hashing. The implicit fallback emits a WARNING naming the resolved dir so the operator can pin `--output-dir` for cross-tool correlation with `forgelm reverse-pii`. |
+| `--output-dir DIR` | no | Defaults to the parent of `--corpus`. The per-output-dir salt at `<output_dir>/.forgelm_audit_salt` is read here for `target_id` hashing. The implicit fallback emits a WARNING naming the resolved dir and the `final_model/` the memorisation check will look for, so the operator can pin `--output-dir` to the training output directory and for cross-tool correlation with `forgelm reverse-pii`. |
 | `--justification TEXT` | no | Operator-supplied reason recorded on every erasure event. Reference your internal ticket id; do not paste subject identifiers. |
 | `--dry-run` | no | Preview the deletion + emit the audit chain (with `dry_run=true`) without modifying disk. |
 
@@ -80,7 +80,7 @@ All six events ride the common envelope from [`audit_event_catalog.md`](audit_ev
 | `data.erasure_requested` | First step of any `--row-id` / `--run-id` invocation, BEFORE any deletion. `--check-policy` is read-only and emits no events. | `target_kind` ∈ `{row, staging, artefacts}`, `target_id` (hashed in row mode), `salt_source` (row mode), `corpus_path` (row), `output_dir` (run), `justification`, `dry_run` |
 | `data.erasure_completed` | Successful deletion finished. | All `requested` fields + `bytes_freed`, `files_modified`, `pre_erasure_line_number` (row mode), `match_count` (row mode) |
 | `data.erasure_failed` | Disk operation raised, OR no matching row/run, OR multi-row policy refused on ambiguity. | All `requested` fields + `error_class`, `error_message` |
-| `data.erasure_warning_memorisation` | Row erasure × `final_model/` exists for any run that consumed this corpus. | All `completed` fields + `affected_run_ids` |
+| `data.erasure_warning_memorisation` | Row erasure × a `final_model/` directory exists directly under `--output-dir` (literal name; `--output-dir` defaults to the corpus's directory, so pass your training output directory). ForgeLM does not determine which runs consumed the corpus. | All `completed` fields + `affected_run_ids` |
 | `data.erasure_warning_synthetic_data_present` | Row erasure × `synthetic_data*.jsonl` exists in `output_dir`. | All `completed` fields + `synthetic_files` |
 | `data.erasure_warning_external_copies` | Loaded config has a non-empty `webhook` block; downstream consumers may have received notices. | All `completed` fields + `webhook_targets` (redacted URLs) |
 
