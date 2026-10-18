@@ -1,7 +1,7 @@
 """
 GGUF export for post-training model distribution.
 
-Wraps llama-cpp-python's ``convert_hf_to_gguf.py`` conversion script to
+Runs llama.cpp's ``convert_hf_to_gguf.py`` conversion script to
 produce quantised GGUF files that can be served by Ollama, llama.cpp, and
 compatible runtimes.
 
@@ -30,7 +30,7 @@ logger = logging.getLogger("forgelm.export")
 SUPPORTED_FORMATS = frozenset({"gguf"})
 SUPPORTED_QUANTS = frozenset({"q2_k", "q3_k_m", "q4_k_m", "q5_k_m", "q8_0", "f16"})
 
-# Name of the HF→GGUF conversion script bundled with llama-cpp-python.
+# Name of the HF→GGUF conversion script (it lives in a llama.cpp checkout; no released llama-cpp-python wheel installs it where it is searched).
 _CONVERTER_SCRIPT = "convert_hf_to_gguf.py"
 
 # Quant types supported directly by convert_hf_to_gguf.py via --outtype.
@@ -87,11 +87,13 @@ class ExportResult:
 
 
 def _find_converter_script() -> str:
-    """Locate llama-cpp-python's HF → GGUF conversion script.
+    """Locate the HF → GGUF conversion script.
 
-    Checks the ``FORGELM_GGUF_CONVERTER`` environment variable first, allowing
-    users to pin a specific converter script (useful when the bundled version is
-    outdated or when using a standalone llama.cpp build).
+    Checks the ``FORGELM_GGUF_CONVERTER`` environment variable first.  In practice
+    that is the supported route: the script is not part of the llama-cpp-python
+    wheels (0.2.90 puts it in ``bin/``, 0.3.x does not ship it), so the
+    ``llama_cpp`` directories searched below are only a fallback for a layout that
+    no current wheel has.  Point the variable at the copy inside a llama.cpp checkout.
 
     Raises:
         ImportError: When llama-cpp-python is not installed.
@@ -141,9 +143,9 @@ def _find_converter_script() -> str:
             return path
 
     raise FileNotFoundError(
-        f"{_CONVERTER_SCRIPT} not found inside the llama-cpp-python installation.  "
-        "Try: pip install 'llama-cpp-python>=0.2.90'  "
-        f"Or set FORGELM_GGUF_CONVERTER=/path/to/{_CONVERTER_SCRIPT} to use a custom script."
+        f"{_CONVERTER_SCRIPT} not found inside the llama-cpp-python installation (no released wheel installs it "
+        "where ForgeLM looks).  "
+        f"Set FORGELM_GGUF_CONVERTER=/path/to/llama.cpp/{_CONVERTER_SCRIPT}, the script inside a llama.cpp checkout."
     )
 
 

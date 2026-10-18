@@ -292,6 +292,10 @@ class TestExportModel:
 
         assert result.success is False
         assert result.error_kind == "runtime"
+        # The hint must send the operator to the route that works (the script in a llama.cpp checkout), not to a
+        # reinstall of llama-cpp-python, whose wheels do not carry the script.
+        assert "FORGELM_GGUF_CONVERTER" in result.error and "llama.cpp checkout" in result.error
+        assert "pip install" not in result.error
 
     def test_all_supported_quants_accepted(self, tmp_path):
         """Every quant in SUPPORTED_QUANTS must pass format/quant validation."""

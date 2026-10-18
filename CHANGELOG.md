@@ -68,6 +68,13 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Stop saying that `pip install 'forgelm[export]'` brings the GGUF converter. `forgelm export` runs llama.cpp's `convert_hf_to_gguf.py`;
+  no `llama-cpp-python` wheel puts it where ForgeLM searches (0.2.90 installs it under `bin/`, 0.3.x does not ship it), so a plain
+  install ends with `convert_hf_to_gguf.py not found inside the llama-cpp-python installation` (exit 2) unless `FORGELM_GGUF_CONVERTER`
+  points at the script in a llama.cpp checkout. The installation page, the CLI reference, the usage and quickstart guides, the
+  post-training notebook, the `export` extra's comment in `pyproject.toml`, the module docstring and the error message (which advised
+  `pip install 'llama-cpp-python>=0.2.90'`) now say so. Searching the locations real wheels use, or bundling the script, is a code
+  change and stays open (#113).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).
