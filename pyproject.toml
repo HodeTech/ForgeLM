@@ -145,12 +145,12 @@ export = [
 # so a bare install still works.
 # OCR is intentionally out of scope (handle externally with Tesseract).
 ingestion = [
-  "pypdf>=4.0.0,<6.0.0",
+  "pypdf>=4.0.0,<7.0.0",
   "python-docx>=1.0.0,<2.0.0",
   "ebooklib>=0.18,<1.0.0",
   "beautifulsoup4>=4.12.0,<5.0.0",
   "langdetect>=1.0.9,<2.0.0",
-  "xxhash>=3.0.0,<4.0.0",
+  "xxhash>=3.0.0,<5.0.0",
 ]
 
 # Optional MinHash LSH near-duplicate detector for >50K-row corpora.
@@ -159,7 +159,7 @@ ingestion = [
 # operators auditing larger datasets where MinHash's recall/precision
 # trade-off is the industry standard (NeMo Curator, Dolma, RedPajama).
 ingestion-scale = [
-  "datasketch>=1.6.0,<2.0.0",
+  "datasketch>=1.6.0,<3.0.0",
 ]
 
 # Optional Presidio ML-NER PII detector. Adds the unstructured-identifier
@@ -187,7 +187,7 @@ dev = [
   # surface in CI instead of waiting for a Python micro-bump or runner
   # change to flip collection order.  Run locally via
   # ``pytest --randomly-seed=<n>`` to reproduce a failure.
-  "pytest-randomly>=3.15.0,<4.0.0",
+  "pytest-randomly>=3.15.0,<6.0.0",
   # Bounded on purpose.  ruff 0.16.0 began formatting Python blocks *inside
   # Markdown*, taking the format check from 277 files to 562 — on an unchanged
   # tree that is 32 newly "unformatted" documents and a red lint job nobody
