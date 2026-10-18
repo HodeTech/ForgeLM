@@ -66,6 +66,12 @@ All notable changes to ForgeLM are documented here.
   `CONTRIBUTING.md`, `CLAUDE.md` and `AGENTS.md` that the front door is chosen with labels and
   views, never by closing issues.
 
+### Removed
+
+- Delete the stale `requirements.txt`, `requirements-eval.txt` and `requirements-linux.txt`. Nothing
+  referenced them, their floors were far below `pyproject.toml`'s, and Dependabot would have opened weekly
+  pull requests against them; installation goes through the `pyproject.toml` extras (#968).
+
 ### Fixed
 
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
