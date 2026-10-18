@@ -28,3 +28,32 @@ test('a string a page shows as plain text holds no markup or HTML entity', () =>
   }
   assert.deepEqual(literal, []);
 });
+
+// Site copy that promised more than the code does (the Wave 0 triage). The English and Turkish tiers are matched
+// by phrase; the other four locales are checked for a token every translation of the corrected string keeps.
+test('claims the code does not back stay out of the site copy', () => {
+  const { translations } = loadWizard();
+  const site = path.join(root, 'site');
+  const retired = {
+    en: [/dual-control/i, /\bauto-deletes\b/, /run fails \(exit 3\)/, /satisfying the access-request/,
+      /Slack, Teams, Discord, or any HTTP/, /Slack \/ Teams \/ Discord/, /enforced upstream/, /GDPR-compliant TTLs/,
+      /SHA-256 \+ size manifest/, /6 quant levels and SHA-256 manifest/, /ZeRO-2 \/ ZeRO-3 presets/,
+      /PII redacted at ingest/, /GGUF export at q4_k_m/],
+    tr: [/ikili[- ]kontrol/i, /otomatik siler/, /GDPR uyumlu TTL/, /erişim-talebi tarafını karşılar/,
+      /Slack, Teams, Discord veya/, /Slack \/ Teams \/ Discord/, /upstream'de uygulanır/],
+  };
+  const found = [];
+  for (const [locale, patterns] of Object.entries(retired)) {
+    for (const [key, value] of Object.entries(translations[locale])) {
+      for (const pattern of patterns) if (pattern.test(value)) found.push(`${locale} ${key}: ${pattern}`);
+    }
+  }
+  for (const page of fs.readdirSync(site).filter(name => name.endsWith('.html'))) {
+    const html = fs.readFileSync(path.join(site, page), 'utf8');
+    for (const pattern of retired.en) if (pattern.test(html)) found.push(`${page}: ${pattern}`);
+  }
+  assert.deepEqual(found, []);
+  for (const [locale, table] of Object.entries(translations)) {
+    assert.match(table['wizard.retention.enforce.hint'], /--check-policy/, `${locale}: retention is only reported`);
+  }
+});

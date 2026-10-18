@@ -102,6 +102,15 @@ All notable changes to ForgeLM are documented here.
   oversight (monitor, interpret, override, stop) happens while the system is in use. `audit_log.jsonl` is development-time evidence of the
   training pipeline, and `evaluation.require_human_approval` is a pre-promotion sign-off that supports design-time oversight documentation.
   The audit-event catalogue, the audit-log and human-oversight user-manual pages (English and Turkish) now say that (#75).
+- Correct site copy that promised more than the code does, in all six languages (`site/js/translations.js`, the HTML fallbacks and a code
+  comment in `site/js/wizard.js`): a failing benchmark gate exits 3 only with `evaluation.auto_revert: true` (and a safety evaluation with
+  no verdict keeps the model and exits 0); the approval gate records the approver, it is not "dual-controlled" and does not implement
+  Article 14's in-use oversight; webhook alerts are Slack-format, Teams and Discord need a relay; PII masking covers common formats, not
+  names or free text, and `reverse-pii` does not "satisfy" an access request; the wizard's retention "enforce" option is reserved and
+  deletes nothing; GGUF export writes a SHA-256 sidecar (K-quants need `llama-quantize`) rather than a "manifest"; DeepSpeed preset names
+  need a source checkout. A new site test keeps those phrases from coming back. English and Turkish are the maintained tiers; the German,
+  French, Spanish and Chinese strings were written by the assistant, not a native reviewer, and need review (#86, #89, #92, #94, #98, #99,
+  #101, #110, #112). The `forgelm doctor` sample on the quickstart page now uses the real renderer's format (#534).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).
