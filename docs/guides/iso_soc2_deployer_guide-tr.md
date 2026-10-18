@@ -254,8 +254,11 @@ Referans:
 
 - `docs/qms/sop_incident_response.md` §4 (Wave 4 / Faz 23
   genişletme) güvenlik-incident playbook için.
-- Zincirin kendisi: `audit.classifier_load_failed` event yangın +
-  `pipeline.failed` propagate + koşum `final_model/` dizini ÜRETMEZ.
+- Zincirin kendisi: `audit.classifier_load_failed` event'i tetiklenir
+  ve `safety.evaluation_completed` `evaluation_completed: false` kaydeder.
+  Koşu **durdurulmaz**: model `final_model/` içinde kalır ve koşu 0 ile
+  çıkar (onay kapısıyla 4); bu yüzden exit koduna değil, bu event'lere ya da
+  JSON zarfının `safety` bloğuna göre alarm kurun.
 - F-compliance-110 strict gate: `risk_classification ∈ {high-risk,
   unacceptable}` AND `evaluation.safety.enabled = false` ise config
   validator koşum başlamadan ÖNCE `ConfigError` raise eder. Denetçi

@@ -103,7 +103,7 @@ ekler.
 |---|---|
 | Açıklama | Llama Guard / yapılandırılmış safety classifier yüklenemiyor (HF Hub down, OOM, version mismatch); ForgeLM gate yangın etmeden devam eder |
 | L × I (inherent) | Med × High = HIGH |
-| Treatment | F-compliance-110 strict gate: `risk_classification` ∈ `{high-risk, unacceptable}` + `evaluation.safety.enabled: false` `ConfigError` raise eder; `audit.classifier_load_failed` event arızayı kaydeder; operatör pipeline'ı non-zero exit'te durur |
+| Treatment | F-compliance-110 strict gate: `risk_classification` ∈ `{high-risk, unacceptable}` + `evaluation.safety.enabled: false` `ConfigError` raise eder; `audit.classifier_load_failed` event arızayı kaydeder. Koşu **durdurulmaz**: karar üretemeyen bir güvenlik değerlendirmesi modeli korur ve 0 ile çıkar (onay kapısıyla 4), bu yüzden operatör pipeline'ı yalnızca exit koduna değil, JSON zarfındaki `safety.evaluation_completed` / `safety.passed`'e ya da o audit event'ine bakmalıdır |
 | Residual L × I | Low × Low = LOW |
 | Sahip | ML Lead |
 | Review cadence | Eğitim koşumu başına |

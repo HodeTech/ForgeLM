@@ -253,9 +253,11 @@ Reference:
 
 - `docs/qms/sop_incident_response.md` §4 (Wave 4 / Faz 23 expansion)
   for the security-incident playbook.
-- The audit chain itself: `audit.classifier_load_failed` event fires
-  + `pipeline.failed` propagates + the run does NOT produce a
-  `final_model/` directory.
+- The audit chain itself: the `audit.classifier_load_failed` event fires
+  and `safety.evaluation_completed` records `evaluation_completed: false`.
+  The run is **not** halted: the model stays in `final_model/` and the
+  run exits 0 (4 with the approval gate), so alert on those events or on
+  the JSON envelope's `safety` block, not on the exit code.
 - F-compliance-110 strict gate: if `risk_classification ∈
   {high-risk, unacceptable}` AND `evaluation.safety.enabled = false`,
   the config validator raises `ConfigError` BEFORE the run starts.

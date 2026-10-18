@@ -11,7 +11,7 @@ ForgeLM'in exit kodları kamuya açık bir kontrattır. CI/CD hatları, schedule
 
 | Exit | Sabit | Anlam | Tipik CI aksiyonu |
 |---|---|---|---|
-| **0** | `EXIT_SUCCESS` | Koşu tamamlandı ve checkpoint terfi etti. `evaluation.auto_revert: true` ile tüm kapılar da geçti; sevk edilen varsayılan `auto_revert: false` ile başarısız bir benchmark/güvenlik/judge kapısı **JSON çıktısına kaydedilir ama exit kodunu değiştirmez** — aşağıdaki ["exit 0 tam olarak ne garanti eder"](#exit-0-tam-olarak-ne-garanti-eder) bölümüne bakın. | Hattı sürdür (`auto_revert` kapalıysa kapı bloklarını parse et) |
+| **0** | `EXIT_SUCCESS` | Koşu tamamlandı ve checkpoint terfi etti. `evaluation.auto_revert: true` ile karara varan tüm kapılar da geçti (karar üretemeyen bir güvenlik değerlendirmesi de modeli korur ve 0 ile çıkar); sevk edilen varsayılan `auto_revert: false` ile başarısız bir benchmark/güvenlik/judge kapısı **JSON çıktısına kaydedilir ama exit kodunu değiştirmez** — aşağıdaki ["exit 0 tam olarak ne garanti eder"](#exit-0-tam-olarak-ne-garanti-eder) bölümüne bakın. | Hattı sürdür (`auto_revert` kapalıysa kapı bloklarını parse et) |
 | **1** | `EXIT_CONFIG_ERROR` | YAML geçersiz, dosya yok, env var ayarsız veya argüman bozuk. | Hızlı başarısız |
 | **2** | `EXIT_TRAINING_ERROR` | Eğitim sırasında runtime hatası (config veya değerlendirme kapısı dışı her ele alınmamış istisna: data yükleme, OOM, NaN loss, I/O başarısızlığı, mid-stream audit-iteration OSError). | İncele; logları yüzeyle |
 | **3** | `EXIT_EVAL_FAILURE` | Bir benchmark/güvenlik/judge kapısı geçemedi **ve** model otomatik geri alındı (`evaluation.auto_revert: true` gerektirir). `auto_revert: false` ile başarısız bir kapı exit 3 üretmez — koşu, JSON kapı bloklarına kaydedilen başarısızlıkla 0 çıkar. | İncele; terfi ETTİRME |
@@ -112,7 +112,7 @@ Exit kodu kontrat tek başına yeterli — POSIX kabuklarda `$?`, cmd'de `%ERROR
 
 **Kapılar ve exit 0.** *Geçen* bir benchmark/güvenlik/judge kapısının exit-0 garantisinin parçası olup olmadığı `evaluation.auto_revert`'e bağlıdır:
 
-- `evaluation.auto_revert: true` ile (EU AI Act yüksek-riskli varsayılanı), başarısız bir kapı modeli otomatik geri alır ve **3** ile çıkar — yani exit 0 *gerçekten* tüm konfigüre kapıların geçtiği anlamına gelir.
+- `evaluation.auto_revert: true` ile (EU AI Act yüksek-riskli varsayılanı), başarısız bir kapı modeli otomatik geri alır ve **3** ile çıkar — yani exit 0, karara varan her konfigüre kapının geçtiği anlamına gelir. **Tek istisna:** karar üretemeyen bir güvenlik değerlendirmesi (`safety.evaluation_completed: false` — sınıflandırıcı yüklenemedi, probe dosyası yok ya da boş, ya da çoğu karar okunamadı) `auto_revert: true` olsa bile modeli korur ve 0 ile çıkar (onay kapısıyla 4); JSON çıktısındaki `safety.passed` ve `safety.evaluation_completed`'e bakın.
 - Sevk edilen varsayılan `evaluation.auto_revert: false` ile, başarısız bir kapı **kaydedilir** (JSON çıktısındaki `benchmark` / `safety` / `judge` bloğu `*_passed: false` taşır) ama model yine terfi eder ve koşu **0** ile çıkar. Bu JSON bloklarını okuyun; kapı başarısını yalnızca exit 0'dan çıkarsamayın.
 
 Tasarım gereği "kısmi başarı" exit kodu yok — başarısız bir kapının exit kodunu değiştirmesini istiyorsanız `auto_revert`'i açın.
