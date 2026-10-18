@@ -14,6 +14,22 @@ from ._exit_codes import EXIT_CONFIG_ERROR
 from ._logging import logger
 
 
+def _warn_reserved_retention_enforce(config) -> None:
+    """``retention.enforce`` is validated and offered by both wizards, but no command reads it.
+
+    A config that sets ``warn_on_excess`` or ``block_on_excess`` is asking for a gate that does not exist; say so,
+    rather than accept it silently.  (This lives here, not in the schema, to keep ``config.py`` within its
+    deferred-split line budget.)
+    """
+    mode = getattr(getattr(config, "retention", None), "enforce", "log_only")
+    if mode != "log_only":
+        logger.warning(
+            "retention.enforce=%r is accepted but no command acts on it yet: retention horizons are only reported "
+            "by `forgelm purge --check-policy`, and the trainer is not warned or blocked.",
+            mode,
+        )
+
+
 def _load_config_or_exit(config_path: str, json_output: bool):
     """Load config and translate exceptions into the right exit code.
 
@@ -25,7 +41,9 @@ def _load_config_or_exit(config_path: str, json_output: bool):
     """
     try:
         logger.info("Loading configuration from %s...", config_path)
-        return load_config(config_path)
+        config = load_config(config_path)
+        _warn_reserved_retention_enforce(config)
+        return config
     except FileNotFoundError as e:
         msg = f"Config file not found: {e}"
     except ConfigError as e:

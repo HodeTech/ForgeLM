@@ -281,7 +281,7 @@ exits 0, and nothing is deleted, blocked or scheduled automatically. The
 | `staging_ttl_days` | int | `7` | Days to retain `final_model.staging.<run_id>/` after a `forgelm reject` decision before scheduled cleanup. Set to `0` to retain indefinitely. Replaces the removed `evaluation.staging_ttl_days` (removed in v0.8.0). |
 | `ephemeral_artefact_retention_days` | int | `90` | Days to retain compliance bundles, data audit reports, and other run-scoped derived artefacts. Set to `0` to retain indefinitely. |
 | `raw_documents_retention_days` | int | `90` | Days to retain ingested raw documents (PDF / DOCX / EPUB / TXT / Markdown) under the operator's ingestion-output directory. Set to `0` to retain indefinitely. |
-| `enforce` | string | `"log_only"` | Reserved policy mode. No command reads it yet: `"log_only"`, `"warn_on_excess"` and `"block_on_excess"` are all accepted and behave the same, and a config that sets either of the last two logs a warning when it is loaded. |
+| `enforce` | string | `"log_only"` | Reserved policy mode. No command reads it yet: `"log_only"`, `"warn_on_excess"` and `"block_on_excess"` are all accepted and behave the same, and the CLI warns when a config sets either of the last two. |
 
 > **Removed:** `evaluation.staging_ttl_days` (deprecated as of v0.5.5) was
 > removed in v0.8.0. `retention.staging_ttl_days` is now the only accepted form.

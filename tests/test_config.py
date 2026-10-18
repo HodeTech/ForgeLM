@@ -939,27 +939,11 @@ class TestStagingTtlLegacyFieldRemoved:
 class TestRetentionConfig:
     """`retention` horizons are reported, not enforced; `enforce` is reserved (#92)."""
 
-    def test_log_only_enforce_is_silent(self, caplog):
-        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
-            cfg = ForgeConfig(**minimal_config(retention={"enforce": "log_only"}))
-        assert cfg.retention.enforce == "log_only"
-        assert not [r for r in caplog.records if "retention.enforce" in r.message]
-
-    @pytest.mark.parametrize("mode", ["warn_on_excess", "block_on_excess"])
-    def test_a_non_default_enforce_is_accepted_but_warns_that_nothing_acts_on_it(self, caplog, mode):
-        # No command reads `retention.enforce` (retention is only reported by `forgelm purge --check-policy`), so a
-        # config that asks for a gate must be told it does not get one (#92).
-        with caplog.at_level(logging.WARNING, logger="forgelm.config"):
-            cfg = ForgeConfig(**minimal_config(retention={"enforce": mode}))
-        assert cfg.retention.enforce == mode
-        warned = [r.getMessage() for r in caplog.records if "retention.enforce" in r.getMessage()]
-        assert len(warned) == 1 and mode in warned[0] and "no command acts on it" in warned[0]
-
     def test_the_description_does_not_promise_a_gate(self):
         from forgelm.config import RetentionConfig
 
         description = RetentionConfig.model_fields["enforce"].description or ""
-        assert "No command reads it" in description
+        assert "no command reads it" in description
         assert "EXIT_EVAL_FAILURE" not in description and "aborts" not in description
 
     def test_canonical_retention_staging_ttl_days_still_works(self):

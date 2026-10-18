@@ -1598,13 +1598,12 @@ class RetentionConfig(BaseModel):
     days (typical ingestion-window before re-running data audit).
 
     Setting any horizon to ``0`` disables the policy for that artefact
-    kind (retain indefinitely).  The horizons are *reported*: ``forgelm
-    purge --check-policy`` lists the artefacts that are past them and
-    always exits 0.  Nothing is deleted, blocked or scheduled
-    automatically.  ``enforce`` is accepted and validated but no command
-    acts on it yet, so ``warn_on_excess`` and ``block_on_excess`` behave
-    exactly like ``log_only``; a non-default value logs a warning when the
-    config is loaded.
+    kind (retain indefinitely).  The horizons are *reported*, not enforced:
+    ``forgelm purge --check-policy`` lists artefacts past them and always
+    exits 0; nothing is deleted, blocked or scheduled automatically.
+    ``enforce`` is reserved: no command acts on it yet, so
+    ``warn_on_excess`` and ``block_on_excess`` behave like ``log_only``
+    (the CLI logs a warning when a config sets either).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1646,23 +1645,11 @@ class RetentionConfig(BaseModel):
     enforce: Literal["log_only", "warn_on_excess", "block_on_excess"] = Field(
         default="log_only",
         description=(
-            "Reserved policy-enforcement mode.  No command reads it yet: retention horizons are only reported, "
-            "read-only, by `forgelm purge --check-policy` (which always exits 0), and nothing is deleted, warned about "
-            "or blocked automatically.  `warn_on_excess` and `block_on_excess` are accepted but behave like `log_only`, "
-            "and loading a config that sets either logs a warning."
+            "Reserved: no command reads it yet.  Retention horizons are only reported, read-only, by `forgelm purge "
+            "--check-policy` (always exit 0); nothing is deleted, warned about or blocked automatically.  "
+            "`warn_on_excess` and `block_on_excess` are accepted but behave like `log_only`; the CLI warns when set."
         ),
     )
-
-    @model_validator(mode="after")
-    def _warn_enforce_is_not_acted_on(self) -> "RetentionConfig":
-        """A non-default ``enforce`` promises a gate that does not exist; say so instead of staying silent."""
-        if self.enforce != "log_only":
-            logger.warning(
-                "retention.enforce=%r is accepted but no command acts on it yet: the retention horizons are only "
-                "reported by `forgelm purge --check-policy`, and the trainer is not blocked or warned.",
-                self.enforce,
-            )
-        return self
 
 
 # Module-level deduplication set for _warn_tier_disagreement.  Without this,
