@@ -21,7 +21,7 @@ ForgeLM, LLM ince ayarını (fine-tuning) **güvenli, denetlenebilir ve tekrarla
 - **3 katmanlı güvenlik kapısı**: ikili geçer/kalır + güven ağırlıklı skor + 14 zarar kategorisinde (S1-S14) önem analizi
 - **Otomatik geri alma (auto-revert)**: güvenlik regresyonu tespit edilirse, çıktılar yazılmadan önce eğitim sonucu otomatik olarak reddedilir
 - **Çalıştırmalar arası trend izleme**: güvenlik skorları her çalıştırmada loglanır; zamanla oluşan kayan bozulma yakalanır
-- **`auto_revert_on_safety_failure`** config alanı doğrudan YAML'a yazılır — CI'da güvenlik kapısı uygulamak için özel script gerekmez
+- **`evaluation.auto_revert`** config alanı doğrudan YAML'a yazılır — bir güvenlik, benchmark ya da judge kapısı başarısız olduğunda çalışma eğitilmiş çıktıları silip 3 koduyla çıkabilir; CI'da kapıları uygulamak için özel script gerekmez
 
 ### 2. Uyumluluk Yerleşik (Compliance-Native)
 

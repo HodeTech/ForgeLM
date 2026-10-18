@@ -74,6 +74,10 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Correct claims in the roadmap and strategy documents: `forgelm chat` does not screen for safety and reads no YAML
+  config (#91), the live risk rows no longer name a past "August 2026" deadline (#75), and
+  `docs/product_strategy.md` (English and Turkish) names the real `evaluation.auto_revert` field instead of a
+  non-existent `auto_revert_on_safety_failure`.
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).
