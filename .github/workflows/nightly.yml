@@ -270,7 +270,7 @@ jobs:
     # the moment a dependency advisory drops, even before the team
     # re-bumps versions:
     #
-    # - pip-audit (transitive CVEs against the OSV / GHSA databases)
+    # - pip-audit (transitive CVEs against PyPI's vulnerability data, its default service)
     # - bandit (static-analysis on forgelm/ production code only)
     #
     # Severity policy (per tools/check_pip_audit.py + tools/check_bandit.py):

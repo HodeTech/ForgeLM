@@ -52,7 +52,7 @@
 | A.5.29 Aksaklık sırasında bilgi güvenliği | FL-helps | `auto_revert` baseline-flip; `model.reverted` olayı |
 | A.5.30 İş sürekliliği için ICT hazırlığı | OOS | — |
 | A.5.31 Yasal, kanuni, düzenleyici ve sözleşmesel gerekliliklerin tanımlanması | FL-helps | EU AI Act + GDPR mappings; Annex IV bundle |
-| A.5.32 Fikri mülkiyet hakları | FL-helps | SBOM'da lisans çıkarımı; HF model-card metadata |
+| A.5.32 Fikri mülkiyet hakları | FL-helps | HF model-card metadata (SBOM lisans verisi taşımaz) |
 | A.5.33 Kayıtların korunması | FL | Append-only + HMAC + manifest sidecar |
 | A.5.34 Gizlilik ve PII korunması | FL | `forgelm reverse-pii` Madde 15; `forgelm purge` Madde 17 (ayrıca bkz. A.8.3) |
 | A.5.35 Bilgi güvenliğinin bağımsız incelenmesi | OOS | — |

@@ -34,8 +34,10 @@ ForgeLM kanıtına sahip:
    (collection_method, annotation_process, known_biases,
    personal_data_included, dpia_completed).
 4. **Supply chain** — yayın etiketi başına yayın matrisinin her (OS
-   × Python-version) hücresi için emit edilen CycloneDX 1.5 SBOM.
-   Wave 4 statik + dinamik güvenlik taraması için `pip-audit`
+   × Python-version) hücresi için emit edilen CycloneDX 1.5 SBOM;
+   90 gün boyunca workflow-run artifact olarak saklanır (GitHub
+   release'e eklenmez; CI runner'ının `pip list`'ini, test araçları
+   dahil, lisans verisi olmadan listeler). Wave 4 statik + dinamik güvenlik taraması için `pip-audit`
    nightly + `bandit` CI ekler.
 
 ## Denetim gözlem dönemi öncesi setup checklist'i
@@ -198,19 +200,25 @@ eğittiğinin kanıtı saymayın.
 ### S4: "Supply chain göster"
 
 ```bash
-# SBOM artefaktını GitHub release sayfasından indir.
-gh release download v0.5.5 --pattern 'sbom-*'
+# Tag'in publish çalıştırmasından bir SBOM indir. Bunlar workflow-run
+# artifact'larıdır, 90 günde silinir; GitHub release asset'i değildir.
+gh run list --repo HodeTech/ForgeLM --workflow publish.yml --branch v0.11.0 --status success \
+    --json databaseId,createdAt
+gh run download <databaseId> --repo HodeTech/ForgeLM --name sbom-ubuntu-latest-py3.11
 
-# Veya istek üzerine yeniden üret.
+# Veya kendi ortamınızı tanımlayın: modeli eğiten ya da sunan ortamda,
+# bir ForgeLM checkout'undan çalıştırın.
 python3 tools/generate_sbom.py > sbom.json
 
 # Son yayınla diff al.
 diff <(jq -S . sbom-prev.json) <(jq -S . sbom.json)
 ```
 
-CycloneDX 1.5 JSON her transitive bağımlılığı purl
-(`pkg:pypi/...`) ve sürümle listeler. Dependency-Track CVE
-korelasyonu için bunu doğal olarak içe alır.
+CycloneDX 1.5 JSON kurulu her paketi purl (`pkg:pypi/...`) ve
+sürümle listeler; bağımlılık grafiği ve lisans verisi yoktur.
+Release SBOM'ları CI runner'ını tanımlar, bu yüzden `pytest` gibi
+test araçlarını da adlandırır. Dependency-Track dosyayı CVE
+korelasyonu için doğal olarak içe alır.
 
 ### S5: "Erişim kontrolleri göster — yalnız yetkili reviewer'ların model onayladığını nasıl ispatlıyorsunuz?"
 

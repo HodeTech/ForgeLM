@@ -33,7 +33,10 @@ direct ForgeLM evidence:
    (collection_method, annotation_process, known_biases,
    personal_data_included, dpia_completed).
 4. **Supply chain** — CycloneDX 1.5 SBOM emitted per release tag for
-   every (OS × Python-version) cell of the publish matrix. Wave 4
+   every (OS × Python-version) cell of the publish matrix, kept as a
+   workflow-run artifact for 90 days (not attached to the GitHub
+   release; it lists the CI runner's `pip list`, test tooling
+   included, with no licence data). Wave 4
    adds `pip-audit` nightly + `bandit` CI for static + dynamic
    security scanning.
 
@@ -198,19 +201,25 @@ corpus trained the model.
 ### Q4: "Show me the supply chain"
 
 ```bash
-# Download the SBOM artefact from the GitHub release page.
-gh release download v0.5.5 --pattern 'sbom-*'
+# Download one SBOM from the tag's publish run. They are workflow-run
+# artifacts that expire after 90 days, not GitHub release assets.
+gh run list --repo HodeTech/ForgeLM --workflow publish.yml --branch v0.11.0 --status success \
+    --json databaseId,createdAt
+gh run download <databaseId> --repo HodeTech/ForgeLM --name sbom-ubuntu-latest-py3.11
 
-# Or regenerate on demand.
+# Or describe your own environment: run this from a ForgeLM checkout in the
+# environment that trains or serves the model.
 python3 tools/generate_sbom.py > sbom.json
 
 # Diff against last release.
 diff <(jq -S . sbom-prev.json) <(jq -S . sbom.json)
 ```
 
-The CycloneDX 1.5 JSON lists every transitive dependency with its
-purl (`pkg:pypi/...`) and version. Dependency-Track ingests this
-natively for CVE correlation.
+The CycloneDX 1.5 JSON lists every installed package with its purl
+(`pkg:pypi/...`) and version; it has no dependency graph and no licence
+data. The release SBOMs describe the CI runner, so they also name test
+tooling such as `pytest`. Dependency-Track ingests the file natively for
+CVE correlation.
 
 ### Q5: "Show me the access controls — how do you prove only authorised reviewers approve models?"
 

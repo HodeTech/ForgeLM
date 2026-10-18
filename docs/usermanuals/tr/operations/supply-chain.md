@@ -5,21 +5,24 @@ description: ForgeLM SBOM + pip-audit + bandit pipeline'ı için operatör yüze
 
 # Tedarik Zinciri
 
-ForgeLM sürüm tag'i başına bir CycloneDX 1.5 SBOM yayınlar ve `pip-audit` + `bandit`'i `nightly.yml` workflow'u üzerinden gecelik çalıştırır (her sürüm-tag yayınında da yeniden koşar). Bu sayfa operatörün zihinsel modelidir: ne zaman ne çalışır, artefaktlar nereden alınır ve aynı kontroller lokalde nasıl yansıtılır.
+ForgeLM sürüm tag'i başına bir CycloneDX 1.5 SBOM üretir (workflow-run artifact'ı olarak, GitHub release asset'i değil) ve `pip-audit` + `bandit`'i `nightly.yml` workflow'u üzerinden gecelik çalıştırır (her sürüm-tag yayınında da yeniden koşar). Bu sayfa operatörün zihinsel modelidir: ne zaman ne çalışır, artefaktlar nereden alınır ve aynı kontroller lokalde nasıl yansıtılır.
 
 ## Ne zaman ne çalışır
 
 | Tetikleyici | Araç | Sonuç | Hata politikası |
 |---|---|---|---|
-| Sürüm tag'i (`v*`) | `tools/generate_sbom.py` | (OS × Python-sürüm) hücresi başına bir CycloneDX 1.5 JSON, GitHub release'e iliştirilir | SBOM adımı pure-stdlib; yeşil sürüm matrisini sessizce bozamaz |
-| Gecelik 03:00 UTC | `pip-audit` (`tools/check_pip_audit.py` üzerinden) | Kurulu bağımlılıklara karşı OSV / GHSA taraması | HIGH/CRITICAL → exit 1 + GitHub issue; MEDIUM → `::warning::`; LOW → sessiz |
+| Sürüm tag'i (`v*`) | `tools/generate_sbom.py` | (OS × Python-sürüm) hücresi başına bir CycloneDX 1.5 JSON, tag'in publish çalıştırmasının workflow-run artifact'ı olarak yüklenir (90 gün saklanır; GitHub release'e iliştirilmez) | SBOM adımı pure-stdlib; yeşil sürüm matrisini sessizce bozamaz |
+| Gecelik 03:00 UTC | `pip-audit` (`tools/check_pip_audit.py` üzerinden) | Kurulu bağımlılıklara karşı PyPI güvenlik açığı verisi taraması | HIGH/CRITICAL ya da UNKNOWN severity → exit 1 + GitHub issue; MEDIUM → `::warning::`; LOW → sessiz |
 | Gecelik 03:00 UTC + sürüm tag'i | `bandit` (`tools/check_bandit.py` üzerinden) | `forgelm/` üzerinde statik güvenlik taraması (`tests/` hariç) | HIGH → exit 1; MEDIUM → `::warning::`; LOW → sessiz |
 
 ## SBOM nereden alınır
 
 ```bash
-# Bir sürüm için tüm SBOM'lar.
-gh release download "$(gh release view --json tagName -q .tagName)" --pattern 'sbom-*'
+# Bir tag için başarılı publish çalıştırmasını bulun, sonra SBOM'larını indirin
+# (artifact başına bir dizin). Run artifact'ları 90 günde silinir.
+gh run list --repo HodeTech/ForgeLM --workflow publish.yml --branch v<X.Y.Z> --status success \
+    --json databaseId,createdAt
+gh run download <databaseId> --repo HodeTech/ForgeLM --pattern 'sbom-*'
 
 # Birini güzel-yazdır.
 jq . sbom-ubuntu-latest-py3.11.json | less
@@ -34,7 +37,7 @@ curl -X POST -H "X-Api-Key: $DT_KEY" -H "Content-Type: application/octet-stream"
     https://deptrack.example.com/api/v1/bom
 ```
 
-SBOM determinizm-pinli — aynı Python ortamında ardışık iki yayın content-identical JSON üretir (CycloneDX semantiği gereği kasıtlı olarak değişen `serialNumber` ve `metadata.timestamp` hariç).
+SBOM determinizm-pinli — aynı Python ortamında ardışık iki yayın content-identical JSON üretir (CycloneDX semantiği gereği kasıtlı olarak değişen `serialNumber` ve `metadata.timestamp` hariç). Bu, aynı ortama özgü bir özelliktir: release SBOM'u CI runner'ının `pip list`'idir (`pytest` gibi test araçları dahil, bağımlılık grafiği ve lisans verisi yok); aynı tag'den sonradan yeniden emit etmek onu tekrarlamaz. Kendi ortamınızı tanımlamak için orada bir ForgeLM checkout'undan `python3 tools/generate_sbom.py` çalıştırın.
 
 ## Gecelik kontrolü lokalde yansıtın
 
@@ -46,7 +49,7 @@ pip-audit --strict --format json --output /tmp/pip-audit.json
 python3 tools/check_pip_audit.py /tmp/pip-audit.json
 ```
 
-Exit 0, ForgeLM CI'nın uyguladığı aynı severity politikasının geçtiği anlamına gelir. Exit 1, gecelik ateşlenmeden önce bir HIGH/CRITICAL açığın ele alınması gerektiği anlamına gelir.
+Exit 0, ForgeLM CI'nın uyguladığı aynı severity politikasının geçtiği anlamına gelir. Exit 1, gecelik ateşlenmeden önce bir HIGH/CRITICAL açığın ya da pip-audit'in severity bildirmediği (UNKNOWN; çoğu bulgu böyledir) bir bulgunun ele alınması gerektiği anlamına gelir.
 
 ## Bandit kontrolünü lokalde yansıtın
 

@@ -134,9 +134,12 @@ olarak atfeder.
 1.5 SBOM üretir. Wave 4 bir determinism contract testi ekler
 (`tests/test_supply_chain_security.py::TestGenerateSbomDeterministic`).
 
-Drift tespiti: bir release'in SBOM'u `git tag`'inden tekrarlanabilir.
-Bir denetçi bunu istek üzerine yeniden emit edip GitHub release'e
-ekli artefakta diff alabilir.
+Drift tespiti: SBOM, release'in build edildiği ortamın kaydıdır (matris runner'ında
+`pip list`); tag'in `publish.yml` çalıştırmasının workflow-run artifact'ı olarak 90 gün
+saklanır, GitHub release'e eklenmez. Bağımlılıklar build anında PyPI'dan çözüldüğü için
+yalnızca `git tag`'den tekrarlanamaz. İki release'in SBOM'unu `diff` ile karşılaştırın;
+dağıtılmış bir ortamı kanıtlamak için orada `python3 tools/generate_sbom.py` ile yeni
+bir tane üretin.
 
 ## 5. Versiyon İzleme
 
