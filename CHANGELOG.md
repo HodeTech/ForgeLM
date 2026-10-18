@@ -68,6 +68,13 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- `training.rope_scaling` works on transformers 5 again. The setting was passed to `from_pretrained(rope_scaling=...)`,
+  which no longer works: the documented `{type: linear, factor: 4}` raised `KeyError: 'rope_type'` while the model was
+  built, and `{rope_type: ..., factor: ...}` replaced the whole parameter dict so `rope_theta` was lost (`TypeError`).
+  The requested keys are now merged over the model's own `rope_parameters` (the legacy key `type` is read as
+  `rope_type`), applied to the text config of a multimodal checkpoint, and the finished config is loaded. The
+  `sliding_window_attention` override travels in the same config object. Verified on transformers 5.13.0 for
+  `linear`, `dynamic` and `yarn` on a tiny local Llama; not exercised on the 5.3-5.9 range the floor still admits (#103).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).

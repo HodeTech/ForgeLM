@@ -115,15 +115,105 @@ class TestBuildModelKwargs:
         assert "quantization_config" in kwargs
         fake_bnb.assert_called_once()
 
-    def test_rope_and_sliding_window_passed_through(self):
+    def test_sliding_window_alone_is_a_keyword_argument(self):
+        cfg = _cfg(
+            model={"name_or_path": "org/model", "load_in_4bit": False},
+            training={"sliding_window_attention": 4096},
+        )
+        with patch("torch.cuda.is_available", return_value=False):
+            kwargs = model_mod._build_model_kwargs(cfg, trust_remote_code=False)
+        assert kwargs["sliding_window"] == 4096 and "config" not in kwargs
+
+    def test_rope_scaling_travels_in_a_config_object_not_a_keyword(self):
+        # transformers 5 no longer accepts `rope_scaling=` on from_pretrained (#103): the settings go into the
+        # config, together with the sliding-window override, which would otherwise reach the model constructor.
+        model_config = SimpleNamespace(rope_parameters={"rope_theta": 10000.0, "rope_type": "default"})
+        fake_transformers = MagicMock()
+        fake_transformers.AutoConfig.from_pretrained.return_value = model_config
         cfg = _cfg(
             model={"name_or_path": "org/model", "load_in_4bit": False},
             training={"rope_scaling": {"type": "linear", "factor": 2.0}, "sliding_window_attention": 4096},
         )
-        with patch("torch.cuda.is_available", return_value=False):
-            kwargs = model_mod._build_model_kwargs(cfg, trust_remote_code=False)
-        assert kwargs["rope_scaling"] == {"type": "linear", "factor": 2.0}
-        assert kwargs["sliding_window"] == 4096
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            patch.dict("sys.modules", {"transformers": fake_transformers}),
+        ):
+            kwargs = model_mod._build_model_kwargs(cfg, trust_remote_code=False, revision="abc123")
+        assert "rope_scaling" not in kwargs and "sliding_window" not in kwargs
+        assert kwargs["config"] is model_config
+        assert model_config.rope_parameters == {"rope_theta": 10000.0, "rope_type": "linear", "factor": 2.0}
+        assert model_config.sliding_window == 4096
+        fake_transformers.AutoConfig.from_pretrained.assert_called_once_with(
+            "org/model", trust_remote_code=False, revision="abc123"
+        )
+
+
+class TestConfigWithRopeScaling:
+    """Against a real (tiny, local, CPU) Llama config: the merged settings must build and run a model (#103)."""
+
+    @staticmethod
+    def _tiny_model_dir(tmp_path):
+        from transformers import LlamaConfig
+
+        LlamaConfig(
+            vocab_size=64,
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            max_position_embeddings=128,
+        ).save_pretrained(tmp_path)
+        return str(tmp_path)
+
+    @pytest.mark.parametrize(
+        "requested, expected_type",
+        [
+            ({"type": "linear", "factor": 4.0}, "linear"),  # the key every documented example and the wizard use
+            ({"rope_type": "linear", "factor": 4.0}, "linear"),
+            ({"type": "dynamic", "factor": 2.0}, "dynamic"),
+            ({"rope_type": "yarn", "factor": 2.0, "original_max_position_embeddings": 128}, "yarn"),
+        ],
+    )
+    def test_the_merged_config_builds_a_model_that_runs(self, tmp_path, requested, expected_type):
+        import torch
+        from transformers import AutoModelForCausalLM
+
+        path = self._tiny_model_dir(tmp_path)
+        model_config = model_mod._config_with_rope_scaling(path, requested, trust_remote_code=False)
+        assert model_config.rope_parameters["rope_type"] == expected_type
+        assert model_config.rope_parameters["rope_theta"] == 10000.0  # kept from the model, not lost
+        assert "type" not in model_config.rope_parameters
+        logits = AutoModelForCausalLM.from_config(model_config)(input_ids=torch.tensor([[1, 2, 3, 4]])).logits
+        assert tuple(logits.shape) == (1, 4, 64)
+
+    def test_requested_rope_theta_overrides_the_models(self, tmp_path):
+        path = self._tiny_model_dir(tmp_path)
+        model_config = model_mod._config_with_rope_scaling(
+            path, {"type": "linear", "factor": 2.0, "rope_theta": 500000.0}, trust_remote_code=False
+        )
+        assert model_config.rope_parameters["rope_theta"] == 500000.0
+
+    def test_a_transformers_without_rope_parameters_gets_the_legacy_attribute(self):
+        legacy = SimpleNamespace()
+        fake_transformers = MagicMock()
+        fake_transformers.AutoConfig.from_pretrained.return_value = legacy
+        with patch.dict("sys.modules", {"transformers": fake_transformers}):
+            out = model_mod._config_with_rope_scaling(
+                "org/model", {"type": "linear", "factor": 2.0}, trust_remote_code=False
+            )
+        assert out is legacy and legacy.rope_scaling == {"rope_type": "linear", "factor": 2.0}
+
+    def test_multimodal_settings_land_in_the_text_config(self):
+        text = SimpleNamespace(rope_parameters={"rope_theta": 1.0, "rope_type": "default"})
+        outer = SimpleNamespace(get_text_config=lambda: text)
+        fake_transformers = MagicMock()
+        fake_transformers.AutoConfig.from_pretrained.return_value = outer
+        with patch.dict("sys.modules", {"transformers": fake_transformers}):
+            out = model_mod._config_with_rope_scaling(
+                "org/vlm", {"type": "linear", "factor": 2.0}, trust_remote_code=False
+            )
+        assert out is outer and text.rope_parameters["rope_type"] == "linear"
 
 
 class TestLoadTokenizer:
