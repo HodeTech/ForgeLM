@@ -32,6 +32,14 @@ All notable changes to ForgeLM are documented here.
 
 ### Changed
 
+- Raise the `transformers` floor from `>=5.3.0` to `>=5.10.1` (and `huggingface_hub` from `>=1.3.0` to `>=1.5.0`, which
+  transformers 5.10 requires). `5.3.0` was described as the CVE fix floor but still admitted CVE-2026-5241 (a LightGlue
+  `config.json` overrides `trust_remote_code: false`, fixed in 5.5.0) and CVE-2026-9856 (a `chat_template` name in
+  `tokenizer_config.json` is used unsanitised as a file name by `save_pretrained`, so `final_model/` saves, GGUF export
+  and merges could write outside the output directory; fixed in 5.10.0, which PyPI yanked, hence 5.10.1). The nightly
+  minimum-versions job pins the new floor, and `tests/test_packaging.py` keeps it from drifting from
+  `pyproject.toml` and checks that a traversal `chat_template` name cannot escape on save. Environments pinned to
+  transformers 5.3 to 5.9 must upgrade (#109).
 - Record monitoring default provenance in `defaulted_fields` and mark literal URL projection with
   `endpoint_redacted` (also true when the URL already contains only scheme/host/port). Literal
   endpoints retain scheme/host/port in JSON evidence, including IPv6 brackets; userinfo, path,
