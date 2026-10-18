@@ -1523,17 +1523,17 @@ class WebhookConfig(BaseModel):
 
     url: Optional[str] = Field(
         default=None,
-        description="Webhook URL (Slack / Teams / Discord / custom).  Use `url_env` to read from env to avoid committing secrets.",
+        description="Webhook URL (a Slack incoming webhook, or a relay that forwards to Teams / Discord / custom).  Use `url_env` to avoid committing secrets.",
     )
     url_env: Optional[str] = Field(
-        default=None, description="Env var name carrying the webhook URL (overrides `url` when set)."
+        default=None, description="Env var name carrying the webhook URL; read only when `url` is empty."
     )
     notify_on_start: bool = Field(default=True, description="POST a `notify_start` event when training begins.")
     notify_on_success: bool = Field(
         default=True, description="POST a `notify_success` event when training completes successfully."
     )
     notify_on_failure: bool = Field(
-        default=True, description="POST a `notify_failure` event when training fails (any non-zero exit)."
+        default=True, description="POST a failure event when training raises or a post-training gate reverts the model."
     )
     timeout: int = Field(
         default=10,
@@ -1677,7 +1677,7 @@ class ForgeConfig(BaseModel):
         description="Post-training evaluation block (loss / benchmark / safety / judge / human-approval gate).",
     )
     webhook: Optional[WebhookConfig] = Field(
-        default=None, description="Webhook notification block (Slack / Teams / Discord / custom)."
+        default=None, description="Webhook notification block (Slack-format JSON; Teams and Discord need a relay)."
     )
     distributed: Optional[DistributedConfig] = Field(
         default=None, description="DeepSpeed / FSDP multi-GPU configuration block."

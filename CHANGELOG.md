@@ -68,6 +68,13 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Stop saying that Microsoft Teams and Discord accept the webhook payload directly. The user manual (English and Turkish) and the
+  `webhook` field descriptions said all three ingest it; the body is a Slack-style `attachments` block with no top-level `text`,
+  `content` or `embeds`. Discord needs `content` or `embeds` and answers HTTP 400; Teams retired Office 365 Connectors in May 2026 and
+  its Workflows webhooks expect an Adaptive Card. Both need a relay. The page now shows the real payload, and the access-control SOP
+  no longer claims that a payload carries `FORGELM_OPERATOR` (it does not) or lists five events (there are eight). The `url_env`
+  description said it overrides `url`; it is read only when `url` is empty, so `url` wins. A formatter for Teams and Discord is a
+  separate, larger change and stays open on the issue (#112).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).

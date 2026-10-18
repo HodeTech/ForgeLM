@@ -228,21 +228,23 @@ webhook:
 
 ForgeLM does **not** HMAC-sign webhook bodies — there is no
 `webhook.secret_env` field on `WebhookConfig` (see
-`forgelm/config.py::WebhookConfig`). Destination-side attribution falls to (a)
-HTTPS + URL-secrecy via `webhook.url_env`, (b) the
-`FORGELM_OPERATOR` identity carried inside the curated payload, and
-(c) the receiving system's own bearer-token / signed-request
-controls (Slack signing secret, Teams connector token).
+`forgelm/config.py::WebhookConfig`). Destination-side authenticity falls to
+(a) HTTPS + URL-secrecy via `webhook.url_env` and (b) the receiving
+system's own bearer-token / signed-request controls (for example Slack's
+signing secret). A webhook payload does **not** carry the
+`FORGELM_OPERATOR` identity; attribution of who ran or approved a model
+comes from the audit log, not from the notification.
 
-The webhook wire-format event vocabulary (5 events) is
-`training.start`, `training.success`, `training.failure`,
-`training.reverted`, and `approval.required` — Phase 8. The
-in-process notifier method names use the `notify_*` prefix
-(`notify_start`, `notify_success`, `notify_failure`,
-`notify_reverted`, `notify_awaiting_approval`) and dispatch to those
-five wire events. Every payload carries the `FORGELM_OPERATOR`
-identity so the receiving system (Slack, Teams, custom
-incident-management) can attribute the notification.
+The webhook wire-format event vocabulary has eight events: the five
+single-stage lifecycle events `training.start`, `training.success`,
+`training.failure`, `training.reverted` and `approval.required`, plus the
+three `pipeline.*` events (`pipeline.started`, `pipeline.completed`,
+`pipeline.stage_reverted`) that a multi-stage run emits alongside them. The
+in-process notifier methods use the `notify_*` prefix (`notify_start`,
+`notify_success`, `notify_failure`, `notify_reverted`,
+`notify_awaiting_approval`, `notify_pipeline_started`,
+`notify_pipeline_completed`, `notify_pipeline_reverted`) and dispatch to
+those wire events.
 
 ## 8. Verification checklist
 

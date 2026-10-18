@@ -262,8 +262,8 @@ compliance:
 
 ```yaml
 webhook:
-  url: null                                   # Slack / Teams / Discord / custom; prefer url_env
-  url_env: null                               # env var carrying the webhook URL
+  url: null                                   # Slack incoming webhook, or a relay for Teams / Discord; prefer url_env
+  url_env: null                               # env var carrying the webhook URL; read only when url is empty
   notify_on_start: true
   notify_on_success: true
   notify_on_failure: true
