@@ -1,9 +1,9 @@
 # Audit Event Catalog
 
-> **Audience:** ForgeLM operators, regulators, and downstream verifiers reviewing the EU AI Act Article 12 record-keeping artefacts.
+> **Audience:** ForgeLM operators, regulators, and downstream verifiers reviewing ForgeLM's training-pipeline audit log.
 > **Mirror:** [audit_event_catalog-tr.md](audit_event_catalog-tr.md)
 
-This catalog enumerates every event ForgeLM may append to `audit_log.jsonl`, the append-only, hash-chained record-keeping artefact mandated by EU AI Act Article 12. Every entry shares a common envelope; the `event` field selects one of the rows below.
+This catalog enumerates every event ForgeLM may append to `audit_log.jsonl`, ForgeLM's append-only, hash-chained training-pipeline audit log. It is development-time evidence that can support the technical documentation (Annex IV) and quality-management record-keeping; it does not by itself satisfy EU AI Act Article 12, which requires the deployed high-risk system to log events automatically over its lifetime. Every entry shares a common envelope; the `event` field selects one of the rows below.
 
 ## Common envelope
 

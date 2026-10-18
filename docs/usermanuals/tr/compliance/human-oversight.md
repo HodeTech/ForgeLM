@@ -5,7 +5,7 @@ description: Bir insan inceleyip imzalayana kadar model terfisini engelleyin —
 
 # İnsan Gözetimi
 
-EU AI Act Madde 14, yüksek-riskli AI sistemlerinin insan gözetimi imkânı sağlamasını gerektirir. ForgeLM bunu opsiyonel bir config kapısı olarak uygular: `evaluation.require_human_approval: true` olduğunda model terfisi bir insan onay imzalayana kadar engellenir.
+EU AI Act Madde 14, yüksek-riskli AI sistemlerinin insan gözetimi imkânı sağlamasını gerektirir. ForgeLM, `evaluation.require_human_approval: true` ile açılan opsiyonel bir terfi-öncesi onay kapısı sunar: model terfisi bir insan onay imzalayana kadar engellenir ve bu imza kaydedilir. Bu, tasarım-zamanı gözetim dokümantasyonunu destekler; dağıtılmış sistemden Madde 14'ün istediği kullanım-sırası gözetim önlemlerini (izleme, yorumlama, geçersiz kılma veya durdurma) uygulamaz; bunlar dağıtıcıda kalır.
 
 ## Kapı nasıl çalışır
 
