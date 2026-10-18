@@ -231,9 +231,12 @@ webhook:
 ForgeLM webhook gövdelerini HMAC ile **imzalamaz** — `WebhookConfig`
 üzerinde `webhook.secret_env` alanı yoktur (bkz.
 `forgelm/config.py::WebhookConfig`). Hedef-tarafı özgünlük (a) HTTPS +
-`webhook.url_env` üzerinden URL-gizliliğine ve (b) alıcı sistemin
-kendi bearer-token / imzalı-istek kontrollerine (örneğin Slack'in
-signing secret'ı) düşer. Webhook payload'u `FORGELM_OPERATOR`
+`webhook.url_env` üzerinden URL-gizliliğine ve (b) alıcı tarafın kendi
+uyguladığı kimlik doğrulamaya düşer. Bir Slack incoming webhook'unun gizli
+URL'sinden başka bir doğrulaması yoktur (Slack'in signing secret'ı Slack'ten
+*gelen* istekleri doğrular, bir webhook URL'sine gelenleri değil); bu yüzden
+özel bir relay kendi kimlik doğrulamasını istemelidir, çünkü ForgeLM imza
+göndermez. Webhook payload'u `FORGELM_OPERATOR`
 kimliğini **taşımaz**; bir modeli kimin çalıştırdığı veya onayladığı
 bildirimden değil, audit log'dan okunur.
 

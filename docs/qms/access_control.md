@@ -229,9 +229,12 @@ webhook:
 ForgeLM does **not** HMAC-sign webhook bodies — there is no
 `webhook.secret_env` field on `WebhookConfig` (see
 `forgelm/config.py::WebhookConfig`). Destination-side authenticity falls to
-(a) HTTPS + URL-secrecy via `webhook.url_env` and (b) the receiving
-system's own bearer-token / signed-request controls (for example Slack's
-signing secret). A webhook payload does **not** carry the
+(a) HTTPS + URL-secrecy via `webhook.url_env` and (b) authentication
+the receiving side applies itself. A Slack incoming webhook has none
+beyond its secret URL (Slack's signing secret verifies requests *from*
+Slack, not requests to a webhook URL), so a custom relay should require
+its own authentication, because ForgeLM sends no signature. A webhook
+payload does **not** carry the
 `FORGELM_OPERATOR` identity; attribution of who ran or approved a model
 comes from the audit log, not from the notification.
 
