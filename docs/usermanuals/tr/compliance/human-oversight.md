@@ -48,12 +48,8 @@ webhook:
 Trainer eval'den sonra durur ve yazdırır:
 
 ```text
-[2026-04-29 14:33:10] Human approval required.
-  Run ID: abc123
-  Bundle: checkpoints/run/artifacts/
-
-  To approve: forgelm approve abc123 --output-dir checkpoints/run --comment "..."
-  To reject:  forgelm reject  abc123 --output-dir checkpoints/run --comment "..."
+2026-04-29 14:33:10 [INFO] forgelm.trainer: Human approval required. Model staged at: checkpoints/run/final_model.staging.abc123
+2026-04-29 14:33:10 [INFO] forgelm.trainer: Review results in checkpoints/run/compliance/ and run `forgelm approve abc123 --output-dir checkpoints/run` to promote, or `forgelm reject abc123 --output-dir checkpoints/run` to preserve for forensic review.
 ```
 
 Reviewer audit-log + staging dizinine erişimi olan herhangi bir makineden onay komutunu çalıştırır. ForgeLM kimliği `FORGELM_OPERATOR`'dan resolve eder, kararı HMAC ile zincirler ve (`approve`'da) staging dizinini kanonik `final_model/` yoluna rename eder.

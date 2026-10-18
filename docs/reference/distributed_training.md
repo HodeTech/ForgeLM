@@ -49,7 +49,17 @@ torchrun --nproc_per_node=4 -m forgelm.cli --config my_config.yaml
 
 ## DeepSpeed Configuration
 
-ForgeLM provides three built-in DeepSpeed presets. Set `deepspeed_config` to one of these names, or provide a path to your own JSON file.
+The repository ships three DeepSpeed presets under `configs/deepspeed/`. Set `deepspeed_config` to one of their names, or provide a path to your own JSON file.
+
+**A preset name works only when `configs/deepspeed/<name>.json` is available beside the installed package or in the
+current directory.** A source checkout provides those files; a `pip install forgelm` wheel and the Docker image do not,
+so there a preset name fails with a configuration error (exit 1). Copy the JSON files from the repository's
+`configs/deepspeed/` folder (into a `configs/deepspeed/` directory in the working directory, or anywhere if you point
+`deepspeed_config` at the path), or write your own.
+
+**Known issue ([#410](https://github.com/HodeTech/ForgeLM/issues/410)):** the `zero2` preset, which is also used when
+`deepspeed_config` is unset, sets `allgather_bucket_size` to `"auto"`, a value transformers' DeepSpeed integration does
+not fill in, so a ZeRO-2 run with it aborts. Use your own ZeRO-2 JSON until that is fixed.
 
 ### Presets
 
@@ -64,8 +74,8 @@ ForgeLM provides three built-in DeepSpeed presets. Set `deepspeed_config` to one
 ```yaml
 distributed:
   strategy: "deepspeed"
-  deepspeed_config: "zero2"       # Preset name
-  # deepspeed_config: "./my_ds_config.json"  # Or custom path
+  deepspeed_config: "./my_ds_config.json"  # Path to your own JSON (works on every install)
+  # deepspeed_config: "zero2"       # Preset name: source checkout only
 ```
 
 ### ZeRO Stage Comparison
@@ -118,8 +128,8 @@ PyTorch Fully Sharded Data Parallel (FSDP) is an alternative to DeepSpeed that's
 |----------|-------------|----------------|
 | `full_shard` | Shard parameters, gradients, and optimizer states | Highest |
 | `shard_grad_op` | Shard gradients and optimizer states only | Medium |
-| `hybrid_shard` | Full shard within nodes, replicate across nodes | Multi-node |
-| `no_shard` | Standard DDP (no sharding) | None |
+
+`hybrid_shard` and `no_shard` are **not accepted**: `fsdp_strategy` must be `full_shard` or `shard_grad_op`. transformers 5.10 and later, which ForgeLM requires, run FSDP2 by default, and FSDP2 supports neither: they used to pass `--dry-run` and then fail with exit 2 (`fsdp=hybrid_shard is only available with FSDP1`) after the model was loaded, and now fail validation with exit 1.
 
 ### Usage
 
@@ -127,11 +137,13 @@ PyTorch Fully Sharded Data Parallel (FSDP) is an alternative to DeepSpeed that's
 distributed:
   strategy: "fsdp"
   fsdp_strategy: "full_shard"
-  fsdp_auto_wrap: true          # Auto-wrap transformer layers
+  fsdp_auto_wrap: true          # Ignored on transformers 5.10+ (FSDP2 always wraps transformer layers)
   fsdp_offload: false           # Offload parameters AND gradients (between forward/backward) to CPU
-  fsdp_backward_prefetch: "backward_pre"  # Prefetch strategy
+  fsdp_backward_prefetch: "backward_pre"  # Ignored on transformers 5.10+ (FSDP2 takes no prefetch policy)
   fsdp_state_dict_type: "FULL_STATE_DICT" # State dict handling
 ```
+
+`fsdp_auto_wrap: false` and `fsdp_backward_prefetch: backward_post` are still accepted, but under FSDP2 they change nothing, so ForgeLM logs a warning when either is set away from its default.
 
 ### When to Choose FSDP over DeepSpeed
 

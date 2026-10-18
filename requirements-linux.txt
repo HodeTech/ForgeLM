@@ -1,2 +1,0 @@
-bitsandbytes>=0.42.0
-unsloth>=2024.3.0

@@ -161,7 +161,7 @@ ForgeLM's own nightly does carry a checked-in
 project-internal triage (currently nine no-fix torch advisories and one
 OSV-misclassified markdown record; the two transformers advisories it once
 carried were dropped once the `transformers>=5.3.0` floor made them
-unreportable by pip-audit). That file is consumed only by the
+unreportable by pip-audit; the floor is now `>=5.10.1`). That file is consumed only by the
 project's own workflow via `--ignores`; deployers do not inherit it.
 Review at every release cycle.
 

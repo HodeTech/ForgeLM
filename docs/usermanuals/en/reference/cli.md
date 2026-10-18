@@ -44,7 +44,7 @@ Run `forgelm <subcommand> --help` for any of these.
 | `--dry-run` | Validate configuration and check model/dataset access; no training. |
 | `--fit-check` | Estimate peak training VRAM; no model load. Requires `--config`. |
 | `--resume [PATH]` | Resume training. Bare `--resume` auto-detects last checkpoint; `--resume PATH` resumes from a specific one. |
-| `--offline` | Air-gapped mode: disable all HF Hub network calls. Models and datasets must be available locally. |
+| `--offline` | Offline mode: set the Hugging Face offline variables so Hub, transformers and datasets make no network calls. Models and datasets must be available locally. Does not stop webhooks, judge or synthetic-data API clients, or experiment trackers. |
 | `--benchmark-only MODEL_PATH` | Run benchmark evaluation on an existing model without training. Requires `evaluation.benchmark` config. |
 | `--merge` | Run model merging from the `merge:` config block. No training. |
 | `--stage NAME` | Multi-stage pipelines only: run a single named stage in isolation. Non-first stages need the previous stage's on-disk output, or `--input-model`. |
@@ -327,7 +327,7 @@ See [Exit Codes](#/reference/exit-codes) for the full contract.
 | `FORGELM_OPERATOR` | Operator identity recorded in audit events (overrides `getpass.getuser()@hostname`) |
 | `FORGELM_ALLOW_ANONYMOUS_OPERATOR` | When `1`, permit the audit log to record an anonymous operator (otherwise an unresolved identity is an error) |
 | `FORGELM_AUDIT_SECRET` | HMAC signing key for the audit log chain (enables tamper-detection) |
-| `FORGELM_GGUF_CONVERTER` | Path to a custom `convert-hf-to-gguf.py` script |
+| `FORGELM_GGUF_CONVERTER` | Path to `convert_hf_to_gguf.py` inside a llama.cpp checkout. In practice required: no `llama-cpp-python` wheel installs the script where ForgeLM searches (see [Installation](#/getting-started/installation)) |
 
 ## Common patterns
 

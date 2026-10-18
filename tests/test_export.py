@@ -10,11 +10,13 @@ import sys
 from unittest.mock import MagicMock, patch
 
 from forgelm.export import (
+    GGUF_SIDECAR_SUFFIX,
     SUPPORTED_FORMATS,
     SUPPORTED_QUANTS,
     ExportResult,
     _sha256_file,
     _update_integrity_manifest,
+    _write_sha256_sidecar,
     export_model,
 )
 
@@ -67,6 +69,110 @@ class TestSha256File:
 # ---------------------------------------------------------------------------
 # _update_integrity_manifest
 # ---------------------------------------------------------------------------
+
+
+class TestSha256Sidecar:
+    """`forgelm export` writes `<gguf>.sha256`, the file `forgelm verify-gguf` looks for (#84)."""
+
+    @staticmethod
+    def _gguf(tmp_path, name="model.gguf", body=b"GGUF" + b"\x00" * 64):
+        path = tmp_path / name
+        path.write_bytes(body)
+        return str(path)
+
+    def test_suffix_matches_what_verify_gguf_looks_for(self):
+        from forgelm.verify._gguf import _SIDECAR_SUFFIX
+
+        assert GGUF_SIDECAR_SUFFIX == _SIDECAR_SUFFIX
+
+    def test_sidecar_is_in_sha256sum_binary_format(self, tmp_path):
+        gguf = self._gguf(tmp_path)
+        digest = _sha256_file(gguf)
+        sidecar = _write_sha256_sidecar(gguf, digest)
+        assert sidecar == gguf + ".sha256"
+        assert open(sidecar, encoding="utf-8").read() == f"{digest} *model.gguf\n"
+
+    # The fake file is not a parseable GGUF, so the metadata layer is switched off: these tests are about the sidecar,
+    # and must give the same answer whether or not the optional `gguf` package is installed.
+    _NO_METADATA = {"parsed": False, "error": None, "tensor_count": None}
+
+    def test_verify_gguf_accepts_what_the_exporter_wrote(self, tmp_path):
+        from forgelm.verify._gguf import verify_gguf
+
+        gguf = self._gguf(tmp_path)
+        _write_sha256_sidecar(gguf, _sha256_file(gguf))
+        with patch("forgelm.verify._gguf._maybe_parse_metadata", return_value=self._NO_METADATA):
+            result = verify_gguf(gguf)
+        assert result.valid is True
+        assert result.checks["sidecar_present"] is True and result.checks["sidecar_match"] is True
+
+    def test_verify_gguf_catches_a_change_after_export(self, tmp_path):
+        from forgelm.verify._gguf import verify_gguf
+
+        gguf = self._gguf(tmp_path)
+        _write_sha256_sidecar(gguf, _sha256_file(gguf))
+        with open(gguf, "ab") as fh:
+            fh.write(b"tampered")
+        with patch("forgelm.verify._gguf._maybe_parse_metadata", return_value=self._NO_METADATA):
+            result = verify_gguf(gguf)
+        assert result.valid is False and result.checks["sidecar_match"] is False
+
+    def test_a_failed_write_leaves_no_temporary_file(self, tmp_path):
+        gguf = self._gguf(tmp_path)
+        with patch("forgelm.export.os.replace", side_effect=OSError("disk full")):
+            try:
+                _write_sha256_sidecar(gguf, "0" * 64)
+            except OSError:
+                pass
+            else:  # pragma: no cover - the patched replace must raise
+                raise AssertionError("expected OSError")
+        assert not os.path.exists(gguf + ".sha256") and not os.path.exists(gguf + ".sha256.tmp")
+
+
+class TestExportWritesTheSidecar:
+    def _run_export(self, tmp_path, quant, content=b"GGUF-mock-bytes"):
+        output_path = str(tmp_path / "model.gguf")
+
+        def fake_run(cmd, **kwargs):
+            actual = cmd[cmd.index("--outfile") + 1] if "--outfile" in cmd else output_path
+            with open(actual, "wb") as f:
+                f.write(content)
+            result = MagicMock()
+            result.returncode, result.stderr, result.stdout = 0, "", ""
+            return result
+
+        stub = MagicMock()
+        os.makedirs(str(tmp_path / "llama_cpp"), exist_ok=True)
+        stub.__file__ = str(tmp_path / "llama_cpp" / "__init__.py")
+        open(str(tmp_path / "llama_cpp" / "convert_hf_to_gguf.py"), "w").close()
+        with patch.dict(sys.modules, {"llama_cpp": stub}), patch("subprocess.run", side_effect=fake_run):
+            return output_path, export_model(str(tmp_path / "model"), output_path, quant=quant, update_integrity=False)
+
+    def test_sidecar_sits_next_to_the_file_with_the_reported_digest(self, tmp_path):
+        output_path, result = self._run_export(tmp_path, "q8_0")
+        assert result.success is True and result.output_path == output_path
+        text = open(output_path + ".sha256", encoding="utf-8").read()
+        assert text == f"{result.sha256} *model.gguf\n"
+
+    def test_k_quant_sidecar_belongs_to_the_intermediate_f16_file(self, tmp_path):
+        output_path, result = self._run_export(tmp_path, "q4_k_m")
+        assert result.success is True and result.output_path.endswith(".f16.gguf")
+        assert os.path.isfile(result.output_path + ".sha256")
+        assert not os.path.exists(output_path + ".sha256")  # the requested q4_k_m file does not exist yet
+
+    def test_a_sidecar_that_cannot_be_written_fails_the_export_loudly(self, tmp_path):
+        with patch("forgelm.export._write_sha256_sidecar", side_effect=OSError("read-only file system")):
+            _, result = self._run_export(tmp_path, "q8_0")
+        assert result.success is False and result.error_kind == "runtime"
+        assert "SHA-256 sidecar could not be written" in result.error and "read-only" in result.error
+        assert result.sha256 is not None  # the file exists and its digest is still reported
+
+    def test_a_manifest_that_cannot_be_updated_is_logged_as_a_warning(self, tmp_path, caplog):
+        (tmp_path / "model_integrity.json").write_text("{not json")
+        result = ExportResult(success=True, output_path=str(tmp_path / "m.gguf"), sha256="abc")
+        with caplog.at_level(logging.WARNING, logger="forgelm.export"):
+            _update_integrity_manifest(str(tmp_path), result)
+        assert any("Could not update model_integrity.json" in r.message for r in caplog.records)
 
 
 class TestUpdateIntegrityManifest:
@@ -292,6 +398,10 @@ class TestExportModel:
 
         assert result.success is False
         assert result.error_kind == "runtime"
+        # The hint must send the operator to the route that works (the script in a llama.cpp checkout), not to a
+        # reinstall of llama-cpp-python, whose wheels do not carry the script.
+        assert "FORGELM_GGUF_CONVERTER" in result.error and "llama.cpp checkout" in result.error
+        assert "pip install" not in result.error
 
     def test_all_supported_quants_accepted(self, tmp_path):
         """Every quant in SUPPORTED_QUANTS must pass format/quant validation."""
