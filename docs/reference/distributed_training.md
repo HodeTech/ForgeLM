@@ -118,8 +118,8 @@ PyTorch Fully Sharded Data Parallel (FSDP) is an alternative to DeepSpeed that's
 |----------|-------------|----------------|
 | `full_shard` | Shard parameters, gradients, and optimizer states | Highest |
 | `shard_grad_op` | Shard gradients and optimizer states only | Medium |
-| `hybrid_shard` | Full shard within nodes, replicate across nodes | Multi-node |
-| `no_shard` | Standard DDP (no sharding) | None |
+
+`hybrid_shard` and `no_shard` are **not accepted**: `fsdp_strategy` must be `full_shard` or `shard_grad_op`. transformers 5.10 and later, which ForgeLM requires, run FSDP2 by default, and FSDP2 supports neither: they used to pass `--dry-run` and then fail with exit 2 (`fsdp=hybrid_shard is only available with FSDP1`) after the model was loaded, and now fail validation with exit 1.
 
 ### Usage
 
@@ -127,11 +127,13 @@ PyTorch Fully Sharded Data Parallel (FSDP) is an alternative to DeepSpeed that's
 distributed:
   strategy: "fsdp"
   fsdp_strategy: "full_shard"
-  fsdp_auto_wrap: true          # Auto-wrap transformer layers
+  fsdp_auto_wrap: true          # Ignored on transformers 5.10+ (FSDP2 always wraps transformer layers)
   fsdp_offload: false           # Offload parameters AND gradients (between forward/backward) to CPU
-  fsdp_backward_prefetch: "backward_pre"  # Prefetch strategy
+  fsdp_backward_prefetch: "backward_pre"  # Ignored on transformers 5.10+ (FSDP2 takes no prefetch policy)
   fsdp_state_dict_type: "FULL_STATE_DICT" # State dict handling
 ```
+
+`fsdp_auto_wrap: false` and `fsdp_backward_prefetch: backward_post` are still accepted, but under FSDP2 they change nothing, so ForgeLM logs a warning when either is set away from its default.
 
 ### When to Choose FSDP over DeepSpeed
 

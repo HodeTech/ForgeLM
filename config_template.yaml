@@ -167,7 +167,7 @@ data:
 #   strategy: "deepspeed"           # "deepspeed" or "fsdp"
 #   deepspeed_config: "zero2"       # preset: "zero2", "zero3", "zero3_offload" or path to JSON
 #   # --- FSDP options (when strategy: "fsdp") ---
-#   # fsdp_strategy: "full_shard"   # "full_shard", "shard_grad_op", "no_shard", "hybrid_shard"
+#   # fsdp_strategy: "full_shard"   # "full_shard" or "shard_grad_op" (FSDP2 supports no other)
 #   # fsdp_auto_wrap: true
 #   # fsdp_offload: false
 

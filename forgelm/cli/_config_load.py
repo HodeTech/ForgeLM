@@ -55,3 +55,27 @@ def _apply_offline_flag(config, offline_arg: bool) -> None:
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
         os.environ["HF_DATASETS_OFFLINE"] = "1"
         logger.info("Offline mode enabled. All HF Hub network calls are disabled.")
+
+
+def _warn_inert_fsdp_options(config) -> None:
+    """Say so when an FSDP knob that transformers' FSDP2 default ignores is set away from its default.
+
+    ``fsdp_auto_wrap: false`` and ``fsdp_backward_prefetch: backward_post`` are still accepted, but under
+    transformers 5.10+ (FSDP2) the transformer-layer wrap policy is always applied and no backward prefetch is
+    passed on, so the run behaves as if the defaults had been kept.  (This lives here, not in the schema, to keep
+    ``config.py`` within its deferred-split line budget.)
+    """
+    dist = getattr(config, "distributed", None)
+    if getattr(dist, "strategy", None) != "fsdp":
+        return
+    if not dist.fsdp_auto_wrap:
+        logger.warning(
+            "distributed.fsdp_auto_wrap=false has no effect: transformers 5.10+ runs FSDP2, which always wraps "
+            "transformer layers."
+        )
+    if dist.fsdp_backward_prefetch != "backward_pre":
+        logger.warning(
+            "distributed.fsdp_backward_prefetch=%r has no effect: transformers 5.10+ runs FSDP2, which does not take "
+            "a backward-prefetch policy.",
+            dist.fsdp_backward_prefetch,
+        )

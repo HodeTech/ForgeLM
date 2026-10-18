@@ -231,10 +231,10 @@ Merge alanı `algorithm` değil `method`'dur, `dare_ties` seçeneği, `base_mode
 distributed:
   strategy: null                              # null (tek GPU, dağıtık sarmalama yok) | deepspeed | fsdp
   deepspeed_config: null                      # bir DeepSpeed JSON'a yol, veya preset adı: zero2 | zero3 | zero3_offload
-  fsdp_strategy: "full_shard"                 # full_shard | shard_grad_op | no_shard | hybrid_shard
-  fsdp_auto_wrap: true                        # transformer katmanlarını otomatik sarmala (önerilir)
+  fsdp_strategy: "full_shard"                 # full_shard | shard_grad_op
+  fsdp_auto_wrap: true                        # transformers 5.10+'ta yok sayılır (FSDP2 transformer katmanlarını hep sarar)
   fsdp_offload: false                         # forward/backward arasında FSDP parametrelerini CPU'ya offload et
-  fsdp_backward_prefetch: "backward_pre"      # backward_pre | backward_post
+  fsdp_backward_prefetch: "backward_pre"      # backward_pre | backward_post; transformers 5.10+'ta yok sayılır
   fsdp_state_dict_type: "FULL_STATE_DICT"     # FULL_STATE_DICT | SHARDED_STATE_DICT
 ```
 

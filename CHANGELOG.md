@@ -68,6 +68,12 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- `distributed.fsdp_strategy: no_shard` and `hybrid_shard` are rejected when the config loads (exit 1). They were documented, passed `--dry-run`,
+  and then failed with exit 2 at trainer construction (`fsdp=hybrid_shard is only available with FSDP1`), because transformers 5.10+ runs
+  FSDP2 by default. `fsdp_auto_wrap: false` and `fsdp_backward_prefetch: backward_post` are still accepted but change nothing under FSDP2;
+  ForgeLM now logs a warning when either is set, and the field descriptions, reference pages, user manuals and `config_template.yaml`
+  say so. Moving to FSDP2 settings (`fsdp=True` plus an explicit `fsdp_config`) is not part of this change; the string form is
+  deprecated in transformers and slated for removal in v5.20 (#104).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).

@@ -310,10 +310,10 @@ silently extend the retention horizon by re-using a stale workspace.
 |-------|------|---------|-------------|
 | `strategy` | string | `null` | `"deepspeed"` or `"fsdp"` (null = single GPU) |
 | `deepspeed_config` | string | `null` | Preset (`"zero2"`, `"zero3"`, `"zero3_offload"`) or JSON path |
-| `fsdp_strategy` | string | `"full_shard"` | `"full_shard"`, `"shard_grad_op"`, `"hybrid_shard"`, `"no_shard"` |
-| `fsdp_auto_wrap` | bool | `true` | Auto-wrap transformer layers |
+| `fsdp_strategy` | string | `"full_shard"` | `"full_shard"` or `"shard_grad_op"` (`"hybrid_shard"` and `"no_shard"` are rejected: FSDP2 does not support them) |
+| `fsdp_auto_wrap` | bool | `true` | Auto-wrap transformer layers (ignored on transformers 5.10+, which always wraps them) |
 | `fsdp_offload` | bool | `false` | Offload parameters to CPU |
-| `fsdp_backward_prefetch` | string | `"backward_pre"` | `"backward_pre"` or `"backward_post"` |
+| `fsdp_backward_prefetch` | string | `"backward_pre"` | `"backward_pre"` or `"backward_post"` (ignored on transformers 5.10+, whose FSDP2 takes no prefetch policy) |
 | `fsdp_state_dict_type` | string | `"FULL_STATE_DICT"` | `"FULL_STATE_DICT"` or `"SHARDED_STATE_DICT"` |
 
 ---
