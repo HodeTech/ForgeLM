@@ -16,7 +16,7 @@ $ forgelm export ./checkpoints/customer-support \
 Export complete: model.gguf (quant=q8_0, sha256=3f2a91c0b4d7…)
 ```
 
-(Log output, abridged.) The result is `model.gguf` plus `model.gguf.sha256` next to it. The sidecar is in `sha256sum` format (`<digest> *model.gguf`), so both `sha256sum -c model.gguf.sha256` and [`forgelm verify-gguf`](#/deployment/verify-gguf) accept it. When the checkpoint directory already holds a `model_integrity.json`, the digest is also recorded there under `exported_artifacts` (`--no-integrity-update` skips this).
+(Log output, abridged.) The result is `model.gguf` plus `model.gguf.sha256` next to it. The sidecar is in `sha256sum` format (`<digest> *model.gguf`), so both `sha256sum -c model.gguf.sha256` and [`forgelm verify-gguf`](#/deployment/verify-gguf) accept it. When the checkpoint directory already holds a `model_integrity.json`, ForgeLM also tries to record the digest there under `exported_artifacts` (best effort: if the file is not valid JSON or cannot be written, a warning is logged and the export still succeeds; `--no-integrity-update` skips this).
 
 The sidecar detects corruption and accidental change. It sits beside the file, so it is **not** tamper evidence: whoever can replace the GGUF can replace the sidecar too. If you need that, sign the file or keep the digest where the file's writer cannot reach it.
 
@@ -35,7 +35,7 @@ The sidecar detects corruption and accidental change. It sits beside the file, s
 
 ### K-quants take one more step
 
-The converter ForgeLM calls writes `f16` and `q8_0` directly. For a K-quant (`q2_k`, `q3_k_m`, `q4_k_m` — the default — and `q5_k_m`) `forgelm export` writes an intermediate `f16` GGUF named `<output>.f16.gguf`, with its own `.sha256`. It reports the substitution (`requested_quant`, `manual_step_required` and the exact `followup_command` in `--output-format json`) and logs the `llama-quantize` command that finishes the job:
+The converter ForgeLM calls writes `f16` and `q8_0` directly. For a K-quant (`q2_k`, `q3_k_m`, `q4_k_m` — the default — and `q5_k_m`) `forgelm export` writes an intermediate `f16` GGUF, named like the output with its `.gguf` suffix replaced by `.f16.gguf` (`model.gguf` becomes `model.f16.gguf`; an output without the suffix gets `.f16.gguf` appended), with its own `.sha256`. It reports the substitution (`requested_quant`, `manual_step_required` and the exact `followup_command` in `--output-format json`) and logs the `llama-quantize` command that finishes the job:
 
 ```shell
 $ forgelm export ./checkpoints/customer-support --output model.gguf --quant q4_k_m
@@ -68,7 +68,7 @@ Export complete: ./gguf/model.f16.gguf (quant=f16, sha256=b81d05e6c392…)
 
 Each run writes its own sidecar (`model.q8_0.gguf.sha256`, `model.f16.gguf.sha256`). For K-quants, run the loop with the K-quant names and finish each intermediate file with `llama-quantize`, as above.
 
-When the checkpoint directory holds a `model_integrity.json`, each run appends an entry to its `exported_artifacts` list:
+When the checkpoint directory holds a `model_integrity.json`, each run tries to append an entry to its `exported_artifacts` list (best effort, as above):
 
 ```json
 {

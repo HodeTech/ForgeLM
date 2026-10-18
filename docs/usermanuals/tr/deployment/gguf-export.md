@@ -16,7 +16,7 @@ $ forgelm export ./checkpoints/customer-support \
 Export complete: model.gguf (quant=q8_0, sha256=3f2a91c0b4d7…)
 ```
 
-(Log çıktısı, kısaltılmış.) Sonuç `model.gguf` ve yanında `model.gguf.sha256`'dır. Sidecar `sha256sum` formatındadır (`<digest> *model.gguf`); bu yüzden hem `sha256sum -c model.gguf.sha256` hem de [`forgelm verify-gguf`](#/deployment/verify-gguf) onu kabul eder. Checkpoint dizininde zaten bir `model_integrity.json` varsa digest oraya da `exported_artifacts` altında yazılır (`--no-integrity-update` bunu atlar).
+(Log çıktısı, kısaltılmış.) Sonuç `model.gguf` ve yanında `model.gguf.sha256`'dır. Sidecar `sha256sum` formatındadır (`<digest> *model.gguf`); bu yüzden hem `sha256sum -c model.gguf.sha256` hem de [`forgelm verify-gguf`](#/deployment/verify-gguf) onu kabul eder. Checkpoint dizininde zaten bir `model_integrity.json` varsa ForgeLM digest'i oraya da `exported_artifacts` altında yazmayı dener (best-effort: dosya geçerli JSON değilse ya da yazılamıyorsa bir uyarı loglanır ve export yine de başarılı olur; `--no-integrity-update` bunu atlar).
 
 Sidecar bozulmayı ve kazara değişikliği yakalar. Dosyanın yanında durduğu için kurcalama kanıtı **değildir**: GGUF'u değiştirebilen sidecar'ı da değiştirebilir. Buna ihtiyacınız varsa dosyayı imzalayın ya da digest'i dosyanın yazarının erişemediği bir yerde tutun.
 
@@ -35,7 +35,7 @@ Sidecar bozulmayı ve kazara değişikliği yakalar. Dosyanın yanında durduğu
 
 ### K-quant'lar bir adım daha ister
 
-ForgeLM'in çağırdığı dönüştürücü `f16` ve `q8_0`'ı doğrudan yazar. Bir K-quant için (`q2_k`, `q3_k_m`, `q4_k_m` — varsayılan — ve `q5_k_m`) `forgelm export`, kendi `.sha256`'sıyla birlikte `<output>.f16.gguf` adında ara bir `f16` GGUF yazar. Değişikliği bildirir (`--output-format json`'da `requested_quant`, `manual_step_required` ve tam `followup_command`) ve işi bitiren `llama-quantize` komutunu loglar:
+ForgeLM'in çağırdığı dönüştürücü `f16` ve `q8_0`'ı doğrudan yazar. Bir K-quant için (`q2_k`, `q3_k_m`, `q4_k_m` — varsayılan — ve `q5_k_m`) `forgelm export`, kendi `.sha256`'sıyla birlikte, çıktı adındaki `.gguf` uzantısı `.f16.gguf` ile değiştirilerek adlandırılan (`model.gguf` → `model.f16.gguf`; bu uzantıyla bitmeyen bir çıktıya `.f16.gguf` eklenir) ara bir `f16` GGUF yazar. Değişikliği bildirir (`--output-format json`'da `requested_quant`, `manual_step_required` ve tam `followup_command`) ve işi bitiren `llama-quantize` komutunu loglar:
 
 ```shell
 $ forgelm export ./checkpoints/customer-support --output model.gguf --quant q4_k_m
@@ -69,7 +69,7 @@ Export complete: ./gguf/model.f16.gguf (quant=f16, sha256=b81d05e6c392…)
 
 Her çalıştırma kendi sidecar'ını yazar (`model.q8_0.gguf.sha256`, `model.f16.gguf.sha256`). K-quant'lar için döngüyü K-quant adlarıyla çalıştırın ve her ara dosyayı yukarıdaki gibi `llama-quantize` ile tamamlayın.
 
-Checkpoint dizininde bir `model_integrity.json` varsa her çalıştırma onun `exported_artifacts` listesine bir kayıt ekler:
+Checkpoint dizininde bir `model_integrity.json` varsa her çalıştırma onun `exported_artifacts` listesine (yukarıdaki gibi best-effort) bir kayıt eklemeyi dener:
 
 ```json
 {
