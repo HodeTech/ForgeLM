@@ -39,7 +39,17 @@ içinde çalışır:
 ```
 
 Cross-OS test matrisinin her (OS × Python-version) hücresi için bir
-SBOM. Artefaktlar GitHub release sayfasından indirilebilir.
+SBOM.
+
+SBOM'lar, release tag'i için çalışan `publish.yml` çalıştırmasının **workflow-run artifact**'larıdır.
+GitHub Release sayfasına eklenmezler ve GitHub, deponun saklama süresi (90 gün) dolunca run
+artifact'larını siler; ihtiyacınız olanı çalıştırma hâlâ duruyorken indirin ve kayıtlarınızla
+birlikte arşivleyin.
+
+Bir SBOM'un listelediği: matris runner'ında paketlenmiş wheel kurulduktan sonraki `pip list`
+çıktısı (bağımlılıkları o anda PyPI'dan çözülür, sabitlenmemiştir), Linux'ta `qlora`, `ingestion`
+ve `eval` extras'ı ve `pytest` / `pytest-cov`. Bu yüzden runtime kapanışının yanında test araçlarını
+da adlandırır, bağımlılık grafiği taşımaz ve **lisans verisi taşımaz**.
 
 ### Determinism contract
 
@@ -52,17 +62,21 @@ Wave 4 / Faz 23 bir determinism testi ekler
 - `tests/test_supply_chain_security.py::TestGenerateSbomDeterministic::test_two_invocations_produce_same_content`
   CI'da bunu pin'ler.
 
-Bir denetçi karşılık gelen `git tag`'den SBOM'u yeniden emit edip
-GitHub release'e ekli artefaktla diff alabilir; trivial olmayan
-herhangi bir fark build ortamında dependency-resolution drift'ine
-işaret eder.
+Determinizm, aynı ortama özgü bir özelliktir. Aynı `git tag`'den sonradan yapılan yeniden
+emit'in bir release'in SBOM'uyla eşleşmesi beklenmez; çünkü o release bağımlılıklarını
+build edildiği anda PyPI'dan çözdü. **Sizin** dağıttığınızı kaydetmek için, modeli eğiten ya da
+sunan ortamda bir ForgeLM checkout'undan `python3 tools/generate_sbom.py` çalıştırın.
 
 ### SBOM'u tüketme
 
 ```bash
-# Bir release için tüm SBOM'ları indir. v<X.Y.Z>'yi CI'da pinlediğiniz
-# tag ile değiştirin; SBOM artefakt formatı release'ler arasında stabildir.
-gh release download v<X.Y.Z> --pattern 'sbom-*'
+# CI'da pinlediğiniz tag için başarılı publish çalıştırmasını bulun (bir tag'in
+# daha önce başarısız olmuş bir çalıştırması olabilir), sonra ondan bir SBOM indirin.
+# v<X.Y.Z>'yi tag ile değiştirin. Run artifact'ları 90 günde silinir; on ikisi için
+# --pattern 'sbom-*' kullanın.
+gh run list --repo HodeTech/ForgeLM --workflow publish.yml --branch v<X.Y.Z> --status success \
+    --json databaseId,createdAt
+gh run download <databaseId> --repo HodeTech/ForgeLM --name sbom-ubuntu-latest-py3.11
 
 # İnsan inceleme için pretty-print.
 jq . sbom-ubuntu-latest-py3.11.json | less
@@ -110,7 +124,7 @@ Wave 4 / Faz 23 nightly workflow'a `pip-audit` ekler. Davranış:
     Belirli bir CVE'yi kabul etmek için opt-in ignore dosyasıyla
     dokümante edin (aşağıdaki Suppression'a bakın); yeşil kalmak için
     UNKNOWN kovasına güvenmeyin.
-- OSV / GHSA veritabanlarını kullanır (pip-audit varsayılanı).
+- PyPI'ın güvenlik açığı verisini sorgular (pip-audit'in varsayılan `pypi` servisi; nightly `--vulnerability-service` geçmez).
 
 Operatörler aynı tooling'i lokalde kurar:
 

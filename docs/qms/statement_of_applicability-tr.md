@@ -59,7 +59,7 @@ operatör-tarafı eylem.
 | A.5.29 Aksaklık sırasında bilgi güvenliği | YES | `auto_revert` baseline-flip; `model.reverted` event | Base-model retention dokümante et |
 | A.5.30 İş sürekliliği için ICT hazırlığı | YES | DR planlama | Benimse |
 | A.5.31 Yasal, kanuni, düzenleyici ve sözleşmesel gerekliliklerin tanımlanması | YES | EU AI Act + GDPR mapping'ler; Annex IV bundle | Kural değişikliklerini izle |
-| A.5.32 Fikri mülkiyet hakları | YES | SBOM'da lisans çıkarımı; HF model-card metadata | Per-model lisans review |
+| A.5.32 Fikri mülkiyet hakları | YES | HF model-card metadata (SBOM lisans verisi taşımaz) | Per-model lisans review |
 | A.5.33 Kayıtların korunması | YES | Append-only + HMAC + manifest sidecar; off-site replica | Off-site backup |
 | A.5.34 Gizlilik ve PII korunması | YES | `forgelm reverse-pii` Md. 15; `forgelm purge` Md. 17; `forgelm audit` PII tespiti + maskeleme | DSAR workflow + DPIA |
 | A.5.35 Bilgi güvenliğinin bağımsız incelenmesi | YES | Yıllık external denetim | Benimse |

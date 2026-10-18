@@ -14,7 +14,7 @@ Four pillars an ISO / SOC 2 auditor cares about most have direct ForgeLM evidenc
 1. **Audit trail** — `audit_log.jsonl` per training run, append-only with HMAC + SHA-256 hash chain + genesis manifest sidecar. `forgelm verify-audit` validates the chain end-to-end.
 2. **Change control** — Article 14 staging gate (`forgelm approve` / `reject`) + `human_approval.required/granted/rejected` audit events + `config_hash` (per-run manifest sidecar field) stamped per run.
 3. **Data lineage** — `data_provenance.json` (SHA-256 fingerprint + size + mtime, plus the dataset's HF Hub commit SHA **graded by `hf_revision_source`**) + `data_governance_report.json` (collection_method, annotation_process, known_biases, personal_data_included, dpia_completed). Read the grade before the SHA: only `hf_revision_source: loaded` is evidence of the corpus that trained the model.
-4. **Supply chain** — CycloneDX 1.5 SBOM emitted per release, `pip-audit` nightly, `bandit` CI for static + dynamic security scanning.
+4. **Supply chain** — CycloneDX 1.5 SBOM emitted per release (a workflow-run artifact kept 90 days, not a GitHub release asset), `pip-audit` nightly, `bandit` CI for static + dynamic security scanning.
 
 ## The eight audit-floor questions
 
@@ -23,7 +23,7 @@ The deep guide answers each with the exact `jq` / CLI command + the artefact it 
 1. "Show me the audit trail for every model promotion in the past 90 days" → `forgelm verify-audit` + `jq 'select(.event == "human_approval.granted")'`.
 2. "Show me the change-control evidence — who approved this model?" → cross-reference `training.started` + `human_approval.granted` events; compare the two identities; they are self-asserted (`FORGELM_OPERATOR`, else the OS user), so segregation of duties (ISO A.5.3, SOC 2 CC1.5) holds only if your identity provider makes them different people.
 3. "Show me the data lineage" → `data_provenance.json`; `sha256` + `hf_revision` pin the corpus — but only when `hf_revision_source` reads `loaded`. `unverified` means the SHA is a Hub lookup made when the bundle was written, with no coupling to the load; `unresolved` means no SHA was obtained and none is claimed.
-4. "Show me the supply chain" → `gh release download "$(gh release view --json tagName -q .tagName)" --pattern 'sbom-*'`; CycloneDX 1.5 JSON.
+4. "Show me the supply chain" → `gh run list --repo HodeTech/ForgeLM --workflow publish.yml --branch v<X.Y.Z> --status success`, then `gh run download <id> --repo HodeTech/ForgeLM --pattern 'sbom-*'` within 90 days; CycloneDX 1.5 JSON (the CI runner's package list, test tooling included, no licence data).
 5. "Show me the access controls" → IdP audit log + `FORGELM_OPERATOR` cross-reference.
 6. "Show me the encryption posture" → deployer-side substrate (KMS audit log + `data_governance_report.json`).
 7. "Show me the incident response" → `audit.classifier_load_failed` + F-compliance-110 strict gate.

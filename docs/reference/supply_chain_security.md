@@ -39,7 +39,16 @@ publish workflow:
 ```
 
 One SBOM per (OS × Python-version) cell of the cross-OS test matrix.
-The artefacts are downloadable from the GitHub release page.
+
+The SBOMs are **workflow-run artifacts** of the `publish.yml` run for the release tag. They are
+not attached to the GitHub Release page, and GitHub deletes run artifacts when the repository's
+retention period ends (90 days), so download what you need while the run is still available and
+archive it with your records.
+
+What an SBOM lists: the output of `pip list` on the matrix runner after it installed the packaged
+wheel (its dependencies resolve from PyPI at that moment, unpinned), on Linux the `qlora`,
+`ingestion` and `eval` extras, and `pytest` / `pytest-cov`. It therefore names test tooling
+beside the runtime closure, carries no dependency graph, and carries **no licence data**.
 
 ### Determinism contract
 
@@ -52,17 +61,20 @@ Wave 4 / Faz 23 adds a determinism test (`tests/test_supply_chain_security.py`):
 - `tests/test_supply_chain_security.py::TestGenerateSbomDeterministic::test_two_invocations_produce_same_content`
   pins this in CI.
 
-An auditor can re-emit the SBOM from the corresponding `git tag`
-and diff against the artefact attached to the GitHub release; any
-non-trivial difference indicates dependency-resolution drift in the
-build environment.
+Determinism is a same-environment property. A later re-emission from the same `git tag` is not
+expected to match a release's SBOM, because that release resolved its dependencies from PyPI when
+it was built. To record what **you** deploy, run `python3 tools/generate_sbom.py` from a ForgeLM
+checkout in the environment that trains or serves the model.
 
 ### Consuming the SBOM
 
 ```bash
-# Download all SBOMs for a release. Replace v<X.Y.Z> with the tag you
-# pinned in your CI; the SBOM artefact format is stable across releases.
-gh release download v<X.Y.Z> --pattern 'sbom-*'
+# Find the successful publish run for the tag you pinned in your CI (a tag can have an
+# earlier failed run), then download one SBOM from it. Replace v<X.Y.Z> with the tag.
+# Run artifacts expire after 90 days; use --pattern 'sbom-*' for all twelve.
+gh run list --repo HodeTech/ForgeLM --workflow publish.yml --branch v<X.Y.Z> --status success \
+    --json databaseId,createdAt
+gh run download <databaseId> --repo HodeTech/ForgeLM --name sbom-ubuntu-latest-py3.11
 
 # Pretty-print for human review.
 jq . sbom-ubuntu-latest-py3.11.json | less
@@ -108,7 +120,7 @@ Wave 4 / Faz 23 adds `pip-audit` to the nightly workflow. Behaviour:
     To accept a specific CVE, document it via the opt-in ignore file
     (see Suppression below); do not rely on the UNKNOWN bucket to stay
     green.
-- Uses the OSV / GHSA databases (pip-audit's default).
+- Queries PyPI's vulnerability data (pip-audit's default `pypi` service; the nightly does not pass `--vulnerability-service`).
 
 Operators install the same tooling locally:
 

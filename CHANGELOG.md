@@ -87,6 +87,16 @@ All notable changes to ForgeLM are documented here.
   0 meant every gate passed, that a classifier load failure "halts" the pipeline and leaves no `final_model/`, and that
   classification errors count as unsafe. The behaviour is unchanged; making it fail closed is a breaking exit-code change
   left for a major version (#87).
+- Say where the per-release SBOMs actually are and what they contain. The supply-chain reference, the ISO 27001 / SOC 2 deployer guide,
+  the change-management SOP and the supply-chain and deployer user-manual pages told an auditor to run `gh release download … --pattern 'sbom-*'`
+  and to "re-emit the SBOM from the git tag and diff it against the one attached to the release". Nothing attaches an SBOM to a
+  GitHub Release: `publish.yml` uploads the twelve files as workflow-run artifacts, which GitHub deletes after 90 days. The docs now give
+  the working commands (`gh run list --workflow publish.yml --branch v<X.Y.Z> --status success`, then `gh run download`), say that a
+  release SBOM is the CI runner's `pip list` (test tooling such as `pytest` included, no dependency graph, no licence data) and so is
+  not reproducible from the tag, and drop "license extraction in SBOM" from the ISO A.5.32, SOC 2 CC9.2 and statement-of-applicability
+  rows. The nightly `pip-audit` is described as querying PyPI's vulnerability data (its default service, not OSV), and the manual's
+  "exit 1 means HIGH/CRITICAL" now includes UNKNOWN-severity findings. English and Turkish. Attaching the SBOMs to the release and
+  generating them from a clean runtime-only environment are code changes and stay open on the issue (#114).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).
