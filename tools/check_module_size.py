@@ -488,7 +488,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/cli/subcommands/_purge.py": _DeferredSplit(
-        budget=1216,
+        budget=1224,
         deferred_at_loc=1215,
         budget_history=(
             "2026-10-09 (Phase 16 S1-S3 review, 1215 -> 1216, +1): the `dumps_strict` import. "
@@ -496,6 +496,10 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "strict-JSON guard's hand-picked module list; the guard now scans all of "
             "`forgelm/`, so they route through the chokepoint like every other writer. "
             "One line, taken as a raise rather than a split per decision C-18.",
+            "2026-10-18 (wave-0 triage, #102, 1216 -> 1224, +8): the warning `purge --row-id` logs when "
+            "`--output-dir` is omitted. The default (the corpus directory) silently pointed the memorisation "
+            "check at a directory that never holds a trained model, so the message has to sit where the "
+            "default is resolved. Taken as a raise rather than a split per decision C-18.",
         ),
         reason=(
             "GDPR purge: row-id resolution + run-id resolution + retention-policy "

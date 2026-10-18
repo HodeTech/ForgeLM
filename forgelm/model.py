@@ -420,6 +420,35 @@ def _device_map_for(config: Any, is_distributed: bool):
     return None  # CPU-only
 
 
+def _config_with_rope_scaling(
+    name_or_path: str, rope_scaling: dict, *, trust_remote_code: bool, revision: Optional[str] = None
+) -> Any:
+    """Load the model's config and apply ``training.rope_scaling`` to it.
+
+    transformers 5 keeps the RoPE settings in ``config.rope_parameters`` (which also carries ``rope_theta``) and
+    expects the key ``rope_type``.  Passing ``rope_scaling=`` to ``from_pretrained`` no longer works: the documented
+    ``{type: linear, factor: 4}`` raises ``KeyError: 'rope_type'`` while the model is built, and
+    ``{rope_type: ..., factor: ...}`` replaces the whole dict so ``rope_theta`` is lost (``TypeError`` in the
+    frequency computation).  So the requested keys are merged *over* the model's own ``rope_parameters``, the legacy
+    key ``type`` is read as ``rope_type``, and the finished config object is what gets loaded.
+
+    For a multimodal checkpoint the RoPE settings live in the text sub-config, which is where they are applied.
+    A transformers without ``rope_parameters`` gets the legacy ``rope_scaling`` attribute instead.
+    """
+    from transformers import AutoConfig
+
+    model_config = AutoConfig.from_pretrained(name_or_path, trust_remote_code=trust_remote_code, revision=revision)
+    target = model_config.get_text_config() if hasattr(model_config, "get_text_config") else model_config
+    requested = dict(rope_scaling)
+    if "type" in requested and "rope_type" not in requested:
+        requested["rope_type"] = requested.pop("type")
+    if hasattr(target, "rope_parameters"):
+        target.rope_parameters = {**(getattr(target, "rope_parameters", None) or {}), **requested}
+    else:
+        target.rope_scaling = requested
+    return model_config
+
+
 def _build_model_kwargs(config: Any, trust_remote_code: bool, revision: Optional[str] = None) -> dict:
     """Assemble from_pretrained kwargs (device_map, BnB, RoPE, sliding window, revision).
 
@@ -461,12 +490,19 @@ def _build_model_kwargs(config: Any, trust_remote_code: bool, revision: Optional
         )
 
     rope_scaling = config.training.rope_scaling
+    sliding_window = config.training.sliding_window_attention
     if rope_scaling:
         logger.info("RoPE scaling enabled: %s", rope_scaling)
-        kwargs["rope_scaling"] = rope_scaling
-
-    sliding_window = config.training.sliding_window_attention
-    if sliding_window:
+        model_config = _config_with_rope_scaling(
+            config.model.name_or_path, rope_scaling, trust_remote_code=trust_remote_code, revision=revision
+        )
+        if sliding_window:
+            # Once ``config=`` is a finished object, from_pretrained hands unrecognised keyword arguments to the
+            # model constructor instead of the config, so the override is applied to the config itself.
+            logger.info("Sliding window attention override: %d tokens", sliding_window)
+            model_config.sliding_window = sliding_window
+        kwargs["config"] = model_config
+    elif sliding_window:
         logger.info("Sliding window attention override: %d tokens", sliding_window)
         kwargs["sliding_window"] = sliding_window
 
