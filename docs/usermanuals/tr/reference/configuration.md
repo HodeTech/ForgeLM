@@ -230,7 +230,7 @@ Merge alanı `algorithm` değil `method`'dur, `dare_ties` seçeneği, `base_mode
 ```yaml
 distributed:
   strategy: null                              # null (tek GPU, dağıtık sarmalama yok) | deepspeed | fsdp
-  deepspeed_config: null                      # bir DeepSpeed JSON'a yol, veya preset adı: zero2 | zero3 | zero3_offload
+  deepspeed_config: null                      # bir DeepSpeed JSON'a yol (preset adları zero2 | zero3 | zero3_offload kaynak checkout'u ister)
   fsdp_strategy: "full_shard"                 # full_shard | shard_grad_op | no_shard | hybrid_shard
   fsdp_auto_wrap: true                        # transformer katmanlarını otomatik sarmala (önerilir)
   fsdp_offload: false                         # forward/backward arasında FSDP parametrelerini CPU'ya offload et

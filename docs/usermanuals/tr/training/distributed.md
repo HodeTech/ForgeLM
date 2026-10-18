@@ -66,7 +66,7 @@ ZeRO-2 optimizer state'i sharder (Adam gibi adaptif optimizer'larda en ağır VR
 ```yaml
 distributed:
   strategy: "deepspeed"
-  deepspeed_config: "zero2"             # preset adı (veya bir DeepSpeed JSON dosya yolu)
+  deepspeed_config: "./ds_zero2.json"   # bir DeepSpeed JSON dosya yolu ("zero2" gibi preset adları kaynak checkout'u ister)
 
 training:
   gradient_accumulation_steps: 4
@@ -95,7 +95,7 @@ training:
   gradient_accumulation_steps: 8
 ```
 
-`zero3_offload` preset'i, optimizer state ve parametreleri CPU'ya boşaltarak 70B'i 8×24 GB'a sığdırır. ZeRO-Infinity'nin NVMe offload'u hazır bir preset değildir — bunun için `deepspeed_config`'i, `offload_param`/`offload_optimizer` alanları `device: nvme` olarak ayarlanmış özel bir DeepSpeed JSON dosyasına yönlendirin.
+`zero3_offload` preset'i optimizer state ve parametreleri CPU'ya boşaltır, hızdan GPU belleği kazandırır; belirli bir modelin sığıp sığmayacağı GPU belleğinize ve CPU RAM'inize bağlıdır. `zero2`, `zero3` ve `zero3_offload` preset adları yalnızca kaynak checkout'unda çözülür (JSON dosyaları pip wheel'inde ya da Docker imajında değil, deponun `configs/deepspeed/` klasöründedir) ve `zero2` preset'i şu an bozuktur ([#410](https://github.com/HodeTech/ForgeLM/issues/410)); bu yüzden `deepspeed_config`'e kontrolünüzdeki bir JSON dosyasının yolunu verin. ZeRO-Infinity'nin NVMe offload'u bir preset değildir — bunun için `deepspeed_config`'i, `offload_param`/`offload_optimizer` alanları `device: nvme` olarak ayarlanmış özel bir DeepSpeed JSON dosyasına yönlendirin.
 
 | Model | GPU | ZeRO-3 + offload? |
 |---|---|---|

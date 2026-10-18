@@ -768,7 +768,7 @@ class DistributedConfig(BaseModel):
     )
     deepspeed_config: Optional[str] = Field(
         default=None,
-        description="DeepSpeed config: filesystem path to a DS JSON OR preset name (`zero2`, `zero3`, `zero3_offload`).",
+        description="DeepSpeed config: filesystem path to a DS JSON.  The preset names (`zero2`, `zero3`, `zero3_offload`) resolve only from a source checkout, not a pip or Docker install.",
     )
     fsdp_strategy: Literal["full_shard", "shard_grad_op", "no_shard", "hybrid_shard"] = Field(
         default="full_shard",

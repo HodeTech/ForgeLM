@@ -162,10 +162,10 @@ data:
 #   dare_seed: 42               # DARE: RNG seed for the random drop mask
 
 # Distributed training (multi-GPU). Requires: pip install forgelm[distributed]
-# Launch with: torchrun --nproc_per_node=N forgelm --config my_config.yaml
+# Launch with: torchrun --nproc_per_node=N -m forgelm --config my_config.yaml
 # distributed:
 #   strategy: "deepspeed"           # "deepspeed" or "fsdp"
-#   deepspeed_config: "zero2"       # preset: "zero2", "zero3", "zero3_offload" or path to JSON
+#   deepspeed_config: "ds.json"     # path to a DeepSpeed JSON (the presets "zero2", "zero3", "zero3_offload" need a source checkout)
 #   # --- FSDP options (when strategy: "fsdp") ---
 #   # fsdp_strategy: "full_shard"   # "full_shard", "shard_grad_op", "no_shard", "hybrid_shard"
 #   # fsdp_auto_wrap: true

@@ -121,7 +121,7 @@ ForgeLM sets `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `HF_DATASETS_OFFLINE=
 ```yaml
 distributed:
   strategy: "deepspeed"
-  deepspeed_config: "zero2"  # or "zero3", "zero3_offload"
+  deepspeed_config: "/etc/forgelm/ds_zero2.json"  # your own DeepSpeed JSON; the zero2/zero3/zero3_offload preset names need a source checkout
 ```
 
 ```bash

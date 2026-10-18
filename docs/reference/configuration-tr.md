@@ -397,7 +397,7 @@ kaynağı kaydedilmemiştir.
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
 | `strategy` | string | `null` | `"deepspeed"` veya `"fsdp"` (null = tek GPU) |
-| `deepspeed_config` | string | `null` | Ön ayar (`"zero2"`, `"zero3"`, `"zero3_offload"`) veya JSON yolu |
+| `deepspeed_config` | string | `null` | JSON yolu ya da yalnızca kaynak checkout'unda çözülen (pip veya Docker kurulumunda çözülmeyen) bir ön ayar adı (`"zero2"`, `"zero3"`, `"zero3_offload"`) |
 | `fsdp_strategy` | string | `"full_shard"` | `"full_shard"`, `"shard_grad_op"`, `"hybrid_shard"`, `"no_shard"` |
 | `fsdp_auto_wrap` | bool | `true` | Transformer katmanlarını otomatik sar |
 | `fsdp_offload` | bool | `false` | Parametreleri CPU'ya taşı |
