@@ -11,7 +11,7 @@ ForgeLM's exit codes are a public contract. CI/CD pipelines, schedulers, and das
 
 | Exit | Constant | Meaning | Typical CI action |
 |---|---|---|---|
-| **0** | `EXIT_SUCCESS` | Run completed and the checkpoint was promoted. With `evaluation.auto_revert: true` every gate also passed; with the shipped default `auto_revert: false` a failed benchmark/safety/judge gate is **recorded in the JSON output but does not change the exit code** — see ["What exit 0 actually guarantees"](#what-exit-0-actually-guarantees) below. | Continue pipeline (parse gate blocks if `auto_revert` is off) |
+| **0** | `EXIT_SUCCESS` | Run completed and the checkpoint was promoted. With `evaluation.auto_revert: true` every gate that produced a verdict also passed (a safety evaluation with no verdict keeps the model and exits 0 too); with the shipped default `auto_revert: false` a failed benchmark/safety/judge gate is **recorded in the JSON output but does not change the exit code** — see ["What exit 0 actually guarantees"](#what-exit-0-actually-guarantees) below. | Continue pipeline (parse gate blocks if `auto_revert` is off) |
 | **1** | `EXIT_CONFIG_ERROR` | YAML invalid, file missing, env var unset, or argument malformed. | Fail fast |
 | **2** | `EXIT_TRAINING_ERROR` | Training-time runtime error (any unhandled exception that isn't a config or eval-gate failure: data load, OOM, NaN loss, I/O failure, mid-stream audit-iteration OSError). | Investigate; surface logs |
 | **3** | `EXIT_EVAL_FAILURE` | A benchmark/safety/judge gate failed **and** the model was auto-reverted (requires `evaluation.auto_revert: true`). With `auto_revert: false` a failed gate does not produce exit 3 — the run exits 0 with the failure recorded in the JSON gate blocks. | Investigate; do NOT promote |
@@ -112,7 +112,7 @@ A run that exits 0 has:
 
 **Gates and exit 0.** Whether a *passed* benchmark/safety/judge gate is part of the exit-0 guarantee depends on `evaluation.auto_revert`:
 
-- With `evaluation.auto_revert: true` (the EU AI Act high-risk default), a failed gate auto-reverts the model and exits **3** — so exit 0 *does* mean every configured gate passed.
+- With `evaluation.auto_revert: true` (the EU AI Act high-risk default), a failed gate auto-reverts the model and exits **3** — so exit 0 means every configured gate that produced a verdict passed. **One exception:** a safety evaluation that produced no verdict (`safety.evaluation_completed: false` — the classifier failed to load, the probes file is missing or empty, or most verdicts were unreadable) keeps the model and exits 0 (4 with the approval gate) even with `auto_revert: true`; check `safety.passed` and `safety.evaluation_completed` in the JSON output.
 - With the shipped default `evaluation.auto_revert: false`, a failed gate is **recorded** (the `benchmark` / `safety` / `judge` block in the JSON output carries `*_passed: false`) but the model is still promoted and the run exits **0**. Read those JSON blocks; do not infer gate success from exit 0 alone.
 
 There is no "partial success" exit code by design — turn on `auto_revert` if you want a failing gate to change the exit code.

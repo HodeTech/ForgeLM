@@ -1,9 +1,9 @@
 # Audit Event Kataloğu
 
-> **Hedef kitle:** EU AI Act Madde 12 kayıt-tutma artefaktlarını inceleyen ForgeLM operatörleri, denetçiler ve aşağı akış doğrulayıcıları.
+> **Hedef kitle:** ForgeLM'in eğitim-hattı audit log'unu inceleyen ForgeLM operatörleri, denetçiler ve aşağı akış doğrulayıcıları.
 > **Ayna:** [audit_event_catalog.md](audit_event_catalog.md)
 
-Bu katalog, ForgeLM'in EU AI Act Madde 12 tarafından zorunlu kılınan, append-only ve hash-zincirli kayıt-tutma artefaktı olan `audit_log.jsonl`'a yazabileceği tüm event'leri sıralar. Her satır ortak bir zarf paylaşır; aşağıdaki satırlardan birini `event` alanı seçer.
+Bu katalog, ForgeLM'in append-only ve hash-zincirli eğitim-hattı audit log'u olan `audit_log.jsonl`'a yazabileceği tüm event'leri sıralar. Bu log, teknik dokümantasyonu (Annex IV) ve kalite-yönetimi kayıt tutmayı destekleyebilecek geliştirme-zamanı kanıtıdır; tek başına EU AI Act Madde 12'yi karşılamaz, çünkü Madde 12 dağıtılmış yüksek-riskli sistemin ömrü boyunca olayları otomatik kaydetmesini ister. Her satır ortak bir zarf paylaşır; aşağıdaki satırlardan birini `event` alanı seçer.
 
 ## Ortak zarf
 
@@ -161,7 +161,7 @@ damgasıyla kurabilir. Uygulama: `forgelm/webhook.py`.
 | Webhook `event` | Denetim günlüğü karşılığı | Tetikleyici | Kapı (gate) | Zorunlu payload alanları |
 |---|---|---|---|---|
 | `training.start` | `training.started` | `train()` çağrıldı, model yüklenmeden önce. | `webhook.notify_on_start` | `run_name`, `status="started"` |
-| `training.success` | `pipeline.completed` | Koşu revert veya bekleyen onay olmadan tamamlandı. `evaluation.auto_revert: true` ile tüm kapılar geçildi; varsayılan `auto_revert: false` ile bir kapı geçemediği halde yalnızca kaydedildiğinde de tetiklenir (model yine terfi eder). | `webhook.notify_on_success` | `run_name`, `status="succeeded"`, `metrics` |
+| `training.success` | `pipeline.completed` | Koşu revert veya bekleyen onay olmadan tamamlandı. `evaluation.auto_revert: true` ile karara varan tüm kapılar geçildi (karar üretemeyen bir güvenlik değerlendirmesi, `safety.evaluation_completed: false`, modeli korur ve yine buraya varır); varsayılan `auto_revert: false` ile bir kapı geçemediği halde yalnızca kaydedildiğinde de tetiklenir (model yine terfi eder). | `webhook.notify_on_success` | `run_name`, `status="succeeded"`, `metrics` |
 | `training.failure` | `pipeline.failed` | Eğitim sürecinin kendisi hata fırlattı (OOM, veri seti hatası, yakalanmayan istisna). | `webhook.notify_on_failure` | `run_name`, `status="failed"`, `reason` (maskelenmiş, ≤2048 karakter) |
 | `training.reverted` | `model.reverted` | Eğitim sonrası bir kapı (değerlendirme, güvenlik, hakem, benchmark) çalışmayı reddetti ve `_revert_model` adaptörleri sildi. | `webhook.notify_on_failure` | `run_name`, `status="reverted"`, `reason` (maskelenmiş, ≤2048 karakter) |
 | `approval.required` | `human_approval.required` | Çalışma başarılı oldu, `evaluation.require_human_approval=true`, model insan incelemesi için staging'de (EU AI Act Madde 14). | `webhook.notify_on_success` | `run_name`, `status="awaiting_approval"`, `model_path` |

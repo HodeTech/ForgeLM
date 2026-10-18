@@ -1,9 +1,9 @@
 # Audit Event Catalog
 
-> **Audience:** ForgeLM operators, regulators, and downstream verifiers reviewing the EU AI Act Article 12 record-keeping artefacts.
+> **Audience:** ForgeLM operators, regulators, and downstream verifiers reviewing ForgeLM's training-pipeline audit log.
 > **Mirror:** [audit_event_catalog-tr.md](audit_event_catalog-tr.md)
 
-This catalog enumerates every event ForgeLM may append to `audit_log.jsonl`, the append-only, hash-chained record-keeping artefact mandated by EU AI Act Article 12. Every entry shares a common envelope; the `event` field selects one of the rows below.
+This catalog enumerates every event ForgeLM may append to `audit_log.jsonl`, ForgeLM's append-only, hash-chained training-pipeline audit log. It is development-time evidence that can support the technical documentation (Annex IV) and quality-management record-keeping; it does not by itself satisfy EU AI Act Article 12, which requires the deployed high-risk system to log events automatically over its lifetime. Every entry shares a common envelope; the `event` field selects one of the rows below.
 
 ## Common envelope
 
@@ -161,7 +161,7 @@ webhook ping → audit entry by `run_name` + timestamp. Implementation:
 | Webhook `event` | Audit-log mirror | Trigger | Gated by | Required payload fields |
 |---|---|---|---|---|
 | `training.start` | `training.started` | `train()` entered, before model load. | `webhook.notify_on_start` | `run_name`, `status="started"` |
-| `training.success` | `pipeline.completed` | Run completed without revert or pending approval. With `evaluation.auto_revert: true` all gates passed; with the default `auto_revert: false` it also fires when a gate failed but was only recorded (model still promoted). | `webhook.notify_on_success` | `run_name`, `status="succeeded"`, `metrics` |
+| `training.success` | `pipeline.completed` | Run completed without revert or pending approval. With `evaluation.auto_revert: true` every gate that produced a verdict passed (a safety evaluation with no verdict, `safety.evaluation_completed: false`, keeps the model and also ends here); with the default `auto_revert: false` it also fires when a gate failed but was only recorded (model still promoted). | `webhook.notify_on_success` | `run_name`, `status="succeeded"`, `metrics` |
 | `training.failure` | `pipeline.failed` | Training itself raised (OOM, dataset error, unhandled exception). | `webhook.notify_on_failure` | `run_name`, `status="failed"`, `reason` (masked, ≤2048 chars) |
 | `training.reverted` | `model.reverted` | A post-training gate (evaluation, safety, judge, benchmark) rejected the run and `_revert_model` deleted the adapters. | `webhook.notify_on_failure` | `run_name`, `status="reverted"`, `reason` (masked, ≤2048 chars) |
 | `approval.required` | `human_approval.required` | Run succeeded, `evaluation.require_human_approval=true`, model staged for review (EU AI Act Art. 14). | `webhook.notify_on_success` | `run_name`, `status="awaiting_approval"`, `model_path` |

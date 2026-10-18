@@ -87,6 +87,49 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Stop describing the human-approval gate as enforcing segregation of duties (English and Turkish): it records the
+  trainer and approver identities and does not compare them, and both are self-asserted. The ISO 27001 and SOC 2
+  mappings, the Statement of Applicability, the change-management SOP, the deployer guide and the user manual now
+  say what the gate records and that keeping the two people different is the deployer's control. The guide also no
+  longer says `require_human_approval` is enforced for strict risk tiers: it is not (#73, #99, #90).
+- Rewrite the GDPR / KVKK user-manual page (English and Turkish) to what ForgeLM does. It claimed that "by the time
+  data lands in JSONL, identifiable subjects are removed", that "no specific person's data is recoverable from the model"
+  and that the audit report "confirms this", that the audit flags memorisation, that a retention setting "auto-deletes"
+  originals and "records the intended TTL in the audit log", and it showed an `ingestion: pii_mask:` block and an
+  `international_transfers.enabled` setting that do not exist. Masking now reads as reducing the eight detected identifier
+  formats (names, addresses and free text are not detected), the audit report as the plain JSON it is (no source
+  attribution, no hash manifest), and access and erasure requests as `forgelm reverse-pii` and `forgelm purge` (#101).
+- Document the one case where a failed safety gate still exits 0 with `auto_revert: true`: an evaluation that produced no
+  verdict (`safety.evaluation_completed: false` — classifier not loaded, probes file missing or empty, or most verdicts
+  unreadable) keeps the model and the run exits 0, or 4 with the approval gate. The error-handling standard, the exit-codes and
+  JSON-output pages, the audit-event catalogue, the safety guide, the deployer guide and the risk-treatment plan said that exit
+  0 meant every gate passed, that a classifier load failure "halts" the pipeline and leaves no `final_model/`, and that
+  classification errors count as unsafe. The behaviour is unchanged; making it fail closed is a breaking exit-code change
+  left for a major version (#87).
+- Say where the per-release SBOMs actually are and what they contain. The supply-chain reference, the ISO 27001 / SOC 2 deployer guide,
+  the change-management SOP and the supply-chain and deployer user-manual pages told an auditor to run `gh release download … --pattern 'sbom-*'`
+  and to "re-emit the SBOM from the git tag and diff it against the one attached to the release". Nothing attaches an SBOM to a
+  GitHub Release: `publish.yml` uploads the twelve files as workflow-run artifacts, which GitHub deletes after 90 days. The docs now give
+  the working commands (`gh run list --workflow publish.yml --branch v<X.Y.Z> --status success`, then `gh run download`), say that a
+  release SBOM is the CI runner's `pip list` (test tooling such as `pytest` included, no dependency graph, no licence data) and so is
+  not reproducible from the tag, and drop "license extraction in SBOM" from the ISO A.5.32, SOC 2 CC9.2 and statement-of-applicability
+  rows. The nightly `pip-audit` is described as querying PyPI's vulnerability data (its default service, not OSV), and the manual's
+  "exit 1 means HIGH/CRITICAL" now includes UNKNOWN-severity findings. English and Turkish. Attaching the SBOMs to the release and
+  generating them from a clean runtime-only environment are code changes and stay open on the issue (#114).
+- Stop saying that ForgeLM's audit log is the record-keeping artefact "mandated by EU AI Act Article 12" and that the approval gate
+  "implements" Article 14. Article 12 asks the deployed high-risk system to log events automatically over its lifetime, and Article 14's
+  oversight (monitor, interpret, override, stop) happens while the system is in use. `audit_log.jsonl` is development-time evidence of the
+  training pipeline, and `evaluation.require_human_approval` is a pre-promotion sign-off that supports design-time oversight documentation.
+  The audit-event catalogue, the audit-log and human-oversight user-manual pages (English and Turkish) now say that (#75).
+- Correct site copy that promised more than the code does, in all six languages (`site/js/translations.js`, the HTML fallbacks and a code
+  comment in `site/js/wizard.js`): a failing benchmark gate exits 3 only with `evaluation.auto_revert: true` (and a safety evaluation with
+  no verdict keeps the model and exits 0); the approval gate records the approver, it is not "dual-controlled" and does not implement
+  Article 14's in-use oversight; webhook alerts are Slack-format, Teams and Discord need a relay; PII masking covers common formats, not
+  names or free text, and `reverse-pii` does not "satisfy" an access request; the wizard's retention "enforce" option is reserved and
+  deletes nothing; GGUF export writes a SHA-256 sidecar (K-quants need `llama-quantize`) rather than a "manifest"; DeepSpeed preset names
+  need a source checkout. A new site test keeps those phrases from coming back. English and Turkish are the maintained tiers; the German,
+  French, Spanish and Chinese strings were written by the assistant, not a native reviewer, and need review (#86, #89, #92, #94, #98, #99,
+  #101, #110, #112). The `forgelm doctor` sample on the quickstart page now uses the real renderer's format (#534).
 - Make `.github/dependabot.yml` parse. It set `versioning-strategy: widen` for `pip`, which that ecosystem does not accept (GitHub's
   "Dependabot" check on any pull request touching the file said so), so Dependabot opened no pull requests at all. The setting is removed, the
   header comment explains the restriction.

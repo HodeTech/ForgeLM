@@ -58,7 +58,7 @@ contribution → deployer-side action.
 | A.5.29 Information security during disruption | YES | `auto_revert` baseline-flip; `model.reverted` event | Document base-model retention |
 | A.5.30 ICT readiness for business continuity | YES | DR planning | Adopt |
 | A.5.31 Identification of legal, statutory, regulatory and contractual requirements | YES | EU AI Act + GDPR mappings; Annex IV bundle | Track rule changes |
-| A.5.32 Intellectual property rights | YES | License extraction in SBOM; HF model-card metadata | Per-model license review |
+| A.5.32 Intellectual property rights | YES | HF model-card metadata (the SBOM carries no licence data) | Per-model license review |
 | A.5.33 Protection of records | YES | Append-only + HMAC + manifest; off-site replica | Off-site backup |
 | A.5.34 Privacy and protection of PII | YES | `forgelm reverse-pii` Article 15; `forgelm purge` Article 17; `forgelm audit` PII detection + masking | DSAR workflow + DPIA |
 | A.5.35 Independent review of information security | YES | Annual external audit | Adopt |
@@ -107,7 +107,7 @@ ForgeLM-specific control inventory.
 | Control | Applicable? | ForgeLM evidence | Deployer-side action |
 |---|---|---|---|
 | A.8.1 User endpoint devices | YES | `forgelm doctor` — Python / CUDA / GPU / extras / HF auth / disk / `FORGELM_OPERATOR` checks | Endpoint hardening |
-| A.8.2 Privileged access rights | YES | Operator attribution; approval gate non-trainer operator | RBAC at IdP |
+| A.8.2 Privileged access rights | YES | Operator attribution; approval gate records the approver identity | RBAC at IdP |
 | A.8.3 Information access restriction | YES | Salted identifier hashing; `forgelm reverse-pii` Article 15 | DSAR workflow |
 | A.8.4 Access to source code | YES | `model.trust_remote_code=False` default; `model.revision` pins the base-model repo, bounding the repo-bundled code `trust_remote_code: true` would run.  `_fingerprint_hf_revision` covers the **dataset** repo only | VCS access control; require `model.revision` wherever `trust_remote_code: true` is approved |
 | A.8.5 Secure authentication | YES | `safe_post` rejects auth headers on non-HTTPS; webhook secret discipline | MFA + token rotation |

@@ -26,16 +26,20 @@ ForgeLM kanıtına sahip:
 2. **Change control** — Madde 14 staging gate (`forgelm approve` /
    `reject`) + `human_approval.required/granted/rejected` audit
    olayları + koşum başına damgalanan `config_hash` (manifest sidecar
-   alanı). Her model promotion çift kontrollü ve forensic olarak
-   attribute edilmiştir.
+   alanı). Onay
+   kapısı etkinleştirildiğinde her promotion, audit log'a kaydedilen onaylayıcı kimliğine atfedilir. ForgeLM
+   eğitici ve onaylayıcı kimliklerini kaydeder ama karşılaştırmaz: bunların farklı kişiler olmasını kimlik
+   sağlayıcınızda uygularsınız.
 3. **Data lineage** — `data_provenance.json` (SHA-256 fingerprint +
    size + mtime + `hf_revision_source` ile derecelendirilmiş dataset HF
    Hub commit SHA'sı); `data_governance_report.json`
    (collection_method, annotation_process, known_biases,
    personal_data_included, dpia_completed).
 4. **Supply chain** — yayın etiketi başına yayın matrisinin her (OS
-   × Python-version) hücresi için emit edilen CycloneDX 1.5 SBOM.
-   Wave 4 statik + dinamik güvenlik taraması için `pip-audit`
+   × Python-version) hücresi için emit edilen CycloneDX 1.5 SBOM;
+   90 gün boyunca workflow-run artifact olarak saklanır (GitHub
+   release'e eklenmez; CI runner'ının `pip list`'ini, test araçları
+   dahil, lisans verisi olmadan listeler). Wave 4 statik + dinamik güvenlik taraması için `pip-audit`
    nightly + `bandit` CI ekler.
 
 ## Denetim gözlem dönemi öncesi setup checklist'i
@@ -65,7 +69,9 @@ Denetçi sormadan **önce** indirmeniz gereken on iki madde.
 
 - [ ] **`evaluation.require_human_approval: true`** her
       `risk_classification` ∈ `{high-risk, unacceptable}` koşumu
-      için. Unutursanız F-compliance-110 `ConfigError` raise eder.
+      için. ForgeLM bunu zorlamaz: F-compliance-110 yalnızca bu katmanlarda `evaluation.safety.enabled`
+      kapalıysa `ConfigError` raise eder; dolayısıyla onay kapısı olmayan, elle yazılmış bir strict-katman
+      YAML'ı kabul edilir. CLI sihirbazı (`forgelm --wizard`) bu katmanlarda kapıyı açar.
 - [ ] **Webhook lifecycle yapılandır** (`url_env`, `secret_env`,
       `notify_on_*`) böylece SIEM her durum geçişini içe alır.
 - [ ] **`auto_revert: true` etkinleştir** üretim eğitimi için —
@@ -155,8 +161,9 @@ jq -r 'select(.run_id == "X" and (.event == "training.started" or .event == "hum
     ./outputs/audit_log.jsonl | sort -u
 ```
 
-İki farklı operator ID görev ayrılığını kanıtlar (ISO A.5.3, SOC 2
-CC1.5).
+`training.started` üzerindeki operatörü `human_approval.granted` üzerindeki onaylayıcıyla karşılaştırın. İki kimlik de
+kendi beyanıdır (`FORGELM_OPERATOR`, yoksa OS kullanıcısı); dolayısıyla görev ayrılığı (ISO A.5.3, SOC 2 CC1.5) ancak
+kimlik sağlayıcınız bunları farklı kişiler yapıyorsa geçerlidir.
 
 ### S3: "Data lineage göster"
 
@@ -198,19 +205,25 @@ eğittiğinin kanıtı saymayın.
 ### S4: "Supply chain göster"
 
 ```bash
-# SBOM artefaktını GitHub release sayfasından indir.
-gh release download v0.5.5 --pattern 'sbom-*'
+# Tag'in publish çalıştırmasından bir SBOM indir. Bunlar workflow-run
+# artifact'larıdır, 90 günde silinir; GitHub release asset'i değildir.
+gh run list --repo HodeTech/ForgeLM --workflow publish.yml --branch v0.11.0 --status success \
+    --json databaseId,createdAt
+gh run download <databaseId> --repo HodeTech/ForgeLM --name sbom-ubuntu-latest-py3.11
 
-# Veya istek üzerine yeniden üret.
+# Veya kendi ortamınızı tanımlayın: modeli eğiten ya da sunan ortamda,
+# bir ForgeLM checkout'undan çalıştırın.
 python3 tools/generate_sbom.py > sbom.json
 
 # Son yayınla diff al.
 diff <(jq -S . sbom-prev.json) <(jq -S . sbom.json)
 ```
 
-CycloneDX 1.5 JSON her transitive bağımlılığı purl
-(`pkg:pypi/...`) ve sürümle listeler. Dependency-Track CVE
-korelasyonu için bunu doğal olarak içe alır.
+CycloneDX 1.5 JSON kurulu her paketi purl (`pkg:pypi/...`) ve
+sürümle listeler; bağımlılık grafiği ve lisans verisi yoktur.
+Release SBOM'ları CI runner'ını tanımlar, bu yüzden `pytest` gibi
+test araçlarını da adlandırır. Dependency-Track dosyayı CVE
+korelasyonu için doğal olarak içe alır.
 
 ### S5: "Erişim kontrolleri göster — yalnız yetkili reviewer'ların model onayladığını nasıl ispatlıyorsunuz?"
 
@@ -249,8 +262,11 @@ Referans:
 
 - `docs/qms/sop_incident_response.md` §4 (Wave 4 / Faz 23
   genişletme) güvenlik-incident playbook için.
-- Zincirin kendisi: `audit.classifier_load_failed` event yangın +
-  `pipeline.failed` propagate + koşum `final_model/` dizini ÜRETMEZ.
+- Zincirin kendisi: `audit.classifier_load_failed` event'i tetiklenir
+  ve `safety.evaluation_completed` `evaluation_completed: false` kaydeder.
+  Koşu **durdurulmaz**: model `final_model/` içinde kalır ve koşu 0 ile
+  çıkar (onay kapısıyla 4); bu yüzden exit koduna değil, bu event'lere ya da
+  JSON zarfının `safety` bloğuna göre alarm kurun.
 - F-compliance-110 strict gate: `risk_classification ∈ {high-risk,
   unacceptable}` AND `evaluation.safety.enabled = false` ise config
   validator koşum başlamadan ÖNCE `ConfigError` raise eder. Denetçi
