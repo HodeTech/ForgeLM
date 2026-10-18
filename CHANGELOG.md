@@ -17,6 +17,11 @@ All notable changes to ForgeLM are documented here.
 
 - `CITATION.cff`, so the repository can be cited through GitHub's "Cite this
   repository" panel (#964).
+- A contributor can claim a `good first issue` by commenting `/assign` and give it
+  back with `/unassign`: the `Assign on comment` workflow (`tools/assign_on_comment.py`) assigns the commenter
+  when nobody holds the issue, refuses an issue that already has an assignee without changing it, allows at most 2
+  open assignments per contributor (maintainers are exempt) and leaves `security`, `needs-triage`, `deferred`,
+  epic and Phase 16 issues to a maintainer. Reassigning stays a maintainer's decision.
 - `GOVERNANCE.md` and `MAINTAINERS.md` at the repository root, recording how
   decisions are made, how the maintainer roles work, and which areas the current
   maintainer owns (#964).
