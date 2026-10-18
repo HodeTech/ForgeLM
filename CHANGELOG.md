@@ -87,6 +87,37 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Stop saying that Microsoft Teams and Discord accept the webhook payload directly. The user manual (English and Turkish) and the
+  `webhook` field descriptions said all three ingest it; the body is a Slack-style `attachments` block with no top-level `text`,
+  `content` or `embeds`. Discord needs `content` or `embeds` and answers HTTP 400; Teams retired Office 365 Connectors in May 2026 and
+  its Workflows webhooks expect an Adaptive Card. Both need a relay. The page now shows the real payload, and the access-control SOP
+  no longer claims that a payload carries `FORGELM_OPERATOR` (it does not) or lists five events (there are eight). The `url_env`
+  description said it overrides `url`; it is read only when `url` is empty, so `url` wins. A formatter for Teams and Discord is a
+  separate, larger change and stays open on the issue (#112).
+- Say that the DeepSpeed preset names (`zero2`, `zero3`, `zero3_offload`) work only from a source checkout. They resolve to
+  `configs/deepspeed/<name>.json` beside the package or in the current directory, and neither the wheel nor the Docker image ships
+  that folder, so on a `pip install` the names fail with a configuration error (and the unset-`deepspeed_config` default is
+  `zero2`). The configuration and distributed-training references, the troubleshooting entry (its sample error is now the real
+  message), the enterprise guide, the user manuals, `config_template.yaml` and the field description now say so and point at a
+  JSON path; the template's `torchrun … forgelm` launch line is `-m forgelm`, the only form that runs the checkout. The
+  unverified "`zero3_offload` fits 70B on 8×24 GB" sentence is gone, and the `zero2` preset's own start-up failure is noted
+  (#410). Shipping the presets in the package, and a test that resolves one from an installed wheel, are code changes and stay
+  open on the issues (#110, #111, #115).
+- Show the real output directory on the first-run, project-layout and human-oversight pages (English and Turkish). They described a
+  `checkpoints/<name>/artifacts/` bundle with a `manifest.json` that hashes "every file inside … for tamper-evidence", a
+  `config_snapshot.yaml`, a `safety_report.json` and a `data_audit_report.json`. None of those exist: a run writes `audit_log.jsonl` with its
+  `.manifest.json` genesis pin, a `compliance/` directory (`compliance_report.json`, `training_manifest.yaml`, `data_provenance.json`,
+  `data_governance_report.json`, and `annex_iv_metadata.json` only when the YAML names a provider, system or purpose), `safety/` and
+  `benchmark/` only when enabled, and `final_model/` with the weights, model card, `deployer_instructions.md` and `model_integrity.json`.
+  Only the audit log and `final_model/` are tamper-checked; nothing hashes `compliance/`, and the pages now say so. The invented training log
+  (a DPO pass in an SFT-only template, `Llama Guard S1-S14: clean`) is replaced by a description of the real stages, the approval-gate
+  sample shows the two log lines the trainer prints, and the `forgelm doctor` sample uses the real renderer's format (ASCII header and
+  `[+ pass]` markers, "discoverable" wording, an abridged row list) (#96, #534).
+- Describe `--offline` / `model.offline` as what it does. It sets `HF_HUB_OFFLINE`, `TRANSFORMERS_OFFLINE` and `HF_DATASETS_OFFLINE`; it does not
+  stop webhooks, the LLM-judge and synthetic-data API clients, or W&B / MLflow. The `--offline` help text, the `model.offline` field
+  description, the configuration and CLI references (English and Turkish) and the enterprise deployment guide said "Air-gapped mode" and
+  "prevents any network calls"; the air-gap page no longer lists Comet, which `training.report_to` does not accept. Gating those clients
+  behind the flag is a code change and stays open (#74, #100, #893).
 - `training.rope_scaling` works on transformers 5 again. The setting was passed to `from_pretrained(rope_scaling=...)`,
   which no longer works: the documented `{type: linear, factor: 4}` raised `KeyError: 'rope_type'` while the model was
   built, and `{rope_type: ..., factor: ...}` replaced the whole parameter dict so `rope_theta` was lost (`TypeError`).

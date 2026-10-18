@@ -344,10 +344,12 @@ nvidia-smi
 ### DeepSpeed Config Not Found
 
 ```text
-FileNotFoundError: DeepSpeed preset 'zero2' not found
+DeepSpeed preset 'zero2' not found at <path>/configs/deepspeed/zero2.json
 ```
 
-Ensure you're running from the ForgeLM project root, or use an absolute path:
+The preset names resolve only from a source checkout (a `configs/deepspeed/` directory beside the package or in the
+current directory); a `pip install` or the Docker image does not contain them. Run from the ForgeLM project root, or
+use the path of a DeepSpeed JSON file:
 
 ```yaml
 distributed:

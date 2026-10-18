@@ -29,21 +29,22 @@ flowchart LR
 Her şeyden önce Python, PyTorch, CUDA ve opsiyonel bağımlılıkların doğru bağlandığını kontrol etmek için `forgelm doctor` çalıştırın:
 
 ```shell
-$ forgelm doctor
-forgelm doctor — environment check
+$ forgelm doctor --offline
+forgelm doctor - environment check
 
-  [✓ pass] python.version          Python 3.11.4 (CPython).
-  [✓ pass] torch.cuda              torch 2.4.0 with CUDA 12.4.
-  [✓ pass] gpu.inventory           1 GPU(s) — GPU0: NVIDIA RTX 4090 (24.0 GiB).
-  [✓ pass] extras.qlora            Installed (module bitsandbytes, purpose: 4-bit / 8-bit QLoRA training (Linux GPUs only)).
-  [✓ pass] extras.unsloth          Installed (module unsloth, purpose: Unsloth-accelerated training (Linux GPUs only)).
-  [! warn] extras.distributed      Optional extra missing — install with: pip install 'forgelm[distributed]' (purpose: DeepSpeed ZeRO + offload distributed training (Linux + macOS only)).
-  [✓ pass] hf_hub.reachable        HuggingFace Hub reachable (HTTP 200).
-  [✓ pass] disk.workspace          Workspace /home/me/forgelm — 387.0 GiB free of 500.0 GiB.
-  [! warn] operator.identity       FORGELM_OPERATOR not set; audit events will fall back to 'me@workstation'. Pin FORGELM_OPERATOR=<id> for CI / pipeline runs.
+  [+ pass] python.version           Python 3.11.4 (CPython).
+  [! warn] torch.cuda               torch 2.4.0 installed but CUDA is unavailable. CPU-only runs are supported but training will be very slow; expect to use this only for tiny experiments or smoke tests.
+  [+ pass] numpy.torch_abi          torch 2.4.0 + numpy 2.1.0 are ABI-compatible.
+  [! warn] gpu.inventory            No CUDA devices visible; CPU-only mode.
+  [! warn] extras.distributed       Optional extra missing — install with: pip install 'forgelm[distributed]' (purpose: DeepSpeed ZeRO + offload distributed training (Linux + macOS only)).
+  [+ pass] disk.workspace           Workspace /home/me/forgelm — 387.0 GiB free of 500.0 GiB.
+  [! warn] operator.identity        FORGELM_OPERATOR not set; audit events will fall back to 'me@workstation'. Pin FORGELM_OPERATOR=<id> for CI / pipeline runs so the audit log identifies a stable identity.
+  ...
 
-Summary: 7 pass, 2 warn, 0 fail.
+Summary: 7 pass, 12 warn, 0 fail.
 ```
+
+Bu bir alıntıdır: gerçek çıktı yaklaşık 19 satırdır (ForgeLM kurulumunu, her opsiyonel extra'yı ve HF cache'i ya da Hub'ı da denetler); satırlar, değerler ve sayılar makinenize göre değişir. Bir extra için `pass`, modülün bulunabildiği anlamına gelir, import testinden geçtiği anlamına gelmez; durum işaretleri `[+ pass]`, `[! warn]` ve `[x fail]`'dir.
 
 `--output-format json` yapısal bir zarf döner (`{"success": bool, "checks": [...], "summary": {...}}`); CI ayrı ayrı probe sonuçlarını tabloyu parse etmeden filtreleyebilir. `--offline` HF Hub ağ probe'unu atlar ve onun yerine yerel cache'i inceler — air-gap dağıtımları için faydalı.
 
@@ -137,16 +138,9 @@ Olası verdict'ler:
 
 ```shell
 $ forgelm --config configs/quickstart-customer-support.yaml
-[2026-04-29 14:01:32] config validated
-[2026-04-29 14:01:33] auditing data/customer-support.jsonl (12,400 rows, 3 splits)
-[2026-04-29 14:01:35] PII flags: 0 critical, 5 medium · cross-split overlap: 0
-[2026-04-29 14:01:37] SFT epoch 1/3 · loss=2.31 → 1.42
-[2026-04-29 14:18:55] DPO preference pass · β=0.1 · KL=4.2
-[2026-04-29 14:32:11] benchmark hellaswag=0.62 truthfulqa=0.48
-[2026-04-29 14:33:02] Llama Guard S1-S14: clean
-[2026-04-29 14:33:04] Annex IV → checkpoints/customer-support/artifacts/annex_iv_metadata.json
-[2026-04-29 14:33:04] ✔ finished, exit 0
 ```
+
+Çıktı, `forgelm.*` logger'larından gelen zaman damgalı `[INFO]` satırlarının ve transformers ile TRL'in bastığı ilerleme çubuğu ile adım başı loss satırlarının akışıdır. `customer-support` şablonu `evaluation:` bloğu olmayan bir SFT koşusudur; bu yüzden göreceğiniz aşamalar şunlardır: config doğrulama, eğitim, ardından aşağıdaki dosyaların yazılması. Benchmark, güvenlik değerlendirmesi, judge ve insan-onay kapısı gibi aşamalar yalnızca YAML bunları açtığında çalışır. Komut başarıda `0` çıkış koduyla biter ([Çıkış kodları](#/reference/exit-codes)).
 
 ## 6. Modeli dene
 
@@ -160,20 +154,32 @@ Erişiminiz mevcut faturalama döneminin sonuna kadar devam eder…
 ## Diskte ne var
 
 ```text
-checkpoints/customer-support/
-├── artifacts/
-│   ├── annex_iv_metadata.json              ← Article 11 teknik dokümantasyon
-│   ├── audit_log.jsonl            ← Article 12 append-only event log
-│   ├── data_audit_report.json     ← Article 10 veri yönetimi kanıtı
-│   ├── safety_report.json         ← Llama Guard verdict
-│   ├── benchmark_results.json     ← Görev başı doğruluk
-│   └── manifest.json              ← Her artifact üzerinde SHA-256
-├── README.md                      ← Article 13 model card
-├── config_snapshot.yaml           ← Bu koşunun kullandığı tam YAML
-└── adapter_model.safetensors      ← LoRA ağırlıkları (veya birleştirilmiş checkpoint)
+checkpoints/customer-support/          ← training.output_dir
+├── audit_log.jsonl                    ← Article 12 append-only event log, hash zincirli
+├── audit_log.jsonl.manifest.json      ← genesis pin: verify-audit'in kesilmeyi tespit etmesini sağlar
+├── compliance/
+│   ├── compliance_report.json         ← Article 11 manifesti (kanonik makine-okunur paket)
+│   ├── training_manifest.yaml         ← koşunun operatör-okunur özeti
+│   ├── data_provenance.json           ← Article 10 veri seti parmak izi
+│   └── data_governance_report.json    ← Article 10 veri yönetimi kanıtı
+├── checkpoint-<step>/                 ← ara Trainer checkpoint'leri
+└── final_model/
+    ├── adapter_model.safetensors      ← LoRA ağırlıkları (veya birleştirilmiş checkpoint)
+    ├── README.md                      ← Article 13 model card
+    ├── deployer_instructions.md       ← modeli dağıtacak kişi için notlar
+    └── model_integrity.json           ← final_model/ içindeki dosyaların SHA-256 özetleri
 ```
 
-O `artifacts/` dizini compliance incelemeleri için teslim edilebilirdir. İçindeki her dosya `manifest.json`'da tamper-evidence için hashlenmiştir.
+Bazı dosyalar yalnızca YAML istediğinde oluşur:
+
+| Dosya | Ne zaman oluşur |
+|---|---|
+| `compliance/annex_iv_metadata.json` | `compliance.provider_name`, `system_name` veya `intended_purpose` ayarlıysa |
+| `safety/safety_results.json` | güvenlik değerlendirmesi açıksa |
+| `benchmark/benchmark_results.json` | benchmark kapısı açıksa |
+| `final_model/` yerine `final_model.staging.<run_id>/` | `evaluation.require_human_approval` açıksa, `forgelm approve` onu terfi ettirene kadar |
+
+`artifacts/` dizini ve tüm paketi kapsayan tek bir manifest yoktur. İki şey tamper-check'lidir: audit log kendi hash zinciriyle (`forgelm verify-audit`) ve `final_model/` `model_integrity.json` ile (`forgelm verify-integrity`). `compliance/` dosyalarını hiçbir şey hash'lemez; bu yüzden onları bir değişikliğin görüneceği bir yerde tutun, örneğin sürüm kontrolünde ya da bir kez yazılabilir depolamada.
 
 ## Sonraki adımlar
 

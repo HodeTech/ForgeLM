@@ -230,7 +230,7 @@ Merge alanı `algorithm` değil `method`'dur, `dare_ties` seçeneği, `base_mode
 ```yaml
 distributed:
   strategy: null                              # null (tek GPU, dağıtık sarmalama yok) | deepspeed | fsdp
-  deepspeed_config: null                      # bir DeepSpeed JSON'a yol, veya preset adı: zero2 | zero3 | zero3_offload
+  deepspeed_config: null                      # bir DeepSpeed JSON'a yol (preset adları zero2 | zero3 | zero3_offload kaynak checkout'u ister)
   fsdp_strategy: "full_shard"                 # full_shard | shard_grad_op
   fsdp_auto_wrap: true                        # transformers 5.10+'ta yok sayılır (FSDP2 transformer katmanlarını hep sarar)
   fsdp_offload: false                         # forward/backward arasında FSDP parametrelerini CPU'ya offload et
@@ -264,8 +264,8 @@ compliance:
 
 ```yaml
 webhook:
-  url: null                                   # Slack / Teams / Discord / özel; url_env tercihli
-  url_env: null                               # webhook URL'sini taşıyan env değişkeni
+  url: null                                   # Slack incoming webhook'u ya da Teams / Discord için relay; url_env tercihli
+  url_env: null                               # webhook URL'sini taşıyan env değişkeni; yalnızca url boşken okunur
   notify_on_start: true
   notify_on_success: true
   notify_on_failure: true

@@ -49,7 +49,17 @@ torchrun --nproc_per_node=4 -m forgelm.cli --config my_config.yaml
 
 ## DeepSpeed Configuration
 
-ForgeLM provides three built-in DeepSpeed presets. Set `deepspeed_config` to one of these names, or provide a path to your own JSON file.
+The repository ships three DeepSpeed presets under `configs/deepspeed/`. Set `deepspeed_config` to one of their names, or provide a path to your own JSON file.
+
+**A preset name works only when `configs/deepspeed/<name>.json` is available beside the installed package or in the
+current directory.** A source checkout provides those files; a `pip install forgelm` wheel and the Docker image do not,
+so there a preset name fails with a configuration error (exit 1). Copy the JSON files from the repository's
+`configs/deepspeed/` folder (into a `configs/deepspeed/` directory in the working directory, or anywhere if you point
+`deepspeed_config` at the path), or write your own.
+
+**Known issue ([#410](https://github.com/HodeTech/ForgeLM/issues/410)):** the `zero2` preset, which is also used when
+`deepspeed_config` is unset, sets `allgather_bucket_size` to `"auto"`, a value transformers' DeepSpeed integration does
+not fill in, so a ZeRO-2 run with it aborts. Use your own ZeRO-2 JSON until that is fixed.
 
 ### Presets
 
@@ -64,8 +74,8 @@ ForgeLM provides three built-in DeepSpeed presets. Set `deepspeed_config` to one
 ```yaml
 distributed:
   strategy: "deepspeed"
-  deepspeed_config: "zero2"       # Preset name
-  # deepspeed_config: "./my_ds_config.json"  # Or custom path
+  deepspeed_config: "./my_ds_config.json"  # Path to your own JSON (works on every install)
+  # deepspeed_config: "zero2"       # Preset name: source checkout only
 ```
 
 ### ZeRO Stage Comparison

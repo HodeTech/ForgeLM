@@ -15,7 +15,7 @@ See `config_template.yaml` for a complete annotated example.
 | `load_in_4bit` | bool | `true` | Enable QLoRA 4-bit NF4 quantization |
 | `backend` | string | `"transformers"` | `"transformers"` or `"unsloth"` (faster on supported architectures, Linux only) |
 | `trust_remote_code` | bool | `false` | Allow custom code from model repos. **Security risk** — only enable for models that require it |
-| `offline` | bool | `false` | Air-gapped mode: no HF Hub calls. Models/datasets must be local |
+| `offline` | bool | `false` | Sets the HF offline variables, so Hub, transformers and datasets make no network calls. Models/datasets must be local. Does not stop webhooks, judge or synthetic-data API clients, or W&B / MLflow |
 | `revision` | string | `null` | Pin the base model + tokenizer to an HF Hub commit SHA (40-hex) or a branch/tag. **Honoured today.** See [Hub revision pinning](#hub-revision-pinning) |
 | `bnb_4bit_use_double_quant` | bool | `true` | Double quantization for extra VRAM savings |
 | `bnb_4bit_quant_type` | string | `"nf4"` | Quantization type (`"nf4"` or `"fp4"`) |
@@ -293,11 +293,11 @@ exits 0, and nothing is deleted, blocked or scheduled automatically. The
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `url` | string | `null` | Webhook destination URL |
-| `url_env` | string | `null` | Env var name containing URL |
+| `url` | string | `null` | Webhook destination URL: a Slack incoming webhook, or a relay (Teams and Discord reject the payload directly) |
+| `url_env` | string | `null` | Env var name containing the URL; read only when `url` is empty |
 | `notify_on_start` | bool | `true` | Notify on training start |
 | `notify_on_success` | bool | `true` | Notify on success |
-| `notify_on_failure` | bool | `true` | Notify on failure |
+| `notify_on_failure` | bool | `true` | Notify when training raises or a post-training gate reverts the model |
 | `timeout` | int | `10` | HTTP request timeout (seconds). Clamped to ≥ 1s by the notifier. Default raised to 10s in v0.5.5 (was 5s) — Slack/Teams gateway latency spikes regularly cross 5s in production, and a webhook timeout silently degrades the audit chain (webhook failure is best-effort). |
 | `allow_private_destinations` | bool | `false` | Opt in to webhooks pointing at RFC1918 / loopback / link-local hosts (in-cluster Slack proxy, on-prem Teams gateway). Defaults to public-internet only — SSRF guard |
 | `require_https` | bool | `false` | TLS-only enforcement. `true` refuses a plaintext `http://` URL (the SSRF chokepoint raises; the POST is skipped) instead of warn-and-send. Default `false` preserves warn-then-send |
@@ -310,7 +310,7 @@ exits 0, and nothing is deleted, blocked or scheduled automatically. The
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `strategy` | string | `null` | `"deepspeed"` or `"fsdp"` (null = single GPU) |
-| `deepspeed_config` | string | `null` | Preset (`"zero2"`, `"zero3"`, `"zero3_offload"`) or JSON path |
+| `deepspeed_config` | string | `null` | JSON path, or a preset name (`"zero2"`, `"zero3"`, `"zero3_offload"`) that resolves only from a source checkout, not from a pip or Docker install |
 | `fsdp_strategy` | string | `"full_shard"` | `"full_shard"` or `"shard_grad_op"` (`"hybrid_shard"` and `"no_shard"` are rejected: FSDP2 does not support them) |
 | `fsdp_auto_wrap` | bool | `true` | Auto-wrap transformer layers (ignored on transformers 5.10+, which always wraps them) |
 | `fsdp_offload` | bool | `false` | Offload parameters to CPU |
