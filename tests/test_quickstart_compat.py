@@ -99,7 +99,7 @@ class TestVramProbe:
         with patch.dict(sys.modules, {"torch": fake_torch}):
             assert _detect_available_vram_gb() is None
 
-    def test_detect_vram_probe_failure_returns_none(self):
+    def test_detect_vram_probe_failure_returns_none(self, caplog):
         fake_torch = MagicMock()
         fake_torch.cuda.is_available.return_value = True
         fake_torch.cuda.device_count.return_value = 1
@@ -107,8 +107,10 @@ class TestVramProbe:
         fake_torch.backends.mps.is_available.return_value = False
         fake_torch.xpu.is_available.return_value = False
 
-        with patch.dict(sys.modules, {"torch": fake_torch}):
+        with caplog.at_level("DEBUG", logger="forgelm.quickstart"), patch.dict(sys.modules, {"torch": fake_torch}):
             assert _detect_available_vram_gb() is None
+
+        assert "device unavailable" in caplog.text
 
     def test_detect_vram_device_count_zero_returns_none(self):
         fake_torch = MagicMock()
