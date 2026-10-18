@@ -76,7 +76,7 @@ All notable changes to ForgeLM are documented here.
   deletes nothing; GGUF export writes a SHA-256 sidecar (K-quants need `llama-quantize`) rather than a "manifest"; DeepSpeed preset names
   need a source checkout. A new site test keeps those phrases from coming back. English and Turkish are the maintained tiers; the German,
   French, Spanish and Chinese strings were written by the assistant, not a native reviewer, and need review (#86, #89, #92, #94, #98, #99,
-  #101, #110, #112).
+  #101, #110, #112). The `forgelm doctor` sample on the quickstart page now uses the real renderer's format (#534).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).
