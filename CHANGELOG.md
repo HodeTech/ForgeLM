@@ -75,6 +75,15 @@ All notable changes to ForgeLM are documented here.
   no longer claims that a payload carries `FORGELM_OPERATOR` (it does not) or lists five events (there are eight). The `url_env`
   description said it overrides `url`; it is read only when `url` is empty, so `url` wins. A formatter for Teams and Discord is a
   separate, larger change and stays open on the issue (#112).
+- Say that the DeepSpeed preset names (`zero2`, `zero3`, `zero3_offload`) work only from a source checkout. They resolve to
+  `configs/deepspeed/<name>.json` beside the package or in the current directory, and neither the wheel nor the Docker image ships
+  that folder, so on a `pip install` the names fail with a configuration error (and the unset-`deepspeed_config` default is
+  `zero2`). The configuration and distributed-training references, the troubleshooting entry (its sample error is now the real
+  message), the enterprise guide, the user manuals, `config_template.yaml` and the field description now say so and point at a
+  JSON path; the template's `torchrun … forgelm` launch line is `-m forgelm`, the only form that runs the checkout. The
+  unverified "`zero3_offload` fits 70B on 8×24 GB" sentence is gone, and the `zero2` preset's own start-up failure is noted
+  (#410). Shipping the presets in the package, and a test that resolves one from an installed wheel, are code changes and stay
+  open on the issues (#110, #111, #115).
 - Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
   fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
   `label` (#965).

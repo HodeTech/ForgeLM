@@ -49,7 +49,16 @@ torchrun --nproc_per_node=4 -m forgelm.cli --config my_config.yaml
 
 ## DeepSpeed Yapılandırması
 
-ForgeLM, üç yerleşik DeepSpeed ön ayarı sunar. `deepspeed_config` parametresine bu isimlerden birini veya kendi JSON dosyanızın yolunu verin.
+Depo, `configs/deepspeed/` altında üç DeepSpeed ön ayarı barındırır. `deepspeed_config` parametresine bunların adlarından birini veya kendi JSON dosyanızın yolunu verin.
+
+**Ön ayar adları yalnızca bir kaynak checkout'unda çalışır.** Kurulu paketin yanındaki ya da geçerli dizindeki
+`configs/deepspeed/<ad>.json` dosyasına çözülürler. `pip install forgelm` wheel'i ve Docker imajı bu dosyaları içermez;
+orada bir ön ayar adı yapılandırma hatasıyla (exit 1) başarısız olur. Deponun `configs/deepspeed/` klasöründeki JSON
+dosyalarını kopyalayın ya da kendinizinkini yazın ve `deepspeed_config`'i onun yoluna ayarlayın.
+
+**Bilinen sorun ([#410](https://github.com/HodeTech/ForgeLM/issues/410)):** `deepspeed_config` ayarlanmadığında da
+kullanılan `zero2` ön ayarı `allgather_bucket_size` değerini `"auto"` yapar; transformers'ın DeepSpeed entegrasyonu bu
+değeri doldurmaz, bu yüzden onunla bir ZeRO-2 koşusu durur. Düzelene kadar kendi ZeRO-2 JSON'unuzu kullanın.
 
 ### Ön Ayarlar (Presets)
 
@@ -64,8 +73,8 @@ ForgeLM, üç yerleşik DeepSpeed ön ayarı sunar. `deepspeed_config` parametre
 ```yaml
 distributed:
   strategy: "deepspeed"
-  deepspeed_config: "zero2"       # Ön ayar adı
-  # deepspeed_config: "./my_ds_config.json"  # Veya özel dosya yolu
+  deepspeed_config: "./my_ds_config.json"  # Kendi JSON'unuzun yolu (her kurulumda çalışır)
+  # deepspeed_config: "zero2"       # Ön ayar adı: yalnızca kaynak checkout'u
 ```
 
 ### ZeRO Aşama Karşılaştırması

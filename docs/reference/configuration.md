@@ -309,7 +309,7 @@ silently extend the retention horizon by re-using a stale workspace.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `strategy` | string | `null` | `"deepspeed"` or `"fsdp"` (null = single GPU) |
-| `deepspeed_config` | string | `null` | Preset (`"zero2"`, `"zero3"`, `"zero3_offload"`) or JSON path |
+| `deepspeed_config` | string | `null` | JSON path, or a preset name (`"zero2"`, `"zero3"`, `"zero3_offload"`) that resolves only from a source checkout, not from a pip or Docker install |
 | `fsdp_strategy` | string | `"full_shard"` | `"full_shard"`, `"shard_grad_op"`, `"hybrid_shard"`, `"no_shard"` |
 | `fsdp_auto_wrap` | bool | `true` | Auto-wrap transformer layers |
 | `fsdp_offload` | bool | `false` | Offload parameters to CPU |

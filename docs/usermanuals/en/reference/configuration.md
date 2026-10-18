@@ -228,7 +228,7 @@ The merge field is `method` (not `algorithm`), and there is no `dare_ties` choic
 ```yaml
 distributed:
   strategy: null                              # null (single-GPU, no distributed wrapping) | deepspeed | fsdp
-  deepspeed_config: null                      # path to a DeepSpeed JSON, or preset name: zero2 | zero3 | zero3_offload
+  deepspeed_config: null                      # path to a DeepSpeed JSON (preset names zero2 | zero3 | zero3_offload need a source checkout)
   fsdp_strategy: "full_shard"                 # full_shard | shard_grad_op | no_shard | hybrid_shard
   fsdp_auto_wrap: true                        # auto-wrap transformer layers (recommended)
   fsdp_offload: false                         # offload FSDP parameters to CPU between forward/backward
