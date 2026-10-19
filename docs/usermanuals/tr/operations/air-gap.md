@@ -111,7 +111,7 @@ $ forgelm doctor --offline
 forgelm doctor — environment check
 
   [✓ pass] python.version          Python 3.11.4 (CPython).
-  [✓ pass] torch.cuda              torch 2.4.0 with CUDA 12.4.
+  [✓ pass] torch.cuda              torch 2.7.0 with CUDA 12.6.
   [✓ pass] gpu.inventory           1 GPU(s) — GPU0: NVIDIA A100 (80.0 GiB).
   [✓ pass] extras.qlora            Installed (module bitsandbytes, purpose: 4-bit / 8-bit QLoRA training).
   [✓ pass] extras.eval             Installed (module lm_eval, purpose: lm-evaluation-harness benchmark scoring).

@@ -22,7 +22,7 @@ ForgeLM ships as a single PyPI package with optional dependency groups (called *
 :::
 
 :::note
-**Intel Macs (x86_64) are not supported.** ForgeLM requires `torch>=2.4.0` (the minimum that `transformers` 5 supports), and PyPI publishes no `torch>=2.4` wheel for x86_64 macOS. Use Apple Silicon, Linux, or Windows.
+**Intel Macs (x86_64) are not supported.** ForgeLM requires `torch>=2.7.0` (the first release with a dtype `transformers` 5.10 imports), and PyPI publishes no `torch>=2.7` wheel for x86_64 macOS. Use Apple Silicon, Linux, or Windows.
 :::
 
 ## Base install

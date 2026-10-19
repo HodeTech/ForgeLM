@@ -30,6 +30,13 @@ def _warn_reserved_retention_enforce(config) -> None:
         )
 
 
+def _reject_unsloth_unsupported_overrides(config) -> None:
+    """Fail at config load (exit 1, also under ``--dry-run``) when the unsloth backend cannot apply an override."""
+    from ..model import _reject_unsloth_unsupported_overrides as reject
+
+    reject(config)
+
+
 def _load_config_or_exit(config_path: str, json_output: bool):
     """Load config and translate exceptions into the right exit code.
 
@@ -43,6 +50,7 @@ def _load_config_or_exit(config_path: str, json_output: bool):
         logger.info("Loading configuration from %s...", config_path)
         config = load_config(config_path)
         _warn_reserved_retention_enforce(config)
+        _reject_unsloth_unsupported_overrides(config)
         return config
     except FileNotFoundError as e:
         msg = f"Config file not found: {e}"

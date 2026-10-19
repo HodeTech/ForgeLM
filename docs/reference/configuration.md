@@ -140,9 +140,9 @@ across retries. Each retry attempt is logged to the audit trail.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `rope_scaling` | `Optional[Dict[str, Any]]` | `null` | RoPE scaling method dict (`{"type": "linear", "factor": 2.0}` etc.). Supported types: `"linear"`, `"dynamic"`, `"yarn"`, `"longrope"`. |
+| `rope_scaling` | `Optional[Dict[str, Any]]` | `null` | RoPE scaling method dict (`{"type": "linear", "factor": 2.0}` etc.). Supported types: `"linear"`, `"dynamic"`, `"yarn"`, `"longrope"`. Not supported with `model.backend: unsloth` (rejected, exit 1). |
 | `neftune_noise_alpha` | float | `null` | NEFTune noise injection alpha (e.g., `5.0`) |
-| `sliding_window_attention` | int | `null` | Sliding window attention size in tokens |
+| `sliding_window_attention` | int | `null` | Sliding window attention size in tokens. Not supported with `model.backend: unsloth` (rejected, exit 1). |
 | `sample_packing` | bool | `false` | **Deprecated** alias for `packing` (TRL exposes a single packing knob). Setting `true` forwards to `packing: true` with a `DeprecationWarning`; will be removed in v1.0.0. Use `packing` instead. |
 
 > Removal will land in v1.0.0, not sooner, because removing a YAML field is a

@@ -43,13 +43,19 @@ classifiers = [
 ]
 
 dependencies = [
-  "torch>=2.4.0,<3.0.0",
-  # transformers 5.x requires torch>=2.4. PyTorch Foundation never published
-  # >=2.3 wheels for x86_64 Darwin, so Intel Macs (x86_64) can no longer
-  # install ForgeLM's core dependency stack — that platform was dropped with
-  # the transformers-5 migration (v0.9.0). Apple Silicon, Linux and Windows
-  # are unaffected. The previous `numpy<2; darwin x86_64` ABI-guard marker is
-  # gone with the platform it protected (torch 2.4+ ships against NumPy 2.x).
+  "torch>=2.7.0,<3.0.0",
+  # transformers 5.10.1 (the security floor below) imports `torch.float8_e8m0fnu`
+  # when `transformers.modeling_utils` loads, and that dtype first exists in
+  # torch 2.7.0 (2.6.0 raises AttributeError, which breaks every model import).
+  # transformers' own metadata lists torch only as an extra, so pip would not
+  # upgrade an older torch for you; the floor has to be stated here. The
+  # nightly minimum-versions job installs exactly this version and caught the
+  # earlier `torch>=2.4.0`. PyTorch Foundation never published >=2.3 wheels
+  # for x86_64 Darwin, so Intel Macs (x86_64) can no longer install ForgeLM's
+  # core dependency stack — that platform was dropped with the transformers-5
+  # migration (v0.9.0). Apple Silicon, Linux and Windows are unaffected. The
+  # previous `numpy<2; darwin x86_64` ABI-guard marker is gone with the
+  # platform it protected (torch 2.4+ ships against NumPy 2.x).
   # 5.10.1 is the first installable release past three advisories that reach ForgeLM's own load and save path from
   # a Hub repo: CVE-2026-4372 (fixed 5.3.0), CVE-2026-5241 (a LightGlue config.json overrides trust_remote_code;
   # fixed 5.5.0) and CVE-2026-9856 (chat_template names used unsanitised as file names by save_pretrained; fixed

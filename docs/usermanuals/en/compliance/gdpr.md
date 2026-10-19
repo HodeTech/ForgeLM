@@ -76,9 +76,37 @@ The scan reports the lines where the identifier appears; zero matches is a valid
 "Delete my data."
 
 If a person's data was in your training set:
-1. Find the rows with `forgelm reverse-pii`, then remove them with `forgelm purge --row-id <id> --corpus <file>`; every erasure is written to the audit log.
+1. Find the rows with `forgelm reverse-pii`, then remove them with `forgelm purge --row-id <id> --corpus <file>`; every erasure is written to the audit log. `--row-id` is matched against the row's `id` or `row_id` field and never against a line number, and `forgelm ingest` does not write either field, so give every row a stable id **before you train** (see below). A corpus without ids cannot be purged row by row.
 2. Source documents may still hold it — drop them from your raw store and re-ingest if necessary.
 3. The model may have memorised some details — see "model-level erasure" below.
+
+To make rows addressable, give each JSONL row a unique `id` once, when the corpus is created, and keep it when the file is later filtered or re-ordered. Rows with a missing, null or empty `id` get a new one; a row whose `id` (or `row_id`, which `purge` also matches) another row already uses stops the script, because `forgelm purge --row-id` would see both rows as one match (it refuses by default, and with `--row-matches all` it would erase every match) and you have to decide which row keeps the id. The output is written to a temporary file and moved into place only after every row passed, so a failed run leaves an existing output file untouched:
+
+```python
+import json, os, uuid
+
+SRC, DST = "data/train.jsonl", "data/train.with-ids.jsonl"
+tmp, seen = DST + ".tmp", set()
+try:
+    with open(SRC, encoding="utf-8") as src, open(tmp, "w", encoding="utf-8") as dst:
+        for line_no, line in enumerate(src, start=1):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row.get("id") in (None, ""):
+                row["id"] = str(uuid.uuid4())
+            ids = {str(row[key]) for key in ("id", "row_id") if row.get(key) not in (None, "")}
+            if ids & seen:
+                raise SystemExit(f"line {line_no}: id {sorted(ids & seen)[0]!r} is already used by another row")
+            seen |= ids
+            dst.write(json.dumps(row, ensure_ascii=False) + "\n")
+    os.replace(tmp, DST)  # reached only when every row passed
+finally:
+    if os.path.exists(tmp):
+        os.remove(tmp)
+```
+
+Train from the file with ids. `forgelm reverse-pii` reports the file and line where the identifier occurs; read that row's `id` from the file and pass it to `forgelm purge --row-id`. Re-assigning ids after training breaks the link between the audit log and the corpus, so assign once.
 
 ### Model-level erasure
 

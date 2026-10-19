@@ -176,9 +176,26 @@ All notable changes to ForgeLM are documented here.
   which no longer works: the documented `{type: linear, factor: 4}` raised `KeyError: 'rope_type'` while the model was
   built, and `{rope_type: ..., factor: ...}` replaced the whole parameter dict so `rope_theta` was lost (`TypeError`).
   The requested keys are now merged over the model's own `rope_parameters` (the legacy key `type` is read as
-  `rope_type`), applied to the text config of a multimodal checkpoint, and the finished config is loaded. The
-  `sliding_window_attention` override travels in the same config object. Verified on transformers 5.13.0 for
-  `linear`, `dynamic` and `yarn` on a tiny local Llama; not exercised on the 5.3-5.9 range the floor still admits (#103).
+  `rope_type`), applied to the text config of a multimodal checkpoint, and the finished config is loaded. A model that
+  keeps one entry per layer type (Gemma 3: `full_attention` and `sliding_attention`) gets the scaling on its
+  `full_attention` entry, and one with per-layer-type entries but no `full_attention` is refused with exit 1 instead of
+  being scaled nowhere. Verified on transformers 5.13.0 for `linear`, `dynamic` and `yarn` on a tiny local Llama, and
+  on real Gemma 3 configs (#103).
+- `training.sliding_window_attention` reaches the text config and takes effect. The override was passed as a
+  `from_pretrained(sliding_window=...)` keyword, which transformers 5 forwards to the model constructor once `config=`
+  is set, and a multimodal model (Qwen2-VL) keeps `sliding_window` on its text config, not the outer one. It now travels in
+  the same config object as `rope_scaling`. For the Qwen2 family the config also derives a per-layer `layer_types`
+  list from `use_sliding_window`, `sliding_window` and `max_window_layers`, so setting the number alone left every layer
+  on full attention; the text config is rebuilt with the flag on so the list is derived again (a pattern the checkpoint
+  supplied itself is kept), and a warning is logged when the result still has no sliding-attention layer. The unsloth backend builds no transformers config, so it
+  applied neither `rope_scaling` nor `sliding_window_attention` and trained with the model's own settings; it now
+  refuses a config that sets either when the config loads (exit 1, `--dry-run` included) instead of ignoring it (#103).
+- The `torch` floor is `>=2.7.0`, not `>=2.4.0`. transformers 5.10.1 imports `torch.float8_e8m0fnu` when
+  `transformers.modeling_utils` loads, and that dtype first exists in torch 2.7.0; on 2.6.0 the import raises
+  `AttributeError`. transformers lists torch only as an extra, so pip never raised the old floor. The Nightly
+  Compatibility job's minimum-versions leg caught it (it installs every floor with `--no-deps`); its torch pin, the
+  installation pages (English and Turkish) and the `forgelm doctor` samples in the guides, references and user manuals
+  now say 2.7.0. The Intel Mac note stands: there is no `torch>=2.7` wheel for x86_64 macOS.
 - The `forgelm` CLI no longer sends Hugging Face's anonymous usage ping. TRL's trainers call `send_telemetry` when they are
   built, and `huggingface_hub` sends it unless `HF_HUB_DISABLE_TELEMETRY` is true or offline mode is on, which contradicted the
   privacy page ("does not send usage data anywhere"). `main()` now sets `HF_HUB_DISABLE_TELEMETRY=1` before anything imports

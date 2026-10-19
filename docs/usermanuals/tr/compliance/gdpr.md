@@ -76,9 +76,37 @@ Tarama, tanımlayıcının geçtiği satırları raporlar; sıfır eşleşme ge�
 "Verilerimi silin."
 
 Bir kişinin verisi eğitim setinizdeydi:
-1. Satırları `forgelm reverse-pii` ile bulun, sonra `forgelm purge --row-id <id> --corpus <dosya>` ile kaldırın; her silme audit log'a yazılır.
+1. Satırları `forgelm reverse-pii` ile bulun, sonra `forgelm purge --row-id <id> --corpus <dosya>` ile kaldırın; her silme audit log'a yazılır. `--row-id` satırın `id` veya `row_id` alanıyla eşleştirilir, satır numarasıyla asla; `forgelm ingest` bu alanlardan hiçbirini yazmaz. Bu yüzden **eğitimden önce** her satıra kalıcı bir id verin (aşağıya bakın). Id'si olmayan bir corpus satır satır silinemez.
 2. Ham kaynak dokümanlar hâlâ içerebilir — ham deponuzdan düşürün ve gerekirse yeniden ingest edin.
 3. Model bazı detayları ezberlemiş olabilir — aşağıdaki "model-seviyesi silme"ye bakın.
+
+Satırları adreslenebilir kılmak için corpus oluşturulurken her JSONL satırına bir kez benzersiz bir `id` verin ve dosya sonradan filtrelenir ya da yeniden sıralanırsa bu id'yi koruyun. `id`'si eksik, null ya da boş olan satırlar yeni bir id alır; `id`'sini (ya da `purge`'ın da eşleştirdiği `row_id`'yi) başka bir satırın da kullandığı satırda betik durur, çünkü `forgelm purge --row-id` iki satırı tek eşleşme olarak görür (varsayılanda reddeder, `--row-matches all` ile her eşleşmeyi siler) ve id'yi hangi satırın koruyacağına sizin karar vermeniz gerekir. Çıktı önce geçici bir dosyaya yazılır ve yalnızca her satır doğrulandıktan sonra yerine taşınır; böylece başarısız bir çalıştırma mevcut çıktı dosyasına dokunmaz:
+
+```python
+import json, os, uuid
+
+SRC, DST = "data/train.jsonl", "data/train.with-ids.jsonl"
+tmp, seen = DST + ".tmp", set()
+try:
+    with open(SRC, encoding="utf-8") as src, open(tmp, "w", encoding="utf-8") as dst:
+        for line_no, line in enumerate(src, start=1):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row.get("id") in (None, ""):
+                row["id"] = str(uuid.uuid4())
+            ids = {str(row[key]) for key in ("id", "row_id") if row.get(key) not in (None, "")}
+            if ids & seen:
+                raise SystemExit(f"line {line_no}: id {sorted(ids & seen)[0]!r} is already used by another row")
+            seen |= ids
+            dst.write(json.dumps(row, ensure_ascii=False) + "\n")
+    os.replace(tmp, DST)  # reached only when every row passed
+finally:
+    if os.path.exists(tmp):
+        os.remove(tmp)
+```
+
+Eğitimi id'li dosyadan yapın. `forgelm reverse-pii` tanımlayıcının geçtiği dosyayı ve satırı raporlar; o satırın `id` değerini dosyadan okuyup `forgelm purge --row-id`'ye verin. Eğitimden sonra id'leri yeniden atamak audit log ile corpus arasındaki bağı koparır; bu yüzden bir kez atayın.
 
 ### Model-seviyesi silme
 

@@ -33,8 +33,8 @@ $ forgelm doctor --offline
 forgelm doctor - environment check
 
   [+ pass] python.version           Python 3.11.4 (CPython).
-  [! warn] torch.cuda               torch 2.4.0 installed but CUDA is unavailable. CPU-only runs are supported but training will be very slow; expect to use this only for tiny experiments or smoke tests.
-  [+ pass] numpy.torch_abi          torch 2.4.0 + numpy 2.1.0 are ABI-compatible.
+  [! warn] torch.cuda               torch 2.7.0 installed but CUDA is unavailable. CPU-only runs are supported but training will be very slow; expect to use this only for tiny experiments or smoke tests.
+  [+ pass] numpy.torch_abi          torch 2.7.0 + numpy 2.1.0 are ABI-compatible.
   [! warn] gpu.inventory            No CUDA devices visible; CPU-only mode.
   [! warn] extras.distributed       Optional extra missing — install with: pip install 'forgelm[distributed]' (purpose: DeepSpeed ZeRO + offload distributed training (Linux + macOS only)).
   [+ pass] disk.workspace           Workspace /home/me/forgelm — 387.0 GiB free of 500.0 GiB.
@@ -145,11 +145,13 @@ $ forgelm --config configs/quickstart-customer-support.yaml
 ## 6. Modeli dene
 
 ```shell
-$ forgelm chat ./checkpoints/customer-support
+$ forgelm chat Qwen/Qwen2.5-7B-Instruct --adapter ./checkpoints/customer-support/final_model
 forgelm> aboneliği nasıl iptal ederim?
 Aboneliğinizi Ayarlar → Faturalandırma → Aboneliği İptal Et adımlarıyla iptal edebilirsiniz.
 Erişiminiz mevcut faturalama döneminin sonuna kadar devam eder…
 ```
+
+Konumsal argüman, çalıştırma özetindeki `Model` satırında yazan temel modeldir; `--adapter`, `final_model/` içindeki LoRA ağırlıklarını gösterir ve oturum için temel modele birleştirir. Çalıştırmanız bunun yerine birleştirilmiş bir checkpoint kaydettiyse (`final_model/` tam ağırlıkları içerir ve `adapter_model.safetensors` yoktur), o dizini tek argüman olarak verin: `forgelm chat ./checkpoints/customer-support/final_model`.
 
 ## Diskte ne var
 

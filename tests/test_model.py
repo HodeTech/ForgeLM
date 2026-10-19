@@ -115,16 +115,25 @@ class TestBuildModelKwargs:
         assert "quantization_config" in kwargs
         fake_bnb.assert_called_once()
 
-    def test_sliding_window_alone_is_a_keyword_argument(self):
+    def test_sliding_window_alone_travels_in_a_config_object_not_a_keyword(self):
+        # With ``config=`` set, from_pretrained forwards unknown keywords to the model constructor, so the override
+        # is an edit to the (text) config, never ``sliding_window=...``.
+        model_config = SimpleNamespace(sliding_window=None)
+        fake_transformers = MagicMock()
+        fake_transformers.AutoConfig.from_pretrained.return_value = model_config
         cfg = _cfg(
             model={"name_or_path": "org/model", "load_in_4bit": False},
             training={"sliding_window_attention": 4096},
         )
-        with patch("torch.cuda.is_available", return_value=False):
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            patch.dict("sys.modules", {"transformers": fake_transformers}),
+        ):
             kwargs = model_mod._build_model_kwargs(cfg, trust_remote_code=False)
-        assert kwargs["sliding_window"] == 4096 and "config" not in kwargs
+        assert "sliding_window" not in kwargs and "rope_scaling" not in kwargs
+        assert kwargs["config"] is model_config and model_config.sliding_window == 4096
 
-    def test_rope_scaling_travels_in_a_config_object_not_a_keyword(self):
+    def test_rope_scaling_and_sliding_window_travel_in_one_config_object(self):
         # transformers 5 no longer accepts `rope_scaling=` on from_pretrained (#103): the settings go into the
         # config, together with the sliding-window override, which would otherwise reach the model constructor.
         model_config = SimpleNamespace(rope_parameters={"rope_theta": 10000.0, "rope_type": "default"})
@@ -146,6 +155,12 @@ class TestBuildModelKwargs:
         fake_transformers.AutoConfig.from_pretrained.assert_called_once_with(
             "org/model", trust_remote_code=False, revision="abc123"
         )
+
+    def test_no_overrides_leave_the_config_to_from_pretrained(self):
+        cfg = _cfg(model={"name_or_path": "org/model", "load_in_4bit": False})
+        with patch("torch.cuda.is_available", return_value=False):
+            kwargs = model_mod._build_model_kwargs(cfg, trust_remote_code=False)
+        assert "config" not in kwargs and "sliding_window" not in kwargs
 
 
 class TestConfigWithRopeScaling:
@@ -214,6 +229,180 @@ class TestConfigWithRopeScaling:
                 "org/vlm", {"type": "linear", "factor": 2.0}, trust_remote_code=False
             )
         assert out is outer and text.rope_parameters["rope_type"] == "linear"
+
+    def test_nested_per_layer_type_parameters_scale_the_full_attention_entry(self):
+        # Gemma 3 keeps one rope_parameters entry per layer type; a flat key next to them is read by neither.
+        text = SimpleNamespace(
+            rope_parameters={
+                "full_attention": {"rope_type": "default", "rope_theta": 1000000.0},
+                "sliding_attention": {"rope_type": "default", "rope_theta": 10000.0},
+            }
+        )
+        outer = SimpleNamespace(get_text_config=lambda: text)
+        fake_transformers = MagicMock()
+        fake_transformers.AutoConfig.from_pretrained.return_value = outer
+        with patch.dict("sys.modules", {"transformers": fake_transformers}):
+            model_mod._config_with_rope_scaling("org/gemma", {"type": "linear", "factor": 8.0}, trust_remote_code=False)
+        assert text.rope_parameters["full_attention"] == {"rope_type": "linear", "rope_theta": 1000000.0, "factor": 8.0}
+        assert text.rope_parameters["sliding_attention"] == {"rope_type": "default", "rope_theta": 10000.0}
+        assert "factor" not in text.rope_parameters and "rope_type" not in text.rope_parameters
+
+    def test_per_layer_type_parameters_without_full_attention_are_refused(self):
+        from forgelm.config import ConfigError
+
+        text = SimpleNamespace(rope_parameters={"sliding_attention": {"rope_type": "default", "rope_theta": 10000.0}})
+        fake_transformers = MagicMock()
+        fake_transformers.AutoConfig.from_pretrained.return_value = text
+        with patch.dict("sys.modules", {"transformers": fake_transformers}):
+            with pytest.raises(ConfigError, match="full_attention"):
+                model_mod._config_with_rope_scaling(
+                    "org/odd", {"type": "linear", "factor": 2.0}, trust_remote_code=False
+                )
+
+    def test_a_real_gemma3_text_config_is_scaled_on_global_layers_only(self):
+        from transformers import Gemma3TextConfig
+
+        config = Gemma3TextConfig(num_hidden_layers=6, hidden_size=32, intermediate_size=64, num_attention_heads=2)
+        sliding_before = dict(config.rope_parameters["sliding_attention"])
+        fake_transformers = MagicMock()
+        fake_transformers.AutoConfig.from_pretrained.return_value = config
+        with patch.dict("sys.modules", {"transformers": fake_transformers}):
+            out = model_mod._config_with_rope_scaling(
+                "org/gemma3", {"type": "linear", "factor": 8.0}, trust_remote_code=False
+            )
+        assert out.rope_parameters["full_attention"]["rope_type"] == "linear"
+        assert out.rope_parameters["full_attention"]["factor"] == 8.0
+        assert out.rope_parameters["sliding_attention"] == sliding_before
+
+
+class TestWithSlidingWindow:
+    """``_with_sliding_window`` edits the text config and keeps the derived per-layer pattern consistent."""
+
+    @staticmethod
+    def _qwen2():
+        from transformers import Qwen2Config
+
+        return Qwen2Config(
+            vocab_size=64,
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=4,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            max_window_layers=2,
+        )
+
+    def test_qwen2_layer_types_are_rederived_so_the_window_takes_effect(self):
+        config = self._qwen2()
+        assert set(config.layer_types) == {"full_attention"}
+        out = model_mod._with_sliding_window(config, 16)
+        assert out.sliding_window == 16 and out.use_sliding_window is True
+        assert out.layer_types == ["full_attention", "full_attention", "sliding_attention", "sliding_attention"]
+
+    def test_qwen2_window_changes_what_the_model_computes(self):
+        # Same weights, same input: only attention over the last positions may differ, and only if the window is live.
+        import torch
+        from transformers import AutoModelForCausalLM
+
+        torch.manual_seed(0)
+        full = AutoModelForCausalLM.from_config(self._qwen2()).eval()
+        windowed_config = model_mod._with_sliding_window(self._qwen2(), 4)
+        assert windowed_config.sliding_window == 4
+        assert windowed_config.layer_types == [
+            "full_attention",
+            "full_attention",
+            "sliding_attention",
+            "sliding_attention",
+        ]
+        windowed = AutoModelForCausalLM.from_config(windowed_config).eval()
+        windowed.load_state_dict(full.state_dict())
+        input_ids = torch.arange(1, 13).unsqueeze(0)
+        with torch.no_grad():
+            full_logits, windowed_logits = full(input_ids=input_ids).logits, windowed(input_ids=input_ids).logits
+        assert tuple(windowed_logits.shape) == (1, 12, 64)
+        assert torch.allclose(full_logits[:, :4], windowed_logits[:, :4], atol=1e-5)  # inside the window: identical
+        assert not torch.allclose(full_logits[:, 11], windowed_logits[:, 11], atol=1e-5)  # beyond it: attention differs
+
+    def test_rebuilding_for_the_window_keeps_the_rope_scaling_applied_before_it(self):
+        config = self._qwen2()
+        config.rope_parameters = {"rope_theta": 10000.0, "rope_type": "linear", "factor": 4.0}
+        out = model_mod._with_sliding_window(config, 16)
+        assert out.rope_parameters == {"rope_theta": 10000.0, "rope_type": "linear", "factor": 4.0}
+        assert out.sliding_window == 16 and out.use_sliding_window is True
+        assert out.layer_types == ["full_attention", "full_attention", "sliding_attention", "sliding_attention"]
+
+    def test_a_nested_text_config_the_outer_one_does_not_declare_is_edited_in_place_with_derived_layer_types(self):
+        text = self._qwen2()
+        outer = SimpleNamespace(get_text_config=lambda: text)  # no ``sub_configs`` to swap the rebuilt config into
+        out = model_mod._with_sliding_window(outer, 16)
+        assert out is outer
+        assert text.sliding_window == 16 and text.use_sliding_window is True
+        assert text.layer_types == ["full_attention", "full_attention", "sliding_attention", "sliding_attention"]
+
+    def test_a_layer_pattern_the_checkpoint_supplied_is_kept(self):
+        from transformers import Qwen2Config
+
+        custom = ["full_attention", "sliding_attention", "full_attention", "sliding_attention"]
+        config = Qwen2Config(
+            vocab_size=64,
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=4,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            max_window_layers=2,
+            layer_types=custom,
+        )
+        assert list(config.layer_types) == custom  # differs from the derived ["full", "full", "sliding", "sliding"]
+        out = model_mod._with_sliding_window(config, 16)
+        assert out.sliding_window == 16 and out.use_sliding_window is True
+        assert list(out.layer_types) == custom
+
+    def test_a_window_that_leaves_every_layer_on_full_attention_warns(self, caplog):
+        config = self._qwen2()
+        config.max_window_layers = 4  # sliding attention starts at layer 4 of 4: none
+        with caplog.at_level("WARNING", logger="forgelm.model"):
+            out = model_mod._with_sliding_window(config, 16)
+        assert "sliding_attention" not in out.layer_types
+        assert "has no effect" in caplog.text
+
+    def test_multimodal_window_lands_in_the_text_config(self):
+        from transformers import Qwen2VLConfig
+
+        outer = Qwen2VLConfig(
+            text_config={
+                "vocab_size": 64,
+                "hidden_size": 32,
+                "intermediate_size": 64,
+                "num_hidden_layers": 4,
+                "num_attention_heads": 2,
+                "num_key_value_heads": 2,
+                "max_window_layers": 2,
+            }
+        )
+        out = model_mod._with_sliding_window(outer, 16)
+        assert out is outer
+        text = out.get_text_config()
+        assert text.sliding_window == 16 and text.use_sliding_window is True
+        assert "sliding_attention" in text.layer_types
+        assert out.text_config is text
+
+    def test_mistral_only_gets_the_window_size(self):
+        from transformers import MistralConfig
+
+        config = MistralConfig(
+            vocab_size=64, hidden_size=32, intermediate_size=64, num_hidden_layers=2, num_attention_heads=2
+        )
+        out = model_mod._with_sliding_window(config, 16)
+        assert out is config and out.sliding_window == 16
+
+    def test_gemma3_keeps_its_explicit_layer_pattern(self):
+        from transformers import Gemma3TextConfig
+
+        config = Gemma3TextConfig(num_hidden_layers=6, hidden_size=32, intermediate_size=64, num_attention_heads=2)
+        pattern = list(config.layer_types)
+        out = model_mod._with_sliding_window(config, 256)
+        assert out.sliding_window == 256 and list(out.layer_types) == pattern
 
 
 class TestLoadTokenizer:
@@ -562,6 +751,27 @@ class TestUnslothRevisionSupport:
             from_pretrained = object()
 
         assert model_mod._unsloth_accepts_revision(_Loader) is False
+
+    @pytest.mark.parametrize(
+        "training, named",
+        [
+            ({"rope_scaling": {"type": "linear", "factor": 2.0}}, "training.rope_scaling is"),
+            ({"sliding_window_attention": 4096}, "training.sliding_window_attention is"),
+            (
+                {"rope_scaling": {"type": "linear", "factor": 2.0}, "sliding_window_attention": 4096},
+                "training.rope_scaling and training.sliding_window_attention are",
+            ),
+        ],
+    )
+    def test_config_overrides_the_backend_cannot_apply_are_refused_before_any_load(self, training, named):
+        from forgelm.config import ConfigError
+
+        cfg = _cfg(model={"name_or_path": "org/model", "backend": "unsloth"}, training=training)
+        loader = MagicMock()
+        with patch.dict("sys.modules", {"unsloth": MagicMock(FastLanguageModel=loader)}):
+            with pytest.raises(ConfigError, match=f"{named} not supported by the unsloth backend"):
+                model_mod._load_unsloth(cfg)
+        loader.from_pretrained.assert_not_called()
 
     def test_pin_on_unsupported_unsloth_fails_closed(self, monkeypatch):
         _stub_resolver(monkeypatch, revision_resolved=SHA_A, resolution_source="pinned_resolved")

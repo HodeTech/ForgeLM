@@ -67,38 +67,62 @@ class FakeGitHub:
         for (m, prefix), reason in self.fail.items():
             if m == method and endpoint.startswith(prefix):
                 raise tool.GhError(f"{method} {endpoint} failed: {reason}")
-        if method == "GET" and endpoint == f"repos/{REPO}/issues/7":
-            self._reads += 1
-            answer = self._issue()
-            if self._reads == 1 and self.after_first_read:
-                self.after_first_read()
-            return answer
-        if method == "GET" and "?assignee=" in endpoint:
-            login = endpoint.split("assignee=")[1].split("&")[0]
-            if self.assigned_pages is not None:
-                page = int(endpoint.rsplit("page=", 1)[1])
-                return self.assigned_pages[page - 1] if page <= len(self.assigned_pages) else []
-            return [{"number": 100 + i} for i in range(self.held.get(login, 0))] + [
-                {"number": 999, "pull_request": {}}  # a PR assigned to them must not count
-            ]
-        if method == "GET" and "/comments?" in endpoint:
-            return [{"user": {"type": "Bot"}, "body": b} for b in self.comments] + [
-                {"user": {"type": "User"}, "body": b} for b in self.human_comments
-            ]
-        if method == "POST" and endpoint.endswith("/assignees"):
-            if not self.drop_assignment:
-                self.assignees += [a for a in payload["assignees"] if a not in self.assignees]
-            if self.after_assign:
-                self.after_assign()
-            return self._issue()
-        if method == "DELETE" and endpoint.endswith("/assignees"):
-            if not self.refuse_delete:
-                self.assignees = [a for a in self.assignees if a not in payload["assignees"]]
-            return self._issue()
-        if method == "POST" and endpoint.endswith("/comments"):
-            self.comments.append(payload["body"])
-            return {}
-        raise AssertionError(f"unexpected call {method} {endpoint}")
+        handler = self._route(method, endpoint)
+        if handler is None:
+            raise AssertionError(f"unexpected call {method} {endpoint}")
+        return handler(endpoint, payload)
+
+    def _route(self, method: str, endpoint: str):
+        """The handler that plays the GitHub endpoint being called, or None for one the tool should never hit."""
+        if method == "GET":
+            if endpoint == f"repos/{REPO}/issues/7":
+                return self._get_issue
+            if "?assignee=" in endpoint:
+                return self._get_assigned_issues
+            if "/comments?" in endpoint:
+                return self._get_comments
+        elif endpoint.endswith("/assignees"):
+            return {"POST": self._add_assignees, "DELETE": self._remove_assignees}.get(method)
+        elif method == "POST" and endpoint.endswith("/comments"):
+            return self._post_comment
+        return None
+
+    def _get_issue(self, endpoint: str, payload: Any) -> Dict[str, Any]:
+        self._reads += 1
+        answer = self._issue()
+        if self._reads == 1 and self.after_first_read:
+            self.after_first_read()
+        return answer
+
+    def _get_assigned_issues(self, endpoint: str, payload: Any) -> List[Dict[str, Any]]:
+        login = endpoint.split("assignee=")[1].split("&")[0]
+        if self.assigned_pages is not None:
+            page = int(endpoint.rsplit("page=", 1)[1])
+            return self.assigned_pages[page - 1] if page <= len(self.assigned_pages) else []
+        return [{"number": 100 + i} for i in range(self.held.get(login, 0))] + [
+            {"number": 999, "pull_request": {}}  # a PR assigned to them must not count
+        ]
+
+    def _get_comments(self, endpoint: str, payload: Any) -> List[Dict[str, Any]]:
+        return [{"user": {"type": "Bot"}, "body": b} for b in self.comments] + [
+            {"user": {"type": "User"}, "body": b} for b in self.human_comments
+        ]
+
+    def _add_assignees(self, endpoint: str, payload: Any) -> Dict[str, Any]:
+        if not self.drop_assignment:
+            self.assignees += [a for a in payload["assignees"] if a not in self.assignees]
+        if self.after_assign:
+            self.after_assign()
+        return self._issue()
+
+    def _remove_assignees(self, endpoint: str, payload: Any) -> Dict[str, Any]:
+        if not self.refuse_delete:
+            self.assignees = [a for a in self.assignees if a not in payload["assignees"]]
+        return self._issue()
+
+    def _post_comment(self, endpoint: str, payload: Any) -> Dict[str, Any]:
+        self.comments.append(payload["body"])
+        return {}
 
     def writes(self) -> List[tuple]:
         """Every call that changes an assignment (comments are not assignments)."""

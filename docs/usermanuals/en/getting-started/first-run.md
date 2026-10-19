@@ -33,8 +33,8 @@ $ forgelm doctor --offline
 forgelm doctor - environment check
 
   [+ pass] python.version           Python 3.11.4 (CPython).
-  [! warn] torch.cuda               torch 2.4.0 installed but CUDA is unavailable. CPU-only runs are supported but training will be very slow; expect to use this only for tiny experiments or smoke tests.
-  [+ pass] numpy.torch_abi          torch 2.4.0 + numpy 2.1.0 are ABI-compatible.
+  [! warn] torch.cuda               torch 2.7.0 installed but CUDA is unavailable. CPU-only runs are supported but training will be very slow; expect to use this only for tiny experiments or smoke tests.
+  [+ pass] numpy.torch_abi          torch 2.7.0 + numpy 2.1.0 are ABI-compatible.
   [! warn] gpu.inventory            No CUDA devices visible; CPU-only mode.
   [! warn] extras.distributed       Optional extra missing — install with: pip install 'forgelm[distributed]' (purpose: DeepSpeed ZeRO + offload distributed training (Linux + macOS only)).
   [+ pass] disk.workspace           Workspace /home/me/forgelm — 387.0 GiB free of 500.0 GiB.
@@ -145,11 +145,13 @@ The output is a stream of timestamped `[INFO]` lines from the `forgelm.*` logger
 ## 6. Try the model
 
 ```shell
-$ forgelm chat ./checkpoints/customer-support
+$ forgelm chat Qwen/Qwen2.5-7B-Instruct --adapter ./checkpoints/customer-support/final_model
 forgelm> how do I cancel my subscription?
 You can cancel from Settings → Billing → Cancel subscription. Your access
 continues until the end of the current billing period…
 ```
+
+The positional argument is the base model from the `Model` line of the run summary; `--adapter` points at the LoRA weights in `final_model/` and merges them into it for the session. If your run saved a merged checkpoint instead (`final_model/` holds full weights and no `adapter_model.safetensors`), pass that directory as the only argument: `forgelm chat ./checkpoints/customer-support/final_model`.
 
 ## What you got on disk
 

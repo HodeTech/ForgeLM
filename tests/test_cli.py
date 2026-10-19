@@ -489,3 +489,32 @@ class TestReservedRetentionEnforceWarning:
         with caplog.at_level(logging.WARNING):
             _load_config_or_exit(str(path), json_output=False)
         assert any("retention.enforce" in r.getMessage() for r in caplog.records)
+
+
+class TestUnslothUnsupportedOverridesRejectedAtLoad:
+    """`rope_scaling` / `sliding_window_attention` need a transformers config the unsloth backend never builds (#103)."""
+
+    @pytest.mark.parametrize(
+        "training",
+        [{"rope_scaling": {"type": "linear", "factor": 2.0}}, {"sliding_window_attention": 4096}],
+    )
+    def test_config_load_exits_1_so_dry_run_fails_before_training(self, tmp_path, minimal_config, caplog, training):
+        import logging
+
+        from forgelm.cli._config_load import _load_config_or_exit
+
+        path = tmp_path / "c.yaml"
+        path.write_text(
+            yaml.dump(minimal_config(model={"name_or_path": "org/model", "backend": "unsloth"}, training=training))
+        )
+        with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as exc:
+            _load_config_or_exit(str(path), json_output=False)
+        assert exc.value.code == 1
+        assert "not supported by the unsloth backend" in caplog.text
+
+    def test_the_transformers_backend_still_loads(self, tmp_path, minimal_config):
+        from forgelm.cli._config_load import _load_config_or_exit
+
+        path = tmp_path / "c.yaml"
+        path.write_text(yaml.dump(minimal_config(training={"rope_scaling": {"type": "linear", "factor": 2.0}})))
+        assert _load_config_or_exit(str(path), json_output=False).training.rope_scaling is not None
