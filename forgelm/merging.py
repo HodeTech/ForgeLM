@@ -196,14 +196,15 @@ def _slerp_merge(base_model, adapters):
     base_state = {k: v.clone() for k, v in base_model.state_dict().items()}
 
     model_a = PeftModel.from_pretrained(base_model, adapters[0]["path"])
-    state_a = model_a.merge_and_unload().state_dict()
+    # Resetting the base and loading another adapter would overwrite shared storage.
+    state_a = {k: v.clone() for k, v in model_a.merge_and_unload().state_dict().items()}
     del model_a
 
     # Restore base model before loading second adapter
     base_model.load_state_dict(base_state, strict=True)
 
     model_b = PeftModel.from_pretrained(base_model, adapters[1]["path"])
-    state_b = model_b.merge_and_unload().state_dict()
+    state_b = {k: v.clone() for k, v in model_b.merge_and_unload().state_dict().items()}
     del model_b
 
     merged_state = {}
