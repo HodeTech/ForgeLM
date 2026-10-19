@@ -246,12 +246,14 @@ jobs:
           # 5.10.1 is the first installable release past CVE-2026-4372,
           # CVE-2026-5241 and CVE-2026-9856 (5.10.0, which carries the last of
           # them, was yanked); it requires huggingface_hub>=1.5 /
-          # tokenizers>=0.22, and ForgeLM itself needs torch>=2.4; trl 1.0.0
+          # tokenizers>=0.22 and imports torch.float8_e8m0fnu, which first
+          # exists in torch 2.7.0 (this job failed on torch 2.4.0 with
+          # AttributeError at `import transformers`); trl 1.0.0
           # pulls the accelerate>=1.4 and datasets>=4.7 floor. Keep 1:1 with the
           # pyproject [project].dependencies minimums (tests/test_packaging.py
           # compares them).
           pip install \
-            "torch==2.4.0" \
+            "torch==2.7.0" \
             "transformers==5.10.1" \
             "huggingface_hub==1.5.0" \
             "peft==0.19.0" \

@@ -18,18 +18,21 @@ ForgeLM emits a CycloneDX 1.5 SBOM per release tag (as a workflow-run artifact, 
 ## Where to get the SBOM
 
 ```bash
-# Find the successful publish run for a tag, then download its SBOMs
-# (one directory per artifact). Run artifacts expire after 90 days.
+# Find the successful publish run for a tag, then download one SBOM into the
+# current directory. Run artifacts expire after 90 days. (--pattern 'sbom-*'
+# would fetch every SBOM instead, one sub-directory per artifact.)
 gh run list --repo HodeTech/ForgeLM --workflow publish.yml --branch v<X.Y.Z> --status success \
     --json databaseId,createdAt
-gh run download <databaseId> --repo HodeTech/ForgeLM --pattern 'sbom-*'
+gh run download <databaseId> --repo HodeTech/ForgeLM --name sbom-ubuntu-latest-py3.11
 
-# Pretty-print one.
+# Pretty-print it.
 jq . sbom-ubuntu-latest-py3.11.json | less
 
-# Diff between two releases (lists added/removed dependencies).
-diff <(jq -S '.components | sort_by(.purl)' sbom-prev.json) \
-     <(jq -S '.components | sort_by(.purl)' sbom.json)
+# Diff between two releases (lists added/removed dependencies): download the
+# previous release's SBOM into its own directory, then compare.
+gh run download <previousDatabaseId> --repo HodeTech/ForgeLM --name sbom-ubuntu-latest-py3.11 --dir previous
+diff <(jq -S '.components | sort_by(.purl)' previous/sbom-ubuntu-latest-py3.11.json) \
+     <(jq -S '.components | sort_by(.purl)' sbom-ubuntu-latest-py3.11.json)
 
 # Ingest into Dependency-Track for CVE correlation.
 curl -X POST -H "X-Api-Key: $DT_KEY" -H "Content-Type: application/octet-stream" \

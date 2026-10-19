@@ -76,9 +76,23 @@ The scan reports the lines where the identifier appears; zero matches is a valid
 "Delete my data."
 
 If a person's data was in your training set:
-1. Find the rows with `forgelm reverse-pii`, then remove them with `forgelm purge --row-id <id> --corpus <file>`; every erasure is written to the audit log.
+1. Find the rows with `forgelm reverse-pii`, then remove them with `forgelm purge --row-id <id> --corpus <file>`; every erasure is written to the audit log. `--row-id` is matched against the row's `id` or `row_id` field and never against a line number, and `forgelm ingest` does not write either field, so give every row a stable id **before you train** (see below). A corpus without ids cannot be purged row by row.
 2. Source documents may still hold it — drop them from your raw store and re-ingest if necessary.
 3. The model may have memorised some details — see "model-level erasure" below.
+
+To make rows addressable, add an `id` to each JSONL row once, when the corpus is created, and keep it when the file is later filtered or re-ordered:
+
+```python
+import json, uuid
+
+with open("data/train.jsonl", encoding="utf-8") as src, open("data/train.with-ids.jsonl", "w", encoding="utf-8") as dst:
+    for line in src:
+        row = json.loads(line)
+        row.setdefault("id", str(uuid.uuid4()))
+        dst.write(json.dumps(row, ensure_ascii=False) + "\n")
+```
+
+Train from the file with ids. `forgelm reverse-pii` reports the file and line where the identifier occurs; read that row's `id` from the file and pass it to `forgelm purge --row-id`. Re-assigning ids after training breaks the link between the audit log and the corpus, so assign once.
 
 ### Model-level erasure
 

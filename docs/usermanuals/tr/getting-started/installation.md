@@ -22,7 +22,7 @@ ForgeLM, PyPI'da tek bir paket olarak gelir; ağır özellikler için opsiyonel 
 :::
 
 :::note
-**Intel Mac'ler (x86_64) desteklenmiyor.** ForgeLM `torch>=2.4.0` gerektirir (`transformers` 5'in desteklediği asgari sürüm) ve PyPI'da x86_64 macOS için `torch>=2.4` wheel'i yok. Apple Silicon, Linux veya Windows kullanın.
+**Intel Mac'ler (x86_64) desteklenmiyor.** ForgeLM `torch>=2.7.0` gerektirir (`transformers` 5.10'un import ettiği bir dtype'a sahip ilk sürüm) ve PyPI'da x86_64 macOS için `torch>=2.7` wheel'i yok. Apple Silicon, Linux veya Windows kullanın.
 :::
 
 ## Temel kurulum

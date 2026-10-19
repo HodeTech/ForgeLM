@@ -420,6 +420,41 @@ def _device_map_for(config: Any, is_distributed: bool):
     return None  # CPU-only
 
 
+def _load_model_config(name_or_path: str, *, trust_remote_code: bool, revision: Optional[str] = None) -> Any:
+    """Load the checkpoint's config object (the one every override below edits before the weights are built)."""
+    from transformers import AutoConfig
+
+    return AutoConfig.from_pretrained(name_or_path, trust_remote_code=trust_remote_code, revision=revision)
+
+
+def _text_config(model_config: Any) -> Any:
+    """The sub-config that holds the decoder's settings: the config itself, or a multimodal model's text config."""
+    return model_config.get_text_config() if hasattr(model_config, "get_text_config") else model_config
+
+
+def _merge_rope_parameters(current: dict, requested: dict) -> dict:
+    """Merge the requested RoPE keys over the model's own ``rope_parameters``.
+
+    Most models keep one flat dictionary.  Some (Gemma 3) keep one entry per layer type, ``full_attention`` and
+    ``sliding_attention``, each with its own ``rope_type`` / ``rope_theta``; a flat key added next to those entries is
+    not read by either layer type, so the scaling would be silently ignored.  Context-length scaling belongs to the
+    global-attention layers, so for such a model the requested keys go into the ``full_attention`` entry.  A model
+    with per-layer-type entries and no ``full_attention`` one has nowhere to put the request, which is refused
+    rather than guessed.
+    """
+    per_layer_type = {key: value for key, value in current.items() if isinstance(value, dict)}
+    if not per_layer_type:
+        return {**current, **requested}
+    if "full_attention" not in per_layer_type:
+        from .config import ConfigError
+
+        raise ConfigError(
+            "training.rope_scaling cannot be applied: this model keeps its RoPE settings per layer type "
+            f"({', '.join(sorted(per_layer_type))}) and has no 'full_attention' entry to scale."
+        )
+    return {**current, "full_attention": {**per_layer_type["full_attention"], **requested}}
+
+
 def _config_with_rope_scaling(
     name_or_path: str, rope_scaling: dict, *, trust_remote_code: bool, revision: Optional[str] = None
 ) -> Any:
@@ -429,23 +464,60 @@ def _config_with_rope_scaling(
     expects the key ``rope_type``.  Passing ``rope_scaling=`` to ``from_pretrained`` no longer works: the documented
     ``{type: linear, factor: 4}`` raises ``KeyError: 'rope_type'`` while the model is built, and
     ``{rope_type: ..., factor: ...}`` replaces the whole dict so ``rope_theta`` is lost (``TypeError`` in the
-    frequency computation).  So the requested keys are merged *over* the model's own ``rope_parameters``, the legacy
-    key ``type`` is read as ``rope_type``, and the finished config object is what gets loaded.
+    frequency computation).  So the requested keys are merged *over* the model's own ``rope_parameters`` (see
+    :func:`_merge_rope_parameters` for models with one entry per layer type), the legacy key ``type`` is read as
+    ``rope_type``, and the finished config object is what gets loaded.
 
     For a multimodal checkpoint the RoPE settings live in the text sub-config, which is where they are applied.
     A transformers without ``rope_parameters`` gets the legacy ``rope_scaling`` attribute instead.
     """
-    from transformers import AutoConfig
-
-    model_config = AutoConfig.from_pretrained(name_or_path, trust_remote_code=trust_remote_code, revision=revision)
-    target = model_config.get_text_config() if hasattr(model_config, "get_text_config") else model_config
+    model_config = _load_model_config(name_or_path, trust_remote_code=trust_remote_code, revision=revision)
+    target = _text_config(model_config)
     requested = dict(rope_scaling)
     if "type" in requested and "rope_type" not in requested:
         requested["rope_type"] = requested.pop("type")
     if hasattr(target, "rope_parameters"):
-        target.rope_parameters = {**(getattr(target, "rope_parameters", None) or {}), **requested}
+        target.rope_parameters = _merge_rope_parameters(dict(getattr(target, "rope_parameters", None) or {}), requested)
     else:
         target.rope_scaling = requested
+    return model_config
+
+
+def _with_sliding_window(model_config: Any, window: int) -> Any:
+    """Apply ``training.sliding_window_attention`` to the text config and return the config to load.
+
+    The override has to reach the *text* config: a multimodal model (Qwen2-VL) keeps ``sliding_window`` there, not on
+    the outer config, so the former ``from_pretrained(sliding_window=...)`` keyword did not reach it.  Models such as
+    Qwen2 also derive a per-layer ``layer_types`` list from ``use_sliding_window``, ``sliding_window`` and
+    ``max_window_layers`` when the config is built, so setting the attribute afterwards leaves every layer on full
+    attention.  For those the text config is rebuilt from its own dictionary with the flag on and ``layer_types``
+    cleared, which makes the config derive the list again.  Models without ``use_sliding_window`` (Mistral, Gemma 3)
+    keep their layer pattern and only get the new window size.
+    """
+    text = _text_config(model_config)
+    if not hasattr(text, "use_sliding_window"):
+        text.sliding_window = window
+        return model_config
+
+    updates: Dict[str, Any] = {"sliding_window": window, "use_sliding_window": True}
+    if hasattr(text, "layer_types"):
+        updates["layer_types"] = None  # derived again from the three fields above
+    rebuilt = type(text).from_dict({**text.to_dict(), **updates})
+    if "sliding_attention" not in (getattr(rebuilt, "layer_types", None) or ["sliding_attention"]):
+        logger.warning(
+            "training.sliding_window_attention=%d has no effect on this model: no layer is a sliding-attention layer "
+            "(layer_types=%s). Models of this family switch layers to sliding attention from max_window_layers upwards.",
+            window,
+            list(rebuilt.layer_types),
+        )
+    if text is model_config:
+        return rebuilt
+    for name in getattr(model_config, "sub_configs", {}):
+        if getattr(model_config, name, None) is text:
+            setattr(model_config, name, rebuilt)
+            return model_config
+    for key, value in updates.items():  # a nested config the outer one does not declare: edit it in place
+        setattr(text, key, value)
     return model_config
 
 
@@ -491,20 +563,22 @@ def _build_model_kwargs(config: Any, trust_remote_code: bool, revision: Optional
 
     rope_scaling = config.training.rope_scaling
     sliding_window = config.training.sliding_window_attention
-    if rope_scaling:
-        logger.info("RoPE scaling enabled: %s", rope_scaling)
-        model_config = _config_with_rope_scaling(
-            config.model.name_or_path, rope_scaling, trust_remote_code=trust_remote_code, revision=revision
-        )
+    if rope_scaling or sliding_window:
+        # Both overrides are edits to the model's config.  Once ``config=`` is a finished object, ``from_pretrained``
+        # hands unrecognised keyword arguments to the model constructor, so neither can travel as a keyword.
+        if rope_scaling:
+            logger.info("RoPE scaling enabled: %s", rope_scaling)
+            model_config = _config_with_rope_scaling(
+                config.model.name_or_path, rope_scaling, trust_remote_code=trust_remote_code, revision=revision
+            )
+        else:
+            model_config = _load_model_config(
+                config.model.name_or_path, trust_remote_code=trust_remote_code, revision=revision
+            )
         if sliding_window:
-            # Once ``config=`` is a finished object, from_pretrained hands unrecognised keyword arguments to the
-            # model constructor instead of the config, so the override is applied to the config itself.
             logger.info("Sliding window attention override: %d tokens", sliding_window)
-            model_config.sliding_window = sliding_window
+            model_config = _with_sliding_window(model_config, sliding_window)
         kwargs["config"] = model_config
-    elif sliding_window:
-        logger.info("Sliding window attention override: %d tokens", sliding_window)
-        kwargs["sliding_window"] = sliding_window
 
     return kwargs
 

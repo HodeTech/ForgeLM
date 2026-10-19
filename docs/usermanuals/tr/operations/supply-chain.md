@@ -18,18 +18,21 @@ ForgeLM sürüm tag'i başına bir CycloneDX 1.5 SBOM üretir (workflow-run arti
 ## SBOM nereden alınır
 
 ```bash
-# Bir tag için başarılı publish çalıştırmasını bulun, sonra SBOM'larını indirin
-# (artifact başına bir dizin). Run artifact'ları 90 günde silinir.
+# Bir tag için başarılı publish çalıştırmasını bulun, sonra bir SBOM'u mevcut
+# dizine indirin. Run artifact'ları 90 günde silinir. (--pattern 'sbom-*'
+# bunun yerine tüm SBOM'ları indirir, artifact başına bir alt dizinle.)
 gh run list --repo HodeTech/ForgeLM --workflow publish.yml --branch v<X.Y.Z> --status success \
     --json databaseId,createdAt
-gh run download <databaseId> --repo HodeTech/ForgeLM --pattern 'sbom-*'
+gh run download <databaseId> --repo HodeTech/ForgeLM --name sbom-ubuntu-latest-py3.11
 
-# Birini güzel-yazdır.
+# Güzel-yazdır.
 jq . sbom-ubuntu-latest-py3.11.json | less
 
-# İki sürüm arası diff (eklenen/kaldırılan bağımlılıkları listeler).
-diff <(jq -S '.components | sort_by(.purl)' sbom-prev.json) \
-     <(jq -S '.components | sort_by(.purl)' sbom.json)
+# İki sürüm arası diff (eklenen/kaldırılan bağımlılıkları listeler): önceki
+# sürümün SBOM'unu kendi dizinine indirip karşılaştırın.
+gh run download <oncekiDatabaseId> --repo HodeTech/ForgeLM --name sbom-ubuntu-latest-py3.11 --dir previous
+diff <(jq -S '.components | sort_by(.purl)' previous/sbom-ubuntu-latest-py3.11.json) \
+     <(jq -S '.components | sort_by(.purl)' sbom-ubuntu-latest-py3.11.json)
 
 # CVE korelasyonu için Dependency-Track'a yükle.
 curl -X POST -H "X-Api-Key: $DT_KEY" -H "Content-Type: application/octet-stream" \

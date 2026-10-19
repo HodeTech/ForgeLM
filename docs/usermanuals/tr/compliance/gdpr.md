@@ -76,9 +76,23 @@ Tarama, tanımlayıcının geçtiği satırları raporlar; sıfır eşleşme ge�
 "Verilerimi silin."
 
 Bir kişinin verisi eğitim setinizdeydi:
-1. Satırları `forgelm reverse-pii` ile bulun, sonra `forgelm purge --row-id <id> --corpus <dosya>` ile kaldırın; her silme audit log'a yazılır.
+1. Satırları `forgelm reverse-pii` ile bulun, sonra `forgelm purge --row-id <id> --corpus <dosya>` ile kaldırın; her silme audit log'a yazılır. `--row-id` satırın `id` veya `row_id` alanıyla eşleştirilir, satır numarasıyla asla; `forgelm ingest` bu alanlardan hiçbirini yazmaz. Bu yüzden **eğitimden önce** her satıra kalıcı bir id verin (aşağıya bakın). Id'si olmayan bir corpus satır satır silinemez.
 2. Ham kaynak dokümanlar hâlâ içerebilir — ham deponuzdan düşürün ve gerekirse yeniden ingest edin.
 3. Model bazı detayları ezberlemiş olabilir — aşağıdaki "model-seviyesi silme"ye bakın.
+
+Satırları adreslenebilir kılmak için corpus oluşturulurken her JSONL satırına bir kez `id` ekleyin ve dosya sonradan filtrelenir ya da yeniden sıralanırsa bu id'yi koruyun:
+
+```python
+import json, uuid
+
+with open("data/train.jsonl", encoding="utf-8") as src, open("data/train.with-ids.jsonl", "w", encoding="utf-8") as dst:
+    for line in src:
+        row = json.loads(line)
+        row.setdefault("id", str(uuid.uuid4()))
+        dst.write(json.dumps(row, ensure_ascii=False) + "\n")
+```
+
+Eğitimi id'li dosyadan yapın. `forgelm reverse-pii` tanımlayıcının geçtiği dosyayı ve satırı raporlar; o satırın `id` değerini dosyadan okuyup `forgelm purge --row-id`'ye verin. Eğitimden sonra id'leri yeniden atamak audit log ile corpus arasındaki bağı koparır; bu yüzden bir kez atayın.
 
 ### Model-seviyesi silme
 
