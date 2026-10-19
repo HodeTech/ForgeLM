@@ -80,7 +80,7 @@ Bir kişinin verisi eğitim setinizdeydi:
 2. Ham kaynak dokümanlar hâlâ içerebilir — ham deponuzdan düşürün ve gerekirse yeniden ingest edin.
 3. Model bazı detayları ezberlemiş olabilir — aşağıdaki "model-seviyesi silme"ye bakın.
 
-Satırları adreslenebilir kılmak için corpus oluşturulurken her JSONL satırına bir kez benzersiz bir `id` verin ve dosya sonradan filtrelenir ya da yeniden sıralanırsa bu id'yi koruyun. `id`'si eksik, null ya da boş olan satırlar yeni bir id alır; `id`'sini başka bir satırın da kullandığı satırda betik durur, çünkü `forgelm purge --row-id` iki satırı tek eşleşme olarak görür (varsayılanda reddeder, `--row-matches all` ile her eşleşmeyi siler) ve id'yi hangi satırın koruyacağına sizin karar vermeniz gerekir:
+Satırları adreslenebilir kılmak için corpus oluşturulurken her JSONL satırına bir kez benzersiz bir `id` verin ve dosya sonradan filtrelenir ya da yeniden sıralanırsa bu id'yi koruyun. `id`'si eksik, null ya da boş olan satırlar yeni bir id alır; `id`'sini (ya da `purge`'ın da eşleştirdiği `row_id`'yi) başka bir satırın da kullandığı satırda betik durur, çünkü `forgelm purge --row-id` iki satırı tek eşleşme olarak görür (varsayılanda reddeder, `--row-matches all` ile her eşleşmeyi siler) ve id'yi hangi satırın koruyacağına sizin karar vermeniz gerekir:
 
 ```python
 import json, uuid
@@ -93,9 +93,10 @@ with open("data/train.jsonl", encoding="utf-8") as src, open("data/train.with-id
         row = json.loads(line)
         if row.get("id") in (None, ""):
             row["id"] = str(uuid.uuid4())
-        if str(row["id"]) in seen:
-            raise SystemExit(f"line {line_no}: id {row['id']!r} is already used by another row")
-        seen.add(str(row["id"]))
+        ids = {str(row[key]) for key in ("id", "row_id") if row.get(key) not in (None, "")}
+        if ids & seen:
+            raise SystemExit(f"line {line_no}: id {sorted(ids & seen)[0]!r} is already used by another row")
+        seen |= ids
         dst.write(json.dumps(row, ensure_ascii=False) + "\n")
 ```
 

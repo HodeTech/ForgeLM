@@ -277,6 +277,31 @@ def _unsloth_accepts_revision(loader: Any) -> bool:
     return any(name == "revision" and p.kind is not inspect.Parameter.VAR_KEYWORD for name, p in parameters.items())
 
 
+def _reject_unsloth_unsupported_overrides(config: Any) -> None:
+    """Refuse ``training.rope_scaling`` / ``training.sliding_window_attention`` on the unsloth backend.
+
+    Both are edits to the transformers config (see :func:`_build_model_kwargs`), which this backend never builds;
+    honouring neither would train with the model's own RoPE / attention window under a YAML that asked for more.
+    The CLI calls this when the config loads, so ``--dry-run`` fails too; :func:`_load_unsloth` calls it again for
+    library callers.  (It lives here, not in the schema, to keep ``config.py`` within its deferred-split line budget.)
+    """
+    if getattr(getattr(config, "model", None), "backend", None) != "unsloth":
+        return
+    ignored = [
+        name
+        for name in ("rope_scaling", "sliding_window_attention")
+        if getattr(getattr(config, "training", None), name, None)
+    ]
+    if ignored:
+        from .config import ConfigError
+
+        raise ConfigError(
+            f"training.{' and training.'.join(ignored)} {'is' if len(ignored) == 1 else 'are'} not supported by "
+            f"the unsloth backend. Set model.backend: transformers to apply {'it' if len(ignored) == 1 else 'them'}, "
+            "or remove the setting."
+        )
+
+
 def _load_unsloth(config: Any) -> Tuple[Any, Any]:
     """Load the model + tokenizer + LoRA via the Unsloth backend.
 
@@ -287,20 +312,7 @@ def _load_unsloth(config: Any) -> Tuple[Any, Any]:
     and got a default-branch checkout would carry a manifest asserting a
     reproducibility property the run does not have.
     """
-    ignored = [
-        name
-        for name in ("rope_scaling", "sliding_window_attention")
-        if getattr(getattr(config, "training", None), name, None)
-    ]
-    if ignored:
-        # Both are edits to the transformers config (see _build_model_kwargs), which this backend never builds;
-        # honouring neither would train with the model's own RoPE / attention window under a YAML that asked for more.
-        from .config import ConfigError
-
-        raise ConfigError(
-            f"training.{' and training.'.join(ignored)} {'is' if len(ignored) == 1 else 'are'} not supported by "
-            "the unsloth backend. Set model.backend: transformers to apply them, or remove the setting."
-        )
+    _reject_unsloth_unsupported_overrides(config)
 
     try:
         from unsloth import FastLanguageModel

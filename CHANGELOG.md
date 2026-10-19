@@ -189,7 +189,7 @@ All notable changes to ForgeLM are documented here.
   on full attention; the text config is rebuilt with the flag on so the list is derived again, and a warning is logged
   when the result still has no sliding-attention layer. The unsloth backend builds no transformers config, so it
   applied neither `rope_scaling` nor `sliding_window_attention` and trained with the model's own settings; it now
-  refuses a config that sets either (exit 1) instead of ignoring it (#103).
+  refuses a config that sets either when the config loads (exit 1, `--dry-run` included) instead of ignoring it (#103).
 - The `torch` floor is `>=2.7.0`, not `>=2.4.0`. transformers 5.10.1 imports `torch.float8_e8m0fnu` when
   `transformers.modeling_utils` loads, and that dtype first exists in torch 2.7.0; on 2.6.0 the import raises
   `AttributeError`. transformers lists torch only as an extra, so pip never raised the old floor. The Nightly

@@ -80,7 +80,7 @@ If a person's data was in your training set:
 2. Source documents may still hold it — drop them from your raw store and re-ingest if necessary.
 3. The model may have memorised some details — see "model-level erasure" below.
 
-To make rows addressable, give each JSONL row a unique `id` once, when the corpus is created, and keep it when the file is later filtered or re-ordered. Rows with a missing, null or empty `id` get a new one; a row whose `id` another row already uses stops the script, because `forgelm purge --row-id` would see both rows as one match (it refuses by default, and with `--row-matches all` it would erase every match) and you have to decide which row keeps the id:
+To make rows addressable, give each JSONL row a unique `id` once, when the corpus is created, and keep it when the file is later filtered or re-ordered. Rows with a missing, null or empty `id` get a new one; a row whose `id` (or `row_id`, which `purge` also matches) another row already uses stops the script, because `forgelm purge --row-id` would see both rows as one match (it refuses by default, and with `--row-matches all` it would erase every match) and you have to decide which row keeps the id:
 
 ```python
 import json, uuid
@@ -93,9 +93,10 @@ with open("data/train.jsonl", encoding="utf-8") as src, open("data/train.with-id
         row = json.loads(line)
         if row.get("id") in (None, ""):
             row["id"] = str(uuid.uuid4())
-        if str(row["id"]) in seen:
-            raise SystemExit(f"line {line_no}: id {row['id']!r} is already used by another row")
-        seen.add(str(row["id"]))
+        ids = {str(row[key]) for key in ("id", "row_id") if row.get(key) not in (None, "")}
+        if ids & seen:
+            raise SystemExit(f"line {line_no}: id {sorted(ids & seen)[0]!r} is already used by another row")
+        seen |= ids
         dst.write(json.dumps(row, ensure_ascii=False) + "\n")
 ```
 
