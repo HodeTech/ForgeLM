@@ -5,28 +5,34 @@ description: Operator surface for ForgeLM's SBOM + pip-audit + bandit pipeline �
 
 # Supply Chain
 
-ForgeLM emits a CycloneDX 1.5 SBOM per release tag, and runs `pip-audit` + `bandit` nightly via the `nightly.yml` workflow (also re-run on every release-tag publish). This page is the operator's mental model: what runs when, where to get the artefacts, and how to mirror the same checks locally.
+ForgeLM emits a CycloneDX 1.5 SBOM per release tag (as a workflow-run artifact, not a GitHub release asset), and runs `pip-audit` + `bandit` nightly via the `nightly.yml` workflow (also re-run on every release-tag publish). This page is the operator's mental model: what runs when, where to get the artefacts, and how to mirror the same checks locally.
 
 ## What runs when
 
 | Trigger | Tool | Result | Failure policy |
 |---|---|---|---|
-| Release tag (`v*`) | `tools/generate_sbom.py` | One CycloneDX 1.5 JSON per (OS × Python-version) cell, attached to the GitHub release | SBOM step is pure-stdlib; cannot silently degrade a green release matrix |
-| Nightly 03:00 UTC | `pip-audit` (via `tools/check_pip_audit.py`) | OSV / GHSA scan against installed deps | HIGH/CRITICAL → exit 1 + GitHub issue; MEDIUM → `::warning::`; LOW → silent |
+| Release tag (`v*`) | `tools/generate_sbom.py` | One CycloneDX 1.5 JSON per (OS × Python-version) cell, uploaded as a workflow-run artifact of the tag's publish run (kept 90 days; not attached to the GitHub release) | SBOM step is pure-stdlib; cannot silently degrade a green release matrix |
+| Nightly 03:00 UTC | `pip-audit` (via `tools/check_pip_audit.py`) | PyPI vulnerability-data scan against installed deps | HIGH/CRITICAL or UNKNOWN severity → exit 1 + GitHub issue; MEDIUM → `::warning::`; LOW → silent |
 | Nightly 03:00 UTC + release tag | `bandit` (via `tools/check_bandit.py`) | Static security scan of `forgelm/` (excludes `tests/`) | HIGH → exit 1; MEDIUM → `::warning::`; LOW → silent |
 
 ## Where to get the SBOM
 
 ```bash
-# All SBOMs for a release.
-gh release download "$(gh release view --json tagName -q .tagName)" --pattern 'sbom-*'
+# Find the successful publish run for a tag, then download one SBOM into the
+# current directory. Run artifacts expire after 90 days. (--pattern 'sbom-*'
+# would fetch every SBOM instead, one sub-directory per artifact.)
+gh run list --repo HodeTech/ForgeLM --workflow publish.yml --branch v<X.Y.Z> --status success \
+    --json databaseId,createdAt
+gh run download <databaseId> --repo HodeTech/ForgeLM --name sbom-ubuntu-latest-py3.11
 
-# Pretty-print one.
+# Pretty-print it.
 jq . sbom-ubuntu-latest-py3.11.json | less
 
-# Diff between two releases (lists added/removed dependencies).
-diff <(jq -S '.components | sort_by(.purl)' sbom-prev.json) \
-     <(jq -S '.components | sort_by(.purl)' sbom.json)
+# Diff between two releases (lists added/removed dependencies): download the
+# previous release's SBOM into its own directory, then compare.
+gh run download <previousDatabaseId> --repo HodeTech/ForgeLM --name sbom-ubuntu-latest-py3.11 --dir previous
+diff <(jq -S '.components | sort_by(.purl)' previous/sbom-ubuntu-latest-py3.11.json) \
+     <(jq -S '.components | sort_by(.purl)' sbom-ubuntu-latest-py3.11.json)
 
 # Ingest into Dependency-Track for CVE correlation.
 curl -X POST -H "X-Api-Key: $DT_KEY" -H "Content-Type: application/octet-stream" \
@@ -34,7 +40,7 @@ curl -X POST -H "X-Api-Key: $DT_KEY" -H "Content-Type: application/octet-stream"
     https://deptrack.example.com/api/v1/bom
 ```
 
-The SBOM is determinism-pinned — two consecutive emissions on the same Python environment produce content-identical JSON (modulo `serialNumber` and `metadata.timestamp`, both intentionally varying per CycloneDX semantics).
+The SBOM is determinism-pinned — two consecutive emissions on the same Python environment produce content-identical JSON (modulo `serialNumber` and `metadata.timestamp`, both intentionally varying per CycloneDX semantics). That is a same-environment property: a release SBOM is the CI runner's `pip list` (test tooling such as `pytest` included, no dependency graph, no licence data), so re-emitting it later from the same tag will not reproduce it. To describe your own environment, run `python3 tools/generate_sbom.py` from a ForgeLM checkout there.
 
 ## Mirror the nightly check locally
 
@@ -46,7 +52,7 @@ pip-audit --strict --format json --output /tmp/pip-audit.json
 python3 tools/check_pip_audit.py /tmp/pip-audit.json
 ```
 
-Exit 0 means the same severity policy ForgeLM CI applies passed. Exit 1 means a HIGH/CRITICAL vulnerability needs addressing before the nightly fires.
+Exit 0 means the same severity policy ForgeLM CI applies passed. Exit 1 means a HIGH/CRITICAL vulnerability, or a finding whose severity pip-audit does not report (UNKNOWN, which is most of them), needs addressing before the nightly fires.
 
 ## Mirror the bandit check locally
 

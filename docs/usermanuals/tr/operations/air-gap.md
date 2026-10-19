@@ -59,11 +59,11 @@ ERROR: model "meta-llama/Llama-Guard-3-8B" not in local cache.
 | Alt sistem | Bayrağın etkisi veya operatörün yapması gereken hazırlık |
 |---|---|
 | HuggingFace Hub indirmeleri | `--offline`, HF çevrimdışı ayarlarını yapar; gerekli artefaktları önceden önbelleğe alın. |
-| W&B / MLflow / Comet | Raporlamayı kapatın veya MLflow'u file URI ile yalnızca yerel çalışacak şekilde yapılandırın; `--offline` bu entegrasyonları kapatmaz. |
+| W&B / MLflow | `training.report_to`'yu `none` (veya `tensorboard`) yapın ya da MLflow'u file URI ile yalnızca yerel çalışacak şekilde yapılandırın; `--offline` bu entegrasyonları kapatmaz. |
 | OpenAI / Anthropic judge'lar | API tabanlı değerlendirmeyi kapatın veya yerel judge kullanın; `--offline` API istemcilerini kapatmaz. |
 | Webhook'lar | `--offline`, yapılandırılmış teslimatları kapatmaz. Kapatmak için `webhook:` bloğunu çıkarın veya `url` / `url_env` değerlerini boş bırakın; `allow_private_destinations`, genel hedeflerin yanında özel hedeflere de izin verir. |
 | Runtime'da pip install | Gerekli bağımlılıkları bağlantıyı kesmeden kurun; `--offline`, pip'i yönetmez. |
-| Telemetry | ForgeLM'in kendi telemetri servisi yoktur; harici entegrasyonları ayrıca yapılandırın. |
+| Telemetry | ForgeLM'in kendi telemetri servisi yoktur. `forgelm` CLI'ı `HF_HUB_DISABLE_TELEMETRY=1`'i (siz ayarlamadıysanız) ayarlar; böylece TRL ve `huggingface_hub` anonim kullanım ping'i göndermez. ForgeLM'i kütüphane olarak kullanmak bunu ayarlamaz. Harici entegrasyonları ayrıca yapılandırın. |
 
 ## Yerel sentetik veri
 
@@ -111,7 +111,7 @@ $ forgelm doctor --offline
 forgelm doctor — environment check
 
   [✓ pass] python.version          Python 3.11.4 (CPython).
-  [✓ pass] torch.cuda              torch 2.4.0 with CUDA 12.4.
+  [✓ pass] torch.cuda              torch 2.7.0 with CUDA 12.6.
   [✓ pass] gpu.inventory           1 GPU(s) — GPU0: NVIDIA A100 (80.0 GiB).
   [✓ pass] extras.qlora            Installed (module bitsandbytes, purpose: 4-bit / 8-bit QLoRA training).
   [✓ pass] extras.eval             Installed (module lm_eval, purpose: lm-evaluation-harness benchmark scoring).

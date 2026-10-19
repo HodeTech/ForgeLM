@@ -3,9 +3,9 @@ contact_links:
   - name: Report a security vulnerability
     url: https://github.com/HodeTech/ForgeLM/security/advisories/new
     about: Report vulnerabilities privately, never in a public issue (see SECURITY.md)
-  - name: Documentation
+  - name: Browse the documentation
     url: https://github.com/HodeTech/ForgeLM/tree/main/docs
-    about: Check the docs and guides before opening an issue
+    about: Read the docs and guides before opening a documentation issue
   - name: Discussions (Q&A)
     url: https://github.com/HodeTech/ForgeLM/discussions
     about: Ask questions and get help from the community

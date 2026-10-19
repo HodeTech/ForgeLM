@@ -53,7 +53,7 @@ SFT'den sonra model iyi formatta çıktı üretir ama kalite değişken — baze
 Farklar:
 - **DPO** — referans modele karşı `(chosen, rejected)` çiftlerinden öğrenir. En çok çalışılmış, en kararlı.
 - **SimPO** — DPO ile aynı ama referans modeli atlar. Daha az bellek, biraz daha az kararlılık.
-- **KTO** — ikili `(prompt, response, iyi mi?)` sinyallerinden öğrenir. Sadece thumbs-up/down geri bildiriminiz varsa kullanın.
+- **KTO** — ikili `(prompt, completion, label)` satırlarından öğrenir; `label`, istenen yanıt için `true`, istenmeyen yanıt için `false` olur. Sadece thumbs-up/down geri bildiriminiz varsa kullanın.
 - **ORPO** — SFT ve tercih kaybını tek geçişte birleştirir. Daha hızlı wall-clock; ayrı aşamalardan daha az esneklik.
 
 ### Problem 3: Akıl yürütme

@@ -244,6 +244,108 @@ def test_setuptools_security_floor_meets_pysec_2026_3447() -> None:
     )
 
 
+def test_dependabot_config_uses_only_values_the_pip_ecosystem_accepts() -> None:
+    """GitHub rejects the whole ``dependabot.yml`` for one bad value, and Dependabot then opens nothing.
+
+    ``versioning-strategy: widen`` is valid for npm and Composer but not for ``pip``; the file shipped with it and
+    the "Dependabot" check on every pull request that touched the file said so while the weekly run silently never
+    happened.  The accepted values are listed in GitHub's error message.
+    """
+    import yaml
+
+    config = yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    )
+    accepted = {"auto", "increase", "increase-if-necessary", "lockfile-only"}
+    for update in config["updates"]:
+        if update["package-ecosystem"] != "pip":
+            continue
+        strategy = update.get("versioning-strategy")
+        assert strategy is None or strategy in accepted, (
+            f"versioning-strategy {strategy!r} is not accepted for the pip ecosystem ({sorted(accepted)})"
+        )
+    assert any(u["package-ecosystem"] == "pip" for u in config["updates"]), "the pip update block is gone"
+
+
+def _load_runtime_dependencies() -> list:
+    try:
+        import tomllib  # type: ignore[import-not-found]
+    except ModuleNotFoundError:  # pragma: no cover — Python 3.10 fallback
+        try:
+            import tomli as tomllib  # type: ignore[import-not-found, no-redef]
+        except ModuleNotFoundError:
+            pytest.skip("Neither tomllib (3.11+) nor tomli is available; runtime dependency assertion skipped.")
+    pyproject_path = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    with pyproject_path.open("rb") as fh:
+        pyproject = tomllib.load(fh)
+    return pyproject.get("project", {}).get("dependencies", [])
+
+
+# transformers 5.10.1 is the first installable release past three advisories that reach ForgeLM's own load and
+# save path from a Hub repo: CVE-2026-4372 (5.3.0), CVE-2026-5241 (a LightGlue config.json overrides
+# trust_remote_code; 5.5.0) and CVE-2026-9856 (a chat_template name used as a file name by save_pretrained;
+# 5.10.0, which PyPI yanked). A floor of ">=5.3.0" was documented as "the CVE fix floor" and was not.
+_TRANSFORMERS_SECURITY_FLOOR = Version("5.10.1")
+
+
+def test_transformers_floor_is_past_cve_2026_5241_and_cve_2026_9856() -> None:
+    """``transformers`` must not admit a release that predates the chat_template / trust_remote_code fixes."""
+    found = [
+        Requirement(spec)
+        for spec in _load_runtime_dependencies()
+        if canonicalize_name(Requirement(spec).name) == "transformers"
+    ]
+    assert len(found) == 1, f"expected exactly one transformers requirement in [project].dependencies, found {found!r}"
+    specifier_set = found[0].specifier
+    lower_bounds = [
+        Version(spec.version.rstrip(".*")) for spec in specifier_set if spec.operator in _LOWER_BOUND_OPERATORS
+    ]
+    assert lower_bounds, f"transformers entry {str(found[0])!r} has no lower bound"
+    assert max(lower_bounds) >= _TRANSFORMERS_SECURITY_FLOOR, (
+        f"transformers entry {str(found[0])!r} floors at {max(lower_bounds)}, below {_TRANSFORMERS_SECURITY_FLOOR}, "
+        "the first installable release past CVE-2026-5241 and CVE-2026-9856. Do not lower it without re-verifying "
+        "both advisories against the release you lower it to."
+    )
+    for vulnerable in ("5.3.0", "5.4.0", "5.9.0", "5.10.0"):
+        assert not specifier_set.contains(Version(vulnerable), prereleases=True), (
+            f"transformers entry {str(found[0])!r} still admits {vulnerable}"
+        )
+
+
+def test_nightly_floor_job_pins_the_runtime_dependency_minimums() -> None:
+    """Every ``name==X`` the nightly minimum-versions job installs is the ``>=X`` floor in pyproject.
+
+    The job installs with ``--no-deps`` afterwards, so it can only test the documented minimum if its list is the
+    same list. It is a second hand-kept copy of every floor, and it kept saying ``transformers==5.3.0`` after the
+    floor was meant to be a security floor.
+    """
+    import re
+
+    nightly = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "nightly.yml").read_text(
+        encoding="utf-8"
+    )
+    step = nightly.split("Install minimum dependency versions", 1)[1].split("- name:", 1)[0]
+    pins = {
+        canonicalize_name(name): version for name, version in re.findall(r'"([A-Za-z0-9_.-]+)==([0-9][^"]*)"', step)
+    }
+    assert pins, "the nightly minimum-versions step no longer installs `name==version` pins — update this test"
+
+    floors = {}
+    for spec in _load_runtime_dependencies():
+        req = Requirement(spec)
+        lowers = [s.version for s in req.specifier if s.operator == ">="]
+        if lowers:
+            floors[canonicalize_name(req.name)] = lowers[0]
+
+    for name, version in pins.items():
+        assert name in floors, f"the nightly floor job pins {name}=={version}, which is not a runtime dependency"
+        assert version == floors[name], (
+            f"the nightly floor job pins {name}=={version} but pyproject.toml declares {name}>={floors[name]}; "
+            "the job would test a minimum nobody documents"
+        )
+    assert {"transformers", "huggingface-hub"} <= set(pins), "the floor job must pin transformers and huggingface_hub"
+
+
 def _lint_job_pins() -> dict[str, Requirement]:
     """Requirements the ci.yml lint job installs directly.
 

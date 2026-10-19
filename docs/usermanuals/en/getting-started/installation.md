@@ -22,7 +22,7 @@ ForgeLM ships as a single PyPI package with optional dependency groups (called *
 :::
 
 :::note
-**Intel Macs (x86_64) are not supported.** ForgeLM requires `torch>=2.4.0` (pulled in by `transformers>=5.3.0`), and PyPI publishes no `torch>=2.4` wheel for x86_64 macOS. Use Apple Silicon, Linux, or Windows.
+**Intel Macs (x86_64) are not supported.** ForgeLM requires `torch>=2.7.0` (the first release with a dtype `transformers` 5.10 imports), and PyPI publishes no `torch>=2.7` wheel for x86_64 macOS. Use Apple Silicon, Linux, or Windows.
 :::
 
 ## Base install
@@ -75,7 +75,16 @@ Adds MinHash LSH (via `datasketch`) for near-duplicate detection on corpora bigg
 $ pip install 'forgelm[export]'
 ```
 
-Adds quantized GGUF export for local inference (Ollama, llama.cpp). Pulls in the `gguf` writer and supporting libraries. Optional because not every workflow ends in GGUF — many users hand off to vLLM or TGI directly.
+Adds quantized GGUF export for local inference (Ollama, llama.cpp). Pulls in `llama-cpp-python`. Optional because not every workflow ends in GGUF — many users hand off to vLLM or TGI directly.
+
+**The conversion script is not included.** `forgelm export` runs llama.cpp's `convert_hf_to_gguf.py` with ForgeLM's own Python. No `llama-cpp-python` wheel puts that script where ForgeLM looks, so with only the extra installed `forgelm export` stops with `convert_hf_to_gguf.py not found inside the llama-cpp-python installation` (exit 2). Clone llama.cpp and point `FORGELM_GGUF_CONVERTER` at the script in that checkout:
+
+```shell
+$ git clone https://github.com/ggml-org/llama.cpp
+$ export FORGELM_GGUF_CONVERTER="$PWD/llama.cpp/convert_hf_to_gguf.py"
+```
+
+Use the copy inside the checkout: current versions import sibling modules (`conversion`, `gguf`) that sit beside it, and the script needs the Python packages listed in the checkout's `requirements/` folder importable in the environment ForgeLM runs in. K-quant levels additionally need llama.cpp's `llama-quantize` binary (see [GGUF export](#/deployment/gguf-export)).
 
 ### Distributed training (`[distributed]`)
 

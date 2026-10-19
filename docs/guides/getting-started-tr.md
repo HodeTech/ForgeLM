@@ -46,8 +46,8 @@ forgelm doctor - environment check
 
   [+ pass] forgelm.install          ForgeLM 0.9.0 running from /home/me/.venv/lib/python3.11/site-packages/forgelm (inside site-packages).
   [+ pass] python.version           Python 3.11.4 (CPython).
-  [+ pass] torch.cuda               torch 2.4.0 with CUDA 12.4.
-  [+ pass] numpy.torch_abi          torch 2.4.0 + numpy 1.26.4 are ABI-compatible.
+  [+ pass] torch.cuda               torch 2.7.0 with CUDA 12.6.
+  [+ pass] numpy.torch_abi          torch 2.7.0 + numpy 1.26.4 are ABI-compatible.
   [+ pass] gpu.inventory            1 GPU(s) — GPU0: NVIDIA RTX 4090 (24.0 GiB).
   [+ pass] extras.qlora             Discoverable, not import-tested (module bitsandbytes, purpose: 4-bit / 8-bit QLoRA training).
   [! warn] extras.tracking          Optional extra missing — install with: pip install 'forgelm[tracking]' (purpose: Weights & Biases experiment tracking).

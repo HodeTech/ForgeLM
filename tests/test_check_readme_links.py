@@ -59,6 +59,10 @@ def _make_tree(tmp_path: Path, readme: str, contributing: str = "# Contributing\
     """Write a minimal repo-shaped tree and return its root."""
     (tmp_path / "README.md").write_text(readme, encoding="utf-8")
     (tmp_path / "CONTRIBUTING.md").write_text(contributing, encoding="utf-8")
+    # Every surface in `guard._SURFACES` must exist, or the guard reports it as
+    # missing from the checkout. Keep this in step with that tuple.
+    for surface in ("CODE_OF_CONDUCT.md", "GOVERNANCE.md", "MAINTAINERS.md", "SECURITY.md"):
+        (tmp_path / surface).write_text("# stub\n", encoding="utf-8")
     (tmp_path / "docs" / "guides").mkdir(parents=True, exist_ok=True)
     (tmp_path / "docs" / "guides" / "real.md").write_text("# real\n", encoding="utf-8")
     (tmp_path / "LICENSE").write_text("Apache\n", encoding="utf-8")

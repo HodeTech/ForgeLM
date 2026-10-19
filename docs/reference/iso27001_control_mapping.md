@@ -24,7 +24,7 @@
 |---|---|---|
 | A.5.1 Policies for information security | FL-helps | `audit_event_catalog.md` documents what's logged |
 | A.5.2 Information security roles and responsibilities | FL-helps | `FORGELM_OPERATOR` + `roles_responsibilities.md` |
-| A.5.3 Segregation of duties | FL-helps | `human_approval.required/granted` enforces trainer ≠ approver |
+| A.5.3 Segregation of duties | FL-helps | `human_approval.required/granted` **records** the approver identity (from `FORGELM_OPERATOR`, else the OS user) so trainer ≠ approver is auditable; ForgeLM does not reject self-approval. Keep the runner and reviewer identities disjoint at your identity provider |
 | A.5.4 Management responsibilities | FL-helps | `forgelm doctor`; `compliance_report.json`; `training_manifest.yaml` |
 | A.5.5 Contact with authorities | OOS | — |
 | A.5.6 Contact with special interest groups | OOS | — |
@@ -53,7 +53,7 @@
 | A.5.29 Information security during disruption | FL-helps | `auto_revert` baseline-flip; `model.reverted` event |
 | A.5.30 ICT readiness for business continuity | OOS | — |
 | A.5.31 Identification of legal, statutory, regulatory and contractual requirements | FL-helps | EU AI Act + GDPR mappings; Annex IV bundle |
-| A.5.32 Intellectual property rights | FL-helps | License extraction in SBOM; HF model-card metadata |
+| A.5.32 Intellectual property rights | FL-helps | HF model-card metadata (the SBOM carries no licence data) |
 | A.5.33 Protection of records | FL | Append-only + HMAC + manifest sidecar |
 | A.5.34 Privacy and protection of PII | FL | `forgelm reverse-pii` Article 15; `forgelm purge` Article 17 (see also A.8.3) |
 | A.5.35 Independent review of information security | OOS | — |

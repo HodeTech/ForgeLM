@@ -85,7 +85,7 @@ $ forgelm doctor
 forgelm doctor - environment check
 
   [+ pass] python.version          Python 3.11.4 (CPython).
-  [+ pass] torch.cuda              torch 2.4.0 with CUDA 12.4.
+  [+ pass] torch.cuda              torch 2.7.0 with CUDA 12.6.
   [+ pass] gpu.inventory           1 GPU(s) - GPU0: NVIDIA RTX 4090 (24.0 GiB).
   [+ pass] extras.qlora            Installed (module bitsandbytes, purpose: 4-bit / 8-bit QLoRA training).
   [! warn] extras.tracking         Optional extra missing - install with: pip install 'forgelm[tracking]' (purpose: Weights & Biases experiment tracking).

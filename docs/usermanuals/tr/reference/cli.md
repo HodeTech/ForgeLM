@@ -44,7 +44,7 @@ Bunlardan herhangi biri için `forgelm <subcommand> --help`.
 | `--dry-run` | Config'i ve model/dataset erişimini doğrula; eğitim yok. |
 | `--fit-check` | Eğitim VRAM tahmini; model yüklenmez. `--config` gerektirir. |
 | `--resume [PATH]` | Eğitime kaldığı yerden devam. Çıplak `--resume` son checkpoint'i otomatik bulur; `--resume PATH` belirli bir yerden. |
-| `--offline` | Air-gap modu: tüm HF Hub ağ çağrılarını kapat. Modeller ve dataset'ler yerel olarak mevcut olmalı. |
+| `--offline` | Offline mod: Hugging Face offline değişkenlerini ayarlar; Hub, transformers ve datasets ağ çağrısı yapmaz. Modeller ve dataset'ler yerel olarak mevcut olmalı. Webhook'ları, judge veya sentetik-veri API istemcilerini ve deney izleyicilerini durdurmaz. |
 | `--benchmark-only MODEL_PATH` | Mevcut bir model üzerinde benchmark koştur, eğitim yok. `evaluation.benchmark` config'i gerektirir. |
 | `--merge` | Config'in `merge:` bloğundan model birleştirmeyi koştur. Eğitim yok. |
 | `--stage NAME` | Yalnızca çok aşamalı pipeline'lar: adı verilen tek bir stage'i izole koştur. İlk olmayan stage'ler önceki stage'in on-disk çıktısına ya da `--input-model` override'ına ihtiyaç duyar. |
@@ -328,7 +328,7 @@ Tam kontrat için bkz. [Exit Kodları](#/reference/exit-codes).
 | `FORGELM_OPERATOR` | Audit event'lerinde kaydedilen operatör kimliği (`getpass.getuser()@hostname`'i override eder) |
 | `FORGELM_ALLOW_ANONYMOUS_OPERATOR` | `1` olduğunda audit log'un anonim operatör kaydetmesine izin verir (aksi halde çözülemeyen kimlik hatası) |
 | `FORGELM_AUDIT_SECRET` | Audit log chain için HMAC imza anahtarı (tahrif tespitini açar) |
-| `FORGELM_GGUF_CONVERTER` | Özel `convert-hf-to-gguf.py` script'inin yolu |
+| `FORGELM_GGUF_CONVERTER` | Bir llama.cpp checkout'u içindeki `convert_hf_to_gguf.py`'nin yolu. Pratikte zorunlu: hiçbir `llama-cpp-python` wheel'i script'i ForgeLM'in aradığı yere koymaz ([Kurulum](#/getting-started/installation) sayfasına bakın) |
 
 ## Sık pattern'ler
 

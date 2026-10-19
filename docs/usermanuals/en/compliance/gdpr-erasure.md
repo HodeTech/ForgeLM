@@ -42,7 +42,7 @@ Six events ride the audit chain (see the [Audit Event Catalog on GitHub](https:/
 - `data.erasure_requested` — emitted FIRST, before any deletion.
 - `data.erasure_completed` — emitted LAST after the disk operation succeeded.
 - `data.erasure_failed` — emitted instead when the disk operation raised, or no matching row/run was found.
-- `data.erasure_warning_memorisation` — corpus-row erasure × `final_model/` exists for any run that consumed this corpus (the row is gone from disk but may still be memorised in the trained weights).
+- `data.erasure_warning_memorisation` — corpus-row erasure × a `final_model/` exists directly under `--output-dir` (the row is gone from disk but may still be memorised in the trained weights).
 - `data.erasure_warning_synthetic_data_present` — corpus-row erasure × `synthetic_data*.jsonl` exists in `output_dir`.
 - `data.erasure_warning_external_copies` — loaded config has a non-empty `webhook` block; downstream consumers may have received notices.
 
@@ -110,7 +110,7 @@ Codes 3 (`EXIT_EVAL_FAILURE`) and 4 (`EXIT_AWAITING_APPROVAL`) are not part of e
 :::
 
 :::warn
-**Running `forgelm purge` without checking for memorisation.** If a `final_model/` exists for any run that consumed the corpus, the row is gone from disk but may still be encoded in the weights. The `data.erasure_warning_memorisation` event surfaces the gap; act on it (re-train without the erased row, or document the residual risk in your DPIA).
+**Running `forgelm purge` without checking for memorisation.** If a trained model exists, the row is gone from disk but may still be encoded in the weights. The `data.erasure_warning_memorisation` event surfaces the gap only when a `final_model/` sits directly under `--output-dir` — which defaults to the corpus's directory, so pass your training output directory; act on it (re-train without the erased row, or document the residual risk in your DPIA).
 :::
 
 :::tip

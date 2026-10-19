@@ -1,0 +1,52 @@
+name: Documentation
+description: Report a documentation error, or propose an improvement to a guide or its Turkish mirror
+labels: ["documentation", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for improving the docs! One correction per issue is easiest to review.
+
+        User-facing documentation is kept as an English page **and** a Turkish
+        mirror, and the two are updated together — see
+        [CONTRIBUTING.md](https://github.com/HodeTech/ForgeLM/blob/development/CONTRIBUTING.md).
+        You do not need to write the Turkish yourself: open the pull request with
+        the English change and say so, and a maintainer will complete the mirror.
+        Tell us below which copy you were reading. Documentation pull requests are
+        welcome directly.
+
+  - type: input
+    id: page
+    attributes:
+      label: Page or file
+      description: The repository path or the documentation-site page you were reading.
+      placeholder: docs/guides/quickstart.md — or the Quick start page on the docs site
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or missing?
+      description: What does the page say, and what does the reader need instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested wording (optional)
+      description: If you already know the fix, propose the text. We will tidy the language if needed.
+
+  - type: dropdown
+    id: language
+    attributes:
+      label: Which copy is affected?
+      description: User-facing docs are maintained as an English page and a Turkish mirror. An issue that needs mirror work is labelled `i18n` when it is triaged.
+      options:
+        - English
+        - Turkish
+        - Both
+        - Not sure
+    validations:
+      required: true

@@ -5,7 +5,7 @@ description: Eğitim, değerlendirme ve geri alma kararlarını append-only even
 
 # Audit Log
 
-EU AI Act Madde 12, yüksek-riskli AI sistemlerinin operasyonel olarak ilgili olayların log'unu tutmasını gerektirir. ForgeLM'in `audit_log.jsonl` dosyası; eğitim başlangıcı, eval kapıları, otomatik geri alma kararları ve model export'unu kapsayan, append-only ve SHA-256-anchored bir olay dizisidir.
+EU AI Act Madde 12, yüksek-riskli AI sistemlerinin operasyonel olarak ilgili olayların log'unu tutmasını gerektirir. ForgeLM'in `audit_log.jsonl` dosyası; eğitim başlangıcı, eval kapıları, otomatik geri alma kararları ve model export'unu kapsayan, append-only ve SHA-256-anchored bir olay dizisidir. Eğitim hattını kaydeder; bu, teknik dokümantasyonunuzu destekleyebilecek geliştirme-zamanı kanıtıdır. Madde 12'nin istediği loglama dağıtılmış sistemin bir yeteneğidir ve ForgeLM bunu sağlamaz.
 
 ## Format
 

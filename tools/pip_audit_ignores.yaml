@@ -40,6 +40,9 @@ ignores:
   # so a suppression would be dead weight:
   #   - CVE-2026-1839 — fixed in transformers 5.0.0rc3.
   #   - PYSEC-2025-217 / CVE-2025-14929 (X-CLIP RCE) — OSV last_affected 5.0.0rc0.
+  # The floor has since moved to transformers>=5.10.1, the first installable
+  # release past CVE-2026-5241 (fixed 5.5.0) and CVE-2026-9856 (fixed 5.10.0,
+  # yanked), so neither needs a suppression either.
 
   # ----- torch (added 2026-05-21, triage in issue #58) -----
   #

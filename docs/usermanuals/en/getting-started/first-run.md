@@ -29,21 +29,22 @@ flowchart LR
 Before anything else, run `forgelm doctor` to check that Python, PyTorch, CUDA, and any optional dependencies are wired up correctly:
 
 ```shell
-$ forgelm doctor
-forgelm doctor — environment check
+$ forgelm doctor --offline
+forgelm doctor - environment check
 
-  [✓ pass] python.version          Python 3.11.4 (CPython).
-  [✓ pass] torch.cuda              torch 2.4.0 with CUDA 12.4.
-  [✓ pass] gpu.inventory           1 GPU(s) — GPU0: NVIDIA RTX 4090 (24.0 GiB).
-  [✓ pass] extras.qlora            Installed (module bitsandbytes, purpose: 4-bit / 8-bit QLoRA training (Linux GPUs only)).
-  [✓ pass] extras.unsloth          Installed (module unsloth, purpose: Unsloth-accelerated training (Linux GPUs only)).
-  [! warn] extras.distributed      Optional extra missing — install with: pip install 'forgelm[distributed]' (purpose: DeepSpeed ZeRO + offload distributed training (Linux + macOS only)).
-  [✓ pass] hf_hub.reachable        HuggingFace Hub reachable (HTTP 200).
-  [✓ pass] disk.workspace          Workspace /home/me/forgelm — 387.0 GiB free of 500.0 GiB.
-  [! warn] operator.identity       FORGELM_OPERATOR not set; audit events will fall back to 'me@workstation'. Pin FORGELM_OPERATOR=<id> for CI / pipeline runs.
+  [+ pass] python.version           Python 3.11.4 (CPython).
+  [! warn] torch.cuda               torch 2.7.0 installed but CUDA is unavailable. CPU-only runs are supported but training will be very slow; expect to use this only for tiny experiments or smoke tests.
+  [+ pass] numpy.torch_abi          torch 2.7.0 + numpy 2.1.0 are ABI-compatible.
+  [! warn] gpu.inventory            No CUDA devices visible; CPU-only mode.
+  [! warn] extras.distributed       Optional extra missing — install with: pip install 'forgelm[distributed]' (purpose: DeepSpeed ZeRO + offload distributed training (Linux + macOS only)).
+  [+ pass] disk.workspace           Workspace /home/me/forgelm — 387.0 GiB free of 500.0 GiB.
+  [! warn] operator.identity        FORGELM_OPERATOR not set; audit events will fall back to 'me@workstation'. Pin FORGELM_OPERATOR=<id> for CI / pipeline runs so the audit log identifies a stable identity.
+  ...
 
-Summary: 7 pass, 2 warn, 0 fail.
+Summary: 7 pass, 12 warn, 0 fail.
 ```
+
+This is an excerpt: the real output has around 19 rows (it also checks the ForgeLM install, every optional extra, and the HF cache or Hub), and the rows, values and counts depend on your machine. A `pass` on an extra means the module is discoverable, not that it was import-tested; `[+ pass]`, `[! warn]` and `[x fail]` are the status markers.
 
 `--output-format json` returns a structured envelope (`{"success": bool, "checks": [...], "summary": {...}}`) so CI can filter on individual probe results without parsing the table. Pass `--offline` to skip the HF Hub network probe and inspect the local cache instead — useful for air-gapped deployments.
 
@@ -137,43 +138,50 @@ Possible verdicts:
 
 ```shell
 $ forgelm --config configs/quickstart-customer-support.yaml
-[2026-04-28 14:01:32] config validated
-[2026-04-28 14:01:33] auditing data/customer-support.jsonl (12,400 rows, 3 splits)
-[2026-04-28 14:01:35] PII flags: 0 critical, 5 medium · cross-split overlap: 0
-[2026-04-28 14:01:37] SFT epoch 1/3 · loss=2.31 → 1.42
-[2026-04-28 14:18:55] DPO preference pass · β=0.1 · KL=4.2
-[2026-04-28 14:32:11] benchmark hellaswag=0.62 truthfulqa=0.48
-[2026-04-28 14:33:02] Llama Guard S1-S14: clean
-[2026-04-28 14:33:04] Annex IV → checkpoints/customer-support/artifacts/annex_iv_metadata.json
-[2026-04-28 14:33:04] ✔ finished, exit 0
 ```
+
+The output is a stream of timestamped `[INFO]` lines from the `forgelm.*` loggers, with the progress bar and the per-step loss lines that transformers and TRL print. The `customer-support` template is an SFT run with no `evaluation:` block, so the stages you get are: config validation, training, then the files below being written. Stages such as the benchmark, the safety evaluation, the judge and the human-approval gate run only when the YAML enables them. The command ends with exit code `0` on success (see [Exit codes](#/reference/exit-codes)).
 
 ## 6. Try the model
 
 ```shell
-$ forgelm chat ./checkpoints/customer-support
+$ forgelm chat Qwen/Qwen2.5-7B-Instruct --adapter ./checkpoints/customer-support/final_model
 forgelm> how do I cancel my subscription?
 You can cancel from Settings → Billing → Cancel subscription. Your access
 continues until the end of the current billing period…
 ```
 
+The positional argument is the base model from the `Model` line of the run summary; `--adapter` points at the LoRA weights in `final_model/` and merges them into it for the session. If your run saved a merged checkpoint instead (`final_model/` holds full weights and no `adapter_model.safetensors`), pass that directory as the only argument: `forgelm chat ./checkpoints/customer-support/final_model`.
+
 ## What you got on disk
 
 ```text
-checkpoints/customer-support/
-├── artifacts/
-│   ├── annex_iv_metadata.json              ← Article 11 technical documentation
-│   ├── audit_log.jsonl            ← Article 12 append-only event log
-│   ├── data_audit_report.json     ← Article 10 data governance evidence
-│   ├── safety_report.json         ← Llama Guard verdict
-│   ├── benchmark_results.json     ← Per-task accuracy
-│   └── manifest.json              ← SHA-256 over every artifact
-├── README.md                      ← Article 13 model card
-├── config_snapshot.yaml           ← The exact YAML this run used
-└── adapter_model.safetensors      ← LoRA weights (or merged checkpoint)
+checkpoints/customer-support/          ← training.output_dir
+├── audit_log.jsonl                    ← Article 12 append-only event log, hash-chained
+├── audit_log.jsonl.manifest.json      ← genesis pin: lets verify-audit detect truncation
+├── compliance/
+│   ├── compliance_report.json         ← Article 11 manifest (the canonical machine-readable bundle)
+│   ├── training_manifest.yaml         ← operator-readable summary of the run
+│   ├── data_provenance.json           ← Article 10 dataset fingerprint
+│   └── data_governance_report.json    ← Article 10 data-governance evidence
+├── checkpoint-<step>/                 ← intermediate Trainer checkpoints
+└── final_model/
+    ├── adapter_model.safetensors      ← LoRA weights (or merged checkpoint)
+    ├── README.md                      ← Article 13 model card
+    ├── deployer_instructions.md       ← notes for whoever deploys the model
+    └── model_integrity.json           ← SHA-256 checksums of the files in final_model/
 ```
 
-That `artifacts/` directory is the deliverable for compliance reviews. Every file inside is hashed in `manifest.json` for tamper-evidence.
+Some files appear only when the YAML asks for them:
+
+| File | Appears when |
+|---|---|
+| `compliance/annex_iv_metadata.json` | `compliance.provider_name`, `system_name` or `intended_purpose` is set |
+| `safety/safety_results.json` | the safety evaluation is enabled |
+| `benchmark/benchmark_results.json` | the benchmark gate is enabled |
+| `final_model.staging.<run_id>/` instead of `final_model/` | `evaluation.require_human_approval` is on, until `forgelm approve` promotes it |
+
+There is no `artifacts/` directory and no single manifest over the whole bundle. Two things are tamper-checked: the audit log by its hash chain (`forgelm verify-audit`) and `final_model/` by `model_integrity.json` (`forgelm verify-integrity`). Nothing hashes `compliance/`, so keep those files where an edit would show, for example in version control or write-once storage.
 
 ## Next steps
 

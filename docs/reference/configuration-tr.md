@@ -15,7 +15,7 @@ Tam açıklamalı örnek için `config_template.yaml` dosyasına bakın.
 | `load_in_4bit` | bool | `true` | QLoRA 4-bit NF4 kuantizasyon |
 | `backend` | string | `"transformers"` | `"transformers"` veya `"unsloth"` (desteklenen mimarilerde daha hızlı, Linux) |
 | `trust_remote_code` | bool | `false` | Model depolarından özel kod çalıştırma. **Güvenlik riski** |
-| `offline` | bool | `false` | İzole mod: HF Hub çağrısı yok. Modeller/veri setleri yerel olmalı |
+| `offline` | bool | `false` | HF offline değişkenlerini ayarlar; Hub, transformers ve datasets ağ çağrısı yapmaz. Modeller/veri setleri yerel olmalı. Webhook'ları, judge veya sentetik-veri API istemcilerini ve W&B / MLflow'u durdurmaz |
 | `revision` | string | `null` | Temel modeli + tokenizer'ı bir HF Hub commit SHA'sına (40-hex) veya branch/tag'e sabitle. **Bugün uygulanıyor.** Bkz. [Hub revision pinleme](#hub-revision-pinleme) |
 | `bnb_4bit_use_double_quant` | bool | `true` | Ekstra VRAM tasarrufu için çift kuantizasyon |
 | `bnb_4bit_quant_type` | string | `"nf4"` | Kuantizasyon tipi (`"nf4"` veya `"fp4"`) |
@@ -138,9 +138,9 @@ training:
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
-| `rope_scaling` | `Optional[Dict[str, Any]]` | `null` | RoPE ölçekleme yöntemi sözlüğü (`{"type": "linear", "factor": 2.0}` vs.). Desteklenen tipler: `"linear"`, `"dynamic"`, `"yarn"`, `"longrope"`. |
+| `rope_scaling` | `Optional[Dict[str, Any]]` | `null` | RoPE ölçekleme yöntemi sözlüğü (`{"type": "linear", "factor": 2.0}` vs.). Desteklenen tipler: `"linear"`, `"dynamic"`, `"yarn"`, `"longrope"`. `model.backend: unsloth` ile desteklenmez (reddedilir, exit 1). |
 | `neftune_noise_alpha` | float | `null` | NEFTune gürültü enjeksiyonu alpha değeri (ör. `5.0`) |
-| `sliding_window_attention` | int | `null` | Kayan pencere dikkat boyutu (token) |
+| `sliding_window_attention` | int | `null` | Kayan pencere dikkat boyutu (token). `model.backend: unsloth` ile desteklenmez (reddedilir, exit 1). |
 | `sample_packing` | bool | `false` | **Kullanımdan kaldırıldı** — `packing` için takma ad (TRL tek bir packing düğmesi sunar). `true` ayarlamak `DeprecationWarning` ile `packing: true`'ya yönlendirir; v1.0.0'da kaldırılacak. Bunun yerine `packing` kullanın. |
 
 > Kaldırma, daha erken değil v1.0.0'da gerçekleşecek; çünkü bir YAML alanını
@@ -270,10 +270,10 @@ training:
 
 Uyumluluk, eğitim ve değerlendirme artefaktları için saklama ufuklarını
 belirler. Ufuklar GDPR Madde 5(1)(e) "saklama sınırlaması" ve Madde 17
-"silme hakkı" tarihlerini onurlandırır. `enforce` anahtarı yalnız-loglama,
-uyarı ve sert-engelleme modları arasında geçiş yaparak regüle edilen bir CI
-kapısının saklama ufkunu eski bir çalışma alanını yeniden kullanarak sessizce
-uzatmasını engeller.
+"silme hakkı" tarihlerini onurlandırır. Ufuklar **raporlanır**, zorlanmaz:
+`forgelm purge --check-policy` ufku aşanları listeler ve her zaman 0 ile çıkar;
+hiçbir şey otomatik silinmez, engellenmez ya da zamanlanmaz. `enforce` anahtarı
+ayrılmıştır: henüz hiçbir komut onu okumaz.
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
@@ -281,7 +281,7 @@ uzatmasını engeller.
 | `staging_ttl_days` | int | `7` | `forgelm reject` kararından sonra `final_model.staging.<run_id>/` dizininin planlı temizlenmeden önce saklanacağı gün sayısı. `0` süresiz saklama anlamına gelir. v0.8.0'da kaldırılan `evaluation.staging_ttl_days` yerine geçer. |
 | `ephemeral_artefact_retention_days` | int | `90` | Uyumluluk paketleri, veri denetim raporları ve diğer çalışma kapsamlı türetilmiş artefaktların saklanma süresi (gün). `0` süresiz saklama. |
 | `raw_documents_retention_days` | int | `90` | İngest edilmiş ham belgelerin (PDF / DOCX / EPUB / TXT / Markdown) operatörün ingestion-output dizininde saklanma süresi (gün). `0` süresiz saklama. |
-| `enforce` | string | `"log_only"` | Politika uygulama modu: `"log_only"` (yalnızca audit log), `"warn_on_excess"` (stderr'e yapılandırılmış uyarı), `"block_on_excess"` (`EXIT_EVAL_FAILURE` = 3 ile trainer ön-kontrolünü iptal eder). |
+| `enforce` | string | `"log_only"` | Ayrılmış politika modu. Henüz hiçbir komut onu okumaz: `"log_only"`, `"warn_on_excess"` ve `"block_on_excess"` kabul edilir ve aynı davranır; bir config son ikisinden birini ayarlarsa CLI uyarır. |
 
 > **Kaldırıldı:** `evaluation.staging_ttl_days` (v0.5.5 itibarıyla kullanımdan
 > kaldırılmıştı) v0.8.0'da kaldırılmıştır. Artık geçerli tek form
@@ -397,11 +397,11 @@ kaynağı kaydedilmemiştir.
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
 | `strategy` | string | `null` | `"deepspeed"` veya `"fsdp"` (null = tek GPU) |
-| `deepspeed_config` | string | `null` | Ön ayar (`"zero2"`, `"zero3"`, `"zero3_offload"`) veya JSON yolu |
-| `fsdp_strategy` | string | `"full_shard"` | `"full_shard"`, `"shard_grad_op"`, `"hybrid_shard"`, `"no_shard"` |
-| `fsdp_auto_wrap` | bool | `true` | Transformer katmanlarını otomatik sar |
+| `deepspeed_config` | string | `null` | JSON yolu ya da yalnızca kaynak checkout'unda çözülen (pip veya Docker kurulumunda çözülmeyen) bir ön ayar adı (`"zero2"`, `"zero3"`, `"zero3_offload"`) |
+| `fsdp_strategy` | string | `"full_shard"` | `"full_shard"` veya `"shard_grad_op"` (`"hybrid_shard"` ve `"no_shard"` reddedilir: FSDP2 bunları desteklemez) |
+| `fsdp_auto_wrap` | bool | `true` | Transformer katmanlarını otomatik sar (transformers 5.10+'ta yok sayılır, katmanlar hep sarılır) |
 | `fsdp_offload` | bool | `false` | Parametreleri CPU'ya taşı |
-| `fsdp_backward_prefetch` | string | `"backward_pre"` | `"backward_pre"` veya `"backward_post"` |
+| `fsdp_backward_prefetch` | string | `"backward_pre"` | `"backward_pre"` veya `"backward_post"` (transformers 5.10+'ta yok sayılır; FSDP2 prefetch politikası almaz) |
 | `fsdp_state_dict_type` | string | `"FULL_STATE_DICT"` | `"FULL_STATE_DICT"` veya `"SHARDED_STATE_DICT"` |
 
 ## `synthetic` (İsteğe bağlı — Sentetik Veri Üretimi)
@@ -433,11 +433,11 @@ kaynağı kaydedilmemiştir.
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
-| `url` | string | `null` | Webhook hedef URL |
-| `url_env` | string | `null` | URL'yi içeren ortam değişkeni adı |
+| `url` | string | `null` | Webhook hedef URL'si: bir Slack incoming webhook'u ya da bir relay (Teams ve Discord payload'u doğrudan reddeder) |
+| `url_env` | string | `null` | URL'yi içeren ortam değişkeni adı; yalnızca `url` boşken okunur |
 | `notify_on_start` | bool | `true` | Eğitim başlangıcında bildir |
 | `notify_on_success` | bool | `true` | Başarıda bildir |
-| `notify_on_failure` | bool | `true` | Hata durumunda bildir |
+| `notify_on_failure` | bool | `true` | Eğitim hata verdiğinde ya da eğitim sonrası bir kapı modeli geri aldığında bildir |
 | `timeout` | int | `10` | HTTP istek zaman aşımı (saniye). Notifier ≥ 1s'ye clamp'ler. v0.5.5'te varsayılan 10s'ye çıkarıldı (önceden 5s'di) — Slack/Teams gateway gecikme atışları production'da düzenli olarak 5s'yi aşıyor ve bir webhook zaman aşımı audit chain'i sessizce zayıflatıyor (webhook arızası best-effort). |
 | `allow_private_destinations` | bool | `false` | RFC1918 / loopback / link-local hedeflere webhook gönderimine izin verir (cluster içi Slack proxy, on-prem Teams gateway gibi). Varsayılan yalnızca genel internet — SSRF koruması |
 | `require_https` | bool | `false` | TLS-only zorlama. `true`, plaintext bir `http://` URL'ini reddeder (SSRF chokepoint raise eder; POST atlanır), warn-and-send yerine. Varsayılan `false`, warn-then-send davranışını korur |

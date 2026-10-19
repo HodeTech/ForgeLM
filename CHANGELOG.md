@@ -13,8 +13,45 @@ All notable changes to ForgeLM are documented here.
   and valid port; schemeless addresses are rejected instead of silently becoming `<malformed-url>`
   in evidence. Use `https://monitor.example.com:8443/plan` or an `endpoint_env` name (#93).
 
+### Added
+
+- `forgelm export` now writes `<output>.sha256` next to the GGUF (`sha256sum` format), the file `forgelm verify-gguf`
+  and the documentation always expected. It had never been written, so a sidecar-based check had nothing to compare.
+  A sidecar that cannot be written fails the export (exit 2) instead of leaving a GGUF without it; for a K-quant
+  request it belongs to the intermediate `*.f16.gguf`. A `model_integrity.json` that cannot be updated is now logged
+  as a warning, not at debug level (#84).
+- `CITATION.cff`, so the repository can be cited through GitHub's "Cite this
+  repository" panel (#964).
+- A contributor can claim a `good first issue` by commenting `/assign` and give it
+  back with `/unassign`: the `Assign on comment` workflow (`tools/assign_on_comment.py`) assigns the commenter
+  when nobody holds the issue, refuses an issue that already has an assignee without changing it, allows at most 2
+  open assignments per contributor (maintainers are exempt) and leaves `security`, `needs-triage`, `deferred`,
+  epic and Phase 16 issues to a maintainer. Reassigning stays a maintainer's decision.
+- `GOVERNANCE.md` and `MAINTAINERS.md` at the repository root, recording how
+  decisions are made, how the maintainer roles work, and which areas the current
+  maintainer owns (#964).
+- `.github/dependabot.yml`, so dependency updates arrive as reviewed pull requests
+  rather than waiting for a manual version check; `.github/CODEOWNERS` to route
+  review requests without gating a merge; and a Documentation issue template, since
+  the issue chooser previously offered only a bug and a feature form (#964).
+
 ### Changed
 
+- Admit newer majors of five dependencies: `huggingface_hub` 2, `pypdf` 6 and `xxhash` 4 (the `ingestion` extra), `datasketch` 2 (the
+  `ingestion-scale` extra) and `pytest-randomly` 4 and 5 (the `dev` extra). The ingestion, data-audit and doctor test modules pass on pypdf
+  6.21.1, xxhash 4.0.1 and datasketch 2.0.0 with the same results as on the previous majors; CI installs datasketch 2.0.0 and
+  pytest-randomly 5.0.0 for the full suite. With `huggingface_hub>=1.5.0,<3.0.0` CI resolves `huggingface_hub` 2.2.0 (with transformers
+  5.20.1) and the full suite passes on Python 3.10 to 3.13; every `huggingface_hub` symbol ForgeLM imports exists in 2.2.0. Hub 2 uses a
+  different HTTP stack (`httpx2`), so an environment sees new transitive packages. The tests mock the network, so real Hub calls on 2.x are
+  not covered, and transformers 5.10 to 5.17 still keep pip on `huggingface_hub` 1.x (5.18 and later allow 2.x).
+- Raise the `transformers` floor from `>=5.3.0` to `>=5.10.1` (and `huggingface_hub` from `>=1.3.0` to `>=1.5.0`, which
+  transformers 5.10 requires). `5.3.0` was described as the CVE fix floor but still admitted CVE-2026-5241 (a LightGlue
+  `config.json` overrides `trust_remote_code: false`, fixed in 5.5.0) and CVE-2026-9856 (a `chat_template` name in
+  `tokenizer_config.json` is used unsanitised as a file name by `save_pretrained`, so `final_model/` saves, GGUF export
+  and merges could write outside the output directory; fixed in 5.10.0, which PyPI yanked, hence 5.10.1). The nightly
+  minimum-versions job pins the new floor, and `tests/test_packaging.py` keeps it from drifting from
+  `pyproject.toml` and checks that a traversal `chat_template` name cannot escape on save. Environments pinned to
+  transformers 5.3 to 5.9 must upgrade (#109).
 - Record monitoring default provenance in `defaulted_fields` and mark literal URL projection with
   `endpoint_redacted` (also true when the URL already contains only scheme/host/port). Literal
   endpoints retain scheme/host/port in JSON evidence, including IPv6 brackets; userinfo, path,
@@ -44,9 +81,170 @@ All notable changes to ForgeLM are documented here.
 - Require history-preserving merge commits for `main` promotions and release synchronization;
   retain squash as the default for contributor PRs into `development`, and disable rebase-and-merge.
   Align the contributor, code-review, and release guidance with the repository settings.
+- Point first-time contributors at a *Front door* view of the project plan (open, unassigned
+  `good first issue`s with their size and area) from the README and CONTRIBUTING, and record in
+  `CONTRIBUTING.md`, `CLAUDE.md` and `AGENTS.md` that the front door is chosen with labels and
+  views, never by closing issues.
+
+### Removed
+
+- Delete the stale `requirements.txt`, `requirements-eval.txt` and `requirements-linux.txt`. Nothing
+  referenced them, their floors were far below `pyproject.toml`'s, and Dependabot would have opened weekly
+  pull requests against them; installation goes through the `pyproject.toml` extras (#968).
 
 ### Fixed
 
+- Preserve top-level `--dry-run`, `--config`, `--offline` and `--output` values when a subcommand omits the same flag (CR-A05-001, #414).
+- Stop describing the human-approval gate as enforcing segregation of duties (English and Turkish): it records the
+  trainer and approver identities and does not compare them, and both are self-asserted. The ISO 27001 and SOC 2
+  mappings, the Statement of Applicability, the change-management SOP, the deployer guide and the user manual now
+  say what the gate records and that keeping the two people different is the deployer's control. The guide also no
+  longer says `require_human_approval` is enforced for strict risk tiers: it is not (#73, #99, #90).
+- Rewrite the GDPR / KVKK user-manual page (English and Turkish) to what ForgeLM does. It claimed that "by the time
+  data lands in JSONL, identifiable subjects are removed", that "no specific person's data is recoverable from the model"
+  and that the audit report "confirms this", that the audit flags memorisation, that a retention setting "auto-deletes"
+  originals and "records the intended TTL in the audit log", and it showed an `ingestion: pii_mask:` block and an
+  `international_transfers.enabled` setting that do not exist. Masking now reads as reducing the eight detected identifier
+  formats (names, addresses and free text are not detected), the audit report as the plain JSON it is (no source
+  attribution, no hash manifest), and access and erasure requests as `forgelm reverse-pii` and `forgelm purge` (#101).
+- Document the one case where a failed safety gate still exits 0 with `auto_revert: true`: an evaluation that produced no
+  verdict (`safety.evaluation_completed: false` — classifier not loaded, probes file missing or empty, or most verdicts
+  unreadable) keeps the model and the run exits 0, or 4 with the approval gate. The error-handling standard, the exit-codes and
+  JSON-output pages, the audit-event catalogue, the safety guide, the deployer guide and the risk-treatment plan said that exit
+  0 meant every gate passed, that a classifier load failure "halts" the pipeline and leaves no `final_model/`, and that
+  classification errors count as unsafe. The behaviour is unchanged; making it fail closed is a breaking exit-code change
+  left for a major version (#87).
+- Say where the per-release SBOMs actually are and what they contain. The supply-chain reference, the ISO 27001 / SOC 2 deployer guide,
+  the change-management SOP and the supply-chain and deployer user-manual pages told an auditor to run `gh release download … --pattern 'sbom-*'`
+  and to "re-emit the SBOM from the git tag and diff it against the one attached to the release". Nothing attaches an SBOM to a
+  GitHub Release: `publish.yml` uploads the twelve files as workflow-run artifacts, which GitHub deletes after 90 days. The docs now give
+  the working commands (`gh run list --workflow publish.yml --branch v<X.Y.Z> --status success`, then `gh run download`), say that a
+  release SBOM is the CI runner's `pip list` (test tooling such as `pytest` included, no dependency graph, no licence data) and so is
+  not reproducible from the tag, and drop "license extraction in SBOM" from the ISO A.5.32, SOC 2 CC9.2 and statement-of-applicability
+  rows. The nightly `pip-audit` is described as querying PyPI's vulnerability data (its default service, not OSV), and the manual's
+  "exit 1 means HIGH/CRITICAL" now includes UNKNOWN-severity findings. English and Turkish. Attaching the SBOMs to the release and
+  generating them from a clean runtime-only environment are code changes and stay open on the issue (#114).
+- Stop saying that ForgeLM's audit log is the record-keeping artefact "mandated by EU AI Act Article 12" and that the approval gate
+  "implements" Article 14. Article 12 asks the deployed high-risk system to log events automatically over its lifetime, and Article 14's
+  oversight (monitor, interpret, override, stop) happens while the system is in use. `audit_log.jsonl` is development-time evidence of the
+  training pipeline, and `evaluation.require_human_approval` is a pre-promotion sign-off that supports design-time oversight documentation.
+  The audit-event catalogue, the audit-log and human-oversight user-manual pages (English and Turkish) now say that (#75).
+- Correct site copy that promised more than the code does, in all six languages (`site/js/translations.js`, the HTML fallbacks and a code
+  comment in `site/js/wizard.js`): a failing benchmark gate exits 3 only with `evaluation.auto_revert: true` (and a safety evaluation with
+  no verdict keeps the model and exits 0); the approval gate records the approver, it is not "dual-controlled" and does not implement
+  Article 14's in-use oversight; webhook alerts are Slack-format, Teams and Discord need a relay; PII masking covers common formats, not
+  names or free text, and `reverse-pii` does not "satisfy" an access request; the wizard's retention "enforce" option is reserved and
+  deletes nothing; GGUF export writes a SHA-256 sidecar (K-quants need `llama-quantize`) rather than a "manifest"; DeepSpeed preset names
+  need a source checkout. A new site test keeps those phrases from coming back. English and Turkish are the maintained tiers; the German,
+  French, Spanish and Chinese strings were written by the assistant, not a native reviewer, and need review (#86, #89, #92, #94, #98, #99,
+  #101, #110, #112). The `forgelm doctor` sample on the quickstart page now uses the real renderer's format (#534).
+- Make `.github/dependabot.yml` parse. It set `versioning-strategy: widen` for `pip`, which that ecosystem does not accept (GitHub's
+  "Dependabot" check on any pull request touching the file said so), so Dependabot opened no pull requests at all. The setting is removed, the
+  header comment explains the restriction.
+- Stop saying that Microsoft Teams and Discord accept the webhook payload directly. The user manual (English and Turkish) and the
+  `webhook` field descriptions said all three ingest it; the body is a Slack-style `attachments` block with no top-level `text`,
+  `content` or `embeds`. Discord needs `content` or `embeds` and answers HTTP 400; Teams retired Office 365 Connectors in May 2026 and
+  its Workflows webhooks expect an Adaptive Card. Both need a relay. The page now shows the real payload, and the access-control SOP
+  no longer claims that a payload carries `FORGELM_OPERATOR` (it does not) or lists five events (there are eight). The `url_env`
+  description said it overrides `url`; it is read only when `url` is empty, so `url` wins. A formatter for Teams and Discord is a
+  separate, larger change and stays open on the issue (#112).
+- Say that the DeepSpeed preset names (`zero2`, `zero3`, `zero3_offload`) work only from a source checkout. They resolve to
+  `configs/deepspeed/<name>.json` beside the package or in the current directory, and neither the wheel nor the Docker image ships
+  that folder, so on a `pip install` the names fail with a configuration error (and the unset-`deepspeed_config` default is
+  `zero2`). The configuration and distributed-training references, the troubleshooting entry (its sample error is now the real
+  message), the enterprise guide, the user manuals, `config_template.yaml` and the field description now say so and point at a
+  JSON path; the template's `torchrun … forgelm` launch line is `-m forgelm`, the only form that runs the checkout. The
+  unverified "`zero3_offload` fits 70B on 8×24 GB" sentence is gone, and the `zero2` preset's own start-up failure is noted
+  (#410). Shipping the presets in the package, and a test that resolves one from an installed wheel, are code changes and stay
+  open on the issues (#110, #111, #115).
+- Show the real output directory on the first-run, project-layout and human-oversight pages (English and Turkish). They described a
+  `checkpoints/<name>/artifacts/` bundle with a `manifest.json` that hashes "every file inside … for tamper-evidence", a
+  `config_snapshot.yaml`, a `safety_report.json` and a `data_audit_report.json`. None of those exist: a run writes `audit_log.jsonl` with its
+  `.manifest.json` genesis pin, a `compliance/` directory (`compliance_report.json`, `training_manifest.yaml`, `data_provenance.json`,
+  `data_governance_report.json`, and `annex_iv_metadata.json` only when the YAML names a provider, system or purpose), `safety/` and
+  `benchmark/` only when enabled, and `final_model/` with the weights, model card, `deployer_instructions.md` and `model_integrity.json`.
+  Only the audit log and `final_model/` are tamper-checked; nothing hashes `compliance/`, and the pages now say so. The invented training log
+  (a DPO pass in an SFT-only template, `Llama Guard S1-S14: clean`) is replaced by a description of the real stages, the approval-gate
+  sample shows the two log lines the trainer prints, and the `forgelm doctor` sample uses the real renderer's format (ASCII header and
+  `[+ pass]` markers, "discoverable" wording, an abridged row list) (#96, #534).
+- Describe `--offline` / `model.offline` as what it does. It sets `HF_HUB_OFFLINE`, `TRANSFORMERS_OFFLINE` and `HF_DATASETS_OFFLINE`; it does not
+  stop webhooks, the LLM-judge and synthetic-data API clients, or W&B / MLflow. The `--offline` help text, the `model.offline` field
+  description, the configuration and CLI references (English and Turkish) and the enterprise deployment guide said "Air-gapped mode" and
+  "prevents any network calls"; the air-gap page no longer lists Comet, which `training.report_to` does not accept. Gating those clients
+  behind the flag is a code change and stays open (#74, #100, #893).
+- `training.rope_scaling` works on transformers 5 again. The setting was passed to `from_pretrained(rope_scaling=...)`,
+  which no longer works: the documented `{type: linear, factor: 4}` raised `KeyError: 'rope_type'` while the model was
+  built, and `{rope_type: ..., factor: ...}` replaced the whole parameter dict so `rope_theta` was lost (`TypeError`).
+  The requested keys are now merged over the model's own `rope_parameters` (the legacy key `type` is read as
+  `rope_type`), applied to the text config of a multimodal checkpoint, and the finished config is loaded. A model that
+  keeps one entry per layer type (Gemma 3: `full_attention` and `sliding_attention`) gets the scaling on its
+  `full_attention` entry, and one with per-layer-type entries but no `full_attention` is refused with exit 1 instead of
+  being scaled nowhere. Verified on transformers 5.13.0 for `linear`, `dynamic` and `yarn` on a tiny local Llama, and
+  on real Gemma 3 configs (#103).
+- `training.sliding_window_attention` reaches the text config and takes effect. The override was passed as a
+  `from_pretrained(sliding_window=...)` keyword, which transformers 5 forwards to the model constructor once `config=`
+  is set, and a multimodal model (Qwen2-VL) keeps `sliding_window` on its text config, not the outer one. It now travels in
+  the same config object as `rope_scaling`. For the Qwen2 family the config also derives a per-layer `layer_types`
+  list from `use_sliding_window`, `sliding_window` and `max_window_layers`, so setting the number alone left every layer
+  on full attention; the text config is rebuilt with the flag on so the list is derived again (a pattern the checkpoint
+  supplied itself is kept), and a warning is logged when the result still has no sliding-attention layer. The unsloth backend builds no transformers config, so it
+  applied neither `rope_scaling` nor `sliding_window_attention` and trained with the model's own settings; it now
+  refuses a config that sets either when the config loads (exit 1, `--dry-run` included) instead of ignoring it (#103).
+- The `torch` floor is `>=2.7.0`, not `>=2.4.0`. transformers 5.10.1 imports `torch.float8_e8m0fnu` when
+  `transformers.modeling_utils` loads, and that dtype first exists in torch 2.7.0; on 2.6.0 the import raises
+  `AttributeError`. transformers lists torch only as an extra, so pip never raised the old floor. The Nightly
+  Compatibility job's minimum-versions leg caught it (it installs every floor with `--no-deps`); its torch pin, the
+  installation pages (English and Turkish) and the `forgelm doctor` samples in the guides, references and user manuals
+  now say 2.7.0. The Intel Mac note stands: there is no `torch>=2.7` wheel for x86_64 macOS.
+- The `forgelm` CLI no longer sends Hugging Face's anonymous usage ping. TRL's trainers call `send_telemetry` when they are
+  built, and `huggingface_hub` sends it unless `HF_HUB_DISABLE_TELEMETRY` is true or offline mode is on, which contradicted the
+  privacy page ("does not send usage data anywhere"). `main()` now sets `HF_HUB_DISABLE_TELEMETRY=1` before anything imports
+  `huggingface_hub`, and an operator's own value wins (`HF_HUB_DISABLE_TELEMETRY=0` opts back in). Using ForgeLM as a library
+  does not set it (#95).
+- `retention.enforce` is documented for what it is: reserved. No command reads it, so `warn_on_excess` and
+  `block_on_excess` never warned or blocked anything and nothing was deleted automatically; retention is only reported,
+  read-only, by `forgelm purge --check-policy` (always exit 0). The config description, the wizard prompt, the
+  configuration reference, the GDPR erasure guide and `config_template.yaml` now say so (English and Turkish), and
+  the CLI logs a warning when a config sets a non-default `enforce` instead of staying silent (#92, #98).
+- `distributed.fsdp_strategy: no_shard` and `hybrid_shard` are rejected when the config loads (exit 1). They were documented, passed `--dry-run`,
+  and then failed with exit 2 at trainer construction (`fsdp=hybrid_shard is only available with FSDP1`), because transformers 5.10+ runs
+  FSDP2 by default. `fsdp_auto_wrap: false` and `fsdp_backward_prefetch: backward_post` are still accepted but change nothing under FSDP2;
+  ForgeLM now logs a warning when either is set, and the field descriptions, reference pages, user manuals and `config_template.yaml`
+  say so. Moving to FSDP2 settings (`fsdp=True` plus an explicit `fsdp_config`) is not part of this change; the string form is
+  deprecated in transformers and slated for removal in v5.20 (#104).
+- `forgelm purge --row-id` without `--output-dir` now logs a warning that names the directory it resolved (the corpus's)
+  and the `final_model/` the memorisation check will look for. The documentation promised that warning but the code never
+  logged it, and a default run looks for a model next to the corpus, where a training run rarely writes one, so it finished
+  with a completed-erasure record and no memorisation event. The audit-event catalogue, the purge reference, the GDPR
+  erasure guide, the user manual and the risk-treatment plan now state the real condition: a `final_model/` directly under
+  `--output-dir`, not "any run that consumed the corpus" (English and Turkish). Reading `training.output_dir` from
+  `--config` is still open (#102).
+- Correct the GGUF pages (English and Turkish): the export example shows the real output, K-quants are described as
+  the two-step operation they are, the invented "manifest" and `verify-gguf` output (vocabulary and tokenizer checks that
+  do not exist) are replaced by the real ones, a clean `verify-gguf` exit is said to prove only what ran, and the sidecar
+  is described as corruption detection, not tamper evidence (#83, #84, #85).
+- Stop saying that `pip install 'forgelm[export]'` brings the GGUF converter. `forgelm export` runs llama.cpp's `convert_hf_to_gguf.py`;
+  no `llama-cpp-python` wheel puts it where ForgeLM searches (0.2.90 installs it under `bin/`, 0.3.x does not ship it), so a plain
+  install ends with `convert_hf_to_gguf.py not found inside the llama-cpp-python installation` (exit 2) unless `FORGELM_GGUF_CONVERTER`
+  points at the script in a llama.cpp checkout. The installation page, the CLI reference, the usage and quickstart guides, the
+  post-training notebook, the `export` extra's comment in `pyproject.toml`, the module docstring and the error message (which advised
+  `pip install 'llama-cpp-python>=0.2.90'`) now say so. Searching the locations real wheels use, or bundling the script, is a code
+  change and stays open (#113).
+- Correct claims in the roadmap and strategy documents: `forgelm chat` does not screen for safety and reads no YAML
+  config (#91), the live risk rows no longer name a past "August 2026" deadline (#75), and
+  `docs/product_strategy.md` (English and Turkish) names the real `evaluation.auto_revert` field instead of a
+  non-existent `auto_revert_on_safety_failure`.
+- Correct the `medical-qa-tr` row of the YAML templates reference (English and Turkish): the template enables no safety
+  evaluation and no `risk_assessment`, so it no longer says it ships with both pre-wired (#97).
+- Fix the KTO bullet on the Alignment overview user-manual page (English and Turkish): it named the
+  fields `(prompt, response, good?)`, but the KTO loader reads `prompt`, `completion` and a boolean
+  `label` (#965).
+- Make the site's code comments readable: `--code-comment` was `#6a6f80`, 3.8:1 on the dark code
+  surface, below the 4.5:1 AA floor, and it colours code comments, terminal and code-block title bars,
+  language tags, copy buttons and the wizard's YAML pane header and comment lines. It is now `#8f96a8`,
+  6.43:1 on the code surface and at least 5.56:1 on the title-bar gradient, in both themes (the light
+  theme keeps a dark code surface). Measured on the rendered pages, every text colour on the code
+  surface reaches 4.5:1 (F-W1-SITE-06, #887).
 - Use the Regulation's own Article 72 terms for post-market monitoring in the German and Spanish
   wizard copy ("Beobachtung nach dem Inverkehrbringen", "vigilancia poscomercialización"), and restore
   the "metadata" the French and Spanish hints had dropped, so every locale again separates ForgeLM's
@@ -54,6 +252,10 @@ All notable changes to ForgeLM are documented here.
   article and gender slips in the touched German, French and Spanish strings, and use one German term
   for the external stack. The new validation and interval keys keep their English fallback; native
   review of the deferred locales remains open (refs #948).
+- Name the right columns for KTO in the EN/TR "Choosing a Trainer" user manual: its data-shape table
+  said `{prompt, response, label: bool}`, but the loader requires `{prompt, completion, label}` and
+  rejects the old shape with a `KeyError` (F-W1-DOCS-TRAIN-02, #885). The table's SFT row is a separate
+  defect, tracked in #403, and is unchanged here.
 - Say what Annex IV §9 asks for: a detailed description of the post-market monitoring system, its
   plan included. The wizard hint in every locale and the EN/TR configuration and compliance pages said
   it "includes the detailed plan"; German, French and Spanish now follow the Regulation's wording, and

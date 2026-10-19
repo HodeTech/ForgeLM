@@ -5,7 +5,7 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
 ## Your first pull request
 
 1. Pick an open, unassigned [`good first issue`][good-first-issue].
-   Comment to claim it and confirm the problem on `development`; see [Working on an issue](#working-on-an-issue).
+   Comment `/assign` to claim it and confirm the problem on `development`; see [Working on an issue](#working-on-an-issue).
 2. [Fork and clone](#1-fork--clone), then [create a branch from `development`](#3-create-a-branch).
    Use Python **3.10, 3.11, 3.12 or 3.13** — CI tests all four versions. Create a virtual environment
    with that interpreter (replace `python3.13` below if you selected another supported version),
@@ -20,6 +20,8 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
 3. Make the change and, for a code fix, add a regression test that reproduces the issue;
    follow the [testing standard](docs/standards/testing.md).
    Documentation changes update the English page and its Turkish mirror together.
+   If you do not write Turkish, open the pull request with the English change and say
+   so in the description — a maintainer will complete the mirror for you.
 4. Run fast checks before pushing (replace the example test module with the one you touched):
 
    ```bash
@@ -66,11 +68,11 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
 Work is tracked in two places that play different roles:
 
 - **Issues are where the work happens.** Each issue is one unit of work: it describes the problem, links the code, and lists acceptance criteria. Discussion, claiming and pull-request links all happen on the issue.
-- **The [ForgeLM Project Plan](https://github.com/orgs/HodeTech/projects/5) is where the work is planned.** It shows every issue with its priority, release target and iteration, in several views: *Backlog* (table), *Board* (by status), *Current iteration* and *Roadmap* (timeline), plus filtered views such as *Small tasks*, *Epics*, *Docs & TR mirror* and *Roadmap — Phase 16 & deferred*. Use it to choose what to work on; you never need to edit it — maintainers keep it current, and a card moves automatically when its issue is closed.
+- **The [ForgeLM Project Plan](https://github.com/orgs/HodeTech/projects/5) is where the work is planned.** It shows every issue with its priority, release target and iteration, in several views: *Backlog* (table), *Board* (by status), *Current iteration* and *Roadmap* (timeline), plus filtered views such as *Front door*, *Small tasks*, *Epics*, *Docs & TR mirror* and *Roadmap — Phase 16 & deferred*. Use it to choose what to work on; you never need to edit it — maintainers keep it current, and a card moves automatically when its issue is closed.
 
 ### Planned work lives here too
 
-Every piece of planned or deferred work has an issue and a project card, not only the defects: the remaining steps of [Phase 16](docs/roadmap/phase-16-trust-surface-hardening.md) are sub-issues of [#903](https://github.com/HodeTech/ForgeLM/issues/903), and the deferred items recorded in [risks-and-decisions.md](docs/roadmap/risks-and-decisions.md) are sub-issues of [#929](https://github.com/HodeTech/ForgeLM/issues/929). Each Phase 16 step, and each deferred row that has an issue, links that issue directly from the roadmap entry. New issues land in the project's *Intake — unplanned* view until a maintainer plans them. If you notice work that your pull request is not going to do, open an issue for it instead of leaving a `TODO` or a roadmap line.
+Every piece of planned or deferred work has an issue and a project card, not only the defects: the remaining steps of [Phase 16](docs/roadmap/phase-16-trust-surface-hardening.md) are sub-issues of [#903](https://github.com/HodeTech/ForgeLM/issues/903), and the deferred items recorded in [risks-and-decisions.md](docs/roadmap/risks-and-decisions.md) are sub-issues of [#929](https://github.com/HodeTech/ForgeLM/issues/929). Each Phase 16 step, and each deferred row that has an issue, links that issue directly from the roadmap entry. New issues land in the project's *Intake — unplanned* view until a maintainer plans them. If you notice work that your pull request is not going to do, open an issue for it instead of leaving a `TODO` or a roadmap line. Every item is an issue; which issues appear on the front door is decided by labels and views, never by closing them.
 
 ### How the backlog is organised
 
@@ -97,13 +99,18 @@ In the project, the **Wave**, **Severity**, **Theme**, **Kind**, **Area**, **Siz
 
 Useful starting points:
 
+- The project's [*Front door* view](https://github.com/orgs/HodeTech/projects/5/views/16) — open, unassigned `good first issue`s with their size and area, the place to start on a first contribution
 - [Open, unassigned wave 0–1 issues](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+no%3Aassignee+label%3A%22wave%3A+0%22%2C%22wave%3A+1%22) — the highest-priority work
 - [Documentation issues](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+label%3Adocumentation+no%3Aassignee) — often a good first contribution
 - The project's *Backlog* view, filtered by an **Area** you know or by **Size** `XS`/`S`
 
 ### Working on an issue
 
-1. **Claim it first.** Comment on the issue that you would like to work on it, so a maintainer can assign it to you and nobody duplicates the work. Skip issues labelled `needs-triage`, and check the recorded condition of an issue labelled `deferred` before you start.
+1. **Claim it first.** Start a comment on the issue with `/assign` and, once GitHub confirms it, the issue is assigned to you, so nobody duplicates the work. If the automation cannot complete, its reply says so and a maintainer assigns the issue by hand. This works on an open issue labelled `good first issue` that nobody holds yet. A contributor can hold at most 2 open issues at a time; the maintainers listed in [MAINTAINERS.md](MAINTAINERS.md) are exempt. Comment `/unassign` to give one back. A few rules keep it predictable:
+   - It is first come, first served. A later `/assign` never changes an assignment that exists, whoever wrote it and however it was made. Only a maintainer can reassign an issue, in the issue's sidebar, and a maintainer's decision always stands.
+   - `/assign` and `/unassign` act on the person who writes them, and the command must be the first thing in the comment; they cannot name someone else. If two people claim an issue in the same second, the maintainer's claim wins, and between two contributors one claim is released again and its author is told so.
+   - Anything the automation does not cover stays a maintainer's call: an issue labelled `help wanted` without `good first issue` (grouped sweeps are taken one finding ID at a time, see below), an issue labelled `needs-triage`, `deferred`, `security`, `epic` or `phase: 16`, and a request for more than 2 open issues. Comment on the issue, say what you would take on and mention a maintainer ([MAINTAINERS.md](MAINTAINERS.md)). A plain comment such as "I would like to work on this" is read by a maintainer too, who assigns it by hand.
+   - Skip issues labelled `needs-triage`, and check the recorded condition of an issue labelled `deferred` before you start.
 2. **Re-check against `development`.** Issues from the review link code at the commit they were found on; the links stay valid, but line numbers may have moved. Confirm the problem still exists on `development` before fixing it.
 3. **Follow the acceptance criteria** in the issue. In particular, a code fix carries a regression test that reproduces the described failure, and a documentation fix updates the English page and its Turkish mirror (`-tr.md`, or the `tr/` tree for user manuals) in the same pull request.
 4. **Reference the issue in your pull request.** Use `Fixes #123` when the PR resolves the whole issue, and `Refs #123` when it resolves only part of it.
@@ -247,7 +254,7 @@ ForgeLM is a single-package layout: a mix of single-file modules and five
 focused sub-packages (`forgelm/cli/` post-Phase-15 split,
 `forgelm/data_audit/` post-Phase-14 split, `forgelm/wizard/` from Phase 22,
 `forgelm/safety/` from the post-v0.9.1 split and `forgelm/verify/` from
-Phase 16 S1) under `forgelm/`, 130 test files
+Phase 16 S1) under `forgelm/`, 131 test files
 under `tests/` (collected-test count grows over time — run
 `pytest --collect-only -q` for current), plus `configs/`, `docs/`, `tools/`
 (CI guards), and `notebooks/`. For the authoritative module-by-module map

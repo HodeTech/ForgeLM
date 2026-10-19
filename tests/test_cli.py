@@ -281,6 +281,61 @@ class TestNonTrainingModeMutualExclusion:
         assert exc_info.value.code == EXIT_SUCCESS
 
 
+class TestSharedSubcommandFlags:
+    @pytest.mark.parametrize(
+        "command,extra,flag,value,expected",
+        [
+            ("purge", [], "--dry-run", [], True),
+            ("purge", [], "--config", ["policy.yaml"], "policy.yaml"),
+            ("quickstart", [], "--dry-run", [], True),
+            ("doctor", [], "--offline", [], True),
+            ("deploy", ["model", "--target", "ollama"], "--output", ["serving"], "serving"),
+            ("quickstart", [], "--output", ["config.yaml"], "config.yaml"),
+            ("cache-models", ["--model", "org/model"], "--output", ["cache"], "cache"),
+            ("cache-tasks", ["--tasks", "hellaswag"], "--output", ["cache"], "cache"),
+        ],
+    )
+    @pytest.mark.parametrize("before", [True, False], ids=["before-subcommand", "after-subcommand"])
+    def test_explicit_flag_is_preserved(self, command, extra, flag, value, expected, before):
+        from forgelm.cli._parser import parse_args
+
+        option = [flag, *value]
+        args = [*option, command, *extra] if before else [command, *extra, *option]
+        with patch("sys.argv", ["forgelm", *args]):
+            result = parse_args()
+
+        assert getattr(result, flag.removeprefix("--").replace("-", "_")) == expected
+
+    @pytest.mark.parametrize(
+        "args,attribute,expected",
+        [
+            (["purge"], "dry_run", False),
+            (["purge"], "config", None),
+            (["quickstart"], "dry_run", False),
+            (["doctor"], "offline", False),
+            (["deploy", "model", "--target", "ollama"], "output", None),
+            (["quickstart"], "output", None),
+            (["cache-models", "--model", "org/model"], "output", None),
+            (["cache-tasks", "--tasks", "hellaswag"], "output", None),
+        ],
+    )
+    def test_omitted_flags_keep_their_defaults(self, args, attribute, expected):
+        from forgelm.cli._parser import parse_args
+
+        with patch("sys.argv", ["forgelm", *args]):
+            result = parse_args()
+
+        assert getattr(result, attribute) == expected
+
+    def test_subcommand_value_overrides_root_value(self):
+        from forgelm.cli._parser import parse_args
+
+        with patch("sys.argv", ["forgelm", "--output", "root.yaml", "quickstart", "--output", "local.yaml"]):
+            result = parse_args()
+
+        assert result.output == "local.yaml"
+
+
 class TestParserPublicApi:
     def test_parse_args_has_namespace_return_annotation(self):
         """Finding 8: ``parse_args`` is the one function in _parser imported and
@@ -319,3 +374,147 @@ class TestParserPublicApi:
         ]
         for name in registrars:
             assert callable(getattr(cli, name, None)), f"{name} is not re-exported from forgelm.cli"
+
+
+class TestHubTelemetryDefault:
+    """The CLI keeps TRL / huggingface_hub from sending the anonymous usage ping (#95)."""
+
+    @staticmethod
+    def _unset(monkeypatch):
+        """Make the variable absent *and* make monkeypatch restore that, so a later set does not leak."""
+        monkeypatch.setenv("HF_HUB_DISABLE_TELEMETRY", "placeholder")
+        monkeypatch.delenv("HF_HUB_DISABLE_TELEMETRY")
+
+    @staticmethod
+    def _clean_env():
+        env = {k: v for k, v in os.environ.items() if k != "HF_HUB_DISABLE_TELEMETRY"}
+        env["PYTHONPATH"] = os.getcwd() + os.pathsep + env.get("PYTHONPATH", "")
+        return env
+
+    def test_it_is_set_when_the_operator_did_not_choose(self, monkeypatch):
+        from forgelm.cli._config_load import _disable_hub_telemetry
+
+        self._unset(monkeypatch)
+        _disable_hub_telemetry()
+        assert os.environ["HF_HUB_DISABLE_TELEMETRY"] == "1"
+
+    @pytest.mark.parametrize("chosen", ["0", "1", "false"])
+    def test_an_operators_own_value_wins(self, monkeypatch, chosen):
+        from forgelm.cli._config_load import _disable_hub_telemetry
+
+        monkeypatch.setenv("HF_HUB_DISABLE_TELEMETRY", chosen)
+        _disable_hub_telemetry()
+        assert os.environ["HF_HUB_DISABLE_TELEMETRY"] == chosen
+
+    def test_main_sets_it_before_anything_else_runs(self, monkeypatch):
+        from forgelm.cli import _dispatch
+
+        self._unset(monkeypatch)
+        seen = {}
+
+        def fake_inner():
+            seen["at_dispatch"] = os.environ.get("HF_HUB_DISABLE_TELEMETRY")
+            return 0
+
+        with patch.object(_dispatch, "_main_inner", fake_inner):
+            _dispatch.main()
+        assert seen["at_dispatch"] == "1"
+
+    def test_importing_the_cli_does_not_import_huggingface_hub(self):
+        # huggingface_hub reads HF_HUB_DISABLE_TELEMETRY once, at import. main() sets the variable, so nothing the CLI
+        # module imports at load time may import it first (a top-level `import transformers` in forgelm.cli would).
+        import subprocess
+        import sys
+
+        code = "import sys, forgelm.cli; print(any(m == 'huggingface_hub' or m.startswith('huggingface_hub.') for m in sys.modules))"
+        out = subprocess.run(
+            [sys.executable, "-c", code], env=self._clean_env(), capture_output=True, text=True, timeout=120
+        )
+        assert out.returncode == 0, out.stderr
+        assert out.stdout.strip() == "False"
+
+    def test_a_fresh_process_that_calls_it_reads_the_variable_as_true(self):
+        pytest.importorskip("huggingface_hub")
+        import subprocess
+        import sys
+
+        code = (
+            "from forgelm.cli._config_load import _disable_hub_telemetry; _disable_hub_telemetry(); "
+            "import huggingface_hub.constants as c; print(c.HF_HUB_DISABLE_TELEMETRY)"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code], env=self._clean_env(), capture_output=True, text=True, timeout=120
+        )
+        assert out.returncode == 0, out.stderr
+        assert out.stdout.strip() == "True"
+
+
+class TestReservedRetentionEnforceWarning:
+    """`retention.enforce` is accepted but no command reads it; the CLI says so (#92)."""
+
+    @staticmethod
+    def _config(enforce):
+        from forgelm.config import ForgeConfig
+        from tests._helpers.factories import minimal_config
+
+        return ForgeConfig(**minimal_config(retention={"enforce": enforce}))
+
+    def test_the_default_is_silent(self, caplog):
+        import logging
+
+        from forgelm.cli._config_load import _warn_reserved_retention_enforce
+
+        with caplog.at_level(logging.WARNING):
+            _warn_reserved_retention_enforce(self._config("log_only"))
+        assert not [r for r in caplog.records if "retention.enforce" in r.getMessage()]
+
+    @pytest.mark.parametrize("mode", ["warn_on_excess", "block_on_excess"])
+    def test_a_gate_that_does_not_exist_is_called_out(self, caplog, mode):
+        import logging
+
+        from forgelm.cli._config_load import _warn_reserved_retention_enforce
+
+        with caplog.at_level(logging.WARNING):
+            _warn_reserved_retention_enforce(self._config(mode))
+        warned = [r.getMessage() for r in caplog.records if "retention.enforce" in r.getMessage()]
+        assert len(warned) == 1 and mode in warned[0] and "no command acts on it" in warned[0]
+
+    def test_loading_a_config_file_triggers_it(self, tmp_path, caplog, minimal_config):
+        import logging
+
+        from forgelm.cli._config_load import _load_config_or_exit
+
+        path = tmp_path / "c.yaml"
+        path.write_text(yaml.dump(minimal_config(retention={"enforce": "block_on_excess"})))
+        with caplog.at_level(logging.WARNING):
+            _load_config_or_exit(str(path), json_output=False)
+        assert any("retention.enforce" in r.getMessage() for r in caplog.records)
+
+
+class TestUnslothUnsupportedOverridesRejectedAtLoad:
+    """`rope_scaling` / `sliding_window_attention` need a transformers config the unsloth backend never builds (#103)."""
+
+    @pytest.mark.parametrize(
+        "training",
+        [{"rope_scaling": {"type": "linear", "factor": 2.0}}, {"sliding_window_attention": 4096}],
+    )
+    def test_config_load_exits_1_so_dry_run_fails_before_training(self, tmp_path, minimal_config, caplog, training):
+        import logging
+
+        from forgelm.cli._config_load import _load_config_or_exit
+
+        path = tmp_path / "c.yaml"
+        path.write_text(
+            yaml.dump(minimal_config(model={"name_or_path": "org/model", "backend": "unsloth"}, training=training))
+        )
+        with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as exc:
+            _load_config_or_exit(str(path), json_output=False)
+        assert exc.value.code == 1
+        assert "not supported by the unsloth backend" in caplog.text
+
+    def test_the_transformers_backend_still_loads(self, tmp_path, minimal_config):
+        from forgelm.cli._config_load import _load_config_or_exit
+
+        path = tmp_path / "c.yaml"
+        path.write_text(yaml.dump(minimal_config(training={"rope_scaling": {"type": "linear", "factor": 2.0}})))
+        assert _load_config_or_exit(str(path), json_output=False).training.rope_scaling is not None

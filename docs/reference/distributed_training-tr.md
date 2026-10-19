@@ -49,7 +49,17 @@ torchrun --nproc_per_node=4 -m forgelm.cli --config my_config.yaml
 
 ## DeepSpeed Yapılandırması
 
-ForgeLM, üç yerleşik DeepSpeed ön ayarı sunar. `deepspeed_config` parametresine bu isimlerden birini veya kendi JSON dosyanızın yolunu verin.
+Depo, `configs/deepspeed/` altında üç DeepSpeed ön ayarı barındırır. `deepspeed_config` parametresine bunların adlarından birini veya kendi JSON dosyanızın yolunu verin.
+
+**Bir ön ayar adı yalnızca `configs/deepspeed/<ad>.json` kurulu paketin yanında ya da geçerli dizinde mevcutsa çalışır.**
+Kaynak checkout'u bu dosyaları sağlar; `pip install forgelm` wheel'i ve Docker imajı sağlamaz, orada bir ön ayar adı
+yapılandırma hatasıyla (exit 1) başarısız olur. Deponun `configs/deepspeed/` klasöründeki JSON dosyalarını kopyalayın
+(çalışma dizinindeki bir `configs/deepspeed/` dizinine ya da `deepspeed_config`'i yoluna yönelttiğiniz herhangi bir yere)
+veya kendinizinkini yazın.
+
+**Bilinen sorun ([#410](https://github.com/HodeTech/ForgeLM/issues/410)):** `deepspeed_config` ayarlanmadığında da
+kullanılan `zero2` ön ayarı `allgather_bucket_size` değerini `"auto"` yapar; transformers'ın DeepSpeed entegrasyonu bu
+değeri doldurmaz, bu yüzden onunla bir ZeRO-2 koşusu durur. Düzelene kadar kendi ZeRO-2 JSON'unuzu kullanın.
 
 ### Ön Ayarlar (Presets)
 
@@ -64,8 +74,8 @@ ForgeLM, üç yerleşik DeepSpeed ön ayarı sunar. `deepspeed_config` parametre
 ```yaml
 distributed:
   strategy: "deepspeed"
-  deepspeed_config: "zero2"       # Ön ayar adı
-  # deepspeed_config: "./my_ds_config.json"  # Veya özel dosya yolu
+  deepspeed_config: "./my_ds_config.json"  # Kendi JSON'unuzun yolu (her kurulumda çalışır)
+  # deepspeed_config: "zero2"       # Ön ayar adı: yalnızca kaynak checkout'u
 ```
 
 ### ZeRO Aşama Karşılaştırması
@@ -120,8 +130,8 @@ PyTorch Fully Sharded Data Parallel (FSDP), DeepSpeed'e alternatif olarak PyTorc
 |----------|----------|-----------------|
 | `full_shard` | Parametreleri, gradyanları ve optimizer durumlarını böl | En Yüksek |
 | `shard_grad_op` | Yalnızca gradyanları ve optimizer durumlarını böl | Orta |
-| `hybrid_shard` | Düğüm içi tam bölme, düğümler arası çoğaltma | Çoklu Düğüm |
-| `no_shard` | Standart DDP (bölme yok) | Yok |
+
+`hybrid_shard` ve `no_shard` **kabul edilmez**: `fsdp_strategy` `full_shard` ya da `shard_grad_op` olmalıdır. ForgeLM'in gerektirdiği transformers 5.10 ve sonrası varsayılan olarak FSDP2 çalıştırır ve FSDP2 bu ikisini de desteklemez: eskiden `--dry-run`'ı geçip model yüklendikten sonra exit 2 ile (`fsdp=hybrid_shard is only available with FSDP1`) patlıyorlardı, şimdi doğrulamada exit 1 ile reddediliyorlar.
 
 ### Kullanım
 
@@ -129,11 +139,13 @@ PyTorch Fully Sharded Data Parallel (FSDP), DeepSpeed'e alternatif olarak PyTorc
 distributed:
   strategy: "fsdp"
   fsdp_strategy: "full_shard"
-  fsdp_auto_wrap: true                    # Auto-wrap transformer layers
+  fsdp_auto_wrap: true                    # transformers 5.10+'ta yok sayılır (FSDP2 transformer katmanlarını hep sarar)
   fsdp_offload: false                     # Offload parameters AND gradients (between forward/backward) to CPU
-  fsdp_backward_prefetch: "backward_pre"  # Prefetch strategy
+  fsdp_backward_prefetch: "backward_pre"  # transformers 5.10+'ta yok sayılır (FSDP2 prefetch politikası almaz)
   fsdp_state_dict_type: "FULL_STATE_DICT" # State dict handling
 ```
+
+`fsdp_auto_wrap: false` ve `fsdp_backward_prefetch: backward_post` hâlâ kabul edilir, ancak FSDP2'de hiçbir şeyi değiştirmezler; bu yüzden ikisinden biri varsayılanından farklı ayarlandığında ForgeLM bir uyarı loglar.
 
 ### FSDP'yi DeepSpeed yerine ne zaman seçmeli
 

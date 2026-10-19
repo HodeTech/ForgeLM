@@ -106,8 +106,8 @@ forgelm doctor - environment check
 
   [+ pass] forgelm.install          ForgeLM 0.9.0 running from /opt/airgap-venv/lib/python3.11/site-packages/forgelm (inside site-packages).
   [+ pass] python.version           Python 3.11.4 (CPython).
-  [+ pass] torch.cuda               torch 2.4.0 with CUDA 12.4.
-  [+ pass] numpy.torch_abi          torch 2.4.0 + numpy 1.26.4 are ABI-compatible.
+  [+ pass] torch.cuda               torch 2.7.0 with CUDA 12.6.
+  [+ pass] numpy.torch_abi          torch 2.7.0 + numpy 1.26.4 are ABI-compatible.
   [+ pass] gpu.inventory            1 GPU(s) — GPU0: NVIDIA A100 (80.0 GiB).
   [+ pass] extras.qlora             Discoverable, not import-tested (module bitsandbytes, purpose: 4-bit / 8-bit QLoRA training).
   [+ pass] extras.eval              Discoverable, not import-tested (module lm_eval, purpose: lm-evaluation-harness benchmark scoring).

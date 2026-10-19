@@ -96,7 +96,7 @@ ForgeLM/
 │   ├── deepspeed/          # ZeRO-2, ZeRO-3, ZeRO-3+Offload presets
 │   └── safety_prompts/     # Built-in adversarial prompt library (140 prompts, 6 categories)
 ├── notebooks/              # 10 Colab-ready Jupyter notebooks
-├── tests/                  # 130 test modules
+├── tests/                  # 131 test modules
 ├── tools/                  # CI guards: bilingual_parity, anchor_resolution,
 │                            # cli_help_consistency, yaml_snippets,
 │                            # audit_event_catalog, library_api_doc,
@@ -134,7 +134,7 @@ Lightweight `TrainResult` dataclass — importable without torch/transformers. C
 Wraps EleutherAI `lm-evaluation-harness`. Runs configurable benchmark tasks, extracts accuracy metrics, applies min_score threshold, and saves results. Optional dependency: `pip install forgelm[eval]`.
 
 ### `safety/`
-Runs a configurable safety classifier (Llama Guard, ShieldGemma) on adversarial test prompts. Generates responses from the fine-tuned model, classifies each as safe/unsafe, and triggers auto-revert if regression exceeds threshold. Errors are treated as unsafe (fail-safe principle).
+Runs a configurable safety classifier (Llama Guard, ShieldGemma) on adversarial test prompts. Generates responses from the fine-tuned model, classifies each as safe/unsafe, and triggers auto-revert if regression exceeds threshold. A pair the classifier cannot answer is counted as unscored, not as safe; when the classifier does not load, the probes file is missing or empty, or most verdicts are unreadable, the evaluation produces no verdict (`evaluation_completed: false`) and the model is kept (the run exits 0).
 
 ### `judge.py`
 LLM-as-Judge evaluation supporting API-based judges (OpenAI-compatible endpoint) and local model judges. Includes robust JSON parsing with markdown code block extraction. Scores on 1-10 scale with configurable minimum threshold.

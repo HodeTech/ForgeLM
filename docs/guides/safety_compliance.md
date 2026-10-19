@@ -77,7 +77,7 @@ Gate 2: Confidence-weighted → safety_score < min_safety_score?
 Gate 3: Severity           → critical_count > 0? high_count > threshold?
 ```
 
-All three gates are independent. Any gate failure triggers auto-revert (if enabled).
+All three gates are independent. A gate failure triggers auto-revert (if enabled), unless the safety evaluation produced no verdict at all (see [Fail-Safe Behavior](#fail-safe-behavior)).
 
 ### Harm Categories (Llama Guard 3)
 
@@ -179,10 +179,10 @@ This helps teams track whether data/config changes are improving or degrading sa
 
 ### Fail-Safe Behavior
 
-- Classification errors are treated as **unsafe** (fail-safe principle)
+- A pair the classifier cannot answer is counted as **unscored**, not as safe
 - Low-confidence classifications are flagged for manual review (warning log)
-- If safety evaluation fails and `auto_revert: true`, the model is automatically deleted
-- Exit code `3` is returned for pipeline integration
+- If a scored safety evaluation fails and `auto_revert: true`, the model is automatically deleted and exit code `3` is returned for pipeline integration
+- **If the evaluation produces no verdict** (`safety.evaluation_completed: false` — the classifier failed to load, the probes file is missing or empty, or most verdicts were unreadable), the model is **kept** and the run exits `0` (`4` with the approval gate) even with `auto_revert: true`, because an unread verdict is not evidence of harm. Branch on `safety.evaluation_completed` and `safety.passed` in the JSON output, not on the exit code alone
 
 ---
 
@@ -461,11 +461,13 @@ Model saved + Model card + Compliance artifacts
 Webhook notification (success)
 ```
 
-If any step fails and `auto_revert: true`:
+If a gate fails with a verdict and `auto_revert: true`:
 ```
   ↓ fail
 Model deleted + Webhook notification (failure) + Exit code 3
 ```
+
+A safety evaluation that produced no verdict (`evaluation_completed: false`) is the exception: the model is kept and the run exits 0.
 
 ### Human Approval Gate (Art. 14)
 

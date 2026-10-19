@@ -85,7 +85,7 @@ ForgeLM/
 │                            # export, inference, results, utils, __main__,
 │                            # _pypdf_normalise, _script_sanity,
 │                            # _strip_pattern
-├── tests/                   # 130 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
+├── tests/                   # 131 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
 ├── tools/                   # CI guards: check_anchor_resolution,
 │                            # check_bilingual_parity, check_cli_help_consistency,
 │                            # check_field_descriptions, check_no_analysis_refs,
@@ -386,6 +386,7 @@ Work on ForgeLM is planned and tracked on GitHub, not in local notes:
   acceptance criteria) or tell the user so it can be filed. The exception is a
   security vulnerability — never a public issue; it goes to a private advisory
   as [SECURITY.md](SECURITY.md) describes.
+- **Closing is not triage.** Every item is an issue; which issues appear on the front door is decided by labels and views, never by closing them.
 - **Name what you resolved.** For a grouped issue, list in the pull request the
   finding IDs your change resolves, so each can be ticked.
 
