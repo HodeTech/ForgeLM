@@ -80,15 +80,22 @@ Bir kişinin verisi eğitim setinizdeydi:
 2. Ham kaynak dokümanlar hâlâ içerebilir — ham deponuzdan düşürün ve gerekirse yeniden ingest edin.
 3. Model bazı detayları ezberlemiş olabilir — aşağıdaki "model-seviyesi silme"ye bakın.
 
-Satırları adreslenebilir kılmak için corpus oluşturulurken her JSONL satırına bir kez `id` ekleyin ve dosya sonradan filtrelenir ya da yeniden sıralanırsa bu id'yi koruyun:
+Satırları adreslenebilir kılmak için corpus oluşturulurken her JSONL satırına bir kez benzersiz bir `id` verin ve dosya sonradan filtrelenir ya da yeniden sıralanırsa bu id'yi koruyun. `id`'si eksik, null ya da boş olan satırlar yeni bir id alır; `id`'sini başka bir satırın da kullandığı satırda betik durur, çünkü `forgelm purge --row-id` iki satırı tek eşleşme olarak görür (varsayılanda reddeder, `--row-matches all` ile her eşleşmeyi siler) ve id'yi hangi satırın koruyacağına sizin karar vermeniz gerekir:
 
 ```python
 import json, uuid
 
+seen = set()
 with open("data/train.jsonl", encoding="utf-8") as src, open("data/train.with-ids.jsonl", "w", encoding="utf-8") as dst:
-    for line in src:
+    for line_no, line in enumerate(src, start=1):
+        if not line.strip():
+            continue
         row = json.loads(line)
-        row.setdefault("id", str(uuid.uuid4()))
+        if row.get("id") in (None, ""):
+            row["id"] = str(uuid.uuid4())
+        if str(row["id"]) in seen:
+            raise SystemExit(f"line {line_no}: id {row['id']!r} is already used by another row")
+        seen.add(str(row["id"]))
         dst.write(json.dumps(row, ensure_ascii=False) + "\n")
 ```
 

@@ -299,19 +299,45 @@ class TestWithSlidingWindow:
         assert out.sliding_window == 16 and out.use_sliding_window is True
         assert out.layer_types == ["full_attention", "full_attention", "sliding_attention", "sliding_attention"]
 
-    def test_qwen2_rebuilt_config_builds_a_model_that_runs(self):
+    def test_qwen2_window_changes_what_the_model_computes(self):
+        # Same weights, same input: only attention over the last positions may differ, and only if the window is live.
         import torch
         from transformers import AutoModelForCausalLM
 
-        out = model_mod._with_sliding_window(self._qwen2(), 8)
-        logits = AutoModelForCausalLM.from_config(out)(input_ids=torch.arange(1, 13).unsqueeze(0)).logits
-        assert tuple(logits.shape) == (1, 12, 64)
+        torch.manual_seed(0)
+        full = AutoModelForCausalLM.from_config(self._qwen2()).eval()
+        windowed_config = model_mod._with_sliding_window(self._qwen2(), 4)
+        assert windowed_config.sliding_window == 4
+        assert windowed_config.layer_types == [
+            "full_attention",
+            "full_attention",
+            "sliding_attention",
+            "sliding_attention",
+        ]
+        windowed = AutoModelForCausalLM.from_config(windowed_config).eval()
+        windowed.load_state_dict(full.state_dict())
+        input_ids = torch.arange(1, 13).unsqueeze(0)
+        with torch.no_grad():
+            full_logits, windowed_logits = full(input_ids=input_ids).logits, windowed(input_ids=input_ids).logits
+        assert tuple(windowed_logits.shape) == (1, 12, 64)
+        assert torch.allclose(full_logits[:, :4], windowed_logits[:, :4], atol=1e-5)  # inside the window: identical
+        assert not torch.allclose(full_logits[:, 11], windowed_logits[:, 11], atol=1e-5)  # beyond it: attention differs
 
     def test_rebuilding_for_the_window_keeps_the_rope_scaling_applied_before_it(self):
         config = self._qwen2()
         config.rope_parameters = {"rope_theta": 10000.0, "rope_type": "linear", "factor": 4.0}
         out = model_mod._with_sliding_window(config, 16)
         assert out.rope_parameters == {"rope_theta": 10000.0, "rope_type": "linear", "factor": 4.0}
+        assert out.sliding_window == 16 and out.use_sliding_window is True
+        assert out.layer_types == ["full_attention", "full_attention", "sliding_attention", "sliding_attention"]
+
+    def test_a_nested_text_config_the_outer_one_does_not_declare_is_edited_in_place_with_derived_layer_types(self):
+        text = self._qwen2()
+        outer = SimpleNamespace(get_text_config=lambda: text)  # no ``sub_configs`` to swap the rebuilt config into
+        out = model_mod._with_sliding_window(outer, 16)
+        assert out is outer
+        assert text.sliding_window == 16 and text.use_sliding_window is True
+        assert text.layer_types == ["full_attention", "full_attention", "sliding_attention", "sliding_attention"]
 
     def test_a_window_that_leaves_every_layer_on_full_attention_warns(self, caplog):
         config = self._qwen2()
@@ -706,6 +732,27 @@ class TestUnslothRevisionSupport:
             from_pretrained = object()
 
         assert model_mod._unsloth_accepts_revision(_Loader) is False
+
+    @pytest.mark.parametrize(
+        "training, named",
+        [
+            ({"rope_scaling": {"type": "linear", "factor": 2.0}}, "training.rope_scaling is"),
+            ({"sliding_window_attention": 4096}, "training.sliding_window_attention is"),
+            (
+                {"rope_scaling": {"type": "linear", "factor": 2.0}, "sliding_window_attention": 4096},
+                "training.rope_scaling and training.sliding_window_attention are",
+            ),
+        ],
+    )
+    def test_config_overrides_the_backend_cannot_apply_are_refused_before_any_load(self, training, named):
+        from forgelm.config import ConfigError
+
+        cfg = _cfg(model={"name_or_path": "org/model", "backend": "unsloth"}, training=training)
+        loader = MagicMock()
+        with patch.dict("sys.modules", {"unsloth": MagicMock(FastLanguageModel=loader)}):
+            with pytest.raises(ConfigError, match=f"{named} not supported by the unsloth backend"):
+                model_mod._load_unsloth(cfg)
+        loader.from_pretrained.assert_not_called()
 
     def test_pin_on_unsupported_unsloth_fails_closed(self, monkeypatch):
         _stub_resolver(monkeypatch, revision_resolved=SHA_A, resolution_source="pinned_resolved")

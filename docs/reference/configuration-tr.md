@@ -138,9 +138,9 @@ training:
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
-| `rope_scaling` | `Optional[Dict[str, Any]]` | `null` | RoPE ölçekleme yöntemi sözlüğü (`{"type": "linear", "factor": 2.0}` vs.). Desteklenen tipler: `"linear"`, `"dynamic"`, `"yarn"`, `"longrope"`. |
+| `rope_scaling` | `Optional[Dict[str, Any]]` | `null` | RoPE ölçekleme yöntemi sözlüğü (`{"type": "linear", "factor": 2.0}` vs.). Desteklenen tipler: `"linear"`, `"dynamic"`, `"yarn"`, `"longrope"`. `model.backend: unsloth` ile desteklenmez (reddedilir, exit 1). |
 | `neftune_noise_alpha` | float | `null` | NEFTune gürültü enjeksiyonu alpha değeri (ör. `5.0`) |
-| `sliding_window_attention` | int | `null` | Kayan pencere dikkat boyutu (token) |
+| `sliding_window_attention` | int | `null` | Kayan pencere dikkat boyutu (token). `model.backend: unsloth` ile desteklenmez (reddedilir, exit 1). |
 | `sample_packing` | bool | `false` | **Kullanımdan kaldırıldı** — `packing` için takma ad (TRL tek bir packing düğmesi sunar). `true` ayarlamak `DeprecationWarning` ile `packing: true`'ya yönlendirir; v1.0.0'da kaldırılacak. Bunun yerine `packing` kullanın. |
 
 > Kaldırma, daha erken değil v1.0.0'da gerçekleşecek; çünkü bir YAML alanını

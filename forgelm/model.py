@@ -287,6 +287,21 @@ def _load_unsloth(config: Any) -> Tuple[Any, Any]:
     and got a default-branch checkout would carry a manifest asserting a
     reproducibility property the run does not have.
     """
+    ignored = [
+        name
+        for name in ("rope_scaling", "sliding_window_attention")
+        if getattr(getattr(config, "training", None), name, None)
+    ]
+    if ignored:
+        # Both are edits to the transformers config (see _build_model_kwargs), which this backend never builds;
+        # honouring neither would train with the model's own RoPE / attention window under a YAML that asked for more.
+        from .config import ConfigError
+
+        raise ConfigError(
+            f"training.{' and training.'.join(ignored)} {'is' if len(ignored) == 1 else 'are'} not supported by "
+            "the unsloth backend. Set model.backend: transformers to apply them, or remove the setting."
+        )
+
     try:
         from unsloth import FastLanguageModel
     except ImportError as e:
@@ -516,8 +531,8 @@ def _with_sliding_window(model_config: Any, window: int) -> Any:
         if getattr(model_config, name, None) is text:
             setattr(model_config, name, rebuilt)
             return model_config
-    for key, value in updates.items():  # a nested config the outer one does not declare: edit it in place
-        setattr(text, key, value)
+    for key in updates:  # a nested config the outer one does not declare: edit it in place, with the derived list
+        setattr(text, key, getattr(rebuilt, key))
     return model_config
 
 
