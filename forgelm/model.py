@@ -518,8 +518,9 @@ def _with_sliding_window(model_config: Any, window: int) -> Any:
     Qwen2 also derive a per-layer ``layer_types`` list from ``use_sliding_window``, ``sliding_window`` and
     ``max_window_layers`` when the config is built, so setting the attribute afterwards leaves every layer on full
     attention.  For those the text config is rebuilt from its own dictionary with the flag on and ``layer_types``
-    cleared, which makes the config derive the list again.  Models without ``use_sliding_window`` (Mistral, Gemma 3)
-    keep their layer pattern and only get the new window size.
+    cleared, which makes the config derive the list again; a ``layer_types`` that differs from what the config would
+    derive itself is a pattern the checkpoint supplied, and is kept.  Models without ``use_sliding_window`` (Mistral,
+    Gemma 3) keep their layer pattern and only get the new window size.
     """
     text = _text_config(model_config)
     if not hasattr(text, "use_sliding_window"):
@@ -527,9 +528,12 @@ def _with_sliding_window(model_config: Any, window: int) -> Any:
         return model_config
 
     updates: Dict[str, Any] = {"sliding_window": window, "use_sliding_window": True}
-    if hasattr(text, "layer_types"):
-        updates["layer_types"] = None  # derived again from the three fields above
-    rebuilt = type(text).from_dict({**text.to_dict(), **updates})
+    original = text.to_dict()
+    if getattr(text, "layer_types", None) is not None:
+        derived = type(text).from_dict({**original, "layer_types": None}).layer_types
+        if list(text.layer_types) == list(derived):
+            updates["layer_types"] = None  # the config computed this list itself: compute it again for the new window
+    rebuilt = type(text).from_dict({**original, **updates})
     if "sliding_attention" not in (getattr(rebuilt, "layer_types", None) or ["sliding_attention"]):
         logger.warning(
             "training.sliding_window_attention=%d has no effect on this model: no layer is a sliding-attention layer "

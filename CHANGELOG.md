@@ -186,8 +186,8 @@ All notable changes to ForgeLM are documented here.
   is set, and a multimodal model (Qwen2-VL) keeps `sliding_window` on its text config, not the outer one. It now travels in
   the same config object as `rope_scaling`. For the Qwen2 family the config also derives a per-layer `layer_types`
   list from `use_sliding_window`, `sliding_window` and `max_window_layers`, so setting the number alone left every layer
-  on full attention; the text config is rebuilt with the flag on so the list is derived again, and a warning is logged
-  when the result still has no sliding-attention layer. The unsloth backend builds no transformers config, so it
+  on full attention; the text config is rebuilt with the flag on so the list is derived again (a pattern the checkpoint
+  supplied itself is kept), and a warning is logged when the result still has no sliding-attention layer. The unsloth backend builds no transformers config, so it
   applied neither `rope_scaling` nor `sliding_window_attention` and trained with the model's own settings; it now
   refuses a config that sets either when the config loads (exit 1, `--dry-run` included) instead of ignoring it (#103).
 - The `torch` floor is `>=2.7.0`, not `>=2.4.0`. transformers 5.10.1 imports `torch.float8_e8m0fnu` when

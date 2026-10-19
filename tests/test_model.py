@@ -339,6 +339,25 @@ class TestWithSlidingWindow:
         assert text.sliding_window == 16 and text.use_sliding_window is True
         assert text.layer_types == ["full_attention", "full_attention", "sliding_attention", "sliding_attention"]
 
+    def test_a_layer_pattern_the_checkpoint_supplied_is_kept(self):
+        from transformers import Qwen2Config
+
+        custom = ["full_attention", "sliding_attention", "full_attention", "sliding_attention"]
+        config = Qwen2Config(
+            vocab_size=64,
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=4,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            max_window_layers=2,
+            layer_types=custom,
+        )
+        assert list(config.layer_types) == custom  # differs from the derived ["full", "full", "sliding", "sliding"]
+        out = model_mod._with_sliding_window(config, 16)
+        assert out.sliding_window == 16 and out.use_sliding_window is True
+        assert list(out.layer_types) == custom
+
     def test_a_window_that_leaves_every_layer_on_full_attention_warns(self, caplog):
         config = self._qwen2()
         config.max_window_layers = 4  # sliding attention starts at layer 4 of 4: none
