@@ -37,7 +37,7 @@ jobs:
           python -m pip install twine
           twine check dist/*
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
@@ -109,7 +109,7 @@ jobs:
         shell: bash
         run: python tools/generate_sbom.py > sbom-${{ matrix.os }}-py${{ matrix.python }}.json
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: sbom-${{ matrix.os }}-py${{ matrix.python }}
           path: sbom-${{ matrix.os }}-py${{ matrix.python }}.json
