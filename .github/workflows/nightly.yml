@@ -365,7 +365,7 @@ jobs:
       issues: write   # required for creating failure notification issues
     steps:
       - name: Create issue on failure
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const title = `Nightly CI failure — ${new Date().toISOString().split('T')[0]}`;
