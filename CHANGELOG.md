@@ -113,7 +113,8 @@ All notable changes to ForgeLM are documented here.
 ### Fixed
 
 - Fail closed when judge replies contain multiple score objects or duplicate JSON keys, and reject
-  non-object replies with the existing judge-failure sentinel (CR-A06-015, M-A06-015, #127).
+  non-object replies, including a score object that only appears inside an array, with the existing
+  judge-failure sentinel. The rejection reason is logged without echoing the reply (CR-A06-015, M-A06-015, #127).
 - Restore tensor inputs to generation-based Llama-Guard scoring on transformers 5.x by explicitly requesting
   `return_dict=False` from the chat template. Guard-boundary `AttributeError` failures now score the pair fail-closed
   and empty error messages log the exception type (CR-A06-003, TECH-T05-001, #108).

@@ -218,16 +218,21 @@ def _parse_judge_json(text: str) -> Dict[str, Any]:
         except json.JSONDecodeError:
             candidates = []
             offset = 0
-            while (start := text.find("{", offset)) != -1:
-                try:
-                    candidate, end = decoder.raw_decode(text, start)
-                except json.JSONDecodeError:
-                    offset = start + 1
+            while offset < len(text):
+                if text[offset] not in "{[":
+                    offset += 1
                     continue
-                # Skip the entire object so nested objects and braces in strings
-                # are not counted again as independent verdicts.
+                try:
+                    candidate, end = decoder.raw_decode(text, offset)
+                except json.JSONDecodeError:
+                    offset += 1
+                    continue
+                # Skip the entire value so nested objects and braces in strings
+                # are not counted again as independent verdicts.  A decoded array
+                # is consumed too: like a whole-reply array, an object inside one
+                # is not a verdict.
                 offset = end
-                if "score" in candidate:
+                if isinstance(candidate, dict) and "score" in candidate:
                     candidates.append(candidate)
             if len(candidates) != 1:
                 raise ValueError("Expected exactly one score object in judge response") from None
@@ -235,11 +240,10 @@ def _parse_judge_json(text: str) -> Dict[str, Any]:
         if not isinstance(result, dict):
             raise ValueError("Judge response must be a JSON object")
         return result
-    except ValueError:
-        logger.warning(
-            "Invalid or ambiguous judge JSON response: expected one object with unique keys (length=%d chars).",
-            len(text),
-        )
+    except ValueError as exc:
+        # None of these messages quotes the reply (the duplicate-key, shape and
+        # integer-size errors are fixed text), so the reason is safe to log.
+        logger.warning("Invalid or ambiguous judge JSON response: %s (length=%d chars).", exc, len(text))
     # Use score=None as the failure sentinel — score=0 used to be clipped up
     # to 1.0 by _clip_judge_score and silently lowered the average.
     return {"score": None, "reason": "Invalid JSON response from judge model."}

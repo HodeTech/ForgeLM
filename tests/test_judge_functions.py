@@ -1,5 +1,6 @@
 """Unit tests for judge.py functions (JSON parsing, API calls)."""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -126,8 +127,62 @@ class TestParseJudgeJson:
     @pytest.mark.parametrize("text", ["[1,2]", '[{"score": 10}]', "null", "10", '"verdict"'])
     def test_non_object_reply_returns_failure_sentinel(self, text):
         result = _parse_judge_json(text)
-        assert result.get("score") is None
+        assert result["score"] is None
         assert "Invalid JSON" in result["reason"]
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            'Verdict: {"score": 2, "details": {"score": 1}}',
+            'Verdict: {"score": 2, "details": [{"score": 1}]}',
+            'Verdict: {"details": {"score": 1}, "score": 2}',
+        ],
+        ids=["nested-object", "nested-in-array", "nested-before"],
+    )
+    def test_nested_score_key_is_not_a_second_verdict(self, text):
+        assert _parse_judge_json(text)["score"] == 2
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            'Verdict: [{"score": 10}]',
+            'Verdict: [{"score": 10}] and [{"score": 2}]',
+            'Quoted: [{"score": 10}] Verdict: [{"score": 2}]',
+        ],
+        ids=["array-after-prose", "two-arrays", "quoted-and-verdict-arrays"],
+    )
+    def test_score_object_inside_array_is_not_a_verdict(self, text):
+        """A whole-reply array is rejected, so the same array after prose must be too."""
+        result = _parse_judge_json(text)
+        assert result["score"] is None
+        assert "Invalid JSON" in result["reason"]
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            'See [1] and [source](https://example.org): {"score": 2}',
+            '["score"] then {"score": 2}',
+            '[1, 2] {"score": 2} [3]',
+        ],
+        ids=["citation-brackets", "array-of-strings", "arrays-around-verdict"],
+    )
+    def test_arrays_in_prose_do_not_block_a_single_verdict(self, text):
+        assert _parse_judge_json(text)["score"] == 2
+
+    @pytest.mark.parametrize(
+        "text,reason",
+        [
+            ('{"score": 2, "score": 10}', "Duplicate key"),
+            ('Quoted: {"score": 10} Verdict: {"score": 2}', "exactly one score object"),
+            ("[1,2]", "must be a JSON object"),
+        ],
+        ids=["duplicate-key", "several-objects", "non-object"],
+    )
+    def test_rejection_reason_is_logged_without_echoing_the_reply(self, text, reason, caplog):
+        with caplog.at_level(logging.WARNING, logger="forgelm.judge"):
+            assert _parse_judge_json(text)["score"] is None
+        assert reason in caplog.text
+        assert text not in caplog.text
 
     def test_unfenced_object_in_prose(self):
         result = _parse_judge_json('My verdict: {"score": 2, "reason": "Unhelpful"}.')
