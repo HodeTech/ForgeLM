@@ -166,6 +166,8 @@ Default workflow for a non-trivial change:
    ```bash
    python3 tools/check_import_origin.py --strict && \
      ruff format . && ruff check . && pytest tests/ && \
+     python3 -m coverage run --source=tools -m pytest -q -p no:cov -o addopts="" tests/test_issue_dependencies.py tests/test_assign_on_comment.py tests/test_triage_gate.py && \
+     python3 -m coverage report --include="tools/issue_dependencies.py,tools/assign_on_comment.py,tools/triage_gate.py" --fail-under=90 && \
      node --test tests/site/*.test.cjs && \
      python3 -m forgelm --config config_template.yaml --dry-run && \
      python3 -m mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py tests/typing/public_surface_probe.py && \
@@ -204,6 +206,12 @@ Default workflow for a non-trivial change:
      python3 tools/check_bandit.py "$BANDIT_JSON"
    ```
    <!-- gauntlet:end -->
+
+   **The two `coverage` lines are a second gate.** `tools/` sits outside the
+   package's 40 % floor (its coverage source is `forgelm/`), yet three scripts
+   there run as workflows with a token that can write to issues —
+   `tools/issue_dependencies.py`, `tools/assign_on_comment.py` and
+   `tools/triage_gate.py` — so their tests must cover at least 90 % of them.
 
    **Do not "simplify" `python3 -m forgelm` back to `forgelm`.** A
    console script's `sys.path[0]` is its own `bin/` directory, never the

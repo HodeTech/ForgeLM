@@ -1044,6 +1044,10 @@ class TestRealRepository:
     def test_a_gauntlet_that_stops_running_a_kind_is_a_finding(self, guard, tmp_path, capsys):
         root = _copy_repo_surfaces(guard, tmp_path)
         _mutate(root / "CLAUDE.md", "ruff check . && pytest tests/ && \\", "ruff check . && \\")
+        # The workflow scripts' coverage line runs pytest as well; the kind is gone only when both are.
+        text = (root / "CLAUDE.md").read_text(encoding="utf-8")
+        coverage_run = next(line for line in text.splitlines(keepends=True) if "coverage run" in line)
+        _mutate(root / "CLAUDE.md", coverage_run, "")
         assert guard.main(["--root", str(root)]) == 1
         assert "CLAUDE.md gauntlet: no pytest invocation recognised" in capsys.readouterr().out
 

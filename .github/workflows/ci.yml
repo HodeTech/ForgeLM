@@ -149,6 +149,14 @@ jobs:
         # is added here because it is CI-specific (artifact upload).
         run: pytest -q --tb=short --cov-report=xml:coverage.xml
 
+      - name: Coverage of the workflow scripts
+        # tools/ sits outside the package gate above (its source is forgelm/). The three scripts that run as
+        # workflows with a token that can write to issues get a floor of their own; `-o addopts=` drops the
+        # package's --cov options, and `--include` keeps the other tools/ files out of the total.
+        run: |
+          python -m coverage run --source=tools -m pytest -q -p no:cov -o addopts="" tests/test_issue_dependencies.py tests/test_assign_on_comment.py tests/test_triage_gate.py
+          python -m coverage report --include="tools/issue_dependencies.py,tools/assign_on_comment.py,tools/triage_gate.py" --fail-under=90
+
       - name: Upload coverage (3.11 only)
         # Upload coverage from one combo only — avoids 4× artifact duplication; 3.11 is canonical (matches publish.yml build job).
         if: matrix.python-version == '3.11' && always()
