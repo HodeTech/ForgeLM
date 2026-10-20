@@ -6,6 +6,7 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
 
 1. Pick an open, unassigned [`good first issue`][good-first-issue].
    Comment `/assign` to claim it and confirm the problem on `development`; see [Working on an issue](#working-on-an-issue).
+   Work only on an issue a maintainer has triaged, which means one without the `needs-triage` label; see [Issue triage](#issue-triage).
 2. [Fork and clone](#1-fork--clone), then [create a branch from `development`](#3-create-a-branch).
    Use Python **3.10, 3.11, 3.12 or 3.13** — CI tests all four versions. Create a virtual environment
    with that interpreter (replace `python3.13` below if you selected another supported version),
@@ -84,10 +85,11 @@ Issues carry labels, and the project adds planning fields on top of them.
 | `urgency: now` · `next-release` · `watch` | For dependency and ecosystem items, how soon they need action |
 | `wave: 0` … `wave: 4` | Roadmap wave: 0 is due in the next release, 1–2 in the releases after it, 3 is medium-severity cleanup per module, 4 is low/info work done whenever the module is touched. Milestones name the wave; the release number is set when the release is cut |
 | `area: <name>` | The code area, e.g. `area: cli`, `area: eval-gates`, `area: data-audit` |
-| `bug` · `documentation` · `i18n` · `dependencies` | The kind of change: code, English docs, the Turkish mirror, or a dependency/ecosystem update |
+| `bug` · `enhancement` · `documentation` · `i18n` · `dependencies` | The kind of change: a defect, an improvement, English docs, the Turkish mirror, or a dependency/ecosystem update |
+| `duplicate` · `invalid` · `wontfix` | How a triaged issue was closed: it repeats another issue, it was not a defect, or the project will not do it; the closing comment says which and why |
 | `backlog: known` | Already described in [`docs/roadmap/`](docs/roadmap/); the issue links the roadmap entry |
 | `security` | Security-relevant; read [Reporting Security Vulnerabilities](#reporting-security-vulnerabilities) before discussing details |
-| `needs-triage` | Not triaged yet — a new report, or a finding reviewers disagreed on; wait for a maintainer to confirm and plan it before working on it |
+| `needs-triage` | Not triaged yet: every new issue starts with it, and so does a finding reviewers disagreed on. Only a maintainer removes it, and nobody works on the issue before then — see [Issue triage](#issue-triage) |
 | `source: review-2026-10` | Found by the October 2026 code and documentation review |
 | `source: review-2026-09` | Found by the September 2026 independent review |
 | `source: roadmap` | Planned work recorded in [`docs/roadmap/`](docs/roadmap/): a roadmap step or a deferred item |
@@ -106,12 +108,24 @@ Useful starting points:
 - [Documentation issues](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+label%3Adocumentation+no%3Aassignee) — often a good first contribution
 - The project's *Backlog* view, filtered by an **Area** you know or by **Size** `XS`/`S`
 
+### Issue triage
+
+Every new issue is **triaged** by a maintainer before anyone works on it. Triage is a maintainer reading the report, checking it against `development`, deciding whether and when to do it, and classifying it with the labels above. Until that has happened the issue carries `needs-triage`.
+
+- **The label is automatic.** The issue forms add it, and the *Triage gate* workflow (`tools/triage_gate.py`) adds it to every issue created another way — through the API, `gh issue create`, an app or another tool — whoever opens it, maintainers included. A sweep that runs every hour repairs an issue the first run missed. An issue that someone other than a maintainer reopens after it was closed goes back to triage the same way, and so does an issue whose blocker was closed without being completed (see [Dependencies between issues](#dependencies-between-issues)).
+- **Only a maintainer removes it,** and removing it is how a maintainer says "triaged" (the maintainers are listed in [MAINTAINERS.md](MAINTAINERS.md)). If anyone else removes the label, the workflow puts it back with a comment, unless a maintainer has removed it since. Please do not remove it, even if your account is able to.
+- **Do not work on an untriaged issue.** Do not claim it, start on it or open a pull request for it: `/assign` refuses it, and a maintainer will not review a pull request that links an issue still labelled `needs-triage` until the issue has been triaged (this is how maintainers work, not an automated check). A report can turn out to be inaccurate, a duplicate, already fixed on `development`, planned differently or not something the project will do, and work done before triage is the work most likely to be thrown away. A comment that helps triage — a reproduction, the versions involved, a log — is welcome at any time; "I would like to work on this" can wait for the label to go.
+- **A pull request without an issue is fine** for a small fix such as a typo or a broken link. The rule above applies to a pull request that links an issue.
+- **Triage looks at the report as it stood.** If a triaged issue is rewritten afterwards, a maintainer may put the label back; to add information, comment instead of editing the description.
+- **What triage can decide.** The issue is accepted (classified with a type, an `area:`, a severity and a wave, and the label is removed); answered, or sent back for more information (the label stays); closed as a duplicate or as already tracked (`duplicate`, `backlog: known`); or closed with a reason (`invalid`, `wontfix`). A report of a security vulnerability is moved to a private advisory instead (see [Reporting Security Vulnerabilities](#reporting-security-vulnerabilities)). Triage does not delete issues to hide a decision; the one exception is content that must not stay public, such as a live secret or personal data ([MAINTAINERS.md](MAINTAINERS.md#triage)).
+- **How long it takes.** A maintainer replies within 72 hours on a best-effort basis ([MAINTAINERS.md](MAINTAINERS.md#review-cadence)). If an issue has waited longer, a polite comment is welcome.
+
 ### Working on an issue
 
 1. **Claim it first.** Start a comment on the issue with `/assign` and, once GitHub confirms it, the issue is assigned to you, so nobody duplicates the work. If the automation cannot complete, its reply says so and a maintainer assigns the issue by hand. This works on an open issue labelled `good first issue` that nobody holds yet. A contributor can hold at most 2 open issues at a time; the maintainers listed in [MAINTAINERS.md](MAINTAINERS.md) are exempt. Comment `/unassign` to give one back. A few rules keep it predictable:
    - It is first come, first served. A later `/assign` never changes an assignment that exists, whoever wrote it and however it was made. Only a maintainer can reassign an issue, in the issue's sidebar, and a maintainer's decision always stands.
    - `/assign` and `/unassign` act on the person who writes them, and the command must be the first thing in the comment; they cannot name someone else. If two people claim an issue in the same second, the maintainer's claim wins, and between two contributors one claim is released again and its author is told so.
-   - Anything the automation does not cover stays a maintainer's call: an issue labelled `help wanted` without `good first issue` (grouped sweeps are taken one finding ID at a time, see below), an issue labelled `needs-triage`, `deferred`, `security`, `epic` or `phase: 16`, and a request for more than 2 open issues. Comment on the issue, say what you would take on and mention a maintainer ([MAINTAINERS.md](MAINTAINERS.md)). A plain comment such as "I would like to work on this" is read by a maintainer too, who assigns it by hand.
+   - Anything the automation does not cover stays a maintainer's call: an issue labelled `help wanted` without `good first issue` (grouped sweeps are taken one finding ID at a time, see below), an issue labelled `deferred`, `security`, `epic` or `phase: 16`, and a request for more than 2 open issues. Comment on the issue, say what you would take on and mention a maintainer ([MAINTAINERS.md](MAINTAINERS.md)). A plain comment such as "I would like to work on this" is read by a maintainer too, who assigns it by hand.
    - Skip issues labelled `needs-triage`, and check the recorded condition of an issue labelled `deferred` before you start.
    - Skip issues labelled `blocked` until the label is gone: they wait for another issue, and `/assign` refuses them whatever their other labels (see [Dependencies between issues](#dependencies-between-issues)).
 2. **Re-check against `development`.** Issues from the review link code at the commit they were found on; the links stay valid, but line numbers may have moved. Confirm the problem still exists on `development` before fixing it.
@@ -254,7 +268,7 @@ keep this list and that one in sync if either changes.
 
 ### 5. Submit a PR
 
-Push your branch to your fork and open a Pull Request against `development` (the default base). Link the issue it addresses (`Fixes #123`, or `Refs #123` for part of a grouped issue) and quote any finding IDs — see [Working on an issue](#working-on-an-issue).
+Push your branch to your fork and open a Pull Request against `development` (the default base). Link the issue it addresses (`Fixes #123`, or `Refs #123` for part of a grouped issue) and quote any finding IDs — see [Working on an issue](#working-on-an-issue). The issue must be triaged: a pull request for an issue that still carries `needs-triage` is not reviewed until the label is gone — see [Issue triage](#issue-triage).
 
 **Before a pull request can merge**, branch protection on `development` (and on `main`) requires three things: the six CI checks — `lint`, `test (3.10)`, `test (3.11)`, `test (3.12)`, `test (3.13)` and `validate` — passing, and on `development` also the **Issue dependencies** check ([Dependencies between issues](#dependencies-between-issues)); the branch up to date with its target (use *Update branch*); and every review conversation resolved, including the comments of the automated reviewers.
 
@@ -272,7 +286,7 @@ ForgeLM is a single-package layout: a mix of single-file modules and five
 focused sub-packages (`forgelm/cli/` post-Phase-15 split,
 `forgelm/data_audit/` post-Phase-14 split, `forgelm/wizard/` from Phase 22,
 `forgelm/safety/` from the post-v0.9.1 split and `forgelm/verify/` from
-Phase 16 S1) under `forgelm/`, 132 test files
+Phase 16 S1) under `forgelm/`, 133 test files
 under `tests/` (collected-test count grows over time — run
 `pytest --collect-only -q` for current), plus `configs/`, `docs/`, `tools/`
 (CI guards), and `notebooks/`. For the authoritative module-by-module map

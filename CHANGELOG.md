@@ -22,6 +22,12 @@ All notable changes to ForgeLM are documented here.
   as a warning, not at debug level (#84).
 - `CITATION.cff`, so the repository can be cited through GitHub's "Cite this
   repository" panel (#964).
+- Every new issue is triaged before anyone works on it. The `Triage gate` workflow (`tools/triage_gate.py`) adds
+  `needs-triage` to each issue however it was created, sends an issue reopened by a non-maintainer back to triage, and
+  puts the label back, with one comment, when anyone but a maintainer removes it; an hourly sweep repairs any recent
+  issue the event run missed, and the nightly-failure issue is created with the label. CONTRIBUTING.md (*Issue triage*), MAINTAINERS.md, GOVERNANCE.md, the issue forms, the pull-request
+  template, the review standard and the agent guides tell contributors not to work on, or open a pull request for, an
+  issue that still carries it (#1036).
 - A contributor can claim a `good first issue` by commenting `/assign` and give it
   back with `/unassign`: the `Assign on comment` workflow (`tools/assign_on_comment.py`) assigns the commenter
   when nobody holds the issue, refuses an issue that already has an assignee without changing it, allows at most 2

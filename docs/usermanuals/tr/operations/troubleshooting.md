@@ -167,7 +167,7 @@ audit:
 3. `config.yaml`'iniz (sırlar redakte edilmiş).
 4. `forgelm doctor` çıktısı.
 
-Issue açın: <https://github.com/HodeTech/ForgeLM/issues>. Maintainer ekibi 48 saat içinde triaj eder.
+Issue açın: <https://github.com/HodeTech/ForgeLM/issues>. Maintainer ekibi 72 saat içinde triaj eder.
 
 ## Bkz.
 

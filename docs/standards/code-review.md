@@ -16,6 +16,10 @@ A PR merges only after:
 5. **No linked issue is blocked** — the **Issue dependencies** check passes, or a maintainer accepted the dependency
    with `dependency-override` ([CONTRIBUTING.md, "Dependencies between issues"](../../CONTRIBUTING.md#dependencies-between-issues)).
    Branch protection requires that check on `development`.
+6. **The linked issue is triaged** — an issue still labelled `needs-triage` has not been confirmed or planned by a
+   maintainer, so a pull request that links one waits for triage rather than for review. A pull request with no issue
+   is unaffected ([CONTRIBUTING.md, "Issue triage"](../../CONTRIBUTING.md#issue-triage)). This is a maintainer practice;
+   no check enforces it.
 
 No exceptions for "trivial" changes. Even typo fixes go through CI.
 
@@ -69,6 +73,7 @@ In order of priority:
 ### 6. Is the scope right?
 
 - Does it do one thing? (A bug fix + a refactor + a new feature in one PR: split.)
+- Is the linked issue triaged? An issue that still carries `needs-triage` has not been confirmed or planned by a maintainer, so a PR for it waits for triage rather than for review (see [CONTRIBUTING.md](../../CONTRIBUTING.md#issue-triage)).
 - Are drive-by reformats included that obscure the real diff? (Reject those.)
 - Is it a minimum viable implementation, or has scope crept?
 

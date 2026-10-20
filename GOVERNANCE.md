@@ -53,6 +53,11 @@ Everyone contributing is bound by the
   to open one first, so the design is agreed before code is written. If the
   change is larger than one issue, it becomes a roadmap phase under
   [docs/roadmap/](docs/roadmap/).
+- **Triage** is a maintainer's decision. Every new issue carries `needs-triage`
+  until a maintainer has read it, checked it against `development` and decided
+  what happens to it, and contributors do not work on an issue before then. The
+  rules are in [CONTRIBUTING.md](CONTRIBUTING.md#issue-triage) and the routine in
+  [MAINTAINERS.md](MAINTAINERS.md#triage).
 - **Breaking changes** to the YAML schema or the CLI contract require a
   deprecation period. Removing a YAML field is a MAJOR change; the release a
   removal lands in is named by a single constant,
@@ -104,7 +109,7 @@ on any account that holds it.
 **Continuity: a known gap, recorded rather than promised.** There is one owner
 today, and nothing in the release path is asynchronous — the same single account
 holds the tag ruleset and approves the release workflow's `pypi` environment. An
-unplanned absence therefore stops merges, releases and security advisories at
+unplanned absence therefore stops merges, releases, triage and security advisories at
 once. The fix is a second organisation owner (or an organisation-level owner with
 the release environment's approval); it is not scheduled, and this paragraph is
 what says so.
