@@ -256,7 +256,7 @@ keep this list and that one in sync if either changes.
 
 Push your branch to your fork and open a Pull Request against `development` (the default base). Link the issue it addresses (`Fixes #123`, or `Refs #123` for part of a grouped issue) and quote any finding IDs — see [Working on an issue](#working-on-an-issue).
 
-**Before a pull request can merge**, branch protection on `development` (and on `main`) requires three things: the six CI checks — `lint`, `test (3.10)`, `test (3.11)`, `test (3.12)`, `test (3.13)` and `validate` — passing; the branch up to date with its target (use *Update branch*); and every review conversation resolved, including the comments of the automated reviewers. The **Issue dependencies** check ([Dependencies between issues](#dependencies-between-issues)) runs on every pull request too, but it is not yet among the required checks: a maintainer adds it to the branch protection of `development` once it has run on a pull request after this change (tracked in [#1034](https://github.com/HodeTech/ForgeLM/issues/1034)). Until then a red result is a signal, not a merge block.
+**Before a pull request can merge**, branch protection on `development` (and on `main`) requires three things: the six CI checks — `lint`, `test (3.10)`, `test (3.11)`, `test (3.12)`, `test (3.13)` and `validate` — passing, and on `development` also the **Issue dependencies** check ([Dependencies between issues](#dependencies-between-issues)); the branch up to date with its target (use *Update branch*); and every review conversation resolved, including the comments of the automated reviewers.
 
 Maintainers **squash contributor PRs into `development` by default**. Releases into
 `main` and synchronization PRs from `main` back into `development` use **merge

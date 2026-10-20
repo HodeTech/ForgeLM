@@ -35,7 +35,7 @@ All notable changes to ForgeLM are documented here.
   `Closes` / `Resolves` / `Refs` in its title, description or commits, or a *Development* link), unless GitHub will
   close the blockers with the same pull request or a maintainer sets `dependency-override`. The check runs from the
   default branch (`pull_request_target`; no pull-request code is checked out), and the workflow re-runs it on every
-  open pull request whose result no longer matches. It is advisory until branch protection lists it (#1034).
+  open pull request whose result no longer matches. Branch protection requires it on `development` (#1034).
 - `GOVERNANCE.md` and `MAINTAINERS.md` at the repository root, recording how
   decisions are made, how the maintainer roles work, and which areas the current
   maintainer owns (#964).
