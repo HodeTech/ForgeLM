@@ -153,9 +153,14 @@ def test_the_pull_request_template_itself_links_nothing() -> None:
         ("    ```\nFixes #2\nRefs #3", {2, 3}),  # four spaces: not a fence opener
         ("Refs #1 <!-- Fixes #2 --> Refs #3", {1, 3}),
         ("Refs #1 <!-- Fixes #2\nRefs #3", {1}),  # an unclosed comment runs to the end
+        ("Refs #1 ``Refs #2`` Refs #3", {1, 3}),  # a code span closes on a run of the same length
+        ("Refs #1 `` Refs #2 ` still code `` Refs #3", {1, 3}),
+        ("Refs #1 ``Refs #2` Refs #3", {1, 2, 3}),  # unmatched runs are literal text
+        ("A stray ` here\n\nRefs #3\n\nand ` there", {3}),  # a span never crosses a blank line
+        ("A span `across\nRefs #2` lines\nRefs #3", {3}),  # but it does cross a line break in a paragraph
     ],
 )
-def test_fences_and_comments_follow_commonmark(body: str, every: set) -> None:
+def test_fences_comments_and_code_spans_follow_commonmark(body: str, every: set) -> None:
     assert tool.linked_issues(body, REPO)[1] == frozenset(every)
 
 
@@ -170,6 +175,8 @@ def test_fences_and_comments_follow_commonmark(body: str, every: set) -> None:
         "Fixes" + " " * 60_000 + "x",
         "Fixes #1, " * 6_000,
         "`" * 60_000,
+        "`a" * 30_000,
+        "``a`" * 15_000,
         "<!-- -->```\n" * 5_000,
     ],
 )
@@ -203,7 +210,17 @@ def test_closing_the_blocker_in_the_same_pull_request_passes() -> None:
     assert verdict("Fixes #1\nFixes #5", {5: (blocker(1),), 1: ()}).ok
 
 
-@pytest.mark.parametrize("body", ["Fixes #5, refs #1", "Fixes #5\nFixes#1", "Fixes #5\nFixes: #1", "Fixes #5, #1"])
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Fixes #5, refs #1",
+        "Fixes #5\nFixes#1",
+        "Fixes #5\nFixes: #1",
+        "Fixes #5, #1",
+        "Fixes #5\n``Fixes #1``",  # inside a double-backtick code span GitHub closes nothing
+        "Fixes #5\n`` Fixes #1 ` still code ``",
+    ],
+)
 def test_a_link_github_would_not_close_never_exempts_the_blocker(body: str) -> None:
     assert not verdict(body, {5: (blocker(1),), 1: ()}).ok
 

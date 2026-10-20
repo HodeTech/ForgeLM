@@ -111,7 +111,7 @@ _LINK_RE = re.compile(
 )
 _CLOSING = frozenset({"close", "closes", "closed", "fix", "fixes", "fixed", "resolve", "resolves", "resolved"})
 _FENCE_RE = re.compile(r" {0,3}(`{3,}|~{3,})")  # matched at the start of one line by the walker below
-_INLINE_CODE_RE = re.compile(r"`[^`\n]*`")  # stops at the next backtick or newline: linear
+_BACKTICK_RUN_RE = re.compile(r"`+")  # one quantifier over one character: linear
 
 # Every GraphQL document this script may send. A query is chosen by name; only integer and cursor variables vary.
 _ISSUE_FIELDS = """
@@ -295,9 +295,52 @@ def _strip_html_comments(text: str) -> str:
         start = closing + 3
 
 
+def _strip_code_spans(paragraph: str) -> str:
+    """Drop CommonMark code spans from one paragraph: a run of N backticks up to the next run of exactly N.
+
+    Linear: one pass collects the runs, a backward pass links each run to the next run of its length. An opener
+    without a matching run is literal text, as in CommonMark.
+    """
+    runs = [(m.start(), m.end()) for m in _BACKTICK_RUN_RE.finditer(paragraph)]
+    next_same: list[Optional[int]] = [None] * len(runs)
+    last: dict[int, int] = {}
+    for idx in range(len(runs) - 1, -1, -1):
+        length = runs[idx][1] - runs[idx][0]
+        next_same[idx] = last.get(length)
+        last[length] = idx
+    out: list[str] = []
+    pos = idx = 0
+    while idx < len(runs):
+        close = next_same[idx]
+        if close is None:
+            idx += 1
+            continue
+        out.append(paragraph[pos : runs[idx][0]] + " ")
+        pos, idx = runs[close][1], close + 1
+    out.append(paragraph[pos:])
+    return "".join(out)
+
+
+def _strip_inline_code(text: str) -> str:
+    """Drop code spans paragraph by paragraph. A span never crosses a blank line, so a stray backtick cannot hide
+    the paragraphs after it, or the links in them."""
+    kept: list[str] = []
+    paragraph: list[str] = []
+    for line in text.splitlines() + [""]:
+        if line.strip():
+            paragraph.append(line)
+            continue
+        if paragraph:
+            kept.append(_strip_code_spans("\n".join(paragraph)))
+            paragraph = []
+        kept.append("")
+    return "\n".join(kept)
+
+
 def _strip_non_prose(body: str) -> str:
-    """Drop fenced code, HTML comments and inline code: the template's own examples live there."""
-    return _INLINE_CODE_RE.sub(" ", _strip_html_comments(_strip_fences(body)))
+    """Drop fenced code, HTML comments and inline code: the template's own examples live there, and GitHub neither
+    links nor closes an issue from inside them."""
+    return _strip_inline_code(_strip_html_comments(_strip_fences(body)))
 
 
 def linked_issues(body: str, repo: str) -> tuple[frozenset[int], frozenset[int]]:
