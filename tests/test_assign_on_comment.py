@@ -53,14 +53,27 @@ class FakeGitHub:
         self.human_comments: List[str] = []  # comments by people (the bot's own are in `comments`)
         self.assigned_pages: Optional[List[List[Dict[str, Any]]]] = None  # overrides the count answer, page by page
         self.refuse_delete = False  # accept the DELETE but keep the assignee
+        self.open_blockers: Optional[int] = 0  # GitHub's count of open "Blocked by" issues; None drops the summary
+        self.closed_blockers: List[Optional[str]] = []  # the state_reason of each closed "Blocked by" issue
+        self.listed_open: Optional[int] = None  # open blockers in the list, when it disagrees with the summary
         self._reads = 0
 
     def _issue(self) -> Dict[str, Any]:
-        return {
+        issue: Dict[str, Any] = {
             "state": self.state,
             "labels": [{"name": n} for n in self.labels],
             "assignees": [{"login": a} for a in self.assignees],
         }
+        if self.open_blockers is not None:
+            total = self.open_blockers + len(self.closed_blockers)
+            issue["issue_dependencies_summary"] = {"blocked_by": self.open_blockers, "total_blocked_by": total}
+        return issue
+
+    def _get_blockers(self, endpoint: str, payload: Any) -> List[Dict[str, Any]]:
+        listed = self.open_blockers if self.listed_open is None else self.listed_open
+        return [{"state": "open", "state_reason": None}] * (listed or 0) + [
+            {"state": "closed", "state_reason": reason} for reason in self.closed_blockers
+        ]
 
     def __call__(self, method: str, endpoint: str, payload: Any = None) -> Any:
         self.calls.append((method, endpoint, payload))
@@ -79,6 +92,8 @@ class FakeGitHub:
                 return self._get_issue
             if "?assignee=" in endpoint:
                 return self._get_assigned_issues
+            if endpoint.startswith(f"repos/{REPO}/issues/7/dependencies/blocked_by?"):
+                return self._get_blockers
             if "/comments?" in endpoint:
                 return self._get_comments
         elif endpoint.endswith("/assignees"):
@@ -337,6 +352,78 @@ def test_a_closed_issue_cannot_be_claimed() -> None:
     gh = FakeGitHub(state="closed")
     assert run(gh) == 0
     assert gh.assignees == [] and gh.comments == [tool.MSG_CLOSED]
+
+
+# --- dependencies ---------------------------------------------------------------------------------------------
+
+
+def test_a_blocked_good_first_issue_cannot_be_claimed_and_says_why_without_pinging() -> None:
+    gh = FakeGitHub(labels=["good first issue", "blocked"])
+    assert run(gh) == 0
+    assert gh.assignees == [] and gh.writes() == []
+    assert gh.comments == [tool.MSG_BLOCKED.format(front_door=tool.FRONT_DOOR_URL)]
+    assert tool.MAINTAINER_MENTION not in gh.comments[0]  # nothing to decide: it opens by itself
+
+
+def test_an_open_blocker_refuses_the_claim_before_the_label_has_caught_up() -> None:
+    gh = FakeGitHub(labels=["good first issue"])
+    gh.open_blockers = 1  # linked a minute ago; the hourly sync has not labelled it yet
+    assert run(gh) == 0
+    assert gh.assignees == [] and gh.comments[0].startswith("This issue is blocked")
+
+
+def test_blockers_that_are_all_closed_as_completed_do_not_refuse_the_claim() -> None:
+    gh = FakeGitHub(labels=["good first issue"])
+    gh.closed_blockers = ["completed", None]  # None: closed before GitHub recorded reasons
+    assert run(gh) == 0
+    assert gh.assignees == ["newcomer"]
+
+
+@pytest.mark.parametrize("reason", ["not_planned", "duplicate"])
+def test_a_blocker_closed_without_being_completed_refuses_before_the_label_has_caught_up(reason: str) -> None:
+    gh = FakeGitHub(labels=["good first issue"])
+    gh.closed_blockers = ["completed", reason]  # the summary counts neither as open
+    assert run(gh) == 0
+    assert gh.assignees == [] and gh.comments[0].startswith("This issue is blocked")
+
+
+def test_the_blocker_list_is_read_only_when_the_summary_cannot_decide() -> None:
+    labelled = FakeGitHub(labels=["good first issue", "blocked"])
+    labelled.closed_blockers = ["not_planned"]  # the label already refuses
+    no_closed = FakeGitHub(labels=["good first issue"])  # nothing closed to look up
+    for gh in (labelled, no_closed):
+        run(gh)
+        assert not [c for c in gh.calls if "/dependencies/" in c[1]]
+
+
+def test_without_a_dependency_summary_the_blocker_list_decides() -> None:
+    free, cancelled = FakeGitHub(labels=["good first issue"]), FakeGitHub(labels=["good first issue"])
+    free.open_blockers = cancelled.open_blockers = None
+    cancelled.closed_blockers = ["not_planned"]
+    assert run(free) == 0 and free.assignees == ["newcomer"]
+    assert run(cancelled) == 0 and cancelled.assignees == []
+    assert [c for c in free.calls if "/dependencies/" in c[1]]  # read, not assumed free
+
+
+def test_the_list_is_counted_on_its_own_when_it_disagrees_with_the_summary() -> None:
+    gh = FakeGitHub(labels=["good first issue"])
+    gh.closed_blockers = ["completed"]  # the summary: no open blocker, one closed
+    gh.listed_open = 1  # the list, read a moment later: a blocker was reopened
+    assert run(gh) == 0 and gh.assignees == []
+
+
+def test_a_blocked_issue_can_still_be_released() -> None:
+    gh = FakeGitHub(labels=["good first issue", "blocked"], assignees=["first"])
+    assert run(gh, "/unassign", login="first") == 0
+    assert gh.assignees == []
+
+
+def test_unassign_never_reads_the_dependencies_so_a_failing_read_cannot_stop_it() -> None:
+    gh = FakeGitHub(labels=["good first issue"], assignees=["first"])
+    gh.closed_blockers = ["not_planned"]
+    gh.fail[("GET", f"repos/{REPO}/issues/7/dependencies")] = "boom"
+    assert run(gh, "/unassign", login="first") == 0
+    assert gh.assignees == [] and not [c for c in gh.calls if "/dependencies/" in c[1]]
 
 
 # --- the per-person limit -------------------------------------------------------------------------------------

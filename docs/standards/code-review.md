@@ -13,6 +13,9 @@ A PR merges only after:
 3. **Self-checklist complete** — every box in the PR template ticked honestly.
 4. **Every review conversation resolved** — branch protection enforces this on `development` and `main`, including
    the comments of the automated reviewers.
+5. **No linked issue is blocked** — the **Issue dependencies** check passes, or a maintainer accepted the dependency
+   with `dependency-override` ([CONTRIBUTING.md, "Dependencies between issues"](../../CONTRIBUTING.md#dependencies-between-issues)).
+   Branch protection requires that check on `development`.
 
 No exceptions for "trivial" changes. Even typo fixes go through CI.
 
