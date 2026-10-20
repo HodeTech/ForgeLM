@@ -18,8 +18,8 @@ labelled `area: site` and this table name the same area.
 
 This table is also the list of who may complete triage (see [Triage](#triage)).
 Adding a maintainer here means adding the login to `MAINTAINER_LOGINS` in
-`tools/assign_on_comment.py` and `tools/triage_gate.py`; the tests fail until the
-three agree.
+`tools/assign_on_comment.py`, `tools/issue_dependencies.py` and
+`tools/triage_gate.py`; the tests fail until the three lists and this table agree.
 
 ## How to reach a maintainer
 

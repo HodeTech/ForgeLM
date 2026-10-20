@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
 import assign_on_comment  # noqa: E402
+import issue_dependencies  # noqa: E402
 import triage_gate as tool  # noqa: E402
 
 REPO = "HodeTech/ForgeLM"
@@ -524,12 +525,13 @@ def test_the_maintainer_list_matches_maintainers_md() -> None:
     assert listed == set(tool.MAINTAINER_LOGINS)
 
 
-def test_the_two_issue_tools_agree_on_who_a_maintainer_is() -> None:
-    assert tool.MAINTAINER_LOGINS == assign_on_comment.MAINTAINER_LOGINS
+def test_the_issue_tools_agree_on_who_a_maintainer_is() -> None:
+    assert tool.MAINTAINER_LOGINS == assign_on_comment.MAINTAINER_LOGINS == issue_dependencies.MAINTAINER_LOGINS
 
 
-def test_the_label_is_the_one_assign_on_comment_refuses() -> None:
+def test_the_label_is_the_one_the_other_issue_tools_use() -> None:
     assert tool.TRIAGE_LABEL in assign_on_comment.EXCLUDED_LABELS
+    assert tool.TRIAGE_LABEL == issue_dependencies.TRIAGE_LABEL
 
 
 # --- the workflow file ------------------------------------------------------------------------------------------
