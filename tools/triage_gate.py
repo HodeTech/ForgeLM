@@ -1,26 +1,36 @@
 #!/usr/bin/env python3
 """Keep ``needs-triage`` on every issue until a maintainer removes it.
 
-Run by ``.github/workflows/triage-gate.yml`` on an ``issues`` event. Triage is a maintainer's review of a report:
-the claim is checked against ``development``, the issue is classified, and content that does not belong in a public
-tracker is caught. ``needs-triage`` marks an issue nobody has done that for yet, and a contributor does not work on
-such an issue. This script makes the marker reliable; it never removes it.
+Run by ``.github/workflows/triage-gate.yml``: on an ``issues`` event (the default mode) and hourly as a sweep
+(``triage_gate.py sweep``). Triage is a maintainer's review of a report: the claim is checked against ``development``,
+the issue is classified, and content that does not belong in a public tracker is caught. ``needs-triage`` marks an
+issue nobody has done that for yet, and a contributor does not work on such an issue. This script makes the marker
+reliable; it never removes it.
 
-Rules (see ``CONTRIBUTING.md``, "Issue triage"):
+What the script decides is a function of the issue's *state*, never of which event woke it up, so a replayed, delayed
+or cancelled run reaches the same answer. An issue is **untriaged** unless a maintainer's removal of the label is the
+latest thing that happened to it, and no one who is not a maintainer has reopened it since. A missing label on an
+untriaged issue is added back. The events decide only who may end the matter without a look at the history:
 
-- ``opened``: the issue gets ``needs-triage``, whoever opened it and however it was created (the issue forms add the
-  label themselves; the API, ``gh issue create`` and other tools do not), unless its history shows that a maintainer
-  has already removed it (a maintainer can triage faster than this workflow starts);
-- ``reopened`` by anyone but a maintainer: the issue goes back to triage, with one comment saying so;
+- ``opened``: the label is added however the issue was created (the issue forms add it themselves; the API,
+  ``gh issue create`` and other tools do not), unless the history shows a maintainer already removed it (a maintainer
+  can triage faster than the workflow starts);
+- ``reopened`` by anyone but a maintainer: the issue goes back to triage, with one comment, unless a maintainer has
+  removed the label since the reopening;
 - ``needs-triage`` removed by anyone but a maintainer: the label is put back, with one comment, unless a maintainer
-  has removed it since. Only a maintainer completes triage.
+  has removed it since. Only a maintainer completes triage;
+- ``sweep`` (hourly): every open issue created since ``TRIAGE_SWEEP_SINCE`` that lacks the label gets the same
+  decision. This repairs what an event run could not: a failed API call, a disabled workflow, an issue that a
+  workflow created with its own ``GITHUB_TOKEN`` (such events start no other workflow).
 
 A maintainer is a login listed in ``MAINTAINERS.md`` (``MAINTAINER_LOGINS``; ``tests/test_triage_gate.py`` fails if
 the two drift apart). GitHub's own permission names are not used: they would also count a triage-role or write-role
-collaborator who is not a maintainer.
+collaborator who is not a maintainer. A former maintainer (``FORMER_MAINTAINER_LOGINS``) keeps their past removals
+valid, so stepping down does not reopen the issues they triaged. Apps and bots are never maintainers, and their
+issues are labelled like anyone else's.
 
-What this does not see: events caused by a workflow's own ``GITHUB_TOKEN`` start no other workflow. An issue that a
-workflow creates must therefore carry the label itself (``nightly.yml`` does).
+Triage is a review of the report as it stood: editing an issue after triage does not bring the label back. A
+maintainer who doubts an edited report puts the label back by hand, and this script leaves it there.
 
 Trust boundary. Issue titles and bodies are written by anyone, so the script never reads, executes or prints them:
 the decision uses the event's action, the sender's login, the label's name and the issue's label history. The
@@ -32,8 +42,8 @@ printed.
 Exit codes (per ``tools/`` contract, not the public 0-6 surface of ``forgelm/``):
 
 - ``0`` — handled: the label was added, or nothing needed to change.
-- ``1`` — an API call failed, or GitHub did not confirm the label.
-- ``2`` — the event payload or the environment is unusable.
+- ``1`` — an API call failed, or GitHub did not confirm the label (a sweep goes on to the next issue first).
+- ``2`` — the event payload, the arguments or the environment are unusable.
 """
 
 from __future__ import annotations
@@ -44,21 +54,31 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 TRIAGE_LABEL = "needs-triage"
 # The maintainers, as MAINTAINERS.md lists them (tests/test_triage_gate.py fails if the two drift apart).
 MAINTAINER_LOGINS = frozenset({"cemililik"})
+# Maintainers who stepped down: what they removed stays triaged, but they no longer end a triage by acting now.
+FORMER_MAINTAINER_LOGINS: frozenset[str] = frozenset()
 HANDLED_ACTIONS = frozenset({"opened", "reopened", "unlabeled"})
-_GH_TIMEOUT_SECONDS = 60
+SWEEP_ACTION = "sweep"
+SINCE_ENV = "TRIAGE_SWEEP_SINCE"
+_SINCE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+_GH_TIMEOUT_SECONDS = 30
 _MAX_LOGIN_LENGTH = 39
+_BOT_SUFFIX = "[bot]"
 _PAGE_SIZE = 100
-_MAX_PAGES = 10  # bounds the label-history read; an issue with more than 1000 events fails loudly instead
+# 11 pages: ten full pages and a short or empty one, so an issue with exactly 1000 events is still read in full.
+_MAX_PAGES = 11
+_SWEEP_MAX_PAGES = 5  # 500 issues created since the sweep date; far above the intake rate
 _COMMENT_ATTEMPTS = 2
 _RETRY_DELAY_SECONDS = 2.0
 _ALLOWED_METHODS = frozenset({"GET", "POST"})
+_NAME_EXTRA_CHARS = frozenset("-_.")
 
-# What the label history of an issue says about its triage label (only the latest event counts).
+# What the label history of an issue says about its triage label (only the latest label event counts).
 HISTORY_NEVER = "never"  # the label was never added
 HISTORY_LABELLED = "labelled"  # added, and not removed since
 HISTORY_MAINTAINER_REMOVED = "maintainer-removed"  # a maintainer removed it: triage is done
@@ -75,11 +95,15 @@ MSG_RESTORED = (
 
 
 class EventError(Exception):
-    """The event payload or the environment is not usable."""
+    """The event payload, the arguments or the environment are not usable."""
 
 
 class GhError(RuntimeError):
     """A ``gh api`` call failed, or GitHub's answer was not what the API documents."""
+
+
+class HistoryTooLong(GhError):
+    """The issue has more events than the label history can be read from."""
 
 
 # (method, endpoint, optional JSON body) -> parsed JSON answer (None for an empty body).
@@ -88,12 +112,21 @@ GhApi = Callable[[str, str, Optional[Mapping[str, Any]]], Any]
 
 @dataclass(frozen=True)
 class Context:
-    """What the event says: which issue, what happened, and whether a maintainer did it."""
+    """What the event says: which issue, what happened (or ``sweep``), and whether a maintainer did it."""
 
     repo: str
     number: int
     action: str
     is_maintainer: bool
+
+
+@dataclass(frozen=True)
+class History:
+    """The issue's triage-label story. Positions are indexes in time order (``created_at``, then ``id``); -1 is none."""
+
+    state: str = HISTORY_NEVER
+    label_pos: int = -1  # the latest label event
+    reopened_pos: int = -1  # the latest reopening by someone who is not a maintainer
 
 
 @dataclass(frozen=True)
@@ -107,9 +140,20 @@ class Decision:
 KEEP = Decision(add_label=False)
 
 
+def _name_ok(name: str) -> bool:
+    """A GitHub user, owner or repository name: ASCII letters, digits, hyphen, underscore and dot."""
+    return bool(name) and name.isascii() and all(c.isalnum() or c in _NAME_EXTRA_CHARS for c in name)
+
+
 def valid_login(login: str) -> bool:
-    """GitHub logins are ASCII letters, digits and hyphens, at most 39 characters."""
-    return 0 < len(login) <= _MAX_LOGIN_LENGTH and login.isascii() and all(c.isalnum() or c == "-" for c in login)
+    """The shape of a GitHub login: ASCII letters, digits and hyphens, at most 39 characters; an App ends in [bot]."""
+    name = login[: -len(_BOT_SUFFIX)] if login.endswith(_BOT_SUFFIX) else login
+    return 0 < len(name) <= _MAX_LOGIN_LENGTH and name.isascii() and all(c.isalnum() or c == "-" for c in name)
+
+
+def valid_repository(repo: str) -> bool:
+    owner, _, name = repo.partition("/")
+    return _name_ok(owner) and _name_ok(name) and "/" not in name
 
 
 def _clean(text: str, limit: int = 200) -> str:
@@ -121,39 +165,85 @@ def _is_maintainer(login: Any) -> bool:
     return isinstance(login, str) and login.lower() in MAINTAINER_LOGINS
 
 
-def triage_history(events: Iterable[Any]) -> str:
-    """What the issue's events say about ``needs-triage``: the latest label event decides, ``HISTORY_*``."""
-    state = HISTORY_NEVER
+def _is_maintainer_or_former(login: Any) -> bool:
+    return _is_maintainer(login) or (isinstance(login, str) and login.lower() in FORMER_MAINTAINER_LOGINS)
+
+
+def _sort_key(event: Mapping[str, Any]) -> tuple[str, int]:
+    created, ident = event.get("created_at"), event.get("id")
+    return (created if isinstance(created, str) else "", ident if isinstance(ident, int) else 0)
+
+
+def triage_history(events: Iterable[Any]) -> History:
+    """What the issue's events say about ``needs-triage``. Sorted by time rather than trusted to arrive in order."""
+    relevant: list[dict[str, Any]] = []
     for event in events:
-        if not isinstance(event, dict) or event.get("event") not in ("labeled", "unlabeled"):
+        if not isinstance(event, dict):
             continue
-        label = event.get("label")
-        if not isinstance(label, dict) or str(label.get("name", "")).lower() != TRIAGE_LABEL:
-            continue
-        if event["event"] == "labeled":
-            state = HISTORY_LABELLED
-            continue
+        kind = event.get("event")
+        if kind == "reopened":
+            relevant.append(event)
+        elif kind in ("labeled", "unlabeled"):
+            label = event.get("label")
+            if isinstance(label, dict) and str(label.get("name", "")).lower() == TRIAGE_LABEL:
+                relevant.append(event)
+    relevant.sort(key=_sort_key)  # stable: events without a timestamp keep the order they arrived in
+    state, label_pos, reopened_pos = HISTORY_NEVER, -1, -1
+    for position, event in enumerate(relevant):
         actor = event.get("actor")
-        removed_by = actor.get("login") if isinstance(actor, dict) else None
-        state = HISTORY_MAINTAINER_REMOVED if _is_maintainer(removed_by) else HISTORY_OTHER_REMOVED
-    return state
+        login = actor.get("login") if isinstance(actor, dict) else None
+        if event["event"] == "reopened":
+            if not _is_maintainer_or_former(login):
+                reopened_pos = position
+        elif event["event"] == "labeled":
+            state, label_pos = HISTORY_LABELLED, position
+        else:
+            state = HISTORY_MAINTAINER_REMOVED if _is_maintainer_or_former(login) else HISTORY_OTHER_REMOVED
+            label_pos = position
+    return History(state, label_pos, reopened_pos)
 
 
-def decide(ctx: Context, has_label: bool, history: Callable[[], str]) -> Decision:
-    """The rules: whether ``needs-triage`` has to be added to this issue after ``ctx.action``.
+def untriaged(history: History) -> bool:
+    """True unless a maintainer's removal is the latest word: nobody who is not a maintainer reopened it since."""
+    if history.state == HISTORY_MAINTAINER_REMOVED:
+        return history.reopened_pos > history.label_pos
+    return True
+
+
+def _notice(action: str, history: Optional[History]) -> str:
+    if action == "unlabeled":
+        return MSG_RESTORED
+    if action == "reopened":
+        return MSG_REOPENED
+    if action == SWEEP_ACTION and history is not None:
+        if history.state == HISTORY_OTHER_REMOVED:
+            return MSG_RESTORED
+        if history.state == HISTORY_MAINTAINER_REMOVED:
+            return MSG_REOPENED
+    return ""
+
+
+def decide(ctx: Context, has_label: bool, history: Callable[[], History]) -> Decision:
+    """The rules: whether ``needs-triage`` has to be added to this issue.
 
     ``history`` is called only when the answer depends on it, so a decision made on the event alone makes no API
     call and cannot fail because of one.
     """
     if has_label:
         return KEEP
-    if ctx.action == "reopened":
-        return KEEP if ctx.is_maintainer else Decision(True, MSG_REOPENED)
-    if ctx.action == "unlabeled" and ctx.is_maintainer:
-        return KEEP
-    if history() == HISTORY_MAINTAINER_REMOVED:
-        return KEEP
-    return Decision(True, MSG_RESTORED if ctx.action == "unlabeled" else "")
+    if ctx.is_maintainer and ctx.action in ("reopened", "unlabeled"):
+        return (
+            KEEP  # a maintainer's own decision: the history is not consulted, so a lagging events list cannot undo it
+        )
+    try:
+        story = history()
+    except HistoryTooLong:
+        if ctx.action == SWEEP_ACTION:
+            raise
+        # A maintainer's own act returned above, so this was someone else: with no way to tell whether a maintainer
+        # has triaged the issue since, the label goes back (the safe direction).
+        return Decision(True, _notice(ctx.action, None))
+    return Decision(True, _notice(ctx.action, story)) if untriaged(story) else KEEP
 
 
 def context_from_event(event: Mapping[str, Any], repo: str) -> Optional[Context]:
@@ -161,7 +251,7 @@ def context_from_event(event: Mapping[str, Any], repo: str) -> Optional[Context]
     if not isinstance(event, Mapping):
         raise EventError("event payload is not a JSON object")
     action = event.get("action")
-    if action not in HANDLED_ACTIONS:
+    if not isinstance(action, str) or action not in HANDLED_ACTIONS:
         return None
     try:
         issue, sender = event["issue"], event["sender"]
@@ -176,13 +266,23 @@ def context_from_event(event: Mapping[str, Any], repo: str) -> Optional[Context]
         raise EventError("issue number is not a positive integer")
     if not isinstance(login, str) or not valid_login(login):
         raise EventError("sender login is not a valid GitHub login")
-    return Context(repo, number, str(action), _is_maintainer(login))
+    return Context(repo, number, action, _is_maintainer(login))
+
+
+def _allowed_endpoint(endpoint: str) -> bool:
+    """Only the issues endpoints of one repository: ``repos/<owner>/<name>/issues[/...][?query]``."""
+    if any(c.isspace() for c in endpoint):
+        return False
+    parts = endpoint.split("?", 1)[0].split("/")
+    if len(parts) < 4 or parts[0] != "repos" or parts[3] != "issues":
+        return False
+    return _name_ok(parts[1]) and _name_ok(parts[2]) and not any(p in ("", ".", "..") for p in parts)
 
 
 def gh_api(method: str, endpoint: str, payload: Optional[Mapping[str, Any]] = None) -> Any:
     """Call the GitHub REST API through the ``gh`` CLI (authenticated by ``GH_TOKEN``); no shell is involved."""
-    if method not in _ALLOWED_METHODS or not endpoint.startswith("repos/") or any(c.isspace() for c in endpoint):
-        raise GhError("refusing an API call outside the fixed repos/ endpoints")
+    if method not in _ALLOWED_METHODS or not _allowed_endpoint(endpoint):
+        raise GhError("refusing an API call outside the fixed issues endpoints")
     command = ["gh", "api", "--method", method, endpoint]
     stdin = None
     if payload is not None:
@@ -216,7 +316,7 @@ def current_labels(gh: GhApi, repo: str, number: int) -> frozenset[str]:
         raise GhError("the issue answer lacks labels") from exc
 
 
-def read_history(gh: GhApi, repo: str, number: int) -> str:
+def read_history(gh: GhApi, repo: str, number: int) -> History:
     """``triage_history`` of the issue's events, across pages (oldest first, as the API returns them)."""
     events: list[Any] = []
     for page in range(1, _MAX_PAGES + 1):
@@ -226,7 +326,9 @@ def read_history(gh: GhApi, repo: str, number: int) -> str:
         events.extend(raw)
         if len(raw) < _PAGE_SIZE:
             return triage_history(events)
-    raise GhError(f"the issue has more than {_MAX_PAGES * _PAGE_SIZE} events; its label history was not read")
+    raise HistoryTooLong(
+        f"the issue has more than {(_MAX_PAGES - 1) * _PAGE_SIZE} events; its label history was not read"
+    )
 
 
 def add_triage_label(gh: GhApi, repo: str, number: int) -> None:
@@ -253,36 +355,118 @@ def _comment(gh: GhApi, repo: str, number: int, body: str) -> None:
             time.sleep(_RETRY_DELAY_SECONDS)
 
 
+def _decide_now(gh: GhApi, ctx: Context) -> Decision:
+    labels = current_labels(gh, ctx.repo, ctx.number)
+    return decide(ctx, TRIAGE_LABEL in labels, lambda: read_history(gh, ctx.repo, ctx.number))
+
+
+def triage_issue(gh: GhApi, ctx: Context) -> Decision:
+    """Decide and, when the label has to go on, decide once more on a fresh read right before writing.
+
+    A maintainer can remove the label between the first read and the write; the second look makes that window as short
+    as the two reads, and a maintainer's removal that landed in it wins.
+    """
+    decision = _decide_now(gh, ctx)
+    if not decision.add_label:
+        return decision
+    decision = _decide_now(gh, ctx)
+    if decision.add_label:
+        add_triage_label(gh, ctx.repo, ctx.number)
+    return decision
+
+
+def _handle(gh: GhApi, ctx: Context) -> str:
+    """Decide for one issue, write, post the notice. Returns what happened, as a fixed phrase."""
+    decision = triage_issue(gh, ctx)
+    if decision.add_label and decision.message:
+        try:
+            _comment(gh, ctx.repo, ctx.number, decision.message)
+        except GhError as exc:  # the label is already back; only the explanation is missing
+            raise GhError(f"could not post the notice: {exc}") from exc
+    return "added needs-triage" if decision.add_label else "left as it is"
+
+
 def run(event: Mapping[str, Any], repo: str, gh: GhApi) -> int:
     """Handle one ``issues`` event. See the module docstring for the exit codes."""
     ctx = context_from_event(event, repo)
     if ctx is None:
         return 0
     try:
-        has_label = TRIAGE_LABEL in current_labels(gh, repo, ctx.number)
-        decision = decide(ctx, has_label, lambda: read_history(gh, repo, ctx.number))
-        if decision.add_label:
-            add_triage_label(gh, repo, ctx.number)
+        outcome = _handle(gh, ctx)
     except GhError as exc:
         print(f"error: issue #{ctx.number}: {exc}", file=sys.stderr)
         return 1
-    if decision.message:
-        try:
-            _comment(gh, repo, ctx.number, decision.message)
-        except GhError as exc:  # the label is already back; only the explanation is missing
-            print(f"error: issue #{ctx.number}: could not post the notice: {exc}", file=sys.stderr)
-            return 1
-    outcome = "added needs-triage" if decision.add_label else "left as it is"
     print(f"handled {ctx.action} on issue #{ctx.number}: {outcome}")
     return 0
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
-    del argv  # no command-line arguments: the workflow's environment is the whole input
+def untriaged_candidates(gh: GhApi, repo: str, since: str) -> list[int]:
+    """Open issues (not pull requests) created at or after ``since`` that lack the label, newest first."""
+    numbers: list[int] = []
+    for page in range(1, _SWEEP_MAX_PAGES + 1):
+        raw = gh(
+            "GET", f"repos/{repo}/issues?state=open&sort=created&direction=desc&per_page={_PAGE_SIZE}&page={page}", None
+        )
+        if not isinstance(raw, list):
+            raise GhError("the open-issues answer is not a list")
+        for item in raw:
+            if not isinstance(item, dict) or "pull_request" in item:
+                continue
+            created, number, labels = item.get("created_at"), item.get("number"), item.get("labels")
+            if not isinstance(created, str) or isinstance(number, bool) or not isinstance(number, int):
+                raise GhError("an open-issues entry lacks created_at or number")
+            if created < since:
+                return numbers  # newest first: everything after this is older still
+            if not isinstance(labels, list):
+                raise GhError("an open-issues entry lacks labels")
+            names = {str(label.get("name", "")).lower() for label in labels if isinstance(label, dict)}
+            if TRIAGE_LABEL not in names:
+                numbers.append(number)
+        if len(raw) < _PAGE_SIZE:
+            return numbers
+    raise GhError(f"more than {_SWEEP_MAX_PAGES * _PAGE_SIZE} issues were created since {since}")
+
+
+def run_sweep(repo: str, gh: GhApi, since: str) -> int:
+    """Give every open issue created since ``since`` the decision an ``opened`` event would have had."""
+    failed = 0
+    try:
+        candidates = untriaged_candidates(gh, repo, since)
+    except GhError as exc:
+        print(f"error: sweep: {exc}", file=sys.stderr)
+        return 1
+    for number in candidates:
+        try:
+            outcome = _handle(gh, Context(repo, number, SWEEP_ACTION, False))
+        except GhError as exc:
+            failed += 1
+            print(f"error: issue #{number}: {exc}", file=sys.stderr)
+            continue
+        print(f"handled sweep on issue #{number}: {outcome}")
+    print(f"swept {len(candidates)} open issue(s) without the label; {failed} failed")
+    return 1 if failed else 0
+
+
+def main(argv: Sequence[str] = ()) -> int:
+    args = list(argv)
     repo = os.environ.get("GITHUB_REPOSITORY", "")
+    if not valid_repository(repo):
+        print("error: GITHUB_REPOSITORY must be <owner>/<name>", file=sys.stderr)
+        return 2
+    if args == [SWEEP_ACTION]:
+        since = os.environ.get(SINCE_ENV, "")
+        try:
+            datetime.strptime(since, _SINCE_FORMAT)
+        except ValueError:
+            print(f"error: {SINCE_ENV} must look like 2026-10-21T00:00:00Z", file=sys.stderr)
+            return 2
+        return run_sweep(repo, gh_api, since)
+    if args:
+        print(f"error: the only argument is '{SWEEP_ACTION}'", file=sys.stderr)
+        return 2
     event_path = os.environ.get("GITHUB_EVENT_PATH", "")
-    if repo.count("/") != 1 or not event_path:
-        print("error: GITHUB_REPOSITORY and GITHUB_EVENT_PATH must be set", file=sys.stderr)
+    if not event_path:
+        print("error: GITHUB_EVENT_PATH must be set", file=sys.stderr)
         return 2
     try:
         with open(event_path, encoding="utf-8") as handle:
@@ -298,4 +482,4 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

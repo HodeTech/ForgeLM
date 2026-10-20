@@ -109,7 +109,7 @@ on any account that holds it.
 **Continuity: a known gap, recorded rather than promised.** There is one owner
 today, and nothing in the release path is asynchronous — the same single account
 holds the tag ruleset and approves the release workflow's `pypi` environment. An
-unplanned absence therefore stops merges, releases and security advisories at
+unplanned absence therefore stops merges, releases, triage and security advisories at
 once. The fix is a second organisation owner (or an organisation-level owner with
 the release environment's approval); it is not scheduled, and this paragraph is
 what says so.

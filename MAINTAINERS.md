@@ -48,23 +48,35 @@ it is not rude.
 
 Every new issue starts with the `needs-triage` label: the issue forms add it, and
 the *Triage gate* workflow adds it to any issue created another way, whoever
-opened it. Removing the label is a maintainer's sign-off, and only a
-maintainer's removal stands — the workflow puts the label back after anyone
-else's. Contributors are told not to work on an issue that still carries it
+opened it, and an hourly sweep repairs any recent issue the first run missed.
+Removing the label is a maintainer's sign-off, and only a maintainer's removal
+stands — the workflow puts the label back after anyone else's. Contributors are told not to work on an issue that still carries it
 ([CONTRIBUTING.md](CONTRIBUTING.md#issue-triage)), so the queue is the project's
 front door. The routine:
 
 1. **Find the queue:** [open issues labelled `needs-triage`](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+label%3Aneeds-triage).
 2. **Check the report against `development`.** Is it still true? A duplicate?
    Already tracked (`backlog: known`) or already fixed? Content that should not be
-   public — a vulnerability, a secret, personal data — is edited out and moved to a
-   private advisory first ([SECURITY.md](SECURITY.md)).
+   public — a vulnerability, a secret, personal data — goes to a private advisory
+   first ([SECURITY.md](SECURITY.md)). Rotate any exposed secret before anything
+   else, then redact the public issue. Editing leaves the old text in the issue's
+   history, in notification e-mails and in forks, so an issue that holds a live
+   secret or personal data is deleted instead; this is the one case where the
+   rule "an issue is never deleted" does not apply.
 3. **Decide, and record the decision on the issue.** Accept it (add the type,
    `area:`, `severity:` and `wave:` labels, and set the project card's fields), ask
    the reporter for what is missing (the label stays), or close it as `duplicate`,
    `invalid` or `wontfix` with the reason.
 4. **Remove `needs-triage` last,** when the issue carries its classification or is
-   closed. An open issue without the label is one a maintainer has triaged.
+   closed. An open issue without the label is one a maintainer has triaged — the
+   issues that predate the gate were classified by the October 2026 review and
+   checked once, and the gate and its sweep cover everything created since.
+
+Triage looks at the report as it stood; editing an issue afterwards does not bring
+the label back, so a maintainer who doubts a rewritten report puts it back by hand.
+When a maintainer steps down, move the login from `MAINTAINER_LOGINS` to
+`FORMER_MAINTAINER_LOGINS` in `tools/triage_gate.py`, so the issues they triaged
+stay triaged.
 
 A pull request that links an issue still carrying the label waits for this step
 rather than for a review.

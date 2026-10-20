@@ -51,4 +51,4 @@ Fixes #
 - [ ] Config template (`config_template.yaml`) updated if new config fields added
 - [ ] CHANGELOG entry under `[Unreleased]` if a user or library consumer can observe the change
 - [ ] The issue I link has been triaged (it does not carry `needs-triage`), or this PR links no issue —
-      see CONTRIBUTING.md, "Issue triage"
+      see [Issue triage](https://github.com/HodeTech/ForgeLM/blob/development/CONTRIBUTING.md#issue-triage)
