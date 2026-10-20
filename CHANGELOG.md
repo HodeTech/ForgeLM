@@ -109,6 +109,9 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- SLERP now snapshots both merged adapter states before restoring or updating the base model,
+  so the first adapter's contribution is preserved and the result responds to the configured
+  weights instead of silently returning only the second adapter (CR-A13-001, #407).
 - Preserve top-level `--dry-run`, `--config`, `--offline` and `--output` values when a subcommand omits the same flag (CR-A05-001, #414).
 - Stop describing the human-approval gate as enforcing segregation of duties (English and Turkish): it records the
   trainer and approver identities and does not compare them, and both are self-asserted. The ISO 27001 and SOC 2
