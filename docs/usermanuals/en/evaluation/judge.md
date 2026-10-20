@@ -95,6 +95,10 @@ ForgeLM does not enforce a runtime USD budget. Manage cost externally:
 **Forgetting `judge_api_key_env`.** When `judge_model` is an API model name (e.g. `gpt-4o-mini`) and `judge_api_key_env` is unset, ForgeLM falls back to local-model loading and tries to download `gpt-4o-mini` from HF Hub, which fails noisily. Set the env-var name explicitly when the judge is an API.
 :::
 
+:::warn
+**Replies cut off at the token limit are not scored.** The judge's reply budget is 200 tokens. If a reply is cut off — the API reports `finish_reason: "length"` (or `"content_filter"`), or the local judge uses all 200 tokens without ending — ForgeLM counts it as a failed judge call and does not read it, because a truncated verdict can leave a score object quoted from the judged answer as the only complete one. A judge that writes long justifications loses those rows; when too many are lost the gate fails with `Insufficient valid judge evidence` (see `min_valid_fraction`), and the failure reason says how many replies were cut off. Keep the judge's reply short. A gateway that sends no `finish_reason` cannot be checked.
+:::
+
 :::tip
 **Pair judge with benchmarks.** A model that wins on judge but regresses on benchmarks is overfitting to whatever the judge prefers. Both signals matter.
 :::
