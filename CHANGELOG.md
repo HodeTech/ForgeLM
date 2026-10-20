@@ -94,6 +94,8 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Fail closed when judge replies contain multiple score objects or duplicate JSON keys, and reject
+  non-object replies with the existing judge-failure sentinel (CR-A06-015, M-A06-015, #127).
 - Preserve top-level `--dry-run`, `--config`, `--offline` and `--output` values when a subcommand omits the same flag (CR-A05-001, #414).
 - Stop describing the human-approval gate as enforcing segregation of duties (English and Turkish): it records the
   trainer and approver identities and does not compare them, and both are self-asserted. The ISO 27001 and SOC 2

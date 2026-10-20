@@ -198,23 +198,48 @@ def _validate_rubric(rubric: str) -> Optional[str]:
     return None
 
 
+def _reject_duplicate_judge_keys(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
+    """Build a JSON object, rejecting repeated keys at any nesting level."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate key in judge response")
+        result[key] = value
+    return result
+
+
 def _parse_judge_json(text: str) -> Dict[str, Any]:
-    """Safely parse judge response JSON, handling common LLM output quirks."""
+    """Parse an object reply or a single score object; fail closed on ambiguity."""
     text = text.strip()
-    # Try direct parse first
+    decoder = json.JSONDecoder(object_pairs_hook=_reject_duplicate_judge_keys)
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    # Try extracting JSON from markdown code block
-    if "```" in text:
-        for block in text.split("```"):
-            block = block.strip().removeprefix("json").strip()
-            try:
-                return json.loads(block)
-            except json.JSONDecodeError:
-                continue
-    logger.warning("Could not parse judge response as JSON (length=%d chars).", len(text))
+        try:
+            result = decoder.decode(text)
+        except json.JSONDecodeError:
+            candidates = []
+            offset = 0
+            while (start := text.find("{", offset)) != -1:
+                try:
+                    candidate, end = decoder.raw_decode(text, start)
+                except json.JSONDecodeError:
+                    offset = start + 1
+                    continue
+                # Skip the entire object so nested objects and braces in strings
+                # are not counted again as independent verdicts.
+                offset = end
+                if "score" in candidate:
+                    candidates.append(candidate)
+            if len(candidates) != 1:
+                raise ValueError("Expected exactly one score object in judge response") from None
+            return candidates[0]
+        if not isinstance(result, dict):
+            raise ValueError("Judge response must be a JSON object")
+        return result
+    except ValueError:
+        logger.warning(
+            "Invalid or ambiguous judge JSON response: expected one object with unique keys (length=%d chars).",
+            len(text),
+        )
     # Use score=None as the failure sentinel — score=0 used to be clipped up
     # to 1.0 by _clip_judge_score and silently lowered the average.
     return {"score": None, "reason": "Invalid JSON response from judge model."}
