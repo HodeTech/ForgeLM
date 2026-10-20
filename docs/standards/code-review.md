@@ -15,7 +15,7 @@ A PR merges only after:
    the comments of the automated reviewers.
 5. **No linked issue is blocked** — the **Issue dependencies** check passes, or a maintainer accepted the dependency
    with `dependency-override` ([CONTRIBUTING.md, "Dependencies between issues"](../../CONTRIBUTING.md#dependencies-between-issues)).
-   Until branch protection lists that check, a red result does not disable the merge button, so read it.
+   Branch protection requires that check on `development`.
 
 No exceptions for "trivial" changes. Even typo fixes go through CI.
 
