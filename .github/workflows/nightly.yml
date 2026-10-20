@@ -388,7 +388,8 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 title: title,
-                labels: ['nightly-failure', 'bug'],
+                // Events caused by GITHUB_TOKEN start no other workflow, so the triage gate cannot label this issue.
+                labels: ['nightly-failure', 'bug', 'needs-triage'],
                 body: `## Nightly CI Failure\n\nThe nightly compatibility test failed.\n\n**Run:** [View details](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})\n\nThis may indicate a breaking change in a dependency. Check the test logs for details.`,
               });
             }

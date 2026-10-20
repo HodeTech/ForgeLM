@@ -6,6 +6,7 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
 
 1. Pick an open, unassigned [`good first issue`][good-first-issue].
    Comment `/assign` to claim it and confirm the problem on `development`; see [Working on an issue](#working-on-an-issue).
+   Work only on an issue a maintainer has triaged, which means one without the `needs-triage` label; see [Issue triage](#issue-triage).
 2. [Fork and clone](#1-fork--clone), then [create a branch from `development`](#3-create-a-branch).
    Use Python **3.10, 3.11, 3.12 or 3.13** — CI tests all four versions. Create a virtual environment
    with that interpreter (replace `python3.13` below if you selected another supported version),
@@ -87,7 +88,7 @@ Issues carry labels, and the project adds planning fields on top of them.
 | `bug` · `documentation` · `i18n` · `dependencies` | The kind of change: code, English docs, the Turkish mirror, or a dependency/ecosystem update |
 | `backlog: known` | Already described in [`docs/roadmap/`](docs/roadmap/); the issue links the roadmap entry |
 | `security` | Security-relevant; read [Reporting Security Vulnerabilities](#reporting-security-vulnerabilities) before discussing details |
-| `needs-triage` | Not triaged yet — a new report, or a finding reviewers disagreed on; wait for a maintainer to confirm and plan it before working on it |
+| `needs-triage` | Not triaged yet: every new issue starts with it, and so does a finding reviewers disagreed on. Only a maintainer removes it, and nobody works on the issue before then — see [Issue triage](#issue-triage) |
 | `source: review-2026-10` | Found by the October 2026 code and documentation review |
 | `source: review-2026-09` | Found by the September 2026 independent review |
 | `source: roadmap` | Planned work recorded in [`docs/roadmap/`](docs/roadmap/): a roadmap step or a deferred item |
@@ -105,6 +106,17 @@ Useful starting points:
 - [Open, unassigned wave 0–1 issues](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+no%3Aassignee+label%3A%22wave%3A+0%22%2C%22wave%3A+1%22) — the highest-priority work
 - [Documentation issues](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+label%3Adocumentation+no%3Aassignee) — often a good first contribution
 - The project's *Backlog* view, filtered by an **Area** you know or by **Size** `XS`/`S`
+
+### Issue triage
+
+Every new issue is **triaged** by a maintainer before anyone works on it. Triage is a maintainer reading the report, checking it against `development`, deciding whether and when to do it, and classifying it with the labels above. Until that has happened the issue carries `needs-triage`.
+
+- **The label is automatic.** The issue forms add it, and the *Triage gate* workflow (`tools/triage_gate.py`) adds it to every issue created another way — through the API, `gh issue create` or another tool — whoever opens it, maintainers included. An issue that its author reopens after it was closed goes back to triage the same way.
+- **Only a maintainer removes it,** and removing it is how a maintainer says "triaged" (the maintainers are listed in [MAINTAINERS.md](MAINTAINERS.md)). If anyone else removes the label, the workflow puts it back with a comment. Please do not remove it, even if your account is able to.
+- **Do not work on an untriaged issue.** Do not claim it, start on it or open a pull request for it: `/assign` refuses it, and a pull request that links an issue still labelled `needs-triage` will not be reviewed until a maintainer has triaged the issue. A report can turn out to be inaccurate, a duplicate, already fixed on `development`, planned differently or not something the project will do, and work done before triage is the work most likely to be thrown away. A comment that helps triage — a reproduction, the versions involved, a log — is welcome at any time; "I would like to work on this" can wait for the label to go.
+- **A pull request without an issue is fine** for a small fix such as a typo or a broken link. The rule above applies to a pull request that links an issue.
+- **What triage can decide.** The issue is accepted (classified with a type, an `area:`, a severity and a wave, and the label is removed); answered, or sent back for more information (the label stays); closed as a duplicate or as already tracked (`duplicate`, `backlog: known`); or closed with a reason (`invalid`, `wontfix`). A report of a security vulnerability is moved to a private advisory instead (see [Reporting Security Vulnerabilities](#reporting-security-vulnerabilities)). An issue is never deleted.
+- **How long it takes.** A maintainer replies within 72 hours on a best-effort basis ([MAINTAINERS.md](MAINTAINERS.md#review-cadence)). If an issue has waited longer, a polite comment is welcome.
 
 ### Working on an issue
 
@@ -254,7 +266,7 @@ keep this list and that one in sync if either changes.
 
 ### 5. Submit a PR
 
-Push your branch to your fork and open a Pull Request against `development` (the default base). Link the issue it addresses (`Fixes #123`, or `Refs #123` for part of a grouped issue) and quote any finding IDs — see [Working on an issue](#working-on-an-issue).
+Push your branch to your fork and open a Pull Request against `development` (the default base). Link the issue it addresses (`Fixes #123`, or `Refs #123` for part of a grouped issue) and quote any finding IDs — see [Working on an issue](#working-on-an-issue). The issue must be triaged: a pull request for an issue that still carries `needs-triage` is not reviewed until the label is gone — see [Issue triage](#issue-triage).
 
 **Before a pull request can merge**, branch protection on `development` (and on `main`) requires three things: the six CI checks — `lint`, `test (3.10)`, `test (3.11)`, `test (3.12)`, `test (3.13)` and `validate` — passing, and on `development` also the **Issue dependencies** check ([Dependencies between issues](#dependencies-between-issues)); the branch up to date with its target (use *Update branch*); and every review conversation resolved, including the comments of the automated reviewers.
 

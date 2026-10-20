@@ -12,8 +12,11 @@ body:
         [CONTRIBUTING.md](https://github.com/HodeTech/ForgeLM/blob/development/CONTRIBUTING.md).
         You do not need to write the Turkish yourself: open the pull request with
         the English change and say so, and a maintainer will complete the mirror.
-        Tell us below which copy you were reading. Documentation pull requests are
-        welcome directly.
+        Tell us below which copy you were reading. A documentation pull request is
+        welcome directly, without an issue. If you open an issue, a maintainer triages
+        it first (it carries the `needs-triage` label until then); please wait for that
+        before you start on it — see
+        [Issue triage](https://github.com/HodeTech/ForgeLM/blob/development/CONTRIBUTING.md#issue-triage).
 
   - type: input
     id: page

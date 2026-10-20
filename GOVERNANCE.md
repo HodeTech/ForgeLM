@@ -53,6 +53,11 @@ Everyone contributing is bound by the
   to open one first, so the design is agreed before code is written. If the
   change is larger than one issue, it becomes a roadmap phase under
   [docs/roadmap/](docs/roadmap/).
+- **Triage** is a maintainer's decision. Every new issue carries `needs-triage`
+  until a maintainer has read it, checked it against `development` and decided
+  what happens to it, and contributors do not work on an issue before then. The
+  rules are in [CONTRIBUTING.md](CONTRIBUTING.md#issue-triage) and the routine in
+  [MAINTAINERS.md](MAINTAINERS.md#triage).
 - **Breaking changes** to the YAML schema or the CLI contract require a
   deprecation period. Removing a YAML field is a MAJOR change; the release a
   removal lands in is named by a single constant,

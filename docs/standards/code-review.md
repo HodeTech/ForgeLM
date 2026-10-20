@@ -69,6 +69,7 @@ In order of priority:
 ### 6. Is the scope right?
 
 - Does it do one thing? (A bug fix + a refactor + a new feature in one PR: split.)
+- Is the linked issue triaged? An issue that still carries `needs-triage` has not been confirmed or planned by a maintainer, so a PR for it waits for triage rather than for review (see [CONTRIBUTING.md](../../CONTRIBUTING.md#issue-triage)).
 - Are drive-by reformats included that obscure the real diff? (Reject those.)
 - Is it a minimum viable implementation, or has scope crept?
 

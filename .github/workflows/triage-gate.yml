@@ -1,0 +1,53 @@
+name: Triage gate
+
+# Every issue starts with `needs-triage`, and only a maintainer takes it off. The rules live in
+# tools/triage_gate.py (documented in CONTRIBUTING.md, "Issue triage"):
+#   - an opened issue gets the label, however it was created (the issue forms add it themselves; the API and the
+#     `gh` CLI do not), unless a maintainer has already removed it;
+#   - an issue reopened by anyone but a maintainer goes back to triage;
+#   - the label removed by anyone but a maintainer is put back, with one comment.
+# The script never removes the label: completing triage is the maintainer's decision.
+#
+# This workflow runs on events anyone can cause (opening an issue), with permission to write to issues. Keep it
+# that way on purpose; tests/test_triage_gate.py pins each of these properties:
+#   - the triggers are `issues` / `opened`, `reopened` and `unlabeled` only (an edit cannot start a run);
+#   - the job `if:` reads event data only, never a shell: no `${{ }}` appears in a `run:` line, and the script
+#     reads the event file itself and never reads the issue's title or body;
+#   - the token holds `contents: read` and `issues: write` and nothing else;
+#   - the checkout takes the default branch (what `issues` runs on), one file, no stored credentials, and is pinned
+#     to a full commit SHA;
+#   - there is no `concurrency:` group: GitHub cancels a *pending* run when a newer one joins the group, which
+#     would drop a restore without a word. Instead the script decides again on a fresh read of the issue's labels
+#     and label history, so two runs on one issue reach the same state.
+#
+# Events caused by a workflow's own GITHUB_TOKEN start no other workflow, so an issue that a workflow creates
+# (nightly.yml opens the nightly-failure issue) carries the label from the start instead.
+#
+# Maintainers: to switch the gate off at once, open Actions > "Triage gate" > the "..." menu > "Disable workflow".
+# Labels already set stay as they are.
+
+on:
+  issues:
+    types: [opened, reopened, unlabeled]
+
+permissions: {}
+
+jobs:
+  gate:
+    # Event data only. A removal of any other label is none of this workflow's business.
+    if: ${{ github.event.action != 'unlabeled' || github.event.label.name == 'needs-triage' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read  # the checkout reads one script from the default branch
+      issues: write   # add the label, and post the notice
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/triage_gate.py
+          sparse-checkout-cone-mode: false
+      - name: Keep needs-triage until a maintainer removes it
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 tools/triage_gate.py
