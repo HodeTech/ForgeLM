@@ -56,7 +56,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
+from typing import Any, Callable, Iterable, Iterator, Mapping, Optional, Sequence
 from urllib.parse import quote
 
 BLOCKED_LABEL = "blocked"
@@ -112,6 +112,8 @@ _LINK_RE = re.compile(
 _CLOSING = frozenset({"close", "closes", "closed", "fix", "fixes", "fixed", "resolve", "resolves", "resolved"})
 _FENCE_RE = re.compile(r" {0,3}(`{3,}|~{3,})")  # matched at the start of one line by the walker below
 _BACKTICK_RUN_RE = re.compile(r"`+")  # one quantifier over one character: linear
+_INDENTED_RE = re.compile(r"(?: {4}| {0,3}\t)")  # matched at the start of one line: four spaces, or a tab
+_ATX_HEADING_RE = re.compile(r" {0,3}#{1,6}(?:[ \t]|$)")  # matched at the start of one line
 
 # Every GraphQL document this script may send. A query is chosen by name; only integer and cursor variables vary.
 _ISSUE_FIELDS = """
@@ -343,17 +345,35 @@ def _strip_non_prose(body: str) -> str:
     return _strip_inline_code(_strip_html_comments(_strip_fences(body)))
 
 
-def linked_issues(body: str, repo: str) -> tuple[frozenset[int], frozenset[int]]:
-    """``(closing, all)``: issue numbers of this repository linked from a pull-request description.
+def _strip_indented_code(text: str) -> str:
+    """Drop indented code blocks with a line walker (linear).
 
-    ``all`` holds every linked issue, read leniently; ``closing`` the ones GitHub will close on merge, read strictly
-    (see the module docstring). A reference to another repository is ignored: this repository's links cannot block on
-    it, and its workflow cannot close it.
+    A line indented four spaces (or a tab) opens a block only at the start, after a blank line or after a heading:
+    an indented code block cannot interrupt a paragraph, so a four-space line right after paragraph text is a
+    continuation and stays. Once open, the block runs through indented and blank lines.
     """
+    kept: list[str] = []
+    in_code = False
+    block_start = True
+    for line in text.splitlines():
+        blank = not line.strip()
+        indented = bool(_INDENTED_RE.match(line))
+        if in_code and (blank or indented):
+            kept.append("")
+        elif indented and block_start and not blank:
+            in_code = True
+            kept.append("")
+        else:
+            in_code = False
+            kept.append(line)
+        block_start = blank or bool(_ATX_HEADING_RE.match(line))
+    return "\n".join(kept)
+
+
+def _references(text: str, repo: str) -> Iterator[tuple[int, bool]]:
+    """Each reference to an issue of this repository in ``text``, with whether GitHub closes it on merge."""
     owner, name = repo.lower().split("/")
-    closing: set[int] = set()
-    every: set[int] = set()
-    for match in _LINK_RE.finditer(_strip_non_prose(body or "")):
+    for match in _LINK_RE.finditer(text):
         keyword, sep, refs = match.group("kw").lower(), match.group("sep"), match.group("refs")
         if not sep and not refs.startswith("#"):
             continue  # `refsfoo/bar#1` is a word, not a keyword followed by a reference
@@ -363,13 +383,24 @@ def linked_issues(body: str, repo: str) -> tuple[frozenset[int], frozenset[int]]
         for position, ref in enumerate(_REF_RE.finditer(refs)):
             ref_owner = (ref.group("owner") or ref.group("uowner") or owner).lower()
             ref_repo = (ref.group("repo") or ref.group("urepo") or name).lower()
-            if (ref_owner, ref_repo) != (owner, name):
-                continue
-            number = int(ref.group("num") or ref.group("unum"))
-            every.add(number)
-            if strict and position == 0 and ref.group("num"):
-                closing.add(number)
-    return frozenset(closing), frozenset(every)
+            if (ref_owner, ref_repo) == (owner, name):
+                yield int(ref.group("num") or ref.group("unum")), strict and position == 0 and bool(ref.group("num"))
+
+
+def linked_issues(body: str, repo: str) -> tuple[frozenset[int], frozenset[int]]:
+    """``(closing, all)``: issue numbers of this repository linked from a pull-request description.
+
+    ``all`` holds every linked issue, read leniently; ``closing`` the ones GitHub will close on merge, read strictly
+    (see the module docstring). A reference to another repository is ignored: this repository's links cannot block on
+    it, and its workflow cannot close it.
+    """
+    prose = _strip_non_prose(body or "")
+    every = frozenset(number for number, _ in _references(prose, repo))
+    # Closing references are read without indented code blocks as well, and only they are: inside a list item, a
+    # line indented four spaces after a blank line is still prose, so dropping it from the links could hide a linked
+    # blocked issue, while dropping it from the closing references can only refuse an exemption.
+    closing = frozenset(number for number, closes in _references(_strip_indented_code(prose), repo) if closes)
+    return closing, every
 
 
 @dataclass(frozen=True)

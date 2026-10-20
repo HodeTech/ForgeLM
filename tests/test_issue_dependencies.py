@@ -177,6 +177,8 @@ def test_fences_comments_and_code_spans_follow_commonmark(body: str, every: set)
         "`" * 60_000,
         "`a" * 30_000,
         "``a`" * 15_000,
+        "    Fixes #1\n\n" * 5_000,
+        "## h\n\tFixes #1\n" * 5_000,
         "<!-- -->```\n" * 5_000,
     ],
 )
@@ -219,10 +221,26 @@ def test_closing_the_blocker_in_the_same_pull_request_passes() -> None:
         "Fixes #5, #1",
         "Fixes #5\n``Fixes #1``",  # inside a double-backtick code span GitHub closes nothing
         "Fixes #5\n`` Fixes #1 ` still code ``",
+        "Fixes #5\n\n    Fixes #1",  # nor inside an indented code block: after a blank line,
+        "    Fixes #1\nFixes #5",  # at the very start,
+        "## Notes\n    Fixes #1\n\nFixes #5",  # after a heading,
+        "Fixes #5\n\n\tFixes #1",  # or indented with a tab
     ],
 )
 def test_a_link_github_would_not_close_never_exempts_the_blocker(body: str) -> None:
     assert not verdict(body, {5: (blocker(1),), 1: ()}).ok
+
+
+def test_a_four_space_line_right_after_paragraph_text_is_prose_and_closes() -> None:
+    # An indented code block cannot interrupt a paragraph, so GitHub closes #1 here.
+    assert tool.linked_issues("Fixes #5\n    Fixes #1", REPO) == (frozenset({1, 5}), frozenset({1, 5}))
+    assert verdict("Fixes #5\n    Fixes #1", {5: (blocker(1),), 1: ()}).ok
+
+
+def test_indented_code_is_dropped_from_the_closing_references_only() -> None:
+    # Inside a list item an indented paragraph looks like code to a line walker: keeping it as a link errs strict.
+    body = "- item\n\n    Refs #2\n\n    Fixes #3\nFixes #4"
+    assert tool.linked_issues(body, REPO) == (frozenset({4}), frozenset({2, 3, 4}))
 
 
 def test_a_blocker_closed_without_being_completed_fails_even_if_named() -> None:
