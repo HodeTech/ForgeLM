@@ -179,6 +179,8 @@ def test_fences_comments_and_code_spans_follow_commonmark(body: str, every: set)
         "``a`" * 15_000,
         "    Fixes #1\n\n" * 5_000,
         "## h\n\tFixes #1\n" * 5_000,
+        "- " * 30_000 + "x",  # an almost-thematic break
+        "=" * 60_000 + "x",  # an almost-setext underline
         "<!-- -->```\n" * 5_000,
     ],
 )
@@ -224,17 +226,26 @@ def test_closing_the_blocker_in_the_same_pull_request_passes() -> None:
         "Fixes #5\n\n    Fixes #1",  # nor inside an indented code block: after a blank line,
         "    Fixes #1\nFixes #5",  # at the very start,
         "## Notes\n    Fixes #1\n\nFixes #5",  # after a heading,
-        "Fixes #5\n\n\tFixes #1",  # or indented with a tab
+        "Fixes #5\n\n\tFixes #1",  # indented with a tab,
+        "Fixes #5\n```\nx\n```\n    Fixes #1",  # after a closed fence,
+        "Fixes #5\n\nTitle\n=====\n    Fixes #1",  # after a setext underline,
+        "Fixes #5\n\n***\n    Fixes #1",  # or after a thematic break
+        "Fixes #5\n\n* * *\n    Fixes #1",
+        "Fixes #5\n\n___\n    Fixes #1",
     ],
 )
 def test_a_link_github_would_not_close_never_exempts_the_blocker(body: str) -> None:
     assert not verdict(body, {5: (blocker(1),), 1: ()}).ok
 
 
-def test_a_four_space_line_right_after_paragraph_text_is_prose_and_closes() -> None:
-    # An indented code block cannot interrupt a paragraph, so GitHub closes #1 here.
-    assert tool.linked_issues("Fixes #5\n    Fixes #1", REPO) == (frozenset({1, 5}), frozenset({1, 5}))
-    assert verdict("Fixes #5\n    Fixes #1", {5: (blocker(1),), 1: ()}).ok
+@pytest.mark.parametrize(
+    "body", ["Fixes #5\n    Fixes #1", "Fixes #5\n-_-\n    Fixes #1", "Fixes #5\n**\n    Fixes #1"]
+)
+def test_a_four_space_line_right_after_paragraph_text_is_prose_and_closes(body: str) -> None:
+    # An indented code block cannot interrupt a paragraph, so GitHub closes #1 here; `-_-` and `**` are paragraph
+    # text, not a setext underline or a thematic break.
+    assert tool.linked_issues(body, REPO) == (frozenset({1, 5}), frozenset({1, 5}))
+    assert verdict(body, {5: (blocker(1),), 1: ()}).ok
 
 
 def test_indented_code_is_dropped_from_the_closing_references_only() -> None:

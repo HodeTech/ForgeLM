@@ -114,6 +114,10 @@ _FENCE_RE = re.compile(r" {0,3}(`{3,}|~{3,})")  # matched at the start of one li
 _BACKTICK_RUN_RE = re.compile(r"`+")  # one quantifier over one character: linear
 _INDENTED_RE = re.compile(r"(?: {4}| {0,3}\t)")  # matched at the start of one line: four spaces, or a tab
 _ATX_HEADING_RE = re.compile(r" {0,3}#{1,6}(?:[ \t]|$)")  # matched at the start of one line
+# Whole lines that end a block: a setext underline and a thematic break, in their exact CommonMark forms, so a line
+# such as `-_-` stays paragraph text. Every repetition starts with its own character, so nothing backtracks.
+_SETEXT_UNDERLINE_RE = re.compile(r" {0,3}(?:=+|-+)[ \t]*")
+_THEMATIC_BREAK_RE = re.compile(r" {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})")
 
 # Every GraphQL document this script may send. A query is chosen by name; only integer and cursor variables vary.
 _ISSUE_FIELDS = """
@@ -260,7 +264,8 @@ def _strip_fences(body: str) -> str:
 
     A fence opens with three or more backticks or tildes after at most three spaces (a backtick fence's info string
     may not contain a backtick) and closes on a line holding the same character at least as many times and nothing
-    else. A fence that never closes runs to the end, as in CommonMark.
+    else. A fence that never closes runs to the end, as in CommonMark. Each dropped line is kept as a blank line, so
+    the block boundary the fence made survives for the readers after this one.
     """
     kept: list[str] = []
     open_fence: Optional[tuple[str, int]] = None
@@ -269,15 +274,18 @@ def _strip_fences(body: str) -> str:
         if open_fence is None:
             if match and not (match.group(1)[0] == "`" and "`" in line[match.end() :]):
                 open_fence = (match.group(1)[0], len(match.group(1)))
+                kept.append("")
                 continue
             kept.append(line)
-        elif (
+            continue
+        if (
             match
             and match.group(1)[0] == open_fence[0]
             and len(match.group(1)) >= open_fence[1]
             and not line[match.end() :].strip(" \t")
         ):
             open_fence = None
+        kept.append("")
     return "\n".join(kept)
 
 
@@ -345,12 +353,23 @@ def _strip_non_prose(body: str) -> str:
     return _strip_inline_code(_strip_html_comments(_strip_fences(body)))
 
 
+def _ends_block(line: str) -> bool:
+    """A line after which a new block starts: an ATX heading, a setext underline or a thematic break.
+
+    An `===` or `---` line ends a block only under a paragraph line; read without that context it may end one too
+    early, which can only drop a closing reference, never add one.
+    """
+    return bool(
+        _ATX_HEADING_RE.match(line) or _SETEXT_UNDERLINE_RE.fullmatch(line) or _THEMATIC_BREAK_RE.fullmatch(line)
+    )
+
+
 def _strip_indented_code(text: str) -> str:
     """Drop indented code blocks with a line walker (linear).
 
-    A line indented four spaces (or a tab) opens a block only at the start, after a blank line or after a heading:
-    an indented code block cannot interrupt a paragraph, so a four-space line right after paragraph text is a
-    continuation and stays. Once open, the block runs through indented and blank lines.
+    A line indented four spaces (or a tab) opens a block only at the start, after a blank line or after a line that
+    ends a block (``_ends_block``): an indented code block cannot interrupt a paragraph, so a four-space line right
+    after paragraph text is a continuation and stays. Once open, the block runs through indented and blank lines.
     """
     kept: list[str] = []
     in_code = False
@@ -366,7 +385,7 @@ def _strip_indented_code(text: str) -> str:
         else:
             in_code = False
             kept.append(line)
-        block_start = blank or bool(_ATX_HEADING_RE.match(line))
+        block_start = blank or _ends_block(line)
     return "\n".join(kept)
 
 
