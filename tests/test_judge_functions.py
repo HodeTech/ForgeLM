@@ -1447,12 +1447,12 @@ class TestCutOffRepliesAreReported:
         _, passed, reason = self._summary([8.0, None, None, None, None], truncated=3)
         assert passed is False
         assert reason.startswith("Insufficient valid judge evidence")  # the prefix consumers branch on is unchanged
-        assert "3 of the failed replies were cut off" in reason and "200 tokens" in reason
+        assert "3 of the failed replies were incomplete" in reason and "200 tokens" in reason
 
     def test_no_valid_scores_names_the_cut_off_replies(self):
         _, passed, reason = self._summary([None, None], truncated=2)
         assert passed is False
-        assert reason.startswith("No valid judge scores") and "2 of the failed replies were cut off" in reason
+        assert reason.startswith("No valid judge scores") and "2 of the failed replies were incomplete" in reason
 
     def test_nothing_is_added_when_no_reply_was_cut_off(self):
         _, _, reason = self._summary([None, None], truncated=0)
@@ -1495,4 +1495,4 @@ class TestCutOffRepliesAreReported:
         assert result.scores == [None, None, 8.0, None, 9.0]
         assert result.passed is False
         assert result.failure_reason.startswith("Insufficient valid judge evidence")
-        assert "3 of the failed replies were cut off" in result.failure_reason
+        assert "3 of the failed replies were incomplete" in result.failure_reason

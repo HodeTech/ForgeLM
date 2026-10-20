@@ -96,7 +96,13 @@ ForgeLM runtime USD bütçesi uygulamaz. Maliyeti dışarıdan yönetin:
 :::
 
 :::warn
-**Token sınırında kesilen yanıtlar puanlanmaz.** Judge'ın yanıt bütçesi 200 token'dır. Bir yanıt kesilirse — API `finish_reason: "length"` (veya `"content_filter"`) bildirir ya da yerel judge 200 token'ın hepsini bitirmeden kullanır — ForgeLM bunu başarısız bir judge çağrısı sayar ve okumaz; çünkü kesilmiş bir karar, değerlendirilen yanıttan alıntılanmış bir puan nesnesini tek tam nesne olarak bırakabilir. Uzun gerekçeler yazan bir judge bu satırları kaybeder; çok fazlası kaybolursa kapı `Insufficient valid judge evidence` gerekçesiyle başarısız olur (bkz. `min_valid_fraction`) ve gerekçe kaç yanıtın kesildiğini söyler. Judge'ın yanıtını kısa tutun. `finish_reason` göndermeyen bir gateway denetlenemez.
+**Tamamlanmamış judge yanıtları puanlanmaz.** Judge'ın yanıt bütçesi 200 token'dır. Bir yanıt üç durumda tamamlanmamış sayılır ve ForgeLM her birini okumadan başarısız bir judge çağrısı sayar; çünkü tamamlanmamış bir karar, değerlendirilen yanıttan alıntılanmış bir puan nesnesini tek tam nesne olarak bırakabilir:
+
+- API `finish_reason: "length"` bildirir — 200 token'lık bütçe tükendi;
+- API `finish_reason: "content_filter"` bildirir — sağlayıcının içerik filtresi yanıtı durdurdu; token bütçesi bununla ilgili değildir;
+- yerel judge, bir end-of-sequence token'ı üretmeden 200 token'ın hepsini üretir.
+
+Uzun gerekçeler yazan bir judge birinci ve üçüncü durumda satır kaybeder. Çok fazla satır kaybolursa kapı `Insufficient valid judge evidence` gerekçesiyle başarısız olur (bkz. `min_valid_fraction`) ve gerekçe kaç yanıtın tamamlanmamış olduğunu söyler. Judge'ın yanıtını kısa tutun. `finish_reason` göndermeyen bir gateway denetlenemez.
 :::
 
 :::tip

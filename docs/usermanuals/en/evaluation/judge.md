@@ -96,7 +96,13 @@ ForgeLM does not enforce a runtime USD budget. Manage cost externally:
 :::
 
 :::warn
-**Replies cut off at the token limit are not scored.** The judge's reply budget is 200 tokens. If a reply is cut off — the API reports `finish_reason: "length"` (or `"content_filter"`), or the local judge uses all 200 tokens without ending — ForgeLM counts it as a failed judge call and does not read it, because a truncated verdict can leave a score object quoted from the judged answer as the only complete one. A judge that writes long justifications loses those rows; when too many are lost the gate fails with `Insufficient valid judge evidence` (see `min_valid_fraction`), and the failure reason says how many replies were cut off. Keep the judge's reply short. A gateway that sends no `finish_reason` cannot be checked.
+**Incomplete judge replies are not scored.** The judge's reply budget is 200 tokens. A reply is incomplete in three cases, and ForgeLM counts each as a failed judge call without reading it, because an incomplete verdict can leave a score object quoted from the judged answer as the only complete one:
+
+- the API reports `finish_reason: "length"` — the 200-token budget ran out;
+- the API reports `finish_reason: "content_filter"` — the provider's content filter stopped the reply; the token budget is not involved;
+- the local judge generates all 200 tokens without producing an end-of-sequence token.
+
+A judge that writes long justifications loses rows to the first and third case. When too many rows are lost the gate fails with `Insufficient valid judge evidence` (see `min_valid_fraction`), and the failure reason says how many replies were incomplete. Keep the judge's reply short. A gateway that sends no `finish_reason` cannot be checked.
 :::
 
 :::tip

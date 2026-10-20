@@ -858,8 +858,8 @@ def _cut_off_note(truncated_count: int) -> str:
     if truncated_count <= 0:
         return ""
     return (
-        f" {truncated_count} of the failed replies were cut off before they were complete (the judge's reply budget "
-        f"is {_JUDGE_REPLY_MAX_TOKENS} tokens, or the provider's content filter stopped them)."
+        f" {truncated_count} of the failed replies were incomplete (cut off at the judge's reply budget "
+        f"of {_JUDGE_REPLY_MAX_TOKENS} tokens, or stopped by the provider's content filter)."
     )
 
 
