@@ -95,6 +95,16 @@ ForgeLM runtime USD bütçesi uygulamaz. Maliyeti dışarıdan yönetin:
 **`judge_api_key_env`'i unutmak.** `judge_model` API model adıyken (ör. `gpt-4o-mini`) ve `judge_api_key_env` set edilmemişken, ForgeLM yerel-model yüklemeye fallback yapar ve `gpt-4o-mini`'yi HF Hub'dan indirmeye çalışır, yüksek sesle başarısız olur. Judge bir API ise env-var adını açıkça set edin.
 :::
 
+:::warn
+**Tamamlanmamış judge yanıtları puanlanmaz.** Judge'ın yanıt bütçesi 200 token'dır. Bir yanıt üç durumda tamamlanmamış sayılır ve ForgeLM her birini okumadan başarısız bir judge çağrısı sayar; çünkü tamamlanmamış bir karar, değerlendirilen yanıttan alıntılanmış bir puan nesnesini tek tam nesne olarak bırakabilir:
+
+- API `finish_reason: "length"` bildirir — 200 token'lık bütçe tükendi;
+- API `finish_reason: "content_filter"` bildirir — sağlayıcının içerik filtresi yanıtı durdurdu; token bütçesi bununla ilgili değildir;
+- yerel judge, bir end-of-sequence token'ı üretmeden 200 token'ın hepsini üretir.
+
+Uzun gerekçeler yazan bir judge birinci ve üçüncü durumda satır kaybeder. Çok fazla satır kaybolursa kapı `Insufficient valid judge evidence` gerekçesiyle başarısız olur (bkz. `min_valid_fraction`) ve gerekçe kaç yanıtın tamamlanmamış olduğunu söyler. Judge'ın yanıtını kısa tutun. `finish_reason` göndermeyen bir gateway denetlenemez.
+:::
+
 :::tip
 **Judge'ı benchmark'larla eşleştirin.** Judge'ta kazanan ama benchmark'larda gerileyen bir model, judge'ın tercih ettiği şeye overfit oluyor demektir. Her iki sinyal de önemli.
 :::

@@ -10,7 +10,7 @@ import math
 import os
 import string
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
 from ._strict_json import dumps_strict
 
@@ -80,6 +80,20 @@ class JudgeResult:
 
 
 OPENAI_API_BASE = "https://api.openai.com/v1/chat/completions"
+
+# The judge's reply budget, in tokens, for both the API judge (``max_tokens``) and the local judge
+# (``max_new_tokens``).  A reply that uses all of it was cut off, and a cut-off reply is never parsed: a
+# verdict that was truncated can leave a *quoted* score object as the only complete one in the reply, which the
+# parser would then take for the verdict (#1044).
+_JUDGE_REPLY_MAX_TOKENS = 200
+# ``finish_reason`` values (compared in lower case) that say an API reply is not the whole reply: the token budget ran
+# out ("length"), or the provider's content filter stopped it ("content_filter" -- a planted passage can trip the
+# filter right after the quote, which cuts the reply the same way).  Any other value, or none, is taken as complete.
+_INCOMPLETE_FINISH_REASONS = frozenset({"length", "content_filter"})
+_JUDGE_NO_TEXT_REASON = "Judge reply carried no text content; counted as a judge failure."
+_JUDGE_TRUNCATED_REASON = (
+    "Judge reply was cut off before it was complete (token limit or content filter); counted as a judge failure."
+)
 
 # GDPR / EU AI Act Art. 10 — fields stripped from on-disk judge_results.json
 # unless the operator opts in via JudgeConfig.include_eval_samples=True.
@@ -259,6 +273,27 @@ def _parse_judge_json(text: str) -> Dict[str, Any]:
     return {"score": None, "reason": "Invalid JSON response from judge model."}
 
 
+def _eos_token_ids(model: Any, tokenizer: Any) -> frozenset[int]:
+    """Every token id that ends a generation: the generation config's (an int or a list) and the tokenizer's."""
+    ids: set[int] = set()
+    configured = getattr(getattr(model, "generation_config", None), "eos_token_id", None)
+    for candidate in (configured, getattr(tokenizer, "eos_token_id", None)):
+        if isinstance(candidate, int):
+            ids.add(candidate)
+        elif isinstance(candidate, (list, tuple)):
+            ids.update(i for i in candidate if isinstance(i, int))
+    return frozenset(ids)
+
+
+def _reply_was_cut_off(new_token_ids: Sequence[int], max_new_tokens: int, eos_token_ids: frozenset[int]) -> bool:
+    """True when generation stopped because it ran out of budget: the cap was reached and the last token is no EOS.
+
+    A reply that ends exactly at the cap with an EOS token finished on its own.  When no EOS id is known the cap
+    being reached cannot be shown to be a natural end, so it counts as a cut-off.
+    """
+    return len(new_token_ids) >= max_new_tokens and (not new_token_ids or new_token_ids[-1] not in eos_token_ids)
+
+
 def _call_api_judge(prompt: str, api_key: str, model: str = "gpt-4o", api_base: Optional[str] = None) -> Dict[str, Any]:
     """Call an API-based judge (OpenAI-compatible endpoint).
 
@@ -278,7 +313,7 @@ def _call_api_judge(prompt: str, api_key: str, model: str = "gpt-4o", api_base: 
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0,
-        "max_tokens": 200,
+        "max_tokens": _JUDGE_REPLY_MAX_TOKENS,
     }
 
     import requests
@@ -286,7 +321,23 @@ def _call_api_judge(prompt: str, api_key: str, model: str = "gpt-4o", api_base: 
     try:
         response = safe_post(url, headers=headers, json=payload, timeout=30)
         response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
+        choice = response.json()["choices"][0]
+        content = choice["message"]["content"]
+        # A gateway that sends no ``finish_reason`` cannot be checked; that is a known limit, not an error.
+        finish_reason = choice.get("finish_reason")
+        if isinstance(finish_reason, str) and finish_reason.lower() in _INCOMPLETE_FINISH_REASONS:
+            logger.warning(
+                "API judge reply was cut off (finish_reason=%s, %d-token cap); counted as a judge failure.",
+                finish_reason.lower(),  # one of the two fixed values above, never provider-supplied free text
+                _JUDGE_REPLY_MAX_TOKENS,
+            )
+            return {"score": None, "reason": _JUDGE_TRUNCATED_REASON}
+        # A refusal or a tool call has ``content: null`` whatever its ``finish_reason`` says; the parser needs text.
+        if not isinstance(content, str):
+            logger.warning(
+                "API judge reply carried no text content (type %s); counted as a judge failure.", type(content).__name__
+            )
+            return {"score": None, "reason": _JUDGE_NO_TEXT_REASON}
         return _parse_judge_json(content)
     except HttpSafetyError:
         # Re-raise. HttpSafetyError signals a misconfigured judge endpoint
@@ -328,8 +379,15 @@ def _call_local_judge(prompt: str, model: Any, tokenizer: Any) -> Dict[str, Any]
         inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=2048)
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
         with torch.no_grad():
-            outputs = model.generate(**inputs, max_new_tokens=200, do_sample=False)
-        response = tokenizer.decode(outputs[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True)
+            outputs = model.generate(**inputs, max_new_tokens=_JUDGE_REPLY_MAX_TOKENS, do_sample=False)
+        new_tokens = outputs[0][inputs["input_ids"].shape[1] :]
+        if _reply_was_cut_off(new_tokens.tolist(), _JUDGE_REPLY_MAX_TOKENS, _eos_token_ids(model, tokenizer)):
+            logger.warning(
+                "Local judge reply was cut off at the %d-token cap; counted as a judge failure.",
+                _JUDGE_REPLY_MAX_TOKENS,
+            )
+            return {"score": None, "reason": _JUDGE_TRUNCATED_REASON}
+        response = tokenizer.decode(new_tokens, skip_special_tokens=True)
         return _parse_judge_json(response)
     except (RuntimeError, ValueError, TypeError, IndexError, KeyError) as e:
         # Tokenizer + generate boundary, mirroring _generate_response.
@@ -715,9 +773,11 @@ def run_judge_evaluation(
         logger.error(_LOG_JUDGE_FAILED, failure_reason)
         return JudgeResult(passed=False, failure_reason=failure_reason)
 
+    truncated_count = sum(1 for d in details if d.get("judge_failed") and d.get("reason") == _JUDGE_TRUNCATED_REASON)
     avg_score, passed, summary_failure_reason = _summarize_judge_scores(
         scores=scores,
         failure_count=failure_count,
+        truncated_count=truncated_count,
         eval_prompts=eval_prompts,
         min_score=min_score,
         min_valid_fraction=min_valid_fraction,
@@ -840,6 +900,16 @@ def _score_eval_prompts(
     return scores, details, failure_count
 
 
+def _cut_off_note(truncated_count: int) -> str:
+    """The sentence that tells an operator how many failed replies were cut off (empty when none were)."""
+    if truncated_count <= 0:
+        return ""
+    return (
+        f" {truncated_count} of the failed replies were incomplete (cut off at the judge's reply budget "
+        f"of {_JUDGE_REPLY_MAX_TOKENS} tokens, or stopped by the provider's content filter)."
+    )
+
+
 def _summarize_judge_scores(
     *,
     scores: List[Optional[float]],
@@ -847,6 +917,7 @@ def _summarize_judge_scores(
     eval_prompts: List[str],
     min_score: float,
     min_valid_fraction: float = 0.8,
+    truncated_count: int = 0,
 ) -> tuple[float, bool, Optional[str]]:
     """Reduce per-prompt scores to (avg, passed, failure_reason).
 
@@ -871,7 +942,10 @@ def _summarize_judge_scores(
     valid_scores = [s for s in scores if s is not None]
 
     if not valid_scores:
-        failure_reason = f"No valid judge scores (all {failure_count}/{len(eval_prompts)} parses/requests failed)."
+        failure_reason = (
+            f"No valid judge scores (all {failure_count}/{len(eval_prompts)} parses/requests failed)."
+            f"{_cut_off_note(truncated_count)}"
+        )
         logger.error(_LOG_JUDGE_FAILED, failure_reason)
         return 0.0, False, failure_reason
 
@@ -886,6 +960,7 @@ def _summarize_judge_scores(
             f"({valid_fraction:.1%}) of eval prompts produced a parseable score, below the "
             f"{min_valid_fraction:.0%} minimum (evaluation.llm_judge.min_valid_fraction). "
             f"The average over that sample ({avg_of_sliver:.2f}) is not a measurement of the model."
+            f"{_cut_off_note(truncated_count)}"
         )
         logger.error(_LOG_JUDGE_FAILED, failure_reason)
         return avg_of_sliver, False, failure_reason
