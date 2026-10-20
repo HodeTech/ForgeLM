@@ -85,7 +85,7 @@ ForgeLM/
 │                            # export, inference, results, utils, __main__,
 │                            # _pypdf_normalise, _script_sanity,
 │                            # _strip_pattern
-├── tests/                   # 131 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
+├── tests/                   # 132 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
 ├── tools/                   # CI guards: check_anchor_resolution,
 │                            # check_bilingual_parity, check_cli_help_consistency,
 │                            # check_field_descriptions, check_no_analysis_refs,
@@ -387,6 +387,12 @@ Work on ForgeLM is planned and tracked on GitHub, not in local notes:
   security vulnerability — never a public issue; it goes to a private advisory
   as [SECURITY.md](SECURITY.md) describes.
 - **Closing is not triage.** Every item is an issue; which issues appear on the front door is decided by labels and views, never by closing them.
+- **Dependencies are links, not prose.** When an issue cannot start before
+  another is done, add a **Blocked by** link in its sidebar. The `blocked`
+  label, `/assign` and the **Issue dependencies** pull-request check
+  all follow those links (`tools/issue_dependencies.py`; CONTRIBUTING.md,
+  *Dependencies between issues*). Never set or remove `blocked` by hand, and do
+  not start work on a `blocked` issue.
 - **Name what you resolved.** For a grouped issue, list in the pull request the
   finding IDs your change resolves, so each can be ticked.
 

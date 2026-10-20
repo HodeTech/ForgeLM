@@ -51,7 +51,7 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
 6. A new contributor's first workflow run may wait for a maintainer to approve it; this is normal
    [GitHub workflow approval](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/approve-runs-from-forks).
 
-[good-first-issue]: https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+no%3Aassignee+label%3A%22good+first+issue%22
+[good-first-issue]: https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+no%3Aassignee+label%3A%22good+first+issue%22+-label%3Ablocked
 
 ## Ways to Contribute
 
@@ -68,7 +68,7 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
 Work is tracked in two places that play different roles:
 
 - **Issues are where the work happens.** Each issue is one unit of work: it describes the problem, links the code, and lists acceptance criteria. Discussion, claiming and pull-request links all happen on the issue.
-- **The [ForgeLM Project Plan](https://github.com/orgs/HodeTech/projects/5) is where the work is planned.** It shows every issue with its priority, release target and iteration, in several views: *Backlog* (table), *Board* (by status), *Current iteration* and *Roadmap* (timeline), plus filtered views such as *Front door*, *Small tasks*, *Epics*, *Docs & TR mirror* and *Roadmap — Phase 16 & deferred*. Use it to choose what to work on; you never need to edit it — maintainers keep it current, and a card moves automatically when its issue is closed.
+- **The [ForgeLM Project Plan](https://github.com/orgs/HodeTech/projects/5) is where the work is planned.** It shows every issue with its priority, release target and iteration, in several views: *Backlog* (table), *Board* (by status), *Current iteration* and *Roadmap* (timeline), plus filtered views such as *Front door*, *Small tasks*, *Epics*, *Docs & TR mirror*, *Roadmap — Phase 16 & deferred* and *Blocked*. Use it to choose what to work on; you never need to edit it — maintainers keep it current, and a card moves automatically when its issue is closed.
 
 ### Planned work lives here too
 
@@ -93,6 +93,8 @@ Issues carry labels, and the project adds planning fields on top of them.
 | `source: roadmap` | Planned work recorded in [`docs/roadmap/`](docs/roadmap/): a roadmap step or a deferred item |
 | `phase: 16` | Part of [Phase 16](docs/roadmap/phase-16-trust-surface-hardening.md): one of its remaining steps, one of its two prerequisite standards, or the phase epic. Deferred items are not part of the phase and do not carry it |
 | `deferred` | Waits for a condition recorded in the issue; check that it holds before starting. A deferred item is labelled `source: roadmap` and `deferred` |
+| `blocked` | Waits for another issue, listed under *Blocked by* in the sidebar. Set and removed automatically, never by hand; do not start it — see [Dependencies between issues](#dependencies-between-issues) |
+| `dependency-override` | On a pull request: a maintainer accepts that it works on a blocked issue |
 | `epic` | A parent issue that groups one theme or roadmap phase; its sub-issues are the work |
 
 In the project, the **Wave**, **Severity**, **Theme**, **Kind**, **Area**, **Size** (effort: XS–XL) and **Iteration** fields let you filter and group the same issues. **Milestones** are the waves: waves 0–2 carry a target date at the end of their last iteration, and waves 3–4 are open-ended backlog.
@@ -111,6 +113,7 @@ Useful starting points:
    - `/assign` and `/unassign` act on the person who writes them, and the command must be the first thing in the comment; they cannot name someone else. If two people claim an issue in the same second, the maintainer's claim wins, and between two contributors one claim is released again and its author is told so.
    - Anything the automation does not cover stays a maintainer's call: an issue labelled `help wanted` without `good first issue` (grouped sweeps are taken one finding ID at a time, see below), an issue labelled `needs-triage`, `deferred`, `security`, `epic` or `phase: 16`, and a request for more than 2 open issues. Comment on the issue, say what you would take on and mention a maintainer ([MAINTAINERS.md](MAINTAINERS.md)). A plain comment such as "I would like to work on this" is read by a maintainer too, who assigns it by hand.
    - Skip issues labelled `needs-triage`, and check the recorded condition of an issue labelled `deferred` before you start.
+   - Skip issues labelled `blocked` until the label is gone: they wait for another issue, and `/assign` refuses them whatever their other labels (see [Dependencies between issues](#dependencies-between-issues)).
 2. **Re-check against `development`.** Issues from the review link code at the commit they were found on; the links stay valid, but line numbers may have moved. Confirm the problem still exists on `development` before fixing it.
 3. **Follow the acceptance criteria** in the issue. In particular, a code fix carries a regression test that reproduces the described failure, and a documentation fix updates the English page and its Turkish mirror (`-tr.md`, or the `tr/` tree for user manuals) in the same pull request.
 4. **Reference the issue in your pull request.** Use `Fixes #123` when the PR resolves the whole issue, and `Refs #123` when it resolves only part of it.
@@ -120,6 +123,21 @@ Useful starting points:
 **Roadmap steps.** A Phase 16 step issue is claimed as a whole and worked in step order: each step lands as one root-cause family with its own review rounds, and its issue lists the review issues it closes.
 
 **Finding IDs.** Issues created from the review name their findings with stable IDs — `CR-…` for code, `DOC-…` for documentation (including the Turkish mirror), `TECH-…` for dependency and ecosystem currency. Quote the ID in commits and pull requests so the finding can be traced.
+
+### Dependencies between issues
+
+Some issues can only be done after another one: each Phase 16 step waits for the step before it, a deferred item may wait for the step that changes the same file, and a review issue whose every finding is a unit of a Phase 16 step waits for that step, whose pull request fixes it. Such a dependency is recorded as a **Blocked by** link in the issue's sidebar (*Relationships*), never only in prose.
+
+- **An issue with an open blocker is labelled `blocked`.** Do not start on it and do not open a pull request for it: `/assign` refuses it, and the **Issue dependencies** pull-request check fails a pull request that links it — with `Fixes`, `Closes`, `Resolves` or `Refs #…` in the title, the description or any commit message, or through GitHub's *Development* sidebar. If your pull request only mentions such an issue for context, drop the keyword. The check reads at most 50 linked issues, 100 commits and 50 closing references; a pull request over those limits fails until it is split or a maintainer accepts it.
+- **The label is automatic.** Nobody sets or removes it by hand. The *Issue dependencies* workflow adds it while a blocker is open and removes it once every blocker is closed as completed — as soon as that blocker is closed, or within an hour of a link being added or removed. When it removes the label it says so in a comment on the issue. Within the same hour it also re-runs the check of every open pull request whose result no longer matches, so a red check turns green once its blockers are completed, and a green one turns red if a linked issue becomes blocked.
+- **A blocker closed as not planned or as a duplicate unblocks nothing**, because the work the issue waits for was not done. The issue stays `blocked`, gets `needs-triage`, and a maintainer re-plans it: removes the link, or links the issue that replaces the blocker. Once the dependency is re-planned the label goes, but the issue can be picked up only after a maintainer also removes `needs-triage`.
+- **A pull request may close the blocker as well.** When it closes every open blocker of the issues it links, the check passes. What counts is GitHub's own list of issues the pull request will close — the *Development* sidebar — and only for a pull request into `development`, where GitHub closes on merge. Use one keyword per issue (`Fixes #12, fixes #13`): GitHub closes only the first issue of `Fixes #12, #13`.
+- **A maintainer can accept a dependency deliberately** with the `dependency-override` label on the pull request. The check then passes and lists what it accepted; the label set by anyone not listed in [MAINTAINERS.md](MAINTAINERS.md) is ignored. The override covers the pull request as it stands, so read it again before merging if it changed after the label was set.
+- **Grouped issues are not blocked as a whole** when only some of their findings belong to a Phase 16 step. Those findings say so in the checklist (`KNOWN-OPEN … (S8 open)`): leave them to the step and take the others.
+
+The project's *Blocked* view lists every blocked issue; *Front door* and *Small tasks* leave them out.
+
+**For maintainers.** Record a dependency with a *Blocked by* link and let the label follow; to apply a change at once instead of within the hour, run the *Issue dependencies* workflow by hand (Actions > *Issue dependencies* > *Run workflow*). To stop the automation, disable either workflow in the Actions tab; the links stay. The **Issue dependencies** check runs on `pull_request_target`, which GitHub blocks in public repositories from 2 November 2026 unless an Actions policy allows it: the repository's policy (Settings > Actions > Policies) allows it for `.github/workflows/pr-dependencies.yml` only, so moving or renaming that file needs the policy updated too, or the check stops reporting.
 
 ## Reporting Security Vulnerabilities
 
@@ -238,7 +256,7 @@ keep this list and that one in sync if either changes.
 
 Push your branch to your fork and open a Pull Request against `development` (the default base). Link the issue it addresses (`Fixes #123`, or `Refs #123` for part of a grouped issue) and quote any finding IDs — see [Working on an issue](#working-on-an-issue).
 
-**Before a pull request can merge**, branch protection on `development` (and on `main`) requires three things: the six CI checks — `lint`, `test (3.10)`, `test (3.11)`, `test (3.12)`, `test (3.13)` and `validate` — passing; the branch up to date with its target (use *Update branch*); and every review conversation resolved, including the comments of the automated reviewers.
+**Before a pull request can merge**, branch protection on `development` (and on `main`) requires three things: the six CI checks — `lint`, `test (3.10)`, `test (3.11)`, `test (3.12)`, `test (3.13)` and `validate` — passing, and on `development` also the **Issue dependencies** check ([Dependencies between issues](#dependencies-between-issues)); the branch up to date with its target (use *Update branch*); and every review conversation resolved, including the comments of the automated reviewers.
 
 Maintainers **squash contributor PRs into `development` by default**. Releases into
 `main` and synchronization PRs from `main` back into `development` use **merge
@@ -254,7 +272,7 @@ ForgeLM is a single-package layout: a mix of single-file modules and five
 focused sub-packages (`forgelm/cli/` post-Phase-15 split,
 `forgelm/data_audit/` post-Phase-14 split, `forgelm/wizard/` from Phase 22,
 `forgelm/safety/` from the post-v0.9.1 split and `forgelm/verify/` from
-Phase 16 S1) under `forgelm/`, 131 test files
+Phase 16 S1) under `forgelm/`, 132 test files
 under `tests/` (collected-test count grows over time — run
 `pytest --collect-only -q` for current), plus `configs/`, `docs/`, `tools/`
 (CI guards), and `notebooks/`. For the authoritative module-by-module map
