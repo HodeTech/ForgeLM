@@ -10,7 +10,7 @@ import math
 import os
 import string
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ._strict_json import dumps_strict
 
@@ -80,6 +80,13 @@ class JudgeResult:
 
 
 OPENAI_API_BASE = "https://api.openai.com/v1/chat/completions"
+
+# The judge's reply budget, in tokens, for both the API judge (``max_tokens``) and the local judge
+# (``max_new_tokens``).  A reply that uses all of it was cut off, and a cut-off reply is never parsed: a
+# verdict that was truncated can leave a *quoted* score object as the only complete one in the reply, which the
+# parser would then take for the verdict (#1044).
+_JUDGE_REPLY_MAX_TOKENS = 200
+_JUDGE_TRUNCATED_REASON = "Judge reply was cut off at the token limit; counted as a judge failure."
 
 # GDPR / EU AI Act Art. 10 — fields stripped from on-disk judge_results.json
 # unless the operator opts in via JudgeConfig.include_eval_samples=True.
@@ -220,6 +227,27 @@ def _parse_judge_json(text: str) -> Dict[str, Any]:
     return {"score": None, "reason": "Invalid JSON response from judge model."}
 
 
+def _eos_token_ids(model: Any, tokenizer: Any) -> frozenset[int]:
+    """Every token id that ends a generation: the generation config's (an int or a list) and the tokenizer's."""
+    ids: set[int] = set()
+    configured = getattr(getattr(model, "generation_config", None), "eos_token_id", None)
+    for candidate in (configured, getattr(tokenizer, "eos_token_id", None)):
+        if isinstance(candidate, int):
+            ids.add(candidate)
+        elif isinstance(candidate, (list, tuple)):
+            ids.update(i for i in candidate if isinstance(i, int))
+    return frozenset(ids)
+
+
+def _reply_was_cut_off(new_token_ids: Sequence[int], max_new_tokens: int, eos_token_ids: frozenset[int]) -> bool:
+    """True when generation stopped because it ran out of budget: the cap was reached and the last token is no EOS.
+
+    A reply that ends exactly at the cap with an EOS token finished on its own.  When no EOS id is known the cap
+    being reached cannot be shown to be a natural end, so it counts as a cut-off.
+    """
+    return len(new_token_ids) >= max_new_tokens and (not new_token_ids or new_token_ids[-1] not in eos_token_ids)
+
+
 def _call_api_judge(prompt: str, api_key: str, model: str = "gpt-4o", api_base: Optional[str] = None) -> Dict[str, Any]:
     """Call an API-based judge (OpenAI-compatible endpoint).
 
@@ -239,7 +267,7 @@ def _call_api_judge(prompt: str, api_key: str, model: str = "gpt-4o", api_base: 
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0,
-        "max_tokens": 200,
+        "max_tokens": _JUDGE_REPLY_MAX_TOKENS,
     }
 
     import requests
@@ -247,7 +275,16 @@ def _call_api_judge(prompt: str, api_key: str, model: str = "gpt-4o", api_base: 
     try:
         response = safe_post(url, headers=headers, json=payload, timeout=30)
         response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
+        choice = response.json()["choices"][0]
+        content = choice["message"]["content"]
+        # ``finish_reason`` is "length" when the reply used the whole ``max_tokens`` budget.  A gateway that sends
+        # none cannot be checked; that is a known limit, not an error.
+        if choice.get("finish_reason") == "length":
+            logger.warning(
+                "API judge reply was cut off at the %d-token cap (finish_reason=length); counted as a judge failure.",
+                _JUDGE_REPLY_MAX_TOKENS,
+            )
+            return {"score": None, "reason": _JUDGE_TRUNCATED_REASON}
         return _parse_judge_json(content)
     except HttpSafetyError:
         # Re-raise. HttpSafetyError signals a misconfigured judge endpoint
@@ -289,8 +326,15 @@ def _call_local_judge(prompt: str, model: Any, tokenizer: Any) -> Dict[str, Any]
         inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=2048)
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
         with torch.no_grad():
-            outputs = model.generate(**inputs, max_new_tokens=200, do_sample=False)
-        response = tokenizer.decode(outputs[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True)
+            outputs = model.generate(**inputs, max_new_tokens=_JUDGE_REPLY_MAX_TOKENS, do_sample=False)
+        new_tokens = outputs[0][inputs["input_ids"].shape[1] :]
+        if _reply_was_cut_off(new_tokens.tolist(), _JUDGE_REPLY_MAX_TOKENS, _eos_token_ids(model, tokenizer)):
+            logger.warning(
+                "Local judge reply was cut off at the %d-token cap; counted as a judge failure.",
+                _JUDGE_REPLY_MAX_TOKENS,
+            )
+            return {"score": None, "reason": _JUDGE_TRUNCATED_REASON}
+        response = tokenizer.decode(new_tokens, skip_special_tokens=True)
         return _parse_judge_json(response)
     except (RuntimeError, ValueError, TypeError, IndexError, KeyError) as e:
         # Tokenizer + generate boundary, mirroring _generate_response.

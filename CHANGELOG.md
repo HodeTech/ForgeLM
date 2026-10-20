@@ -109,6 +109,10 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- The LLM-as-judge no longer parses a reply that was cut off at its 200-token budget. A judge led to quote the
+  judged answer could have its own verdict truncated, which left the quoted score object as the only complete one
+  and made it the verdict. The API judge now checks `finish_reason == "length"` and the local judge checks that the
+  cap was reached without an end-of-sequence token; both count the row as a judge failure (CR-A06-032 part 2, #1044).
 - SLERP now snapshots both merged adapter states before restoring or updating the base model,
   so the first adapter's contribution is preserved and the result responds to the configured
   weights instead of silently returning only the second adapter (CR-A13-001, #407).
