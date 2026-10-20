@@ -404,6 +404,10 @@ All notable changes to ForgeLM are documented here.
   (EN + TR) now point to the current Presidio docs and repository
   (`presidio.dataprivacystack.org`, `data-privacy-stack/presidio`); the old `microsoft.github.io`
   page returns 404. (TECH-T06-004, #491)
+- The LLM-as-judge no longer parses a reply that was cut off at its 200-token budget. A judge led to quote the
+  judged answer could have its own verdict truncated, which left the quoted score object as the only complete one
+  and made it the verdict. The API judge now checks `finish_reason == "length"` and the local judge checks that the
+  cap was reached without an end-of-sequence token; both count the row as a judge failure (CR-A06-032 part 2, #1044).
 
 ### Breaking
 
@@ -606,10 +610,6 @@ All notable changes to ForgeLM are documented here.
   and `safety` already carried their verdicts, and a failure kept because
   `auto_revert` is off (the shipped default) otherwise read as `success: true`
   beside a healthy-looking average.
-- The LLM-as-judge no longer parses a reply that was cut off at its 200-token budget. A judge led to quote the
-  judged answer could have its own verdict truncated, which left the quoted score object as the only complete one
-  and made it the verdict. The API judge now checks `finish_reason == "length"` and the local judge checks that the
-  cap was reached without an end-of-sequence token; both count the row as a judge failure (CR-A06-032 part 2, #1044).
 
 ## [0.11.0] — 2026-07-21
 
