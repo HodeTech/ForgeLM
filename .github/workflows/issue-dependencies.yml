@@ -1,0 +1,53 @@
+name: Issue dependencies
+
+# Keeps the `blocked` label in step with each issue's native "Blocked by" links (the rules live in
+# tools/issue_dependencies.py and CONTRIBUTING.md, "Dependencies between issues"):
+#   - an open issue with a blocker that is not closed as completed gets `blocked`;
+#   - every other issue loses it, with one comment when an open issue is unblocked;
+#   - a blocker closed as not planned or as a duplicate leaves the issue blocked and asks a maintainer to re-plan it;
+#   - an unblocked issue's open pull requests get their failed "Issue dependencies" check re-run.
+#
+# GitHub sends no workflow event when a "Blocked by" link is added or removed, so this runs when an issue is closed
+# or reopened (what unblocks or re-blocks its dependents), hourly as the backstop for link edits, and on demand.
+# Every run is a full reconciliation, so the concurrency group may drop a pending run: the one that replaces it
+# does the same work. tests/test_issue_dependencies.py pins these properties:
+#   - the token holds `contents: read`, `issues: write`, `pull-requests: read` and `actions: write`, nothing else;
+#   - no `${{ }}` appears in a `run:` line; the script reads the environment itself;
+#   - the checkout takes the default branch, one file, no stored credentials, pinned to a full commit SHA.
+#
+# Maintainers: to stop it, open Actions > "Issue dependencies" > the "..." menu > "Disable workflow". The links
+# stay; only the label stops following them.
+
+on:
+  issues:
+    types: [closed, reopened]
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: issue-dependencies
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: ${{ github.repository == 'HodeTech/ForgeLM' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read        # the checkout reads one script from the default branch
+      issues: write         # add or remove `blocked` / `needs-triage`, and post the notices
+      pull-requests: read   # find the open pull requests that link an unblocked issue
+      actions: write        # re-run their failed dependency check
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/issue_dependencies.py
+          sparse-checkout-cone-mode: false
+      - name: Bring the blocked label in step with the Blocked-by links
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 tools/issue_dependencies.py sync

@@ -53,14 +53,18 @@ class FakeGitHub:
         self.human_comments: List[str] = []  # comments by people (the bot's own are in `comments`)
         self.assigned_pages: Optional[List[List[Dict[str, Any]]]] = None  # overrides the count answer, page by page
         self.refuse_delete = False  # accept the DELETE but keep the assignee
+        self.open_blockers: Optional[int] = 0  # GitHub's count of open "Blocked by" issues; None drops the summary
         self._reads = 0
 
     def _issue(self) -> Dict[str, Any]:
-        return {
+        issue: Dict[str, Any] = {
             "state": self.state,
             "labels": [{"name": n} for n in self.labels],
             "assignees": [{"login": a} for a in self.assignees],
         }
+        if self.open_blockers is not None:
+            issue["issue_dependencies_summary"] = {"blocked_by": self.open_blockers, "total_blocked_by": 3}
+        return issue
 
     def __call__(self, method: str, endpoint: str, payload: Any = None) -> Any:
         self.calls.append((method, endpoint, payload))
@@ -337,6 +341,44 @@ def test_a_closed_issue_cannot_be_claimed() -> None:
     gh = FakeGitHub(state="closed")
     assert run(gh) == 0
     assert gh.assignees == [] and gh.comments == [tool.MSG_CLOSED]
+
+
+# --- dependencies ---------------------------------------------------------------------------------------------
+
+
+def test_a_blocked_good_first_issue_cannot_be_claimed_and_says_why_without_pinging() -> None:
+    gh = FakeGitHub(labels=["good first issue", "blocked"])
+    assert run(gh) == 0
+    assert gh.assignees == [] and gh.writes() == []
+    assert gh.comments == [tool.MSG_BLOCKED.format(front_door=tool.FRONT_DOOR_URL)]
+    assert tool.MAINTAINER_MENTION not in gh.comments[0]  # nothing to decide: it opens by itself
+
+
+def test_an_open_blocker_refuses_the_claim_before_the_label_has_caught_up() -> None:
+    gh = FakeGitHub(labels=["good first issue"])
+    gh.open_blockers = 1  # linked a minute ago; the hourly sync has not labelled it yet
+    assert run(gh) == 0
+    assert gh.assignees == [] and gh.comments[0].startswith("This issue is blocked")
+
+
+def test_blockers_that_are_all_closed_do_not_refuse_the_claim() -> None:
+    gh = FakeGitHub(labels=["good first issue"])
+    gh.open_blockers = 0  # `total_blocked_by` stays 3: closed blockers no longer count
+    assert run(gh) == 0
+    assert gh.assignees == ["newcomer"]
+
+
+def test_without_a_dependency_summary_the_label_alone_decides() -> None:
+    free, blocked = FakeGitHub(labels=["good first issue"]), FakeGitHub(labels=["good first issue", "blocked"])
+    free.open_blockers = blocked.open_blockers = None
+    assert run(free) == 0 and free.assignees == ["newcomer"]
+    assert run(blocked) == 0 and blocked.assignees == []
+
+
+def test_a_blocked_issue_can_still_be_released() -> None:
+    gh = FakeGitHub(labels=["good first issue", "blocked"], assignees=["first"])
+    assert run(gh, "/unassign", login="first") == 0
+    assert gh.assignees == []
 
 
 # --- the per-person limit -------------------------------------------------------------------------------------

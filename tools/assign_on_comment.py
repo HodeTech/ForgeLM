@@ -9,6 +9,8 @@ Rules (see ``CONTRIBUTING.md``, "Working on an issue"):
 
 - only issues labelled ``good first issue`` are open to ``/assign``, and never one that also carries
   ``security``, ``needs-triage``, ``deferred``, ``epic`` or ``phase: 16``;
+- a blocked issue is refused: one labelled ``blocked``, or one GitHub still lists an open "Blocked by" issue for
+  (the label follows the links hourly, so the count closes the gap; ``tools/issue_dependencies.py``);
 - an issue that already has an assignee is refused, whoever the assignee is and however they were assigned:
   a later ``/assign`` never replaces, adds to or removes an existing assignment;
 - a contributor holds at most ``MAX_OPEN_ASSIGNMENTS`` open issues at a time (the maintainers in
@@ -56,6 +58,7 @@ from urllib.parse import quote
 # lock the rest), or larger tasks that need a maintainer's answer first.
 ELIGIBLE_LABELS = frozenset({"good first issue"})
 EXCLUDED_LABELS = frozenset({"security", "needs-triage", "deferred", "epic", "phase: 16"})
+BLOCKED_LABEL = "blocked"  # set and removed by tools/issue_dependencies.py from the issue's "Blocked by" links
 # The maintainers, as MAINTAINERS.md lists them (tests/test_assign_on_comment.py fails if the two drift apart).
 # GitHub's own "author association" is not used: it also calls a read-only organisation member a MEMBER.
 MAINTAINER_LOGINS = frozenset({"cemililik"})
@@ -74,6 +77,11 @@ _ALLOWED_METHODS = frozenset({"GET", "POST", "DELETE"})
 NOT_OPEN_MARKER = "<!-- assign-on-comment:needs-maintainer -->"
 
 MSG_CLOSED = "This issue is closed, so it cannot be assigned."
+MSG_BLOCKED = (
+    "This issue is blocked: it waits for another issue to be completed (see **Blocked by** in the sidebar), so it "
+    "cannot be claimed yet. The `blocked` label is removed automatically once every blocker is closed as completed, "
+    "and the issue says so in a comment. Until then, pick another one from the [Front door view]({front_door})."
+)
 MSG_NOT_OPEN = (
     "Only `good first issue` issues can be claimed with `/assign`; this one needs a maintainer's decision. "
     "{mention}, could you take a look?\n\n" + NOT_OPEN_MARKER
@@ -154,6 +162,7 @@ class IssueFacts:
     state: str
     labels: frozenset[str]
     assignees: tuple[str, ...]
+    open_blockers: int = 0  # GitHub's count of open "Blocked by" issues
 
 
 @dataclass(frozen=True)
@@ -222,6 +231,8 @@ def decide(ctx: Context, issue: IssueFacts, count_open_assignments: Callable[[],
         return Decision("reply", MSG_NOT_YOURS)
     if issue.state != "open":
         return Decision("reply", MSG_CLOSED)
+    if BLOCKED_LABEL in issue.labels or issue.open_blockers > 0:
+        return Decision("reply", MSG_BLOCKED.format(front_door=FRONT_DOOR_URL))
     if issue.labels & EXCLUDED_LABELS or not issue.labels & ELIGIBLE_LABELS:
         return Decision("reply", MSG_NOT_OPEN.format(mention=MAINTAINER_MENTION), pings=True)
     if login in issue.assignees:
@@ -306,8 +317,12 @@ def fetch_issue(gh: GhApi, repo: str, number: int) -> IssueFacts:
     raw = gh("GET", f"repos/{repo}/issues/{number}", None)
     try:
         labels = frozenset(str(label["name"]) for label in raw["labels"])
-        return IssueFacts(str(raw["state"]), labels, _logins(raw["assignees"]))
-    except (KeyError, TypeError) as exc:
+        summary = raw.get("issue_dependencies_summary")
+        # The summary's `blocked_by` counts only blockers that are still open. Without the summary the label alone
+        # decides, which is what tools/issue_dependencies.py keeps true.
+        open_blockers = int(summary.get("blocked_by") or 0) if isinstance(summary, dict) else 0
+        return IssueFacts(str(raw["state"]), labels, _logins(raw["assignees"]), open_blockers)
+    except (KeyError, TypeError, ValueError) as exc:
         raise GhError("the issue answer lacks labels, state or assignees") from exc
 
 

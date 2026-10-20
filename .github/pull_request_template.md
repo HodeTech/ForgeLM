@@ -6,7 +6,9 @@
 
 <!-- `Fixes #123` closes the issue when this PR is merged. Use `Refs #123` instead when the PR
      resolves only part of it, e.g. some findings of a grouped issue. Quote any finding IDs
-     (CR-…, DOC-…, TECH-…) you address. Write "None" if there is no issue. -->
+     (CR-…, DOC-…, TECH-…) you address. Write "None" if there is no issue.
+     An issue labelled `blocked` waits for another one: the "Issue dependencies" check fails until
+     its blockers are closed as completed, unless this PR closes them too (`Fixes #…` for each). -->
 Fixes #
 
 ## Changes

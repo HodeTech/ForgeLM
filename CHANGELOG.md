@@ -27,6 +27,12 @@ All notable changes to ForgeLM are documented here.
   when nobody holds the issue, refuses an issue that already has an assignee without changing it, allows at most 2
   open assignments per contributor (maintainers are exempt) and leaves `security`, `needs-triage`, `deferred`,
   epic and Phase 16 issues to a maintainer. Reassigning stays a maintainer's decision.
+- Dependencies between issues are enforced. A dependency is a native "Blocked by" link; the `Issue dependencies`
+  workflow (`tools/issue_dependencies.py`) labels every open issue with an unresolved blocker `blocked` and removes
+  the label, with one comment, once every blocker is closed as completed. A blocker closed as not planned or as a
+  duplicate keeps the issue blocked and flags it `needs-triage`. `/assign` refuses a blocked issue, and the new
+  required `Issue dependencies` check fails a pull request that links one (`Fixes` / `Closes` / `Resolves` / `Refs`)
+  unless it closes the blockers too or a maintainer sets `dependency-override` (#1034).
 - `GOVERNANCE.md` and `MAINTAINERS.md` at the repository root, recording how
   decisions are made, how the maintainer roles work, and which areas the current
   maintainer owns (#964).
