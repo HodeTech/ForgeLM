@@ -374,11 +374,30 @@ def test_gauntlet_non_guard_steps_are_wired_into_ci():
         # the probe was created to close.
         "mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py"
         " tests/typing/public_surface_probe.py",
+        # The workflow scripts' own coverage floor (tools/ is outside the package gate): both halves, so dropping
+        # the report, its --include or its threshold from either side is caught.
+        'coverage run --source=tools -m pytest -q -p no:cov -o addopts="" tests/test_issue_dependencies.py'
+        " tests/test_assign_on_comment.py tests/test_triage_gate.py",
+        'coverage report --include="tools/issue_dependencies.py,tools/assign_on_comment.py,tools/triage_gate.py"'
+        " --fail-under=90",
     )
     commands = " \n".join(_gauntlet_commands(_REPO_ROOT / "CLAUDE.md"))
     for fragment in required:
         assert fragment in commands, f"the documented gauntlet no longer runs {fragment!r}"
         assert fragment in ci_text, f"ci.yml no longer runs {fragment!r}, but the gauntlet still tells contributors to"
+
+
+def test_the_full_suite_runs_and_not_only_the_workflow_scripts_subset():
+    """The workflow scripts' coverage line runs pytest on three modules, so the fragment ``pytest`` above no longer
+    proves that the whole suite runs: deleting ``pytest tests/`` from a gauntlet, or the bare ``pytest`` step from
+    ci.yml, would leave it satisfied by the subset alone.
+    """
+    for doc in _GAUNTLET_DOCS:
+        assert "pytest tests/" in _gauntlet_commands(_REPO_ROOT / doc), (
+            f"{doc}'s gauntlet no longer runs the full suite"
+        )
+    lines = [line.split() for script in _run_scalars(_WORKFLOWS / "ci.yml") for line in script.splitlines()]
+    assert any(words and words[0] == "pytest" for words in lines), "ci.yml no longer runs the full suite"
 
 
 def test_import_origin_guard_leads_every_gauntlet():

@@ -209,6 +209,13 @@ fail_under = 40
 
 If you need to exempt more, file an issue first.
 
+`tools/` sits outside that floor: its scripts are CI guards and helpers, not the
+package. The three that run as workflows with a token that can write to issues —
+`tools/issue_dependencies.py`, `tools/assign_on_comment.py` and
+`tools/triage_gate.py` — have a floor of their own, **90%** across the three,
+measured on their own test modules by the *Coverage of the workflow scripts*
+step in `ci.yml` and by the two `coverage` lines of the self-review gauntlet.
+
 ## CI gates
 
 From [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml):
