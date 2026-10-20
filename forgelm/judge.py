@@ -222,6 +222,12 @@ def _reject_duplicate_judge_keys(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]
     return result
 
 
+def _inside_unclosed_bracket(text: str, bracket_at: int, object_at: int) -> bool:
+    """True when the ``[`` at ``bracket_at`` (or an earlier one since) is still open where the object starts."""
+    segment = text[bracket_at:object_at]
+    return segment.count("[") > segment.count("]")
+
+
 def _parse_judge_json(text: str) -> Dict[str, Any]:
     """Parse an object reply or a single score object; fail closed on ambiguity."""
     text = text.strip()
@@ -232,6 +238,7 @@ def _parse_judge_json(text: str) -> Dict[str, Any]:
         except json.JSONDecodeError:
             candidates = []
             malformed_object_seen = False
+            first_undecodable_array: Optional[int] = None
             offset = 0
             while offset < len(text):
                 if text[offset] not in "{[":
@@ -243,20 +250,28 @@ def _parse_judge_json(text: str) -> Dict[str, Any]:
                     # The extent of an undecodable "{" is unknown, so a score object
                     # after it may be nested inside it (a judge's own verdict that
                     # quotes the planted block without escaping the quotes) and cannot
-                    # be told apart from the verdict.  Only "{" is tracked: prose such
-                    # as "[source]" starts with "[" and says nothing about objects.
+                    # be told apart from the verdict.  An undecodable "[" is the same
+                    # while it is still open where the score object starts (an array
+                    # that was never closed); prose such as "[source]" closes its
+                    # bracket before the verdict and says nothing about objects.
                     if text[offset] == "{":
                         malformed_object_seen = True
+                    elif first_undecodable_array is None:
+                        first_undecodable_array = offset
                     offset += 1
                     continue
                 # Skip the entire value so nested objects and braces in strings
                 # are not counted again as independent verdicts.  A decoded array
                 # is consumed too: like a whole-reply array, an object inside one
                 # is not a verdict.
-                offset = end
+                start, offset = offset, end
                 if isinstance(candidate, dict) and "score" in candidate:
                     if malformed_object_seen:
                         raise ValueError("Score object follows an undecodable object in judge response") from None
+                    if first_undecodable_array is not None and _inside_unclosed_bracket(
+                        text, first_undecodable_array, start
+                    ):
+                        raise ValueError("Score object sits in an unterminated array in judge response") from None
                     candidates.append(candidate)
             if len(candidates) != 1:
                 raise ValueError("Expected exactly one score object in judge response") from None
