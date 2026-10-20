@@ -2,19 +2,28 @@ name: PR dependencies
 
 # The "Issue dependencies" check: fails while the pull request links an issue that is still blocked (Fixes / Closes /
 # Resolves / Refs #N in its title, description or commits, or a Development-sidebar link), unless GitHub lists every
-# open blocker as closed by the same pull request or a maintainer has labelled it `dependency-override`. Rules:
-# tools/issue_dependencies.py and CONTRIBUTING.md, "Dependencies between issues". The "Issue dependencies" workflow
-# re-runs this check whenever its result no longer matches the issues.
+# open blocker as closed by the same pull request or a maintainer has labelled it `dependency-override` and nothing
+# has changed since. Rules: tools/issue_dependencies.py and CONTRIBUTING.md, "Dependencies between issues". The
+# "Issue dependencies" workflow re-runs this check whenever its result no longer matches the issues.
+#
+# Two jobs:
+#   - "Record dependency override" runs only when a `dependency-override` label is added. If a maintainer added it,
+#     it posts a comment recording the head commit and the issues the pull request links at that moment; the
+#     override counts for those and ends with a new commit or a link to another issue. It is the only job that may
+#     write, and it can only comment.
+#   - "Issue dependencies" is the required check. It waits for the recorder, so a record is in place before it reads
+#     one, and runs whether the recorder ran, was skipped (every other event) or failed.
 #
 # Why `pull_request_target`. A `pull_request` run takes this file from the pull request itself, so a pull request
 # could rewrite the check that judges it. `pull_request_target` takes the workflow and the script from the default
-# branch instead. Its known risk is running the pull request's code with a privileged token; this job never does:
+# branch instead. Its known risk is running the pull request's code with a privileged token; these jobs never do:
 # the checkout has no `ref`, so it reads one file from the default branch; nothing from the pull request is checked
-# out, built or executed; the token is read-only; no secret but GITHUB_TOKEN is used; and the script treats the
-# description as data. tests/test_issue_dependencies.py pins these properties:
+# out, built or executed; no secret but GITHUB_TOKEN is used; and the script treats the title, the description and
+# the commits as data. tests/test_issue_dependencies.py pins these properties:
 #   - `pull_request_target` only, no `paths:` or `branches:` filter (a required check must always report);
-#   - the token holds `contents: read`, `issues: read` and `pull-requests: read`, nothing else;
-#   - the checkout has no `ref`, takes one file, keeps no credentials and is pinned to a full commit SHA, and no
+#   - the check's token holds `contents: read`, `issues: read` and `pull-requests: read`, nothing else; the
+#     recorder's holds `contents: read` and `pull-requests: write`, and its `if:` reads the event's action and label;
+#   - each checkout has no `ref`, takes one file, keeps no credentials and is pinned to a full commit SHA, and no
 #     expression in this file names the pull request's head;
 #   - no `${{ }}` appears in a `run:` line; the script reads the event file itself.
 # What it cannot stop: a pull request may add a different workflow with a job of the same name, and branch
@@ -25,7 +34,8 @@ name: PR dependencies
 # policy allows it. This repository's policy (Settings > Actions > Policies) allows it for this file's path only;
 # renaming or moving this file needs the policy updated in the same change, or the check stops reporting.
 #
-# One run per pull request at a time: a newer event cancels the run still going, so a burst of edits costs one run.
+# One check per pull request at a time: a newer event cancels the check still going, so a burst of edits costs one
+# check. The recorder is never cancelled, so a record is never lost to a burst.
 
 on:
   pull_request_target:
@@ -33,19 +43,40 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: pr-dependencies-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 jobs:
-  issue-dependencies:
-    name: Issue dependencies
+  record-override:
+    name: Record dependency override
+    # Event data only: the action and the label's name. The script checks who added the label.
+    if: ${{ github.event.action == 'labeled' && github.event.label.name == 'dependency-override' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read        # the checkout reads one script from the default branch
-      issues: read          # read the linked issues, their "Blocked by" links and the label events
-      pull-requests: read   # read the pull request's current description and labels
+      pull-requests: write  # read the pull request and its label changes; post the record comment
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/issue_dependencies.py
+          sparse-checkout-cone-mode: false
+      - name: Record the commit and the linked issues the override accepts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 tools/issue_dependencies.py record-override
+
+  issue-dependencies:
+    name: Issue dependencies
+    needs: record-override
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: pr-dependencies-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read        # the checkout reads one script from the default branch
+      issues: read          # read the linked issues and their "Blocked by" links
+      pull-requests: read   # read the pull request, its label changes and the override record
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:

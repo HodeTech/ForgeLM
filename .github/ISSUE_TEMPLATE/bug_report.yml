@@ -7,6 +7,11 @@ body:
       value: |
         Thanks for reporting a bug! Please fill out the sections below to help us fix it faster.
 
+        A maintainer triages every new issue before work on it starts; until then it
+        carries the `needs-triage` label. If you would like to fix it yourself, please
+        wait for triage before you start — see
+        [Issue triage](https://github.com/HodeTech/ForgeLM/blob/development/CONTRIBUTING.md#issue-triage).
+
   - type: textarea
     id: description
     attributes:
