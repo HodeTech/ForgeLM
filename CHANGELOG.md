@@ -425,8 +425,8 @@ All notable changes to ForgeLM are documented here.
   A reply whose `content` is not text (an OpenAI refusal or a tool call has `content: null`) is now one judge
   failure too, instead of an `AttributeError` that stopped the whole evaluation (CR-A06-021, null-content half).
 - The judge reply parser now treats a lone score object inside an unterminated array like one inside an unterminated
-  object: it fails closed instead of taking the object for the verdict. Brackets that close before the verdict, as in
-  prose citations (`[1]`, `[source]`), still do not block it (#1048).
+  object: it fails closed instead of taking the object for the verdict. Plain bracketed notes that close right away,
+  as in prose citations (`[1]`, `[source]`), still do not block it (#1048).
   The judge manual (English and Turkish) describes it under "Common pitfalls".
 
 ### Breaking
