@@ -37,11 +37,11 @@ Which issues a pull request links. Two sources, merged:
   same pull request", and only when the pull request targets the default branch, where GitHub closes on merge. The
   check never guesses closing syntax, so an exemption is never broader than what GitHub will actually do.
 - *Everything else it mentions*: ``Fixes`` / ``Closes`` / ``Resolves`` / ``Refs`` references read leniently from the
-  title and the description *as GitHub renders them* (``POST /markdown``), so code, HTML comments, escapes and nested
-  blocks are exactly what GitHub makes of them and a reference a reader can see is one the check sees; and from every
-  commit message as plain text, because GitHub closes an issue from a commit message whatever it looks like. Reading
-  too many links can only make the check stricter. The template's own examples sit in HTML comments, which GitHub
-  drops.
+  description *as GitHub renders it* (``POST /markdown``), so code, HTML comments, escapes and nested blocks are
+  exactly what GitHub makes of them and a reference a reader can see is one the check sees; and from the title and
+  every commit message as plain text. GitHub does not render a title as Markdown (an HTML comment or a fence marker
+  shows there as written), and it closes an issue from a commit message whatever the message looks like. Reading too
+  many links can only make the check stricter. The template's own examples sit in HTML comments, which GitHub drops.
 
 The check sees what a pull request declares: it cannot see work on an issue nothing links, so it guards against
 honest mistakes, and a maintainer's review remains the backstop. At most ``_MAX_LINKED`` linked issues are read; more
@@ -452,8 +452,8 @@ def prose(html: str) -> str:
 
 
 def linked_issues(text: str, repo: str) -> frozenset[int]:
-    """Issue numbers of this repository that plain ``text`` references after a keyword, read leniently: a commit
-    message, or the ``prose`` of a rendered title or description.
+    """Issue numbers of this repository that plain ``text`` references after a keyword, read leniently: a title, a
+    commit message, or the ``prose`` of a rendered description.
 
     A colon or a missing space after the keyword still counts, and so does every issue of a list (`Fixes #1, #2`):
     these links can only make the check stricter. Whether GitHub *closes* an issue is never decided here — see
@@ -473,13 +473,11 @@ def linked_issues(text: str, repo: str) -> frozenset[int]:
 
 
 def pull_links(pull: PullFacts, repo: str, render: Render) -> frozenset[int]:
-    """Every issue of this repository the pull request links: what its title and description show once GitHub has
-    rendered them, what its commit messages say, and what GitHub lists as closed by it."""
+    """Every issue of this repository the pull request links: what its description shows once GitHub has rendered
+    it, what its title and its commit messages say as written, and what GitHub lists as closed by it."""
     home = repo.lower()
-    linked: set[int] = set()
-    for text in (pull.title, pull.body):
-        linked |= linked_issues(prose(render(text)), repo)
-    for message in pull.messages:
+    linked: set[int] = set(linked_issues(prose(render(pull.body)), repo))
+    for message in (pull.title,) + pull.messages:
         linked |= linked_issues(message, repo)
     linked |= {int(key.rsplit("#", 1)[1]) for key in pull.listed if key.rsplit("#", 1)[0] == home}
     return frozenset(linked)
@@ -889,7 +887,7 @@ def fetch_pull(gh: GhApi, repo: str, number: int) -> PullFacts:
 
 
 def render_markdown(gh: GhApi, repo: str, text: str) -> str:
-    """GitHub's own rendering of a title or a description, as the pull request shows it."""
+    """GitHub's own rendering of a description, as the pull request shows it."""
     if not text.strip():
         return ""
     html = gh("POST", "markdown", {"text": text, "mode": "gfm", "context": repo})

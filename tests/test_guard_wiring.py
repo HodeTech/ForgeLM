@@ -396,8 +396,20 @@ def test_the_full_suite_runs_and_not_only_the_workflow_scripts_subset():
         assert "pytest tests/" in _gauntlet_commands(_REPO_ROOT / doc), (
             f"{doc}'s gauntlet no longer runs the full suite"
         )
+    # A bare `pytest` whose every argument is an option, and none of them one that selects or skips tests: a test
+    # path (`pytest tests/test_x.py`), `-k`, `-m`, `--deselect`, `--ignore` or `--lf` would narrow the run.
+    narrowing = ("-k", "-m", "--deselect", "--ignore", "--lf", "--last-failed")
+
+    def runs_everything(words: list[str]) -> bool:
+        return words[:1] == ["pytest"] and all(
+            word in ("tests", "tests/") or (word.startswith("-") and not word.startswith(narrowing))
+            for word in words[1:]
+        )
+
     lines = [line.split() for script in _run_scalars(_WORKFLOWS / "ci.yml") for line in script.splitlines()]
-    assert any(words and words[0] == "pytest" for words in lines), "ci.yml no longer runs the full suite"
+    assert any(runs_everything(words) for words in lines), "ci.yml no longer runs the full suite"
+    assert not runs_everything("pytest -q tests/test_issue_dependencies.py".split())
+    assert not runs_everything("pytest -q -m slow".split()) and not runs_everything("pytest --deselect=x".split())
 
 
 def test_import_origin_guard_leads_every_gauntlet():

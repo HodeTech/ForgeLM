@@ -38,7 +38,7 @@ All notable changes to ForgeLM are documented here.
   `blocked` and removes the label, with a comment each time, once every blocker is closed as completed. A blocker
   closed as not planned or as a duplicate keeps the issue blocked and flags it `needs-triage`. `/assign` refuses a
   blocked issue, and the new `Issue dependencies` pull-request check fails a pull request that links one (`Fixes` /
-  `Closes` / `Resolves` / `Refs` in its title or description as GitHub renders them, in a commit message, or a
+  `Closes` / `Resolves` / `Refs` in its description as GitHub renders it, in its title or a commit message, or a
   *Development* link), unless GitHub will close the blockers with the same pull request or a maintainer sets
   `dependency-override`. A comment records the head commit and the linked issues the override accepts, and a new
   commit or a new link ends it. The check runs from the default branch (`pull_request_target`; no pull-request code

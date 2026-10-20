@@ -301,7 +301,7 @@ def test_the_pull_request_template_links_nothing_outside_its_html_comments() -> 
     assert tool.linked_issues("".join(outside), REPO) == frozenset()
 
 
-def test_titles_and_descriptions_are_read_through_the_renderer_and_commit_messages_as_they_are() -> None:
+def test_the_description_is_read_through_the_renderer_and_the_title_and_commit_messages_as_written() -> None:
     seen: List[str] = []
 
     def render(text: str) -> str:
@@ -309,7 +309,13 @@ def test_titles_and_descriptions_are_read_through_the_renderer_and_commit_messag
         return plain_render(text)
 
     pull = facts(title="Refs #1", body="Refs #2", commits=["Refs #3"])
-    assert tool.pull_links(pull, REPO, render) == {1, 2, 3} and seen == ["Refs #1", "Refs #2"]
+    assert tool.pull_links(pull, REPO, render) == {1, 2, 3} and seen == ["Refs #2"]
+
+
+@pytest.mark.parametrize("title", ["```Fixes #5", "<!-- Fixes #5 -->", "Fix `Refs #5` docs"])
+def test_a_title_hides_nothing_behind_markdown_it_does_not_render(title: str) -> None:
+    # GitHub shows an HTML comment or a fence marker in a title as written, so the reference is visible there.
+    assert 5 in tool.pull_links(facts(title=title), REPO, lambda text: "")
 
 
 def test_an_empty_text_is_never_sent_to_the_renderer() -> None:
