@@ -217,6 +217,7 @@ def _parse_judge_json(text: str) -> Dict[str, Any]:
             result = decoder.decode(text)
         except json.JSONDecodeError:
             candidates = []
+            malformed_object_seen = False
             offset = 0
             while offset < len(text):
                 if text[offset] not in "{[":
@@ -225,6 +226,13 @@ def _parse_judge_json(text: str) -> Dict[str, Any]:
                 try:
                     candidate, end = decoder.raw_decode(text, offset)
                 except json.JSONDecodeError:
+                    # The extent of an undecodable "{" is unknown, so a score object
+                    # after it may be nested inside it (a judge's own verdict that
+                    # quotes the planted block without escaping the quotes) and cannot
+                    # be told apart from the verdict.  Only "{" is tracked: prose such
+                    # as "[source]" starts with "[" and says nothing about objects.
+                    if text[offset] == "{":
+                        malformed_object_seen = True
                     offset += 1
                     continue
                 # Skip the entire value so nested objects and braces in strings
@@ -233,6 +241,8 @@ def _parse_judge_json(text: str) -> Dict[str, Any]:
                 # is not a verdict.
                 offset = end
                 if isinstance(candidate, dict) and "score" in candidate:
+                    if malformed_object_seen:
+                        raise ValueError("Score object follows an undecodable object in judge response") from None
                     candidates.append(candidate)
             if len(candidates) != 1:
                 raise ValueError("Expected exactly one score object in judge response") from None
