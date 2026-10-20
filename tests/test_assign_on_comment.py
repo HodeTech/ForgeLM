@@ -55,6 +55,7 @@ class FakeGitHub:
         self.refuse_delete = False  # accept the DELETE but keep the assignee
         self.open_blockers: Optional[int] = 0  # GitHub's count of open "Blocked by" issues; None drops the summary
         self.closed_blockers: List[Optional[str]] = []  # the state_reason of each closed "Blocked by" issue
+        self.listed_open: Optional[int] = None  # open blockers in the list, when it disagrees with the summary
         self._reads = 0
 
     def _issue(self) -> Dict[str, Any]:
@@ -69,7 +70,8 @@ class FakeGitHub:
         return issue
 
     def _get_blockers(self, endpoint: str, payload: Any) -> List[Dict[str, Any]]:
-        return [{"state": "open", "state_reason": None}] * (self.open_blockers or 0) + [
+        listed = self.open_blockers if self.listed_open is None else self.listed_open
+        return [{"state": "open", "state_reason": None}] * (listed or 0) + [
             {"state": "closed", "state_reason": reason} for reason in self.closed_blockers
         ]
 
@@ -394,17 +396,34 @@ def test_the_blocker_list_is_read_only_when_the_summary_cannot_decide() -> None:
         assert not [c for c in gh.calls if "/dependencies/" in c[1]]
 
 
-def test_without_a_dependency_summary_the_label_alone_decides() -> None:
-    free, blocked = FakeGitHub(labels=["good first issue"]), FakeGitHub(labels=["good first issue", "blocked"])
-    free.open_blockers = blocked.open_blockers = None
+def test_without_a_dependency_summary_the_blocker_list_decides() -> None:
+    free, cancelled = FakeGitHub(labels=["good first issue"]), FakeGitHub(labels=["good first issue"])
+    free.open_blockers = cancelled.open_blockers = None
+    cancelled.closed_blockers = ["not_planned"]
     assert run(free) == 0 and free.assignees == ["newcomer"]
-    assert run(blocked) == 0 and blocked.assignees == []
+    assert run(cancelled) == 0 and cancelled.assignees == []
+    assert [c for c in free.calls if "/dependencies/" in c[1]]  # read, not assumed free
+
+
+def test_the_list_is_counted_on_its_own_when_it_disagrees_with_the_summary() -> None:
+    gh = FakeGitHub(labels=["good first issue"])
+    gh.closed_blockers = ["completed"]  # the summary: no open blocker, one closed
+    gh.listed_open = 1  # the list, read a moment later: a blocker was reopened
+    assert run(gh) == 0 and gh.assignees == []
 
 
 def test_a_blocked_issue_can_still_be_released() -> None:
     gh = FakeGitHub(labels=["good first issue", "blocked"], assignees=["first"])
     assert run(gh, "/unassign", login="first") == 0
     assert gh.assignees == []
+
+
+def test_unassign_never_reads_the_dependencies_so_a_failing_read_cannot_stop_it() -> None:
+    gh = FakeGitHub(labels=["good first issue"], assignees=["first"])
+    gh.closed_blockers = ["not_planned"]
+    gh.fail[("GET", f"repos/{REPO}/issues/7/dependencies")] = "boom"
+    assert run(gh, "/unassign", login="first") == 0
+    assert gh.assignees == [] and not [c for c in gh.calls if "/dependencies/" in c[1]]
 
 
 # --- the per-person limit -------------------------------------------------------------------------------------

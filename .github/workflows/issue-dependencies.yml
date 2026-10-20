@@ -35,7 +35,9 @@ concurrency:
 
 jobs:
   sync:
-    if: ${{ github.repository == 'HodeTech/ForgeLM' }}
+    # This repository, and only its default branch: a manual run started from another branch would check out that
+    # branch's copy of the script with this job's write token.
+    if: ${{ github.repository == 'HodeTech/ForgeLM' && github.ref == 'refs/heads/development' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

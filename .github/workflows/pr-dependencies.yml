@@ -1,9 +1,10 @@
 name: PR dependencies
 
-# The "Issue dependencies" check: fails while the pull request's description links (Fixes / Closes / Resolves /
-# Refs #N) an issue that is still blocked, unless the same pull request closes every open blocker or a maintainer has
-# labelled it `dependency-override`. Rules: tools/issue_dependencies.py and CONTRIBUTING.md, "Dependencies between
-# issues". The "Issue dependencies" workflow re-runs this check whenever its result no longer matches the issues.
+# The "Issue dependencies" check: fails while the pull request links an issue that is still blocked (Fixes / Closes /
+# Resolves / Refs #N in its title, description or commits, or a Development-sidebar link), unless GitHub lists every
+# open blocker as closed by the same pull request or a maintainer has labelled it `dependency-override`. Rules:
+# tools/issue_dependencies.py and CONTRIBUTING.md, "Dependencies between issues". The "Issue dependencies" workflow
+# re-runs this check whenever its result no longer matches the issues.
 #
 # Why `pull_request_target`. A `pull_request` run takes this file from the pull request itself, so a pull request
 # could rewrite the check that judges it. `pull_request_target` takes the workflow and the script from the default
@@ -18,13 +19,23 @@ name: PR dependencies
 #   - no `${{ }}` appears in a `run:` line; the script reads the event file itself.
 # What it cannot stop: a pull request may add a different workflow with a job of the same name, and branch
 # protection cannot tell two GitHub Actions checks of one name apart (true of every required Actions check), so a
-# maintainer reads every change under `.github/` before merging it.
+# maintainer reads every change under `.github/` and `tools/` before merging it.
+#
+# Prerequisite: from 2 November 2026 GitHub blocks `pull_request_target` in public repositories unless an Actions
+# policy allows it. This repository's policy (Settings > Actions > Policies) allows it for this file's path only;
+# renaming or moving this file needs the policy updated in the same change, or the check stops reporting.
+#
+# One run per pull request at a time: a newer event cancels the run still going, so a burst of edits costs one run.
 
 on:
   pull_request_target:
     types: [opened, edited, reopened, synchronize, ready_for_review, labeled, unlabeled]
 
 permissions: {}
+
+concurrency:
+  group: pr-dependencies-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   issue-dependencies:

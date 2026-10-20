@@ -20,21 +20,27 @@ Rules (documented in ``CONTRIBUTING.md``, "Dependencies between issues"):
 - ``blocked`` is derived and never set by hand: ``sync`` adds it to every open issue with an unresolved blocker and
   removes it everywhere else, from a closed issue and from one where someone set it by hand. When it removes the
   label from an open issue it posts one comment; it does not comment when an issue becomes blocked.
-- ``check-pr`` fails when the pull request's description links a blocked issue with ``Fixes``, ``Closes``,
-  ``Resolves`` or ``Refs`` — unless the same pull request closes every open blocker, or a maintainer listed in
-  ``MAINTAINER_LOGINS`` has labelled it ``dependency-override`` (the label set by anyone else is ignored). It reads
-  the links themselves, not the label, so it never trails behind ``sync``.
+- ``check-pr`` fails while the pull request links a blocked issue — unless the same pull request closes every open
+  blocker, or a maintainer listed in ``MAINTAINER_LOGINS`` has labelled it ``dependency-override`` (the label set by
+  anyone else is ignored). It reads the links themselves, not the label, so it never trails behind ``sync``.
 
-Reading a description. A *link* is read leniently (a colon or a missing space after the keyword still counts),
-because reading too many links can only make the check stricter. A *closing* link is read exactly as GitHub closes
-issues — ``Fixes #12`` or ``Fixes owner/repo#12``, the keyword followed by whitespace, one keyword per issue — because
-it exempts a blocker, and an exemption GitHub would not honour lets blocked work through. Fenced code, inline code
-and HTML comments are skipped (the template's own examples live there); an unclosed fence or comment runs to the end,
-as in CommonMark. The check sees what a description declares: it cannot see work on an issue the description does not
-link, so it guards against honest mistakes, and a maintainer's review remains the backstop.
+Which issues a pull request links. Two sources, merged:
+
+- *What GitHub will close*: the pull request's ``closingIssuesReferences`` — GitHub's own list (the "Development"
+  sidebar), built from its closing keywords and manual links. Only this list can exempt a blocker as "closed by the
+  same pull request", and only when the pull request targets the default branch, where GitHub closes on merge. The
+  check never guesses closing syntax, so an exemption is never broader than what GitHub will actually do.
+- *Everything else it mentions*: ``Fixes`` / ``Closes`` / ``Resolves`` / ``Refs`` references read leniently from the
+  title, the description and every commit message (a commit message can close an issue too). Reading too many links
+  can only make the check stricter. Fenced code, inline code and HTML comments are skipped (the template's own
+  examples live there).
+
+The check sees what a pull request declares: it cannot see work on an issue nothing links, so it guards against
+honest mistakes, and a maintainer's review remains the backstop. At most ``_MAX_LINKED`` linked issues are read; more
+fails the check without reading any, so a description cannot spend the repository's API budget.
 
 Trust boundary. Issue and pull-request text is written by anyone, so the script never executes or prints it: it
-parses the description in linear time and writes only fixed messages and issue numbers to the log. The workflows pass
+parses the text in linear time and writes only fixed messages and issue numbers to the log. The workflows pass
 nothing through the shell; the script reads the event file itself. Every subprocess call is a list without a shell,
 limited to fixed endpoints (``repos/`` paths built from integers, and ``graphql`` with a query constant from this
 module).
@@ -42,7 +48,8 @@ module).
 Exit codes (per ``tools/`` contract, not the public 0-6 surface of ``forgelm/``):
 
 - ``0`` — done: labels in step, or the pull request may merge.
-- ``1`` — unexpected failure: an API call failed, or GitHub's answer was not what its API documents.
+- ``1`` — unexpected failure: an API call failed, or GitHub's answer was not what its API documents. ``sync`` keeps
+  going after one issue fails, reconciles the pull-request checks anyway, and exits 1 at the end.
 - ``2`` — the event payload, the arguments or the environment are unusable.
 - ``3`` — ``check-pr`` only: the pull request links an issue that is still blocked.
 """
@@ -50,13 +57,14 @@ Exit codes (per ``tools/`` contract, not the public 0-6 surface of ``forgelm/``)
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Iterator, Mapping, Optional, Sequence
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 from urllib.parse import quote
 
 BLOCKED_LABEL = "blocked"
@@ -67,17 +75,27 @@ CHECK_NAME = "Issue dependencies"  # the job name in pr-dependencies.yml, and th
 # a notice. `{blocker}` / `{blockers}` hold `owner/repo#N` references, so blockers in two repositories never collide.
 NOT_COMPLETED_MARKER = "<!-- issue-dependencies:not-completed:{blocker} -->"
 UNBLOCKED_MARKER = "<!-- issue-dependencies:unblocked:{blockers} -->"
+# Conclusions branch protection accepts as a passing check.
+PASSING_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 
+_EXIT_BLOCKED = 3
 _GH_TIMEOUT_SECONDS = 60
 _PAGE_SIZE = 100
 _MAX_PAGES = 30  # 3,000 items: far above the backlog; bounds every paginated read
 _MAX_BLOCKERS = 50  # GitHub shows at most this many "Blocked by" links per issue
 _MAX_LABELS = 100  # GitHub allows at most this many labels per issue
+_MAX_LINKED = 50  # issues one pull request may link; each costs one API call
+_MAX_COMMITS = 100  # commits one pull request may have and still be read in full
+_RERUN_DAYS = 30  # GitHub re-runs a workflow run only within this many days
 _ALLOWED_METHODS = frozenset({"GET", "POST", "DELETE"})
 
 MSG_UNBLOCKED = (
     "This issue is no longer blocked: every issue it waited for is closed as completed ({blockers}). It can be "
     "picked up now; see [Working on an issue]({contributing})."
+)
+MSG_UNBLOCKED_TRIAGE = (
+    "This issue is no longer blocked by another issue ({blockers}). It still carries `needs-triage`, so a maintainer "
+    "has to finish triaging it before it can be picked up."
 )
 MSG_UNBLOCKED_NO_LINKS = (
     'This issue is no longer blocked: it has no open "Blocked by" link. The `blocked` label follows those links '
@@ -92,16 +110,16 @@ MSG_NOT_COMPLETED = (
 MAINTAINER_LOGINS = frozenset({"cemililik"})  # MAINTAINERS.md; tests/test_issue_dependencies.py keeps them equal
 MAINTAINER_MENTION = " ".join(f"@{login}" for login in sorted(MAINTAINER_LOGINS))
 
-# A reference in a pull-request description: `#12`, `owner/repo#12` or an issue URL, after a keyword. GitHub closes
-# an issue for close/fix/resolve and their inflections; `Refs` is this project's word for "part of". Every class is
-# explicit ASCII (GitHub's keywords, logins and repository names are ASCII; docs/standards/regex.md rule 1).
+# A reference after a keyword: `#12`, `owner/repo#12` or an issue URL. Every class is explicit ASCII (keywords,
+# logins and repository names are ASCII; docs/standards/regex.md rule 1), and a number is a whole token, so `#5abc`
+# and `#５` are not references.
 _KEYWORD = r"(?P<kw>close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?|references)"
-_OWNER, _NAME = r"[A-Za-z0-9-]+", r"[A-Za-z0-9._-]+"
+_OWNER, _NAME, _NUM = r"[A-Za-z0-9-]+", r"[A-Za-z0-9._-]+", r"[0-9]+(?![A-Za-z0-9_])"
 _REF_RE = re.compile(
-    rf"(?:(?P<owner>{_OWNER})/(?P<repo>{_NAME}))?#(?P<num>\d+)"
-    rf"|https://github\.com/(?P<uowner>{_OWNER})/(?P<urepo>{_NAME})/issues/(?P<unum>\d+)"
+    rf"(?:(?P<owner>{_OWNER})/(?P<repo>{_NAME}))?#(?P<num>{_NUM})"
+    rf"|https?://github\.com/(?P<uowner>{_OWNER})/(?P<urepo>{_NAME})/issues/(?P<unum>{_NUM})"
 )
-_REF_PLAIN = rf"(?:(?:{_OWNER}/{_NAME})?#\d+|https://github\.com/{_OWNER}/{_NAME}/issues/\d+)"
+_REF_PLAIN = rf"(?:(?:{_OWNER}/{_NAME})?#{_NUM}|https?://github\.com/{_OWNER}/{_NAME}/issues/{_NUM})"
 # Horizontal whitespace only (rule 5), and the optional colon owns the whitespace after it, so no two quantifiers
 # compete for the same characters (rule 4).
 _LINK_RE = re.compile(
@@ -109,20 +127,18 @@ _LINK_RE = re.compile(
     rf"(?P<refs>{_REF_PLAIN}(?:[ \t]*(?:,|and|&)[ \t]*{_REF_PLAIN})*)",
     re.IGNORECASE,
 )
-_CLOSING = frozenset({"close", "closes", "closed", "fix", "fixes", "fixed", "resolve", "resolves", "resolved"})
 _FENCE_RE = re.compile(r" {0,3}(`{3,}|~{3,})")  # matched at the start of one line by the walker below
 _BACKTICK_RUN_RE = re.compile(r"`+")  # one quantifier over one character: linear
-_INDENTED_RE = re.compile(r"(?: {4}| {0,3}\t)")  # matched at the start of one line: four spaces, or a tab
-_ATX_HEADING_RE = re.compile(r" {0,3}#{1,6}(?:[ \t]|$)")  # matched at the start of one line
-# Whole lines that end a block: a setext underline and a thematic break, in their exact CommonMark forms, so a line
-# such as `-_-` stays paragraph text. Every repetition starts with its own character, so nothing backtracks.
-_SETEXT_UNDERLINE_RE = re.compile(r" {0,3}(?:=+|-+)[ \t]*")
-_THEMATIC_BREAK_RE = re.compile(r" {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})")
 
 # Every GraphQL document this script may send. A query is chosen by name; only integer and cursor variables vary.
 _ISSUE_FIELDS = """
         labels(first: 100) { totalCount nodes { name } }
         blockedBy(first: 50) { totalCount nodes { number state stateReason repository { nameWithOwner } } }"""
+_PULL_FIELDS = """
+        number title body headRefOid baseRefName
+        labels(first: 100) { totalCount nodes { name } }
+        closingIssuesReferences(first: 50) { totalCount nodes { number repository { nameWithOwner } } }
+        commits(first: 100) { totalCount nodes { commit { message } } }"""
 QUERIES = {
     "open_issues": """
 query($owner: String!, $name: String!, $after: String) {
@@ -146,6 +162,29 @@ query($owner: String!, $name: String!, $number: Int!) {
         number
         state"""
     + _ISSUE_FIELDS
+    + """
+      }
+    }
+  }
+}""",
+    "pull": """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    defaultBranchRef { name }
+    pullRequest(number: $number) {"""
+    + _PULL_FIELDS
+    + """
+    }
+  }
+}""",
+    "open_pulls": """
+query($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    defaultBranchRef { name }
+    pullRequests(states: OPEN, first: 25, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes {"""
+    + _PULL_FIELDS
     + """
       }
     }
@@ -208,6 +247,19 @@ class IssueState:
 
 
 @dataclass(frozen=True)
+class PullFacts:
+    """What the check needs to know about one pull request."""
+
+    number: int
+    head_sha: str
+    labels: frozenset[str]
+    texts: tuple[str, ...]  # the title, the description and every commit message
+    closing: frozenset[str]  # `owner/repo#N` keys GitHub will close on merge (empty off the default branch)
+    listed: frozenset[str]  # every key in GitHub's closing list, whatever the base branch
+    complete: bool  # False when GitHub's lists were longer than one page, so not everything could be read
+
+
+@dataclass(frozen=True)
 class Plan:
     """What ``sync`` does to one issue. ``comment`` is the unblocked notice and ``marker`` its idempotency key;
     ``not_completed`` lists blockers that were closed without being completed (each gets one notice and
@@ -245,7 +297,8 @@ def plan_issue(issue: IssueState, repo: str) -> Plan:
         return Plan()
     if issue.blockers:
         refs = ", ".join(b.ref(repo) for b in issue.blockers)
-        message = MSG_UNBLOCKED.format(blockers=refs, contributing=contributing_url(repo, "working-on-an-issue"))
+        template = MSG_UNBLOCKED_TRIAGE if TRIAGE_LABEL in issue.labels else MSG_UNBLOCKED
+        message = template.format(blockers=refs, contributing=contributing_url(repo, "working-on-an-issue"))
         marker = UNBLOCKED_MARKER.format(blockers=",".join(sorted(b.key for b in issue.blockers)))
     else:
         message = MSG_UNBLOCKED_NO_LINKS.format(contributing=contributing_url(repo))
@@ -264,8 +317,8 @@ def _strip_fences(body: str) -> str:
 
     A fence opens with three or more backticks or tildes after at most three spaces (a backtick fence's info string
     may not contain a backtick) and closes on a line holding the same character at least as many times and nothing
-    else. A fence that never closes runs to the end, as in CommonMark. Each dropped line is kept as a blank line, so
-    the block boundary the fence made survives for the readers after this one.
+    else. A fence that never closes runs to the end, as in CommonMark. Dropped lines are kept as blank lines, so a
+    code span is never paired across a fence.
     """
     kept: list[str] = []
     open_fence: Optional[tuple[str, int]] = None
@@ -348,78 +401,38 @@ def _strip_inline_code(text: str) -> str:
 
 
 def _strip_non_prose(body: str) -> str:
-    """Drop fenced code, HTML comments and inline code: the template's own examples live there, and GitHub neither
-    links nor closes an issue from inside them."""
+    """Drop fenced code, HTML comments and inline code: the template's own examples live there."""
     return _strip_inline_code(_strip_html_comments(_strip_fences(body)))
 
 
-def _ends_block(line: str) -> bool:
-    """A line after which a new block starts: an ATX heading, a setext underline or a thematic break.
+def linked_issues(text: str, repo: str) -> frozenset[int]:
+    """Issue numbers of this repository that ``text`` references after a keyword, read leniently.
 
-    An `===` or `---` line ends a block only under a paragraph line; read without that context it may end one too
-    early, which can only drop a closing reference, never add one.
+    A colon or a missing space after the keyword still counts, and so does every issue of a list (`Fixes #1, #2`):
+    these links can only make the check stricter. Whether GitHub *closes* an issue is never decided here — see
+    ``PullFacts.closing``. A reference to another repository is ignored: this repository's links cannot block on it.
     """
-    return bool(
-        _ATX_HEADING_RE.match(line) or _SETEXT_UNDERLINE_RE.fullmatch(line) or _THEMATIC_BREAK_RE.fullmatch(line)
-    )
-
-
-def _strip_indented_code(text: str) -> str:
-    """Drop indented code blocks with a line walker (linear).
-
-    A line indented four spaces (or a tab) opens a block only at the start, after a blank line or after a line that
-    ends a block (``_ends_block``): an indented code block cannot interrupt a paragraph, so a four-space line right
-    after paragraph text is a continuation and stays. Once open, the block runs through indented and blank lines.
-    """
-    kept: list[str] = []
-    in_code = False
-    block_start = True
-    for line in text.splitlines():
-        blank = not line.strip()
-        indented = bool(_INDENTED_RE.match(line))
-        if in_code and (blank or indented):
-            kept.append("")
-        elif indented and block_start and not blank:
-            in_code = True
-            kept.append("")
-        else:
-            in_code = False
-            kept.append(line)
-        block_start = blank or _ends_block(line)
-    return "\n".join(kept)
-
-
-def _references(text: str, repo: str) -> Iterator[tuple[int, bool]]:
-    """Each reference to an issue of this repository in ``text``, with whether GitHub closes it on merge."""
     owner, name = repo.lower().split("/")
-    for match in _LINK_RE.finditer(text):
-        keyword, sep, refs = match.group("kw").lower(), match.group("sep"), match.group("refs")
-        if not sep and not refs.startswith("#"):
+    found: set[int] = set()
+    for match in _LINK_RE.finditer(_strip_non_prose(text or "")):
+        if not match.group("sep") and not match.group("refs").startswith("#"):
             continue  # `refsfoo/bar#1` is a word, not a keyword followed by a reference
-        # GitHub closes only `KEYWORD #N` / `KEYWORD owner/repo#N`: whitespace after the keyword, no colon, one
-        # keyword per issue — so only the first reference of a list, and never a URL.
-        strict = keyword in _CLOSING and bool(sep) and not sep.strip(" \t")
-        for position, ref in enumerate(_REF_RE.finditer(refs)):
+        for ref in _REF_RE.finditer(match.group("refs")):
             ref_owner = (ref.group("owner") or ref.group("uowner") or owner).lower()
             ref_repo = (ref.group("repo") or ref.group("urepo") or name).lower()
             if (ref_owner, ref_repo) == (owner, name):
-                yield int(ref.group("num") or ref.group("unum")), strict and position == 0 and bool(ref.group("num"))
+                found.add(int(ref.group("num") or ref.group("unum")))
+    return frozenset(found)
 
 
-def linked_issues(body: str, repo: str) -> tuple[frozenset[int], frozenset[int]]:
-    """``(closing, all)``: issue numbers of this repository linked from a pull-request description.
-
-    ``all`` holds every linked issue, read leniently; ``closing`` the ones GitHub will close on merge, read strictly
-    (see the module docstring). A reference to another repository is ignored: this repository's links cannot block on
-    it, and its workflow cannot close it.
-    """
-    prose = _strip_non_prose(body or "")
-    every = frozenset(number for number, _ in _references(prose, repo))
-    # Closing references are read without indented code blocks as well, and only they are: inside a list item, a
-    # line indented four spaces after a blank line is still prose, so dropping it from the links could hide a linked
-    # blocked issue, while dropping it from the closing references can only refuse an exemption.
-    closing = frozenset(number for number, closes in _references(_strip_indented_code(prose), repo) if closes)
-    return closing, every
+def pull_links(pull: PullFacts, repo: str) -> frozenset[int]:
+    """Every issue of this repository the pull request links: what its texts mention and what GitHub lists."""
+    home = repo.lower()
+    linked: set[int] = set()
+    for text in pull.texts:
+        linked |= linked_issues(text, repo)
+    linked |= {int(key.rsplit("#", 1)[1]) for key in pull.listed if key.rsplit("#", 1)[0] == home}
+    return frozenset(linked)
 
 
 @dataclass(frozen=True)
@@ -432,8 +445,7 @@ class Verdict:
 
 def check_pull_request(
     override: Optional[bool],
-    closing: frozenset[int],
-    linked: frozenset[int],
+    pull: PullFacts,
     blockers_of: Callable[[int], Optional[tuple[Blocker, ...]]],
     repo: str,
 ) -> Verdict:
@@ -441,38 +453,57 @@ def check_pull_request(
 
     ``override`` is ``None`` without the override label, ``True`` when a maintainer set it and ``False`` when someone
     else did (then it is ignored). ``blockers_of`` returns an open issue's links, or ``None`` for a pull request, a
-    closed issue or a number that does not exist (none of those can be blocked work).
+    closed issue or a number that does not exist (none of those can be blocked work); it may raise ``GhError``.
     """
-    if override:
-        return Verdict(True, (f"`{OVERRIDE_LABEL}` was set by a maintainer, who accepted the linked dependencies.",))
+    linked = pull_links(pull, repo)
+    if len(linked) > _MAX_LINKED or not pull.complete:
+        why = (
+            f"links {len(linked)} issues; the check reads at most {_MAX_LINKED}"
+            if len(linked) > _MAX_LINKED
+            else f"has more than {_MAX_COMMITS} commits or 50 closing references, so not all of its links can be read"
+        )
+        if override:
+            return Verdict(True, (f"This pull request {why}; `{OVERRIDE_LABEL}` was set by a maintainer.",))
+        return Verdict(False, (f"This pull request {why}. Split it, or ask a maintainer.",))
     notes: tuple[str, ...] = ()
     if override is False:
         notes = (f"`{OVERRIDE_LABEL}` is ignored: only a maintainer listed in MAINTAINERS.md can set it.",)
     problems: list[str] = []
-    checked = 0
+    waiting = checked = 0
     for number in sorted(linked):
         blockers = blockers_of(number)
         if blockers is None:
             continue
         checked += 1
         for b in blockers:
-            if b.status == "resolved":
-                continue
-            if b.status == "waiting" and b.repo.lower() == repo.lower() and b.number in closing:
-                continue  # this pull request closes the blocker as well
-            why = "is still open" if b.status == "waiting" else "was closed without being completed"
-            problems.append(f"#{number} is blocked by {b.ref(repo)}, which {why}.")
-    if problems:
+            if b.status == "resolved" or (b.status == "waiting" and b.key in pull.closing):
+                continue  # completed, or closed by this pull request as well
+            if b.status == "waiting":
+                waiting += 1
+                problems.append(f"#{number} is blocked by {b.ref(repo)}, which is still open.")
+            else:
+                problems.append(
+                    f"#{number} is blocked by {b.ref(repo)}, which was closed without being completed: a maintainer "
+                    "has to re-plan that dependency first (the issue is flagged `needs-triage`)."
+                )
+    if override:
         return Verdict(
-            False,
-            tuple(problems)
-            + notes
-            + (
-                "Wait until the blocker is closed as completed (this check is re-run within the hour), close it in "
-                f"this pull request too (`Fixes #N` for each), or ask a maintainer. See {contributing_url(repo)}",
-            ),
+            True,
+            (f"`{OVERRIDE_LABEL}` was set by a maintainer, who accepts:",) + tuple(problems or ["nothing is blocked"]),
         )
-    return Verdict(True, (f"No linked issue is blocked ({checked} issue(s) checked).",) + notes)
+    if not problems:
+        return Verdict(True, (f"No linked issue is blocked ({checked} issue(s) checked).",) + notes)
+    hints = (
+        "If this pull request does not work on that issue, remove the reference (title, description and commit "
+        "messages count).",
+    )
+    if waiting:
+        hints = (
+            "Wait until the blocker is closed as completed (this check is re-run within the hour), close it in this "
+            "pull request too (GitHub must list it under Development as closed by this pull request), or ask a "
+            "maintainer.",
+        ) + hints
+    return Verdict(False, tuple(problems) + notes + hints + (f"See {contributing_url(repo)}",))
 
 
 # ------------------------------------------------------------------------------------------------ GitHub access
@@ -482,7 +513,11 @@ def _clean(text: str, limit: int = 200) -> str:
 
 
 def gh_api(method: str, endpoint: str, payload: Optional[Mapping[str, Any]] = None) -> Any:
-    """Call the GitHub API through the ``gh`` CLI (authenticated by ``GH_TOKEN``); no shell is involved."""
+    """Call the GitHub API through the ``gh`` CLI (authenticated by ``GH_TOKEN``); no shell is involved.
+
+    ``gh`` exits non-zero when a GraphQL answer carries errors, even partial ones; that answer is returned so that
+    ``graphql`` can decide which errors it accepts.
+    """
     if method not in _ALLOWED_METHODS or any(c.isspace() for c in endpoint):
         raise GhError("refusing an API call outside the fixed endpoints")
     if endpoint == "graphql":
@@ -504,20 +539,39 @@ def gh_api(method: str, endpoint: str, payload: Optional[Mapping[str, Any]] = No
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise GhError(f"{label} could not run: {type(exc).__name__}") from exc
+    answer: Any = None
+    if proc.stdout.strip():
+        try:
+            answer = json.loads(proc.stdout)
+        except ValueError as exc:
+            if proc.returncode == 0:
+                raise GhError(f"{label} returned something that is not JSON") from exc
     if proc.returncode != 0:
+        if endpoint == "graphql" and isinstance(answer, Mapping) and "errors" in answer:
+            return answer
         raise GhError(f"{label} failed (exit {proc.returncode}): {_clean(proc.stderr)}")
-    if not proc.stdout.strip():
-        return None
-    try:
-        return json.loads(proc.stdout)
-    except ValueError as exc:
-        raise GhError(f"{label} returned something that is not JSON") from exc
+    return answer
 
 
-def graphql(gh: GhApi, query: str, **variables: Any) -> Mapping[str, Any]:
+def _only_missing_issue(errors: Any) -> bool:
+    """Exactly one NOT_FOUND error, for ``repository.issueOrPullRequest``: the number names no issue."""
+    return (
+        isinstance(errors, list)
+        and len(errors) == 1
+        and isinstance(errors[0], Mapping)
+        and errors[0].get("type") == "NOT_FOUND"
+        and errors[0].get("path") == ["repository", "issueOrPullRequest"]
+    )
+
+
+def graphql(gh: GhApi, query: str, *, allow_missing: bool = False, **variables: Any) -> Mapping[str, Any]:
+    """Run one of ``QUERIES``. ``allow_missing`` accepts the one error a missing issue number produces; any other
+    error, including one for the repository itself, raises."""
     answer = gh("POST", "graphql", {"query": QUERIES[query], "variables": variables})
-    if not isinstance(answer, Mapping) or answer.get("errors") or not isinstance(answer.get("data"), Mapping):
-        errors = answer.get("errors") if isinstance(answer, Mapping) else None
+    errors = answer.get("errors") if isinstance(answer, Mapping) else None
+    if errors and allow_missing and _only_missing_issue(errors):
+        errors = None
+    if not isinstance(answer, Mapping) or errors or not isinstance(answer.get("data"), Mapping):
         first = (
             errors[0].get("message", "")
             if isinstance(errors, list) and errors and isinstance(errors[0], Mapping)
@@ -527,39 +581,30 @@ def graphql(gh: GhApi, query: str, **variables: Any) -> Mapping[str, Any]:
     return answer["data"]
 
 
-def _blockers(node: Mapping[str, Any]) -> tuple[Blocker, ...]:
-    try:
-        links = node["blockedBy"]
-        if links["totalCount"] > len(links["nodes"]):
-            raise GhError(f"issue #{node['number']} has more than {_MAX_BLOCKERS} blockers")
-        return tuple(
-            Blocker(int(b["number"]), str(b["repository"]["nameWithOwner"]), str(b["state"]), b.get("stateReason"))
-            for b in links["nodes"]
-        )
-    except (KeyError, TypeError, ValueError) as exc:
-        raise GhError("a blockedBy answer lacks a field") from exc
-
-
-def _labels(node: Mapping[str, Any]) -> frozenset[str]:
-    try:
-        labels = node["labels"]
-        if labels["totalCount"] > len(labels["nodes"]):
-            raise GhError(f"issue #{node['number']} has more than {_MAX_LABELS} labels")
-        return frozenset(str(label["name"]) for label in labels["nodes"])
-    except (KeyError, TypeError) as exc:
-        raise GhError("a labels answer lacks a field") from exc
+def _page(connection: Mapping[str, Any], limit: int, what: str, number: Any) -> list:
+    if connection["totalCount"] > len(connection["nodes"]):
+        raise GhError(f"#{number} has more than {limit} {what}")
+    return list(connection["nodes"])
 
 
 def _issue_state(node: Mapping[str, Any], is_open: bool) -> IssueState:
     try:
-        return IssueState(int(node["number"]), is_open, _labels(node), _blockers(node))
+        number = int(node["number"])
+        labels = frozenset(str(label["name"]) for label in _page(node["labels"], _MAX_LABELS, "labels", number))
+        blockers = tuple(
+            Blocker(int(b["number"]), str(b["repository"]["nameWithOwner"]), str(b["state"]), b.get("stateReason"))
+            for b in _page(node["blockedBy"], _MAX_BLOCKERS, "blockers", number)
+        )
+        return IssueState(number, is_open, labels, blockers)
     except (KeyError, TypeError, ValueError) as exc:
         raise GhError("an issue answer lacks a field") from exc
 
 
-def fetch_open_issues(gh: GhApi, repo: str) -> list[IssueState]:
+def fetch_open_issues(gh: GhApi, repo: str) -> tuple[list[IssueState], set[int]]:
+    """Every open issue, and the numbers of those whose links could not be read (each reported to stderr)."""
     owner, name = repo.split("/")
     out: list[IssueState] = []
+    broken: set[int] = set()
     after: Optional[str] = None
     for _ in range(_MAX_PAGES):
         data = graphql(gh, "open_issues", owner=owner, name=name, after=after)
@@ -568,9 +613,14 @@ def fetch_open_issues(gh: GhApi, repo: str) -> list[IssueState]:
             nodes, info = page["nodes"], page["pageInfo"]
         except (KeyError, TypeError) as exc:
             raise GhError("the open-issues answer lacks a field") from exc
-        out += [_issue_state(n, True) for n in nodes]
+        for node in nodes:
+            try:
+                out.append(_issue_state(node, True))
+            except GhError as exc:
+                broken.add(int(node.get("number") or 0))
+                print(f"error: {_clean(str(exc))}", file=sys.stderr)
         if not info.get("hasNextPage"):
-            return out
+            return out, broken
         after = str(info["endCursor"])
     raise GhError(f"more than {_MAX_PAGES} pages of open issues")
 
@@ -593,9 +643,9 @@ def fetch_closed_labelled(gh: GhApi, repo: str) -> list[int]:
 
 
 def fetch_issue_state(gh: GhApi, repo: str, number: int) -> Optional[IssueState]:
-    """One issue as it stands now, or ``None`` when ``number`` is a pull request or does not exist."""
+    """One issue as it stands now, or ``None`` when ``number`` is a pull request or names no issue."""
     owner, name = repo.split("/")
-    data = graphql(gh, "issue", owner=owner, name=name, number=number)
+    data = graphql(gh, "issue", allow_missing=True, owner=owner, name=name, number=number)
     node = (data.get("repository") or {}).get("issueOrPullRequest")
     if not isinstance(node, Mapping) or node.get("__typename") != "Issue":
         return None
@@ -603,39 +653,80 @@ def fetch_issue_state(gh: GhApi, repo: str, number: int) -> Optional[IssueState]
 
 
 def fetch_blockers_of(gh: GhApi, repo: str, number: int) -> Optional[tuple[Blocker, ...]]:
-    """An open issue's links, or ``None`` when ``number`` is a pull request, a closed issue or does not exist."""
+    """An open issue's links, or ``None`` when ``number`` is a pull request, a closed issue or names no issue."""
     state = fetch_issue_state(gh, repo, number)
     return state.blockers if state is not None and state.is_open else None
+
+
+def _pull_facts(node: Mapping[str, Any], default_branch: str) -> PullFacts:
+    try:
+        number, sha = int(node["number"]), str(node["headRefOid"])
+        if not re.fullmatch(r"[0-9a-f]{40}", sha):
+            raise GhError(f"pull request #{number} has a malformed head sha")
+        labels = frozenset(str(label["name"]) for label in _page(node["labels"], _MAX_LABELS, "labels", number))
+        refs, commits = node["closingIssuesReferences"], node["commits"]
+        complete = refs["totalCount"] <= len(refs["nodes"]) and commits["totalCount"] <= len(commits["nodes"])
+        listed = frozenset(f"{str(r['repository']['nameWithOwner']).lower()}#{int(r['number'])}" for r in refs["nodes"])
+        texts = (str(node.get("title") or ""), str(node.get("body") or "")) + tuple(
+            str((c.get("commit") or {}).get("message") or "") for c in commits["nodes"]
+        )
+        # GitHub closes on merge only into the default branch; elsewhere nothing is exempted.
+        closing = listed if node["baseRefName"] == default_branch else frozenset()
+        return PullFacts(number, sha, labels, texts, closing, listed, complete)
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise GhError("a pull-request answer lacks a field") from exc
+
+
+def _default_branch(data: Mapping[str, Any]) -> str:
+    try:
+        return str(data["repository"]["defaultBranchRef"]["name"])
+    except (KeyError, TypeError) as exc:
+        raise GhError("the answer lacks the default branch") from exc
+
+
+def fetch_pull(gh: GhApi, repo: str, number: int) -> PullFacts:
+    owner, name = repo.split("/")
+    data = graphql(gh, "pull", owner=owner, name=name, number=number)
+    node = (data.get("repository") or {}).get("pullRequest")
+    if not isinstance(node, Mapping):
+        raise GhError(f"pull request #{number} was not found")
+    return _pull_facts(node, _default_branch(data))
 
 
 def override_authorized(gh: GhApi, repo: str, number: int) -> bool:
     """True when the latest change of the override label on this pull request is a maintainer adding it.
 
     Who may *add* a label is a repository permission, not a maintainer decision, so the label alone proves nothing.
-    The issue events (oldest first) record who added or removed it.
+    The issue events record who added or removed it; they are sorted by time rather than trusted to arrive in order.
     """
-    last: Optional[Mapping[str, Any]] = None
+    changes: list[Mapping[str, Any]] = []
     for page in range(1, _MAX_PAGES + 1):
         raw = gh("GET", f"repos/{repo}/issues/{number}/events?per_page={_PAGE_SIZE}&page={page}", None)
         if not isinstance(raw, list):
             raise GhError("the events answer is not a list")
-        for event in raw:
-            if (
-                isinstance(event, Mapping)
-                and event.get("event") in ("labeled", "unlabeled")
-                and (event.get("label") or {}).get("name") == OVERRIDE_LABEL
-            ):
-                last = event
+        changes += [
+            e
+            for e in raw
+            if isinstance(e, Mapping)
+            and e.get("event") in ("labeled", "unlabeled")
+            and (e.get("label") or {}).get("name") == OVERRIDE_LABEL
+        ]
         if len(raw) < _PAGE_SIZE:
             break
     else:
         raise GhError(f"more than {_MAX_PAGES} pages of events")
-    if last is None or last.get("event") != "labeled":
+    if not changes:
         return False
-    return str((last.get("actor") or {}).get("login") or "").lower() in MAINTAINER_LOGINS
+    last = max(changes, key=lambda e: (str(e.get("created_at") or ""), int(e.get("id") or 0)))
+    return (
+        last.get("event") == "labeled"
+        and str((last.get("actor") or {}).get("login") or "").lower() in MAINTAINER_LOGINS
+    )
 
 
 def _already_noticed(gh: GhApi, repo: str, number: int, marker: str) -> bool:
+    """True when the bot has posted ``marker`` on the issue. Past the page bound it answers True (and says so), so a
+    very long thread cannot make the bot repeat a notice every hour."""
     for page in range(1, _MAX_PAGES + 1):
         raw = gh("GET", f"repos/{repo}/issues/{number}/comments?per_page={_PAGE_SIZE}&page={page}", None)
         if not isinstance(raw, list):
@@ -646,25 +737,27 @@ def _already_noticed(gh: GhApi, repo: str, number: int, marker: str) -> bool:
                 return True
         if len(raw) < _PAGE_SIZE:
             return False
-    return False
+    print(f"warning: issue #{number}: too many comments to look for an earlier notice; not posting", file=sys.stderr)
+    return True
+
+
+def _now() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc)
 
 
 def _reconcile_one(
     gh: GhApi,
     repo: str,
-    pull: Mapping[str, Any],
+    pull: PullFacts,
     blockers_of: Callable[[int], Optional[tuple[Blocker, ...]]],
     dry_run: bool,
 ) -> bool:
     """Re-run one pull request's dependency check if its last result no longer matches; True when it did."""
-    number, sha = int(pull["number"]), str(pull["head"]["sha"])
-    if not re.fullmatch(r"[0-9a-f]{40}", sha):
-        raise GhError("a pull request's head sha is malformed")
-    labels = frozenset(str(label["name"]) for label in pull["labels"])
-    closing, linked = linked_issues(str(pull.get("body") or ""), repo)
-    override = override_authorized(gh, repo, number) if OVERRIDE_LABEL in labels else None
-    want_ok = check_pull_request(override, closing, linked, blockers_of, repo).ok
-    runs = gh("GET", f"repos/{repo}/commits/{sha}/check-runs?check_name={quote(CHECK_NAME)}&per_page=100", None)
+    override = override_authorized(gh, repo, pull.number) if OVERRIDE_LABEL in pull.labels else None
+    want_ok = check_pull_request(override, pull, blockers_of, repo).ok
+    runs = gh(
+        "GET", f"repos/{repo}/commits/{pull.head_sha}/check-runs?check_name={quote(CHECK_NAME)}&per_page=100", None
+    )
     candidates = [
         r for r in (runs or {}).get("check_runs") or [] if (r.get("app") or {}).get("slug") == "github-actions"
     ]
@@ -673,17 +766,25 @@ def _reconcile_one(
     latest = max(candidates, key=lambda r: int(r["id"]))
     if latest.get("status") != "completed":
         return False  # still running on what it read; the next sync compares again
-    if (latest.get("conclusion") == "success") == want_ok:
+    if (latest.get("conclusion") in PASSING_CONCLUSIONS) == want_ok:
         return False
-    print(f"{'would re-run' if dry_run else 'did re-run'} the dependency check of pull request #{number}")
+    started = datetime.datetime.fromisoformat(str(latest.get("started_at") or "").replace("Z", "+00:00"))
+    if _now() - started > datetime.timedelta(days=_RERUN_DAYS):
+        print(
+            f"warning: pull request #{pull.number}: its dependency check is too old to re-run; a push or an edit of the "
+            "pull request runs it again",
+            file=sys.stderr,
+        )
+        return False
     if not dry_run:
         # An Actions check run's id is its job's id.
         gh("POST", f"repos/{repo}/actions/jobs/{int(latest['id'])}/rerun", None)
+    print(f"{'would re-run' if dry_run else 'did re-run'} the dependency check of pull request #{pull.number}")
     return True
 
 
 def reconcile_pr_checks(
-    gh: GhApi, repo: str, open_issues: Mapping[int, IssueState], dry_run: bool = False
+    gh: GhApi, repo: str, open_issues: Mapping[int, IssueState], broken: Iterable[int] = (), dry_run: bool = False
 ) -> tuple[int, int]:
     """Re-run the dependency check of every open pull request whose last result no longer matches its linked issues:
     red although every blocker is now completed, or green although a linked issue became blocked.
@@ -692,25 +793,31 @@ def reconcile_pr_checks(
     running, or a sync that stopped half-way is simply caught by the next run. Optional by design: a failure is a
     warning, never a failed sync. Returns ``(pull requests looked at, checks re-run)``.
     """
+    unreadable = frozenset(broken)
 
     def blockers_of(number: int) -> Optional[tuple[Blocker, ...]]:
+        if number in unreadable:
+            raise GhError(f"the Blocked-by links of #{number} could not be read")
         issue = open_issues.get(number)
         return issue.blockers if issue is not None else None
 
+    owner, name = repo.split("/")
     seen = rerun = 0
     try:
-        for page in range(1, _MAX_PAGES + 1):
-            pulls = gh("GET", f"repos/{repo}/pulls?state=open&per_page={_PAGE_SIZE}&page={page}", None)
-            if not isinstance(pulls, list):
-                raise GhError("the pull-request list is not a list")
-            for pull in pulls:
+        after: Optional[str] = None
+        for _ in range(_MAX_PAGES):
+            data = graphql(gh, "open_pulls", owner=owner, name=name, after=after)
+            default_branch = _default_branch(data)
+            page = data["repository"]["pullRequests"]
+            for node in page["nodes"]:
                 seen += 1
                 try:
-                    rerun += _reconcile_one(gh, repo, pull, blockers_of, dry_run)
+                    rerun += _reconcile_one(gh, repo, _pull_facts(node, default_branch), blockers_of, dry_run)
                 except (GhError, AttributeError, KeyError, TypeError, ValueError) as exc:
                     print(f"warning: could not reconcile a pull request's check: {_clean(str(exc))}", file=sys.stderr)
-            if len(pulls) < _PAGE_SIZE:
+            if not page["pageInfo"].get("hasNextPage"):
                 break
+            after = str(page["pageInfo"]["endCursor"])
         else:
             print(f"warning: more than {_MAX_PAGES} pages of open pull requests; the rest wait", file=sys.stderr)
     except (GhError, AttributeError, KeyError, TypeError, ValueError) as exc:
@@ -719,53 +826,67 @@ def reconcile_pr_checks(
 
 
 # ----------------------------------------------------------------------------------------------------- commands
-def run_sync(repo: str, gh: GhApi, dry_run: bool = False) -> int:
-    open_issues = fetch_open_issues(gh, repo)
-    closed = [IssueState(n, False, frozenset({BLOCKED_LABEL}), ()) for n in fetch_closed_labelled(gh, repo)]
-    blocked = sum(1 for i in open_issues if is_blocked(i.blockers))
+def _sync_issue(gh: GhApi, repo: str, issue: IssueState, dry_run: bool) -> bool:
+    """Apply the rules to one issue; True when an open issue was unblocked."""
+    plan = plan_issue(issue, repo)
+    if plan.remove_label and issue.is_open and not dry_run:
+        # Read the issue again right before acting on it: a blocker reopened since the snapshot must not lead to an
+        # "unblocked" notice that a later run cannot take back.
+        fresh = fetch_issue_state(gh, repo, issue.number)
+        if fresh is None:
+            print(f"skipped #{issue.number}: no longer an issue")
+            return False
+        issue, plan = fresh, plan_issue(fresh, repo)
     verb = "would" if dry_run else "did"
+    if plan.add_label:
+        if not dry_run:
+            gh("POST", f"repos/{repo}/issues/{issue.number}/labels", {"labels": [BLOCKED_LABEL]})
+        print(f"{verb} label #{issue.number} {BLOCKED_LABEL}")
+    if plan.remove_label:
+        if not dry_run:
+            # The notice goes first and is idempotent through its marker, and the label goes last: if anything fails in
+            # between, the label is still there and the next run finishes the job without a second notice.
+            if plan.comment and not _already_noticed(gh, repo, issue.number, plan.marker):
+                gh("POST", f"repos/{repo}/issues/{issue.number}/comments", {"body": plan.comment})
+            gh("DELETE", f"repos/{repo}/issues/{issue.number}/labels/{quote(BLOCKED_LABEL)}", None)
+        print(f"{verb} unlabel #{issue.number} {BLOCKED_LABEL}" + (" and comment" if plan.comment else ""))
+    for b in plan.not_completed:
+        if dry_run:
+            print(f"would check #{issue.number}: blocker {b.ref(repo)} was not completed")
+            continue
+        if _already_noticed(gh, repo, issue.number, NOT_COMPLETED_MARKER.format(blocker=b.key)):
+            continue
+        gh("POST", f"repos/{repo}/issues/{issue.number}/labels", {"labels": [TRIAGE_LABEL]})
+        gh("POST", f"repos/{repo}/issues/{issue.number}/comments", {"body": not_completed_notice(b, repo)})
+        print(f"did flag #{issue.number}: blocker {b.ref(repo)} was not completed")
+    return plan.remove_label and issue.is_open
+
+
+def run_sync(repo: str, gh: GhApi, dry_run: bool = False) -> int:
+    open_issues, broken = fetch_open_issues(gh, repo)
+    failures = len(broken)
+    try:
+        closed = [IssueState(n, False, frozenset({BLOCKED_LABEL}), ()) for n in fetch_closed_labelled(gh, repo)]
+    except GhError as exc:
+        failures += 1
+        closed = []
+        print(f"error: could not list closed issues that keep `{BLOCKED_LABEL}`: {_clean(str(exc))}", file=sys.stderr)
+    blocked = sum(1 for i in open_issues if is_blocked(i.blockers))
     unblocked = 0
     for issue in open_issues + closed:
-        plan = plan_issue(issue, repo)
-        if plan.remove_label and issue.is_open and not dry_run:
-            # Read the issue again right before acting on it: a blocker reopened since the snapshot must not lead to
-            # an "unblocked" notice that a later run cannot take back.
-            fresh = fetch_issue_state(gh, repo, issue.number)
-            if fresh is None:
-                print(f"skipped #{issue.number}: no longer an issue")
-                continue
-            issue, plan = fresh, plan_issue(fresh, repo)
-        if not plan.changes:
-            continue
-        if plan.add_label:
-            print(f"{verb} label #{issue.number} {BLOCKED_LABEL}")
-            if not dry_run:
-                gh("POST", f"repos/{repo}/issues/{issue.number}/labels", {"labels": [BLOCKED_LABEL]})
-        if plan.remove_label:
-            print(f"{verb} unlabel #{issue.number} {BLOCKED_LABEL}" + (" and comment" if plan.comment else ""))
-            if not dry_run:
-                # The notice goes first and is idempotent through its marker, and the label goes last: if anything
-                # fails in between, the label is still there and the next run finishes the job without a second
-                # notice.
-                if plan.comment and not _already_noticed(gh, repo, issue.number, plan.marker):
-                    gh("POST", f"repos/{repo}/issues/{issue.number}/comments", {"body": plan.comment})
-                gh("DELETE", f"repos/{repo}/issues/{issue.number}/labels/{quote(BLOCKED_LABEL)}", None)
-            unblocked += issue.is_open
-        for b in plan.not_completed:
-            if dry_run:
-                print(f"would check #{issue.number}: blocker {b.ref(repo)} was not completed")
-                continue
-            if _already_noticed(gh, repo, issue.number, NOT_COMPLETED_MARKER.format(blocker=b.key)):
-                continue
-            print(f"did flag #{issue.number}: blocker {b.ref(repo)} was not completed")
-            gh("POST", f"repos/{repo}/issues/{issue.number}/labels", {"labels": [TRIAGE_LABEL]})
-            gh("POST", f"repos/{repo}/issues/{issue.number}/comments", {"body": not_completed_notice(b, repo)})
-    seen, rerun = reconcile_pr_checks(gh, repo, {i.number: i for i in open_issues}, dry_run)
+        # One issue that cannot be written (locked, at its label limit, ...) must not stop the others, nor the
+        # pull-request reconciliation below.
+        try:
+            unblocked += _sync_issue(gh, repo, issue, dry_run)
+        except GhError as exc:
+            failures += 1
+            print(f"error: issue #{issue.number}: {_clean(str(exc))}", file=sys.stderr)
+    seen, rerun = reconcile_pr_checks(gh, repo, {i.number: i for i in open_issues}, broken, dry_run)
     print(
         f"open issues: {len(open_issues)}, blocked: {blocked}, unblocked now: {unblocked}, "
-        f"open pull requests: {seen}, dependency checks re-run: {rerun}"
+        f"open pull requests: {seen}, dependency checks re-run: {rerun}, failures: {failures}"
     )
-    return 0
+    return 1 if failures else 0
 
 
 def run_check_pr(event: Mapping[str, Any], repo: str, gh: GhApi) -> int:
@@ -776,19 +897,13 @@ def run_check_pr(event: Mapping[str, Any], repo: str, gh: GhApi) -> int:
     if isinstance(number, bool) or not isinstance(number, int) or number < 1:
         raise EventError("pull request number is not a positive integer")
     # Read the pull request again rather than trust the event: a re-run replays the original payload, and the
-    # description or the labels may have changed since.
-    pull = gh("GET", f"repos/{repo}/pulls/{number}", None)
-    try:
-        body = str(pull.get("body") or "")
-        labels = frozenset(str(label["name"]) for label in pull["labels"])
-    except (AttributeError, KeyError, TypeError) as exc:
-        raise GhError("the pull-request answer lacks body or labels") from exc
-    closing, linked = linked_issues(body, repo)
-    override = override_authorized(gh, repo, number) if OVERRIDE_LABEL in labels else None
-    verdict = check_pull_request(override, closing, linked, lambda n: fetch_blockers_of(gh, repo, n), repo)
+    # description, the labels or the commits may have changed since.
+    pull = fetch_pull(gh, repo, number)
+    override = override_authorized(gh, repo, number) if OVERRIDE_LABEL in pull.labels else None
+    verdict = check_pull_request(override, pull, lambda n: fetch_blockers_of(gh, repo, n), repo)
     for line in verdict.lines:
         print(line if verdict.ok else f"::error::{line}")
-    return 0 if verdict.ok else 3
+    return 0 if verdict.ok else _EXIT_BLOCKED
 
 
 def _repo_from_env() -> str:

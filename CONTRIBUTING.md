@@ -51,7 +51,7 @@ Thanks for your interest in contributing! ForgeLM is an open-source project and 
 6. A new contributor's first workflow run may wait for a maintainer to approve it; this is normal
    [GitHub workflow approval](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/approve-runs-from-forks).
 
-[good-first-issue]: https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+no%3Aassignee+label%3A%22good+first+issue%22
+[good-first-issue]: https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue+is%3Aopen+no%3Aassignee+label%3A%22good+first+issue%22+-label%3Ablocked
 
 ## Ways to Contribute
 
@@ -128,13 +128,16 @@ Useful starting points:
 
 Some issues can only be done after another one: each Phase 16 step waits for the step before it, a deferred item may wait for the step that changes the same file, and a review issue whose every finding is a unit of a Phase 16 step waits for that step, whose pull request fixes it. Such a dependency is recorded as a **Blocked by** link in the issue's sidebar (*Relationships*), never only in prose.
 
-- **An issue with an open blocker is labelled `blocked`.** Do not start on it and do not open a pull request for it: `/assign` refuses it, and the **Issue dependencies** pull-request check fails a pull request whose description links it with `Fixes`, `Closes`, `Resolves` or `Refs #…`.
+- **An issue with an open blocker is labelled `blocked`.** Do not start on it and do not open a pull request for it: `/assign` refuses it, and the **Issue dependencies** pull-request check fails a pull request that links it — with `Fixes`, `Closes`, `Resolves` or `Refs #…` in the title, the description or any commit message, or through GitHub's *Development* sidebar. If your pull request only mentions such an issue for context, drop the keyword. The check reads at most 50 linked issues, 100 commits and 50 closing references; a pull request over those limits fails until it is split or a maintainer accepts it.
 - **The label is automatic.** Nobody sets or removes it by hand. The *Issue dependencies* workflow adds it while a blocker is open and removes it once every blocker is closed as completed — as soon as that blocker is closed, or within an hour of a link being added or removed. When it removes the label it says so in a comment on the issue. Within the same hour it also re-runs the check of every open pull request whose result no longer matches, so a red check turns green once its blockers are completed, and a green one turns red if a linked issue becomes blocked.
-- **A blocker closed as not planned or as a duplicate unblocks nothing**, because the work the issue waits for was not done. The issue stays `blocked`, gets `needs-triage`, and a maintainer re-plans it: removes the link, or links the issue that replaces the blocker.
-- **A pull request may close the blocker as well.** When it closes every open blocker of the issues it links, the check passes. It counts a blocker as closed only in the form GitHub closes on merge — the keyword, a space and the issue, once per issue (`Fixes #12, fixes #13`) — so `Fixes#12`, `Fixes: #12` or the second issue of `Fixes #12, #13` leave the blocker open. A maintainer listed in [MAINTAINERS.md](MAINTAINERS.md) can also accept a dependency deliberately with the `dependency-override` label; the label set by anyone else is ignored.
+- **A blocker closed as not planned or as a duplicate unblocks nothing**, because the work the issue waits for was not done. The issue stays `blocked`, gets `needs-triage`, and a maintainer re-plans it: removes the link, or links the issue that replaces the blocker. Once the dependency is re-planned the label goes, but the issue can be picked up only after a maintainer also removes `needs-triage`.
+- **A pull request may close the blocker as well.** When it closes every open blocker of the issues it links, the check passes. What counts is GitHub's own list of issues the pull request will close — the *Development* sidebar — and only for a pull request into `development`, where GitHub closes on merge. Use one keyword per issue (`Fixes #12, fixes #13`): GitHub closes only the first issue of `Fixes #12, #13`.
+- **A maintainer can accept a dependency deliberately** with the `dependency-override` label on the pull request. The check then passes and lists what it accepted; the label set by anyone not listed in [MAINTAINERS.md](MAINTAINERS.md) is ignored. The override covers the pull request as it stands, so read it again before merging if it changed after the label was set.
 - **Grouped issues are not blocked as a whole** when only some of their findings belong to a Phase 16 step. Those findings say so in the checklist (`KNOWN-OPEN … (S8 open)`): leave them to the step and take the others.
 
 The project's *Blocked* view lists every blocked issue; *Front door* and *Small tasks* leave them out.
+
+**For maintainers.** Record a dependency with a *Blocked by* link and let the label follow; to apply a change at once instead of within the hour, run the *Issue dependencies* workflow by hand (Actions > *Issue dependencies* > *Run workflow*). To stop the automation, disable either workflow in the Actions tab; the links stay. The **Issue dependencies** check runs on `pull_request_target`, which GitHub blocks in public repositories from 2 November 2026 unless an Actions policy allows it: the repository's policy (Settings > Actions > Policies) allows it for `.github/workflows/pr-dependencies.yml` only, so moving or renaming that file needs the policy updated too, or the check stops reporting.
 
 ## Reporting Security Vulnerabilities
 
@@ -269,7 +272,7 @@ ForgeLM is a single-package layout: a mix of single-file modules and five
 focused sub-packages (`forgelm/cli/` post-Phase-15 split,
 `forgelm/data_audit/` post-Phase-14 split, `forgelm/wizard/` from Phase 22,
 `forgelm/safety/` from the post-v0.9.1 split and `forgelm/verify/` from
-Phase 16 S1) under `forgelm/`, 131 test files
+Phase 16 S1) under `forgelm/`, 132 test files
 under `tests/` (collected-test count grows over time — run
 `pytest --collect-only -q` for current), plus `configs/`, `docs/`, `tools/`
 (CI guards), and `notebooks/`. For the authoritative module-by-module map

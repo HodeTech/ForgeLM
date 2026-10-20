@@ -79,9 +79,10 @@ NOT_OPEN_MARKER = "<!-- assign-on-comment:needs-maintainer -->"
 
 MSG_CLOSED = "This issue is closed, so it cannot be assigned."
 MSG_BLOCKED = (
-    "This issue is blocked: it waits for another issue to be completed (see **Blocked by** in the sidebar), so it "
-    "cannot be claimed yet. The `blocked` label is removed automatically once every blocker is closed as completed; "
-    "check this issue again then. Until then, pick another one from the [Front door view]({front_door})."
+    "This issue is blocked: it waits for another issue (see **Blocked by** in the sidebar) to be completed, or for a "
+    "maintainer to re-plan a dependency whose blocker was closed without being completed, so it cannot be claimed "
+    "yet. The `blocked` label is removed automatically once that is done; check this issue again then. Until then, "
+    "pick another one from the [Front door view]({front_door})."
 )
 MSG_NOT_OPEN = (
     "Only `good first issue` issues can be claimed with `/assign`; this one needs a maintainer's decision. "
@@ -314,26 +315,31 @@ def _logins(users: Any) -> tuple[str, ...]:
         raise GhError("an assignee has no login") from exc
 
 
-def fetch_issue(gh: GhApi, repo: str, number: int) -> IssueFacts:
+def fetch_issue(gh: GhApi, repo: str, number: int, read_blockers: bool = True) -> IssueFacts:
+    """The issue's facts. ``read_blockers`` is False for ``/unassign``, which never depends on them, so a failing
+    dependency read can never stop a contributor from giving an issue back."""
     raw = gh("GET", f"repos/{repo}/issues/{number}", None)
     try:
         labels = frozenset(str(label["name"]) for label in raw["labels"])
-        summary = raw.get("issue_dependencies_summary")
-        # The summary's `blocked_by` counts only blockers that are still open. A blocker closed as not planned or as
-        # a duplicate blocks too, so when closed ones exist and the label has not caught up, read their reasons.
-        # Without the summary the label alone decides, which is what tools/issue_dependencies.py keeps true.
         unresolved = 0
-        if isinstance(summary, dict):
-            unresolved = int(summary.get("blocked_by") or 0)
-            if int(summary.get("total_blocked_by") or 0) > unresolved and BLOCKED_LABEL not in labels:
-                unresolved += count_not_completed_blockers(gh, repo, number)
+        if read_blockers and BLOCKED_LABEL not in labels:  # the label already refuses; no need to read further
+            summary = raw.get("issue_dependencies_summary")
+            # The summary's `blocked_by` counts only blockers that are still open. A blocker closed as not planned or
+            # as a duplicate blocks too, so when closed ones exist, or the summary is missing, read the list itself.
+            if not isinstance(summary, dict):
+                unresolved = count_unresolved_blockers(gh, repo, number)
+            else:
+                unresolved = int(summary.get("blocked_by") or 0)
+                if int(summary.get("total_blocked_by") or 0) > unresolved:
+                    unresolved = count_unresolved_blockers(gh, repo, number)
         return IssueFacts(str(raw["state"]), labels, _logins(raw["assignees"]), unresolved)
     except (KeyError, TypeError, ValueError) as exc:
         raise GhError("the issue answer lacks labels, state or assignees") from exc
 
 
-def count_not_completed_blockers(gh: GhApi, repo: str, number: int) -> int:
-    """The issue's "Blocked by" issues that are closed without being completed (not planned, or a duplicate)."""
+def count_unresolved_blockers(gh: GhApi, repo: str, number: int) -> int:
+    """The issue's "Blocked by" issues that are still open or closed without being completed (not planned, or a
+    duplicate), counted from the list itself rather than mixed with the summary."""
     found = 0
     for page in range(1, _MAX_PAGES + 1):
         raw = gh("GET", f"repos/{repo}/issues/{number}/dependencies/blocked_by?per_page={_PAGE_SIZE}&page={page}", None)
@@ -342,7 +348,7 @@ def count_not_completed_blockers(gh: GhApi, repo: str, number: int) -> int:
         found += sum(
             1
             for b in raw
-            if isinstance(b, dict) and b.get("state") == "closed" and b.get("state_reason") not in (None, "completed")
+            if isinstance(b, dict) and (b.get("state") != "closed" or b.get("state_reason") not in (None, "completed"))
         )
         if len(raw) < _PAGE_SIZE:
             break
@@ -426,7 +432,7 @@ def _settle_after_write(ctx: Context, gh: GhApi, assignees: tuple[str, ...], mes
 
 def _perform(ctx: Context, gh: GhApi) -> str:
     """Read, decide, change the assignment. Returns the reply text ('' for none)."""
-    issue = fetch_issue(gh, ctx.repo, ctx.number)
+    issue = fetch_issue(gh, ctx.repo, ctx.number, read_blockers=ctx.command == "/assign")
     counted: list[int] = []
 
     def held() -> int:  # asked for at most once per run, and only if the answer depends on it
