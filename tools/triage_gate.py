@@ -21,7 +21,11 @@ untriaged issue is added back. The events decide only who may end the matter wit
   has removed it since. Only a maintainer completes triage;
 - ``sweep`` (hourly): every open issue created since ``TRIAGE_SWEEP_SINCE`` that lacks the label gets the same
   decision. This repairs what an event run could not: a failed API call, a disabled workflow, an issue that a
-  workflow created with its own ``GITHUB_TOKEN`` (such events start no other workflow).
+  workflow created with its own ``GITHUB_TOKEN`` (such events start no other workflow). The candidates are found with
+  the search API, which filters on the server (open, an issue, no label, created since), so issues that already have
+  the label never use up a run's page budget. A missing label is the only state there is: whatever one run does not
+  reach (the cap of ``_SWEEP_MAX_PAGES`` pages, a failed call) is found again by the next, newest first, and nothing
+  is checkpointed. Issues created before ``TRIAGE_SWEEP_SINCE`` were classified by hand and are never candidates.
 
 A maintainer is a login listed in ``MAINTAINERS.md`` (``MAINTAINER_LOGINS``; ``tests/test_triage_gate.py`` fails if
 the two drift apart). GitHub's own permission names are not used: they would also count a triage-role or write-role
@@ -56,6 +60,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
+from urllib.parse import quote
 
 TRIAGE_LABEL = "needs-triage"
 # The maintainers, as MAINTAINERS.md lists them (tests/test_triage_gate.py fails if the two drift apart).
@@ -269,11 +274,14 @@ def context_from_event(event: Mapping[str, Any], repo: str) -> Optional[Context]
     return Context(repo, number, action, _is_maintainer(login))
 
 
-def _allowed_endpoint(endpoint: str) -> bool:
-    """Only the issues endpoints of one repository: ``repos/<owner>/<name>/issues[/...][?query]``."""
+def _allowed_endpoint(method: str, endpoint: str) -> bool:
+    """Only the issues endpoints of one repository (``repos/<owner>/<name>/issues[/...][?query]``) and the issue search."""
     if any(c.isspace() for c in endpoint):
         return False
-    parts = endpoint.split("?", 1)[0].split("/")
+    path = endpoint.split("?", 1)[0]
+    if path == "search/issues":  # the sweep's candidate query, read-only; the other search endpoints are refused
+        return method == "GET"
+    parts = path.split("/")
     if len(parts) < 4 or parts[0] != "repos" or parts[3] != "issues":
         return False
     return _name_ok(parts[1]) and _name_ok(parts[2]) and not any(p in ("", ".", "..") for p in parts)
@@ -281,7 +289,7 @@ def _allowed_endpoint(endpoint: str) -> bool:
 
 def gh_api(method: str, endpoint: str, payload: Optional[Mapping[str, Any]] = None) -> Any:
     """Call the GitHub REST API through the ``gh`` CLI (authenticated by ``GH_TOKEN``); no shell is involved."""
-    if method not in _ALLOWED_METHODS or not _allowed_endpoint(endpoint):
+    if method not in _ALLOWED_METHODS or not _allowed_endpoint(method, endpoint):
         raise GhError("refusing an API call outside the fixed issues endpoints")
     command = ["gh", "api", "--method", method, endpoint]
     stdin = None
@@ -401,30 +409,38 @@ def run(event: Mapping[str, Any], repo: str, gh: GhApi) -> int:
 
 
 def untriaged_candidates(gh: GhApi, repo: str, since: str) -> list[int]:
-    """Open issues (not pull requests) created at or after ``since`` that lack the label, newest first."""
+    """Open issues (not pull requests) created at or after ``since`` that lack the label, newest first.
+
+    The server does the filtering, so at most ``_SWEEP_MAX_PAGES`` pages are read and every entry is a candidate. When
+    there are more, the newest are returned and the next sweep finds the rest: handling one removes it from the query.
+    """
+    query = f"repo:{repo} is:issue is:open -label:{TRIAGE_LABEL} created:>={since}"
     numbers: list[int] = []
     for page in range(1, _SWEEP_MAX_PAGES + 1):
         raw = gh(
-            "GET", f"repos/{repo}/issues?state=open&sort=created&direction=desc&per_page={_PAGE_SIZE}&page={page}", None
+            "GET",
+            f"search/issues?q={quote(query, safe='')}&sort=created&order=desc&per_page={_PAGE_SIZE}&page={page}",
+            None,
         )
-        if not isinstance(raw, list):
-            raise GhError("the open-issues answer is not a list")
-        for item in raw:
+        items = raw.get("items") if isinstance(raw, dict) else None
+        if not isinstance(items, list):
+            raise GhError("the issue search answer lacks items")
+        for item in items:
             if not isinstance(item, dict) or "pull_request" in item:
                 continue
             created, number, labels = item.get("created_at"), item.get("number"), item.get("labels")
             if not isinstance(created, str) or isinstance(number, bool) or not isinstance(number, int):
-                raise GhError("an open-issues entry lacks created_at or number")
-            if created < since:
-                return numbers  # newest first: everything after this is older still
+                raise GhError("a search entry lacks created_at or number")
             if not isinstance(labels, list):
-                raise GhError("an open-issues entry lacks labels")
+                raise GhError("a search entry lacks labels")
             names = {str(label.get("name", "")).lower() for label in labels if isinstance(label, dict)}
-            if TRIAGE_LABEL not in names:
+            # The search index can lag behind the issue; the filters are checked again on what was returned.
+            if created >= since and TRIAGE_LABEL not in names:
                 numbers.append(number)
-        if len(raw) < _PAGE_SIZE:
+        if len(items) < _PAGE_SIZE:
             return numbers
-    raise GhError(f"more than {_SWEEP_MAX_PAGES * _PAGE_SIZE} issues were created since {since}")
+    print(f"note: more than {_SWEEP_MAX_PAGES * _PAGE_SIZE} issues lack the label; the next sweep continues")
+    return numbers
 
 
 def run_sweep(repo: str, gh: GhApi, since: str) -> int:

@@ -16,6 +16,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import parse_qs
 
 import pytest
 import yaml
@@ -81,6 +82,8 @@ class FakeGitHub:
         self.drop_label = False  # accept the POST but do not apply it
         self.after_events_read: Optional[Callable[[], None]] = None  # runs once, after the first events read
         self._events_reads = 0
+        self.queries: List[str] = []  # the decoded q= of every issue search
+        self.search_ignores_filters = False  # a lagging search index: it returns issues the query excludes
 
     def add_issue(
         self,
@@ -111,10 +114,10 @@ class FakeGitHub:
         for (m, prefix), reason in self.fail.items():
             if m == method and endpoint.startswith(prefix):
                 raise tool.GhError(f"{method} {endpoint} failed: {reason}")
+        if method == "GET" and endpoint.startswith("search/issues?"):
+            return self._search(endpoint)
         base = f"repos/{REPO}/issues"
         rest = endpoint[len(base) :]
-        if method == "GET" and rest.startswith("?"):
-            return self._open_issues(rest)
         number = int(rest.lstrip("/").split("/")[0].split("?")[0])
         issue = self.issues[number]
         if method == "GET" and rest == f"/{number}":
@@ -141,11 +144,19 @@ class FakeGitHub:
             self.after_events_read()  # after the answer was taken: this read does not see what the hook does
         return answer
 
-    def _open_issues(self, query: str) -> List[Dict[str, Any]]:
-        page = int(query.rsplit("page=", 1)[1])
+    def _search(self, endpoint: str) -> Dict[str, Any]:
+        """The issue search, with the server-side filters the tool's query asks for."""
+        params = parse_qs(endpoint.split("?", 1)[1])
+        query, page = params["q"][0], int(params["page"][0])
+        assert params["sort"] == ["created"] and params["order"] == ["desc"] and params["per_page"] == ["100"]
+        self.queries.append(query)
+        since = query.split("created:>=", 1)[1]
         newest_first = sorted(self.issues.items(), key=lambda item: item[1]["created_at"], reverse=True)
         items = []
         for number, issue in newest_first:
+            matches = not issue["pull_request"] and TRIAGE not in issue["labels"] and issue["created_at"] >= since
+            if not (matches or self.search_ignores_filters):
+                continue
             entry: Dict[str, Any] = {
                 "number": number,
                 "created_at": issue["created_at"],
@@ -154,7 +165,11 @@ class FakeGitHub:
             if issue["pull_request"]:
                 entry["pull_request"] = {"url": "x"}
             items.append(entry)
-        return items[(page - 1) * tool._PAGE_SIZE : page * tool._PAGE_SIZE]
+        return {
+            "total_count": len(items),
+            "incomplete_results": False,
+            "items": items[(page - 1) * tool._PAGE_SIZE : page * tool._PAGE_SIZE],
+        }
 
     def writes(self) -> List[tuple]:
         """Every call that changes an issue (labels or comments)."""
@@ -638,6 +653,18 @@ def test_the_sweep_labels_recent_issues_that_lack_the_label_and_nothing_else() -
     assert gh.issues[8]["labels"] == [TRIAGE]
     assert gh.issues[9]["labels"] == [] and gh.issues[10]["labels"] == ["bug"] and gh.issues[11]["labels"] == []
     assert gh.comments == []  # a missing label on a new issue is repaired silently
+    assert gh.queries == [f"repo:{REPO} is:issue is:open -label:{TRIAGE} created:>={SINCE}"]  # the server filters
+
+
+def test_the_sweep_checks_the_filters_again_on_what_a_lagging_index_returns() -> None:
+    gh = FakeGitHub()
+    gh.issues.clear()
+    gh.search_ignores_filters = True
+    gh.add_issue(7, created_at="2026-10-22T10:00:00Z")
+    gh.add_issue(8, labels=[TRIAGE], created_at="2026-10-22T09:00:00Z")
+    gh.add_issue(9, created_at="2026-10-22T08:00:00Z", pull_request=True)
+    gh.add_issue(10, created_at="2026-10-20T08:00:00Z")
+    assert tool.untriaged_candidates(gh, REPO, SINCE) == [7]
 
 
 def test_the_sweep_restores_a_label_a_contributor_removed_and_says_so() -> None:
@@ -672,6 +699,32 @@ def test_the_sweep_reads_every_page_of_recent_issues() -> None:
     assert all(issue["labels"] == [TRIAGE] for issue in gh.issues.values())
 
 
+def test_the_sweep_stops_at_the_page_cap_and_the_next_one_continues(capsys: pytest.CaptureFixture[str]) -> None:
+    gh = FakeGitHub()
+    gh.issues.clear()
+    start = datetime(2026, 10, 22)
+    total = tool._SWEEP_MAX_PAGES * tool._PAGE_SIZE + 150
+    for number in range(1, total + 1):
+        gh.add_issue(number, created_at=(start + timedelta(minutes=number)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    assert tool.run_sweep(REPO, gh, SINCE) == 0
+    labelled = [n for n, issue in gh.issues.items() if issue["labels"] == [TRIAGE]]
+    assert len(labelled) == tool._SWEEP_MAX_PAGES * tool._PAGE_SIZE
+    assert min(labelled) == 151  # the newest were handled first; the oldest 150 wait
+    assert "the next sweep continues" in capsys.readouterr().out
+    assert tool.run_sweep(REPO, gh, SINCE) == 0  # nothing was checkpointed: handled issues simply left the query
+    assert all(issue["labels"] == [TRIAGE] for issue in gh.issues.values())
+
+
+def test_an_issue_the_sweep_could_not_label_is_a_candidate_again_next_time() -> None:
+    gh = FakeGitHub()
+    gh.issues.clear()
+    gh.add_issue(7, created_at="2026-10-22T10:00:00Z")
+    gh.fail[("POST", f"repos/{REPO}/issues/7/labels")] = "HTTP 502"
+    assert tool.run_sweep(REPO, gh, SINCE) == 1 and gh.issues[7]["labels"] == []
+    gh.fail.clear()
+    assert tool.run_sweep(REPO, gh, SINCE) == 0 and gh.issues[7]["labels"] == [TRIAGE]
+
+
 def test_the_sweep_carries_on_after_one_issue_fails_and_exits_one(capsys: pytest.CaptureFixture[str]) -> None:
     gh = FakeGitHub()
     gh.issues.clear()
@@ -696,7 +749,7 @@ def test_the_sweep_does_not_guess_when_the_history_is_too_long(capsys: pytest.Ca
 
 def test_a_sweep_that_cannot_list_the_issues_exits_one() -> None:
     gh = FakeGitHub()
-    gh.fail[("GET", f"repos/{REPO}/issues?")] = "HTTP 500"
+    gh.fail[("GET", "search/issues?")] = "HTTP 500"
     assert tool.run_sweep(REPO, gh, SINCE) == 1
 
 
@@ -711,13 +764,13 @@ def test_a_sweep_that_cannot_list_the_issues_exits_one() -> None:
 )
 def test_the_sweep_rejects_an_entry_it_cannot_read(entry: Dict[str, Any]) -> None:
     with pytest.raises(tool.GhError):
-        tool.untriaged_candidates(lambda m, e, p=None: [entry], REPO, SINCE)
+        tool.untriaged_candidates(lambda m, e, p=None: {"items": [entry]}, REPO, SINCE)
 
 
-def test_the_sweep_refuses_to_page_forever() -> None:
-    page = [{"number": n, "created_at": "2026-10-23T00:00:00Z", "labels": []} for n in range(tool._PAGE_SIZE)]
+@pytest.mark.parametrize("answer", [[], None, {}, {"items": None}, {"items": "x"}])
+def test_the_sweep_rejects_a_search_answer_without_items(answer: Any) -> None:
     with pytest.raises(tool.GhError):
-        tool.untriaged_candidates(lambda m, e, p=None: page, REPO, SINCE)
+        tool.untriaged_candidates(lambda m, e, p=None: answer, REPO, SINCE)
 
 
 # --- the gh wrapper ---------------------------------------------------------------------------------------------
@@ -753,6 +806,10 @@ def test_gh_api_runs_a_list_command_without_a_shell(monkeypatch: pytest.MonkeyPa
         ("GET", "repos/o/r"),
         ("GET", "repos/o/r/pulls/1"),
         ("GET", "repos/o/r/contents/x"),
+        ("GET", "search/code?q=x"),
+        ("GET", "search/repositories?q=x"),
+        ("GET", "search/issues/../x"),
+        ("POST", "search/issues?q=x"),
         ("GET", "repos/o/r/issues/1 --jq x"),
         ("GET", "repos/o/r/issues/../../x"),
         ("GET", "repos/o/r/issues//1"),
@@ -778,7 +835,7 @@ def test_gh_api_accepts_the_issue_endpoints_the_tool_uses(monkeypatch: pytest.Mo
     for endpoint in (
         "repos/o/r/issues/1",
         "repos/o/r/issues/1/events?per_page=100&page=2",
-        "repos/o/r/issues?state=open&sort=created&direction=desc&per_page=100&page=1",
+        "search/issues?q=repo%3Ao%2Fr%20is%3Aissue&sort=created&order=desc&per_page=100&page=1",
         "repos/o/r/issues/1/comments",
     ):
         assert tool.gh_api("GET", endpoint) == []
