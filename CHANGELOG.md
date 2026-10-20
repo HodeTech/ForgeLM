@@ -94,6 +94,9 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Restore tensor inputs to generation-based Llama-Guard scoring on transformers 5.x by explicitly requesting
+  `return_dict=False` from the chat template. Guard-boundary `AttributeError` failures now score the pair fail-closed
+  and empty error messages log the exception type (CR-A06-003, TECH-T05-001, #108).
 - Preserve top-level `--dry-run`, `--config`, `--offline` and `--output` values when a subcommand omits the same flag (CR-A05-001, #414).
 - Stop describing the human-approval gate as enforcing segregation of duties (English and Turkish): it records the
   trainer and approver identities and does not compare them, and both are self-asserted. The ISO 27001 and SOC 2

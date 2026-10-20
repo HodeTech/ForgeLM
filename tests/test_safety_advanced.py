@@ -1396,6 +1396,60 @@ class TestLoadGenerativeGuard:
 
 @pytest.mark.skipif(not torch_available, reason="torch required for the guard generate path")
 class TestGenerateGuardVerdict:
+    @pytest.mark.parametrize("verdict,verdict_ids", [("safe", [3]), ("unsafe S1", [4, 5])])
+    def test_real_chat_template_returns_tensor_and_decodes_only_verdict(self, verdict, verdict_ids):
+        """Exercise the transformers chat-template contract without Hub downloads."""
+        import torch
+        from tokenizers import Tokenizer
+        from tokenizers.models import WordLevel
+        from tokenizers.pre_tokenizers import Whitespace
+        from transformers import PreTrainedTokenizerFast
+
+        from forgelm.safety import _generate_guard_verdict
+
+        backend = Tokenizer(
+            WordLevel({"[UNK]": 0, "hello": 1, "response": 2, "safe": 3, "unsafe": 4, "S1": 5}, unk_token="[UNK]")
+        )
+        backend.pre_tokenizer = Whitespace()
+        tokenizer = PreTrainedTokenizerFast(
+            tokenizer_object=backend,
+            unk_token="[UNK]",
+            chat_template="{% for message in messages %}{{ message['content'] }} {% endfor %}",
+        )
+
+        def generate(*, input_ids, max_new_tokens, do_sample):
+            assert isinstance(input_ids, torch.Tensor)
+            assert input_ids.device.type == "cpu"
+            assert input_ids.tolist() == [[1, 2]]
+            assert do_sample is False
+            return torch.cat((input_ids, torch.tensor([verdict_ids], dtype=torch.long)), dim=1)
+
+        model = MagicMock()
+        model.device = "cpu"
+        model.generate.side_effect = generate
+
+        assert _generate_guard_verdict(model, tokenizer, "hello", "response") == verdict
+        model.generate.assert_called_once()
+
+    @pytest.mark.parametrize("boundary", ["apply_chat_template", "generate", "decode"])
+    @pytest.mark.parametrize("message", ["", "missing guard attribute"])
+    def test_attribute_error_returns_empty_string_and_logs_reason(self, boundary, message, caplog):
+        import torch
+
+        from forgelm.safety import _generate_guard_verdict
+
+        model = MagicMock()
+        model.device = "cpu"
+        model.generate.return_value = torch.zeros((1, 6), dtype=torch.long)
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.return_value = torch.zeros((1, 4), dtype=torch.long)
+        target = model.generate if boundary == "generate" else getattr(tokenizer, boundary)
+        target.side_effect = AttributeError(message)
+
+        with caplog.at_level(logging.WARNING, logger="forgelm.safety"):
+            assert _generate_guard_verdict(model, tokenizer, "p", "r") == ""
+        assert f"Failed to generate Llama-Guard verdict: {message or 'AttributeError'}" in caplog.text
+
     def test_builds_chat_template_and_decodes_verdict(self):
         import torch
 
