@@ -109,6 +109,12 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Restore tensor inputs to generation-based Llama-Guard scoring on transformers 5.x by explicitly requesting
+  `return_dict=False` from the chat template. Guard-boundary `AttributeError` failures now score the pair fail-closed
+  and empty error messages log the exception type (CR-A06-003, TECH-T05-001, #108).
+- Neutralise tokenizer control-token strings in the prompt and the evaluated model's response before the
+  generative guard's chat template is applied, so message content can no longer open or close turns of
+  the moderation conversation.
 - SLERP now snapshots both merged adapter states before restoring or updating the base model,
   so the first adapter's contribution is preserved and the result responds to the configured
   weights instead of silently returning only the second adapter (CR-A13-001, #407).
