@@ -417,6 +417,14 @@ All notable changes to ForgeLM are documented here.
   (EN + TR) now point to the current Presidio docs and repository
   (`presidio.dataprivacystack.org`, `data-privacy-stack/presidio`); the old `microsoft.github.io`
   page returns 404. (TECH-T06-004, #491)
+- The LLM-as-judge no longer parses a reply that was cut off at its 200-token budget. A judge led to quote the
+  judged answer could have its own verdict truncated, which left the quoted score object as the only complete one
+  and made it the verdict. The API judge now treats `finish_reason` `length` or `content_filter` as an incomplete
+  reply and the local judge checks that the cap was reached without an end-of-sequence token; both count the row as a
+  judge failure, and the gate's failure reason says how many replies were cut off (CR-A06-032 part 2, #1044).
+  A reply whose `content` is not text (an OpenAI refusal or a tool call has `content: null`) is now one judge
+  failure too, instead of an `AttributeError` that stopped the whole evaluation (CR-A06-021, null-content half).
+  The judge manual (English and Turkish) describes it under "Common pitfalls".
 
 ### Breaking
 
