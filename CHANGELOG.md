@@ -22,6 +22,12 @@ All notable changes to ForgeLM are documented here.
   as a warning, not at debug level (#84).
 - `CITATION.cff`, so the repository can be cited through GitHub's "Cite this
   repository" panel (#964).
+- Every new issue is triaged before anyone works on it. The `Triage gate` workflow (`tools/triage_gate.py`) adds
+  `needs-triage` to each issue however it was created, sends an issue reopened by a non-maintainer back to triage, and
+  puts the label back, with one comment, when anyone but a maintainer removes it; an hourly sweep repairs any recent
+  issue the event run missed, and the nightly-failure issue is created with the label. CONTRIBUTING.md (*Issue triage*), MAINTAINERS.md, GOVERNANCE.md, the issue forms, the pull-request
+  template, the review standard and the agent guides tell contributors not to work on, or open a pull request for, an
+  issue that still carries it (#1036).
 - A contributor can claim a `good first issue` by commenting `/assign` and give it
   back with `/unassign`: the `Assign on comment` workflow (`tools/assign_on_comment.py`) assigns the commenter
   when nobody holds the issue, refuses an issue that already has an assignee without changing it, allows at most 2
@@ -106,6 +112,9 @@ All notable changes to ForgeLM are documented here.
 - Restore tensor inputs to generation-based Llama-Guard scoring on transformers 5.x by explicitly requesting
   `return_dict=False` from the chat template. Guard-boundary `AttributeError` failures now score the pair fail-closed
   and empty error messages log the exception type (CR-A06-003, TECH-T05-001, #108).
+- SLERP now snapshots both merged adapter states before restoring or updating the base model,
+  so the first adapter's contribution is preserved and the result responds to the configured
+  weights instead of silently returning only the second adapter (CR-A13-001, #407).
 - Preserve top-level `--dry-run`, `--config`, `--offline` and `--output` values when a subcommand omits the same flag (CR-A05-001, #414).
 - Stop describing the human-approval gate as enforcing segregation of duties (English and Turkish): it records the
   trainer and approver identities and does not compare them, and both are self-asserted. The ISO 27001 and SOC 2

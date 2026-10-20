@@ -85,7 +85,7 @@ ForgeLM/
 │                            # export, inference, results, utils, __main__,
 │                            # _pypdf_normalise, _script_sanity,
 │                            # _strip_pattern
-├── tests/                   # 132 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
+├── tests/                   # 133 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
 ├── tools/                   # CI guards: check_anchor_resolution,
 │                            # check_bilingual_parity, check_cli_help_consistency,
 │                            # check_field_descriptions, check_no_analysis_refs,
@@ -381,6 +381,14 @@ Work on ForgeLM is planned and tracked on GitHub, not in local notes:
   issue before you start, reference it from the pull request (`Fixes #N`, or
   `Refs #N` when the change resolves only part of a grouped issue), and quote
   finding IDs (`CR-…`, `DOC-…`, `TECH-…`, `F-W…`) in commit bodies.
+- **Do not work on an untriaged issue.** `needs-triage` means no maintainer
+  has reviewed the report yet: it may be wrong, a duplicate, already fixed or
+  not wanted. Every new issue gets the label automatically and only a
+  maintainer removes it (CONTRIBUTING.md, *Issue triage*). Do not start,
+  claim or open a pull request for an issue that carries it, and never remove
+  it yourself; tell the user the issue is untriaged instead (a maintainer
+  removes the label in GitHub once they have triaged it). A small pull request
+  with no issue, such as a typo fix, is fine.
 - **Work you find but do not do becomes an issue.** Do not leave a `TODO`, a
   roadmap-only line or a note in working memory: open an issue (English, with
   acceptance criteria) or tell the user so it can be filed. The exception is a

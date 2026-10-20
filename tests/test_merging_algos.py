@@ -513,6 +513,60 @@ class TestSlerpAntiParallelGuard:
         assert not used_linear, "F-L-18: orthogonal vectors should use SLERP, not linear fallback"
 
 
+class TestSlerpRealAdapters:
+    """Exercise PEFT's shared parameter storage with tiny local adapters."""
+
+    @staticmethod
+    def _base_model():
+        model = torch.nn.Sequential(torch.nn.Linear(2, 2, bias=False))
+        with torch.no_grad():
+            model[0].weight.copy_(torch.eye(2))
+        return model
+
+    @staticmethod
+    def _save_adapter(path, axis):
+        from peft import LoraConfig, get_peft_model
+
+        model = get_peft_model(
+            TestSlerpRealAdapters._base_model(),
+            LoraConfig(r=1, lora_alpha=1, target_modules=["0"]),
+        )
+        layer = model.base_model.model[0]
+        with torch.no_grad():
+            layer.lora_A["default"].weight.zero_()
+            layer.lora_B["default"].weight.zero_()
+            layer.lora_A["default"].weight[0, axis] = 1
+            layer.lora_B["default"].weight[axis, 0] = 1
+        model.save_pretrained(path)
+
+    @pytest.mark.parametrize("weights", [(1, 1), (3, 1), (1, 3), (1, 0), (0, 1)])
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_merge_preserves_both_adapters_and_respects_weights(self, tmp_path, weights, reverse):
+        from forgelm.merging import _slerp_merge
+
+        paths = [tmp_path / "a", tmp_path / "b"]
+        for axis, path in enumerate(paths):
+            self._save_adapter(path, axis)
+        expected_a = torch.diag(torch.tensor([2.0, 1.0]))
+        expected_b = torch.diag(torch.tensor([1.0, 2.0]))
+        if reverse:
+            paths.reverse()
+            expected_a, expected_b = expected_b, expected_a
+        adapters = [{"path": str(path), "weight": weight} for path, weight in zip(paths, weights)]
+        base = self._base_model()
+
+        merged = _slerp_merge(base, adapters)
+
+        t = weights[1] / sum(weights)
+        angle = math.acos(4 / 5)
+        expected = (math.sin((1 - t) * angle) * expected_a + math.sin(t * angle) * expected_b) / math.sin(angle)
+        assert merged is base
+        torch.testing.assert_close(merged[0].weight, expected)
+        if 0 < t < 1:
+            assert not torch.allclose(merged[0].weight, expected_a)
+            assert not torch.allclose(merged[0].weight, expected_b)
+
+
 class TestTiesDisjointMergeRenormalization:
     """The TIES 'Merge' step is the paper's disjoint merge: average only the
     sign-agreeing models, renormalizing by their weight sum.  Without the
