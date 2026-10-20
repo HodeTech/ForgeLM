@@ -202,9 +202,12 @@ def _slerp_merge(base_model, adapters):
 
     # Restore base model before loading second adapter
     base_model.load_state_dict(base_state, strict=True)
+    del base_state  # not needed again; free a full model-sized copy before the second merge
 
     model_b = PeftModel.from_pretrained(base_model, adapters[1]["path"])
-    state_b = {k: v.clone() for k, v in model_b.merge_and_unload().state_dict().items()}
+    # No clone needed: base_model is not touched again until the final load_state_dict below,
+    # by which point merged_state holds freshly computed tensors.
+    state_b = model_b.merge_and_unload().state_dict()
     del model_b
 
     merged_state = {}
