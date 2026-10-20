@@ -119,7 +119,7 @@ class FakeGitHub:
         ]
 
     def _get_comments(self, endpoint: str, payload: Any) -> List[Dict[str, Any]]:
-        return [{"user": {"type": "Bot"}, "body": b} for b in self.comments] + [
+        return [{"user": {"login": tool.BOT_LOGIN, "type": "Bot"}, "body": b} for b in self.comments] + [
             {"user": {"type": "User"}, "body": b} for b in self.human_comments
         ]
 
@@ -367,7 +367,7 @@ def test_a_blocked_good_first_issue_cannot_be_claimed_and_says_why_without_pingi
 
 def test_an_open_blocker_refuses_the_claim_before_the_label_has_caught_up() -> None:
     gh = FakeGitHub(labels=["good first issue"])
-    gh.open_blockers = 1  # linked a minute ago; the hourly sync has not labelled it yet
+    gh.open_blockers = 1  # linked a minute ago; the sync has not labelled it yet
     assert run(gh) == 0
     assert gh.assignees == [] and gh.comments[0].startswith("This issue is blocked")
 
@@ -418,6 +418,25 @@ def test_a_blocked_issue_can_still_be_released() -> None:
     assert gh.assignees == []
 
 
+@pytest.mark.parametrize("summary", [True, False], ids=["the list", "the summary"])
+def test_a_dependency_read_that_fails_tells_the_maintainer_to_check_the_links(summary: bool) -> None:
+    gh = FakeGitHub(labels=["good first issue"])
+    if summary:
+        gh.closed_blockers = ["not_planned"]  # the list must be read, and that read fails
+        gh.fail[("GET", f"repos/{REPO}/issues/7/dependencies")] = "boom"
+    else:
+        gh.open_blockers = None
+        gh._issue = lambda: {  # type: ignore[method-assign]
+            "state": "open",
+            "labels": [{"name": "good first issue"}],
+            "assignees": [],
+            "issue_dependencies_summary": {"blocked_by": "many"},
+        }
+    assert run(gh) == 1 and gh.assignees == []
+    assert gh.comments == [tool.MSG_DEPENDENCIES_FAILED.format(mention=tool.MAINTAINER_MENTION)]
+    assert "**Blocked by**" in gh.comments[0]
+
+
 def test_unassign_never_reads_the_dependencies_so_a_failing_read_cannot_stop_it() -> None:
     gh = FakeGitHub(labels=["good first issue"], assignees=["first"])
     gh.closed_blockers = ["not_planned"]
@@ -457,7 +476,7 @@ def test_maintainers_are_exempt_from_the_limit_and_skip_the_count() -> None:
 def test_a_read_only_organisation_member_is_not_a_maintainer() -> None:
     gh = FakeGitHub(held={"hodesis": tool.MAX_OPEN_ASSIGNMENTS})  # a MEMBER by GitHub's association, read access only
     assert run(gh, login="hodesis") == 0
-    assert gh.assignees == [] and "limit at a time" in gh.comments[0]
+    assert gh.assignees == [] and "the limit is 2 at a time" in gh.comments[0]
 
 
 def test_the_maintainer_list_matches_maintainers_md() -> None:
@@ -655,7 +674,9 @@ def test_gh_api_runs_a_list_command_without_a_shell(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(tool.subprocess, "run", fake_run)
     assert tool.gh_api("POST", "repos/o/r/issues/1/assignees", {"assignees": ["a"]}) == {"ok": True}
-    assert seen["command"] == ["gh", "api", "--method", "POST", "repos/o/r/issues/1/assignees", "--input", "-"]
+    assert seen["command"] == [
+        "gh", "api", "--include", "--method", "POST", "repos/o/r/issues/1/assignees", "--input", "-"
+    ]  # fmt: skip
     assert seen["kwargs"]["input"] == '{"assignees": ["a"]}'
     assert not seen["kwargs"].get("shell") and seen["kwargs"]["timeout"] == tool._GH_TIMEOUT_SECONDS
 
@@ -798,7 +819,7 @@ def test_the_count_follows_pages_so_pull_requests_cannot_hide_issues() -> None:
     gh.assigned_pages = [first_page, [{"number": 500}, {"number": 501}]]
     assert tool.count_open_assignments(gh, REPO, "newcomer") == 2
     assert run(gh) == 0
-    assert gh.assignees == [] and "limit at a time" in gh.comments[0]
+    assert gh.assignees == [] and "the limit is 2 at a time" in gh.comments[0]
 
 
 def test_the_count_stops_as_soon_as_it_knows() -> None:
@@ -942,3 +963,128 @@ def test_the_workflow_gate_lets_through_everything_the_script_accepts(body: str)
     gate = body.lower().startswith(("/assign", "/unassign"))  # startsWith ignores case and trims nothing
     if tool.parse_command(body) is not None:
         assert gate
+
+
+# --- review round: #1039 (paging, transient failures, wording) -------------------------------------------------
+
+
+def test_the_limit_message_never_calls_a_count_above_the_limit_the_limit() -> None:
+    gh = FakeGitHub(held={"newcomer": tool.MAX_OPEN_ASSIGNMENTS + 1})
+    assert run(gh) == 0
+    assert gh.comments[0].startswith(f"You have {tool.MAX_OPEN_ASSIGNMENTS + 1} open assignments, and the limit is 2")
+
+
+def test_a_release_says_only_what_changed() -> None:
+    gh = FakeGitHub(labels=["good first issue", "blocked"], assignees=["first", "second"])
+    assert run(gh, "/unassign", login="first") == 0
+    assert gh.comments == [tool.MSG_RELEASED.format(login="first")]
+    assert "you are no longer assigned" in gh.comments[0] and "open for others" not in gh.comments[0]
+
+
+def test_the_assigned_reply_links_contributing_on_the_default_branch_whatever_it_is_called() -> None:
+    assert tool.contributing_url(REPO) == f"https://github.com/{REPO}/blob/HEAD/CONTRIBUTING.md#working-on-an-issue"
+
+
+def test_a_marker_counts_only_from_this_repositorys_bot() -> None:
+    gh = FakeGitHub(labels=["bug"])
+    original = gh._get_comments
+    gh._get_comments = lambda endpoint, payload: (
+        original(endpoint, payload)
+        + [  # type: ignore[method-assign]
+            {"user": {"login": "coderabbitai[bot]", "type": "Bot"}, "body": tool.NOT_OPEN_MARKER}
+        ]
+    )
+    assert run(gh) == 0
+    assert tool.MAINTAINER_MENTION in gh.comments[0]  # another app repeating the marker silences nothing
+
+
+def test_a_full_last_page_without_a_next_link_ends_the_count() -> None:
+    asked: List[str] = []
+
+    def gh(method: str, endpoint: str, payload: Any = None) -> Any:
+        asked.append(endpoint)
+        return tool.Page({"number": n} for n in range(tool._PAGE_SIZE))  # full, but GitHub announces no next page
+
+    assert tool.count_open_assignments(gh, REPO, "newcomer") == tool._PAGE_SIZE and len(asked) == 1
+
+
+def test_counts_past_the_page_bound_warn_instead_of_stopping_silently(capsys: pytest.CaptureFixture[str]) -> None:
+    def gh(method: str, endpoint: str, payload: Any = None) -> Any:
+        return [{"number": n, "pull_request": {}} for n in range(tool._PAGE_SIZE)]  # full pages, forever
+
+    assert tool.count_open_assignments(gh, REPO, "newcomer") == 0
+    assert "more than 10 pages of assignments" in capsys.readouterr().err
+    with pytest.raises(tool.GhError, match="pages of blockers"):
+        tool.count_unresolved_blockers(gh, REPO, 7)
+
+
+def test_a_thread_too_long_to_search_mentions_the_maintainer_again(capsys: pytest.CaptureFixture[str]) -> None:
+    def gh(method: str, endpoint: str, payload: Any = None) -> Any:
+        return [{"user": {"type": "User"}, "body": "chat"}] * tool._PAGE_SIZE
+
+    assert tool._already_pinged(gh, REPO, 7) is False
+    assert "too many comments" in capsys.readouterr().err
+
+
+def _response(status: int = 200, body: str = "{}", headers: Any = ()) -> str:
+    return f"HTTP/2.0 {status} X\n" + "".join(f"{k}: {v}\r\n" for k, v in headers) + "\r\n" + body
+
+
+def _scripted(monkeypatch: pytest.MonkeyPatch, *answers: Any) -> List[Any]:
+    """``subprocess.run`` answering in turn; returns the list of the waits ``time.sleep`` was asked for."""
+    waits: List[Any] = []
+    queue = list(answers)
+
+    def fake_run(command: Any, **kwargs: Any) -> Any:
+        answer = queue.pop(0)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(tool.subprocess, "run", fake_run)
+    monkeypatch.setattr(tool.time, "sleep", waits.append)
+    return waits
+
+
+def test_gh_api_reads_the_link_header_into_the_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    link = ("Link", '<https://api.github.com/repositories/1/issues?page=2>; rel="next"')
+    _scripted(
+        monkeypatch, _Completed(stdout=_response(body="[1]", headers=[link])), _Completed(stdout=_response(body="[2]"))
+    )
+    first, last = tool.gh_api("GET", "repos/o/r/issues?page=1"), tool.gh_api("GET", "repos/o/r/issues?page=2")
+    assert first == [1] and first.has_next and last == [2] and not last.has_next
+
+
+@pytest.mark.parametrize(
+    "first, wait",
+    [
+        (_Completed(1, _response(502, "<html>"), "gh: HTTP 502"), 2.0),
+        (_Completed(1, "", "error connecting to api.github.com"), 2.0),
+        (_Completed(1, _response(429, "{}", [("Retry-After", "3")]), "gh: HTTP 429"), 3.0),
+        (subprocess.TimeoutExpired("gh", 60), 2.0),
+    ],
+    ids=["a 5xx", "no answer", "Retry-After", "a timeout"],
+)
+def test_gh_api_tries_a_read_again_after_a_transient_failure(
+    monkeypatch: pytest.MonkeyPatch, first: Any, wait: float
+) -> None:
+    waits = _scripted(monkeypatch, first, _Completed(stdout=_response(body='{"ok": true}')))
+    assert tool.gh_api("GET", "repos/o/r/issues/1") == {"ok": True} and waits == [wait]
+
+
+@pytest.mark.parametrize(
+    "method, answer",
+    [
+        ("POST", _Completed(1, _response(502, ""), "gh: HTTP 502")),  # a write is never repeated
+        ("GET", _Completed(1, _response(404, "{}"), "gh: Not Found")),
+        ("GET", _Completed(1, _response(429, "{}", [("Retry-After", "600")]), "")),  # too long to wait
+    ],
+    ids=["a write", "a 404", "a wait too long"],
+)
+def test_gh_api_fails_at_once_when_trying_again_cannot_help(
+    monkeypatch: pytest.MonkeyPatch, method: str, answer: Any
+) -> None:
+    waits = _scripted(monkeypatch, answer)
+    with pytest.raises(tool.GhError):
+        tool.gh_api(method, "repos/o/r/issues/1/comments", {"body": "x"} if method == "POST" else None)
+    assert waits == []

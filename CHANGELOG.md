@@ -35,13 +35,16 @@ All notable changes to ForgeLM are documented here.
   epic and Phase 16 issues to a maintainer. Reassigning stays a maintainer's decision.
 - Dependencies between issues are tracked and gated. A dependency is a native "Blocked by" link; the
   `Issue dependencies` workflow (`tools/issue_dependencies.py`) labels every open issue with an unresolved blocker
-  `blocked` and removes the label, with one comment, once every blocker is closed as completed. A blocker closed as
-  not planned or as a duplicate keeps the issue blocked and flags it `needs-triage`. `/assign` refuses a blocked
-  issue, and the new `Issue dependencies` pull-request check fails a pull request that links one (`Fixes` /
-  `Closes` / `Resolves` / `Refs` in its title, description or commits, or a *Development* link), unless GitHub will
-  close the blockers with the same pull request or a maintainer sets `dependency-override`. The check runs from the
-  default branch (`pull_request_target`; no pull-request code is checked out), and the workflow re-runs it on every
-  open pull request whose result no longer matches. Branch protection requires it on `development` (#1034).
+  `blocked` and removes the label, with a comment each time, once every blocker is closed as completed. A blocker
+  closed as not planned or as a duplicate keeps the issue blocked and flags it `needs-triage`. `/assign` refuses a
+  blocked issue, and the new `Issue dependencies` pull-request check fails a pull request that links one (`Fixes` /
+  `Closes` / `Resolves` / `Refs` in its description as GitHub renders it, in its title or a commit message, or a
+  *Development* link), unless GitHub will close the blockers with the same pull request or a maintainer sets
+  `dependency-override`. A comment records the head commit and the linked issues the override accepts, and a new
+  commit or a new link ends it. The check runs from the default branch (`pull_request_target`; no pull-request code
+  is checked out), and the workflow re-runs it, every 15 minutes, on every open pull request whose result no longer
+  matches. Branch protection requires it on `development`. The three workflow scripts in `tools/` have a coverage
+  floor of their own, 90% (#1034, #1039).
 - `GOVERNANCE.md` and `MAINTAINERS.md` at the repository root, recording how
   decisions are made, how the maintainer roles work, and which areas the current
   maintainer owns (#964).
@@ -109,6 +112,16 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Fail closed when judge replies contain multiple score objects or duplicate JSON keys, and reject
+  non-object replies, including a score object that only appears inside an array or after an undecodable
+  `{`, with the existing judge-failure sentinel. The rejection reason is logged without echoing the reply
+  (CR-A06-015, M-A06-015, #127).
+- Restore tensor inputs to generation-based Llama-Guard scoring on transformers 5.x by explicitly requesting
+  `return_dict=False` from the chat template. Guard-boundary `AttributeError` failures now score the pair fail-closed
+  and empty error messages log the exception type (CR-A06-003, TECH-T05-001, #108).
+- Neutralise tokenizer control-token strings in the prompt and the evaluated model's response before the
+  generative guard's chat template is applied, so message content can no longer open or close turns of
+  the moderation conversation.
 - SLERP now snapshots both merged adapter states before restoring or updating the base model,
   so the first adapter's contribution is preserved and the result responds to the configured
   weights instead of silently returning only the second adapter (CR-A13-001, #407).

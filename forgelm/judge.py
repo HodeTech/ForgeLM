@@ -211,23 +211,62 @@ def _validate_rubric(rubric: str) -> Optional[str]:
     return None
 
 
+def _reject_duplicate_judge_keys(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
+    """Build a JSON object, rejecting repeated keys at any nesting level."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate key in judge response")
+        result[key] = value
+    return result
+
+
 def _parse_judge_json(text: str) -> Dict[str, Any]:
-    """Safely parse judge response JSON, handling common LLM output quirks."""
+    """Parse an object reply or a single score object; fail closed on ambiguity."""
     text = text.strip()
-    # Try direct parse first
+    decoder = json.JSONDecoder(object_pairs_hook=_reject_duplicate_judge_keys)
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    # Try extracting JSON from markdown code block
-    if "```" in text:
-        for block in text.split("```"):
-            block = block.strip().removeprefix("json").strip()
-            try:
-                return json.loads(block)
-            except json.JSONDecodeError:
-                continue
-    logger.warning("Could not parse judge response as JSON (length=%d chars).", len(text))
+        try:
+            result = decoder.decode(text)
+        except json.JSONDecodeError:
+            candidates = []
+            malformed_object_seen = False
+            offset = 0
+            while offset < len(text):
+                if text[offset] not in "{[":
+                    offset += 1
+                    continue
+                try:
+                    candidate, end = decoder.raw_decode(text, offset)
+                except json.JSONDecodeError:
+                    # The extent of an undecodable "{" is unknown, so a score object
+                    # after it may be nested inside it (a judge's own verdict that
+                    # quotes the planted block without escaping the quotes) and cannot
+                    # be told apart from the verdict.  Only "{" is tracked: prose such
+                    # as "[source]" starts with "[" and says nothing about objects.
+                    if text[offset] == "{":
+                        malformed_object_seen = True
+                    offset += 1
+                    continue
+                # Skip the entire value so nested objects and braces in strings
+                # are not counted again as independent verdicts.  A decoded array
+                # is consumed too: like a whole-reply array, an object inside one
+                # is not a verdict.
+                offset = end
+                if isinstance(candidate, dict) and "score" in candidate:
+                    if malformed_object_seen:
+                        raise ValueError("Score object follows an undecodable object in judge response") from None
+                    candidates.append(candidate)
+            if len(candidates) != 1:
+                raise ValueError("Expected exactly one score object in judge response") from None
+            return candidates[0]
+        if not isinstance(result, dict):
+            raise ValueError("Judge response must be a JSON object")
+        return result
+    except ValueError as exc:
+        # None of these messages quotes the reply (the duplicate-key, shape and
+        # integer-size errors are fixed text), so the reason is safe to log.
+        logger.warning("Invalid or ambiguous judge JSON response: %s (length=%d chars).", exc, len(text))
     # Use score=None as the failure sentinel — score=0 used to be clipped up
     # to 1.0 by _clip_judge_score and silently lowered the average.
     return {"score": None, "reason": "Invalid JSON response from judge model."}

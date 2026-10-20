@@ -13,7 +13,10 @@
 The project has a single maintainer today. When a co-maintainer takes
 responsibility for an area, they are added here and to
 [`.github/CODEOWNERS`](.github/CODEOWNERS), which routes reviews for that area to
-them. The "Areas" column mirrors the repository's `area:` labels, so an issue
+them. With a second maintainer, branch protection on `development` also turns on
+*Require review from Code Owners*, so a change to `.github/` or to a workflow
+script under `tools/` gets a second reader; until then the single maintainer reads
+every such change before merging it. The "Areas" column mirrors the repository's `area:` labels, so an issue
 labelled `area: site` and this table name the same area.
 
 This table is also the list of who may complete triage (see [Triage](#triage)).
@@ -80,6 +83,33 @@ stay triaged.
 
 A pull request that links an issue still carrying the label waits for this step
 rather than for a review.
+
+## Repository automation
+
+Four workflows act on issues and pull requests with a token that can write to
+them: *Triage gate* (`tools/triage_gate.py`), *Assign on comment*
+(`tools/assign_on_comment.py`), and *Issue dependencies* and *PR dependencies*
+(`tools/issue_dependencies.py`). Any of them is switched off from the Actions
+tab ("Disable workflow"). Some changes to the repository need a workflow changed
+first:
+
+- **Renaming or transferring the repository.** *Issue dependencies* runs only
+  where `github.repository` is `HodeTech/ForgeLM`, so under a new name it stops
+  without a word: update that guard in
+  `.github/workflows/issue-dependencies.yml` in the same change. The Actions
+  policy that allows `pull_request_target` for
+  `.github/workflows/pr-dependencies.yml` (Settings > Actions > Policies) and the
+  branch protection of `development` are repository settings, so check after a
+  transfer that both are still in place. The project-board link in
+  `tools/assign_on_comment.py` names the organisation.
+- **Enabling a merge queue.** The required **Issue dependencies** check runs on
+  `pull_request_target`, which a merge queue never triggers, so the queue would
+  wait for it forever. Add a `merge_group` trigger to
+  `.github/workflows/pr-dependencies.yml` first, and have `check-pr` read that
+  event's payload.
+- **Adding a co-maintainer.** Add the login to the table above and to
+  `MAINTAINER_LOGINS` in the three scripts, give them their `CODEOWNERS` lines,
+  and turn on *Require review from Code Owners* for `development`.
 
 ## Contributors
 

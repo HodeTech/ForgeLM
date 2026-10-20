@@ -3,13 +3,14 @@ name: Issue dependencies
 # Keeps the `blocked` label in step with each issue's native "Blocked by" links (the rules live in
 # tools/issue_dependencies.py and CONTRIBUTING.md, "Dependencies between issues"):
 #   - an open issue with a blocker that is not closed as completed gets `blocked`;
-#   - every other issue loses it, with one comment when an open issue is unblocked;
+#   - every other issue loses it, with one comment when an open issue is unblocked, and so does a pull request;
 #   - a blocker closed as not planned or as a duplicate leaves the issue blocked and asks a maintainer to re-plan it;
 #   - every open pull request whose "Issue dependencies" check no longer matches its linked issues (red although
 #     they are unblocked, or green although one became blocked) gets that check re-run.
 #
 # GitHub sends no workflow event when a "Blocked by" link is added or removed, so this runs when an issue is closed
-# or reopened (what unblocks or re-blocks its dependents), hourly as the backstop for link edits, and on demand.
+# or reopened (what unblocks or re-blocks its dependents), every 15 minutes as the backstop for link edits (off the
+# hour, when GitHub's scheduler is busiest), and on demand.
 # Every run is a full reconciliation of state, not a reaction to a transition, so the concurrency group may drop a
 # pending run, and a run that fails half-way is finished by the next one. tests/test_issue_dependencies.py pins:
 #   - the token holds `contents: read`, `issues: write`, `pull-requests: read`, `checks: read` and `actions: write`,
@@ -24,7 +25,7 @@ on:
   issues:
     types: [closed, reopened]
   schedule:
-    - cron: "17 * * * *"
+    - cron: "2,17,32,47 * * * *"
   workflow_dispatch:
 
 permissions: {}
@@ -36,7 +37,8 @@ concurrency:
 jobs:
   sync:
     # This repository, and only its default branch: a manual run started from another branch would check out that
-    # branch's copy of the script with this job's write token.
+    # branch's copy of the script with this job's write token. After a rename or a transfer the guard must name the
+    # new repository, or the sync stops without a word (MAINTAINERS.md, "Repository automation").
     if: ${{ github.repository == 'HodeTech/ForgeLM' && github.ref == 'refs/heads/development' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10

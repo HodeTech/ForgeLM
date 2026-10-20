@@ -142,16 +142,16 @@ Every new issue is **triaged** by a maintainer before anyone works on it. Triage
 
 Some issues can only be done after another one: each Phase 16 step waits for the step before it, a deferred item may wait for the step that changes the same file, and a review issue whose every finding is a unit of a Phase 16 step waits for that step, whose pull request fixes it. Such a dependency is recorded as a **Blocked by** link in the issue's sidebar (*Relationships*), never only in prose.
 
-- **An issue with an open blocker is labelled `blocked`.** Do not start on it and do not open a pull request for it: `/assign` refuses it, and the **Issue dependencies** pull-request check fails a pull request that links it — with `Fixes`, `Closes`, `Resolves` or `Refs #…` in the title, the description or any commit message, or through GitHub's *Development* sidebar. If your pull request only mentions such an issue for context, drop the keyword. The check reads at most 50 linked issues, 100 commits and 50 closing references; a pull request over those limits fails until it is split or a maintainer accepts it.
-- **The label is automatic.** Nobody sets or removes it by hand. The *Issue dependencies* workflow adds it while a blocker is open and removes it once every blocker is closed as completed — as soon as that blocker is closed, or within an hour of a link being added or removed. When it removes the label it says so in a comment on the issue. Within the same hour it also re-runs the check of every open pull request whose result no longer matches, so a red check turns green once its blockers are completed, and a green one turns red if a linked issue becomes blocked.
+- **An issue with an open blocker is labelled `blocked`.** Do not start on it and do not open a pull request for it: `/assign` refuses it, and the **Issue dependencies** pull-request check fails a pull request that links it — with `Fixes`, `Closes`, `Resolves` or `Refs #…` in the title, the description or any commit message, or through GitHub's *Development* sidebar. The description is read as GitHub shows it, so a reference inside code or an HTML comment there does not count; the title and the commit messages are read as they are written, because GitHub does not render a title as Markdown and closes an issue from a commit message whatever it looks like. If your pull request only mentions such an issue for context, drop the keyword. The check reads at most 50 linked issues, 100 commits and 50 closing references; a pull request over those limits fails until it is split or a maintainer accepts it.
+- **The label is automatic.** Nobody sets or removes it by hand. The *Issue dependencies* workflow adds it while a blocker is open and removes it once every blocker is closed as completed — as soon as that blocker is closed, or within 15 minutes of a link being added or removed. When it removes the label it says so in a comment on the issue, each time the issue is unblocked. In the same run it also re-runs the check of every open pull request whose result no longer matches, so a red check turns green once its blockers are completed, and a green one turns red if a linked issue becomes blocked. The label describes issues only; on a pull request it is removed.
 - **A blocker closed as not planned or as a duplicate unblocks nothing**, because the work the issue waits for was not done. The issue stays `blocked`, gets `needs-triage`, and a maintainer re-plans it: removes the link, or links the issue that replaces the blocker. Once the dependency is re-planned the label goes, but the issue can be picked up only after a maintainer also removes `needs-triage`.
 - **A pull request may close the blocker as well.** When it closes every open blocker of the issues it links, the check passes. What counts is GitHub's own list of issues the pull request will close — the *Development* sidebar — and only for a pull request into `development`, where GitHub closes on merge. Use one keyword per issue (`Fixes #12, fixes #13`): GitHub closes only the first issue of `Fixes #12, #13`.
-- **A maintainer can accept a dependency deliberately** with the `dependency-override` label on the pull request. The check then passes and lists what it accepted; the label set by anyone not listed in [MAINTAINERS.md](MAINTAINERS.md) is ignored. The override covers the pull request as it stands, so read it again before merging if it changed after the label was set.
+- **A maintainer can accept a dependency deliberately** with the `dependency-override` label on the pull request. When a maintainer sets it, the *Record dependency override* job posts a comment recording the head commit and the issues the pull request links at that moment; the check then passes and lists what it accepted. A new commit, or a link to another issue, ends the override, and the check says so: the maintainer reads the pull request again, removes the label and sets it again. The label set by anyone not listed in [MAINTAINERS.md](MAINTAINERS.md) is ignored.
 - **Grouped issues are not blocked as a whole** when only some of their findings belong to a Phase 16 step. Those findings say so in the checklist (`KNOWN-OPEN … (S8 open)`): leave them to the step and take the others.
 
 The project's *Blocked* view lists every blocked issue; *Front door* and *Small tasks* leave them out.
 
-**For maintainers.** Record a dependency with a *Blocked by* link and let the label follow; to apply a change at once instead of within the hour, run the *Issue dependencies* workflow by hand (Actions > *Issue dependencies* > *Run workflow*). To stop the automation, disable either workflow in the Actions tab; the links stay. The **Issue dependencies** check runs on `pull_request_target`, which GitHub blocks in public repositories from 2 November 2026 unless an Actions policy allows it: the repository's policy (Settings > Actions > Policies) allows it for `.github/workflows/pr-dependencies.yml` only, so moving or renaming that file needs the policy updated too, or the check stops reporting.
+**For maintainers.** Record a dependency with a *Blocked by* link and let the label follow; to apply a change at once instead of within 15 minutes, run the *Issue dependencies* workflow by hand (Actions > *Issue dependencies* > *Run workflow*). To stop the automation, disable either workflow in the Actions tab; the links stay. The **Issue dependencies** check runs on `pull_request_target`, which GitHub blocks in public repositories from 2 November 2026 unless an Actions policy allows it: the repository's policy (Settings > Actions > Policies) allows it for `.github/workflows/pr-dependencies.yml` only, so moving or renaming that file needs the policy updated too, or the check stops reporting. Before transferring a `blocked` issue to another repository, remove its links and the label: the label travels with the issue, and nothing there removes it. Renaming the repository, transferring it or enabling a merge queue each needs a change to the workflows first; see [Repository automation](MAINTAINERS.md#repository-automation).
 
 ## Reporting Security Vulnerabilities
 
@@ -204,6 +204,8 @@ supported Python matrix:
 ```bash
 python3 tools/check_import_origin.py --strict && \
   ruff format . && ruff check . && pytest tests/ && \
+  python3 -m coverage run --source=tools -m pytest -q -p no:cov -o addopts="" tests/test_issue_dependencies.py tests/test_assign_on_comment.py tests/test_triage_gate.py && \
+  python3 -m coverage report --include="tools/issue_dependencies.py,tools/assign_on_comment.py,tools/triage_gate.py" --fail-under=90 && \
   node --test tests/site/*.test.cjs && \
   python3 -m forgelm --config config_template.yaml --dry-run && \
   python3 -m mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py tests/typing/public_surface_probe.py && \
@@ -242,6 +244,12 @@ python3 tools/check_import_origin.py --strict && \
   python3 tools/check_bandit.py "$BANDIT_JSON"
 ```
 <!-- gauntlet:end -->
+
+**The two `coverage` lines are a second gate.** `tools/` sits outside the
+package's 40 % floor (its coverage source is `forgelm/`), yet three scripts
+there run as workflows with a token that can write to issues —
+`tools/issue_dependencies.py`, `tools/assign_on_comment.py` and
+`tools/triage_gate.py` — so their tests must cover at least 90 % of them.
 
 **Do not "simplify" `python3 -m forgelm` back to `forgelm`.** A console
 script's `sys.path[0]` is its own `bin/` directory, never the cwd, so
