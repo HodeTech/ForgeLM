@@ -22,11 +22,26 @@ All notable changes to ForgeLM are documented here.
   as a warning, not at debug level (#84).
 - `CITATION.cff`, so the repository can be cited through GitHub's "Cite this
   repository" panel (#964).
+- Every new issue is triaged before anyone works on it. The `Triage gate` workflow (`tools/triage_gate.py`) adds
+  `needs-triage` to each issue however it was created, sends an issue reopened by a non-maintainer back to triage, and
+  puts the label back, with one comment, when anyone but a maintainer removes it; an hourly sweep repairs any recent
+  issue the event run missed, and the nightly-failure issue is created with the label. CONTRIBUTING.md (*Issue triage*), MAINTAINERS.md, GOVERNANCE.md, the issue forms, the pull-request
+  template, the review standard and the agent guides tell contributors not to work on, or open a pull request for, an
+  issue that still carries it (#1036).
 - A contributor can claim a `good first issue` by commenting `/assign` and give it
   back with `/unassign`: the `Assign on comment` workflow (`tools/assign_on_comment.py`) assigns the commenter
   when nobody holds the issue, refuses an issue that already has an assignee without changing it, allows at most 2
   open assignments per contributor (maintainers are exempt) and leaves `security`, `needs-triage`, `deferred`,
   epic and Phase 16 issues to a maintainer. Reassigning stays a maintainer's decision.
+- Dependencies between issues are tracked and gated. A dependency is a native "Blocked by" link; the
+  `Issue dependencies` workflow (`tools/issue_dependencies.py`) labels every open issue with an unresolved blocker
+  `blocked` and removes the label, with one comment, once every blocker is closed as completed. A blocker closed as
+  not planned or as a duplicate keeps the issue blocked and flags it `needs-triage`. `/assign` refuses a blocked
+  issue, and the new `Issue dependencies` pull-request check fails a pull request that links one (`Fixes` /
+  `Closes` / `Resolves` / `Refs` in its title, description or commits, or a *Development* link), unless GitHub will
+  close the blockers with the same pull request or a maintainer sets `dependency-override`. The check runs from the
+  default branch (`pull_request_target`; no pull-request code is checked out), and the workflow re-runs it on every
+  open pull request whose result no longer matches. Branch protection requires it on `development` (#1034).
 - `GOVERNANCE.md` and `MAINTAINERS.md` at the repository root, recording how
   decisions are made, how the maintainer roles work, and which areas the current
   maintainer owns (#964).

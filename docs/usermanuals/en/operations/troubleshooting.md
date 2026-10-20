@@ -167,7 +167,7 @@ If `forgelm doctor` says everything's fine but the problem persists, gather:
 3. Your `config.yaml` (with secrets redacted).
 4. Output of `forgelm doctor`.
 
-Open an issue: <https://github.com/HodeTech/ForgeLM/issues>. The maintainer team triages within 48 hours.
+Open an issue: <https://github.com/HodeTech/ForgeLM/issues>. The maintainer team triages within 72 hours.
 
 ## See also
 

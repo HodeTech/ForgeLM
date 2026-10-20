@@ -29,7 +29,7 @@ and an audit trail. Start with SFT, use preference or reasoning methods when you
 them, and opt into safety evaluation, human approval, and EU AI Act documentation.
 The same configuration works locally and in a CI/CD pipeline.
 
-**Here to contribute?** Pick an [unassigned good first issue](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee)
+**Here to contribute?** Pick an [unassigned good first issue](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee%20-label%3Ablocked)
 and follow [your first pull request](https://github.com/HodeTech/ForgeLM/blob/development/CONTRIBUTING.md#your-first-pull-request).
 Documentation, Turkish translations, examples, and tests are welcome alongside code.
 
@@ -181,7 +181,7 @@ translate an example, reproduce a bug, add a regression test, or work on a plann
 feature. Start small; you do not need a GPU to run the unit tests or documentation checks.
 
 1. Start at the [Front door](https://github.com/orgs/HodeTech/projects/5/views/16): the open, unassigned `good first issue`s
-   with their size and area. You can also [search by label](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee).
+   with their size and area. You can also [search by label](https://github.com/HodeTech/ForgeLM/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee%20-label%3Ablocked).
    The rest of the planned work is in the [project plan](https://github.com/orgs/HodeTech/projects/5).
 2. Follow [your first pull request](https://github.com/HodeTech/ForgeLM/blob/development/CONTRIBUTING.md#your-first-pull-request)
    to set up the environment and run the relevant checks.
