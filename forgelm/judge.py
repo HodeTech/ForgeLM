@@ -90,6 +90,7 @@ _JUDGE_REPLY_MAX_TOKENS = 200
 # out ("length"), or the provider's content filter stopped it ("content_filter" -- a planted passage can trip the
 # filter right after the quote, which cuts the reply the same way).  Any other value, or none, is taken as complete.
 _INCOMPLETE_FINISH_REASONS = frozenset({"length", "content_filter"})
+_JUDGE_NO_TEXT_REASON = "Judge reply carried no text content; counted as a judge failure."
 _JUDGE_TRUNCATED_REASON = (
     "Judge reply was cut off before it was complete (token limit or content filter); counted as a judge failure."
 )
@@ -331,6 +332,12 @@ def _call_api_judge(prompt: str, api_key: str, model: str = "gpt-4o", api_base: 
                 _JUDGE_REPLY_MAX_TOKENS,
             )
             return {"score": None, "reason": _JUDGE_TRUNCATED_REASON}
+        # A refusal or a tool call has ``content: null`` whatever its ``finish_reason`` says; the parser needs text.
+        if not isinstance(content, str):
+            logger.warning(
+                "API judge reply carried no text content (type %s); counted as a judge failure.", type(content).__name__
+            )
+            return {"score": None, "reason": _JUDGE_NO_TEXT_REASON}
         return _parse_judge_json(content)
     except HttpSafetyError:
         # Re-raise. HttpSafetyError signals a misconfigured judge endpoint

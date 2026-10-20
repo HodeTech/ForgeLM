@@ -1467,6 +1467,35 @@ class TestApiJudgeTruncation:
         mock_post.return_value = self._reply(None, finish_reason="content_filter")
         assert _call_api_judge("p", "key")["score"] is None
 
+    @pytest.mark.parametrize("finish_reason", ["stop", "tool_calls", None, "something_new"])
+    @pytest.mark.parametrize("content", [None, 7, ["part one", "part two"], {"text": "x"}])
+    @patch("forgelm._http.safe_post")
+    def test_a_reply_without_text_is_a_judge_failure_for_every_finish_reason(self, mock_post, content, finish_reason):
+        # An OpenAI refusal and a tool call both arrive with ``content: null`` and a complete finish reason.
+        from forgelm.judge import _JUDGE_NO_TEXT_REASON, _call_api_judge
+
+        mock_post.return_value = self._reply(content, finish_reason=finish_reason)
+        assert _call_api_judge("p", "key") == {"score": None, "reason": _JUDGE_NO_TEXT_REASON}
+
+    @patch("forgelm._http.safe_post")
+    def test_the_log_names_the_type_of_a_missing_text_and_nothing_else(self, mock_post, caplog):
+        import logging
+
+        from forgelm.judge import _call_api_judge
+
+        mock_post.return_value = self._reply(None, finish_reason="stop")
+        with caplog.at_level(logging.WARNING, logger="forgelm.judge"):
+            _call_api_judge("p", "key")
+        assert "no text content (type NoneType)" in caplog.text
+
+    @patch("forgelm._http.safe_post")
+    def test_an_empty_string_is_still_text_and_goes_to_the_parser(self, mock_post):
+        from forgelm.judge import _JUDGE_NO_TEXT_REASON, _call_api_judge
+
+        mock_post.return_value = self._reply("", finish_reason="stop")
+        result = _call_api_judge("p", "key")
+        assert result["score"] is None and result["reason"] != _JUDGE_NO_TEXT_REASON  # "Invalid JSON", as before
+
     @patch("forgelm._http.safe_post")
     def test_the_log_never_echoes_a_provider_supplied_finish_reason(self, mock_post, caplog):
         import logging

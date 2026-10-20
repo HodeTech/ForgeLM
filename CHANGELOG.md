@@ -422,6 +422,8 @@ All notable changes to ForgeLM are documented here.
   and made it the verdict. The API judge now treats `finish_reason` `length` or `content_filter` as an incomplete
   reply and the local judge checks that the cap was reached without an end-of-sequence token; both count the row as a
   judge failure, and the gate's failure reason says how many replies were cut off (CR-A06-032 part 2, #1044).
+  A reply whose `content` is not text (an OpenAI refusal or a tool call has `content: null`) is now one judge
+  failure too, instead of an `AttributeError` that stopped the whole evaluation (CR-A06-021, null-content half).
   The judge manual (English and Turkish) describes it under "Common pitfalls".
 
 ### Breaking
