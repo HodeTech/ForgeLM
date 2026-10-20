@@ -1,20 +1,27 @@
 name: PR dependencies
 
-# The required "Issue dependencies" check: fails while the pull request's description links (Fixes / Closes /
-# Resolves / Refs #N) an issue that is still blocked, unless the same pull request closes every open blocker or a
-# maintainer has labelled it `dependency-override`. Rules: tools/issue_dependencies.py and CONTRIBUTING.md,
-# "Dependencies between issues". When a blocker is closed, the "Issue dependencies" workflow re-runs this check.
+# The "Issue dependencies" check: fails while the pull request's description links (Fixes / Closes / Resolves /
+# Refs #N) an issue that is still blocked, unless the same pull request closes every open blocker or a maintainer has
+# labelled it `dependency-override`. Rules: tools/issue_dependencies.py and CONTRIBUTING.md, "Dependencies between
+# issues". The "Issue dependencies" workflow re-runs this check whenever its result no longer matches the issues.
 #
-# The pull request's code never runs here: the checkout takes the base commit's copy of the script, so a pull
-# request cannot change the check that judges it. The token is read-only, which is all a fork's pull request gets
-# anyway. tests/test_issue_dependencies.py pins these properties:
-#   - `pull_request` only (never `pull_request_target`), no `paths:` filter (a required check must always report);
+# Why `pull_request_target`. A `pull_request` run takes this file from the pull request itself, so a pull request
+# could rewrite the check that judges it. `pull_request_target` takes the workflow and the script from the default
+# branch instead. Its known risk is running the pull request's code with a privileged token; this job never does:
+# the checkout has no `ref`, so it reads one file from the default branch; nothing from the pull request is checked
+# out, built or executed; the token is read-only; no secret but GITHUB_TOKEN is used; and the script treats the
+# description as data. tests/test_issue_dependencies.py pins these properties:
+#   - `pull_request_target` only, no `paths:` or `branches:` filter (a required check must always report);
 #   - the token holds `contents: read`, `issues: read` and `pull-requests: read`, nothing else;
-#   - the checkout takes the base SHA, one file, no stored credentials, pinned to a full commit SHA;
+#   - the checkout has no `ref`, takes one file, keeps no credentials and is pinned to a full commit SHA, and no
+#     expression in this file names the pull request's head;
 #   - no `${{ }}` appears in a `run:` line; the script reads the event file itself.
+# What it cannot stop: a pull request may add a different workflow with a job of the same name, and branch
+# protection cannot tell two GitHub Actions checks of one name apart (true of every required Actions check), so a
+# maintainer reads every change under `.github/` before merging it.
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, edited, reopened, synchronize, ready_for_review, labeled, unlabeled]
 
 permissions: {}
@@ -25,13 +32,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: read        # the checkout reads one script from the base commit
-      issues: read          # read the linked issues and their "Blocked by" links
+      contents: read        # the checkout reads one script from the default branch
+      issues: read          # read the linked issues, their "Blocked by" links and the label events
       pull-requests: read   # read the pull request's current description and labels
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
           sparse-checkout: tools/issue_dependencies.py
           sparse-checkout-cone-mode: false

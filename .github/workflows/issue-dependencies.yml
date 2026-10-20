@@ -5,13 +5,15 @@ name: Issue dependencies
 #   - an open issue with a blocker that is not closed as completed gets `blocked`;
 #   - every other issue loses it, with one comment when an open issue is unblocked;
 #   - a blocker closed as not planned or as a duplicate leaves the issue blocked and asks a maintainer to re-plan it;
-#   - an unblocked issue's open pull requests get their failed "Issue dependencies" check re-run.
+#   - every open pull request whose "Issue dependencies" check no longer matches its linked issues (red although
+#     they are unblocked, or green although one became blocked) gets that check re-run.
 #
 # GitHub sends no workflow event when a "Blocked by" link is added or removed, so this runs when an issue is closed
 # or reopened (what unblocks or re-blocks its dependents), hourly as the backstop for link edits, and on demand.
-# Every run is a full reconciliation, so the concurrency group may drop a pending run: the one that replaces it
-# does the same work. tests/test_issue_dependencies.py pins these properties:
-#   - the token holds `contents: read`, `issues: write`, `pull-requests: read` and `actions: write`, nothing else;
+# Every run is a full reconciliation of state, not a reaction to a transition, so the concurrency group may drop a
+# pending run, and a run that fails half-way is finished by the next one. tests/test_issue_dependencies.py pins:
+#   - the token holds `contents: read`, `issues: write`, `pull-requests: read`, `checks: read` and `actions: write`,
+#     nothing else;
 #   - no `${{ }}` appears in a `run:` line; the script reads the environment itself;
 #   - the checkout takes the default branch, one file, no stored credentials, pinned to a full commit SHA.
 #
@@ -39,8 +41,9 @@ jobs:
     permissions:
       contents: read        # the checkout reads one script from the default branch
       issues: write         # add or remove `blocked` / `needs-triage`, and post the notices
-      pull-requests: read   # find the open pull requests that link an unblocked issue
-      actions: write        # re-run their failed dependency check
+      pull-requests: read   # read the open pull requests and the issues they link
+      checks: read          # read each one's latest "Issue dependencies" result
+      actions: write        # re-run that check when the result no longer matches
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:

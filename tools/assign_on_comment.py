@@ -9,8 +9,9 @@ Rules (see ``CONTRIBUTING.md``, "Working on an issue"):
 
 - only issues labelled ``good first issue`` are open to ``/assign``, and never one that also carries
   ``security``, ``needs-triage``, ``deferred``, ``epic`` or ``phase: 16``;
-- a blocked issue is refused: one labelled ``blocked``, or one GitHub still lists an open "Blocked by" issue for
-  (the label follows the links hourly, so the count closes the gap; ``tools/issue_dependencies.py``);
+- a blocked issue is refused: one labelled ``blocked``, or one with a "Blocked by" issue that is still open or was
+  closed without being completed (the label follows the links within the hour, so reading them closes the gap;
+  ``tools/issue_dependencies.py``);
 - an issue that already has an assignee is refused, whoever the assignee is and however they were assigned:
   a later ``/assign`` never replaces, adds to or removes an existing assignment;
 - a contributor holds at most ``MAX_OPEN_ASSIGNMENTS`` open issues at a time (the maintainers in
@@ -79,8 +80,8 @@ NOT_OPEN_MARKER = "<!-- assign-on-comment:needs-maintainer -->"
 MSG_CLOSED = "This issue is closed, so it cannot be assigned."
 MSG_BLOCKED = (
     "This issue is blocked: it waits for another issue to be completed (see **Blocked by** in the sidebar), so it "
-    "cannot be claimed yet. The `blocked` label is removed automatically once every blocker is closed as completed, "
-    "and the issue says so in a comment. Until then, pick another one from the [Front door view]({front_door})."
+    "cannot be claimed yet. The `blocked` label is removed automatically once every blocker is closed as completed; "
+    "check this issue again then. Until then, pick another one from the [Front door view]({front_door})."
 )
 MSG_NOT_OPEN = (
     "Only `good first issue` issues can be claimed with `/assign`; this one needs a maintainer's decision. "
@@ -162,7 +163,7 @@ class IssueFacts:
     state: str
     labels: frozenset[str]
     assignees: tuple[str, ...]
-    open_blockers: int = 0  # GitHub's count of open "Blocked by" issues
+    unresolved_blockers: int = 0  # "Blocked by" issues still open or closed without being completed
 
 
 @dataclass(frozen=True)
@@ -231,7 +232,7 @@ def decide(ctx: Context, issue: IssueFacts, count_open_assignments: Callable[[],
         return Decision("reply", MSG_NOT_YOURS)
     if issue.state != "open":
         return Decision("reply", MSG_CLOSED)
-    if BLOCKED_LABEL in issue.labels or issue.open_blockers > 0:
+    if BLOCKED_LABEL in issue.labels or issue.unresolved_blockers > 0:
         return Decision("reply", MSG_BLOCKED.format(front_door=FRONT_DOOR_URL))
     if issue.labels & EXCLUDED_LABELS or not issue.labels & ELIGIBLE_LABELS:
         return Decision("reply", MSG_NOT_OPEN.format(mention=MAINTAINER_MENTION), pings=True)
@@ -318,12 +319,34 @@ def fetch_issue(gh: GhApi, repo: str, number: int) -> IssueFacts:
     try:
         labels = frozenset(str(label["name"]) for label in raw["labels"])
         summary = raw.get("issue_dependencies_summary")
-        # The summary's `blocked_by` counts only blockers that are still open. Without the summary the label alone
-        # decides, which is what tools/issue_dependencies.py keeps true.
-        open_blockers = int(summary.get("blocked_by") or 0) if isinstance(summary, dict) else 0
-        return IssueFacts(str(raw["state"]), labels, _logins(raw["assignees"]), open_blockers)
+        # The summary's `blocked_by` counts only blockers that are still open. A blocker closed as not planned or as
+        # a duplicate blocks too, so when closed ones exist and the label has not caught up, read their reasons.
+        # Without the summary the label alone decides, which is what tools/issue_dependencies.py keeps true.
+        unresolved = 0
+        if isinstance(summary, dict):
+            unresolved = int(summary.get("blocked_by") or 0)
+            if int(summary.get("total_blocked_by") or 0) > unresolved and BLOCKED_LABEL not in labels:
+                unresolved += count_not_completed_blockers(gh, repo, number)
+        return IssueFacts(str(raw["state"]), labels, _logins(raw["assignees"]), unresolved)
     except (KeyError, TypeError, ValueError) as exc:
         raise GhError("the issue answer lacks labels, state or assignees") from exc
+
+
+def count_not_completed_blockers(gh: GhApi, repo: str, number: int) -> int:
+    """The issue's "Blocked by" issues that are closed without being completed (not planned, or a duplicate)."""
+    found = 0
+    for page in range(1, _MAX_PAGES + 1):
+        raw = gh("GET", f"repos/{repo}/issues/{number}/dependencies/blocked_by?per_page={_PAGE_SIZE}&page={page}", None)
+        if not isinstance(raw, list):
+            raise GhError("the blocked-by answer is not a list")
+        found += sum(
+            1
+            for b in raw
+            if isinstance(b, dict) and b.get("state") == "closed" and b.get("state_reason") not in (None, "completed")
+        )
+        if len(raw) < _PAGE_SIZE:
+            break
+    return found
 
 
 def count_open_assignments(gh: GhApi, repo: str, login: str, stop_at: Optional[int] = None) -> int:
