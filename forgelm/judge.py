@@ -10,7 +10,7 @@ import math
 import os
 import string
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
 from ._strict_json import dumps_strict
 
@@ -416,7 +416,7 @@ def _load_eval_prompts(path: str) -> List[str]:
             line = raw.strip()
             if not line:
                 continue
-            prompt: str
+            prompt: Any  # a row may hold a non-string value; the isinstance check below drops it
             try:
                 data = json.loads(line)
             except json.JSONDecodeError:
@@ -774,7 +774,7 @@ def run_judge_evaluation(
         return JudgeResult(passed=False, failure_reason=failure_reason)
 
     truncated_count = sum(1 for d in details if d.get("judge_failed") and d.get("reason") == _JUDGE_TRUNCATED_REASON)
-    avg_score, passed, failure_reason = _summarize_judge_scores(
+    avg_score, passed, summary_failure_reason = _summarize_judge_scores(
         scores=scores,
         failure_count=failure_count,
         truncated_count=truncated_count,
@@ -792,14 +792,14 @@ def run_judge_evaluation(
             len(eval_prompts),
             details,
             include_samples=include_samples,
-            failure_reason=failure_reason,
+            failure_reason=summary_failure_reason,
         )
 
     return JudgeResult(
         average_score=avg_score,
         scores=scores,
         passed=passed,
-        failure_reason=failure_reason,
+        failure_reason=summary_failure_reason,
         details=details,
     )
 
@@ -853,7 +853,8 @@ def _score_eval_prompts(
             response=_neutralize_delimiter_tags(response[:_JUDGE_RESPONSE_MAX_CHARS]),
         )
         if is_api_judge:
-            result = _call_api_judge(judge_prompt, judge_api_key, judge_model, api_base=api_base)
+            # ``run_judge_evaluation`` derives ``is_api_judge`` from ``judge_api_key is not None``.
+            result = _call_api_judge(judge_prompt, cast(str, judge_api_key), judge_model, api_base=api_base)
         else:
             result = _call_local_judge(judge_prompt, local_judge_model, local_judge_tokenizer)
 
