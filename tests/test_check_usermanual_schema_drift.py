@@ -302,16 +302,17 @@ class TestUnknownTopLevelBlocks:
             self._write(tmp_path, lang, "operations/cicd.md", "jobs: {}\nchat: {}\n")
         result = tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], rows, {})
         assert [sorted(u.keys) for u in result.unknown_blocks] == [["chat", "jobs"], ["chat", "jobs"]]
-        assert [row for _, row, _ in result.stale_rows] == [("operations/cicd.md", frozenset({"jobs"}))]
+        assert [(row.page, row.keys) for row in result.stale_rows] == [("operations/cicd.md", frozenset({"jobs"}))]
 
     def test_a_row_that_matches_no_snippet_is_stale(self, tool, synthetic_schema, tmp_path):
         rows = {("operations/gpu-cost.md", frozenset({"gpu_profiles"})): "tracked elsewhere"}
         for lang in ("en", "tr"):
             self._write(tmp_path, lang, "operations/gpu-cost.md", "training:\n  learning_rate: 0.1\n")
         result = tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], {}, rows)
-        assert [(name, row) for name, row, _ in result.stale_rows] == [
-            ("_KNOWN_OPEN", ("operations/gpu-cost.md", frozenset({"gpu_profiles"})))
+        assert [(row.table, row.page, row.keys) for row in result.stale_rows] == [
+            ("_KNOWN_OPEN", "operations/gpu-cost.md", frozenset({"gpu_profiles"}))
         ]
+        assert not result.clean
 
     def test_a_row_matched_in_only_one_language_is_stale(self, tool, synthetic_schema, tmp_path):
         rows = {("operations/gpu-cost.md", frozenset({"gpu_profiles"})): "tracked elsewhere"}
@@ -319,6 +320,90 @@ class TestUnknownTopLevelBlocks:
         self._write(tmp_path, "tr", "operations/gpu-cost.md", "training:\n  learning_rate: 0.1\n")
         result = tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], {}, rows)
         assert len(result.stale_rows) == 1
+        stale = result.stale_rows[0]
+        assert (stale.matched_in, stale.missing_in) == (("en",), ("tr",))
+
+    def test_known_blocks_inside_mixed_or_exempted_snippets_are_still_walked(self, tool, synthetic_schema, tmp_path):
+        rows = {("operations/cicd.md", frozenset({"chat"})): "tracked elsewhere"}
+        for lang in ("en", "tr"):
+            self._write(tmp_path, lang, "operations/cicd.md", "training:\n  bogus: 1\nchat: {}\n")
+        result = tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], rows, {})
+        assert sorted({d.key_path for d in result.drifts}) == ["training.bogus"]
+        assert result.unknown_blocks == [] and result.stale_rows == []
+        # Without the row, the same snippet reports BOTH the nested drift and the unknown block.
+        bare = tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], {}, {})
+        assert len(bare.drifts) == 2 and len(bare.unknown_blocks) == 2
+
+    def test_each_row_is_matched_on_its_own_not_per_page(self, tool, synthetic_schema, tmp_path):
+        rows = {
+            ("ops/a.md", frozenset({"jobs"})): "GitHub Actions",
+            ("ops/a.md", frozenset({"concurrency"})): "GitHub Actions concurrency",
+        }
+        for lang in ("en", "tr"):
+            self._write(tmp_path, lang, "ops/a.md", "jobs: {}\n")
+        result = tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], rows, {})
+        assert [(row.page, row.keys) for row in result.stale_rows] == [("ops/a.md", frozenset({"concurrency"}))]
+
+    def test_key_matching_is_case_sensitive(self, tool, synthetic_schema):
+        top = synthetic_schema["ForgeConfig"]
+        assert tool.unknown_top_level_keys(self._snippet(tool, "Training:\n  bogus: 1\n"), top) == frozenset(
+            {"Training"}
+        )
+
+    def test_every_document_of_a_multi_document_snippet_is_checked(self, tool, synthetic_schema):
+        top = synthetic_schema["ForgeConfig"]
+        body = "chat: {}\n---\noutput: {}\n---\ntraining:\n  bogus: 1\n"
+        assert tool.unknown_top_level_keys(self._snippet(tool, body), top) == frozenset({"chat", "output"})
+        assert [d.key_path for d in tool.check_snippet(self._snippet(tool, body), synthetic_schema, top)] == [
+            "training.bogus"
+        ]
+
+    def test_an_empty_tree_cannot_pass_vacuously(self, tool, synthetic_schema, tmp_path, monkeypatch):
+        rows = {("ops/a.md", frozenset({"jobs"})): "GitHub Actions"}
+        empty = tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], rows, {})
+        assert not empty.clean and empty.snippet_count == 0
+        config_path = tmp_path / "config.py"
+        config_path.write_text(_SYNTHETIC_CONFIG, encoding="utf-8")
+        root = tmp_path / "usermanuals"
+        root.mkdir()
+        monkeypatch.setattr(tool, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(tool, "USERMANUAL_ROOT", root)
+        assert tool.main(["--strict", "--quiet"]) == 1
+
+    def test_a_stray_top_level_file_is_not_a_language_directory(self, tool, synthetic_schema, tmp_path):
+        rows = {("ops/a.md", frozenset({"jobs"})): "GitHub Actions"}
+        for lang in ("en", "tr"):
+            self._write(tmp_path, lang, "ops/a.md", "jobs: {}\n")
+        (tmp_path / "README.md").write_text("```yaml\njobs: {}\n```\n", encoding="utf-8")
+        assert tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], rows, {}).clean
+
+    def test_a_partial_language_directory_names_the_missing_language(self, tool, synthetic_schema, tmp_path, capsys):
+        rows = {("ops/a.md", frozenset({"jobs"})): "GitHub Actions"}
+        for lang in ("en", "tr"):
+            self._write(tmp_path, lang, "ops/a.md", "jobs: {}\n")
+        self._write(tmp_path, "de", "ops/b.md", "training:\n  learning_rate: 0.1\n")
+        result = tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], rows, {})
+        assert [(row.missing_in, row.matched_in) for row in result.stale_rows] == [(("de",), ("en", "tr"))]
+        tool._report(result)
+        assert "unmatched in de but matched in en, tr" in capsys.readouterr().out
+
+    def test_main_fails_strict_when_only_a_stale_row_remains(
+        self, tool, synthetic_schema, tmp_path, monkeypatch, capsys
+    ):
+        config_path = tmp_path / "config.py"
+        config_path.write_text(_SYNTHETIC_CONFIG, encoding="utf-8")
+        root = tmp_path / "usermanuals"
+        for lang in ("en", "tr"):
+            self._write(root, lang, "ops/a.md", "training:\n  learning_rate: 0.1\n")
+        monkeypatch.setattr(tool, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(tool, "USERMANUAL_ROOT", root)
+        monkeypatch.setattr(tool, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(tool, "_NON_FORGELM_YAML", {})
+        monkeypatch.setattr(tool, "_KNOWN_OPEN", {("ops/a.md", frozenset({"gone"})): "was fixed"})
+        assert tool.main(["--strict"]) == 1
+        out = capsys.readouterr().out
+        assert "_KNOWN_OPEN: ops/a.md  gone" in out and "delete the row" in out
+        assert tool.main([]) == 0
 
     def test_main_strict_exits_one_on_an_unlisted_block_and_zero_in_advisory_mode(
         self, tool, synthetic_schema, tmp_path, monkeypatch, capsys

@@ -45,9 +45,9 @@ yolunu izleyebilirsiniz...
 | Sampling temperature | `--temperature` (change it later with `/temperature`) | `0.7` |
 | Maximum tokens per reply | `--max-new-tokens` | `512` |
 | Streaming output | `--no-stream` turns it off | on |
-| Quantised loading | `--load-in-4bit` or `--load-in-8bit` | off |
+| Quantised loading (CUDA with bitsandbytes only; ignored otherwise) | `--load-in-4bit` (NF4) or `--load-in-8bit`; 4-bit wins if both are given | off |
 
-There is no top-p setting and no history file that persists across sessions; write a conversation out with `/save`.
+Top-p, top-k and the repetition penalty are fixed (0.9 / 50 / 1.1) and cannot be set, and there is no history file that persists across sessions; write a conversation out with `/save`.
 
 ## Loading a checkpoint
 

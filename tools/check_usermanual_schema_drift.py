@@ -77,7 +77,13 @@ that ``forgelm/`` honours):
 
 - ``0`` — every checked key path resolves against the schema.
 - ``1`` — at least one fabricated key path, unrecognised top-level block
-  or stale exemption row found (strict mode), or invalid arguments.
+  or stale exemption row found (strict mode), or no YAML block found at all.
+  (Invalid command-line arguments exit ``2`` through ``argparse``.)
+
+Known limits: a snippet ``yaml.safe_load_all`` cannot parse is skipped
+(``check_yaml_snippets.py`` reports parse errors on full configs), and a
+top-level key YAML 1.1 reads as a non-string (``on:``, ``yes:``, ``1:``) is
+not checked — GitHub Actions' ``on:`` is exactly such a key.
 
 CI wiring: this guard runs in ``.github/workflows/ci.yml`` with
 ``--strict`` — any fabricated key path fails the build. The
@@ -152,7 +158,7 @@ _NON_FORGELM_YAML: Dict[_PageKeys, str] = {
                 "trust_remote_code",
             }
         ),
-    ): "vLLM server config that `forgelm deploy --target vllm` generates",
+    ): "vLLM engine config sample (tokenizer_mode / served_model_name / chat_template are not emitted by `forgelm deploy`: #435)",
     ("operations/cicd.md", frozenset({"jobs", "name"})): "GitHub Actions workflow",
     ("operations/cicd.md", frozenset({"audit", "deploy", "stages", "train"})): "GitLab CI pipeline",
     ("operations/cicd.md", frozenset({"concurrency"})): "GitHub Actions concurrency block",
@@ -202,12 +208,24 @@ class UnknownBlock:
 
 
 @dataclass(frozen=True)
+class StaleRow:
+    """An exemption row that does not match a snippet in every language directory."""
+
+    table: str
+    page: str
+    keys: FrozenSet[str]
+    reason: str
+    matched_in: Tuple[str, ...]
+    missing_in: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ScanResult:
     """Everything one pass over a usermanual tree found."""
 
     drifts: List[KeyDrift]
     unknown_blocks: List[UnknownBlock]
-    stale_rows: List[Tuple[str, _PageKeys, str]]  # (table name, row key, reason)
+    stale_rows: List[StaleRow]
     snippet_count: int
 
     @property
@@ -367,28 +385,26 @@ def _walk_value(
     return drift
 
 
-def _parse_fragment(snippet: "Snippet") -> Optional[dict]:
-    """Return the parsed mapping of a fragment this guard checks, else ``None``.
+def _parse_fragments(snippet: "Snippet") -> List[dict]:
+    """Return the fragment mappings of ``snippet`` that this guard checks.
 
-    ``None`` covers unparseable YAML (``check_yaml_snippets.py`` reports parse
-    errors on full configs), non-mapping documents, and full configs that
-    ``check_yaml_snippets.py`` already validates with a real ``ForgeConfig(**data)``.
+    A snippet may hold several YAML documents (``---``); each mapping is
+    returned. Unparseable YAML, non-mapping documents and full configs that
+    ``check_yaml_snippets.py`` already validates with a real
+    ``ForgeConfig(**data)`` are left out.
     """
     try:
-        parsed = yaml.safe_load(snippet.body)
+        documents = list(yaml.safe_load_all(snippet.body))
     except yaml.YAMLError:
-        return None
-    if not isinstance(parsed, dict) or _FULL_CONFIG_KEYS.issubset(parsed.keys()):
-        return None
-    return parsed
+        return []
+    return [doc for doc in documents if isinstance(doc, dict) and not _FULL_CONFIG_KEYS.issubset(doc.keys())]
 
 
 def unknown_top_level_keys(snippet: "Snippet", top_level: Dict[str, FieldType]) -> FrozenSet[str]:
     """Return the string top-level keys of ``snippet`` that are not ForgeConfig blocks."""
-    parsed = _parse_fragment(snippet)
-    if parsed is None:
-        return frozenset()
-    return frozenset(key for key in parsed if isinstance(key, str) and key not in top_level)
+    return frozenset(
+        key for doc in _parse_fragments(snippet) for key in doc if isinstance(key, str) and key not in top_level
+    )
 
 
 def check_snippet(
@@ -399,18 +415,16 @@ def check_snippet(
     Only the keys *inside* recognised ForgeConfig blocks are walked here; an
     unrecognised top-level block is :func:`unknown_top_level_keys`'s concern.
     """
-    parsed = _parse_fragment(snippet)
-    if parsed is None:
-        return []
     drifts: List[KeyDrift] = []
-    for key, sub_value in parsed.items():
-        if not isinstance(key, str):
-            continue
-        field_type = top_level.get(key)
-        if field_type is None or field_type.nested_class is None:
-            continue  # unrecognised or opaque top-level block — see unknown_top_level_keys
-        for key_path in _walk_value(sub_value, field_type.nested_class, schema, key):
-            drifts.append(KeyDrift(path=snippet.path, line=snippet.line_start, key_path=key_path))
+    for doc in _parse_fragments(snippet):
+        for key, sub_value in doc.items():
+            if not isinstance(key, str):
+                continue
+            field_type = top_level.get(key)
+            if field_type is None or field_type.nested_class is None:
+                continue  # unrecognised or opaque top-level block — see unknown_top_level_keys
+            for key_path in _walk_value(sub_value, field_type.nested_class, schema, key):
+                drifts.append(KeyDrift(path=snippet.path, line=snippet.line_start, key_path=key_path))
     return drifts
 
 
@@ -419,9 +433,14 @@ def walk_usermanuals(root: Path) -> List[Path]:
     return [p for p in sorted(root.rglob("*.md")) if p.is_file()]
 
 
-def _language_and_page(root: Path, md_path: Path) -> Tuple[str, str]:
-    """Split ``<root>/<lang>/<section>/<page>.md`` into ``(lang, "<section>/<page>.md")``."""
+def _language_and_page(root: Path, md_path: Path) -> Optional[Tuple[str, str]]:
+    """Split ``<root>/<lang>/<section>/<page>.md`` into ``(lang, "<section>/<page>.md")``.
+
+    A file directly under ``root`` belongs to no language directory and returns ``None``.
+    """
     parts = md_path.relative_to(root).parts
+    if len(parts) < 2:
+        return None
     return parts[0], "/".join(parts[1:])
 
 
@@ -439,7 +458,10 @@ def scan(
     languages: Set[str] = set()
     snippet_count = 0
     for md_path in walk_usermanuals(root):
-        language, page = _language_and_page(root, md_path)
+        located = _language_and_page(root, md_path)
+        if located is None:
+            continue
+        language, page = located
         languages.add(language)
         for snippet in extract_yaml_snippets(md_path):
             snippet_count += 1
@@ -451,11 +473,13 @@ def scan(
                 matched.add((language, page, keys))
             else:
                 unknown.append(UnknownBlock(path=snippet.path, line=snippet.line_start, keys=keys))
-    stale: List[Tuple[str, _PageKeys, str]] = []
+    stale: List[StaleRow] = []
     for table_name, table in (("_NON_FORGELM_YAML", non_forgelm), ("_KNOWN_OPEN", known_open)):
         for (page, keys), reason in table.items():
-            if any((language, page, keys) not in matched for language in sorted(languages)):
-                stale.append((table_name, (page, keys), reason))
+            present = tuple(lang for lang in sorted(languages) if (lang, page, keys) in matched)
+            missing = tuple(lang for lang in sorted(languages) if (lang, page, keys) not in matched)
+            if missing or not languages:
+                stale.append(StaleRow(table_name, page, keys, reason, present, missing))
     return ScanResult(drifts=drifts, unknown_blocks=unknown, stale_rows=stale, snippet_count=snippet_count)
 
 
@@ -497,6 +521,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     result = scan(USERMANUAL_ROOT, schema, top_level, _NON_FORGELM_YAML, _KNOWN_OPEN)
 
+    if result.snippet_count == 0:
+        print(f"check_usermanual_schema_drift: no yaml blocks found under {USERMANUAL_ROOT}.", file=sys.stderr)
+        return 1
     if not result.clean:
         _report(result)
         return 1 if args.strict else 0
@@ -505,7 +532,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(
             f"OK: {result.snippet_count} yaml block(s) under docs/usermanuals/ checked; "
             f"every recognised ForgeConfig key path resolves against the schema and every "
-            f"other top-level block is another tool's YAML."
+            f"other top-level block is another tool's YAML or a listed known-open block."
         )
     return 0
 
@@ -525,12 +552,20 @@ def _report(result: ScanResult) -> None:
             rel = u.path.relative_to(REPO_ROOT) if u.path.is_absolute() else u.path
             print(
                 f"  {rel}:{u.line}  {', '.join(sorted(u.keys))}  (not a ForgeConfig top-level block: correct the "
-                f"example, or list it in _NON_FORGELM_YAML with a reason if it is another tool's YAML)"
+                f"example, or list it in _NON_FORGELM_YAML with a reason if it is another tool's YAML, or in "
+                f"_KNOWN_OPEN if a tracked issue owns the fix)"
             )
     if result.stale_rows:
-        print(f"FAIL: {len(result.stale_rows)} exemption row(s) match no YAML block in every language.")
-        for table_name, (page, keys), reason in result.stale_rows:
-            print(f"  {table_name}: {page}  {', '.join(sorted(keys))}  ({reason}) — delete the row")
+        print(f"FAIL: {len(result.stale_rows)} exemption row(s) do not match a YAML block in every language.")
+        for row in result.stale_rows:
+            where = f"{row.table}: {row.page}  {', '.join(sorted(row.keys))}  ({row.reason})"
+            if row.matched_in:
+                print(
+                    f"  {where} — unmatched in {', '.join(row.missing_in)} but matched in "
+                    f"{', '.join(row.matched_in)}: the language copies diverged; fix the page, not the row"
+                )
+            else:
+                print(f"  {where} — matches no snippet in any language: delete the row")
 
 
 if __name__ == "__main__":

@@ -40,7 +40,7 @@ training:
   gpu_cost_per_hour: 1.10          # USD per hour for the training GPU
 ```
 
-Set `training.gpu_cost_per_hour` to your real rate. When it is unset, ForgeLM falls back to its built-in price table for the detected GPU; the run's `resource_usage` records which one it used (`cost_source`: `user_config` or `auto_detected`). There is one rate per run: per-GPU-model rate tables are not supported.
+Set `training.gpu_cost_per_hour` to your real rate. When it is unset, ForgeLM falls back to its built-in price table for the detected GPU; the run's `resource_usage` records which one it used (`cost_source`: `user_config`, `auto_detected` for an exact GPU-name match, or `fuzzy_match` for a partial-name match; the key is absent when no rate could be resolved). Without a CUDA GPU there is no detected GPU, so set `training.gpu_cost_per_hour` explicitly. There is one rate per run: per-GPU-model rate tables are not supported.
 
 ## Output
 

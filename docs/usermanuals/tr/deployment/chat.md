@@ -45,9 +45,9 @@ Tarifenizi Ayarlar → Plan → Yükselt menüsünden değiştirebilirsiniz...
 | Sampling temperature | `--temperature` (sonra `/temperature` ile değiştirin) | `0.7` |
 | Yanıt başına maksimum token | `--max-new-tokens` | `512` |
 | Streaming çıktı | `--no-stream` kapatır | açık |
-| Quantize yükleme | `--load-in-4bit` veya `--load-in-8bit` | kapalı |
+| Quantize yükleme (yalnızca CUDA + bitsandbytes; aksi halde yok sayılır) | `--load-in-4bit` (NF4) veya `--load-in-8bit`; ikisi de verilirse 4-bit kazanır | kapalı |
 
-top-p ayarı ve oturumlar arası kalıcı bir history dosyası yoktur; bir konuşmayı `/save` ile yazın.
+top-p, top-k ve repetition penalty sabittir (0.9 / 50 / 1.1) ve ayarlanamaz; oturumlar arası kalıcı bir history dosyası da yoktur; bir konuşmayı `/save` ile yazın.
 
 ## Checkpoint yükleme
 

@@ -40,7 +40,7 @@ training:
   gpu_cost_per_hour: 1.10          # eğitim GPU'su için saatlik USD
 ```
 
-`training.gpu_cost_per_hour`'u gerçek tarifenize ayarlayın. Ayarlı değilse ForgeLM tespit edilen GPU için yerleşik fiyat tablosuna döner; koşunun `resource_usage` kaydı hangisinin kullanıldığını yazar (`cost_source`: `user_config` veya `auto_detected`). Koşu başına tek bir tarife vardır: GPU modeli başına tarife tabloları desteklenmez.
+`training.gpu_cost_per_hour`'u gerçek tarifenize ayarlayın. Ayarlı değilse ForgeLM tespit edilen GPU için yerleşik fiyat tablosuna döner; koşunun `resource_usage` kaydı hangisinin kullanıldığını yazar (`cost_source`: `user_config`; tam GPU adı eşleşmesi için `auto_detected`; kısmi ad eşleşmesi için `fuzzy_match`; tarife çözülemediyse anahtar yoktur). CUDA GPU yoksa tespit edilen bir GPU da yoktur, bu yüzden `training.gpu_cost_per_hour`'u açıkça ayarlayın. Koşu başına tek bir tarife vardır: GPU modeli başına tarife tabloları desteklenmez.
 
 ## Çıktı
 
@@ -92,7 +92,7 @@ Kalibrasyon yaklaşımı genelde gerçeğin %20 içindedir.
 
 Kontrolden çıkabilecek koşular için planlanan `cost_tracking` bloğu eşik
 tabanlı alarmı (alarm eşiği aşılınca webhook tetiklenir) ve durdurmayı
-(durdurma eşiğinde eğitim durur) destekleyecekti. Böyle bir ayar bugün
+(durdurma eşiğinde eğitim durur) destekleyecek. Böyle bir ayar bugün
 `forgelm/config.py`'de yoktur.
 
 İmplemente edildiğinde, alarm konfigüre webhook'u fırlatır (bkz. [Webhook'lar](#/operations/webhooks)) — yanlış konfigüre koşunun gece bütçeyi haftalık bitirmesini CI'da yakalamak için faydalı. O zamana kadar maliyeti audit log + zamanlayıcınızdaki bütçe-tarafı koruyucu ile manuel izleyin.
