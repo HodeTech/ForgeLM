@@ -31,7 +31,7 @@ PII masking at ingest replaces the identifier formats ForgeLM detects with a pla
 $ forgelm ingest ./policies/ --recursive --strategy markdown --pii-mask --output data/policies.jsonl
 ```
 
-The detectors cover email, phone, credit card, IBAN, and the Turkish, German, French and US national-ID formats; every match becomes `[REDACTED]`. **Names, addresses, dates of birth, health data and other free text are not detected**, and the patterns are tuned to miss a borderline match rather than redact ordinary prose. Masking reduces the personal data in the JSONL; it does not remove identifiable subjects from it. See [PII Masking](#/data/pii-masking).
+The detectors cover email, phone, credit card, IBAN, and the Turkish, German, French and US national-ID formats; every match becomes `[REDACTED]`. **Names, addresses, dates of birth, health data and other free text are not detected**, and the patterns are tuned to miss a borderline match rather than redact ordinary prose. Masking reduces the personal data in the JSONL; it does not remove identifiable subjects from it. To find names, organisations and locations, run `forgelm audit --pii-ml`: it adds Presidio NER **detection** (it reports them, it does not mask them) and needs the `ingestion-pii-ml` extra and a spaCy model. See [PII Masking](#/data/pii-masking) and [ML-NER PII](#/data/pii-ml).
 
 ### Accountability (Art. 5(2))
 
@@ -66,10 +66,11 @@ Most-common request types and how ForgeLM helps:
 Search your training data for the person's identifier:
 
 ```shell
-$ forgelm reverse-pii --query "ali@example.com" data/*.jsonl
+$ forgelm reverse-pii --query "ali@example.com" --output-dir ./outputs data/*.jsonl
+No matches for identifier hash 3f2a9c1e5b7d4a60… (literal, plaintext mode) in 3 file(s).
 ```
 
-The scan reports the lines where the identifier appears; zero matches is a valid answer. It finds what is literally in the files you point it at. Masking only removes the identifier formats it detects, so a name or an undetected variant can remain, and the raw source documents are not covered by a scan of the masked JSONL: search those separately. ForgeLM cannot tell you what a trained model remembers.
+The scan reports the file and line where the identifier appears (the snippets are raw corpus text, so do not redirect them to a persistent log); zero matches, as above, is a valid answer. The printed hash is the salted identifier hash that the audit event records, not the identifier. `--output-dir` is where ForgeLM keeps the per-directory salt (`.forgelm_audit_salt`) and appends the `data.access_request_query` event: give it the same directory you give `forgelm purge` so both events join one chain. Without it, both are written next to the first corpus file and ForgeLM logs a warning. It finds what is literally in the files you point it at. Masking only removes the identifier formats it detects, so a name or an undetected variant can remain, and the raw source documents are not covered by a scan of the masked JSONL: search those separately. ForgeLM cannot tell you what a trained model remembers.
 
 ### Right to erasure (Art. 17)
 

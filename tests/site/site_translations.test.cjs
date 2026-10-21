@@ -38,9 +38,11 @@ test('claims the code does not back stay out of the site copy', () => {
     en: [/dual-control/i, /\bauto-deletes\b/, /run fails \(exit 3\)/, /satisfying the access-request/,
       /Slack, Teams, Discord, or any HTTP/, /Slack \/ Teams \/ Discord/, /enforced upstream/, /GDPR-compliant TTLs/,
       /SHA-256 \+ size manifest/, /6 quant levels and SHA-256 manifest/, /ZeRO-2 \/ ZeRO-3 presets/,
-      /PII redacted at ingest/, /GGUF export at q4_k_m/],
+      /PII redacted at ingest/, /GGUF export at q4_k_m/, /both wired into the audit log/, /matches EU AI Act guidance/,
+      /rejected models in final_model\.staging/],
     tr: [/ikili[- ]kontrol/i, /otomatik siler/, /GDPR uyumlu TTL/, /erişim-talebi tarafını karşılar/,
-      /Slack, Teams, Discord veya/, /Slack \/ Teams \/ Discord/, /upstream'de uygulanır/],
+      /Slack, Teams, Discord veya/, /Slack \/ Teams \/ Discord/, /upstream'de uygulanır/, /her ikisi de audit log'a bağlı/,
+      /EU AI Act rehberiyle uyumlu/, /reddedilen modeller ne kadar tutulsun/],
   };
   const found = [];
   for (const [locale, patterns] of Object.entries(retired)) {
@@ -55,5 +57,22 @@ test('claims the code does not back stay out of the site copy', () => {
   assert.deepEqual(found, []);
   for (const [locale, table] of Object.entries(translations)) {
     assert.match(table['wizard.retention.enforce.hint'], /--check-policy/, `${locale}: retention is only reported`);
+    for (const key of ['wizard.retention.audit_log.hint', 'wizard.retention.staging.hint']) {
+      assert.match(table[key], /--check-policy/, `${locale} ${key}: a horizon is only reported, not enforced`);
+    }
   }
+});
+
+// The home-page GDPR card says what the two commands are for (an input to an Article 15 response, one step of an
+// Article 17 erasure) and that trained weights are untouched. Every locale keeps the weights caveat.
+test('the home GDPR card keeps the trained-weights caveat in every locale', () => {
+  const { translations } = loadWizard();
+  const caveat = { en: /trained weights are not changed/, tr: /eğitilmiş ağırlıklar değişmez/,
+    de: /Gewichte bleiben unverändert/, fr: /poids entraînés ne changent pas/, es: /pesos entrenados no cambian/,
+    zh: /权重不会改变/ };
+  for (const [locale, pattern] of Object.entries(caveat)) {
+    assert.match(translations[locale]['home.cap.gdpr.body'], pattern, `${locale}: home.cap.gdpr.body`);
+  }
+  const html = fs.readFileSync(path.join(root, 'site', 'index.html'), 'utf8');
+  assert.match(html, /trained weights are not changed/, 'index.html static fallback');
 });

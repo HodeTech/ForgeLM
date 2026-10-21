@@ -93,6 +93,8 @@ _GDPR_CLAIM_FILES = (
     "docs/guides/data_audit-tr.md",
     "docs/usermanuals/en/data/pii-ml.md",
     "docs/usermanuals/tr/data/pii-ml.md",
+    "docs/usermanuals/en/compliance/gdpr.md",
+    "docs/usermanuals/tr/compliance/gdpr.md",
 )
 
 _RETIRED_GDPR_CLAIMS = (
@@ -138,6 +140,22 @@ _RETIRED_GDPR_CLAIMS = (
     r"Article\s+10\s+cares",
     r"Madde\s+10'un\s+önemsediği",
     r"GDPR-mandated",
+    # The GDPR / KVKK page (CR-A11-001): masking is a fixed regex set, not anonymisation, and no audit report can
+    # confirm that a model holds nothing about a person.
+    r"identifiable\s+subjects\s+are\s+removed",
+    r"no\s+specific\s+person's\s+data\s+is\s+recoverable",
+    r"audit\s+report\s+confirms\s+this",
+    r"tanımlanabilir\s+özneler\s+kaldırılmıştır",
+    r"geri\s+çıkarılamaz",
+    r"Audit\s+raporu\s+bunu\s+teyit",
+    r"international_transfers",
+    r"No\s+matches\s+found\s+in\s+masked",
+    r"eşleşme\s+bulunamadı",
+    r"auto-delete\s+originals",
+    r"records\s+the\s+intended\s+TTL",
+    r"SHA-256\s+manifest\s+for\s+tamper",
+    r"Source\s+attribution\s+\(which\s+document",
+    r"pii_mask:",
 )
 
 _PURGE_ARTEFACT_WARNING_FILES = (
@@ -182,3 +200,28 @@ def test_purge_docs_warn_that_artefacts_misses_the_standard_bundle(rel: str) -> 
     text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
     assert "NoMatchingArtefacts" in text, f"{rel} must warn that --kind artefacts finds nothing"
     assert "compliance_report.json" in text, f"{rel} must name the fixed-basename bundle"
+
+
+@pytest.mark.parametrize("lang", ["en", "tr"])
+class TestGdprPageStaysExecutable:
+    """CR-A11-001: the GDPR / KVKK page shows commands an operator can run and says what they find."""
+
+    @staticmethod
+    def _page(lang: str) -> str:
+        return (_REPO_ROOT / "docs" / "usermanuals" / lang / "compliance" / "gdpr.md").read_text(encoding="utf-8")
+
+    def test_reverse_pii_example_pins_the_output_dir_and_shows_the_real_output_line(self, lang: str) -> None:
+        # Without --output-dir the command writes the per-directory salt and an audit event next to the first corpus
+        # file; the real zero-match line is "No matches for identifier hash <16 hex>… (literal, plaintext mode) in N file(s)."
+        text = self._page(lang)
+        assert re.search(
+            r"forgelm reverse-pii --query \"ali@example\.com\" --output-dir \./outputs data/\*\.jsonl", text
+        )
+        assert re.search(
+            r"No matches for identifier hash [0-9a-f]{16}… \(literal, plaintext mode\) in \d+ file\(s\)\.", text
+        )
+
+    def test_names_point_to_the_detection_only_pii_ml_layer(self, lang: str) -> None:
+        text = self._page(lang)
+        assert "forgelm audit --pii-ml" in text and "#/data/pii-ml" in text
+        assert "ingestion-pii-ml" in text

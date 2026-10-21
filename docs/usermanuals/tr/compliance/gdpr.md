@@ -31,7 +31,7 @@ Ingest'te PII maskeleme, ForgeLM'in tespit ettiği tanımlayıcı biçimlerini b
 $ forgelm ingest ./policies/ --recursive --strategy markdown --pii-mask --output data/policies.jsonl
 ```
 
-Dedektörler e-posta, telefon, kredi kartı, IBAN ile Türk, Alman, Fransız ve ABD ulusal kimlik biçimlerini kapsar; her eşleşme `[REDACTED]` olur. **İsimler, adresler, doğum tarihleri, sağlık verisi ve diğer serbest metin tespit edilmez**; desenler sıradan düzyazıyı maskelemek yerine sınırda bir eşleşmeyi kaçırmaya ayarlıdır. Maskeleme JSONL'daki kişisel veriyi azaltır; tanımlanabilir özneleri ondan kaldırmaz. Bkz. [PII Maskeleme](#/data/pii-masking).
+Dedektörler e-posta, telefon, kredi kartı, IBAN ile Türk, Alman, Fransız ve ABD ulusal kimlik biçimlerini kapsar; her eşleşme `[REDACTED]` olur. **İsimler, adresler, doğum tarihleri, sağlık verisi ve diğer serbest metin tespit edilmez**; desenler sıradan düzyazıyı maskelemek yerine sınırda bir eşleşmeyi kaçırmaya ayarlıdır. Maskeleme JSONL'daki kişisel veriyi azaltır; tanımlanabilir özneleri ondan kaldırmaz. İsimleri, kurumları ve yerleri bulmak için `forgelm audit --pii-ml` çalıştırın: Presidio NER **tespiti** ekler (raporlar, maskelemez) ve `ingestion-pii-ml` extra'sını ile bir spaCy modeli gerektirir. Bkz. [PII Maskeleme](#/data/pii-masking) ve [ML-NER PII](#/data/pii-ml).
 
 ### Hesap verebilirlik (Md. 5(2))
 
@@ -66,10 +66,11 @@ En sık talep tipleri ve ForgeLM nasıl yardım eder:
 Kişinin tanımlayıcısını eğitim verinizde arayın:
 
 ```shell
-$ forgelm reverse-pii --query "ali@example.com" data/*.jsonl
+$ forgelm reverse-pii --query "ali@example.com" --output-dir ./outputs data/*.jsonl
+No matches for identifier hash 3f2a9c1e5b7d4a60… (literal, plaintext mode) in 3 file(s).
 ```
 
-Tarama, tanımlayıcının geçtiği satırları raporlar; sıfır eşleşme geçerli bir cevaptır. Yalnızca işaret ettiğiniz dosyalarda gerçekten bulunanı bulur. Maskeleme yalnızca tespit ettiği tanımlayıcı biçimlerini kaldırır; bir isim ya da tespit edilemeyen bir varyant kalabilir ve maskelenmiş JSONL taraması ham kaynak dokümanları kapsamaz: onları ayrıca arayın. ForgeLM eğitilmiş bir modelin neyi hatırladığını söyleyemez.
+Tarama, tanımlayıcının geçtiği dosyayı ve satırı raporlar (snippet'ler ham corpus metnidir; kalıcı bir log'a yönlendirmeyin); yukarıdaki gibi sıfır eşleşme geçerli bir cevaptır. Basılan hash, audit event'inin kaydettiği tuzlu tanımlayıcı hash'idir, tanımlayıcının kendisi değildir. `--output-dir`, ForgeLM'in dizin başına tuzu (`.forgelm_audit_salt`) tuttuğu ve `data.access_request_query` event'ini eklediği yerdir: `forgelm purge`'e verdiğiniz dizini verin, böylece iki event aynı zincire katılır. Verilmezse ikisi de ilk corpus dosyasının yanına yazılır ve ForgeLM bir uyarı loglar. Yalnızca işaret ettiğiniz dosyalarda gerçekten bulunanı bulur. Maskeleme yalnızca tespit ettiği tanımlayıcı biçimlerini kaldırır; bir isim ya da tespit edilemeyen bir varyant kalabilir ve maskelenmiş JSONL taraması ham kaynak dokümanları kapsamaz: onları ayrıca arayın. ForgeLM eğitilmiş bir modelin neyi hatırladığını söyleyemez.
 
 ### Silme hakkı (Md. 17)
 
