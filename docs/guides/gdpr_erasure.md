@@ -143,8 +143,9 @@ that `forgelm purge` uses for its `target_id` field — Article 15
 access requests must not themselves leak the subject's data into the
 audit log.  The salted form is a stable per-identifier fingerprint
 that lets a compliance reviewer correlate Article 17 (purge) and
-Article 15 (reverse-pii) events for the same subject (the digests
-match) without seeing the cleartext.
+Article 15 (reverse-pii) events for the same subject (the digests match
+when you pass the same value to `--row-id` and `--query`) without seeing
+the cleartext.
 
 **Identifier types** (`--type`): `literal` (default), `email`,
 `phone`, `tr_id`, `us_ssn`, `iban`, `credit_card`, `custom`.  All

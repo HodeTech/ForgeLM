@@ -38,11 +38,13 @@ test('claims the code does not back stay out of the site copy', () => {
     en: [/dual-control/i, /\bauto-deletes\b/, /run fails \(exit 3\)/, /satisfying the access-request/,
       /Slack, Teams, Discord, or any HTTP/, /Slack \/ Teams \/ Discord/, /enforced upstream/, /GDPR-compliant TTLs/,
       /SHA-256 \+ size manifest/, /6 quant levels and SHA-256 manifest/, /ZeRO-2 \/ ZeRO-3 presets/,
-      /PII redacted at ingest/, /GGUF export at q4_k_m/, /both wired into the audit log/, /matches EU AI Act guidance/,
-      /rejected models in final_model\.staging/],
+      /PII redacted at ingest/, /GGUF export at q4_k_m/, /wired into the audit log/, /Article 17 erasure with/, /matches EU AI Act guidance/,
+      /rejected models in final_model\.staging/, /forensically linked/, /every row of every split/,
+      /surface every row/],
     tr: [/ikili[- ]kontrol/i, /otomatik siler/, /GDPR uyumlu TTL/, /erişim-talebi tarafını karşılar/,
       /Slack, Teams, Discord veya/, /Slack \/ Teams \/ Discord/, /upstream'de uygulanır/, /her ikisi de audit log'a bağlı/,
-      /EU AI Act rehberiyle uyumlu/, /reddedilen modeller ne kadar tutulsun/],
+      /EU AI Act rehberiyle uyumlu/, /reddedilen modeller ne kadar tutulsun/, /adli olarak bağlanır/,
+      /geçtiği her split/, /yüzeye çıkarır/],
   };
   const found = [];
   for (const [locale, patterns] of Object.entries(retired)) {
@@ -60,6 +62,7 @@ test('claims the code does not back stay out of the site copy', () => {
     for (const key of ['wizard.retention.audit_log.hint', 'wizard.retention.staging.hint']) {
       assert.match(table[key], /--check-policy/, `${locale} ${key}: a horizon is only reported, not enforced`);
     }
+    assert.doesNotMatch(table['wizard.retention.audit_log.hint'], /EU AI Act/, `${locale}: the 5-year default is not a legal period`);
   }
 });
 
@@ -73,6 +76,12 @@ test('the home GDPR card keeps the trained-weights caveat in every locale', () =
   for (const [locale, pattern] of Object.entries(caveat)) {
     assert.match(translations[locale]['home.cap.gdpr.body'], pattern, `${locale}: home.cap.gdpr.body`);
   }
+  const weights = { en: /weights/, tr: /ağırlıklar/, de: /Gewichte/, fr: /poids/, es: /pesos/, zh: /权重/ };
+  for (const [locale, pattern] of Object.entries(weights)) {
+    assert.match(translations[locale]['compliance.gdpr17.body'], pattern, `${locale}: purge does not change trained weights`);
+  }
   const html = fs.readFileSync(path.join(root, 'site', 'index.html'), 'utf8');
-  assert.match(html, /trained weights are not changed/, 'index.html static fallback');
+  const fallback = html.match(/data-i18n-html="home\.cap\.gdpr\.body">([^<]*(?:<code>[^<]*<\/code>[^<]*)*)<\/p>/);
+  assert.ok(fallback, 'index.html keeps a static fallback for the card');
+  assert.equal(fallback[1], translations.en['home.cap.gdpr.body'], 'the static fallback equals the English string');
 });

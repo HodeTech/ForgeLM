@@ -145,7 +145,8 @@ için kullandığı aynı per-output-dir salt'ı yeniden kullanılır.
 Madde 15 erişim talepleri kendisi de subject'in verisini audit log'a
 sızdırmamalıdır.  Salt'lı form, compliance reviewer'ın aynı subject
 için Madde 17 (purge) ve Madde 15 (reverse-pii) olaylarını cleartext
-görmeden ilişkilendirmesini sağlar (digest'ler eşleşir).
+görmeden ilişkilendirmesini sağlar (`--row-id` ve `--query`'ye aynı değeri
+verdiğinizde digest'ler eşleşir).
 
 **Identifier tipleri** (`--type`): `literal` (varsayılan), `email`,
 `phone`, `tr_id`, `us_ssn`, `iban`, `credit_card`, `custom`.

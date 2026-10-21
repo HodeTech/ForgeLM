@@ -202,14 +202,14 @@
       <article class="article-card">
         <span class="article-num">GDPR Art. 15</span>
         <h3 data-i18n="compliance.gdpr15.title">Right of access</h3>
-        <p data-i18n-html="compliance.gdpr15.body"><code>forgelm reverse-pii</code> scans masked JSONL corpora for plaintext residuals or salted SHA-256 digests of a data-subject identifier and reports every row of every split where that subject appears. It finds only what is literally in the files you scan: raw sources and the trained model are not searched, and handling an access request stays your process.</p>
+        <p data-i18n-html="compliance.gdpr15.body"><code>forgelm reverse-pii</code> scans JSONL corpora for plaintext occurrences, or for salted SHA-256 digests written by an external masking pipeline, of a data-subject identifier and reports every line, in the files you scan, that contains it. It is an input to your Article 15 response, which must also give a copy of the data and the Article 15(1)(a)-(h) information; raw sources and the trained model are not searched.</p>
         <div class="article-evidence"><b>forgelm reverse-pii</b></div>
       </article>
 
       <article class="article-card">
         <span class="article-num">GDPR Art. 17</span>
         <h3 data-i18n="compliance.gdpr17.title">Right to erasure</h3>
-        <p data-i18n-html="compliance.gdpr17.body"><code>forgelm purge</code> deletes a data-subject's rows from training corpora and stamps <code>data.erasure_requested</code> + <code>data.erasure_completed</code> events into the append-only audit log so post-deletion runs are forensically linked to the erasure event.</p>
+        <p data-i18n-html="compliance.gdpr17.body"><code>forgelm purge</code> deletes rows by id from a training corpus and records <code>data.erasure_requested</code> + <code>data.erasure_completed</code> events in the append-only audit log. It is one step of an Article 17 erasure: trained weights, source documents and copies elsewhere are not changed.</p>
         <div class="article-evidence"><b>forgelm purge</b></div>
       </article>
     </div>
