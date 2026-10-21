@@ -43,8 +43,7 @@ Exit-code contract (per ``docs/standards/error-handling.md``):
 - 0 — success or a successful ``--check-policy`` report (report-not-gate
   semantic per design §10 Q5).
 - 1 — config error (unknown ``row-id``, no matching run-scoped target,
-  missing corpus, mutually exclusive flag combination, a ``--config``
-  that cannot be loaded).
+  missing corpus, conflicting flags, an unloadable ``--config``).
 - 2 — runtime error (I/O, permission denied, atomic rename failure).
 """
 
@@ -1011,14 +1010,11 @@ def _legacy_staging_owned_by(legacy_dir: Path, run_id: str) -> bool:
 def _artefact_targets_for_run(base: Path, run_id: str) -> List[Path]:
     """Return ``compliance/`` files whose name embeds ``run_id`` as a token.
 
-    Any regular file directly under ``compliance/`` whose name carries
-    the run-id as a token is matched, whatever its extension.  The
-    standard bundle ForgeLM writes uses fixed basenames
-    (``compliance_report.json`` ...) with no run-id, so it is never matched
-    (pinned by ``test_artefacts_kind_finds_nothing_in_the_standard_fixed_name_bundle``).
-    The token-boundary check (`_filename_contains_run_id`) defends against
-    short-run-id false positives where a substring match would
-    accidentally pick up files belonging to a different run.
+    Any regular file directly under ``compliance/`` whose name carries the
+    run-id as a token matches, whatever its extension.  The standard bundle
+    (fixed basenames such as ``compliance_report.json``) has no run-id and is
+    never matched.  The token-boundary check (`_filename_contains_run_id`)
+    defends against short-run-id false positives on other runs' files.
     """
     compliance_dir = base / "compliance"
     if not compliance_dir.is_dir():

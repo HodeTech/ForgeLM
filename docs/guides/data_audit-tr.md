@@ -416,8 +416,9 @@ install ile uyumlu kalır.
 Varsayılan regex detector, yaygın yapılandırılmış identifier'ları (email,
 telefon, IBAN, kredi kartı, ulusal kimlik) kapsar. Her biri, kimliği belirli
 veya belirlenebilir bir gerçek kişiye ilişkin olduğunda GDPR Madde 4(1)
-kapsamında kişisel veridir; bir şirketin IBAN'ı veya santral numarası (Gerekçe 14) ile bir test
-kart numarası ise kişisel veri değildir.
+kapsamında kişisel veridir; bir tüzel kişinin IBAN'ı veya santral numarası, şahıs tacir gibi bir gerçek
+kişiyi tanımlamadıkça kişisel veri değildir (Gerekçe 14); bir test kart
+numarası ise hiç kimseye ilişkin değildir.
 Faz 12.5, regex'in doğal olarak kaçırdığı yapılandırılmamış identifier
 kategorilerini ekleyen opt-in **Presidio** ([data-privacy-stack/presidio](https://github.com/data-privacy-stack/presidio))
 adaptörünü ML-NER olarak üstüne ekler: `person`, `organization`,

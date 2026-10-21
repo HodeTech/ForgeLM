@@ -98,6 +98,7 @@ class ForgeConfig(BaseModel):
     data: DataConfig = Field(description="data block")
     leaf: Optional[LeafConfig] = Field(default=None, description="top-level leaf block")
     pipeline: Optional[PipelineConfig] = Field(default=None, description="pipeline block")
+    metadata: Dict[str, Any] = Field(default={}, description="opaque top-level map")
 """
 
 
@@ -158,7 +159,7 @@ class TestResolveAnnotation:
 class TestBuildSchemaMap:
     def test_forge_config_top_level_matches_declared_blocks(self, synthetic_schema):
         top = synthetic_schema["ForgeConfig"]
-        assert set(top.keys()) == {"model", "training", "data", "leaf", "pipeline"}
+        assert set(top.keys()) == {"model", "training", "data", "leaf", "pipeline", "metadata"}
 
     def test_alias_indexed_alongside_field_name(self, synthetic_schema):
         training = synthetic_schema["TrainingConfig"]
@@ -404,6 +405,57 @@ class TestUnknownTopLevelBlocks:
         out = capsys.readouterr().out
         assert "_KNOWN_OPEN: ops/a.md  gone" in out and "delete the row" in out
         assert tool.main([]) == 0
+
+    def test_an_opaque_top_level_field_is_not_an_unknown_block(self, tool, synthetic_schema):
+        top = synthetic_schema["ForgeConfig"]
+        snippet = self._snippet(tool, "metadata:\n  anything: 1\n")
+        assert tool.unknown_top_level_keys(snippet, top) == frozenset()
+        assert tool.check_snippet(snippet, synthetic_schema, top) == []
+
+    def test_a_row_with_extra_keys_does_not_exempt_a_trimmed_snippet(self, tool, synthetic_schema, tmp_path):
+        rows = {("ops/a.md", frozenset({"jobs", "name"})): "GitHub Actions"}
+        for lang in ("en", "tr"):
+            self._write(tmp_path, lang, "ops/a.md", "jobs: {}\n")
+        result = tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], rows, {})
+        assert [sorted(u.keys) for u in result.unknown_blocks] == [["jobs"], ["jobs"]]
+        assert [(row.page, row.keys) for row in result.stale_rows] == [("ops/a.md", frozenset({"jobs", "name"}))]
+
+    def test_a_page_directly_under_a_language_directory_is_scanned(self, tool, synthetic_schema, tmp_path):
+        for lang in ("en", "tr"):
+            self._write(tmp_path, lang, "flat.md", "chat: {}\n")
+        result = tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], {}, {})
+        assert [u.path.relative_to(tmp_path).as_posix() for u in result.unknown_blocks] == ["en/flat.md", "tr/flat.md"]
+
+    def test_main_strict_fails_on_a_nested_drift_alone_and_names_file_line_and_key(
+        self, tool, tmp_path, monkeypatch, capsys
+    ):
+        config_path = tmp_path / "config.py"
+        config_path.write_text(_SYNTHETIC_CONFIG, encoding="utf-8")
+        root = tmp_path / "usermanuals"
+        for lang in ("en", "tr"):
+            self._write(root, lang, "ops/a.md", "training:\n  bogus: 1\n")
+        monkeypatch.setattr(tool, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(tool, "USERMANUAL_ROOT", root)
+        monkeypatch.setattr(tool, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(tool, "_NON_FORGELM_YAML", {})
+        monkeypatch.setattr(tool, "_KNOWN_OPEN", {})
+        assert tool.main(["--strict"]) == 1
+        out = capsys.readouterr().out
+        assert "usermanuals/en/ops/a.md:3  training.bogus  (no such field on the ForgeConfig schema)" in out
+        assert tool.main([]) == 0
+
+    def test_an_empty_tree_fails_in_both_modes_even_with_empty_tables(self, tool, tmp_path, monkeypatch, capsys):
+        config_path = tmp_path / "config.py"
+        config_path.write_text(_SYNTHETIC_CONFIG, encoding="utf-8")
+        root = tmp_path / "usermanuals"
+        root.mkdir()
+        monkeypatch.setattr(tool, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(tool, "USERMANUAL_ROOT", root)
+        monkeypatch.setattr(tool, "_NON_FORGELM_YAML", {})
+        monkeypatch.setattr(tool, "_KNOWN_OPEN", {})
+        assert tool.main(["--strict"]) == 1
+        assert "no yaml blocks found" in capsys.readouterr().err
+        assert tool.main([]) == 1
 
     def test_main_strict_exits_one_on_an_unlisted_block_and_zero_in_advisory_mode(
         self, tool, synthetic_schema, tmp_path, monkeypatch, capsys

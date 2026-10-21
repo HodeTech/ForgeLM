@@ -43,7 +43,7 @@ test('claims the code does not back stay out of the site copy', () => {
       /surface every row/, /drops a data-subject's rows/],
     tr: [/ikili[- ]kontrol/i, /otomatik siler/, /GDPR uyumlu TTL/, /erişim-talebi tarafını karşılar/,
       /Slack, Teams, Discord veya/, /Slack \/ Teams \/ Discord/, /upstream'de uygulanır/, /her ikisi de audit log'a bağlı/,
-      /EU AI Act rehberiyle uyumlu/, /reddedilen modeller ne kadar tutulsun/, /adli olarak bağlanır/,
+      /EU AI Act rehberiyle uyumlu/, /reddedilen modeller ne kadar tutulsun/, /adli olarak .{0,30}bağlanır/,
       /geçtiği her split/, /yüzeye çıkarır/,
       /satırlarını eğitim corpus'undan düşürür/],
   };

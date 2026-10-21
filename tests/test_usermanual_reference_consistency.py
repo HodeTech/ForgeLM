@@ -93,12 +93,12 @@ _RETIRED_GDPR_CLAIMS = (
     r"17\(3\)\(b\)\s+preserves",
     r"17\(3\)\(b\)\s+(?:exemption|defence)",
     r"17\(3\)\(b\)\s+records",
-    r"17\(3\)\(b\) savunması",
+    r"17\(3\)\(b\)\s+savunması",
     r"17\(3\)\(b\)\s+audit\s*/\s*muhasebe",
-    r"17\(3\)\(b\) kayıt",
-    r"append-only (?:Article|Madde) 17\(3\)\(b\)",
+    r"17\(3\)\(b\)\s+kayıt",
+    r"append-only\s+(?:Article|Madde)\s+17\(3\)\(b\)",
     r"5\s+years\s+default\s+\(Article\s+5\(1\)\(e\)\)",
-    r"varsayılan 5 yıl \(Madde 5\(1\)\(e\)\)",
+    r"varsayılan\s+5\s+yıl\s+\(Madde\s+5\(1\)\(e\)\)",
     r"legal-obligation\s+record\s+under",
     r"compliant\s+out\s+of\s+the\s+box",
     r"years\s+\(Article\s+12\s+record-keeping\)|Article\s+12\s+record-keeping\s+baseline",
@@ -159,9 +159,9 @@ _PII_CITATION_FILES = (
 )
 
 _RETIRED_PII_CITATIONS = (
-    r"(?:Art(?:icle|\.)?|Madde|Md\.)\s*9\b",
+    r"\b(?:Art(?:icle|\.)?|Madde|Md\.)\s*9\b",
     r"GDPR[\s\u2010-\u2015-]*(?:mandat|requir)",
-    r"regulat\w*[\s\u2010-\u2015-]*mandated",
+    r"regulation[\s\u2010-\u2015-]+mandated",
     r"(?:Article|Madde)\s+10\b[^.\n]{0,60}(?:cares|concerned|önemsediği)",
     r"consensus\s+regulatory",
     r"konsensüs\s+regülatif",
@@ -201,7 +201,7 @@ def test_every_article_17_3_b_mention_is_conditional(rel: str) -> None:
     text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
     unqualified = [
         text[max(0, m.start() - 60) : m.end() + 60]
-        for m in re.finditer(r"17\(3\)\(b\)", text)
+        for m in re.finditer(r"17\s*\(3\)\s*\(b\)", text)
         if not _CONDITIONAL_17_3_B.search(text[max(0, m.start() - 250) : m.end() + 250])
     ]
     assert unqualified == [], f"{rel}: Article 17(3)(b) mentioned without a limiting qualifier: {unqualified}"

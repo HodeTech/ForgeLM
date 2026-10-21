@@ -628,9 +628,8 @@ def _add_audit_subcommand(subparsers) -> None:
             "Phase 12.5: language code passed to Presidio's NLP engine when --pii-ml is on "
             "(default: 'en'). Presidio raises a typed exception if no engine is registered for "
             "the requested language — surface it to the operator instead of silently "
-            "running an English NER on a non-English corpus. Set to e.g. 'de' on a German "
-            "corpus, or 'xx' (multilingual fallback) for a language without a dedicated spaCy "
-            "model such as Turkish, AND make sure the matching spaCy model is installed."
+            "running an English NER on a non-English corpus. Set to e.g. 'de' on a German corpus, or 'xx' (multilingual fallback) for a language "
+            "without a spaCy model such as Turkish, AND install the matching spaCy model."
         ),
     )
     p.add_argument(
