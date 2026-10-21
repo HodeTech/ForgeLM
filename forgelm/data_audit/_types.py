@@ -22,12 +22,13 @@ PII_TYPES: Tuple[str, ...] = ("email", "phone", "credit_card", "iban", "tr_id", 
 # Phase 11.5: PII severity grading. A flat ``{type: count}`` map gives zero
 # guidance to a compliance reviewer staring at the audit JSON — they have to
 # remember by hand that ``credit_card`` is materially worse than ``phone``.
-# The tiers below encode the consensus regulatory weighting (PCI-DSS for
-# financial; GDPR Art. 87 + Art. 32 and ENISA for national IDs) so the audit
-# surfaces a one-glance verdict via :data:`PII_SEVERITY`. Tweak the table when
-# local law disagrees — the audit honours whatever map is loaded at call time.
+# The tiers below are ForgeLM's default weighting, not a regulatory
+# classification (PCI DSS protects card numbers; GDPR Art. 87 lets Member
+# States restrict national identification numbers), so the audit surfaces a
+# one-glance verdict via :data:`PII_SEVERITY`. Tweak the table when local law
+# disagrees — the audit honours whatever map is loaded at call time.
 PII_SEVERITY: Dict[str, str] = {
-    # Financial / fully reversible identity theft -> highest weight.
+    # Financial identifiers -> highest weight: directly usable for fraud.
     "credit_card": "critical",
     "iban": "critical",
     # Government-issued identifiers -> high. Tied to a specific person and

@@ -150,9 +150,15 @@ The flat `pii_summary` map gives compliance reviewers no guidance on
 }
 ```
 
-The tier table is consensus regulatory weighting (PCI-DSS for financial
-identifiers; GDPR Art. 87 (national identification numbers) and Art. 32
-plus ENISA for government IDs). The `critical` tier now gates the command itself (next section); pipelines that also
+The tier table is ForgeLM's default weighting, not a classification taken
+from any regulation. Card numbers and IBANs are `critical` because they are
+directly usable for fraud (PCI DSS, an industry standard, covers card
+numbers; IBANs share the tier as ForgeLM's own judgement). National
+identifiers are `high` because they are hard to change and some national
+laws restrict their use (GDPR Art. 87 lets Member States set conditions for
+processing a national identification number). GDPR itself ranks no
+identifier: Art. 32 asks for security appropriate to the risk, an assessment
+this table helps you start and does not replace. The `critical` tier now gates the command itself (next section); pipelines that also
 want to stop at `high` should read `pii_severity.worst_tier` and refuse
 to publish without explicit review.
 
@@ -401,8 +407,10 @@ the audit reproducible (Annex IV requirement) and bare-install-friendly.
 ### ML-NER PII adapter — `--pii-ml` (Phase 12.5, opt-in)
 
 The default regex detector covers the common structured identifiers
-(email, phone, IBAN, credit card, national IDs), which are personal data
-under GDPR Art. 4(1).
+(email, phone, IBAN, credit card, national IDs). Each is personal data under
+GDPR Art. 4(1) when it relates to an identified or identifiable natural
+person; a company's IBAN or switchboard number, or a test card number, is not
+(recital 14).
 Phase 12.5 adds an opt-in **Presidio** ([data-privacy-stack/presidio](https://github.com/data-privacy-stack/presidio))
 adapter that layers ML-NER on top — adding the unstructured-identifier
 categories regex inherently misses: `person`, `organization`, `location`.

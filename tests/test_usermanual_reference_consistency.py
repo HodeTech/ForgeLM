@@ -163,6 +163,8 @@ _RETIRED_PII_CITATIONS = (
     r"GDPR[\s\u2010-\u2015-]*(?:mandat|requir)",
     r"regulat\w*[\s\u2010-\u2015-]*mandated",
     r"(?:Article|Madde)\s+10\b[^.\n]{0,60}(?:cares|concerned|önemsediği)",
+    r"consensus\s+regulatory",
+    r"konsensüs\s+regülatif",
 )
 
 _PURGE_ARTEFACT_WARNING_FILES = (
