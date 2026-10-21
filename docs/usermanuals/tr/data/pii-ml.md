@@ -40,7 +40,7 @@ spaCy modeli yoksa `forgelm audit --pii-ml` hiçbir satır taranmadan **önce** 
 $ forgelm audit data/customer-letters.jsonl --output ./audit/ --pii-ml
 ✓ format: instructions (8.400 satır)
 ⚠ PII: 12 email, 3 telefon (regex katmanı)
-⚠ PII (ML): 47 person, 18 organization, 9 location (Presidio)
+⚠ PII (ML): 47 person, 9 location (Presidio)
    en kötü kat: medium
 ```
 
@@ -52,17 +52,16 @@ Presidio bulguları aynı `pii_summary` ve `pii_severity` bloklarına disjoint k
     "email": 12,
     "phone": 3,
     "person": 47,
-    "organization": 18,
     "location": 9
   },
   "pii_severity": {
-    "by_tier": {"critical": 0, "high": 0, "medium": 59, "low": 30},
+    "by_tier": {"critical": 0, "high": 0, "medium": 59, "low": 12},
     "worst_tier": "medium"
   }
 }
 ```
 
-Presidio'nun varsayılan İngilizce yapılandırması `organization` etiketini yok sayar (çok yanlış pozitif üretir); bu yüzden `--pii-ml-language en` ile `organization` sayısı 0 kalır. Yukarıdaki rakamlar bu etiketi raporlayan bir dil modelini (örneğin `xx`) varsayar.
+Presidio'nun varsayılan İngilizce yapılandırması `organization` etiketini yok sayar (çok yanlış pozitif üretir); bu yüzden varsayılan `--pii-ml-language en` ile `organization` sayısı 0 kalır ve yukarıdaki örnek onu göstermez; bu etiketi raporlayan bir dil modeli (örneğin `--pii-ml-language xx`) bir `organization` sayısı ekler.
 
 ## Şiddet katmanları
 

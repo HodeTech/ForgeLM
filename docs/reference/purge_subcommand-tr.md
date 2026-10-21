@@ -58,7 +58,7 @@ JSONL eğitim corpus'undan `id` (veya `row_id`) field'ı ile tanımlanan tek bir
 
 Salt-okunur tarama. `<output_dir>` üzerinde dolaşır, her artefact'ın yaşını (kanonik: `final_model.staging.<run_id>/` dizini için koşumun ilk audit event'i, yoksa audit-log genesis `timestamp`'i; fallback: dosya sistemi `mtime`'ı, `age_source=mtime` flag'iyle) yüklü config'in `retention:` horizon'larıyla karşılaştırır ve yapısal bir ihlal listesi yayar.
 
-**Başarılı policy raporu her zaman 0 ile çıkar** (report-not-gate semantik, design §10 Q5). Config-load başarısızlıkları `EXIT_CONFIG_ERROR` (1) ile çıkar — eksik, okunamaz veya Pydantic doğrulamasından geçemeyen explicit `--config` non-zero olarak yüzeyselleşir; böylece operatör "loader başarısız" durumunu "ihlal yok" sanmaz. CI gate kuran operatörler `--output-format json` kullanıp `jq '.violations | length'`'e pipe eder.
+**Başarılı policy raporu her zaman 0 ile çıkar** (report-not-gate semantik, design §10 Q5). Config-load başarısızlıkları `EXIT_CONFIG_ERROR` (1) ile çıkar — eksik, okunamaz veya Pydantic doğrulamasından geçemeyen explicit `--config` non-zero olarak yüzeyselleşir; böylece operatör "loader başarısız" durumunu "ihlal yok" sanmaz. CI gate kuran operatörler `--output-format json` kullanıp `jq -e '.success and (.violations | length == 0)'` (exit 1 while violations exist)'e pipe eder.
 
 ## Salt çözümlemesi
 

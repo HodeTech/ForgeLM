@@ -68,7 +68,7 @@ $ forgelm purge --check-policy --config configs/run.yaml --output-dir ./outputs
 
 Salt-okunur tarama. Output dizinini gezer, her artefact'ın yaşını (canonical: `final_model.staging.<run_id>/` dizini için koşumun ilk audit event'i, yoksa audit-log genesis `timestamp`'i; fallback: filesystem `mtime` + `age_source=mtime` flag'i ile) yüklü config'in `retention:` horizon'larına karşı kıyaslar ve structured violation list yayar.
 
-**Başarılı policy raporları 0 ile çıkar** (rapor-değil-gate semantiği — design §10 Q5). Config-load başarısızlıkları `EXIT_CONFIG_ERROR` (sıfır olmayan) ile çıkar: eksik / okunamayan / Pydantic validation'ı geçemeyen explicit `--config`, "loader failed" durumunu "ihlal yok" sanmamak için `EXIT_CONFIG_ERROR` olarak yüzeye çıkar. CI gate isteyen operatörler `--output-format json` kullanır ve `jq '.violations | length'`'e pipe'lar; bu, public exit-code kontratını `0/1/2/3/4` her ForgeLM subcommand'ında tutarlı tutar.
+**Başarılı policy raporları 0 ile çıkar** (rapor-değil-gate semantiği — design §10 Q5). Config-load başarısızlıkları `EXIT_CONFIG_ERROR` (sıfır olmayan) ile çıkar: eksik / okunamayan / Pydantic validation'ı geçemeyen explicit `--config`, "loader failed" durumunu "ihlal yok" sanmamak için `EXIT_CONFIG_ERROR` olarak yüzeye çıkar. CI gate isteyen operatörler `--output-format json` kullanır ve `jq -e '.success and (.violations | length == 0)'` (exit 1 while violations exist)'e pipe'lar; bu, public exit-code kontratını `0/1/2/3/4` her ForgeLM subcommand'ında tutarlı tutar.
 
 ## `retention:` config block'u
 
@@ -146,7 +146,9 @@ Madde 15 erişim talepleri kendisi de subject'in verisini audit log'a
 sızdırmamalıdır.  Salt'lı form, compliance reviewer'ın aynı subject
 için Madde 17 (purge) ve Madde 15 (reverse-pii) olaylarını cleartext
 görmeden ilişkilendirmesini sağlar (`--row-id` ve `--query`'ye aynı değeri
-verdiğinizde digest'ler eşleşir).
+verdiğinizde, aynı `--output-dir`'i ve aynı salt kaynağını kullandığınızda
+digest'ler eşleşir: purge için `FORGELM_AUDIT_SECRET` ayarlıysa aynı secret ile
+`--salt-source env_var` kullanarak sorgulayın).
 
 **Identifier tipleri** (`--type`): `literal` (varsayılan), `email`,
 `phone`, `tr_id`, `us_ssn`, `iban`, `credit_card`, `custom`.

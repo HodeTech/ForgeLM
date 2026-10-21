@@ -68,7 +68,7 @@ $ forgelm purge --check-policy --config configs/run.yaml --output-dir ./outputs
 
 Read-only scan. Walks the output directory, compares each artefact's age (canonical: the run's first audit event for a `final_model.staging.<run_id>/` directory, else the audit log's genesis `timestamp`; fallback: filesystem `mtime` with `age_source=mtime` flag) against the loaded config's `retention:` horizons, and emits a structured violation list.
 
-**Successful policy reports exit 0** (report-not-gate semantic per design §10 Q5). Config-load failures exit with `EXIT_CONFIG_ERROR` (non-zero): an explicit `--config` that is missing, unreadable, or fails Pydantic validation surfaces as `EXIT_CONFIG_ERROR` so the operator does not mistake "loader failed" for "no violations". Operators wiring a CI gate use `--output-format json` and pipe to `jq '.violations | length'` themselves; this keeps the public exit-code contract `0/1/2/3/4` consistent across every ForgeLM subcommand.
+**Successful policy reports exit 0** (report-not-gate semantic per design §10 Q5). Config-load failures exit with `EXIT_CONFIG_ERROR` (non-zero): an explicit `--config` that is missing, unreadable, or fails Pydantic validation surfaces as `EXIT_CONFIG_ERROR` so the operator does not mistake "loader failed" for "no violations". Operators wiring a CI gate use `--output-format json` and pipe to `jq -e '.success and (.violations | length == 0)'` (exit 1 while violations exist) themselves; this keeps the public exit-code contract `0/1/2/3/4` consistent across every ForgeLM subcommand.
 
 ## The `retention:` config block
 
@@ -144,8 +144,10 @@ access requests must not themselves leak the subject's data into the
 audit log.  The salted form is a stable per-identifier fingerprint
 that lets a compliance reviewer correlate Article 17 (purge) and
 Article 15 (reverse-pii) events for the same subject (the digests match
-when you pass the same value to `--row-id` and `--query`) without seeing
-the cleartext.
+when you pass the same value to `--row-id` and `--query`, use the same
+`--output-dir`, and use the same salt source: if `FORGELM_AUDIT_SECRET` was set
+for the purge, query with `--salt-source env_var` and the same secret) without
+seeing the cleartext.
 
 **Identifier types** (`--type`): `literal` (default), `email`,
 `phone`, `tr_id`, `us_ssn`, `iban`, `credit_card`, `custom`.  All

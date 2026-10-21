@@ -1122,7 +1122,7 @@ def _run_purge_check_policy(args, output_format: str) -> None:
 
     Always exits 0 (per design §10 Q5: report-not-gate semantic).
     Operators wiring a CI gate use ``--output-format json`` and pipe
-    to ``jq '.violations | length'`` themselves.
+    to ``jq -e '.violations | length == 0'`` themselves.
 
     Strict config loading: ``--check-policy`` is the one purge mode
     where the operator explicitly asked for a retention report.  A

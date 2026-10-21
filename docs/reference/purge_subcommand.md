@@ -58,7 +58,7 @@ Erases a single row identified by its `id` (or `row_id`) field from a JSONL trai
 
 Read-only scan. Walks `<output_dir>`, compares each artefact's age (canonical: the run's first audit event for a `final_model.staging.<run_id>/` directory, else the audit log's genesis `timestamp`; fallback: filesystem `mtime` with `age_source=mtime`) against the loaded config's `retention:` horizons, and emits a structured violation list.
 
-**Successful policy reports always exit 0** (report-not-gate semantic per design §10 Q5). Config-load failures exit `EXIT_CONFIG_ERROR` (1) — an explicit `--config` that is missing, unreadable, or fails Pydantic validation surfaces as a non-zero so the operator does not mistake "loader failed" for "no violations". Operators wiring a CI gate use `--output-format json` and pipe to `jq '.violations | length'` themselves.
+**Successful policy reports always exit 0** (report-not-gate semantic per design §10 Q5). Config-load failures exit `EXIT_CONFIG_ERROR` (1) — an explicit `--config` that is missing, unreadable, or fails Pydantic validation surfaces as a non-zero so the operator does not mistake "loader failed" for "no violations". Operators wiring a CI gate use `--output-format json` and pipe to `jq -e '.success and (.violations | length == 0)'` (exit 1 while violations exist) themselves.
 
 ## Salt resolution
 

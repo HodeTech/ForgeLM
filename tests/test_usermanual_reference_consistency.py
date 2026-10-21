@@ -196,15 +196,56 @@ def test_retired_pii_citations_stay_out(rel: str) -> None:
     assert found == [], f"{rel} still attributes the PII detector set or tiers to the wrong GDPR provision: {found}"
 
 
+_ARTICLE_17_3_B = re.compile(r"17\s*\(3\)\s*\(b\)")
+# A block ends at a blank line, a list item or a table row; a hard-wrapped newline inside a sentence does not end it.
+_BLOCK_BREAK = re.compile(r"\n\s*\n|\n(?=\s*(?:[-*]\s|\d+\.\s|\|))")
+# A sentence ends at ". " before a capital, backtick, asterisk, pipe or dash ("Art. 17" does not end one).
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[A-ZÇĞİÖŞÜ`*|\-])")
+# The sentence after a mention only belongs to its claim when it picks the claim up ("It applies only to the extent ...").
+_CONTINUES_THE_CLAIM = re.compile(r"(?:It|Each|Both|They|This|These|That|Bu|Her|Her biri|Bunlar|Her ikisi)\b")
+
+
+def unqualified_article_17_3_b_mentions(text: str) -> list:
+    """Return the Article 17(3)(b) mentions with no limiting qualifier in their own sentence.
+
+    A qualifier in the next sentence counts only when that sentence continues the claim; one in an earlier or an
+    unrelated sentence, or in another list item, row or paragraph, does not.
+    """
+    bad = []
+    for block in _BLOCK_BREAK.split(text):
+        sentences = _SENTENCE_BREAK.split(block)
+        for index, sentence in enumerate(sentences):
+            if not _ARTICLE_17_3_B.search(sentence) or _CONDITIONAL_17_3_B.search(sentence):
+                continue
+            following = sentences[index + 1] if index + 1 < len(sentences) else ""
+            if _CONTINUES_THE_CLAIM.match(following.lstrip()) and _CONDITIONAL_17_3_B.search(following):
+                continue
+            bad.append(sentence.strip()[:120])
+    return bad
+
+
 @pytest.mark.parametrize("rel", _GDPR_CLAIM_FILES)
 def test_every_article_17_3_b_mention_is_conditional(rel: str) -> None:
     text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
-    unqualified = [
-        text[max(0, m.start() - 60) : m.end() + 60]
-        for m in re.finditer(r"17\s*\(3\)\s*\(b\)", text)
-        if not _CONDITIONAL_17_3_B.search(text[max(0, m.start() - 250) : m.end() + 250])
-    ]
+    unqualified = unqualified_article_17_3_b_mentions(text)
     assert unqualified == [], f"{rel}: Article 17(3)(b) mentioned without a limiting qualifier: {unqualified}"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_bad"),
+    [
+        ("Article 17(3)(b) applies only to the extent a specific obligation requires it.", 0),
+        ("Article 17(3)(b) can justify keeping entries.  It applies only to the extent an obligation requires it.", 0),
+        ("Access is limited only to staff.  Article 17(3)(b) exempts every audit log.", 1),
+        ("Article 17(3)(b) exempts every audit log.\n\nAccess is limited only to staff.", 1),
+        ("- Art. 17(3)(b) preserves audit records.\n- Retention applies only to the extent the user sets.", 1),
+        ("Madde 17(3)(b) audit kayıtlarını korur.", 1),
+        ("Madde 17(3)(b) yalnızca belirli bir yükümlülüğün gerektirdiği ölçüde uygulanır.", 0),
+        ("Article 17 (3) (b) is a blanket defence.", 1),
+    ],
+)
+def test_the_article_17_3_b_invariant_ties_the_qualifier_to_its_own_claim(text: str, expected_bad: int) -> None:
+    assert len(unqualified_article_17_3_b_mentions(text)) == expected_bad
 
 
 @pytest.mark.parametrize("rel", _PURGE_ARTEFACT_WARNING_FILES)

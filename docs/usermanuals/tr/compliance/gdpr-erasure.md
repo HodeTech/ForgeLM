@@ -100,8 +100,8 @@ Chain satırı cleartext identifier'ı asla taşımaz — salt audit log'un kend
 | Kod | Anlamı |
 |---|---|
 | 0 | Başarı. İhlal bulunduğunda bile `forgelm purge --check-policy` 0 ile çıkar (report-not-gate semantik). Eşleşme bulunmadığında bile `forgelm reverse-pii` 0 ile çıkar (Madde 15 "kayıt yok"u geçerli yanıt olarak açıkça kabul eder). |
-| 1 | Config hatası: kötü flag'ler, hatalı regex, `--run-id` ile eşleşen staging dizini / compliance dosyası yok, yüklenemeyen bir `--config`, yazılamaz `--audit-dir`. |
-| 2 | Runtime hatası: I/O başarısızlığı, izin reddedildi, ReDoS SIGALRM timeout, atomic-rename başarısızlığı. |
+| 1 | Config hatası: kötü flag'ler, hatalı regex, `--run-id` ile eşleşen staging dizini / compliance dosyası yok, yüklenemeyen bir `--config`. |
+| 2 | Runtime hatası: I/O başarısızlığı, izin reddedildi, yazılamaz `--audit-dir`, ReDoS SIGALRM timeout, atomic-rename başarısızlığı. |
 
 Kod 3 (`EXIT_EVAL_FAILURE`) ve 4 (`EXIT_AWAITING_APPROVAL`) iki subcommand'ın da yüzeyinin parçası değildir.
 

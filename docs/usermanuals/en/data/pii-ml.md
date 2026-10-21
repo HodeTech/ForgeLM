@@ -40,7 +40,7 @@ Without the spaCy model, `forgelm audit --pii-ml` raises a typed `ImportError` *
 $ forgelm audit data/customer-letters.jsonl --output ./audit/ --pii-ml
 ✓ format: instructions (8,400 rows)
 ⚠ PII: 12 emails, 3 phone (regex layer)
-⚠ PII (ML): 47 person, 18 organization, 9 location (Presidio)
+⚠ PII (ML): 47 person, 9 location (Presidio)
    worst tier: medium
 ```
 
@@ -52,17 +52,16 @@ The Presidio findings merge into the same `pii_summary` and `pii_severity` block
     "email": 12,
     "phone": 3,
     "person": 47,
-    "organization": 18,
     "location": 9
   },
   "pii_severity": {
-    "by_tier": {"critical": 0, "high": 0, "medium": 59, "low": 30},
+    "by_tier": {"critical": 0, "high": 0, "medium": 59, "low": 12},
     "worst_tier": "medium"
   }
 }
 ```
 
-Presidio's default English configuration ignores the `organization` label (it produces many false positives), so with `--pii-ml-language en` the `organization` count stays 0; the figures above assume a language model that reports it, for example `xx`.
+Presidio's default English configuration ignores the `organization` label (it produces many false positives), so with the default `--pii-ml-language en` the `organization` count stays 0 and the example above shows none; a language model that reports it, for example `--pii-ml-language xx`, adds an `organization` count.
 
 ## Severity tiers
 

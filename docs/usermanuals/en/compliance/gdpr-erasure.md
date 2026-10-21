@@ -100,8 +100,8 @@ Both subcommands follow the project's `0/1/2/3/4` contract:
 | Code | Meaning |
 |---|---|
 | 0 | Success. `forgelm purge --check-policy` exits 0 even when violations are found (report-not-gate semantic). `forgelm reverse-pii` exits 0 even when no matches are found (Article 15 explicitly accepts "no records" as a valid answer). |
-| 1 | Config error: bad flags, malformed regex, no staging directory / compliance file matching `--run-id`, a `--config` that cannot be loaded, unwritable `--audit-dir`. |
-| 2 | Runtime error: I/O failure, permission denied, ReDoS SIGALRM timeout, atomic-rename failure. |
+| 1 | Config error: bad flags, malformed regex, no staging directory / compliance file matching `--run-id`, a `--config` that cannot be loaded. |
+| 2 | Runtime error: I/O failure, permission denied, unwritable `--audit-dir`, ReDoS SIGALRM timeout, atomic-rename failure. |
 
 Codes 3 (`EXIT_EVAL_FAILURE`) and 4 (`EXIT_AWAITING_APPROVAL`) are not part of either subcommand's surface.
 
