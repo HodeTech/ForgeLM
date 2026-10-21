@@ -162,8 +162,7 @@ kötü?* sorusunda sıfır rehberlik veriyor. Faz 11.5 yanına bir
 
 Tier tablosu konsensüs regülatif ağırlıklandırmadır (finansal
 kimlikler için PCI-DSS; devlet kimlikleri için GDPR Madde 87 (ulusal kimlik
-numaraları) ve Madde 32 + ENISA).
-`critical` katman artık komutun kendisini kapılar (sonraki bölüm);
+numaraları) ve Madde 32 + ENISA). `critical` katman artık komutun kendisini kapılar (sonraki bölüm);
 `high`'ta da durmak isteyen pipeline'lar `pii_severity.worst_tier`'i
 okumalı ve açık bir review olmadan yayınlamayı reddetmelidir.
 

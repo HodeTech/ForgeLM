@@ -85,14 +85,6 @@ _GDPR_CLAIM_FILES = (
     "docs/usermanuals/tr/compliance/human-oversight.md",
     "docs/qms/sop_change_management.md",
     "docs/qms/sop_change_management-tr.md",
-    "forgelm/data_audit/_types.py",
-    "forgelm/data_audit/_pii_regex.py",
-    "forgelm/data_audit/_optional.py",
-    "pyproject.toml",
-    "docs/guides/data_audit.md",
-    "docs/guides/data_audit-tr.md",
-    "docs/usermanuals/en/data/pii-ml.md",
-    "docs/usermanuals/tr/data/pii-ml.md",
     "docs/usermanuals/en/compliance/gdpr.md",
     "docs/usermanuals/tr/compliance/gdpr.md",
 )
@@ -133,13 +125,6 @@ _RETIRED_GDPR_CLAIMS = (
     r"onurlandırır",
     r"17\(3\)\(b\)\s+protects",
     r"17\(3\)\(b\)[^.\n]{0,40}\bkorur",
-    # The PII tier table and detector set are not a GDPR-mandated list: Art. 9 covers special categories (not
-    # national IDs, which Art. 87 addresses) and Art. 10 covers criminal-conviction data.
-    r"GDPR\s+Art\.\s+9\s*\+\s*ENISA",
-    r"GDPR\s+Md\.\s+9\s*\+\s*ENISA",
-    r"Article\s+10\s+cares",
-    r"Madde\s+10'un\s+önemsediği",
-    r"GDPR-mandated",
     # The GDPR / KVKK page (CR-A11-001): masking is a fixed regex set, not anonymisation, and no audit report can
     # confirm that a model holds nothing about a person.
     r"identifiable\s+subjects\s+are\s+removed",
@@ -156,6 +141,28 @@ _RETIRED_GDPR_CLAIMS = (
     r"SHA-256\s+manifest\s+for\s+tamper",
     r"Source\s+attribution\s+\(which\s+document",
     r"pii_mask:",
+)
+
+# The PII tier table and the regex detector set are not a GDPR-mandated list: Art. 9 covers special categories (not
+# national IDs, which Art. 87 addresses), Art. 10 covers criminal-conviction data, and the identifiers are personal
+# data because of Art. 4(1).  Nothing in these files has a legitimate reason to cite Art. 9 or to say GDPR mandates
+# or requires the detector set, so the guard bans the citation broadly instead of one exact old sentence.
+_PII_CITATION_FILES = (
+    "forgelm/data_audit/_types.py",
+    "forgelm/data_audit/_pii_regex.py",
+    "forgelm/data_audit/_optional.py",
+    "pyproject.toml",
+    "docs/guides/data_audit.md",
+    "docs/guides/data_audit-tr.md",
+    "docs/usermanuals/en/data/pii-ml.md",
+    "docs/usermanuals/tr/data/pii-ml.md",
+)
+
+_RETIRED_PII_CITATIONS = (
+    r"(?:Art(?:icle|\.)?|Madde|Md\.)\s*9\b",
+    r"GDPR[\s\u2010-\u2015-]*(?:mandat|requir)",
+    r"regulat\w*[\s\u2010-\u2015-]*mandated",
+    r"(?:Article|Madde)\s+10\b[^.\n]{0,60}(?:cares|concerned|önemsediği)",
 )
 
 _PURGE_ARTEFACT_WARNING_FILES = (
@@ -178,6 +185,13 @@ def test_retired_gdpr_claims_stay_out(rel: str) -> None:
 # Positive invariant, so a reworded version of the retired claim cannot slip past the phrase list: every mention of
 # Article 17(3)(b) must sit next to a qualifier that limits it ("to the extent", "still requires", Turkish "ölçüde").
 _CONDITIONAL_17_3_B = re.compile(r"to\s+the\s+extent|only\s+to\s|still\s+requires|ölçüde", re.IGNORECASE)
+
+
+@pytest.mark.parametrize("rel", _PII_CITATION_FILES)
+def test_retired_pii_citations_stay_out(rel: str) -> None:
+    text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
+    found = [pattern for pattern in _RETIRED_PII_CITATIONS if re.search(pattern, text, re.IGNORECASE)]
+    assert found == [], f"{rel} still attributes the PII detector set or tiers to the wrong GDPR provision: {found}"
 
 
 @pytest.mark.parametrize("rel", _GDPR_CLAIM_FILES)

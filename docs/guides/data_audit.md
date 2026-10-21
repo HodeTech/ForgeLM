@@ -152,8 +152,7 @@ The flat `pii_summary` map gives compliance reviewers no guidance on
 
 The tier table is consensus regulatory weighting (PCI-DSS for financial
 identifiers; GDPR Art. 87 (national identification numbers) and Art. 32
-plus ENISA for government IDs). The `critical`
-tier now gates the command itself (next section); pipelines that also
+plus ENISA for government IDs). The `critical` tier now gates the command itself (next section); pipelines that also
 want to stop at `high` should read `pii_severity.worst_tier` and refuse
 to publish without explicit review.
 
