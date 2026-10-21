@@ -222,6 +222,27 @@ def _reject_duplicate_judge_keys(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]
     return result
 
 
+# A bracket that opens and closes within this many characters on one line, with no other bracket, brace or quote
+# between, is a prose note such as "[source]" or "[see below]"; any other "[" that does not decode as JSON is
+# treated as the start of a container that was never closed.
+_PROSE_BRACKET_MAX_CHARS = 80
+_PROSE_BRACKET_BREAKERS = frozenset('[{}"\n')
+
+
+def _is_prose_bracket(text: str, bracket_at: int) -> bool:
+    """True when the ``[`` at ``bracket_at`` closes right away as a plain note (see ``_PROSE_BRACKET_MAX_CHARS``).
+
+    Deliberately not a bracket count and not string-aware: the reply is prose, so a stray ``"`` or ``]`` could
+    otherwise hide an opener or cancel one.  Anything that is not a tight pair counts as an unterminated array.
+    """
+    for char in text[bracket_at + 1 : bracket_at + 2 + _PROSE_BRACKET_MAX_CHARS]:
+        if char == "]":
+            return True
+        if char in _PROSE_BRACKET_BREAKERS:
+            return False
+    return False
+
+
 def _parse_judge_json(text: str) -> Dict[str, Any]:
     """Parse an object reply or a single score object; fail closed on ambiguity."""
     text = text.strip()
@@ -232,6 +253,7 @@ def _parse_judge_json(text: str) -> Dict[str, Any]:
         except json.JSONDecodeError:
             candidates = []
             malformed_object_seen = False
+            malformed_array_seen = False
             offset = 0
             while offset < len(text):
                 if text[offset] not in "{[":
@@ -243,10 +265,13 @@ def _parse_judge_json(text: str) -> Dict[str, Any]:
                     # The extent of an undecodable "{" is unknown, so a score object
                     # after it may be nested inside it (a judge's own verdict that
                     # quotes the planted block without escaping the quotes) and cannot
-                    # be told apart from the verdict.  Only "{" is tracked: prose such
-                    # as "[source]" starts with "[" and says nothing about objects.
+                    # be told apart from the verdict.  An undecodable "[" is the same
+                    # (an array that was never closed), unless it is a plain prose note
+                    # such as "[source]" that closes right away.
                     if text[offset] == "{":
                         malformed_object_seen = True
+                    elif not _is_prose_bracket(text, offset):
+                        malformed_array_seen = True
                     offset += 1
                     continue
                 # Skip the entire value so nested objects and braces in strings
@@ -257,6 +282,8 @@ def _parse_judge_json(text: str) -> Dict[str, Any]:
                 if isinstance(candidate, dict) and "score" in candidate:
                     if malformed_object_seen:
                         raise ValueError("Score object follows an undecodable object in judge response") from None
+                    if malformed_array_seen:
+                        raise ValueError("Score object follows an unterminated array in judge response") from None
                     candidates.append(candidate)
             if len(candidates) != 1:
                 raise ValueError("Expected exactly one score object in judge response") from None
