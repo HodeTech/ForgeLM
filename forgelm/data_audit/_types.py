@@ -23,8 +23,8 @@ PII_TYPES: Tuple[str, ...] = ("email", "phone", "credit_card", "iban", "tr_id", 
 # guidance to a compliance reviewer staring at the audit JSON — they have to
 # remember by hand that ``credit_card`` is materially worse than ``phone``.
 # The tiers below encode the consensus regulatory weighting (PCI-DSS for
-# financial; GDPR Art. 9 + ENISA for identifiers) so the audit surfaces a
-# one-glance verdict via :data:`PII_SEVERITY`. Tweak the table when local
+# financial; GDPR Art. 87 + Art. 32 and ENISA for national IDs) so the audit
+# surfaces a one-glance verdict via :data:`PII_SEVERITY`. Tweak the table when local
 # law disagrees — the audit honours whatever map is loaded at call time.
 PII_SEVERITY: Dict[str, str] = {
     # Financial / fully reversible identity theft -> highest weight.

@@ -172,7 +172,7 @@ ingestion-scale = [
 # categories (person / organization / location) that the regex detector
 # inherently misses. Heavyweight install (≈ 50 MB spaCy model on first
 # analyzer build), so opt-in only — the regex set already covers the
-# GDPR-mandated structured identifiers (email, phone, IBAN, credit card,
+# common structured identifiers (email, phone, IBAN, credit card,
 # national IDs).
 ingestion-pii-ml = [
   "presidio-analyzer>=2.2.0,<3.0.0",

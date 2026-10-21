@@ -5,7 +5,7 @@ description: Regex PII katmanının üzerine person / organization / location te
 
 # ML-NER PII Tespiti — `--pii-ml`
 
-Varsayılan [PII Maskeleme](#/data/pii-masking) katmanı regex-anchored'dır ve GDPR Madde 10'un önemsediği *yapılandırılmış* identifier'ları (email, telefon, IBAN, kredi kartı, ulusal kimlikler) kapsar. Presidio NER, regex'in doğal olarak kaçırdığı *yapılandırılmamış* identifier'ları ekler: kişi isimleri, organizasyon isimleri, coğrafi yerler.
+Varsayılan [PII Maskeleme](#/data/pii-masking) katmanı regex-anchored'dır ve GDPR Madde 4(1) kapsamında veriyi kişisel yapan *yapılandırılmış* identifier'ları (email, telefon, IBAN, kredi kartı, ulusal kimlikler; ayrıca Madde 87) kapsar. Presidio NER, regex'in doğal olarak kaçırdığı *yapılandırılmamış* identifier'ları ekler: kişi isimleri, organizasyon isimleri, coğrafi yerler.
 
 Bu katman **opt-in**'dir. `--pii-ml` geçilmediğinde varsayılan audit + ingest davranışı değişmez.
 

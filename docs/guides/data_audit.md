@@ -151,7 +151,8 @@ The flat `pii_summary` map gives compliance reviewers no guidance on
 ```
 
 The tier table is consensus regulatory weighting (PCI-DSS for financial
-identifiers; GDPR Art. 9 + ENISA for government IDs). The `critical`
+identifiers; GDPR Art. 87 (national identification numbers) and Art. 32
+plus ENISA for government IDs). The `critical`
 tier now gates the command itself (next section); pipelines that also
 want to stop at `high` should read `pii_severity.worst_tier` and refuse
 to publish without explicit review.
@@ -400,8 +401,9 @@ the audit reproducible (Annex IV requirement) and bare-install-friendly.
 
 ### ML-NER PII adapter — `--pii-ml` (Phase 12.5, opt-in)
 
-The default regex detector covers the structured identifiers EU AI Act
-Article 10 cares about (email, phone, IBAN, credit card, national IDs).
+The default regex detector covers the common structured identifiers
+(email, phone, IBAN, credit card, national IDs), which are personal data
+under GDPR Art. 4(1).
 Phase 12.5 adds an opt-in **Presidio** ([data-privacy-stack/presidio](https://github.com/data-privacy-stack/presidio))
 adapter that layers ML-NER on top — adding the unstructured-identifier
 categories regex inherently misses: `person`, `organization`, `location`.

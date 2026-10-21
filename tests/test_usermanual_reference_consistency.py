@@ -85,6 +85,14 @@ _GDPR_CLAIM_FILES = (
     "docs/usermanuals/tr/compliance/human-oversight.md",
     "docs/qms/sop_change_management.md",
     "docs/qms/sop_change_management-tr.md",
+    "forgelm/data_audit/_types.py",
+    "forgelm/data_audit/_pii_regex.py",
+    "forgelm/data_audit/_optional.py",
+    "pyproject.toml",
+    "docs/guides/data_audit.md",
+    "docs/guides/data_audit-tr.md",
+    "docs/usermanuals/en/data/pii-ml.md",
+    "docs/usermanuals/tr/data/pii-ml.md",
 )
 
 _RETIRED_GDPR_CLAIMS = (
@@ -123,6 +131,13 @@ _RETIRED_GDPR_CLAIMS = (
     r"onurlandırır",
     r"17\(3\)\(b\)\s+protects",
     r"17\(3\)\(b\)[^.\n]{0,40}\bkorur",
+    # The PII tier table and detector set are not a GDPR-mandated list: Art. 9 covers special categories (not
+    # national IDs, which Art. 87 addresses) and Art. 10 covers criminal-conviction data.
+    r"GDPR\s+Art\.\s+9\s*\+\s*ENISA",
+    r"GDPR\s+Md\.\s+9\s*\+\s*ENISA",
+    r"Article\s+10\s+cares",
+    r"Madde\s+10'un\s+önemsediği",
+    r"GDPR-mandated",
 )
 
 _PURGE_ARTEFACT_WARNING_FILES = (

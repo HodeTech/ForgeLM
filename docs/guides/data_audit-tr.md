@@ -161,7 +161,8 @@ kötü?* sorusunda sıfır rehberlik veriyor. Faz 11.5 yanına bir
 ```
 
 Tier tablosu konsensüs regülatif ağırlıklandırmadır (finansal
-kimlikler için PCI-DSS; devlet kimlikleri için GDPR Md. 9 + ENISA).
+kimlikler için PCI-DSS; devlet kimlikleri için GDPR Madde 87 (ulusal kimlik
+numaraları) ve Madde 32 + ENISA).
 `critical` katman artık komutun kendisini kapılar (sonraki bölüm);
 `high`'ta da durmak isteyen pipeline'lar `pii_severity.worst_tier`'i
 okumalı ve açık bir review olmadan yayınlamayı reddetmelidir.
@@ -406,8 +407,9 @@ install ile uyumlu kalır.
 
 ### ML-NER PII adaptörü — `--pii-ml` (Faz 12.5, opt-in)
 
-Varsayılan regex detector, EU AI Act Madde 10'un önemsediği yapılandırılmış
-identifier'ları (email, telefon, IBAN, kredi kartı, ulusal kimlik) kapsar.
+Varsayılan regex detector, yaygın yapılandırılmış identifier'ları (email,
+telefon, IBAN, kredi kartı, ulusal kimlik) kapsar; bunlar GDPR Madde 4(1)
+kapsamında kişisel veridir.
 Faz 12.5, regex'in doğal olarak kaçırdığı yapılandırılmamış identifier
 kategorilerini ekleyen opt-in **Presidio** ([data-privacy-stack/presidio](https://github.com/data-privacy-stack/presidio))
 adaptörünü ML-NER olarak üstüne ekler: `person`, `organization`,
