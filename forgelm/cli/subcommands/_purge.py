@@ -28,9 +28,9 @@ Audit-event vocabulary (six new events per design §5.1):
   the chain shows ``request → fail`` instead of ``request → complete``,
   so an operator scanning the log can spot the unfinished erasure.
 - ``data.erasure_warning_memorisation`` — corpus row erasure ran
-  while a ``final_model/`` exists for any run that consumed this
-  corpus.  The row is gone from disk but may still be memorised in
-  the trained weights.
+  while a ``final_model/`` directory exists directly under the output
+  dir (which runs consumed the corpus is not determined).  The row is
+  gone from disk but may still be memorised in the trained weights.
 - ``data.erasure_warning_synthetic_data_present`` — corpus row erasure
   ran with synthetic-data snapshots present; the row may have produced
   derivative snippets the row→snippet mapping no longer connects.
@@ -40,10 +40,11 @@ Audit-event vocabulary (six new events per design §5.1):
 
 Exit-code contract (per ``docs/standards/error-handling.md``):
 
-- 0 — success or ``--check-policy`` report (gate-not-report semantic
-  per design §10 Q5).
-- 1 — config error (unknown ``row-id``, missing corpus, mutually
-  exclusive flag combination, conflicting retention values).
+- 0 — success or a successful ``--check-policy`` report (report-not-gate
+  semantic per design §10 Q5).
+- 1 — config error (unknown ``row-id``, no matching run-scoped target,
+  missing corpus, mutually exclusive flag combination, a ``--config``
+  that cannot be loaded).
 - 2 — runtime error (I/O, permission denied, atomic rename failure).
 """
 
@@ -386,9 +387,9 @@ def _detect_warning_conditions(
 
     Per design §5.1:
 
-    - ``data.erasure_warning_memorisation`` when any ``final_model/``
-      exists in the operator's output dir tree (a trained model may
-      have memorised the row).
+    - ``data.erasure_warning_memorisation`` when a ``final_model/``
+      directory exists directly under the operator's output dir (a
+      trained model may have memorised the row).
     - ``data.erasure_warning_synthetic_data_present`` when any
       ``synthetic_data*.jsonl`` exists (the row may have produced
       derivative snippets).
@@ -1010,9 +1011,12 @@ def _legacy_staging_owned_by(legacy_dir: Path, run_id: str) -> bool:
 def _artefact_targets_for_run(base: Path, run_id: str) -> List[Path]:
     """Return ``compliance/`` files whose name embeds ``run_id`` as a token.
 
-    Compliance bundle filenames embed the run-id; we accept both
-    ``compliance_<run_id>.json`` and ``annex_iv_<run_id>.json``.  The
-    token-boundary check (`_filename_contains_run_id`) defends against
+    Any regular file directly under ``compliance/`` whose name carries
+    the run-id as a token is matched, whatever its extension.  The
+    standard bundle ForgeLM writes uses fixed basenames
+    (``compliance_report.json`` ...) with no run-id, so it is never matched
+    (pinned by ``test_artefacts_kind_finds_nothing_in_the_standard_fixed_name_bundle``).
+    The token-boundary check (`_filename_contains_run_id`) defends against
     short-run-id false positives where a substring match would
     accidentally pick up files belonging to a different run.
     """

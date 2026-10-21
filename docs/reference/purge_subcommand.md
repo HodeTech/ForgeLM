@@ -56,7 +56,7 @@ Erases a single row identified by its `id` (or `row_id`) field from a JSONL trai
 
 ### Retention-policy report (`--check-policy`)
 
-Read-only scan. Walks `<output_dir>`, compares each artefact's age (canonical: audit-log genesis `timestamp`; fallback: filesystem `mtime` with `age_source=mtime`) against the loaded config's `retention:` horizons, and emits a structured violation list.
+Read-only scan. Walks `<output_dir>`, compares each artefact's age (canonical: the run's first audit event for a `final_model.staging.<run_id>/` directory, else the audit log's genesis `timestamp`; fallback: filesystem `mtime` with `age_source=mtime`) against the loaded config's `retention:` horizons, and emits a structured violation list.
 
 **Successful policy reports always exit 0** (report-not-gate semantic per design §10 Q5). Config-load failures exit `EXIT_CONFIG_ERROR` (1) — an explicit `--config` that is missing, unreadable, or fails Pydantic validation surfaces as a non-zero so the operator does not mistake "loader failed" for "no violations". Operators wiring a CI gate use `--output-format json` and pipe to `jq '.violations | length'` themselves.
 
@@ -71,7 +71,7 @@ The per-output-dir salt at `<output_dir>/.forgelm_audit_salt` is created on firs
 
 ## Cross-tool digest correlation with `forgelm reverse-pii`
 
-When `forgelm purge --row-id <value>` and `forgelm reverse-pii --query <value> --salt-source per_dir` run against the **same** `<output_dir>` (i.e. consume the same `.forgelm_audit_salt`), the `target_id` field on `data.erasure_*` events and the `query_hash` field on `data.access_request_query` events are byte-identical. A compliance reviewer can therefore correlate Article 17 erasures and Article 15 access requests for the same data subject without ever seeing the cleartext identifier. Pinned by `tests/test_reverse_pii.py::test_purge_target_id_matches_reverse_pii_query_hash_on_same_output_dir`.
+When `forgelm purge --row-id <value>` and `forgelm reverse-pii --query <value> --salt-source per_dir` run against the **same** `<output_dir>` (i.e. consume the same `.forgelm_audit_salt`) and `FORGELM_AUDIT_SECRET` was unset for the purge (`salt_source=per_dir`; when it was set, the purge XORs it into the salt and records `salt_source=env_var`, so query with `--salt-source env_var` and the same secret instead), the `target_id` field on `data.erasure_*` events and the `query_hash` field on `data.access_request_query` events are byte-identical. A compliance reviewer can therefore correlate Article 17 erasures and Article 15 access requests for the same data subject without ever seeing the cleartext identifier. Pinned by `tests/test_reverse_pii.py::test_purge_target_id_matches_reverse_pii_query_hash_on_same_output_dir`.
 
 ## Audit events emitted
 
@@ -84,7 +84,7 @@ All six events ride the common envelope from [`audit_event_catalog.md`](audit_ev
 | `data.erasure_failed` | Disk operation raised, OR no matching row/run, OR multi-row policy refused on ambiguity. | All `requested` fields + `error_class`, `error_message` |
 | `data.erasure_warning_memorisation` | Row erasure × a `final_model/` directory exists directly under `--output-dir` (literal name; `--output-dir` defaults to the corpus's directory, so pass your training output directory). ForgeLM does not determine which runs consumed the corpus. | All `completed` fields + `affected_run_ids` |
 | `data.erasure_warning_synthetic_data_present` | Row erasure × `synthetic_data*.jsonl` exists in `output_dir`. | All `completed` fields + `synthetic_files` |
-| `data.erasure_warning_external_copies` | Loaded config has a non-empty `webhook` block; downstream consumers may have received notices. | All `completed` fields + `webhook_targets` (redacted URLs) |
+| `data.erasure_warning_external_copies` | **Row mode only, when `--config` is given.** Loaded config has a non-empty `webhook` block; downstream consumers may have received notices. | All `completed` fields + `webhook_targets` (redacted URLs) |
 
 `forgelm verify-audit <output_dir>/audit_log.jsonl` continues to validate the chain after any number of erasure events — the tool appends new events, never rewrites old ones.
 
@@ -93,7 +93,7 @@ All six events ride the common envelope from [`audit_event_catalog.md`](audit_ev
 | Code | Meaning |
 |---|---|
 | 0 | Success, or a successful `--check-policy` report (report-not-gate semantic). |
-| 1 | Config error: unknown `--row-id`, no staging directory / compliance file matching `--run-id` (including `--kind artefacts` against the standard fixed-name bundle), missing `--corpus`, mutually-exclusive flag combination, conflicting `staging_ttl_days` values, or `--check-policy --config <path>` that is missing / unreadable / fails Pydantic validation. |
+| 1 | Config error: unknown `--row-id`, no staging directory / compliance file matching `--run-id` (including `--kind artefacts` against the standard fixed-name bundle), missing `--corpus`, mutually-exclusive flag combination, or `--check-policy --config <path>` that is missing / unreadable / fails Pydantic validation. |
 | 2 | Runtime error: I/O failure, permission denied, atomic-rename failure. |
 
 `--check-policy` never returns code 3 or 4. Codes 3 (`EXIT_EVAL_FAILURE`) and 4 (`EXIT_AWAITING_APPROVAL`) are reserved for the training pipeline and are not part of this subcommand's surface.
@@ -145,14 +145,14 @@ For `--dry-run` invocations the same envelope appears with `dry_run: true` and w
       "path": "/abs/path/outputs/run42/compliance/data_audit_report.json",
       "age_days": 121.4,
       "horizon_days": 90,
-      "age_source": "audit_genesis"
+      "age_source": "audit"
     }
   ],
   "count": 1
 }
 ```
 
-`age_source` ∈ `{audit_genesis, mtime}` — `audit_genesis` is the canonical age (run's first audit event timestamp); `mtime` is the filesystem fallback flagged for the operator's awareness.
+`age_source` ∈ `{audit, mtime}` — `audit` is the canonical age (run's first audit event timestamp); `mtime` is the filesystem fallback flagged for the operator's awareness.
 
 **Failure envelope (any mode)** — `_output_error_and_exit`:
 

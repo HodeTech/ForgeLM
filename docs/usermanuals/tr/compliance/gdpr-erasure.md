@@ -29,7 +29,7 @@ forgelm purge --row-id "ali@example.com" --corpus train.jsonl \
 
 # Koşum-kapsamlı silme
 forgelm purge --run-id fg-abc123def456 --kind staging --output-dir ./outputs
-forgelm purge --run-id fg-abc123def456 --kind artefacts --output-dir ./outputs
+forgelm purge --run-id fg-abc123def456 --kind artefacts --output-dir ./outputs   # standart pakette hiçbir şey bulmaz, aşağıya bakın
 
 # Retention-policy raporu (salt-okunur)
 forgelm purge --check-policy --config configs/run.yaml --output-dir ./outputs
@@ -49,9 +49,10 @@ Audit zincirine altı event yazılır (bkz. [GitHub'daki Audit Event Kataloğu](
 ### Neyi YAPMAZ
 
 - **Modelleri yeniden eğitmez.** Bir satırı corpus'tan kaldırmak onu zaten eğitilmiş ağırlıklardan unutturmaz — silinmiş satır olmadan tam yeniden eğitim tek doğru çözümdür. Tool `data.erasure_warning_memorisation` yayar; böylece boşluk görünür olur.
-- **Audit log'unu silmez.** Tool silmeyi geçmişi yeniden yazmak yerine yeni bir event olarak kaydeder. Veri sahibini adlandıran girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır ve veri sorumlusu nedenini belgeler: girdiler amaçları için hâlâ gereklidir ya da Madde 17(3) istisnalarından biri uygulanır. Örneğin Madde 17(3)(b) yalnızca belirli bir AB veya üye devlet hukuku yükümlülüğü işlemeyi gerektirdiği ölçüde uygulanır ve bu yükümlülüğü adlandırabilmeniz gerekir.
-- **`--kind artefacts` ile standart compliance paketini bulmaz.** Trainer run id içermeyen sabit dosya adları yazar (`compliance_report.json`, `training_manifest.yaml`, ...); resolver ise yalnızca onu embed eden dosya adlarını eşler. Normal bir çıktı dizininde komut hiçbir şey bulmaz, `data.erasure_failed` (`NoMatchingArtefacts`) yayar, 1 ile çıkar ve hiçbir şey silmez; paketi depolama katmanınız üzerinden kaldırın.
-- **Downstream tüketicilere bildirim göndermez.** Webhook receiver'ları, dataset mirror'ları ve deploy edilmiş model endpoint'leri operatörün runtime-katmanı sorumluluğudur (Madde 17(2)). `data.erasure_warning_external_copies` event'ı açık hatırlatmadır.
+- **Audit log'unu silmez.** Tool silmeyi geçmişi yeniden yazmak yerine yeni bir event olarak kaydeder. Veri sahibini adlandıran girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır ve veri sorumlusu nedenini belgeler: girdiler amaçları için hâlâ gereklidir ya da Madde 17(3) istisnalarından biri uygulanır. Örneğin Madde 17(3)(b) yalnızca AB hukukundan ya da üye devlet hukukundan doğan belirli bir yükümlülüğün işlemeyi gerektirdiği ölçüde uygulanır ve bu yükümlülüğü adlandırabilmeniz gerekir.
+- **İşaretsiz legacy `final_model.staging/` dizinini silmez.** `--kind staging`, `final_model.staging.<run_id>/` dizinini siler; legacy `final_model.staging/` dizinini yalnızca içinde run id'ye eşit bir `staging_run_id` dosyası varsa siler. ForgeLM bu işaretçiyi yazmaz, bu yüzden işaretsiz bir legacy dizini kendiniz silin.
+- **`--kind artefacts` ile standart compliance paketini bulmaz.** Trainer run id içermeyen sabit dosya adları yazar (`compliance_report.json`, `training_manifest.yaml`, ...); resolver ise yalnızca run id'yi embed eden dosya adlarını eşler. Normal bir çıktı dizininde komut hiçbir şey bulmaz, `data.erasure_failed` (`NoMatchingArtefacts`) yayar, 1 ile çıkar ve hiçbir şey silmez; paketi depolama katmanınız üzerinden kaldırın.
+- **Downstream tüketicilere bildirim göndermez.** Webhook receiver'ları, dataset mirror'ları ve deploy edilmiş model endpoint'leri operatörün runtime-katmanı sorumluluğudur (Madde 19 verinin ifşa edildiği her alıcıya bildirim yapılmasını ister; Madde 17(2) ise kontrolör veriyi kamuya açtıysa makul adımlar ekler). `data.erasure_warning_external_copies` event'ı açık hatırlatmadır.
 
 ## Madde 15 — `forgelm reverse-pii`
 
@@ -88,9 +89,9 @@ Chain satırı cleartext identifier'ı asla taşımaz — salt audit log'un kend
 
 İki primitif kasıtlı olarak ayrıdır:
 
-- `FORGELM_AUDIT_SECRET` rotasyonu **yalnızca chain HMAC anahtarını** rotate eder. Identifier hash'leri per-output-dir salt'tan türetilir ve **env-var rotasyonlarına karşı stabildir**; rotasyondan sonra aynı `--output-dir` üzerinde mount edilen bir `forgelm reverse-pii` sorgusu, rotasyondan ÖNCE kaydedilmiş `forgelm purge` event'leriyle hâlâ korele eder.
+- `FORGELM_AUDIT_SECRET` rotasyonu chain HMAC anahtarını **ve**, değişken ayarlıysa, identifier-hash salt'ını rotate eder: `forgelm purge` secret'ın ilk 16 byte'ını per-output-dir salt'a XOR'lar ve `salt_source=env_var` kaydeder; bu yüzden `target_id` digest'leri secret ile değişir. Bir `forgelm reverse-pii` sorgusu, önceki purge event'leriyle yalnızca aynı salt kaynağını kullandığında korele eder (aynı secret ile `--salt-source env_var` ya da değişken olmadan koşturulmuş purge'lar için `--salt-source per_dir`).
 - Birini incelemek diğerini ifşa etmez.
-- Per-output-dir salt, identifier hash'lemenin tek girdisidir; output dizininin yaşam süresi boyunca kalıcıdır ve chain HMAC'in rotasyon kadansını cross-tool digest korelasyonundan izole eder.
+- Per-output-dir salt identifier hash'lemenin her zaman bir girdisidir ve output dizininin yaşam süresi boyunca kalıcıdır; secret, ayarlıysa, ikinci girdidir.
 
 ## Exit kodları
 
@@ -99,7 +100,7 @@ Chain satırı cleartext identifier'ı asla taşımaz — salt audit log'un kend
 | Kod | Anlamı |
 |---|---|
 | 0 | Başarı. İhlal bulunduğunda bile `forgelm purge --check-policy` 0 ile çıkar (report-not-gate semantik). Eşleşme bulunmadığında bile `forgelm reverse-pii` 0 ile çıkar (Madde 15 "kayıt yok"u geçerli yanıt olarak açıkça kabul eder). |
-| 1 | Config hatası: kötü flag'ler, okunamaz corpus, hatalı regex, çakışan retention değerleri, yazılamaz `--audit-dir`. |
+| 1 | Config hatası: kötü flag'ler, hatalı regex, `--run-id` ile eşleşen staging dizini / compliance dosyası yok, yüklenemeyen bir `--config`, yazılamaz `--audit-dir`. |
 | 2 | Runtime hatası: I/O başarısızlığı, izin reddedildi, ReDoS SIGALRM timeout, atomic-rename başarısızlığı. |
 
 Kod 3 (`EXIT_EVAL_FAILURE`) ve 4 (`EXIT_AWAITING_APPROVAL`) iki subcommand'ın da yüzeyinin parçası değildir.

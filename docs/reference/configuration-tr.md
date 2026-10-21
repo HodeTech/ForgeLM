@@ -269,11 +269,12 @@ training:
 ## `retention` (İsteğe bağlı — GDPR Madde 17 silme ufukları)
 
 Uyumluluk, eğitim ve değerlendirme artefaktları için saklama ufuklarını
-belirler. Ufuklar, operatörün belirlediği saklama sınırlarıdır. GDPR Madde 5(1)(e)
-"saklama sınırlaması"nın (sabit süre yok: veri yalnızca gerektiği kadar tutulabilir)
-uygulanmasına yardımcı olur ve Madde 17 kapsamındaki silme işlemlerini destekler
-(talepler gereksiz gecikme olmaksızın, Madde 12(3)'teki bir aylık süre içinde, iki ay daha uzatılabilir şekilde yanıtlanır).
-Değerleri kendi gereklilik değerlendirmenizden seçin; varsayılanlar ForgeLM
+belirler. Ufuklar, GDPR Madde 5(1)(e) "saklama sınırlaması"nın (sabit süre yoktur:
+veri yalnızca gerektiği kadar tutulabilir) uygulanmasına yardımcı olan ve Madde 17
+kapsamındaki silme işlemlerini destekleyen, operatör tarafından belirlenen saklama
+sınırlarıdır (talepler gereksiz gecikmeden kaçınılarak, en geç Madde 12(3)'teki bir
+aylık süre içinde yanıtlanır; bu süre iki ay daha uzatılabilir). Değerleri kendi
+gereklilik (necessity) değerlendirmenize göre belirleyin; varsayılanlar ForgeLM
 tercihleridir, yasal süre değildir. Ufuklar **raporlanır**, zorlanmaz:
 `forgelm purge --check-policy` ufku aşanları listeler ve her zaman 0 ile çıkar;
 hiçbir şey otomatik silinmez, engellenmez ya da zamanlanmaz. `enforce` anahtarı
@@ -281,11 +282,11 @@ ayrılmıştır: henüz hiçbir komut onu okumaz.
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
-| `audit_log_retention_days` | int | `1825` (~5 yıl) | `forgelm purge --check-policy`'nin `audit_log.jsonl` dosyasını "geciken" olarak raporladığı gün sayısı (Madde 5(1)(e)). 5 yıllık varsayılan bir ForgeLM tercihidir, yasal süre değildir (duruma göre AI Act Md. 18(1), dokümantasyon 10 yıl, ve Md. 19(1) / 26(6), sistem logları en az altı ay). `0` süresiz saklamayı belirtir; girdilerin neden gerekli kaldığını veya dayandığınız yasal yükümlülüğü belgeleyin. |
+| `audit_log_retention_days` | int | `1825` (~5 yıl) | `forgelm purge --check-policy`'nin `audit_log.jsonl` dosyasını "geciken" olarak raporladığı gün sayısı (Madde 5(1)(e)). 5 yıllık varsayılan bir ForgeLM tercihidir, yasal süre değildir (uygulanabildiği ölçüde bkz. AI Act Madde 18(1): dokümantasyon 10 yıl; Madde 19(1) ve 26(6): sistem logları en az altı ay). `0` süresiz saklamayı belirtir; girdilerin neden gerekli kaldığını veya dayandığınız yasal yükümlülüğü belgeleyin. |
 | `staging_ttl_days` | int | `7` | `forgelm purge --check-policy`'nin bir `final_model.staging.<run_id>/` dizinini (ve legacy `final_model.staging/`'i) "geciken" olarak raporladığı yaş (koşumun ilk audit event'inden, yoksa audit log'un ilk event'inden, o da yoksa dizinin mtime'ından); hiçbir şey otomatik silinmez ve `forgelm reject` kararının zamanı kullanılmaz. `0` süresiz saklama anlamına gelir. v0.8.0'da kaldırılan `evaluation.staging_ttl_days` yerine geçer. |
-| `ephemeral_artefact_retention_days` | int | `90` | Uyumluluk paketleri, veri denetim raporları ve diğer çalışma kapsamlı türetilmiş artefaktların saklanma süresi (gün). `0` süresiz saklama. |
-| `raw_documents_retention_days` | int | `90` | İngest edilmiş ham belgelerin (PDF / DOCX / EPUB / TXT / Markdown) operatörün ingestion-output dizininde saklanma süresi (gün). `0` süresiz saklama. |
-| `enforce` | string | `"log_only"` | Ayrılmış politika modu. Henüz hiçbir komut onu okumaz: `"log_only"`, `"warn_on_excess"` ve `"block_on_excess"` kabul edilir ve aynı davranır; bir config son ikisinden birini ayarlarsa CLI uyarır. |
+| `ephemeral_artefact_retention_days` | int | `90` | `forgelm purge --check-policy`'nin `<output_dir>/compliance/` ve `<output_dir>/data_audit_report.json`'ı "geciken" olarak raporladığı yaş (gün; audit log'un ilk event'inden, yoksa mtime'dan); hiçbir şey silinmez. `0` süresiz saklama. |
+| `raw_documents_retention_days` | int | `90` | `forgelm purge --check-policy`'nin `<output_dir>/raw_documents/` veya `<output_dir>/ingestion_output/`'u (ingest edilmiş PDF / DOCX / EPUB / TXT / Markdown) "geciken" olarak raporladığı yaş (gün; audit log'un ilk event'inden, yoksa mtime'dan); hiçbir şey silinmez. `0` süresiz saklama. |
+| `enforce` | string | `"log_only"` | Ayrılmış politika modu. Hiçbir komut onu kullanmaz: `"log_only"`, `"warn_on_excess"` ve `"block_on_excess"` kabul edilir ve aynı davranır; bir config son ikisinden birini ayarlarsa eğitim ve `--dry-run` uyarır. |
 
 > **Kaldırıldı:** `evaluation.staging_ttl_days` (v0.5.5 itibarıyla kullanımdan
 > kaldırılmıştı) v0.8.0'da kaldırılmıştır. Artık geçerli tek form

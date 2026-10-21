@@ -43,7 +43,7 @@ Phase 21 closes the gap with a real implementation.  This Phase 20 document spec
 | (e) Legal obligation | Court order. | (out of scope — operator handles externally; tool just records) |
 | (f) Child's data offered without parental consent | Subject was a minor at point of collection. | (out of scope — operator handles externally) |
 
-**Article 17(2)** requires the controller to inform downstream processors / publishers of the erasure when the data has been disclosed.  ForgeLM is not a publisher (we do not run inference); the deployer is.  We document this boundary in the operator guide rather than implement push notification.
+**Article 19** requires the controller to tell each recipient the data was disclosed to about the erasure, and **Article 17(2)** adds reasonable steps to inform other controllers where the controller made the data public.  ForgeLM is not a publisher (we do not run inference); the deployer is.  We document this boundary in the operator guide rather than implement push notification.
 
 **Article 17(3)** lists exemptions where erasure does **not** apply — including (3)(b) compliance with a legal obligation under Union or Member State law (or a task in the public interest or in the exercise of official authority) and (3)(e) the establishment, exercise or defence of legal claims.  Each applies only to the extent the processing is necessary for that obligation, task or claim, and the controller has to name it: no provision of EU law protects a training audit log merely because ForgeLM produces it.  Erasure is also owed only where an Art. 17(1) ground exists, so entries may equally stay because the processing is still necessary for its purpose on its own Art. 6 basis.
 
@@ -72,7 +72,7 @@ The four artefact kinds the operator can act on in-tool: `corpus_rows`, `staging
 
 Article 5(1)(e) requires personal data to be kept "no longer than is necessary".  ForgeLM ships a config block so the operator can declare their retention horizon and the tool can warn / refuse runs that violate it.
 
-> **As shipped:** the horizons are only *reported* by `forgelm purge --check-policy` (read-only, always exit 0).  `retention.enforce` is reserved: no command reads it, so nothing warns, refuses or deletes on age.  Ages come from the audit log first (the run's first event, else the log's first event) and fall back to `mtime`.  Read the warn / refuse and `mtime` passages below as the original design; §12 lists the deviations.
+> **As shipped:** the horizons are only *reported* by `forgelm purge --check-policy` (read-only, always exit 0).  `retention.enforce` is reserved: no command acts on it (the training CLI only logs a warning when it is set), so nothing warns, refuses or deletes on age.  Ages come from the audit log first (the run's first event, else the log's first event) and fall back to `mtime`.  Read the warn / refuse and `mtime` passages below as the original design; §12 lists the deviations.
 
 ### 3.1 Prior-state acknowledgement (audited 2026-05-02)
 
@@ -102,16 +102,13 @@ class RetentionConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # Audit log retention horizon. EU AI Act Article 12(2) sets the floor
-    # at 6 months; Article 11 (technical documentation) extends to 10 years
-    # post-deployment for high-risk systems. GDPR Article 30 record-keeping
-    # commonly demands ≥3 years. We default to 1825 days (5 years) as a
-    # middle-of-the-road horizon that satisfies the AI Act floor with a
-    # comfortable margin AND covers the GDPR controller-record requirement.
-    # Operators with stricter compliance (Article 11 deployer obligation,
-    # ISO 27001 retention contracts) can set this higher; Article 12(2)
-    # operators with no AI Act obligation can lower to 180 (6 months).
-    # Set to 0 to disable horizon enforcement entirely (not recommended).
+    # Audit log retention horizon: the age at which `forgelm purge
+    # --check-policy` reports `audit_log.jsonl` as overdue.  1825 days
+    # (5 years) is a ForgeLM choice, not a legal period: GDPR Art. 5(1)(e)
+    # sets no fixed period.  Align it with the obligations that apply to you
+    # (for example AI Act Art. 18(1), documentation kept 10 years, and
+    # Art. 19(1) / 26(6), system logs at least six months) and with your
+    # own necessity assessment.  Set to 0 to retain indefinitely.
     audit_log_retention_days: int = Field(default=1825, ge=0)
 
     # Staging directory time-to-live. Article 14 staging is meant to hold a
@@ -165,7 +162,7 @@ Three sites:
 
 For each retention horizon:
 - Compare artefact `mtime` against `now - <horizon>_days`.
-- If older, the artefact has overstayed the declared lawful basis.
+- If older, the artefact has passed the operator-declared retention horizon; review whether it is still necessary.
 - The audit log itself is **never deleted automatically** even when the policy says it has overstayed.  The tool only flags; the operator makes the deletion call by hand, after checking whether the entries are still necessary for their purpose or a specific Union or Member State obligation (Art. 17(3)(b)) or legal claim (Art. 17(3)(e)) still requires them.
 
 The compliance artefacts (`compliance/*.json`) are tied to a specific run; their lifetime is the run's lifetime, not a separate horizon.  In-place deletion is specified via `forgelm purge --run-id <id> --kind artefacts` (§4.1) which is meant to remove `<output_dir>/compliance/*.json` for the named run while leaving the audit log + final model intact (as shipped, the resolver only matches filenames that embed the run id, and the standard bundle uses fixed basenames, so it finds nothing — see the purge reference) — useful when an operator wants to regenerate the bundle after an Article 17 corpus erasure changed the lineage.  Whole-`<output_dir>` deletion remains the operator's manual escalation when the entire run is being scrubbed.
@@ -357,7 +354,7 @@ What ForgeLM does **not** do:
 - Forgetting from already-trained model weights (this is an active research
   area called "machine unlearning"; the only proper mitigation today is
   full retraining without the erased data).
-- Pushing erasure notices to downstream processors (Article 17(2)) — that
+- Pushing erasure notices to downstream recipients (Article 19; Article 17(2) where the data was made public) — that
   is your runtime layer's responsibility, not the training toolkit's.
 
 See [`docs/guides/gdpr_erasure.md`](../guides/gdpr_erasure.md) for the operator how-to
@@ -478,6 +475,9 @@ The design above shipped in v0.5.5, with the deviations listed after this list:
 
 **Deviations from the design, as shipped today:**
 
-- `--kind artefacts` matches `compliance/` filenames that embed the run id as a token.  The exporter writes fixed basenames (`compliance_report.json`, `training_manifest.yaml`, ...), so on a standard output directory the command finds nothing: it fails safe (nothing is deleted, `data.erasure_failed` with `NoMatchingArtefacts`, exit 1).  The fixed allow-list with an ownership proof that §4.4 describes is open work.
-- Retention horizons are reported by `forgelm purge --check-policy` and never enforced; `retention.enforce` is reserved and no command reads it.
+- `--kind artefacts` matches `compliance/` filenames that embed the run id as a token.  The exporter writes fixed basenames (`compliance_report.json`, `training_manifest.yaml`, ...), so on a standard output directory the command finds nothing: it fails safe (nothing is deleted, `data.erasure_failed` with `NoMatchingArtefacts`, exit 1).  The fixed allow-list that §4.4 describes, plus an ownership check, is open work.
+- Retention horizons are reported by `forgelm purge --check-policy` and never enforced; `retention.enforce` is reserved and no command acts on it (the training CLI logs a warning when it is set).  There is no trainer pre-flight gate: nothing exits 3 or refuses a run on age.
 - The legacy `final_model.staging/` is purged only when it holds a `staging_run_id` marker equal to the run id.  Nothing in ForgeLM writes that marker.
+- `--check-policy` ages the raw-documents directories (`raw_documents/`, `ingestion_output/`) from the audit log's first event, not per run; it reads `--config` only when given (no `./forgelm.yaml` discovery) and, without a `retention:` block, reports that nothing was checked.  `--dry-run` combined with `--check-policy` is not rejected.
+- The `data.erasure_warning_external_copies` event is emitted in row mode only, and only when `--config` is given; run mode never loads the config.
+- The `recommendation` field listed for the new events in §5.1 is not emitted, and the test table in §7 predates the shipped tests (for example, a dry-run appends audit events, and erasing the same row twice exits 1 with `NoMatchingRow`); `tests/test_gdpr_erasure.py` is the source of truth.

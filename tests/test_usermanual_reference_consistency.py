@@ -99,7 +99,7 @@ _RETIRED_GDPR_CLAIMS = (
     r"varsayılan 5 yıl \(Madde 5\(1\)\(e\)\)",
     r"legal-obligation\s+record\s+under",
     r"compliant\s+out\s+of\s+the\s+box",
-    r"Article\s+12\s+record-keeping\s+(?:baseline|\))",
+    r"years\s+\(Article\s+12\s+record-keeping\)|Article\s+12\s+record-keeping\s+baseline",
     r"Horizons\s+honou?r\s+GDPR",
     r"removed\s+by\s+default\s+after\s+a\s+defined\s+retention\s+horizon",
     r"after\s+a\s+`forgelm\s+reject`\s+decision\s+before\s+scheduled\s+cleanup",
@@ -111,9 +111,18 @@ _RETIRED_GDPR_CLAIMS = (
     r"fiziksel\s+olarak\s+prune",
     r"until\s+retention\s+expires",
     r"retention\s+süresi\s+dolana",
-    r"justified\s+only\s+to\s+the\s+extent",
-    r"name\s+the\s+Union\s+or\s+Member\s+State\s+obligation",
     r"compliance/\*\.json`\s+files\s+whose\s+name\s+embeds",
+    r"staging\s+directory,?\s+or\s+(?:the\s+|a\s+)?compliance\s+bundle",
+    r"compliance\s+bundle'ı(?:nı)?\s+(?:siler|atomik)",
+    r"compliance/\*\.json`\s+dosyalar",
+    r"retain\s+staging\s+model\s+after\s+forgelm\s+reject",
+    r"forgelm\s+reject\s+sonrası\s+staging",
+    r"TTL\s+after\s+`forgelm\s+reject`",
+    r"planlı\s+temizlenmeden",
+    r"bir\s+iş\s+haftası",
+    r"onurlandırır",
+    r"17\(3\)\(b\)\s+protects",
+    r"17\(3\)\(b\)[^.\n]{0,40}\bkorur",
 )
 
 _PURGE_ARTEFACT_WARNING_FILES = (
@@ -131,6 +140,22 @@ def test_retired_gdpr_claims_stay_out(rel: str) -> None:
     text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
     found = [pattern for pattern in _RETIRED_GDPR_CLAIMS if re.search(pattern, text, re.IGNORECASE)]
     assert found == [], f"{rel} still carries retired GDPR wording: {found}"
+
+
+# Positive invariant, so a reworded version of the retired claim cannot slip past the phrase list: every mention of
+# Article 17(3)(b) must sit next to a qualifier that limits it ("to the extent", "still requires", Turkish "ölçüde").
+_CONDITIONAL_17_3_B = re.compile(r"to\s+the\s+extent|only\s+to\s|still\s+requires|ölçüde", re.IGNORECASE)
+
+
+@pytest.mark.parametrize("rel", _GDPR_CLAIM_FILES)
+def test_every_article_17_3_b_mention_is_conditional(rel: str) -> None:
+    text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
+    unqualified = [
+        text[max(0, m.start() - 60) : m.end() + 60]
+        for m in re.finditer(r"17\(3\)\(b\)", text)
+        if not _CONDITIONAL_17_3_B.search(text[max(0, m.start() - 250) : m.end() + 250])
+    ]
+    assert unqualified == [], f"{rel}: Article 17(3)(b) mentioned without a limiting qualifier: {unqualified}"
 
 
 @pytest.mark.parametrize("rel", _PURGE_ARTEFACT_WARNING_FILES)

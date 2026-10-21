@@ -21,7 +21,7 @@
 
 - Re-train models. Removing a row from the corpus does not unmemorise it from already-trained weights — full retraining without the erased row is the only proper mitigation. The tool emits `data.erasure_warning_memorisation` when a `final_model/` directory exists directly under `--output-dir` (which defaults to the corpus's directory, so pass your training output directory), so the operator sees the gap. It cannot tell which runs consumed the corpus.
 - Delete entries from the audit log itself. The tool records the erasure as a new event rather than rewriting history. Whether entries that reference the data subject may be kept is the controller's decision, and the controller documents why: the entries are still necessary for their purpose, or an Article 17(3) exception applies. Article 17(3)(b), for example, applies only to the extent a specific Union or Member State legal obligation requires the processing (such as the 10-year documentation keeping of AI Act Art. 18(1) where the log forms part of your technical documentation, or the log-retention duties of Art. 19(1) and Art. 26(6) for logs a deployed high-risk system generates), and you have to be able to name that obligation.
-- Push erasure notices to downstream consumers. Webhook receivers, dataset mirrors, deployed model endpoints, and third-party fine-tunes derived from a published checkpoint are the operator's runtime-layer responsibility (Article 17(2)). The tool emits `data.erasure_warning_external_copies` when the loaded config has a webhook block, so a downstream consumer querying the audit log sees the explicit reminder.
+- Push erasure notices to downstream consumers. Webhook receivers, dataset mirrors, deployed model endpoints, and third-party fine-tunes derived from a published checkpoint are the operator's runtime-layer responsibility (Article 19 requires telling each recipient the data was disclosed to; Article 17(2) adds reasonable steps where the controller made the data public). The tool emits `data.erasure_warning_external_copies` when the loaded config has a webhook block, so a downstream consumer querying the audit log sees the explicit reminder.
 - Erase backups. Replicas, snapshots, and storage backups outside the operator's `<output_dir>` are infrastructure-side concerns.
 
 ## Three modes
@@ -38,7 +38,7 @@ $ forgelm purge \
 
 The tool:
 
-1. Resolves the per-output-dir salt at `<output_dir>/.forgelm_audit_salt` (creates it on first use; mode `0600`; XOR'd with `FORGELM_AUDIT_SECRET[:16]` if the env var is set). **Note:** this XOR feeds **identifier hashing only** — the audit-chain HMAC key is derived independently as `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)` (see [`docs/qms/access_control.md`](../qms/access_control.md) §3.4 / `forgelm/compliance.py:104-114`). The two primitives are intentionally separate.
+1. Resolves the per-output-dir salt at `<output_dir>/.forgelm_audit_salt` (creates it on first use; mode `0600`; XOR'd with `FORGELM_AUDIT_SECRET[:16]` if the env var is set). **Note:** this XOR feeds **identifier hashing only** — the audit-chain HMAC key is derived independently as `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)` (see [`docs/qms/access_control.md`](../qms/access_control.md) §3.4 / `AuditLogger.__init__` in `forgelm/compliance.py`). The two primitives are intentionally separate.
 2. Writes `data.erasure_requested` to the audit log with the **hashed** target_id (`SHA-256(salt + value)`) and the operator-supplied justification.
 3. Locates the matching JSONL row by its `id` (or `row_id`) field — line-number fallback is **rejected** to defend against silent wrong-row deletion on a re-ordered file. ForgeLM does not currently provide an id-population helper (a `forgelm audit --add-row-ids` flag is on the Phase 28 backlog); operators with id-less corpora must pre-populate ids with an operator-side script (e.g. `jq -c 'to_entries | with_entries(...)'` or a one-shot Python loop) before invoking purge.
 4. Atomically rewrites the corpus (writes a sibling temp file + `os.replace`); operators get either the full pre-erasure file or the full post-erasure file, never a partial state.
@@ -58,7 +58,7 @@ $ forgelm purge --run-id fg-abc123def456 --kind artefacts --output-dir ./outputs
 
 - `--kind staging` removes `<output_dir>/final_model.staging.<run_id>/`, and the legacy `final_model.staging/` only if it carries a `staging_run_id` marker whose content equals the `<run_id>` (ForgeLM does not write that marker; otherwise remove the legacy directory yourself).
 - `--kind artefacts` removes any file directly under `<output_dir>/compliance/` whose name contains the `<run_id>` bounded by `_`, `-`, `.` or the start/end of the name (not only `.json`). **It does not find the standard bundle:** the trainer writes fixed basenames (`compliance_report.json`, `training_manifest.yaml`, ...) that contain no run id, so on a normal output directory the command finds nothing, emits `data.erasure_failed` (`NoMatchingArtefacts`), exits 1 and deletes nothing. Remove the bundle through your storage layer until the resolver is fixed.
-- `--kind logs` is **intentionally absent**: the audit log is append-only and the tool never deletes it (see the first list above for who decides whether its entries may be kept).
+- `--kind logs` is **intentionally absent**: the audit log is append-only and the tool never deletes it (see the "Does not" list above for who decides whether its entries may be kept).
 
 ### 3. Retention-policy report
 
@@ -66,7 +66,7 @@ $ forgelm purge --run-id fg-abc123def456 --kind artefacts --output-dir ./outputs
 $ forgelm purge --check-policy --config configs/run.yaml --output-dir ./outputs
 ```
 
-Read-only scan. Walks the output directory, compares each artefact's age (canonical: audit-log genesis `timestamp`; fallback: filesystem `mtime` with `age_source=mtime` flag) against the loaded config's `retention:` horizons, and emits a structured violation list.
+Read-only scan. Walks the output directory, compares each artefact's age (canonical: the run's first audit event for a `final_model.staging.<run_id>/` directory, else the audit log's genesis `timestamp`; fallback: filesystem `mtime` with `age_source=mtime` flag) against the loaded config's `retention:` horizons, and emits a structured violation list.
 
 **Successful policy reports exit 0** (report-not-gate semantic per design §10 Q5). Config-load failures exit with `EXIT_CONFIG_ERROR` (non-zero): an explicit `--config` that is missing, unreadable, or fails Pydantic validation surfaces as `EXIT_CONFIG_ERROR` so the operator does not mistake "loader failed" for "no violations". Operators wiring a CI gate use `--output-format json` and pipe to `jq '.violations | length'` themselves; this keeps the public exit-code contract `0/1/2/3/4` consistent across every ForgeLM subcommand.
 
@@ -98,7 +98,7 @@ Six new events ship with `forgelm purge` (catalogued in `docs/reference/audit_ev
 | `data.erasure_failed` | Disk operation raised, OR no matching row/run found, OR multi-row policy refused on ambiguity | All `requested` fields + `error_class`, `error_message` |
 | `data.erasure_warning_memorisation` | **Row mode only.** Row erasure × a `final_model/` directory exists directly under `--output-dir`. (Run mode does not emit memorisation warnings — the run-scoped `staging` / `artefacts` kinds are by definition pre-promotion.) | All `completed` fields + `affected_run_ids` |
 | `data.erasure_warning_synthetic_data_present` | **Row mode only.** Row erasure × `synthetic_data*.jsonl` exists in `output_dir`. (Run mode does not surface this warning — synthetic data is corpus-scoped, not run-scoped.) | All `completed` fields + `synthetic_files` |
-| `data.erasure_warning_external_copies` | Loaded config has a webhook block (both modes). | All `completed` fields + `webhook_targets` |
+| `data.erasure_warning_external_copies` | **Row mode only, when `--config` is given.** Loaded config has a webhook block. (Run mode never loads `--config`.) | All `completed` fields + `webhook_targets` |
 
 ## Verifying a chain post-erasure
 
@@ -109,7 +109,7 @@ Six new events ship with `forgelm purge` (catalogued in `docs/reference/audit_ev
 | Code | Meaning |
 |---|---|
 | 0 | Success, or a successful `--check-policy` report (report-not-gate semantic). |
-| 1 | Config error: unknown `--row-id`, missing `--corpus`, mutually-exclusive flag combination, conflicting `staging_ttl_days` values, or `--check-policy --config <path>` that is missing / unreadable / fails Pydantic validation. |
+| 1 | Config error: unknown `--row-id`, no staging directory / compliance file matching `--run-id` (including `--kind artefacts` against the standard fixed-name bundle), missing `--corpus`, mutually-exclusive flag combination, or `--check-policy --config <path>` that is missing / unreadable / fails Pydantic validation. |
 | 2 | Runtime error: I/O failure, permission denied, atomic-rename failure. |
 
 `--check-policy` never returns code 3. A successful report exits 0; a failure to load the supplied `--config` exits with `EXIT_CONFIG_ERROR` (non-zero) rather than degrading to a misleading "no violations" report. Operators wiring a CI gate compute the violation count from JSON output themselves (per design §10 Q5).

@@ -351,7 +351,9 @@ class TestArtefactDeletion:
                     n.func.attr for n in ast.walk(fn) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
                 }
         assert total == inside_reader == 1, "the marker name must appear only in _legacy_staging_owned_by"
-        assert not reader_calls & {"write_text", "write", "touch", "mkdir"}, "the marker reader must stay read-only"
+        assert reader_calls <= {"is_file", "exists", "read_text", "strip"}, (
+            f"the marker reader must stay read-only: {reader_calls}"
+        )
 
 
 # ---------------------------------------------------------------------------

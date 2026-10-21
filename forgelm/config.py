@@ -1603,7 +1603,7 @@ class RetentionConfig(BaseModel):
     exits 0; nothing is deleted, blocked or scheduled automatically.
     ``enforce`` is reserved: no command acts on it yet, so
     ``warn_on_excess`` and ``block_on_excess`` behave like ``log_only``
-    (the CLI logs a warning when a config sets either).
+    (training and ``--dry-run`` log a warning when a config sets either).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1629,25 +1629,25 @@ class RetentionConfig(BaseModel):
         default=90,
         ge=0,
         description=(
-            "Days to retain compliance bundles, data audit reports, and other run-scoped derived artefacts. "
-            "Set to 0 to retain indefinitely."
+            "Age in days after which `forgelm purge --check-policy` reports `<output_dir>/compliance/` and "
+            "`<output_dir>/data_audit_report.json` as overdue; nothing is deleted. Set to 0 to retain indefinitely."
         ),
     )
     raw_documents_retention_days: int = Field(
         default=90,
         ge=0,
         description=(
-            "Days to retain ingested raw documents (PDF / DOCX / EPUB / TXT / Markdown) under "
-            "the operator's ingestion-output directory.  Set to 0 to retain indefinitely. "
+            "Age in days after which `forgelm purge --check-policy` reports `<output_dir>/raw_documents/` or "
+            "`<output_dir>/ingestion_output/` (ingested PDF / DOCX / EPUB / TXT / Markdown) as overdue; nothing is deleted.  Set to 0 to retain indefinitely. "
             "Closes ghost-features GH-023 (was nested as `ingestion.retention.raw_documents.ttl_days`; now top-level)."
         ),
     )
     enforce: Literal["log_only", "warn_on_excess", "block_on_excess"] = Field(
         default="log_only",
         description=(
-            "Reserved: no command reads it yet.  Retention horizons are only reported, read-only, by `forgelm purge "
+            "Reserved: no command acts on it.  Retention horizons are only reported, read-only, by `forgelm purge "
             "--check-policy` (always exit 0); nothing is deleted, warned about or blocked automatically.  "
-            "`warn_on_excess` and `block_on_excess` are accepted but behave like `log_only`; the CLI warns when set."
+            "`warn_on_excess` and `block_on_excess` are accepted but behave like `log_only`; training and `--dry-run` warn when set."
         ),
     )
 

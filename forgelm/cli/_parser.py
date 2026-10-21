@@ -1115,7 +1115,7 @@ def _add_purge_subcommand(subparsers) -> None:
     mode.add_argument(
         "--check-policy",
         action="store_true",
-        help="Read-only retention-policy violation report.  Always exits 0 (report-not-gate).",
+        help="Read-only retention-policy violation report.  A successful report exits 0 (report-not-gate); a --config that cannot be loaded exits 1.",
     )
     p.add_argument(
         "--corpus",
@@ -1143,14 +1143,14 @@ def _add_purge_subcommand(subparsers) -> None:
         type=str,
         default=None,
         metavar="DIR",
-        help="Output directory containing audit_log.jsonl + the per-output-dir salt file.  Defaults to corpus parent dir in row mode; required in run mode.",
+        help="Output directory containing audit_log.jsonl + the per-output-dir salt file.  Defaults to the corpus parent dir in row mode and to the current directory in run mode.",
     )
     p.add_argument(
         "--config",
         type=str,
         default=argparse.SUPPRESS,
         metavar="PATH",
-        help="YAML config (optional in row/run mode; required for --check-policy).  Detects the webhook block + retention horizons.",
+        help="YAML config.  Row mode: detects the webhook block for the external-copies warning.  --check-policy: supplies the `retention:` horizons (without it nothing is checked and the report says so).  Run mode does not read it.",
     )
     p.add_argument(
         "--justification",

@@ -29,7 +29,7 @@ forgelm purge --row-id "ali@example.com" --corpus train.jsonl \
 
 # Run-scoped erasure
 forgelm purge --run-id fg-abc123def456 --kind staging --output-dir ./outputs
-forgelm purge --run-id fg-abc123def456 --kind artefacts --output-dir ./outputs
+forgelm purge --run-id fg-abc123def456 --kind artefacts --output-dir ./outputs   # finds nothing on the standard bundle, see below
 
 # Retention-policy report (read-only)
 forgelm purge --check-policy --config configs/run.yaml --output-dir ./outputs
@@ -50,8 +50,9 @@ Six events ride the audit chain (see the [Audit Event Catalog on GitHub](https:/
 
 - **Re-train models.** Removing a row from the corpus does not unmemorise it from already-trained weights — full retraining without the erased row is the only proper mitigation. The tool emits `data.erasure_warning_memorisation` so the gap is visible.
 - **Delete the audit log.** The tool records the erasure as a new event rather than rewriting history. Whether entries that name the data subject may be kept is the controller's decision, and the controller documents why: the entries are still necessary for their purpose, or an Article 17(3) exception applies. Article 17(3)(b), for example, applies only to the extent a specific Union or Member State legal obligation requires the processing, and you have to be able to name that obligation.
+- **Remove an unmarked legacy `final_model.staging/`.** `--kind staging` deletes `final_model.staging.<run_id>/`, and the legacy `final_model.staging/` only when it holds a `staging_run_id` file equal to the run id. ForgeLM does not write that marker, so remove an unmarked legacy directory yourself.
 - **Find the standard compliance bundle with `--kind artefacts`.** The trainer writes fixed basenames (`compliance_report.json`, `training_manifest.yaml`, ...) that contain no run id, and the resolver matches only filenames that embed it. On a normal output directory the command finds nothing, emits `data.erasure_failed` (`NoMatchingArtefacts`), exits 1 and deletes nothing; remove the bundle through your storage layer.
-- **Push notices to downstream consumers.** Webhook receivers, dataset mirrors, and deployed model endpoints are the operator's runtime-layer responsibility (Article 17(2)). The `data.erasure_warning_external_copies` event is the explicit reminder.
+- **Push notices to downstream consumers.** Webhook receivers, dataset mirrors, and deployed model endpoints are the operator's runtime-layer responsibility (Article 19 requires telling each recipient the data was disclosed to; Article 17(2) adds reasonable steps where the controller made the data public). The `data.erasure_warning_external_copies` event is the explicit reminder.
 
 ## Article 15 — `forgelm reverse-pii`
 
@@ -88,9 +89,9 @@ The per-output-dir salt at `<output_dir>/.forgelm_audit_salt` (mode `0600`, atom
 
 The two primitives are intentionally separate:
 
-- Rotating `FORGELM_AUDIT_SECRET` rotates **only the chain HMAC key**. Identifier hashes derive from the per-output-dir salt and are **stable across env-var rotations**, so a `forgelm reverse-pii` query mounted on the same `--output-dir` after a rotation still correlates with `forgelm purge` events recorded before it.
+- Rotating `FORGELM_AUDIT_SECRET` rotates the chain HMAC key **and**, whenever the variable is set, the identifier-hash salt: `forgelm purge` XORs the first 16 bytes of the secret into the per-output-dir salt and records `salt_source=env_var`, so its `target_id` digests change with the secret. A `forgelm reverse-pii` query correlates with earlier purge events only when it uses the same salt source (`--salt-source env_var` with the same secret, or `--salt-source per_dir` for purges run without the variable).
 - Inspecting either primitive does not reveal the other.
-- The per-output-dir salt is the only input to identifier hashing; it persists for the lifetime of the output dir, isolating the chain HMAC's rotation cadence from the cross-tool digest correlation.
+- The per-output-dir salt is always an input to identifier hashing and persists for the lifetime of the output dir; the secret, when set, is a second input.
 
 ## Exit codes
 
@@ -99,7 +100,7 @@ Both subcommands follow the project's `0/1/2/3/4` contract:
 | Code | Meaning |
 |---|---|
 | 0 | Success. `forgelm purge --check-policy` exits 0 even when violations are found (report-not-gate semantic). `forgelm reverse-pii` exits 0 even when no matches are found (Article 15 explicitly accepts "no records" as a valid answer). |
-| 1 | Config error: bad flags, unreadable corpus, malformed regex, conflicting retention values, unwritable `--audit-dir`. |
+| 1 | Config error: bad flags, malformed regex, no staging directory / compliance file matching `--run-id`, a `--config` that cannot be loaded, unwritable `--audit-dir`. |
 | 2 | Runtime error: I/O failure, permission denied, ReDoS SIGALRM timeout, atomic-rename failure. |
 
 Codes 3 (`EXIT_EVAL_FAILURE`) and 4 (`EXIT_AWAITING_APPROVAL`) are not part of either subcommand's surface.

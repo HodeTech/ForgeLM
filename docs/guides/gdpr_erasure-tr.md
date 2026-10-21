@@ -20,8 +20,8 @@
 **Yapmaz:**
 
 - Modelleri yeniden eğitmez. Bir satırı corpus'tan kaldırmak onu zaten eğitilmiş ağırlıklardan unutturmaz — silinmiş satır olmadan tam yeniden eğitim tek doğru çözüm. Tool, `--output-dir` altında doğrudan bir `final_model/` dizini mevcut olduğunda `data.erasure_warning_memorisation` yayar (`--output-dir` varsayılan olarak corpus'un dizinidir; bu yüzden eğitim çıktı dizininizi verin); böylece operatör boşluğu görür. Corpus'u hangi koşumların tükettiğini ayırt edemez.
-- Audit log'un kendisinden entry silmez. Tool silmeyi geçmişi yeniden yazmak yerine yeni bir event olarak kaydeder. Veri sahibine atıf yapan girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır ve veri sorumlusu nedenini belgeler: girdiler amaçları için hâlâ gereklidir ya da Madde 17(3) istisnalarından biri uygulanır. Örneğin Madde 17(3)(b) yalnızca belirli bir AB veya üye devlet hukuku yükümlülüğü işlemeyi gerektirdiği ölçüde uygulanır (log teknik dokümantasyonunuzun parçasıysa AI Act Md. 18(1)'in 10 yıllık dokümantasyon saklaması ya da devreye alınmış yüksek riskli bir sistemin ürettiği loglar için Md. 19(1) ve 26(6)'nın log saklama yükümlülükleri gibi) ve bu yükümlülüğü adlandırabilmeniz gerekir.
-- Downstream tüketicilere silme bildirimi göndermez. Webhook receiver'ları, dataset mirror'ları, deploy edilmiş model endpoint'leri ve yayınlanmış checkpoint'ten türetilmiş üçüncü-taraf fine-tune'lar operatörün runtime-katmanı sorumluluğudur (Madde 17(2)). Tool yüklü config webhook block'u içerdiğinde `data.erasure_warning_external_copies` yayar; böylece audit log'u sorgulayan downstream tüketici açık hatırlatmayı görür.
+- Audit log'un kendisinden entry silmez. Tool silmeyi geçmişi yeniden yazmak yerine yeni bir event olarak kaydeder. Veri sahibine atıf yapan girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır ve veri sorumlusu nedenini belgeler: girdiler amaçları için hâlâ gereklidir ya da Madde 17(3) istisnalarından biri uygulanır. Örneğin Madde 17(3)(b) yalnızca AB hukukundan ya da üye devlet hukukundan doğan belirli bir yükümlülüğün işlemeyi gerektirdiği ölçüde uygulanır (log teknik dokümantasyonunuzun parçasıysa AI Act Madde 18(1)'in 10 yıllık dokümantasyon saklaması ya da kullanıma alınmış yüksek riskli bir sistemin ürettiği loglar için Madde 19(1) ile 26(6)'nın log saklama yükümlülükleri gibi) ve bu yükümlülüğü adlandırabilmeniz gerekir.
+- Downstream tüketicilere silme bildirimi göndermez. Webhook receiver'ları, dataset mirror'ları, deploy edilmiş model endpoint'leri ve yayınlanmış checkpoint'ten türetilmiş üçüncü-taraf fine-tune'lar operatörün runtime-katmanı sorumluluğudur (Madde 19 verinin ifşa edildiği her alıcıya bildirim yapılmasını ister; Madde 17(2) ise kontrolör veriyi kamuya açtıysa makul adımlar ekler). Tool yüklü config webhook block'u içerdiğinde `data.erasure_warning_external_copies` yayar; böylece audit log'u sorgulayan downstream tüketici açık hatırlatmayı görür.
 - Yedekleri silmez. Operatörün `<output_dir>` sınırı dışındaki replikalar, snapshot'lar ve storage backup'lar altyapı tarafı endişelerdir.
 
 ## Üç mod
@@ -58,7 +58,7 @@ $ forgelm purge --run-id fg-abc123def456 --kind artefacts --output-dir ./outputs
 
 - `--kind staging` — `<output_dir>/final_model.staging.<run_id>/`'i siler; legacy `final_model.staging/`'i yalnızca içeriği `<run_id>`'ye eşit bir `staging_run_id` işaretçisi taşıyorsa siler (ForgeLM bu işaretçiyi yazmaz; aksi halde legacy dizini kendiniz silin).
 - `--kind artefacts` — `<output_dir>/compliance/` altında doğrudan bulunan, adı `<run_id>`'yi `_`, `-`, `.` ya da adın başı/sonu ile sınırlı olarak içeren her dosyayı siler (yalnızca `.json` değil). **Standart paketi bulamaz:** trainer run id içermeyen sabit dosya adları yazar (`compliance_report.json`, `training_manifest.yaml`, ...), bu yüzden normal bir çıktı dizininde komut hiçbir şey bulmaz, `data.erasure_failed` (`NoMatchingArtefacts`) yayar, 1 ile çıkar ve hiçbir şey silmez. Resolver düzeltilene kadar paketi depolama katmanınız üzerinden kaldırın.
-- `--kind logs` **bilinçli olarak yok**: audit log append-only'dir ve tool onu asla silmez (girdilerinin tutulup tutulamayacağına kimin karar verdiği için yukarıdaki ilk listeye bakın).
+- `--kind logs` **bilinçli olarak yok**: audit log append-only'dir ve tool onu asla silmez (girdilerin tutulup tutulamayacağına kimin karar verdiği için yukarıdaki "Yapmaz" listesine bakın).
 
 ### 3. Retention policy raporu
 
@@ -66,7 +66,7 @@ $ forgelm purge --run-id fg-abc123def456 --kind artefacts --output-dir ./outputs
 $ forgelm purge --check-policy --config configs/run.yaml --output-dir ./outputs
 ```
 
-Salt-okunur tarama. Output dizinini gezer, her artefact'ın yaşını (canonical: audit-log genesis `timestamp`'i; fallback: filesystem `mtime` + `age_source=mtime` flag'i ile) yüklü config'in `retention:` horizon'larına karşı kıyaslar ve structured violation list yayar.
+Salt-okunur tarama. Output dizinini gezer, her artefact'ın yaşını (canonical: `final_model.staging.<run_id>/` dizini için koşumun ilk audit event'i, yoksa audit-log genesis `timestamp`'i; fallback: filesystem `mtime` + `age_source=mtime` flag'i ile) yüklü config'in `retention:` horizon'larına karşı kıyaslar ve structured violation list yayar.
 
 **Başarılı policy raporları 0 ile çıkar** (rapor-değil-gate semantiği — design §10 Q5). Config-load başarısızlıkları `EXIT_CONFIG_ERROR` (sıfır olmayan) ile çıkar: eksik / okunamayan / Pydantic validation'ı geçemeyen explicit `--config`, "loader failed" durumunu "ihlal yok" sanmamak için `EXIT_CONFIG_ERROR` olarak yüzeye çıkar. CI gate isteyen operatörler `--output-format json` kullanır ve `jq '.violations | length'`'e pipe'lar; bu, public exit-code kontratını `0/1/2/3/4` her ForgeLM subcommand'ında tutarlı tutar.
 
@@ -98,7 +98,7 @@ Herhangi bir horizon'u `0` olarak ayarlamak o artefact kind'ı için policy'yi d
 | `data.erasure_failed` | Disk operasyonu raise etti VEYA eşleşen satır/koşum bulunamadı VEYA çoklu-satır policy belirsizliği reddetti | Tüm `requested` field'ları + `error_class`, `error_message` |
 | `data.erasure_warning_memorisation` | **Yalnız row modunda.** Row erasure × `--output-dir` altında doğrudan bir `final_model/` dizini mevcut. (Run modu memorisation uyarısı emit etmez — run-scoped `staging` / `artefacts` türleri tanım gereği promote-öncesi.) | Tüm `completed` field'ları + `affected_run_ids` |
 | `data.erasure_warning_synthetic_data_present` | **Yalnız row modunda.** Row erasure × `output_dir`'de `synthetic_data*.jsonl` mevcut. (Run modu bu uyarıyı yüzeylemez — synthetic veri corpus-scoped'dur, run-scoped değil.) | Tüm `completed` field'ları + `synthetic_files` |
-| `data.erasure_warning_external_copies` | Yüklü config webhook block'u içeriyor | Tüm `completed` field'ları + `webhook_targets` |
+| `data.erasure_warning_external_copies` | **Yalnız row modunda, `--config` verildiğinde.** Yüklü config webhook block'u içeriyor. (Run modu `--config` yüklemez.) | Tüm `completed` field'ları + `webhook_targets` |
 
 ## Silme sonrası zincir doğrulama
 
@@ -109,7 +109,7 @@ Herhangi bir horizon'u `0` olarak ayarlamak o artefact kind'ı için policy'yi d
 | Kod | Anlamı |
 |---|---|
 | 0 | Başarı veya başarılı `--check-policy` raporu (rapor-değil-gate semantiği). |
-| 1 | Config hatası: bilinmeyen `--row-id`, eksik `--corpus`, mutually-exclusive flag kombinasyonu, çelişen `staging_ttl_days` değerleri veya eksik / okunamayan / Pydantic validation'ı geçemeyen `--check-policy --config <path>`. |
+| 1 | Config hatası: bilinmeyen `--row-id`, eksik `--corpus`, `--run-id` ile eşleşen staging dizini / compliance dosyası yok (standart sabit-adlı pakete karşı `--kind artefacts` dahil), mutually-exclusive flag kombinasyonu veya eksik / okunamayan / Pydantic validation'ı geçemeyen `--check-policy --config <path>`. |
 | 2 | Runtime hatası: I/O failure, permission denied, atomic-rename failure. |
 
 `--check-policy` asla 3 kodu döndürmez. Başarılı bir rapor 0 ile çıkar; verilen `--config`'i yükleme başarısızlığı ise yanıltıcı bir "ihlal yok" raporuna düşmek yerine `EXIT_CONFIG_ERROR` (sıfır olmayan) ile çıkar. CI gate isteyen operatörler ihlal sayısını JSON çıktıdan kendileri hesaplar (design §10 Q5).

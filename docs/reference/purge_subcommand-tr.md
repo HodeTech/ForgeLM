@@ -47,16 +47,16 @@ JSONL eğitim corpus'undan `id` (veya `row_id`) field'ı ile tanımlanan tek bir
 
 | Kind | Hedef |
 |---|---|
-| `staging` | `<output_dir>/final_model.staging.<run_id>/`; legacy `final_model.staging/` yalnızca içinde içeriği `<run_id>`'ye eşit bir `staging_run_id` dosyası varsa. ForgeLM bu işaretçiyi yazmaz; işaretsiz bir legacy staging dizinini kendiniz silin. |
+| `staging` | `<output_dir>/final_model.staging.<run_id>/`; legacy `final_model.staging/` yalnızca içerdiği `staging_run_id` dosyasının içeriği `<run_id>`'ye eşitse. ForgeLM bu işaretçiyi yazmaz; işaretsiz bir legacy staging dizinini kendiniz silin. |
 | `artefacts` | `<output_dir>/compliance/` altında doğrudan bulunan, adı `<run_id>`'yi `_`, `-`, `.` ya da adın başı/sonu ile sınırlı olarak içeren her dosya (yalnızca `.json` değil). |
 
 > **`--kind artefacts` standart compliance paketini bulamaz.** Trainer ve exporter sabit dosya adları yazar (`compliance_report.json`, `training_manifest.yaml`, `data_provenance.json`, `data_governance_report.json`; yapılandırıldığında `risk_assessment.json` / `annex_iv_metadata.json`) ve hiçbiri run id içermez. Normal bir çıktı dizininde komut bu yüzden hiçbir şey bulmaz, `data.erasure_failed` (`NoMatchingArtefacts`) yayar ve 1 ile çıkar; hiçbir şey silmez. Yalnızca adına run id'yi kendiniz yazdığınız dosyalara etki eder. Resolver düzeltilene kadar paketi depolama katmanınız üzerinden kaldırın.
 
-`--kind logs` **kasıtlı olarak yok**: audit log append-only'dir ve tool onu asla silmez. Veri sahibini adlandıran girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır ve veri sorumlusu nedenini belgeler: girdiler amaçları için hâlâ gereklidir ya da Madde 17(3) istisnalarından biri uygulanır. Örneğin Madde 17(3)(b) yalnızca belirli bir AB veya üye devlet hukuku yükümlülüğü işlemeyi gerektirdiği ölçüde uygulanır ve bu yükümlülüğü adlandırabilmeniz gerekir.
+`--kind logs` **kasıtlı olarak yok**: audit log append-only'dir ve tool onu asla silmez. Veri sahibini adlandıran girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır ve veri sorumlusu nedenini belgeler: girdiler amaçları için hâlâ gereklidir ya da Madde 17(3) istisnalarından biri uygulanır. Örneğin Madde 17(3)(b) yalnızca AB hukukundan ya da üye devlet hukukundan doğan belirli bir yükümlülüğün işlemeyi gerektirdiği ölçüde uygulanır ve bu yükümlülüğü adlandırabilmeniz gerekir.
 
 ### Retention-policy raporu (`--check-policy`)
 
-Salt-okunur tarama. `<output_dir>` üzerinde dolaşır, her artefact'ın yaşını (kanonik: audit-log genesis `timestamp`'i; fallback: dosya sistemi `mtime`'ı, `age_source=mtime` flag'iyle) yüklü config'in `retention:` horizon'larıyla karşılaştırır ve yapısal bir ihlal listesi yayar.
+Salt-okunur tarama. `<output_dir>` üzerinde dolaşır, her artefact'ın yaşını (kanonik: `final_model.staging.<run_id>/` dizini için koşumun ilk audit event'i, yoksa audit-log genesis `timestamp`'i; fallback: dosya sistemi `mtime`'ı, `age_source=mtime` flag'iyle) yüklü config'in `retention:` horizon'larıyla karşılaştırır ve yapısal bir ihlal listesi yayar.
 
 **Başarılı policy raporu her zaman 0 ile çıkar** (report-not-gate semantik, design §10 Q5). Config-load başarısızlıkları `EXIT_CONFIG_ERROR` (1) ile çıkar — eksik, okunamaz veya Pydantic doğrulamasından geçemeyen explicit `--config` non-zero olarak yüzeyselleşir; böylece operatör "loader başarısız" durumunu "ihlal yok" sanmaz. CI gate kuran operatörler `--output-format json` kullanıp `jq '.violations | length'`'e pipe eder.
 
@@ -71,7 +71,7 @@ Per-output-dir salt `<output_dir>/.forgelm_audit_salt`'ta ilk kullanımda oluşt
 
 ## `forgelm reverse-pii` ile cross-tool digest korelasyonu
 
-`forgelm purge --row-id <value>` ve `forgelm reverse-pii --query <value> --salt-source per_dir` **aynı** `<output_dir>`'e (yani aynı `.forgelm_audit_salt`'ı tüketerek) çalıştırıldığında, `data.erasure_*` event'lerindeki `target_id` ile `data.access_request_query` event'indeki `query_hash` byte-byte aynıdır. Compliance reviewer böylece aynı veri sahibi için Madde 17 silme ve Madde 15 erişim taleplerini cleartext identifier'ı asla görmeden korele edebilir. `tests/test_reverse_pii.py::test_purge_target_id_matches_reverse_pii_query_hash_on_same_output_dir` ile pin'lendi.
+`forgelm purge --row-id <value>` ve `forgelm reverse-pii --query <value> --salt-source per_dir` **aynı** `<output_dir>`'e (yani aynı `.forgelm_audit_salt`'ı tüketerek) çalıştırıldığında ve purge için `FORGELM_AUDIT_SECRET` ayarlı değilse (`salt_source=per_dir`; ayarlıysa purge onu salt'a XOR'lar ve `salt_source=env_var` kaydeder, bu durumda bunun yerine aynı secret ile `--salt-source env_var` kullanarak sorgulayın), `data.erasure_*` event'lerindeki `target_id` ile `data.access_request_query` event'indeki `query_hash` byte-byte aynıdır. Compliance reviewer böylece aynı veri sahibi için Madde 17 silme ve Madde 15 erişim taleplerini cleartext identifier'ı asla görmeden korele edebilir. `tests/test_reverse_pii.py::test_purge_target_id_matches_reverse_pii_query_hash_on_same_output_dir` ile pin'lendi.
 
 ## Yayılan audit event'leri
 
@@ -84,7 +84,7 @@ Altı event de [`audit_event_catalog.md`](audit_event_catalog-tr.md)'deki ortak 
 | `data.erasure_failed` | Disk operasyonu raise etti VEYA eşleşen satır/koşum yok VEYA çoklu-satır policy belirsizliği reddetti. | Tüm `requested` field'ları + `error_class`, `error_message` |
 | `data.erasure_warning_memorisation` | Row erasure × `--output-dir` altında doğrudan bir `final_model/` dizini mevcut (birebir ad; `--output-dir` varsayılan olarak corpus'un dizinidir, bu yüzden eğitim çıktı dizininizi verin). ForgeLM corpus'u hangi koşumların tükettiğini belirlemez. | Tüm `completed` field'ları + `affected_run_ids` |
 | `data.erasure_warning_synthetic_data_present` | Row erasure × `output_dir`'de `synthetic_data*.jsonl` mevcut. | Tüm `completed` field'ları + `synthetic_files` |
-| `data.erasure_warning_external_copies` | Yüklü config boş-olmayan `webhook` block'u içeriyor; downstream tüketiciler bildirim almış olabilir. | Tüm `completed` field'ları + `webhook_targets` (redact'li URL'ler) |
+| `data.erasure_warning_external_copies` | **Yalnız row modunda, `--config` verildiğinde.** Yüklü config boş-olmayan `webhook` block'u içeriyor; downstream tüketiciler bildirim almış olabilir. | Tüm `completed` field'ları + `webhook_targets` (redact'li URL'ler) |
 
 `forgelm verify-audit <output_dir>/audit_log.jsonl` herhangi bir sayıda erasure event'i sonrası zinciri doğrulamaya devam eder — tool yeni event'ler ekler, eskileri yeniden yazmaz.
 
@@ -93,7 +93,7 @@ Altı event de [`audit_event_catalog.md`](audit_event_catalog-tr.md)'deki ortak 
 | Kod | Anlamı |
 |---|---|
 | 0 | Başarı veya başarılı `--check-policy` raporu (report-not-gate semantik). |
-| 1 | Config hatası: bilinmeyen `--row-id`, `--run-id` ile eşleşen staging dizini / compliance dosyası yok (standart sabit-adlı pakete karşı `--kind artefacts` dahil), eksik `--corpus`, karşılıklı dışlayıcı flag kombinasyonu, çakışan `staging_ttl_days` değerleri veya eksik / okunamaz / Pydantic doğrulamasından geçemeyen `--check-policy --config <path>`. |
+| 1 | Config hatası: bilinmeyen `--row-id`, `--run-id` ile eşleşen staging dizini / compliance dosyası yok (standart sabit-adlı pakete karşı `--kind artefacts` dahil), eksik `--corpus`, karşılıklı dışlayıcı flag kombinasyonu veya eksik / okunamaz / Pydantic doğrulamasından geçemeyen `--check-policy --config <path>`. |
 | 2 | Runtime hatası: I/O başarısızlığı, izin reddedildi, atomic-rename başarısızlığı. |
 
 `--check-policy` asla 3 veya 4 dönmez. Kod 3 (`EXIT_EVAL_FAILURE`) ve 4 (`EXIT_AWAITING_APPROVAL`) eğitim pipeline'ı için ayrılmıştır ve bu subcommand'ın yüzeyinin parçası değildir.
@@ -145,14 +145,14 @@ Altı event de [`audit_event_catalog.md`](audit_event_catalog-tr.md)'deki ortak 
       "path": "/abs/path/outputs/run42/compliance/data_audit_report.json",
       "age_days": 121.4,
       "horizon_days": 90,
-      "age_source": "audit_genesis"
+      "age_source": "audit"
     }
   ],
   "count": 1
 }
 ```
 
-`age_source` ∈ `{audit_genesis, mtime}` — `audit_genesis` kanonik yaş (koşumun ilk audit event timestamp'i); `mtime` operatörün farkındalığı için işaretlenmiş filesystem fallback'i.
+`age_source` ∈ `{audit, mtime}` — `audit` kanonik yaş (koşumun ilk audit event timestamp'i); `mtime` operatörün farkındalığı için işaretlenmiş filesystem fallback'i.
 
 **Hata zarfı (her mod)** — `_output_error_and_exit`:
 
