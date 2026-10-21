@@ -37,14 +37,17 @@ Tarifenizi Ayarlar → Plan → Yükselt menüsünden değiştirebilirsiniz...
 
 ## Konfigürasyon
 
-```yaml
-chat:
-  default_temperature: 0.7
-  default_top_p: 0.9
-  default_max_tokens: 1024
-  default_system_prompt: "Yardımsever bir asistansın."
-  history_file: "~/.forgelm/chat-history"     # oturumlar arası kalıcı
-```
+`forgelm chat` YAML config okumaz ve `chat:` bloğu yoktur: komut satırı flag'leri ve yukarıdaki slash komutlarıyla ayarlanır.
+
+| Ayar | Flag | Varsayılan |
+|---|---|---|
+| Başlangıç system prompt'u | `--system PROMPT` (sonra `/system` ile değiştirin) | yok |
+| Sampling temperature | `--temperature` (sonra `/temperature` ile değiştirin) | `0.7` |
+| Yanıt başına maksimum token | `--max-new-tokens` | `512` |
+| Streaming çıktı | `--no-stream` kapatır | açık |
+| Quantize yükleme | `--load-in-4bit` veya `--load-in-8bit` | kapalı |
+
+top-p ayarı ve oturumlar arası kalıcı bir history dosyası yoktur; bir konuşmayı `/save` ile yazın.
 
 ## Checkpoint yükleme
 

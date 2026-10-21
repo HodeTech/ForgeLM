@@ -6,12 +6,12 @@ description: Auto-detect across 16 GPU profiles and track per-run cost against y
 # GPU Cost Estimation
 
 > **Status:** GPU detection + per-run duration + audit-log stamping ship
-> today; the config-driven `cost_tracking:` block (rate tables, alert /
-> halt thresholds) is **tracked on the roadmap and not yet implemented** —
-> `forgelm/config.py` has no `output.cost_tracking` surface. Examples below
-> that show `cost_tracking:` fields are forward-looking placeholders — set
-> hourly rates manually until the YAML surface lands. The deferral is
-> tracked in the [risks-and-decisions roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap/risks-and-decisions.md).
+> today, and `training.gpu_cost_per_hour` is the one cost setting. A
+> config-driven `cost_tracking:` block (per-GPU rate tables, alert / halt
+> thresholds) is **tracked on the roadmap and not yet implemented** —
+> `forgelm/config.py` has no `output.cost_tracking` surface, so no example on
+> this page uses one. The deferral is tracked in the
+> [risks-and-decisions roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap/risks-and-decisions.md).
 
 ForgeLM detects the GPU you're running on, looks up its profile (memory, compute, typical hourly rate), and tracks per-run cost. After every run, the audit log records exactly how much GPU time was used and what it cost.
 
@@ -36,19 +36,11 @@ If your GPU isn't recognised, ForgeLM logs a warning and falls back to a generic
 ## Configuring your hourly rate
 
 ```yaml
-output:
-  cost_tracking:
-    enabled: true
-    rate_per_hour:
-      A100_80GB: 1.10              # USD per hour
-      A100_40GB: 0.85
-      H100_80GB: 2.40
-      RTX_4090: 0.50               # rough cost-of-electricity
-      default: 1.00                # for unmatched GPUs
-    currency: "USD"
+training:
+  gpu_cost_per_hour: 1.10          # USD per hour for the training GPU
 ```
 
-Once the `cost_tracking:` surface lands, set this once per project and ForgeLM will use the matched rate for cost reporting. Until then, the block is a forward-looking placeholder (see the status banner above).
+Set `training.gpu_cost_per_hour` to your real rate. When it is unset, ForgeLM falls back to its built-in price table for the detected GPU; the run's `resource_usage` records which one it used (`cost_source`: `user_config` or `auto_detected`). There is one rate per run: per-GPU-model rate tables are not supported.
 
 ## Output
 
@@ -92,29 +84,16 @@ The calibration approach is typically within 20% of actual.
 
 ## Multi-GPU and distributed
 
-For multi-GPU training, ForgeLM multiplies the per-GPU rate by the GPU count:
-
-```yaml
-output:
-  cost_tracking:
-    rate_per_hour:
-      A100_80GB: 1.10
-```
+For multi-GPU training, ForgeLM multiplies the single `training.gpu_cost_per_hour` rate by the GPU count (`gpu_hours` is the training time times the GPU count):
 
 A 4×A100 run for 2 hours = 4 × 2 × $1.10 = $8.80, regardless of whether you use ZeRO or FSDP.
 
 ## Cost alerts (roadmap — not yet implemented)
 
-For runs that may run away, the planned `cost_tracking` block will support
-threshold-based alerts and halts:
-
-```yaml
-# roadmap placeholder — not yet honoured by forgelm/config.py
-output:
-  cost_tracking:
-    alert_threshold_usd: 50.0          # webhook fires when crossed
-    halt_threshold_usd: 200.0          # training stops
-```
+For runs that may run away, the planned `cost_tracking` block would support
+threshold-based alerts (a webhook fires when an alert threshold is crossed) and
+halts (training stops at a halt threshold). No such setting exists in
+`forgelm/config.py` today.
 
 When implemented, the alert will fire the configured webhook (see [Webhooks](#/operations/webhooks)) — useful in CI to catch a misconfigured run before it spends a week of budget overnight. Until then, monitor cost manually via the audit log + a budget-side guardrail in your scheduler.
 

@@ -37,14 +37,17 @@ yolunu izleyebilirsiniz...
 
 ## Configuration
 
-```yaml
-chat:
-  default_temperature: 0.7
-  default_top_p: 0.9
-  default_max_tokens: 1024
-  default_system_prompt: "You are a helpful assistant."
-  history_file: "~/.forgelm/chat-history"     # persisted across sessions
-```
+`forgelm chat` reads no YAML config and has no `chat:` block: it is set with command-line flags and the slash commands above.
+
+| Setting | Flag | Default |
+|---|---|---|
+| Initial system prompt | `--system PROMPT` (change it later with `/system`) | none |
+| Sampling temperature | `--temperature` (change it later with `/temperature`) | `0.7` |
+| Maximum tokens per reply | `--max-new-tokens` | `512` |
+| Streaming output | `--no-stream` turns it off | on |
+| Quantised loading | `--load-in-4bit` or `--load-in-8bit` | off |
+
+There is no top-p setting and no history file that persists across sessions; write a conversation out with `/save`.
 
 ## Loading a checkpoint
 

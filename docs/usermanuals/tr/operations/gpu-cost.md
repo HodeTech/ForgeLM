@@ -6,12 +6,12 @@ description: 16 GPU profilinde otomatik tespit ve saatlik tarifenize göre koşu
 # GPU Maliyet Tahmini
 
 > **Durum:** GPU tespiti + koşu süresi + audit-log damgalama bugün
-> gönderiliyor; konfigürasyon-tabanlı `cost_tracking:` bloğu (tarife
+> gönderiliyor ve `training.gpu_cost_per_hour` tek maliyet ayarıdır.
+> Konfigürasyon-tabanlı bir `cost_tracking:` bloğu (GPU başına tarife
 > tabloları, alarm / durdurma eşikleri) **yol haritasında ve henüz
 > uygulanmadı** — `forgelm/config.py`'de `output.cost_tracking` yüzeyi
-> yok. Aşağıdaki `cost_tracking:` örnekleri ileriye dönük yer
-> tutuculardır — YAML yüzeyi inene kadar saatlik tarifeleri manuel
-> ayarlayın. Erteleme için bkz. [GitHub'daki risks-and-decisions yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap/risks-and-decisions.md).
+> yok, bu yüzden bu sayfadaki hiçbir örnek onu kullanmaz. Erteleme için bkz.
+> [GitHub'daki risks-and-decisions yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap/risks-and-decisions.md).
 
 ForgeLM, üzerinde koştuğunuz GPU'yu tespit eder, profilini (bellek, compute, tipik saatlik tarife) bulur ve koşu başı maliyeti izler. Her koşunun ardından audit log tam olarak ne kadar GPU zamanı kullanıldığını ve maliyetini kaydeder.
 
@@ -36,19 +36,11 @@ GPU'nuz tanınmazsa ForgeLM uyarı bırakır ve generic profile fallback yapar (
 ## Saatlik tarife konfigürasyonu
 
 ```yaml
-output:
-  cost_tracking:
-    enabled: true
-    rate_per_hour:
-      A100_80GB: 1.10              # saatlik USD
-      A100_40GB: 0.85
-      H100_80GB: 2.40
-      RTX_4090: 0.50               # kabaca elektrik maliyeti
-      default: 1.00                # eşleşmeyen GPU'lar için
-    currency: "USD"
+training:
+  gpu_cost_per_hour: 1.10          # eğitim GPU'su için saatlik USD
 ```
 
-`cost_tracking:` yüzeyi indiğinde, bunu proje başına bir kez ayarlayın ve ForgeLM maliyet raporlama için eşleşen tarifeyi kullanacak. O zamana kadar blok ileriye dönük bir yer tutucudur (yukarıdaki durum bandına bakın).
+`training.gpu_cost_per_hour`'u gerçek tarifenize ayarlayın. Ayarlı değilse ForgeLM tespit edilen GPU için yerleşik fiyat tablosuna döner; koşunun `resource_usage` kaydı hangisinin kullanıldığını yazar (`cost_source`: `user_config` veya `auto_detected`). Koşu başına tek bir tarife vardır: GPU modeli başına tarife tabloları desteklenmez.
 
 ## Çıktı
 
@@ -92,29 +84,16 @@ Kalibrasyon yaklaşımı genelde gerçeğin %20 içindedir.
 
 ## Çoklu-GPU ve dağıtık
 
-Çoklu-GPU eğitiminde ForgeLM GPU başı tarifeyi GPU sayısıyla çarpar:
-
-```yaml
-output:
-  cost_tracking:
-    rate_per_hour:
-      A100_80GB: 1.10
-```
+Çoklu-GPU eğitiminde ForgeLM tek `training.gpu_cost_per_hour` tarifesini GPU sayısıyla çarpar (`gpu_hours`, eğitim süresi çarpı GPU sayısıdır):
 
 4×A100 koşusu 2 saat = 4 × 2 × $1.10 = $8.80; ZeRO veya FSDP kullanmak fark etmez.
 
 ## Maliyet alarmları (yol haritası — henüz uygulanmadı)
 
 Kontrolden çıkabilecek koşular için planlanan `cost_tracking` bloğu eşik
-tabanlı alarm + durdurma destekleyecek:
-
-```yaml
-# yol haritası yer tutucusu — forgelm/config.py tarafından henüz honure edilmez
-output:
-  cost_tracking:
-    alert_threshold_usd: 50.0          # geçildiğinde webhook fırlat
-    halt_threshold_usd: 200.0          # eğitim durur
-```
+tabanlı alarmı (alarm eşiği aşılınca webhook tetiklenir) ve durdurmayı
+(durdurma eşiğinde eğitim durur) destekleyecekti. Böyle bir ayar bugün
+`forgelm/config.py`'de yoktur.
 
 İmplemente edildiğinde, alarm konfigüre webhook'u fırlatır (bkz. [Webhook'lar](#/operations/webhooks)) — yanlış konfigüre koşunun gece bütçeyi haftalık bitirmesini CI'da yakalamak için faydalı. O zamana kadar maliyeti audit log + zamanlayıcınızdaki bütçe-tarafı koruyucu ile manuel izleyin.
 

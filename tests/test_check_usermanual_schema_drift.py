@@ -211,10 +211,10 @@ class TestCheckSnippet:
         )
         assert tool.check_snippet(snippet, synthetic_schema, top) == []
 
-    def test_unrecognised_top_level_key_is_out_of_scope(self, tool, synthetic_schema):
-        # A yaml block unrelated to ForgeConfig (e.g. a docker-compose or
-        # deepspeed example) must not be flagged just because its keys
-        # happen not to match anything.
+    def test_unrecognised_top_level_key_is_not_a_nested_key_drift(self, tool, synthetic_schema):
+        # check_snippet only walks the keys *inside* recognised ForgeConfig
+        # blocks; an unrecognised top-level block is reported by
+        # unknown_top_level_keys / scan (see TestUnknownTopLevelBlocks).
         top = synthetic_schema["ForgeConfig"]
         snippet = self._snippet(tool, "services:\n  train:\n    image: x\n")
         assert tool.check_snippet(snippet, synthetic_schema, top) == []
@@ -233,6 +233,122 @@ class TestCheckSnippet:
         top = synthetic_schema["ForgeConfig"]
         snippet = self._snippet(tool, "training:\n  - [unbalanced\n")
         assert tool.check_snippet(snippet, synthetic_schema, top) == []
+
+
+class TestUnknownTopLevelBlocks:
+    """CR-A17a-007: a fragment may not use a top-level key ForgeConfig rejects."""
+
+    @staticmethod
+    def _snippet(tool, body: str):
+        return tool.Snippet(path=Path("doc.md"), line_start=1, body=body)
+
+    @staticmethod
+    def _write(root: Path, lang: str, page: str, body: str) -> None:
+        path = root / lang / page
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# Page\n\n```yaml\n{body}```\n", encoding="utf-8")
+
+    def test_fabricated_top_level_block_is_reported(self, tool, synthetic_schema):
+        top = synthetic_schema["ForgeConfig"]
+        keys = tool.unknown_top_level_keys(self._snippet(tool, "chat:\n  default_temperature: 0.7\n"), top)
+        assert keys == frozenset({"chat"})
+
+    def test_known_blocks_and_nested_drift_are_not_unknown_blocks(self, tool, synthetic_schema):
+        top = synthetic_schema["ForgeConfig"]
+        assert tool.unknown_top_level_keys(self._snippet(tool, "training:\n  bogus: 1\n"), top) == frozenset()
+
+    def test_mixed_snippet_reports_only_the_unknown_keys(self, tool, synthetic_schema):
+        top = synthetic_schema["ForgeConfig"]
+        body = "training:\n  learning_rate: 0.1\noutput:\n  cost_tracking: {}\n"
+        assert tool.unknown_top_level_keys(self._snippet(tool, body), top) == frozenset({"output"})
+
+    def test_full_config_and_unparseable_and_non_mapping_snippets_are_skipped(self, tool, synthetic_schema):
+        top = synthetic_schema["ForgeConfig"]
+        full = "model:\n  name_or_path: x\ntraining: {}\ndata:\n  dataset_name_or_path: y\nchat: {}\n"
+        assert tool.unknown_top_level_keys(self._snippet(tool, full), top) == frozenset()
+        assert tool.unknown_top_level_keys(self._snippet(tool, "chat:\n  - [unbalanced\n"), top) == frozenset()
+        assert tool.unknown_top_level_keys(self._snippet(tool, "- chat\n- output\n"), top) == frozenset()
+
+    def test_scan_flags_an_unlisted_block_in_both_languages(self, tool, synthetic_schema, tmp_path):
+        for lang in ("en", "tr"):
+            self._write(tmp_path, lang, "deployment/chat.md", "chat:\n  default_temperature: 0.7\n")
+        result = tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], {}, {})
+        assert [(u.path.relative_to(tmp_path).as_posix(), sorted(u.keys)) for u in result.unknown_blocks] == [
+            ("en/deployment/chat.md", ["chat"]),
+            ("tr/deployment/chat.md", ["chat"]),
+        ]
+        assert not result.clean
+
+    def test_a_listed_block_passes_in_every_language_and_survives_a_line_shift(self, tool, synthetic_schema, tmp_path):
+        rows = {("operations/cicd.md", frozenset({"jobs", "name"})): "GitHub Actions workflow"}
+        self._write(tmp_path, "en", "operations/cicd.md", "name: ci\njobs: {}\n")
+        (tmp_path / "tr" / "operations").mkdir(parents=True)
+        (tmp_path / "tr" / "operations" / "cicd.md").write_text(
+            "Intro line\n\nMore text\n\n```yaml\nname: ci\njobs: {}\n```\n", encoding="utf-8"
+        )
+        result = tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], rows, {})
+        assert result.clean
+
+    def test_known_open_rows_behave_like_non_forgelm_rows(self, tool, synthetic_schema, tmp_path):
+        rows = {("operations/troubleshooting.md", frozenset({"audit"})): "tracked elsewhere"}
+        for lang in ("en", "tr"):
+            self._write(tmp_path, lang, "operations/troubleshooting.md", "audit:\n  quality_filter: {}\n")
+        result = tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], {}, rows)
+        assert result.clean
+
+    def test_a_row_must_match_the_exact_key_set(self, tool, synthetic_schema, tmp_path):
+        rows = {("operations/cicd.md", frozenset({"jobs"})): "GitHub Actions workflow"}
+        for lang in ("en", "tr"):
+            self._write(tmp_path, lang, "operations/cicd.md", "jobs: {}\nchat: {}\n")
+        result = tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], rows, {})
+        assert [sorted(u.keys) for u in result.unknown_blocks] == [["chat", "jobs"], ["chat", "jobs"]]
+        assert [row for _, row, _ in result.stale_rows] == [("operations/cicd.md", frozenset({"jobs"}))]
+
+    def test_a_row_that_matches_no_snippet_is_stale(self, tool, synthetic_schema, tmp_path):
+        rows = {("operations/gpu-cost.md", frozenset({"gpu_profiles"})): "tracked elsewhere"}
+        for lang in ("en", "tr"):
+            self._write(tmp_path, lang, "operations/gpu-cost.md", "training:\n  learning_rate: 0.1\n")
+        result = tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], {}, rows)
+        assert [(name, row) for name, row, _ in result.stale_rows] == [
+            ("_KNOWN_OPEN", ("operations/gpu-cost.md", frozenset({"gpu_profiles"})))
+        ]
+
+    def test_a_row_matched_in_only_one_language_is_stale(self, tool, synthetic_schema, tmp_path):
+        rows = {("operations/gpu-cost.md", frozenset({"gpu_profiles"})): "tracked elsewhere"}
+        self._write(tmp_path, "en", "operations/gpu-cost.md", "gpu_profiles:\n  custom: []\n")
+        self._write(tmp_path, "tr", "operations/gpu-cost.md", "training:\n  learning_rate: 0.1\n")
+        result = tool.scan(tmp_path, synthetic_schema, synthetic_schema["ForgeConfig"], {}, rows)
+        assert len(result.stale_rows) == 1
+
+    def test_main_strict_exits_one_on_an_unlisted_block_and_zero_in_advisory_mode(
+        self, tool, synthetic_schema, tmp_path, monkeypatch, capsys
+    ):
+        config_path = tmp_path / "config.py"
+        config_path.write_text(_SYNTHETIC_CONFIG, encoding="utf-8")
+        root = tmp_path / "usermanuals"
+        for lang in ("en", "tr"):
+            self._write(root, lang, "deployment/chat.md", "chat:\n  default_temperature: 0.7\n")
+        monkeypatch.setattr(tool, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(tool, "USERMANUAL_ROOT", root)
+        monkeypatch.setattr(tool, "REPO_ROOT", tmp_path)
+        assert tool.main(["--strict"]) == 1
+        out = capsys.readouterr().out
+        assert "usermanuals/en/deployment/chat.md:3  chat" in out and "_NON_FORGELM_YAML" in out
+        assert tool.main([]) == 0
+
+    def test_every_real_exemption_row_is_matched_in_every_language(self, tool):
+        schema = tool.build_schema_map(tool.CONFIG_PATH)
+        result = tool.scan(
+            tool.USERMANUAL_ROOT, schema, schema["ForgeConfig"], tool._NON_FORGELM_YAML, tool._KNOWN_OPEN
+        )
+        assert result.stale_rows == [] and result.unknown_blocks == []
+
+    def test_real_exemption_tables_carry_a_reason_and_do_not_overlap(self, tool):
+        for table in (tool._NON_FORGELM_YAML, tool._KNOWN_OPEN):
+            assert all(reason.strip() for reason in table.values())
+        assert not set(tool._NON_FORGELM_YAML) & set(tool._KNOWN_OPEN)
+        # A fabricated block must never be filed as "another tool's YAML".
+        assert not any({"chat", "output"} & keys for _, keys in tool._NON_FORGELM_YAML)
 
 
 class TestRealSchemaSmoke:
