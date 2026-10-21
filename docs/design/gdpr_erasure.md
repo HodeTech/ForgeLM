@@ -45,9 +45,9 @@ Phase 21 closes the gap with a real implementation.  This Phase 20 document spec
 
 **Article 17(2)** requires the controller to inform downstream processors / publishers of the erasure when the data has been disclosed.  ForgeLM is not a publisher (we do not run inference); the deployer is.  We document this boundary in the operator guide rather than implement push notification.
 
-**Article 17(3)** lists exemptions where erasure does **not** apply — including (3)(b) compliance with a legal obligation under Union or Member State law and (3)(e) the establishment, exercise or defence of legal claims.  Each applies only to the extent the processing is necessary for that obligation or claim, and the controller has to name it: no provision of EU law protects a training audit log merely because ForgeLM produces it.
+**Article 17(3)** lists exemptions where erasure does **not** apply — including (3)(b) compliance with a legal obligation under Union or Member State law (or a task in the public interest or in the exercise of official authority) and (3)(e) the establishment, exercise or defence of legal claims.  Each applies only to the extent the processing is necessary for that obligation, task or claim, and the controller has to name it: no provision of EU law protects a training audit log merely because ForgeLM produces it.  Erasure is also owed only where an Art. 17(1) ground exists, so entries may equally stay because the processing is still necessary for its purpose on its own Art. 6 basis.
 
-The take-away: erasure operates on **training data + derived artefacts**, not on the audit log.  The audit log records *that an erasure happened* (Art. 5(2) accountability), and ForgeLM never edits or deletes an entry.  Whether the entries that reference the now-erased subject may stay is the controller's decision: Art. 17(3)(b) and (3)(e) cover them only to the extent a specific obligation or claim requires it, and the controller documents which one.
+The take-away: erasure operates on **training data + derived artefacts**, not on the audit log.  The audit log records *that an erasure happened* (Art. 5(2) accountability), and ForgeLM never edits or deletes an entry.  Whether the entries that reference the now-erased subject may stay is the controller's decision, and the controller documents why: they are still necessary for their purpose, or an Art. 17(3) exception applies (for (3)(b) and (3)(e), only to the extent a specific obligation or claim requires it).
 
 ---
 
@@ -56,10 +56,10 @@ The take-away: erasure operates on **training data + derived artefacts**, not on
 | Artefact | Where it lives | Carries personal data? | Erasure strategy |
 |---|---|---|---|
 | **Training corpus rows** | `<corpus>.jsonl` (operator-supplied) | Yes — the whole point | **Delete row in place** + audit event |
-| **Audit log entries** | `<output_dir>/audit_log.jsonl` (append-only) | Indirectly (operator name, run config, possibly file paths that name a subject) | **Never delete original** — append a `data.erasure_completed` event that references the deleted row's `row_id`.  The tool never rewrites the chain; keeping the entries is justified only to the extent Art. 17(3)(b) or (3)(e) applies, which the controller documents. |
+| **Audit log entries** | `<output_dir>/audit_log.jsonl` (append-only) | Indirectly (operator name, run config, possibly file paths that name a subject) | **Never delete original** — append a `data.erasure_completed` event that references the deleted row's `row_id`.  The tool never rewrites the chain; why the entries may be kept (still necessary for their purpose, or an Art. 17(3) exception) is the controller's documented decision. |
 | **Model adapters** | `<output_dir>/final_model/` (PEFT adapter + tokenizer) | **Memorised** training samples — extraction risk for high-overfit models | **Document escalation**: full retraining is the only proper resolution.  Tool emits `data.erasure_warning_memorisation` audit event flagging the gap. |
 | **Final model staging** | `<output_dir>/final_model.staging.<run_id>/` | Same memorisation risk | Operator chooses: delete staging (pre-promotion) or treat as adapters above |
-| **Compliance artefacts** | `<output_dir>/compliance/*.{json,yaml}` | References to corpus paths (could disclose subject names via filename) | **Regenerate** after erasure (or `forgelm purge --kind artefacts` rewrites them) |
+| **Compliance artefacts** | `<output_dir>/compliance/*.{json,yaml}` | References to corpus paths (could disclose subject names via filename) | **Regenerate** after erasure (`forgelm purge --kind artefacts` is designed to remove them, but as shipped it does not find the standard bundle — §12) |
 | **Data audit reports** | `<output_dir>/data_audit_report.json` | `lang_sample` field carries up-to-512-char snippets from random rows (could include subject text) | **Regenerate** post-erasure (or hand-edit the snippets — the report is operator-facing only) |
 | **Synthetic / GRPO logs** | `<output_dir>/synthetic_data.jsonl`, GRPO completions | Yes if generated from a prompt that named the subject | **Delete row** with the same row-id mechanism as training corpus |
 | **Webhook history** | (external system; ForgeLM does not store) | Possibly | Out of scope — operator handles in the receiving system |
@@ -71,6 +71,8 @@ The four artefact kinds the operator can act on in-tool: `corpus_rows`, `staging
 ## 3. Retention policy — `RetentionConfig`
 
 Article 5(1)(e) requires personal data to be kept "no longer than is necessary".  ForgeLM ships a config block so the operator can declare their retention horizon and the tool can warn / refuse runs that violate it.
+
+> **As shipped:** the horizons are only *reported* by `forgelm purge --check-policy` (read-only, always exit 0).  `retention.enforce` is reserved: no command reads it, so nothing warns, refuses or deletes on age.  Ages come from the audit log first (the run's first event, else the log's first event) and fall back to `mtime`.  Read the warn / refuse and `mtime` passages below as the original design; §12 lists the deviations.
 
 ### 3.1 Prior-state acknowledgement (audited 2026-05-02)
 
@@ -164,9 +166,9 @@ Three sites:
 For each retention horizon:
 - Compare artefact `mtime` against `now - <horizon>_days`.
 - If older, the artefact has overstayed the declared lawful basis.
-- The audit log itself is **never deleted automatically** even when the policy says it has overstayed.  The tool only flags; the operator makes the deletion call by hand, after checking that no specific Union or Member State obligation (Art. 17(3)(b)) or legal claim (Art. 17(3)(e)) still requires the entries.
+- The audit log itself is **never deleted automatically** even when the policy says it has overstayed.  The tool only flags; the operator makes the deletion call by hand, after checking whether the entries are still necessary for their purpose or a specific Union or Member State obligation (Art. 17(3)(b)) or legal claim (Art. 17(3)(e)) still requires them.
 
-The compliance artefacts (`compliance/*.json`) are tied to a specific run; their lifetime is the run's lifetime, not a separate horizon.  In-place deletion is supported via `forgelm purge --run-id <id> --kind artefacts` (§4.1) which is meant to remove `<output_dir>/compliance/*.json` for the named run while leaving the audit log + final model intact (as shipped, the resolver only matches filenames that embed the run id, and the standard bundle uses fixed basenames, so it finds nothing — see the purge reference) — useful when an operator wants to regenerate the bundle after an Article 17 corpus erasure changed the lineage.  Whole-`<output_dir>` deletion remains the operator's manual escalation when the entire run is being scrubbed.
+The compliance artefacts (`compliance/*.json`) are tied to a specific run; their lifetime is the run's lifetime, not a separate horizon.  In-place deletion is specified via `forgelm purge --run-id <id> --kind artefacts` (§4.1) which is meant to remove `<output_dir>/compliance/*.json` for the named run while leaving the audit log + final model intact (as shipped, the resolver only matches filenames that embed the run id, and the standard bundle uses fixed basenames, so it finds nothing — see the purge reference) — useful when an operator wants to regenerate the bundle after an Article 17 corpus erasure changed the lineage.  Whole-`<output_dir>` deletion remains the operator's manual escalation when the entire run is being scrubbed.
 
 ---
 
@@ -190,7 +192,7 @@ A single invocation does exactly one of the three.  Combining flags is a `Config
 | `--corpus <path>` | corpus mode | str | Path to **a single JSONL file**.  Directory mode is **rejected** in `--row-id` mode — multi-file purges are an operator script (loop over files), not a `forgelm purge` flag, because GDPR Article 17 expects an erasure decision *per row* with its own audit event.  An invocation that matches the same id in two files is a "DELETE without WHERE" hazard. |
 | `--row-matches` | corpus mode optional | enum | `one` (default; refuses if 0 or ≥2 matches in the file) / `all` (deletes every match, requires explicit opt-in for the ambiguity).  Without this flag, multi-row matches in a single file abort with `EXIT_CONFIG_ERROR` so the operator confirms intent before bulk delete. |
 | `--run-id <id>` | run mode | str | Run id matching `<output_dir>/audit_log.jsonl`'s top-level `run_id`. |
-| `--kind {staging,artefacts}` | run mode | enum | Which derived artefacts to erase.  `staging` = `final_model.staging.*`; `artefacts` = `compliance/`, `data_audit_report.json`, derived JSONL snapshots. |
+| `--kind {staging,artefacts}` | run mode | enum | Which derived artefacts to erase.  `staging` = `final_model.staging.*`; `artefacts` = `compliance/`, `data_audit_report.json`, derived JSONL snapshots (design intent; what shipped is in §12). |
 | `--output-dir <dir>` | run mode | str | Where to look for the run.  Default `./` (current dir). |
 | `--check-policy` | policy mode | bool | Dry-run scan; reports violations against the loaded config's `retention` block. |
 | `--config <path>` | policy mode (optional) | str | Config to load for the retention block; defaults to `./forgelm.yaml` then walks up. |
@@ -230,7 +232,7 @@ Recovery path for a step-5 failure (rename fails after the temp file is fully wr
 
 **Run-scoped erasure** for `kind=staging` uses `shutil.rmtree(staging_path)` after a `os.path.commonpath` check (same defence-in-depth as `_approve.py`'s staging path validator) so an attacker who can rewrite the audit log cannot point us at `/etc`.
 
-**Run-scoped erasure** for `kind=artefacts` deletes a fixed allow-list (`compliance/`, `data_audit_report.json`, `data_governance_report.json`) — never a glob.  Allow-list lives in `forgelm.compliance` next to the artefact emitter.
+**Run-scoped erasure** for `kind=artefacts` is designed to delete a fixed allow-list (`compliance/`, `data_audit_report.json`, `data_governance_report.json`) — never a glob — kept in `forgelm.compliance` next to the artefact emitter.  That allow-list does not exist yet; §12 describes what shipped.
 
 ### 4.5 What `forgelm purge` does NOT do
 
@@ -239,7 +241,7 @@ Recovery path for a step-5 failure (rename fails after the temp file is fully wr
 | **Re-train the model after corpus erasure** | Operator decision; ForgeLM cannot infer the right downstream pipeline. |
 | **Distributed corpus deletion** | Single-node only.  Multi-node corpus shards live on separate filesystems; the operator runs `forgelm purge --row-id` on each. |
 | **Webhook receiver cleanup** | The Slack / Teams thread that received `notify_awaiting_approval` is in the operator's chat platform, not in ForgeLM.  We log a notice. |
-| **Audit log rewriting** | The chain is append-only by construction.  Erasure adds an event; never edits an entry.  Whether the entries may be kept is the controller's call: Art. 17(3)(b) and (3)(e) apply only to the extent a specific obligation or claim requires it. |
+| **Audit log rewriting** | The chain is append-only by construction.  Erasure adds an event; never edits an entry.  Whether the entries may be kept is the controller's documented call: still necessary for their purpose, or an Art. 17(3) exception such as (3)(b) / (3)(e), which applies only to the extent a specific obligation or claim requires it. |
 | **Model weight forgetting** | "Machine unlearning" is an active research area; we do not ship a half-baked impl.  We emit `data.erasure_warning_memorisation` so the operator knows the gap is theirs to close. |
 
 ---
@@ -322,8 +324,9 @@ in three scopes:
 1. **Training corpus row erasure.** `forgelm purge --row-id <id> --corpus <path>`
    atomically rewrites the JSONL, dropping the matched row.
 2. **Run-scoped artefact erasure.** `forgelm purge --run-id <id>
-   --kind {staging,artefacts}` deletes the model staging directory or the
-   compliance bundle for a specific run.
+   --kind {staging,artefacts}` deletes the model staging directory for a
+   specific run and the compliance files whose names embed the run id (as
+   shipped, not the standard bundle; see the purge reference).
 3. **Retention policy enforcement.** Configure `retention.*` in your YAML;
    `forgelm purge --check-policy` lists artefacts that have overstayed the
    declared horizon.
@@ -375,7 +378,7 @@ Phase 21 ships **at least 7 tests** covering the acceptance surface.  Every test
 | 1 | `test_row_erasure_rewrites_jsonl_atomically` | Row matching `row_id=42` removed from `train.jsonl`; other 99 rows byte-identical to pre-erasure. |
 | 2 | `test_row_erasure_emits_audit_events` | Two new audit events landed: `data.erasure_requested` then `data.erasure_completed`, in that order, with matching `target_id` field. |
 | 3 | `test_run_scoped_staging_erasure` | `--run-id fg-abc --kind staging` removes `final_model.staging.fg-abc/` recursively; final dir untouched if it exists. |
-| 4 | `test_run_scoped_artefacts_erasure` | `--run-id fg-abc --kind artefacts` removes the `compliance/` allow-list; `final_model/` untouched. |
+| 4 | `test_run_scoped_artefacts_erasure` | `--run-id fg-abc --kind artefacts` removes `compliance/` files named for the run; `final_model/` untouched (the standard fixed-basename bundle is not found, pinned separately). |
 | 5 | `test_audit_chain_verifies_post_erasure` | After erasure, `verify_audit_log(path).valid is True`; chain length grew by 2 events. |
 | 6 | `test_check_policy_reports_violations` | `--check-policy` against a fixture with overstayed artefacts returns the correct violation list (text + JSON). |
 | 7 | `test_unknown_row_id_clear_error` | Unknown `--row-id` exits 1 with a message that names the file scanned and the id searched. |
@@ -465,10 +468,16 @@ The closure plan §15.5 lists three open items that intersect Phase 21:
 
 ## 12. Implementation status
 
-The design above shipped end-to-end in v0.5.5:
+The design above shipped in v0.5.5, with the deviations listed after this list:
 
 - **`RetentionConfig`** (§3): pinned in `forgelm/config.py` as a top-level `retention:` block with five fields (`audit_log_retention_days`, `staging_ttl_days`, `ephemeral_artefact_retention_days`, `raw_documents_retention_days`, `enforce`). `EvaluationConfig.staging_ttl_days` deprecated with `DeprecationWarning` + alias-forwarding to `retention.staging_ttl_days`.
 - **`forgelm purge` subcommand** (§4): pinned in `forgelm/cli/subcommands/_purge.py` with `--row-id`, `--corpus`, `--run-id`, `--kind`, `--check-policy`, atomic-rewrite + recovery semantics.
 - **Audit events** (§5): six new events live in `audit_event_catalog.md` — `data.erasure_requested`, `data.erasure_completed`, `data.erasure_failed`, plus three operator-warning events.
 - **Tests** (§7): `tests/test_gdpr_erasure.py` ships the regression coverage (unknown row id, multi-match refusal, partial-commit recovery, retention horizon enforcement, audit-PII redaction, etc.).
 - **User-facing docs** (§6, §8): `docs/guides/gdpr_erasure{,-tr}.md` + `docs/usermanuals/{en,tr}/compliance/gdpr-erasure.md` reference the implemented surface.
+
+**Deviations from the design, as shipped today:**
+
+- `--kind artefacts` matches `compliance/` filenames that embed the run id as a token.  The exporter writes fixed basenames (`compliance_report.json`, `training_manifest.yaml`, ...), so on a standard output directory the command finds nothing: it fails safe (nothing is deleted, `data.erasure_failed` with `NoMatchingArtefacts`, exit 1).  The fixed allow-list with an ownership proof that §4.4 describes is open work.
+- Retention horizons are reported by `forgelm purge --check-policy` and never enforced; `retention.enforce` is reserved and no command reads it.
+- The legacy `final_model.staging/` is purged only when it holds a `staging_run_id` marker equal to the run id.  Nothing in ForgeLM writes that marker.

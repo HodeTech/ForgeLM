@@ -102,7 +102,8 @@ in-pipeline CAB:
    `<output_dir>/final_model/` via atomic rename.
 5. If rejected, `human_approval.rejected` event fires; model stays
    in `final_model.staging.<run_id>/` for forensic review until
-   retention expires (`retention.staging_ttl_days` in the config).
+   someone removes it (`forgelm purge --check-policy` reports it once it
+   is older than `retention.staging_ttl_days`).
 
 This gives a deployer SOC 2 CC8.1 evidence: when the approval gate is
 enabled, every model promotion is attributed to the recorded approver identity and forensically recorded.

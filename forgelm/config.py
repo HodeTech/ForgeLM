@@ -1591,7 +1591,7 @@ class RetentionConfig(BaseModel):
     §3 + closure-plan §15.5 v2.5).  All four horizons default to
     ForgeLM's own choices, not legal periods (GDPR Article 5(1)(e) sets
     no fixed period):  audit logs at 5 years, staging at 7 days
-    (operator gets one work-week to act on a `forgelm reject`),
+    (one work-week before `purge --check-policy` reports a staging dir),
     ephemeral artefacts at 90 days (compliance bundle + audit reports
     have a quarterly review cadence in most QMS), raw documents at 90
     days (typical ingestion-window before re-running data audit).
@@ -1613,14 +1613,14 @@ class RetentionConfig(BaseModel):
         ge=0,
         description=(
             "Days after which `forgelm purge --check-policy` reports `audit_log.jsonl` as overdue (Article 5(1)(e)). "
-            "Default 1825 = 5 years, a ForgeLM choice, not a legal period.  Set to 0 to retain indefinitely; name the Union or Member State obligation you rely on."
+            "Default 1825 = 5 years, a ForgeLM choice, not a legal period.  Set to 0 to retain indefinitely; document why the entries stay necessary or the legal obligation you rely on."
         ),
     )
     staging_ttl_days: int = Field(
         default=7,
         ge=0,
         description=(
-            "Days after which `forgelm purge --check-policy` reports a `final_model.staging.<run_id>/` directory as overdue (aged from the run's first audit event, else mtime); nothing is deleted. "
+            "Days after which `forgelm purge --check-policy` reports a `final_model.staging.<run_id>/` (or legacy `final_model.staging/`) directory as overdue (aged from the run's first audit event, else the log's first event, else mtime); nothing is deleted. "
             "Set to 0 to retain indefinitely. This is the canonical staging-retention field; "
             "the legacy `evaluation.staging_ttl_days` alias was removed in v0.8.0."
         ),

@@ -106,8 +106,8 @@ CAB'sıdır:
    atomik rename ile `<output_dir>/final_model/`'e promote olur.
 5. Reddedilirse `human_approval.rejected` event yangın eder; model
    forensic inceleme için `final_model.staging.<run_id>/`'de kalır,
-   retention süresi dolana kadar (`retention.staging_ttl_days` —
-   config'te).
+   biri onu silene kadar (`forgelm purge --check-policy`, onu
+   `retention.staging_ttl_days`'ten eski olduğunda raporlar).
 
 Bu, operatöre SOC 2 CC8.1 kanıtı verir: onay kapısı etkinleştirildiğinde her
 model promotion kaydedilen onaylayıcı kimliğine atfedilir ve forensic olarak kayıtlıdır. Eğitici ile onaylayıcıyı

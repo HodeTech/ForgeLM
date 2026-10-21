@@ -95,7 +95,7 @@ ForgeLM yerleşik bir quorum gate'i **göndermez**. `approval.quorum` alanı yok
 
 ## Timeout
 
-ForgeLM staged koşumları **timeout etmez**. `approval.timeout_hours`, `human_approval.timeout` event'i veya auto-fail saati yoktur. Staged koşum süresiz bekler; deployer eski staging dizinlerinin sona ermesini istiyorsa bunun yerine `retention.staging_ttl_days`'i konfigüre edin — bu GDPR Madde 17 retention pipeline'ına bağlanır (yapılandırılan horizon'dan sonra dizini fiziksel olarak prune eder, approval gate'e değil).
+ForgeLM staged koşumları **timeout etmez**. `approval.timeout_hours`, `human_approval.timeout` event'i veya auto-fail saati yoktur. Staged koşum süresiz bekler; deployer eski staging dizinlerinin sona ermesini istiyorsa bunun yerine `retention.staging_ttl_days`'i konfigüre edin — bu bir retention raporudur, süre sonu değildir: `forgelm purge --check-policy` horizon'dan eski staging dizinlerini listeler, hiçbir şey otomatik silinmez (birini `forgelm purge --run-id <id> --kind staging` ile kaldırın) ve approval gate'e asla dokunmaz.
 
 ## Bekleyen koşuları inceleme
 

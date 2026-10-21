@@ -14,7 +14,7 @@ This page is the operator quick-reference. The deeper deployer-flow walkthrough 
 | Right | Subcommand | What it answers |
 |---|---|---|
 | **Article 15** — right of access | `forgelm reverse-pii` | "Do you hold any record of me?" — scans JSONL corpora for the subject's identifier. |
-| **Article 17** — right to erasure | `forgelm purge` | "Delete every record of me." — atomically removes a row or a staging directory, and compliance files whose names embed the run id. |
+| **Article 17** — right to erasure | `forgelm purge` | "Delete every record of me." — atomically removes a corpus row; with `--run-id` it removes a staging directory or compliance files whose names embed the run id. |
 
 Both subcommands hash the subject's identifier with the **same** per-output-dir salt (`<output_dir>/.forgelm_audit_salt`) before recording the audit row. The `query_hash` field on `data.access_request_query` and the `target_id` field on `data.erasure_*` are byte-identical for the same subject, which lets a reviewer correlate the two without cleartext.
 
@@ -49,7 +49,7 @@ Six events ride the audit chain (see the [Audit Event Catalog on GitHub](https:/
 ### What it does NOT do
 
 - **Re-train models.** Removing a row from the corpus does not unmemorise it from already-trained weights — full retraining without the erased row is the only proper mitigation. The tool emits `data.erasure_warning_memorisation` so the gap is visible.
-- **Delete the audit log.** The tool records the erasure as a new event rather than rewriting history. Whether entries that name the data subject may be kept is the controller's decision: Article 17(3)(b) applies only to the extent a specific Union or Member State legal obligation requires the processing, and you have to be able to name that obligation.
+- **Delete the audit log.** The tool records the erasure as a new event rather than rewriting history. Whether entries that name the data subject may be kept is the controller's decision, and the controller documents why: the entries are still necessary for their purpose, or an Article 17(3) exception applies. Article 17(3)(b), for example, applies only to the extent a specific Union or Member State legal obligation requires the processing, and you have to be able to name that obligation.
 - **Find the standard compliance bundle with `--kind artefacts`.** The trainer writes fixed basenames (`compliance_report.json`, `training_manifest.yaml`, ...) that contain no run id, and the resolver matches only filenames that embed it. On a normal output directory the command finds nothing, emits `data.erasure_failed` (`NoMatchingArtefacts`), exits 1 and deletes nothing; remove the bundle through your storage layer.
 - **Push notices to downstream consumers.** Webhook receivers, dataset mirrors, and deployed model endpoints are the operator's runtime-layer responsibility (Article 17(2)). The `data.erasure_warning_external_copies` event is the explicit reminder.
 

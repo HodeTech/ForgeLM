@@ -3,7 +3,7 @@
 > **Hedef kitle:** Eğitim corpus'larına ve koşum-kapsamlı artefact'lara karşı GDPR Madde 17 silme taleplerini karşılayan ForgeLM operatörleri ve ortaya çıkan `data.erasure_*` audit zincirini doğrulayan denetçiler.
 > **Ayna:** [purge_subcommand.md](purge_subcommand.md)
 
-`forgelm purge`, ForgeLM eğitim corpus'ları ve koşum artefact'ları için **GDPR Madde 17 silinme hakkı**'nın operatör-yüzlü uygulamasıdır (Phase 21). Bir satırı, bir koşumun staging dizinini ve (dosya adları run id'yi taşıyorsa — aşağıdaki `--kind artefacts`'e bakın) bir koşumun compliance dosyalarını atomik olarak siler ve her adımı tamper-evident `audit_log.jsonl` zincirine kaydeder.
+`forgelm purge`, ForgeLM eğitim corpus'ları ve koşum artefact'ları için **GDPR Madde 17 silinme hakkı**'nın operatör-yüzlü uygulamasıdır (Phase 21). Bir corpus satırını atomik olarak siler; `--run-id` ile bir koşumun staging dizinini (`--kind staging`) veya adı run id'yi embed eden compliance dosyalarını (`--kind artefacts`, aşağıya bakın) siler; her adımı tamper-evident `audit_log.jsonl` zincirine kaydeder.
 
 Deployer akışı (DSAR ticket → CLI çağrısı → doğrulama) için bkz. [`../guides/gdpr_erasure.md`](../guides/gdpr_erasure-tr.md). Bu sayfa flag-başına, event-başına referanstır.
 
@@ -48,11 +48,11 @@ JSONL eğitim corpus'undan `id` (veya `row_id`) field'ı ile tanımlanan tek bir
 | Kind | Hedef |
 |---|---|
 | `staging` | `<output_dir>/final_model.staging.<run_id>/`; legacy `final_model.staging/` yalnızca içinde içeriği `<run_id>`'ye eşit bir `staging_run_id` dosyası varsa. ForgeLM bu işaretçiyi yazmaz; işaretsiz bir legacy staging dizinini kendiniz silin. |
-| `artefacts` | Adı `<run_id>`'yi bir token olarak (`_`, `-` veya `.` ile sınırlanmış) embed eden `<output_dir>/compliance/*.json` dosyaları. |
+| `artefacts` | `<output_dir>/compliance/` altında doğrudan bulunan, adı `<run_id>`'yi `_`, `-`, `.` ya da adın başı/sonu ile sınırlı olarak içeren her dosya (yalnızca `.json` değil). |
 
 > **`--kind artefacts` standart compliance paketini bulamaz.** Trainer ve exporter sabit dosya adları yazar (`compliance_report.json`, `training_manifest.yaml`, `data_provenance.json`, `data_governance_report.json`; yapılandırıldığında `risk_assessment.json` / `annex_iv_metadata.json`) ve hiçbiri run id içermez. Normal bir çıktı dizininde komut bu yüzden hiçbir şey bulmaz, `data.erasure_failed` (`NoMatchingArtefacts`) yayar ve 1 ile çıkar; hiçbir şey silmez. Yalnızca adına run id'yi kendiniz yazdığınız dosyalara etki eder. Resolver düzeltilene kadar paketi depolama katmanınız üzerinden kaldırın.
 
-`--kind logs` **kasıtlı olarak yok**: audit log append-only'dir ve tool onu asla silmez. Bir veri sahibini adlandıran girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır: Madde 17(3)(b) yalnızca belirli bir AB veya üye devlet hukuku yükümlülüğü bunları tutmayı gerektirdiği ölçüde uygulanır ve bu yükümlülüğü adlandırabilmeniz gerekir.
+`--kind logs` **kasıtlı olarak yok**: audit log append-only'dir ve tool onu asla silmez. Veri sahibini adlandıran girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır ve veri sorumlusu nedenini belgeler: girdiler amaçları için hâlâ gereklidir ya da Madde 17(3) istisnalarından biri uygulanır. Örneğin Madde 17(3)(b) yalnızca belirli bir AB veya üye devlet hukuku yükümlülüğü işlemeyi gerektirdiği ölçüde uygulanır ve bu yükümlülüğü adlandırabilmeniz gerekir.
 
 ### Retention-policy raporu (`--check-policy`)
 
@@ -93,7 +93,7 @@ Altı event de [`audit_event_catalog.md`](audit_event_catalog-tr.md)'deki ortak 
 | Kod | Anlamı |
 |---|---|
 | 0 | Başarı veya başarılı `--check-policy` raporu (report-not-gate semantik). |
-| 1 | Config hatası: bilinmeyen `--row-id`, eksik `--corpus`, karşılıklı dışlayıcı flag kombinasyonu, çakışan `staging_ttl_days` değerleri veya eksik / okunamaz / Pydantic doğrulamasından geçemeyen `--check-policy --config <path>`. |
+| 1 | Config hatası: bilinmeyen `--row-id`, `--run-id` ile eşleşen staging dizini / compliance dosyası yok (standart sabit-adlı pakete karşı `--kind artefacts` dahil), eksik `--corpus`, karşılıklı dışlayıcı flag kombinasyonu, çakışan `staging_ttl_days` değerleri veya eksik / okunamaz / Pydantic doğrulamasından geçemeyen `--check-policy --config <path>`. |
 | 2 | Runtime hatası: I/O başarısızlığı, izin reddedildi, atomic-rename başarısızlığı. |
 
 `--check-policy` asla 3 veya 4 dönmez. Kod 3 (`EXIT_EVAL_FAILURE`) ve 4 (`EXIT_AWAITING_APPROVAL`) eğitim pipeline'ı için ayrılmıştır ve bu subcommand'ın yüzeyinin parçası değildir.

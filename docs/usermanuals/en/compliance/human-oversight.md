@@ -95,7 +95,7 @@ ForgeLM does **not** ship a built-in quorum gate. There is no `approval.quorum` 
 
 ## Timeouts
 
-ForgeLM does **not** time out staged runs. There is no `approval.timeout_hours`, no `human_approval.timeout` event, and no auto-fail clock. A staged run waits indefinitely; if the deployer wants to expire stale staging directories, configure `retention.staging_ttl_days` instead — that wires into the GDPR Article 17 retention pipeline (which physically prunes the directory after the configured horizon, not into the approval gate).
+ForgeLM does **not** time out staged runs. There is no `approval.timeout_hours`, no `human_approval.timeout` event, and no auto-fail clock. A staged run waits indefinitely; if the deployer wants to expire stale staging directories, configure `retention.staging_ttl_days` instead — that is a retention report, not an expiry: `forgelm purge --check-policy` lists staging directories older than the horizon, nothing is deleted automatically (remove one with `forgelm purge --run-id <id> --kind staging`), and it never touches the approval gate.
 
 ## Inspecting pending runs
 

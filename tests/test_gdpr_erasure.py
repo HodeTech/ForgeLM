@@ -327,17 +327,31 @@ class TestArtefactDeletion:
         failed = [e for e in _read_audit_events(tmp_path / "audit_log.jsonl") if e["event"] == "data.erasure_failed"]
         assert [e["error_class"] for e in failed] == ["NoMatchingArtefacts"]
 
-    def test_no_forgelm_writer_creates_the_legacy_staging_marker(self) -> None:
+    def test_only_the_purge_reader_names_the_legacy_staging_marker(self) -> None:
         # The docs tell operators to remove an unmarked legacy ``final_model.staging/``
-        # themselves because ForgeLM never writes ``staging_run_id``.  A writer
-        # would make that advice stale.
+        # themselves because ForgeLM never writes ``staging_run_id``.  Every use of that
+        # marker name in the package must be the read-only ownership check; a writer
+        # anywhere would make the documented advice stale (update docs + this test).
+        import ast
+
         forgelm_dir = Path(__file__).resolve().parent.parent / "forgelm"
-        writers = [
-            str(path.relative_to(forgelm_dir))
-            for path in sorted(forgelm_dir.rglob("*.py"))
-            if "staging_run_id" in path.read_text(encoding="utf-8")
-        ]
-        assert writers == [os.path.join("cli", "subcommands", "_purge.py")]
+        total = 0
+        inside_reader = 0
+        reader_calls: set[str] = set()
+        for path in sorted(forgelm_dir.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            total += sum(1 for n in ast.walk(tree) if isinstance(n, ast.Constant) and n.value == "staging_run_id")
+            for fn in (
+                n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_legacy_staging_owned_by"
+            ):
+                inside_reader += sum(
+                    1 for n in ast.walk(fn) if isinstance(n, ast.Constant) and n.value == "staging_run_id"
+                )
+                reader_calls |= {
+                    n.func.attr for n in ast.walk(fn) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                }
+        assert total == inside_reader == 1, "the marker name must appear only in _legacy_staging_owned_by"
+        assert not reader_calls & {"write_text", "write", "touch", "mkdir"}, "the marker reader must stay read-only"
 
 
 # ---------------------------------------------------------------------------

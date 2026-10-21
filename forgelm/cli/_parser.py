@@ -1077,7 +1077,7 @@ def _add_purge_subcommand(subparsers) -> None:
     - ``--row-id <id> --corpus <path>`` — atomic JSONL row erasure with
       hashed audit event (Article 17 right-to-erasure for training rows).
     - ``--run-id <id> --kind {staging,artefacts}`` — run-scoped artefact
-      erasure (staging directory or compliance bundle).
+      erasure (staging directory or compliance files whose names embed the run id).
     - ``--check-policy`` — read-only retention-policy violation report
       against the loaded config's ``retention:`` block.
 
@@ -1092,7 +1092,7 @@ def _add_purge_subcommand(subparsers) -> None:
         help="GDPR Article 17 erasure: remove corpus rows or run-scoped artefacts.",
         description=(
             "Article 17 right-to-erasure: deletes a corpus row, a staging "
-            "directory, or a run's compliance bundle, and records a tamper-evident "
+            "directory, or a run's compliance files whose names embed the run id, and records a tamper-evident "
             "audit-event chain (request → completed / failed).  Use --check-policy "
             "for a read-only retention-violation report against the loaded config."
         ),

@@ -81,24 +81,39 @@ _GDPR_CLAIM_FILES = (
     "docs/usermanuals/tr/compliance/gdpr-erasure.md",
     "docs/usermanuals/en/reference/configuration.md",
     "docs/usermanuals/tr/reference/configuration.md",
+    "docs/usermanuals/en/compliance/human-oversight.md",
+    "docs/usermanuals/tr/compliance/human-oversight.md",
+    "docs/qms/sop_change_management.md",
+    "docs/qms/sop_change_management-tr.md",
 )
 
 _RETIRED_GDPR_CLAIMS = (
-    r"17\(3\)\(b\) preserves",
-    r"17\(3\)\(b\) (?:exemption|defence)",
-    r"17\(3\)\(b\) records",
+    r"17\(3\)\(b\)\s+preserves",
+    r"17\(3\)\(b\)\s+(?:exemption|defence)",
+    r"17\(3\)\(b\)\s+records",
     r"17\(3\)\(b\) savunması",
-    r"17\(3\)\(b\) audit / muhasebe",
+    r"17\(3\)\(b\)\s+audit\s*/\s*muhasebe",
     r"17\(3\)\(b\) kayıt",
     r"append-only (?:Article|Madde) 17\(3\)\(b\)",
-    r"5 years default \(Article 5\(1\)\(e\)\)",
+    r"5\s+years\s+default\s+\(Article\s+5\(1\)\(e\)\)",
     r"varsayılan 5 yıl \(Madde 5\(1\)\(e\)\)",
-    r"legal-obligation record under",
-    r"compliant out of the box",
-    r"Article 12 record-keeping baseline",
-    r"Horizons honour GDPR",
-    r"removed by default after a defined retention horizon",
-    r"after a `forgelm reject` decision before scheduled cleanup",
+    r"legal-obligation\s+record\s+under",
+    r"compliant\s+out\s+of\s+the\s+box",
+    r"Article\s+12\s+record-keeping\s+(?:baseline|\))",
+    r"Horizons\s+honou?r\s+GDPR",
+    r"removed\s+by\s+default\s+after\s+a\s+defined\s+retention\s+horizon",
+    r"after\s+a\s+`forgelm\s+reject`\s+decision\s+before\s+scheduled\s+cleanup",
+    r"work-week\s+to\s+act\s+on\s+a\s+`forgelm\s+reject`",
+    r"Madde\s+12\s+kayıt-tutma",
+    r"run's\s+compliance\s+bundle",
+    r"staging\s+directory\s+or\s+compliance\s+bundle",
+    r"physically\s+prunes",
+    r"fiziksel\s+olarak\s+prune",
+    r"until\s+retention\s+expires",
+    r"retention\s+süresi\s+dolana",
+    r"justified\s+only\s+to\s+the\s+extent",
+    r"name\s+the\s+Union\s+or\s+Member\s+State\s+obligation",
+    r"compliance/\*\.json`\s+files\s+whose\s+name\s+embeds",
 )
 
 _PURGE_ARTEFACT_WARNING_FILES = (
@@ -114,7 +129,7 @@ _PURGE_ARTEFACT_WARNING_FILES = (
 @pytest.mark.parametrize("rel", _GDPR_CLAIM_FILES)
 def test_retired_gdpr_claims_stay_out(rel: str) -> None:
     text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
-    found = [pattern for pattern in _RETIRED_GDPR_CLAIMS if re.search(pattern, text)]
+    found = [pattern for pattern in _RETIRED_GDPR_CLAIMS if re.search(pattern, text, re.IGNORECASE)]
     assert found == [], f"{rel} still carries retired GDPR wording: {found}"
 
 

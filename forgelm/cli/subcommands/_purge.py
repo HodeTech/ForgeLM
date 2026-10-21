@@ -7,7 +7,7 @@ Implements the operator-facing surface specified in
   erasure with hashed audit event (Article 17 right-to-erasure for
   training corpus rows).
 - ``forgelm purge --run-id <id> --kind {staging,artefacts}`` —
-  run-scoped artefact erasure (staging directory or compliance bundle).
+  run-scoped artefact erasure (staging directory or compliance files whose names embed the run id).
 - ``forgelm purge --check-policy [--config <path>]`` — read-only
   retention-policy violation report against the loaded config's
   ``retention:`` block.

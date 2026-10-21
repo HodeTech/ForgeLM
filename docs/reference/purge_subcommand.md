@@ -3,7 +3,7 @@
 > **Audience:** ForgeLM operators honouring GDPR Article 17 erasure requests against training corpora and run-scoped artefacts, plus auditors verifying the resulting `data.erasure_*` audit chain.
 > **Mirror:** [purge_subcommand-tr.md](purge_subcommand-tr.md)
 
-`forgelm purge` is the operator-facing implementation of the **GDPR Article 17 right-to-erasure** for ForgeLM training corpora and run artefacts (Phase 21). It atomically deletes a row, or a run's staging directory, and (when the files carry the run id in their name — see `--kind artefacts` below) a run's compliance files, and records every step in the tamper-evident `audit_log.jsonl` chain.
+`forgelm purge` is the operator-facing implementation of the **GDPR Article 17 right-to-erasure** for ForgeLM training corpora and run artefacts (Phase 21). It atomically erases a corpus row; with `--run-id` it deletes a run's staging directory (`--kind staging`) or compliance files whose names embed the run id (`--kind artefacts`, see below); and it records every step in the tamper-evident `audit_log.jsonl` chain.
 
 For the deployer-flow walkthrough (DSAR ticket → CLI invocation → verification), see [`../guides/gdpr_erasure.md`](../guides/gdpr_erasure.md). This page is the per-flag, per-event reference.
 
@@ -48,11 +48,11 @@ Erases a single row identified by its `id` (or `row_id`) field from a JSONL trai
 | Kind | Target |
 |---|---|
 | `staging` | `<output_dir>/final_model.staging.<run_id>/`, and the legacy `final_model.staging/` only when it contains a `staging_run_id` file whose content equals `<run_id>`. ForgeLM does not write that marker, so remove an unmarked legacy staging directory yourself. |
-| `artefacts` | `<output_dir>/compliance/*.json` files whose name embeds `<run_id>` as a token (delimited by `_`, `-` or `.`). |
+| `artefacts` | Any file directly under `<output_dir>/compliance/` whose name contains `<run_id>` bounded by `_`, `-`, `.` or the start/end of the name (not only `.json`). |
 
 > **`--kind artefacts` does not find the standard compliance bundle.** The trainer and exporter write fixed basenames (`compliance_report.json`, `training_manifest.yaml`, `data_provenance.json`, `data_governance_report.json`, and `risk_assessment.json` / `annex_iv_metadata.json` when configured), none of which contains a run id. On a normal output directory the command therefore finds nothing, emits `data.erasure_failed` (`NoMatchingArtefacts`) and exits 1; it deletes nothing. It acts only on files you have named with the run id yourself. Until the resolver is fixed, remove the bundle through your storage layer.
 
-`--kind logs` is **intentionally absent**: the audit log is append-only and the tool never deletes it. Whether entries that name a data subject may stay is the controller's decision: Article 17(3)(b) applies only to the extent a specific Union or Member State legal obligation requires keeping them, and you have to be able to name that obligation.
+`--kind logs` is **intentionally absent**: the audit log is append-only and the tool never deletes it. Whether entries that name the data subject may be kept is the controller's decision, and the controller documents why: the entries are still necessary for their purpose, or an Article 17(3) exception applies. Article 17(3)(b), for example, applies only to the extent a specific Union or Member State legal obligation requires the processing, and you have to be able to name that obligation.
 
 ### Retention-policy report (`--check-policy`)
 
@@ -93,7 +93,7 @@ All six events ride the common envelope from [`audit_event_catalog.md`](audit_ev
 | Code | Meaning |
 |---|---|
 | 0 | Success, or a successful `--check-policy` report (report-not-gate semantic). |
-| 1 | Config error: unknown `--row-id`, missing `--corpus`, mutually-exclusive flag combination, conflicting `staging_ttl_days` values, or `--check-policy --config <path>` that is missing / unreadable / fails Pydantic validation. |
+| 1 | Config error: unknown `--row-id`, no staging directory / compliance file matching `--run-id` (including `--kind artefacts` against the standard fixed-name bundle), missing `--corpus`, mutually-exclusive flag combination, conflicting `staging_ttl_days` values, or `--check-policy --config <path>` that is missing / unreadable / fails Pydantic validation. |
 | 2 | Runtime error: I/O failure, permission denied, atomic-rename failure. |
 
 `--check-policy` never returns code 3 or 4. Codes 3 (`EXIT_EVAL_FAILURE`) and 4 (`EXIT_AWAITING_APPROVAL`) are reserved for the training pipeline and are not part of this subcommand's surface.

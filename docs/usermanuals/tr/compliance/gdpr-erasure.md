@@ -14,7 +14,7 @@ Bu sayfa operatör hızlı-referansıdır. Daha derin deployer akışı [GitHub'
 | Hak | Subcommand | Ne yanıtlar |
 |---|---|---|
 | **Madde 15** — erişim hakkı | `forgelm reverse-pii` | "Hakkımda kayıt tutuyor musunuz?" — JSONL corpus'ları subject identifier'ı için tarar. |
-| **Madde 17** — silinme hakkı | `forgelm purge` | "Hakkımdaki her kaydı silin." — bir satırı veya bir staging dizinini, ayrıca adı run id'yi embed eden compliance dosyalarını atomik olarak siler. |
+| **Madde 17** — silinme hakkı | `forgelm purge` | "Hakkımdaki her kaydı silin." — bir corpus satırını atomik olarak siler; `--run-id` ile bir staging dizinini veya adı run id'yi embed eden compliance dosyalarını siler. |
 
 İki subcommand da audit satırını kaydetmeden önce subject identifier'ını **aynı** per-output-dir salt (`<output_dir>/.forgelm_audit_salt`) ile hash'ler. `data.access_request_query` üzerindeki `query_hash` ve `data.erasure_*` üzerindeki `target_id` aynı subject için byte-byte aynıdır; reviewer bu sayede ikisini cleartext olmadan korele edebilir.
 
@@ -49,7 +49,7 @@ Audit zincirine altı event yazılır (bkz. [GitHub'daki Audit Event Kataloğu](
 ### Neyi YAPMAZ
 
 - **Modelleri yeniden eğitmez.** Bir satırı corpus'tan kaldırmak onu zaten eğitilmiş ağırlıklardan unutturmaz — silinmiş satır olmadan tam yeniden eğitim tek doğru çözümdür. Tool `data.erasure_warning_memorisation` yayar; böylece boşluk görünür olur.
-- **Audit log'unu silmez.** Tool silmeyi geçmişi yeniden yazmak yerine yeni bir event olarak kaydeder. Veri sahibini adlandıran girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır: Madde 17(3)(b) yalnızca belirli bir AB veya üye devlet hukuku yükümlülüğü işlemeyi gerektirdiği ölçüde uygulanır ve bu yükümlülüğü adlandırabilmeniz gerekir.
+- **Audit log'unu silmez.** Tool silmeyi geçmişi yeniden yazmak yerine yeni bir event olarak kaydeder. Veri sahibini adlandıran girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır ve veri sorumlusu nedenini belgeler: girdiler amaçları için hâlâ gereklidir ya da Madde 17(3) istisnalarından biri uygulanır. Örneğin Madde 17(3)(b) yalnızca belirli bir AB veya üye devlet hukuku yükümlülüğü işlemeyi gerektirdiği ölçüde uygulanır ve bu yükümlülüğü adlandırabilmeniz gerekir.
 - **`--kind artefacts` ile standart compliance paketini bulmaz.** Trainer run id içermeyen sabit dosya adları yazar (`compliance_report.json`, `training_manifest.yaml`, ...); resolver ise yalnızca onu embed eden dosya adlarını eşler. Normal bir çıktı dizininde komut hiçbir şey bulmaz, `data.erasure_failed` (`NoMatchingArtefacts`) yayar, 1 ile çıkar ve hiçbir şey silmez; paketi depolama katmanınız üzerinden kaldırın.
 - **Downstream tüketicilere bildirim göndermez.** Webhook receiver'ları, dataset mirror'ları ve deploy edilmiş model endpoint'leri operatörün runtime-katmanı sorumluluğudur (Madde 17(2)). `data.erasure_warning_external_copies` event'ı açık hatırlatmadır.
 

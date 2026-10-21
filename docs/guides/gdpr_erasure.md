@@ -20,7 +20,7 @@
 **Does not:**
 
 - Re-train models. Removing a row from the corpus does not unmemorise it from already-trained weights — full retraining without the erased row is the only proper mitigation. The tool emits `data.erasure_warning_memorisation` when a `final_model/` directory exists directly under `--output-dir` (which defaults to the corpus's directory, so pass your training output directory), so the operator sees the gap. It cannot tell which runs consumed the corpus.
-- Delete entries from the audit log itself. The tool records the erasure as a new event rather than rewriting history. Whether entries that reference the data subject may be kept is the controller's decision: Article 17(3)(b) applies only to the extent a specific Union or Member State legal obligation requires the processing (for example the log-retention duties of AI Act Art. 19(1) and Art. 26(6), once they apply to your system), and you have to be able to name that obligation.
+- Delete entries from the audit log itself. The tool records the erasure as a new event rather than rewriting history. Whether entries that reference the data subject may be kept is the controller's decision, and the controller documents why: the entries are still necessary for their purpose, or an Article 17(3) exception applies. Article 17(3)(b), for example, applies only to the extent a specific Union or Member State legal obligation requires the processing (such as the 10-year documentation keeping of AI Act Art. 18(1) where the log forms part of your technical documentation, or the log-retention duties of Art. 19(1) and Art. 26(6) for logs a deployed high-risk system generates), and you have to be able to name that obligation.
 - Push erasure notices to downstream consumers. Webhook receivers, dataset mirrors, deployed model endpoints, and third-party fine-tunes derived from a published checkpoint are the operator's runtime-layer responsibility (Article 17(2)). The tool emits `data.erasure_warning_external_copies` when the loaded config has a webhook block, so a downstream consumer querying the audit log sees the explicit reminder.
 - Erase backups. Replicas, snapshots, and storage backups outside the operator's `<output_dir>` are infrastructure-side concerns.
 
@@ -57,7 +57,7 @@ $ forgelm purge --run-id fg-abc123def456 --kind artefacts --output-dir ./outputs
 ```
 
 - `--kind staging` removes `<output_dir>/final_model.staging.<run_id>/`, and the legacy `final_model.staging/` only if it carries a `staging_run_id` marker whose content equals the `<run_id>` (ForgeLM does not write that marker; otherwise remove the legacy directory yourself).
-- `--kind artefacts` removes `<output_dir>/compliance/*.json` files whose name embeds the `<run_id>` as a token. **It does not find the standard bundle:** the trainer writes fixed basenames (`compliance_report.json`, `training_manifest.yaml`, ...) that contain no run id, so on a normal output directory the command finds nothing, emits `data.erasure_failed` (`NoMatchingArtefacts`), exits 1 and deletes nothing. Remove the bundle through your storage layer until the resolver is fixed.
+- `--kind artefacts` removes any file directly under `<output_dir>/compliance/` whose name contains the `<run_id>` bounded by `_`, `-`, `.` or the start/end of the name (not only `.json`). **It does not find the standard bundle:** the trainer writes fixed basenames (`compliance_report.json`, `training_manifest.yaml`, ...) that contain no run id, so on a normal output directory the command finds nothing, emits `data.erasure_failed` (`NoMatchingArtefacts`), exits 1 and deletes nothing. Remove the bundle through your storage layer until the resolver is fixed.
 - `--kind logs` is **intentionally absent**: the audit log is append-only and the tool never deletes it (see the first list above for who decides whether its entries may be kept).
 
 ### 3. Retention-policy report
@@ -74,8 +74,8 @@ Read-only scan. Walks the output directory, compares each artefact's age (canoni
 
 ```yaml
 retention:
-  audit_log_retention_days: 1825          # 5 years (Article 12 record-keeping)
-  staging_ttl_days: 7                     # one work-week to act on a `forgelm reject`
+  audit_log_retention_days: 1825          # 5 years (ForgeLM default, not a legal period)
+  staging_ttl_days: 7                     # age at which `purge --check-policy` reports a staging dir as overdue
   ephemeral_artefact_retention_days: 90   # quarterly review cadence
   raw_documents_retention_days: 90        # ingestion-window before re-running data audit
   enforce: log_only                       # reserved: no command acts on it yet (log_only / warn_on_excess / block_on_excess)

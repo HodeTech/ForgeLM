@@ -20,7 +20,7 @@
 **Yapmaz:**
 
 - Modelleri yeniden eğitmez. Bir satırı corpus'tan kaldırmak onu zaten eğitilmiş ağırlıklardan unutturmaz — silinmiş satır olmadan tam yeniden eğitim tek doğru çözüm. Tool, `--output-dir` altında doğrudan bir `final_model/` dizini mevcut olduğunda `data.erasure_warning_memorisation` yayar (`--output-dir` varsayılan olarak corpus'un dizinidir; bu yüzden eğitim çıktı dizininizi verin); böylece operatör boşluğu görür. Corpus'u hangi koşumların tükettiğini ayırt edemez.
-- Audit log'un kendisinden entry silmez. Tool silmeyi geçmişi yeniden yazmak yerine yeni bir event olarak kaydeder. Veri sahibine atıf yapan girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır: Madde 17(3)(b) yalnızca belirli bir AB veya üye devlet hukuku yükümlülüğü işlemeyi gerektirdiği ölçüde uygulanır (örneğin sisteminiz için geçerli hale geldiğinde AI Act Md. 19(1) ve 26(6)'daki log saklama yükümlülükleri) ve bu yükümlülüğü adlandırabilmeniz gerekir.
+- Audit log'un kendisinden entry silmez. Tool silmeyi geçmişi yeniden yazmak yerine yeni bir event olarak kaydeder. Veri sahibine atıf yapan girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır ve veri sorumlusu nedenini belgeler: girdiler amaçları için hâlâ gereklidir ya da Madde 17(3) istisnalarından biri uygulanır. Örneğin Madde 17(3)(b) yalnızca belirli bir AB veya üye devlet hukuku yükümlülüğü işlemeyi gerektirdiği ölçüde uygulanır (log teknik dokümantasyonunuzun parçasıysa AI Act Md. 18(1)'in 10 yıllık dokümantasyon saklaması ya da devreye alınmış yüksek riskli bir sistemin ürettiği loglar için Md. 19(1) ve 26(6)'nın log saklama yükümlülükleri gibi) ve bu yükümlülüğü adlandırabilmeniz gerekir.
 - Downstream tüketicilere silme bildirimi göndermez. Webhook receiver'ları, dataset mirror'ları, deploy edilmiş model endpoint'leri ve yayınlanmış checkpoint'ten türetilmiş üçüncü-taraf fine-tune'lar operatörün runtime-katmanı sorumluluğudur (Madde 17(2)). Tool yüklü config webhook block'u içerdiğinde `data.erasure_warning_external_copies` yayar; böylece audit log'u sorgulayan downstream tüketici açık hatırlatmayı görür.
 - Yedekleri silmez. Operatörün `<output_dir>` sınırı dışındaki replikalar, snapshot'lar ve storage backup'lar altyapı tarafı endişelerdir.
 
@@ -57,7 +57,7 @@ $ forgelm purge --run-id fg-abc123def456 --kind artefacts --output-dir ./outputs
 ```
 
 - `--kind staging` — `<output_dir>/final_model.staging.<run_id>/`'i siler; legacy `final_model.staging/`'i yalnızca içeriği `<run_id>`'ye eşit bir `staging_run_id` işaretçisi taşıyorsa siler (ForgeLM bu işaretçiyi yazmaz; aksi halde legacy dizini kendiniz silin).
-- `--kind artefacts` — `<run_id>`'i adında token olarak embed eden `<output_dir>/compliance/*.json` dosyalarını siler. **Standart paketi bulamaz:** trainer run id içermeyen sabit dosya adları yazar (`compliance_report.json`, `training_manifest.yaml`, ...), bu yüzden normal bir çıktı dizininde komut hiçbir şey bulmaz, `data.erasure_failed` (`NoMatchingArtefacts`) yayar, 1 ile çıkar ve hiçbir şey silmez. Resolver düzeltilene kadar paketi depolama katmanınız üzerinden kaldırın.
+- `--kind artefacts` — `<output_dir>/compliance/` altında doğrudan bulunan, adı `<run_id>`'yi `_`, `-`, `.` ya da adın başı/sonu ile sınırlı olarak içeren her dosyayı siler (yalnızca `.json` değil). **Standart paketi bulamaz:** trainer run id içermeyen sabit dosya adları yazar (`compliance_report.json`, `training_manifest.yaml`, ...), bu yüzden normal bir çıktı dizininde komut hiçbir şey bulmaz, `data.erasure_failed` (`NoMatchingArtefacts`) yayar, 1 ile çıkar ve hiçbir şey silmez. Resolver düzeltilene kadar paketi depolama katmanınız üzerinden kaldırın.
 - `--kind logs` **bilinçli olarak yok**: audit log append-only'dir ve tool onu asla silmez (girdilerinin tutulup tutulamayacağına kimin karar verdiği için yukarıdaki ilk listeye bakın).
 
 ### 3. Retention policy raporu
@@ -74,8 +74,8 @@ Salt-okunur tarama. Output dizinini gezer, her artefact'ın yaşını (canonical
 
 ```yaml
 retention:
-  audit_log_retention_days: 1825          # 5 yıl (Madde 12 kayıt-tutma)
-  staging_ttl_days: 7                     # `forgelm reject` üzerine aksiyon almak için bir iş haftası
+  audit_log_retention_days: 1825          # 5 yıl (ForgeLM varsayılanı, yasal süre değildir)
+  staging_ttl_days: 7                     # purge --check-policy'nin staging dizinini geciken saydığı yaş
   ephemeral_artefact_retention_days: 90   # üç-aylık review cadence'i
   raw_documents_retention_days: 90        # data audit yeniden çalıştırmadan önce ingestion penceresi
   enforce: log_only                       # ayrılmış: henüz hiçbir komut onu kullanmaz (log_only / warn_on_excess / block_on_excess)
