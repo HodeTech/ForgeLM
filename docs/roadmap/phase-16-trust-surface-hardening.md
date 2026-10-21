@@ -760,6 +760,12 @@ committed, then the same with Sonnet, then the next step.
     that would have caught it**, and they share one hard constraint: EN, TR and
     all six site locales change in the same commit.
 
+    *Landed with the GDPR-claims fix:* `check_usermanual_schema_drift.py` now
+    also fails on a fenced-YAML top-level block `ForgeConfig` does not have
+    (the `chat:` / `output:` / `gdpr.md` blocks), with a reasoned exemption
+    table and stale-row detection.  Still open here: the inline-code
+    config-key-in-prose half, and the two known-open blocks the guard lists.
+
     Regulation (EU) 2026/1744 moves Annex III high-risk obligations to
     **2 December 2027** and Annex I to **2 August 2028**; five current surfaces
     still tie "full enforcement" to 2 August 2026, and the original wording
