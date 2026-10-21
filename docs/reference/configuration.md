@@ -269,16 +269,20 @@ across retries. Each retry attempt is logged to the audit trail.
 ## `retention` (Optional — GDPR Article 17 erasure horizons)
 
 Defines maximum retention horizons for compliance, training, and evaluation
-artefacts. Horizons honour GDPR Article 5(1)(e) "storage limitation" and
-Article 17 "right to erasure" deadlines. The horizons are **reported**, not
+artefacts. Horizons are operator-set retention limits that help implement GDPR
+Article 5(1)(e) "storage limitation" (no fixed period: data may be kept only as
+long as necessary) and support erasure handling under Article 17 (requests are
+answered without undue delay, within the Article 12(3) one-month period). Choose
+values from your own necessity assessment; the defaults are ForgeLM choices, not
+legal periods. The horizons are **reported**, not
 enforced: `forgelm purge --check-policy` lists what is past them and always
 exits 0, and nothing is deleted, blocked or scheduled automatically. The
 `enforce` knob is reserved: no command reads it yet.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `audit_log_retention_days` | int | `1825` (~5 years) | Days to retain `audit_log.jsonl` before flagging it as overdue under Article 5(1)(e). Set to `0` to retain indefinitely (Article 17(3)(b) defence). |
-| `staging_ttl_days` | int | `7` | Days to retain `final_model.staging.<run_id>/` after a `forgelm reject` decision before scheduled cleanup. Set to `0` to retain indefinitely. Replaces the removed `evaluation.staging_ttl_days` (removed in v0.8.0). |
+| `audit_log_retention_days` | int | `1825` (~5 years) | Days after which `forgelm purge --check-policy` reports `audit_log.jsonl` as overdue (Article 5(1)(e)). The 5-year default is a ForgeLM choice, not a legal period (the AI Act's log-retention duties are Art. 19(1) / Art. 26(6), at least six months). Set to `0` to retain indefinitely; name the Union or Member State obligation you rely on. |
+| `staging_ttl_days` | int | `7` | Age (from the run's first audit event, else the directory's mtime) after which `forgelm purge --check-policy` reports a `final_model.staging.<run_id>/` directory as overdue; nothing is deleted automatically and the time of a `forgelm reject` decision is not used. Set to `0` to retain indefinitely. Replaces the removed `evaluation.staging_ttl_days` (removed in v0.8.0). |
 | `ephemeral_artefact_retention_days` | int | `90` | Days to retain compliance bundles, data audit reports, and other run-scoped derived artefacts. Set to `0` to retain indefinitely. |
 | `raw_documents_retention_days` | int | `90` | Days to retain ingested raw documents (PDF / DOCX / EPUB / TXT / Markdown) under the operator's ingestion-output directory. Set to `0` to retain indefinitely. |
 | `enforce` | string | `"log_only"` | Reserved policy mode. No command reads it yet: `"log_only"`, `"warn_on_excess"` and `"block_on_excess"` are all accepted and behave the same, and the CLI warns when a config sets either of the last two. |

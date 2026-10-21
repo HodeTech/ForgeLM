@@ -269,16 +269,20 @@ training:
 ## `retention` (İsteğe bağlı — GDPR Madde 17 silme ufukları)
 
 Uyumluluk, eğitim ve değerlendirme artefaktları için saklama ufuklarını
-belirler. Ufuklar GDPR Madde 5(1)(e) "saklama sınırlaması" ve Madde 17
-"silme hakkı" tarihlerini onurlandırır. Ufuklar **raporlanır**, zorlanmaz:
+belirler. Ufuklar, GDPR Madde 5(1)(e) "saklama sınırlaması"nı (sabit süre yok:
+veri yalnızca gerektiği kadar tutulabilir) uygulamaya yardımcı olan ve Madde 17
+kapsamındaki silme işlemlerini destekleyen operatör tarafından belirlenen saklama
+sınırlarıdır (talepler gecikmeksizin, Madde 12(3)'teki bir aylık süre içinde
+yanıtlanır). Değerleri kendi gereklilik değerlendirmenizden seçin; varsayılanlar
+ForgeLM tercihleridir, yasal süre değildir. Ufuklar **raporlanır**, zorlanmaz:
 `forgelm purge --check-policy` ufku aşanları listeler ve her zaman 0 ile çıkar;
 hiçbir şey otomatik silinmez, engellenmez ya da zamanlanmaz. `enforce` anahtarı
 ayrılmıştır: henüz hiçbir komut onu okumaz.
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
-| `audit_log_retention_days` | int | `1825` (~5 yıl) | `audit_log.jsonl` dosyasının Madde 5(1)(e) kapsamında "geciken" olarak işaretlenmeden önce saklanacağı gün sayısı. `0` süresiz saklamayı belirtir (Madde 17(3)(b) savunması). |
-| `staging_ttl_days` | int | `7` | `forgelm reject` kararından sonra `final_model.staging.<run_id>/` dizininin planlı temizlenmeden önce saklanacağı gün sayısı. `0` süresiz saklama anlamına gelir. v0.8.0'da kaldırılan `evaluation.staging_ttl_days` yerine geçer. |
+| `audit_log_retention_days` | int | `1825` (~5 yıl) | `forgelm purge --check-policy`'nin `audit_log.jsonl` dosyasını "geciken" olarak raporladığı gün sayısı (Madde 5(1)(e)). 5 yıllık varsayılan bir ForgeLM tercihidir, yasal süre değildir (AI Act'in log saklama yükümlülükleri Md. 19(1) / Md. 26(6), en az altı ay). `0` süresiz saklamayı belirtir; dayandığınız AB veya üye devlet yükümlülüğünü adlandırın. |
+| `staging_ttl_days` | int | `7` | `forgelm purge --check-policy`'nin bir `final_model.staging.<run_id>/` dizinini "geciken" olarak raporladığı yaş (koşumun ilk audit event'inden, yoksa dizinin mtime'ından); hiçbir şey otomatik silinmez ve `forgelm reject` kararının zamanı kullanılmaz. `0` süresiz saklama anlamına gelir. v0.8.0'da kaldırılan `evaluation.staging_ttl_days` yerine geçer. |
 | `ephemeral_artefact_retention_days` | int | `90` | Uyumluluk paketleri, veri denetim raporları ve diğer çalışma kapsamlı türetilmiş artefaktların saklanma süresi (gün). `0` süresiz saklama. |
 | `raw_documents_retention_days` | int | `90` | İngest edilmiş ham belgelerin (PDF / DOCX / EPUB / TXT / Markdown) operatörün ingestion-output dizininde saklanma süresi (gün). `0` süresiz saklama. |
 | `enforce` | string | `"log_only"` | Ayrılmış politika modu. Henüz hiçbir komut onu okumaz: `"log_only"`, `"warn_on_excess"` ve `"block_on_excess"` kabul edilir ve aynı davranır; bir config son ikisinden birini ayarlarsa CLI uyarır. |

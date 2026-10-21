@@ -3,7 +3,7 @@
 > **Audience:** ForgeLM operators honouring GDPR Article 17 erasure requests against training corpora and run-scoped artefacts, plus auditors verifying the resulting `data.erasure_*` audit chain.
 > **Mirror:** [purge_subcommand-tr.md](purge_subcommand-tr.md)
 
-`forgelm purge` is the operator-facing implementation of the **GDPR Article 17 right-to-erasure** for ForgeLM training corpora and run artefacts (Phase 21). It atomically deletes a row, a run's staging directory, or a run's compliance bundle, and records every step in the tamper-evident `audit_log.jsonl` chain.
+`forgelm purge` is the operator-facing implementation of the **GDPR Article 17 right-to-erasure** for ForgeLM training corpora and run artefacts (Phase 21). It atomically deletes a row, or a run's staging directory, and (when the files carry the run id in their name — see `--kind artefacts` below) a run's compliance files, and records every step in the tamper-evident `audit_log.jsonl` chain.
 
 For the deployer-flow walkthrough (DSAR ticket → CLI invocation → verification), see [`../guides/gdpr_erasure.md`](../guides/gdpr_erasure.md). This page is the per-flag, per-event reference.
 
@@ -47,10 +47,12 @@ Erases a single row identified by its `id` (or `row_id`) field from a JSONL trai
 
 | Kind | Target |
 |---|---|
-| `staging` | `<output_dir>/final_model.staging.<run_id>/` (and the legacy `final_model.staging/` if present). |
-| `artefacts` | `<output_dir>/compliance/*.json` files whose name embeds `<run_id>`. |
+| `staging` | `<output_dir>/final_model.staging.<run_id>/`, and the legacy `final_model.staging/` only when it contains a `staging_run_id` file whose content equals `<run_id>`. ForgeLM does not write that marker, so remove an unmarked legacy staging directory yourself. |
+| `artefacts` | `<output_dir>/compliance/*.json` files whose name embeds `<run_id>` as a token (delimited by `_`, `-` or `.`). |
 
-`--kind logs` is **intentionally absent**: audit logs are append-only Article 17(3)(b) records and are not deleted by the tool.
+> **`--kind artefacts` does not find the standard compliance bundle.** The trainer and exporter write fixed basenames (`compliance_report.json`, `training_manifest.yaml`, `data_provenance.json`, `data_governance_report.json`, and `risk_assessment.json` / `annex_iv_metadata.json` when configured), none of which contains a run id. On a normal output directory the command therefore finds nothing, emits `data.erasure_failed` (`NoMatchingArtefacts`) and exits 1; it deletes nothing. It acts only on files you have named with the run id yourself. Until the resolver is fixed, remove the bundle through your storage layer.
+
+`--kind logs` is **intentionally absent**: the audit log is append-only and the tool never deletes it. Whether entries that name a data subject may stay is the controller's decision: Article 17(3)(b) applies only to the extent a specific Union or Member State legal obligation requires keeping them, and you have to be able to name that obligation.
 
 ### Retention-policy report (`--check-policy`)
 

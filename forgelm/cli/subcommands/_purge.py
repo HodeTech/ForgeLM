@@ -88,7 +88,7 @@ _SALT_FILE_MODE = 0o600
 _ROW_ID_KEYS: Tuple[str, ...] = ("id", "row_id")
 
 # Allowed --kind values per design §4.1.  ``logs`` is intentionally
-# absent (audit logs are append-only Article 17(3)(b) and never deleted
+# absent (the audit log is append-only and never deleted
 # automatically — the trainer + the tool record the request, the
 # operator handles the residual disposal manually).
 _VALID_RUN_KINDS: Tuple[str, ...] = ("staging", "artefacts")

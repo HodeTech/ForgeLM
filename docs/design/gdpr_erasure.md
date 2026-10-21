@@ -18,7 +18,7 @@ to be forgotten") + Article 5(1)(e) ("storage limitation").
 
 ## 0. Why this document exists
 
-ForgeLM emits training-data corpora, model adapters, audit logs, and derived artefacts that may contain personal data of identifiable EU data subjects.  Article 17 of the GDPR gives those subjects the right to request that this data be erased.  Article 5(1)(e) requires that any personal data not actively required for the declared purpose is removed by default after a defined retention horizon.
+ForgeLM emits training-data corpora, model adapters, audit logs, and derived artefacts that may contain personal data of identifiable EU data subjects.  Article 17 of the GDPR gives those subjects the right to request that this data be erased.  Article 5(1)(e) requires that personal data be kept in identifiable form no longer than necessary for the purpose; together with Art. 25(2) and recital 39, controllers set time limits for erasure or periodic review.
 
 ForgeLM today has no operator-actionable tool for either obligation:
 
@@ -45,9 +45,9 @@ Phase 21 closes the gap with a real implementation.  This Phase 20 document spec
 
 **Article 17(2)** requires the controller to inform downstream processors / publishers of the erasure when the data has been disclosed.  ForgeLM is not a publisher (we do not run inference); the deployer is.  We document this boundary in the operator guide rather than implement push notification.
 
-**Article 17(3)** lists exemptions where erasure does **not** apply — including (3)(b) compliance with a legal obligation of EU law, which is the entire reason the audit log itself is preserved.
+**Article 17(3)** lists exemptions where erasure does **not** apply — including (3)(b) compliance with a legal obligation under Union or Member State law and (3)(e) the establishment, exercise or defence of legal claims.  Each applies only to the extent the processing is necessary for that obligation or claim, and the controller has to name it: no provision of EU law protects a training audit log merely because ForgeLM produces it.
 
-The take-away: erasure operates on **training data + derived artefacts**, not on the audit log.  The audit log records *that an erasure happened* (Art. 5(2) accountability) but the original entries that reference the now-erased subject stay in place because the audit log is the legal-obligation record under Art. 17(3)(b).
+The take-away: erasure operates on **training data + derived artefacts**, not on the audit log.  The audit log records *that an erasure happened* (Art. 5(2) accountability), and ForgeLM never edits or deletes an entry.  Whether the entries that reference the now-erased subject may stay is the controller's decision: Art. 17(3)(b) and (3)(e) cover them only to the extent a specific obligation or claim requires it, and the controller documents which one.
 
 ---
 
@@ -56,7 +56,7 @@ The take-away: erasure operates on **training data + derived artefacts**, not on
 | Artefact | Where it lives | Carries personal data? | Erasure strategy |
 |---|---|---|---|
 | **Training corpus rows** | `<corpus>.jsonl` (operator-supplied) | Yes — the whole point | **Delete row in place** + audit event |
-| **Audit log entries** | `<output_dir>/audit_log.jsonl` (append-only) | Indirectly (operator name, run config, possibly file paths that name a subject) | **Never delete original** — append a `data.erasure_completed` event that references the deleted row's `row_id`.  Article 17(3)(b) exemption. |
+| **Audit log entries** | `<output_dir>/audit_log.jsonl` (append-only) | Indirectly (operator name, run config, possibly file paths that name a subject) | **Never delete original** — append a `data.erasure_completed` event that references the deleted row's `row_id`.  The tool never rewrites the chain; keeping the entries is justified only to the extent Art. 17(3)(b) or (3)(e) applies, which the controller documents. |
 | **Model adapters** | `<output_dir>/final_model/` (PEFT adapter + tokenizer) | **Memorised** training samples — extraction risk for high-overfit models | **Document escalation**: full retraining is the only proper resolution.  Tool emits `data.erasure_warning_memorisation` audit event flagging the gap. |
 | **Final model staging** | `<output_dir>/final_model.staging.<run_id>/` | Same memorisation risk | Operator chooses: delete staging (pre-promotion) or treat as adapters above |
 | **Compliance artefacts** | `<output_dir>/compliance/*.{json,yaml}` | References to corpus paths (could disclose subject names via filename) | **Regenerate** after erasure (or `forgelm purge --kind artefacts` rewrites them) |
@@ -164,9 +164,9 @@ Three sites:
 For each retention horizon:
 - Compare artefact `mtime` against `now - <horizon>_days`.
 - If older, the artefact has overstayed the declared lawful basis.
-- The audit log itself is **never deleted automatically** even when the policy says it has overstayed — Article 17(3)(b) exemption applies and the operator must make the deletion call by hand.  The tool only flags.
+- The audit log itself is **never deleted automatically** even when the policy says it has overstayed.  The tool only flags; the operator makes the deletion call by hand, after checking that no specific Union or Member State obligation (Art. 17(3)(b)) or legal claim (Art. 17(3)(e)) still requires the entries.
 
-The compliance artefacts (`compliance/*.json`) are tied to a specific run; their lifetime is the run's lifetime, not a separate horizon.  In-place deletion is supported via `forgelm purge --run-id <id> --kind artefacts` (§4.1) which removes `<output_dir>/compliance/*.json` for the named run while leaving the audit log + final model intact — useful when an operator wants to regenerate the bundle after an Article 17 corpus erasure changed the lineage.  Whole-`<output_dir>` deletion remains the operator's manual escalation when the entire run is being scrubbed.
+The compliance artefacts (`compliance/*.json`) are tied to a specific run; their lifetime is the run's lifetime, not a separate horizon.  In-place deletion is supported via `forgelm purge --run-id <id> --kind artefacts` (§4.1) which is meant to remove `<output_dir>/compliance/*.json` for the named run while leaving the audit log + final model intact (as shipped, the resolver only matches filenames that embed the run id, and the standard bundle uses fixed basenames, so it finds nothing — see the purge reference) — useful when an operator wants to regenerate the bundle after an Article 17 corpus erasure changed the lineage.  Whole-`<output_dir>` deletion remains the operator's manual escalation when the entire run is being scrubbed.
 
 ---
 
@@ -239,7 +239,7 @@ Recovery path for a step-5 failure (rename fails after the temp file is fully wr
 | **Re-train the model after corpus erasure** | Operator decision; ForgeLM cannot infer the right downstream pipeline. |
 | **Distributed corpus deletion** | Single-node only.  Multi-node corpus shards live on separate filesystems; the operator runs `forgelm purge --row-id` on each. |
 | **Webhook receiver cleanup** | The Slack / Teams thread that received `notify_awaiting_approval` is in the operator's chat platform, not in ForgeLM.  We log a notice. |
-| **Audit log rewriting** | The chain is append-only by construction (Art. 17(3)(b) exemption).  Erasure adds an event; never edits an entry. |
+| **Audit log rewriting** | The chain is append-only by construction.  Erasure adds an event; never edits an entry.  Whether the entries may be kept is the controller's call: Art. 17(3)(b) and (3)(e) apply only to the extent a specific obligation or claim requires it. |
 | **Model weight forgetting** | "Machine unlearning" is an active research area; we do not ship a half-baked impl.  We emit `data.erasure_warning_memorisation` so the operator knows the gap is theirs to close. |
 
 ---
@@ -280,7 +280,7 @@ If the **justification** field includes something that *might* be PII (e.g. oper
 
 ### 5.4 Personal-data minimisation across every audit-event field
 
-Article 17(3)(b) preserves the audit log itself, but Article 5(1)(c) (data minimisation) still applies to **what we put in each event**.  Phase 21 enumerates every field on every new audit event and classifies it; categories that may carry personal data get a hash / redaction policy at emit time so the persisted log carries the minimum identifying surface needed for accountability.
+The audit log itself is append-only, but Article 5(1)(c) (data minimisation) still applies to **what we put in each event**.  Phase 21 enumerates every field on every new audit event and classifies it; categories that may carry personal data get a hash / redaction policy at emit time so the persisted log carries the minimum identifying surface needed for accountability.
 
 | Event field | Source / shape | Personal-data category | Phase 21 policy |
 |---|---|---|---|

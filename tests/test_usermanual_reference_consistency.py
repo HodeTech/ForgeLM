@@ -54,3 +54,76 @@ class TestRejectStagingConsistency:
         assert "discard staging" not in text
         # TR mirror used "staging'i at" ("discard staging").
         assert "staging'i at" not in text
+
+
+# ---------------------------------------------------------------------------
+# GDPR citations and erasure behaviour (issue #101)
+# ---------------------------------------------------------------------------
+#
+# Article 17(3)(b) disapplies erasure only to the extent a specific Union or
+# Member State legal obligation requires the processing; it does not preserve
+# an audit log as a class.  The retention defaults are ForgeLM choices, not
+# legal periods.  These pages and code strings used to say otherwise.
+
+_GDPR_CLAIM_FILES = (
+    "forgelm/config.py",
+    "forgelm/cli/_parser.py",
+    "forgelm/cli/subcommands/_purge.py",
+    "config_template.yaml",
+    "docs/design/gdpr_erasure.md",
+    "docs/guides/gdpr_erasure.md",
+    "docs/guides/gdpr_erasure-tr.md",
+    "docs/reference/configuration.md",
+    "docs/reference/configuration-tr.md",
+    "docs/reference/purge_subcommand.md",
+    "docs/reference/purge_subcommand-tr.md",
+    "docs/usermanuals/en/compliance/gdpr-erasure.md",
+    "docs/usermanuals/tr/compliance/gdpr-erasure.md",
+    "docs/usermanuals/en/reference/configuration.md",
+    "docs/usermanuals/tr/reference/configuration.md",
+)
+
+_RETIRED_GDPR_CLAIMS = (
+    r"17\(3\)\(b\) preserves",
+    r"17\(3\)\(b\) (?:exemption|defence)",
+    r"17\(3\)\(b\) records",
+    r"17\(3\)\(b\) savunması",
+    r"17\(3\)\(b\) audit / muhasebe",
+    r"17\(3\)\(b\) kayıt",
+    r"append-only (?:Article|Madde) 17\(3\)\(b\)",
+    r"5 years default \(Article 5\(1\)\(e\)\)",
+    r"varsayılan 5 yıl \(Madde 5\(1\)\(e\)\)",
+    r"legal-obligation record under",
+    r"compliant out of the box",
+    r"Article 12 record-keeping baseline",
+    r"Horizons honour GDPR",
+    r"removed by default after a defined retention horizon",
+    r"after a `forgelm reject` decision before scheduled cleanup",
+)
+
+_PURGE_ARTEFACT_WARNING_FILES = (
+    "docs/guides/gdpr_erasure.md",
+    "docs/guides/gdpr_erasure-tr.md",
+    "docs/reference/purge_subcommand.md",
+    "docs/reference/purge_subcommand-tr.md",
+    "docs/usermanuals/en/compliance/gdpr-erasure.md",
+    "docs/usermanuals/tr/compliance/gdpr-erasure.md",
+)
+
+
+@pytest.mark.parametrize("rel", _GDPR_CLAIM_FILES)
+def test_retired_gdpr_claims_stay_out(rel: str) -> None:
+    text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
+    found = [pattern for pattern in _RETIRED_GDPR_CLAIMS if re.search(pattern, text)]
+    assert found == [], f"{rel} still carries retired GDPR wording: {found}"
+
+
+@pytest.mark.parametrize("rel", _PURGE_ARTEFACT_WARNING_FILES)
+def test_purge_docs_warn_that_artefacts_misses_the_standard_bundle(rel: str) -> None:
+    # CR-A10-002 / DOC-D1B05-005: the exporter writes fixed basenames and the
+    # resolver matches filenames that embed the run id, so the documented
+    # ``--kind artefacts`` finds nothing on a real output directory.  The
+    # behaviour is pinned in tests/test_gdpr_erasure.py; the docs must say so.
+    text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
+    assert "NoMatchingArtefacts" in text, f"{rel} must warn that --kind artefacts finds nothing"
+    assert "compliance_report.json" in text, f"{rel} must name the fixed-basename bundle"

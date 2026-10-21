@@ -12,7 +12,7 @@
 **Yapar:**
 
 - JSONL eğitim corpus'undan tek bir satırı siler (`--row-id <id> --corpus <path>`).
-- Bir koşumun staging dizinini veya compliance bundle'ını siler (`--run-id <id> --kind {staging,artefacts}`).
+- Bir koşumun staging dizinini ve adı run id'yi embed eden compliance dosyalarını siler (`--run-id <id> --kind {staging,artefacts}`; `artefacts` standart paketi bulamaz, aşağıya bakın).
 - Yüklü config'in `retention:` block'una karşı retention-policy ihlallerini raporlar (`--check-policy`).
 - Her aksiyonu tamper-evident bir audit-event zinciriyle kaydeder — `request → completed` (veya `request → failed`) — böylece adli inceleyici tam olarak ne olduğunu yeniden inşa edebilir.
 - Operatör tarafından sağlanan satır identifier'larını audit log'a girmeden önce SHA-256 ile hash'ler; böylece zincirin kendisi kişisel-veri sızıntısına dönüşmez (Madde 5(1)(c) veri minimizasyonu).
@@ -20,7 +20,7 @@
 **Yapmaz:**
 
 - Modelleri yeniden eğitmez. Bir satırı corpus'tan kaldırmak onu zaten eğitilmiş ağırlıklardan unutturmaz — silinmiş satır olmadan tam yeniden eğitim tek doğru çözüm. Tool, `--output-dir` altında doğrudan bir `final_model/` dizini mevcut olduğunda `data.erasure_warning_memorisation` yayar (`--output-dir` varsayılan olarak corpus'un dizinidir; bu yüzden eğitim çıktı dizininizi verin); böylece operatör boşluğu görür. Corpus'u hangi koşumların tükettiğini ayırt edemez.
-- Audit log'un kendisinden entry silmez. Madde 17(3)(b) audit / muhasebe kayıtlarını bir hukuki yükümlülük savunması olarak korur; tool silmeyi geçmişi yeniden yazmak yerine yeni bir event olarak kaydeder.
+- Audit log'un kendisinden entry silmez. Tool silmeyi geçmişi yeniden yazmak yerine yeni bir event olarak kaydeder. Veri sahibine atıf yapan girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır: Madde 17(3)(b) yalnızca belirli bir AB veya üye devlet hukuku yükümlülüğü işlemeyi gerektirdiği ölçüde uygulanır (örneğin sisteminiz için geçerli hale geldiğinde AI Act Md. 19(1) ve 26(6)'daki log saklama yükümlülükleri) ve bu yükümlülüğü adlandırabilmeniz gerekir.
 - Downstream tüketicilere silme bildirimi göndermez. Webhook receiver'ları, dataset mirror'ları, deploy edilmiş model endpoint'leri ve yayınlanmış checkpoint'ten türetilmiş üçüncü-taraf fine-tune'lar operatörün runtime-katmanı sorumluluğudur (Madde 17(2)). Tool yüklü config webhook block'u içerdiğinde `data.erasure_warning_external_copies` yayar; böylece audit log'u sorgulayan downstream tüketici açık hatırlatmayı görür.
 - Yedekleri silmez. Operatörün `<output_dir>` sınırı dışındaki replikalar, snapshot'lar ve storage backup'lar altyapı tarafı endişelerdir.
 
@@ -56,9 +56,9 @@ $ forgelm purge --run-id fg-abc123def456 --kind staging --output-dir ./outputs
 $ forgelm purge --run-id fg-abc123def456 --kind artefacts --output-dir ./outputs
 ```
 
-- `--kind staging` — `<output_dir>/final_model.staging.<run_id>/`'i siler (mevcutsa legacy `final_model.staging/` da).
-- `--kind artefacts` — `<run_id>`'i adında embed eden `<output_dir>/compliance/*.json` dosyalarını siler.
-- `--kind logs` **bilinçli olarak yok**: audit log'lar append-only Madde 17(3)(b) kayıtları; tool tarafından silinmez.
+- `--kind staging` — `<output_dir>/final_model.staging.<run_id>/`'i siler; legacy `final_model.staging/`'i yalnızca içeriği `<run_id>`'ye eşit bir `staging_run_id` işaretçisi taşıyorsa siler (ForgeLM bu işaretçiyi yazmaz; aksi halde legacy dizini kendiniz silin).
+- `--kind artefacts` — `<run_id>`'i adında token olarak embed eden `<output_dir>/compliance/*.json` dosyalarını siler. **Standart paketi bulamaz:** trainer run id içermeyen sabit dosya adları yazar (`compliance_report.json`, `training_manifest.yaml`, ...), bu yüzden normal bir çıktı dizininde komut hiçbir şey bulmaz, `data.erasure_failed` (`NoMatchingArtefacts`) yayar, 1 ile çıkar ve hiçbir şey silmez. Resolver düzeltilene kadar paketi depolama katmanınız üzerinden kaldırın.
+- `--kind logs` **bilinçli olarak yok**: audit log append-only'dir ve tool onu asla silmez (girdilerinin tutulup tutulamayacağına kimin karar verdiği için yukarıdaki ilk listeye bakın).
 
 ### 3. Retention policy raporu
 

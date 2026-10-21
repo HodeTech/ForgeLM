@@ -298,6 +298,47 @@ class TestArtefactDeletion:
         # Other run's bundle is untouched.
         assert (compliance_dir / "compliance_other-run.json").exists()
 
+    def test_artefacts_kind_finds_nothing_in_the_standard_fixed_name_bundle(self, tmp_path: Path) -> None:
+        # CR-A10-002 / DOC-D1B05-005: the exporter writes fixed basenames that
+        # carry no run id, so ``--kind artefacts`` cannot find the real bundle.
+        # It fails safe (deletes nothing, exits 1).  docs/reference/purge_subcommand.md
+        # warns about exactly this; when the resolver learns to prove ownership
+        # this test and that warning change together.
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        run_id = "fg-abc123def456"
+        compliance_dir = tmp_path / "compliance"
+        compliance_dir.mkdir(parents=True)
+        bundle = (
+            "compliance_report.json",
+            "training_manifest.yaml",
+            "data_provenance.json",
+            "data_governance_report.json",
+            "annex_iv_metadata.json",
+        )
+        for name in bundle:
+            (compliance_dir / name).write_text("{}")
+
+        args = _build_args(run_id=run_id, kind="artefacts", output_dir=str(tmp_path))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+        assert ei.value.code == 1
+        assert all((compliance_dir / name).exists() for name in bundle)
+        failed = [e for e in _read_audit_events(tmp_path / "audit_log.jsonl") if e["event"] == "data.erasure_failed"]
+        assert [e["error_class"] for e in failed] == ["NoMatchingArtefacts"]
+
+    def test_no_forgelm_writer_creates_the_legacy_staging_marker(self) -> None:
+        # The docs tell operators to remove an unmarked legacy ``final_model.staging/``
+        # themselves because ForgeLM never writes ``staging_run_id``.  A writer
+        # would make that advice stale.
+        forgelm_dir = Path(__file__).resolve().parent.parent / "forgelm"
+        writers = [
+            str(path.relative_to(forgelm_dir))
+            for path in sorted(forgelm_dir.rglob("*.py"))
+            if "staging_run_id" in path.read_text(encoding="utf-8")
+        ]
+        assert writers == [os.path.join("cli", "subcommands", "_purge.py")]
+
 
 # ---------------------------------------------------------------------------
 # §7 Test 5 — Audit chain post-erasure still verifies

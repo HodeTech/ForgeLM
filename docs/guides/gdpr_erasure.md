@@ -12,7 +12,7 @@
 **Does:**
 
 - Erases a single row from a JSONL training corpus (`--row-id <id> --corpus <path>`).
-- Deletes a run's staging directory or compliance bundle (`--run-id <id> --kind {staging,artefacts}`).
+- Deletes a run's staging directory, and compliance files whose names embed the run id (`--run-id <id> --kind {staging,artefacts}`; `artefacts` does not find the standard bundle, see below).
 - Reports retention-policy violations against the loaded config's `retention:` block (`--check-policy`).
 - Records every action with a tamper-evident audit-event chain — `request → completed` (or `request → failed`) — so a forensic reviewer can reconstruct exactly what happened.
 - Hashes operator-supplied row identifiers with SHA-256 before they enter the audit log so the chain itself does not become a personal-data leak (Article 5(1)(c) data minimisation).
@@ -20,7 +20,7 @@
 **Does not:**
 
 - Re-train models. Removing a row from the corpus does not unmemorise it from already-trained weights — full retraining without the erased row is the only proper mitigation. The tool emits `data.erasure_warning_memorisation` when a `final_model/` directory exists directly under `--output-dir` (which defaults to the corpus's directory, so pass your training output directory), so the operator sees the gap. It cannot tell which runs consumed the corpus.
-- Delete entries from the audit log itself. Article 17(3)(b) preserves audit / accounting records as a legal-obligation defence; the tool records the erasure as a new event rather than rewriting history.
+- Delete entries from the audit log itself. The tool records the erasure as a new event rather than rewriting history. Whether entries that reference the data subject may be kept is the controller's decision: Article 17(3)(b) applies only to the extent a specific Union or Member State legal obligation requires the processing (for example the log-retention duties of AI Act Art. 19(1) and Art. 26(6), once they apply to your system), and you have to be able to name that obligation.
 - Push erasure notices to downstream consumers. Webhook receivers, dataset mirrors, deployed model endpoints, and third-party fine-tunes derived from a published checkpoint are the operator's runtime-layer responsibility (Article 17(2)). The tool emits `data.erasure_warning_external_copies` when the loaded config has a webhook block, so a downstream consumer querying the audit log sees the explicit reminder.
 - Erase backups. Replicas, snapshots, and storage backups outside the operator's `<output_dir>` are infrastructure-side concerns.
 
@@ -56,9 +56,9 @@ $ forgelm purge --run-id fg-abc123def456 --kind staging --output-dir ./outputs
 $ forgelm purge --run-id fg-abc123def456 --kind artefacts --output-dir ./outputs
 ```
 
-- `--kind staging` removes `<output_dir>/final_model.staging.<run_id>/` (and the legacy `final_model.staging/` if present).
-- `--kind artefacts` removes `<output_dir>/compliance/*.json` files whose name embeds the `<run_id>`.
-- `--kind logs` is **intentionally absent**: audit logs are append-only Article 17(3)(b) records and are not deleted by the tool.
+- `--kind staging` removes `<output_dir>/final_model.staging.<run_id>/`, and the legacy `final_model.staging/` only if it carries a `staging_run_id` marker whose content equals the `<run_id>` (ForgeLM does not write that marker; otherwise remove the legacy directory yourself).
+- `--kind artefacts` removes `<output_dir>/compliance/*.json` files whose name embeds the `<run_id>` as a token. **It does not find the standard bundle:** the trainer writes fixed basenames (`compliance_report.json`, `training_manifest.yaml`, ...) that contain no run id, so on a normal output directory the command finds nothing, emits `data.erasure_failed` (`NoMatchingArtefacts`), exits 1 and deletes nothing. Remove the bundle through your storage layer until the resolver is fixed.
+- `--kind logs` is **intentionally absent**: the audit log is append-only and the tool never deletes it (see the first list above for who decides whether its entries may be kept).
 
 ### 3. Retention-policy report
 

@@ -359,8 +359,8 @@ defaults was not recorded.
 
 ```yaml
 retention:
-  audit_log_retention_days: 1825             # 5 years default (Article 5(1)(e))
-  staging_ttl_days: 7                        # days to retain staging model after forgelm reject
+  audit_log_retention_days: 1825             # 5 years: ForgeLM default (project choice; GDPR Article 5(1)(e) sets no fixed period)
+  staging_ttl_days: 7                        # staging dir age that purge --check-policy reports as overdue
   ephemeral_artefact_retention_days: 90      # compliance bundles, audit reports
   raw_documents_retention_days: 90           # ingested PDF/DOCX/EPUB/TXT/Markdown
   enforce: "log_only"                        # reserved: no command acts on it yet (log_only | warn_on_excess | block_on_excess)

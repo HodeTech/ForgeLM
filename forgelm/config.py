@@ -1588,14 +1588,14 @@ class RetentionConfig(BaseModel):
     erasure horizons.
 
     Top-level retention block (per Phase 20 design `gdpr-erasure-design`
-    §3 + closure-plan §15.5 v2.5).  All four horizons default to values
-    chosen to be compliant out of the box for typical enterprise EU AI
-    Act use:  audit logs at 5 years (Article 12 record-keeping
-    obligation × statute-of-limitations buffer), staging at 7 days
+    §3 + closure-plan §15.5 v2.5).  All four horizons default to
+    ForgeLM's own choices, not legal periods (GDPR Article 5(1)(e) sets
+    no fixed period):  audit logs at 5 years, staging at 7 days
     (operator gets one work-week to act on a `forgelm reject`),
     ephemeral artefacts at 90 days (compliance bundle + audit reports
     have a quarterly review cadence in most QMS), raw documents at 90
     days (typical ingestion-window before re-running data audit).
+    Choose values from your own necessity assessment.
 
     Setting any horizon to ``0`` disables the policy for that artefact
     kind (retain indefinitely).  The horizons are *reported*, not enforced:
@@ -1612,15 +1612,15 @@ class RetentionConfig(BaseModel):
         default=1825,
         ge=0,
         description=(
-            "Days to retain `audit_log.jsonl` before flagging it as overdue under Article 5(1)(e). "
-            "Default 1825 = 5 years.  Set to 0 to retain indefinitely (Article 17(3)(b) defence)."
+            "Days after which `forgelm purge --check-policy` reports `audit_log.jsonl` as overdue (Article 5(1)(e)). "
+            "Default 1825 = 5 years, a ForgeLM choice, not a legal period.  Set to 0 to retain indefinitely; name the Union or Member State obligation you rely on."
         ),
     )
     staging_ttl_days: int = Field(
         default=7,
         ge=0,
         description=(
-            "Days to retain `final_model.staging.<run_id>/` after a `forgelm reject` decision before scheduled cleanup. "
+            "Days after which `forgelm purge --check-policy` reports a `final_model.staging.<run_id>/` directory as overdue (aged from the run's first audit event, else mtime); nothing is deleted. "
             "Set to 0 to retain indefinitely. This is the canonical staging-retention field; "
             "the legacy `evaluation.staging_ttl_days` alias was removed in v0.8.0."
         ),
