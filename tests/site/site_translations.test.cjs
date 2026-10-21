@@ -40,11 +40,12 @@ test('claims the code does not back stay out of the site copy', () => {
       /SHA-256 \+ size manifest/, /6 quant levels and SHA-256 manifest/, /ZeRO-2 \/ ZeRO-3 presets/,
       /PII redacted at ingest/, /GGUF export at q4_k_m/, /wired into the audit log/, /Article 17 erasure with/, /matches EU AI Act guidance/,
       /rejected models in final_model\.staging/, /forensically linked/, /every row of every split/,
-      /surface every row/],
+      /surface every row/, /drops a data-subject's rows/],
     tr: [/ikili[- ]kontrol/i, /otomatik siler/, /GDPR uyumlu TTL/, /erişim-talebi tarafını karşılar/,
       /Slack, Teams, Discord veya/, /Slack \/ Teams \/ Discord/, /upstream'de uygulanır/, /her ikisi de audit log'a bağlı/,
       /EU AI Act rehberiyle uyumlu/, /reddedilen modeller ne kadar tutulsun/, /adli olarak bağlanır/,
-      /geçtiği her split/, /yüzeye çıkarır/],
+      /geçtiği her split/, /yüzeye çıkarır/,
+      /satırlarını eğitim corpus'undan düşürür/],
   };
   const found = [];
   for (const [locale, patterns] of Object.entries(retired)) {
@@ -78,7 +79,9 @@ test('the home GDPR card keeps the trained-weights caveat in every locale', () =
   }
   const weights = { en: /weights/, tr: /ağırlıklar/, de: /Gewichte/, fr: /poids/, es: /pesos/, zh: /权重/ };
   for (const [locale, pattern] of Object.entries(weights)) {
-    assert.match(translations[locale]['compliance.gdpr17.body'], pattern, `${locale}: purge does not change trained weights`);
+    for (const key of ['compliance.gdpr17.body', 'features.gov.purge.body']) {
+      assert.match(translations[locale][key], pattern, `${locale} ${key}: purge does not change trained weights`);
+    }
   }
   const html = fs.readFileSync(path.join(root, 'site', 'index.html'), 'utf8');
   const fallback = html.match(/data-i18n-html="home\.cap\.gdpr\.body">([^<]*(?:<code>[^<]*<\/code>[^<]*)*)<\/p>/);

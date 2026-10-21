@@ -40,7 +40,7 @@ training:
   gpu_cost_per_hour: 1.10          # eğitim GPU'su için saatlik USD
 ```
 
-`training.gpu_cost_per_hour`'u gerçek tarifenize ayarlayın. Ayarlı değilse ForgeLM tespit edilen GPU için yerleşik fiyat tablosuna döner; koşunun `resource_usage` kaydı hangisinin kullanıldığını yazar (`cost_source`: `user_config`; tam GPU adı eşleşmesi için `auto_detected`; kısmi ad eşleşmesi için `fuzzy_match`; tarife çözülemediyse anahtar yoktur). CUDA GPU yoksa tespit edilen bir GPU da yoktur, bu yüzden `training.gpu_cost_per_hour`'u açıkça ayarlayın. Koşu başına tek bir tarife vardır: GPU modeli başına tarife tabloları desteklenmez.
+`training.gpu_cost_per_hour`'u gerçek tarifenize ayarlayın. Ayarlı değilse ForgeLM tespit edilen GPU için yerleşik fiyat tablosuna döner; koşunun `resource_usage` kaydı hangisinin kullanıldığını yazar (`cost_source`: `user_config`; tam GPU adı eşleşmesi için `auto_detected`; kısmi ad eşleşmesi için `fuzzy_match`; tarife belirlenemediyse anahtar bulunmaz). CUDA GPU yoksa tespit edilen bir GPU da yoktur, bu yüzden `training.gpu_cost_per_hour`'u açıkça ayarlayın. Koşu başına tek bir tarife vardır: GPU modeli başına tarife tabloları desteklenmez.
 
 ## Çıktı
 
@@ -84,7 +84,7 @@ Kalibrasyon yaklaşımı genelde gerçeğin %20 içindedir.
 
 ## Çoklu-GPU ve dağıtık
 
-Çoklu-GPU eğitiminde ForgeLM tek `training.gpu_cost_per_hour` tarifesini GPU sayısıyla çarpar (`gpu_hours`, eğitim süresi çarpı GPU sayısıdır):
+Çoklu-GPU eğitiminde ForgeLM tek `training.gpu_cost_per_hour` tarifesini GPU sayısıyla çarpar (`gpu_hours`, eğitim süresi çarpı GPU sayısıdır).
 
 4×A100 koşusu 2 saat = 4 × 2 × $1.10 = $8.80; ZeRO veya FSDP kullanmak fark etmez.
 
@@ -131,4 +131,4 @@ Bunu proje kökünüze `gpu_profiles.local.yaml` olarak bırakın; ForgeLM otoma
 
 - [VRAM Fit-Check](#/operations/vram-fit-check) — maliyet tahmini ile birlikte koşar.
 - [CI/CD Hatları](#/operations/cicd) — CI'da maliyet alarmları.
-- [Konfigürasyon Referansı](#/reference/configuration) — tam `cost_tracking` bloğu.
+- [Konfigürasyon Referansı](#/reference/configuration) — `training.gpu_cost_per_hour` alanı.

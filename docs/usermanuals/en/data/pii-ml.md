@@ -5,7 +5,7 @@ description: Optional Microsoft Presidio adapter that adds person / organization
 
 # ML-NER PII Detection — `--pii-ml`
 
-The default [PII Masking](#/data/pii-masking) layer is regex-anchored and covers the common *structured* identifiers (email, phone, IBAN, credit card, national IDs). They are personal data under GDPR Article 4(1) whenever they relate to an identifiable natural person; Article 87 additionally lets Member States restrict how national identification numbers are processed. Presidio NER adds the *unstructured* identifiers regex inherently misses: person names, organization names, geographic locations.
+The default [PII Masking](#/data/pii-masking) layer is regex-anchored and covers the common *structured* identifiers (email, phone, IBAN, credit card, national IDs). They are personal data under GDPR Article 4(1) whenever they relate to an identified or identifiable natural person; Article 87 additionally lets Member States set the specific conditions for processing national identification numbers. Presidio NER adds the *unstructured* identifiers regex inherently misses: person names, organization names, geographic locations.
 
 This is an **opt-in** layer. The default audit behaviour is unchanged when `--pii-ml` is not passed (`forgelm ingest` has no `--pii-ml` flag).
 

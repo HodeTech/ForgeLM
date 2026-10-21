@@ -409,8 +409,7 @@ the audit reproducible (Annex IV requirement) and bare-install-friendly.
 The default regex detector covers the common structured identifiers
 (email, phone, IBAN, credit card, national IDs). Each is personal data under
 GDPR Art. 4(1) when it relates to an identified or identifiable natural
-person; a company's IBAN or switchboard number, or a test card number, is not
-(recital 14).
+person; a company's IBAN or switchboard number (recital 14), or a test card number, is not.
 Phase 12.5 adds an opt-in **Presidio** ([data-privacy-stack/presidio](https://github.com/data-privacy-stack/presidio))
 adapter that layers ML-NER on top — adding the unstructured-identifier
 categories regex inherently misses: `person`, `organization`, `location`.

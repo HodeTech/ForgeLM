@@ -47,7 +47,7 @@ Tarifenizi Ayarlar → Plan → Yükselt menüsünden değiştirebilirsiniz...
 | Streaming çıktı | `--no-stream` kapatır | açık |
 | Quantize yükleme (yalnızca CUDA + bitsandbytes; aksi halde yok sayılır) | `--load-in-4bit` (NF4) veya `--load-in-8bit`; ikisi de verilirse 4-bit kazanır | kapalı |
 
-top-p, top-k ve repetition penalty sabittir (0.9 / 50 / 1.1) ve ayarlanamaz; oturumlar arası kalıcı bir history dosyası da yoktur; bir konuşmayı `/save` ile yazın.
+Top-p, top-k ve repetition penalty sabittir (0.9 / 50 / 1.1) ve ayarlanamaz. Oturumlar arası kalıcı bir history dosyası da yoktur; bir konuşmayı `/save` ile kaydedin.
 
 ## Checkpoint yükleme
 

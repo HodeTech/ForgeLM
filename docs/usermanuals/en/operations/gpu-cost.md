@@ -84,7 +84,7 @@ The calibration approach is typically within 20% of actual.
 
 ## Multi-GPU and distributed
 
-For multi-GPU training, ForgeLM multiplies the single `training.gpu_cost_per_hour` rate by the GPU count (`gpu_hours` is the training time times the GPU count):
+For multi-GPU training, ForgeLM multiplies the single `training.gpu_cost_per_hour` rate by the GPU count (`gpu_hours` is the training time times the GPU count).
 
 A 4×A100 run for 2 hours = 4 × 2 × $1.10 = $8.80, regardless of whether you use ZeRO or FSDP.
 
@@ -131,4 +131,4 @@ Drop this in your project root as `gpu_profiles.local.yaml`; ForgeLM auto-merges
 
 - [VRAM Fit-Check](#/operations/vram-fit-check) — runs alongside cost estimation.
 - [CI/CD Pipelines](#/operations/cicd) — cost alerts in CI.
-- [Configuration Reference](#/reference/configuration) — full `cost_tracking` block.
+- [Configuration Reference](#/reference/configuration) — the `training.gpu_cost_per_hour` field.

@@ -75,7 +75,7 @@ Salt-okunur tarama. Output dizinini gezer, her artefact'ın yaşını (canonical
 ```yaml
 retention:
   audit_log_retention_days: 1825          # 5 yıl (ForgeLM varsayılanı, yasal süre değildir)
-  staging_ttl_days: 7                     # purge --check-policy'nin staging dizinini geciken saydığı yaş
+  staging_ttl_days: 7                     # purge --check-policy'nin staging dizinini süresi geçmiş saydığı yaş
   ephemeral_artefact_retention_days: 90   # üç-aylık review cadence'i
   raw_documents_retention_days: 90        # data audit yeniden çalıştırmadan önce ingestion penceresi
   enforce: log_only                       # ayrılmış: henüz hiçbir komut onu kullanmaz (log_only / warn_on_excess / block_on_excess)
