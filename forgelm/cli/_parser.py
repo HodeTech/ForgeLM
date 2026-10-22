@@ -1129,7 +1129,7 @@ def _add_purge_subcommand(subparsers) -> None:
         type=str,
         default=None,
         choices=["staging", "artefacts"],
-        help="Run-scoped erasure target: staging directory OR compliance files whose names embed the run id (the standard compliance bundle has fixed filenames without a run id and is never matched).  `logs` is intentionally absent (the audit log is append-only and never deleted by this command).",
+        help="Run-scoped erasure target: staging directory OR compliance files whose names embed the run id (the standard compliance bundle has fixed filenames without a run id: a real run id never matches it, a generic token such as `json` does).  `logs` is intentionally absent (the audit log is append-only and never deleted by this command).",
     )
     p.add_argument(
         "--row-matches",

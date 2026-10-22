@@ -335,6 +335,24 @@ class TestArtefactDeletion:
         assert "fixed filenames" in capsys.readouterr().out
         assert "fixed filenames" in failed[0]["error_message"]
 
+    def test_a_generic_run_id_matches_the_fixed_basenames_as_the_docs_warn(self, tmp_path: Path, capsys) -> None:
+        # The docs say the standard bundle is not found for a real run id, but that a generic token of a fixed name
+        # (``json``, ``report``) does match it and deletes it: the reason to always pass the full run id.  If the
+        # resolver learns to prove ownership, update the caveat in the six documents together with this test.
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        compliance_dir = tmp_path / "compliance"
+        compliance_dir.mkdir()
+        (compliance_dir / "compliance_report.json").write_text("{}")
+        (compliance_dir / "training_manifest.yaml").write_text("{}")
+
+        args = _build_args(run_id="json", kind="artefacts", output_dir=str(tmp_path), dry_run=True)
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+        assert ei.value.code == 0
+        would_delete = json.loads(capsys.readouterr().out)["would_delete"]
+        assert [Path(p).name for p in would_delete] == ["compliance_report.json"]
+
     def test_only_the_purge_reader_names_the_legacy_staging_marker(self) -> None:
         # The docs tell operators to remove an unmarked legacy ``final_model.staging/``
         # themselves because ForgeLM never writes ``staging_run_id``.  Every use of that

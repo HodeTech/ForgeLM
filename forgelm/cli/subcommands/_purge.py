@@ -865,7 +865,7 @@ def _run_purge_run_id(args, output_format: str) -> None:
 
     target_paths = _resolve_run_kind_targets(output_dir, args.run_id, args.kind)
     if not target_paths:
-        # The standard compliance bundle has fixed filenames with no run id, so `--kind artefacts` never matches it.
+        # The standard compliance bundle has fixed filenames with no run id, so a real run id never matches it.
         hint = " The standard compliance bundle has fixed filenames without a run id; remove it through your storage layer."
         reason = f"No {args.kind!r} artefacts found for run_id={args.run_id!r}." + (
             hint if args.kind == "artefacts" else ""
@@ -1008,8 +1008,8 @@ def _artefact_targets_for_run(base: Path, run_id: str) -> List[Path]:
 
     Any regular file directly under ``compliance/`` whose name carries the
     run-id as a token matches, whatever its extension.  The standard bundle
-    (fixed basenames such as ``compliance_report.json``) has no run-id and is
-    never matched.  The token-boundary check (`_filename_contains_run_id`)
+    (fixed basenames such as ``compliance_report.json``) has no run-id, so a real
+    run id never matches it (a generic token such as ``json`` does).  The token-boundary check (`_filename_contains_run_id`)
     defends against short-run-id false positives on other runs' files.
     """
     compliance_dir = base / "compliance"

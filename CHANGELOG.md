@@ -150,7 +150,7 @@ All notable changes to ForgeLM are documented here.
     envelope section is regenerated from real output; the external-copies warning is row mode with `--config` only.
   - `forgelm purge --kind artefacts` is documented as what it does: it matches files under `compliance/` whose names contain the
     run id, so it finds nothing in the standard bundle (fixed basenames), emits `data.erasure_failed` (`NoMatchingArtefacts`),
-    exits 1 and deletes nothing; the legacy `final_model.staging/` is purged only with a marker ForgeLM never writes. The code
+    exits 1 and deletes nothing for a real run id (a generic token that appears in a fixed name, such as `json`, does match those files and deletes them, so pass the full run id); the legacy `final_model.staging/` is purged only with a marker ForgeLM never writes. The code
     half of that limitation stays open.
   - The PII-masking page counts eight detectors; the German ID-card serial and the French NIR are shape-only (no checksum); the
     audit report carries counts, not row indices; running `forgelm audit` over masked output re-applies the same regexes. The
