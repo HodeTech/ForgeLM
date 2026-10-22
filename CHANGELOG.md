@@ -125,6 +125,10 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Make the Document Ingestion quick-start example runnable in the English and Turkish user manuals: pair `--chunk-tokens`
+  with `--tokenizer` and show the real `summarize_result` output, with `--output` resolved to the absolute path the tool
+  prints, instead of a layout the tool never prints (#395).
+
 - Make the GDPR, erasure, retention, PII-masking, GPU-cost and chat documentation say what ForgeLM does, so a deployer can copy a
   documented command or YAML block, and quote a documented limit in a DPIA or an access reply, without it being untrue. The GDPR
   / KVKK manual page was rewritten earlier in this cycle; this completes it and the pages around it (#101):

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import bisect
 import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -619,6 +620,48 @@ def test_gpu_cost_page_lists_every_priced_gpu_and_cost_source(lang: str) -> None
     table = text.split("| `cost_source` |", 1)[1].split("\n\n", 1)[0]
     documented = set(re.findall(r"^\| `([a-z_]+)` \|", table, re.MULTILINE))
     assert documented == {"user_config", "auto_detected", "fuzzy_match"}, f"{lang}/operations/gpu-cost.md: {documented}"
+
+
+@pytest.mark.parametrize("lang", ["en", "tr"])
+class TestIngestionPageQuickExampleStaysRunnable:
+    """CR-A12-004: the Document Ingestion quick example must be a command that runs and its real output."""
+
+    @staticmethod
+    def _page(lang: str) -> str:
+        return (_REPO_ROOT / "docs" / "usermanuals" / lang / "data" / "ingestion.md").read_text(encoding="utf-8")
+
+    def _quick_example_tokens(self, lang: str) -> list[str]:
+        text = self._page(lang)
+        block = next(
+            (block for block in re.findall(r"```shell[ \t]*\n(.*?)```", text, re.DOTALL) if "forgelm ingest" in block),
+            None,
+        )
+        assert block is not None, f"ingestion.md ({lang}) must show a shell block with `forgelm ingest`"
+        command = re.sub(r"\\\n\s*", " ", block)
+        line = next(line for line in command.splitlines() if "forgelm ingest" in line)
+        return shlex.split(line.lstrip("$ ").strip())
+
+    def test_chunk_tokens_is_paired_with_a_tokenizer(self, lang: str) -> None:
+        # `forgelm ingest --chunk-tokens` refuses to run without `--tokenizer` (exit 1), so the first command a reader
+        # copies must carry both.
+        tokens = self._quick_example_tokens(lang)
+        assert "--chunk-tokens" in tokens, f"ingestion.md ({lang}) must keep the documented --chunk-tokens example"
+        assert "--tokenizer" in tokens, f"ingestion.md ({lang}) must pass --tokenizer with --chunk-tokens"
+        chunk_tokens_at = tokens.index("--chunk-tokens")
+        chunk_value = tokens[chunk_tokens_at + 1] if chunk_tokens_at + 1 < len(tokens) else ""
+        assert chunk_value.isdigit() and int(chunk_value) > 0, (
+            f"ingestion.md ({lang}) must give --chunk-tokens a positive token count, not just the bare flag"
+        )
+        tokenizer_at = tokens.index("--tokenizer")
+        assert tokenizer_at + 1 < len(tokens) and not tokens[tokenizer_at + 1].startswith("-"), (
+            f"ingestion.md ({lang}) must give --tokenizer a model name, not just the bare flag"
+        )
+
+    def test_page_shows_the_real_summarize_result_labels(self, lang: str) -> None:
+        # The old block showed tick-mark progress lines that `summarize_result` never prints.
+        text = self._page(lang)
+        assert "Ingestion summary" in text, f"ingestion.md ({lang}) must show the real summarize_result heading"
+        assert "Files (in/out)" in text, f"ingestion.md ({lang}) must show the real Files (in/out) line"
 
 
 @pytest.mark.parametrize("lang", ["en", "tr"])
