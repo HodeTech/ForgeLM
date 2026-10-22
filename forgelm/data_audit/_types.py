@@ -24,7 +24,8 @@ PII_TYPES: Tuple[str, ...] = ("email", "phone", "credit_card", "iban", "tr_id", 
 # remember by hand that ``credit_card`` is materially worse than ``phone``.
 # The tiers below are ForgeLM's default weighting, not a regulatory
 # classification (PCI DSS protects card numbers; GDPR Art. 87 lets Member
-# States restrict national identification numbers), so the audit surfaces a
+# States set the specific conditions for processing national identification
+# numbers), so the audit surfaces a
 # one-glance verdict via :data:`PII_SEVERITY`. Tweak the table when local law
 # disagrees — the audit honours whatever map is loaded at call time.
 PII_SEVERITY: Dict[str, str] = {

@@ -1001,7 +1001,7 @@ class SafetyConfig(BaseModel):
         default=False,
         description=(
             "Persist raw `prompt` / `response` strings to `safety_results.json`.  "
-            "Default OFF for GDPR / EU AI Act Art. 10 privacy by default — adversarial "
+            "Default OFF for GDPR Art. 25(2) data protection by default — adversarial "
             "test prompts and model responses may surface sensitive content.  Opt in "
             "for debugging."
         ),
@@ -1140,8 +1140,8 @@ class JudgeConfig(BaseModel):
         default=False,
         description=(
             "Persist raw eval `prompt`, `response`, and judge `reason` strings to "
-            "`judge_results.json`.  Default OFF for GDPR / EU AI Act Art. 10 "
-            "privacy by default — judge reasoning can quote PII from the eval set.  "
+            "`judge_results.json`.  Default OFF for GDPR Art. 25(2) "
+            "data protection by default — judge reasoning can quote PII from the eval set.  "
             "Opt in for debugging."
         ),
     )
@@ -1592,9 +1592,9 @@ class RetentionConfig(BaseModel):
     ForgeLM's own choices, not legal periods (GDPR Article 5(1)(e) sets
     no fixed period):  audit logs at 5 years, staging at 7 days
     (one work-week before `purge --check-policy` reports a staging dir),
-    ephemeral artefacts at 90 days (compliance bundle + audit reports
-    have a quarterly review cadence in most QMS), raw documents at 90
-    days (typical ingestion-window before re-running data audit).
+    ephemeral artefacts at 90 days and raw documents at 90 days (round
+    numbers chosen for ForgeLM, not review cadences or ingestion windows
+    taken from any standard).
     Choose values from your own necessity assessment.
 
     Setting any horizon to ``0`` disables the policy for that artefact
@@ -1630,7 +1630,7 @@ class RetentionConfig(BaseModel):
         ge=0,
         description=(
             "Age in days after which `forgelm purge --check-policy` reports `<output_dir>/compliance/` and "
-            "`<output_dir>/data_audit_report.json` as overdue; nothing is deleted. Set to 0 to stop reporting it."
+            "`<output_dir>/data_audit_report.json` as overdue (aged from the audit log's first event, else mtime); nothing is deleted. Set to 0 to stop reporting it."
         ),
     )
     raw_documents_retention_days: int = Field(
@@ -1638,8 +1638,8 @@ class RetentionConfig(BaseModel):
         ge=0,
         description=(
             "Age in days after which `forgelm purge --check-policy` reports `<output_dir>/raw_documents/` or "
-            "`<output_dir>/ingestion_output/` (ingested PDF / DOCX / EPUB / TXT / Markdown) as overdue; nothing is deleted.  Set to 0 to stop reporting it. "
-            "Closes ghost-features GH-023 (was nested as `ingestion.retention.raw_documents.ttl_days`; now top-level)."
+            "`<output_dir>/ingestion_output/` (ingested PDF / DOCX / EPUB / TXT / Markdown) as overdue (aged from the audit log's first event, else mtime); nothing is deleted.  Set to 0 to stop reporting it. "
+            "ForgeLM does not create these directories; the horizon applies only to source documents you keep there."
         ),
     )
     enforce: Literal["log_only", "warn_on_excess", "block_on_excess"] = Field(
@@ -1699,7 +1699,7 @@ class ForgeConfig(BaseModel):
     )
     retention: Optional[RetentionConfig] = Field(
         default=None,
-        description="Phase 21 / GDPR Article 5(1)(e) storage limitation + Article 17 erasure horizons block.",
+        description="Retention horizons (GDPR Article 5(1)(e) storage limitation), reported by `forgelm purge --check-policy` and never enforced.",
     )
     pipeline: Optional["PipelineConfig"] = Field(
         default=None,

@@ -139,7 +139,7 @@ class RetentionConfig(BaseModel):
     enforce: Literal["log_only", "warn_on_excess", "block_on_excess"] = "log_only"
 ```
 
-`ForgeConfig` grows an optional `retention: Optional[RetentionConfig] = None` field.  When unset, the existing default-permissive behaviour holds (no retention check).  When set, the trainer's pre-flight gate runs the check.
+`ForgeConfig` grows an optional `retention: Optional[RetentionConfig] = None` field.  When unset, the existing default-permissive behaviour holds (no retention check).  When set, `forgelm purge --check-policy` reports against it.  The trainer pre-flight gate this section originally described was never built (§12).
 
 ### 3.3 mtime caveat (and the in-band age field)
 
@@ -154,9 +154,9 @@ The `--check-policy` JSON output includes `age_source ∈ {audit, mtime}` per ar
 
 Three sites:
 
-1. **`ForgeTrainer.train()` pre-flight** (before any data is read): scan `output_dir` for artefacts whose `mtime` exceeds the retention window; emit per-violation audit events; honour `enforce`.
+1. **`ForgeTrainer.train()` pre-flight** *(designed; not implemented, see §12)* (before any data is read): scan `output_dir` for artefacts whose `mtime` exceeds the retention window; emit per-violation audit events; honour `enforce`.
 2. **`forgelm purge --check-policy` (no --row-id / --run-id)**: read-only scan; reports violations as a structured summary (text + JSON output formats).
-3. **`forgelm audit`** (existing subcommand): when `retention` is set in the loaded config, the audit report's `notes` block lists violations as a friendly heads-up.
+3. **`forgelm audit`** (existing subcommand) *(designed; not implemented, see §12)*: when `retention` is set in the loaded config, the audit report's `notes` block lists violations as a friendly heads-up.
 
 ### 3.5 What "violation" means
 
@@ -205,9 +205,9 @@ Standard ForgeLM 0/1/2/3/4 contract — all codes from `forgelm.cli._exit_codes`
 | Code | Constant | Meaning |
 |---|---|---|
 | 0 | `EXIT_SUCCESS` | Erasure completed (or `--dry-run` reported successfully). |
-| 1 | `EXIT_CONFIG_ERROR` | Config-level error: missing flag, flag combination, unknown row-id (corpus mode), unknown run-id (run mode), `--row-id` directory mode without `--row-matches=all`, multi-row match without `--row-matches=all`. (`--yes` is not implemented — see §3.5 for the consent model; the shipped `forgelm purge` is non-interactive on every invocation, so there is no "missing `--yes` on a non-TTY" failure mode.) |
+| 1 | `EXIT_CONFIG_ERROR` | Config-level error: unknown row-id (corpus mode), unknown run-id (run mode), `--row-id` directory mode without `--row-matches=all`, multi-row match without `--row-matches=all`. Flag combinations the argument parser rejects exit 2 instead (§12). (`--yes` is not implemented — see §3.5 for the consent model; the shipped `forgelm purge` is non-interactive on every invocation, so there is no "missing `--yes` on a non-TTY" failure mode.) |
 | 2 | `EXIT_TRAINING_ERROR` | Runtime / I/O failure: corpus unreadable, audit-log write failure, atomic-rename failure, partial commit recovery. |
-| 3 | `EXIT_EVAL_FAILURE` | Reserved for the trainer pre-flight gate when `enforce: block_on_excess` is configured (see §3.4 in the spirit of the master `error-handling.md` exit-code contract).  **Not** used by `forgelm purge --check-policy` — that path is a report, not a gate; see §10 Q5 + the paragraph below. |
+| 3 | `EXIT_EVAL_FAILURE` | Reserved for the trainer pre-flight gate when `enforce: block_on_excess` is configured (no such gate exists today; see §3.4 in the spirit of the master `error-handling.md` exit-code contract).  **Not** used by `forgelm purge --check-policy` — that path is a report, not a gate; see §10 Q5 + the paragraph below. |
 | 4 | `EXIT_AWAITING_APPROVAL` | Reserved for its trainer-pipeline meaning per `docs/standards/error-handling.md` ("Training + evals passed, but `require_human_approval: true` — staged, awaiting human sign-off").  **Not** reused by `forgelm purge`. Since the shipped `forgelm purge` is non-interactive (no prompt, no `--yes` flag), there is no "operator declined the prompt" path; consent is recorded in the operator-supplied `--justification` and the audit chain. |
 
 **`--check-policy` exits 0 on a successful report** (per §10 Q5 — the resolved decision: report-not-gate semantic).  Operators who want a CI gate use `--output-format json` and test the report themselves (for example `jq -e '.success == true and has("count") and .count == 0'` under `set -o pipefail`; `count` is absent when no `retention:` block was loaded); CI then branches on that rather than on the exit code.  This keeps the public contract `docs/standards/error-handling.md` (the exit-code table in that standard) consistent across every ForgeLM subcommand: a code-3 from `forgelm purge` always means "trainer pre-flight gate failed", never "report found something".
@@ -223,7 +223,7 @@ Standard ForgeLM 0/1/2/3/4 contract — all codes from `forgelm.cli._exit_codes`
 5. `os.fsync` + `os.replace` to swap.
 6. **Audit `data.erasure_completed` LAST** — same fields plus `bytes_freed`, `pre_erasure_line_number`, `files_modified=[corpus_path]`.
 
-Recovery path for a step-5 failure (rename fails after the temp file is fully written): the `data.erasure_requested` event is in the chain, the temp file is left on disk for forensic inspection, and a `data.erasure_failed` event is appended carrying the original error.  An operator inspecting the log sees the request → failure pair and can manually decide whether to retry or revert.
+Recovery path for a step-5 failure (rename fails after the temp file is fully written): the `data.erasure_requested` event is in the chain, the temp file is removed on a best-effort basis (the corpus itself is untouched), and a `data.erasure_failed` event is appended carrying the original error.  An operator inspecting the log sees the request → failure pair and can manually decide whether to retry or revert.
 
 **Recovery path for a step-6 failure** (rename succeeded, completion event write fails): the row is gone from the corpus but the chain has only the request event.  This is detectable: a `request` event without a matching `completed` / `failed` event within the same minute is the operator's signal to verify the corpus state and append a manual `data.erasure_completed` (or `_failed`) event by hand.  Phase 21 ships a `tests/test_gdpr_erasure.py::test_partial_commit_emits_failed_event` test that simulates this race + asserts the chain stays interpretable.
 
@@ -256,9 +256,9 @@ Six new events in `audit_event_catalog.md` — three core erasure events plus th
 | `data.erasure_requested` | First step of any `forgelm purge --row-id` / `--run-id` invocation, *before* any deletion (see §4.4 commit ordering).  If deletion then fails, the request record stays in the chain so a forensic reviewer can see the intent.  `--check-policy` is read-only and does not emit this event. | `target_kind` ∈ {row, staging, artefacts}, `target_id` (hashed per §5.4 for row mode), `salt_source` ∈ {`"env_var"`, `"per_dir"`} (row mode only; see §5.4), `corpus_path` (corpus mode), `output_dir` (run mode), `justification`, `dry_run` |
 | `data.erasure_completed` | Successful deletion finishes. | All `data.erasure_requested` fields + `bytes_freed`, `files_modified` (list), `pre_erasure_line_number` (corpus mode) |
 | `data.erasure_failed` | Deletion failed (atomic rename failure, permission denied, I/O error). | All `data.erasure_requested` fields + `error_class`, `error_message` (already-redacted via §5.4 policy + `_http`'s mask helper) |
-| `data.erasure_warning_memorisation` | Emitted alongside `data.erasure_completed` when `target_kind="row"` AND a `<output_dir>/final_model/` exists for any run that consumed this corpus.  Signals that the row is gone from the corpus but may still be memorised in trained weights. | All `data.erasure_completed` fields + `affected_run_ids` (list of run ids whose final_model used this corpus), `recommendation` (literal `"full retraining without the erased row is the only proper mitigation"`) |
+| `data.erasure_warning_memorisation` | Emitted alongside `data.erasure_completed` when `target_kind="row"` AND a `<output_dir>/final_model/` exists.  The trigger is that directory's existence alone: ForgeLM does not check which run (if any) trained on this corpus or this row.  Signals that the row is gone from the corpus but may still be memorised in trained weights. | All `data.erasure_completed` fields + `affected_run_ids` (list of run ids whose final_model used this corpus), `recommendation` (literal `"full retraining without the erased row is the only proper mitigation"`) |
 | `data.erasure_warning_synthetic_data_present` | Emitted alongside `data.erasure_completed` when `target_kind="row"` AND any `<output_dir>/synthetic_data*.jsonl` exists.  Signals that the row may have produced derivative synthetic snippets that the row→snippet mapping no longer connects. | All `data.erasure_completed` fields + `synthetic_files` (list of paths), `recommendation` (literal `"regenerate synthetic data after erasure to ensure no derivatives reference the erased row"`) |
-| `data.erasure_warning_external_copies` | Emitted alongside `data.erasure_completed` when the loaded config has a non-empty `webhook` block.  Signals that downstream consumers may have received notices that referenced the now-erased data; ForgeLM's local erasure does not propagate. | All `data.erasure_completed` fields + `webhook_targets` (list of redacted URLs), `recommendation` (literal `"propagate the erasure to downstream processors per Article 17(2)"`) |
+| `data.erasure_warning_external_copies` | Emitted alongside `data.erasure_completed` when the loaded config has a non-empty `webhook` block.  Signals that downstream consumers may have received notices that referenced the now-erased data; ForgeLM's local erasure does not propagate. | All `data.erasure_completed` fields + `webhook_targets` (list of redacted URLs), `recommendation` (literal `"tell the recipients the data was disclosed to about the erasure, per Article 19 (and Article 17(2) where the data was made public)"`) |
 
 ### 5.2 Chain-integrity post-erasure
 
@@ -296,7 +296,7 @@ The audit log itself is append-only, but Article 5(1)(c) (data minimisation) sti
 | `pre_erasure_line_number` | int | None | clear |
 | `error_class` | exception class name | None | clear |
 | `error_message` | str | **Possibly personal** (Python tracebacks include `repr()` of objects, which may include row content) | route through `forgelm._http._mask_secrets_in_text` first; redact obvious PII (email regex, phone regex) via the existing `forgelm.data_audit._pii_regex` mask helpers |
-| `operator` (carried on every AuditLogger event) | `FORGELM_OPERATOR` or `getuser()@host` | **Personal** | clear (Article 12 record-keeping requires identifiable operator; this is the explicit Article 5(1)(b) lawful basis) |
+| `operator` (carried on every AuditLogger event) | `FORGELM_OPERATOR` or `getuser()@host` | **Personal** | clear (the record must say who acted, so the operator stays identifiable; the controller needs its own documented Article 6 basis for keeping that identity in the log) |
 
 The take-away: **the only field this design hashes by default is `target_id` in row mode**.  Everything else either is genuinely operational, is the operator's responsibility (justification), or is masked through the existing Wave 1 `_mask_secrets_in_text` helper.  Phase 21 ships a unit test `tests/test_gdpr_erasure.py::test_target_id_hashed_in_audit_event` that asserts the raw row id never appears in the persisted JSONL after a `forgelm purge --row-id ali@example.com --corpus train.jsonl` run.
 
@@ -324,7 +324,7 @@ in three scopes:
    --kind {staging,artefacts}` deletes the model staging directory for a
    specific run and the compliance files whose names embed the run id (as
    shipped, not the standard bundle; see the purge reference).
-3. **Retention policy enforcement.** Configure `retention.*` in your YAML;
+3. **Retention reporting.** Configure `retention.*` in your YAML;
    `forgelm purge --check-policy` lists artefacts that have overstayed the
    declared horizon.
 
@@ -444,7 +444,7 @@ The closure plan §15.5 lists three open items that intersect Phase 21:
 
 ### Q5. Should `--check-policy` return non-zero when violations are found?
 
-**Decision:** no.  `--check-policy` is a *report*, not a *gate*.  The CI gate is the trainer pre-flight (when `enforce: block_on_excess` is configured).  Mixing gate + report semantics into one exit code makes the tool harder to script.  Operators who want a CI gate use `--output-format json` and test the report themselves (see §4.3).
+**Decision:** no.  `--check-policy` is a *report*, not a *gate*.  The trainer pre-flight gate that was meant to be the CI gate (`enforce: block_on_excess`) was never built, so CI tests the JSON report.  Mixing gate + report semantics into one exit code makes the tool harder to script.  Operators who want a CI gate use `--output-format json` and test the report themselves (see §4.3).
 
 ### Q6. Should we delete the synthetic-data snapshots on row erasure?
 
@@ -467,7 +467,7 @@ The closure plan §15.5 lists three open items that intersect Phase 21:
 
 The design above shipped in v0.5.5, with the deviations listed after this list:
 
-- **`RetentionConfig`** (§3): pinned in `forgelm/config.py` as a top-level `retention:` block with five fields (`audit_log_retention_days`, `staging_ttl_days`, `ephemeral_artefact_retention_days`, `raw_documents_retention_days`, `enforce`). `EvaluationConfig.staging_ttl_days` deprecated with `DeprecationWarning` + alias-forwarding to `retention.staging_ttl_days`.
+- **`RetentionConfig`** (§3): pinned in `forgelm/config.py` as a top-level `retention:` block with five fields (`audit_log_retention_days`, `staging_ttl_days`, `ephemeral_artefact_retention_days`, `raw_documents_retention_days`, `enforce`). `EvaluationConfig.staging_ttl_days` was deprecated with `DeprecationWarning` + alias-forwarding to `retention.staging_ttl_days` and has since been removed (v0.8.0); §3.1 describes that historical window.
 - **`forgelm purge` subcommand** (§4): pinned in `forgelm/cli/subcommands/_purge.py` with `--row-id`, `--corpus`, `--run-id`, `--kind`, `--check-policy`, atomic-rewrite + recovery semantics.
 - **Audit events** (§5): six new events live in `audit_event_catalog.md` — `data.erasure_requested`, `data.erasure_completed`, `data.erasure_failed`, plus three operator-warning events.
 - **Tests** (§7): `tests/test_gdpr_erasure.py` ships the regression coverage (unknown row id, multi-match refusal, partial-commit recovery, retention horizon enforcement, audit-PII redaction, etc.).
@@ -480,4 +480,9 @@ The design above shipped in v0.5.5, with the deviations listed after this list:
 - The legacy `final_model.staging/` is purged only when it holds a `staging_run_id` marker equal to the run id.  Nothing in ForgeLM writes that marker.
 - `--check-policy` ages the raw-documents directories (`raw_documents/`, `ingestion_output/`) from the audit log's first event, not per run; it reads `--config` only when given (no `./forgelm.yaml` discovery) and, without a `retention:` block, reports that nothing was checked.  `--dry-run` combined with `--check-policy` is not rejected.
 - The `data.erasure_warning_external_copies` event is emitted in row mode only, and only when `--config` is given; run mode never loads the config.
+- Mode flags that conflict (for example `--row-id` with `--run-id`, or `--kind logs`) are rejected by the argument parser, which exits 2 without a JSON envelope; other configuration errors exit 1.  A run id is not looked up in the audit log: it is "unknown" only when no matching artefact exists.
+- With `FORGELM_AUDIT_SECRET` set, the per-directory salt is XOR-combined with the first 16 bytes of the secret (`salt_source=env_var`), so a row's `target_id` changes when the secret rotates.  `forgelm reverse-pii` derives its `query_hash` the same way in its default plaintext mode; `--salt-source` switches it to a hash-mask scan that looks for digests inside the corpus.
+- `data.erasure_warning_memorisation` fires whenever `<output_dir>/final_model/` exists; the check does not tie that model to the erased row.
+- The recovery paths of §4.4 assume the temp file survives a failed rename; the shipped code removes it (best effort) instead.
+- Neither the trainer pre-flight gate nor the `forgelm audit` retention notes of §3.4 exist.
 - The `recommendation` field listed for the new events in §5.1 is not emitted, and the test table in §7 predates the shipped tests (for example, a dry-run appends audit events, and erasing the same row twice exits 1 with `NoMatchingRow`); `tests/test_gdpr_erasure.py` is the source of truth.

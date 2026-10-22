@@ -25,7 +25,7 @@ Aşağıdaki ForgeLM-ürettiği asset sınıfları:
 | Model ağırlıkları — final | `<output_dir>/final_model/` | Eğitim verisi memorisation; rekabetçi moat |
 | Model ağırlıkları — staging | `<output_dir>/final_model.staging.<run_id>/` | Final ile aynı, artı pre-approval state |
 | Audit log | `<output_dir>/audit_log.jsonl` + `audit_log.jsonl.manifest.json` (genesis pin) | Operatör kimliği geçmişi; yapılandırma hashleri; uyumluluk için chain-of-custody — satır-seviyesi bütünlük per-line `_hmac` + `prev_hash` ile in-band'dir, ayrı bir `.sha256` sidecar yok |
-| Per-output-dir salt | `<output_dir>/.forgelm_audit_salt` | Düşük-entropi identifier'ların salt'sız SHA-256'sı brute-force edilebilir — salt audit hash'ine wordlist direnci veren secret'tir |
+| Per-output-dir salt | `<output_dir>/.forgelm_audit_salt` | Düşük-entropi identifier'ların salt'sız SHA-256'sı brute-force edilebilir — salt hazır bir wordlist'i işe yaramaz kılar, ancak hem log'a hem salt'a sahip olan biri tahminleri yine de deneyebilir |
 | Eğitim corpusu | (operatör-tedarikli; tipik olarak `data/*.jsonl`) | PII; ticari sırlar; müşteri verisi |
 | Quickstart-rendered config | (operatör path'i) | HF token'ları, webhook URL'leri, secret env-var isimleri |
 | Uyumluluk paketi (Annex IV) | `<output_dir>/compliance/` ZIP | Yukarıdaki her artefaktın aggregate formu |
@@ -138,9 +138,10 @@ karşı offline dictionary saldırısı çalıştırmasına izin verir.
 - Sadece audit log'un şifreleme posture'ı ile eşleşen substrate'lere
   yedeklenir (HİÇBİR ZAMAN debug bucket'a plaintext).
 - Sadece karşılık gelen `<output_dir>` decommissioned olduğunda
-  rotate edilir — output-dir-ortasında rotate etmek `forgelm
-  verify-audit`'in önceki olaylar için salted-hash varsayımlarını
-  geçersiz kılar.
+  rotate edilir — output-dir-ortasında rotate etmek önceki ve sonraki
+  digest'ler arasındaki korelasyonu bozar (sonraki bir `forgelm
+  reverse-pii` sorgusu önceki bir `forgelm purge` olayıyla eşleşmez).
+  Salt'ı kullanmayan `forgelm verify-audit`'i etkilemez.
 
 **Defence-in-depth:** `FORGELM_AUDIT_SECRET`'i KMS'inizden export et
 böylece on-disk salt iki-bileşenli anahtarın yarısı haline gelir.
@@ -215,9 +216,11 @@ ForgeLM kendisi şifreleme uygulamaz ama ŞUNLARI YAPAR:
 3. **Şifreleme-sonrası bütünlüğü doğrula.** `forgelm verify-audit`
    chain-after-decryption'ın chain-as-emitted ile eşleştiğini teyit
    eder; substrate-seviyesi herhangi bir bozulma tespit edilebilirdir.
-4. **Düşük-entropi identifier'ları hash'le.** Salted SHA-256, audit
-   chain'in kendisinin atıl-durumda gizli olması için şifrelenmesine
-   ihtiyaç olmadığı anlamına gelir — yalnız salt'ın.
+4. **Düşük-entropi identifier'ları takma adlandır (pseudonymise).** Salted SHA-256
+   bir identifier'ı anonim bir değere değil, bir takma ada dönüştürür (GDPR
+   Madde 4(5)): log'a ve salt'a sahip olan herkes tahmin ettiği bir identifier'dan
+   digest'i yeniden hesaplayabilir. Audit log'u ve salt'ı aynı standartta
+   şifreleyin ve digest'leri kişisel veri sayın.
 
 ## 6. Doğrulama checklist'i
 

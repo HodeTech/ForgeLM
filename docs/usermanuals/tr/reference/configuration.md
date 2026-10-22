@@ -371,7 +371,7 @@ retention:
   staging_ttl_days: 7                        # staging dizininin purge --check-policy tarafından süresi geçmiş sayıldığı yaş
   ephemeral_artefact_retention_days: 90      # uyumluluk paketleri, denetim raporları
   raw_documents_retention_days: 90           # ingest edilen PDF/DOCX/EPUB/TXT/Markdown
-  enforce: "log_only"                        # ayrılmış: henüz hiçbir komut onu kullanmaz (log_only | warn_on_excess | block_on_excess)
+  enforce: "log_only"                        # ayrılmış: henüz hiçbir komut onu dikkate almaz (log_only | warn_on_excess | block_on_excess)
 ```
 
 ## `pipeline:`

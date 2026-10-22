@@ -11,11 +11,11 @@ For the deployer-flow walkthrough (DSAR ticket → CLI invocation → verificati
 
 ```text
 forgelm purge --row-id ID --corpus PATH [--row-matches {one,all}]
-              [--output-dir DIR] [--justification TEXT] [--dry-run]
-              [--output-format {text,json}]
+              [--output-dir DIR] [--config PATH] [--justification TEXT]
+              [--dry-run] [--output-format {text,json}]
 
 forgelm purge --run-id RUN_ID --kind {staging,artefacts}
-              --output-dir DIR [--justification TEXT] [--dry-run]
+              [--output-dir DIR] [--justification TEXT] [--dry-run]
               [--output-format {text,json}]
 
 forgelm purge --check-policy --config PATH [--output-dir DIR]

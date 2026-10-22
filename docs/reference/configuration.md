@@ -233,7 +233,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `track_categories` | bool | `false` | Parse Llama Guard S1-S14 harm categories |
 | `severity_thresholds` | dict | `null` | Per-severity limits: `{"critical": 0, "high": 0.01, "medium": 0.05}` |
 | `batch_size` | int | `8` | Batched generation size for safety evaluation. `1` disables batching; raise for throughput on large VRAM, lower to reduce OOM risk on small VRAM. |
-| `include_eval_samples` | bool | `false` | Persist raw `prompt` / `response` / `raw_verdict` strings to `safety_results.json`. **Off by default** for GDPR / EU AI Act Art. 10 privacy — adversarial prompts and responses may surface sensitive content, and `raw_verdict` (the guard's own generated text under `classifier_mode: generation`) can echo or continue the probe when the guard is misconfigured. Opt in only for debugging. |
+| `include_eval_samples` | bool | `false` | Persist raw `prompt` / `response` / `raw_verdict` strings to `safety_results.json`. **Off by default** for GDPR Art. 25(2) data protection by default — adversarial prompts and responses may surface sensitive content, and `raw_verdict` (the guard's own generated text under `classifier_mode: generation`) can echo or continue the probe when the guard is misconfigured. Opt in only for debugging. |
 
 #### `evaluation.llm_judge` (Optional)
 
@@ -248,7 +248,7 @@ across retries. Each retry attempt is logged to the audit trail.
 | `min_score` | float | `5.0` | Minimum average score (1-10) |
 | `min_valid_fraction` | float | `0.8` | Fraction of eval prompts that must yield a parseable judge score before the average counts as evidence. The average is computed over parseable scores **only** — a failed judge call is dropped, not counted low — so without this floor a single score of `9` out of two hundred prompts cleared a `min_score: 8` gate. Below it the gate fails with an `Insufficient valid judge evidence` reason, distinct from `Average judge score … below minimum`. `0.0` restores the behaviour through 0.11.0. |
 | `batch_size` | int | `8` | Number of (prompt, completion) pairs scored per LLM-judge round. `1` disables batching. |
-| `include_eval_samples` | bool | `false` | Persist raw eval `prompt`, `response`, and judge `reason` strings to `judge_results.json`. **Off by default** for GDPR / EU AI Act Art. 10 privacy — judge reasoning can quote PII from the eval set. Opt in only for debugging. |
+| `include_eval_samples` | bool | `false` | Persist raw eval `prompt`, `response`, and judge `reason` strings to `judge_results.json`. **Off by default** for GDPR Art. 25(2) data protection by default — judge reasoning can quote PII from the eval set. Opt in only for debugging. |
 
 > **Judge input truncation:** when building each scoring prompt the judge
 > sees at most the first **500 characters of the eval prompt** and the first
@@ -260,31 +260,33 @@ across retries. Each retry attempt is logged to the audit trail.
 > for long-form fine-tunes.
 >
 > **Removed:** `evaluation.staging_ttl_days` was superseded by
-> [`retention.staging_ttl_days`](#retention-optional--gdpr-article-17-erasure-horizons)
+> [`retention.staging_ttl_days`](#retention-optional--retention-horizons)
 > and was removed in v0.8.0. Use `retention.staging_ttl_days`; YAML files that
 > still set the legacy key will fail config-load with `EXIT_CONFIG_ERROR`.
 
 ---
 
-## `retention` (Optional — GDPR Article 17 erasure horizons)
+## `retention` (Optional — retention horizons)
 
-Defines maximum retention horizons for compliance, training, and evaluation
-artefacts. Horizons are operator-set retention limits that help implement GDPR
-Article 5(1)(e) "storage limitation" (no fixed period: data may be kept only as
-long as necessary) and support erasure handling under Article 17 (requests are
-answered without undue delay, within the Article 12(3) one-month period, extendable by two further months). Choose
-values from your own necessity assessment; the defaults are ForgeLM choices, not
-legal periods. The horizons are **reported**, not enforced: `forgelm purge
---check-policy` lists what is past them and exits 0 however many it finds (an unloadable `--config` exits 1), and nothing is
-deleted, blocked or scheduled automatically. The `enforce` knob is reserved: no
-command reads it yet.
+Retention horizons for compliance, training and evaluation artefacts. They are
+limits you set to help apply the GDPR Article 5(1)(e) storage-limitation
+principle (personal data may be kept only as long as necessary; the Regulation
+sets no fixed period). Choose values from your own necessity assessment: the
+defaults are ForgeLM choices, not legal periods.
+
+The horizons are **reported, not enforced**: `forgelm purge --check-policy`
+lists what is past them and exits 0 however many it finds (an unloadable
+`--config` exits 1), and nothing is deleted, blocked or scheduled
+automatically. Without a `retention:` block nothing is checked at all;
+`retention: {}` switches the defaults on. The `enforce` knob is reserved: no
+command acts on it yet.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `audit_log_retention_days` | int | `1825` (~5 years) | Days after which `forgelm purge --check-policy` reports `audit_log.jsonl` as overdue (Article 5(1)(e)). The 5-year default is a ForgeLM choice, not a legal period. Set to `0` to stop reporting it (nothing is ever deleted); keep it only for as long as the entries stay necessary or a specific legal retention duty you can name requires it. |
 | `staging_ttl_days` | int | `7` | Age (from the run's first audit event, else the audit log's first event, else the directory's mtime) after which `forgelm purge --check-policy` reports a `final_model.staging.<run_id>/` directory (and the legacy `final_model.staging/`) as overdue; nothing is deleted automatically and the time of a `forgelm reject` decision is not used. Set to `0` to stop reporting it. Replaces the removed `evaluation.staging_ttl_days` (removed in v0.8.0). |
 | `ephemeral_artefact_retention_days` | int | `90` | Age in days after which `forgelm purge --check-policy` reports `<output_dir>/compliance/` and `<output_dir>/data_audit_report.json` as overdue (aged from the audit log's first event, else mtime); nothing is deleted. Set to `0` to stop reporting it. |
-| `raw_documents_retention_days` | int | `90` | Age in days after which `forgelm purge --check-policy` reports `<output_dir>/raw_documents/` or `<output_dir>/ingestion_output/` (ingested PDF / DOCX / EPUB / TXT / Markdown) as overdue (aged from the audit log's first event, else mtime); nothing is deleted. Set to `0` to stop reporting it. |
+| `raw_documents_retention_days` | int | `90` | Age in days after which `forgelm purge --check-policy` reports `<output_dir>/raw_documents/` or `<output_dir>/ingestion_output/` (ingested PDF / DOCX / EPUB / TXT / Markdown) as overdue (aged from the audit log's first event, else mtime); nothing is deleted. ForgeLM does not create these directories, so the horizon applies only to source documents you keep there. Set to `0` to stop reporting it. |
 | `enforce` | string | `"log_only"` | Reserved policy mode. No command acts on it: `"log_only"`, `"warn_on_excess"` and `"block_on_excess"` are all accepted and behave the same, and training and `--dry-run` warn when a config sets either of the last two. |
 
 **Shared output directories.** `compliance/`, `data_audit_report.json` and the raw-document directories are aged from the audit log's *first* event, not from when the file was last written. In a directory reused for many runs, a bundle written today can be reported as past its horizon: check the file's own date before deleting anything the report lists.

@@ -1143,7 +1143,7 @@ def _add_purge_subcommand(subparsers) -> None:
         type=str,
         default=None,
         metavar="DIR",
-        help="Output directory containing audit_log.jsonl + the per-output-dir salt file.  Defaults to the corpus parent dir in row mode and to the current directory in run mode.",
+        help="Output directory containing audit_log.jsonl + the per-output-dir salt file.  Defaults to the corpus parent dir in row mode and to the current directory in run mode and with --check-policy (where it names the directory to scan).",
     )
     p.add_argument(
         "--config",

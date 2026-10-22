@@ -52,8 +52,8 @@ Audit zincirine altı event yazılır (bkz. [GitHub'daki Audit Event Kataloğu](
 - **Audit log'unu silmez.** Tool, silmeyi geçmişi yeniden yazmak yerine yeni bir event olarak kaydeder ve audit log'dan hiçbir girdiyi silmez. Veri sahibini adlandıran girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır ve belgelenmelidir. Bir Madde 17(1) gerekçesi geçerliyse girdiler yalnızca bir Madde 17(3) istisnasının kapsadığı yerde kalır: 17(3)(b), yalnızca işlemenin veri sorumlusunun tabi olduğu AB veya üye devlet hukukundan doğan bir yasal yükümlülüğe uyum için (veya kamu yararına ya da kamu otoritesinin kullanılmasına ilişkin bir görev için) gerekli olduğu ölçüde uygulanır; 17(3)(e) ise hukuki talepleri kapsar. Hiçbir Madde 17(1) gerekçesi geçerli değilse (örneğin girdiler toplandıkları amaç için hâlâ gereklidir) silme gerekmez; ancak talebe yine de Madde 12 süresi içinde gerekçeli bir yanıt verilir ve şikâyet hakkı bildirilir (Madde 12(4)).
 - **İşaretsiz legacy `final_model.staging/` dizinini silmez.** `--kind staging`, `final_model.staging.<run_id>/` dizinini siler; legacy `final_model.staging/` dizinini yalnızca içinde run id'ye eşit bir `staging_run_id` dosyası varsa siler. ForgeLM bu işaretçiyi yazmaz, bu yüzden işaretsiz bir legacy dizini kendiniz silin.
 - **`--kind artefacts` ile standart compliance paketini bulmaz.** Trainer run id içermeyen sabit dosya adları yazar (`compliance_report.json`, `training_manifest.yaml`, ...); resolver ise yalnızca run id'yi embed eden dosya adlarını eşler. Normal bir çıktı dizininde komut hiçbir şey bulmaz, `data.erasure_failed` (`NoMatchingArtefacts`) yayar, 1 ile çıkar ve hiçbir şey silmez; paketi depolama katmanınız üzerinden kaldırın.
-- **Downstream tüketicilere bildirim göndermez.** Webhook receiver'ları, dataset mirror'ları ve deploy edilmiş model endpoint'leri operatörün runtime-katmanı sorumluluğudur (GDPR Madde 19, verinin ifşa edildiği her alıcıya silmeyi bildirmeyi ister; bu, imkânsız olmadıkça veya orantısız çaba gerektirmedikçe geçerlidir ve ilgili kişi isterse bu alıcıları ona da bildirmek gerekir; Madde 17(2) ise veri sorumlusu veriyi kamuya açtıysa makul adımlar ekler). `data.erasure_warning_external_copies` event'ı açık hatırlatmadır.
-- **Yanıtın tamamını vermez.** Eksiksiz bir yanıt, ForgeLM'in yapmadığı adımları da gerektirir: talep edenin kimliğini doğrulamak (Madde 12(6)); talebin alınmasından itibaren bir ay içinde yanıtlamak (Madde 12(3); karmaşık veya çok sayıda talep için iki ay daha uzatılabilir, uzatma ilk ay içinde bildirilir); ilgili kişiye verinin bir kopyasını ve Madde 15(1)(a)-(h) bilgilerini vermek (Madde 15(3)) ve bunu başkalarının hak ve özgürlüklerini olumsuz etkilemeden yapmak (Madde 15(4)); bir Madde 17(1) gerekçesinin geçerli olup olmadığına ve tuttuğunuz şeyi hangi Madde 17(3) istisnasının (varsa) kapsadığına karar vermek; alıcıları bilgilendirmek (Madde 19); satırların gittiğini doğrulamak için purge sonrasında erişim aramasını yeniden çalıştırmak; ve bir talebi reddederseniz aynı süre içinde gerekçeyi ve şikâyet hakkını bildirmek (Madde 12(4)). Eğitilmiş modelin kişisel veri sayılıp sayılmayacağı ayrı bir sorudur (EDPB Görüş 28/2024).
+- **Downstream tüketicilere bildirim göndermez.** Webhook receiver'ları, dataset mirror'ları ve deploy edilmiş model endpoint'leri operatörün runtime-katmanı sorumluluğudur (GDPR Madde 19, verinin ifşa edildiği her alıcıya silmeyi bildirmeyi ister; bu, imkânsız olmadıkça veya orantısız çaba gerektirmedikçe geçerlidir ve veri sahibi isterse bu alıcıları ona da bildirmek gerekir; Madde 17(2) ise veri sorumlusu veriyi kamuya açtıysa makul adımlar ekler). `data.erasure_warning_external_copies` event'ı açık hatırlatmadır.
+- **Yanıtın tamamını vermez.** Eksiksiz bir yanıt, ForgeLM'in yapmadığı adımları da gerektirir: talep edenin kimliğini doğrulamak (Madde 12(6)); talebin alınmasından itibaren bir ay içinde yanıtlamak (Madde 12(3); karmaşık veya çok sayıda talep için iki ay daha uzatılabilir, uzatma ilk ay içinde bildirilir); veri sahibine verinin bir kopyasını ve Madde 15(1)(a)-(h) bilgilerini vermek (Madde 15(3)) ve bunu başkalarının hak ve özgürlüklerini olumsuz etkilemeden yapmak (Madde 15(4)); bir Madde 17(1) gerekçesinin geçerli olup olmadığına ve tuttuğunuz şeyi hangi Madde 17(3) istisnasının (varsa) kapsadığına karar vermek; alıcıları bilgilendirmek (Madde 19); satırların gittiğini doğrulamak için purge sonrasında erişim aramasını yeniden çalıştırmak; ve bir talebi reddederseniz aynı süre içinde gerekçeyi ve şikâyet hakkını bildirmek (Madde 12(4)). Eğitilmiş modelin kişisel veri sayılıp sayılmayacağı ayrı bir sorudur (EDPB Görüş 28/2024).
 
 ## Madde 15 — `forgelm reverse-pii`
 
@@ -96,7 +96,7 @@ Chain satırı cleartext identifier'ı asla taşımaz, yalnızca salt'lı bir di
 
 ## Exit kodları
 
-İki subcommand da projenin `0/1/2/3/4` sözleşmesine uyar:
+İki subcommand da projenin herkese açık exit-code sözleşmesinin (0-6) ilk üç kodunu kullanır:
 
 | Kod | Anlamı |
 |---|---|
@@ -104,7 +104,7 @@ Chain satırı cleartext identifier'ı asla taşımaz, yalnızca salt'lı bir di
 | 1 | Config hatası: eksik `--kind`, `--corpus`'suz `--row-id`, hatalı regex, `--run-id` ile eşleşen staging dizini / compliance dosyası yok, yüklenemeyen bir `--config`. |
 | 2 | Runtime hatası: I/O başarısızlığı, izin reddedildi, yazılamaz `--audit-dir`, argüman-parser kullanım hatası (birlikte verilen iki mod, `--kind logs`), ReDoS SIGALRM timeout, atomic-rename başarısızlığı. |
 
-Kod 3 (`EXIT_EVAL_FAILURE`) ve 4 (`EXIT_AWAITING_APPROVAL`) iki subcommand'ın da yüzeyinin parçası değildir.
+Kod 3 ile 6 arası (`EXIT_EVAL_FAILURE`, `EXIT_AWAITING_APPROVAL`, `EXIT_WIZARD_CANCELLED`, `EXIT_INTEGRITY_FAILURE`) iki subcommand'ın da yüzeyinin parçası değildir.
 
 ## Sık hatalar
 
@@ -121,7 +121,7 @@ Kod 3 (`EXIT_EVAL_FAILURE`) ve 4 (`EXIT_AWAITING_APPROVAL`) iki subcommand'ın d
 :::
 
 :::tip
-**`forgelm verify-audit`'i DSAR kapanışınıza wire'layın.** Erasure / access event zincire girdikten sonra `forgelm verify-audit <output_dir>/audit_log.jsonl --require-hmac` çalıştırın ve doğrulama çıktısını DSAR ticket'a iliştirin. Auditor okuyacak.
+**`forgelm verify-audit`'i DSAR kapanışınıza wire'layın.** Erasure / access event zincire girdikten sonra `forgelm verify-audit <output_dir>/audit_log.jsonl` çalıştırın ve doğrulama çıktısını DSAR ticket'a iliştirin. `--require-hmac`'i yalnızca zincir yazılırken `FORGELM_AUDIT_SECRET` ayarlıysa ve şimdi de ayarlıysa ekleyin: bayrak secret olmadan 1 ile çıkar ve herhangi bir satırda HMAC etiketi yoksa 6 ile çıkar; yani secret olmadan yazılmış bir zincirde tasarım gereği başarısız olur. Auditor okuyacak.
 :::
 
 ## Bkz.

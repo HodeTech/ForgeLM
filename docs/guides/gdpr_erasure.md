@@ -79,12 +79,12 @@ Read-only scan. Walks the output directory, compares each artefact's age (canoni
 retention:
   audit_log_retention_days: 1825          # 5 years (ForgeLM default, not a legal period)
   staging_ttl_days: 7                     # age at which `purge --check-policy` reports a staging dir as overdue
-  ephemeral_artefact_retention_days: 90   # quarterly review cadence
-  raw_documents_retention_days: 90        # ingestion-window before re-running data audit
+  ephemeral_artefact_retention_days: 90   # compliance/ and data_audit_report.json, aged from the audit log's first event
+  raw_documents_retention_days: 90        # only <output_dir>/raw_documents/ and ingestion_output/ (ForgeLM does not create them)
   enforce: log_only                       # reserved: no command acts on it yet (log_only / warn_on_excess / block_on_excess)
 ```
 
-Setting any horizon to `0` turns the report off for that artefact kind (nothing is deleted either way). The horizons are reported by `forgelm purge --check-policy` (read-only; exits 0 however many it finds); nothing is deleted or blocked automatically. `enforce` is reserved: no command acts on it yet, so all three values behave like `log_only`.
+Setting any horizon to `0` turns the report off for that artefact kind (nothing is deleted either way). The horizons are reported by `forgelm purge --check-policy` (read-only; exits 0 however many it finds); nothing is deleted or blocked automatically. ForgeLM does not create `raw_documents/` or `ingestion_output/`; `raw_documents_retention_days` has an effect only if you keep source documents there. `enforce` is reserved: no command acts on it yet, so all three values behave like `log_only`.
 
 ## Removed: `evaluation.staging_ttl_days`
 
@@ -184,6 +184,6 @@ for the JSON envelope schema.
 
 ## See also
 
-- `docs/qms/sop_data_management.md` — the full data-lifecycle SOP including the retention + erasure procedures.
+- `docs/qms/sop_data_management.md` — the data-lifecycle SOP (collection, quality, storage); it does not contain a retention or erasure procedure, so write one from this guide.
 - `docs/usermanuals/en/compliance/overview.md` — the operator-facing compliance overview that links here.
 - [`docs/design/gdpr_erasure.md`](../design/gdpr_erasure.md) — the Phase 20 design document that this implementation realises.

@@ -111,7 +111,7 @@ Manual checks:
 
 - Training data stored in version-controlled or immutable storage
 - SHA-256 fingerprint recorded in `data_provenance.json` for every training run
-- Retain training data for minimum **5 years** alongside model artifacts
+- Retain training data alongside model artifacts only for the period your retention policy sets and justifies: personal data may be kept only as long as necessary (GDPR Article 5(1)(e)), and a documentation-retention duty such as EU AI Act Article 18 does not by itself justify keeping personal data. The SHA-256 fingerprint in `data_provenance.json` holds no row content and can be kept longer than the corpus
 - Access restricted to authorized ML team members
 
 ## 7. Review

@@ -251,7 +251,7 @@ def _validate_row_id_args(args, output_format: str) -> None:
         _output_error_and_exit(
             output_format,
             "`--row-id` requires `--corpus <path>`. Bare row-id invocations are "
-            "rejected per Article 17 (per-row decision + per-row audit event).",
+            "rejected so that every erasure names the file it edits and gets its own audit event.",
             EXIT_CONFIG_ERROR,
         )
     # ``--corpus`` is trusted operator self-service input (named directly on the

@@ -96,7 +96,7 @@ The two primitives are intentionally separate:
 
 ## Exit codes
 
-Both subcommands follow the project's `0/1/2/3/4` contract:
+Both subcommands use the first three codes of the project's public exit-code contract (0-6):
 
 | Code | Meaning |
 |---|---|
@@ -104,7 +104,7 @@ Both subcommands follow the project's `0/1/2/3/4` contract:
 | 1 | Config error: a missing `--kind`, `--row-id` without `--corpus`, malformed regex, no staging directory / compliance file matching `--run-id`, a `--config` that cannot be loaded. |
 | 2 | Runtime error: I/O failure, permission denied, unwritable `--audit-dir`, an argument-parser usage error (two modes together, `--kind logs`), ReDoS SIGALRM timeout, atomic-rename failure. |
 
-Codes 3 (`EXIT_EVAL_FAILURE`) and 4 (`EXIT_AWAITING_APPROVAL`) are not part of either subcommand's surface.
+Codes 3 to 6 (`EXIT_EVAL_FAILURE`, `EXIT_AWAITING_APPROVAL`, `EXIT_WIZARD_CANCELLED`, `EXIT_INTEGRITY_FAILURE`) are not part of either subcommand's surface.
 
 ## Common pitfalls
 
@@ -121,7 +121,7 @@ Codes 3 (`EXIT_EVAL_FAILURE`) and 4 (`EXIT_AWAITING_APPROVAL`) are not part of e
 :::
 
 :::tip
-**Wire `forgelm verify-audit` into your DSAR closeout.** Once the erasure / access event is in the chain, run `forgelm verify-audit <output_dir>/audit_log.jsonl --require-hmac` and attach the verification output to the DSAR ticket. The auditor will read it.
+**Wire `forgelm verify-audit` into your DSAR closeout.** Once the erasure / access event is in the chain, run `forgelm verify-audit <output_dir>/audit_log.jsonl` and attach the verification output to the DSAR ticket. Add `--require-hmac` only if `FORGELM_AUDIT_SECRET` was set when the chain was written and is set now: the flag exits 1 without the secret and exits 6 if any line lacks an HMAC tag, so on a chain written without the secret it fails by design. The auditor will read it.
 :::
 
 ## See also
