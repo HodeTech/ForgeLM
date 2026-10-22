@@ -1132,7 +1132,11 @@ def _run_purge_check_policy(args, output_format: str) -> None:
     from forgelm.config import ConfigError
 
     try:
-        config_loaded = _maybe_load_config(getattr(args, "config", None), strict=True)
+        config_loaded = _maybe_load_config(
+            getattr(args, "config", None),
+            strict=True,
+            allow_retention_only=True,
+        )
     except (ConfigError, OSError, _yaml.YAMLError) as exc:
         # OSError covers FileNotFoundError + permission denied; ConfigError
         # wraps Pydantic ValidationError raised by ``load_config``;
@@ -1413,8 +1417,13 @@ def _resolve_artefact_age(
 # ---------------------------------------------------------------------------
 
 
-def _maybe_load_config(config_path: Optional[str], *, strict: bool = False):
-    """Load the ``ForgeConfig`` from YAML.
+def _maybe_load_config(
+    config_path: Optional[str],
+    *,
+    strict: bool = False,
+    allow_retention_only: bool = False,
+):
+    """Load the ``ForgeConfig`` (or retention-only config) from YAML.
 
     ``strict=False`` (default) is the best-effort mode used by the
     row-id / run-id erasure paths: those subcommands work without a
@@ -1430,6 +1439,10 @@ def _maybe_load_config(config_path: Optional[str], *, strict: bool = False):
     must surface as the original ``ConfigError`` / ``OSError`` so the
     operator sees the validation failure instead of a misleading
     "no `retention:` block" notice.
+
+    When ``allow_retention_only=True``, if the YAML lacks training/model
+    keys but contains a ``retention:`` block, that block is loaded and
+    validated as a ``RetentionConfig`` wrapped in a lightweight namespace.
     """
     if not config_path:
         return None
@@ -1441,7 +1454,41 @@ def _maybe_load_config(config_path: Optional[str], *, strict: bool = False):
     # ``docs/standards/error-handling.md``.
     import yaml as _yaml
 
-    from forgelm.config import ConfigError, load_config
+    from forgelm.config import ConfigError, RetentionConfig, load_config
+
+    if allow_retention_only:
+        import os
+        from types import SimpleNamespace
+        from pydantic import ValidationError
+
+        if not os.path.exists(config_path):
+            raise OSError(f"Configuration file not found: {config_path}")
+
+        with open(config_path, "r", encoding="utf-8") as f:
+            try:
+                yaml_data = _yaml.safe_load(f)
+            except _yaml.YAMLError as e:
+                raise ConfigError(f"Invalid YAML syntax in {config_path}: {e}") from e
+
+        if not isinstance(yaml_data, dict):
+            raise ConfigError(
+                f"Configuration file must contain a YAML mapping, got {type(yaml_data).__name__}"
+            )
+
+        if "retention" in yaml_data and "model" not in yaml_data:
+            # Retention-only YAML: validate specifically with RetentionConfig
+            retention_raw = yaml_data.get("retention")
+            if not isinstance(retention_raw, dict):
+                raise ConfigError(
+                    f"Configuration validation failed: 'retention' must be a mapping, got {type(retention_raw).__name__}"
+                )
+            try:
+                retention_obj = RetentionConfig(**retention_raw)
+            except ValidationError as e:
+                raise ConfigError(f"Configuration validation failed:\n{e}") from e
+            except (TypeError, ValueError) as e:
+                raise ConfigError(f"Configuration validation failed: {e}") from e
+            return SimpleNamespace(retention=retention_obj)
 
     try:
         return load_config(config_path)

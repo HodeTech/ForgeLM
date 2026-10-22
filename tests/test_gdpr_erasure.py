@@ -1112,6 +1112,34 @@ data:
             _run_purge_cmd(args, output_format="json")
         assert ei.value.code == 0
 
+    def test_check_policy_retention_only_config_succeeds(self, tmp_path: Path, capsys) -> None:
+        """#1054: a config file with only a retention block is accepted and validated."""
+        import json
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        cfg = tmp_path / "retention-only.yaml"
+        cfg.write_text("retention:\n  ephemeral_artefact_retention_days: 30\n")
+        args = _build_args(check_policy=True, config=str(cfg), output_dir=str(tmp_path))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+        assert ei.value.code == 0
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert data["success"] is True
+        assert "violations" in data
+        assert "count" in data
+
+    def test_check_policy_retention_only_invalid_exits_config_error(self, tmp_path: Path) -> None:
+        """#1054: an invalid retention block in a retention-only file exits EXIT_CONFIG_ERROR (1)."""
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        cfg = tmp_path / "retention-invalid.yaml"
+        cfg.write_text("retention:\n  invalid_horizon_field: 30\n")
+        args = _build_args(check_policy=True, config=str(cfg), output_dir=str(tmp_path))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+        assert ei.value.code == 1
+
 
 class TestAtomicityFsyncFdPinning:
     """F-21-T-06: the existing `test_atomic_rewrite_fsyncs_before_rename`
