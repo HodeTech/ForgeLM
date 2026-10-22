@@ -121,7 +121,7 @@ SoA'sının uçtan uca auditable olması için tamlık adına listelenmiştir.
 | A.8.21 Ağ hizmetlerinin güvenliği | FL-helps | TLS-only webhooks (HTTPS + SSRF guard); audit-log chain HMAC `FORGELM_AUDIT_SECRET` üzerinden (not: webhook **gövdeleri** HMAC ile imzalanmaz) |
 | A.8.22 Ağ ayrımı | OOS | — |
 | A.8.23 Web filtreleme | OOS | — |
-| A.8.24 Kriptografi kullanımı | FL | SHA-256 + HMAC chain (per-run imzalama anahtarı = `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)`, bkz. `forgelm/compliance.py:104-114`); ayrıca purge / reverse-pii için salted SHA-256 identifier hashing |
+| A.8.24 Kriptografi kullanımı | FL | SHA-256 + HMAC chain (per-run imzalama anahtarı = `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)`, bkz. `forgelm/compliance.py` içindeki `AuditLogger.__init__`); ayrıca purge / reverse-pii için salted SHA-256 identifier hashing |
 | A.8.25 Güvenli geliştirme yaşam döngüsü | FL-helps | `docs/standards/code-review.md`, `release.md`, CI gates |
 | A.8.26 Uygulama güvenliği gereksinimleri | FL-helps | F-compliance-110 strict gate; ReDoS guard |
 | A.8.27 Güvenli sistem mimarisi ve mühendislik prensipleri | FL-helps | Append-only audit log mimarisi |

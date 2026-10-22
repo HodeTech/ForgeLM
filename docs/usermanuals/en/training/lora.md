@@ -94,15 +94,13 @@ LoRA only trains the modules you point it at. Defaults are reasonable for most a
 
 ```yaml
 lora:
-  # broadest — every Linear layer:
-  # target_modules: "all-linear"
-  # or specifically:
+  # broader — attention and MLP projections (a list; the string "all-linear" is not accepted):
   # target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
-  # or just attention:
+  # or just the query and value projections (the default):
   target_modules: ["q_proj", "v_proj"]
 ```
 
-Broader = more capacity but more VRAM. The default (Q/K/V/O projections) is the right balance for most tasks.
+Broader = more capacity but more VRAM. The default (`["q_proj", "v_proj"]`, the query and value projections) is the right balance for most tasks.
 
 ## DoRA — when it pays off
 

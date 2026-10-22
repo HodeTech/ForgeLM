@@ -2534,7 +2534,7 @@ def ingest_path(  # NOSONAR python:S107 — every kwarg is a documented operator
             breakdown = ", ".join(f"{k}={v}" for k, v in sorted(pii_redaction_counts.items()))
             notes.append(f"PII masking redacted {redacted_total} span(s): {breakdown}")
         else:
-            notes.append("PII masking enabled — no PII detected in this corpus")
+            notes.append("PII masking enabled — the regex detectors found nothing to mask (names are not detected)")
     if secrets_mask:
         if secrets_redaction_counts:
             secret_total = sum(secrets_redaction_counts.values())

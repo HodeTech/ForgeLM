@@ -92,15 +92,13 @@ Rank LoRA kalitesi için en önemli hyperparam.
 
 ```yaml
 lora:
-  # en geniş — her Linear:
-  # target_modules: "all-linear"
-  # veya:
+  # daha geniş — attention ve MLP projeksiyonları (bir liste; "all-linear" string'i kabul edilmez):
   # target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
-  # veya sadece attention:
+  # veya yalnızca query ve value projeksiyonları (varsayılan):
   target_modules: ["q_proj", "v_proj"]
 ```
 
-Geniş = daha çok kapasite ama daha çok VRAM. Varsayılan (Q/K/V/O) çoğu görev için doğru denge.
+Geniş = daha çok kapasite ama daha çok VRAM. Varsayılan (`["q_proj", "v_proj"]`, query ve value projeksiyonları) çoğu görev için doğru denge.
 
 ## DoRA — ne zaman değer
 
