@@ -56,10 +56,18 @@ All notable changes to ForgeLM are documented here.
 ### Changed
 
 - `tools/check_usermanual_schema_drift.py` now also fails on a top-level block in a user-manual YAML example that `ForgeConfig`
-  does not have (a `chat:` or `output:` block that Pydantic rejects with `extra_forbidden`), instead of skipping it as "someone
-  else's YAML". Another tool's YAML (a CI workflow, a compose file, a vLLM config) is listed in the guard with a reason, a
-  fabricated block that a tracked issue still owns goes in a second table, and a listed row that no longer matches a snippet in
-  every language fails, so the tables cannot become a blanket allowlist (CR-A17a-007, #101).
+  does not have (a `chat:` or `output:` block that Pydantic rejects with `extra_forbidden`), including in a full-config summary
+  block, instead of skipping it as "someone else's YAML". Another tool's YAML (a CI workflow, a compose file, a vLLM config) is
+  listed with a reason in one table, a fabricated block that a tracked issue still owns in a second (its reason must name the
+  issue). A row exempts exactly one block per language directory and a row that matches nothing fails, so the tables cannot
+  become a blanket allowlist. A block the guard cannot read (a duplicate key, a parse error, an indented, `~~~` or `yml` fence,
+  a non-string key) now fails instead of passing silently, YAML is read with 1.2 booleans so GitHub Actions' `on:` stays a
+  string, a missing PyYAML exits 1, and the success line counts the blocks it found, walked and exempted (CR-A17a-007, #101).
+- Help and message text only (behaviour, flags and exit codes are unchanged): `forgelm purge --kind artefacts` explains in its
+  error and `--help` that the standard compliance bundle has fixed filenames and is never matched; `forgelm purge` and
+  `forgelm reverse-pii` describe themselves as an input to an Article 15 response and one step of an Article 17 erasure;
+  `--output-dir`, `--dry-run`, `--config` and `--pii-ml-language` say what they do; the wizard prompts say "0 = never report";
+  `forgelm ingest --pii-mask` no longer says "no PII detected" when the regex detectors find nothing (#101).
 - Admit newer majors of five dependencies: `huggingface_hub` 2, `pypdf` 6 and `xxhash` 4 (the `ingestion` extra), `datasketch` 2 (the
   `ingestion-scale` extra) and `pytest-randomly` 4 and 5 (the `dev` extra). The ingestion, data-audit and doctor test modules pass on pypdf
   6.21.1, xxhash 4.0.1 and datasketch 2.0.0 with the same results as on the previous majors; CI installs datasketch 2.0.0 and
@@ -117,37 +125,44 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
-- Make the GDPR, erasure, retention and PII documentation say what ForgeLM does, so a deployer can copy a documented command or
-  YAML block, and quote a documented limit in a DPIA or an access reply, without it being untrue (#101). The GDPR / KVKK manual
-  page was rewritten earlier in this cycle; this completes it:
+- Make the GDPR, erasure, retention, PII-masking, GPU-cost and chat documentation say what ForgeLM does, so a deployer can copy a
+  documented command or YAML block, and quote a documented limit in a DPIA or an access reply, without it being untrue. The GDPR
+  / KVKK manual page was rewritten earlier in this cycle; this completes it and the pages around it (#101):
   - Article 17(3)(b) is no longer presented as preserving the audit log as a class. It disapplies erasure only to the extent a
-    specific Union or Member State obligation requires the processing, and keeping entries needs a documented basis (the guides,
-    reference, user manual, design note, `forgelm purge --help`, `RetentionConfig` and `config_template.yaml`).
-  - The retention horizons are described as operator-set limits that `forgelm purge --check-policy` reports and never enforces; the
-    defaults (5 years for the audit log, 7 / 90 / 90 days) are ForgeLM choices, not legal periods. `staging_ttl_days` is the age
-    after which a staging directory is reported (from the run's first audit event, else the log's first event, else mtime), not a
-    scheduled cleanup after `forgelm reject`; the ephemeral and raw-document rows name the directories the scan covers; the
-    `--check-policy` JSON `age_source` is `audit` or `mtime`.
+    specific Union or Member State obligation (or a public-interest task) requires the processing, and keeping entries needs a
+    documented basis; ForgeLM never edits or deletes an entry. The AI Act examples that justified keeping logs are gone.
+  - `forgelm reverse-pii` is described as an input to an Article 15 response and `forgelm purge` as one step of an Article 17
+    erasure, in the CLI help, the references, the manual, the compliance summary and the site (six languages). A complete response
+    also needs identity verification, the one-month deadline, a copy of the data and the 15(1)(a)-(h) information, Article 19
+    notices and the 17(3) assessment; a scan with zero matches does not answer an access request.
+  - A `purge` digest (`target_id`) and a `reverse-pii` digest (`query_hash`) are byte-identical only for the same value, the same
+    `--output-dir` and the same `FORGELM_AUDIT_SECRET` state, in `reverse-pii`'s default plaintext mode. `--salt-source` is a
+    hash-mask scan for externally masked corpora and finds nothing in plaintext (an earlier draft recommended it for
+    correlation). A salted digest is pseudonymisation (Art. 4(5)), not anonymisation: the salt sits next to the log.
+  - The retention horizons are limits that `forgelm purge --check-policy` reports and never enforces; the defaults (5 years for
+    the audit log, 7 / 90 / 90 days) are ForgeLM choices, not legal periods; a config with no `retention:` block checks nothing
+    and `retention: {}` switches the defaults on; `0` stops a report; ages come from the run's first audit event, else the log's
+    first event, else mtime, so a shared output directory can report a fresh bundle as overdue; ForgeLM creates neither
+    `raw_documents/` nor `ingestion_output/`. The "minimum 5 years" lines of the QMS SOPs follow the storage-limitation principle.
+  - The CI gate is `jq -e '.success == true and has("count") and .count == 0'` under `set -o pipefail` (the earlier forms were
+    green on a config error and on a directory that was never checked); argument-parser usage errors exit 2, not 1; the purge JSON
+    envelope section is regenerated from real output; the external-copies warning is row mode with `--config` only.
   - `forgelm purge --kind artefacts` is documented as what it does: it matches files under `compliance/` whose names contain the
-    run id, so it finds nothing in the standard bundle (fixed basenames such as `compliance_report.json`), emits
-    `data.erasure_failed` (`NoMatchingArtefacts`) and exits 1 without deleting anything. The legacy `final_model.staging/` is
-    purged only with a `staging_run_id` marker that ForgeLM never writes. The code half of the artefacts limitation stays open.
-  - With `FORGELM_AUDIT_SECRET` set, `forgelm purge` XORs it into the identifier salt, so rotating it changes `target_id`
-    digests (the user manual said they were stable); the external-copies warning is row mode only; run-scoped deletion is not
-    atomic; `--output-dir` defaults to the current directory in run mode; erasure notices to recipients are Article 19.
-  - The PII severity tiers cite GDPR Art. 87 and Art. 32 with ENISA (not Art. 9), and the regex detector set is described as
-    structured identifiers that are personal data under Art. 4(1), not "what Article 10 cares about" or "GDPR-mandated".
-  - The GDPR page's access-request example passes `--output-dir` and shows the real output line, and points to `forgelm audit
-    --pii-ml` (detection only) for names. The site's home GDPR card says `forgelm reverse-pii` locates rows (an input to an
-    Article 15 response) and `forgelm purge` removes them from training corpora (one step of Article 17 erasure; trained weights
-    are not changed), in all six languages; the wizard's retention hints no longer say the 5-year default "matches EU AI Act
-    guidance". The German, French, Spanish and Chinese strings have no native review.
-  - The access-request page says what `forgelm reverse-pii` cannot see: matching is case-sensitive and compares raw file text,
-    `--check-policy` needs `--output-dir <training.output_dir>`, and a model that cannot be shown to be anonymous (EDPB Opinion
-    28/2024) can bring access and erasure requests to the model itself. The wizard's retention hints and the site's access and
-    erasure cards (six languages) say what `forgelm purge --check-policy`, `forgelm reverse-pii` and `forgelm purge` do.
-  - The `forgelm chat` page shows the real flags instead of a `chat:` YAML block, and the GPU-cost page the real
-    `training.gpu_cost_per_hour` field instead of an `output.cost_tracking` block that does not exist.
+    run id, so it finds nothing in the standard bundle (fixed basenames), emits `data.erasure_failed` (`NoMatchingArtefacts`),
+    exits 1 and deletes nothing; the legacy `final_model.staging/` is purged only with a marker ForgeLM never writes. The code
+    half of that limitation stays open.
+  - The PII-masking page counts eight detectors; the German ID-card serial and the French NIR are shape-only (no checksum); the
+    audit report carries counts, not row indices; running `forgelm audit` over masked output re-applies the same regexes. The
+    `--pii-ml` examples drop the `organization` count Presidio does not report for English and use `--pii-ml-language xx` for
+    Turkish. The severity tiers cite Art. 87 and Art. 32; `include_eval_samples` cites Art. 25(2).
+  - The GPU-cost page describes what is recorded (device name, visible-device count, `train_runtime`, the real price table and
+    `cost_source` values), where it lands, the placeholder rate on machines without a CUDA GPU, a calibration recipe that runs, and
+    that `gpu_profiles` is not implemented. The chat page lists the real flags, says GGUF files are not loaded and that chat has
+    no seed or greedy mode, and shows the real transcript; `lora.target_modules` is a list.
+  - The site says masking is opt-in, that matching is literal and case-sensitive, and that `0` stops a retention report; the
+    German, French, Spanish and Chinese strings have no native review. The legal pages' date moved to 2026-10-22.
+  - Smaller corrections: KVKK Articles 7, 11(1)(e) and 13(2), the AI Act Art. 14(5) and Art. 18 statements, the human-oversight
+    timeout and quorum text, stale `compliance.py` line references, and the Turkish glossary (veri sahibi, veri sorumlusu, salt).
 - Fail closed when judge replies contain multiple score objects or duplicate JSON keys, and reject
   non-object replies, including a score object that only appears inside an array or after an undecodable
   `{`, with the existing judge-failure sentinel. The rejection reason is logged without echoing the reply
