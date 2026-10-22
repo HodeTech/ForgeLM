@@ -647,6 +647,10 @@ class TestIngestionPageQuickExampleStaysRunnable:
         tokens = self._quick_example_tokens(lang)
         assert "--chunk-tokens" in tokens, f"ingestion.md ({lang}) must keep the documented --chunk-tokens example"
         assert "--tokenizer" in tokens, f"ingestion.md ({lang}) must pass --tokenizer with --chunk-tokens"
+        tokenizer_at = tokens.index("--tokenizer")
+        assert tokenizer_at + 1 < len(tokens) and not tokens[tokenizer_at + 1].startswith("-"), (
+            f"ingestion.md ({lang}) must give --tokenizer a model name, not just the bare flag"
+        )
 
     def test_page_shows_the_real_summarize_result_labels(self, lang: str) -> None:
         # The old block showed tick-mark progress lines that `summarize_result` never prints.
