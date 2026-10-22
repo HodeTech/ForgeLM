@@ -5,7 +5,7 @@ description: E-posta, telefon, kredi kartı, IBAN ve ulusal kimlikleri ingest s�
 
 # PII Maskeleme
 
-Eğitim setinizdeki kişisel veri hem regülatif tehlikedir (GDPR Md. 5(1)(c) — veri minimizasyonu) hem operasyonel tehlikedir (model ezberler ve geri verir). ForgeLM'in PII maskeleyicisi dokuz kategori PII'yi tespit eder ve ingest zamanında, satırlar JSONL'a düşmeden redakte eder.
+Eğitim setinizdeki kişisel veri hem regülatif tehlikedir (GDPR Md. 5(1)(c) — veri minimizasyonu) hem operasyonel tehlikedir (model ezberler ve geri verir). ForgeLM'in PII maskeleyicisi sekiz kategori PII'yi tespit eder ve ingest zamanında, satırlar JSONL'a düşmeden redakte eder.
 
 ## Tespit edilenler
 
@@ -16,8 +16,8 @@ Eğitim setinizdeki kişisel veri hem regülatif tehlikedir (GDPR Md. 5(1)(c) �
 | **Kredi kartı** | `4111-1111-1111-1111` | Issuer öneki (Visa/MC/Amex/Discover/JCB/UnionPay) + Luhn — yalnızca Luhn değil; her IMEI Luhn'dan geçer |
 | **IBAN** | `TR12 0006 4000 0011 2345 6789 01` | Ülke-bilinçli checksum |
 | **Ulusal ID — Türkiye** | 11 haneli TC kimlik | Modulo-10 + modulo-11 checksum |
-| **Ulusal ID — Almanya** | Steuer-ID | Format + checksum |
-| **Ulusal ID — Fransa** | NIR (sosyal güvenlik) | Format + key validation |
+| **Ulusal ID — Almanya** | Kimlik kartı seri numarası (Personalausweis), örn. `T22000129` | Yalnızca şekil: bir harf, 7-8 rakam ve isteğe bağlı bir kontrol karakteri; checksum yok |
+| **Ulusal ID — Fransa** | NIR (sosyal güvenlik numarası) | Yalnızca şekil: cinsiyet, yıl, ay, departman, komün ve sıra rakamları ile isteğe bağlı iki haneli anahtar; anahtar doğrulanmaz |
 | **US SSN** | `123-45-6789` | Format + reserved-block dışlama |
 
 Bu sekizi tam kümedir (`forgelm/data_audit/_pii_regex.py` içindeki `_PII_PATTERNS`). **IP adresleri tespit edilmez** — bu sayfanın önceki sürümleri bir "IPv4 / IPv6 (varsayılan kapalı; opt-in)" satırı listeliyordu, ancak böyle bir pattern ve böyle bir opt-in mevcut değil. GDPR değerlendirmeniz IP adreslerini kişisel veri sayıyorsa, bunun için ayrı bir kontrole ihtiyacınız var.
@@ -46,7 +46,7 @@ Placeholder dataset boyunca tutarlı; model "şu slot'a maskelenmiş *bir şey* 
 ## Yayınlanan placeholder
 
 :::warn
-**Kategori başına değil, tek bir placeholder vardır.** Tespit edilen her span — e-posta, telefon, kredi kartı, IBAN, TC kimlik, Steuer-ID, NIR, US SSN — tek bir düz `[REDACTED]` ile değiştirilir. Bu sayfanın önceki sürümleri kategori başına etiketlerden oluşan dokuz satırlık bir tablo yayımlıyordu (`[EMAIL_REDACTED]`, `[PHONE_REDACTED]`, `[IP_REDACTED]`, …). Bu string'lerin hiçbiri kod tabanının hiçbir yerinde mevcut değil. Hangi kategorinin maskelendiğini geri elde etmek için redaksiyon etiketlerini parse eden bir tüketici bunu yapamaz — o bilgi yalnızca audit raporundaki `pii_summary` sayımlarında yaşar.
+**Kategori başına değil, tek bir placeholder vardır.** Tespit edilen her span — e-posta, telefon, kredi kartı, IBAN, TC kimlik, Alman kimlik kartı seri numarası, NIR, US SSN — tek bir düz `[REDACTED]` ile değiştirilir. Bu sayfanın önceki sürümleri kategori başına etiketlerden oluşan dokuz satırlık bir tablo yayımlıyordu (`[EMAIL_REDACTED]`, `[PHONE_REDACTED]`, `[IP_REDACTED]`, …). Bu string'lerin hiçbiri kod tabanının hiçbir yerinde mevcut değil. Hangi kategorinin maskelendiğini geri elde etmek için redaksiyon etiketlerini parse eden bir tüketici bunu yapamaz — o bilgi yalnızca audit raporundaki `pii_summary` sayımlarında yaşar.
 :::
 
 Varsayılan `[REDACTED]`'dır (`mask_pii`'nin `replacement` parametresi). Paralel sır maskeleyici `[REDACTED-SECRET]` kullanır — bkz. [Sır Temizleme](#/data/secrets). Yukarıdaki örnekte telefon pattern'ının numaranın tamamını her zaman tüketmediğine dikkat edin; maskelemeye güvenmeden önce kendi formatlarınıza karşı doğrulayın.
@@ -55,8 +55,8 @@ Varsayılan `[REDACTED]`'dır (`mask_pii`'nin `replacement` parametresi). Parale
 
 PII regex'leri bilinçli olarak **düşük false-positive oran** için ayarlanır. Sınırda eşleşmeyi atlamayı (false negative) prose'unuzdaki PII olmayan string'i redakte etmeye (false positive) tercih eder. Sebepler:
 
-1. False positive sessizce verinizi bozar — gerçek kelimeleri `[EMAIL_REDACTED]` ile değiştirmek örnekleri mahveder.
-2. Audit aşaması maskelemenin kaçırdığını yakalar; satır başına düzeltme veya düşürme kararı sizde.
+1. False positive sessizce verinizi bozar — gerçek kelimeleri `[REDACTED]` ile değiştirmek örnekleri mahveder.
+2. Maskelenmiş çıktı üzerinde `forgelm audit` koşturmak aynı regex'leri yeniden uygular; bu yüzden o pattern'lerin artık eşleşmediğini doğrular, ama pattern'lerin tarif etmediği tanımlayıcıları (örneğin isimleri) bulamaz — onları `--pii-ml` sayar.
 3. Agresif regex'ler gerçek-dünya ML pipeline kesintilerine yol açtı (Phase 11.5 olayı [GitHub'daki katkıda bulunan regex standardında](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/regex.md) belgelenmiştir).
 
 Daha katı tespit gerekirse — örneğin yüksek-stake bir hukuk corpus'u — maskeleyiciyi manuel inceleme adımıyla birleştirin. Regex'leri zorlamayın.
@@ -67,20 +67,29 @@ Modifiye etmeden tespit için:
 
 ```shell
 $ forgelm audit data/policies.jsonl
-⚠ PII: 18 e-posta, 4 telefon, 2 IBAN (orta seviye)
+Data audit summary
+  Source        : data/policies.jsonl
+  Total samples : 12240
+  Splits        : train
+  └─ train: n=12240
+     PII             : email=18, phone=4
+  PII severity   : worst tier = medium
+     by tier      : medium=18, low=4
 ```
 
-Audit raporu satır indisleri ve offset'leri listeler; spesifik vakaları inceleyebilirsiniz.
+Audit raporu kategori ve split başına sayımları taşır; satır indislerini ya da offset'leri değil. Belirli bir tanımlayıcıyı içeren satırları bulmak için onu `forgelm reverse-pii` ile arayın.
 
-## Locale'ler
+## Bölgesel formatlar
 
-| Locale | Telefon | Ulusal ID | Notlar |
-|---|---|---|---|
-| TR (varsayılan) | E.164 + Türkiye formatları | TC kimlik | En çok ayarlanan. |
-| DE | E.164 + Almanya formatları | Steuer-ID | |
-| FR | E.164 + Fransa formatları | NIR | |
-| US | E.164 + (xxx) xxx-xxxx | Reserved-block dışlamalı SSN | |
-| Global | Sadece E.164 | yok | Bilinmeyen locale fallback. |
+| Format | Neyi eşleştirir | Checksum doğrulaması |
+|---|---|---|
+| Telefon (tüm ülkeler) | Tek bir pattern: `+` ülke öneki ya da parantezli alan kodu | Hayır |
+| TR ulusal ID | 11 rakam (TC kimlik) | Evet: modulo-10 ve modulo-11 |
+| DE ulusal ID | Kimlik kartı seri numarası: bir harf, 7-8 rakam, isteğe bağlı bir kontrol karakteri | Hayır |
+| FR ulusal ID | NIR: isteğe bağlı iki haneli anahtarla 13 rakam | Hayır |
+| US SSN | `NNN-NN-NNNN`, reserved block'lar hariç | Hayır |
+
+Yalnızca kredi kartları, IBAN'lar ve TC kimlik numaraları checksum ile doğrulanır; diğer aileler yalnızca şekle göre eşleştirilir. Bu yüzden bir bulguyu doğrulanmış bir tanımlayıcı değil, gözden geçirilecek bir aday sayın.
 
 `forgelm ingest --pii-mask` (veya audit eşdeğeri) tarafından
 tetiklenen regex-bazlı PII katmanı, yukarıdaki tablodaki tüm

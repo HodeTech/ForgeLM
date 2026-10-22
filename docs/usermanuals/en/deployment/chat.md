@@ -11,29 +11,35 @@ description: Sanity-check your fine-tuned model in a streaming REPL.
 
 ```shell
 $ forgelm chat ./checkpoints/customer-support
-ForgeLM 0.7.0 — chat with checkpoints/customer-support
-forgelm> how do I cancel my subscription?
-You can cancel from Settings → Billing → Cancel subscription. Your access
-continues until the end of the current billing period…
+ForgeLM Chat  —  type your message and press Enter
+Streaming : on  |  Temperature : 0.7
+Commands  : /help  /reset  /save  /temperature  /system  /exit
+────────────────────────────────────────────────────────
 
-forgelm> /system You are a polite customer-support agent for a Turkish telecom.
-[system prompt updated]
+> how do I cancel my subscription?
+Assistant: You can cancel from Settings → Billing → Cancel subscription. Your
+access continues until the end of the current billing period…
 
-forgelm> aboneliği nasıl iptal ederim?
-Aboneliğinizi iptal etmek için Ayarlar → Faturalandırma → Aboneliği İptal Et
-yolunu izleyebilirsiniz...
+> /system You are a polite customer-support agent for a Turkish telecom.
+[System prompt updated]
+
+> aboneliği nasıl iptal ederim?
+Assistant: Aboneliğinizi iptal etmek için Ayarlar → Faturalandırma → Aboneliği
+İptal Et yolunu izleyebilirsiniz...
 ```
+
+With `rich` installed, the banner is drawn inside a panel. A new system prompt applies to the turns that follow; it does not rewrite the conversation so far.
 
 ## Slash commands
 
 | Command | What it does |
 |---|---|
 | `/reset` | Clear conversation history. |
-| `/save <path>` | Save the conversation to JSONL. |
-| `/system <prompt>` | Set or update the system prompt. |
-| `/temperature <value>` | Set sampling temperature (0.0 to 2.0). |
-| `/help` | Show this list. |
-| `/exit` or `Ctrl+D` | Exit. |
+| `/save [path]` | Save the conversation to JSONL; without a path it writes `chat_history_<timestamp>.jsonl` in the current directory. |
+| `/system [prompt]` | Set or update the system prompt; without an argument it shows the current one. |
+| `/temperature <value>` | Set sampling temperature: above 0 and up to 2.0 (`0` is rejected). |
+| `/help` or `/?` | Show this list. |
+| `/exit`, `/quit` or `Ctrl+D` | Exit. |
 
 ## Configuration
 
@@ -41,13 +47,16 @@ yolunu izleyebilirsiniz...
 
 | Setting | Flag | Default |
 |---|---|---|
+| Adapter to merge before chatting | `--adapter DIR` (not supported with `--backend unsloth`) | none |
 | Initial system prompt | `--system PROMPT` (change it later with `/system`) | none |
 | Sampling temperature | `--temperature` (change it later with `/temperature`) | `0.7` |
 | Maximum tokens per reply | `--max-new-tokens` | `512` |
 | Streaming output | `--no-stream` turns it off | on |
-| Quantized loading (CUDA with bitsandbytes only; ignored otherwise) | `--load-in-4bit` (NF4) or `--load-in-8bit`; 4-bit wins if both are given | off |
+| Quantized loading (CUDA with bitsandbytes only; ignored otherwise) | `--load-in-4bit` (NF4) or `--load-in-8bit`; with `--backend unsloth`, 4-bit wins if both are given and is the default when neither is | off |
+| Model backend | `--backend transformers` or `--backend unsloth` | `transformers` |
+| Run code bundled with the model | `--trust-remote-code` | off |
 
-Top-p, top-k and the repetition penalty are fixed (0.9 / 50 / 1.1) and cannot be set, and there is no history file that persists across sessions; write a conversation out with `/save`.
+Top-p, top-k and the repetition penalty are fixed (0.9 / 50 / 1.1) and cannot be set. Chat always samples: there is no seed and no greedy mode. There is no history file that persists across sessions; write a conversation out with `/save`. The command-line flag accepts a temperature of `0.0`, but sampling rejects it, so every turn then fails with a `[Generation error: …]` line; use a value above 0.
 
 ## Loading a checkpoint
 
@@ -56,7 +65,8 @@ Top-p, top-k and the repetition penalty are fixed (0.9 / 50 / 1.1) and cannot be
 - A directory with adapter weights (LoRA): `./checkpoints/run/`
 - A merged checkpoint directory: `./checkpoints/run/merged/`
 - A HuggingFace model ID: `Qwen/Qwen2.5-7B-Instruct`
-- A GGUF file: `./model.gguf` (uses llama.cpp under the hood)
+
+GGUF files are not loaded by `forgelm chat`: the command loads Hugging Face checkpoints only. To try a GGUF export, run it in Ollama or llama.cpp (see [Deploy Targets](#/deployment/deploy-targets)).
 
 For LoRA checkpoints, pass the base model as the positional argument and the adapter directory via `--adapter`:
 
@@ -71,7 +81,7 @@ $ forgelm chat "Qwen/Qwen2.5-7B" --adapter ./checkpoints/run/
 Under the planned `--safety` flag (preview only — see the note above), every prompt and response would be screened by Llama Guard:
 
 ```text
-forgelm> [adversarial prompt]
+> [adversarial prompt]
 [Llama Guard flagged S2 (non-violent crimes) — refusing]
 I can't help with that. Try rephrasing the question.
 ```
@@ -80,28 +90,26 @@ Useful when probing the model for jailbreaks before deployment. Off by default f
 
 ## Multi-turn handling
 
-Conversation history is preserved within a session. The model sees the full chat (or as much as fits in `max_length`):
+Conversation history is preserved within a session. With every prompt the model receives the system prompt and the last 50 question-and-answer pairs; older pairs stay in memory (and in a `/save` file) but are no longer sent. The limit counts pairs, not tokens:
 
 ```text
-forgelm> what's the capital of Türkiye?
-Ankara.
+> what's the capital of Türkiye?
+Assistant: Ankara.
 
-forgelm> what's its population?
-[uses prior context: "its" refers to Ankara]
-About 5.7 million as of recent estimates...
+> what's its population?
+Assistant: About 5.7 million as of recent estimates...
 ```
 
-To start fresh: `/reset`.
+The second answer is only possible because the first turn is sent along with it ("its" refers to Ankara). To start fresh: `/reset`.
 
 ## Saving and replaying
 
 ```shell
-forgelm> /save sessions/qa-1.jsonl
-[saved 6 turns to sessions/qa-1.jsonl]
+> /save sessions/qa-1.jsonl
+[History saved → sessions/qa-1.jsonl (7 messages)]
 ```
 
-The saved JSONL is replayable by feeding it back through a fresh
-session's prompt history (replay tooling is roadmapped for a future Pro CLI release).
+The file holds one `{"role": ..., "content": ...}` message per line: the system prompt first (when one is set), then every user and assistant message of the session. The system prompt written is the one in force when you save, even if you changed it mid-conversation. There is no command to load a saved file back into a session (replay tooling is roadmapped for a future Pro CLI release).
 
 Sessions are useful for:
 - Reproducing a bug you found during testing.
@@ -125,11 +133,11 @@ Win rate v2 vs v1: 0.62 (sig p=0.04)
 ## Common pitfalls
 
 :::warn
-**Treating `/temperature 0` as deterministic.** It's near-deterministic, but tiebreaks in argmax sampling can still produce minor variance. For exact reproducibility, set `seed:` in YAML.
+**Treating chat as reproducible.** Chat always samples, and it has no seed and no greedy mode (`/temperature 0` is rejected), so the same prompt can give different answers. Use it to explore; keep a `/save` transcript of what the model actually said, and use the evaluation commands for repeatable checks.
 :::
 
 :::warn
-**Long conversations exceeding context.** Once history exceeds `max_length`, ForgeLM drops oldest messages first. The conversation can lose continuity unexpectedly. Use `/reset` periodically for long testing sessions.
+**Long conversations exceeding context.** Only the last 50 pairs are sent, but nothing counts tokens: a long system prompt, long answers or a small-context model can still overflow, and the turn then fails with a `[Generation error: …]` line (the turn is not added to the history). Use `/reset` periodically for long testing sessions.
 :::
 
 :::tip

@@ -1,92 +1,113 @@
 ---
 title: GPU Cost Estimation
-description: Auto-detect across 16 GPU profiles and track per-run cost against your hourly rate.
+description: Detect the GPU, price the run from your hourly rate or a built-in table, and record the cost of every run.
 ---
 
 # GPU Cost Estimation
 
-> **Status:** GPU detection + per-run duration + audit-log stamping ship
-> today, and `training.gpu_cost_per_hour` is the one cost setting. A
-> config-driven `cost_tracking:` block (per-GPU rate tables, alert / halt
-> thresholds) is **tracked on the roadmap and not yet implemented** —
+> **Status:** GPU detection, the training duration and a cost estimate are
+> recorded for every run today, and `training.gpu_cost_per_hour` is the one cost
+> setting. A config-driven `cost_tracking:` block (per-GPU rate tables, alert /
+> halt thresholds) is **tracked on the roadmap and not yet implemented** —
 > `forgelm/config.py` has no `output.cost_tracking` surface, so no example on
 > this page uses one. The deferral is tracked in the
 > [risks-and-decisions roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap/risks-and-decisions.md).
 
-ForgeLM detects the GPU you're running on, looks up its profile (memory, compute, typical hourly rate), and tracks per-run cost. After every run, the audit log records exactly how much GPU time was used and what it cost.
+When a training run finishes, ForgeLM records how long it trained, on how many GPUs, and what that cost at an hourly rate: yours if you set one, otherwise a built-in price for the detected GPU. The estimate is written next to the other run results; it is not a bill, and it does not stop or alert anything.
 
 ## How detection works
 
-On startup, `forgelm` reads:
-- `nvidia-smi --query-gpu=name,memory.total,...` for hardware identification.
-- The matching hourly rate from the built-in GPU price table in `forgelm/trainer.py`.
+After training, ForgeLM asks PyTorch for the first CUDA device's name (`torch.cuda.get_device_name(0)`), the number of CUDA devices the process can see, and the peak memory allocated on the first device. It takes the training time from the Hugging Face trainer's `train_runtime`. It does not call `nvidia-smi`. Without a CUDA GPU none of the GPU fields are recorded.
 
-Supported GPUs include:
+The rate comes from `training.gpu_cost_per_hour` when set, and otherwise from the price table `_GPU_PRICING` in `forgelm/trainer.py`, which is matched against the exact device name that PyTorch reports:
 
-| Class | Models |
+| Class | Recognised names |
 |---|---|
-| Datacenter | A100 40 GB / 80 GB, H100 80 GB, H200, L40S |
-| Workstation | RTX 6000 Ada, RTX A6000 |
-| Consumer | RTX 4090, RTX 4080, RTX 3090, RTX 3080 |
-| Cloud-only | T4, V100, A10G |
-| Apple | M1/M2/M3 Max (CPU/MPS fallback) |
+| Tesla | Tesla T4, Tesla P100, Tesla V100, Tesla K80 |
+| NVIDIA data center | NVIDIA A10G, NVIDIA A100-SXM4-40GB, NVIDIA A100-SXM4-80GB, NVIDIA A100 80GB PCIe, NVIDIA H100 80GB HBM3, NVIDIA H100 SXM5 80GB, NVIDIA H200, NVIDIA L4, NVIDIA L40S, NVIDIA B200 |
+| GeForce (self-hosted) | NVIDIA GeForce RTX 3090, NVIDIA GeForce RTX 4090 |
 
-If your GPU isn't recognised, ForgeLM logs a warning and falls back to a generic profile (no cost estimation, but training works).
+The prices in that table are approximate on-demand cloud averages (for the GeForce cards, an estimate of electricity plus amortisation). A GPU that is not in the table, for example `NVIDIA RTX A6000` or `NVIDIA H100 PCIe`, is **not** reported with a warning: the run simply has no estimated cost unless you set `training.gpu_cost_per_hour`.
 
 ## Configuring your hourly rate
 
 ```yaml
 training:
-  gpu_cost_per_hour: 1.10          # USD per hour for the training GPU
+  gpu_cost_per_hour: 1.10          # USD per hour, per GPU
 ```
 
-Set `training.gpu_cost_per_hour` to your real rate. When it is unset, ForgeLM falls back to its built-in price table for the detected GPU; the run's `resource_usage` records which one it used (`cost_source`: `user_config`, `auto_detected` for an exact GPU-name match, or `fuzzy_match` for a partial-name match; the key is absent when no rate could be resolved). Without a CUDA GPU there is no detected GPU, so set `training.gpu_cost_per_hour` explicitly. There is one rate per run: per-GPU-model rate tables are not supported.
+Set `training.gpu_cost_per_hour` to your real rate. When it is unset, ForgeLM falls back to its built-in price table for the detected GPU; the run's `resource_usage` records which one it used in `cost_source`:
+
+| `cost_source` | Meaning |
+|---|---|
+| `user_config` | The rate came from `training.gpu_cost_per_hour` (`0` is accepted and records a zero cost). |
+| `auto_detected` | The device name matched a table entry exactly. |
+| `fuzzy_match` | The device name partly matched a table entry. This is a guess: `NVIDIA L40`, for instance, is priced as `NVIDIA L40S`. |
+
+When no rate resolves, `cost_source`, `gpu_cost_per_hour_usd` and `estimated_cost_usd` are absent.
+
+:::warn
+**Machines without a CUDA GPU (CPU, Apple silicon).** There is no device name, and an empty name partly matches the first table entry, so the run is recorded at a placeholder `0.15` USD per hour with `cost_source: fuzzy_match`. Do not read that as a real cost; set `training.gpu_cost_per_hour` explicitly on such machines (`0` if the run is free to you).
+:::
+
+There is one rate per run, and it is per GPU: per-GPU-model rate tables are not supported.
 
 ## Output
 
-After each run, the audit log records:
+The estimate is recorded in four places:
+
+- **`compliance/compliance_report.json`**, under `resource_usage`, in the run's `training.output_dir`, written when the run completes.
+- **The `--output-format json` result**, as `resource_usage` and a top-level `estimated_cost_usd`.
+- **The console**, as an `Estimated training cost` line and a `GPU-hours` line that names the pricing source (text mode).
+- **The run metrics**: every numeric field is copied in as `resource/<field>` (for example `resource/estimated_cost_usd`), so it reaches your experiment tracker and the `metrics_summary` of the `pipeline.completed` audit event.
+
+A 4-GPU run that trained for 1892 seconds at `gpu_cost_per_hour: 1.10` records:
 
 ```json
 {
-  "event": "run_complete",
-  "ts": "2026-04-29T14:33:10Z",
-  "duration_seconds": 1892,
-  "gpu_profile": "A100_80GB",
-  "gpus_used": 1,
-  "estimated_cost_usd": 0.578,
-  "rate_per_hour": 1.10,
-  "currency": "USD"
+  "resource_usage": {
+    "gpu_model": "NVIDIA A100-SXM4-80GB",
+    "peak_vram_gb": 41.7,
+    "gpu_count": 4,
+    "training_duration_seconds": 1892.0,
+    "gpu_hours": 2.102,
+    "cost_source": "user_config",
+    "gpu_cost_per_hour_usd": 1.1,
+    "estimated_cost_usd": 2.3124
+  }
 }
 ```
 
-The model card cites it:
-
-```markdown
-## Training cost
-
-This model was trained for 31m 32s on 1× A100 80GB,
-estimated at $0.58 USD at the configured rate.
-```
+The model card does not include the cost.
 
 ## Pre-flight cost estimation
 
-Before starting a long training run, run a short calibration (1-2 steps with `training.max_steps: 2`), capture the resulting `gpu_hours` from the per-run `compliance_report.json`, and multiply by your provider's hourly rate. (A dedicated `--estimate-cost` flag was discussed but not shipped; the resource-tracking path emits actuals only.)
+Before starting a long training run, run a short calibration with a hard step cap, read `gpu_hours` from its `resource_usage`, scale it to the full step count and multiply by your hourly rate. A dedicated `--estimate-cost` flag was discussed but not shipped; the resource-tracking path records actuals only.
 
-```shell
-$ forgelm --config configs/calibration.yaml --output-dir /tmp/calib
-$ jq '.resource_usage.gpu_hours' /tmp/calib/compliance_report.json
-0.034
-$ python -c "print(0.034 * (3 / 0.034) * 1.10)"   # 6h training at $1.10/hr
-$7.15
+```yaml
+# configs/calibration.yaml — your real config, plus:
+training:
+  max_steps: 20
+  output_dir: /tmp/calib
 ```
 
-The calibration approach is typically within 20% of actual.
+```shell
+$ forgelm --config configs/calibration.yaml
+$ jq '.resource_usage.gpu_hours' /tmp/calib/compliance/compliance_report.json
+0.034
+$ python -c "print(0.034 * (3000 / 20) * 1.10)"   # 3,000 steps at $1.10 per GPU-hour
+5.61
+```
+
+Treat the result as a rough figure. The first steps include warm-up, and the mix of sequence lengths in a few steps rarely matches the whole dataset, so run enough steps to see a stable step time before scaling it.
 
 ## Multi-GPU and distributed
 
-For multi-GPU training, ForgeLM multiplies the single `training.gpu_cost_per_hour` rate by the GPU count (`gpu_hours` is the training time times the GPU count).
+`gpu_hours` is the training time multiplied by the number of CUDA devices visible to the process, and the single `training.gpu_cost_per_hour` rate is applied per GPU.
 
 A 4×A100 run for 2 hours = 4 × 2 × $1.10 = $8.80, regardless of whether you use ZeRO or FSDP.
+
+If the job uses fewer GPUs than the machine has, restrict the devices it can see (for example with `CUDA_VISIBLE_DEVICES`), or the estimate counts GPUs the run never used.
 
 ## Cost alerts (roadmap — not yet implemented)
 
@@ -95,36 +116,38 @@ threshold-based alerts (a webhook fires when an alert threshold is crossed) and
 halts (training stops at a halt threshold). No such setting exists in
 `forgelm/config.py` today.
 
-When implemented, the alert will fire the configured webhook (see [Webhooks](#/operations/webhooks)) — useful in CI to catch a misconfigured run before it spends a week of budget overnight. Until then, monitor cost manually via the audit log + a budget-side guardrail in your scheduler.
+When implemented, the alert will fire the configured webhook (see [Webhooks](#/operations/webhooks)) — useful in CI to catch a misconfigured run before it spends a week of budget overnight. Until then, monitor cost manually via the recorded `resource_usage` and a budget-side guardrail in your scheduler.
 
 ## Custom GPU profiles
 
-To add a GPU not in the default profile:
+:::warn
+**Not implemented.** ForgeLM has no `gpu_profiles` setting and reads no `gpu_profiles.local.yaml`; the snippet below is the planned shape only and a config that contains it is rejected. Today the way to price a GPU that is not in the table is `training.gpu_cost_per_hour`, which works for any GPU.
+:::
+
+To add a GPU not in the built-in table (planned):
 
 ```yaml
 gpu_profiles:
   custom:
     - name: "AcmeNVIDIA-XYZ"
-      pattern: "AcmeNVIDIA-XYZ"        # match against nvidia-smi name
+      pattern: "AcmeNVIDIA-XYZ"        # match against the device name
       memory_gb: 96
       compute_capability: 9.0
       tensor_cores: true
 ```
 
-Drop this in your project root as `gpu_profiles.local.yaml`; ForgeLM auto-merges it.
-
 ## Common pitfalls
 
 :::warn
-**Hourly rate as gospel.** ForgeLM's defaults are reasonable averages — your actual cloud bill depends on instance type, region, spot vs on-demand, and discounts. Override with your real rate.
+**Hourly rate as gospel.** ForgeLM's defaults are rough averages — your actual cloud bill depends on instance type, region, spot vs on-demand, and discounts. Override with your real rate.
 :::
 
 :::warn
-**Multi-tenancy on shared GPUs.** If multiple jobs share a GPU (rare for training, common for inference), the cost-tracking multiplies rather than divides. Use `--gpus N` to declare actual allocation.
+**Shared GPUs.** The estimate bills the whole training time on every visible GPU; there is no setting for a fractional or shared allocation. If other jobs share the GPU, divide the figure yourself.
 :::
 
 :::tip
-**Track cost over time.** The audit log includes cost for every run; trend it over weeks to catch creeping overruns. A 2× cost increase for the same training time is usually a sign that data grew or hyperparameters drifted.
+**Track cost over time.** Every run records its cost; trend it over weeks to catch creeping overruns. A 2× cost increase for the same training time is usually a sign that data grew or hyperparameters drifted.
 :::
 
 ## See also
