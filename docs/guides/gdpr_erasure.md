@@ -151,8 +151,9 @@ cleartext.  The digests match only when the `--row-id` and `--query` values
 are the same text, both commands use the same `--output-dir`, and
 `FORGELM_AUDIT_SECRET` is in the same state for both (unset, or the same
 value); run the access request in its default plaintext mode: `--salt-source` is
-not needed for the digests to match, and on a plaintext corpus its
-hash-mask scan reports zero matches even when the person is there.  When
+not needed for the digests to match, and with it the hash-mask scan looks
+for digests inside the corpus, so a plaintext corpus reports zero matches
+even when the person is there.  When
 the ids differ, link a request to its erasure
 through the ticket reference you pass to `forgelm purge --justification`.
 

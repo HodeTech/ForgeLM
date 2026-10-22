@@ -153,8 +153,9 @@ görmeden ilişkilendirmesini sağlar.  Digest'ler yalnızca `--row-id` ve
 `--query` değerleri aynı metinse, iki komut da aynı `--output-dir`'i
 kullanıyorsa ve `FORGELM_AUDIT_SECRET` ikisinde de aynı durumdaysa (ayarsız ya
 da aynı değer) eşleşir; erişim talebini varsayılan düz-metin modunda çalıştırın:
-`--salt-source` digest'lerin eşleşmesi için gerekmez ve düz metin içeren bir
-corpus'ta hash-mask taraması, kişi orada olsa bile sıfır eşleşme bildirir.
+`--salt-source` digest'lerin eşleşmesi için gerekmez; onunla hash-mask taraması
+corpus içinde digest arar, bu yüzden düz metin içeren bir corpus'ta kişi orada
+olsa bile sıfır eşleşme alırsınız.
 Id'ler farklıysa erişim talebini ilgili silme işlemine,
 `forgelm purge --justification`'a verdiğiniz ticket referansı üzerinden
 bağlayın.
