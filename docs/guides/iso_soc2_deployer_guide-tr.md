@@ -282,8 +282,8 @@ forgelm reverse-pii --query "alice@example.com" --type email \
 # JSON envelope { matches: [...], match_count: N } döner
 # Audit chain QUERY HASH'LENMİŞ ŞEKİLDE bir
 # `data.access_request_query` event damgalar (asla raw). Salt'lı digest
-# pseudonymised'dır, anonim değildir: `.forgelm_audit_salt`'ı log ile aynı
-# erişim kontrolleri altında tutun, yoksa tahmin edilen bir identifier ona karşı sınanabilir.
+# kişisel veridir, anonim değildir: `.forgelm_audit_salt`'ı log'dan ayrı
+# tutun (veya FORGELM_AUDIT_SECRET ayarlayın), yoksa tahmin edilen bir identifier ona karşı sınanabilir.
 ```
 
 Madde 17 (silme hakkı):
@@ -297,7 +297,7 @@ forgelm purge --row-id "alice@example.com" --corpus data/2026Q2.jsonl \
 # `final_model/` dizini varsa `data.erasure_warning_memorisation` DA
 # tetiklenir; satırı hangi modelin gördüğünü söylemez, bu yüzden
 # corpus ile eğitilmiş her modeli kapsam içinde sayın ve memorisation
-# residual riskini özneye bildirin.
+# kalan ezberleme riskini veri sahibine bildirin.
 ```
 
 Cross-tool digest correlation (purge `target_id` == reverse-pii

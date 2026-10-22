@@ -282,9 +282,9 @@ forgelm reverse-pii --query "alice@example.com" --type email \
     --output-dir ./outputs data/*.jsonl
 # JSON envelope returns { matches: [...], match_count: N }
 # The audit chain stamps a `data.access_request_query` event with
-# the QUERY HASHED (never raw). The salted digest is pseudonymised,
-# not anonymous: keep `.forgelm_audit_salt` under the same access
-# controls as the log, or a guessed identifier can be tested against it.
+# the QUERY HASHED (never raw). The salted digest is personal data,
+# not anonymous: keep `.forgelm_audit_salt` apart from the log (or set
+# FORGELM_AUDIT_SECRET), or a guessed identifier can be tested against it.
 ```
 
 Article 17 (right to erasure):

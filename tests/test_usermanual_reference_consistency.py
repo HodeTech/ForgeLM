@@ -200,6 +200,9 @@ _RETIRED_GDPR_CLAIMS = (
     r"use\s+the\s+same\s+salt\s+source",
     r"query\s+with\s+`--salt-source\s+(?:env_var|per_dir)`",
     r"`--salt-source\s+env_var`\s+kullanarak\s+sorgulayın",
+    r"not\s+a\s+way\s+to\s+match\s+purge\s+digests",
+    r"eşleştirmenin\s+bir\s+yolu\s+değildir",
+    # The recorded query_hash does match in the default mode; what --salt-source gets wrong is the corpus scan.
     # Zero matches do not answer an access request.
     r"zero\s+matches[^.\n]{0,20}is\s+a\s+valid\s+answer",
     r"explicitly\s+accepts\s+[\"'“]no\s+records",
@@ -414,7 +417,7 @@ _CORRELATION_RULE_FILES = {
     "docs/reference/purge_subcommand-tr.md": r"byte-byte\s+aynıdır",
     "docs/reference/reverse_pii_subcommand.md": r"byte-identical\s+only\s+when",
     "docs/reference/reverse_pii_subcommand-tr.md": r"byte-byte\s+aynıdır",
-    "docs/guides/gdpr_erasure.md": r"is\s+not\s+a\s+way\s+to\s+match\s+purge\s+digests",
+    "docs/guides/gdpr_erasure.md": r"is\s+not\s+needed\s+for\s+the\s+digests\s+to\s+match",
 }
 
 

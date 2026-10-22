@@ -27,7 +27,7 @@ ForgeLM, subcommand'larla tek bir `forgelm` binary'si yayınlar. Bu sayfa kanoni
 | `forgelm reject` | İnsan onay isteğini reddet; staging dizini adli inceleme için korunur. |
 | `forgelm approvals` | Bekleyen onayları listele (`--pending`) veya tek birini incele (`--show RUN_ID`). |
 | `forgelm purge` | GDPR Madde 17 silmenin bir adımı: row-id, run-id veya `--check-policy` retention raporu. |
-| `forgelm reverse-pii` | GDPR Madde 15 yanıtının bir girdisi: corpora'da subject kimlik bilgisini ara (plaintext veya hash-mask scan). |
+| `forgelm reverse-pii` | GDPR Madde 15 yanıtının bir girdisi: corpus'larda veri sahibinin identifier'ını ara (plaintext veya hash-mask scan). |
 | `forgelm cache-models` | Air-gap workflow: bir veya birden fazla model için HuggingFace Hub cache'ini önceden doldur. |
 | `forgelm cache-tasks` | Air-gap workflow: lm-eval task dataset cache'ini önceden doldur (`[eval]` extra'sı gerekir). |
 | `forgelm safety-eval` | Bir model checkpoint'ine karşı standalone safety evaluation (varsayılan Llama Guard). |

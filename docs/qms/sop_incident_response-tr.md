@@ -244,7 +244,7 @@ olabilir.
 **Tetik:** Veri sahibi operatörün DSAR portalı veya iletişim formu
 üzerinden erişim talebi gönderir.
 
-**Önem:** Medium (yanıt, talebin alınmasından itibaren bir ay içinde, GDPR Madde 12(3); bildirimle iki ay uzatılabilir; KVKK Madde 13(2)'de 30 gün).
+**Önem:** Medium (yanıt, talebin alınmasından itibaren bir ay içinde, GDPR Madde 12(3); talebin karmaşıklığı ve sayısı gerektiriyorsa iki ay daha uzatılabilir, uzatma ve gerekçesi ilk ay içinde bildirilir; KVKK Madde 13(2)'de 30 gün).
 
 **Runbook:**
 
@@ -267,8 +267,9 @@ olabilir.
 **Tetik:** Sahip silme talebi gönderir.
 
 **Önem:** Medium (yanıt, talebin alınmasından itibaren bir ay içinde,
-GDPR Madde 12(3); bildirimle iki ay uzatılabilir; KVKK Madde 13(2)'de
-30 gün).
+GDPR Madde 12(3); talebin karmaşıklığı ve sayısı gerektiriyorsa iki ay
+daha uzatılabilir, uzatma ve gerekçesi ilk ay içinde bildirilir; KVKK
+Madde 13(2)'de 30 gün).
 
 **Runbook:**
 

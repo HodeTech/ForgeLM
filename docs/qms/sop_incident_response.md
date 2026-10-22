@@ -246,7 +246,7 @@ that an attacker may have observed.
 **Trigger:** Data subject submits an access request via deployer's
 DSAR portal or contact form.
 
-**Severity:** Medium (response due within one month of receipt, GDPR Art. 12(3), extendable by two months with notice; 30 days under KVKK Art. 13(2)).
+**Severity:** Medium (response due within one month of receipt, GDPR Art. 12(3), extendable by two further months where necessary given the complexity and number of requests, with notice and reasons in the first month; 30 days under KVKK Art. 13(2)).
 
 **Runbook:**
 
@@ -269,8 +269,9 @@ DSAR portal or contact form.
 **Trigger:** Subject submits an erasure request.
 
 **Severity:** Medium (response due within one month of receipt, GDPR
-Art. 12(3), extendable by two months with notice; 30 days under KVKK
-Art. 13(2)).
+Art. 12(3), extendable by two further months where necessary given the
+complexity and number of requests, with notice and reasons in the first
+month; 30 days under KVKK Art. 13(2)).
 
 **Runbook:**
 

@@ -15,7 +15,7 @@ Personal data in your training set is a regulatory hazard (GDPR Article 5(1)(c) 
 | **Phone** | `+90 532 123 45 67`, `(555) 123-4567` | E.164-compatible patterns + locale variants |
 | **Credit card** | `4111-1111-1111-1111` | Issuer prefix (Visa/MC/Amex/Discover/JCB/UnionPay) + Luhn check — not Luhn alone, which every IMEI passes |
 | **IBAN** | `TR12 0006 4000 0011 2345 6789 01` | Country-aware checksum |
-| **National ID — Turkey** | 11-digit TC kimlik | Modulo-10 + modulo-11 checksums |
+| **National ID — Turkey** | 11-digit TC kimlik | Two modulo-10 check digits (10th and 11th) |
 | **National ID — Germany** | ID-card serial (Personalausweis), e.g. `T22000129` | Shape only: a letter, 7-8 digits and an optional check character; no checksum |
 | **National ID — France** | NIR (social security number) | Shape only: sex, year, month, department, commune and order digits plus an optional two-digit key; the key is not verified |
 | **US SSN** | `123-45-6789` | Format + reserved-block exclusions |
@@ -72,6 +72,8 @@ Data audit summary
   Total samples : 12240
   Splits        : train
   └─ train: n=12240
+     length  min=24 max=1180 mean=212.4 p95=640
+     languages (top-3): en=12240
      PII             : email=18, phone=4
   PII severity   : worst tier = medium
      by tier      : medium=18, low=4
@@ -84,9 +86,9 @@ The audit report carries counts per category and split, not row indices or offse
 | Format | What it matches | Checksum-validated |
 |---|---|---|
 | Phone (all countries) | One pattern: a `+` country prefix, or a parenthesised area code | No |
-| TR national ID | 11 digits (TC kimlik) | Yes: modulo-10 and modulo-11 |
+| TR national ID | 11 digits (TC kimlik) | Yes: two modulo-10 check digits (10th and 11th) |
 | DE national ID | ID-card serial: a letter, 7-8 digits, an optional check character | No |
-| FR national ID | NIR: 13 digits with an optional two-digit key | No |
+| FR national ID | NIR: 13 characters (digits, or `2A` / `2B` for Corsica) with an optional two-digit key | No |
 | US SSN | `NNN-NN-NNNN`, reserved blocks excluded | No |
 
 Only credit cards, IBANs and TC kimlik numbers are checksum-validated; the other families are matched by shape only, so treat a finding as a candidate to review rather than a confirmed identifier.

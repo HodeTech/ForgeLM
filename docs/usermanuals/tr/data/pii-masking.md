@@ -15,7 +15,7 @@ Eğitim setinizdeki kişisel veri hem regülatif tehlikedir (GDPR Md. 5(1)(c) �
 | **Telefon** | `+90 532 123 45 67`, `(555) 123-4567` | E.164-uyumlu pattern + locale varyantları |
 | **Kredi kartı** | `4111-1111-1111-1111` | Issuer öneki (Visa/MC/Amex/Discover/JCB/UnionPay) + Luhn — yalnızca Luhn değil; her IMEI Luhn'dan geçer |
 | **IBAN** | `TR12 0006 4000 0011 2345 6789 01` | Ülke-bilinçli checksum |
-| **Ulusal ID — Türkiye** | 11 haneli TC kimlik | Modulo-10 + modulo-11 checksum |
+| **Ulusal ID — Türkiye** | 11 haneli TC kimlik | İki modulo-10 kontrol hanesi (10. ve 11.) |
 | **Ulusal ID — Almanya** | Kimlik kartı seri numarası (Personalausweis), örn. `T22000129` | Yalnızca şekil: bir harf, 7-8 rakam ve isteğe bağlı bir kontrol karakteri; checksum yok |
 | **Ulusal ID — Fransa** | NIR (sosyal güvenlik numarası) | Yalnızca şekil: cinsiyet, yıl, ay, departman, komün ve sıra rakamları ile isteğe bağlı iki haneli anahtar; anahtar doğrulanmaz |
 | **US SSN** | `123-45-6789` | Format + reserved-block dışlama |
@@ -72,6 +72,8 @@ Data audit summary
   Total samples : 12240
   Splits        : train
   └─ train: n=12240
+     length  min=24 max=1180 mean=212.4 p95=640
+     languages (top-3): en=12240
      PII             : email=18, phone=4
   PII severity   : worst tier = medium
      by tier      : medium=18, low=4
@@ -84,9 +86,9 @@ Audit raporu kategori ve split başına sayımları taşır; satır indislerini 
 | Format | Neyi eşleştirir | Checksum doğrulaması |
 |---|---|---|
 | Telefon (tüm ülkeler) | Tek bir pattern: `+` ülke öneki ya da parantezli alan kodu | Hayır |
-| TR ulusal ID | 11 rakam (TC kimlik) | Evet: modulo-10 ve modulo-11 |
+| TR ulusal ID | 11 rakam (TC kimlik) | Evet: iki modulo-10 kontrol hanesi (10. ve 11. haneler) |
 | DE ulusal ID | Kimlik kartı seri numarası: bir harf, 7-8 rakam, isteğe bağlı bir kontrol karakteri | Hayır |
-| FR ulusal ID | NIR: isteğe bağlı iki haneli anahtarla 13 rakam | Hayır |
+| FR ulusal ID | NIR: isteğe bağlı iki haneli anahtarla 13 karakter (rakam; Korsika için `2A` / `2B`) | Hayır |
 | US SSN | `NNN-NN-NNNN`, reserved block'lar hariç | Hayır |
 
 Yalnızca kredi kartları, IBAN'lar ve TC kimlik numaraları checksum ile doğrulanır; diğer aileler yalnızca şekle göre eşleştirilir. Bu yüzden bir bulguyu doğrulanmış bir tanımlayıcı değil, gözden geçirilecek bir aday sayın.

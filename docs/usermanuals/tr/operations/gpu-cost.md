@@ -6,14 +6,14 @@ description: GPU'yu tespit eder, koşuyu sizin saatlik tarifenizle ya da yerleş
 # GPU Maliyet Tahmini
 
 > **Durum:** GPU tespiti, eğitim süresi ve maliyet tahmini bugün her koşu için
-> kaydedilir ve `training.gpu_cost_per_hour` tek maliyet ayarıdır.
+> değerlendirme-kaybı ve benchmark kapılarını geçen her koşu için kaydedilir ve `training.gpu_cost_per_hour` tek maliyet ayarıdır.
 > Konfigürasyon-tabanlı bir `cost_tracking:` bloğu (GPU başına tarife
 > tabloları, alarm / durdurma eşikleri) **yol haritasında ve henüz
 > uygulanmadı** — `forgelm/config.py`'de `output.cost_tracking` yüzeyi
 > yok, bu yüzden bu sayfadaki hiçbir örnek onu kullanmaz. Erteleme için bkz.
 > [GitHub'daki risks-and-decisions yol haritası](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap/risks-and-decisions.md).
 
-Bir eğitim koşusu bittiğinde ForgeLM, ne kadar süre eğitildiğini, kaç GPU üzerinde koştuğunu ve bunun saatlik bir tarifeyle ne tuttuğunu kaydeder: tarifeyi siz verdiyseniz sizinki, vermediyseniz tespit edilen GPU için yerleşik bir fiyat kullanılır. Tahmin diğer koşu sonuçlarının yanına yazılır; fatura değildir ve hiçbir şeyi durdurmaz ya da uyarmaz.
+Bir eğitim koşusu değerlendirme-kaybı ve benchmark kapılarını geçtiğinde (birinde başarısız olan koşu maliyet toplanmadan döner) ForgeLM, ne kadar süre eğitildiğini, kaç GPU üzerinde koştuğunu ve bunun saatlik bir tarifeyle ne tuttuğunu kaydeder: tarifeyi siz verdiyseniz sizinki, vermediyseniz tespit edilen GPU için yerleşik bir fiyat kullanılır. Tahmin diğer koşu sonuçlarının yanına yazılır; fatura değildir ve hiçbir şeyi durdurmaz ya da uyarmaz.
 
 ## Tespit nasıl çalışır
 
@@ -47,19 +47,19 @@ training:
 Hiçbir tarife belirlenemediğinde `cost_source`, `gpu_cost_per_hour_usd` ve `estimated_cost_usd` bulunmaz.
 
 :::warn
-**CUDA GPU'su olmayan makineler (CPU, Apple silicon).** Aygıt adı yoktur ve boş bir ad tablonun ilk girdisiyle kısmen eşleşir; bu yüzden koşu, `cost_source: fuzzy_match` ile yer tutucu bir `0.15` USD/saat tarifesiyle kaydedilir. Bunu gerçek bir maliyet saymayın; böyle makinelerde `training.gpu_cost_per_hour`'u açıkça ayarlayın (koşu size ücretsizse `0`).
+**CUDA GPU'su olmayan makineler (CPU, Apple silicon).** Aygıt adı yoktur ve boş bir ad tablonun her girdisiyle kısmen eşleşir ve en uzun ad, `NVIDIA GeForce RTX 3090`, seçilir; bu yüzden koşu, `cost_source: fuzzy_match` ile yer tutucu bir `0.15` USD/saat tarifesiyle kaydedilir. Bunu gerçek bir maliyet saymayın; böyle makinelerde `training.gpu_cost_per_hour`'u açıkça ayarlayın (koşu size ücretsizse `0`).
 :::
 
 Koşu başına tek bir tarife vardır ve bu tarife GPU başınadır: GPU modeli başına tarife tabloları desteklenmez.
 
 ## Çıktı
 
-Tahmin dört yerde kaydedilir:
+Tahmin şu yerlerde görünür:
 
-- **`compliance/compliance_report.json`**, `resource_usage` altında; koşunun `training.output_dir` dizininde, koşu tamamlandığında yazılır.
+- **`compliance/compliance_report.json`**, `resource_usage` altında; koşunun `training.output_dir` dizininde, güvenlik ve judge kapılarını da geçen bir koşunun sonunda yazılır (geri alınan koşu rapor dışa aktarmaz). Aynı veri `annex_iv_metadata.json` içine `computational_resources` olarak kopyalanır.
 - **`--output-format json` sonucu**: `resource_usage` ve üst düzey `estimated_cost_usd` olarak.
 - **Konsol**: `Estimated training cost` satırı ve fiyat kaynağını belirten bir `GPU-hours` satırı (text modunda).
-- **Koşu metrikleri**: her sayısal alan `resource/<alan>` olarak kopyalanır (örneğin `resource/estimated_cost_usd`); böylece deney izleyicinize ve `pipeline.completed` audit olayının `metrics_summary` alanına ulaşır.
+- **Koşu metrikleri**: her sayısal alan `resource/<alan>` olarak kopyalanır (örneğin `resource/estimated_cost_usd`). Kopyalar sonucun `metrics` alanında, başarı webhook'unda ve `pipeline.completed` audit olayının `metrics_summary` alanında görünür (koşu insan-onayı kapısında durduğunda olay yayımlanmaz). W&B, MLflow ya da TensorBoard'a gönderilmezler.
 
 `gpu_cost_per_hour: 1.10` ile 1892 saniye eğitilen 4 GPU'lu bir koşu şunu kaydeder:
 
@@ -95,7 +95,7 @@ training:
 $ forgelm --config configs/calibration.yaml
 $ jq '.resource_usage.gpu_hours' /tmp/calib/compliance/compliance_report.json
 0.034
-$ python -c "print(0.034 * (3000 / 20) * 1.10)"   # 3.000 adım, GPU-saat başına $1.10
+$ python -c "print(round(0.034 * (3000 / 20) * 1.10, 2))"   # 3.000 adım, GPU-saat başına $1.10
 5.61
 ```
 

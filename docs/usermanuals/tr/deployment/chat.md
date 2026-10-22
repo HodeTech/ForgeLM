@@ -52,11 +52,11 @@ CLI çıktısı yalnızca İngilizcedir; yukarıdaki banner ve köşeli parantez
 | Sampling temperature | `--temperature` (sonra `/temperature` ile değiştirin) | `0.7` |
 | Yanıt başına maksimum token | `--max-new-tokens` | `512` |
 | Streaming çıktı | `--no-stream` kapatır | açık |
-| Quantize yükleme (yalnızca CUDA + bitsandbytes; aksi halde yok sayılır) | `--load-in-4bit` (NF4) veya `--load-in-8bit`; `--backend unsloth` ile ikisi de verilirse 4-bit kazanır, hiçbiri verilmezse 4-bit varsayılandır | kapalı |
+| Quantize yükleme (yalnızca CUDA + bitsandbytes; aksi halde yok sayılır) | `--load-in-4bit` (NF4) veya `--load-in-8bit`; ikisi de verilirse 4-bit kazanır; `--backend unsloth` ile hiçbiri verilmezse de 4-bit varsayılandır | kapalı |
 | Model backend'i | `--backend transformers` veya `--backend unsloth` | `transformers` |
 | Modelle birlikte gelen kodu çalıştırma | `--trust-remote-code` | kapalı |
 
-Top-p, top-k ve repetition penalty sabittir (0.9 / 50 / 1.1) ve ayarlanamaz. Chat her zaman sampling yapar: seed yoktur ve greedy mod yoktur. Oturumlar arası kalıcı bir history dosyası da yoktur; bir konuşmayı `/save` ile kaydedin. Komut satırı flag'i `0.0` sıcaklığı kabul eder, ancak sampling onu reddeder; bu yüzden her tur bir `[Generation error: …]` satırıyla başarısız olur. 0'ın üstünde bir değer kullanın.
+Top-p, top-k ve repetition penalty sabittir (0.9 / 50 / 1.1) ve ayarlanamaz. Chat her zaman sampling yapar: seed yoktur ve greedy mod yoktur. Oturumlar arası kalıcı bir history dosyası da yoktur; bir konuşmayı `/save` ile kaydedin. Komut satırı flag'i `0.0` sıcaklığı kabul eder, ancak sampling onu reddeder; bu yüzden her tur bir `[Generation error: …]` satırıyla başarısız olur (streaming açıkken, ki varsayılandır, ancak 60 saniyelik bir beklemeden sonra). 0'ın üstünde bir değer kullanın.
 
 ## Checkpoint yükleme
 
@@ -137,7 +137,7 @@ v1 vs v2 win rate: 0.62 (sig p=0.04)
 :::
 
 :::warn
-**Context'i aşan uzun konuşmalar.** Yalnızca son 50 çift gönderilir, ancak hiçbir şey token saymaz: uzun bir system prompt, uzun yanıtlar ya da küçük context'li bir model yine de taşabilir; tur o zaman bir `[Generation error: …]` satırıyla başarısız olur (tur geçmişe eklenmez). Uzun test oturumlarında periyodik `/reset` kullanın.
+**Context'i aşan uzun konuşmalar.** Yalnızca son 50 çift gönderilir, ancak hiçbir şey token saymaz: uzun bir system prompt, uzun yanıtlar ya da küçük context'li bir model yine de taşabilir. Modele bağlı olarak tur ya bir `[Generation error: …]` satırıyla başarısız olur (geçmişe eklenmez) ya da üretim bozulmuş çıktıyla devam eder ve yalnızca `transformers` bir uyarı verir. Uzun test oturumlarında periyodik `/reset` kullanın.
 :::
 
 :::tip

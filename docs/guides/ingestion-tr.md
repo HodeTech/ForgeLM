@@ -108,7 +108,7 @@ forgelm ingest ./customer_emails/ --output data/masked.jsonl --pii-mask
 Tespit edilen span'ler `[REDACTED]` ile değiştirilir. Tespit regex
 tabanlıdır — false positive'ler kasıtlıdır. Sonrasında çıktıyı
 `forgelm audit` ile denetleyin: aynı regex'leri yeniden uygular, yani o pattern'lerin artık eşleşmediğini doğrular;
-`--pii-ml` isim ve konum sayımı ekler. Maskelenmiş metin, geriye kalandan bir kişi yeniden tanımlanabildiği sürece hâlâ kişisel veridir.
+`--pii-ml` isim ve konum sayımı ekler. Maskelenmiş metin, geriye kalan bilgilerden kişinin kimliği belirlenebildiği sürece hâlâ kişisel veridir.
 
 ---
 

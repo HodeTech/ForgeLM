@@ -5,8 +5,8 @@
 > silinmesini isteme hakkı verir. ForgeLM'in `forgelm purge`
 > subcommand'ı böyle bir talebi yanıtlamanın bir adımıdır: bir ForgeLM
 > dağıtımının ürettiği veya tükettiği eğitim corpus'larından ve
-> koşum-kapsamlı artefact'lardan satır kaldırır. Kişiyi tanımlamak, bir
-> Madde 17(1) gerekçesinin geçerli olup olmadığına karar vermek, Madde 12
+> koşum-kapsamlı artefact'lardan satır kaldırır. Kişinin kimliğini doğrulamak, bir
+> Madde 17(1)'deki nedenlerden birinin geçerli olup olmadığına karar vermek, Madde 12
 > süresi içinde yanıtlamak ve eğitilmiş ağırlıklarla ilgili her şey sizin
 > sürecinizde kalır.
 
@@ -18,15 +18,15 @@
 - Bir koşumun staging dizinini ve adı run id'yi embed eden compliance dosyalarını siler (`--run-id <id> --kind {staging,artefacts}`; `artefacts` standart paketi bulamaz, aşağıya bakın).
 - Yüklü config'in `retention:` block'una karşı retention-policy ihlallerini raporlar (`--check-policy`).
 - Her aksiyonu tamper-evident bir audit-event zinciriyle kaydeder — `request → completed` (veya `request → failed`) — böylece adli inceleyici tam olarak ne olduğunu yeniden inşa edebilir.
-- Operatör tarafından sağlanan satır identifier'larını audit log'a girmeden önce per-output-dir salt ile hash'ler; böylece log identifier'ı açık halde tutmaz (Madde 5(1)(c) veri minimizasyonu). Bu pseudonymisation'dır, anonimleştirme değildir (Madde 4(5), gerekçe 26): log'un yanındaki `.forgelm_audit_salt` dosyasını okuyabilen herkes tahmin ettiği bir identifier'dan digest'i yeniden hesaplayabilir; bu yüzden log'u ve salt'ı aynı erişim kontrolleriyle koruyun ve digest'leri kişisel veri sayın.
+- Operatör tarafından sağlanan satır identifier'larını audit log'a girmeden önce per-output-dir salt ile hash'ler; böylece log identifier'ı açık halde tutmaz (Madde 5(1)(c) veri minimizasyonu). Digest anonim değil, kişisel veridir (Gerekçe 26); ek bilgi ayrı tutulup kendi kontrolleri altında korunuyorsa takma adlandırma (pseudonymisation, Madde 4(5)) sayılır. Varsayılan olarak `.forgelm_audit_salt` dosyası log'un yanında durur; ikisini de okuyabilen herkes tahmin ettiği bir identifier'dan digest'i yeniden hesaplayabilir. `FORGELM_AUDIT_SECRET` ayarlayın (salt'a XOR'lanır, dosya tek başına yetmez) ve log'u ile salt'ı kişisel veri gibi koruyun.
 
 **Yapmaz:**
 
 - Modelleri yeniden eğitmez. Bir satırı corpus'tan kaldırmak onu zaten eğitilmiş ağırlıklardan unutturmaz — silinmiş satır olmadan tam yeniden eğitim tek doğru çözüm. Tool, `--output-dir` altında doğrudan bir `final_model/` dizini mevcut olduğunda `data.erasure_warning_memorisation` yayar (`--output-dir` varsayılan olarak corpus'un dizinidir; bu yüzden eğitim çıktı dizininizi verin); böylece operatör boşluğu görür. Corpus'u hangi koşumların tükettiğini ayırt edemez.
-- Audit log'un kendisinden entry silmez. Tool, silmeyi geçmişi yeniden yazmak yerine yeni bir event olarak kaydeder ve audit log'dan hiçbir girdiyi silmez. Veri sahibini adlandıran girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır ve belgelenmelidir. Bir Madde 17(1) gerekçesi geçerliyse girdiler yalnızca bir Madde 17(3) istisnasının kapsadığı yerde kalır: 17(3)(b), yalnızca işlemenin veri sorumlusunun tabi olduğu AB veya üye devlet hukukundan doğan bir yasal yükümlülüğe uyum için (veya kamu yararına ya da kamu otoritesinin kullanılmasına ilişkin bir görev için) gerekli olduğu ölçüde uygulanır; 17(3)(e) ise hukuki talepleri kapsar. Hiçbir Madde 17(1) gerekçesi geçerli değilse (örneğin girdiler toplandıkları amaç için hâlâ gereklidir) silme gerekmez; ancak talebe yine de Madde 12 süresi içinde gerekçeli bir yanıt verilir ve şikâyet hakkı bildirilir (Madde 12(4)).
+- Audit log'un kendisinden entry silmez. Tool, silmeyi geçmişi yeniden yazmak yerine yeni bir event olarak kaydeder ve audit log'dan hiçbir girdiyi silmez. Veri sahibini adlandıran girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır ve belgelenmelidir. Madde 17(1)'deki silme nedenlerinden biri geçerliyse girdiler yalnızca bir Madde 17(3) istisnasının kapsadığı yerde kalır: 17(3)(b), yalnızca işlemenin veri sorumlusunun tabi olduğu AB veya üye devlet hukukundan doğan bir yasal yükümlülüğe uyum için (veya kamu yararına ya da kamu otoritesinin kullanılmasına ilişkin bir görev için) gerekli olduğu ölçüde uygulanır; 17(3)(e) ise hukuki taleplerin ileri sürülmesini, kullanılmasını veya savunulmasını kapsar. Madde 17(1)'deki nedenlerin hiçbiri geçerli değilse (girdilerin toplandıkları amaç için hâlâ gerekli olması yalnızca 17(1)(a)'yı dışlar; rızanın geri çekilmesini, Madde 21 itirazını ve hukuka aykırı işlemeyi de kontrol edin) silme gerekmez; ancak talebe yine de gecikmeksizin ve en geç talebin alınmasından itibaren bir ay içinde yanıt verilir; yanıtta gerekçe, bir denetim otoritesine şikâyet etme ve yargı yoluna başvurma imkânı bildirilir (Madde 12(4)).
 - Downstream tüketicilere silme bildirimi göndermez. Webhook receiver'ları, dataset mirror'ları, deploy edilmiş model endpoint'leri ve yayınlanmış checkpoint'ten türetilmiş üçüncü-taraf fine-tune'lar operatörün runtime-katmanı sorumluluğudur (GDPR Madde 19, verinin ifşa edildiği her alıcıya silmeyi bildirmeyi ister; bu, imkânsız olmadıkça veya orantısız çaba gerektirmedikçe geçerlidir ve veri sahibi isterse bu alıcıları ona da bildirmek gerekir; Madde 17(2) ise veri sorumlusu veriyi kamuya açtıysa makul adımlar ekler). Tool, row modunda `--config` ile verdiğiniz config webhook block'u içerdiğinde `data.erasure_warning_external_copies` yayar; böylece audit log'u sorgulayan downstream tüketici açık hatırlatmayı görür.
 - Yedekleri silmez. Operatörün `<output_dir>` sınırı dışındaki replikalar, snapshot'lar ve storage backup'lar altyapı tarafı endişelerdir.
-- Yanıtın tamamını vermez. Eksiksiz bir yanıt, ForgeLM'in yapmadığı adımları da gerektirir: talep edenin kimliğini doğrulamak (Madde 12(6)); talebin alınmasından itibaren bir ay içinde yanıtlamak (Madde 12(3); karmaşık veya çok sayıda talep için iki ay daha uzatılabilir, uzatma ilk ay içinde bildirilir); veri sahibine verinin bir kopyasını ve Madde 15(1)(a)-(h) bilgilerini vermek (Madde 15(3)) ve bunu başkalarının hak ve özgürlüklerini olumsuz etkilemeden yapmak (Madde 15(4)); bir Madde 17(1) gerekçesinin geçerli olup olmadığına ve tuttuğunuz şeyi hangi Madde 17(3) istisnasının (varsa) kapsadığına karar vermek; alıcıları bilgilendirmek (Madde 19); satırların gittiğini doğrulamak için purge sonrasında erişim aramasını yeniden çalıştırmak; ve bir talebi reddederseniz aynı süre içinde gerekçeyi ve şikâyet hakkını bildirmek (Madde 12(4)). Eğitilmiş modelin kişisel veri sayılıp sayılmayacağı ayrı bir sorudur (EDPB Görüş 28/2024).
+- Yanıtın tamamını vermez. Eksiksiz bir yanıt, ForgeLM'in yapmadığı adımları da gerektirir: talep edenin kimliğini makul önlemlerle doğrulamak (Gerekçe 64; Madde 12(6), makul şüphe varsa ek bilgi istemenize izin verir); talebin alınmasından itibaren bir ay içinde yanıtlamak (Madde 12(3); karmaşık veya çok sayıda talep için iki ay daha uzatılabilir, uzatma ilk ay içinde bildirilir); veri sahibine verinin bir kopyasını ve Madde 15(1)(a)-(h) bilgilerini vermek (Madde 15(3)) ve veri üçüncü bir ülkeye aktarıldıysa Madde 46 güvencelerini (Madde 15(2)) vermek; bunu başkalarının hak ve özgürlüklerini olumsuz etkilemeden yapmak (Madde 15(4)); Madde 17(1)'deki nedenlerden birinin geçerli olup olmadığına ve tuttuğunuz şeyi hangi Madde 17(3) istisnasının (varsa) kapsadığına karar vermek; alıcıları bilgilendirmek (Madde 19); satırların gittiğini doğrulamak için purge sonrasında erişim aramasını yeniden çalıştırmak; ve bir talebi reddederseniz gecikmeksizin ve en geç bir ay içinde gerekçeyi, şikâyet etme ve yargı yoluna başvurma imkânını bildirmek (Madde 12(4)). Eğitilmiş modelin kişisel veri sayılıp sayılmayacağı ayrı bir sorudur (EDPB Görüş 28/2024).
 
 ## Üç mod
 
@@ -85,7 +85,7 @@ retention:
   enforce: log_only                       # ayrılmış: henüz hiçbir komut onu dikkate almaz (log_only / warn_on_excess / block_on_excess)
 ```
 
-Herhangi bir horizon'u `0` olarak ayarlamak o artefact kind'ı için raporu kapatır (her iki durumda da hiçbir şey silinmez). Horizon'lar `forgelm purge --check-policy` ile raporlanır (salt-okunur; kaç tane bulursa bulsun 0 ile çıkar); hiçbir şey otomatik silinmez ya da engellenmez. ForgeLM `raw_documents/` veya `ingestion_output/` dizinlerini oluşturmaz; `raw_documents_retention_days` yalnızca kaynak dokümanları orada tutuyorsanız bir etki yapar. `enforce` ayrılmıştır: henüz hiçbir komut onu dikkate almaz, bu yüzden üç değer de `log_only` gibi davranır.
+Herhangi bir horizon'u `0` olarak ayarlamak o artefact kind'ı için raporu kapatır (her iki durumda da hiçbir şey silinmez). Horizon'lar `forgelm purge --check-policy` ile raporlanır (salt-okunur; kaç tane bulursa bulsun 0 ile çıkar); hiçbir şey otomatik silinmez ya da engellenmez. ForgeLM `raw_documents/` veya `ingestion_output/` dizinlerini oluşturmaz; `raw_documents_retention_days` yalnızca kaynak dokümanları orada tutuyorsanız etkili olur. `enforce` ayrılmıştır: henüz hiçbir komut onu dikkate almaz, bu yüzden üç değer de `log_only` gibi davranır.
 
 ## Kaldırıldı: `evaluation.staging_ttl_days`
 
@@ -147,16 +147,17 @@ Audit chain `data.access_request_query`'yi identifier *salt'lı
 hash'lenmiş* olarak kaydeder — `forgelm purge`'ün `target_id` field'ı
 için kullandığı aynı per-output-dir salt'ı yeniden kullanılır.
 Madde 15 erişim talepleri kendisi de subject'in verisini audit log'a
-sızdırmamalıdır.  Salt'lı form, compliance reviewer'ın aynı subject
+sızdırmamalıdır.  Salt'lı form, compliance reviewer'ın aynı veri sahibi
 için Madde 17 (purge) ve Madde 15 (reverse-pii) olaylarını cleartext
 görmeden ilişkilendirmesini sağlar.  Digest'ler yalnızca `--row-id` ve
 `--query` değerleri aynı metinse, iki komut da aynı `--output-dir`'i
 kullanıyorsa ve `FORGELM_AUDIT_SECRET` ikisinde de aynı durumdaysa (ayarsız ya
-da aynı değer) eşleşir; erişim talebini varsayılan düz-metin modunda çalıştırın,
-çünkü `--salt-source` yukarıdaki hash-mask taramasına geçirir ve purge
-digest'lerini eşleştirmenin bir yolu değildir.  Id'ler farklıysa bir talebi
-silmesine, `forgelm purge --justification`'a verdiğiniz ticket referansı
-üzerinden bağlayın.
+da aynı değer) eşleşir; erişim talebini varsayılan düz-metin modunda çalıştırın:
+`--salt-source` digest'lerin eşleşmesi için gerekmez ve düz metin içeren bir
+corpus'ta hash-mask taraması, kişi orada olsa bile sıfır eşleşme bildirir.
+Id'ler farklıysa erişim talebini ilgili silme işlemine,
+`forgelm purge --justification`'a verdiğiniz ticket referansı üzerinden
+bağlayın.
 
 **Identifier tipleri** (`--type`): `literal` (varsayılan), `email`,
 `phone`, `tr_id`, `us_ssn`, `iban`, `credit_card`, `custom`.

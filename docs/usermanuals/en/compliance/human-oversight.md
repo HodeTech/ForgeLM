@@ -141,7 +141,7 @@ A `--show` against a granted / rejected run prints the full timeline (request â†
 :::
 
 :::warn
-**No quorum for shipping decisions.** ForgeLM records one approver per decision. If your risk assessment calls for more than one reviewer, enforce it outside ForgeLM as described above (Article 14(5) of the EU AI Act asks for two natural persons to verify an identification only for the remote biometric identification systems in Annex III point 1(a)).
+**No quorum for shipping decisions.** ForgeLM records one approver per decision. If your risk assessment calls for more than one reviewer, enforce it outside ForgeLM as described above (Article 14(5) of the EU AI Act asks for an identification to be separately verified by at least two natural persons only for the remote biometric identification systems in Annex III point 1(a), with an exception for law enforcement, migration, border control and asylum where Union or national law finds it disproportionate).
 :::
 
 :::tip

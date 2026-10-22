@@ -431,8 +431,8 @@ forgelm audit data/ --output ./audit/ --pii-ml
 
 Yeni kategoriler mevcut `pii_summary` ve `pii_severity` bloklarına
 disjoint isimlerle birleşir, bu yüzden regex baseline ML sinyaliyle
-yan yana görünür kalır (örnek varsayılan İngilizce model içindir; o model
-`organization` raporlamaz, diğer dil modelleri eder):
+yan yana görünür kalır (örnek ForgeLM'in varsayılan İngilizce yapılandırması
+içindir; o yapılandırma `organization` raporlamaz):
 
 ```json
 {

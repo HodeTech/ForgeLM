@@ -137,8 +137,9 @@ All notable changes to ForgeLM are documented here.
     notices and the 17(3) assessment; a scan with zero matches does not answer an access request.
   - A `purge` digest (`target_id`) and a `reverse-pii` digest (`query_hash`) are byte-identical only for the same value, the same
     `--output-dir` and the same `FORGELM_AUDIT_SECRET` state, in `reverse-pii`'s default plaintext mode. `--salt-source` is a
-    hash-mask scan for externally masked corpora and finds nothing in plaintext (an earlier draft recommended it for
-    correlation). A salted digest is pseudonymisation (Art. 4(5)), not anonymisation: the salt sits next to the log.
+    hash-mask scan for externally masked corpora: it is not needed for the digests to match and reports zero matches on a
+    plaintext corpus even when the person is there (an earlier draft recommended it). A salted digest is personal data, and
+    pseudonymisation (Art. 4(5)) only if the salt is kept separately: by default it sits next to the log.
   - The retention horizons are limits that `forgelm purge --check-policy` reports and never enforces; the defaults (5 years for
     the audit log, 7 / 90 / 90 days) are ForgeLM choices, not legal periods; a config with no `retention:` block checks nothing
     and `retention: {}` switches the defaults on; `0` stops a report; ages come from the run's first audit event, else the log's

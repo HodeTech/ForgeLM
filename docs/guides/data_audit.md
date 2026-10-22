@@ -421,8 +421,8 @@ forgelm audit data/ --output ./audit/ --pii-ml
 
 The new categories merge into the existing `pii_summary` and
 `pii_severity` blocks under disjoint names so the regex baseline stays
-visible alongside the ML signal (the example is for the default English
-model, which never reports `organization`; other language models do):
+visible alongside the ML signal (the example is for ForgeLM's default English
+configuration, which never reports `organization`):
 
 ```json
 {

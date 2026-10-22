@@ -208,11 +208,13 @@ ForgeLM does not implement encryption itself but DOES:
 3. **Verify post-encryption integrity.** `forgelm verify-audit`
    confirms the chain-after-decryption matches the chain-as-emitted;
    any substrate-level corruption is detectable.
-4. **Pseudonymise low-entropy identifiers.** Salted SHA-256 turns an
-   identifier into a pseudonym (GDPR Article 4(5)), not an anonymous value:
-   anyone holding the log and the salt can recompute a digest from a
-   guessed identifier. Encrypt the audit log and the salt to the same
-   standard and treat the digests as personal data.
+4. **Treat identifier digests as personal data.** Salted SHA-256 does
+   not make an identifier anonymous (recital 26); it is pseudonymisation
+   (GDPR Article 4(5)) only if the additional information is kept
+   separately. With the salt on the same disk as the log, anyone holding
+   both can recompute a digest from a guessed identifier. Encrypt the
+   audit log and the salt to the same standard, or hold the secret
+   (`FORGELM_AUDIT_SECRET`) in a key store.
 
 ## 6. Verification checklist
 

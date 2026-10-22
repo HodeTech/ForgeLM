@@ -52,7 +52,7 @@ JSONL eğitim corpus'undan `id` (veya `row_id`) field'ı ile tanımlanan tek bir
 
 > **`--kind artefacts` standart compliance paketini bulamaz.** Trainer ve exporter sabit dosya adları yazar (`compliance_report.json`, `training_manifest.yaml`, `data_provenance.json`, `data_governance_report.json`; yapılandırıldığında `risk_assessment.json` / `annex_iv_metadata.json`) ve hiçbiri run id içermez. Normal bir çıktı dizininde komut bu yüzden hiçbir şey bulmaz, `data.erasure_failed` (`NoMatchingArtefacts`) yayar ve 1 ile çıkar; hiçbir şey silmez. Yalnızca adına run id'yi kendiniz yazdığınız dosyalara etki eder. Resolver düzeltilene kadar paketi depolama katmanınız üzerinden kaldırın.
 
-`--kind logs` **kasıtlı olarak yok**: audit log append-only'dir ve tool onu asla silmez. Veri sahibini adlandıran girdilerin tutulup tutulamayacağı veri sorumlusunun belgelenmiş kararıdır: bir Madde 17(1) gerekçesi geçerliyse girdiler yalnızca bir Madde 17(3) istisnasının kapsadığı yerde kalır (17(3)(b), yalnızca işlemenin veri sorumlusunun tabi olduğu AB veya üye devlet hukukundan doğan bir yasal yükümlülük ya da kamu yararına bir görev için gerekli olduğu ölçüde; 17(3)(e) hukuki talepleri kapsar); hiçbir gerekçe geçerli değilse silme gerekmez, ancak talebe yine de Madde 12 süresi içinde gerekçeli bir yanıt verilir (Madde 12(4)).
+`--kind logs` **kasıtlı olarak yok**: audit log append-only'dir ve tool onu asla silmez. Veri sahibini adlandıran girdilerin tutulup tutulamayacağı veri sorumlusunun belgelenmiş kararıdır: Madde 17(1)'deki silme nedenlerinden biri geçerliyse girdiler yalnızca bir Madde 17(3) istisnasının kapsadığı yerde kalır (17(3)(b), yalnızca işlemenin veri sorumlusunun tabi olduğu AB veya üye devlet hukukundan doğan bir yasal yükümlülük ya da kamu yararına veya kamu otoritesinin kullanılmasına ilişkin bir görev için gerekli olduğu ölçüde; 17(3)(e) hukuki taleplerin ileri sürülmesini, kullanılmasını veya savunulmasını kapsar); hiçbir neden geçerli değilse silme gerekmez, ancak talebe yine de gecikmeksizin ve en geç bir ay içinde yanıt verilir; yanıtta gerekçe, şikâyet etme ve yargı yoluna başvurma imkânı bildirilir (Madde 12(4)).
 
 ### Retention-policy raporu (`--check-policy`)
 
@@ -73,7 +73,7 @@ Per-output-dir salt `<output_dir>/.forgelm_audit_salt`'ta ilk kullanımda oluşt
 
 ## `forgelm reverse-pii` ile cross-tool digest korelasyonu
 
-`forgelm purge` `target_id` kaydeder (salt ile `--row-id` değerinin SHA-256'sı); `forgelm reverse-pii` ise `--query` değerinin aynı fonksiyonunu `query_hash` olarak kaydeder. İkisi yalnızca şu üç koşulun hepsi sağlandığında byte-byte aynıdır: değer aynı metindir (satırın `id` / `row_id` alanı ile sorgu aynı string olmalıdır; opak UUID satır id'leri bir e-posta sorgusuna asla eşit olmaz), iki komut da aynı `--output-dir`'i (aynı `.forgelm_audit_salt`'ı) kullanır ve `FORGELM_AUDIT_SECRET` ikisinde de aynı durumdadır (ayarsız ya da aynı değerle ayarlı; ayarlıysa purge `salt_source=env_var` kaydeder). Erişim talebini varsayılan düz-metin modunda çalıştırın: `--salt-source` gerekmez ve purge digest'lerini eşleştirmenin bir yolu değildir; çünkü `reverse-pii`'yi corpus *içinde* digest arayan bir hash-mask taramasına geçirir ve düz metin içeren bir corpus'ta hiçbir şey bulmaz. Id'ler farklıysa bir talebi silmesine, `forgelm purge --justification`'a verdiğiniz ticket referansı üzerinden bağlayın. Compliance reviewer böylece aynı veri sahibi için Madde 17 silme ve Madde 15 erişim taleplerini cleartext identifier'ı asla görmeden korele edebilir. `tests/test_reverse_pii.py::test_purge_target_id_matches_reverse_pii_query_hash_on_same_output_dir` ile pin'lendi.
+`forgelm purge` `target_id` kaydeder (salt ile `--row-id` değerinin SHA-256'sı); `forgelm reverse-pii` ise `--query` değerinin aynı fonksiyonunu `query_hash` olarak kaydeder. İkisi yalnızca şu üç koşulun hepsi sağlandığında byte-byte aynıdır: değer aynı metindir (satırın `id` / `row_id` alanı ile sorgu aynı string olmalıdır; opak UUID satır id'leri bir e-posta sorgusuna asla eşit olmaz), iki komut da aynı `--output-dir`'i (aynı `.forgelm_audit_salt`'ı) kullanır ve `FORGELM_AUDIT_SECRET` ikisinde de aynı durumdadır (ayarsız ya da aynı değerle ayarlı; ayarlıysa purge `salt_source=env_var` kaydeder). Erişim talebini varsayılan düz-metin modunda çalıştırın: `--salt-source` gerekmez (varsayılan mod zaten eşleşen bir `query_hash` kaydeder) ve düz metin içeren bir corpus'ta, kişi orada olsa bile sıfır eşleşme bildirir; çünkü `reverse-pii`'yi corpus *içinde* digest arayan bir hash-mask taramasına geçirir. Id'ler farklıysa erişim talebini ilgili silme işlemine, `forgelm purge --justification`'a verdiğiniz ticket referansı üzerinden bağlayın. Compliance reviewer böylece aynı veri sahibi için Madde 17 silme ve Madde 15 erişim taleplerini cleartext identifier'ı asla görmeden korele edebilir. `tests/test_reverse_pii.py::test_purge_target_id_matches_reverse_pii_query_hash_on_same_output_dir` ile pin'lendi.
 
 ## Yayılan audit event'leri
 
@@ -121,7 +121,7 @@ Altı event de [`audit_event_catalog.md`](audit_event_catalog-tr.md)'deki ortak 
 }
 ```
 
-`row_id_hash`, salt ile `--row-id` değerinin tam SHA-256 hex digest'idir; `data.erasure_*` event'leri onun ilk 16 hex hanesini `target_id` olarak taşır. `--dry-run` çağrılarında aynı zarf `dry_run: true` ile ve `bytes_freed` olmadan görünür (rewrite hiç olmaz).
+`row_id_hash`, salt ile `--row-id` değerinin tam SHA-256 hex digest'idir; `data.erasure_*` event'leri aynı tam digest'i `target_id` olarak taşır (metin çıktısı yalnızca ilk 16 hex hanesini gösterir). `--dry-run` çağrılarında aynı zarf `dry_run: true` ile ve `bytes_freed` olmadan görünür (rewrite hiç olmaz).
 
 **Run modu (başarı)** — `_run_purge_run_id`'den yayılır:
 
@@ -175,7 +175,7 @@ Altı event de [`audit_event_catalog.md`](audit_event_catalog-tr.md)'deki ortak 
 }
 ```
 
-Tanımlayıcı asla geri yazılmaz: mesaj `--row-id` değeri yerine bir hash öneki taşır.
+Tanımlayıcı mesajda asla tekrarlanmaz: mesaj `--row-id` değeri yerine bir hash öneki taşır.
 
 ## Bkz.
 

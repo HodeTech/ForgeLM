@@ -63,7 +63,7 @@ Manuel:
 
 ### 4.5 Kayıt Tutma
 
-- Uyumluluk artefaktları saklama politikanızın belirlediği süre boyunca saklanır (örneğin EU AI Act Madde 18, yüksek riskli sistem sağlayıcılarından teknik dokümantasyonu sistem piyasaya sürüldükten sonra 10 yıl saklamalarını ister; size neyin uygulandığını kontrol edin)
+- Uyumluluk artefaktları saklama politikanızın belirlediği süre boyunca saklanır (örneğin EU AI Act Madde 18, yüksek riskli sistem sağlayıcılarından teknik dokümantasyonu, kalite yönetimi dokümantasyonunu ve AB uygunluk beyanını sistem piyasaya arz edildikten veya hizmete alındıktan sonra 10 yıl saklamalarını ister; size neyin uygulandığını kontrol edin)
 - Kanıt paketi: `forgelm --config job.yaml --compliance-export ./archive/`
 - Mümkünse immutable/append-only depolamada sakla
 

@@ -52,11 +52,11 @@ With `rich` installed, the banner is drawn inside a panel. A new system prompt a
 | Sampling temperature | `--temperature` (change it later with `/temperature`) | `0.7` |
 | Maximum tokens per reply | `--max-new-tokens` | `512` |
 | Streaming output | `--no-stream` turns it off | on |
-| Quantized loading (CUDA with bitsandbytes only; ignored otherwise) | `--load-in-4bit` (NF4) or `--load-in-8bit`; with `--backend unsloth`, 4-bit wins if both are given and is the default when neither is | off |
+| Quantized loading (CUDA with bitsandbytes only; ignored otherwise) | `--load-in-4bit` (NF4) or `--load-in-8bit`; 4-bit wins if both are given, and with `--backend unsloth` it is also the default when neither is | off |
 | Model backend | `--backend transformers` or `--backend unsloth` | `transformers` |
 | Run code bundled with the model | `--trust-remote-code` | off |
 
-Top-p, top-k and the repetition penalty are fixed (0.9 / 50 / 1.1) and cannot be set. Chat always samples: there is no seed and no greedy mode. There is no history file that persists across sessions; write a conversation out with `/save`. The command-line flag accepts a temperature of `0.0`, but sampling rejects it, so every turn then fails with a `[Generation error: …]` line; use a value above 0.
+Top-p, top-k and the repetition penalty are fixed (0.9 / 50 / 1.1) and cannot be set. Chat always samples: there is no seed and no greedy mode. There is no history file that persists across sessions; write a conversation out with `/save`. The command-line flag accepts a temperature of `0.0`, but sampling rejects it, so every turn then fails with a `[Generation error: …]` line (with streaming on, the default, only after a 60-second wait); use a value above 0.
 
 ## Loading a checkpoint
 
@@ -137,7 +137,7 @@ Win rate v2 vs v1: 0.62 (sig p=0.04)
 :::
 
 :::warn
-**Long conversations exceeding context.** Only the last 50 pairs are sent, but nothing counts tokens: a long system prompt, long answers or a small-context model can still overflow, and the turn then fails with a `[Generation error: …]` line (the turn is not added to the history). Use `/reset` periodically for long testing sessions.
+**Long conversations exceeding context.** Only the last 50 pairs are sent, but nothing counts tokens: a long system prompt, long answers or a small-context model can still overflow. Depending on the model, the turn then fails with a `[Generation error: …]` line (it is not added to the history) or generation continues with degraded output and only a warning from `transformers`. Use `/reset` periodically for long testing sessions.
 :::
 
 :::tip

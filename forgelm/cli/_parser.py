@@ -1163,7 +1163,7 @@ def _add_purge_subcommand(subparsers) -> None:
         "--dry-run",
         action="store_true",
         default=argparse.SUPPRESS,
-        help="Show what would be deleted without touching the corpus or the staging files.  The salt file is still created and audit events still emit (with dry_run=True) so the chain reflects intent.",
+        help="Show what would be deleted without touching the corpus or the staging files.  In row mode the salt file is still created; audit events still emit (with dry_run=True) in both modes so the chain reflects intent.",
     )
     _add_common_subparser_flags(p, include_output_format=True)
 
@@ -1196,7 +1196,7 @@ def _add_reverse_pii_subcommand(subparsers) -> None:
             "every line where the supplied identifier appears (plaintext residual "
             "scan by default; hash-mask scan when --salt-source is set).  Audit "
             "event `data.access_request_query` records the hashed identifier so "
-            "the chain does not store it in clear (a pseudonymised digest, not an anonymous one)."
+            "the chain does not store it in clear (a salted digest is personal data, not anonymous data)."
         ),
     )
     p.add_argument(

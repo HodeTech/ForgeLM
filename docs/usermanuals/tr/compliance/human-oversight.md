@@ -141,7 +141,7 @@ Granted / rejected bir koşu üzerinde `--show` çalıştırıldığında tam za
 :::
 
 :::warn
-**Üretim kararları için quorum yok.** ForgeLM her karar için tek bir onaylayıcı kaydeder. Risk değerlendirmeniz birden fazla reviewer gerektiriyorsa bunu yukarıda anlatıldığı gibi ForgeLM'in dışında zorlayın (EU AI Act Madde 14(5), iki gerçek kişinin doğrulamasını yalnızca Annex III madde 1(a) kapsamındaki uzaktan biyometrik tanımlama sistemleri için ister).
+**Üretim kararları için quorum yok.** ForgeLM her karar için tek bir onaylayıcı kaydeder. Risk değerlendirmeniz birden fazla reviewer gerektiriyorsa bunu yukarıda anlatıldığı gibi ForgeLM'in dışında zorlayın (EU AI Act Madde 14(5), bir tanımlamanın en az iki gerçek kişi tarafından ayrıca doğrulanmasını yalnızca Ek III'ün 1(a) bendindeki uzaktan biyometrik tanımlama sistemleri için ister; kolluk, göç, sınır kontrolü ve iltica alanında, Birlik veya ulusal hukuk bunu orantısız bulursa istisna vardır).
 :::
 
 :::tip

@@ -43,6 +43,7 @@ Data audit summary
   Total samples : 8400
   Splits        : train
   └─ train: n=8400
+     length  min=31 max=2210 mean=402.7 p95=1180
      languages (top-3): en=8400
      PII             : email=12, location=9, person=47, phone=3
   PII severity   : worst tier = medium

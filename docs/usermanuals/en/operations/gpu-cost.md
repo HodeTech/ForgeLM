@@ -6,14 +6,14 @@ description: Detect the GPU, price the run from your hourly rate or a built-in t
 # GPU Cost Estimation
 
 > **Status:** GPU detection, the training duration and a cost estimate are
-> recorded for every run today, and `training.gpu_cost_per_hour` is the one cost
+> recorded today for every run that passes its evaluation-loss and benchmark gates, and `training.gpu_cost_per_hour` is the one cost
 > setting. A config-driven `cost_tracking:` block (per-GPU rate tables, alert /
 > halt thresholds) is **tracked on the roadmap and not yet implemented** —
 > `forgelm/config.py` has no `output.cost_tracking` surface, so no example on
 > this page uses one. The deferral is tracked in the
 > [risks-and-decisions roadmap on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/roadmap/risks-and-decisions.md).
 
-When a training run finishes, ForgeLM records how long it trained, on how many GPUs, and what that cost at an hourly rate: yours if you set one, otherwise a built-in price for the detected GPU. The estimate is written next to the other run results; it is not a bill, and it does not stop or alert anything.
+When a training run passes its evaluation-loss and benchmark gates (a run that fails one returns before the cost is collected), ForgeLM records how long it trained, on how many GPUs, and what that cost at an hourly rate: yours if you set one, otherwise a built-in price for the detected GPU. The estimate is written next to the other run results; it is not a bill, and it does not stop or alert anything.
 
 ## How detection works
 
@@ -47,19 +47,19 @@ Set `training.gpu_cost_per_hour` to your real rate. When it is unset, ForgeLM fa
 When no rate resolves, `cost_source`, `gpu_cost_per_hour_usd` and `estimated_cost_usd` are absent.
 
 :::warn
-**Machines without a CUDA GPU (CPU, Apple silicon).** There is no device name, and an empty name partly matches the first table entry, so the run is recorded at a placeholder `0.15` USD per hour with `cost_source: fuzzy_match`. Do not read that as a real cost; set `training.gpu_cost_per_hour` explicitly on such machines (`0` if the run is free to you).
+**Machines without a CUDA GPU (CPU, Apple silicon).** There is no device name, and an empty name partly matches every table entry and the longest one, `NVIDIA GeForce RTX 3090`, wins, so the run is recorded at a placeholder `0.15` USD per hour with `cost_source: fuzzy_match`. Do not read that as a real cost; set `training.gpu_cost_per_hour` explicitly on such machines (`0` if the run is free to you).
 :::
 
 There is one rate per run, and it is per GPU: per-GPU-model rate tables are not supported.
 
 ## Output
 
-The estimate is recorded in four places:
+The estimate appears in these places:
 
-- **`compliance/compliance_report.json`**, under `resource_usage`, in the run's `training.output_dir`, written when the run completes.
+- **`compliance/compliance_report.json`**, under `resource_usage`, in the run's `training.output_dir`; it is written at the end of a run that also passes the safety and judge gates (a reverted run exports no report). The same data is copied into `annex_iv_metadata.json` as `computational_resources`.
 - **The `--output-format json` result**, as `resource_usage` and a top-level `estimated_cost_usd`.
 - **The console**, as an `Estimated training cost` line and a `GPU-hours` line that names the pricing source (text mode).
-- **The run metrics**: every numeric field is copied in as `resource/<field>` (for example `resource/estimated_cost_usd`), so it reaches your experiment tracker and the `metrics_summary` of the `pipeline.completed` audit event.
+- **The run metrics**: every numeric field is copied in as `resource/<field>` (for example `resource/estimated_cost_usd`). The copies appear in the result's `metrics`, in the success webhook and in the `metrics_summary` of the `pipeline.completed` audit event (not emitted when the run stops at the human-approval gate). They are not sent to W&B, MLflow or TensorBoard.
 
 A 4-GPU run that trained for 1892 seconds at `gpu_cost_per_hour: 1.10` records:
 
@@ -95,7 +95,7 @@ training:
 $ forgelm --config configs/calibration.yaml
 $ jq '.resource_usage.gpu_hours' /tmp/calib/compliance/compliance_report.json
 0.034
-$ python -c "print(0.034 * (3000 / 20) * 1.10)"   # 3,000 steps at $1.10 per GPU-hour
+$ python -c "print(round(0.034 * (3000 / 20) * 1.10, 2))"   # 3,000 steps at $1.10 per GPU-hour
 5.61
 ```
 

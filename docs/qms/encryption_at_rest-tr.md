@@ -216,11 +216,12 @@ ForgeLM kendisi şifreleme uygulamaz ama ŞUNLARI YAPAR:
 3. **Şifreleme-sonrası bütünlüğü doğrula.** `forgelm verify-audit`
    chain-after-decryption'ın chain-as-emitted ile eşleştiğini teyit
    eder; substrate-seviyesi herhangi bir bozulma tespit edilebilirdir.
-4. **Düşük-entropi identifier'ları takma adlandır (pseudonymise).** Salted SHA-256
-   bir identifier'ı anonim bir değere değil, bir takma ada dönüştürür (GDPR
-   Madde 4(5)): log'a ve salt'a sahip olan herkes tahmin ettiği bir identifier'dan
-   digest'i yeniden hesaplayabilir. Audit log'u ve salt'ı aynı standartta
-   şifreleyin ve digest'leri kişisel veri sayın.
+4. **Identifier digest'lerini kişisel veri sayın.** Salted SHA-256 bir
+   identifier'ı anonim kılmaz (Gerekçe 26); ek bilgi ayrı tutulursa takma
+   adlandırma (GDPR Madde 4(5)) sayılır. Salt log ile aynı diskteyken ikisine
+   sahip olan herkes tahmin ettiği bir identifier'dan digest'i yeniden
+   hesaplayabilir. Audit log'u ve salt'ı aynı standartta şifreleyin ya da
+   secret'ı (`FORGELM_AUDIT_SECRET`) bir anahtar deposunda tutun.
 
 ## 6. Doğrulama checklist'i
 
