@@ -298,34 +298,42 @@ class TestArtefactDeletion:
         # Other run's bundle is untouched.
         assert (compliance_dir / "compliance_other-run.json").exists()
 
-    def test_artefacts_kind_finds_nothing_in_the_standard_fixed_name_bundle(self, tmp_path: Path) -> None:
-        # CR-A10-002 / DOC-D1B05-005: the exporter writes fixed basenames that
-        # carry no run id, so ``--kind artefacts`` cannot find the real bundle.
-        # It fails safe (deletes nothing, exits 1).  docs/reference/purge_subcommand.md
-        # warns about exactly this; when the resolver learns to prove ownership
-        # this test and that warning change together.
+    def test_artefacts_kind_finds_nothing_in_the_standard_fixed_name_bundle(
+        self, tmp_path: Path, minimal_config, capsys
+    ) -> None:
+        # CR-A10-002 / DOC-D1B05-005: the exporter writes fixed basenames that carry no run id, so
+        # ``--kind artefacts`` cannot find the real bundle.  It fails safe (deletes nothing, exits 1).
+        # The bundle is built by the real exporter, with the run id also written *inside* the files,
+        # so the test still trips when the resolver learns to prove ownership from file contents
+        # rather than from names.
         from forgelm.cli.subcommands._purge import _run_purge_cmd
+        from forgelm.compliance import export_compliance_artifacts, generate_training_manifest
+        from forgelm.config import ForgeConfig
 
         run_id = "fg-abc123def456"
         compliance_dir = tmp_path / "compliance"
-        compliance_dir.mkdir(parents=True)
-        bundle = (
-            "compliance_report.json",
-            "training_manifest.yaml",
-            "data_provenance.json",
-            "data_governance_report.json",
-            "annex_iv_metadata.json",
-        )
-        for name in bundle:
-            (compliance_dir / name).write_text("{}")
+        manifest = generate_training_manifest(ForgeConfig(**minimal_config()), metrics={"eval_loss": 0.5})
+        manifest["run_id"] = run_id
+        bundle = [Path(p).name for p in export_compliance_artifacts(manifest, str(compliance_dir))]
+        (compliance_dir / "data_governance_report.json").write_text(f'{{"run_id": "{run_id}"}}', encoding="utf-8")
+        bundle.append("data_governance_report.json")
 
         args = _build_args(run_id=run_id, kind="artefacts", output_dir=str(tmp_path))
         with pytest.raises(SystemExit) as ei:
             _run_purge_cmd(args, output_format="json")
-        assert ei.value.code == 1
-        assert all((compliance_dir / name).exists() for name in bundle)
+        tripwire = (
+            "`purge --kind artefacts` now finds the standard compliance bundle.  Delete this test and the "
+            "'finds nothing in the standard bundle' warning in docs/guides/gdpr_erasure{,-tr}.md, "
+            "docs/reference/purge_subcommand{,-tr}.md and docs/usermanuals/{en,tr}/compliance/gdpr-erasure.md, "
+            "and update test_usermanual_reference_consistency.py::test_purge_docs_warn_that_artefacts_misses_the_standard_bundle"
+        )
+        assert ei.value.code == 1, tripwire
+        assert all((compliance_dir / name).exists() for name in bundle), tripwire
         failed = [e for e in _read_audit_events(tmp_path / "audit_log.jsonl") if e["event"] == "data.erasure_failed"]
-        assert [e["error_class"] for e in failed] == ["NoMatchingArtefacts"]
+        assert [e["error_class"] for e in failed] == ["NoMatchingArtefacts"], tripwire
+        # The operator sees why: the message and the audit event both say the bundle has fixed names.
+        assert "fixed filenames" in capsys.readouterr().out
+        assert "fixed filenames" in failed[0]["error_message"]
 
     def test_only_the_purge_reader_names_the_legacy_staging_marker(self) -> None:
         # The docs tell operators to remove an unmarked legacy ``final_model.staging/``
@@ -353,6 +361,15 @@ class TestArtefactDeletion:
                     if isinstance(n, ast.Call)
                 }
         assert total == inside_reader == 1, "the marker name must appear only in _legacy_staging_owned_by"
+        # A name assembled from pieces ("staging_" + "run_id", f"staging_{key}") would dodge the literal count above.
+        assembled = [
+            f"{path.relative_to(forgelm_dir.parent)}:{n.lineno}"
+            for path in sorted(forgelm_dir.rglob("*.py"))
+            for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            if isinstance(n, (ast.JoinedStr, ast.BinOp))
+            and any(isinstance(c, ast.Constant) and c.value == "staging_" for c in ast.walk(n))
+        ]
+        assert assembled == [], f"build the legacy marker name only inside the reader, never from pieces: {assembled}"
         assert reader_calls <= {"is_file", "read_text", "strip"}, (
             f"the marker reader must stay read-only: {reader_calls}"
         )

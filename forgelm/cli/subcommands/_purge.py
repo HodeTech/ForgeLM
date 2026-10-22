@@ -1117,7 +1117,7 @@ def _run_purge_check_policy(args, output_format: str) -> None:
     """Handle ``forgelm purge --check-policy [--config <path>]``.
 
     A successful report exits 0 (design §10 Q5: report-not-gate); an unloadable config exits 1.
-    Operators wiring a CI gate use ``--output-format json`` and pipe
+    Operators wiring a CI gate (under ``set -o pipefail``) use ``--output-format json`` and pipe
     to ``jq -e '.success == true and has("count") and .count == 0'``.
 
     Strict config loading: ``--check-policy`` is the one purge mode

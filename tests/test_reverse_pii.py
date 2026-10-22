@@ -143,6 +143,24 @@ class TestPlaintextResidualMatch:
         assert len(payload["files_scanned"]) == 1
         assert payload["files_scanned"][0]["match_count"] == 0
 
+    def test_zero_match_line_is_the_one_the_docs_show(self, tmp_path: Path, capsys) -> None:
+        # docs/usermanuals/{en,tr}/compliance/gdpr.md show this line verbatim (the same regex pins the pages in
+        # tests/test_usermanual_reference_consistency.py); if the command's wording changes, the pages go stale.
+        import re
+
+        from forgelm.cli.subcommands._reverse_pii import _run_reverse_pii_cmd
+
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "row-A", "text": "no PII here"}])
+        args = _build_args(query="ali@example.com", files=[str(corpus)], output_dir=str(tmp_path))
+        with pytest.raises(SystemExit) as ei:
+            _run_reverse_pii_cmd(args, output_format="text")
+        assert ei.value.code == 0
+        out = capsys.readouterr().out
+        assert re.search(
+            r"No matches for identifier hash [0-9a-f]{16}… \(literal, plaintext mode\) in \d+ file\(s\)\.", out
+        ), out
+
     def test_default_type_is_literal_not_regex(self, tmp_path: Path, capsys) -> None:
         """F-W3-02 regression: the default --type must NOT interpret the
         query as a regex.  ``alice@example.com`` (with literal dot) must

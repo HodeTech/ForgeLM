@@ -40,12 +40,17 @@ test('claims the code does not back stay out of the site copy', () => {
       /SHA-256 \+ size manifest/, /6 quant levels and SHA-256 manifest/, /ZeRO-2 \/ ZeRO-3 presets/,
       /PII redacted at ingest/, /GGUF export at q4_k_m/, /wired into the audit log/, /Article 17 erasure with/, /matches EU AI Act guidance/,
       /rejected models in final_model\.staging/, /forensically linked/, /every row of every split/,
-      /surface every row/, /drops a data-subject's rows/],
+      /surface every row/, /drops a data-subject's rows/, /reports every row where they appear/, /\(Article 15 access\)/,
+      /\(Article 17 erasure\)/, /deletes those rows/],
     tr: [/ikili[- ]kontrol/i, /otomatik siler/, /GDPR uyumlu TTL/, /erişim-talebi tarafını karşılar/,
       /Slack, Teams, Discord veya/, /Slack \/ Teams \/ Discord/, /upstream'de uygulanır/, /her ikisi de audit log'a bağlı/,
       /EU AI Act rehberiyle uyumlu/, /reddedilen modeller ne kadar tutulsun/, /adli olarak .{0,30}bağlanır/,
       /geçtiği her split/, /yüzeye çıkarır/,
-      /satırlarını eğitim corpus'undan düşürür/],
+      /satırlarını eğitim corpus'undan düşürür/, /geçtiği her satırı raporlar/, /\(Madde 15 erişim\)/, /\(Madde 17 silme\)/],
+    de: [/jede Zeile jedes Splits/, /zum Vorschein/, /Datensubjekt/],
+    fr: [/chaque ligne de chaque split/, /font remonter/],
+    es: [/cada fila de cada split/, /sacan a la luz/],
+    zh: [/每个 split 的每一行/, /浮现/],
   };
   const found = [];
   for (const [locale, patterns] of Object.entries(retired)) {
@@ -60,31 +65,83 @@ test('claims the code does not back stay out of the site copy', () => {
   assert.deepEqual(found, []);
   for (const [locale, table] of Object.entries(translations)) {
     assert.match(table['wizard.retention.enforce.hint'], /--check-policy/, `${locale}: retention is only reported`);
-    for (const key of ['wizard.retention.audit_log.hint', 'wizard.retention.staging.hint']) {
+    for (const key of ['wizard.retention.hint', 'wizard.retention.audit_log.hint', 'wizard.retention.staging.hint',
+      'wizard.retention.ephemeral.hint', 'wizard.retention.raw_documents.hint']) {
       assert.match(table[key], /--check-policy/, `${locale} ${key}: a horizon is only reported, not enforced`);
     }
+    assert.match(table['wizard.retention.hint'], /\b0\b/, `${locale}: the section hint says what 0 does`);
+    assert.doesNotMatch(table['wizard.retention.title'], /5\+17/, `${locale}: the retention title cites Article 5(1)(e) only`);
     assert.doesNotMatch(table['wizard.retention.audit_log.hint'], /EU AI Act/, `${locale}: the 5-year default is not a legal period`);
   }
 });
 
-// The home-page GDPR card says what the two commands are for (an input to an Article 15 response, one step of an
-// Article 17 erasure) and that trained weights are untouched. Every locale keeps the weights caveat.
-test('the home GDPR card keeps the trained-weights caveat in every locale', () => {
+// The GDPR cards say what the two commands are for (an input to an Article 15 response, one step of an Article 17
+// erasure) and that trained weights are untouched.  Every locale keeps the caveats: a reversed or softened sentence
+// that still contains the word "weights" must not pass.
+const weightsUnchanged = {
+  en: /trained weights[^.;)]{0,80}(?:are )?not changed/,
+  tr: /eğitilmiş ağırlıklar[^.;)]{0,80}değişmez/,
+  de: /[Tt]rainierte Gewichte[^.;)]{0,80}bleiben unverändert/,
+  fr: /poids entraînés[^;)]{0,100}(?:ne changent pas|ne sont pas modifiés)/,
+  es: /pesos entrenados[^;)]{0,100}no cambian/,
+  zh: /权重[^。;)]{0,40}不会改变/,
+};
+// Article 15: the card is an input to a response, not the response.
+const accessInput = {
+  en: /an input to/, tr: /bir girdisi/, de: /Baustein/, fr: /un élément/, es: /un elemento/, zh: /之一/,
+};
+const accessCopyAndInfo = {
+  en: /15\(1\)\(a\)-\(h\)/, tr: /15\(1\)\(a\)-\(h\)/, de: /Abs\. 1 Buchst\. a bis h/,
+  fr: /paragraphe 1, points a\) à h\)/, es: /apartado 1, letras a\) a h\)/, zh: /第 1 款第 \(a\) 至 \(h\) 项/,
+};
+const matchIsLiteral = {
+  en: /literal and case-sensitive/, tr: /büyük\/küçük harfe duyarlı/, de: /Groß- und Kleinschreibung/,
+  fr: /sensible à la casse/, es: /distingue mayúsculas/, zh: /区分大小写/,
+};
+const maskingIsOptIn = { en: /--pii-mask/, tr: /--pii-mask/, de: /--pii-mask/, fr: /--pii-mask/, es: /--pii-mask/, zh: /--pii-mask/ };
+
+test('the GDPR cards keep their caveats in every locale', () => {
   const { translations } = loadWizard();
-  const caveat = { en: /trained weights are not changed/, tr: /eğitilmiş ağırlıklar değişmez/,
-    de: /Gewichte bleiben unverändert/, fr: /poids entraînés ne changent pas/, es: /pesos entrenados no cambian/,
-    zh: /权重不会改变/ };
-  for (const [locale, pattern] of Object.entries(caveat)) {
-    assert.match(translations[locale]['home.cap.gdpr.body'], pattern, `${locale}: home.cap.gdpr.body`);
-  }
-  const weights = { en: /weights/, tr: /ağırlıklar/, de: /Gewichte/, fr: /poids/, es: /pesos/, zh: /权重/ };
-  for (const [locale, pattern] of Object.entries(weights)) {
-    for (const key of ['compliance.gdpr17.body', 'features.gov.purge.body']) {
-      assert.match(translations[locale][key], pattern, `${locale} ${key}: purge does not change trained weights`);
+  for (const [locale, pattern] of Object.entries(weightsUnchanged)) {
+    for (const key of ['home.cap.gdpr.body', 'compliance.gdpr17.body', 'features.gov.purge.body']) {
+      assert.match(translations[locale][key], pattern, `${locale} ${key}: purge leaves trained weights unchanged`);
     }
   }
-  const html = fs.readFileSync(path.join(root, 'site', 'index.html'), 'utf8');
-  const fallback = html.match(/data-i18n-html="home\.cap\.gdpr\.body">([^<]*(?:<code>[^<]*<\/code>[^<]*)*)<\/p>/);
-  assert.ok(fallback, 'index.html keeps a static fallback for the card');
-  assert.equal(fallback[1], translations.en['home.cap.gdpr.body'], 'the static fallback equals the English string');
+  for (const [locale, pattern] of Object.entries(accessInput)) {
+    for (const key of ['home.cap.gdpr.body', 'compliance.gdpr15.body', 'features.gov.access.body']) {
+      assert.match(translations[locale][key], pattern, `${locale} ${key}: reverse-pii is an input to an Article 15 response`);
+    }
+  }
+  for (const [locale, pattern] of Object.entries(accessCopyAndInfo)) {
+    assert.match(translations[locale]['compliance.gdpr15.body'], pattern, `${locale}: the response also needs a copy and the 15(1)(a)-(h) information`);
+  }
+  for (const [locale, pattern] of Object.entries(matchIsLiteral)) {
+    assert.match(translations[locale]['compliance.gdpr15.body'], pattern, `${locale}: matching is literal and case-sensitive`);
+  }
+  for (const [locale, pattern] of Object.entries(maskingIsOptIn)) {
+    for (const key of ['home.use.domain.body', 'features.data.pii.body']) {
+      assert.match(translations[locale][key], pattern, `${locale} ${key}: masking is opt-in (--pii-mask)`);
+    }
+  }
+  assert.doesNotMatch(translations.en['compliance.art10.body'], /bias detection/i, 'the audit does not detect bias');
+});
+
+// A page shows its static fallback until the script runs, so each fallback of a GDPR string equals the English one.
+test('the static fallbacks of the GDPR strings equal the English translations', () => {
+  const { translations } = loadWizard();
+  const pairs = [
+    ['index.html', 'home.cap.gdpr.body'],
+    ['index.html', 'home.use.domain.body'],
+    ['compliance.html', 'compliance.gdpr15.body'],
+    ['compliance.html', 'compliance.gdpr17.body'],
+    ['features.html', 'features.gov.access.body'],
+    ['features.html', 'features.gov.purge.body'],
+  ];
+  for (const [page, key] of pairs) {
+    const html = fs.readFileSync(path.join(root, 'site', page), 'utf8');
+    const escaped = key.replace(/\./g, '\\.');
+    const fallback = html.match(new RegExp(`data-i18n-html="${escaped}">([^<]*(?:<code>[^<]*<\\/code>[^<]*)*)<\\/p>`));
+    assert.ok(fallback, `${page} keeps a static fallback for ${key}`);
+    assert.equal(fallback[1], translations.en[key], `${page} ${key}: the static fallback equals the English string`);
+  }
 });
