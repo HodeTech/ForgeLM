@@ -170,7 +170,7 @@ forgelm ingest ./scan.pdf --strategy sliding --chunk-size 1024 --overlap 128 \
   --output data/scan.jsonl
 
 # Yazmadan önce PII'yi maskele
-forgelm ingest ./customer_emails/ --pii-mask --output data/anon.jsonl
+forgelm ingest ./customer_emails/ --pii-mask --output data/masked.jsonl
 
 # Token-aware chunking — chunk'ları modelinizin vocab'ına göre boyutlandırır
 forgelm ingest ./policies/ --recursive --output data/policies.jsonl \

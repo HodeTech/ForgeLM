@@ -231,7 +231,11 @@ Default workflow for a non-trivial change:
    `check_usermanual_schema_drift.py --strict` — validates that every
    fenced YAML key under `docs/usermanuals/` resolves against the real
    `ForgeConfig` schema, catching fabricated-field examples that would
-   fail `--dry-run`). The four after the import-origin guard are the
+   fail `--dry-run`; it also fails on a top-level block `ForgeConfig` does
+   not have — a `chat:` or `output:` example — unless the page and exact
+   key set are listed with a reason as another tool's YAML or as a
+   known-open block, and on a listed row that no longer matches). The four
+   after the import-origin guard are the
    historical gauntlet;
    the three doc guards (Wave 3 / Wave 4 / Wave 5 additions) catch
    bilingual structural drift, broken markdown anchors, and CLI ↔ docs

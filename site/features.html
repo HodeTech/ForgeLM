@@ -414,13 +414,13 @@
       </div>
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></div>
-        <h3 data-i18n="features.gov.purge.title">GDPR Article 17 erasure</h3>
-        <p data-i18n-html="features.gov.purge.body"><code>forgelm purge</code> drops a data-subject's rows from training corpora and stamps the deletion in the append-only audit log.</p>
+        <h3 data-i18n="features.gov.purge.title">Row erasure (Article 17 step)</h3>
+        <p data-i18n-html="features.gov.purge.body"><code>forgelm purge</code> deletes rows by id from a training corpus and records the erasure in the append-only audit log; it is one step of an Article 17 erasure (trained weights are not changed).</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
-        <h3 data-i18n="features.gov.access.title">GDPR Article 15 access</h3>
-        <p data-i18n-html="features.gov.access.body"><code>forgelm reverse-pii</code> scans masked JSONL corpora for forensic substring or salted-digest matches that surface every row in which a data-subject identifier appears.</p>
+        <h3 data-i18n="features.gov.access.title">Identifier search (Article 15 input)</h3>
+        <p data-i18n-html="features.gov.access.body"><code>forgelm reverse-pii</code> scans JSONL corpora for plaintext or salted-digest matches of a data-subject identifier and lists the lines in the scanned files that contain it: an input to an Article 15 response.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg></div>

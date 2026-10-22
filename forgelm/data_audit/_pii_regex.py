@@ -1,8 +1,8 @@
 """Regex-based PII detector + masker.
 
-Prefix-anchored / shape-anchored patterns covering the GDPR-mandated
+Prefix-anchored / shape-anchored patterns covering the common
 structured identifiers (email, phone, IBAN, credit card, national IDs).
-These are the categories every audit *must* surface; the optional
+These are the categories every audit surfaces by default; the optional
 Presidio ML-NER adapter (:mod:`forgelm.data_audit._pii_ml`) layers on
 top to pick up unstructured identifiers (person names, organizations,
 locations) which regex inherently misses.

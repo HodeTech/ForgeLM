@@ -265,7 +265,7 @@
       syntheticTeacherModel: 'gpt-4o',
       syntheticSeedFile: '',
       syntheticApiKeyEnv: 'OPENAI_API_KEY',
-      // GDPR Article 5+17 retention horizons. Defaults below match
+      // GDPR Article 5(1)(e) retention horizons. Defaults below match
       // forgelm/config.py RetentionConfig.
       retentionAuditLog: 1825,        // 5 years
       retentionStaging: 7,
@@ -3008,7 +3008,7 @@
       }
     }));
 
-    // Retention horizons (GDPR Art. 5+17) accordion.
+    // Retention horizons (GDPR Art. 5(1)(e)) accordion.
     pane.appendChild(makeAccordion(state, persist, 'retention',
       'wizard.retention.title', 'wizard.retention.hint', function (body) {
       function makeNumberRow(field, labelKey, hintKey) {

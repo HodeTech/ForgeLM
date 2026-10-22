@@ -150,9 +150,15 @@ The flat `pii_summary` map gives compliance reviewers no guidance on
 }
 ```
 
-The tier table is consensus regulatory weighting (PCI-DSS for financial
-identifiers; GDPR Art. 9 + ENISA for government IDs). The `critical`
-tier now gates the command itself (next section); pipelines that also
+The tier table is ForgeLM's default weighting, not a classification taken
+from any regulation. Card numbers and IBANs are `critical` because they are
+directly usable for fraud (PCI DSS, an industry standard, covers card
+numbers; IBANs share the tier as ForgeLM's own judgement). National
+identifiers are `high` because they are hard to change and some national
+laws restrict their use (GDPR Art. 87 lets Member States set conditions for
+processing a national identification number). GDPR itself ranks no
+identifier: Art. 32 asks for security appropriate to the risk, an assessment
+this table helps you start and does not replace. The `critical` tier now gates the command itself (next section); pipelines that also
 want to stop at `high` should read `pii_severity.worst_tier` and refuse
 to publish without explicit review.
 
@@ -400,8 +406,10 @@ the audit reproducible (Annex IV requirement) and bare-install-friendly.
 
 ### ML-NER PII adapter — `--pii-ml` (Phase 12.5, opt-in)
 
-The default regex detector covers the structured identifiers EU AI Act
-Article 10 cares about (email, phone, IBAN, credit card, national IDs).
+The default regex detector covers the common structured identifiers
+(email, phone, IBAN, credit card, national IDs). Each is personal data under
+GDPR Art. 4(1) when it relates to an identified or identifiable natural
+person; a legal person's IBAN or switchboard number is not (recital 14) unless it identifies a natural person such as a sole trader, and a test card number relates to no one.
 Phase 12.5 adds an opt-in **Presidio** ([data-privacy-stack/presidio](https://github.com/data-privacy-stack/presidio))
 adapter that layers ML-NER on top — adding the unstructured-identifier
 categories regex inherently misses: `person`, `organization`, `location`.
@@ -413,7 +421,8 @@ forgelm audit data/ --output ./audit/ --pii-ml
 
 The new categories merge into the existing `pii_summary` and
 `pii_severity` blocks under disjoint names so the regex baseline stays
-visible alongside the ML signal:
+visible alongside the ML signal (the example is for ForgeLM's default English
+configuration, which never reports `organization`):
 
 ```json
 {
@@ -421,15 +430,14 @@ visible alongside the ML signal:
     "email": 12,
     "phone": 3,
     "person": 47,         // ← Presidio
-    "organization": 18,   // ← Presidio
     "location": 9         // ← Presidio
   },
   "pii_severity": {
-    "by_tier": {"critical": 0, "high": 0, "medium": 59, "low": 30},
+    "by_tier": {"critical": 0, "high": 0, "medium": 59, "low": 12},
     "by_type": {
       "email": {"count": 12, "tier": "medium"},
       "person": {"count": 47, "tier": "medium"},
-      "organization": {"count": 18, "tier": "low"}
+      "location": {"count": 9, "tier": "low"}
     },
     "worst_tier": "medium"
   }

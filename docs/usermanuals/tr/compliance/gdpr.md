@@ -19,7 +19,7 @@ GDPR (Avrupa) ve KVKK (Türkiye), eğitimde kullanılan kişisel verilere koruma
 | **Bütünlük & gizlilik** | GDPR Md. 5(1)(f) | Yetkisiz erişime karşı koruyun. |
 | **Hesap verebilirlik** | GDPR Md. 5(2) | Uyumu gösterebilmelisiniz. |
 
-KVKK (Türkiye) bu ilkeleri yakından yansıtır.
+KVKK (Türkiye, 6698 sayılı Kanun) benzer ilkeleri 4. maddesinde sayar. 11. madde ilgili kişiye verilerinin işlenip işlenmediğini öğrenme ve silinmesini ya da yok edilmesini isteme hakkını tanır (11/1-(e); 7. maddedeki koşullar çerçevesinde, 7. madde ayrıca işleme sebebi ortadan kalkınca veri sorumlusunu verileri silmeye, yok etmeye veya anonim hale getirmeye mecbur eder) ve veri sorumlusu başvuruyu en geç otuz gün içinde sonuçlandırır (13/2). KVKK'da ayrı bir hesap verebilirlik ilkesi yoktur ve güvenlik yükümlülükleri 12. maddededir.
 
 ## ForgeLM her birini nasıl ele alıyor
 
@@ -31,7 +31,7 @@ Ingest'te PII maskeleme, ForgeLM'in tespit ettiği tanımlayıcı biçimlerini b
 $ forgelm ingest ./policies/ --recursive --strategy markdown --pii-mask --output data/policies.jsonl
 ```
 
-Dedektörler e-posta, telefon, kredi kartı, IBAN ile Türk, Alman, Fransız ve ABD ulusal kimlik biçimlerini kapsar; her eşleşme `[REDACTED]` olur. **İsimler, adresler, doğum tarihleri, sağlık verisi ve diğer serbest metin tespit edilmez**; desenler sıradan düzyazıyı maskelemek yerine sınırda bir eşleşmeyi kaçırmaya ayarlıdır. Maskeleme JSONL'daki kişisel veriyi azaltır; tanımlanabilir özneleri ondan kaldırmaz. Bkz. [PII Maskeleme](#/data/pii-masking).
+Dedektörler e-posta, telefon, kredi kartı, IBAN ile Türk, Alman, Fransız ve ABD ulusal kimlik biçimlerini kapsar; her eşleşme `[REDACTED]` olur. **İsimler, adresler, doğum tarihleri, sağlık verisi ve diğer serbest metin tespit edilmez**; desenler sıradan düzyazıyı maskelemek yerine sınırda bir eşleşmeyi kaçırmaya ayarlıdır. Maskeleme JSONL'daki kişisel veriyi azaltır; tanımlanabilir özneleri ondan kaldırmaz. Geriye kaç isim ve yerin (bazı dil modellerinde kurumların da) kaldığını ölçmek için `forgelm audit --pii-ml` çalıştırın: Presidio NER **tespiti** ekler; bu tespit her split için kategori başına sayıları raporlar (hangi satırların ya da hangi isimlerin olduğunu değil) ve hiçbir şeyi maskelemez. `ingestion-pii-ml` extra'sını ve bir spaCy modelini gerektirir (Türkçe gibi özel modeli olmayan diller için `--pii-ml-language xx`, `xx_ent_wiki_sm` kullanır). Bilinen bir ismi bulmak için onu `forgelm reverse-pii` ile arayın. Bkz. [PII Maskeleme](#/data/pii-masking) ve [ML-NER PII](#/data/pii-ml).
 
 ### Hesap verebilirlik (Md. 5(2))
 
@@ -53,7 +53,7 @@ retention:
   ephemeral_artefact_retention_days: 365
 ```
 
-`forgelm purge --check-policy --config config.yaml` ufku aşmış artefaktları listeler ve her zaman 0 ile çıkar. Hiçbir şey otomatik silinmez ve bunun için audit log'a bir şey yazılmaz; süresi geçeni silmek depolama katmanınızın işidir. (`retention.enforce` ayrılmıştır: henüz hiçbir komut onu kullanmaz.)
+`forgelm purge --check-policy --config config.yaml --output-dir <training.output_dir>` o dizinde ufku aşmış artefaktları listeler ve kaç tane bulursa bulsun 0 ile çıkar (`--output-dir` verilmezse `training.output_dir`'i değil, bulunulan dizini tarar). Hiçbir şey otomatik silinmez ve bunun için audit log'a bir şey yazılmaz; süresi geçeni silmek depolama katmanınızın işidir. (`retention.enforce` ayrılmıştır: henüz hiçbir komut onu kullanmaz.) ForgeLM `raw_documents/` veya `ingestion_output/` dizinlerini oluşturmaz; bu yüzden `raw_documents_retention_days`, yalnızca kaynak dokümanları `<training.output_dir>/raw_documents/` ya da `ingestion_output/` altında tutuyorsanız etkili olur.
 
 ## Veri sahibi talepleri
 
@@ -66,17 +66,18 @@ En sık talep tipleri ve ForgeLM nasıl yardım eder:
 Kişinin tanımlayıcısını eğitim verinizde arayın:
 
 ```shell
-$ forgelm reverse-pii --query "ali@example.com" data/*.jsonl
+$ forgelm reverse-pii --query "ali@example.com" --output-dir ./outputs data/*.jsonl
+No matches for identifier hash 3f2a9c1e5b7d4a60… (literal, plaintext mode) in 3 file(s).
 ```
 
-Tarama, tanımlayıcının geçtiği satırları raporlar; sıfır eşleşme geçerli bir cevaptır. Yalnızca işaret ettiğiniz dosyalarda gerçekten bulunanı bulur. Maskeleme yalnızca tespit ettiği tanımlayıcı biçimlerini kaldırır; bir isim ya da tespit edilemeyen bir varyant kalabilir ve maskelenmiş JSONL taraması ham kaynak dokümanları kapsamaz: onları ayrıca arayın. ForgeLM eğitilmiş bir modelin neyi hatırladığını söyleyemez.
+Tarama, tanımlayıcının geçtiği dosyayı ve satırı raporlar (snippet'ler ham corpus metnidir; kalıcı bir log'a yönlendirmeyin); yukarıdaki gibi sıfır eşleşme yalnızca, taradığınız dosyaların hiçbirinde birebir metnin bulunmadığı anlamına gelir. Tek başına kişi hakkında hiç veri tutmadığınızı göstermez ve Madde 15 yanıtı bir arama sonucundan fazlasını ister: verinin bir kopyası ve Madde 15(1)(a)-(h) bilgileri (bkz. [GDPR Silme ve Erişim](#/compliance/gdpr-erasure)). Basılan değer, audit event'inin kaydettiği salt'lı tanımlayıcı hash'inin ilk 16 hex hanesidir, tanımlayıcının kendisi değildir. `--output-dir`, ForgeLM'in dizin başına salt'ı (`.forgelm_audit_salt`) tuttuğu ve `data.access_request_query` event'ini eklediği yerdir: `forgelm purge`'e verdiğiniz dizini verin, böylece iki event aynı zincire katılır. Verilmezse ikisi de ilk corpus dosyasının yanına yazılır ve ForgeLM bir uyarı loglar; `data/*.jsonl` gibi bir glob ile bu, `audit_log.jsonl`'i corpus dosyalarınızın arasına koyar, bu yüzden her zaman `--output-dir` verin. Yalnızca işaret ettiğiniz dosyalarda gerçekten bulunanı bulur: eşleşme büyük/küçük harfe duyarlıdır ve ham dosya metnini karşılaştırır, bu yüzden yazım ve harf varyantlarını da arayın (`--type custom --query '(?i)…'`); `\u00e7` gibi ASCII kaçışlarıyla yazılmış bir corpus ASCII dışı isimleri literal sorgudan gizler. Maskeleme yalnızca tespit ettiği tanımlayıcı biçimlerini kaldırır; bir isim ya da tespit edilemeyen bir varyant kalabilir ve maskelenmiş JSONL taraması ham kaynak dokümanları kapsamaz: onları ayrıca arayın. ForgeLM eğitilmiş bir modelin neyi hatırladığını söyleyemez.
 
 ### Silme hakkı (Md. 17)
 
 "Verilerimi silin."
 
 Bir kişinin verisi eğitim setinizdeydi:
-1. Satırları `forgelm reverse-pii` ile bulun, sonra `forgelm purge --row-id <id> --corpus <dosya>` ile kaldırın; her silme audit log'a yazılır. `--row-id` satırın `id` veya `row_id` alanıyla eşleştirilir, satır numarasıyla asla; `forgelm ingest` bu alanlardan hiçbirini yazmaz. Bu yüzden **eğitimden önce** her satıra kalıcı bir id verin (aşağıya bakın). Id'si olmayan bir corpus satır satır silinemez.
+1. Satırları `forgelm reverse-pii` ile bulun, sonra `forgelm purge --row-id <id> --corpus <dosya> --output-dir ./outputs` ile kaldırın (`reverse-pii` ile aynı dizin; purge'ün eğitilmiş bir `final_model/` için de uyarabilmesi adına eğitim çıktı dizininizi kullanın); her silme audit log'a yazılır. `--row-id` satırın `id` veya `row_id` alanıyla eşleştirilir, satır numarasıyla asla; `forgelm ingest` bu alanlardan hiçbirini yazmaz. Bu yüzden **eğitimden önce** her satıra kalıcı bir id verin (aşağıya bakın). Id'si olmayan bir corpus satır satır silinemez.
 2. Ham kaynak dokümanlar hâlâ içerebilir — ham deponuzdan düşürün ve gerekirse yeniden ingest edin.
 3. Model bazı detayları ezberlemiş olabilir — aşağıdaki "model-seviyesi silme"ye bakın.
 
@@ -106,11 +107,11 @@ finally:
         os.remove(tmp)
 ```
 
-Eğitimi id'li dosyadan yapın. `forgelm reverse-pii` tanımlayıcının geçtiği dosyayı ve satırı raporlar; o satırın `id` değerini dosyadan okuyup `forgelm purge --row-id`'ye verin. Eğitimden sonra id'leri yeniden atamak audit log ile corpus arasındaki bağı koparır; bu yüzden bir kez atayın.
+Eğitimi id'li dosyadan yapın. `forgelm reverse-pii` tanımlayıcının geçtiği dosyayı ve satırı raporlar; o satırın `id` değerini dosyadan okuyup `forgelm purge --row-id`'ye verin. Eğitimden sonra id'leri yeniden atamak audit log ile corpus arasındaki bağı koparır; bu yüzden bir kez atayın. Yeni dosyayı kontrol ettikten sonra özgün `data/train.jsonl`'i taşıyın ya da silin: id'siz olarak hâlâ her satırı tutar; bu yüzden `data/*.jsonl` glob'u iki kopyayı da eşleştirir, `reverse-pii` kişiyi ikisinde de raporlar ve `purge` yalnızca `--corpus` ile adını verdiğiniz dosyayı düzenler.
 
 ### Model-seviyesi silme
 
-LLM'ler eğitimden nadir string'leri ezberleyebilir. PII maskelemeyle bile deploy edilmiş bir modelden tüm izleri kaldırmak zordur. ForgeLM'in savunmaları:
+LLM'ler eğitimden nadir string'leri ezberleyebilir. PII maskelemeyle bile deploy edilmiş bir modelden tüm izleri kaldırmak zordur. EDPB Görüş 28/2024'e göre kişisel veriyle eğitilmiş bir model her zaman anonim değildir; modelinizin anonim olup olmadığı olay bazında değerlendirilmelidir. Anonim olduğunu gösterene kadar erişim ve silme taleplerine vereceğiniz yanıtları, eğitilmiş ağırlıklar hâlâ kişisel veri içerebilirmiş gibi planlayın. ForgeLM'in savunmaları:
 
 - **Girenleri azalt:** PII maskeleme ve deduplikasyon (ezberlenen veri genelde tekrarlanan veridir).
 - **Ezber ölçülmez:** ForgeLM, eğitilmiş bir modelin belirli bir string'i üretip üretmediğini test etmez.

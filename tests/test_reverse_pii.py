@@ -143,6 +143,24 @@ class TestPlaintextResidualMatch:
         assert len(payload["files_scanned"]) == 1
         assert payload["files_scanned"][0]["match_count"] == 0
 
+    def test_zero_match_line_is_the_one_the_docs_show(self, tmp_path: Path, capsys) -> None:
+        # docs/usermanuals/{en,tr}/compliance/gdpr.md show this line verbatim (the same regex pins the pages in
+        # tests/test_usermanual_reference_consistency.py); if the command's wording changes, the pages go stale.
+        import re
+
+        from forgelm.cli.subcommands._reverse_pii import _run_reverse_pii_cmd
+
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "row-A", "text": "no PII here"}])
+        args = _build_args(query="ali@example.com", files=[str(corpus)], output_dir=str(tmp_path))
+        with pytest.raises(SystemExit) as ei:
+            _run_reverse_pii_cmd(args, output_format="text")
+        assert ei.value.code == 0
+        out = capsys.readouterr().out
+        assert re.search(
+            r"No matches for identifier hash [0-9a-f]{16}… \(literal, plaintext mode\) in \d+ file\(s\)\.", out
+        ), out
+
     def test_default_type_is_literal_not_regex(self, tmp_path: Path, capsys) -> None:
         """F-W3-02 regression: the default --type must NOT interpret the
         query as a regex.  ``alice@example.com`` (with literal dot) must
@@ -417,6 +435,59 @@ class TestAuditEventDoesNotLeakIdentifier:
         assert purge_target_id == reverse_pii_query_hash, (
             "cross-tool audit correlation requires both subcommands to salt with the same per-output-dir salt"
         )
+
+    @pytest.mark.parametrize("secret", [None, "s3cret-value-for-test"])
+    def test_digests_correlate_end_to_end_in_the_default_plaintext_mode(
+        self, tmp_path: Path, capsys, monkeypatch, secret: str | None
+    ) -> None:
+        """The documented rule: purge's ``row_id_hash`` equals reverse-pii's ``query_hash`` when the value, the
+        ``--output-dir`` and the ``FORGELM_AUDIT_SECRET`` state are the same, with no ``--salt-source``; and
+        ``--salt-source`` is a *different* scan (digests inside the corpus) that finds nothing in a plaintext corpus."""
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+        from forgelm.cli.subcommands._reverse_pii import _run_reverse_pii_cmd
+
+        if secret:
+            monkeypatch.setenv("FORGELM_AUDIT_SECRET", secret)
+        else:
+            monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        # Mixed case on purpose: a command that lower-cased or stripped the value would break the equality.
+        identifier = "Alice@Example.com"
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": identifier, "text": f"mail {identifier}"}])
+        purge_args = SimpleNamespace(
+            row_id=identifier,
+            corpus=str(corpus),
+            run_id=None,
+            kind=None,
+            check_policy=False,
+            output_dir=str(tmp_path),
+            config=None,
+            justification=None,
+            dry_run=True,
+            row_matches="one",
+        )
+        with pytest.raises(SystemExit) as purge_exit:
+            _run_purge_cmd(purge_args, output_format="json")
+        assert purge_exit.value.code == 0
+        purge_hash = json.loads(capsys.readouterr().out)["row_id_hash"]
+
+        def scan(salt_source: str | None, output_dir: Path = tmp_path) -> dict:
+            args = _build_args(
+                query=identifier, files=[str(corpus)], output_dir=str(output_dir), salt_source=salt_source
+            )
+            with pytest.raises(SystemExit) as scan_exit:
+                _run_reverse_pii_cmd(args, output_format="json")
+            assert scan_exit.value.code == 0
+            return json.loads(capsys.readouterr().out)
+
+        plaintext = scan(None)
+        assert plaintext["query_hash"] == purge_hash
+        assert plaintext["match_count"] == 1
+        # Another output directory has another salt, so its digest differs: the documented condition is real.
+        assert scan(None, output_dir=tmp_path / "elsewhere")["query_hash"] != purge_hash
+        hash_mode = scan("env_var" if secret else "per_dir")
+        assert hash_mode["scan_mode"] == "hash"
+        assert hash_mode["match_count"] == 0, "--salt-source searches for digests, so a plaintext corpus has none"
 
 
 # ---------------------------------------------------------------------------

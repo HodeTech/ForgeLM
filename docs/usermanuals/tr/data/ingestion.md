@@ -125,7 +125,7 @@ Yetkili liste için `forgelm ingest --help`. En sık görülenler:
 :::
 
 :::tip
-**Ingest'ten sonra her zaman audit yapın.** Temiz ingest temiz dataset anlamına gelmez. Split-arası sızıntı, near-duplicate ve maskelemenin kaçırdığı PII için `forgelm audit data/output.jsonl` koşturun.
+**Ingest'ten sonra her zaman audit yapın.** Temiz ingest temiz dataset anlamına gelmez. Split-arası sızıntı, near-duplicate ve maskelemenin kapsamadığı PII için `forgelm audit data/output.jsonl` koşturun (`forgelm audit` aynı regex'leri yeniden uygular; isim ve konumları saymak için `--pii-ml` ekleyin).
 :::
 
 ## Bkz.

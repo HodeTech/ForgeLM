@@ -95,7 +95,7 @@ ForgeLM yerleşik bir quorum gate'i **göndermez**. `approval.quorum` alanı yok
 
 ## Timeout
 
-ForgeLM staged koşumları **timeout etmez**. `approval.timeout_hours`, `human_approval.timeout` event'i veya auto-fail saati yoktur. Staged koşum süresiz bekler; deployer eski staging dizinlerinin sona ermesini istiyorsa bunun yerine `retention.staging_ttl_days`'i konfigüre edin — bu GDPR Madde 17 retention pipeline'ına bağlanır (yapılandırılan horizon'dan sonra dizini fiziksel olarak prune eder, approval gate'e değil).
+ForgeLM staged koşumları **timeout etmez**. `approval.timeout_hours`, `human_approval.timeout` event'i veya auto-fail saati yoktur. Staged koşum süresiz bekler. `retention.staging_ttl_days` bunu değiştirmez: yalnızca `forgelm purge --check-policy`'nin horizon'dan eski staging dizinlerini listelemesini sağlar. Hiçbir şey otomatik silinmez ya da sona erdirilmez ve rapor approval gate'e dokunmaz. Bir staging dizinini kendiniz kaldırmak (`forgelm purge --run-id <id> --kind staging`) bekleyen modeli atar ve onayı karara bağlanmamış bırakır; kararın audit log'da görünmesini istiyorsanız önce bir `forgelm reject` kaydedin.
 
 ## Bekleyen koşuları inceleme
 
@@ -141,7 +141,7 @@ Granted / rejected bir koşu üzerinde `--show` çalıştırıldığında tam za
 :::
 
 :::warn
-**Üretim kararları için quorum yok.** Yüksek-riskli üretim deployment'ları için tek-reviewer onayı yetersizdir. Her zaman quorum >= 2 isteyin.
+**Üretim kararları için quorum yok.** ForgeLM her karar için tek bir onaylayıcı kaydeder. Risk değerlendirmeniz birden fazla reviewer gerektiriyorsa bunu yukarıda anlatıldığı gibi ForgeLM'in dışında zorlayın (EU AI Act Madde 14(5), bir tanımlamanın en az iki gerçek kişi tarafından ayrıca doğrulanmasını yalnızca Ek III'ün 1(a) bendindeki uzaktan biyometrik tanımlama sistemleri için ister; kolluk, göç, sınır kontrolü ve iltica alanında, Birlik veya ulusal hukuk bunu orantısız bulursa istisna vardır).
 :::
 
 :::tip

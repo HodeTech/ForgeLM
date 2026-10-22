@@ -15,7 +15,7 @@ from ._logging import logger
 
 
 def _warn_reserved_retention_enforce(config) -> None:
-    """``retention.enforce`` is validated and offered by both wizards, but no command reads it.
+    """``retention.enforce`` is validated and offered by both wizards, but no command acts on it.
 
     A config that sets ``warn_on_excess`` or ``block_on_excess`` is asking for a gate that does not exist; say so,
     rather than accept it silently.  (This lives here, not in the schema, to keep ``config.py`` within its

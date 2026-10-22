@@ -66,7 +66,7 @@ except ImportError:  # pragma: no cover
 # the regex detector so the default audit keeps its zero-extra-deps
 # guarantee. Presidio + spaCy are heavyweight (~50 MB model download),
 # so we stay strictly opt-in and fail soft when missing — the regex set
-# already covers the GDPR-mandated structured identifiers (email, phone,
+# already covers the common structured identifiers (email, phone,
 # IBAN, credit card, national IDs) that the audit's compliance contract
 # is built around. ML adds the *unstructured* identifiers regex inherently
 # misses: person names, organizations, locations.

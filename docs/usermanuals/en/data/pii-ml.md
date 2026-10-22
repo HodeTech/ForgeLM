@@ -5,9 +5,9 @@ description: Optional Microsoft Presidio adapter that adds person / organization
 
 # ML-NER PII Detection — `--pii-ml`
 
-The default [PII Masking](#/data/pii-masking) layer is regex-anchored and covers the *structured* identifiers GDPR Article 10 cares about (email, phone, IBAN, credit card, national IDs). Presidio NER adds the *unstructured* identifiers regex inherently misses: person names, organization names, geographic locations.
+The default [PII Masking](#/data/pii-masking) layer is regex-anchored and covers the common *structured* identifiers (email, phone, IBAN, credit card, national IDs). They are personal data under GDPR Article 4(1) whenever they relate to an identified or identifiable natural person; Article 87 additionally lets Member States set the specific conditions for processing national identification numbers. Presidio NER adds the *unstructured* identifiers regex inherently misses: person names, organization names, geographic locations.
 
-This is an **opt-in** layer. The default audit + ingest behaviour is unchanged when `--pii-ml` is not passed.
+This is an **opt-in** layer. The default audit behaviour is unchanged when `--pii-ml` is not passed (`forgelm ingest` has no `--pii-ml` flag).
 
 ## When to use it
 
@@ -38,10 +38,16 @@ Without the spaCy model, `forgelm audit --pii-ml` raises a typed `ImportError` *
 
 ```shell
 $ forgelm audit data/customer-letters.jsonl --output ./audit/ --pii-ml
-✓ format: instructions (8,400 rows)
-⚠ PII: 12 emails, 3 phone, 1 IBAN (regex layer)
-⚠ PII (ML): 47 person, 18 organization, 9 location (Presidio)
-   worst tier: medium
+Data audit summary
+  Source        : data/customer-letters.jsonl
+  Total samples : 8400
+  Splits        : train
+  └─ train: n=8400
+     length  min=31 max=2210 mean=402.7 p95=1180
+     languages (top-3): en=8400
+     PII             : email=12, location=9, person=47, phone=3
+  PII severity   : worst tier = medium
+     by tier      : medium=59, low=12
 ```
 
 The Presidio findings merge into the same `pii_summary` and `pii_severity` blocks under disjoint category names, so the regex baseline stays visible alongside the ML signal:
@@ -52,15 +58,16 @@ The Presidio findings merge into the same `pii_summary` and `pii_severity` block
     "email": 12,
     "phone": 3,
     "person": 47,
-    "organization": 18,
     "location": 9
   },
   "pii_severity": {
-    "by_tier": {"critical": 0, "high": 0, "medium": 59, "low": 30},
+    "by_tier": {"critical": 0, "high": 0, "medium": 59, "low": 12},
     "worst_tier": "medium"
   }
 }
 ```
+
+Presidio's default English configuration ignores the `organization` label (it produces many false positives), so with the default `--pii-ml-language en` the `organization` count stays 0 and the example above shows none; a language model that reports it, for example `--pii-ml-language xx`, adds an `organization` count.
 
 ## Severity tiers
 
@@ -115,7 +122,7 @@ _require_presidio()
 text = "Alice Williams visits Acme Corp's Berlin office on Monday."
 counts = detect_pii_ml(text, language="en")
 print(counts)
-# {'person': 1, 'organization': 1, 'location': 1}
+# {'person': 1, 'location': 1}   (Presidio's default English configuration ignores organizations)
 ```
 
 The function returns an empty dict for non-string input, missing extras, or transient analyzer errors (a single bad row never blocks the audit). Hard failures (missing spaCy model, language not registered) are caught up front by `_require_presidio(language=...)` and raised before any rows are scanned — call it explicitly when you bypass `audit_dataset` and want the same pre-flight guarantees.

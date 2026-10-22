@@ -112,7 +112,7 @@ Manuel kontroller:
 
 - Eğitim verisi sürüm kontrollü veya immutable depolamada saklanır
 - SHA-256 fingerprint her eğitim koşumu için `data_provenance.json`'da kaydedilir
-- Eğitim verisi en az **5 yıl** model artefaktlarıyla birlikte saklanır
+- Eğitim verisi model artefaktlarıyla birlikte yalnızca saklama politikanızın belirlediği ve gerekçelendirdiği süre boyunca saklanır: kişisel veri yalnızca gerektiği kadar tutulabilir (GDPR Madde 5(1)(e)) ve EU AI Act Madde 18 gibi bir dokümantasyon saklama yükümlülüğü kişisel veriyi saklamayı tek başına haklı kılmaz. `data_provenance.json` içindeki SHA-256 parmak izi satır içeriği taşımaz ve corpus'tan daha uzun süre saklanabilir
 - Erişim yetkili ML ekibi üyeleriyle sınırlıdır
 
 ## 7. İnceleme

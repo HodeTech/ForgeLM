@@ -126,7 +126,7 @@ that appear most often:
 :::
 
 :::tip
-**Always audit after ingest.** A clean ingest doesn't mean a clean dataset. Run `forgelm audit data/output.jsonl` to check for cross-split leakage, near-duplicates, and PII the masking missed.
+**Always audit after ingest.** A clean ingest doesn't mean a clean dataset. Run `forgelm audit data/output.jsonl` to check for cross-split leakage, near-duplicates, and PII the masking did not cover (`forgelm audit` re-applies the same regexes, so add `--pii-ml` to count names and locations).
 :::
 
 ## See also

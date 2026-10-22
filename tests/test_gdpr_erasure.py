@@ -298,6 +298,100 @@ class TestArtefactDeletion:
         # Other run's bundle is untouched.
         assert (compliance_dir / "compliance_other-run.json").exists()
 
+    def test_artefacts_kind_finds_nothing_in_the_standard_fixed_name_bundle(
+        self, tmp_path: Path, minimal_config, capsys
+    ) -> None:
+        # CR-A10-002 / DOC-D1B05-005: the exporter writes fixed basenames that carry no run id, so
+        # ``--kind artefacts`` cannot find the real bundle.  It fails safe (deletes nothing, exits 1).
+        # The bundle is built by the real exporter, with the run id also written *inside* the files,
+        # so the test still trips when the resolver learns to prove ownership from file contents
+        # rather than from names.
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+        from forgelm.compliance import export_compliance_artifacts, generate_training_manifest
+        from forgelm.config import ForgeConfig
+
+        run_id = "fg-abc123def456"
+        compliance_dir = tmp_path / "compliance"
+        manifest = generate_training_manifest(ForgeConfig(**minimal_config()), metrics={"eval_loss": 0.5})
+        manifest["run_id"] = run_id
+        bundle = [Path(p).name for p in export_compliance_artifacts(manifest, str(compliance_dir))]
+        (compliance_dir / "data_governance_report.json").write_text(f'{{"run_id": "{run_id}"}}', encoding="utf-8")
+        bundle.append("data_governance_report.json")
+
+        args = _build_args(run_id=run_id, kind="artefacts", output_dir=str(tmp_path))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+        tripwire = (
+            "`purge --kind artefacts` now finds the standard compliance bundle.  Delete this test and the "
+            "'finds nothing in the standard bundle' warning in docs/guides/gdpr_erasure{,-tr}.md, "
+            "docs/reference/purge_subcommand{,-tr}.md and docs/usermanuals/{en,tr}/compliance/gdpr-erasure.md, "
+            "and update test_usermanual_reference_consistency.py::test_purge_docs_warn_that_artefacts_misses_the_standard_bundle"
+        )
+        assert ei.value.code == 1, tripwire
+        assert all((compliance_dir / name).exists() for name in bundle), tripwire
+        failed = [e for e in _read_audit_events(tmp_path / "audit_log.jsonl") if e["event"] == "data.erasure_failed"]
+        assert [e["error_class"] for e in failed] == ["NoMatchingArtefacts"], tripwire
+        # The operator sees why: the message and the audit event both say the bundle has fixed names.
+        assert "fixed filenames" in capsys.readouterr().out
+        assert "fixed filenames" in failed[0]["error_message"]
+
+    def test_a_generic_run_id_matches_the_fixed_basenames_as_the_docs_warn(self, tmp_path: Path, capsys) -> None:
+        # The docs say the standard bundle is not found for a real run id, but that a generic token of a fixed name
+        # (``json``, ``report``) does match it and deletes it: the reason to always pass the full run id.  If the
+        # resolver learns to prove ownership, update the caveat in the six documents together with this test.
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        compliance_dir = tmp_path / "compliance"
+        compliance_dir.mkdir()
+        (compliance_dir / "compliance_report.json").write_text("{}")
+        (compliance_dir / "training_manifest.yaml").write_text("{}")
+
+        args = _build_args(run_id="json", kind="artefacts", output_dir=str(tmp_path), dry_run=True)
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+        assert ei.value.code == 0
+        would_delete = json.loads(capsys.readouterr().out)["would_delete"]
+        assert [Path(p).name for p in would_delete] == ["compliance_report.json"]
+
+    def test_only_the_purge_reader_names_the_legacy_staging_marker(self) -> None:
+        # The docs tell operators to remove an unmarked legacy ``final_model.staging/``
+        # themselves because ForgeLM never writes ``staging_run_id``.  Every use of that
+        # marker name in the package must be the read-only ownership check; a writer
+        # anywhere would make the documented advice stale (update docs + this test).
+        import ast
+
+        forgelm_dir = Path(__file__).resolve().parent.parent / "forgelm"
+        total = 0
+        inside_reader = 0
+        reader_calls: set[str] = set()
+        for path in sorted(forgelm_dir.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            total += sum(1 for n in ast.walk(tree) if isinstance(n, ast.Constant) and n.value == "staging_run_id")
+            for fn in (
+                n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_legacy_staging_owned_by"
+            ):
+                inside_reader += sum(
+                    1 for n in ast.walk(fn) if isinstance(n, ast.Constant) and n.value == "staging_run_id"
+                )
+                reader_calls |= {
+                    n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "?")
+                    for n in ast.walk(fn)
+                    if isinstance(n, ast.Call)
+                }
+        assert total == inside_reader == 1, "the marker name must appear only in _legacy_staging_owned_by"
+        # A name assembled from pieces ("staging_" + "run_id", f"staging_{key}") would dodge the literal count above.
+        assembled = [
+            f"{path.relative_to(forgelm_dir.parent)}:{n.lineno}"
+            for path in sorted(forgelm_dir.rglob("*.py"))
+            for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            if isinstance(n, (ast.JoinedStr, ast.BinOp))
+            and any(isinstance(c, ast.Constant) and c.value == "staging_" for c in ast.walk(n))
+        ]
+        assert assembled == [], f"build the legacy marker name only inside the reader, never from pieces: {assembled}"
+        assert reader_calls <= {"is_file", "read_text", "strip"}, (
+            f"the marker reader must stay read-only: {reader_calls}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # §7 Test 5 — Audit chain post-erasure still verifies

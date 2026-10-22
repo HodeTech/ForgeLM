@@ -281,8 +281,9 @@ forgelm reverse-pii --query "alice@example.com" --type email \
     --output-dir ./outputs data/*.jsonl
 # JSON envelope { matches: [...], match_count: N } döner
 # Audit chain QUERY HASH'LENMİŞ ŞEKİLDE bir
-# `data.access_request_query` event damgalar (asla raw — salt audit
-# log'un kendisine karşı wordlist saldırılarına karşı koruma sağlar).
+# `data.access_request_query` event damgalar (asla raw). Salt'lı digest
+# kişisel veridir, anonim değildir: `.forgelm_audit_salt`'ı log'dan ayrı
+# tutun (veya FORGELM_AUDIT_SECRET ayarlayın), yoksa tahmin edilen bir identifier ona karşı sınanabilir.
 ```
 
 Madde 17 (silme hakkı):
@@ -292,15 +293,17 @@ forgelm purge --row-id "alice@example.com" --corpus data/2026Q2.jsonl \
     --output-dir ./outputs
 # Audit chain `target_id` HASH'LENMİŞ ŞEKİLDE
 # `data.erasure_requested` → `data.erasure_completed` (veya
-# `data.erasure_failed`) damgalar.  Eğer satırı eğiten bir model
-# `final_model/`e sahipse `data.erasure_warning_memorisation` DA
-# yangın eder ve memorisation residual riskini özneye bildirmek
-# zorundasınız.
+# `data.erasure_failed`) damgalar.  Eğer `--output-dir` altında doğrudan bir
+# `final_model/` dizini varsa `data.erasure_warning_memorisation` DA
+# tetiklenir; satırı hangi modelin gördüğünü söylemez, bu yüzden
+# corpus ile eğitilmiş her modeli kapsam içinde sayın ve memorisation
+# kalan ezberleme riskini veri sahibine bildirin.
 ```
 
 Cross-tool digest correlation (purge `target_id` == reverse-pii
-`query_hash` aynı `output_dir`'deki aynı identifier için) Wave 3
-follow-up testleriyle pin'lenmiştir.
+`query_hash`: aynı `output_dir`, aynı değer ve aynı
+`FORGELM_AUDIT_SECRET` durumu, `--salt-source` olmadan) testlerle
+pin'lenmiştir.
 
 ## Yaygın tuzaklar
 
