@@ -647,6 +647,11 @@ class TestIngestionPageQuickExampleStaysRunnable:
         tokens = self._quick_example_tokens(lang)
         assert "--chunk-tokens" in tokens, f"ingestion.md ({lang}) must keep the documented --chunk-tokens example"
         assert "--tokenizer" in tokens, f"ingestion.md ({lang}) must pass --tokenizer with --chunk-tokens"
+        chunk_tokens_at = tokens.index("--chunk-tokens")
+        chunk_value = tokens[chunk_tokens_at + 1] if chunk_tokens_at + 1 < len(tokens) else ""
+        assert chunk_value.isdigit() and int(chunk_value) > 0, (
+            f"ingestion.md ({lang}) must give --chunk-tokens a positive token count, not just the bare flag"
+        )
         tokenizer_at = tokens.index("--tokenizer")
         assert tokenizer_at + 1 < len(tokens) and not tokens[tokenizer_at + 1].startswith("-"), (
             f"ingestion.md ({lang}) must give --tokenizer a model name, not just the bare flag"

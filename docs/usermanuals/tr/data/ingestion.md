@@ -31,7 +31,7 @@ $ forgelm ingest ./policies/ \
     --all-mask \
     --output data/policies.jsonl
 Ingestion summary
-  Output JSONL  : data/policies.jsonl
+  Output JSONL  : /srv/project/data/policies.jsonl
   Files (in/out): processed=47  skipped=0
   Chunks        : 12240
   Total chars   : 28410553
@@ -39,8 +39,8 @@ Ingestion summary
   Note          : PII masking redacted 18 span(s): email=11, phone=7
   Note          : Secrets masking enabled — no credentials detected in this corpus
 
-Next: forgelm audit data/policies.jsonl --output ./audit/
-Or train: forgelm --config <your.yaml>  (set data.dataset_name_or_path: data/policies.jsonl)
+Next: forgelm audit /srv/project/data/policies.jsonl --output ./audit/
+Or train: forgelm --config <your.yaml>  (set data.dataset_name_or_path: /srv/project/data/policies.jsonl)
 ```
 
 `--all-mask`, `--secrets-mask --pii-mask`'in doğru sıradaki belgelenen
