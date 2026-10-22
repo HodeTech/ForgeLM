@@ -92,9 +92,10 @@ Rank LoRA kalitesi için en önemli hyperparam.
 
 ```yaml
 lora:
-  target_modules: "all-linear"          # en geniş — her Linear
+  # en geniş — her Linear:
+  # target_modules: "all-linear"
   # veya:
-  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  # target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
   # veya sadece attention:
   target_modules: ["q_proj", "v_proj"]
 ```

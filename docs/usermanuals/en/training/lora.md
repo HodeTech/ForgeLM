@@ -94,9 +94,10 @@ LoRA only trains the modules you point it at. Defaults are reasonable for most a
 
 ```yaml
 lora:
-  target_modules: "all-linear"          # broadest — every Linear layer
+  # broadest — every Linear layer:
+  # target_modules: "all-linear"
   # or specifically:
-  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  # target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
   # or just attention:
   target_modules: ["q_proj", "v_proj"]
 ```

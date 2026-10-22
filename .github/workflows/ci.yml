@@ -424,13 +424,15 @@ jobs:
         run: python3 tools/check_yaml_snippets.py --strict
 
       - name: User-manual YAML example schema-key drift
-        # check_yaml_snippets.py only validates snippets carrying the full
-        # model+training+data triplet; single-block fragments (the common
-        # case in a user-manual page explaining one section) are skipped
-        # there. This guard AST-walks forgelm/config.py's Pydantic schema
-        # and flags fragment keys that don't exist on it. Runs with --strict:
-        # the introduction-time fabricated-key backlog (38 instances across 8
-        # EN/TR page-pairs) has been cleaned, so any new drift now fails CI.
+        # check_yaml_snippets.py validates only full configs (model + training
+        # + data) with real Pydantic. This guard reads every fenced YAML block
+        # in docs/usermanuals/ and fails on a block it cannot read (another
+        # fence spelling, an unclosed fence, a parse error, a duplicate key),
+        # on a fragment key path the schema AST-walked from forgelm/config.py
+        # does not declare, and on a top-level block ForgeConfig does not have
+        # (full configs included) unless the guard lists it as another tool's
+        # YAML or a known-open block; each listed row must match exactly one
+        # block per language, so a row that no longer matches fails too.
         run: python3 tools/check_usermanual_schema_drift.py --strict
 
       - name: Deprecation removal-target drift (strict)
