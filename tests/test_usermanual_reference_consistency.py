@@ -274,17 +274,31 @@ def test_retired_pii_citations_stay_out(rel: str) -> None:
 
 
 # Positive invariant, so a reworded version of the retired claim cannot slip past the phrase list: every mention of the
-# Article 17(3) exceptions the docs rely on, (b) legal obligation and (e) legal claims, written "17(3)(b)" or "(3)(b)"
-# after "Article 17(3)", in any case, carries a limiting qualifier in its own sentence.  The qualifier list accepts the
-# English and Turkish ways of saying "to the extent" and nothing broader ("only to" is not one: it matches any "only to").
-_ART_17_3_EXCEPTION = re.compile(r"(?:17\s*)?\(3\)\s*\([be]\)", re.IGNORECASE)
-_LIMITING_QUALIFIER = re.compile(
-    r"to\s+the\s+extent|insofar\s+as|only\s+where|still\s+requires|ölçüde|ölçüsünde|kadarıyla", re.IGNORECASE
+# Article 17(3) exceptions the docs rely on, (b) legal obligation and (e) legal claims, in any case and in any of the
+# spellings "17(3)(b)", "17(3)b", "17(3), point (b)", "17 paragraph 3 point (b)", "17 para. 3 lit. b" or a bare "(3)(b)"
+# after "Article 17(3)" (but not "35(3)(b)" of another article), carries a limiting qualifier in its own sentence.  The
+# qualifier list accepts the English and Turkish ways of saying "to the extent" and nothing broader ("only to" is not one:
+# it matches any "only to").  One qualifier can still cover both (b) and (e) in the same sentence, as the real text does.
+_ART_17_3_EXCEPTION = re.compile(
+    r"17\s*\(3\)\s*\([be]\)"
+    r"|17\s*\(3\)[be]\b"
+    r"|17\s*\(3\)\s*,?\s*(?:point|lit\.?)\s*\(?[be]\)?(?![a-z])"
+    r"|17\s*,?\s*(?:paragraph|para\.?)\s*3\s*,?\s*(?:point|lit\.?)\s*\(?[be]\)?(?![a-z])"
+    r"|(?<![\d)])\(3\)\s*\([be]\)",
+    re.IGNORECASE,
 )
-# A sentence ends at ". " before a letter (not after "Art." / "Md." / "e.g." / "i.e."), at a blank line, at a new
-# list item or table row, and at a table-cell separator.
+_LIMITING_QUALIFIER = re.compile(
+    r"to\s+the\s+extent|in\s+so\s+far\s+as|insofar\s+as|(?:as|so)\s+far\s+as|only\s+where|only\s+if"
+    r"|provided\s+that|limited\s+to|unless|still\s+requires"
+    r"|ölçüde|ölçüsünde|kadarıyla|kadar\s+uygulanır|sürece|hallerde",
+    re.IGNORECASE,
+)
+# A sentence ends at ". " (closing quotes or brackets may follow the full stop, and markdown or comment markers such as
+# "**", ">" or "#" may open the next sentence) before a letter, but not after "Art." / "Md." / "e.g." / "i.e." / "cf." /
+# "etc." / "resp." / "vs."; it also ends at a blank line, at a new list item or table row, and at a table-cell separator.
 _SENTENCE_BREAK = re.compile(
-    r"(?<!\bArt\.)(?<!\bMd\.)(?<!\be\.g\.)(?<!\bi\.e\.)(?<=[.!?])[ \t\n]+(?=[^\W\d_])"
+    r"(?<!\bArt\.)(?<!\bMd\.)(?<!\be\.g\.)(?<!\bi\.e\.)(?<!\bcf\.)(?<!\betc\.)(?<!\bresp\.)(?<!\bvs\.)"
+    r"(?<=[.!?])[\"'”»)*_]*[\s\u00a0]+(?=[*_>#\"'“”«(\[ \t]*[^\W\d_])"
     r"|\n[ \t]*\n|\n[ \t]*(?:[-*+]|\d{1,3}\.|\|)[ \t]|\|"
 )
 
@@ -303,7 +317,8 @@ def unqualified_article_17_3_mentions(text: str) -> list:
         if i not in qualified:
             qualified[i] = _LIMITING_QUALIFIER.search(text, starts[i], ends[i]) is not None
         if not qualified[i]:
-            bad.append(f"line {text.count(chr(10), 0, m.start()) + 1}: {text[starts[i] : ends[i]].strip()[:160]}")
+            sentence = text[starts[i] : min(ends[i], starts[i] + 400)]
+            bad.append(f"line {text.count(chr(10), 0, m.start()) + 1}: {sentence.strip()[:160]}")
     return bad
 
 
@@ -337,13 +352,18 @@ def _public_text_files() -> list:
         found += [
             p for p in sorted((_REPO_ROOT / root).rglob("*")) if p.is_file() and p.suffix in _PUBLIC_TEXT_SUFFIXES
         ]
-    # ``.claude/worktrees/`` holds disposable git worktrees (gitignored), not the project's own text.
-    return [p for p in found if p.is_file() and ".claude/worktrees" not in p.as_posix()]
+    # ``.claude/worktrees/`` holds disposable git worktrees (gitignored), not the project's own text.  The test is on the
+    # path relative to the repository root, because the repository may itself be checked out inside such a directory.
+    return [
+        p for p in found if p.is_file() and not p.relative_to(_REPO_ROOT).as_posix().startswith(".claude/worktrees/")
+    ]
 
 
 def test_every_article_17_3_exception_mention_is_qualified() -> None:
+    files = _public_text_files()
+    assert len(files) > 150, f"the scan found {len(files)} files: a path filter dropped the public tree"
     failures = {}
-    for path in _public_text_files():
+    for path in files:
         bad = unqualified_article_17_3_mentions(path.read_text(encoding="utf-8"))
         if bad:
             failures[str(path.relative_to(_REPO_ROOT))] = bad
@@ -371,6 +391,20 @@ def test_every_article_17_3_exception_mention_is_qualified() -> None:
         ("Article 17 (3) (b) is a blanket defence.", 1),
         ("Article 17(3)(B) exempts the audit log.", 1),
         ("Article 17(3)(e) preserves the audit log.", 1),
+        ("Article 17(3), point (b), preserves the audit log.", 1),
+        ("Article 17 paragraph 3 point (b) preserves the audit log.", 1),
+        ("Art. 17 para. 3 lit. b preserves the audit log.", 1),
+        ("Article 17(3)b preserves the audit log.", 1),
+        ("Article 35(3)(b) requires a DPIA for large-scale processing.", 0),
+        ("Article 17(3)(b) preserves the audit log.  **It applies only to the extent a law requires it.**", 1),
+        ('"Article 17(3)(b) preserves the audit log." It applies only to the extent a law requires it.', 1),
+        ("# Article 17(3)(b) exempts every log.\n# It applies only to the extent a law requires it.", 1),
+        ("> Article 17(3)(b) exempts every log.\n> It applies only to the extent a law requires it.", 1),
+        ("Article 17(3)(b) exempts every log.\u00a0It applies only to the extent a law requires it.", 1),
+        ("Article 17(3)(b) applies in so far as a specific law requires the processing.", 0),
+        ("Art. 17(3)(b) (cf. recital 65) applies only to the extent a law requires it.", 0),
+        ("Art. 17(3)(b), (e), etc. apply only to the extent a law requires it.", 0),
+        ("Madde 17(3)(b) yalnızca belirli bir yasanın gerektirdiği kadar uygulanır.", 0),
         ("Including (3)(b) compliance with a legal obligation, which is why the audit log is preserved.", 1),
     ],
 )
@@ -521,27 +555,53 @@ def test_pages_do_not_describe_what_the_code_does_not_do(lang: str, page: str) -
     assert hits == [], f"{lang}/{page} describes something the code does not do: {hits}"
 
 
-def _chat_option_strings() -> list:
+def _chat_parser():
     import argparse
 
     from forgelm.cli._parser import _add_chat_subcommand
 
     parser = argparse.ArgumentParser()
     _add_chat_subcommand(parser.add_subparsers())
-    chat = next(iter(parser._subparsers._group_actions[0].choices.values()))
+    return next(iter(parser._subparsers._group_actions[0].choices.values()))
+
+
+def _chat_option_strings() -> list:
     skipped = {"--help", "--quiet", "--log-level"}
     return sorted(
-        opt for action in chat._actions for opt in action.option_strings if opt.startswith("--") and opt not in skipped
+        opt
+        for action in _chat_parser()._actions
+        for opt in action.option_strings
+        if opt.startswith("--") and opt not in skipped
     )
 
 
+# Flags the chat page names without them belonging to the chat parser: a planned flag it says does not exist, the
+# benchmark command it points to, and the prompts file of the planned chat-compare preview.
+_CHAT_PAGE_OTHER_FLAGS = {"--benchmark-only", "--prompts", "--safety"}
+
+
+def _flag_mentioned(text: str, flag: str) -> bool:
+    return re.search(r"(?<![\w-])" + re.escape(flag) + r"(?![\w-])", text) is not None
+
+
 @pytest.mark.parametrize("lang", ["en", "tr"])
-def test_chat_page_documents_every_chat_flag(lang: str) -> None:
+def test_chat_page_documents_every_chat_flag_and_no_other(lang: str) -> None:
     text = (_REPO_ROOT / "docs" / "usermanuals" / lang / "deployment" / "chat.md").read_text(encoding="utf-8")
     flags = _chat_option_strings()
     assert "--backend" in flags and "--adapter" in flags, "the chat parser lost the flags this test expects"
-    missing = [flag for flag in flags if flag not in text]
+    missing = [flag for flag in flags if not _flag_mentioned(text, flag)]
     assert missing == [], f"{lang}/deployment/chat.md does not document: {missing}"
+    invented = sorted(set(re.findall(r"(?<![\w-])--[a-z][a-z0-9-]*", text)) - set(flags) - _CHAT_PAGE_OTHER_FLAGS)
+    assert invented == [], f"{lang}/deployment/chat.md names flags the chat parser does not have: {invented}"
+
+
+@pytest.mark.parametrize("lang", ["en", "tr"])
+def test_chat_page_shows_the_parser_defaults(lang: str) -> None:
+    text = (_REPO_ROOT / "docs" / "usermanuals" / lang / "deployment" / "chat.md").read_text(encoding="utf-8")
+    defaults = {action.dest: action.default for action in _chat_parser()._actions}
+    for flag, dest in (("--temperature", "temperature"), ("--max-new-tokens", "max_new_tokens")):
+        row = next((line for line in text.splitlines() if line.startswith("|") and f"`{flag}`" in line), "")
+        assert f"`{defaults[dest]}`" in row, f"{lang}/deployment/chat.md: the row for {flag} must show {defaults[dest]}"
 
 
 @pytest.mark.parametrize("lang", ["en", "tr"])
@@ -549,10 +609,16 @@ def test_gpu_cost_page_lists_every_priced_gpu_and_cost_source(lang: str) -> None
     from forgelm.trainer import ForgeTrainer
 
     text = (_REPO_ROOT / "docs" / "usermanuals" / lang / "operations" / "gpu-cost.md").read_text(encoding="utf-8")
-    missing = [name for name in ForgeTrainer._GPU_PRICING if name not in text]
+    # Whole names only: "NVIDIA L4" is a prefix of "NVIDIA L40S", so a substring test cannot see it go missing.
+    missing = [
+        name
+        for name in ForgeTrainer._GPU_PRICING
+        if re.search(r"(?<![\w-])" + re.escape(name) + r"(?![\w-])", text) is None
+    ]
     assert missing == [], f"{lang}/operations/gpu-cost.md omits priced GPUs: {missing}"
-    for source in ("user_config", "auto_detected", "fuzzy_match"):
-        assert source in text, f"{lang}/operations/gpu-cost.md must explain cost_source {source!r}"
+    table = text.split("| `cost_source` |", 1)[1].split("\n\n", 1)[0]
+    documented = set(re.findall(r"^\| `([a-z_]+)` \|", table, re.MULTILINE))
+    assert documented == {"user_config", "auto_detected", "fuzzy_match"}, f"{lang}/operations/gpu-cost.md: {documented}"
 
 
 @pytest.mark.parametrize("lang", ["en", "tr"])
@@ -564,5 +630,7 @@ def test_pii_masking_page_counts_and_validates_the_real_detectors(lang: str) -> 
     assert len(PII_TYPES) == 8, "a detector was added or removed: update the pii-masking page (count, table, API list)"
     assert ("eight categories" if lang == "en" else "sekiz kategori") in text
     assert CHECKSUM_VALIDATED_PII_TYPES == {"credit_card", "iban", "tr_id"}, "update the pii-masking validation table"
-    for kind in PII_TYPES:
-        assert f"`{kind}`" in text, f"{lang}/data/pii-masking.md must list the detector kind {kind!r}"
+    kinds_line = next(line for line in text.splitlines() if "`fr_ssn`" in line and "`us_ssn`" in line)
+    assert set(re.findall(r"`([a-z_]+)`", kinds_line)) == set(PII_TYPES), (
+        f"{lang}/data/pii-masking.md: the listed detector kinds differ from PII_TYPES"
+    )

@@ -414,6 +414,41 @@ class TestUnreadableBlocks:
         result = _scan(tool, synthetic_schema, tmp_path)
         assert [(b.line, b.problem) for b in result.unreadable_blocks] == [(5, "YAML fence written '```yaml'")] * 2
 
+    @pytest.mark.parametrize("prefix", ["> ", "- ", "* ", "1. ", "> - "])
+    def test_a_yaml_fence_opened_in_a_block_quote_or_list_item_is_a_finding(
+        self, tool, synthetic_schema, tmp_path, prefix
+    ):
+        page = f"# Page\n\n{prefix}```yaml\n{prefix}chat: {{}}\n{prefix}```\n\n```yaml\ntraining: {{}}\n```\n"
+        for lang in ("en", "tr"):
+            _write_raw(tmp_path, f"{lang}/ops/a.md", page)
+        result = _scan(tool, synthetic_schema, tmp_path)
+        assert [(b.line, b.problem) for b in result.unreadable_blocks] == [
+            (3, f"YAML fence written {(prefix + '```yaml').strip()!r}")
+        ] * 2
+        # The prefixed fence closes on its prefixed closer, so the plain block after it is still read.
+        assert result.walked_count == 2
+
+    def test_closing_fences_follow_the_commonmark_length_and_marker_rules(self, tool, synthetic_schema, tmp_path):
+        page = (
+            "# Page\n\n"
+            "````text\n```\nstill content\n```yaml\nchat: {}\n```\n````\n\n"  # a shorter fence does not close
+            "```text\n~~~yaml\nchat: {}\n~~~\n```\n\n"  # a tilde fence does not close a backtick fence
+            "```yaml\ntraining: {}\n```\n"
+        )
+        for lang in ("en", "tr"):
+            _write_raw(tmp_path, f"{lang}/ops/a.md", page)
+        result = _scan(tool, synthetic_schema, tmp_path)
+        assert result.unreadable_blocks == []
+
+    def test_a_block_nested_too_deeply_is_a_finding_not_a_crash(self, tool, synthetic_schema, tmp_path):
+        deep = "[" * 3000 + "]" * 3000
+        for lang in ("en", "tr"):
+            _write_raw(tmp_path, f"{lang}/ops/a.md", f"# Page\n\n```yaml\nmetadata: {deep}\n```\n")
+        result = _scan(tool, synthetic_schema, tmp_path)
+        assert [(b.line, b.problem.split(" to ")[0]) for b in result.unreadable_blocks] == [
+            (3, "nested too deeply")
+        ] * 2
+
     def test_an_unclosed_yaml_fence_is_a_finding(self, tool, synthetic_schema, tmp_path):
         for lang in ("en", "tr"):
             _write_raw(tmp_path, f"{lang}/ops/a.md", "# Page\n\n```yaml\nchat: {}\n")
@@ -907,7 +942,13 @@ class TestRealSchemaSmoke:
             tool.USERMANUAL_ROOT, schema, schema["ForgeConfig"], tool._NON_FORGELM_YAML, tool._KNOWN_OPEN
         )
         assert result.stale_rows == [] and result.unknown_blocks == [] and result.unreadable_blocks == []
-        assert result.exempted_count == 2 * (len(tool._NON_FORGELM_YAML) + len(tool._KNOWN_OPEN))
+        # A row exempts one block in every language directory that has its page (a deferred language may have no copy).
+        languages = [path.name for path in tool.USERMANUAL_ROOT.iterdir() if path.is_dir()]
+        rows = [*tool._NON_FORGELM_YAML, *tool._KNOWN_OPEN]
+        expected = sum(
+            1 for page, _keys in rows for lang in languages if (tool.USERMANUAL_ROOT / lang / page).is_file()
+        )
+        assert result.exempted_count == expected >= 2 * len(rows)
 
     def test_main_runs_against_the_real_repo_without_crashing(self, tool):
         # Advisory mode exits 0 on findings; this proves the full walk and report path run end to end.

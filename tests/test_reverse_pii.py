@@ -448,10 +448,14 @@ class TestAuditEventDoesNotLeakIdentifier:
 
         if secret:
             monkeypatch.setenv("FORGELM_AUDIT_SECRET", secret)
+        else:
+            monkeypatch.delenv("FORGELM_AUDIT_SECRET", raising=False)
+        # Mixed case on purpose: a command that lower-cased or stripped the value would break the equality.
+        identifier = "Alice@Example.com"
         corpus = tmp_path / "train.jsonl"
-        _seed_corpus(corpus, [{"id": "alice@example.com", "text": "mail alice@example.com"}])
+        _seed_corpus(corpus, [{"id": identifier, "text": f"mail {identifier}"}])
         purge_args = SimpleNamespace(
-            row_id="alice@example.com",
+            row_id=identifier,
             corpus=str(corpus),
             run_id=None,
             kind=None,
@@ -467,9 +471,9 @@ class TestAuditEventDoesNotLeakIdentifier:
         assert purge_exit.value.code == 0
         purge_hash = json.loads(capsys.readouterr().out)["row_id_hash"]
 
-        def scan(salt_source: str | None) -> dict:
+        def scan(salt_source: str | None, output_dir: Path = tmp_path) -> dict:
             args = _build_args(
-                query="alice@example.com", files=[str(corpus)], output_dir=str(tmp_path), salt_source=salt_source
+                query=identifier, files=[str(corpus)], output_dir=str(output_dir), salt_source=salt_source
             )
             with pytest.raises(SystemExit) as scan_exit:
                 _run_reverse_pii_cmd(args, output_format="json")
@@ -479,6 +483,8 @@ class TestAuditEventDoesNotLeakIdentifier:
         plaintext = scan(None)
         assert plaintext["query_hash"] == purge_hash
         assert plaintext["match_count"] == 1
+        # Another output directory has another salt, so its digest differs: the documented condition is real.
+        assert scan(None, output_dir=tmp_path / "elsewhere")["query_hash"] != purge_hash
         hash_mode = scan("env_var" if secret else "per_dir")
         assert hash_mode["scan_mode"] == "hash"
         assert hash_mode["match_count"] == 0, "--salt-source searches for digests, so a plaintext corpus has none"

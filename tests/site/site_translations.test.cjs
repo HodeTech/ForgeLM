@@ -58,8 +58,10 @@ test('claims the code does not back stay out of the site copy', () => {
       for (const pattern of patterns) if (pattern.test(value)) found.push(`${locale} ${key}: ${pattern}`);
     }
   }
-  for (const page of fs.readdirSync(site).filter(name => name.endsWith('.html'))) {
-    const html = fs.readFileSync(path.join(site, page), 'utf8');
+  const scripts = ['wizard.js'].map(name => [path.join('js', name), path.join(site, 'js', name)]);
+  const pages = fs.readdirSync(site).filter(name => name.endsWith('.html')).map(name => [name, path.join(site, name)]);
+  for (const [page, file] of [...pages, ...scripts]) {
+    const html = fs.readFileSync(file, 'utf8');
     for (const pattern of retired.en) if (pattern.test(html)) found.push(`${page}: ${pattern}`);
   }
   assert.deepEqual(found, []);

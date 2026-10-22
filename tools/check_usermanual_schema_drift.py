@@ -536,6 +536,8 @@ def _read(snippet: "Snippet") -> Tuple[List[object], Optional[UnreadableBlock]]:
     except (yaml.YAMLError, ValueError) as exc:
         hint = _DUPLICATE_HINT if isinstance(exc, _DuplicateKeyError) else _PARSE_HINT
         return [], UnreadableBlock(snippet.path, snippet.line_start, _describe_parse_error(snippet, exc), hint)
+    except RecursionError:
+        return [], UnreadableBlock(snippet.path, snippet.line_start, "nested too deeply to read", _PARSE_HINT)
 
 
 def _is_full_config(document: object) -> bool:
@@ -610,6 +612,15 @@ def _fence_of(line: str) -> Optional[Tuple[str, int, str]]:
     return marker, length, info
 
 
+# A fence opened inside a block quote or a list item (``> ```yaml``, ``- ```yaml``) is not one the extractor reads either.
+_CONTAINER_PREFIX_RE = re.compile(r"^(?:[ \t]*(?:>|[-*+]|\d{1,9}[.)])[ \t]?)+")
+
+
+def _strip_container(line: str) -> str:
+    """Return ``line`` without its leading block-quote and list-item markers."""
+    return _CONTAINER_PREFIX_RE.sub("", line, count=1)
+
+
 def _fence_language(info: str) -> str:
     """Return the language word of a fence's info string, lower-cased (``YAML title="x"`` gives ``yaml``)."""
     return "".join(itertools.takewhile(lambda ch: ch.isalnum() or ch in "-_+", info.lstrip("{."))).lower()
@@ -624,9 +635,16 @@ def unreadable_yaml_fences(lines: List[str], snippets: List["Snippet"]) -> List[
     """
     read = {snippet.line_start for snippet in snippets}
     found: List[Tuple[int, str, str]] = []
-    open_fence: Optional[Tuple[str, int]] = None
+    open_fence: Optional[Tuple[str, int, bool]] = None  # (marker, length, opened inside a block quote or list item)
     for number, line in enumerate(lines, 1):
-        fence = _fence_of(line)
+        prefixed = False
+        if open_fence is None:
+            fence = _fence_of(line)
+            if fence is None:
+                fence = _fence_of(_strip_container(line))
+                prefixed = fence is not None
+        else:
+            fence = _fence_of(_strip_container(line) if open_fence[2] else line)
         if fence is None:
             continue
         marker, length, info = fence
@@ -634,7 +652,7 @@ def unreadable_yaml_fences(lines: List[str], snippets: List["Snippet"]) -> List[
             if marker == open_fence[0] and length >= open_fence[1] and not info:
                 open_fence = None
             continue
-        open_fence = (marker, length)
+        open_fence = (marker, length, prefixed)
         if number in read or _fence_language(info) not in _YAML_LANGUAGES:
             continue
         if line.rstrip() == _CANONICAL_YAML_FENCE:
@@ -714,13 +732,21 @@ def scan(
             if problem is not None:
                 problems.append(problem)
                 continue
-            drifts.extend(
-                KeyDrift(path=snippet.path, line=snippet.line_start, key_path=key_path)
-                for key_path in _nested_drift(documents, schema, top_level)
-            )
-            keys = _unknown_keys(documents, top_level)
+            try:
+                snippet_drifts = [
+                    KeyDrift(path=snippet.path, line=snippet.line_start, key_path=key_path)
+                    for key_path in _nested_drift(documents, schema, top_level)
+                ]
+                keys = _unknown_keys(documents, top_level)
+                is_full = any(_is_full_config(doc) for doc in documents)
+            except RecursionError:
+                problems.append(
+                    UnreadableBlock(snippet.path, snippet.line_start, "nested too deeply to check", _PARSE_HINT)
+                )
+                continue
+            drifts.extend(snippet_drifts)
             if not keys:
-                tally["full" if any(_is_full_config(doc) for doc in documents) else "walked"] += 1
+                tally["full" if is_full else "walked"] += 1
             elif located is not None and ((located[1], keys) in non_forgelm or (located[1], keys) in known_open):
                 matched[(located[0], located[1], keys)] += 1
                 tally["exempted"] += 1
