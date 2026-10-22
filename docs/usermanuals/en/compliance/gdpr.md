@@ -53,7 +53,7 @@ retention:
   ephemeral_artefact_retention_days: 365
 ```
 
-`forgelm purge --check-policy --config config.yaml --output-dir <training.output_dir>` lists the artefacts in that directory that are past their horizon and always exits 0 (without `--output-dir` it scans the current directory, not `training.output_dir`). Nothing is deleted automatically and nothing is written to the audit log for it; deleting what is overdue is your storage layer's job. (`retention.enforce` is reserved: no command acts on it yet.)
+`forgelm purge --check-policy --config config.yaml --output-dir <training.output_dir>` lists the artefacts in that directory that are past their horizon and exits 0 however many it finds (without `--output-dir` it scans the current directory, not `training.output_dir`). Nothing is deleted automatically and nothing is written to the audit log for it; deleting what is overdue is your storage layer's job. (`retention.enforce` is reserved: no command acts on it yet.)
 
 ## Data subject requests
 
@@ -111,7 +111,7 @@ Train from the file with ids. `forgelm reverse-pii` reports the file and line wh
 
 ### Model-level erasure
 
-LLMs can memorise rare strings from training. Even with PII masking, removing all traces from a deployed model is hard, and under EDPB Opinion 28/2024 a model trained on personal data cannot always be considered anonymous: if you cannot show that yours is, an access or erasure request may reach the model itself, not only the corpus. ForgeLM's defences:
+LLMs can memorise rare strings from training. Even with PII masking, removing all traces from a deployed model is hard. EDPB Opinion 28/2024 says a model trained on personal data is not always anonymous, so whether yours is has to be assessed case by case; until you can show that it is, plan your answers to access and erasure requests as if the trained weights might still contain personal data. ForgeLM's defences:
 
 - **Reduce what goes in:** PII masking and deduplication (memorised data is usually duplicated data).
 - **Memorisation is not measured:** ForgeLM does not test whether a trained model reproduces a given string.

@@ -38,10 +38,15 @@ Without the spaCy model, `forgelm audit --pii-ml` raises a typed `ImportError` *
 
 ```shell
 $ forgelm audit data/customer-letters.jsonl --output ./audit/ --pii-ml
-✓ format: instructions (8,400 rows)
-⚠ PII: 12 emails, 3 phone (regex layer)
-⚠ PII (ML): 47 person, 9 location (Presidio)
-   worst tier: medium
+Data audit summary
+  Source        : data/customer-letters.jsonl
+  Total samples : 8400
+  Splits        : train
+  └─ train: n=8400
+     languages (top-3): en=8400
+     PII             : email=12, location=9, person=47, phone=3
+  PII severity   : worst tier = medium
+     by tier      : medium=59, low=12
 ```
 
 The Presidio findings merge into the same `pii_summary` and `pii_severity` blocks under disjoint category names, so the regex baseline stays visible alongside the ML signal:
@@ -116,7 +121,7 @@ _require_presidio()
 text = "Alice Williams visits Acme Corp's Berlin office on Monday."
 counts = detect_pii_ml(text, language="en")
 print(counts)
-# {'person': 1, 'organization': 1, 'location': 1}
+# {'person': 1, 'location': 1}   (Presidio's default English configuration ignores organizations)
 ```
 
 The function returns an empty dict for non-string input, missing extras, or transient analyzer errors (a single bad row never blocks the audit). Hard failures (missing spaCy model, language not registered) are caught up front by `_require_presidio(language=...)` and raised before any rows are scanned — call it explicitly when you bypass `audit_dataset` and want the same pre-flight guarantees.

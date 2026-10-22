@@ -1,9 +1,9 @@
 # `forgelm purge` — Subcommand Referansı
 
-> **Hedef kitle:** Eğitim corpus'larına ve koşum-kapsamlı artefact'lara karşı GDPR Madde 17 silme taleplerini karşılayan ForgeLM operatörleri ve ortaya çıkan `data.erasure_*` audit zincirini doğrulayan denetçiler.
+> **Hedef kitle:** Eğitim corpus'larına ve koşum-kapsamlı artefact'lara karşı GDPR Madde 17 silme taleplerinin corpus adımını yürüten ForgeLM operatörleri ve ortaya çıkan `data.erasure_*` audit zincirini doğrulayan denetçiler.
 > **Ayna:** [purge_subcommand.md](purge_subcommand.md)
 
-`forgelm purge`, ForgeLM eğitim corpus'ları ve koşum artefact'ları için **GDPR Madde 17 silinme hakkı**'nın operatör-yüzlü uygulamasıdır (Phase 21). Bir corpus satırını atomik olarak siler; `--run-id` ile bir koşumun staging dizinini (`--kind staging`) veya adı run id'yi embed eden compliance dosyalarını (`--kind artefacts`, aşağıya bakın) siler; her adımı tamper-evident `audit_log.jsonl` zincirine kaydeder.
+`forgelm purge`, bir **GDPR Madde 17 silmesinin** corpus ve koşum-artefact adımı için operatör-yüzlü araçtır (Phase 21); yanıtın geri kalanı ve eğitilmiş ağırlıklar sizin sürecinizde kalır. Bir corpus satırını atomik olarak siler; `--run-id` ile bir koşumun staging dizinini (`--kind staging`) veya adı run id'yi embed eden compliance dosyalarını (`--kind artefacts`, aşağıya bakın) siler; her adımı tamper-evident `audit_log.jsonl` zincirine kaydeder.
 
 Deployer akışı (DSAR ticket → CLI çağrısı → doğrulama) için bkz. [`../guides/gdpr_erasure.md`](../guides/gdpr_erasure-tr.md). Bu sayfa flag-başına, event-başına referanstır.
 
@@ -52,13 +52,15 @@ JSONL eğitim corpus'undan `id` (veya `row_id`) field'ı ile tanımlanan tek bir
 
 > **`--kind artefacts` standart compliance paketini bulamaz.** Trainer ve exporter sabit dosya adları yazar (`compliance_report.json`, `training_manifest.yaml`, `data_provenance.json`, `data_governance_report.json`; yapılandırıldığında `risk_assessment.json` / `annex_iv_metadata.json`) ve hiçbiri run id içermez. Normal bir çıktı dizininde komut bu yüzden hiçbir şey bulmaz, `data.erasure_failed` (`NoMatchingArtefacts`) yayar ve 1 ile çıkar; hiçbir şey silmez. Yalnızca adına run id'yi kendiniz yazdığınız dosyalara etki eder. Resolver düzeltilene kadar paketi depolama katmanınız üzerinden kaldırın.
 
-`--kind logs` **kasıtlı olarak yok**: audit log append-only'dir ve tool onu asla silmez. Veri sahibini adlandıran girdilerin tutulup tutulamayacağı veri sorumlusunun kararıdır ve veri sorumlusu nedenini belgeler: girdiler amaçları için hâlâ gereklidir ya da Madde 17(3) istisnalarından biri uygulanır. Örneğin Madde 17(3)(b) yalnızca AB hukukundan ya da üye devlet hukukundan doğan belirli bir yükümlülüğün işlemeyi gerektirdiği ölçüde uygulanır ve bu yükümlülüğü adlandırabilmeniz gerekir.
+`--kind logs` **kasıtlı olarak yok**: audit log append-only'dir ve tool onu asla silmez. Veri sahibini adlandıran girdilerin tutulup tutulamayacağı veri sorumlusunun belgelenmiş kararıdır: bir Madde 17(1) gerekçesi geçerliyse girdiler yalnızca bir Madde 17(3) istisnasının kapsadığı yerde kalır (17(3)(b), yalnızca işlemenin veri sorumlusunun tabi olduğu AB veya üye devlet hukukundan doğan bir yasal yükümlülük ya da kamu yararına bir görev için gerekli olduğu ölçüde; 17(3)(e) hukuki talepleri kapsar); hiçbir gerekçe geçerli değilse silme gerekmez, ancak talebe yine de Madde 12 süresi içinde gerekçeli bir yanıt verilir (Madde 12(4)).
 
 ### Retention-policy raporu (`--check-policy`)
 
 Salt-okunur tarama. `<output_dir>` üzerinde dolaşır, her artefact'ın yaşını (kanonik: `final_model.staging.<run_id>/` dizini için koşumun ilk audit event'i, yoksa audit-log genesis `timestamp`'i; fallback: dosya sistemi `mtime`'ı, `age_source=mtime` flag'iyle) yüklü config'in `retention:` horizon'larıyla karşılaştırır ve yapısal bir ihlal listesi yayar.
 
-**Başarılı policy raporu her zaman 0 ile çıkar** (report-not-gate semantik, design §10 Q5). Config-load başarısızlıkları `EXIT_CONFIG_ERROR` (1) ile çıkar — eksik, okunamaz veya Pydantic doğrulamasından geçemeyen explicit `--config` non-zero olarak yüzeyselleşir; böylece operatör "loader başarısız" durumunu "ihlal yok" sanmaz. CI gate kuran operatörler `--output-format json` kullanıp `jq -e '.success and (.violations | length == 0)'` (exit 1 while violations exist)'e pipe eder.
+**Paylaşılan çıktı dizinleri.** `compliance/`, `data_audit_report.json` ve ham-belge dizinlerinin yaşı, dosyanın en son yazıldığı andan değil, audit log'un *ilk* event'inden sayılır. Birçok koşum için yeniden kullanılan bir dizinde bugün yazılmış bir paket de ufku aşmış olarak raporlanabilir: raporun listelediği bir şeyi silmeden önce dosyanın kendi tarihine bakın.
+
+**Başarılı policy raporu her zaman 0 ile çıkar** (report-not-gate semantik, design §10 Q5). Config-load başarısızlıkları `EXIT_CONFIG_ERROR` (1) ile çıkar — eksik, okunamaz veya Pydantic doğrulamasından geçemeyen explicit `--config` non-zero olarak yüzeyselleşir; böylece operatör "loader başarısız" durumunu "ihlal yok" sanmaz. CI gate kuran operatörler `--output-format json` kullanır ve raporu kendileri sınar, örneğin `set -o pipefail` altında `jq -e '.success == true and has("count") and .count == 0'`: `count`, hiçbir `retention:` bloğu yüklenmediğinde yoktur; böylece gate hiç kontrol edilmemiş bir dizinde geçmek yerine başarısız olur, ve `--output-dir` gerçek eğitim çıktı dizini olmalıdır (olmayan bir dizin `count: 0` raporlar).
 
 ## Salt çözümlemesi
 
@@ -71,7 +73,7 @@ Per-output-dir salt `<output_dir>/.forgelm_audit_salt`'ta ilk kullanımda oluşt
 
 ## `forgelm reverse-pii` ile cross-tool digest korelasyonu
 
-`forgelm purge --row-id <value>` ve `forgelm reverse-pii --query <value> --salt-source per_dir` **aynı** `<output_dir>`'e (yani aynı `.forgelm_audit_salt`'ı tüketerek) çalıştırıldığında ve purge için `FORGELM_AUDIT_SECRET` ayarlı değilse (`salt_source=per_dir`; ayarlıysa purge onu salt'a XOR'lar ve `salt_source=env_var` kaydeder, bu durumda bunun yerine aynı secret ile `--salt-source env_var` kullanarak sorgulayın), `data.erasure_*` event'lerindeki `target_id` ile `data.access_request_query` event'indeki `query_hash` byte-byte aynıdır. Compliance reviewer böylece aynı veri sahibi için Madde 17 silme ve Madde 15 erişim taleplerini cleartext identifier'ı asla görmeden korele edebilir. `tests/test_reverse_pii.py::test_purge_target_id_matches_reverse_pii_query_hash_on_same_output_dir` ile pin'lendi.
+`forgelm purge` `target_id` kaydeder (salt ile `--row-id` değerinin SHA-256'sı); `forgelm reverse-pii` ise `--query` değerinin aynı fonksiyonunu `query_hash` olarak kaydeder. İkisi yalnızca şu üç koşulun hepsi sağlandığında byte-byte aynıdır: değer aynı metindir (satırın `id` / `row_id` alanı ile sorgu aynı string olmalıdır; opak UUID satır id'leri bir e-posta sorgusuna asla eşit olmaz), iki komut da aynı `--output-dir`'i (aynı `.forgelm_audit_salt`'ı) kullanır ve `FORGELM_AUDIT_SECRET` ikisinde de aynı durumdadır (ayarsız ya da aynı değerle ayarlı; ayarlıysa purge `salt_source=env_var` kaydeder). Erişim talebini varsayılan düz-metin modunda çalıştırın: `--salt-source` gerekmez ve purge digest'lerini eşleştirmenin bir yolu değildir; çünkü `reverse-pii`'yi corpus *içinde* digest arayan bir hash-mask taramasına geçirir ve düz metin içeren bir corpus'ta hiçbir şey bulmaz. Id'ler farklıysa bir talebi silmesine, `forgelm purge --justification`'a verdiğiniz ticket referansı üzerinden bağlayın. Compliance reviewer böylece aynı veri sahibi için Madde 17 silme ve Madde 15 erişim taleplerini cleartext identifier'ı asla görmeden korele edebilir. `tests/test_reverse_pii.py::test_purge_target_id_matches_reverse_pii_query_hash_on_same_output_dir` ile pin'lendi.
 
 ## Yayılan audit event'leri
 
@@ -93,21 +95,23 @@ Altı event de [`audit_event_catalog.md`](audit_event_catalog-tr.md)'deki ortak 
 | Kod | Anlamı |
 |---|---|
 | 0 | Başarı veya başarılı `--check-policy` raporu (report-not-gate semantik). |
-| 1 | Config hatası: bilinmeyen `--row-id`, `--run-id` ile eşleşen staging dizini / compliance dosyası yok (standart sabit-adlı pakete karşı `--kind artefacts` dahil), eksik `--corpus`, karşılıklı dışlayıcı flag kombinasyonu veya eksik / okunamaz / Pydantic doğrulamasından geçemeyen `--check-policy --config <path>`. |
-| 2 | Runtime hatası: I/O başarısızlığı, izin reddedildi, atomic-rename başarısızlığı. |
+| 1 | Config hatası: bilinmeyen `--row-id`, `--run-id` ile eşleşen staging dizini / compliance dosyası yok (standart sabit-adlı pakete karşı `--kind artefacts` dahil), eksik `--corpus` ya da `--corpus`'suz `--row-id`, eksik `--kind`, seçilmemiş mod veya eksik / okunamaz / Pydantic doğrulamasından geçemeyen `--check-policy --config <path>`. |
+| 2 | Runtime hatası: I/O başarısızlığı, izin reddedildi, atomic-rename başarısızlığı; ayrıca argüman-parser kullanım hatası (`--row-id` ile `--run-id` gibi birlikte verilen iki mod, `--kind logs`), JSON zarfı yerine usage basar. |
 
 `--check-policy` asla 3 veya 4 dönmez. Kod 3 (`EXIT_EVAL_FAILURE`) ve 4 (`EXIT_AWAITING_APPROVAL`) eğitim pipeline'ı için ayrılmıştır ve bu subcommand'ın yüzeyinin parçası değildir.
 
 ## JSON çıktı zarfı
 
-`--output-format json` ile her çağrı stdout'a tam olarak bir JSON nesnesi yazdırır. Şekil moda göre değişir — toplam üç zarf.
+`--output-format json` ile argüman ayrıştırmayı geçen her çağrı stdout'a tam olarak bir JSON nesnesi yazdırır (argüman-parser hatası bunun yerine usage basar ve 2 ile çıkar). Başarılı ya da başarısız her zarf boolean bir `success` taşır; ona göre dallanın. Şekil moda göre değişir.
 
 **Row modu (başarı)** — `_perform_row_erasure_and_audit`'den yayılır:
 
 ```json
 {
+  "success": true,
   "mode": "row",
   "dry_run": false,
+  "row_id_hash": "01aeebf6566c0f6ec4a95a4678a2eb3ef45022ffb7bd9d5662b706d6d6506efc",
   "salt_source": "per_dir",
   "corpus_path": "/abs/path/data/train.jsonl",
   "matches": 1,
@@ -117,22 +121,23 @@ Altı event de [`audit_event_catalog.md`](audit_event_catalog-tr.md)'deki ortak 
 }
 ```
 
-`--dry-run` çağrılarında aynı zarf `dry_run: true` ile ve `bytes_freed` olmadan görünür (rewrite hiç olmaz).
+`row_id_hash`, salt ile `--row-id` değerinin tam SHA-256 hex digest'idir; `data.erasure_*` event'leri onun ilk 16 hex hanesini `target_id` olarak taşır. `--dry-run` çağrılarında aynı zarf `dry_run: true` ile ve `bytes_freed` olmadan görünür (rewrite hiç olmaz).
 
 **Run modu (başarı)** — `_run_purge_run_id`'den yayılır:
 
 ```json
 {
+  "success": true,
   "mode": "run",
   "kind": "staging",
   "dry_run": false,
   "run_id": "fg-abc123def456",
-  "deleted": ["/abs/path/outputs/run42/final_model.staging.fg-abc123def456"],
-  "bytes_freed": 102400000
+  "deleted": ["<output_dir>/final_model.staging.fg-abc123def456"],
+  "bytes_freed": 2048
 }
 ```
 
-`deleted` gerçekten silinen mutlak yolların **listesidir** (ya da `--dry-run`'da `would_delete` anahtarı aynı şekli taşır ve `deleted` yoktur).
+`deleted` gerçekten silinen yolların **listesidir**; yollar `--output-dir`'e verdiğiniz biçimde yazılır (ya da `--dry-run`'da `would_delete` anahtarı aynı şekli taşır ve `deleted` yoktur).
 
 **`--check-policy` modu** — `_run_purge_check_policy`'ten yayılır:
 
@@ -141,29 +146,36 @@ Altı event de [`audit_event_catalog.md`](audit_event_catalog-tr.md)'deki ortak 
   "success": true,
   "violations": [
     {
-      "artefact_kind": "ephemeral_artefact",
-      "path": "/abs/path/outputs/run42/compliance/data_audit_report.json",
+      "artefact_kind": "compliance_bundle",
+      "path": "<output_dir>/compliance",
       "age_days": 121.4,
       "horizon_days": 90,
       "age_source": "audit"
+    },
+    {
+      "artefact_kind": "staging_dir[fg-old]",
+      "path": "<output_dir>/final_model.staging.fg-old",
+      "age_days": 121.4,
+      "horizon_days": 7,
+      "age_source": "audit"
     }
   ],
-  "count": 1
+  "count": 2
 }
 ```
 
-`age_source` ∈ `{audit, mtime}` — `audit` kanonik yaş (koşumun ilk audit event timestamp'i); `mtime` operatörün farkındalığı için işaretlenmiş filesystem fallback'i.
+`artefact_kind` şunlardan biridir: `audit_log`, `staging_dir`, `staging_dir[<run_id>]`, `compliance_bundle`, `data_audit_report` veya `raw_documents[<dizin>]`. `age_source` ∈ `{audit, mtime}` — `audit` yaşın audit log'dan sayıldığı anlamına gelir (staging dizini için koşumun ilk event'i, yoksa log'un ilk event'i); `mtime` operatörün farkındalığı için işaretlenmiş filesystem fallback'idir. Hiçbir `retention:` bloğu yüklenmediğinde (`--config` yok ya da bloğu olmayan bir config) zarf `count`'suz `{"success": true, "violations": [], "note": "..."}` olur: hiçbir şey kontrol edilmemiştir.
 
 **Hata zarfı (her mod)** — `_output_error_and_exit`:
 
 ```json
 {
   "success": false,
-  "error": "Row id 'ali@example.com' not found in 'data/train.jsonl'."
+  "error": "No row with id=<id_hash:023f957b697d…> in 'data/train.jsonl'.  Refusing to delete."
 }
 ```
 
-Asimetri notu: row/run başarı zarfları açık `success` field'ı **taşımaz** (`mode` ayraç başarı sinyalidir); `--check-policy` ve hata zarfı taşır. CI gate'leri `mode` anahtarına (başarı yolu) ya da `success: false`'a (hata yolu) dallanmalı; `success: true`'nin varlığı/yokluğuna değil.
+Tanımlayıcı asla geri yazılmaz: mesaj `--row-id` değeri yerine bir hash öneki taşır.
 
 ## Bkz.
 

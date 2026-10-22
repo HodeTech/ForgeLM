@@ -3,9 +3,11 @@
 > **Article 17 of the EU General Data Protection Regulation** (the
 > "right to be forgotten") gives data subjects the right to request
 > erasure of personal data a controller holds about them. ForgeLM's
-> `forgelm purge` subcommand is the operator-facing tool for honouring
-> those requests against training corpora and run-scoped artefacts a
-> ForgeLM deployment produced or consumed.
+> `forgelm purge` subcommand is one step of answering such a request: it
+> removes rows from the training corpora and run-scoped artefacts a ForgeLM
+> deployment produced or consumed. Identifying the person, deciding whether
+> an Article 17(1) ground applies, answering within the Article 12 deadline
+> and everything about the trained weights remain your process.
 
 ## What `forgelm purge` does (and does not)
 
@@ -15,14 +17,15 @@
 - Deletes a run's staging directory, and compliance files whose names embed the run id (`--run-id <id> --kind {staging,artefacts}`; `artefacts` does not find the standard bundle, see below).
 - Reports retention-policy violations against the loaded config's `retention:` block (`--check-policy`).
 - Records every action with a tamper-evident audit-event chain — `request → completed` (or `request → failed`) — so a forensic reviewer can reconstruct exactly what happened.
-- Hashes operator-supplied row identifiers with SHA-256 before they enter the audit log so the chain itself does not become a personal-data leak (Article 5(1)(c) data minimisation).
+- Hashes operator-supplied row identifiers with a per-output-dir salt before they enter the audit log, so the log does not hold the identifier in clear (Article 5(1)(c) data minimisation). This is pseudonymisation, not anonymisation (Article 4(5), recital 26): anyone who can read the `.forgelm_audit_salt` file kept next to the log can recompute a digest from a guessed identifier, so protect the log and the salt with the same access controls and treat the digests as personal data.
 
 **Does not:**
 
 - Re-train models. Removing a row from the corpus does not unmemorise it from already-trained weights — full retraining without the erased row is the only proper mitigation. The tool emits `data.erasure_warning_memorisation` when a `final_model/` directory exists directly under `--output-dir` (which defaults to the corpus's directory, so pass your training output directory), so the operator sees the gap. It cannot tell which runs consumed the corpus.
-- Delete entries from the audit log itself. The tool records the erasure as a new event rather than rewriting history. Whether entries that reference the data subject may be kept is the controller's decision, and the controller documents why: the entries are still necessary for their purpose, or an Article 17(3) exception applies. Article 17(3)(b), for example, applies only to the extent a specific Union or Member State legal obligation requires the processing (such as the 10-year documentation keeping of AI Act Art. 18(1) where the log forms part of your technical documentation, or the log-retention duties of Art. 19(1) and Art. 26(6) for logs a deployed high-risk system generates), and you have to be able to name that obligation.
-- Push erasure notices to downstream consumers. Webhook receivers, dataset mirrors, deployed model endpoints, and third-party fine-tunes derived from a published checkpoint are the operator's runtime-layer responsibility (Article 19 requires telling each recipient the data was disclosed to; Article 17(2) adds reasonable steps where the controller made the data public). The tool emits `data.erasure_warning_external_copies` when the loaded config has a webhook block, so a downstream consumer querying the audit log sees the explicit reminder.
+- Delete entries from the audit log itself. The tool records the erasure as a new event rather than rewriting history, and never deletes an audit-log entry. Whether entries that name the data subject may be kept is the controller's decision, and it has to be documented. If an Article 17(1) ground applies, the entries stay only where an Article 17(3) exception covers them: 17(3)(b) applies only to the extent processing is necessary for compliance with a legal obligation under Union or Member State law to which the controller is subject (or for a task in the public interest or in the exercise of official authority), and 17(3)(e) covers legal claims. If no Article 17(1) ground applies (for example the entries are still necessary for the purpose they were collected for), erasure is not owed, but the request still gets a reasoned answer within the Article 12 deadline, with the right to complain (Article 12(4)).
+- Push erasure notices to downstream consumers. Webhook receivers, dataset mirrors, deployed model endpoints, and third-party fine-tunes derived from a published checkpoint are the operator's runtime-layer responsibility (GDPR Article 19 requires telling each recipient the data was disclosed to about the erasure, unless that proves impossible or involves disproportionate effort, and telling the data subject about those recipients on request; Article 17(2) adds reasonable steps where the controller made the data public). The tool emits `data.erasure_warning_external_copies` in row mode when the config you pass with `--config` has a webhook block, so a downstream consumer querying the audit log sees the explicit reminder.
 - Erase backups. Replicas, snapshots, and storage backups outside the operator's `<output_dir>` are infrastructure-side concerns.
+- Make the whole response. A complete response also needs steps ForgeLM does not perform: verifying the requester's identity (Article 12(6)); answering within one month of receipt (Article 12(3); extendable by two further months for complex or numerous requests, with notice in the first month); giving the data subject a copy of the data and the Article 15(1)(a)-(h) information (Article 15(3)) without adversely affecting other people's rights (Article 15(4)); deciding whether an Article 17(1) ground applies and which Article 17(3) exception, if any, covers what you keep; telling recipients (Article 19); re-running the access search after a purge to confirm the rows are gone; and, if you refuse a request, giving reasons and the right to complain within the same deadline (Article 12(4)). Whether the trained model counts as personal data is a separate question (EDPB Opinion 28/2024).
 
 ## Three modes
 
@@ -42,7 +45,7 @@ The tool:
 2. Writes `data.erasure_requested` to the audit log with the **hashed** target_id (`SHA-256(salt + value)`) and the operator-supplied justification.
 3. Locates the matching JSONL row by its `id` (or `row_id`) field — line-number fallback is **rejected** to defend against silent wrong-row deletion on a re-ordered file. ForgeLM does not currently provide an id-population helper (a `forgelm audit --add-row-ids` flag is on the Phase 28 backlog); operators with id-less corpora must pre-populate ids with an operator-side script (e.g. `jq -c 'to_entries | with_entries(...)'` or a one-shot Python loop) before invoking purge.
 4. Atomically rewrites the corpus (writes a sibling temp file + `os.replace`); operators get either the full pre-erasure file or the full post-erasure file, never a partial state.
-5. Detects warning conditions and emits the matching events (memorisation, synthetic-data presence, external copies).
+5. Detects warning conditions and emits the matching events (memorisation, synthetic-data presence, external copies). The external-copies check reads the `webhook` block of the config you pass with `--config` (a literal `url`, or a `url_env` variable that is exported in the purge environment); without `--config`, or with an unset `url_env`, it cannot fire.
 6. Writes `data.erasure_completed` (or `data.erasure_failed` if the disk operation raised) so the chain reflects the final state.
 
 Multi-row matches default to refusal (`--row-matches one`); pass `--row-matches all` to delete every row sharing the id (operator confirms intent).
@@ -68,7 +71,7 @@ $ forgelm purge --check-policy --config configs/run.yaml --output-dir ./outputs
 
 Read-only scan. Walks the output directory, compares each artefact's age (canonical: the run's first audit event for a `final_model.staging.<run_id>/` directory, else the audit log's genesis `timestamp`; fallback: filesystem `mtime` with `age_source=mtime` flag) against the loaded config's `retention:` horizons, and emits a structured violation list.
 
-**Successful policy reports exit 0** (report-not-gate semantic per design §10 Q5). Config-load failures exit with `EXIT_CONFIG_ERROR` (non-zero): an explicit `--config` that is missing, unreadable, or fails Pydantic validation surfaces as `EXIT_CONFIG_ERROR` so the operator does not mistake "loader failed" for "no violations". Operators wiring a CI gate use `--output-format json` and pipe to `jq -e '.success and (.violations | length == 0)'` (exit 1 while violations exist) themselves; this keeps the public exit-code contract `0/1/2/3/4` consistent across every ForgeLM subcommand.
+**Successful policy reports exit 0** (report-not-gate semantic per design §10 Q5). Config-load failures exit with `EXIT_CONFIG_ERROR` (non-zero): an explicit `--config` that is missing, unreadable, or fails Pydantic validation surfaces as `EXIT_CONFIG_ERROR` so the operator does not mistake "loader failed" for "no violations". Operators wiring a CI gate use `--output-format json` and test the report themselves, for example `jq -e '.success == true and has("count") and .count == 0'` under `set -o pipefail`: `count` is absent when no `retention:` block was loaded, so the gate fails instead of passing on a directory that was never checked, and `--output-dir` must be the real training output directory (a missing one reports `count: 0`). This keeps the public exit-code contract consistent across every ForgeLM subcommand.
 
 ## The `retention:` config block
 
@@ -81,7 +84,7 @@ retention:
   enforce: log_only                       # reserved: no command acts on it yet (log_only / warn_on_excess / block_on_excess)
 ```
 
-Setting any horizon to `0` disables the policy for that artefact kind (retain indefinitely). The horizons are reported by `forgelm purge --check-policy` (read-only, always exits 0); nothing is deleted or blocked automatically. `enforce` is reserved: no command acts on it yet, so all three values behave like `log_only`.
+Setting any horizon to `0` turns the report off for that artefact kind (nothing is deleted either way). The horizons are reported by `forgelm purge --check-policy` (read-only; exits 0 however many it finds); nothing is deleted or blocked automatically. `enforce` is reserved: no command acts on it yet, so all three values behave like `log_only`.
 
 ## Removed: `evaluation.staging_ttl_days`
 
@@ -109,8 +112,8 @@ Six new events ship with `forgelm purge` (catalogued in `docs/reference/audit_ev
 | Code | Meaning |
 |---|---|
 | 0 | Success, or a successful `--check-policy` report (report-not-gate semantic). |
-| 1 | Config error: unknown `--row-id`, no staging directory / compliance file matching `--run-id` (including `--kind artefacts` against the standard fixed-name bundle), missing `--corpus`, mutually-exclusive flag combination, or `--check-policy --config <path>` that is missing / unreadable / fails Pydantic validation. |
-| 2 | Runtime error: I/O failure, permission denied, atomic-rename failure. |
+| 1 | Config error: unknown `--row-id`, no staging directory / compliance file matching `--run-id` (including `--kind artefacts` against the standard fixed-name bundle), a missing `--corpus` or `--row-id` without `--corpus`, a missing `--kind`, no mode selected, or `--check-policy --config <path>` that is missing / unreadable / fails Pydantic validation. |
+| 2 | Runtime error: I/O failure, permission denied, atomic-rename failure; also an argument-parser usage error (two modes together such as `--row-id` with `--run-id`, `--kind logs`), which prints usage instead of a JSON envelope. |
 
 `--check-policy` never returns code 3. A successful report exits 0; a failure to load the supplied `--config` exits with `EXIT_CONFIG_ERROR` (non-zero) rather than degrading to a misleading "no violations" report. Operators wiring a CI gate compute the violation count from JSON output themselves (per design §10 Q5).
 
@@ -143,11 +146,14 @@ that `forgelm purge` uses for its `target_id` field — Article 15
 access requests must not themselves leak the subject's data into the
 audit log.  The salted form is a stable per-identifier fingerprint
 that lets a compliance reviewer correlate Article 17 (purge) and
-Article 15 (reverse-pii) events for the same subject (the digests match
-when you pass the same value to `--row-id` and `--query`, use the same
-`--output-dir`, and use the same salt source: if `FORGELM_AUDIT_SECRET` was set
-for the purge, query with `--salt-source env_var` and the same secret) without
-seeing the cleartext.
+Article 15 (reverse-pii) events for the same subject without seeing the
+cleartext.  The digests match only when the `--row-id` and `--query` values
+are the same text, both commands use the same `--output-dir`, and
+`FORGELM_AUDIT_SECRET` is in the same state for both (unset, or the same
+value); run the access request in its default plaintext mode, because
+`--salt-source` switches to the hash-mask scan above and is not a way to
+match purge digests.  When the ids differ, link a request to its erasure
+through the ticket reference you pass to `forgelm purge --justification`.
 
 **Identifier types** (`--type`): `literal` (default), `email`,
 `phone`, `tr_id`, `us_ssn`, `iban`, `credit_card`, `custom`.  All

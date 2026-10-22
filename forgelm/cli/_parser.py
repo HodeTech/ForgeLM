@@ -629,7 +629,7 @@ def _add_audit_subcommand(subparsers) -> None:
             "(default: 'en'). Presidio raises a typed exception if no engine is registered for "
             "the requested language — surface it to the operator instead of silently "
             "running an English NER on a non-English corpus. Set to e.g. 'de' on a German corpus, or 'xx' (multilingual fallback) for a language "
-            "without a spaCy model such as Turkish, AND install the matching spaCy model."
+            "with no dedicated spaCy model such as Turkish; the matching spaCy model must be installed."
         ),
     )
     p.add_argument(
@@ -1089,9 +1089,9 @@ def _add_purge_subcommand(subparsers) -> None:
     """
     p = subparsers.add_parser(
         "purge",
-        help="GDPR Article 17 erasure: remove corpus rows or run-scoped artefacts.",
+        help="Remove corpus rows or run-scoped artefacts (one step of a GDPR Article 17 erasure).",
         description=(
-            "Article 17 right-to-erasure: deletes a corpus row, a staging "
+            "One step of a GDPR Article 17 erasure: deletes a corpus row, a staging "
             "directory, or a run's compliance files whose names embed the run id, and records a tamper-evident "
             "audit-event chain (request → completed / failed).  Use --check-policy "
             "for a read-only retention-violation report against the loaded config."
@@ -1129,7 +1129,7 @@ def _add_purge_subcommand(subparsers) -> None:
         type=str,
         default=None,
         choices=["staging", "artefacts"],
-        help="Run-scoped erasure target: staging directory OR compliance files whose names embed the run id.  `logs` is intentionally absent (the audit log is append-only and never deleted by this command).",
+        help="Run-scoped erasure target: staging directory OR compliance files whose names embed the run id (the standard compliance bundle has fixed filenames without a run id and is never matched).  `logs` is intentionally absent (the audit log is append-only and never deleted by this command).",
     )
     p.add_argument(
         "--row-matches",
@@ -1163,7 +1163,7 @@ def _add_purge_subcommand(subparsers) -> None:
         "--dry-run",
         action="store_true",
         default=argparse.SUPPRESS,
-        help="Show what would be deleted; do not modify disk.  Audit events still emit (with dry_run=True) so the chain reflects intent.",
+        help="Show what would be deleted without touching the corpus or the staging files.  The salt file is still created and audit events still emit (with dry_run=True) so the chain reflects intent.",
     )
     _add_common_subparser_flags(p, include_output_format=True)
 
@@ -1190,13 +1190,13 @@ def _add_reverse_pii_subcommand(subparsers) -> None:
     """
     p = subparsers.add_parser(
         "reverse-pii",
-        help="GDPR Article 15 right-of-access: search masked corpora for a subject's identifier.",
+        help="Search corpora for a subject's identifier (an input to a GDPR Article 15 response).",
         description=(
-            "Article 15 right-of-access: walks a glob of JSONL corpora and reports "
+            "An input to a GDPR Article 15 response: walks a glob of JSONL corpora and reports "
             "every line where the supplied identifier appears (plaintext residual "
             "scan by default; hash-mask scan when --salt-source is set).  Audit "
             "event `data.access_request_query` records the hashed identifier so "
-            "the chain itself does not leak the subject's data."
+            "the chain does not store it in clear (a pseudonymised digest, not an anonymous one)."
         ),
     )
     p.add_argument(
@@ -1294,8 +1294,8 @@ def parse_args() -> argparse.Namespace:
             "  forgelm approve RUN_ID          Promote a staged model after human review (Art. 14)\n"
             "  forgelm reject  RUN_ID          Reject a staged model (preserves staging dir for forensics)\n"
             "  forgelm approvals --pending     List runs awaiting human approval (or --show RUN_ID)\n"
-            "  forgelm purge --row-id ID       GDPR Article 17 erasure (corpus row / run artefacts / --check-policy)\n"
-            "  forgelm reverse-pii --query VAL GDPR Article 15 right-of-access (find subject identifier in masked corpora)\n"
+            "  forgelm purge --row-id ID       One step of a GDPR Art. 17 erasure (corpus row / run artefacts / --check-policy)\n"
+            "  forgelm reverse-pii --query VAL Input to a GDPR Art. 15 response (find a subject identifier in corpora)\n"
             "  forgelm cache-models --model M  Pre-populate HF Hub cache (air-gap workflow)\n"
             "  forgelm cache-tasks --tasks CSV Pre-populate lm-eval task datasets (requires [eval] extra)\n"
             "  forgelm verify-annex-iv PATH    Verify EU AI Act Annex IV artifact (field set + manifest hash)\n"

@@ -275,17 +275,19 @@ long as necessary) and support erasure handling under Article 17 (requests are
 answered without undue delay, within the Article 12(3) one-month period, extendable by two further months). Choose
 values from your own necessity assessment; the defaults are ForgeLM choices, not
 legal periods. The horizons are **reported**, not enforced: `forgelm purge
---check-policy` lists what is past them and always exits 0, and nothing is
+--check-policy` lists what is past them and exits 0 however many it finds (an unloadable `--config` exits 1), and nothing is
 deleted, blocked or scheduled automatically. The `enforce` knob is reserved: no
 command reads it yet.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `audit_log_retention_days` | int | `1825` (~5 years) | Days after which `forgelm purge --check-policy` reports `audit_log.jsonl` as overdue (Article 5(1)(e)). The 5-year default is a ForgeLM choice, not a legal period (see AI Act Art. 18(1), documentation kept 10 years, and Art. 19(1) / 26(6), system logs at least six months, as applicable). Set to `0` to retain indefinitely; document why the entries stay necessary or the legal obligation you rely on. |
-| `staging_ttl_days` | int | `7` | Age (from the run's first audit event, else the audit log's first event, else the directory's mtime) after which `forgelm purge --check-policy` reports a `final_model.staging.<run_id>/` directory (and the legacy `final_model.staging/`) as overdue; nothing is deleted automatically and the time of a `forgelm reject` decision is not used. Set to `0` to retain indefinitely. Replaces the removed `evaluation.staging_ttl_days` (removed in v0.8.0). |
-| `ephemeral_artefact_retention_days` | int | `90` | Age in days after which `forgelm purge --check-policy` reports `<output_dir>/compliance/` and `<output_dir>/data_audit_report.json` as overdue (aged from the audit log's first event, else mtime); nothing is deleted. Set to `0` to retain indefinitely. |
-| `raw_documents_retention_days` | int | `90` | Age in days after which `forgelm purge --check-policy` reports `<output_dir>/raw_documents/` or `<output_dir>/ingestion_output/` (ingested PDF / DOCX / EPUB / TXT / Markdown) as overdue (aged from the audit log's first event, else mtime); nothing is deleted. Set to `0` to retain indefinitely. |
+| `audit_log_retention_days` | int | `1825` (~5 years) | Days after which `forgelm purge --check-policy` reports `audit_log.jsonl` as overdue (Article 5(1)(e)). The 5-year default is a ForgeLM choice, not a legal period. Set to `0` to stop reporting it (nothing is ever deleted); keep it only for as long as the entries stay necessary or a specific legal retention duty you can name requires it. |
+| `staging_ttl_days` | int | `7` | Age (from the run's first audit event, else the audit log's first event, else the directory's mtime) after which `forgelm purge --check-policy` reports a `final_model.staging.<run_id>/` directory (and the legacy `final_model.staging/`) as overdue; nothing is deleted automatically and the time of a `forgelm reject` decision is not used. Set to `0` to stop reporting it. Replaces the removed `evaluation.staging_ttl_days` (removed in v0.8.0). |
+| `ephemeral_artefact_retention_days` | int | `90` | Age in days after which `forgelm purge --check-policy` reports `<output_dir>/compliance/` and `<output_dir>/data_audit_report.json` as overdue (aged from the audit log's first event, else mtime); nothing is deleted. Set to `0` to stop reporting it. |
+| `raw_documents_retention_days` | int | `90` | Age in days after which `forgelm purge --check-policy` reports `<output_dir>/raw_documents/` or `<output_dir>/ingestion_output/` (ingested PDF / DOCX / EPUB / TXT / Markdown) as overdue (aged from the audit log's first event, else mtime); nothing is deleted. Set to `0` to stop reporting it. |
 | `enforce` | string | `"log_only"` | Reserved policy mode. No command acts on it: `"log_only"`, `"warn_on_excess"` and `"block_on_excess"` are all accepted and behave the same, and training and `--dry-run` warn when a config sets either of the last two. |
+
+**Shared output directories.** `compliance/`, `data_audit_report.json` and the raw-document directories are aged from the audit log's *first* event, not from when the file was last written. In a directory reused for many runs, a bundle written today can be reported as past its horizon: check the file's own date before deleting anything the report lists.
 
 > **Removed:** `evaluation.staging_ttl_days` (deprecated as of v0.5.5) was
 > removed in v0.8.0. `retention.staging_ttl_days` is now the only accepted form.

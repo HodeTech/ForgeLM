@@ -276,17 +276,19 @@ sınırlarıdır (talepler gereksiz gecikmeden kaçınılarak, en geç Madde 12(
 aylık süre içinde yanıtlanır; bu süre iki ay daha uzatılabilir). Değerleri kendi
 gereklilik (necessity) değerlendirmenize göre belirleyin; varsayılanlar ForgeLM
 tercihleridir, yasal süre değildir. Ufuklar **raporlanır**, zorlanmaz:
-`forgelm purge --check-policy` ufku aşanları listeler ve her zaman 0 ile çıkar;
+`forgelm purge --check-policy` ufku aşanları listeler ve kaç tane bulursa bulsun 0 ile çıkar (yüklenemeyen `--config` 1 ile çıkar);
 hiçbir şey otomatik silinmez, engellenmez ya da zamanlanmaz. `enforce` anahtarı
 ayrılmıştır: henüz hiçbir komut onu okumaz.
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
-| `audit_log_retention_days` | int | `1825` (~5 yıl) | `forgelm purge --check-policy`'nin `audit_log.jsonl` dosyasını "süresi geçmiş" olarak raporladığı gün sayısı (Madde 5(1)(e)). 5 yıllık varsayılan bir ForgeLM tercihidir, yasal süre değildir (uygulanabildiği ölçüde bkz. AI Act Madde 18(1): dokümantasyon 10 yıl; Madde 19(1) ve 26(6): sistem logları en az altı ay). `0` süresiz saklamayı belirtir; girdilerin neden gerekli kaldığını veya dayandığınız yasal yükümlülüğü belgeleyin. |
-| `staging_ttl_days` | int | `7` | `forgelm purge --check-policy`'nin bir `final_model.staging.<run_id>/` dizinini (ve eski `final_model.staging/`'i) "süresi geçmiş" olarak raporladığı yaş (koşumun ilk audit event'inden, yoksa audit log'un ilk event'inden, o da yoksa dizinin mtime'ından); hiçbir şey otomatik silinmez ve `forgelm reject` kararının zamanı kullanılmaz. `0` süresiz saklama anlamına gelir. v0.8.0'da kaldırılan `evaluation.staging_ttl_days` yerine geçer. |
-| `ephemeral_artefact_retention_days` | int | `90` | `forgelm purge --check-policy`'nin `<output_dir>/compliance/` ve `<output_dir>/data_audit_report.json`'ı "süresi geçmiş" olarak raporladığı yaş (gün; audit log'un ilk event'inden, yoksa mtime'dan); hiçbir şey silinmez. `0` süresiz saklama. |
-| `raw_documents_retention_days` | int | `90` | `forgelm purge --check-policy`'nin `<output_dir>/raw_documents/` veya `<output_dir>/ingestion_output/`'u (ingest edilmiş PDF / DOCX / EPUB / TXT / Markdown) "süresi geçmiş" olarak raporladığı yaş (gün; audit log'un ilk event'inden, yoksa mtime'dan); hiçbir şey silinmez. `0` süresiz saklama. |
+| `audit_log_retention_days` | int | `1825` (~5 yıl) | `forgelm purge --check-policy`'nin `audit_log.jsonl` dosyasını "süresi geçmiş" olarak raporladığı gün sayısı (Madde 5(1)(e)). 5 yıllık varsayılan bir ForgeLM tercihidir, yasal süre değildir. `0` bu raporu kapatır (hiçbir şey silinmez); log'u yalnızca girdiler gerekli kaldığı sürece ya da adlandırabileceğiniz belirli bir yasal saklama yükümlülüğü gerektirdiği sürece tutun. |
+| `staging_ttl_days` | int | `7` | `forgelm purge --check-policy`'nin bir `final_model.staging.<run_id>/` dizinini (ve eski `final_model.staging/`'i) "süresi geçmiş" olarak raporladığı yaş (koşumun ilk audit event'inden, yoksa audit log'un ilk event'inden, o da yoksa dizinin mtime'ından); hiçbir şey otomatik silinmez ve `forgelm reject` kararının zamanı kullanılmaz. `0` bu raporu kapatır. v0.8.0'da kaldırılan `evaluation.staging_ttl_days` yerine geçer. |
+| `ephemeral_artefact_retention_days` | int | `90` | `forgelm purge --check-policy`'nin `<output_dir>/compliance/` ve `<output_dir>/data_audit_report.json`'ı "süresi geçmiş" olarak raporladığı yaş (gün; audit log'un ilk event'inden, yoksa mtime'dan); hiçbir şey silinmez. `0` bu raporu kapatır. |
+| `raw_documents_retention_days` | int | `90` | `forgelm purge --check-policy`'nin `<output_dir>/raw_documents/` veya `<output_dir>/ingestion_output/`'u (ingest edilmiş PDF / DOCX / EPUB / TXT / Markdown) "süresi geçmiş" olarak raporladığı yaş (gün; audit log'un ilk event'inden, yoksa mtime'dan); hiçbir şey silinmez. `0` bu raporu kapatır. |
 | `enforce` | string | `"log_only"` | Ayrılmış politika modu. Hiçbir komut onu kullanmaz: `"log_only"`, `"warn_on_excess"` ve `"block_on_excess"` kabul edilir ve aynı davranır; bir config son ikisinden birini ayarlarsa eğitim ve `--dry-run` uyarır. |
+
+**Paylaşılan çıktı dizinleri.** `compliance/`, `data_audit_report.json` ve ham-belge dizinlerinin yaşı, dosyanın en son yazıldığı andan değil, audit log'un *ilk* event'inden sayılır. Birçok koşum için yeniden kullanılan bir dizinde bugün yazılmış bir paket de ufku aşmış olarak raporlanabilir: raporun listelediği bir şeyi silmeden önce dosyanın kendi tarihine bakın.
 
 > **Kaldırıldı:** `evaluation.staging_ttl_days` (v0.5.5 itibarıyla kullanımdan
 > kaldırılmıştı) v0.8.0'da kaldırılmıştır. Artık geçerli tek form

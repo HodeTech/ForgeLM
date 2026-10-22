@@ -431,7 +431,8 @@ forgelm audit data/ --output ./audit/ --pii-ml
 
 Yeni kategoriler mevcut `pii_summary` ve `pii_severity` bloklarına
 disjoint isimlerle birleşir, bu yüzden regex baseline ML sinyaliyle
-yan yana görünür kalır:
+yan yana görünür kalır (örnek varsayılan İngilizce model içindir; o model
+`organization` raporlamaz, diğer dil modelleri eder):
 
 ```json
 {
@@ -439,15 +440,14 @@ yan yana görünür kalır:
     "email": 12,
     "phone": 3,
     "person": 47,         // ← Presidio
-    "organization": 18,   // ← Presidio
     "location": 9         // ← Presidio
   },
   "pii_severity": {
-    "by_tier": {"critical": 0, "high": 0, "medium": 59, "low": 30},
+    "by_tier": {"critical": 0, "high": 0, "medium": 59, "low": 12},
     "by_type": {
       "email": {"count": 12, "tier": "medium"},
       "person": {"count": 47, "tier": "medium"},
-      "organization": {"count": 18, "tier": "low"}
+      "location": {"count": 9, "tier": "low"}
     },
     "worst_tier": "medium"
   }

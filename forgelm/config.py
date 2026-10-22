@@ -1598,7 +1598,7 @@ class RetentionConfig(BaseModel):
     Choose values from your own necessity assessment.
 
     Setting any horizon to ``0`` disables the policy for that artefact
-    kind (retain indefinitely).  The horizons are *reported*, not enforced:
+    kind (it is never reported).  The horizons are *reported*, not enforced:
     ``forgelm purge --check-policy`` lists artefacts past them and always
     exits 0; nothing is deleted, blocked or scheduled automatically.
     ``enforce`` is reserved: no command acts on it yet, so
@@ -1613,7 +1613,7 @@ class RetentionConfig(BaseModel):
         ge=0,
         description=(
             "Days after which `forgelm purge --check-policy` reports `audit_log.jsonl` as overdue (Article 5(1)(e)). "
-            "Default 1825 = 5 years, a ForgeLM choice, not a legal period.  Set to 0 to retain indefinitely; document why the entries stay necessary or the legal obligation you rely on."
+            "Default 1825 = 5 years, a ForgeLM choice, not a legal period.  Set to 0 to stop reporting it; keep the log only while it stays necessary or a nameable legal duty requires it."
         ),
     )
     staging_ttl_days: int = Field(
@@ -1621,7 +1621,7 @@ class RetentionConfig(BaseModel):
         ge=0,
         description=(
             "Days after which `forgelm purge --check-policy` reports a `final_model.staging.<run_id>/` (or legacy `final_model.staging/`) directory as overdue (aged from the run's first audit event, else the log's first event, else mtime); nothing is deleted. "
-            "Set to 0 to retain indefinitely. This is the canonical staging-retention field; "
+            "Set to 0 to stop reporting it. This is the canonical staging-retention field; "
             "the legacy `evaluation.staging_ttl_days` alias was removed in v0.8.0."
         ),
     )
@@ -1630,7 +1630,7 @@ class RetentionConfig(BaseModel):
         ge=0,
         description=(
             "Age in days after which `forgelm purge --check-policy` reports `<output_dir>/compliance/` and "
-            "`<output_dir>/data_audit_report.json` as overdue; nothing is deleted. Set to 0 to retain indefinitely."
+            "`<output_dir>/data_audit_report.json` as overdue; nothing is deleted. Set to 0 to stop reporting it."
         ),
     )
     raw_documents_retention_days: int = Field(
@@ -1638,7 +1638,7 @@ class RetentionConfig(BaseModel):
         ge=0,
         description=(
             "Age in days after which `forgelm purge --check-policy` reports `<output_dir>/raw_documents/` or "
-            "`<output_dir>/ingestion_output/` (ingested PDF / DOCX / EPUB / TXT / Markdown) as overdue; nothing is deleted.  Set to 0 to retain indefinitely. "
+            "`<output_dir>/ingestion_output/` (ingested PDF / DOCX / EPUB / TXT / Markdown) as overdue; nothing is deleted.  Set to 0 to stop reporting it. "
             "Closes ghost-features GH-023 (was nested as `ingestion.retention.raw_documents.ttl_days`; now top-level)."
         ),
     )
@@ -1646,7 +1646,7 @@ class RetentionConfig(BaseModel):
         default="log_only",
         description=(
             "Reserved: no command acts on it.  Retention horizons are only reported, read-only, by `forgelm purge "
-            "--check-policy` (always exit 0); nothing is deleted, warned about or blocked automatically.  "
+            "--check-policy` (exit 0 whatever it finds); nothing is deleted, warned about or blocked automatically.  "
             "`warn_on_excess` and `block_on_excess` are accepted but behave like `log_only`; training and `--dry-run` warn when set."
         ),
     )

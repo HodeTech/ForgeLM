@@ -146,7 +146,7 @@
       <article class="article-card">
         <span class="article-num">Article 10</span>
         <h3 data-i18n-html="compliance.art10.title">Data &amp; data governance</h3>
-        <p data-i18n="compliance.art10.body">Quality, relevance, representativeness criteria. Bias detection, PII redaction. Optional <b>Presidio</b> ML-NER for unstructured PII; optional <b>Croissant 1.0</b> dataset card emitted alongside the audit.</p>
+        <p data-i18n="compliance.art10.body">Quality, relevance, representativeness criteria you declare. PII counts and masking, cross-split leakage gate. Optional Presidio ML-NER PII layer and Croissant 1.0 dataset card emitted alongside the audit. Every audit report can be filed as part of your Article 10 evidence; collection, provenance and bias-examination documentation still come from you.</p>
         <div class="article-evidence"><b>forgelm/data_audit/</b> · <b>forgelm/ingestion.py</b></div>
       </article>
 
@@ -277,7 +277,7 @@
         <pre class="code-block-body">checkpoints/policy-bot/             <span class="comment"># training.output_dir from your YAML</span>
 ├── audit_log.jsonl                 <span class="comment"># Article 12 append-only event log</span>
 ├── audit_log.jsonl.manifest.json   <span class="comment"># SHA-256 sidecar over the audit log</span>
-├── data_audit_report.json          <span class="comment"># Article 10 quality/PII/bias scan — you place it here (see note)</span>
+├── data_audit_report.json          <span class="comment"># Article 10 quality/PII/leakage audit — you place it here (see note)</span>
 ├── compliance/                     <span class="comment"># Annex IV bundle (Articles 9-17)</span>
 │   ├── annex_iv_metadata.json      <span class="comment"># Article 11 technical documentation (flat JSON)</span>
 │   ├── compliance_report.json      <span class="comment"># Full Article 9-17 manifest — superset of the per-artefact files</span>

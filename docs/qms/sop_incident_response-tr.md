@@ -244,17 +244,21 @@ olabilir.
 **Tetik:** Veri sahibi operatörün DSAR portalı veya iletişim formu
 üzerinden erişim talebi gönderir.
 
-**Önem:** Medium (regülasyon deadline 30 gün).
+**Önem:** Medium (yanıt, talebin alınmasından itibaren bir ay içinde, GDPR Madde 12(3); bildirimle iki ay uzatılabilir; KVKK Madde 13(2)'de 30 gün).
 
 **Runbook:**
 
 1. [ ] **Sahip kimliğini doğrula** operatörün DSAR prosedürü başına.
 2. [ ] **`forgelm reverse-pii --query <verified-identifier>
        --type <category> data/*.jsonl --output-dir <run-dir>` çalıştır**.
-3. [ ] **Hash-mask scan** ForgeLM'in maskelediği herhangi bir
-       korpus için (`forgelm reverse-pii --query <id>
-       --salt-source per_dir --output-dir <run-dir>`).
-4. [ ] **Yanıt mektubu oluştur** DSAR şablonu başına; koşumun
+3. [ ] **Diğer kopyaları da ara.** Eşleşme büyük/küçük harfe duyarlıdır
+       ve ham dosya metnini karşılaştırır; yazım ve harf varyantlarını da
+       ara; `forgelm ingest --pii-mask` digest değil `[REDACTED]` yazar,
+       bu yüzden hash-mask taraması (`--salt-source`) yalnızca ForgeLM
+       dışında hash'lenmiş korpuslar içindir; ham kaynak dokümanları ayrıca ara.
+4. [ ] **Yanıt mektubu oluştur** DSAR şablonu başına: verinin bir
+       kopyası ve Madde 15(1)(a)-(h) bilgileri; başkalarının verisini
+       açığa çıkarmamaya dikkat et (Madde 15(4)); koşumun
        `data.access_request_query` audit-event id'sine atıf yap.
 5. [ ] **Yanıt mektubunu sakla** audit chain yanında.
 
@@ -262,8 +266,9 @@ olabilir.
 
 **Tetik:** Sahip silme talebi gönderir.
 
-**Önem:** Medium (regülasyon deadline 30 gün; bazı AB üye
-ülkeleri daha kısa yanıt gerektirir).
+**Önem:** Medium (yanıt, talebin alınmasından itibaren bir ay içinde,
+GDPR Madde 12(3); bildirimle iki ay uzatılabilir; KVKK Madde 13(2)'de
+30 gün).
 
 **Runbook:**
 
@@ -271,8 +276,10 @@ olabilir.
 2. [ ] **`forgelm purge --row-id <verified-id> --corpus
        data/<file>.jsonl --output-dir <run-dir>` çalıştır**.
 3. [ ] **`data.erasure_warning_memorisation` olayını kontrol et** —
-       satırı eğiten bir model `final_model/` artefaktına sahipse,
-       memorisation residual riski uygulanır.
+       yalnızca `--output-dir` altında doğrudan bir `final_model/`
+       dizini varsa tetiklenir ve satırı hangi modelin gördüğünü
+       söylemez; uyarı tetiklenmese bile corpus ile eğitilmiş her
+       modeli kapsam içinde say.
 4. [ ] **Memorisation caveat'ı sahibe bildir** yanıt mektubunda
        (şablon: "satırı sildik ama önceden eğitilmiş bir model bunu
        memorise etmiş olabilir; uygun şekilde yeniden eğiteceğiz veya

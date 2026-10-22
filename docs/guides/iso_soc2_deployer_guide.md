@@ -282,8 +282,9 @@ forgelm reverse-pii --query "alice@example.com" --type email \
     --output-dir ./outputs data/*.jsonl
 # JSON envelope returns { matches: [...], match_count: N }
 # The audit chain stamps a `data.access_request_query` event with
-# the QUERY HASHED (never raw — the salt protects against wordlist
-# attacks against the audit log itself).
+# the QUERY HASHED (never raw). The salted digest is pseudonymised,
+# not anonymous: keep `.forgelm_audit_salt` under the same access
+# controls as the log, or a guessed identifier can be tested against it.
 ```
 
 Article 17 (right to erasure):
@@ -293,15 +294,17 @@ forgelm purge --row-id "alice@example.com" --corpus data/2026Q2.jsonl \
     --output-dir ./outputs
 # The audit chain stamps `data.erasure_requested` →
 # `data.erasure_completed` (or `data.erasure_failed`) with
-# `target_id` HASHED.  If a model trained on the row has
-# `final_model/`, `data.erasure_warning_memorisation` ALSO fires
-# and you must communicate the memorisation residual risk to the
-# subject.
+# `target_id` HASHED.  If a `final_model/` directory exists directly
+# under `--output-dir`, `data.erasure_warning_memorisation` ALSO fires;
+# it does not say which model saw the row, so treat every model
+# trained on the corpus as in scope and communicate the memorisation
+# residual risk to the subject.
 ```
 
 The cross-tool digest correlation (purge `target_id` ==
-reverse-pii `query_hash` for the same identifier in the same
-`output_dir`) is pinned by Wave 3 follow-up tests.
+reverse-pii `query_hash` for the same value in the same `output_dir`
+under the same `FORGELM_AUDIT_SECRET` state, with no `--salt-source`)
+is pinned by tests.
 
 ## Common pitfalls
 

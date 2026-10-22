@@ -418,6 +418,53 @@ class TestAuditEventDoesNotLeakIdentifier:
             "cross-tool audit correlation requires both subcommands to salt with the same per-output-dir salt"
         )
 
+    @pytest.mark.parametrize("secret", [None, "s3cret-value-for-test"])
+    def test_digests_correlate_end_to_end_in_the_default_plaintext_mode(
+        self, tmp_path: Path, capsys, monkeypatch, secret: str | None
+    ) -> None:
+        """The documented rule: purge's ``row_id_hash`` equals reverse-pii's ``query_hash`` when the value, the
+        ``--output-dir`` and the ``FORGELM_AUDIT_SECRET`` state are the same, with no ``--salt-source``; and
+        ``--salt-source`` is a *different* scan (digests inside the corpus) that finds nothing in a plaintext corpus."""
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+        from forgelm.cli.subcommands._reverse_pii import _run_reverse_pii_cmd
+
+        if secret:
+            monkeypatch.setenv("FORGELM_AUDIT_SECRET", secret)
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "alice@example.com", "text": "mail alice@example.com"}])
+        purge_args = SimpleNamespace(
+            row_id="alice@example.com",
+            corpus=str(corpus),
+            run_id=None,
+            kind=None,
+            check_policy=False,
+            output_dir=str(tmp_path),
+            config=None,
+            justification=None,
+            dry_run=True,
+            row_matches="one",
+        )
+        with pytest.raises(SystemExit) as purge_exit:
+            _run_purge_cmd(purge_args, output_format="json")
+        assert purge_exit.value.code == 0
+        purge_hash = json.loads(capsys.readouterr().out)["row_id_hash"]
+
+        def scan(salt_source: str | None) -> dict:
+            args = _build_args(
+                query="alice@example.com", files=[str(corpus)], output_dir=str(tmp_path), salt_source=salt_source
+            )
+            with pytest.raises(SystemExit) as scan_exit:
+                _run_reverse_pii_cmd(args, output_format="json")
+            assert scan_exit.value.code == 0
+            return json.loads(capsys.readouterr().out)
+
+        plaintext = scan(None)
+        assert plaintext["query_hash"] == purge_hash
+        assert plaintext["match_count"] == 1
+        hash_mode = scan("env_var" if secret else "per_dir")
+        assert hash_mode["scan_mode"] == "hash"
+        assert hash_mode["match_count"] == 0, "--salt-source searches for digests, so a plaintext corpus has none"
+
 
 # ---------------------------------------------------------------------------
 # §4 Test — Glob expansion: multiple files, deterministic ordering

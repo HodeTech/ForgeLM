@@ -37,8 +37,8 @@ ForgeLM ships out-of-the-box:
   post-deployment verification via `forgelm verify-integrity`.
 - **EU AI Act Article 17** QMS templates in `docs/qms/` (Wave 0
   baseline + Wave 4 ISO additions).
-- **GDPR Article 15** right-of-access via `forgelm reverse-pii`.
-- **GDPR Article 17** right-to-erasure via `forgelm purge`.
+- **GDPR Article 15**: `forgelm reverse-pii` finds the rows that contain an identifier (an input to an access response).
+- **GDPR Article 17**: `forgelm purge` removes rows from a corpus (one step of an erasure).
 - **ISO 27001 / SOC 2 alignment** — see Wave 4 design doc + deployer
   guide.
 
@@ -258,9 +258,9 @@ Full field semantics and the config surface:
 
 ### GDPR Article 15 + 17 (Wave 2b + Wave 3)
 
-- Article 17 erasure: `forgelm purge --row-id <id> --corpus
+- Article 17 (one step of an erasure): `forgelm purge --row-id <id> --corpus
   data/file.jsonl` with salted-hash audit (`data.erasure_*` events).
-- Article 15 access: `forgelm reverse-pii --query <id> --type
+- Article 15 (an input to an access response): `forgelm reverse-pii --query <id> --type
   email|phone|... data/*.jsonl` with salted-hash audit
   (`data.access_request_query` event).
 

@@ -38,10 +38,15 @@ spaCy modeli yoksa `forgelm audit --pii-ml` hiçbir satır taranmadan **önce** 
 
 ```shell
 $ forgelm audit data/customer-letters.jsonl --output ./audit/ --pii-ml
-✓ format: instructions (8.400 satır)
-⚠ PII: 12 email, 3 telefon (regex katmanı)
-⚠ PII (ML): 47 person, 9 location (Presidio)
-   en kötü kat: medium
+Data audit summary
+  Source        : data/customer-letters.jsonl
+  Total samples : 8400
+  Splits        : train
+  └─ train: n=8400
+     languages (top-3): en=8400
+     PII             : email=12, location=9, person=47, phone=3
+  PII severity   : worst tier = medium
+     by tier      : medium=59, low=12
 ```
 
 Presidio bulguları aynı `pii_summary` ve `pii_severity` bloklarına disjoint kategori isimleriyle birleşir, böylece regex baseline ML sinyaliyle yan yana görünür kalır:
@@ -116,7 +121,7 @@ _require_presidio()
 text = "Alice Williams Pazartesi Acme Corp'un Berlin ofisini ziyaret ediyor."
 counts = detect_pii_ml(text, language="en")
 print(counts)
-# {'person': 1, 'organization': 1, 'location': 1}
+# {'person': 1, 'location': 1}   (Presidio'nun varsayılan İngilizce yapılandırması organization'ı yok sayar)
 ```
 
 Fonksiyon non-string input, eksik extra'lar veya geçici analyzer hataları için boş dict döndürür (tek bir kötü satır audit'i bloke etmez). Sert arızalar (eksik spaCy modeli, kayıtlı olmayan dil) `_require_presidio(language=...)` tarafından peşinen yakalanır ve hiçbir satır taranmadan önce raise edilir — `audit_dataset`'i bypass ettiğinizde aynı pre-flight garantilerini istiyorsanız bunu açıkça çağırın.

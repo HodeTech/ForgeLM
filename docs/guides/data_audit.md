@@ -421,7 +421,8 @@ forgelm audit data/ --output ./audit/ --pii-ml
 
 The new categories merge into the existing `pii_summary` and
 `pii_severity` blocks under disjoint names so the regex baseline stays
-visible alongside the ML signal:
+visible alongside the ML signal (the example is for the default English
+model, which never reports `organization`; other language models do):
 
 ```json
 {
@@ -429,15 +430,14 @@ visible alongside the ML signal:
     "email": 12,
     "phone": 3,
     "person": 47,         // ← Presidio
-    "organization": 18,   // ← Presidio
     "location": 9         // ← Presidio
   },
   "pii_severity": {
-    "by_tier": {"critical": 0, "high": 0, "medium": 59, "low": 30},
+    "by_tier": {"critical": 0, "high": 0, "medium": 59, "low": 12},
     "by_type": {
       "email": {"count": 12, "tier": "medium"},
       "person": {"count": 47, "tier": "medium"},
-      "organization": {"count": 18, "tier": "low"}
+      "location": {"count": 9, "tier": "low"}
     },
     "worst_tier": "medium"
   }

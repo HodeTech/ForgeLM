@@ -53,7 +53,7 @@ retention:
   ephemeral_artefact_retention_days: 365
 ```
 
-`forgelm purge --check-policy --config config.yaml --output-dir <training.output_dir>` o dizinde ufku aşmış artefaktları listeler ve her zaman 0 ile çıkar (`--output-dir` verilmezse `training.output_dir`'i değil, bulunulan dizini tarar). Hiçbir şey otomatik silinmez ve bunun için audit log'a bir şey yazılmaz; süresi geçeni silmek depolama katmanınızın işidir. (`retention.enforce` ayrılmıştır: henüz hiçbir komut onu kullanmaz.)
+`forgelm purge --check-policy --config config.yaml --output-dir <training.output_dir>` o dizinde ufku aşmış artefaktları listeler ve kaç tane bulursa bulsun 0 ile çıkar (`--output-dir` verilmezse `training.output_dir`'i değil, bulunulan dizini tarar). Hiçbir şey otomatik silinmez ve bunun için audit log'a bir şey yazılmaz; süresi geçeni silmek depolama katmanınızın işidir. (`retention.enforce` ayrılmıştır: henüz hiçbir komut onu kullanmaz.)
 
 ## Veri sahibi talepleri
 
@@ -111,7 +111,7 @@ Eğitimi id'li dosyadan yapın. `forgelm reverse-pii` tanımlayıcının geçti�
 
 ### Model-seviyesi silme
 
-LLM'ler eğitimden nadir string'leri ezberleyebilir. PII maskelemeyle bile deploy edilmiş bir modelden tüm izleri kaldırmak zordur; EDPB Görüş 28/2024'e göre kişisel veriyle eğitilmiş bir model her durumda anonim sayılamaz: modelinizin anonim olduğunu gösteremiyorsanız, bir erişim veya silme talebi yalnızca corpus'a değil modelin kendisine de uzanabilir. ForgeLM'in savunmaları:
+LLM'ler eğitimden nadir string'leri ezberleyebilir. PII maskelemeyle bile deploy edilmiş bir modelden tüm izleri kaldırmak zordur. EDPB Görüş 28/2024'e göre kişisel veriyle eğitilmiş bir model her zaman anonim değildir; modelinizin anonim olup olmadığı olay bazında değerlendirilmelidir. Anonim olduğunu gösterene kadar erişim ve silme taleplerine vereceğiniz yanıtları, eğitilmiş ağırlıklar hâlâ kişisel veri içerebilirmiş gibi planlayın. ForgeLM'in savunmaları:
 
 - **Girenleri azalt:** PII maskeleme ve deduplikasyon (ezberlenen veri genelde tekrarlanan veridir).
 - **Ezber ölçülmez:** ForgeLM, eğitilmiş bir modelin belirli bir string'i üretip üretmediğini test etmez.

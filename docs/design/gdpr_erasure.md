@@ -45,7 +45,7 @@ Phase 21 closes the gap with a real implementation.  This Phase 20 document spec
 
 **Article 19** requires the controller to tell each recipient the data was disclosed to about the erasure, and **Article 17(2)** adds reasonable steps to inform other controllers where the controller made the data public.  ForgeLM is not a publisher (we do not run inference); the deployer is.  We document this boundary in the operator guide rather than implement push notification.
 
-**Article 17(3)** lists exemptions where erasure does **not** apply — including (3)(b) compliance with a legal obligation under Union or Member State law (or a task in the public interest or in the exercise of official authority) and (3)(e) the establishment, exercise or defence of legal claims.  Each applies only to the extent the processing is necessary for that obligation, task or claim, and the controller has to name it: no provision of EU law protects a training audit log merely because ForgeLM produces it.  Erasure is also owed only where an Art. 17(1) ground exists, so entries may equally stay because the processing is still necessary for its purpose on its own Art. 6 basis.
+**Article 17(3)** lists exemptions where erasure does **not** apply — including (3)(b) compliance with a legal obligation under Union or Member State law (or a task in the public interest or in the exercise of official authority) and (3)(e) the establishment, exercise or defence of legal claims.  Each applies only to the extent the processing is necessary for that obligation, task or claim, and the controller has to be able to name it.  Erasure is also owed only where an Art. 17(1) ground exists, so entries may equally stay because the processing is still necessary for its purpose on its own Art. 6 basis; once the data subject withdraws consent or a successful objection removes that basis, it no longer carries them (Art. 17(1)(b)-(c)), and a refusal still needs reasons and a complaint route within the Art. 12 deadline (Art. 12(4)).
 
 The take-away: erasure operates on **training data + derived artefacts**, not on the audit log.  The audit log records *that an erasure happened* (Art. 5(2) accountability), and ForgeLM never edits or deletes an entry.  Whether the entries that reference the now-erased subject may stay is the controller's decision, and the controller documents why: they are still necessary for their purpose, or an Art. 17(3) exception applies (for (3)(b) and (3)(e), only to the extent a specific obligation or claim requires it).
 
@@ -72,7 +72,7 @@ The four artefact kinds the operator can act on in-tool: `corpus_rows`, `staging
 
 Article 5(1)(e) requires personal data to be kept "no longer than is necessary".  ForgeLM ships a config block so the operator can declare their retention horizon and the tool can warn / refuse runs that violate it.
 
-> **As shipped:** the horizons are only *reported* by `forgelm purge --check-policy` (read-only, always exit 0).  `retention.enforce` is reserved: no command acts on it (the training CLI only logs a warning when it is set), so nothing warns, refuses or deletes on age.  Ages come from the audit log first (the run's first event, else the log's first event) and fall back to `mtime`.  Read the warn / refuse and `mtime` passages below as the original design; §12 lists the deviations.
+> **As shipped:** the horizons are only *reported* by `forgelm purge --check-policy` (read-only; exits 0 however many it finds).  `retention.enforce` is reserved: no command acts on it (the training CLI only logs a warning when it is set), so nothing warns, refuses or deletes on age.  Ages come from the audit log first (the run's first event, else the log's first event) and fall back to `mtime`.  Read the warn / refuse and `mtime` passages below as the original design; §12 lists the deviations.
 
 ### 3.1 Prior-state acknowledgement (audited 2026-05-02)
 
@@ -106,9 +106,9 @@ class RetentionConfig(BaseModel):
     # --check-policy` reports `audit_log.jsonl` as overdue.  1825 days
     # (5 years) is a ForgeLM choice, not a legal period: GDPR Art. 5(1)(e)
     # sets no fixed period.  Align it with the obligations that apply to you
-    # (for example AI Act Art. 18(1), documentation kept 10 years, and
-    # Art. 19(1) / 26(6), system logs at least six months) and with your
-    # own necessity assessment.  Set to 0 to retain indefinitely.
+    # (for example a sector retention rule, or AI Act Art. 18(1) for
+    # provider documentation once it applies to you) and with your own
+    # necessity assessment.  Set to 0 to stop reporting it.
     audit_log_retention_days: int = Field(default=1825, ge=0)
 
     # Staging directory time-to-live. Article 14 staging is meant to hold a
@@ -210,7 +210,7 @@ Standard ForgeLM 0/1/2/3/4 contract — all codes from `forgelm.cli._exit_codes`
 | 3 | `EXIT_EVAL_FAILURE` | Reserved for the trainer pre-flight gate when `enforce: block_on_excess` is configured (see §3.4 in the spirit of the master `error-handling.md` exit-code contract).  **Not** used by `forgelm purge --check-policy` — that path is a report, not a gate; see §10 Q5 + the paragraph below. |
 | 4 | `EXIT_AWAITING_APPROVAL` | Reserved for its trainer-pipeline meaning per `docs/standards/error-handling.md` ("Training + evals passed, but `require_human_approval: true` — staged, awaiting human sign-off").  **Not** reused by `forgelm purge`. Since the shipped `forgelm purge` is non-interactive (no prompt, no `--yes` flag), there is no "operator declined the prompt" path; consent is recorded in the operator-supplied `--justification` and the audit chain. |
 
-**`--check-policy` always exits 0** (per §10 Q5 — the resolved decision: report-not-gate semantic).  Operators who want a CI gate use `--output-format json` and pipe to `jq -e '.violations | length == 0'` themselves; CI then branches on that count rather than on the exit code.  This keeps the public contract `docs/standards/error-handling.md` (0/1/2/3/4 trainer + 5 wizard-cancel) consistent across every ForgeLM subcommand: a code-3 from `forgelm purge` always means "trainer pre-flight gate failed", never "report found something".
+**`--check-policy` exits 0 on a successful report** (per §10 Q5 — the resolved decision: report-not-gate semantic).  Operators who want a CI gate use `--output-format json` and test the report themselves (for example `jq -e '.success == true and has("count") and .count == 0'` under `set -o pipefail`; `count` is absent when no `retention:` block was loaded); CI then branches on that rather than on the exit code.  This keeps the public contract `docs/standards/error-handling.md` (the exit-code table in that standard) consistent across every ForgeLM subcommand: a code-3 from `forgelm purge` always means "trainer pre-flight gate failed", never "report found something".
 
 ### 4.4 Atomicity
 
@@ -444,7 +444,7 @@ The closure plan §15.5 lists three open items that intersect Phase 21:
 
 ### Q5. Should `--check-policy` return non-zero when violations are found?
 
-**Decision:** no.  `--check-policy` is a *report*, not a *gate*.  The CI gate is the trainer pre-flight (when `enforce: block_on_excess` is configured).  Mixing gate + report semantics into one exit code makes the tool harder to script.  Operators who want a CI gate use `--output-format json` and pipe to `jq -e '.violations | length == 0'` themselves.
+**Decision:** no.  `--check-policy` is a *report*, not a *gate*.  The CI gate is the trainer pre-flight (when `enforce: block_on_excess` is configured).  Mixing gate + report semantics into one exit code makes the tool harder to script.  Operators who want a CI gate use `--output-format json` and test the report themselves (see §4.3).
 
 ### Q6. Should we delete the synthetic-data snapshots on row erasure?
 

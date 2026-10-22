@@ -865,17 +865,13 @@ def _run_purge_run_id(args, output_format: str) -> None:
 
     target_paths = _resolve_run_kind_targets(output_dir, args.run_id, args.kind)
     if not target_paths:
-        audit.log_event(
-            _EVT_ERASURE_FAILED,
-            **request_fields,
-            error_class="NoMatchingArtefacts",
-            error_message=f"No {args.kind!r} artefacts found for run_id={args.run_id!r}.",
+        # The standard compliance bundle has fixed filenames with no run id, so `--kind artefacts` never matches it.
+        hint = " The standard compliance bundle has fixed filenames without a run id; remove it through your storage layer."
+        reason = f"No {args.kind!r} artefacts found for run_id={args.run_id!r}." + (
+            hint if args.kind == "artefacts" else ""
         )
-        _output_error_and_exit(
-            output_format,
-            f"No {args.kind!r} artefacts found for run_id={args.run_id!r} under {output_dir!r}.",
-            EXIT_CONFIG_ERROR,
-        )
+        audit.log_event(_EVT_ERASURE_FAILED, **request_fields, error_class="NoMatchingArtefacts", error_message=reason)
+        _output_error_and_exit(output_format, f"{reason} (searched under {output_dir!r})", EXIT_CONFIG_ERROR)
 
     # Boundary check (F-P5-OPUS-02): refuse any resolved target that escapes
     # ``output_dir``.  ``--run-id`` is free-form, so a ``..``-bearing value
@@ -1120,9 +1116,9 @@ def _delete_path(path: Path) -> int:
 def _run_purge_check_policy(args, output_format: str) -> None:
     """Handle ``forgelm purge --check-policy [--config <path>]``.
 
-    Always exits 0 (per design §10 Q5: report-not-gate semantic).
+    A successful report exits 0 (design §10 Q5: report-not-gate); an unloadable config exits 1.
     Operators wiring a CI gate use ``--output-format json`` and pipe
-    to ``jq -e '.violations | length == 0'`` themselves.
+    to ``jq -e '.success == true and has("count") and .count == 0'``.
 
     Strict config loading: ``--check-policy`` is the one purge mode
     where the operator explicitly asked for a retention report.  A

@@ -246,17 +246,21 @@ that an attacker may have observed.
 **Trigger:** Data subject submits an access request via deployer's
 DSAR portal or contact form.
 
-**Severity:** Medium (regulatory deadline 30 days).
+**Severity:** Medium (response due within one month of receipt, GDPR Art. 12(3), extendable by two months with notice; 30 days under KVKK Art. 13(2)).
 
 **Runbook:**
 
 1. [ ] **Verify subject identity** per deployer's DSAR procedure.
 2. [ ] **Run** `forgelm reverse-pii --query <verified-identifier>
        --type <category> data/*.jsonl --output-dir <run-dir>`
-3. [ ] **Hash-mask scan** for any corpus that ForgeLM masked
-       (`forgelm reverse-pii --query <id> --salt-source per_dir
-       --output-dir <run-dir>`).
-4. [ ] **Compose response letter** per DSAR template; cite the run's
+3. [ ] **Search the other copies too.** The match is case-sensitive
+       and compares raw file text, so search spelling and case variants;
+       `forgelm ingest --pii-mask` writes `[REDACTED]`, not digests, so a
+       hash-mask scan (`--salt-source`) is only for corpora hashed outside
+       ForgeLM; search the raw source documents separately.
+4. [ ] **Compose response letter** per DSAR template: a copy of the
+       data and the Art. 15(1)(a)-(h) information, taking care not to
+       expose other people's data (Art. 15(4)); cite the run's
        `data.access_request_query` audit-event id.
 5. [ ] **Retain** the response letter alongside the audit chain.
 
@@ -264,8 +268,9 @@ DSAR portal or contact form.
 
 **Trigger:** Subject submits an erasure request.
 
-**Severity:** Medium (regulatory deadline 30 days; some EU member
-states require shorter response).
+**Severity:** Medium (response due within one month of receipt, GDPR
+Art. 12(3), extendable by two months with notice; 30 days under KVKK
+Art. 13(2)).
 
 **Runbook:**
 
@@ -273,8 +278,10 @@ states require shorter response).
 2. [ ] **Run** `forgelm purge --row-id <verified-id> --corpus
        data/<file>.jsonl --output-dir <run-dir>`.
 3. [ ] **Check** for `data.erasure_warning_memorisation` event —
-       if a model trained on the row has a `final_model/` artefact,
-       memorisation residual risk applies.
+       it fires only when a `final_model/` directory exists directly
+       under `--output-dir` and does not say which model saw the row, so
+       treat every model trained on the corpus as in scope even when no
+       warning fires.
 4. [ ] **Communicate the memorisation caveat** to the subject in
        the response letter (template: "we deleted the row but a
        previously-trained model may have memorised it; we will

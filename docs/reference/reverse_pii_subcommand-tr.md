@@ -1,9 +1,9 @@
 # `forgelm reverse-pii` — Subcommand Referansı
 
-> **Hedef kitle:** Eğitim corpus'larına karşı GDPR Madde 15 erişim hakkı taleplerini yanıtlayan ForgeLM operatörleri ve ortaya çıkan `data.access_request_query` audit satırını doğrulayan denetçiler.
+> **Hedef kitle:** Eğitim corpus'larına karşı GDPR Madde 15 erişim yanıtları hazırlayan ForgeLM operatörleri ve ortaya çıkan `data.access_request_query` audit satırını doğrulayan denetçiler.
 > **Ayna:** [reverse_pii_subcommand.md](reverse_pii_subcommand.md)
 
-`forgelm reverse-pii`, ForgeLM eğitim corpus'ları için **GDPR Madde 15 erişim hakkı**'nın operatör-yüzlü uygulamasıdır (Phase 38). [`forgelm purge`](purge_subcommand-tr.md) "satırımı sil" derken, `reverse-pii` "identifier'ımın geçtiği her satırı bul" der.
+`forgelm reverse-pii`, ForgeLM eğitim corpus'ları için bir **GDPR Madde 15 erişim yanıtının** girdisidir (Phase 38): bir identifier'ın nerede geçtiğini bulur; sıfır eşleşme yalnızca literal metnin taradığınız dosyalarda olmadığını söyler. [`forgelm purge`](purge_subcommand-tr.md) "satırımı sil" derken, `reverse-pii` "identifier'ımın geçtiği her satırı bul" der.
 
 ## Synopsis
 
@@ -47,7 +47,7 @@ $ forgelm reverse-pii --query "alice@example.com" --type email \
     --salt-source per_dir --output-dir ./outputs data/*.jsonl
 ```
 
-`--salt-source env_var` `FORGELM_AUDIT_SECRET`'in set olmasını gerektirir; `per_dir` `<output_dir>/.forgelm_audit_salt`'taki salt dosyasını okur.
+`--salt-source env_var` `FORGELM_AUDIT_SECRET`'in set olmasını gerektirir; `per_dir` `<output_dir>/.forgelm_audit_salt`'taki salt dosyasını okur. `forgelm ingest --pii-mask` digest değil `[REDACTED]` yazar, bu yüzden bu mod ForgeLM'in kendi maskelediği bir corpus'ta hiçbir şey bulmaz; onlar için varsayılan düz-metin taramasını kullanın.
 
 ## Identifier tipleri
 
@@ -59,7 +59,7 @@ $ forgelm reverse-pii --query "alice@example.com" --type email \
 
 ## `forgelm purge` ile cross-tool digest korelasyonu
 
-`forgelm reverse-pii --query <value> --salt-source per_dir` ve `forgelm purge --row-id <value>` **aynı** `<output_dir>`'e (yani aynı `.forgelm_audit_salt`'ı tüketerek) çalıştırıldığında, `data.access_request_query` üzerindeki `query_hash` ile `data.erasure_*` event'leri üzerindeki `target_id` byte-byte aynıdır. Bu, compliance reviewer'ın Madde 15 erişim talebini ve aynı subject için Madde 17 silmesini tek bir audit zincirinde, cleartext identifier operatör terminalinden hiç çıkmadan korele etmesini sağlar. `tests/test_reverse_pii.py::test_purge_target_id_matches_reverse_pii_query_hash_on_same_output_dir` ile pin'lendi.
+`forgelm purge` `target_id` kaydeder (salt ile `--row-id` değerinin SHA-256'sı); `forgelm reverse-pii` ise `--query` değerinin aynı fonksiyonunu `query_hash` olarak kaydeder. İkisi yalnızca şu üç koşulun hepsi sağlandığında byte-byte aynıdır: değer aynı metindir (satırın `id` / `row_id` alanı ile sorgu aynı string olmalıdır; opak UUID satır id'leri bir e-posta sorgusuna asla eşit olmaz), iki komut da aynı `--output-dir`'i (aynı `.forgelm_audit_salt`'ı) kullanır ve `FORGELM_AUDIT_SECRET` ikisinde de aynı durumdadır (ayarsız ya da aynı değerle ayarlı; ayarlıysa purge `salt_source=env_var` kaydeder). Erişim talebini varsayılan düz-metin modunda çalıştırın: `--salt-source` gerekmez ve purge digest'lerini eşleştirmenin bir yolu değildir; çünkü `reverse-pii`'yi corpus *içinde* digest arayan bir hash-mask taramasına geçirir ve düz metin içeren bir corpus'ta hiçbir şey bulmaz. Id'ler farklıysa bir talebi silmesine, `forgelm purge --justification`'a verdiğiniz ticket referansı üzerinden bağlayın. Bu, compliance reviewer'ın Madde 15 erişim talebini ve aynı subject için Madde 17 silmesini tek bir audit zincirinde, cleartext identifier operatör terminalinden hiç çıkmadan korele etmesini sağlar. `tests/test_reverse_pii.py::test_purge_target_id_matches_reverse_pii_query_hash_on_same_output_dir` ile pin'lendi.
 
 `<output_dir>/.forgelm_audit_salt`'taki salt **yalnızca identifier-hash salt'ıdır** — audit-chain HMAC anahtarına katılmaz; o anahtar bağımsız olarak `forgelm.compliance.AuditLogger.__init__` içinde `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)` şeklinde türetilir.
 
@@ -71,7 +71,7 @@ Her çağrı tam olarak bir event yayar ([katalog satırı](audit_event_catalog-
 |---|---|---|
 | `data.access_request_query` | Scan tamamlandıktan sonra (veya mid-scan I/O hatası sonrası — `error_class` / `error_message` ile). | `query_hash` (raw identifier'ın salt'lı SHA-256'sı — asla raw; purge'ün per-output-dir salt'ını yeniden kullanır), `identifier_type` ∈ `{literal, email, phone, tr_id, us_ssn, iban, credit_card, custom}`, `scan_mode` ∈ `{plaintext, hash}`, `salt_source` ∈ `{plaintext, per_dir, env_var}`, `files_scanned` (path'ler), `match_count`, opsiyonel `error_class` / `error_message` |
 
-Chain satırı **hash'li** identifier'ı kaydeder; böylece zincirin kendisi subject verisini sızdırmaz.
+Chain satırı **hash'li** identifier'ı kaydeder; böylece zincir onu açık halde tutmaz. Digest pseudonymised'dır, anonim değildir: salt dosyası log'un yanında durur, bu yüzden ikisini de aynı erişim kontrolleriyle koruyun ve digest'leri kişisel veri sayın.
 
 ## Exit kodları
 

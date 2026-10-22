@@ -484,10 +484,11 @@ def _hash_for_audit(query: str, salt: bytes) -> str:
        is set, the env secret too).  Salt-free SHA-256 of low-entropy
        identifiers (e-mails, phone numbers) is brute-forcible from a
        commodity wordlist; the salt closes that gap.
-    2. A purge → reverse-pii cycle for the same subject in the same
-       ``output_dir`` produces matching digests, so a compliance
-       reviewer correlating Article 17 + Article 15 events for one
-       subject sees a connected timeline.
+    2. A purge → reverse-pii cycle for the same value (the ``--row-id``
+       and the ``--query`` text) in the same ``output_dir`` and under the
+       same ``FORGELM_AUDIT_SECRET`` state produces matching digests, so a
+       compliance reviewer correlating Article 17 + Article 15 events sees a
+       connected timeline.
 
     F-W3FU-08 (priv) fix: ``salt`` is required (was ``Optional[bytes]``
     with an unsalted-fallback branch).  The legacy ``None`` branch was
