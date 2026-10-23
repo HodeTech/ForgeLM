@@ -673,7 +673,8 @@ below before upgrading a pinned CI pipeline.)_
   relative model directory, separate from audit, compliance, evaluation, logging, and checkpoint paths.
   Reject trailing separators/dot components that would put approval staging inside the final directory.
   Recheck destinations before initialization, saving, finalization, and auto-revert; preserve run records
-  when deleting a rejected final or staged model, including nested custom model directories.
+  when deleting a rejected final or staged model, including nested custom model directories (on Windows
+  too: the recheck reads the platform's `\` separators as the config's `/`).
 - Derive current top-level module inventories from the source tree in the numerical-claims guard;
   correct the agent and EN/TR architecture inventories and list the TRL compatibility and strict JSON helpers.
 - Resolve ORPO and SimPO config/trainer classes from top-level TRL or its experimental ORPO/CPO modules,
