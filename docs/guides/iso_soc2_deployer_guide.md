@@ -294,8 +294,9 @@ forgelm purge --row-id "alice@example.com" --corpus data/2026Q2.jsonl \
     --output-dir ./outputs
 # The audit chain stamps `data.erasure_requested` →
 # `data.erasure_completed` (or `data.erasure_failed`) with
-# `target_id` HASHED.  If a `final_model/` directory exists directly
-# under `--output-dir`, `data.erasure_warning_memorisation` ALSO fires;
+# `target_id` HASHED.  If a model, staging or `checkpoint-*` directory
+# exists under `--output-dir`, `data.erasure_warning_memorisation` ALSO
+# fires;
 # it does not say which model saw the row, so treat every model
 # trained on the corpus as in scope and communicate the memorisation
 # residual risk to the subject.

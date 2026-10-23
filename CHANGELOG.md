@@ -4,6 +4,29 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`forgelm purge --row-id` warns about the weights a run actually leaves behind.** This restores the documented
+  contract that `data.erasure_warning_memorisation` fires when a trained model exists for the erased row. The check
+  used to look only for a literal `<--output-dir>/final_model/`, so a default invocation (`--output-dir` omitted,
+  which uses the corpus directory), a non-default `training.final_model_dir`, a run awaiting or refused human
+  approval (its model exists only as `<final_model_dir>.staging.<run_id>/`) and a run whose auto-revert deleted the
+  model but left `checkpoint-*` all exited `0` with no warning. It now reports the model directory, its
+  `<final_model_dir>.staging[.<run_id>]` siblings and `checkpoint-*` directories under `--output-dir` and, with
+  `--config`, under `training.output_dir` / `training.final_model_dir`, every `pipeline` stage's `training` block
+  and `merge.output_dir`. The event gains `memorisation_artefact_paths` (the absolute path of every artefact
+  found); `affected_run_ids` also reads the run's own audit log under the configured training directory; a
+  directory that cannot be listed is logged at WARNING instead of reading as "nothing found". Models you export or
+  copy outside those directories stay invisible to the check (#102, CR-A10-022, CR-A10-042).
+- `forgelm purge --run-id <id> --kind staging` reads `--config` for `training.final_model_dir`, and
+  `--check-policy` takes it from a full config, so a run with a non-default model directory has its
+  `<final_model_dir>.staging.<run_id>/` found, erased and aged like the default `final_model.staging.<run_id>/`.
+  A `retention:`-only file still means the default `final_model`. No retention horizon covers `checkpoint-*`
+  directories; the purge, retention and configuration docs now say so (#102, CR-A10-022, CR-A10-042).
+- The user manual states that `forgelm purge --row-id` matches the row's `id` / `row_id` field only, never the row's
+  text or a line number, and points to `forgelm reverse-pii` for finding every row that mentions the subject
+  (#102, DOC-D3B02-005).
+
 ## [0.11.1] — 2026-10-23
 
 _(**Numbered as a patch by a maintainer decision, as a one-time exception.**

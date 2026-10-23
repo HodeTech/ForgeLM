@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Optional
+from typing import Optional, Tuple
 
 import yaml
 from pydantic import ConfigDict, TypeAdapter, ValidationError
 
 from .._strict_json import dumps_strict
-from ..config import ConfigError, RetentionConfig, load_config
+from ..config import ConfigError, ForgeConfig, RetentionConfig, load_config
 from ._exit_codes import EXIT_CONFIG_ERROR
 from ._logging import logger
 
@@ -74,17 +74,19 @@ def _load_config_or_exit(config_path: str, json_output: bool):
     sys.exit(EXIT_CONFIG_ERROR)
 
 
-def _load_retention_policy(config_path: Optional[str]) -> Optional[RetentionConfig]:
-    """Return the ``retention:`` block that ``forgelm purge --check-policy`` reports against.
+def _load_retention_and_config(config_path: Optional[str]) -> Tuple[Optional[RetentionConfig], Optional[ForgeConfig]]:
+    """Return what ``forgelm purge --check-policy`` needs from ``--config``: the ``retention:`` block and the full config.
 
     The file is either a full ForgeLM config or one whose only top-level key is ``retention``: a scheduled
     retention report needs no training config (#1054).  Any other top-level key makes it a full config, validated
-    as one, so a misspelt ``retension:`` fails instead of being ignored.  ``retention: null`` returns ``None``, as
-    it does in a full config.  Raises what ``load_config`` raises (``FileNotFoundError``, ``OSError``,
+    as one, so a misspelt ``retension:`` fails instead of being ignored.  ``retention: null`` yields ``None`` for
+    the block, as it does in a full config.  The second item is the validated config, or ``None`` for a
+    retention-only file, which names no ``training.final_model_dir`` and so leaves the report on the default
+    model directory name.  Raises what ``load_config`` raises (``FileNotFoundError``, ``OSError``,
     ``ConfigError``), and like ``ForgeConfig`` leaves raw input values out of validation messages.
     """
     if not config_path:
-        return None
+        return None, None
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
     with open(config_path, encoding="utf-8") as fh:
@@ -93,10 +95,11 @@ def _load_retention_policy(config_path: Optional[str]) -> Optional[RetentionConf
         except yaml.YAMLError as exc:
             raise ConfigError(f"Invalid YAML syntax in {config_path}: {exc}") from exc
     if not (isinstance(data, dict) and set(data) == {"retention"}):
-        return load_config(config_path).retention
+        config = load_config(config_path)
+        return config.retention, config
     adapter = TypeAdapter(Optional[RetentionConfig], config=ConfigDict(hide_input_in_errors=True, title="retention"))
     try:
-        return adapter.validate_python(data["retention"])
+        return adapter.validate_python(data["retention"]), None
     except ValidationError as exc:
         raise ConfigError(f"Configuration validation failed:\n{exc}") from exc
 

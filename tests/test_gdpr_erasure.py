@@ -1634,6 +1634,581 @@ class TestWarningPayloadCatalogCompleteness:
 
 
 # ---------------------------------------------------------------------------
+# Memorisation artefacts (CR-A10-022, CR-A10-042).  Weights trained on an erased
+# row live in the model directory, in the ``<final_model_dir>.staging.<run_id>``
+# sibling a run awaiting human approval leaves, and in ``checkpoint-*``
+# directories; the warning must find them under the layout the trainer really
+# writes, with or without ``--config``, and for a non-default ``final_model_dir``.
+# ---------------------------------------------------------------------------
+
+_MISSING_RUN_ID_HINT = "unknown"
+_TRAINING_CONFIG = """
+model:
+  name_or_path: gpt2
+  backend: transformers
+lora:
+  r: 8
+training:
+  trainer_type: sft
+  output_dir: '{output_dir}'
+  final_model_dir: {final_model_dir}
+  num_train_epochs: 1
+data:
+  dataset_name_or_path: train.jsonl
+{extra}"""
+
+
+def _write_training_config(
+    tmp_path: Path, output_dir: Path, final_model_dir: str = "final_model", extra: str = ""
+) -> Path:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        _TRAINING_CONFIG.format(output_dir=output_dir, final_model_dir=final_model_dir, extra=extra), encoding="utf-8"
+    )
+    return config_path
+
+
+def _purge_one_row(tmp_path: Path, *, config: Path | None = None, output_dir: Path | None = None) -> list[dict]:
+    """Erase ``row-1`` from a one-row corpus and return the audit events the erasure wrote.
+
+    Without *output_dir* the corpus directory is used, as it is when the operator omits ``--output-dir``.
+    """
+    from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+    corpus = tmp_path / "data" / "train.jsonl"
+    _seed_corpus(corpus, [{"id": "row-1", "text": "x"}])
+    args = _build_args(
+        row_id="row-1",
+        corpus=str(corpus),
+        output_dir=str(output_dir) if output_dir else None,
+        config=str(config) if config else None,
+    )
+    with pytest.raises(SystemExit) as ei:
+        _run_purge_cmd(args, output_format="json")
+    assert ei.value.code == 0
+    return _read_audit_events((output_dir or corpus.parent) / "audit_log.jsonl")
+
+
+def _memorisation_event(events: list[dict]) -> dict | None:
+    return next((e for e in events if e["event"] == "data.erasure_warning_memorisation"), None)
+
+
+class TestMemorisationArtefactDetection:
+    def test_checkpoints_under_the_configured_output_dir_fire_the_warning(self, tmp_path: Path) -> None:
+        training_out = tmp_path / "training_out"
+        (training_out / "checkpoint-100").mkdir(parents=True)
+        (training_out / "checkpoint-200").mkdir()
+        config = _write_training_config(tmp_path, training_out)
+
+        warning = _memorisation_event(_purge_one_row(tmp_path, config=config, output_dir=tmp_path / "audit"))
+
+        assert warning is not None
+        assert warning["memorisation_artefact_paths"] == [
+            str(training_out / "checkpoint-100"),
+            str(training_out / "checkpoint-200"),
+        ]
+        assert warning["affected_run_ids"][0].startswith(_MISSING_RUN_ID_HINT)
+
+    def test_default_invocation_finds_the_model_through_the_config(self, tmp_path: Path) -> None:
+        """No ``--output-dir`` (so the corpus directory is used) and no checkpoints left: the model under the
+        configured ``training.output_dir`` must still be found."""
+        training_out = tmp_path / "checkpoints"
+        (training_out / "final_model").mkdir(parents=True)
+        config = _write_training_config(tmp_path, training_out)
+
+        warning = _memorisation_event(_purge_one_row(tmp_path, config=config))
+
+        assert warning is not None
+        assert warning["memorisation_artefact_paths"] == [str(training_out / "final_model")]
+
+    def test_custom_final_model_dir_is_found(self, tmp_path: Path) -> None:
+        training_out = tmp_path / "ck"
+        (training_out / "my_model").mkdir(parents=True)
+        config = _write_training_config(tmp_path, training_out, final_model_dir="my_model")
+
+        warning = _memorisation_event(_purge_one_row(tmp_path, config=config, output_dir=training_out))
+
+        assert warning is not None
+        assert warning["memorisation_artefact_paths"] == [str(training_out / "my_model")]
+
+    def test_nested_final_model_dir_and_its_staging_sibling_are_found(self, tmp_path: Path) -> None:
+        training_out = tmp_path / "ck"
+        (training_out / "models" / "final").mkdir(parents=True)
+        (training_out / "models" / "final.staging.fg-run1").mkdir()
+        config = _write_training_config(tmp_path, training_out, final_model_dir="models/final")
+
+        warning = _memorisation_event(_purge_one_row(tmp_path, config=config, output_dir=tmp_path / "audit"))
+
+        assert warning is not None
+        assert warning["memorisation_artefact_paths"] == [
+            str(training_out / "models" / "final"),
+            str(training_out / "models" / "final.staging.fg-run1"),
+        ]
+        assert warning["affected_run_ids"] == ["fg-run1"]
+
+    @pytest.mark.parametrize("model_dir", ["final_model", "my_model"])
+    def test_staging_directory_of_a_run_awaiting_approval_is_found(self, tmp_path: Path, model_dir: str) -> None:
+        """The run exits 4 holding only ``<final_model_dir>.staging.<run_id>`` — no model directory, no checkpoint."""
+        training_out = tmp_path / "ck"
+        (training_out / f"{model_dir}.staging.fg-run1").mkdir(parents=True)
+        config = _write_training_config(tmp_path, training_out, final_model_dir=model_dir)
+
+        warning = _memorisation_event(_purge_one_row(tmp_path, config=config, output_dir=tmp_path / "audit"))
+
+        assert warning is not None
+        assert warning["memorisation_artefact_paths"] == [str(training_out / f"{model_dir}.staging.fg-run1")]
+        assert warning["affected_run_ids"] == ["fg-run1"]
+
+    def test_unscoped_legacy_staging_directory_is_found(self, tmp_path: Path) -> None:
+        (tmp_path / "ck" / "final_model.staging").mkdir(parents=True)
+
+        warning = _memorisation_event(_purge_one_row(tmp_path, output_dir=tmp_path / "ck"))
+
+        assert warning is not None
+        assert warning["memorisation_artefact_paths"] == [str(tmp_path / "ck" / "final_model.staging")]
+
+    def test_lookalike_names_are_not_reported(self, tmp_path: Path) -> None:
+        training_out = tmp_path / "ck"
+        for name in ("final_model.stagingX", "final_model_old", "checkpoint", "my-checkpoint-1", "x.staging.fg-run1"):
+            (training_out / name).mkdir(parents=True, exist_ok=True)
+        (training_out / "checkpoint-9").write_text("a file, not a checkpoint directory")
+
+        assert _memorisation_event(_purge_one_row(tmp_path, output_dir=training_out)) is None
+
+    def test_without_config_the_output_dir_is_scanned_for_checkpoints_and_staging(self, tmp_path: Path) -> None:
+        """``forgelm purge --row-id alice --corpus data/train.jsonl --output-dir out`` with no ``--config``."""
+        out = tmp_path / "out"
+        (out / "checkpoint-1").mkdir(parents=True)
+        (out / "checkpoint-2").mkdir()
+        (out / "final_model.staging.fg-run1").mkdir()
+
+        warning = _memorisation_event(_purge_one_row(tmp_path, output_dir=out))
+
+        assert warning is not None
+        assert warning["memorisation_artefact_paths"] == [
+            str(out / "checkpoint-1"),
+            str(out / "checkpoint-2"),
+            str(out / "final_model.staging.fg-run1"),
+        ]
+        assert warning["affected_run_ids"] == ["fg-run1"]
+
+    def test_without_config_artefacts_outside_the_output_dir_stay_invisible(self, tmp_path: Path) -> None:
+        (tmp_path / "training_out" / "checkpoint-100").mkdir(parents=True)
+
+        assert _memorisation_event(_purge_one_row(tmp_path, output_dir=tmp_path / "audit")) is None
+
+    def test_no_artefacts_no_warning_with_config(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)  # the merge block's default ``./merged_model`` is relative to the cwd
+        training_out = tmp_path / "training_out"
+        training_out.mkdir()
+        config = _write_training_config(tmp_path, training_out, extra="merge:\n  enabled: false\n")
+
+        assert _memorisation_event(_purge_one_row(tmp_path, config=config, output_dir=tmp_path / "audit")) is None
+
+    def test_missing_training_directory_is_silent(self, tmp_path: Path, caplog) -> None:
+        """A config whose run never started has no directory to scan: no warning and no log noise."""
+        config = _write_training_config(tmp_path, tmp_path / "never_trained")
+
+        with caplog.at_level("WARNING"):
+            events = _purge_one_row(tmp_path, config=config, output_dir=tmp_path / "audit")
+
+        assert _memorisation_event(events) is None
+        assert not [r for r in caplog.records if "could not scan" in r.getMessage()]
+
+    def test_pipeline_stage_layouts_are_scanned(self, tmp_path: Path) -> None:
+        stage_one, stage_two = tmp_path / "stage_one", tmp_path / "stage_two"
+        (stage_one / "stage_one_model").mkdir(parents=True)
+        (stage_two / "checkpoint-5").mkdir(parents=True)
+        pipeline = (
+            "pipeline:\n"
+            f"  output_dir: '{tmp_path / 'pipeline_run'}'\n"
+            "  stages:\n"
+            "    - name: sft\n"
+            "      training:\n"
+            "        trainer_type: sft\n"
+            f"        output_dir: '{stage_one}'\n"
+            "        final_model_dir: stage_one_model\n"
+            "    - name: dpo\n"
+            "      training:\n"
+            "        trainer_type: dpo\n"
+            f"        output_dir: '{stage_two}'\n"
+        )
+        config = _write_training_config(tmp_path, tmp_path / "root_unused", extra=pipeline)
+
+        warning = _memorisation_event(_purge_one_row(tmp_path, config=config, output_dir=tmp_path / "audit"))
+
+        assert warning is not None
+        assert warning["memorisation_artefact_paths"] == [
+            str(stage_one / "stage_one_model"),
+            str(stage_two / "checkpoint-5"),
+        ]
+
+    def test_merge_output_dir_is_reported_when_the_merge_ran(self, tmp_path: Path) -> None:
+        merged = tmp_path / "merged_model"
+        merged.mkdir()
+        merge = (
+            "merge:\n  enabled: true\n  method: linear\n  models:\n    - path: ./a\n      weight: 0.5\n"
+            f"    - path: ./b\n      weight: 0.5\n  output_dir: '{merged}'\n"
+        )
+        config = _write_training_config(tmp_path, tmp_path / "never_trained", extra=merge)
+
+        warning = _memorisation_event(_purge_one_row(tmp_path, config=config, output_dir=tmp_path / "audit"))
+
+        assert warning is not None
+        assert warning["memorisation_artefact_paths"] == [str(merged)]
+
+    def test_the_same_directory_reached_two_ways_is_listed_once(self, tmp_path: Path) -> None:
+        """``--output-dir`` is the training directory the config also names."""
+        training_out = tmp_path / "ck"
+        (training_out / "final_model").mkdir(parents=True)
+        (training_out / "checkpoint-1").mkdir()
+        config = _write_training_config(tmp_path, training_out)
+
+        warning = _memorisation_event(_purge_one_row(tmp_path, config=config, output_dir=training_out))
+
+        assert warning is not None
+        assert warning["memorisation_artefact_paths"] == [
+            str(training_out / "checkpoint-1"),
+            str(training_out / "final_model"),
+        ]
+
+    def test_symlinked_checkpoint_is_reported_where_it_is_named(self, tmp_path: Path) -> None:
+        """Checkpoints are often symlinked to a scratch volume; the weights are still there, so the warning
+        lists the link instead of dropping it."""
+        scratch = tmp_path / "scratch_volume" / "checkpoint-100"
+        scratch.mkdir(parents=True)
+        training_out = tmp_path / "ck"
+        training_out.mkdir()
+        try:
+            (training_out / "checkpoint-100").symlink_to(scratch, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlink creation not permitted on this platform")
+
+        warning = _memorisation_event(_purge_one_row(tmp_path, output_dir=training_out))
+
+        assert warning is not None
+        assert warning["memorisation_artefact_paths"] == [str(training_out / "checkpoint-100")]
+
+    def test_unreadable_directory_is_logged_and_the_erasure_still_completes(
+        self, tmp_path: Path, monkeypatch, caplog
+    ) -> None:
+        """A directory that cannot be listed must not abort a purge whose row is already gone, and must not read
+        as 'nothing found': the operator is told the check is incomplete."""
+        training_out = tmp_path / "ck"
+        (training_out / "checkpoint-1").mkdir(parents=True)
+        literal = tmp_path / "out" / "final_model"
+        literal.mkdir(parents=True)
+        config = _write_training_config(tmp_path, training_out)
+        real_scandir = os.scandir
+
+        def flaky_scandir(path="."):
+            if os.fspath(path) == str(training_out):
+                raise PermissionError(errno.EACCES, "Permission denied", os.fspath(path))
+            return real_scandir(path)
+
+        monkeypatch.setattr("forgelm.cli.subcommands._purge.os.scandir", flaky_scandir)
+
+        with caplog.at_level("WARNING"):
+            events = _purge_one_row(tmp_path, config=config, output_dir=tmp_path / "out")
+
+        assert "data.erasure_completed" in [e["event"] for e in events]
+        assert [r for r in caplog.records if "could not scan" in r.getMessage() and str(training_out) in r.getMessage()]
+        warning = _memorisation_event(events)
+        assert warning is not None
+        assert warning["memorisation_artefact_paths"] == [str(literal)]
+
+    def test_unloadable_config_falls_back_to_the_output_dir_scan(self, tmp_path: Path, caplog) -> None:
+        bad_config = tmp_path / "broken.yaml"
+        bad_config.write_text("training: [unterminated", encoding="utf-8")
+        (tmp_path / "out" / "final_model").mkdir(parents=True)
+
+        with caplog.at_level("WARNING"):
+            warning = _memorisation_event(_purge_one_row(tmp_path, config=bad_config, output_dir=tmp_path / "out"))
+
+        assert warning is not None
+        assert warning["memorisation_artefact_paths"] == [str(tmp_path / "out" / "final_model")]
+        assert [r for r in caplog.records if "could not be loaded" in r.getMessage()]
+
+    def test_output_dir_is_paired_with_the_configs_custom_model_dir(self, tmp_path: Path, monkeypatch) -> None:
+        """The config names ``final_model_dir: my_model`` but a ``training.output_dir`` that is not reachable from
+        here (a relative path, or a config copied between hosts); the operator points ``--output-dir`` at the
+        directory that really holds ``my_model/``."""
+        monkeypatch.chdir(tmp_path)
+        real_out = tmp_path / "ck2"
+        (real_out / "my_model").mkdir(parents=True)
+        config = _write_training_config(tmp_path, tmp_path / "not_here", final_model_dir="my_model")
+
+        warning = _memorisation_event(_purge_one_row(tmp_path, config=config, output_dir=real_out))
+
+        assert warning is not None
+        assert warning["memorisation_artefact_paths"] == [str(real_out / "my_model")]
+
+    def test_non_utf8_audit_log_in_a_training_directory_does_not_abort_the_erasure(self, tmp_path: Path) -> None:
+        """The run-id lookup reads audit logs outside ``--output-dir`` after the row is already gone: a log that
+        cannot be decoded must leave the chain closed, not stranded at ``data.erasure_requested``."""
+        training_out = tmp_path / "ck"
+        (training_out / "final_model").mkdir(parents=True)
+        (training_out / "audit_log.jsonl").write_bytes(b'{"event": "x"}\n\xff\xfe not utf-8\n')
+        config = _write_training_config(tmp_path, training_out)
+
+        events = _purge_one_row(tmp_path, config=config, output_dir=tmp_path / "audit")
+
+        assert [e["event"] for e in events][:2] == ["data.erasure_requested", "data.erasure_completed"]
+        warning = _memorisation_event(events)
+        assert warning is not None
+        assert warning["affected_run_ids"][0].startswith(_MISSING_RUN_ID_HINT)
+
+    def test_unexaminable_entry_does_not_hide_its_siblings(self, tmp_path: Path) -> None:
+        """A symlink loop named ``checkpoint-1`` cannot be stat'ed; the real ``checkpoint-2`` beside it is still
+        reported."""
+        training_out = tmp_path / "ck"
+        (training_out / "checkpoint-2").mkdir(parents=True)
+        try:
+            (training_out / "checkpoint-1").symlink_to(training_out / "checkpoint-1", target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlink creation not permitted on this platform")
+
+        warning = _memorisation_event(_purge_one_row(tmp_path, output_dir=training_out))
+
+        assert warning is not None
+        assert warning["memorisation_artefact_paths"] == [str(training_out / "checkpoint-2")]
+
+    def test_the_staging_name_the_scan_looks_for_is_the_one_the_trainer_writes(self) -> None:
+        """Drift guard: ``ForgeTrainer`` stages a run next to its model directory.  If this literal changes, update
+        ``_scan_training_tree``, ``_staging_targets_for_run`` and ``_discover_per_run_staging_horizons`` with it."""
+        import forgelm.trainer
+
+        source = Path(forgelm.trainer.__file__).read_text(encoding="utf-8")
+
+        assert 'f"{final_path}.staging.{self.audit.run_id}"' in source
+
+    def test_granted_approval_in_the_training_audit_log_names_the_run(self, tmp_path: Path) -> None:
+        """After ``forgelm approve`` the staging suffix is gone; the run's own audit log, under the configured
+        training directory, still names it."""
+        training_out = tmp_path / "ck"
+        (training_out / "final_model").mkdir(parents=True)
+        (training_out / "audit_log.jsonl").write_text(
+            json.dumps({"event": "human_approval.granted", "run_id": "fg-granted"}) + "\n", encoding="utf-8"
+        )
+        config = _write_training_config(tmp_path, training_out)
+
+        warning = _memorisation_event(_purge_one_row(tmp_path, config=config, output_dir=tmp_path / "audit"))
+
+        assert warning is not None
+        assert warning["affected_run_ids"] == ["fg-granted"]
+
+    @pytest.mark.parametrize("model_dir", ["final_model", "my_model"])
+    def test_staging_naming_is_shared_by_the_scan_the_run_purge_and_the_retention_report(
+        self, tmp_path: Path, model_dir: str
+    ) -> None:
+        """One staging name, three consumers: if any of them drifts from ``<final_model_dir>.staging.<run_id>``
+        (what ``ForgeTrainer`` writes) a run's staging directory is reported by one and invisible to another."""
+        from forgelm.cli.subcommands._purge import (
+            _discover_per_run_staging_horizons,
+            _scan_memorisation_artefacts,
+            _staging_targets_for_run,
+        )
+
+        staging = tmp_path / f"{model_dir}.staging.fg-run1"
+        staging.mkdir()
+        config = SimpleNamespace(training=SimpleNamespace(output_dir=str(tmp_path), final_model_dir=model_dir))
+
+        assert _scan_memorisation_artefacts(str(tmp_path / "elsewhere"), config) == [str(staging)]
+        assert _staging_targets_for_run(tmp_path, "fg-run1", [model_dir]) == [staging]
+        assert [d[1] for d in _discover_per_run_staging_horizons(str(tmp_path), 7, [model_dir])] == [str(staging)]
+
+
+class TestRunScopedStagingNamesFollowTheConfig:
+    def test_run_id_erases_the_staging_directory_of_a_custom_final_model_dir(self, tmp_path: Path) -> None:
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        out = tmp_path / "ck"
+        staging = out / "my_model.staging.fg-x"
+        staging.mkdir(parents=True)
+        (staging / "adapter_model.safetensors").write_text("w")
+        config = _write_training_config(tmp_path, out, final_model_dir="my_model")
+
+        args = _build_args(run_id="fg-x", kind="staging", output_dir=str(out), config=str(config))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+
+        assert ei.value.code == 0
+        assert not staging.exists()
+
+    def test_without_the_config_the_custom_staging_directory_is_not_found_and_is_left_alone(
+        self, tmp_path: Path
+    ) -> None:
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        out = tmp_path / "ck"
+        staging = out / "my_model.staging.fg-x"
+        staging.mkdir(parents=True)
+
+        args = _build_args(run_id="fg-x", kind="staging", output_dir=str(out))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+
+        assert ei.value.code == 1
+        assert staging.exists()
+        failed = next(e for e in _read_audit_events(out / "audit_log.jsonl") if e["event"] == "data.erasure_failed")
+        assert failed["error_class"] == "NoMatchingArtefacts"
+
+
+class TestRunScopedErasureWithAnUnreadableConfig:
+    def test_non_utf8_config_falls_back_to_the_default_name_and_closes_the_chain(self, tmp_path: Path, caplog) -> None:
+        """The config is read before ``data.erasure_requested`` is logged and a file that cannot be decoded is
+        'cannot be loaded', like any other: the purge continues with the default staging name."""
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        out = tmp_path / "ck"
+        staging = out / "final_model.staging.fg-x"
+        staging.mkdir(parents=True)
+        bad_config = tmp_path / "binary.yaml"
+        bad_config.write_bytes(b"training:\n  output_dir: \xff\xfe\x00\n")
+
+        args = _build_args(run_id="fg-x", kind="staging", output_dir=str(out), config=str(bad_config))
+        with caplog.at_level("WARNING"), pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+
+        assert ei.value.code == 0
+        assert not staging.exists()
+        assert [e["event"] for e in _read_audit_events(out / "audit_log.jsonl")] == [
+            "data.erasure_requested",
+            "data.erasure_completed",
+        ]
+        assert [r for r in caplog.records if "could not be loaded" in r.getMessage()]
+
+    def test_artefacts_kind_does_not_load_the_config(self, tmp_path: Path, caplog) -> None:
+        """Only ``--kind staging`` needs ``final_model_dir``; ``--kind artefacts`` must not warn about a config it
+        never uses."""
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        out = tmp_path / "ck"
+        (out / "compliance").mkdir(parents=True)
+        (out / "compliance" / "report_fg-x.json").write_text("{}")
+        bad_config = tmp_path / "binary.yaml"
+        bad_config.write_bytes(b"\xff\xfe\x00")
+
+        args = _build_args(run_id="fg-x", kind="artefacts", output_dir=str(out), config=str(bad_config))
+        with caplog.at_level("WARNING"), pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+
+        assert ei.value.code == 0
+        assert not [r for r in caplog.records if "could not be loaded" in r.getMessage()]
+
+
+class TestRetentionReportFollowsTheConfig:
+    @staticmethod
+    def _age(path: Path, days: int) -> None:
+        old = path.stat().st_mtime - days * 86400
+        os.utime(path, (old, old))
+
+    def test_check_policy_reports_staging_next_to_a_custom_final_model_dir(self, tmp_path: Path, capsys) -> None:
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        out = tmp_path / "ck"
+        staging = out / "my_model.staging.fg-old"
+        staging.mkdir(parents=True)
+        self._age(staging, 30)
+        config = _write_training_config(
+            tmp_path, out, final_model_dir="my_model", extra="retention:\n  staging_ttl_days: 7\n"
+        )
+
+        args = _build_args(check_policy=True, config=str(config), output_dir=str(out))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+
+        assert ei.value.code == 0
+        violations = json.loads(capsys.readouterr().out)["violations"]
+        assert [(v["artefact_kind"], v["path"]) for v in violations] == [("staging_dir[fg-old]", str(staging))]
+
+    def test_check_policy_with_a_retention_only_file_reports_the_default_staging_name(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """A retention-only file names no ``training.final_model_dir``, so only ``final_model.staging*`` is known."""
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        out = tmp_path / "ck"
+        default_staging = out / "final_model.staging.fg-old"
+        custom_staging = out / "my_model.staging.fg-old"
+        for staging in (default_staging, custom_staging):
+            staging.mkdir(parents=True)
+            self._age(staging, 30)
+        config = tmp_path / "retention.yaml"
+        config.write_text("retention:\n  staging_ttl_days: 7\n", encoding="utf-8")
+
+        args = _build_args(check_policy=True, config=str(config), output_dir=str(out))
+        with pytest.raises(SystemExit):
+            _run_purge_cmd(args, output_format="json")
+
+        violations = json.loads(capsys.readouterr().out)["violations"]
+        assert [v["path"] for v in violations] == [str(default_staging)]
+
+    def test_checkpoints_are_outside_every_retention_horizon(self, tmp_path: Path) -> None:
+        """No ``retention:`` field covers ``checkpoint-*``; the docs say so and this pins it."""
+        from forgelm.cli.subcommands._purge import _scan_retention_violations
+        from forgelm.config import RetentionConfig
+
+        checkpoint = tmp_path / "checkpoint-1"
+        staging = tmp_path / "final_model.staging.fg-old"
+        for artefact in (checkpoint, staging):
+            artefact.mkdir()
+            self._age(artefact, 400)
+        retention = RetentionConfig(
+            audit_log_retention_days=1,
+            staging_ttl_days=1,
+            ephemeral_artefact_retention_days=1,
+            raw_documents_retention_days=1,
+        )
+
+        # The aged staging directory beside it proves the scan ran: only the checkpoint is left out.
+        assert [v["path"] for v in _scan_retention_violations(retention, str(tmp_path))] == [str(staging)]
+
+    def test_check_policy_follows_pipeline_stage_model_names(self, tmp_path: Path, capsys) -> None:
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        out = tmp_path / "ck"
+        staging = out / "stage_one_model.staging.fg-old"
+        staging.mkdir(parents=True)
+        self._age(staging, 30)
+        extra = (
+            "retention:\n  staging_ttl_days: 7\n"
+            "pipeline:\n"
+            f"  output_dir: '{tmp_path / 'pipeline_run'}'\n"
+            "  stages:\n"
+            "    - name: sft\n"
+            "      training:\n"
+            "        trainer_type: sft\n"
+            f"        output_dir: '{out}'\n"
+            "        final_model_dir: stage_one_model\n"
+        )
+        config = _write_training_config(tmp_path, out, extra=extra)
+
+        args = _build_args(check_policy=True, config=str(config), output_dir=str(out))
+        with pytest.raises(SystemExit):
+            _run_purge_cmd(args, output_format="json")
+
+        violations = json.loads(capsys.readouterr().out)["violations"]
+        assert [v["path"] for v in violations] == [str(staging)]
+
+    def test_retention_loader_returns_the_full_config_only_for_a_full_file(self, tmp_path: Path) -> None:
+        from forgelm.cli._config_load import _load_retention_and_config
+
+        full = _write_training_config(tmp_path, tmp_path / "ck", extra="retention:\n  staging_ttl_days: 7\n")
+        only = tmp_path / "retention.yaml"
+        only.write_text("retention:\n  staging_ttl_days: 9\n", encoding="utf-8")
+
+        full_retention, full_config = _load_retention_and_config(str(full))
+        only_retention, only_config = _load_retention_and_config(str(only))
+
+        assert full_retention is not None and full_retention.staging_ttl_days == 7
+        assert full_config is not None and full_config.training.output_dir == str(tmp_path / "ck")
+        assert only_retention is not None and only_retention.staging_ttl_days == 9
+        assert only_config is None
+        assert _load_retention_and_config(None) == (None, None)
+
+
+# ---------------------------------------------------------------------------
 # Finding 5 (LOW) — run-scoped erasure records the PLAIN run_id as target_id
 # (design §5.3); the module docstring now documents this asymmetry.
 # ---------------------------------------------------------------------------

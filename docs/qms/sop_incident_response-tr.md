@@ -277,10 +277,11 @@ Madde 13(2)'de 30 gün).
 2. [ ] **`forgelm purge --row-id <verified-id> --corpus
        data/<file>.jsonl --output-dir <run-dir>` çalıştır**.
 3. [ ] **`data.erasure_warning_memorisation` olayını kontrol et** —
-       yalnızca `--output-dir` altında doğrudan bir `final_model/`
-       dizini varsa tetiklenir ve satırı hangi modelin gördüğünü
-       söylemez; uyarı tetiklenmese bile corpus ile eğitilmiş her
-       modeli kapsam içinde say.
+       yalnızca `--output-dir` altında (veya `--config` ile config'in
+       adlandırdığı eğitim dizinlerinde) bir model, staging ya da
+       `checkpoint-*` dizini bulursa tetiklenir ve satırı hangi modelin
+       gördüğünü söylemez; uyarı tetiklenmese bile corpus ile eğitilmiş
+       her modeli kapsam içinde say.
 4. [ ] **Memorisation caveat'ı sahibe bildir** yanıt mektubunda
        (şablon: "satırı sildik ama önceden eğitilmiş bir model bunu
        memorise etmiş olabilir; uygun şekilde yeniden eğiteceğiz veya

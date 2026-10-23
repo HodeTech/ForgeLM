@@ -279,12 +279,17 @@ Ufuklar **raporlanır, zorlanmaz**: `forgelm purge --check-policy` ufku aşanlar
 listeler ve kaç tane bulursa bulsun 0 ile çıkar (yüklenemeyen `--config` 1 ile
 çıkar); hiçbir şey otomatik silinmez, engellenmez ya da zamanlanmaz. `retention:`
 bloğu yoksa hiçbir şey kontrol edilmez; `retention: {}` varsayılanları devreye alır.
+Staging dizinleri `training.final_model_dir`'i izler (yalnızca `retention:` içeren dosya
+bir tane adlandırmaz; rapor varsayılan `final_model`'i arar). **Hiçbir ufuk
+`checkpoint-*` dizinlerini kapsamaz**: bir koşum bunları `training.output_dir`
+altına kaydeder (`save_total_limit`'in tuttuğu kadarını) ve rapor bunları hiç
+listelemez; bu yüzden depolama katmanınız üzerinden kendiniz silin.
 `enforce` anahtarı ayrılmıştır: henüz hiçbir komut onu dikkate almaz.
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
 | `audit_log_retention_days` | int | `1825` (~5 yıl) | `forgelm purge --check-policy`'nin `audit_log.jsonl` dosyasını "süresi geçmiş" olarak raporladığı gün sayısı (Madde 5(1)(e)). 5 yıllık varsayılan bir ForgeLM tercihidir, yasal süre değildir. `0` bu raporu kapatır (hiçbir şey silinmez); log'u yalnızca girdiler gerekli kaldığı sürece ya da adlandırabileceğiniz belirli bir yasal saklama yükümlülüğü gerektirdiği sürece tutun. |
-| `staging_ttl_days` | int | `7` | `forgelm purge --check-policy`'nin bir `final_model.staging.<run_id>/` dizinini (ve eski `final_model.staging/`'i) "süresi geçmiş" olarak raporladığı yaş (koşumun ilk audit event'inden, yoksa audit log'un ilk event'inden, o da yoksa dizinin mtime'ından); hiçbir şey otomatik silinmez ve `forgelm reject` kararının zamanı kullanılmaz. `0` bu raporu kapatır. v0.8.0'da kaldırılan `evaluation.staging_ttl_days` yerine geçer. |
+| `staging_ttl_days` | int | `7` | `forgelm purge --check-policy`'nin bir `<final_model_dir>.staging.<run_id>/` dizinini (ve eski `<final_model_dir>.staging/`'i) "süresi geçmiş" olarak raporladığı yaş (koşumun ilk audit event'inden, yoksa audit log'un ilk event'inden, o da yoksa dizinin mtime'ından); hiçbir şey otomatik silinmez ve `forgelm reject` kararının zamanı kullanılmaz. `0` bu raporu kapatır. v0.8.0'da kaldırılan `evaluation.staging_ttl_days` yerine geçer. |
 | `ephemeral_artefact_retention_days` | int | `90` | `forgelm purge --check-policy`'nin `<output_dir>/compliance/` ve `<output_dir>/data_audit_report.json`'ı "süresi geçmiş" olarak raporladığı yaş (gün; audit log'un ilk event'inden, yoksa mtime'dan); hiçbir şey silinmez. `0` bu raporu kapatır. |
 | `raw_documents_retention_days` | int | `90` | `forgelm purge --check-policy`'nin `<output_dir>/raw_documents/` veya `<output_dir>/ingestion_output/`'u (ingest edilmiş PDF / DOCX / EPUB / TXT / Markdown) "süresi geçmiş" olarak raporladığı yaş (gün; audit log'un ilk event'inden, yoksa mtime'dan); hiçbir şey silinmez. ForgeLM bu dizinleri oluşturmaz; ufuk yalnızca orada tuttuğunuz kaynak dokümanlara uygulanır. `0` bu raporu kapatır. |
 | `enforce` | string | `"log_only"` | Ayrılmış politika modu. Hiçbir komut onu kullanmaz: `"log_only"`, `"warn_on_excess"` ve `"block_on_excess"` kabul edilir ve aynı davranır; bir config son ikisinden birini ayarlarsa eğitim ve `--dry-run` uyarır. |

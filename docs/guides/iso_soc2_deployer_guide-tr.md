@@ -293,8 +293,8 @@ forgelm purge --row-id "alice@example.com" --corpus data/2026Q2.jsonl \
     --output-dir ./outputs
 # Audit chain `target_id` HASH'LENMİŞ ŞEKİLDE
 # `data.erasure_requested` → `data.erasure_completed` (veya
-# `data.erasure_failed`) damgalar.  Eğer `--output-dir` altında doğrudan bir
-# `final_model/` dizini varsa `data.erasure_warning_memorisation` DA
+# `data.erasure_failed`) damgalar.  Eğer `--output-dir` altında bir model, staging
+# veya `checkpoint-*` dizini varsa `data.erasure_warning_memorisation` DA
 # tetiklenir; satırı hangi modelin gördüğünü söylemez, bu yüzden
 # corpus ile eğitilmiş her modeli kapsam içinde sayın ve memorisation
 # kalan ezberleme riskini veri sahibine bildirin.

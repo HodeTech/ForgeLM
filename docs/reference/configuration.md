@@ -278,13 +278,18 @@ The horizons are **reported, not enforced**: `forgelm purge --check-policy`
 lists what is past them and exits 0 however many it finds (an unloadable
 `--config` exits 1), and nothing is deleted, blocked or scheduled
 automatically. Without a `retention:` block nothing is checked at all;
-`retention: {}` switches the defaults on. The `enforce` knob is reserved: no
-command acts on it yet.
+`retention: {}` switches the defaults on. Staging directories follow
+`training.final_model_dir` (a `retention:`-only file names none, so the report
+looks for the default `final_model`). **No horizon covers `checkpoint-*`
+directories**: a run saves them under `training.output_dir` (as many as
+`save_total_limit` keeps) and the report never lists them, so remove them through
+your storage layer. The
+`enforce` knob is reserved: no command acts on it yet.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `audit_log_retention_days` | int | `1825` (~5 years) | Days after which `forgelm purge --check-policy` reports `audit_log.jsonl` as overdue (Article 5(1)(e)). The 5-year default is a ForgeLM choice, not a legal period. Set to `0` to stop reporting it (nothing is ever deleted); keep it only for as long as the entries stay necessary or a specific legal retention duty you can name requires it. |
-| `staging_ttl_days` | int | `7` | Age (from the run's first audit event, else the audit log's first event, else the directory's mtime) after which `forgelm purge --check-policy` reports a `final_model.staging.<run_id>/` directory (and the legacy `final_model.staging/`) as overdue; nothing is deleted automatically and the time of a `forgelm reject` decision is not used. Set to `0` to stop reporting it. Replaces the removed `evaluation.staging_ttl_days` (removed in v0.8.0). |
+| `staging_ttl_days` | int | `7` | Age (from the run's first audit event, else the audit log's first event, else the directory's mtime) after which `forgelm purge --check-policy` reports a `<final_model_dir>.staging.<run_id>/` directory (and the legacy `<final_model_dir>.staging/`) as overdue; nothing is deleted automatically and the time of a `forgelm reject` decision is not used. Set to `0` to stop reporting it. Replaces the removed `evaluation.staging_ttl_days` (removed in v0.8.0). |
 | `ephemeral_artefact_retention_days` | int | `90` | Age in days after which `forgelm purge --check-policy` reports `<output_dir>/compliance/` and `<output_dir>/data_audit_report.json` as overdue (aged from the audit log's first event, else mtime); nothing is deleted. Set to `0` to stop reporting it. |
 | `raw_documents_retention_days` | int | `90` | Age in days after which `forgelm purge --check-policy` reports `<output_dir>/raw_documents/` or `<output_dir>/ingestion_output/` (ingested PDF / DOCX / EPUB / TXT / Markdown) as overdue (aged from the audit log's first event, else mtime); nothing is deleted. ForgeLM does not create these directories, so the horizon applies only to source documents you keep there. Set to `0` to stop reporting it. |
 | `enforce` | string | `"log_only"` | Reserved policy mode. No command acts on it: `"log_only"`, `"warn_on_excess"` and `"block_on_excess"` are all accepted and behave the same, and training and `--dry-run` warn when a config sets either of the last two. |

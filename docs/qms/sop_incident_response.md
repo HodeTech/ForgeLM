@@ -279,10 +279,11 @@ month; 30 days under KVKK Art. 13(2)).
 2. [ ] **Run** `forgelm purge --row-id <verified-id> --corpus
        data/<file>.jsonl --output-dir <run-dir>`.
 3. [ ] **Check** for `data.erasure_warning_memorisation` event —
-       it fires only when a `final_model/` directory exists directly
-       under `--output-dir` and does not say which model saw the row, so
-       treat every model trained on the corpus as in scope even when no
-       warning fires.
+       it fires only when it finds a model, staging or `checkpoint-*`
+       directory under `--output-dir` (or, with `--config`, under the
+       training directories the config names) and does not say which
+       model saw the row, so treat every model trained on the corpus as
+       in scope even when no warning fires.
 4. [ ] **Communicate the memorisation caveat** to the subject in
        the response letter (template: "we deleted the row but a
        previously-trained model may have memorised it; we will

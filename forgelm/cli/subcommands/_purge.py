@@ -28,9 +28,11 @@ Audit-event vocabulary (six new events per design §5.1):
   the chain shows ``request → fail`` instead of ``request → complete``,
   so an operator scanning the log can spot the unfinished erasure.
 - ``data.erasure_warning_memorisation`` — corpus row erasure ran
-  while a ``final_model/`` directory exists directly under the output
-  dir (which runs consumed the corpus is not determined).  The row is
-  gone from disk but may still be memorised in the trained weights.
+  while a trained model, a staging directory or a ``checkpoint-*``
+  directory exists: under the output dir, and under every training
+  layout a loaded ``--config`` names (which runs consumed the corpus is
+  not determined).  The row is gone from disk but may still be memorised
+  in the trained weights.
 - ``data.erasure_warning_synthetic_data_present`` — corpus row erasure
   ran with synthetic-data snapshots present; the row may have produced
   derivative snippets the row→snippet mapping no longer connects.
@@ -52,14 +54,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import secrets
 import shutil
 import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, NoReturn, Optional, Tuple
+from typing import Any, Dict, List, NoReturn, Optional, Sequence, Tuple
 
 from ..._strict_json import dumps_strict
 from .._exit_codes import EXIT_CONFIG_ERROR, EXIT_SUCCESS, EXIT_TRAINING_ERROR
@@ -92,6 +93,10 @@ _ROW_ID_KEYS: Tuple[str, ...] = ("id", "row_id")
 # automatically — the trainer + the tool record the request, the
 # operator handles the residual disposal manually).
 _VALID_RUN_KINDS: Tuple[str, ...] = ("staging", "artefacts")
+
+# ``training.final_model_dir`` default.  A run writes its model to ``<output_dir>/<final_model_dir>`` and, while
+# ``require_human_approval`` holds it back, to the sibling ``<final_model_dir>.staging.<run_id>``.
+_DEFAULT_FINAL_MODEL_DIR = "final_model"
 
 # Cap for the ``error_message`` field persisted into the append-only audit
 # chain.  ``reverse-pii`` imports :func:`_sanitise_audit_error_message`
@@ -386,9 +391,9 @@ def _detect_warning_conditions(
 
     Per design §5.1:
 
-    - ``data.erasure_warning_memorisation`` when a ``final_model/``
-      directory exists directly under the operator's output dir (a
-      trained model may have memorised the row).
+    - ``data.erasure_warning_memorisation`` when :func:`_scan_memorisation_artefacts`
+      finds a trained model, a staging directory or a checkpoint (the
+      row may be memorised in weights trained on it).
     - ``data.erasure_warning_synthetic_data_present`` when any
       ``synthetic_data*.jsonl`` exists (the row may have produced
       derivative snippets).
@@ -399,10 +404,13 @@ def _detect_warning_conditions(
     warnings: List[str] = []
     extras: Dict[str, Dict[str, Any]] = {}
 
-    final_model_dir = os.path.join(output_dir, "final_model")
-    if os.path.isdir(final_model_dir):
+    memorisation_paths = _scan_memorisation_artefacts(output_dir, config_loaded)
+    if memorisation_paths:
         warnings.append(_EVT_WARN_MEMORISATION)
-        extras[_EVT_WARN_MEMORISATION] = {"affected_run_ids": _scan_run_ids_with_final_model(output_dir)}
+        extras[_EVT_WARN_MEMORISATION] = {
+            "affected_run_ids": _affected_run_ids(output_dir, config_loaded, memorisation_paths),
+            "memorisation_artefact_paths": memorisation_paths,
+        }
 
     synthetic_files = sorted(str(p) for p in Path(output_dir).glob("synthetic_data*.jsonl") if p.is_file())
     if synthetic_files:
@@ -417,41 +425,113 @@ def _detect_warning_conditions(
     return warnings, extras
 
 
-def _scan_run_ids_with_final_model(output_dir: str) -> List[str]:
-    """Best-effort: enumerate run ids whose ``final_model/`` is present.
+def _training_trees(config_loaded: Optional[Any]) -> List[Tuple[str, str]]:
+    """``(output_dir, final_model_dir)`` of every training run the loaded config describes."""
+    stages = getattr(getattr(config_loaded, "pipeline", None), "stages", None) or []
+    blocks = [getattr(config_loaded, "training", None), *(getattr(stage, "training", None) for stage in stages)]
+    return [(block.output_dir, block.final_model_dir) for block in blocks if block is not None]
 
-    Looks for ``final_model.staging.<run_id>/`` directories left as
-    forensic artefacts after promotion.
 
-    Wave 2b Round-4 review F-W2B-06 fix: once an operator runs
-    ``forgelm approve <run_id>``, the staging directory is renamed to
-    ``final_model/`` — leaving no staging-suffix directory to match.
-    Falls back to the audit log's ``human_approval.granted`` events so
-    the warning event still names a concrete run id.  Empty list with
-    a sentinel placeholder when nothing matches and the audit log is
-    silent — the warning still fires (the ``final_model/`` is present,
-    that's what triggered it), but the operator gets a clear hint.
+def _final_model_names(config_loaded: Optional[Any]) -> List[str]:
+    """Model directory names a run may have left a staging sibling for: the config's, then the default."""
+    names = [model_dir for _output_dir, model_dir in _training_trees(config_loaded)]
+    return list(dict.fromkeys([*names, _DEFAULT_FINAL_MODEL_DIR]))
+
+
+def _memorisation_trees(output_dir: str, config_loaded: Optional[Any]) -> List[Tuple[str, str]]:
+    """``--output-dir`` under every model directory name in play, plus every layout the loaded config names.
+
+    The operator's ``--output-dir`` need not be the config's ``training.output_dir`` (the config may be
+    resolved from another working directory), so it is paired with the config's ``final_model_dir`` too.
     """
-    pattern = re.compile(r"final_model\.staging\.([A-Za-z0-9._-]+)$")
-    run_ids: List[str] = []
+    return [*((output_dir, name) for name in _final_model_names(config_loaded)), *_training_trees(config_loaded)]
+
+
+def _scan_memorisation_artefacts(output_dir: str, config_loaded: Optional[Any]) -> List[str]:
+    """Return sorted paths of memorisation-risk artefacts, or ``[]``.
+
+    Weights trained on an erased row survive in three places, all reported:
+
+    - the model directory (``<final_model_dir>``) and its staging siblings
+      (``<final_model_dir>.staging[.<run_id>]``), which hold the adapters of a
+      run that is awaiting or was refused human approval;
+    - ``checkpoint-*`` directories, which every completed run leaves behind
+      and which survive an auto-revert;
+    - ``merge.output_dir`` when the loaded config has a ``merge`` block.
+
+    ``output_dir`` is scanned for the default ``final_model`` layout without a
+    config; a loaded ``--config`` adds its ``training`` block and every
+    ``pipeline`` stage that carries its own.  Symlinked entries are reported where
+    they are named: the scan stats and lists paths and never reads or deletes them.
+    """
+    found: Dict[str, str] = {}
+    for root, model_dir in _memorisation_trees(output_dir, config_loaded):
+        for path in _scan_training_tree(root, model_dir):
+            found.setdefault(os.path.realpath(path), path)
+    merge = getattr(config_loaded, "merge", None)
+    if merge is not None and os.path.isdir(merge.output_dir):
+        found.setdefault(os.path.realpath(merge.output_dir), os.path.abspath(merge.output_dir))
+    return sorted(found.values())
+
+
+def _is_artefact_name(name: str, model_name: str) -> bool:
+    """Any ``checkpoint-*`` (a prefix ``final_model_dir`` may not use), or ``<model_name>.staging[.<run_id>]``."""
+    staging = f"{model_name}.staging"
+    return name.startswith("checkpoint-") or name == staging or name.startswith(f"{staging}.")
+
+
+def _is_directory(entry: os.DirEntry) -> bool:
+    """``entry.is_dir()``, where an entry that cannot be examined (a symlink loop) is logged and skipped, not fatal."""
     try:
-        for entry in os.listdir(output_dir):
-            match = pattern.match(entry)
-            if match:
-                run_ids.append(match.group(1))
-    except OSError:
-        return []
-    if run_ids:
-        return sorted(set(run_ids))
-    # Staging dir is gone (run was promoted).  Walk the audit log for
-    # granted approvals; their run_id is the one that consumed this
-    # corpus.
-    audit_run_ids = _scan_run_ids_from_granted_events(os.path.join(output_dir, "audit_log.jsonl"))
-    if audit_run_ids:
-        return audit_run_ids
-    # Nothing on disk, nothing in audit chain — surface a clear hint
-    # so the operator knows where to look next.
-    return ["unknown — no matching staging directory or human_approval.granted event"]
+        return entry.is_dir()
+    except OSError as exc:
+        logger.warning("purge: could not examine %s for the memorisation check (%s); skipped.", entry.path, exc)
+        return False
+
+
+def _scan_training_tree(output_dir: str, final_model_dir: str) -> List[str]:
+    """Model, staging and checkpoint directories one training layout holds, as absolute paths.
+
+    Checkpoints sit directly under *output_dir*; staging directories are siblings of the
+    model directory, which is nested under *output_dir* when ``final_model_dir`` has a ``/``.
+    """
+    root = os.path.abspath(output_dir)
+    model_path = os.path.normpath(os.path.join(root, final_model_dir))
+    model_parent, model_name = os.path.split(model_path)
+    found = [model_path] if os.path.isdir(model_path) else []
+    for parent in dict.fromkeys((model_parent, root)):
+        try:
+            with os.scandir(parent) as entries:
+                found.extend(e.path for e in entries if _is_artefact_name(e.name, model_name) and _is_directory(e))
+        except FileNotFoundError:
+            continue  # nothing was trained into this directory
+        except OSError as exc:
+            logger.warning(
+                "purge: could not scan %s for memorisation-risk artefacts (%s); the memorisation check is "
+                "incomplete for this directory.",
+                parent,
+                exc,
+            )
+    return found
+
+
+def _affected_run_ids(output_dir: str, config_loaded: Optional[Any], artefact_paths: List[str]) -> List[str]:
+    """Run ids behind the artefacts: from staging names, else from granted approvals, else a hint.
+
+    Once ``forgelm approve <run_id>`` renames a staging directory to the model directory
+    no suffix names the run, so the audit logs of the scanned layouts are read for
+    ``human_approval.granted`` events.  When neither names a run the warning still
+    fires, because artefacts exist, and carries a hint instead of an empty list.
+    """
+    marker = ".staging."
+    from_names = {os.path.basename(p).partition(marker)[2] for p in artefact_paths if marker in os.path.basename(p)}
+    if from_names - {""}:
+        return sorted(from_names - {""})
+    roots = dict.fromkeys(os.path.abspath(root) for root, _model_dir in _memorisation_trees(output_dir, config_loaded))
+    granted = {
+        rid for root in roots for rid in _scan_run_ids_from_granted_events(os.path.join(root, "audit_log.jsonl"))
+    }
+    return sorted(granted) or ["unknown — no matching staging directory or human_approval.granted event"]
 
 
 def _scan_run_ids_from_granted_events(audit_log_path: str) -> List[str]:
@@ -478,7 +558,9 @@ def _scan_run_ids_from_granted_events(audit_log_path: str) -> List[str]:
                 run_id = event.get("run_id")
                 if isinstance(run_id, str) and run_id:
                     run_ids.append(run_id)
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        # The reader runs after the row is gone and on logs outside --output-dir: an unreadable one must not
+        # abort the erasure chain, only leave the run id to the next source.
         return []
     return sorted(set(run_ids))
 
@@ -720,10 +802,11 @@ def _run_purge_row_id(args, output_format: str) -> None:
         # so say what was resolved instead of letting the check pass quietly over the wrong directory.
         logger.warning(
             "--output-dir not given: using the corpus directory %s for the audit log, the salt and the memorisation "
-            "check (which looks for %s). Pass --output-dir <training output dir> to check your trained model and to "
+            "check (which looks there for %s, staging and checkpoint-* directories, and in the training directories "
+            "a --config names). Pass --output-dir <training output dir> to check your trained model and to "
             "correlate with `forgelm reverse-pii`.",
             output_dir,
-            os.path.join(output_dir, "final_model"),
+            os.path.join(output_dir, _DEFAULT_FINAL_MODEL_DIR),
         )
     os.makedirs(output_dir, exist_ok=True)
 
@@ -854,6 +937,9 @@ def _run_purge_run_id(args, output_format: str) -> None:
     except ConfigError as exc:
         _output_error_and_exit(output_format, str(exc), EXIT_CONFIG_ERROR)
 
+    # Loaded before ``data.erasure_requested`` so a config that cannot be read never strands a request in the chain.
+    # Only ``--kind staging`` uses it (``final_model_dir`` names the staging directory).
+    config_loaded = _maybe_load_config(getattr(args, "config", None)) if args.kind == "staging" else None
     request_fields: Dict[str, Any] = {
         "target_kind": args.kind,
         "target_id": args.run_id,
@@ -863,7 +949,7 @@ def _run_purge_run_id(args, output_format: str) -> None:
     }
     audit.log_event(_EVT_ERASURE_REQUESTED, **request_fields)
 
-    target_paths = _resolve_run_kind_targets(output_dir, args.run_id, args.kind)
+    target_paths = _resolve_run_kind_targets(output_dir, args.run_id, args.kind, _final_model_names(config_loaded))
     if not target_paths:
         # The standard compliance bundle has fixed filenames with no run id, so a real run id never matches it.
         hint = " The standard compliance bundle has fixed filenames without a run id; remove it through your storage layer."
@@ -957,11 +1043,17 @@ def _run_purge_run_id(args, output_format: str) -> None:
     )
 
 
-def _staging_targets_for_run(base: Path, run_id: str) -> List[Path]:
-    """Return existing ``final_model.staging`` paths for ``run_id``.
+def _staging_targets_for_run(
+    base: Path, run_id: str, model_names: Sequence[str] = (_DEFAULT_FINAL_MODEL_DIR,)
+) -> List[Path]:
+    """Return existing ``<model_name>.staging`` paths for ``run_id``, one candidate per *model_names* entry.
+
+    *model_names* are the ``training.final_model_dir`` values the loaded config names (see
+    :func:`_final_model_names`); the trainer stages a run next to its model directory, so a
+    non-default ``final_model_dir`` has a non-default staging name.
 
     Wave 2b final-review F-21-STAGING: only the Phase 9 v2 explicit form
-    ``final_model.staging.<run_id>/`` is considered.  Earlier revisions
+    ``<model_name>.staging.<run_id>/`` is considered.  Earlier revisions
     also unconditionally included the legacy unscoped
     ``final_model.staging/`` candidate as a "pre-Phase-9-v2 backward
     compatibility" path, but that path could belong to any pre-v2 run
@@ -975,12 +1067,13 @@ def _staging_targets_for_run(base: Path, run_id: str) -> List[Path]:
     via the Phase 9 v2 path or remove the directory manually.
     """
     targets: List[Path] = []
-    scoped = base / f"final_model.staging.{run_id}"
-    if scoped.exists():
-        targets.append(scoped)
-    legacy = base / "final_model.staging"
-    if legacy.exists() and _legacy_staging_owned_by(legacy, run_id):
-        targets.append(legacy)
+    for name in model_names:
+        scoped = base / f"{name}.staging.{run_id}"
+        if scoped.exists():
+            targets.append(scoped)
+        legacy = base / f"{name}.staging"
+        if legacy.exists() and _legacy_staging_owned_by(legacy, run_id):
+            targets.append(legacy)
     return targets
 
 
@@ -1003,8 +1096,13 @@ def _legacy_staging_owned_by(legacy_dir: Path, run_id: str) -> bool:
     return recorded == run_id
 
 
-def _artefact_targets_for_run(base: Path, run_id: str) -> List[Path]:
+def _artefact_targets_for_run(
+    base: Path, run_id: str, model_names: Sequence[str] = (_DEFAULT_FINAL_MODEL_DIR,)
+) -> List[Path]:
     """Return ``compliance/`` files whose name embeds ``run_id`` as a token.
+
+    *model_names* is unused: every resolver in :data:`_RUN_KIND_RESOLVERS` takes the same arguments, and
+    compliance files are named by run id alone.
 
     Any regular file directly under ``compliance/`` whose name carries the
     run-id as a token matches, whatever its extension.  The standard bundle
@@ -1030,7 +1128,9 @@ _RUN_KIND_RESOLVERS: Dict[str, Any] = {
 }
 
 
-def _resolve_run_kind_targets(output_dir: str, run_id: str, kind: str) -> List[Path]:
+def _resolve_run_kind_targets(
+    output_dir: str, run_id: str, kind: str, model_names: Sequence[str] = (_DEFAULT_FINAL_MODEL_DIR,)
+) -> List[Path]:
     """Return the on-disk paths the ``--kind`` flag refers to for ``run_id``.
 
     Dispatches to a per-kind resolver in :data:`_RUN_KIND_RESOLVERS`.
@@ -1043,7 +1143,7 @@ def _resolve_run_kind_targets(output_dir: str, run_id: str, kind: str) -> List[P
     resolver = _RUN_KIND_RESOLVERS.get(kind)
     if resolver is None:
         return []
-    return resolver(Path(output_dir), run_id)
+    return resolver(Path(output_dir), run_id, model_names)
 
 
 _RUN_ID_BOUNDARIES = ("_", "-", ".")
@@ -1126,16 +1226,16 @@ def _run_purge_check_policy(args, output_format: str) -> None:
     ``EXIT_CONFIG_ERROR`` rather than silently degrading to a
     "no retention block" notice (which the operator would mistake
     for "no violations").  The file may hold only ``retention:``
-    (#1054); see ``_load_retention_policy``.
+    (#1054); see ``_load_retention_and_config``.
     """
     import yaml as _yaml
 
     from forgelm.config import ConfigError
 
-    from .._config_load import _load_retention_policy
+    from .._config_load import _load_retention_and_config
 
     try:
-        retention = _load_retention_policy(getattr(args, "config", None))
+        retention, config_loaded = _load_retention_and_config(getattr(args, "config", None))
     except (ConfigError, OSError, _yaml.YAMLError) as exc:
         # OSError covers FileNotFoundError + permission denied; ConfigError
         # wraps Pydantic ValidationError and YAML parse errors;
@@ -1161,7 +1261,7 @@ def _run_purge_check_policy(args, output_format: str) -> None:
         sys.exit(EXIT_SUCCESS)
 
     output_dir = args.output_dir or "."
-    violations = _scan_retention_violations(retention, output_dir)
+    violations = _scan_retention_violations(retention, output_dir, _final_model_names(config_loaded))
     if output_format == "json":
         print(dumps_strict({"success": True, "violations": violations, "count": len(violations)}, indent=2))
     else:
@@ -1179,8 +1279,14 @@ def _run_purge_check_policy(args, output_format: str) -> None:
     sys.exit(EXIT_SUCCESS)
 
 
-def _scan_retention_violations(retention, output_dir: str) -> List[Dict[str, Any]]:
+def _scan_retention_violations(
+    retention, output_dir: str, model_names: Sequence[str] = (_DEFAULT_FINAL_MODEL_DIR,)
+) -> List[Dict[str, Any]]:
     """Walk ``output_dir`` and report artefacts past their retention horizon.
+
+    *model_names* are the ``training.final_model_dir`` values whose staging siblings
+    are reported (see :func:`_final_model_names`).  ``checkpoint-*`` directories are
+    deliberately not walked: no ``retention:`` horizon covers them.
 
     Belt-and-suspenders age resolution (design §3.3):
 
@@ -1209,7 +1315,10 @@ def _scan_retention_violations(retention, output_dir: str) -> List[Dict[str, Any
     # per-artefact age lookup hits the right audit timestamp.
     horizons: List[Tuple[str, str, int, Optional[str]]] = [
         ("audit_log", audit_log_path, retention.audit_log_retention_days, None),
-        ("staging_dir", os.path.join(output_dir, "final_model.staging"), retention.staging_ttl_days, None),
+        *(
+            ("staging_dir", os.path.join(output_dir, f"{name}.staging"), retention.staging_ttl_days, None)
+            for name in model_names
+        ),
         (
             "compliance_bundle",
             os.path.join(output_dir, "compliance"),
@@ -1228,7 +1337,7 @@ def _scan_retention_violations(retention, output_dir: str) -> List[Dict[str, Any
     # the trainer actually creates since Phase 9 v2) and the raw
     # documents horizon.  Discover both at scan time so the report
     # reflects every artefact kind the retention block covers.
-    horizons.extend(_discover_per_run_staging_horizons(output_dir, retention.staging_ttl_days))
+    horizons.extend(_discover_per_run_staging_horizons(output_dir, retention.staging_ttl_days, model_names))
     horizons.extend(_discover_raw_documents_horizons(output_dir, retention.raw_documents_retention_days))
     for kind, path, horizon_days, run_id in horizons:
         if horizon_days == 0 or not os.path.exists(path):
@@ -1269,9 +1378,11 @@ def _parse_iso_timestamp_to_posix(ts: str) -> Optional[float]:
     return when.timestamp()
 
 
-def _discover_per_run_staging_horizons(output_dir: str, horizon_days: int) -> List[Tuple[str, str, int, Optional[str]]]:
-    """Enumerate ``final_model.staging.<run_id>/`` directories under
-    ``output_dir`` so the retention scan reports each one separately.
+def _discover_per_run_staging_horizons(
+    output_dir: str, horizon_days: int, model_names: Sequence[str] = (_DEFAULT_FINAL_MODEL_DIR,)
+) -> List[Tuple[str, str, int, Optional[str]]]:
+    """Enumerate ``<model_name>.staging.<run_id>/`` directories next to each model
+    directory so the retention scan reports each one separately.
 
     Returns ``[]`` when the horizon is disabled (``horizon_days == 0``)
     or the output dir cannot be listed (callers handle the empty
@@ -1285,18 +1396,18 @@ def _discover_per_run_staging_horizons(output_dir: str, horizon_days: int) -> Li
     if horizon_days == 0:
         return []
     discovered: List[Tuple[str, str, int, Optional[str]]] = []
-    try:
-        entries = os.listdir(output_dir)
-    except OSError:
-        return []
-    for entry in entries:
-        if not entry.startswith("final_model.staging."):
+    for name in model_names:
+        parent, base_name = os.path.split(os.path.join(output_dir, name))
+        prefix = f"{base_name}.staging."
+        try:
+            entries = os.listdir(parent)
+        except OSError:
             continue
-        full = os.path.join(output_dir, entry)
-        if not os.path.isdir(full):
-            continue
-        run_id = entry[len("final_model.staging.") :]
-        discovered.append((f"staging_dir[{run_id}]", full, horizon_days, run_id))
+        for entry in entries:
+            full = os.path.join(parent, entry)
+            if entry.startswith(prefix) and os.path.isdir(full):
+                run_id = entry[len(prefix) :]
+                discovered.append((f"staging_dir[{run_id}]", full, horizon_days, run_id))
     return discovered
 
 
@@ -1419,13 +1530,13 @@ def _resolve_artefact_age(
 def _maybe_load_config(config_path: Optional[str]):
     """Load the ``ForgeConfig`` from YAML, best effort.
 
-    Used by the row-id erasure path, which works without a config (the
-    corpus-row erasure is intentionally config-agnostic), so a missing /
-    unreadable / invalid YAML falls back to ``None``.  When *config_path*
-    was explicitly supplied the fallback is logged at ``WARNING`` (not
-    silent) so an operator relying on it for external-copies detection
-    sees that the load failed.  ``--check-policy`` loads its config
-    strictly, through ``_load_retention_policy``.
+    Used by the row-id and run-id erasure paths, which work without a config
+    (erasure is intentionally config-agnostic), so a missing / unreadable /
+    invalid YAML falls back to ``None``.  When *config_path* was explicitly
+    supplied the fallback is logged at ``WARNING`` (not silent) so an operator
+    relying on it for the memorisation check, external-copies detection or a
+    non-default ``training.final_model_dir`` sees that the load failed.  ``--check-policy`` loads its config
+    strictly, through ``_load_retention_and_config``.
     """
     if not config_path:
         return None
@@ -1441,7 +1552,7 @@ def _maybe_load_config(config_path: Optional[str]):
 
     try:
         return load_config(config_path)
-    except (ConfigError, OSError, _yaml.YAMLError) as exc:
+    except (ConfigError, OSError, UnicodeDecodeError, _yaml.YAMLError) as exc:
         # Best-effort fallback: row-id / run-id paths run config-free.
         # WARNING, not DEBUG: an operator who explicitly passed --config
         # (e.g. to surface the external-copies webhook warning) must see
@@ -1450,7 +1561,9 @@ def _maybe_load_config(config_path: Optional[str]):
         # load indistinguishable from "no webhook configured" (a false
         # compliance signal).
         logger.warning(
-            "purge: --config %r could not be loaded (%s); external-copies warning detection is disabled for this run.",
+            "purge: --config %r could not be loaded (%s); what it supplies is disabled for this run (row mode: "
+            "the memorisation scan of its training directories and external-copies detection; run mode: "
+            "its final_model_dir for the staging directory name).",
             config_path,
             exc,
         )
@@ -1558,5 +1671,6 @@ __all__ = [
     "_find_matching_rows",
     "_atomic_rewrite_dropping_lines",
     "_detect_warning_conditions",
+    "_scan_memorisation_artefacts",
     "_scan_retention_violations",
 ]
