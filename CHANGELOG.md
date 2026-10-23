@@ -269,7 +269,8 @@ below before upgrading a pinned CI pipeline.)_
   library consumer reading `cfg.merge.models[0]["path"]` must use
   `cfg.merge.models[0].path`; `merge_peft_adapters` still takes the dict
   shape it always took.
-- **Every artefact ForgeLM writes is now valid JSON.** The audit log, the
+- **Every artefact ForgeLM writes is now valid JSON** (in a JSON Lines file such as
+  the audit log or `safety_trend.jsonl`, every line). The audit log, the
   training result envelope, `benchmark_results.json`, `judge_results.json`,
   `safety_results.json`, `safety_trend.jsonl`, the compliance and Annex IV
   manifests, the data-audit report, the pipeline state and the webhook body

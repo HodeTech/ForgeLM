@@ -33,7 +33,7 @@
 > belongs to the separate Faz 1-38 closure-cycle numbering used for `v0.5.5`
 > and is not part of this sequence; 16-21 were never allocated.
 >
-> **Release cycle: the open `0.11.1rc1` cycle.  Release *number*: derived at
+> **Release cycle: the open development cycle.  Release *number*: derived at
 > the cut, not fixed here.**  The work lands on the current development cycle;
 > what it is tagged as follows from what it contains.
 > [`../standards/release.md`](../standards/release.md#versioning) defines PATCH
@@ -995,8 +995,9 @@ Per **C-20** no step cuts a release.  A PR files under `[Unreleased]` in
 library consumer can observe; internal-only work (a behaviour-neutral refactor,
 tooling, CI pins) files nothing — the narrowing is recorded in the 2026-07-30
 addendum in [risks-and-decisions.md](risks-and-decisions.md).  A single
-`chore: release` commit follows the phase once all sixteen steps and their
-review rounds are complete, on the open `0.11.1rc1` cycle.
+`chore: release` commit follows the phase once S4–S16 and their review rounds
+are complete, on the next development cycle (S1–S3 shipped in `v0.11.1`; see the
+exception below).
 
 **The tag is derived at that commit, not before.**  Run the `cut-release`
 checklist against [`../standards/release.md`](../standards/release.md#versioning)'s

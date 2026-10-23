@@ -340,7 +340,7 @@ Phase 16's pre-work and its first three steps ship here (S1–S3; S4–S16 are n
 - The LLM-judge gate fails on an empty eval dataset and when fewer than `min_valid_fraction` (default `0.8`) of its scores parse. A judge reply with several score objects, duplicate keys, no text, or cut off at the token cap counts as a judge failure instead of a verdict.
 - A benchmark gate with `min_score` fails when a requested task reports no accuracy metric.
 - `cache-tasks` exits `2` when a task fails to stage, instead of `success: true` on an incomplete air-gap bundle.
-- Every artefact ForgeLM writes is valid JSON, a `success: false` envelope carries `error`, and `reverted` reports what actually happened.
+- Every artefact ForgeLM writes is valid JSON (in a JSON Lines file such as the audit log, every line), a `success: false` envelope carries `error`, and `reverted` reports what actually happened.
 
 ### Documentation that says what the code does
 
