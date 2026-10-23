@@ -112,7 +112,9 @@ def _check_model_destination(output_dir: str, final_path: str, config: Any) -> N
     from .config import ConfigError
 
     try:
-        relative = os.path.relpath(final_path, output_dir)
+        # relpath answers with the platform separator, '\' on Windows, while the layout check takes the config's
+        # '/' form. On POSIX a backslash is part of a name; the resolve comparison below still rejects that path.
+        relative = os.path.relpath(final_path, output_dir).replace("\\", "/")
         expected = _validate_layout(output_dir, relative, _benchmark_output_dir(config))
         # relpath is lexical; do not let normalization conceal a symlink/..
         # path whose actual destination differs from the checked directory.
