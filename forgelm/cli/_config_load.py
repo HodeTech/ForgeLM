@@ -1,15 +1,16 @@
-"""Config loading + offline-flag application for training mode."""
+"""Config loading + offline-flag application for training mode, and the ``purge --check-policy`` retention loader."""
 
 from __future__ import annotations
 
 import os
 import sys
+from typing import Optional
 
 import yaml
-from pydantic import ValidationError
+from pydantic import ConfigDict, TypeAdapter, ValidationError
 
 from .._strict_json import dumps_strict
-from ..config import ConfigError, load_config
+from ..config import ConfigError, RetentionConfig, load_config
 from ._exit_codes import EXIT_CONFIG_ERROR
 from ._logging import logger
 
@@ -71,6 +72,33 @@ def _load_config_or_exit(config_path: str, json_output: bool):
     else:
         logger.error("Configuration error: %s", msg)
     sys.exit(EXIT_CONFIG_ERROR)
+
+
+def _load_retention_policy(config_path: Optional[str]) -> Optional[RetentionConfig]:
+    """Return the ``retention:`` block that ``forgelm purge --check-policy`` reports against.
+
+    The file is either a full ForgeLM config or one whose only top-level key is ``retention``: a scheduled
+    retention report needs no training config (#1054).  Any other top-level key makes it a full config, validated
+    as one, so a misspelt ``retension:`` fails instead of being ignored.  ``retention: null`` returns ``None``, as
+    it does in a full config.  Raises what ``load_config`` raises (``FileNotFoundError``, ``OSError``,
+    ``ConfigError``), and like ``ForgeConfig`` leaves raw input values out of validation messages.
+    """
+    if not config_path:
+        return None
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+    with open(config_path, encoding="utf-8") as fh:
+        try:
+            data = yaml.safe_load(fh)
+        except yaml.YAMLError as exc:
+            raise ConfigError(f"Invalid YAML syntax in {config_path}: {exc}") from exc
+    if not (isinstance(data, dict) and set(data) == {"retention"}):
+        return load_config(config_path).retention
+    adapter = TypeAdapter(Optional[RetentionConfig], config=ConfigDict(hide_input_in_errors=True, title="retention"))
+    try:
+        return adapter.validate_python(data["retention"])
+    except ValidationError as exc:
+        raise ConfigError(f"Configuration validation failed:\n{exc}") from exc
 
 
 def _disable_hub_telemetry() -> None:

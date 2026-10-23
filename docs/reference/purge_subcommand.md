@@ -56,7 +56,7 @@ Erases a single row identified by its `id` (or `row_id`) field from a JSONL trai
 
 ### Retention-policy report (`--check-policy`)
 
-Read-only scan. Walks `<output_dir>`, compares each artefact's age (canonical: the run's first audit event for a `final_model.staging.<run_id>/` directory, else the audit log's genesis `timestamp`; fallback: filesystem `mtime` with `age_source=mtime`) against the loaded config's `retention:` horizons, and emits a structured violation list.
+Read-only scan. Walks `<output_dir>`, compares each artefact's age (canonical: the run's first audit event for a `final_model.staging.<run_id>/` directory, else the audit log's genesis `timestamp`; fallback: filesystem `mtime` with `age_source=mtime`) against the loaded config's `retention:` horizons, and emits a structured violation list. The config can be a full training config or a YAML file whose only top-level key is `retention:`; a file with any other top-level key is validated as a full config.
 
 **Shared output directories.** `compliance/`, `data_audit_report.json` and the raw-document directories are aged from the audit log's *first* event, not from when the file was last written. In a directory reused for many runs, a bundle written today can be reported as past its horizon: check the file's own date before deleting anything the report lists.
 

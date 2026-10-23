@@ -53,7 +53,7 @@ retention:
   ephemeral_artefact_retention_days: 365
 ```
 
-`forgelm purge --check-policy --config config.yaml --output-dir <training.output_dir>` o dizinde ufku aşmış artefaktları listeler ve kaç tane bulursa bulsun 0 ile çıkar (`--output-dir` verilmezse `training.output_dir`'i değil, bulunulan dizini tarar). Hiçbir şey otomatik silinmez ve bunun için audit log'a bir şey yazılmaz; süresi geçeni silmek depolama katmanınızın işidir. (`retention.enforce` ayrılmıştır: henüz hiçbir komut onu kullanmaz.) ForgeLM `raw_documents/` veya `ingestion_output/` dizinlerini oluşturmaz; bu yüzden `raw_documents_retention_days`, yalnızca kaynak dokümanları `<training.output_dir>/raw_documents/` ya da `ingestion_output/` altında tutuyorsanız etkili olur.
+`forgelm purge --check-policy --config config.yaml --output-dir <training.output_dir>` o dizinde ufku aşmış artefaktları listeler ve kaç tane bulursa bulsun 0 ile çıkar (`--output-dir` verilmezse `training.output_dir`'i değil, bulunulan dizini tarar). `config.yaml`, eğitim config'iniz ya da yalnızca yukarıdaki `retention:` bloğunu içeren bir dosya olabilir. Hiçbir şey otomatik silinmez ve bunun için audit log'a bir şey yazılmaz; süresi geçeni silmek depolama katmanınızın işidir. (`retention.enforce` ayrılmıştır: henüz hiçbir komut onu kullanmaz.) ForgeLM `raw_documents/` veya `ingestion_output/` dizinlerini oluşturmaz; bu yüzden `raw_documents_retention_days`, yalnızca kaynak dokümanları `<training.output_dir>/raw_documents/` ya da `ingestion_output/` altında tutuyorsanız etkili olur.
 
 ## Veri sahibi talepleri
 
