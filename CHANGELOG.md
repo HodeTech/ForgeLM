@@ -134,6 +134,13 @@ All notable changes to ForgeLM are documented here.
   with `--tokenizer` and show the real `summarize_result` output, with `--output` resolved to the absolute path the tool
   prints, instead of a layout the tool never prints (#395).
 
+- Correct the PII-masking and GDPR-erasure pages of the user manual, in English and Turkish. The PII-masking page shows
+  the real `forgelm ingest --pii-mask` and `forgelm audit` output, and its audit example now reads an unmasked corpus:
+  auditing the masked output prints no `PII` line, so the old example's counts could not have come from it. The
+  GDPR-erasure page no longer says the identifier never leaves the operator's terminal: the audit chain records a salted
+  digest instead, but the identifier is still typed on the command line and `forgelm reverse-pii` prints the matching
+  corpus lines unmasked.
+
 - Make the GDPR, erasure, retention, PII-masking, GPU-cost and chat documentation say what ForgeLM does, so a deployer can copy a
   documented command or YAML block, and quote a documented limit in a DPIA or an access reply, without it being untrue. The GDPR
   / KVKK manual page was rewritten earlier in this cycle; this completes it and the pages around it (#101):
