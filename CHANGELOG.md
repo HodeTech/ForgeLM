@@ -117,9 +117,10 @@ All notable changes to ForgeLM are documented here.
   `CONTRIBUTING.md`, `CLAUDE.md` and `AGENTS.md` that the front door is chosen with labels and
   views, never by closing issues.
 - `forgelm purge --check-policy --config` accepts a file whose only top-level key is `retention:`, so a scheduled
-  retention report no longer needs a full training config next to it. A file with any other top-level key, a misspelt
-  `retension:` included, is still validated as a full config and exits 1. `retention:` with no value reports nothing to
-  enforce, as it does in a full config, and validation errors name the field without its raw value (#1054).
+  retention report no longer needs a full training config next to it. A file with any other top-level key is still
+  validated as a full config, so a misspelt `retension:` or a partial training config exits 1 instead of being ignored.
+  `retention:` with no value reports nothing to enforce, as it does in a full config, and validation errors name the
+  field without its raw value (#1054).
 
 ### Removed
 
