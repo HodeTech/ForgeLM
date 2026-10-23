@@ -386,9 +386,14 @@ def _detect_warning_conditions(
 
     Per design §5.1:
 
-    - ``data.erasure_warning_memorisation`` when a ``final_model/``
-      directory exists directly under the operator's output dir (a
-      trained model may have memorised the row).
+    - ``data.erasure_warning_memorisation`` when memorisation-risk
+      artefacts are found: a ``final_model/`` directory directly under
+      the operator's output dir (the config-free literal check), or —
+      when a ``--config`` was supplied and loaded — ``checkpoint-*``
+      directories and ``.staging.*`` entries under the configured
+      ``training.output_dir`` / ``training.final_model_dir`` (#102:
+      a trained model or an intermediate checkpoint may have memorised
+      the row).
     - ``data.erasure_warning_synthetic_data_present`` when any
       ``synthetic_data*.jsonl`` exists (the row may have produced
       derivative snippets).
@@ -399,10 +404,13 @@ def _detect_warning_conditions(
     warnings: List[str] = []
     extras: Dict[str, Dict[str, Any]] = {}
 
-    final_model_dir = os.path.join(output_dir, "final_model")
-    if os.path.isdir(final_model_dir):
+    memorisation_paths = _scan_memorisation_artefacts(output_dir, config_loaded)
+    if memorisation_paths:
         warnings.append(_EVT_WARN_MEMORISATION)
-        extras[_EVT_WARN_MEMORISATION] = {"affected_run_ids": _scan_run_ids_with_final_model(output_dir)}
+        extras[_EVT_WARN_MEMORISATION] = {
+            "affected_run_ids": _scan_run_ids_with_final_model(output_dir),
+            "memorisation_artefact_paths": memorisation_paths,
+        }
 
     synthetic_files = sorted(str(p) for p in Path(output_dir).glob("synthetic_data*.jsonl") if p.is_file())
     if synthetic_files:
@@ -415,6 +423,88 @@ def _detect_warning_conditions(
         extras[_EVT_WARN_EXTERNAL_COPIES] = {"webhook_targets": webhook_targets}
 
     return warnings, extras
+
+
+def _scan_memorisation_artefacts(output_dir: str, config_loaded: Optional[Any]) -> List[str]:
+    """Return sorted paths of memorisation-risk artefacts, or ``[]``.
+
+    Two detection layers (#102, CR-A10-022 remainder + CR-A10-042):
+
+    - Config-free literal check: ``<output_dir>/final_model/`` exists.
+      Retained because the row-erasure path must still warn when no
+      ``--config`` was given.
+    - Config-driven check: when a config was loaded, scan the configured
+      ``training.output_dir`` and ``training.final_model_dir`` for
+      ``checkpoint-*`` directories and ``.staging.*`` entries — the
+      places a trained model or an intermediate checkpoint actually
+      lands, which the literal check cannot see.
+
+    Symlink safety: scanning uses ``os.scandir`` with a resolved root;
+    any entry that is a symlink resolving outside the target tree is
+    skipped, so a malicious corpus directory cannot point the purge
+    warning at (or into) unrelated paths.
+    """
+    paths: List[str] = []
+
+    final_model_dir = os.path.join(output_dir, "final_model")
+    if os.path.isdir(final_model_dir):
+        paths.append(final_model_dir)
+
+    if config_loaded is not None:
+        for scan_root in _configured_memorisation_roots(config_loaded):
+            paths.extend(_scan_dir_for_artefacts(scan_root))
+
+    return sorted(set(paths))
+
+
+def _configured_memorisation_roots(config_loaded: Any) -> List[str]:
+    """Deduplicated, existing directories the config says training wrote to.
+
+    ``training.final_model_dir`` is validated at config load to be a
+    subdirectory of ``training.output_dir`` (``_artifact_paths``), so
+    scanning both is belt-and-suspenders: a hand-edited or stale config
+    that slipped past validation still gets its ``output_dir`` scanned.
+    """
+    training = getattr(config_loaded, "training", None)
+    if training is None:
+        return []
+    roots: List[str] = []
+    for value in (getattr(training, "output_dir", None), getattr(training, "final_model_dir", None)):
+        if not value:
+            continue
+        root = os.path.abspath(value)
+        if root not in roots and os.path.isdir(root):
+            roots.append(root)
+    return roots
+
+
+def _scan_dir_for_artefacts(scan_root: str) -> List[str]:
+    """List ``checkpoint-*`` directories and ``.staging.*`` entries under *scan_root*.
+
+    Symlinks are never followed: an entry whose ``resolve()`` escapes
+    *scan_root* is skipped rather than reported, so the warning cannot
+    be steered at paths outside the configured training tree.
+    """
+    root = Path(scan_root).resolve()
+    found: List[str] = []
+    try:
+        for entry in os.scandir(root):
+            if entry.name.startswith("checkpoint-") or entry.name.startswith(".staging."):
+                if _resolves_within(entry.path, root):
+                    found.append(entry.path)
+    except OSError:
+        # Unreadable / vanished directory: nothing to report from it.
+        return found
+    return found
+
+
+def _resolves_within(path: str, root: Path) -> bool:
+    """True when *path* (after resolving symlinks) stays inside *root*."""
+    try:
+        resolved = Path(path).resolve()
+    except OSError:  # pragma: no cover — resolve() on a broken deep chain
+        return False
+    return resolved == root or root in resolved.parents
 
 
 def _scan_run_ids_with_final_model(output_dir: str) -> List[str]:
@@ -1558,5 +1648,6 @@ __all__ = [
     "_find_matching_rows",
     "_atomic_rewrite_dropping_lines",
     "_detect_warning_conditions",
+    "_scan_memorisation_artefacts",
     "_scan_retention_violations",
 ]

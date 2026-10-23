@@ -1634,6 +1634,116 @@ class TestWarningPayloadCatalogCompleteness:
 
 
 # ---------------------------------------------------------------------------
+# #102 remainder (CR-A10-022 remainder + CR-A10-042) — config-driven
+# memorisation detection: with a loaded --config, checkpoint-* dirs and
+# .staging.* entries under training.output_dir / training.final_model_dir
+# trigger the memorisation warning and are listed in the payload.
+# ---------------------------------------------------------------------------
+
+
+class TestConfigDrivenMemorisationDetection:
+    _CONFIG_BODY = """
+model:
+  name_or_path: gpt2
+  backend: transformers
+lora:
+  r: 8
+training:
+  trainer_type: sft
+  output_dir: {output_dir}
+  final_model_dir: final_model
+  num_train_epochs: 1
+data:
+  dataset_name_or_path: train.jsonl
+"""
+
+    @staticmethod
+    def _write_config(tmp_path: Path, output_dir: Path) -> Path:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(TestConfigDrivenMemorisationDetection._CONFIG_BODY.format(output_dir=output_dir))
+        return config_path
+
+    def test_config_driven_artefacts_under_training_output_dir(self, tmp_path: Path) -> None:
+        """checkpoint-* and .staging.* under the configured training.output_dir
+        fire the warning and are listed in memorisation_artefact_paths — even
+        though the literal <output_dir>/final_model check sees nothing."""
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        training_out = tmp_path / "training_out"
+        (training_out / "checkpoint-100").mkdir(parents=True)
+        (training_out / ".staging.fg-run9").mkdir()
+        config_path = self._write_config(tmp_path, training_out)
+
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "row-1", "text": "x"}])
+        args = _build_args(row_id="row-1", corpus=str(corpus), output_dir=str(tmp_path), config=str(config_path))
+        with pytest.raises(SystemExit):
+            _run_purge_cmd(args, output_format="json")
+
+        events = _read_audit_events(tmp_path / "audit_log.jsonl")
+        warn_evt = next(e for e in events if e["event"] == "data.erasure_warning_memorisation")
+        artefacts = warn_evt["memorisation_artefact_paths"]
+        assert os.path.join(str(training_out), "checkpoint-100") in artefacts
+        assert os.path.join(str(training_out), ".staging.fg-run9") in artefacts
+
+    def test_config_free_path_keeps_literal_final_model_check_only(self, tmp_path: Path) -> None:
+        """Without --config, artefacts under an unrelated training dir are
+        invisible: only the literal <output_dir>/final_model check runs."""
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        training_out = tmp_path / "training_out"
+        (training_out / "checkpoint-100").mkdir(parents=True)
+
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "row-1", "text": "x"}])
+        args = _build_args(row_id="row-1", corpus=str(corpus), output_dir=str(tmp_path))
+        with pytest.raises(SystemExit):
+            _run_purge_cmd(args, output_format="json")
+
+        events = _read_audit_events(tmp_path / "audit_log.jsonl")
+        assert "data.erasure_warning_memorisation" not in [e["event"] for e in events]
+
+    def test_symlink_escape_is_not_reported(self, tmp_path: Path) -> None:
+        """A checkpoint-* symlink pointing outside the training tree is skipped,
+        not reported — the warning cannot be steered at unrelated paths."""
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        training_out = tmp_path / "training_out"
+        training_out.mkdir()
+        (training_out / "checkpoint-100").symlink_to(outside, target_is_directory=True)
+        config_path = self._write_config(tmp_path, training_out)
+
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "row-1", "text": "x"}])
+        args = _build_args(row_id="row-1", corpus=str(corpus), output_dir=str(tmp_path), config=str(config_path))
+        with pytest.raises(SystemExit):
+            _run_purge_cmd(args, output_format="json")
+
+        events = _read_audit_events(tmp_path / "audit_log.jsonl")
+        assert "data.erasure_warning_memorisation" not in [e["event"] for e in events]
+
+    def test_no_artefacts_no_warning_with_config(self, tmp_path: Path) -> None:
+        """A loaded config whose training dirs contain no artefacts emits no
+        memorisation warning."""
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        training_out = tmp_path / "training_out"
+        training_out.mkdir()
+        config_path = self._write_config(tmp_path, training_out)
+
+        corpus = tmp_path / "train.jsonl"
+        _seed_corpus(corpus, [{"id": "row-1", "text": "x"}])
+        args = _build_args(row_id="row-1", corpus=str(corpus), output_dir=str(tmp_path), config=str(config_path))
+        with pytest.raises(SystemExit):
+            _run_purge_cmd(args, output_format="json")
+
+        events = _read_audit_events(tmp_path / "audit_log.jsonl")
+        assert "data.erasure_warning_memorisation" not in [e["event"] for e in events]
+
+
+# ---------------------------------------------------------------------------
 # Finding 5 (LOW) — run-scoped erasure records the PLAIN run_id as target_id
 # (design §5.3); the module docstring now documents this asymmetry.
 # ---------------------------------------------------------------------------

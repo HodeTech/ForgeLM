@@ -4,6 +4,16 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- `forgelm purge --row-id` memorisation detection is now config-driven when `--config` is
+  supplied and loads: in addition to the literal `<output_dir>/final_model/` check, the
+  configured `training.output_dir` and `training.final_model_dir` are scanned for
+  `checkpoint-*` directories and `.staging.*` entries, and the discovered paths are listed
+  in a new `memorisation_artefact_paths` field on the `data.erasure_warning_memorisation`
+  audit event. Symlinks resolving outside the scanned tree are never followed or reported
+  (#102, CR-A10-022 remainder + CR-A10-042).
+
 ## [0.11.1] — 2026-10-23
 
 _(**Numbered as a patch by a maintainer decision, as a one-time exception.**

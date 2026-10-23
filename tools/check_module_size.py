@@ -493,7 +493,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/cli/subcommands/_purge.py": _DeferredSplit(
-        budget=1224,
+        budget=1287,
         deferred_at_loc=1215,
         budget_history=(
             "2026-10-09 (Phase 16 S1-S3 review, 1215 -> 1216, +1): the `dumps_strict` import. "
@@ -505,6 +505,10 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "`--output-dir` is omitted. The default (the corpus directory) silently pointed the memorisation "
             "check at a directory that never holds a trained model, so the message has to sit where the "
             "default is resolved. Taken as a raise rather than a split per decision C-18.",
+            "2026-10-24 (#102 remainder, CR-A10-022 remainder + CR-A10-042, 1224 -> 1287, +63): config-driven "
+            "memorisation detection — scanning the configured training.output_dir / final_model_dir for "
+            "checkpoint-* and .staging.* artefacts with a symlink-escape guard, plus the payload field. "
+            "Taken as a raise rather than a split per decision C-18.",
         ),
         reason=(
             "GDPR purge: row-id resolution + run-id resolution + retention-policy "
