@@ -48,6 +48,12 @@
 > rotted three times in this repository (`F-PR29-*` → `v0.6.x`, `F-PR54-*` →
 > `v0.7.x` → `v0.9.x`, the module-size labels).  Deferrals below likewise
 > state a **budget or a condition, never a due date**.
+>
+> **2026-10-23:** S1, S2 and S3 shipped early in `v0.11.1`, numbered as a patch by
+> maintainer decision, as a one-time exception to this paragraph and to **C-20**
+> (recorded in [risks-and-decisions.md](risks-and-decisions.md)).  The rules are
+> unchanged: the remaining steps land on the next development cycle, and its tag
+> is derived at the cut.
 
 **Goal:** Close the gap between what ForgeLM *reports* and what ForgeLM
 *established*.  The review found no broken tests and no failing guard — it
@@ -1001,6 +1007,11 @@ cadence forbids a patch release from removing anything — so the expected
 outcome is a MINOR bump.  A PATCH tag is reachable only by moving every
 breaking item out of the phase into the deferral cohort, which is a scope
 decision, not a numbering one.
+
+**2026-10-23 exception.** S1–S3 shipped in `v0.11.1`, ahead of this plan and under a
+patch number, by maintainer decision; see the note under the phase header and the
+2026-10-23 entry in [risks-and-decisions.md](risks-and-decisions.md).  The plan above
+still governs S4–S16.
 
 Steps carrying `### Breaking` entries: S2 (configs that load today now exit 1;
 `run_benchmark` verdict change; merge config-error routing moves exit 2 → 1),

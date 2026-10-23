@@ -325,6 +325,47 @@ See [CHANGELOG.md `[0.8.0]`](../../CHANGELOG.md#080--2026-06-16) for the complet
 
 ---
 
+## v0.11.1 — "Fail Closed" (2026-10-23)
+
+**Status:** Released — numbered as a **patch by maintainer decision, as a one-time exception** to the bump table in [`release.md`](../standards/release.md#versioning), which would make this cycle `0.12.0`: it carries eleven **breaking** changes (see `### Breaking` in [`CHANGELOG.md`](../../CHANGELOG.md)) and new features. The rules are unchanged; the exception, and the early cut it makes in Phase 16 against decision C-20, are recorded in [risks-and-decisions.md](risks-and-decisions.md). A pin such as `forgelm~=0.11.0` picks this release up, so read the breaking changes before upgrading a pinned pipeline.
+
+Focus: a gate that could not measure must not pass, and the documentation says what the code does.
+
+### Gates that fail closed
+
+Phase 16's pre-work and its first three steps ship here (S1–S3; S4–S16 are not in this release).
+
+- A non-finite or out-of-domain number in a config now exits `1` at load. A `.nan` threshold, spellable in ordinary YAML, made the gate it guards pass every model it was asked to reject and wrote `passed: true` into the audit log.
+- The quality and safety gates fail when a measurement cannot be compared (a non-finite lm-eval score, a non-finite `safe_ratio`). A safety evaluation whose responses were never generated reports `evaluation_completed: false` instead of a pass.
+- The LLM-judge gate fails on an empty eval dataset and when fewer than `min_valid_fraction` (default `0.8`) of its scores parse. A judge reply with several score objects, duplicate keys, no text, or cut off at the token cap counts as a judge failure instead of a verdict.
+- A benchmark gate with `min_score` fails when a requested task reports no accuracy metric.
+- `cache-tasks` exits `2` when a task fails to stage, instead of `success: true` on an incomplete air-gap bundle.
+- Every artefact ForgeLM writes is valid JSON, a `success: false` envelope carries `error`, and `reverted` reports what actually happened.
+
+### Documentation that says what the code does
+
+The GDPR, erasure, retention, PII-masking, GPU-cost and chat documentation was corrected against the code (English and Turkish), as were claims about segregation of duties, the Article 12 audit log, `--offline`, webhook receivers, the DeepSpeed presets, the GGUF converter and the SBOMs. The site's copy was corrected in all six languages; the German, French, Spanish and Chinese strings still await a native review.
+
+### Fixes
+
+- `training.rope_scaling` works on transformers 5 again, and `sliding_window_attention` reaches the text config.
+- The `transformers` floor is `5.10.1`, which closes two published transformers advisories; the `torch` floor is `2.7.0`.
+- Llama-Guard generation scoring runs on transformers 5 again; SLERP merges keep both adapters.
+- `forgelm export` writes the `.sha256` sidecar that `forgelm verify-gguf` checks; the CLI no longer sends Hugging Face's usage ping; `distributed.fsdp_strategy: no_shard` and `hybrid_shard` are refused at load.
+- `forgelm purge --check-policy` accepts a config file that holds only `retention:`.
+
+### Working on ForgeLM
+
+New issues are triaged before work starts, dependencies between issues are gated, and a contributor can claim a `good first issue` with `/assign`. The repository gained `CITATION.cff`, `GOVERNANCE.md`, `MAINTAINERS.md`, Dependabot, private security reporting and a 32nd CI guard, `tools/check_ci_failure_masking.py`.
+
+`__api_version__` 1.1.0 → 1.2.0: `TrainResult` gained `judge_passed`, an additive field on a stable dataclass. 4584 → 6769 tests collected (124 → 133 test modules); 29 → 32 CI guards.
+
+### Full changelog
+
+See [CHANGELOG.md `[0.11.1]`](../../CHANGELOG.md#0111--2026-10-23).
+
+---
+
 ## v0.11.0 — "The Front Door" (2026-07-21)
 
 **Status:** Released — a MINOR bump carrying two **breaking** changes (see `### Breaking` in [`CHANGELOG.md`](../../CHANGELOG.md)): `forgelm audit` now exits `3` on a critical-tier PII finding (credit card / IBAN) where it exited `0`, and the `[distributed]` extra now installs nothing on Windows (marked `sys_platform != 'win32'`) instead of failing the whole install on a source build.
