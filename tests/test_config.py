@@ -370,6 +370,35 @@ class TestFinalModelDirectoryPolicy:
         assert raised.value.code == 1
         assert not output.exists()
 
+    def test_runtime_recheck_accepts_a_windows_relpath(self, tmp_path, minimal_config, monkeypatch):
+        """On Windows ``os.path.relpath`` answers ``models\\final``; the recheck before saving must read it as the
+        configured ``models/final`` rather than fail the finished run (found by the v0.11.1 cross-OS matrix)."""
+        import forgelm._artifact_paths as artifact_paths
+
+        output = tmp_path / "output"
+        config = ForgeConfig.model_validate(
+            minimal_config(training={"output_dir": str(output), "final_model_dir": "models/final"})
+        )
+        real_relpath = os.path.relpath
+        monkeypatch.setattr(
+            artifact_paths.os.path, "relpath", lambda path, start: real_relpath(path, start).replace("/", "\\")
+        )
+        artifact_paths._check_model_destination(str(output), str(output / "models" / "final"), config)
+        artifact_paths._check_model_destination(str(output), str(output / "models" / "final.staging.fg-1"), config)
+
+    @pytest.mark.skipif(os.name == "nt", reason="a backslash is a separator on Windows")
+    def test_runtime_recheck_rejects_a_backslash_in_a_posix_name(self, tmp_path, minimal_config):
+        """On POSIX ``models\\final`` is one directory name, not ``models/final``: reading the separator as ``/``
+        must not let it pass the recheck."""
+        import forgelm._artifact_paths as artifact_paths
+
+        output = tmp_path / "output"
+        config = ForgeConfig.model_validate(
+            minimal_config(training={"output_dir": str(output), "final_model_dir": "models/final"})
+        )
+        with pytest.raises(ConfigError):
+            artifact_paths._check_model_destination(str(output), str(output / "models\\final"), config)
+
     @pytest.mark.parametrize(
         "value",
         [

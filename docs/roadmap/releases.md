@@ -358,7 +358,7 @@ The GDPR, erasure, retention, PII-masking, GPU-cost and chat documentation was c
 
 New issues are triaged before work starts, dependencies between issues are gated, and a contributor can claim a `good first issue` with `/assign`. The repository gained `CITATION.cff`, `GOVERNANCE.md`, `MAINTAINERS.md`, Dependabot, private security reporting and a 32nd CI guard, `tools/check_ci_failure_masking.py`.
 
-`__api_version__` 1.1.0 → 1.2.0: `TrainResult` gained `judge_passed`, an additive field on a stable dataclass. 4584 → 6769 tests collected (124 → 133 test modules); 29 → 32 CI guards.
+`__api_version__` 1.1.0 → 1.2.0: `TrainResult` gained `judge_passed`, an additive field on a stable dataclass. 4584 → 6771 tests collected (124 → 133 test modules); 29 → 32 CI guards.
 
 ### Full changelog
 
