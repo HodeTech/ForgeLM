@@ -50,7 +50,7 @@ except PackageNotFoundError:  # pragma: no cover — uninstalled-source path
 # ``VerifyIntegrityResult`` dataclass were added to ``forgelm.__all__``
 # (additive → MINOR ``__api_version__`` bump per the rule above).
 #
-# 1.2.0 (the unreleased 0.11.1rc1 cycle): ``TrainResult`` gained ``judge_passed``,
+# Bumped to 1.2.0 in v0.11.1: ``TrainResult`` gained ``judge_passed``,
 # an additive field on a stable dataclass — the MINOR trigger the rule above names.
 # Phase 16 S1 also annotated ``SyntheticDataGenerator.__init__`` and
 # ``WebhookNotifier.__init__``, which were bare ``def __init__(self, config):`` and

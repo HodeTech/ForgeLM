@@ -1380,7 +1380,7 @@ def _read_text_with_bom_strip(path: Path, *, encoding: Optional[str] = None) -> 
             raw = path.read_text(encoding="utf-8-sig", errors="replace")
     else:
         raw = path.read_text(encoding=encoding, errors="replace")
-    if raw.startswith("﻿"):
+    if raw.startswith("\ufeff"):
         raw = raw[1:]
     return raw
 

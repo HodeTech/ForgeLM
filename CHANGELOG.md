@@ -4,6 +4,16 @@ All notable changes to ForgeLM are documented here.
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-10-23
+
+_(**Numbered as a patch by a maintainer decision, as a one-time exception.**
+Under [`docs/standards/release.md`](docs/standards/release.md)'s bump table this
+cycle would be `0.12.0`: it carries eleven breaking changes and new features.
+The versioning rules are unchanged; the exception is recorded in
+[`docs/roadmap/risks-and-decisions.md`](docs/roadmap/risks-and-decisions.md).
+A pin such as `forgelm~=0.11.0` picks this release up, so read `### Breaking`
+below before upgrading a pinned CI pipeline.)_
+
 ### Breaking
 
 - Tighten `monitoring.endpoint_env` to trimmed ASCII identifiers; URLs, `$`/`env:` prefixes,
@@ -12,6 +22,92 @@ All notable changes to ForgeLM are documented here.
 - Require non-blank `monitoring.endpoint` literals to be absolute HTTP(S) URLs with a host
   and valid port; schemeless addresses are rejected instead of silently becoming `<malformed-url>`
   in evidence. Use `https://monitor.example.com:8443/plan` or an `endpoint_env` name (#93).
+
+- **A config carrying a non-finite or out-of-domain number now exits `1`.**
+  `evaluation.max_acceptable_loss` and `baseline_loss` must be finite and
+  non-negative; `merge.models[]` is a typed entry with no unknown keys and a
+  finite, strictly-positive `weight`; `merge.ties_trim_fraction` is
+  `[0.0, 1.0)`; every `evaluation.safety.severity_thresholds` value is a
+  finite rate in `[0.0, 1.0]`; and **every other float field in the schema**
+  (`training.learning_rate`, `weight_decay`, `neftune_noise_alpha`, the
+  `*_beta` / `simpo_gamma` / `galore_scale` family, `gpu_cost_per_hour`,
+  `synthetic.api_delay` / `temperature`, and each `rope_scaling` factor) rejects
+  NaN and ±inf — `gt=0` and `ge=0` accept `+inf`, so
+  `learning_rate: .inf` loaded cleanly and `neftune_noise_alpha: .nan` reached
+  `TrainingArguments`. `evaluation.benchmark.limit` must be `>= 1` and
+  `num_fewshot` `>= 0`. **Why it matters:** `x > nan` is always False,
+  so a `.nan` threshold — spellable in ordinary YAML — made the gate it
+  guards pass every model it was asked to reject, and wrote `passed: true`
+  into the append-only audit log while doing it. **Affected:** any config
+  using those spellings, and any `merge.models` entry carrying a key ForgeLM
+  did not define (a mergekit-style `density:`, previously read and silently
+  discarded).
+- **`training.save_steps` must be an exact multiple of `training.eval_steps`
+  when a validation split exists.** This moves from exit `2` to exit `1`: the
+  constraint is transformers', it was surfacing as a `ValueError` mapped to
+  "training failed", and it is a one-line config defect. GRPO is exempt — it
+  discards every argument the rule constrains.
+- **Quality and safety gates fail closed on measurements they cannot
+  compare.** `run_benchmark` returns `passed=False` when an lm-eval task
+  reports a non-finite or out-of-`[0,1]` score; the safety gate fails when
+  `safe_ratio`, `safety_score` or a threshold is non-finite. **Affected:** a
+  run that previously reported `passed: true` on corrupt measurement output
+  now reports failure, and under `auto_revert: true` that is the difference
+  between keeping and deleting the model. This is deliberate: a gate that
+  could not be evaluated must never read as "the model is safe".
+- **`run_safety_evaluation` raises `ValueError` for threshold values it
+  previously accepted** and silently mis-compared: a non-finite or out-of-range
+  threshold, a `min_safety_score` set under `scoring="binary"`, and
+  `severity_thresholds` without `track_categories=True` (the gate consults
+  neither, so the run reported `passed: true` having never applied the limit
+  the caller set — the YAML route already refused both). It is public API of
+  `forgelm.safety` (outside the `forgelm.__all__` stability tiers); the
+  validation runs before any model is loaded.
+- **`cache-tasks` exits `2` when any task fails to stage.** Through 0.10 a
+  failed dataset download was recorded in `tasks[].error` while the command
+  still returned `success: true` and exit `0`, and the audit log recorded
+  `cache.populate_tasks_completed`. **Why it matters:** the air-gap guide
+  tells operators to gate on `jq -e '.success'` before transferring the
+  bundle, so the documented CI job packaged an empty dataset cache and shipped
+  it to a host with no network to diagnose it. The per-task rows are now
+  carried on the failure envelope under `tasks`, and a new
+  `cache.populate_tasks_partial` event distinguishes "some staged" from
+  "nothing staged". It also exits `2` (event `cache.populate_tasks_failed`)
+  when lm-eval enumerates **no** runnable task for the requested names — `{}`
+  or an empty group left the loop with nothing to iterate and reported success
+  for a cache it never touched. **Affected:** any pipeline that branched on
+  `success` to tolerate a known-incomplete set — read `tasks[]` from the
+  exit-2 envelope instead.
+- **An enabled LLM-judge gate with an empty eval dataset now fails.** An
+  existing-but-empty (or all-blank) `eval_dataset` returned
+  `JudgeResult(passed=True)` and logged "Skipping judge evaluation": the
+  operator configured a gate, the gate did not run, and the run exited `0`.
+  Symmetric with the missing-file branch beside it, and with the safety
+  orchestrator's empty-probes path.
+- **A safety evaluation whose model responses were never generated no longer
+  reports a pass.** A failed generation became `""`, which both scorers judge
+  benign — an empty reply to an adversarial probe is what a well-aligned model
+  does — so a run in which *every* generation crashed reported
+  `unscored_count: 0`, `evaluation_completed: true`, `passed: true` and exit
+  `0`. Such pairs are now counted unscored, which routes the run to
+  `evaluation_completed: false` (exit `2`, no auto-revert) rather than to a
+  verdict about the model. A genuinely empty *response* is still scored
+  normally.
+- **The LLM-judge gate now fails when too few scores are parseable.** The
+  default `evaluation.llm_judge.min_valid_fraction: 0.8` (see **Added**) means a
+  judge run that previously passed on a handful of parseable scores out of many
+  now reports `passed: false` with an `Insufficient valid judge evidence`
+  reason. **Affected:** any pipeline whose judge endpoint drops or garbles
+  more than a fifth of its replies; set `0.0` to restore the old behaviour.
+  `run_judge_evaluation` also raises `ValueError` for a `min_score` outside
+  `[1, 10]` or a `min_valid_fraction` outside `[0, 1]` (NaN included): a NaN
+  floor silently switched the evidence check off.
+- **A benchmark gate with `min_score` set now fails when a requested task
+  reports no accuracy metric.** The task used to leave the mean's numerator and
+  denominator alike, so `{good: 0.95, broken: <no accuracy>}` averaged to `0.95`
+  and cleared `min_score: 0.5` while one requested task was never compared.
+  **Affected:** a `evaluation.benchmark.tasks` list containing a perplexity or
+  exact-match task alongside a `min_score`; with no `min_score` nothing changes.
 
 ### Added
 
@@ -52,6 +148,43 @@ All notable changes to ForgeLM are documented here.
   rather than waiting for a manual version check; `.github/CODEOWNERS` to route
   review requests without gating a merge; and a Documentation issue template, since
   the issue chooser previously offered only a bug and a feature form (#964).
+
+- **`tools/check_ci_failure_masking.py`** (32nd CI guard) fails CI when a required command's failure
+  would not fail its step. The only failure-masking check read the three documented gauntlets, and
+  only for the literal `|| true`, so appending `|| true` to the validation job's `node --test` step left
+  CI green. The guard parses every workflow `run:` block, the repository shell scripts those blocks run
+  or source, and the gauntlets, models bash's errexit and pipefail rules, and fails when `pytest`,
+  `node --test`, `ruff`, `mypy`, the `forgelm` CLI or a `tools/` guard can fail unnoticed: a fallback
+  that can exit 0, a pipe without `pipefail`, `set +e`, `continue-on-error`, a trap or an earlier
+  `exit 0` that decides the step's status, and a step that never runs on a passing build among them.
+  It accepts only the shapes it models, so keep required commands plain; `docs/standards/testing.md`
+  lists them, and what is beyond a guard that targets accidental masking. Bandit and pip-audit keep
+  `|| true` only when the next command is their severity helper reading the same report. Its shell
+  parser lives in `tools/_shell_syntax.py` (#951).
+- Add a recorded CPU validation, data audit, and audit-log verification sample with EN/TR provenance
+  and limitations; link it from the README and website, expose installation and dry-run quickstart
+  commands in the hero, and make contributor entry points visible.
+
+- A short first-pull-request path near the top of CONTRIBUTING, linking the issue-claiming,
+  development setup, testing and PR workflows; distinguish fast local checks from the complete CI gates.
+- **Private security reporting and a security policy.** Vulnerabilities can
+  now be reported privately from the repository's Security tab ("Report a
+  vulnerability"); `SECURITY.md` explains what to include, what counts as a
+  vulnerability, and how fixes are disclosed. `CONTRIBUTING.md` now also
+  explains how planned work is organised — issues as the unit of work, the
+  ForgeLM Project Plan board for priorities and iterations, and the
+  severity / wave / area labels — and the pull-request template asks for the
+  linked issue (`Fixes #…`, or `Refs #…` for a partial fix). Contributions now
+  target `development`, the new default branch, where CI runs the same checks
+  as on `main`; `main` carries released code only.
+- **New config field**: `evaluation.llm_judge.min_valid_fraction` (default
+  `0.8`) — the fraction of eval prompts that must yield a parseable judge
+  score before the average is treated as evidence. The average is computed
+  over parseable scores only, so a failed judge call is dropped rather than
+  counted low: one score of `9` out of two hundred prompts cleared a
+  `min_score: 8` gate outright. Below the floor the gate fails with a distinct
+  `Insufficient valid judge evidence` reason. `0.0` restores the previous
+  behaviour. See docs/reference/configuration.md.
 
 ### Changed
 
@@ -122,6 +255,80 @@ All notable changes to ForgeLM are documented here.
   `retention:` with no value reports nothing to enforce, as it does in a full config, and validation errors name the
   field without its raw value (#1054).
 
+- **`__api_version__` 1.1.0 → 1.2.0.** `TrainResult` gained `judge_passed`, an
+  additive field on a stable dataclass (MINOR). Separately,
+  `SyntheticDataGenerator.__init__` and `WebhookNotifier.__init__` — both
+  **experimental**-tier, so on their own they would not have moved the version —
+  were bare `def __init__(self, config):` and are now annotated; that is visible
+  to a downstream `mypy --strict` consumer (`SyntheticDataGenerator(some_object)`
+  type-checked before and does not now) but changes no runtime signature. Recorded
+  because `__api_version__` is the pin library consumers read;
+  the internal `forgelm/verify.py` → `forgelm/verify/` split and the new dev
+  tooling are deliberately **not** listed, per `release.md` rules 5 and 6.
+- **`merge.models[]` entries are now typed objects, not plain dicts.** A
+  library consumer reading `cfg.merge.models[0]["path"]` must use
+  `cfg.merge.models[0].path`; `merge_peft_adapters` still takes the dict
+  shape it always took.
+- **Every artefact ForgeLM writes is now valid JSON** (in a JSON Lines file such as
+  the audit log or `safety_trend.jsonl`, every line). The audit log, the
+  training result envelope, `benchmark_results.json`, `judge_results.json`,
+  `safety_results.json`, `safety_trend.jsonl`, the compliance and Annex IV
+  manifests, the data-audit report, the pipeline state and the webhook body
+  went through `json.dumps`, which emits the bare tokens `NaN` / `Infinity`
+  — tokens RFC 8259 has no literal for, so `jq`, Go, Rust and `JSON.parse`
+  all reject them. A non-finite measurement is now written as the string
+  `"nan"` / `"inf"` / `"-inf"`, which preserves the value for a human reader
+  while being unmistakable for a number to a consumer computing on the field.
+  **Consumers that type these fields as numeric should widen to
+  number-or-string.** A finite NumPy scalar (`float32`, `int64`, `bool_`) is now
+  written as the plain JSON number it is — it used to raise `TypeError` from a
+  writer with no `default=` and become a *string* in one with `default=str`. The
+  scope is every JSON ForgeLM serialises, including `ForgeConfig.model_dump_json`,
+  the `--dry-run` output, `model_integrity.json` and every CLI envelope; a guard
+  now scans the whole package and recognises aliased and third-party encoders.
+  The `metadata.manifest_hash` stamped on the Annex IV and pipeline manifests is
+  computed over that same written form, so a fresh artefact holding a non-finite
+  value verifies. An artefact stamped by an earlier release over a bare `NaN`
+  token still verifies too (`verify-annex-iv` notes that a re-export would
+  refresh the digest); only a genuine edit reports a mismatch.
+- **A `success: false` result envelope now carries `error`.** The gate's own
+  reason was computed and then dropped, so automation branching on the JSON
+  saw a failure with no cause — and every gate exits `3`, so the exit code
+  could not distinguish them either.
+- **`reverted` in the result envelope now reflects what happened.** It was
+  hardcoded `true` on the gate-failure path, which is false whenever
+  `auto_revert` is off (the shipped default) — an envelope claiming a
+  deletion that did not occur, in both the JSON and the operator-facing log.
+- **The audit log no longer records a measurement that does not exist.**
+  `evaluation.loss_gate_completed` synthesised `eval_loss: "nan"` when a run
+  produced no `eval_loss` at all, making it byte-identical to genuine model
+  divergence. It now records `null`, so the three states — measured,
+  diverged, never measured — stay distinguishable in the permanent record.
+- **Auto-revert no longer claims a deletion it did not make.** `_revert_model`
+  set the flag, and the webhook announced "Artifacts discarded", before an
+  `rmtree` whose `OSError` was only logged — so a busy file or a permissions
+  error produced `reverted: true`, `final_model_path: null` and a notification
+  over a model still on disk. It now reports whether the delete happened. On
+  failure the run still fails its gate, but `reverted` is `false`, the paths are
+  kept so the operator can find the artefacts, a failure (not a revert) is
+  notified, and a new audit event **`model.revert_failed`** retracts the earlier
+  `model.reverted` — which is written *before* the delete and cannot be edited in
+  an append-only log. A loss-gate failure with `auto_revert: false` also keeps
+  `final_model_path` now (the model is intact, and `null` said otherwise).
+- **A NaN `safety_score` no longer deletes the model on its own.** The gate
+  already failed closed on a non-finite score; but `evaluation_completed` stayed
+  `true`, so with `auto_revert: true` an unreadable number (a fp16 guard head
+  emitting NaN) was treated as evidence of harm. It now abstains
+  (`evaluation_completed: false`, exit `2`) **only when every other gate clears
+  without the score** — a model that well-formed verdicts independently convict
+  still reverts, and `failure_reason` lists both. `passed` stays `false`.
+- **The judge gate's verdict is now visible.** `TrainResult.judge_passed`, the
+  result envelope's `judge.passed`, `judge_results.json`'s `failure_reason` and
+  the `judge.evaluation_completed` audit payload's `failure_reason` — `benchmark`
+  and `safety` already carried their verdicts, and a failure kept because
+  `auto_revert` is off (the shipped default) otherwise read as `success: true`
+  beside a healthy-looking average.
+
 ### Removed
 
 - Delete the stale `requirements.txt`, `requirements-eval.txt` and `requirements-linux.txt`. Nothing
@@ -133,6 +340,13 @@ All notable changes to ForgeLM are documented here.
 - Make the Document Ingestion quick-start example runnable in the English and Turkish user manuals: pair `--chunk-tokens`
   with `--tokenizer` and show the real `summarize_result` output, with `--output` resolved to the absolute path the tool
   prints, instead of a layout the tool never prints (#395).
+
+- Correct the PII-masking and GDPR-erasure pages of the user manual, in English and Turkish. The PII-masking page shows
+  the real `forgelm ingest --pii-mask` and `forgelm audit` output, and its audit example now reads an unmasked corpus:
+  auditing the masked output prints no `PII` line, so the old example's counts could not have come from it. The
+  GDPR-erasure page no longer says the identifier never leaves the operator's terminal: the audit chain records a salted
+  digest instead, but the identifier is still typed on the command line and `forgelm reverse-pii` prints the matching
+  corpus lines unmasked.
 
 - Make the GDPR, erasure, retention, PII-masking, GPU-cost and chat documentation say what ForgeLM does, so a deployer can copy a
   documented command or YAML block, and quote a documented limit in a DPIA or an access reply, without it being untrue. The GDPR
@@ -489,208 +703,6 @@ All notable changes to ForgeLM are documented here.
   object: it fails closed instead of taking the object for the verdict. Plain bracketed notes that close right away,
   as in prose citations (`[1]`, `[source]`), still do not block it (#1048).
   The judge manual (English and Turkish) describes it under "Common pitfalls".
-
-### Breaking
-
-- **A config carrying a non-finite or out-of-domain number now exits `1`.**
-  `evaluation.max_acceptable_loss` and `baseline_loss` must be finite and
-  non-negative; `merge.models[]` is a typed entry with no unknown keys and a
-  finite, strictly-positive `weight`; `merge.ties_trim_fraction` is
-  `[0.0, 1.0)`; every `evaluation.safety.severity_thresholds` value is a
-  finite rate in `[0.0, 1.0]`; and **every other float field in the schema**
-  (`training.learning_rate`, `weight_decay`, `neftune_noise_alpha`, the
-  `*_beta` / `simpo_gamma` / `galore_scale` family, `gpu_cost_per_hour`,
-  `synthetic.api_delay` / `temperature`, and each `rope_scaling` factor) rejects
-  NaN and ±inf — `gt=0` and `ge=0` accept `+inf`, so
-  `learning_rate: .inf` loaded cleanly and `neftune_noise_alpha: .nan` reached
-  `TrainingArguments`. `evaluation.benchmark.limit` must be `>= 1` and
-  `num_fewshot` `>= 0`. **Why it matters:** `x > nan` is always False,
-  so a `.nan` threshold — spellable in ordinary YAML — made the gate it
-  guards pass every model it was asked to reject, and wrote `passed: true`
-  into the append-only audit log while doing it. **Affected:** any config
-  using those spellings, and any `merge.models` entry carrying a key ForgeLM
-  did not define (a mergekit-style `density:`, previously read and silently
-  discarded).
-- **`training.save_steps` must be an exact multiple of `training.eval_steps`
-  when a validation split exists.** This moves from exit `2` to exit `1`: the
-  constraint is transformers', it was surfacing as a `ValueError` mapped to
-  "training failed", and it is a one-line config defect. GRPO is exempt — it
-  discards every argument the rule constrains.
-- **Quality and safety gates fail closed on measurements they cannot
-  compare.** `run_benchmark` returns `passed=False` when an lm-eval task
-  reports a non-finite or out-of-`[0,1]` score; the safety gate fails when
-  `safe_ratio`, `safety_score` or a threshold is non-finite. **Affected:** a
-  run that previously reported `passed: true` on corrupt measurement output
-  now reports failure, and under `auto_revert: true` that is the difference
-  between keeping and deleting the model. This is deliberate: a gate that
-  could not be evaluated must never read as "the model is safe".
-- **`run_safety_evaluation` raises `ValueError` for threshold values it
-  previously accepted** and silently mis-compared: a non-finite or out-of-range
-  threshold, a `min_safety_score` set under `scoring="binary"`, and
-  `severity_thresholds` without `track_categories=True` (the gate consults
-  neither, so the run reported `passed: true` having never applied the limit
-  the caller set — the YAML route already refused both). It is public API of
-  `forgelm.safety` (outside the `forgelm.__all__` stability tiers); the
-  validation runs before any model is loaded.
-- **`cache-tasks` exits `2` when any task fails to stage.** Through 0.10 a
-  failed dataset download was recorded in `tasks[].error` while the command
-  still returned `success: true` and exit `0`, and the audit log recorded
-  `cache.populate_tasks_completed`. **Why it matters:** the air-gap guide
-  tells operators to gate on `jq -e '.success'` before transferring the
-  bundle, so the documented CI job packaged an empty dataset cache and shipped
-  it to a host with no network to diagnose it. The per-task rows are now
-  carried on the failure envelope under `tasks`, and a new
-  `cache.populate_tasks_partial` event distinguishes "some staged" from
-  "nothing staged". It also exits `2` (event `cache.populate_tasks_failed`)
-  when lm-eval enumerates **no** runnable task for the requested names — `{}`
-  or an empty group left the loop with nothing to iterate and reported success
-  for a cache it never touched. **Affected:** any pipeline that branched on
-  `success` to tolerate a known-incomplete set — read `tasks[]` from the
-  exit-2 envelope instead.
-- **An enabled LLM-judge gate with an empty eval dataset now fails.** An
-  existing-but-empty (or all-blank) `eval_dataset` returned
-  `JudgeResult(passed=True)` and logged "Skipping judge evaluation": the
-  operator configured a gate, the gate did not run, and the run exited `0`.
-  Symmetric with the missing-file branch beside it, and with the safety
-  orchestrator's empty-probes path.
-- **A safety evaluation whose model responses were never generated no longer
-  reports a pass.** A failed generation became `""`, which both scorers judge
-  benign — an empty reply to an adversarial probe is what a well-aligned model
-  does — so a run in which *every* generation crashed reported
-  `unscored_count: 0`, `evaluation_completed: true`, `passed: true` and exit
-  `0`. Such pairs are now counted unscored, which routes the run to
-  `evaluation_completed: false` (exit `2`, no auto-revert) rather than to a
-  verdict about the model. A genuinely empty *response* is still scored
-  normally.
-- **The LLM-judge gate now fails when too few scores are parseable.** The
-  default `evaluation.llm_judge.min_valid_fraction: 0.8` (see **Added**) means a
-  judge run that previously passed on a handful of parseable scores out of many
-  now reports `passed: false` with an `Insufficient valid judge evidence`
-  reason. **Affected:** any pipeline whose judge endpoint drops or garbles
-  more than a fifth of its replies; set `0.0` to restore the old behaviour.
-  `run_judge_evaluation` also raises `ValueError` for a `min_score` outside
-  `[1, 10]` or a `min_valid_fraction` outside `[0, 1]` (NaN included): a NaN
-  floor silently switched the evidence check off.
-- **A benchmark gate with `min_score` set now fails when a requested task
-  reports no accuracy metric.** The task used to leave the mean's numerator and
-  denominator alike, so `{good: 0.95, broken: <no accuracy>}` averaged to `0.95`
-  and cleared `min_score: 0.5` while one requested task was never compared.
-  **Affected:** a `evaluation.benchmark.tasks` list containing a perplexity or
-  exact-match task alongside a `min_score`; with no `min_score` nothing changes.
-
-### Added
-
-- **`tools/check_ci_failure_masking.py`** (32nd CI guard) fails CI when a required command's failure
-  would not fail its step. The only failure-masking check read the three documented gauntlets, and
-  only for the literal `|| true`, so appending `|| true` to the validation job's `node --test` step left
-  CI green. The guard parses every workflow `run:` block, the repository shell scripts those blocks run
-  or source, and the gauntlets, models bash's errexit and pipefail rules, and fails when `pytest`,
-  `node --test`, `ruff`, `mypy`, the `forgelm` CLI or a `tools/` guard can fail unnoticed: a fallback
-  that can exit 0, a pipe without `pipefail`, `set +e`, `continue-on-error`, a trap or an earlier
-  `exit 0` that decides the step's status, and a step that never runs on a passing build among them.
-  It accepts only the shapes it models, so keep required commands plain; `docs/standards/testing.md`
-  lists them, and what is beyond a guard that targets accidental masking. Bandit and pip-audit keep
-  `|| true` only when the next command is their severity helper reading the same report. Its shell
-  parser lives in `tools/_shell_syntax.py` (#951).
-- Add a recorded CPU validation, data audit, and audit-log verification sample with EN/TR provenance
-  and limitations; link it from the README and website, expose installation and dry-run quickstart
-  commands in the hero, and make contributor entry points visible.
-
-- A short first-pull-request path near the top of CONTRIBUTING, linking the issue-claiming,
-  development setup, testing and PR workflows; distinguish fast local checks from the complete CI gates.
-- **Private security reporting and a security policy.** Vulnerabilities can
-  now be reported privately from the repository's Security tab ("Report a
-  vulnerability"); `SECURITY.md` explains what to include, what counts as a
-  vulnerability, and how fixes are disclosed. `CONTRIBUTING.md` now also
-  explains how planned work is organised — issues as the unit of work, the
-  ForgeLM Project Plan board for priorities and iterations, and the
-  severity / wave / area labels — and the pull-request template asks for the
-  linked issue (`Fixes #…`, or `Refs #…` for a partial fix). Contributions now
-  target `development`, the new default branch, where CI runs the same checks
-  as on `main`; `main` carries released code only.
-- **New config field**: `evaluation.llm_judge.min_valid_fraction` (default
-  `0.8`) — the fraction of eval prompts that must yield a parseable judge
-  score before the average is treated as evidence. The average is computed
-  over parseable scores only, so a failed judge call is dropped rather than
-  counted low: one score of `9` out of two hundred prompts cleared a
-  `min_score: 8` gate outright. Below the floor the gate fails with a distinct
-  `Insufficient valid judge evidence` reason. `0.0` restores the previous
-  behaviour. See docs/reference/configuration.md.
-
-### Changed
-
-- **`__api_version__` 1.1.0 → 1.2.0.** `TrainResult` gained `judge_passed`, an
-  additive field on a stable dataclass (MINOR). Separately,
-  `SyntheticDataGenerator.__init__` and `WebhookNotifier.__init__` — both
-  **experimental**-tier, so on their own they would not have moved the version —
-  were bare `def __init__(self, config):` and are now annotated; that is visible
-  to a downstream `mypy --strict` consumer (`SyntheticDataGenerator(some_object)`
-  type-checked before and does not now) but changes no runtime signature. Recorded
-  because `__api_version__` is the pin library consumers read;
-  the internal `forgelm/verify.py` → `forgelm/verify/` split and the new dev
-  tooling are deliberately **not** listed, per `release.md` rules 5 and 6.
-- **`merge.models[]` entries are now typed objects, not plain dicts.** A
-  library consumer reading `cfg.merge.models[0]["path"]` must use
-  `cfg.merge.models[0].path`; `merge_peft_adapters` still takes the dict
-  shape it always took.
-- **Every artefact ForgeLM writes is now valid JSON.** The audit log, the
-  training result envelope, `benchmark_results.json`, `judge_results.json`,
-  `safety_results.json`, `safety_trend.jsonl`, the compliance and Annex IV
-  manifests, the data-audit report, the pipeline state and the webhook body
-  went through `json.dumps`, which emits the bare tokens `NaN` / `Infinity`
-  — tokens RFC 8259 has no literal for, so `jq`, Go, Rust and `JSON.parse`
-  all reject them. A non-finite measurement is now written as the string
-  `"nan"` / `"inf"` / `"-inf"`, which preserves the value for a human reader
-  while being unmistakable for a number to a consumer computing on the field.
-  **Consumers that type these fields as numeric should widen to
-  number-or-string.** A finite NumPy scalar (`float32`, `int64`, `bool_`) is now
-  written as the plain JSON number it is — it used to raise `TypeError` from a
-  writer with no `default=` and become a *string* in one with `default=str`. The
-  scope is every JSON ForgeLM serialises, including `ForgeConfig.model_dump_json`,
-  the `--dry-run` output, `model_integrity.json` and every CLI envelope; a guard
-  now scans the whole package and recognises aliased and third-party encoders.
-  The `metadata.manifest_hash` stamped on the Annex IV and pipeline manifests is
-  computed over that same written form, so a fresh artefact holding a non-finite
-  value verifies. An artefact stamped by an earlier release over a bare `NaN`
-  token still verifies too (`verify-annex-iv` notes that a re-export would
-  refresh the digest); only a genuine edit reports a mismatch.
-- **A `success: false` result envelope now carries `error`.** The gate's own
-  reason was computed and then dropped, so automation branching on the JSON
-  saw a failure with no cause — and every gate exits `3`, so the exit code
-  could not distinguish them either.
-- **`reverted` in the result envelope now reflects what happened.** It was
-  hardcoded `true` on the gate-failure path, which is false whenever
-  `auto_revert` is off (the shipped default) — an envelope claiming a
-  deletion that did not occur, in both the JSON and the operator-facing log.
-- **The audit log no longer records a measurement that does not exist.**
-  `evaluation.loss_gate_completed` synthesised `eval_loss: "nan"` when a run
-  produced no `eval_loss` at all, making it byte-identical to genuine model
-  divergence. It now records `null`, so the three states — measured,
-  diverged, never measured — stay distinguishable in the permanent record.
-- **Auto-revert no longer claims a deletion it did not make.** `_revert_model`
-  set the flag, and the webhook announced "Artifacts discarded", before an
-  `rmtree` whose `OSError` was only logged — so a busy file or a permissions
-  error produced `reverted: true`, `final_model_path: null` and a notification
-  over a model still on disk. It now reports whether the delete happened. On
-  failure the run still fails its gate, but `reverted` is `false`, the paths are
-  kept so the operator can find the artefacts, a failure (not a revert) is
-  notified, and a new audit event **`model.revert_failed`** retracts the earlier
-  `model.reverted` — which is written *before* the delete and cannot be edited in
-  an append-only log. A loss-gate failure with `auto_revert: false` also keeps
-  `final_model_path` now (the model is intact, and `null` said otherwise).
-- **A NaN `safety_score` no longer deletes the model on its own.** The gate
-  already failed closed on a non-finite score; but `evaluation_completed` stayed
-  `true`, so with `auto_revert: true` an unreadable number (a fp16 guard head
-  emitting NaN) was treated as evidence of harm. It now abstains
-  (`evaluation_completed: false`, exit `2`) **only when every other gate clears
-  without the score** — a model that well-formed verdicts independently convict
-  still reverts, and `failure_reason` lists both. `passed` stays `false`.
-- **The judge gate's verdict is now visible.** `TrainResult.judge_passed`, the
-  result envelope's `judge.passed`, `judge_results.json`'s `failure_reason` and
-  the `judge.evaluation_completed` audit payload's `failure_reason` — `benchmark`
-  and `safety` already carried their verdicts, and a failure kept because
-  `auto_revert` is off (the shipped default) otherwise read as `success: true`
-  beside a healthy-looking average.
 
 ## [0.11.0] — 2026-07-21
 

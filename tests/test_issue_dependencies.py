@@ -1266,9 +1266,9 @@ def test_gh_api_failure_text_is_flattened_and_defanged(monkeypatch: pytest.Monke
 
 
 def test_clean_strips_terminal_escapes_and_invisible_characters() -> None:
-    cleaned = tool._clean("\x1b[31mred\x1b[0m ‮evil\u0007\n::error::x")
+    cleaned = tool._clean("\x1b[31mred\x1b[0m \u202eevil\u0007\n::error::x")
     assert cleaned == "red evil : :error: :x"
-    assert assign_on_comment._clean("\x1b[1mbold\x1b[0m‮") == "bold"
+    assert assign_on_comment._clean("\x1b[1mbold\x1b[0m\u202e") == "bold"
 
 
 def test_gh_api_hands_a_graphql_answer_with_errors_to_the_caller_but_not_a_rest_one(
