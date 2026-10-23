@@ -5,9 +5,9 @@ description: Regex PII katmanının üzerine person / organization / location te
 
 # ML-NER PII Tespiti — `--pii-ml`
 
-Varsayılan [PII Maskeleme](#/data/pii-masking) katmanı regex-anchored'dır ve GDPR Madde 10'un önemsediği *yapılandırılmış* identifier'ları (email, telefon, IBAN, kredi kartı, ulusal kimlikler) kapsar. Presidio NER, regex'in doğal olarak kaçırdığı *yapılandırılmamış* identifier'ları ekler: kişi isimleri, organizasyon isimleri, coğrafi yerler.
+Varsayılan [PII Maskeleme](#/data/pii-masking) katmanı regex-anchored'dır ve yaygın *yapılandırılmış* tanımlayıcıları (e-posta, telefon, IBAN, kredi kartı, ulusal kimlik numaraları) kapsar. Bunlar, kimliği belirli veya belirlenebilir bir gerçek kişiye ilişkin olduklarında GDPR Madde 4(1) kapsamında kişisel veridir; Madde 87 ayrıca üye devletlerin ulusal kimlik numaralarının işlenme koşullarını belirlemesine izin verir. Presidio NER, regex'in doğal olarak kaçırdığı *yapılandırılmamış* identifier'ları ekler: kişi isimleri, organizasyon isimleri, coğrafi yerler.
 
-Bu katman **opt-in**'dir. `--pii-ml` geçilmediğinde varsayılan audit + ingest davranışı değişmez.
+Bu katman **opt-in**'dir. `--pii-ml` geçilmediğinde varsayılan audit davranışı değişmez (`forgelm ingest`'in `--pii-ml` flag'i yoktur).
 
 ## Ne zaman kullanılır
 
@@ -38,10 +38,16 @@ spaCy modeli yoksa `forgelm audit --pii-ml` hiçbir satır taranmadan **önce** 
 
 ```shell
 $ forgelm audit data/customer-letters.jsonl --output ./audit/ --pii-ml
-✓ format: instructions (8.400 satır)
-⚠ PII: 12 email, 3 telefon, 1 IBAN (regex katmanı)
-⚠ PII (ML): 47 person, 18 organization, 9 location (Presidio)
-   en kötü kat: medium
+Data audit summary
+  Source        : data/customer-letters.jsonl
+  Total samples : 8400
+  Splits        : train
+  └─ train: n=8400
+     length  min=31 max=2210 mean=402.7 p95=1180
+     languages (top-3): en=8400
+     PII             : email=12, location=9, person=47, phone=3
+  PII severity   : worst tier = medium
+     by tier      : medium=59, low=12
 ```
 
 Presidio bulguları aynı `pii_summary` ve `pii_severity` bloklarına disjoint kategori isimleriyle birleşir, böylece regex baseline ML sinyaliyle yan yana görünür kalır:
@@ -52,15 +58,16 @@ Presidio bulguları aynı `pii_summary` ve `pii_severity` bloklarına disjoint k
     "email": 12,
     "phone": 3,
     "person": 47,
-    "organization": 18,
     "location": 9
   },
   "pii_severity": {
-    "by_tier": {"critical": 0, "high": 0, "medium": 59, "low": 30},
+    "by_tier": {"critical": 0, "high": 0, "medium": 59, "low": 12},
     "worst_tier": "medium"
   }
 }
 ```
+
+Presidio'nun varsayılan İngilizce yapılandırması `organization` etiketini yok sayar (çok yanlış pozitif üretir); bu yüzden varsayılan `--pii-ml-language en` ile `organization` sayısı 0 kalır ve yukarıdaki örnek onu göstermez; bu etiketi raporlayan bir dil modeli (örneğin `--pii-ml-language xx`) bir `organization` sayısı ekler.
 
 ## Şiddet katmanları
 
@@ -115,7 +122,7 @@ _require_presidio()
 text = "Alice Williams Pazartesi Acme Corp'un Berlin ofisini ziyaret ediyor."
 counts = detect_pii_ml(text, language="en")
 print(counts)
-# {'person': 1, 'organization': 1, 'location': 1}
+# {'person': 1, 'location': 1}   (Presidio'nun varsayılan İngilizce yapılandırması organization'ı yok sayar)
 ```
 
 Fonksiyon non-string input, eksik extra'lar veya geçici analyzer hataları için boş dict döndürür (tek bir kötü satır audit'i bloke etmez). Sert arızalar (eksik spaCy modeli, kayıtlı olmayan dil) `_require_presidio(language=...)` tarafından peşinen yakalanır ve hiçbir satır taranmadan önce raise edilir — `audit_dataset`'i bypass ettiğinizde aynı pre-flight garantilerini istiyorsanız bunu açıkça çağırın.

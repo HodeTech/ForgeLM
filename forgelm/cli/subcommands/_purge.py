@@ -7,7 +7,7 @@ Implements the operator-facing surface specified in
   erasure with hashed audit event (Article 17 right-to-erasure for
   training corpus rows).
 - ``forgelm purge --run-id <id> --kind {staging,artefacts}`` —
-  run-scoped artefact erasure (staging directory or compliance bundle).
+  run-scoped artefact erasure (staging directory or compliance files whose names embed the run id).
 - ``forgelm purge --check-policy [--config <path>]`` — read-only
   retention-policy violation report against the loaded config's
   ``retention:`` block.
@@ -28,9 +28,9 @@ Audit-event vocabulary (six new events per design §5.1):
   the chain shows ``request → fail`` instead of ``request → complete``,
   so an operator scanning the log can spot the unfinished erasure.
 - ``data.erasure_warning_memorisation`` — corpus row erasure ran
-  while a ``final_model/`` exists for any run that consumed this
-  corpus.  The row is gone from disk but may still be memorised in
-  the trained weights.
+  while a ``final_model/`` directory exists directly under the output
+  dir (which runs consumed the corpus is not determined).  The row is
+  gone from disk but may still be memorised in the trained weights.
 - ``data.erasure_warning_synthetic_data_present`` — corpus row erasure
   ran with synthetic-data snapshots present; the row may have produced
   derivative snippets the row→snippet mapping no longer connects.
@@ -40,10 +40,10 @@ Audit-event vocabulary (six new events per design §5.1):
 
 Exit-code contract (per ``docs/standards/error-handling.md``):
 
-- 0 — success or ``--check-policy`` report (gate-not-report semantic
-  per design §10 Q5).
-- 1 — config error (unknown ``row-id``, missing corpus, mutually
-  exclusive flag combination, conflicting retention values).
+- 0 — success or a successful ``--check-policy`` report (report-not-gate
+  semantic per design §10 Q5).
+- 1 — config error (unknown ``row-id``, no matching run-scoped target,
+  missing corpus, conflicting flags, an unloadable ``--config``).
 - 2 — runtime error (I/O, permission denied, atomic rename failure).
 """
 
@@ -88,7 +88,7 @@ _SALT_FILE_MODE = 0o600
 _ROW_ID_KEYS: Tuple[str, ...] = ("id", "row_id")
 
 # Allowed --kind values per design §4.1.  ``logs`` is intentionally
-# absent (audit logs are append-only Article 17(3)(b) and never deleted
+# absent (the audit log is append-only and never deleted
 # automatically — the trainer + the tool record the request, the
 # operator handles the residual disposal manually).
 _VALID_RUN_KINDS: Tuple[str, ...] = ("staging", "artefacts")
@@ -251,7 +251,7 @@ def _validate_row_id_args(args, output_format: str) -> None:
         _output_error_and_exit(
             output_format,
             "`--row-id` requires `--corpus <path>`. Bare row-id invocations are "
-            "rejected per Article 17 (per-row decision + per-row audit event).",
+            "rejected so that every erasure names the file it edits and gets its own audit event.",
             EXIT_CONFIG_ERROR,
         )
     # ``--corpus`` is trusted operator self-service input (named directly on the
@@ -386,9 +386,9 @@ def _detect_warning_conditions(
 
     Per design §5.1:
 
-    - ``data.erasure_warning_memorisation`` when any ``final_model/``
-      exists in the operator's output dir tree (a trained model may
-      have memorised the row).
+    - ``data.erasure_warning_memorisation`` when a ``final_model/``
+      directory exists directly under the operator's output dir (a
+      trained model may have memorised the row).
     - ``data.erasure_warning_synthetic_data_present`` when any
       ``synthetic_data*.jsonl`` exists (the row may have produced
       derivative snippets).
@@ -865,17 +865,13 @@ def _run_purge_run_id(args, output_format: str) -> None:
 
     target_paths = _resolve_run_kind_targets(output_dir, args.run_id, args.kind)
     if not target_paths:
-        audit.log_event(
-            _EVT_ERASURE_FAILED,
-            **request_fields,
-            error_class="NoMatchingArtefacts",
-            error_message=f"No {args.kind!r} artefacts found for run_id={args.run_id!r}.",
+        # The standard compliance bundle has fixed filenames with no run id, so a real run id never matches it.
+        hint = " The standard compliance bundle has fixed filenames without a run id; remove it through your storage layer."
+        reason = f"No {args.kind!r} artefacts found for run_id={args.run_id!r}." + (
+            hint if args.kind == "artefacts" else ""
         )
-        _output_error_and_exit(
-            output_format,
-            f"No {args.kind!r} artefacts found for run_id={args.run_id!r} under {output_dir!r}.",
-            EXIT_CONFIG_ERROR,
-        )
+        audit.log_event(_EVT_ERASURE_FAILED, **request_fields, error_class="NoMatchingArtefacts", error_message=reason)
+        _output_error_and_exit(output_format, f"{reason} (searched under {output_dir!r})", EXIT_CONFIG_ERROR)
 
     # Boundary check (F-P5-OPUS-02): refuse any resolved target that escapes
     # ``output_dir``.  ``--run-id`` is free-form, so a ``..``-bearing value
@@ -1010,11 +1006,11 @@ def _legacy_staging_owned_by(legacy_dir: Path, run_id: str) -> bool:
 def _artefact_targets_for_run(base: Path, run_id: str) -> List[Path]:
     """Return ``compliance/`` files whose name embeds ``run_id`` as a token.
 
-    Compliance bundle filenames embed the run-id; we accept both
-    ``compliance_<run_id>.json`` and ``annex_iv_<run_id>.json``.  The
-    token-boundary check (`_filename_contains_run_id`) defends against
-    short-run-id false positives where a substring match would
-    accidentally pick up files belonging to a different run.
+    Any regular file directly under ``compliance/`` whose name carries the
+    run-id as a token matches, whatever its extension.  The standard bundle
+    (fixed basenames such as ``compliance_report.json``) has no run-id, so a real
+    run id never matches it (a generic token such as ``json`` does).  The token-boundary check (`_filename_contains_run_id`)
+    defends against short-run-id false positives on other runs' files.
     """
     compliance_dir = base / "compliance"
     if not compliance_dir.is_dir():
@@ -1120,27 +1116,30 @@ def _delete_path(path: Path) -> int:
 def _run_purge_check_policy(args, output_format: str) -> None:
     """Handle ``forgelm purge --check-policy [--config <path>]``.
 
-    Always exits 0 (per design §10 Q5: report-not-gate semantic).
-    Operators wiring a CI gate use ``--output-format json`` and pipe
-    to ``jq '.violations | length'`` themselves.
+    A successful report exits 0 (design §10 Q5: report-not-gate); an unloadable config exits 1.
+    Operators wiring a CI gate (under ``set -o pipefail``) use ``--output-format json`` and pipe
+    to ``jq -e '.success == true and has("count") and .count == 0'``.
 
     Strict config loading: ``--check-policy`` is the one purge mode
     where the operator explicitly asked for a retention report.  A
     malformed YAML or a Pydantic validation error must surface as
     ``EXIT_CONFIG_ERROR`` rather than silently degrading to a
     "no retention block" notice (which the operator would mistake
-    for "no violations").
+    for "no violations").  The file may hold only ``retention:``
+    (#1054); see ``_load_retention_policy``.
     """
     import yaml as _yaml
 
     from forgelm.config import ConfigError
 
+    from .._config_load import _load_retention_policy
+
     try:
-        config_loaded = _maybe_load_config(getattr(args, "config", None), strict=True)
+        retention = _load_retention_policy(getattr(args, "config", None))
     except (ConfigError, OSError, _yaml.YAMLError) as exc:
         # OSError covers FileNotFoundError + permission denied; ConfigError
-        # wraps Pydantic ValidationError raised by ``load_config``;
-        # ``yaml.YAMLError`` mirrors the inner catch tuple in
+        # wraps Pydantic ValidationError and YAML parse errors;
+        # ``yaml.YAMLError`` mirrors the catch tuple in
         # ``_maybe_load_config`` so a malformed YAML that bypasses the
         # ConfigError wrap still surfaces a formatted operator-facing
         # message instead of a stack trace. Any other class would be a
@@ -1150,7 +1149,7 @@ def _run_purge_check_policy(args, output_format: str) -> None:
             f"--check-policy could not load --config: {exc}",
             EXIT_CONFIG_ERROR,
         )
-    if config_loaded is None or getattr(config_loaded, "retention", None) is None:
+    if retention is None:
         msg = (
             "No `retention:` block in the loaded config; nothing to enforce.  "
             "See `docs/guides/gdpr_erasure.md` for the schema."
@@ -1162,7 +1161,7 @@ def _run_purge_check_policy(args, output_format: str) -> None:
         sys.exit(EXIT_SUCCESS)
 
     output_dir = args.output_dir or "."
-    violations = _scan_retention_violations(config_loaded.retention, output_dir)
+    violations = _scan_retention_violations(retention, output_dir)
     if output_format == "json":
         print(dumps_strict({"success": True, "violations": violations, "count": len(violations)}, indent=2))
     else:
@@ -1417,23 +1416,16 @@ def _resolve_artefact_age(
 # ---------------------------------------------------------------------------
 
 
-def _maybe_load_config(config_path: Optional[str], *, strict: bool = False):
-    """Load the ``ForgeConfig`` from YAML.
+def _maybe_load_config(config_path: Optional[str]):
+    """Load the ``ForgeConfig`` from YAML, best effort.
 
-    ``strict=False`` (default) is the best-effort mode used by the
-    row-id / run-id erasure paths: those subcommands work without a
-    config (the corpus-row erasure is intentionally config-agnostic),
-    so a missing / unreadable / invalid YAML falls back to ``None``.
-    When *config_path* was explicitly supplied the fallback is logged
-    at ``WARNING`` (not silent) so an operator relying on it for
-    external-copies detection sees that the load failed.
-
-    ``strict=True`` is used by ``--check-policy`` where the operator
-    is *explicitly* asking for a retention-policy report against the
-    loaded config.  In that mode a malformed YAML or a schema error
-    must surface as the original ``ConfigError`` / ``OSError`` so the
-    operator sees the validation failure instead of a misleading
-    "no `retention:` block" notice.
+    Used by the row-id erasure path, which works without a config (the
+    corpus-row erasure is intentionally config-agnostic), so a missing /
+    unreadable / invalid YAML falls back to ``None``.  When *config_path*
+    was explicitly supplied the fallback is logged at ``WARNING`` (not
+    silent) so an operator relying on it for external-copies detection
+    sees that the load failed.  ``--check-policy`` loads its config
+    strictly, through ``_load_retention_policy``.
     """
     if not config_path:
         return None
@@ -1450,8 +1442,6 @@ def _maybe_load_config(config_path: Optional[str], *, strict: bool = False):
     try:
         return load_config(config_path)
     except (ConfigError, OSError, _yaml.YAMLError) as exc:
-        if strict:
-            raise
         # Best-effort fallback: row-id / run-id paths run config-free.
         # WARNING, not DEBUG: an operator who explicitly passed --config
         # (e.g. to surface the external-copies webhook warning) must see

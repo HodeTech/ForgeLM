@@ -80,7 +80,7 @@ Hash zinciri, satır diske düştükten (`flush` + `fsync`) sonra ilerler; kirli
 | `data.erasure_failed`                      | Disk operasyonu raise etti VEYA eşleşen satır/koşum bulunamadı VEYA çoklu-satır policy belirsizliği reddetti.    | Tüm `requested` field'ları + `error_class`, `error_message`                                              | 17    |
 | `data.erasure_warning_memorisation`        | Row erasure × `--output-dir` altında doğrudan bir `final_model/` dizini mevcut (birebir ad; `--output-dir` varsayılan olarak corpus'un dizinidir, bu yüzden eğitim çıktı dizininizi verin). ForgeLM corpus'u hangi koşumların tükettiğini belirlemez.                                  | Tüm `completed` field'ları + `affected_run_ids`                                                          | 17    |
 | `data.erasure_warning_synthetic_data_present` | Row erasure × `output_dir`'de `synthetic_data*.jsonl` mevcut.                                                  | Tüm `completed` field'ları + `synthetic_files`                                                           | 17    |
-| `data.erasure_warning_external_copies`     | Yüklü config boş-olmayan `webhook` block'u içeriyor; downstream tüketiciler bildirim almış olabilir.              | Tüm `completed` field'ları + `webhook_targets` (redact'li URL'ler)                                       | 17    |
+| `data.erasure_warning_external_copies`     | Yalnızca `--config` ile row-modu purge: config'in `webhook` bloğu boş değil (literal `url` ya da export edilmiş `url_env`); downstream tüketiciler bildirim almış olabilir. | Tüm `completed` field'ları + `webhook_targets` (redact'li URL'ler)                                       | 17    |
 
 ### Madde 15 — GDPR Erişim Hakkı (Phase 38 — `forgelm reverse-pii`)
 

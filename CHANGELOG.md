@@ -22,11 +22,29 @@ All notable changes to ForgeLM are documented here.
   as a warning, not at debug level (#84).
 - `CITATION.cff`, so the repository can be cited through GitHub's "Cite this
   repository" panel (#964).
+- Every new issue is triaged before anyone works on it. The `Triage gate` workflow (`tools/triage_gate.py`) adds
+  `needs-triage` to each issue however it was created, sends an issue reopened by a non-maintainer back to triage, and
+  puts the label back, with one comment, when anyone but a maintainer removes it; an hourly sweep repairs any recent
+  issue the event run missed, and the nightly-failure issue is created with the label. CONTRIBUTING.md (*Issue triage*), MAINTAINERS.md, GOVERNANCE.md, the issue forms, the pull-request
+  template, the review standard and the agent guides tell contributors not to work on, or open a pull request for, an
+  issue that still carries it (#1036).
 - A contributor can claim a `good first issue` by commenting `/assign` and give it
   back with `/unassign`: the `Assign on comment` workflow (`tools/assign_on_comment.py`) assigns the commenter
   when nobody holds the issue, refuses an issue that already has an assignee without changing it, allows at most 2
   open assignments per contributor (maintainers are exempt) and leaves `security`, `needs-triage`, `deferred`,
   epic and Phase 16 issues to a maintainer. Reassigning stays a maintainer's decision.
+- Dependencies between issues are tracked and gated. A dependency is a native "Blocked by" link; the
+  `Issue dependencies` workflow (`tools/issue_dependencies.py`) labels every open issue with an unresolved blocker
+  `blocked` and removes the label, with a comment each time, once every blocker is closed as completed. A blocker
+  closed as not planned or as a duplicate keeps the issue blocked and flags it `needs-triage`. `/assign` refuses a
+  blocked issue, and the new `Issue dependencies` pull-request check fails a pull request that links one (`Fixes` /
+  `Closes` / `Resolves` / `Refs` in its description as GitHub renders it, in its title or a commit message, or a
+  *Development* link), unless GitHub will close the blockers with the same pull request or a maintainer sets
+  `dependency-override`. A comment records the head commit and the linked issues the override accepts, and a new
+  commit or a new link ends it. The check runs from the default branch (`pull_request_target`; no pull-request code
+  is checked out), and the workflow re-runs it, every 15 minutes, on every open pull request whose result no longer
+  matches. Branch protection requires it on `development`. The three workflow scripts in `tools/` have a coverage
+  floor of their own, 90% (#1034, #1039).
 - `GOVERNANCE.md` and `MAINTAINERS.md` at the repository root, recording how
   decisions are made, how the maintainer roles work, and which areas the current
   maintainer owns (#964).
@@ -37,6 +55,19 @@ All notable changes to ForgeLM are documented here.
 
 ### Changed
 
+- `tools/check_usermanual_schema_drift.py` now also fails on a top-level block in a user-manual YAML example that `ForgeConfig`
+  does not have (a `chat:` or `output:` block that Pydantic rejects with `extra_forbidden`), including in a full-config summary
+  block, instead of skipping it as "someone else's YAML". Another tool's YAML (a CI workflow, a compose file, a vLLM config) is
+  listed with a reason in one table, a fabricated block that a tracked issue still owns in a second (its reason must name the
+  issue). A row exempts exactly one block per language directory and a row that matches nothing fails, so the tables cannot
+  become a blanket allowlist. A block the guard cannot read (a duplicate key, a parse error, an indented, `~~~` or `yml` fence,
+  a non-string key) now fails instead of passing silently, YAML is read with 1.2 booleans so GitHub Actions' `on:` stays a
+  string, a missing PyYAML exits 1, and the success line counts the blocks it found, walked and exempted (CR-A17a-007, #101).
+- Help and message text only (behaviour, flags and exit codes are unchanged): `forgelm purge --kind artefacts` explains in its
+  error and `--help` that the standard compliance bundle has fixed filenames and is never matched; `forgelm purge` and
+  `forgelm reverse-pii` describe themselves as an input to an Article 15 response and one step of an Article 17 erasure;
+  `--output-dir`, `--dry-run`, `--config` and `--pii-ml-language` say what they do; the wizard prompts say "0 = never report";
+  `forgelm ingest --pii-mask` no longer says "no PII detected" when the regex detectors find nothing (#101).
 - Admit newer majors of five dependencies: `huggingface_hub` 2, `pypdf` 6 and `xxhash` 4 (the `ingestion` extra), `datasketch` 2 (the
   `ingestion-scale` extra) and `pytest-randomly` 4 and 5 (the `dev` extra). The ingestion, data-audit and doctor test modules pass on pypdf
   6.21.1, xxhash 4.0.1 and datasketch 2.0.0 with the same results as on the previous majors; CI installs datasketch 2.0.0 and
@@ -85,6 +116,11 @@ All notable changes to ForgeLM are documented here.
   `good first issue`s with their size and area) from the README and CONTRIBUTING, and record in
   `CONTRIBUTING.md`, `CLAUDE.md` and `AGENTS.md` that the front door is chosen with labels and
   views, never by closing issues.
+- `forgelm purge --check-policy --config` accepts a file whose only top-level key is `retention:`, so a scheduled
+  retention report no longer needs a full training config next to it. A file with any other top-level key is still
+  validated as a full config, so a misspelt `retension:` or a partial training config exits 1 instead of being ignored.
+  `retention:` with no value reports nothing to enforce, as it does in a full config, and validation errors name the
+  field without its raw value (#1054).
 
 ### Removed
 
@@ -94,6 +130,62 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- Make the Document Ingestion quick-start example runnable in the English and Turkish user manuals: pair `--chunk-tokens`
+  with `--tokenizer` and show the real `summarize_result` output, with `--output` resolved to the absolute path the tool
+  prints, instead of a layout the tool never prints (#395).
+
+- Make the GDPR, erasure, retention, PII-masking, GPU-cost and chat documentation say what ForgeLM does, so a deployer can copy a
+  documented command or YAML block, and quote a documented limit in a DPIA or an access reply, without it being untrue. The GDPR
+  / KVKK manual page was rewritten earlier in this cycle; this completes it and the pages around it (#101):
+  - Article 17(3)(b) is no longer presented as preserving the audit log as a class. It disapplies erasure only to the extent a
+    specific Union or Member State obligation (or a public-interest task) requires the processing, and keeping entries needs a
+    documented basis; ForgeLM never edits or deletes an entry. The AI Act examples that justified keeping logs are gone.
+  - `forgelm reverse-pii` is described as an input to an Article 15 response and `forgelm purge` as one step of an Article 17
+    erasure, in the CLI help, the references, the manual, the compliance summary and the site (six languages). A complete response
+    also needs identity verification, the one-month deadline, a copy of the data and the 15(1)(a)-(h) information, Article 19
+    notices and the 17(3) assessment; a scan with zero matches does not answer an access request.
+  - A `purge` digest (`target_id`) and a `reverse-pii` digest (`query_hash`) are byte-identical only for the same value, the same
+    `--output-dir` and the same `FORGELM_AUDIT_SECRET` state, in `reverse-pii`'s default plaintext mode. `--salt-source` is a
+    hash-mask scan for externally masked corpora: it is not needed for the digests to match and reports zero matches on a
+    plaintext corpus even when the person is there (an earlier draft recommended it). A salted digest is personal data, and
+    pseudonymisation (Art. 4(5)) only if the salt is kept separately: by default it sits next to the log.
+  - The retention horizons are limits that `forgelm purge --check-policy` reports and never enforces; the defaults (5 years for
+    the audit log, 7 / 90 / 90 days) are ForgeLM choices, not legal periods; a config with no `retention:` block checks nothing
+    and `retention: {}` switches the defaults on; `0` stops a report; ages come from the run's first audit event, else the log's
+    first event, else mtime, so a shared output directory can report a fresh bundle as overdue; ForgeLM creates neither
+    `raw_documents/` nor `ingestion_output/`. The "minimum 5 years" lines of the QMS SOPs follow the storage-limitation principle.
+  - The CI gate is `jq -e '.success == true and has("count") and .count == 0'` under `set -o pipefail` (the earlier forms were
+    green on a config error and on a directory that was never checked); argument-parser usage errors exit 2, not 1; the purge JSON
+    envelope section is regenerated from real output; the external-copies warning is row mode with `--config` only.
+  - `forgelm purge --kind artefacts` is documented as what it does: it matches files under `compliance/` whose names contain the
+    run id, so it finds nothing in the standard bundle (fixed basenames), emits `data.erasure_failed` (`NoMatchingArtefacts`),
+    exits 1 and deletes nothing for a real run id (a generic token that appears in a fixed name, such as `json`, does match those files and deletes them, so pass the full run id); the legacy `final_model.staging/` is purged only with a marker ForgeLM never writes. The code
+    half of that limitation stays open.
+  - The PII-masking page counts eight detectors; the German ID-card serial and the French NIR are shape-only (no checksum); the
+    audit report carries counts, not row indices; running `forgelm audit` over masked output re-applies the same regexes. The
+    `--pii-ml` examples drop the `organization` count Presidio does not report for English and use `--pii-ml-language xx` for
+    Turkish. The severity tiers cite Art. 87 and Art. 32; `include_eval_samples` cites Art. 25(2).
+  - The GPU-cost page describes what is recorded (device name, visible-device count, `train_runtime`, the real price table and
+    `cost_source` values), where it lands, the placeholder rate on machines without a CUDA GPU, a calibration recipe that runs, and
+    that `gpu_profiles` is not implemented. The chat page lists the real flags, says GGUF files are not loaded and that chat has
+    no seed or greedy mode, and shows the real transcript; `lora.target_modules` is a list.
+  - The site says masking is opt-in, that matching is literal and case-sensitive, and that `0` stops a retention report; the
+    German, French, Spanish and Chinese strings have no native review. The legal pages' date moved to 2026-10-22.
+  - Smaller corrections: KVKK Articles 7, 11(1)(e) and 13(2), the AI Act Art. 14(5) and Art. 18 statements, the human-oversight
+    timeout and quorum text, stale `compliance.py` line references, and the Turkish glossary (veri sahibi, veri sorumlusu, salt).
+- Fail closed when judge replies contain multiple score objects or duplicate JSON keys, and reject
+  non-object replies, including a score object that only appears inside an array or after an undecodable
+  `{`, with the existing judge-failure sentinel. The rejection reason is logged without echoing the reply
+  (CR-A06-015, M-A06-015, #127).
+- Restore tensor inputs to generation-based Llama-Guard scoring on transformers 5.x by explicitly requesting
+  `return_dict=False` from the chat template. Guard-boundary `AttributeError` failures now score the pair fail-closed
+  and empty error messages log the exception type (CR-A06-003, TECH-T05-001, #108).
+- Neutralise tokenizer control-token strings in the prompt and the evaluated model's response before the
+  generative guard's chat template is applied, so message content can no longer open or close turns of
+  the moderation conversation.
+- SLERP now snapshots both merged adapter states before restoring or updating the base model,
+  so the first adapter's contribution is preserved and the result responds to the configured
+  weights instead of silently returning only the second adapter (CR-A13-001, #407).
 - Preserve top-level `--dry-run`, `--config`, `--offline` and `--output` values when a subcommand omits the same flag (CR-A05-001, #414).
 - Stop describing the human-approval gate as enforcing segregation of duties (English and Turkish): it records the
   trainer and approver identities and does not compare them, and both are self-asserted. The ISO 27001 and SOC 2
@@ -386,6 +478,17 @@ All notable changes to ForgeLM are documented here.
   (EN + TR) now point to the current Presidio docs and repository
   (`presidio.dataprivacystack.org`, `data-privacy-stack/presidio`); the old `microsoft.github.io`
   page returns 404. (TECH-T06-004, #491)
+- The LLM-as-judge no longer parses a reply that was cut off at its 200-token budget. A judge led to quote the
+  judged answer could have its own verdict truncated, which left the quoted score object as the only complete one
+  and made it the verdict. The API judge now treats `finish_reason` `length` or `content_filter` as an incomplete
+  reply and the local judge checks that the cap was reached without an end-of-sequence token; both count the row as a
+  judge failure, and the gate's failure reason says how many replies were cut off (CR-A06-032 part 2, #1044).
+  A reply whose `content` is not text (an OpenAI refusal or a tool call has `content: null`) is now one judge
+  failure too, instead of an `AttributeError` that stopped the whole evaluation (CR-A06-021, null-content half).
+- The judge reply parser now treats a lone score object inside an unterminated array like one inside an unterminated
+  object: it fails closed instead of taking the object for the verdict. Plain bracketed notes that close right away,
+  as in prose citations (`[1]`, `[source]`), still do not block it (#1048).
+  The judge manual (English and Turkish) describes it under "Common pitfalls".
 
 ### Breaking
 

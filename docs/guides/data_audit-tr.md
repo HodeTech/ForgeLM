@@ -160,9 +160,16 @@ kötü?* sorusunda sıfır rehberlik veriyor. Faz 11.5 yanına bir
 }
 ```
 
-Tier tablosu konsensüs regülatif ağırlıklandırmadır (finansal
-kimlikler için PCI-DSS; devlet kimlikleri için GDPR Md. 9 + ENISA).
-`critical` katman artık komutun kendisini kapılar (sonraki bölüm);
+Tier tablosu ForgeLM'in varsayılan ağırlıklandırmasıdır; herhangi bir
+mevzuattan alınmış bir sınıflandırma değildir. Kart numaraları ve IBAN'lar
+doğrudan dolandırıcılıkta kullanılabildikleri için `critical` katmandadır
+(PCI DSS, yasa değil sektör standardı, kart numaralarını kapsar; IBAN'lar aynı
+katmanda ForgeLM'in kendi değerlendirmesiyle yer alır). Ulusal kimlik
+numaraları değiştirilmesi zor olduğu ve bazı ulusal mevzuatlar kullanımlarını
+kısıtladığı için `high` katmandadır (GDPR Madde 87, üye devletlerin ulusal
+kimlik numarasının işlenme koşullarını belirlemesine izin verir). GDPR hiçbir
+tanımlayıcıyı sıralamaz: Madde 32 riske uygun güvenlik ister; bu tablo o
+değerlendirmeye başlamanıza yardım eder, yerini tutmaz. `critical` katman artık komutun kendisini kapılar (sonraki bölüm);
 `high`'ta da durmak isteyen pipeline'lar `pii_severity.worst_tier`'i
 okumalı ve açık bir review olmadan yayınlamayı reddetmelidir.
 
@@ -406,8 +413,12 @@ install ile uyumlu kalır.
 
 ### ML-NER PII adaptörü — `--pii-ml` (Faz 12.5, opt-in)
 
-Varsayılan regex detector, EU AI Act Madde 10'un önemsediği yapılandırılmış
-identifier'ları (email, telefon, IBAN, kredi kartı, ulusal kimlik) kapsar.
+Varsayılan regex detector, yaygın yapılandırılmış identifier'ları (email,
+telefon, IBAN, kredi kartı, ulusal kimlik) kapsar. Her biri, kimliği belirli
+veya belirlenebilir bir gerçek kişiye ilişkin olduğunda GDPR Madde 4(1)
+kapsamında kişisel veridir; bir tüzel kişinin IBAN'ı veya santral numarası, şahıs tacir gibi bir gerçek
+kişiyi tanımlamadıkça kişisel veri değildir (Gerekçe 14); bir test kart
+numarası ise hiç kimseye ilişkin değildir.
 Faz 12.5, regex'in doğal olarak kaçırdığı yapılandırılmamış identifier
 kategorilerini ekleyen opt-in **Presidio** ([data-privacy-stack/presidio](https://github.com/data-privacy-stack/presidio))
 adaptörünü ML-NER olarak üstüne ekler: `person`, `organization`,
@@ -420,7 +431,8 @@ forgelm audit data/ --output ./audit/ --pii-ml
 
 Yeni kategoriler mevcut `pii_summary` ve `pii_severity` bloklarına
 disjoint isimlerle birleşir, bu yüzden regex baseline ML sinyaliyle
-yan yana görünür kalır:
+yan yana görünür kalır (örnek ForgeLM'in varsayılan İngilizce yapılandırması
+içindir; o yapılandırma `organization` raporlamaz):
 
 ```json
 {
@@ -428,15 +440,14 @@ yan yana görünür kalır:
     "email": 12,
     "phone": 3,
     "person": 47,         // ← Presidio
-    "organization": 18,   // ← Presidio
     "location": 9         // ← Presidio
   },
   "pii_severity": {
-    "by_tier": {"critical": 0, "high": 0, "medium": 59, "low": 30},
+    "by_tier": {"critical": 0, "high": 0, "medium": 59, "low": 12},
     "by_type": {
       "email": {"count": 12, "tier": "medium"},
       "person": {"count": 47, "tier": "medium"},
-      "organization": {"count": 18, "tier": "low"}
+      "location": {"count": 9, "tier": "low"}
     },
     "worst_tier": "medium"
   }

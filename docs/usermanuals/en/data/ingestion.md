@@ -27,12 +27,20 @@ $ forgelm ingest ./policies/ \
     --recursive \
     --strategy markdown \
     --chunk-tokens 1024 \
+    --tokenizer "Qwen/Qwen2.5-7B-Instruct" \
     --all-mask \
     --output data/policies.jsonl
-✓ scanned 47 files (12 PDF, 8 DOCX, 27 MD)
-✓ extracted 12,240 chunks (avg 743 tokens)
-✓ masked 18 PII matches, 0 secret matches
-✓ wrote data/policies.jsonl (8.2 MB)
+Ingestion summary
+  Output JSONL  : /srv/project/data/policies.jsonl
+  Files (in/out): processed=47  skipped=0
+  Chunks        : 12240
+  Total chars   : 28410553
+  By format     : docx=8, md=27, pdf=12
+  Note          : PII masking redacted 18 span(s): email=11, phone=7
+  Note          : Secrets masking enabled — no credentials detected in this corpus
+
+Next: forgelm audit /srv/project/data/policies.jsonl --output ./audit/
+Or train: forgelm --config <your.yaml>  (set data.dataset_name_or_path: /srv/project/data/policies.jsonl)
 ```
 
 `--all-mask` is the documented shorthand for `--secrets-mask --pii-mask`
@@ -126,7 +134,7 @@ that appear most often:
 :::
 
 :::tip
-**Always audit after ingest.** A clean ingest doesn't mean a clean dataset. Run `forgelm audit data/output.jsonl` to check for cross-split leakage, near-duplicates, and PII the masking missed.
+**Always audit after ingest.** A clean ingest doesn't mean a clean dataset. Run `forgelm audit data/output.jsonl` to check for cross-split leakage, near-duplicates, and PII the masking did not cover (`forgelm audit` re-applies the same regexes, so add `--pii-ml` to count names and locations).
 :::
 
 ## See also

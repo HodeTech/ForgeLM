@@ -24,7 +24,7 @@ The following ForgeLM-produced asset classes:
 | Model weights — final | `<output_dir>/final_model/` | Memorisation of training data; competitive moat |
 | Model weights — staging | `<output_dir>/final_model.staging.<run_id>/` | Same as final, plus pre-approval state |
 | Audit log | `<output_dir>/audit_log.jsonl` + `audit_log.jsonl.manifest.json` (genesis pin) | Operator identity history; configuration hashes; chain-of-custody for compliance — line-level integrity is in-band via per-line `_hmac` + `prev_hash`, no separate `.sha256` sidecar |
-| Per-output-dir salt | `<output_dir>/.forgelm_audit_salt` | Unsalted SHA-256 of low-entropy identifiers (emails, phones) is brute-forcible — the salt is the secret that gives the audit hash its wordlist resistance |
+| Per-output-dir salt | `<output_dir>/.forgelm_audit_salt` | Unsalted SHA-256 of low-entropy identifiers (emails, phones) is brute-forcible — the salt makes a precomputed wordlist useless, but anyone who holds both the log and the salt can still test guesses |
 | Training corpus | (operator-supplied; typically `data/*.jsonl`) | PII; trade secrets; client data |
 | Quickstart-rendered config | (operator path) | HF tokens, webhook URLs, secret env-var names |
 | Compliance bundle (Annex IV) | `<output_dir>/compliance/` ZIP | Aggregated form of every above artefact |
@@ -134,8 +134,10 @@ to recover the cleartext identifiers ForgeLM intentionally hashed.
 - Backed up only to substrates that match the audit log's encryption
   posture (NEVER plaintext to a debug bucket).
 - Rotated only when the corresponding `<output_dir>` is decommissioned
-  — rotating mid-output-dir invalidates `forgelm verify-audit`'s
-  salted-hash assumptions for prior events.
+  — rotating mid-output-dir breaks the correlation between earlier and
+  later digests (a later `forgelm reverse-pii` query no longer matches an
+  earlier `forgelm purge` event). It does not affect
+  `forgelm verify-audit`, which does not use the salt.
 
 **Defence-in-depth:** export `FORGELM_AUDIT_SECRET` from your KMS so
 the on-disk salt becomes one half of a two-component key. An attacker
@@ -206,9 +208,13 @@ ForgeLM does not implement encryption itself but DOES:
 3. **Verify post-encryption integrity.** `forgelm verify-audit`
    confirms the chain-after-decryption matches the chain-as-emitted;
    any substrate-level corruption is detectable.
-4. **Hash low-entropy identifiers.** Salted SHA-256 means the audit
-   chain itself does not need encryption to be confidential at rest
-   — only the salt does.
+4. **Treat identifier digests as personal data.** Salted SHA-256 does
+   not make an identifier anonymous (recital 26); it is pseudonymisation
+   (GDPR Article 4(5)) only if the additional information is kept
+   separately. With the salt on the same disk as the log, anyone holding
+   both can recompute a digest from a guessed identifier. Encrypt the
+   audit log and the salt to the same standard, or hold the secret
+   (`FORGELM_AUDIT_SECRET`) in a key store.
 
 ## 6. Verification checklist
 

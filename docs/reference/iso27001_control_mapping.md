@@ -122,7 +122,7 @@ completeness so the deployer's SoA is auditable end-to-end.
 | A.8.21 Security of network services | FL-helps | TLS-only webhooks (HTTPS + SSRF guard); audit-log chain HMAC via `FORGELM_AUDIT_SECRET` (note: webhook **bodies** are not HMAC-signed) |
 | A.8.22 Segregation of networks | OOS | — |
 | A.8.23 Web filtering | OOS | — |
-| A.8.24 Use of cryptography | FL | SHA-256 + HMAC chain (per-run signing key = `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)`, see `forgelm/compliance.py:104-114`); separately, salted SHA-256 identifier hashing for purge / reverse-pii |
+| A.8.24 Use of cryptography | FL | SHA-256 + HMAC chain (per-run signing key = `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)`, see `AuditLogger.__init__` in `forgelm/compliance.py`); separately, salted SHA-256 identifier hashing for purge / reverse-pii |
 | A.8.25 Secure development life cycle | FL-helps | `docs/standards/code-review.md`, `release.md`, CI gates |
 | A.8.26 Application security requirements | FL-helps | F-compliance-110 strict gate; ReDoS guard |
 | A.8.27 Secure system architecture and engineering principles | FL-helps | Append-only audit log architecture |

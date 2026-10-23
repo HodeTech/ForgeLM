@@ -88,7 +88,7 @@ model:
   name_or_path: meta-llama/Llama-3.1-8B-Instruct
   max_length: 2048
   load_in_4bit: true
-  ...
+  # ...
 ```
 
 ## Usage

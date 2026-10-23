@@ -80,7 +80,7 @@ The hash chain advances after the line lands on disk (`flush` + `fsync`), so an 
 | `data.erasure_failed`                      | Disk operation raised, OR no matching row/run found, OR multi-row policy refused on ambiguity.                | All `requested` fields + `error_class`, `error_message`                                                  | 17      |
 | `data.erasure_warning_memorisation`        | Row erasure × a `final_model/` directory exists directly under `--output-dir` (literal name; `--output-dir` defaults to the corpus's directory, so pass your training output directory). ForgeLM does not determine which runs consumed the corpus.                                    | All `completed` fields + `affected_run_ids`                                                              | 17      |
 | `data.erasure_warning_synthetic_data_present` | Row erasure × `synthetic_data*.jsonl` exists in `output_dir`.                                              | All `completed` fields + `synthetic_files`                                                               | 17      |
-| `data.erasure_warning_external_copies`     | Loaded config has a non-empty `webhook` block; downstream consumers may have received notices.                | All `completed` fields + `webhook_targets` (redacted URLs)                                               | 17      |
+| `data.erasure_warning_external_copies`     | Row-mode purge with `--config` only: the config's `webhook` block is non-empty (literal `url`, or `url_env` exported); downstream consumers may have received notices. | All `completed` fields + `webhook_targets` (redacted URLs)                                               | 17      |
 
 ### Article 15 — GDPR Right-of-Access (Phase 38 — `forgelm reverse-pii`)
 

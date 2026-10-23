@@ -5,7 +5,7 @@ description: Detect and redact emails, phones, credit cards, IBAN, and national 
 
 # PII Masking
 
-Personal data in your training set is a regulatory hazard (GDPR Article 5(1)(c) — data minimisation) and an operational hazard (the model memorises and emits it). ForgeLM's PII masker detects nine categories of PII and redacts them at ingest time, before chunks land in JSONL.
+Personal data in your training set is a regulatory hazard (GDPR Article 5(1)(c) — data minimisation) and an operational hazard (the model memorises and emits it). ForgeLM's PII masker detects eight categories of PII and redacts them at ingest time, before chunks land in JSONL.
 
 ## What gets detected
 
@@ -15,9 +15,9 @@ Personal data in your training set is a regulatory hazard (GDPR Article 5(1)(c) 
 | **Phone** | `+90 532 123 45 67`, `(555) 123-4567` | E.164-compatible patterns + locale variants |
 | **Credit card** | `4111-1111-1111-1111` | Issuer prefix (Visa/MC/Amex/Discover/JCB/UnionPay) + Luhn check — not Luhn alone, which every IMEI passes |
 | **IBAN** | `TR12 0006 4000 0011 2345 6789 01` | Country-aware checksum |
-| **National ID — Turkey** | 11-digit TC kimlik | Modulo-10 + modulo-11 checksums |
-| **National ID — Germany** | Steuer-ID | Format + checksum |
-| **National ID — France** | NIR (social security) | Format + key validation |
+| **National ID — Turkey** | 11-digit TC kimlik | Two modulo-10 check digits (10th and 11th) |
+| **National ID — Germany** | ID-card serial (Personalausweis), e.g. `T22000129` | Shape only: a letter, 7-8 digits and an optional check character; no checksum |
+| **National ID — France** | NIR (social security number) | Shape only: sex, year, month, department, commune and order digits plus an optional two-digit key; the key is not verified |
 | **US SSN** | `123-45-6789` | Format + reserved-block exclusions |
 
 These eight are the complete set (`_PII_PATTERNS` in `forgelm/data_audit/_pii_regex.py`). **IP addresses are not detected** — earlier versions of this page listed an "IPv4 / IPv6 (off by default; opt in)" row, but no such pattern and no such opt-in exists. If your GDPR assessment treats IP addresses as personal data, you need a separate control for them.
@@ -46,7 +46,7 @@ The placeholder is consistent across the dataset, so a model can still learn tha
 ## The placeholder emitted
 
 :::warn
-**There is one placeholder, not one per category.** Every detected span — email, phone, credit card, IBAN, TC kimlik, Steuer-ID, NIR, US SSN — is replaced with the single literal `[REDACTED]`. Earlier versions of this page published a nine-row table of per-category tags (`[EMAIL_REDACTED]`, `[PHONE_REDACTED]`, `[IP_REDACTED]`, …). None of those strings exist anywhere in the codebase. A downstream consumer that parses redaction tags to recover *which* category was masked cannot do so — that information survives only in the audit report's `pii_summary` counts.
+**There is one placeholder, not one per category.** Every detected span — email, phone, credit card, IBAN, TC kimlik, German ID-card serial, NIR, US SSN — is replaced with the single literal `[REDACTED]`. Earlier versions of this page published a nine-row table of per-category tags (`[EMAIL_REDACTED]`, `[PHONE_REDACTED]`, `[IP_REDACTED]`, …). None of those strings exist anywhere in the codebase. A downstream consumer that parses redaction tags to recover *which* category was masked cannot do so — that information survives only in the audit report's `pii_summary` counts.
 :::
 
 The default is `[REDACTED]` (`mask_pii`'s `replacement` parameter). The parallel secrets masker uses `[REDACTED-SECRET]` — see [Secrets Scrubbing](#/data/secrets). Note in the example above that the phone pattern does not always consume the full number; verify masking against your own formats before relying on it.
@@ -55,8 +55,8 @@ The default is `[REDACTED]` (`mask_pii`'s `replacement` parameter). The parallel
 
 The PII regexes are deliberately tuned for **low false-positive rate**. They prefer to miss a borderline match (false negative) than to redact a non-PII string in your prose (false positive). Reasons:
 
-1. False positives silently corrupt your data — replacing legitimate words with `[EMAIL_REDACTED]` ruins examples.
-2. The audit step catches what masking missed; you can decide per-row whether to fix or drop.
+1. False positives silently corrupt your data — replacing legitimate words with `[REDACTED]` ruins examples.
+2. Running `forgelm audit` over the masked output re-applies the same regexes, so it confirms those patterns no longer match; it cannot find identifiers the patterns do not describe (names, for example — `--pii-ml` counts those).
 3. Aggressive regexes have caused real-world ML pipeline outages (the Phase 11.5 incident is documented in the contributor [regex standard on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/regex.md)).
 
 If you need stricter detection — for instance, a high-stakes legal corpus — pair the masker with a manual review step. Don't push the regexes harder.
@@ -67,20 +67,31 @@ To detect without modifying:
 
 ```shell
 $ forgelm audit data/policies.jsonl
-⚠ PII: 18 emails, 4 phone, 2 IBAN (medium severity)
+Data audit summary
+  Source        : data/policies.jsonl
+  Total samples : 12240
+  Splits        : train
+  └─ train: n=12240
+     length  min=24 max=1180 mean=212.4 p95=640
+     languages (top-3): en=12240
+     PII             : email=18, phone=4
+  PII severity   : worst tier = medium
+     by tier      : medium=18, low=4
 ```
 
-The audit report lists row indices and offsets, so you can inspect specific cases.
+The audit report carries counts per category and split, not row indices or offsets. To find the rows that hold a specific identifier, search for it with `forgelm reverse-pii`.
 
-## Locales
+## Regional formats
 
-| Locale | Phone | National ID | Notes |
-|---|---|---|---|
-| TR (default) | E.164 + Turkish formats | TC kimlik | Most heavily tuned. |
-| DE | E.164 + German formats | Steuer-ID | |
-| FR | E.164 + French formats | NIR | |
-| US | E.164 + (xxx) xxx-xxxx | SSN with reserved-block exclusion | |
-| Global | E.164 only | none | Fallback for unknown locales. |
+| Format | What it matches | Checksum-validated |
+|---|---|---|
+| Phone (all countries) | One pattern: a `+` country prefix, or a parenthesised area code | No |
+| TR national ID | 11 digits (TC kimlik) | Yes: two modulo-10 check digits (10th and 11th) |
+| DE national ID | ID-card serial: a letter, 7-8 digits, an optional check character | No |
+| FR national ID | NIR: 13 characters (digits, or `2A` / `2B` for Corsica) with an optional two-digit key | No |
+| US SSN | `NNN-NN-NNNN`, reserved blocks excluded | No |
+
+Only credit cards, IBANs and TC kimlik numbers are checksum-validated; the other families are matched by shape only, so treat a finding as a candidate to review rather than a confirmed identifier.
 
 The regex-based PII layer triggered by `forgelm ingest --pii-mask`
 (or the audit equivalent) detects all patterns in the table above

@@ -36,8 +36,8 @@ ForgeLM kutudan çıktığı gibi şunları ship eder:
   `forgelm verify-integrity`.
 - **EU AI Act Madde 17** QMS şablonları: `docs/qms/` (Wave 0 baseline +
   Wave 4 ISO eklemeleri).
-- **GDPR Madde 15** erişim hakkı: `forgelm reverse-pii`.
-- **GDPR Madde 17** silinme hakkı: `forgelm purge`.
+- **GDPR Madde 15**: `forgelm reverse-pii`, bir identifier'ı içeren satırları bulur (erişim yanıtının bir girdisi).
+- **GDPR Madde 17**: `forgelm purge`, bir corpus'tan satır kaldırır (silmenin bir adımı).
 - **ISO 27001 / SOC 2 uyumluluğu** — bkz. Wave 4 design doc + deployer
   rehberi.
 
@@ -259,9 +259,9 @@ Tam alan semantiği ve config yüzeyi:
 
 ### GDPR Madde 15 + 17 (Wave 2b + Wave 3)
 
-- Madde 17 silme: `forgelm purge --row-id <id> --corpus
+- Madde 17 (silmenin bir adımı): `forgelm purge --row-id <id> --corpus
   data/file.jsonl`, salted-hash audit ile (`data.erasure_*` event'leri).
-- Madde 15 erişim: `forgelm reverse-pii --query <id> --type
+- Madde 15 (erişim yanıtının bir girdisi): `forgelm reverse-pii --query <id> --type
   email|phone|... data/*.jsonl`, salted-hash audit ile
   (`data.access_request_query` event'i).
 

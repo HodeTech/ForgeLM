@@ -232,7 +232,7 @@ training:
 | `track_categories` | bool | `false` | Llama Guard S1-S14 zarar kategorilerini ayrıştır |
 | `severity_thresholds` | dict | `null` | Ciddiyet bazlı sınırlar: `{"critical": 0, "high": 0.01}` |
 | `batch_size` | int | `8` | Güvenlik değerlendirmesi için batched generation boyutu. `1` batching'i devre dışı bırakır; geniş VRAM'de throughput için artırın, küçük VRAM'de OOM riskini azaltmak için düşürün. |
-| `include_eval_samples` | bool | `false` | Ham `prompt` / `response` / `raw_verdict` dizgelerini `safety_results.json`'a yazar. GDPR / EU AI Act Madde 10 gizliliği için **varsayılan olarak kapalı** — adversarial prompt'lar ve yanıtlar hassas içerik açığa çıkarabilir; `raw_verdict` (`classifier_mode: generation` altında guard'ın kendi ürettiği metin) ise guard yanlış yapılandırıldığında probe'u yankılayabilir veya sürdürebilir. Yalnızca hata ayıklama için açın. |
+| `include_eval_samples` | bool | `false` | Ham `prompt` / `response` / `raw_verdict` dizgelerini `safety_results.json`'a yazar. GDPR Madde 25(2)'deki varsayılan veri koruma yükümlülüğü gereği **kapalıdır** — adversarial prompt'lar ve yanıtlar hassas içerik açığa çıkarabilir; `raw_verdict` (`classifier_mode: generation` altında guard'ın kendi ürettiği metin) ise guard yanlış yapılandırıldığında probe'u yankılayabilir veya sürdürebilir. Yalnızca hata ayıklama için açın. |
 
 #### `evaluation.llm_judge` (İsteğe bağlı)
 
@@ -247,7 +247,7 @@ training:
 | `min_score` | float | `5.0` | Minimum ortalama puan (1-10) |
 | `min_valid_fraction` | float | `0.8` | Ortalamanın kanıt sayılabilmesi için parse edilebilir judge puanı üretmesi gereken eval prompt oranı. Ortalama **yalnızca** parse edilebilen puanlar üzerinden hesaplanır — başarısız bir judge çağrısı düşük sayılmaz, atılır — dolayısıyla bu taban olmadan iki yüz prompt içinden tek bir `9` puanı `min_score: 8` kapısını geçiyordu. Bu oranın altında kapı, `Average judge score … below minimum`'dan ayrı bir `Insufficient valid judge evidence` gerekçesiyle başarısız olur. `0.0`, 0.11.0'a kadarki davranışa döner. |
 | `batch_size` | int | `8` | LLM-hakim turunda puanlanan (prompt, completion) çift sayısı. `1` batching'i devre dışı bırakır. |
-| `include_eval_samples` | bool | `false` | Ham eval `prompt`, `response` ve hakim `reason` dizgelerini `judge_results.json`'a yazar. GDPR / EU AI Act Madde 10 gizliliği için **varsayılan olarak kapalı** — hakim gerekçesi eval setinden PII alıntılayabilir. Yalnızca hata ayıklama için açın. |
+| `include_eval_samples` | bool | `false` | Ham eval `prompt`, `response` ve hakim `reason` dizgelerini `judge_results.json`'a yazar. GDPR Madde 25(2)'deki varsayılan veri koruma yükümlülüğü gereği **kapalıdır** — hakim gerekçesi eval setinden PII alıntılayabilir. Yalnızca hata ayıklama için açın. |
 
 > **Hakim girdisi kırpma:** her puanlama prompt'u oluşturulurken hakim,
 > eval prompt'unun en fazla ilk **500 karakterini** ve model yanıtının en fazla
@@ -259,29 +259,37 @@ training:
 > için `min_score` ayarlarken bunu göz önünde bulundurun.
 >
 > **Kaldırıldı:** `evaluation.staging_ttl_days`,
-> [`retention.staging_ttl_days`](#retention-isteğe-bağlı--gdpr-madde-17-silme-ufukları)
+> [`retention.staging_ttl_days`](#retention-isteğe-bağlı--saklama-ufukları)
 > tarafından devralınmış ve v0.8.0'da kaldırılmıştır. `retention.staging_ttl_days`
 > kullanın; eski anahtarı hâlâ set eden YAML dosyaları `EXIT_CONFIG_ERROR` ile
 > config-load başarısızlığına yol açar.
 
 ---
 
-## `retention` (İsteğe bağlı — GDPR Madde 17 silme ufukları)
+## `retention` (İsteğe bağlı — saklama ufukları)
 
-Uyumluluk, eğitim ve değerlendirme artefaktları için saklama ufuklarını
-belirler. Ufuklar GDPR Madde 5(1)(e) "saklama sınırlaması" ve Madde 17
-"silme hakkı" tarihlerini onurlandırır. Ufuklar **raporlanır**, zorlanmaz:
-`forgelm purge --check-policy` ufku aşanları listeler ve her zaman 0 ile çıkar;
-hiçbir şey otomatik silinmez, engellenmez ya da zamanlanmaz. `enforce` anahtarı
-ayrılmıştır: henüz hiçbir komut onu okumaz.
+Uyumluluk, eğitim ve değerlendirme artefaktları için saklama ufuklarıdır. Bunlar,
+GDPR Madde 5(1)(e) saklama sınırlaması ilkesini (kişisel veri yalnızca gerektiği
+kadar tutulabilir; Tüzük sabit bir süre belirlemez) uygulamanıza yardımcı olan,
+sizin belirlediğiniz sınırlardır. Değerleri kendi gereklilik (necessity)
+değerlendirmenize göre seçin: varsayılanlar ForgeLM tercihleridir, yasal süre
+değildir.
+
+Ufuklar **raporlanır, zorlanmaz**: `forgelm purge --check-policy` ufku aşanları
+listeler ve kaç tane bulursa bulsun 0 ile çıkar (yüklenemeyen `--config` 1 ile
+çıkar); hiçbir şey otomatik silinmez, engellenmez ya da zamanlanmaz. `retention:`
+bloğu yoksa hiçbir şey kontrol edilmez; `retention: {}` varsayılanları devreye alır.
+`enforce` anahtarı ayrılmıştır: henüz hiçbir komut onu dikkate almaz.
 
 | Alan | Tip | Varsayılan | Açıklama |
 |------|-----|-----------|----------|
-| `audit_log_retention_days` | int | `1825` (~5 yıl) | `audit_log.jsonl` dosyasının Madde 5(1)(e) kapsamında "geciken" olarak işaretlenmeden önce saklanacağı gün sayısı. `0` süresiz saklamayı belirtir (Madde 17(3)(b) savunması). |
-| `staging_ttl_days` | int | `7` | `forgelm reject` kararından sonra `final_model.staging.<run_id>/` dizininin planlı temizlenmeden önce saklanacağı gün sayısı. `0` süresiz saklama anlamına gelir. v0.8.0'da kaldırılan `evaluation.staging_ttl_days` yerine geçer. |
-| `ephemeral_artefact_retention_days` | int | `90` | Uyumluluk paketleri, veri denetim raporları ve diğer çalışma kapsamlı türetilmiş artefaktların saklanma süresi (gün). `0` süresiz saklama. |
-| `raw_documents_retention_days` | int | `90` | İngest edilmiş ham belgelerin (PDF / DOCX / EPUB / TXT / Markdown) operatörün ingestion-output dizininde saklanma süresi (gün). `0` süresiz saklama. |
-| `enforce` | string | `"log_only"` | Ayrılmış politika modu. Henüz hiçbir komut onu okumaz: `"log_only"`, `"warn_on_excess"` ve `"block_on_excess"` kabul edilir ve aynı davranır; bir config son ikisinden birini ayarlarsa CLI uyarır. |
+| `audit_log_retention_days` | int | `1825` (~5 yıl) | `forgelm purge --check-policy`'nin `audit_log.jsonl` dosyasını "süresi geçmiş" olarak raporladığı gün sayısı (Madde 5(1)(e)). 5 yıllık varsayılan bir ForgeLM tercihidir, yasal süre değildir. `0` bu raporu kapatır (hiçbir şey silinmez); log'u yalnızca girdiler gerekli kaldığı sürece ya da adlandırabileceğiniz belirli bir yasal saklama yükümlülüğü gerektirdiği sürece tutun. |
+| `staging_ttl_days` | int | `7` | `forgelm purge --check-policy`'nin bir `final_model.staging.<run_id>/` dizinini (ve eski `final_model.staging/`'i) "süresi geçmiş" olarak raporladığı yaş (koşumun ilk audit event'inden, yoksa audit log'un ilk event'inden, o da yoksa dizinin mtime'ından); hiçbir şey otomatik silinmez ve `forgelm reject` kararının zamanı kullanılmaz. `0` bu raporu kapatır. v0.8.0'da kaldırılan `evaluation.staging_ttl_days` yerine geçer. |
+| `ephemeral_artefact_retention_days` | int | `90` | `forgelm purge --check-policy`'nin `<output_dir>/compliance/` ve `<output_dir>/data_audit_report.json`'ı "süresi geçmiş" olarak raporladığı yaş (gün; audit log'un ilk event'inden, yoksa mtime'dan); hiçbir şey silinmez. `0` bu raporu kapatır. |
+| `raw_documents_retention_days` | int | `90` | `forgelm purge --check-policy`'nin `<output_dir>/raw_documents/` veya `<output_dir>/ingestion_output/`'u (ingest edilmiş PDF / DOCX / EPUB / TXT / Markdown) "süresi geçmiş" olarak raporladığı yaş (gün; audit log'un ilk event'inden, yoksa mtime'dan); hiçbir şey silinmez. ForgeLM bu dizinleri oluşturmaz; ufuk yalnızca orada tuttuğunuz kaynak dokümanlara uygulanır. `0` bu raporu kapatır. |
+| `enforce` | string | `"log_only"` | Ayrılmış politika modu. Hiçbir komut onu kullanmaz: `"log_only"`, `"warn_on_excess"` ve `"block_on_excess"` kabul edilir ve aynı davranır; bir config son ikisinden birini ayarlarsa eğitim ve `--dry-run` uyarır. |
+
+**Paylaşılan çıktı dizinleri.** `compliance/`, `data_audit_report.json` ve ham-belge dizinlerinin yaşı, dosyanın en son yazıldığı andan değil, audit log'un *ilk* event'inden sayılır. Birçok koşum için yeniden kullanılan bir dizinde bugün yazılmış bir paket de ufku aşmış olarak raporlanabilir: raporun listelediği bir şeyi silmeden önce dosyanın kendi tarihine bakın.
 
 > **Kaldırıldı:** `evaluation.staging_ttl_days` (v0.5.5 itibarıyla kullanımdan
 > kaldırılmıştı) v0.8.0'da kaldırılmıştır. Artık geçerli tek form

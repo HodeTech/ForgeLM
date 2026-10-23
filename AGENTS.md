@@ -85,7 +85,7 @@ ForgeLM/
 │                            # export, inference, results, utils, __main__,
 │                            # _pypdf_normalise, _script_sanity,
 │                            # _strip_pattern
-├── tests/                   # 131 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
+├── tests/                   # 133 test modules; count grows over time (run `ls tests/test_*.py | wc -l` for current)
 ├── tools/                   # CI guards: check_anchor_resolution,
 │                            # check_bilingual_parity, check_cli_help_consistency,
 │                            # check_field_descriptions, check_no_analysis_refs,
@@ -166,6 +166,8 @@ Default workflow for a non-trivial change:
    ```bash
    python3 tools/check_import_origin.py --strict && \
      ruff format . && ruff check . && pytest tests/ && \
+     python3 -m coverage run --source=tools -m pytest -q -p no:cov -o addopts="" tests/test_issue_dependencies.py tests/test_assign_on_comment.py tests/test_triage_gate.py && \
+     python3 -m coverage report --include="tools/issue_dependencies.py,tools/assign_on_comment.py,tools/triage_gate.py" --fail-under=90 && \
      node --test tests/site/*.test.cjs && \
      python3 -m forgelm --config config_template.yaml --dry-run && \
      python3 -m mypy --strict --follow-imports=silent forgelm/__init__.py forgelm/_version.py tests/typing/public_surface_probe.py && \
@@ -205,6 +207,12 @@ Default workflow for a non-trivial change:
    ```
    <!-- gauntlet:end -->
 
+   **The two `coverage` lines are a second gate.** `tools/` sits outside the
+   package's 40 % floor (its coverage source is `forgelm/`), yet three scripts
+   there run as workflows with a token that can write to issues —
+   `tools/issue_dependencies.py`, `tools/assign_on_comment.py` and
+   `tools/triage_gate.py` — so their tests must cover at least 90 % of them.
+
    **Do not "simplify" `python3 -m forgelm` back to `forgelm`.** A
    console script's `sys.path[0]` is its own `bin/` directory, never the
    cwd, so `forgelm …` imports whatever is installed in site-packages; a
@@ -223,7 +231,11 @@ Default workflow for a non-trivial change:
    `check_usermanual_schema_drift.py --strict` — validates that every
    fenced YAML key under `docs/usermanuals/` resolves against the real
    `ForgeConfig` schema, catching fabricated-field examples that would
-   fail `--dry-run`). The four after the import-origin guard are the
+   fail `--dry-run`; it also fails on a top-level block `ForgeConfig` does
+   not have — a `chat:` or `output:` example — unless the page and exact
+   key set are listed with a reason as another tool's YAML or as a
+   known-open block, and on a listed row that no longer matches). The four
+   after the import-origin guard are the
    historical gauntlet;
    the three doc guards (Wave 3 / Wave 4 / Wave 5 additions) catch
    bilingual structural drift, broken markdown anchors, and CLI ↔ docs
@@ -381,12 +393,26 @@ Work on ForgeLM is planned and tracked on GitHub, not in local notes:
   issue before you start, reference it from the pull request (`Fixes #N`, or
   `Refs #N` when the change resolves only part of a grouped issue), and quote
   finding IDs (`CR-…`, `DOC-…`, `TECH-…`, `F-W…`) in commit bodies.
+- **Do not work on an untriaged issue.** `needs-triage` means no maintainer
+  has reviewed the report yet: it may be wrong, a duplicate, already fixed or
+  not wanted. Every new issue gets the label automatically and only a
+  maintainer removes it (CONTRIBUTING.md, *Issue triage*). Do not start,
+  claim or open a pull request for an issue that carries it, and never remove
+  it yourself; tell the user the issue is untriaged instead (a maintainer
+  removes the label in GitHub once they have triaged it). A small pull request
+  with no issue, such as a typo fix, is fine.
 - **Work you find but do not do becomes an issue.** Do not leave a `TODO`, a
   roadmap-only line or a note in working memory: open an issue (English, with
   acceptance criteria) or tell the user so it can be filed. The exception is a
   security vulnerability — never a public issue; it goes to a private advisory
   as [SECURITY.md](SECURITY.md) describes.
 - **Closing is not triage.** Every item is an issue; which issues appear on the front door is decided by labels and views, never by closing them.
+- **Dependencies are links, not prose.** When an issue cannot start before
+  another is done, add a **Blocked by** link in its sidebar. The `blocked`
+  label, `/assign` and the **Issue dependencies** pull-request check
+  all follow those links (`tools/issue_dependencies.py`; CONTRIBUTING.md,
+  *Dependencies between issues*). Never set or remove `blocked` by hand, and do
+  not start work on a `blocked` issue.
 - **Name what you resolved.** For a grouped issue, list in the pull request the
   finding IDs your change resolves, so each can be ticked.
 

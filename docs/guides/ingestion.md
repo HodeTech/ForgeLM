@@ -101,12 +101,13 @@ IBAN, and national IDs (TR Kimlik No, DE Personalausweis, FR INSEE, US SSN)
 before any chunk lands in the JSONL:
 
 ```bash
-forgelm ingest ./customer_emails/ --output data/anon.jsonl --pii-mask
+forgelm ingest ./customer_emails/ --output data/masked.jsonl --pii-mask
 ```
 
 Detected spans are replaced with `[REDACTED]`. Detection is regex-based —
 false positives are intentional. Audit your output afterwards with
-`forgelm audit` to verify.
+`forgelm audit`: it re-applies the same regexes, so it confirms those patterns no longer match, and
+`--pii-ml` adds a count of names and locations. Masked text is still personal data wherever a person can be re-identified from what remains.
 
 ---
 

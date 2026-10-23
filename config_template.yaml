@@ -268,12 +268,14 @@ data:
 #   alert_on_drift: true
 #   check_interval_hours: 24
 
-# Retention horizons — GDPR Article 5(1)(e) "storage limitation" + Article 17
-# "right to erasure".  `staging_ttl_days` is the canonical staging-retention
-# field (the legacy `evaluation.staging_ttl_days` alias was removed in v0.8.0).
+# Retention horizons — operator-set limits that help implement GDPR Article 5(1)(e)
+# "storage limitation" and support Article 17 erasure handling; the defaults are
+# ForgeLM choices, not legal periods.  `staging_ttl_days` is the canonical
+# staging-retention field (the legacy `evaluation.staging_ttl_days` alias was
+# removed in v0.8.0).
 # retention:
-#   audit_log_retention_days: 1825    # ~5 years (Article 12 record-keeping baseline)
-#   staging_ttl_days: 7               # final_model.staging.<run_id>/ TTL after `forgelm reject`
+#   audit_log_retention_days: 1825    # ~5 years (ForgeLM default, not a legal period)
+#   staging_ttl_days: 7               # age at which `purge --check-policy` reports final_model.staging.<run_id>/ overdue
 #   ephemeral_artefact_retention_days: 90   # compliance bundles + audit reports
 #   raw_documents_retention_days: 90        # ingested raw docs (PDF/DOCX/EPUB/TXT/MD)
 #   enforce: "log_only"               # reserved: no command acts on it yet ("log_only" | "warn_on_excess" | "block_on_excess")

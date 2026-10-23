@@ -27,12 +27,20 @@ $ forgelm ingest ./policies/ \
     --recursive \
     --strategy markdown \
     --chunk-tokens 1024 \
+    --tokenizer "Qwen/Qwen2.5-7B-Instruct" \
     --all-mask \
     --output data/policies.jsonl
-✓ 47 dosya tarandı (12 PDF, 8 DOCX, 27 MD)
-✓ 12,240 chunk çıkarıldı (ortalama 743 token)
-✓ 18 PII eşleşmesi maskelendi, 0 sır
-✓ data/policies.jsonl yazıldı (8.2 MB)
+Ingestion summary
+  Output JSONL  : /srv/project/data/policies.jsonl
+  Files (in/out): processed=47  skipped=0
+  Chunks        : 12240
+  Total chars   : 28410553
+  By format     : docx=8, md=27, pdf=12
+  Note          : PII masking redacted 18 span(s): email=11, phone=7
+  Note          : Secrets masking enabled — no credentials detected in this corpus
+
+Next: forgelm audit /srv/project/data/policies.jsonl --output ./audit/
+Or train: forgelm --config <your.yaml>  (set data.dataset_name_or_path: /srv/project/data/policies.jsonl)
 ```
 
 `--all-mask`, `--secrets-mask --pii-mask`'in doğru sıradaki belgelenen
@@ -125,7 +133,7 @@ Yetkili liste için `forgelm ingest --help`. En sık görülenler:
 :::
 
 :::tip
-**Ingest'ten sonra her zaman audit yapın.** Temiz ingest temiz dataset anlamına gelmez. Split-arası sızıntı, near-duplicate ve maskelemenin kaçırdığı PII için `forgelm audit data/output.jsonl` koşturun.
+**Ingest'ten sonra her zaman audit yapın.** Temiz ingest temiz dataset anlamına gelmez. Split-arası sızıntı, near-duplicate ve maskelemenin kapsamadığı PII için `forgelm audit data/output.jsonl` koşturun (`forgelm audit` aynı regex'leri yeniden uygular; isim ve konumları saymak için `--pii-ml` ekleyin).
 :::
 
 ## Bkz.

@@ -95,7 +95,7 @@ ForgeLM does **not** ship a built-in quorum gate. There is no `approval.quorum` 
 
 ## Timeouts
 
-ForgeLM does **not** time out staged runs. There is no `approval.timeout_hours`, no `human_approval.timeout` event, and no auto-fail clock. A staged run waits indefinitely; if the deployer wants to expire stale staging directories, configure `retention.staging_ttl_days` instead â€” that wires into the GDPR Article 17 retention pipeline (which physically prunes the directory after the configured horizon, not into the approval gate).
+ForgeLM does **not** time out staged runs. There is no `approval.timeout_hours`, no `human_approval.timeout` event, and no auto-fail clock. A staged run waits indefinitely. `retention.staging_ttl_days` does not change that: it only makes `forgelm purge --check-policy` list staging directories older than the horizon. Nothing is deleted or expired automatically, and the report never touches the approval gate. Removing a staging directory yourself (`forgelm purge --run-id <id> --kind staging`) discards the pending model and leaves the approval undecided, so record a `forgelm reject` first if you want the decision on the audit log.
 
 ## Inspecting pending runs
 
@@ -141,7 +141,7 @@ A `--show` against a granted / rejected run prints the full timeline (request â†
 :::
 
 :::warn
-**No quorum for shipping decisions.** For high-risk production deployments, single-reviewer approval is insufficient. Always require quorum >= 2.
+**No quorum for shipping decisions.** ForgeLM records one approver per decision. If your risk assessment calls for more than one reviewer, enforce it outside ForgeLM as described above (Article 14(5) of the EU AI Act asks for an identification to be separately verified by at least two natural persons only for the remote biometric identification systems in Annex III point 1(a), with an exception for law enforcement, migration, border control and asylum where Union or national law finds it disproportionate).
 :::
 
 :::tip

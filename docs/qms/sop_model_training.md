@@ -62,7 +62,7 @@ Manual:
 
 ### 4.5 Record Retention
 
-- Compliance artifacts retained for minimum **5 years** (or as required by regulation)
+- Compliance artifacts retained for the period your retention policy sets (for example, EU AI Act Article 18 asks providers of high-risk systems to keep technical documentation, quality-management documentation and the EU declaration of conformity for 10 years after the system is placed on the market or put into service; check what applies to you)
 - Evidence bundle: `forgelm --config job.yaml --compliance-export ./archive/`
 - Store in immutable/append-only storage if available
 

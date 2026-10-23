@@ -841,19 +841,19 @@ def _collect_retention() -> Optional[Dict[str, Any]]:
     ):
         return None
     audit = _prompt_int(
-        "audit_log_retention_days (0 = retain indefinitely)",
+        "audit_log_retention_days (0 = never report)",
         1825,
         min_val=0,
         max_val=18250,
     )
-    staging = _prompt_int("staging_ttl_days (0 = retain indefinitely)", 7, min_val=0, max_val=365)
+    staging = _prompt_int("staging_ttl_days (0 = never report)", 7, min_val=0, max_val=365)
     ephemeral = _prompt_int(
-        "ephemeral_artefact_retention_days (0 = retain indefinitely)",
+        "ephemeral_artefact_retention_days (0 = never report)",
         90,
         min_val=0,
         max_val=3650,
     )
-    raw_docs = _prompt_int("raw_documents_retention_days (0 = retain indefinitely)", 90, min_val=0, max_val=3650)
+    raw_docs = _prompt_int("raw_documents_retention_days (0 = never report)", 90, min_val=0, max_val=3650)
     enforce = _prompt_choice(
         "enforcement mode (reserved: no command acts on it yet; `forgelm purge --check-policy` only reports):",
         [

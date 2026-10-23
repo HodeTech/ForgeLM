@@ -943,7 +943,7 @@ class TestRetentionConfig:
         from forgelm.config import RetentionConfig
 
         description = RetentionConfig.model_fields["enforce"].description or ""
-        assert "no command reads it" in description
+        assert "no command acts on it" in description
         assert "EXIT_EVAL_FAILURE" not in description and "aborts" not in description
 
     def test_canonical_retention_staging_ttl_days_still_works(self):

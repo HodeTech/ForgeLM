@@ -1,9 +1,9 @@
 # `forgelm reverse-pii` — Subcommand Reference
 
-> **Audience:** ForgeLM operators answering GDPR Article 15 right-of-access requests against training corpora, plus auditors verifying the resulting `data.access_request_query` audit row.
+> **Audience:** ForgeLM operators preparing GDPR Article 15 access responses against training corpora, plus auditors verifying the resulting `data.access_request_query` audit row.
 > **Mirror:** [reverse_pii_subcommand-tr.md](reverse_pii_subcommand-tr.md)
 
-`forgelm reverse-pii` is the operator-facing implementation of the **GDPR Article 15 right of access** for ForgeLM training corpora (Phase 38). Where [`forgelm purge`](purge_subcommand.md) answers "delete my row", `reverse-pii` answers "find every line where my identifier appears".
+`forgelm reverse-pii` is an input to a **GDPR Article 15 access response** for ForgeLM training corpora (Phase 38): it finds where an identifier appears, and a zero-match scan only says the literal text is absent from the files you scanned. Where [`forgelm purge`](purge_subcommand.md) answers "delete my row", `reverse-pii` answers "find every line where my identifier appears".
 
 ## Synopsis
 
@@ -47,7 +47,7 @@ $ forgelm reverse-pii --query "alice@example.com" --type email \
     --salt-source per_dir --output-dir ./outputs data/*.jsonl
 ```
 
-`--salt-source env_var` requires `FORGELM_AUDIT_SECRET` to be set; `per_dir` reads the salt file at `<output_dir>/.forgelm_audit_salt`.
+`--salt-source env_var` requires `FORGELM_AUDIT_SECRET` to be set; `per_dir` reads the salt file at `<output_dir>/.forgelm_audit_salt`. `forgelm ingest --pii-mask` writes `[REDACTED]`, not digests, so this mode finds nothing in a corpus ForgeLM masked itself; use the default plaintext scan for those.
 
 ## Identifier types
 
@@ -59,7 +59,7 @@ $ forgelm reverse-pii --query "alice@example.com" --type email \
 
 ## Cross-tool digest correlation with `forgelm purge`
 
-When `forgelm reverse-pii --query <value> --salt-source per_dir` and `forgelm purge --row-id <value>` run against the **same** `<output_dir>` (i.e. consume the same `.forgelm_audit_salt`), the `query_hash` field on `data.access_request_query` and the `target_id` field on `data.erasure_*` events are byte-identical. This lets a compliance reviewer correlate the Article 15 access request and the Article 17 erasure for the same data subject in a single audit chain, without the cleartext identifier ever leaving the operator's terminal. Pinned by `tests/test_reverse_pii.py::test_purge_target_id_matches_reverse_pii_query_hash_on_same_output_dir`.
+`forgelm purge` records `target_id` (SHA-256 of the salt plus the `--row-id` value) and `forgelm reverse-pii` records `query_hash` (the same function of the `--query` value). They are byte-identical only when all three hold: the value is the same text (a row's `id` / `row_id` and the query must be the same string; opaque UUID row ids never equal an e-mail query), both commands use the same `--output-dir` (the same `.forgelm_audit_salt`), and `FORGELM_AUDIT_SECRET` is in the same state for both (unset, or set to the same value; purge records `salt_source=env_var` when it is set). Run the access request in its default plaintext mode: `--salt-source` is not needed (the default mode already records a matching `query_hash`, and scans for the literal text); with it `reverse-pii` runs a hash-mask scan that looks for digests *inside the corpus*, so a plaintext corpus reports zero matches even when the person is there. When the ids differ, link a request to its erasure through the ticket reference you pass to `forgelm purge --justification`. This lets a compliance reviewer correlate the Article 15 access request and the Article 17 erasure for the same data subject in a single audit chain without storing the cleartext identifier in that chain. The plaintext scan output can contain cleartext matches: protect stdout, redirected files and captured logs as personal data. Pinned by `tests/test_reverse_pii.py::test_purge_target_id_matches_reverse_pii_query_hash_on_same_output_dir`.
 
 The salt at `<output_dir>/.forgelm_audit_salt` is the **identifier-hash salt only** — it does NOT participate in the audit-chain HMAC key, which is derived independently as `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)` inside `forgelm.compliance.AuditLogger.__init__`.
 
@@ -71,7 +71,7 @@ Every invocation emits exactly one event ([catalog row](audit_event_catalog.md#a
 |---|---|---|
 | `data.access_request_query` | After the scan completes (or after a mid-scan I/O failure — with `error_class` / `error_message`). | `query_hash` (salted SHA-256 of raw identifier — never raw; reuses purge's per-output-dir salt), `identifier_type` ∈ `{literal, email, phone, tr_id, us_ssn, iban, credit_card, custom}`, `scan_mode` ∈ `{plaintext, hash}`, `salt_source` ∈ `{plaintext, per_dir, env_var}`, `files_scanned` (paths), `match_count`, optional `error_class` / `error_message` |
 
-The chain row records the **hashed** identifier so the chain itself does not leak the subject's data.
+The chain row records the **hashed** identifier so the chain does not store it in clear. The digest is personal data, not anonymous data: the salt file sits next to the log, so whoever can read both can test a guessed identifier against it (it is pseudonymisation under Article 4(5) only if the salt is kept separately under its own controls). Treat the digests as personal data.
 
 ## Exit codes
 

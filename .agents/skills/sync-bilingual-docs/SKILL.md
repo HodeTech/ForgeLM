@@ -23,14 +23,13 @@ Any change to these paths or their siblings:
 - `docs/product_strategy.md` / `product_strategy-tr.md`
 - `docs/roadmap.md` / `roadmap-tr.md`
 - `docs/reference/*.md` (has matching `-tr.md`)
+- `docs/guides/*.md` and `docs/qms/*.md` (each has a `-tr.md` mirror; `docs/standards/localization.md` lists the exceptions)
 - `docs/usermanuals/{en,tr}/**/*.md` (the static-site SPA viewer source)
 
 Do **not** use for:
 - `docs/standards/*` (English only)
 - `docs/marketing/*` (gitignored working-memory; mixed languages)
-- `docs/qms/*` (English only)
 - `docs/design/*` (English only)
-- `docs/guides/*` (English only for now — Turkish is future work)
 
 Do **not** reference any file under gitignored working-memory directories
 (`docs/marketing/`, `docs/analysis/`) from the bilingual docs you edit —

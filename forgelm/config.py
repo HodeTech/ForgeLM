@@ -1001,7 +1001,7 @@ class SafetyConfig(BaseModel):
         default=False,
         description=(
             "Persist raw `prompt` / `response` strings to `safety_results.json`.  "
-            "Default OFF for GDPR / EU AI Act Art. 10 privacy by default — adversarial "
+            "Default OFF for GDPR Art. 25(2) data protection by default — adversarial "
             "test prompts and model responses may surface sensitive content.  Opt in "
             "for debugging."
         ),
@@ -1140,8 +1140,8 @@ class JudgeConfig(BaseModel):
         default=False,
         description=(
             "Persist raw eval `prompt`, `response`, and judge `reason` strings to "
-            "`judge_results.json`.  Default OFF for GDPR / EU AI Act Art. 10 "
-            "privacy by default — judge reasoning can quote PII from the eval set.  "
+            "`judge_results.json`.  Default OFF for GDPR Art. 25(2) "
+            "data protection by default — judge reasoning can quote PII from the eval set.  "
             "Opt in for debugging."
         ),
     )
@@ -1588,22 +1588,22 @@ class RetentionConfig(BaseModel):
     erasure horizons.
 
     Top-level retention block (per Phase 20 design `gdpr-erasure-design`
-    §3 + closure-plan §15.5 v2.5).  All four horizons default to values
-    chosen to be compliant out of the box for typical enterprise EU AI
-    Act use:  audit logs at 5 years (Article 12 record-keeping
-    obligation × statute-of-limitations buffer), staging at 7 days
-    (operator gets one work-week to act on a `forgelm reject`),
-    ephemeral artefacts at 90 days (compliance bundle + audit reports
-    have a quarterly review cadence in most QMS), raw documents at 90
-    days (typical ingestion-window before re-running data audit).
+    §3 + closure-plan §15.5 v2.5).  All four horizons default to
+    ForgeLM's own choices, not legal periods (GDPR Article 5(1)(e) sets
+    no fixed period):  audit logs at 5 years, staging at 7 days
+    (one work-week before `purge --check-policy` reports a staging dir),
+    ephemeral artefacts at 90 days and raw documents at 90 days (round
+    numbers chosen for ForgeLM, not review cadences or ingestion windows
+    taken from any standard).
+    Choose values from your own necessity assessment.
 
     Setting any horizon to ``0`` disables the policy for that artefact
-    kind (retain indefinitely).  The horizons are *reported*, not enforced:
+    kind (it is never reported).  The horizons are *reported*, not enforced:
     ``forgelm purge --check-policy`` lists artefacts past them and always
     exits 0; nothing is deleted, blocked or scheduled automatically.
     ``enforce`` is reserved: no command acts on it yet, so
     ``warn_on_excess`` and ``block_on_excess`` behave like ``log_only``
-    (the CLI logs a warning when a config sets either).
+    (training and ``--dry-run`` log a warning when a config sets either).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1612,16 +1612,16 @@ class RetentionConfig(BaseModel):
         default=1825,
         ge=0,
         description=(
-            "Days to retain `audit_log.jsonl` before flagging it as overdue under Article 5(1)(e). "
-            "Default 1825 = 5 years.  Set to 0 to retain indefinitely (Article 17(3)(b) defence)."
+            "Days after which `forgelm purge --check-policy` reports `audit_log.jsonl` as overdue (Article 5(1)(e)). "
+            "Default 1825 = 5 years, a ForgeLM choice, not a legal period.  Set to 0 to stop reporting it; keep the log only while it stays necessary or a nameable legal duty requires it."
         ),
     )
     staging_ttl_days: int = Field(
         default=7,
         ge=0,
         description=(
-            "Days to retain `final_model.staging.<run_id>/` after a `forgelm reject` decision before scheduled cleanup. "
-            "Set to 0 to retain indefinitely. This is the canonical staging-retention field; "
+            "Days after which `forgelm purge --check-policy` reports a `final_model.staging.<run_id>/` (or legacy `final_model.staging/`) directory as overdue (aged from the run's first audit event, else the log's first event, else mtime); nothing is deleted. "
+            "Set to 0 to stop reporting it. This is the canonical staging-retention field; "
             "the legacy `evaluation.staging_ttl_days` alias was removed in v0.8.0."
         ),
     )
@@ -1629,25 +1629,25 @@ class RetentionConfig(BaseModel):
         default=90,
         ge=0,
         description=(
-            "Days to retain compliance bundles, data audit reports, and other run-scoped derived artefacts. "
-            "Set to 0 to retain indefinitely."
+            "Age in days after which `forgelm purge --check-policy` reports `<output_dir>/compliance/` and "
+            "`<output_dir>/data_audit_report.json` as overdue (aged from the audit log's first event, else mtime); nothing is deleted. Set to 0 to stop reporting it."
         ),
     )
     raw_documents_retention_days: int = Field(
         default=90,
         ge=0,
         description=(
-            "Days to retain ingested raw documents (PDF / DOCX / EPUB / TXT / Markdown) under "
-            "the operator's ingestion-output directory.  Set to 0 to retain indefinitely. "
-            "Closes ghost-features GH-023 (was nested as `ingestion.retention.raw_documents.ttl_days`; now top-level)."
+            "Age in days after which `forgelm purge --check-policy` reports `<output_dir>/raw_documents/` or "
+            "`<output_dir>/ingestion_output/` (ingested PDF / DOCX / EPUB / TXT / Markdown) as overdue (aged from the audit log's first event, else mtime); nothing is deleted.  Set to 0 to stop reporting it. "
+            "ForgeLM does not create these directories; the horizon applies only to source documents you keep there."
         ),
     )
     enforce: Literal["log_only", "warn_on_excess", "block_on_excess"] = Field(
         default="log_only",
         description=(
-            "Reserved: no command reads it yet.  Retention horizons are only reported, read-only, by `forgelm purge "
-            "--check-policy` (always exit 0); nothing is deleted, warned about or blocked automatically.  "
-            "`warn_on_excess` and `block_on_excess` are accepted but behave like `log_only`; the CLI warns when set."
+            "Reserved: no command acts on it.  Retention horizons are only reported, read-only, by `forgelm purge "
+            "--check-policy` (exit 0 whatever it finds); nothing is deleted, warned about or blocked automatically.  "
+            "`warn_on_excess` and `block_on_excess` are accepted but behave like `log_only`; training and `--dry-run` warn when set."
         ),
     )
 
@@ -1699,7 +1699,7 @@ class ForgeConfig(BaseModel):
     )
     retention: Optional[RetentionConfig] = Field(
         default=None,
-        description="Phase 21 / GDPR Article 5(1)(e) storage limitation + Article 17 erasure horizons block.",
+        description="Retention horizons (GDPR Article 5(1)(e) storage limitation), reported by `forgelm purge --check-policy` and never enforced.",
     )
     pipeline: Optional["PipelineConfig"] = Field(
         default=None,

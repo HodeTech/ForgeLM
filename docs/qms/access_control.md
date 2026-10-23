@@ -79,7 +79,7 @@ remain in the chain forever. When an operator leaves:
 
 The HMAC-chain signing key is derived **per audit run** as
 `SHA-256(FORGELM_AUDIT_SECRET ‖ run_id)` (concatenation, see
-`AuditLogger.__init__` at `forgelm/compliance.py:164`). Note: the per-output-dir salt
+`AuditLogger.__init__` in `forgelm/compliance.py`). Note: the per-output-dir salt
 written to `<output_dir>/.forgelm_audit_salt` is a **distinct
 concern** — it salts identifier hashing inside `forgelm purge` /
 `forgelm reverse-pii` events (`_purge._resolve_salt` /

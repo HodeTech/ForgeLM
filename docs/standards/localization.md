@@ -137,6 +137,9 @@ For the parts we do translate, keep terminology consistent. A small glossary:
 | drift (model / data) | drift | Kept in English, as in the guides and the site. *Kayma* names a schema drift (*şema kayması*) or a threshold or preference shift |
 | metrics exporter | exporter | Kept in English, like *endpoint* and *webhook*; suffixes take an apostrophe (*exporter'ı*) |
 | alert / notification / warning | alarm / bildirim / uyarı | A monitoring or threshold alert (drift, cost) is *alarm*; a webhook's chat message is *bildirim*, even where English calls it an alert; a log warning is *uyarı* |
+| data subject | veri sahibi | The GDPR term; where a page quotes KVKK (Law 6698) use the law's own *ilgili kişi* |
+| controller / processor | veri sorumlusu / veri işleyen | Not *kontrolör* |
+| salt (hash salt) / digest | salt / digest | Kept in English like *hash*; not *tuz* / *özet* |
 
 When in doubt, look at sibling TR docs and match the most frequent choice. Don't invent new terminology mid-series.
 

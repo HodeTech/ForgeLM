@@ -11,40 +11,52 @@ description: Akışlı REPL'de fine-tuned modelinizi sınayın.
 
 ```shell
 $ forgelm chat ./checkpoints/customer-support
-ForgeLM 0.7.0 — checkpoints/customer-support ile sohbet
-forgelm> aboneliği nasıl iptal ederim?
-Aboneliğinizi Ayarlar → Faturalandırma → Aboneliği İptal Et adımlarıyla
-iptal edebilirsiniz. Erişiminiz mevcut faturalama döneminin sonuna kadar
-devam eder…
+ForgeLM Chat  —  type your message and press Enter
+Streaming : on  |  Temperature : 0.7
+Commands  : /help  /reset  /save  /temperature  /system  /exit
+────────────────────────────────────────────────────────
 
-forgelm> /system Türk telekom için kibar bir müşteri-destek temsilcisisin.
-[system prompt güncellendi]
+> aboneliği nasıl iptal ederim?
+Assistant: Aboneliğinizi Ayarlar → Faturalandırma → Aboneliği İptal Et
+adımlarıyla iptal edebilirsiniz. Erişiminiz mevcut faturalama döneminin
+sonuna kadar devam eder…
 
-forgelm> tarifeyi nasıl yükseltirim?
-Tarifenizi Ayarlar → Plan → Yükselt menüsünden değiştirebilirsiniz...
+> /system Türk telekom için kibar bir müşteri-destek temsilcisisin.
+[System prompt updated]
+
+> tarifeyi nasıl yükseltirim?
+Assistant: Tarifenizi Ayarlar → Plan → Yükselt menüsünden değiştirebilirsiniz...
 ```
+
+CLI çıktısı yalnızca İngilizcedir; yukarıdaki banner ve köşeli parantezli mesajlar bu yüzden çevrilmemiştir. `rich` kuruluysa banner bir panel içinde çizilir. Yeni bir system prompt sonraki turlara uygulanır; o ana kadarki konuşmayı yeniden yazmaz.
 
 ## Slash komutları
 
 | Komut | Yaptığı |
 |---|---|
 | `/reset` | Konuşma geçmişini temizle. |
-| `/save <yol>` | Konuşmayı JSONL'a kaydet. |
-| `/system <prompt>` | System prompt'u ayarla veya güncelle. |
-| `/temperature <değer>` | Sampling sıcaklığını ayarla (0.0 - 2.0). |
-| `/help` | Bu listeyi göster. |
-| `/exit` veya `Ctrl+D` | Çık. |
+| `/save [yol]` | Konuşmayı JSONL'a kaydet; yol verilmezse geçerli dizine `chat_history_<zaman damgası>.jsonl` yazar. |
+| `/system [prompt]` | System prompt'u ayarla veya güncelle; argümansız çağrılırsa mevcut olanı gösterir. |
+| `/temperature <değer>` | Sampling sıcaklığını ayarla: 0'ın üstünde ve 2.0'a kadar (`0` reddedilir). |
+| `/help` veya `/?` | Bu listeyi göster. |
+| `/exit`, `/quit` veya `Ctrl+D` | Çık. |
 
 ## Konfigürasyon
 
-```yaml
-chat:
-  default_temperature: 0.7
-  default_top_p: 0.9
-  default_max_tokens: 1024
-  default_system_prompt: "Yardımsever bir asistansın."
-  history_file: "~/.forgelm/chat-history"     # oturumlar arası kalıcı
-```
+`forgelm chat` YAML config okumaz ve `chat:` bloğu yoktur: komut satırı flag'leri ve yukarıdaki slash komutlarıyla ayarlanır.
+
+| Ayar | Flag | Varsayılan |
+|---|---|---|
+| Sohbetten önce birleştirilecek adapter | `--adapter DIR` (`--backend unsloth` ile desteklenmez) | yok |
+| Başlangıç system prompt'u | `--system PROMPT` (sonra `/system` ile değiştirin) | yok |
+| Sampling temperature | `--temperature` (sonra `/temperature` ile değiştirin) | `0.7` |
+| Yanıt başına maksimum token | `--max-new-tokens` | `512` |
+| Streaming çıktı | `--no-stream` kapatır | açık |
+| Quantize yükleme (yalnızca CUDA + bitsandbytes; aksi halde yok sayılır) | `--load-in-4bit` (NF4) veya `--load-in-8bit`; ikisi de verilirse 4-bit kazanır; `--backend unsloth` ile hiçbiri verilmezse de 4-bit varsayılandır | kapalı |
+| Model backend'i | `--backend transformers` veya `--backend unsloth` | `transformers` |
+| Modelle birlikte gelen kodu çalıştırma | `--trust-remote-code` | kapalı |
+
+Top-p, top-k ve repetition penalty sabittir (0.9 / 50 / 1.1) ve ayarlanamaz. Chat her zaman sampling yapar: seed yoktur ve greedy mod yoktur. Oturumlar arası kalıcı bir history dosyası da yoktur; bir konuşmayı `/save` ile kaydedin. Komut satırı flag'i `0.0` sıcaklığı kabul eder, ancak sampling onu reddeder; bu yüzden her tur bir `[Generation error: …]` satırıyla başarısız olur (streaming açıkken, ki varsayılandır, ancak 60 saniyelik bir beklemeden sonra). 0'ın üstünde bir değer kullanın.
 
 ## Checkpoint yükleme
 
@@ -53,7 +65,8 @@ chat:
 - LoRA adapter ağırlıklı dizin: `./checkpoints/run/`
 - Birleştirilmiş checkpoint dizini: `./checkpoints/run/merged/`
 - HuggingFace model ID: `Qwen/Qwen2.5-7B-Instruct`
-- GGUF dosyası: `./model.gguf` (alta llama.cpp)
+
+GGUF dosyalarını `forgelm chat` yüklemez: komut yalnızca Hugging Face checkpoint'lerini yükler. Bir GGUF çıktısını denemek için onu Ollama veya llama.cpp'de çalıştırın (bkz. [Deploy Hedefleri](#/deployment/deploy-targets)).
 
 LoRA checkpoint'lerinde base modeli pozisyonel argüman olarak verin ve adapter dizinini `--adapter` ile belirtin:
 
@@ -68,7 +81,7 @@ $ forgelm chat "Qwen/Qwen2.5-7B" --adapter ./checkpoints/run/
 Planlanan `--safety` bayrağı altında (yalnız önizleme — yukarıdaki nota bakın) her prompt ve yanıt Llama Guard tarafından taranır:
 
 ```text
-forgelm> [adversarial prompt]
+> [adversarial prompt]
 [Llama Guard S2 (şiddet içermeyen suç) flagledi — reddediliyor]
 Bunda yardım edemem. Soruyu farklı şekilde sormayı deneyin.
 ```
@@ -77,29 +90,26 @@ Deployment öncesi modeli jailbreak için sondalarken faydalı. Sıradan sohbett
 
 ## Multi-turn yönetimi
 
-Konuşma geçmişi bir oturum içinde korunur. Model tüm chat'i (veya `max_length`'a sığanı) görür:
+Konuşma geçmişi bir oturum içinde korunur. Model her prompt'ta system prompt'u ve son 50 soru-cevap çiftini alır; daha eski çiftler bellekte (ve `/save` dosyasında) kalır ama artık gönderilmez. Sınır token'ı değil, çiftleri sayar:
 
 ```text
-forgelm> Türkiye'nin başkenti neresi?
-Ankara.
+> Türkiye'nin başkenti neresi?
+Assistant: Ankara.
 
-forgelm> nüfusu ne kadar?
-[önceki bağlamı kullanır: "nüfusu" Ankara'ya işaret ediyor]
-Yaklaşık 5.7 milyon, son tahminlere göre...
+> nüfusu ne kadar?
+Assistant: Yaklaşık 5.7 milyon, son tahminlere göre...
 ```
 
-Sıfırdan başlamak için: `/reset`.
+İkinci yanıt, ilk tur onunla birlikte gönderildiği için mümkündür ("nüfusu" Ankara'ya işaret ediyor). Sıfırdan başlamak için: `/reset`.
 
 ## Kaydetme ve oynatma
 
 ```shell
-forgelm> /save sessions/qa-1.jsonl
-[6 tur sessions/qa-1.jsonl'a kaydedildi]
+> /save sessions/qa-1.jsonl
+[History saved → sessions/qa-1.jsonl (7 messages)]
 ```
 
-Kaydedilen JSONL, yeni bir oturumun prompt history'sine geri
-besleyerek tekrar oynatılabilir (replay tooling gelecekteki bir Pro CLI sürümü için
-roadmap'tedir).
+Dosya, satır başına bir `{"role": ..., "content": ...}` mesajı içerir: önce (ayarlıysa) system prompt, ardından oturumun tüm kullanıcı ve asistan mesajları. Yazılan system prompt, konuşma sırasında değiştirmiş olsanız bile kaydettiğiniz andaki geçerli olandır. Kaydedilen bir dosyayı bir oturuma geri yükleyen bir komut yoktur (replay tooling gelecekteki bir Pro CLI sürümü için roadmap'tedir).
 
 Oturumlar şu durumlar için faydalı:
 - Test sırasında bulduğunuz bir bug'ı yeniden üretmek.
@@ -123,11 +133,11 @@ v1 vs v2 win rate: 0.62 (sig p=0.04)
 ## Sık hatalar
 
 :::warn
-**`/temperature 0`'ı determinist saymak.** Yakın-determinist ama argmax sampling'deki eşitlik bozma hâlâ küçük varyans üretebilir. Tam yeniden üretilebilirlik için YAML'da `seed:` ayarlayın.
+**Chat'i yeniden üretilebilir saymak.** Chat her zaman sampling yapar; seed'i ve greedy modu yoktur (`/temperature 0` reddedilir), bu yüzden aynı prompt farklı yanıtlar verebilir. Keşif için kullanın; modelin gerçekte ne söylediğini `/save` dökümüyle saklayın ve tekrarlanabilir kontroller için değerlendirme komutlarını kullanın.
 :::
 
 :::warn
-**Context'i aşan uzun konuşmalar.** Geçmiş `max_length`'i aşınca ForgeLM en eski mesajları düşürür. Konuşma süreklilik kaybedebilir. Uzun test oturumlarında periyodik `/reset` kullanın.
+**Context'i aşan uzun konuşmalar.** Yalnızca son 50 çift gönderilir, ancak hiçbir şey token saymaz: uzun bir system prompt, uzun yanıtlar ya da küçük context'li bir model yine de taşabilir. Modele bağlı olarak tur ya bir `[Generation error: …]` satırıyla başarısız olur (geçmişe eklenmez) ya da üretim bozulmuş çıktıyla devam eder ve yalnızca `transformers` bir uyarı verir. Uzun test oturumlarında periyodik `/reset` kullanın.
 :::
 
 :::tip

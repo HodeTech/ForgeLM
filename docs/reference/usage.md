@@ -187,7 +187,7 @@ forgelm ingest ./scan.pdf --strategy sliding --chunk-size 1024 --overlap 128 \
   --output data/scan.jsonl
 
 # Mask PII before writing
-forgelm ingest ./customer_emails/ --pii-mask --output data/anon.jsonl
+forgelm ingest ./customer_emails/ --pii-mask --output data/masked.jsonl
 
 # Token-aware chunking — sizes chunks against your model's vocab
 forgelm ingest ./policies/ --recursive --output data/policies.jsonl \

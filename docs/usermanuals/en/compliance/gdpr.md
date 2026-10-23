@@ -19,7 +19,7 @@ GDPR (Europe) and KVKK (Türkiye) impose data protection requirements on persona
 | **Integrity & confidentiality** | GDPR Art. 5(1)(f) | Protect against unauthorised access. |
 | **Accountability** | GDPR Art. 5(2) | You must be able to demonstrate compliance. |
 
-KVKK (Türkiye) mirrors these principles closely.
+KVKK (Türkiye, Law 6698) sets similar principles in its Article 4. Article 11 gives data subjects the right to learn whether their data are processed and to request erasure or destruction (Article 11(1)(e), under the conditions of Article 7, which also obliges the controller to erase, destroy or anonymise data once the reason for processing ends), and the controller must conclude a request within thirty days at the latest (Article 13(2)). KVKK has no separate accountability principle, and its security duties sit in Article 12.
 
 ## How ForgeLM addresses each
 
@@ -31,7 +31,7 @@ PII masking at ingest replaces the identifier formats ForgeLM detects with a pla
 $ forgelm ingest ./policies/ --recursive --strategy markdown --pii-mask --output data/policies.jsonl
 ```
 
-The detectors cover email, phone, credit card, IBAN, and the Turkish, German, French and US national-ID formats; every match becomes `[REDACTED]`. **Names, addresses, dates of birth, health data and other free text are not detected**, and the patterns are tuned to miss a borderline match rather than redact ordinary prose. Masking reduces the personal data in the JSONL; it does not remove identifiable subjects from it. See [PII Masking](#/data/pii-masking).
+The detectors cover email, phone, credit card, IBAN, and the Turkish, German, French and US national-ID formats; every match becomes `[REDACTED]`. **Names, addresses, dates of birth, health data and other free text are not detected**, and the patterns are tuned to miss a borderline match rather than redact ordinary prose. Masking reduces the personal data in the JSONL; it does not remove identifiable subjects from it. To measure how many names and locations (and, for some language models, organisations) remain, run `forgelm audit --pii-ml`: it adds Presidio NER **detection**, which reports per-category counts for each split (not which rows or which names) and masks nothing. It needs the `ingestion-pii-ml` extra and a spaCy model (for a language without a dedicated model, such as Turkish, `--pii-ml-language xx` uses `xx_ent_wiki_sm`). To find a known name, search for it with `forgelm reverse-pii`. See [PII Masking](#/data/pii-masking) and [ML-NER PII](#/data/pii-ml).
 
 ### Accountability (Art. 5(2))
 
@@ -53,7 +53,7 @@ retention:
   ephemeral_artefact_retention_days: 365
 ```
 
-`forgelm purge --check-policy --config config.yaml` lists artefacts that are past their horizon and always exits 0. Nothing is deleted automatically and nothing is written to the audit log for it; deleting what is overdue is your storage layer's job. (`retention.enforce` is reserved: no command acts on it yet.)
+`forgelm purge --check-policy --config config.yaml --output-dir <training.output_dir>` lists the artefacts in that directory that are past their horizon and exits 0 however many it finds (without `--output-dir` it scans the current directory, not `training.output_dir`). `config.yaml` can be your training config or a file that holds only the `retention:` block above. Nothing is deleted automatically and nothing is written to the audit log for it; deleting what is overdue is your storage layer's job. (`retention.enforce` is reserved: no command acts on it yet.) ForgeLM does not create `raw_documents/` or `ingestion_output/`, so `raw_documents_retention_days` has an effect only if you keep source documents under `<training.output_dir>/raw_documents/` or `ingestion_output/`.
 
 ## Data subject requests
 
@@ -66,17 +66,18 @@ Most-common request types and how ForgeLM helps:
 Search your training data for the person's identifier:
 
 ```shell
-$ forgelm reverse-pii --query "ali@example.com" data/*.jsonl
+$ forgelm reverse-pii --query "ali@example.com" --output-dir ./outputs data/*.jsonl
+No matches for identifier hash 3f2a9c1e5b7d4a60… (literal, plaintext mode) in 3 file(s).
 ```
 
-The scan reports the lines where the identifier appears; zero matches is a valid answer. It finds what is literally in the files you point it at. Masking only removes the identifier formats it detects, so a name or an undetected variant can remain, and the raw source documents are not covered by a scan of the masked JSONL: search those separately. ForgeLM cannot tell you what a trained model remembers.
+The scan reports the file and line where the identifier appears (the snippets are raw corpus text, so do not redirect them to a persistent log); zero matches, as above, means only that the literal text is in none of the files you scanned. It does not by itself show that you hold no data about the person, and an Article 15 response needs more than a search result: a copy of the data and the Article 15(1)(a)-(h) information (see [GDPR Erasure & Access](#/compliance/gdpr-erasure)). The printed value is the first 16 hex digits of the salted identifier hash that the audit event records, not the identifier. `--output-dir` is where ForgeLM keeps the per-directory salt (`.forgelm_audit_salt`) and appends the `data.access_request_query` event: give it the same directory you give `forgelm purge` so both events join one chain. Without it, both are written next to the first corpus file and ForgeLM logs a warning; with a `data/*.jsonl` glob that puts `audit_log.jsonl` among your corpus files, so always pass `--output-dir`. It finds what is literally in the files you point it at: the match is case-sensitive and compares raw file text, so search spelling and case variants as well (`--type custom --query '(?i)…'`), and note that a corpus written with ASCII escapes such as `\u00e7` hides non-ASCII names from a literal query. Masking only removes the identifier formats it detects, so a name or an undetected variant can remain, and the raw source documents are not covered by a scan of the masked JSONL: search those separately. ForgeLM cannot tell you what a trained model remembers.
 
 ### Right to erasure (Art. 17)
 
 "Delete my data."
 
 If a person's data was in your training set:
-1. Find the rows with `forgelm reverse-pii`, then remove them with `forgelm purge --row-id <id> --corpus <file>`; every erasure is written to the audit log. `--row-id` is matched against the row's `id` or `row_id` field and never against a line number, and `forgelm ingest` does not write either field, so give every row a stable id **before you train** (see below). A corpus without ids cannot be purged row by row.
+1. Find the rows with `forgelm reverse-pii`, then remove them with `forgelm purge --row-id <id> --corpus <file> --output-dir ./outputs` (the same directory as `reverse-pii`; use your training output directory so purge can also warn about a trained `final_model/`); every erasure is written to the audit log. `--row-id` is matched against the row's `id` or `row_id` field and never against a line number, and `forgelm ingest` does not write either field, so give every row a stable id **before you train** (see below). A corpus without ids cannot be purged row by row.
 2. Source documents may still hold it — drop them from your raw store and re-ingest if necessary.
 3. The model may have memorised some details — see "model-level erasure" below.
 
@@ -106,11 +107,11 @@ finally:
         os.remove(tmp)
 ```
 
-Train from the file with ids. `forgelm reverse-pii` reports the file and line where the identifier occurs; read that row's `id` from the file and pass it to `forgelm purge --row-id`. Re-assigning ids after training breaks the link between the audit log and the corpus, so assign once.
+Train from the file with ids. `forgelm reverse-pii` reports the file and line where the identifier occurs; read that row's `id` from the file and pass it to `forgelm purge --row-id`. Re-assigning ids after training breaks the link between the audit log and the corpus, so assign once. Once you have checked the new file, move or delete the original `data/train.jsonl`: it still holds every row without an id, so a `data/*.jsonl` glob matches both copies, `reverse-pii` reports the person in each, and `purge` edits only the file you name with `--corpus`.
 
 ### Model-level erasure
 
-LLMs can memorise rare strings from training. Even with PII masking, removing all traces from a deployed model is hard. ForgeLM's defences:
+LLMs can memorise rare strings from training. Even with PII masking, removing all traces from a deployed model is hard. EDPB Opinion 28/2024 says a model trained on personal data is not always anonymous, so whether yours is has to be assessed case by case; until you can show that it is, plan your answers to access and erasure requests as if the trained weights might still contain personal data. ForgeLM's defences:
 
 - **Reduce what goes in:** PII masking and deduplication (memorised data is usually duplicated data).
 - **Memorisation is not measured:** ForgeLM does not test whether a trained model reproduces a given string.
