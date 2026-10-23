@@ -1150,7 +1150,7 @@ def _add_purge_subcommand(subparsers) -> None:
         type=str,
         default=argparse.SUPPRESS,
         metavar="PATH",
-        help="YAML config.  Row mode: detects the webhook block for the external-copies warning.  --check-policy: supplies the `retention:` horizons (without it nothing is checked and the report says so).  Run mode does not read it.",
+        help="YAML config.  Row mode: names the training directories (`training.output_dir`, `training.final_model_dir`, pipeline stages, `merge.output_dir`) scanned for the memorisation warning, and its webhook block feeds the external-copies warning.  Run mode: `training.final_model_dir` names the staging directory to erase.  --check-policy: supplies the `retention:` horizons (without it nothing is checked and the report says so); a full config also names the staging directory to report.",
     )
     p.add_argument(
         "--justification",

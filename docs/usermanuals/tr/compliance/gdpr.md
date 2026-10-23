@@ -77,7 +77,7 @@ Tarama, tanımlayıcının geçtiği dosyayı ve satırı raporlar (snippet'ler 
 "Verilerimi silin."
 
 Bir kişinin verisi eğitim setinizdeydi:
-1. Satırları `forgelm reverse-pii` ile bulun, sonra `forgelm purge --row-id <id> --corpus <dosya> --output-dir ./outputs` ile kaldırın (`reverse-pii` ile aynı dizin; purge'ün eğitilmiş bir `final_model/` için de uyarabilmesi adına eğitim çıktı dizininizi kullanın); her silme audit log'a yazılır. `--row-id` satırın `id` veya `row_id` alanıyla eşleştirilir, satır numarasıyla asla; `forgelm ingest` bu alanlardan hiçbirini yazmaz. Bu yüzden **eğitimden önce** her satıra kalıcı bir id verin (aşağıya bakın). Id'si olmayan bir corpus satır satır silinemez.
+1. Satırları `forgelm reverse-pii` ile bulun, sonra `forgelm purge --row-id <id> --corpus <dosya> --output-dir ./outputs` ile kaldırın (`reverse-pii` ile aynı dizin; purge'ün eğitilmiş bir model, onun staging dizini veya checkpoint'ler için de uyarabilmesi adına eğitim çıktı dizininizi kullanın); her silme audit log'a yazılır. `--row-id` yalnızca satırın `id` veya `row_id` alanıyla eşleştirilir, satırın metniyle ya da satır numarasıyla asla; `forgelm ingest` bu alanlardan hiçbirini yazmaz. Bu yüzden **eğitimden önce** her satıra kalıcı bir id verin (aşağıya bakın). Id'si olmayan bir corpus satır satır silinemez.
 2. Ham kaynak dokümanlar hâlâ içerebilir — ham deponuzdan düşürün ve gerekirse yeniden ingest edin.
 3. Model bazı detayları ezberlemiş olabilir — aşağıdaki "model-seviyesi silme"ye bakın.
 

@@ -77,7 +77,7 @@ The scan reports the file and line where the identifier appears (the snippets ar
 "Delete my data."
 
 If a person's data was in your training set:
-1. Find the rows with `forgelm reverse-pii`, then remove them with `forgelm purge --row-id <id> --corpus <file> --output-dir ./outputs` (the same directory as `reverse-pii`; use your training output directory so purge can also warn about a trained `final_model/`); every erasure is written to the audit log. `--row-id` is matched against the row's `id` or `row_id` field and never against a line number, and `forgelm ingest` does not write either field, so give every row a stable id **before you train** (see below). A corpus without ids cannot be purged row by row.
+1. Find the rows with `forgelm reverse-pii`, then remove them with `forgelm purge --row-id <id> --corpus <file> --output-dir ./outputs` (the same directory as `reverse-pii`; use your training output directory so purge can also warn about a trained model, its staging directory or checkpoints); every erasure is written to the audit log. `--row-id` is matched against the row's `id` or `row_id` field only, never against the row's text or a line number, and `forgelm ingest` does not write either field, so give every row a stable id **before you train** (see below). A corpus without ids cannot be purged row by row.
 2. Source documents may still hold it — drop them from your raw store and re-ingest if necessary.
 3. The model may have memorised some details — see "model-level erasure" below.
 

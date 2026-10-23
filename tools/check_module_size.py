@@ -493,7 +493,7 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
         ),
     ),
     "forgelm/cli/subcommands/_purge.py": _DeferredSplit(
-        budget=1287,
+        budget=1304,
         deferred_at_loc=1215,
         budget_history=(
             "2026-10-09 (Phase 16 S1-S3 review, 1215 -> 1216, +1): the `dumps_strict` import. "
@@ -505,10 +505,12 @@ _DEFERRED_SPLITS: dict[str, _DeferredSplit] = {
             "`--output-dir` is omitted. The default (the corpus directory) silently pointed the memorisation "
             "check at a directory that never holds a trained model, so the message has to sit where the "
             "default is resolved. Taken as a raise rather than a split per decision C-18.",
-            "2026-10-24 (#102 remainder, CR-A10-022 remainder + CR-A10-042, 1224 -> 1287, +63): config-driven "
-            "memorisation detection — scanning the configured training.output_dir / final_model_dir for "
-            "checkpoint-* and .staging.* artefacts with a symlink-escape guard, plus the payload field. "
-            "Taken as a raise rather than a split per decision C-18.",
+            "2026-10-24 (#102, CR-A10-022 + CR-A10-042, 1224 -> 1304, +80): the memorisation check follows the "
+            "layouts the trainer writes: the model directory, its `<final_model_dir>.staging.<run_id>` sibling and "
+            "`checkpoint-*` under the output dir, under the loaded config's `training` and `pipeline` stages, and "
+            "`merge.output_dir`. The run-scoped staging purge and the retention report take their staging name from "
+            "`training.final_model_dir`; the scan survives an unreadable entry or audit log, because it runs after "
+            "the row is already erased. Taken as a raise rather than a split per decision C-18.",
         ),
         reason=(
             "GDPR purge: row-id resolution + run-id resolution + retention-policy "

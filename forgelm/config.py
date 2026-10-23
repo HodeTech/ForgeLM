@@ -1620,7 +1620,7 @@ class RetentionConfig(BaseModel):
         default=7,
         ge=0,
         description=(
-            "Days after which `forgelm purge --check-policy` reports a `final_model.staging.<run_id>/` (or legacy `final_model.staging/`) directory as overdue (aged from the run's first audit event, else the log's first event, else mtime); nothing is deleted. "
+            "Days after which `forgelm purge --check-policy` reports a `<final_model_dir>.staging.<run_id>/` (or legacy `<final_model_dir>.staging/`) directory as overdue (aged from the run's first audit event, else the log's first event, else mtime); nothing is deleted. "
             "Set to 0 to stop reporting it. This is the canonical staging-retention field; "
             "the legacy `evaluation.staging_ttl_days` alias was removed in v0.8.0."
         ),
