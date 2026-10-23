@@ -53,7 +53,7 @@ retention:
   ephemeral_artefact_retention_days: 365
 ```
 
-`forgelm purge --check-policy --config config.yaml --output-dir <training.output_dir>` lists the artefacts in that directory that are past their horizon and exits 0 however many it finds (without `--output-dir` it scans the current directory, not `training.output_dir`). Nothing is deleted automatically and nothing is written to the audit log for it; deleting what is overdue is your storage layer's job. (`retention.enforce` is reserved: no command acts on it yet.) ForgeLM does not create `raw_documents/` or `ingestion_output/`, so `raw_documents_retention_days` has an effect only if you keep source documents under `<training.output_dir>/raw_documents/` or `ingestion_output/`.
+`forgelm purge --check-policy --config config.yaml --output-dir <training.output_dir>` lists the artefacts in that directory that are past their horizon and exits 0 however many it finds (without `--output-dir` it scans the current directory, not `training.output_dir`). `config.yaml` can be your training config or a file that holds only the `retention:` block above. Nothing is deleted automatically and nothing is written to the audit log for it; deleting what is overdue is your storage layer's job. (`retention.enforce` is reserved: no command acts on it yet.) ForgeLM does not create `raw_documents/` or `ingestion_output/`, so `raw_documents_retention_days` has an effect only if you keep source documents under `<training.output_dir>/raw_documents/` or `ingestion_output/`.
 
 ## Data subject requests
 

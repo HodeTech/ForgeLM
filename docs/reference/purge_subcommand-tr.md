@@ -56,7 +56,7 @@ JSONL eğitim corpus'undan `id` (veya `row_id`) field'ı ile tanımlanan tek bir
 
 ### Retention-policy raporu (`--check-policy`)
 
-Salt-okunur tarama. `<output_dir>` üzerinde dolaşır, her artefact'ın yaşını (kanonik: `final_model.staging.<run_id>/` dizini için koşumun ilk audit event'i, yoksa audit-log genesis `timestamp`'i; fallback: dosya sistemi `mtime`'ı, `age_source=mtime` flag'iyle) yüklü config'in `retention:` horizon'larıyla karşılaştırır ve yapısal bir ihlal listesi yayar.
+Salt-okunur tarama. `<output_dir>` üzerinde dolaşır, her artefact'ın yaşını (kanonik: `final_model.staging.<run_id>/` dizini için koşumun ilk audit event'i, yoksa audit-log genesis `timestamp`'i; fallback: dosya sistemi `mtime`'ı, `age_source=mtime` flag'iyle) yüklü config'in `retention:` horizon'larıyla karşılaştırır ve yapısal bir ihlal listesi yayar. Config, tam bir eğitim config'i ya da tek üst düzey anahtarı `retention:` olan bir YAML dosyası olabilir; başka bir üst düzey anahtar içeren dosya tam config olarak doğrulanır.
 
 **Paylaşılan çıktı dizinleri.** `compliance/`, `data_audit_report.json` ve ham-belge dizinlerinin yaşı, dosyanın en son yazıldığı andan değil, audit log'un *ilk* event'inden sayılır. Birçok koşum için yeniden kullanılan bir dizinde bugün yazılmış bir paket de ufku aşmış olarak raporlanabilir: raporun listelediği bir şeyi silmeden önce dosyanın kendi tarihine bakın.
 

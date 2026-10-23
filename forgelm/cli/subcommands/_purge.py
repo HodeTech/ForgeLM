@@ -1125,18 +1125,21 @@ def _run_purge_check_policy(args, output_format: str) -> None:
     malformed YAML or a Pydantic validation error must surface as
     ``EXIT_CONFIG_ERROR`` rather than silently degrading to a
     "no retention block" notice (which the operator would mistake
-    for "no violations").
+    for "no violations").  The file may hold only ``retention:``
+    (#1054); see ``_load_retention_policy``.
     """
     import yaml as _yaml
 
     from forgelm.config import ConfigError
 
+    from .._config_load import _load_retention_policy
+
     try:
-        config_loaded = _maybe_load_config(getattr(args, "config", None), strict=True)
+        retention = _load_retention_policy(getattr(args, "config", None))
     except (ConfigError, OSError, _yaml.YAMLError) as exc:
         # OSError covers FileNotFoundError + permission denied; ConfigError
-        # wraps Pydantic ValidationError raised by ``load_config``;
-        # ``yaml.YAMLError`` mirrors the inner catch tuple in
+        # wraps Pydantic ValidationError and YAML parse errors;
+        # ``yaml.YAMLError`` mirrors the catch tuple in
         # ``_maybe_load_config`` so a malformed YAML that bypasses the
         # ConfigError wrap still surfaces a formatted operator-facing
         # message instead of a stack trace. Any other class would be a
@@ -1146,7 +1149,7 @@ def _run_purge_check_policy(args, output_format: str) -> None:
             f"--check-policy could not load --config: {exc}",
             EXIT_CONFIG_ERROR,
         )
-    if config_loaded is None or getattr(config_loaded, "retention", None) is None:
+    if retention is None:
         msg = (
             "No `retention:` block in the loaded config; nothing to enforce.  "
             "See `docs/guides/gdpr_erasure.md` for the schema."
@@ -1158,7 +1161,7 @@ def _run_purge_check_policy(args, output_format: str) -> None:
         sys.exit(EXIT_SUCCESS)
 
     output_dir = args.output_dir or "."
-    violations = _scan_retention_violations(config_loaded.retention, output_dir)
+    violations = _scan_retention_violations(retention, output_dir)
     if output_format == "json":
         print(dumps_strict({"success": True, "violations": violations, "count": len(violations)}, indent=2))
     else:
@@ -1413,23 +1416,16 @@ def _resolve_artefact_age(
 # ---------------------------------------------------------------------------
 
 
-def _maybe_load_config(config_path: Optional[str], *, strict: bool = False):
-    """Load the ``ForgeConfig`` from YAML.
+def _maybe_load_config(config_path: Optional[str]):
+    """Load the ``ForgeConfig`` from YAML, best effort.
 
-    ``strict=False`` (default) is the best-effort mode used by the
-    row-id / run-id erasure paths: those subcommands work without a
-    config (the corpus-row erasure is intentionally config-agnostic),
-    so a missing / unreadable / invalid YAML falls back to ``None``.
-    When *config_path* was explicitly supplied the fallback is logged
-    at ``WARNING`` (not silent) so an operator relying on it for
-    external-copies detection sees that the load failed.
-
-    ``strict=True`` is used by ``--check-policy`` where the operator
-    is *explicitly* asking for a retention-policy report against the
-    loaded config.  In that mode a malformed YAML or a schema error
-    must surface as the original ``ConfigError`` / ``OSError`` so the
-    operator sees the validation failure instead of a misleading
-    "no `retention:` block" notice.
+    Used by the row-id erasure path, which works without a config (the
+    corpus-row erasure is intentionally config-agnostic), so a missing /
+    unreadable / invalid YAML falls back to ``None``.  When *config_path*
+    was explicitly supplied the fallback is logged at ``WARNING`` (not
+    silent) so an operator relying on it for external-copies detection
+    sees that the load failed.  ``--check-policy`` loads its config
+    strictly, through ``_load_retention_policy``.
     """
     if not config_path:
         return None
@@ -1446,8 +1442,6 @@ def _maybe_load_config(config_path: Optional[str], *, strict: bool = False):
     try:
         return load_config(config_path)
     except (ConfigError, OSError, _yaml.YAMLError) as exc:
-        if strict:
-            raise
         # Best-effort fallback: row-id / run-id paths run config-free.
         # WARNING, not DEBUG: an operator who explicitly passed --config
         # (e.g. to surface the external-copies webhook warning) must see

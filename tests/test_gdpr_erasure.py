@@ -1112,6 +1112,104 @@ data:
             _run_purge_cmd(args, output_format="json")
         assert ei.value.code == 0
 
+    def test_check_policy_retention_only_config_applies_its_horizon(self, tmp_path: Path, capsys) -> None:
+        """#1054: a file holding only `retention:` is accepted, and its horizon is the one applied.
+
+        The report is 60 days old: past the configured 30-day horizon, within the 90-day default,
+        so a loader that fell back to the defaults would report nothing.
+        """
+        import time
+
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        report = tmp_path / "data_audit_report.json"
+        report.write_text("{}")
+        sixty_days_ago = time.time() - 60 * 86400
+        os.utime(report, (sixty_days_ago, sixty_days_ago))
+        cfg = tmp_path / "retention-only.yaml"
+        cfg.write_text("retention:\n  ephemeral_artefact_retention_days: 30\n")
+        args = _build_args(check_policy=True, config=str(cfg), output_dir=str(tmp_path))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+        assert ei.value.code == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["success"] is True
+        assert data["count"] == 1
+        assert data["violations"][0]["artefact_kind"] == "data_audit_report"
+        assert data["violations"][0]["horizon_days"] == 30
+
+    def test_check_policy_retention_only_null_block_has_nothing_to_enforce(self, tmp_path: Path, capsys) -> None:
+        """#1054: `retention:` with no value behaves as in a full config: the "nothing to enforce" note, exit 0."""
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        cfg = tmp_path / "retention-null.yaml"
+        cfg.write_text("retention:\n")
+        args = _build_args(check_policy=True, config=str(cfg), output_dir=str(tmp_path))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+        assert ei.value.code == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["violations"] == []
+        assert "count" not in data
+        assert "nothing to enforce" in data["note"]
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "retention:\n  ephemeral_artefact_retention_days: 30\nretension:\n  staging_ttl_days: 1\n",
+            "retention:\n  ephemeral_artefact_retention_days: 30\ntraining:\n  num_train_epochs: 3\n",
+        ],
+        ids=["misspelt-top-level-key", "partial-training-config"],
+    )
+    def test_check_policy_other_top_level_keys_mean_a_full_config(self, tmp_path: Path, body: str) -> None:
+        """#1054: only a file whose sole key is `retention` skips full validation; a typo is not ignored."""
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(body)
+        args = _build_args(check_policy=True, config=str(cfg), output_dir=str(tmp_path))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+        assert ei.value.code == 1
+
+    def test_check_policy_retention_only_error_omits_raw_input(self, tmp_path: Path, capsys) -> None:
+        """#1054: like a full config's, a retention-only validation error names the field but not the value."""
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        cfg = tmp_path / "retention-secret.yaml"
+        cfg.write_text("retention:\n  ephemeral_artefact_retention_days: fake-secret-value\n  api_token: fake-token\n")
+        args = _build_args(check_policy=True, config=str(cfg), output_dir=str(tmp_path))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+        assert ei.value.code == 1
+        error = json.loads(capsys.readouterr().out)["error"]
+        assert "ephemeral_artefact_retention_days" in error
+        assert "api_token" in error
+        assert "fake-secret-value" not in error
+        assert "fake-token" not in error
+
+    def test_check_policy_missing_config_exits_config_error(self, tmp_path: Path, capsys) -> None:
+        """An explicit `--config` that does not exist exits 1 with the usual not-found message."""
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        missing = tmp_path / "missing.yaml"
+        args = _build_args(check_policy=True, config=str(missing), output_dir=str(tmp_path))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+        assert ei.value.code == 1
+        assert f"Configuration file not found: {missing}" in json.loads(capsys.readouterr().out)["error"]
+
+    def test_check_policy_retention_only_invalid_exits_config_error(self, tmp_path: Path) -> None:
+        """#1054: an invalid retention block in a retention-only file exits EXIT_CONFIG_ERROR (1)."""
+        from forgelm.cli.subcommands._purge import _run_purge_cmd
+
+        cfg = tmp_path / "retention-invalid.yaml"
+        cfg.write_text("retention:\n  invalid_horizon_field: 30\n")
+        args = _build_args(check_policy=True, config=str(cfg), output_dir=str(tmp_path))
+        with pytest.raises(SystemExit) as ei:
+            _run_purge_cmd(args, output_format="json")
+        assert ei.value.code == 1
+
 
 class TestAtomicityFsyncFdPinning:
     """F-21-T-06: the existing `test_atomic_rewrite_fsyncs_before_rename`
