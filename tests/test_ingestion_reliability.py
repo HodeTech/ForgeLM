@@ -482,7 +482,7 @@ class TestTask8TxtBomMdFrontmatter:
         )
         all_text = "\n".join(_read_jsonl(out))
         # The BOM character U+FEFF must not survive into the JSONL.
-        assert "﻿" not in all_text
+        assert "\ufeff" not in all_text
         assert "Header Line One" in all_text
 
     def test_md_frontmatter_stripped_by_default(self, tmp_path):
@@ -965,7 +965,7 @@ class TestRoundTwoFixes:
         out = tmp_path / "out.jsonl"
         ingest_path(str(src), output_path=str(out), strategy="paragraph")
         all_text = "\n".join(_read_jsonl(out))
-        assert "﻿" not in all_text
+        assert "\ufeff" not in all_text
         assert "Hello" in all_text
 
     def test_strip_pattern_catches_escape_shape_redos(self, tmp_path):

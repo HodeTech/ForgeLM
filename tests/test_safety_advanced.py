@@ -1502,7 +1502,7 @@ class TestGenerateGuardVerdict:
     def test_neutralise_control_tokens_fails_closed_when_no_separator_is_inert(self):
         from forgelm.safety._score_generation import _neutralise_control_tokens
 
-        tokens = ["<| a|>", "<|​b|>", "<|⁠c|>"]
+        tokens = ["<| a|>", "<|\u200bb|>", "<|\u2060c|>"]
         with pytest.raises(ValueError, match="inert separator"):
             _neutralise_control_tokens("<| a|>", tokens)
 

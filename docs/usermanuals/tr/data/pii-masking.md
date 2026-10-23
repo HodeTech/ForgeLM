@@ -31,7 +31,16 @@ $ forgelm ingest ./policies/ \
     --recursive --strategy markdown \
     --pii-mask \
     --output data/policies.jsonl
-✓ 12,240 chunk üzerinde 18 PII eşleşmesi maskelendi
+Ingestion summary
+  Output JSONL  : /srv/project/data/policies.jsonl
+  Files (in/out): processed=47  skipped=0
+  Chunks        : 12240
+  Total chars   : 28410553
+  By format     : docx=8, md=27, pdf=12
+  Note          : PII masking redacted 18 span(s): email=11, phone=7
+
+Next: forgelm audit /srv/project/data/policies.jsonl --output ./audit/
+Or train: forgelm --config <your.yaml>  (set data.dataset_name_or_path: /srv/project/data/policies.jsonl)
 ```
 
 Ingest sonrası her eşleşme bir placeholder'la değiştirilir:
@@ -63,21 +72,24 @@ Daha katı tespit gerekirse — örneğin yüksek-stake bir hukuk corpus'u — m
 
 ## Sadece-audit modu
 
-Modifiye etmeden tespit için:
+Modifiye etmeden tespit için `--pii-mask` olmadan ingest edilmiş bir corpus'u audit edin. Burada `data/policies-raw.jsonl`, yukarıdaki örnekle aynı dokümanları içerir:
 
 ```shell
-$ forgelm audit data/policies.jsonl
+$ forgelm audit data/policies-raw.jsonl
 Data audit summary
-  Source        : data/policies.jsonl
+  Source        : /srv/project/data/policies-raw.jsonl
   Total samples : 12240
   Splits        : train
   └─ train: n=12240
      length  min=24 max=1180 mean=212.4 p95=640
      languages (top-3): en=12240
-     PII             : email=18, phone=4
+     PII             : email=11, phone=7
   PII severity   : worst tier = medium
-     by tier      : medium=18, low=4
+     by tier      : medium=11, low=7
+Report written to: audit/data_audit_report.json
 ```
+
+Bunun yerine maskelenmiş `data/policies.jsonl` audit edilirse hiç `PII` satırı yazdırılmaz, çünkü aynı pattern'ler artık onda eşleşmez.
 
 Audit raporu kategori ve split başına sayımları taşır; satır indislerini ya da offset'leri değil. Belirli bir tanımlayıcıyı içeren satırları bulmak için onu `forgelm reverse-pii` ile arayın.
 

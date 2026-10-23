@@ -31,7 +31,16 @@ $ forgelm ingest ./policies/ \
     --recursive --strategy markdown \
     --pii-mask \
     --output data/policies.jsonl
-✓ masked 18 PII matches across 12,240 chunks
+Ingestion summary
+  Output JSONL  : /srv/project/data/policies.jsonl
+  Files (in/out): processed=47  skipped=0
+  Chunks        : 12240
+  Total chars   : 28410553
+  By format     : docx=8, md=27, pdf=12
+  Note          : PII masking redacted 18 span(s): email=11, phone=7
+
+Next: forgelm audit /srv/project/data/policies.jsonl --output ./audit/
+Or train: forgelm --config <your.yaml>  (set data.dataset_name_or_path: /srv/project/data/policies.jsonl)
 ```
 
 After ingest, every match is replaced with a placeholder:
@@ -63,21 +72,24 @@ If you need stricter detection — for instance, a high-stakes legal corpus — 
 
 ## Audit-only mode
 
-To detect without modifying:
+To detect without modifying, audit a corpus that was ingested without `--pii-mask`. Here `data/policies-raw.jsonl` holds the same documents as the example above:
 
 ```shell
-$ forgelm audit data/policies.jsonl
+$ forgelm audit data/policies-raw.jsonl
 Data audit summary
-  Source        : data/policies.jsonl
+  Source        : /srv/project/data/policies-raw.jsonl
   Total samples : 12240
   Splits        : train
   └─ train: n=12240
      length  min=24 max=1180 mean=212.4 p95=640
      languages (top-3): en=12240
-     PII             : email=18, phone=4
+     PII             : email=11, phone=7
   PII severity   : worst tier = medium
-     by tier      : medium=18, low=4
+     by tier      : medium=11, low=7
+Report written to: audit/data_audit_report.json
 ```
+
+Auditing the masked `data/policies.jsonl` instead prints no `PII` line, because the same patterns no longer match it.
 
 The audit report carries counts per category and split, not row indices or offsets. To find the rows that hold a specific identifier, search for it with `forgelm reverse-pii`.
 
