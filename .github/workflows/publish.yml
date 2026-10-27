@@ -137,4 +137,4 @@ jobs:
         # Metadata-Version 2.4 wheels (setuptools ≥77 emits 2.4 for PEP 639
         # license expressions) with "Metadata is missing required fields:
         # Name, Version"; v1.14.0 parses 2.4 correctly.
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
