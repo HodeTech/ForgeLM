@@ -146,11 +146,11 @@ pipeline {
 For programmatic parsing of run outputs, use `--output-format json`:
 
 ```shell
-$ forgelm --config configs/run.yaml --output-format json | jq '.verdict'
-"success"
+$ forgelm --config configs/run.yaml --output-format json | jq '.success'
+true
 ```
 
-Every event ForgeLM logs to stderr is also emitted as a JSON object on stdout, ready to pipe into your log aggregator or dashboard.
+The training envelope is one JSON object on stdout; `success` is a boolean. Log lines remain plain text on stderr. JSON mode does not emit those lines on stdout.
 
 ## Caching models
 
