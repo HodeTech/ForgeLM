@@ -147,11 +147,11 @@ pipeline {
 Koşu çıktısının programatik parse'ı için `--output-format json` kullanın:
 
 ```shell
-$ forgelm --config configs/run.yaml --output-format json | jq '.verdict'
-"success"
+$ forgelm --config configs/run.yaml --output-format json | jq '.success'
+true
 ```
 
-ForgeLM'in stderr'a yazdığı her olay stdout'ta da JSON nesnesi olarak çıkar — log aggregator'ınıza veya dashboard'unuza pipe'lamaya hazır.
+Eğitim zarfı stdout'ta tek bir JSON nesnesidir; `success` bir boolean'dır. Log satırları stderr'da düz metin olarak kalır. JSON modu bu satırları stdout'a yazmaz.
 
 ## Model cache
 
