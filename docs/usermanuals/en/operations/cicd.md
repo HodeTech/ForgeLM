@@ -143,14 +143,40 @@ pipeline {
 
 ## JSON output mode
 
-For programmatic parsing of run outputs, use `--output-format json`:
+For a single-stage training run (a config without `pipeline:`), the result envelope has a boolean `success` field:
 
 ```shell
 $ forgelm --config configs/run.yaml --output-format json | jq '.success'
 true
 ```
 
-The training envelope is one JSON object on stdout; `success` is a boolean. Log lines remain plain text on stderr. JSON mode does not emit those lines on stdout.
+The JSON envelope goes to stdout; human-readable logs remain plain text on stderr.
+JSON mode suppresses logs below WARNING and does not mirror log events to stdout.
+See [JSON output schemas](#/reference/json-output) for every field.
+
+Printing `.success` is not a CI gate: `jq` normally exits 0 even for `false`.
+In Bash, use `pipefail` and `jq -e` to require both ForgeLM exit 0 and a true result.
+An awaiting-approval run has `success: true` but exits 4; `pipefail` keeps that run from passing.
+Handle exit 4 as a hold, as described in [Exit Codes](#/reference/exit-codes).
+
+```bash
+set -o pipefail
+forgelm --config configs/run.yaml --output-format json \
+  | jq -e '.success == true'
+```
+
+A config with `pipeline:` emits a pipeline state with `final_status`, not a top-level `success`.
+For a multi-stage run, require `completed`; `stopped_at_stage` and `gated_pending_approval` must not pass:
+
+```bash
+set -o pipefail
+forgelm --config configs/pipeline.yaml --output-format json \
+  | jq -e '.final_status == "completed"'
+```
+
+Known limitation: training and pipeline runs can print non-JSON library output before the envelope
+([#412](https://github.com/HodeTech/ForgeLM/issues/412)). The examples require clean JSON stdout;
+a JSON parse error must fail the CI step.
 
 ## Caching models
 

@@ -521,39 +521,19 @@ class TestUnslothUnsupportedOverridesRejectedAtLoad:
 
 
 class TestCicdJsonOutputMode:
-    """CR-A04-008: the training JSON envelope has no ``verdict`` key, and
-    JSON mode does not mirror log lines onto stdout.
+    """Check training-result types and JSON-mode logging streams."""
 
-    ``docs/usermanuals/{en,tr}/operations/cicd.md`` used to show
-    ``jq '.verdict'`` printing ``"success"`` and claimed every stderr event
-    was also a JSON object on stdout. A consumer branching on
-    ``.verdict == "success"`` saw null, and a log aggregator on that stream
-    received nothing.
-    """
-
-    _SHELL = "$ forgelm --config configs/run.yaml --output-format json | jq '.success'\ntrue"
-
-    @staticmethod
-    def _section(text: str, heading: str) -> str:
-        start = text.index(heading)
-        body = text[start:]
-        next_h2 = body.find("\n## ", len(heading))
-        return body if next_h2 == -1 else body[:next_h2]
-
-    def test_training_envelope_success_is_boolean_and_has_no_verdict(self, capsys):
+    @pytest.mark.parametrize(("success", "awaiting_approval"), [(True, False), (False, False), (True, True)])
+    def test_training_envelope_success_is_boolean_and_has_no_verdict(self, capsys, success, awaiting_approval):
         from forgelm.cli._result import _output_result
         from forgelm.results import TrainResult
 
-        _output_result(TrainResult(success=True, metrics={"loss": 0.1}), "json")
+        _output_result(TrainResult(success=success, awaiting_approval=awaiting_approval), "json")
         raw = capsys.readouterr().out
         envelope = json.loads(raw)
-        # The old ``jq '.verdict'`` path: the key is absent, so the comparison
-        # a CI script was told to make never matches.
         assert "verdict" not in envelope
-        assert envelope.get("verdict") != "success"
-        # ``jq '.success'`` prints the boolean ``true``, not the string "success".
-        assert envelope["success"] is True
-        assert json.loads(raw)["success"] is True
+        assert envelope["success"] is success
+        assert envelope["awaiting_approval"] is awaiting_approval
 
     def test_json_mode_logs_stay_plain_text_on_stderr(self, capsys):
         import logging
@@ -577,6 +557,7 @@ class TestCicdJsonOutputMode:
         finally:
             for handler in root.handlers[:]:
                 root.removeHandler(handler)
+                handler.close()
             for handler in saved_handlers:
                 root.addHandler(handler)
             root.setLevel(saved_level)
@@ -588,31 +569,3 @@ class TestCicdJsonOutputMode:
         assert "[WARNING]" in captured.err
         with pytest.raises(json.JSONDecodeError):
             json.loads(captured.err.strip())
-
-    @pytest.mark.parametrize(
-        ("lang", "heading", "prose"),
-        [
-            (
-                "en",
-                "## JSON output mode",
-                "Log lines remain plain text on stderr. JSON mode does not emit those lines on stdout.",
-            ),
-            (
-                "tr",
-                "## JSON çıktı modu",
-                "Log satırları stderr'da düz metin olarak kalır. JSON modu bu satırları stdout'a yazmaz.",
-            ),
-        ],
-    )
-    def test_cicd_manual_documents_success_not_a_stdout_event_stream(self, lang, heading, prose):
-        from pathlib import Path
-
-        page = Path(__file__).resolve().parent.parent / "docs" / "usermanuals" / lang / "operations" / "cicd.md"
-        section = self._section(page.read_text(encoding="utf-8"), heading)
-        assert self._SHELL in section
-        assert "jq '.verdict'" not in section
-        assert '"success"' not in section
-        # The retired claim: every stderr event is also a JSON object on stdout.
-        assert "also emitted as a JSON object on stdout" not in section
-        assert "stdout'ta da JSON nesnesi" not in section
-        assert prose in section

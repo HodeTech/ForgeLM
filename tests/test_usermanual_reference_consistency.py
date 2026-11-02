@@ -23,6 +23,7 @@ import bisect
 import re
 import shlex
 from pathlib import Path
+from typing import Tuple
 
 import pytest
 
@@ -31,6 +32,89 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def _cli_md(lang: str) -> str:
     return (_REPO_ROOT / "docs" / "usermanuals" / lang / "reference" / "cli.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("lang", "paragraphs"),
+    [
+        (
+            "en",
+            (
+                "For a single-stage training run (a config without `pipeline:`), "
+                "the result envelope has a boolean `success` field:",
+                "The JSON envelope goes to stdout; human-readable logs remain plain text on stderr. "
+                "JSON mode suppresses logs below WARNING and does not mirror log events to stdout. "
+                "See [JSON output schemas](#/reference/json-output) for every field.",
+                "Printing `.success` is not a CI gate: `jq` normally exits 0 even for `false`. "
+                "In Bash, use `pipefail` and `jq -e` to require both ForgeLM exit 0 and a true result. "
+                "An awaiting-approval run has `success: true` but exits 4; `pipefail` keeps that run from passing. "
+                "Handle exit 4 as a hold, as described in [Exit Codes](#/reference/exit-codes).",
+                "A config with `pipeline:` emits a pipeline state with `final_status`, not a top-level `success`. "
+                "For a multi-stage run, require `completed`; `stopped_at_stage` and `gated_pending_approval` "
+                "must not pass:",
+                "Known limitation: training and pipeline runs can print non-JSON library output before the envelope "
+                "([#412](https://github.com/HodeTech/ForgeLM/issues/412)). The examples require clean JSON stdout; "
+                "a JSON parse error must fail the CI step.",
+            ),
+        ),
+        (
+            "tr",
+            (
+                "Tek aşamalı bir eğitim koşusunda (`pipeline:` içermeyen config), "
+                "sonuç zarfındaki `success` alanı boolean türündedir:",
+                "JSON zarfı stdout'a gider; okunabilir loglar stderr'de düz metin olarak kalır. "
+                "JSON modu WARNING altındaki logları bastırır ve log olaylarını stdout'a kopyalamaz. "
+                "Tüm alanlar için [JSON çıktı şemaları](#/reference/json-output) sayfasına bakın.",
+                "`.success` değerini yazdırmak bir CI kontrolü değildir: `jq`, `false` için de normalde 0 ile çıkar. "
+                "Bash'te hem ForgeLM'in 0 ile çıkmasını hem de sonucun true olmasını şart koşmak için "
+                "`pipefail` ve `jq -e` kullanın. Onay bekleyen bir koşu `success: true` taşır ancak 4 ile çıkar; "
+                "`pipefail` bu koşunun başarılı sayılmasını engeller. "
+                "[Çıkış Kodları](#/reference/exit-codes) sayfasında açıklandığı gibi çıkış 4'te akışı bekletin.",
+                "`pipeline:` içeren config, üst düzey `success` yerine `final_status` taşıyan bir pipeline durumu "
+                "üretir. Çok aşamalı bir koşuda `completed` şartını arayın; `stopped_at_stage` ve "
+                "`gated_pending_approval` başarılı sayılmamalıdır:",
+                "Bilinen sınırlama: eğitim ve pipeline koşuları, zarftan önce JSON olmayan kütüphane çıktısı "
+                "yazabilir ([#412](https://github.com/HodeTech/ForgeLM/issues/412)). Örnekler temiz JSON stdout "
+                "gerektirir; JSON ayrıştırma hatası CI adımını başarısız kılmalıdır.",
+            ),
+        ),
+    ],
+)
+def test_cicd_json_section_matches_result_contracts(lang: str, paragraphs: Tuple[str, ...]) -> None:
+    """Pin the complete JSON section so contradictory event-stream claims cannot be appended."""
+    from forgelm.cli._pipeline import PipelineState, _serialise_state
+    from forgelm.cli._result import _build_result_json_envelope
+    from forgelm.results import TrainResult
+
+    page = _REPO_ROOT / "docs" / "usermanuals" / lang / "operations" / "cicd.md"
+    heading = "## JSON output mode" if lang == "en" else "## JSON çıktı modu"
+    section = page.read_text(encoding="utf-8").partition(heading + "\n")[2].partition("\n## ")[0].strip()
+    blocks = (
+        "```shell\n$ forgelm --config configs/run.yaml --output-format json | jq '.success'\ntrue\n```",
+        "```bash\nset -o pipefail\nforgelm --config configs/run.yaml --output-format json \\\n"
+        "  | jq -e '.success == true'\n```",
+        "```bash\nset -o pipefail\nforgelm --config configs/pipeline.yaml --output-format json \\\n"
+        "  | jq -e '.final_status == \"completed\"'\n```",
+    )
+    expected = "\n\n".join(
+        (paragraphs[0], blocks[0], paragraphs[1], paragraphs[2], blocks[1], paragraphs[3], blocks[2], paragraphs[4])
+    )
+    assert " ".join(section.split()) == " ".join(expected.split())
+
+    training_envelope = _build_result_json_envelope(TrainResult(success=True))
+    pipeline_envelope = _serialise_state(
+        PipelineState(pipeline_run_id="test", pipeline_config_hash="test", forgelm_version="test", started_at="test")
+    )
+    for block, envelope in (
+        (blocks[0], training_envelope),
+        (blocks[1], training_envelope),
+        (blocks[2], pipeline_envelope),
+    ):
+        query = shlex.split(block.split("|", 1)[1].splitlines()[0])[-1]
+        key = query.split(" == ", 1)[0].removeprefix(".")
+        assert key in envelope
+    assert training_envelope["success"] is True
+    assert "success" not in pipeline_envelope
 
 
 @pytest.mark.parametrize("lang", ["en", "tr"])

@@ -144,14 +144,41 @@ pipeline {
 
 ## JSON çıktı modu
 
-Koşu çıktısının programatik parse'ı için `--output-format json` kullanın:
+Tek aşamalı bir eğitim koşusunda (`pipeline:` içermeyen config), sonuç zarfındaki `success` alanı boolean türündedir:
 
 ```shell
 $ forgelm --config configs/run.yaml --output-format json | jq '.success'
 true
 ```
 
-Eğitim zarfı stdout'ta tek bir JSON nesnesidir; `success` bir boolean'dır. Log satırları stderr'da düz metin olarak kalır. JSON modu bu satırları stdout'a yazmaz.
+JSON zarfı stdout'a gider; okunabilir loglar stderr'de düz metin olarak kalır.
+JSON modu WARNING altındaki logları bastırır ve log olaylarını stdout'a kopyalamaz.
+Tüm alanlar için [JSON çıktı şemaları](#/reference/json-output) sayfasına bakın.
+
+`.success` değerini yazdırmak bir CI kontrolü değildir: `jq`, `false` için de normalde 0 ile çıkar.
+Bash'te hem ForgeLM'in 0 ile çıkmasını hem de sonucun true olmasını şart koşmak için `pipefail` ve `jq -e` kullanın.
+Onay bekleyen bir koşu `success: true` taşır ancak 4 ile çıkar; `pipefail` bu koşunun başarılı sayılmasını engeller.
+[Çıkış Kodları](#/reference/exit-codes) sayfasında açıklandığı gibi çıkış 4'te akışı bekletin.
+
+```bash
+set -o pipefail
+forgelm --config configs/run.yaml --output-format json \
+  | jq -e '.success == true'
+```
+
+`pipeline:` içeren config, üst düzey `success` yerine `final_status` taşıyan bir pipeline durumu üretir.
+Çok aşamalı bir koşuda `completed` şartını arayın;
+`stopped_at_stage` ve `gated_pending_approval` başarılı sayılmamalıdır:
+
+```bash
+set -o pipefail
+forgelm --config configs/pipeline.yaml --output-format json \
+  | jq -e '.final_status == "completed"'
+```
+
+Bilinen sınırlama: eğitim ve pipeline koşuları, zarftan önce JSON olmayan kütüphane çıktısı yazabilir
+([#412](https://github.com/HodeTech/ForgeLM/issues/412)). Örnekler temiz JSON stdout gerektirir;
+JSON ayrıştırma hatası CI adımını başarısız kılmalıdır.
 
 ## Model cache
 
