@@ -118,6 +118,32 @@ def test_cicd_json_section_matches_result_contracts(lang: str, paragraphs: Tuple
 
 
 @pytest.mark.parametrize("lang", ["en", "tr"])
+def test_json_reference_documents_pipeline_state_exception(lang: str) -> None:
+    """Keep the canonical wrapper convention consistent with pipeline serialization."""
+    from typing import get_args
+
+    from forgelm.cli._pipeline import FinalStatusLiteral, PipelineState, _serialise_state
+
+    text = (_REPO_ROOT / "docs" / "usermanuals" / lang / "reference" / "json-output.md").read_text(encoding="utf-8")
+    common_heading = "## Common conventions" if lang == "en" else "## Ortak konvansiyonlar"
+    state_heading = "## Multi-stage pipeline state" if lang == "en" else "## Çok aşamalı pipeline durumu"
+    common = text.partition(common_heading + "\n")[2].partition("\n## ")[0]
+    section = text.partition(state_heading + "\n")[2].partition("\n## ")[0]
+    keys = {line.split("|")[1].strip().strip("`") for line in section.splitlines() if line.startswith("| `")}
+    envelope = _serialise_state(
+        PipelineState(pipeline_run_id="test", pipeline_config_hash="test", forgelm_version="test", started_at="test")
+    )
+    assert keys == set(envelope)
+    assert "success" not in envelope
+    assert "`pipeline:`" in common and "`final_status`" in common
+    assert "#/operations/cicd" in common and "#412" in common
+    assert "Every envelope starts" not in common
+    assert "Her envelope" not in common
+    for status in get_args(FinalStatusLiteral):
+        assert f"`{status}`" in section
+
+
+@pytest.mark.parametrize("lang", ["en", "tr"])
 class TestExitCodeTableConsistency:
     def test_ctrl_c_not_documented_as_130(self, lang: str) -> None:
         # The dispatcher clamps KeyboardInterrupt to EXIT_TRAINING_ERROR (2);

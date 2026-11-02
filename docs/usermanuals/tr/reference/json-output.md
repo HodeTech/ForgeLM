@@ -11,11 +11,40 @@ Bu sayfa kanonik referanstır. `forgelm` çıktısını parse eden CI/CD pipelin
 
 ## Ortak konvansiyonlar
 
-- **stdout vs stderr.** JSON envelope **stdout**'a gider. İnsana okunabilir loglar (info / warning / error) **stderr**'e gider. `forgelm ... --output-format json | jq .` ile pipe edip operatör mesajlarını `2>` ile ayrı okuyun.
-- **Üst seviye sarmalayıcı.** Her envelope `"success": true | false` ile başlar. Tüketiciler önce bu tek anahtarda branch açabilir.
+- **stdout vs stderr.** JSON zarfı **stdout**'a, okunabilir loglar **stderr**'e gider.
+  Eğitim ve pipeline koşuları, zarftan önce JSON olmayan kütüphane çıktısı da yazabilir
+  ([#412](https://github.com/HodeTech/ForgeLM/issues/412)); ayrıştırma hatası CI adımını başarısız kılmalıdır.
+  Bash kontrol örnekleri için [CI/CD Pipeline'ları](#/operations/cicd) sayfasına bakın.
+- **Üst seviye sarmalayıcı.** Zarfların çoğu `"success": true | false` ile başlar.
+  `pipeline:` içeren config'lerin özetleri istisnadır: bunun yerine `final_status` kullanırlar.
+  Bkz. [Çok aşamalı pipeline durumu](#çok-aşamalı-pipeline-durumu).
 - **Hata envelope'u.** `success: false` olduğunda envelope `"error": "<mesaj>"` (string) taşır. Opsiyonel zenginleştirilmiş alanlar (`exit_code`, `error_type`, `details`) [GitHub'daki error-handling standardı](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/error-handling.md) gereği var olabilir. Bu alanlardan kesinlik isteyen tüketiciler `$?` ile süreç exit kodunu da kontrol etmelidir.
 - **Exit kodları.** Bkz. [Exit Kodları](#/reference/exit-codes). `success: false` her zaman non-zero bir exit ile eşleşir. `success: true` normal durumda exit `0` ile eşleşir, **tek istisna** dışında: Article 14 insan-onay gate'inde duraklayan bir eğitim çalışması `success: true` **ve** `awaiting_approval: true` emit ederken exit `4` ile çıkar (model stage'lenmiştir, henüz promote edilmemiştir). "Bitti" ile "insan onayı bekliyor"u ayırması gereken tüketiciler tek başına `success` yerine `awaiting_approval` discriminator'ını (veya `$?`'i) okumalıdır.
 - **Argüman-ayrıştırma hataları istisnadır.** JSON-envelope garantisi argümanlar başarıyla ayrıştırıldıktan **sonra** başlar. Ayrıştırma anında saptanan bir kullanım hatası (bilinmeyen flag, hatalı `--choice`, `--workers 0` gibi aralık-dışı validator değeri) `argparse`'in kendisi tarafından raporlanır: **stderr**'e insana okunabilir bir `usage: ... error: ...` satırı ve exit kodu `2`, stdout'ta **hiçbir** JSON envelope olmadan. Her non-zero exit'te stdout-JSON okuyan bir tüketici, boş stdout'u (non-zero `$?` ile eşleşen) bir ayrıştırma/kullanım hatası olarak ele almalı ve mesaj için stderr'e dönmelidir. Envelope kontratı yalnızca dispatcher çalışmaya başladıktan sonra ortaya çıkan hatalar için geçerlidir.
+
+## Çok aşamalı pipeline durumu
+
+`pipeline:` bloğuyla `forgelm --config <pipeline.yaml> --output-format json` çalıştırıldığında
+pipeline durum özeti üretilir.
+Aynı durum `pipeline_state.json` dosyasına kaydedilir. Bu özette üst düzey `success` veya `error` sarmalayıcısı yoktur;
+durum özeti üretilmeden yakalanan bir hata ise ortak `success: false` hata zarfını kullanabilir.
+
+| Anahtar | Tür | Notlar |
+|---|---|---|
+| `pipeline_run_id` | str | Pipeline koşusunun kimliği. |
+| `pipeline_config_hash` | str | Pipeline yapılandırma baytlarının hash'i. |
+| `forgelm_version` | str | Durumu üreten ForgeLM sürümü. |
+| `started_at` | str | UTC başlangıç zaman damgası. |
+| `finished_at` | str veya null | UTC bitiş zaman damgası; koşu sürerken null. |
+| `final_status` | str | Pipeline durumu; değerleri aşağıda verilmiştir. |
+| `stopped_at` | str veya null | Zincirin durduğu aşama; durmadıysa null. |
+| `stages` | list[object] | Aşama başına durum, çıkış kodu, hata, metrik, model yolu ve zaman damgası kayıtları. |
+
+`final_status`, `in_progress`, `completed`, `stopped_at_stage` veya `gated_pending_approval` değerlerinden biridir.
+Bir durum özetinde `.success` aramak yerine bu alanı süreç çıkış koduyla birlikte kontrol edin.
+Aşama davranışı için [Çok aşamalı pipeline'lar](#/training/pipelines) sayfasına,
+iç içe aşama alanları için
+[PipelineStageState kaynağına](https://github.com/HodeTech/ForgeLM/blob/main/forgelm/cli/_pipeline.py) bakın.
 
 ## `forgelm doctor`
 
