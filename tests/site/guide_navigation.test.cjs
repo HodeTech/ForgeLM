@@ -93,6 +93,19 @@ for (const lang of ['en', 'tr']) {
     first.guide.navigate(first.guide.parseHash(first.window.location.hash), true);
     await new Promise(setImmediate);
     const link = first.content.links.find(link => link.href === href);
+    for (const click of [
+      { button: 1 }, { button: 2 },
+      { button: 0, ctrlKey: true }, { button: 0, metaKey: true },
+      { button: 0, shiftKey: true }, { button: 0, altKey: true }
+    ]) {
+      let prevented = false;
+      link.events.click({ ...click, preventDefault() { prevented = true; } });
+      await new Promise(setImmediate);
+      assert.equal(prevented, false, `preserve native behavior for ${JSON.stringify(click)}`);
+      assert.equal(first.window.location.hash, '#/reference/json-output');
+      assert.equal(first.guide.state.route, 'reference/json-output');
+      assert.equal(first.window.scrolled, null);
+    }
     let prevented = false;
     link.events.click({ button: 0, preventDefault() { prevented = true; } });
     await new Promise(setImmediate);

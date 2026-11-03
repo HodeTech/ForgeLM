@@ -40,6 +40,7 @@ def _cli_md(lang: str) -> str:
 
 
 def _cicd_gate_block(config: str, query: str) -> str:
+    """Keep the shared EN/TR gate identical in the complete-section snapshot."""
     return (
         f"```bash\nset -o pipefail\ncommand_status=(0 0)\n"
         f"forgelm --config configs/{config}.yaml --output-format json \\\n"
@@ -145,7 +146,8 @@ _JQ = shutil.which("jq")
 @pytest.mark.parametrize("lang", ["en", "tr"])
 @pytest.mark.parametrize("mode", ["training", "pipeline"])
 @pytest.mark.parametrize(
-    "case", ["success", "failure", "approval", "empty", "usage", "malformed", "producer_error", "missing"]
+    "case",
+    ["success", "failure", "unsuccessful", "approval", "empty", "usage", "malformed", "producer_error", "missing"],
 )
 def test_cicd_bash_preserves_producer_status(lang, mode, case, tmp_path):
     """Run the shipped gate under errexit using real jq and the real CLI usage-error path."""
@@ -161,10 +163,14 @@ def test_cicd_bash_preserves_producer_status(lang, mode, case, tmp_path):
     producer_status = {"failure": 3, "approval": 4, "producer_error": 2}.get(case, 0)
     if mode == "training":
         envelope = _build_result_json_envelope(
-            TrainResult(success=case != "failure", awaiting_approval=case == "approval")
+            TrainResult(success=case not in {"failure", "unsuccessful"}, awaiting_approval=case == "approval")
         )
     else:
-        status = {"failure": "stopped_at_stage", "approval": "gated_pending_approval"}.get(case, "completed")
+        status = {
+            "failure": "stopped_at_stage",
+            "unsuccessful": "stopped_at_stage",
+            "approval": "gated_pending_approval",
+        }.get(case, "completed")
         envelope = _serialise_state(
             PipelineState(
                 pipeline_run_id="test",
