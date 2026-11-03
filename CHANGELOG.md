@@ -6,6 +6,10 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- CI/CD examples capture ForgeLM and `jq` statuses separately: a JSON parser's exit 4 cannot be mistaken for an
+  approval hold, and a multi-stage approval hold retains ForgeLM's exit 4. The guide's JSON-reference section links
+  use the compiled heading IDs and preserve the page route and heading on reload
+  (F-PR1073-A1-01, F-PR1073-A2-01).
 - CI/CD user-manual examples in English and Turkish read the training envelope's boolean `success` field,
   keep plain-text stderr logs separate from the JSON result, and distinguish the multi-stage `final_status`
   summary. The canonical JSON reference documents the pipeline-state exception and its actual fields in both languages.

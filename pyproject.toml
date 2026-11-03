@@ -186,6 +186,8 @@ chat = [
 
 # Developer tooling — test runner, coverage, linter/formatter.
 dev = [
+  # Compile manual pages in the guide navigation regression tests.
+  "markdown>=3.5.0,<4.0.0",
   "pytest>=8.0.0",
   "pytest-cov>=5.0.0",
   # pytest-randomly shuffles test order per session so order-dependent

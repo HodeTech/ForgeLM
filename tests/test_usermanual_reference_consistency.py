@@ -20,8 +20,13 @@ No GPU / no network — pure file reads against the shipped docs tree.
 from __future__ import annotations
 
 import bisect
+import json
+import os
 import re
 import shlex
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Tuple
 
@@ -32,6 +37,21 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def _cli_md(lang: str) -> str:
     return (_REPO_ROOT / "docs" / "usermanuals" / lang / "reference" / "cli.md").read_text(encoding="utf-8")
+
+
+def _cicd_gate_block(config: str, query: str) -> str:
+    return (
+        f"```bash\nset -o pipefail\ncommand_status=(0 0)\n"
+        f"forgelm --config configs/{config}.yaml --output-format json \\\n"
+        f"  | jq -e '{query}' || command_status=(\"${{PIPESTATUS[@]}}\")\n"
+        "forgelm_status=${command_status[0]}\njson_status=${command_status[1]}\n"
+        'if [ "$forgelm_status" -eq 4 ]; then\n'
+        "  printf 'Awaiting human approval\\n' >&2\n  exit 4\n"
+        'elif [ "$forgelm_status" -ne 0 ]; then\n  exit "$forgelm_status"\n'
+        'elif [ "$json_status" -ne 0 ]; then\n'
+        "  printf 'JSON validation failed (jq exit %s)\\n' \"$json_status\" >&2\n"
+        "  exit 1\nfi\nexit 0\n```"
+    )
 
 
 @pytest.mark.parametrize(
@@ -46,9 +66,10 @@ def _cli_md(lang: str) -> str:
                 "JSON mode suppresses logs below WARNING and does not mirror log events to stdout. "
                 "See [JSON output schemas](#/reference/json-output) for every field.",
                 "Printing `.success` is not a CI gate: `jq` normally exits 0 even for `false`. "
-                "In Bash, use `pipefail` and `jq -e` to require both ForgeLM exit 0 and a true result. "
-                "An awaiting-approval run has `success: true` but exits 4; `pipefail` keeps that run from passing. "
-                "Handle exit 4 as a hold, as described in [Exit Codes](#/reference/exit-codes).",
+                "Use `PIPESTATUS` to capture ForgeLM and `jq` results separately before another command overwrites them. "
+                "Only ForgeLM exit 4 means awaiting approval; `jq` can also exit 4 on empty input. "
+                "Preserve non-zero ForgeLM exits. If ForgeLM exits 0 but JSON validation fails, this wrapper exits 1. "
+                "See [Exit Codes](#/reference/exit-codes) for the ForgeLM contract.",
                 "A config with `pipeline:` emits a pipeline state with `final_status`, not a top-level `success`. "
                 "For a multi-stage run, require `completed`; `stopped_at_stage` and `gated_pending_approval` "
                 "must not pass:",
@@ -66,10 +87,10 @@ def _cli_md(lang: str) -> str:
                 "JSON modu WARNING altındaki logları bastırır ve log olaylarını stdout'a kopyalamaz. "
                 "Tüm alanlar için [JSON çıktı şemaları](#/reference/json-output) sayfasına bakın.",
                 "`.success` değerini yazdırmak bir CI kontrolü değildir: `jq`, `false` için de normalde 0 ile çıkar. "
-                "Bash'te hem ForgeLM'in 0 ile çıkmasını hem de sonucun true olmasını şart koşmak için "
-                "`pipefail` ve `jq -e` kullanın. Onay bekleyen bir koşu `success: true` taşır ancak 4 ile çıkar; "
-                "`pipefail` bu koşunun başarılı sayılmasını engeller. "
-                "[Çıkış Kodları](#/reference/exit-codes) sayfasında açıklandığı gibi çıkış 4'te akışı bekletin.",
+                "Başka bir komut üzerine yazmadan önce ForgeLM ve `jq` sonuçlarını `PIPESTATUS` ile ayrı yakalayın. "
+                "Yalnızca ForgeLM'in 4 ile çıkması onay beklendiğini gösterir; `jq` boş girdide de 4 ile çıkabilir. "
+                "ForgeLM'in sıfır dışındaki kodlarını koruyun. ForgeLM 0 ile çıkıp JSON doğrulaması başarısızsa "
+                "bu betik 1 ile çıkar. ForgeLM sözleşmesi için [Çıkış Kodları](#/reference/exit-codes) sayfasına bakın.",
                 "`pipeline:` içeren config, üst düzey `success` yerine `final_status` taşıyan bir pipeline durumu "
                 "üretir. Çok aşamalı bir koşuda `completed` şartını arayın; `stopped_at_stage` ve "
                 "`gated_pending_approval` başarılı sayılmamalıdır:",
@@ -91,10 +112,8 @@ def test_cicd_json_section_matches_result_contracts(lang: str, paragraphs: Tuple
     section = page.read_text(encoding="utf-8").partition(heading + "\n")[2].partition("\n## ")[0].strip()
     blocks = (
         "```shell\n$ forgelm --config configs/run.yaml --output-format json | jq '.success'\ntrue\n```",
-        "```bash\nset -o pipefail\nforgelm --config configs/run.yaml --output-format json \\\n"
-        "  | jq -e '.success == true'\n```",
-        "```bash\nset -o pipefail\nforgelm --config configs/pipeline.yaml --output-format json \\\n"
-        "  | jq -e '.final_status == \"completed\"'\n```",
+        _cicd_gate_block("run", ".success == true"),
+        _cicd_gate_block("pipeline", '.final_status == "completed"'),
     )
     expected = "\n\n".join(
         (paragraphs[0], blocks[0], paragraphs[1], paragraphs[2], blocks[1], paragraphs[3], blocks[2], paragraphs[4])
@@ -110,11 +129,79 @@ def test_cicd_json_section_matches_result_contracts(lang: str, paragraphs: Tuple
         (blocks[1], training_envelope),
         (blocks[2], pipeline_envelope),
     ):
-        query = shlex.split(block.split("|", 1)[1].splitlines()[0])[-1]
+        tokens = shlex.split(block.split("|", 1)[1].splitlines()[0])
+        query = next(token for token in tokens[tokens.index("jq") + 1 :] if not token.startswith("-"))
         key = query.split(" == ", 1)[0].removeprefix(".")
         assert key in envelope
     assert training_envelope["success"] is True
     assert "success" not in pipeline_envelope
+
+
+_BASH = shutil.which("bash") if sys.platform != "win32" else None
+_JQ = shutil.which("jq")
+
+
+@pytest.mark.skipif(not _BASH or not _JQ, reason="needs POSIX Bash and jq to execute the documented CI examples")
+@pytest.mark.parametrize("lang", ["en", "tr"])
+@pytest.mark.parametrize("mode", ["training", "pipeline"])
+@pytest.mark.parametrize(
+    "case", ["success", "failure", "approval", "empty", "usage", "malformed", "producer_error", "missing"]
+)
+def test_cicd_bash_preserves_producer_status(lang, mode, case, tmp_path):
+    """Run the shipped gate under errexit using real jq and the real CLI usage-error path."""
+    from forgelm.cli._pipeline import PipelineState, _serialise_state
+    from forgelm.cli._result import _build_result_json_envelope
+    from forgelm.results import TrainResult
+
+    text = (_REPO_ROOT / "docs" / "usermanuals" / lang / "operations" / "cicd.md").read_text(encoding="utf-8")
+    heading = "## JSON output mode" if lang == "en" else "## JSON çıktı modu"
+    section = text.partition(heading + "\n")[2].partition("\n## ")[0]
+    blocks = [part.split("\n", 1)[1] for part in section.split("```")[1::2] if part.startswith("bash\n")]
+    script = blocks[0 if mode == "training" else 1]
+    producer_status = {"failure": 3, "approval": 4, "producer_error": 2}.get(case, 0)
+    if mode == "training":
+        envelope = _build_result_json_envelope(
+            TrainResult(success=case != "failure", awaiting_approval=case == "approval")
+        )
+    else:
+        status = {"failure": "stopped_at_stage", "approval": "gated_pending_approval"}.get(case, "completed")
+        envelope = _serialise_state(
+            PipelineState(
+                pipeline_run_id="test",
+                pipeline_config_hash="test",
+                forgelm_version="test",
+                started_at="test",
+                final_status=status,
+            )
+        )
+    payload = {"empty": "", "usage": "", "malformed": "not JSON", "missing": "{}"}.get(case, json.dumps(envelope))
+    producer = tmp_path / "forgelm"
+    producer.write_text(
+        '#!/bin/sh\nif [ "$FORGELM_TEST_CASE" = usage ]; then\n'
+        '  exec "$FORGELM_TEST_PYTHON" -m forgelm --definitely-invalid-argument\nfi\n'
+        'printf "%s" "$FORGELM_TEST_JSON"\nexit "$FORGELM_TEST_STATUS"\n',
+        encoding="utf-8",
+    )
+    producer.chmod(0o755)
+    env = dict(
+        os.environ,
+        PATH=str(tmp_path) + os.pathsep + os.environ["PATH"],
+        FORGELM_TEST_CASE=case,
+        FORGELM_TEST_PYTHON=sys.executable,
+        FORGELM_TEST_JSON=payload,
+        FORGELM_TEST_STATUS=str(producer_status),
+    )
+    result = subprocess.run(
+        [_BASH, "-e", "-u", "-o", "pipefail", "-c", script],
+        cwd=_REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    expected = {"success": 0, "failure": 3, "approval": 4, "usage": 2, "producer_error": 2}.get(case, 1)
+    assert result.returncode == expected, result.stderr
+    assert ("Awaiting human approval" in result.stderr) is (case == "approval")
 
 
 @pytest.mark.parametrize("lang", ["en", "tr"])

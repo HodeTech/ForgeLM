@@ -156,14 +156,28 @@ JSON modu WARNING altındaki logları bastırır ve log olaylarını stdout'a ko
 Tüm alanlar için [JSON çıktı şemaları](#/reference/json-output) sayfasına bakın.
 
 `.success` değerini yazdırmak bir CI kontrolü değildir: `jq`, `false` için de normalde 0 ile çıkar.
-Bash'te hem ForgeLM'in 0 ile çıkmasını hem de sonucun true olmasını şart koşmak için `pipefail` ve `jq -e` kullanın.
-Onay bekleyen bir koşu `success: true` taşır ancak 4 ile çıkar; `pipefail` bu koşunun başarılı sayılmasını engeller.
-[Çıkış Kodları](#/reference/exit-codes) sayfasında açıklandığı gibi çıkış 4'te akışı bekletin.
+Başka bir komut üzerine yazmadan önce ForgeLM ve `jq` sonuçlarını `PIPESTATUS` ile ayrı yakalayın.
+Yalnızca ForgeLM'in 4 ile çıkması onay beklendiğini gösterir; `jq` boş girdide de 4 ile çıkabilir.
+ForgeLM'in sıfır dışındaki kodlarını koruyun. ForgeLM 0 ile çıkıp JSON doğrulaması başarısızsa bu betik 1 ile çıkar.
+ForgeLM sözleşmesi için [Çıkış Kodları](#/reference/exit-codes) sayfasına bakın.
 
 ```bash
 set -o pipefail
+command_status=(0 0)
 forgelm --config configs/run.yaml --output-format json \
-  | jq -e '.success == true'
+  | jq -e '.success == true' || command_status=("${PIPESTATUS[@]}")
+forgelm_status=${command_status[0]}
+json_status=${command_status[1]}
+if [ "$forgelm_status" -eq 4 ]; then
+  printf 'Awaiting human approval\n' >&2
+  exit 4
+elif [ "$forgelm_status" -ne 0 ]; then
+  exit "$forgelm_status"
+elif [ "$json_status" -ne 0 ]; then
+  printf 'JSON validation failed (jq exit %s)\n' "$json_status" >&2
+  exit 1
+fi
+exit 0
 ```
 
 `pipeline:` içeren config, üst düzey `success` yerine `final_status` taşıyan bir pipeline durumu üretir.
@@ -172,8 +186,21 @@ forgelm --config configs/run.yaml --output-format json \
 
 ```bash
 set -o pipefail
+command_status=(0 0)
 forgelm --config configs/pipeline.yaml --output-format json \
-  | jq -e '.final_status == "completed"'
+  | jq -e '.final_status == "completed"' || command_status=("${PIPESTATUS[@]}")
+forgelm_status=${command_status[0]}
+json_status=${command_status[1]}
+if [ "$forgelm_status" -eq 4 ]; then
+  printf 'Awaiting human approval\n' >&2
+  exit 4
+elif [ "$forgelm_status" -ne 0 ]; then
+  exit "$forgelm_status"
+elif [ "$json_status" -ne 0 ]; then
+  printf 'JSON validation failed (jq exit %s)\n' "$json_status" >&2
+  exit 1
+fi
+exit 0
 ```
 
 Bilinen sınırlama: eğitim ve pipeline koşuları, zarftan önce JSON olmayan kütüphane çıktısı yazabilir

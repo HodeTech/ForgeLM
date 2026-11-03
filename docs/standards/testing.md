@@ -59,6 +59,13 @@ tests/
 - `conftest.py` holds shared fixtures only. Domain-specific helpers live in the test files that need them.
 - A new feature PR adds the matching `test_*.py` in the **same** PR. No "tests in next PR."
 
+## Documentation regressions
+
+The CI/CD manual regression cases execute the shipped snippets with POSIX Bash and `jq`.
+They are skipped with an explicit prerequisite reason on hosts without these tools; GitHub's Linux runners provide both.
+Guide navigation regressions compile the EN/TR Markdown with the development-only `markdown` dependency and run
+the shipped router in the Node VM harness, checking the compiled heading target and route after reload.
+
 ## Browser wizard regressions
 
 Browser wizard regressions live in `tests/site/*.test.cjs`. Run
