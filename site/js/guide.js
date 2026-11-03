@@ -75,7 +75,7 @@
   }
 
   function navigate(route, replace) {
-    state.route = route;
+    state.route = route.split('#')[0];
     var newHash = '#/' + route;
     if (window.location.hash !== newHash) {
       if (replace) {
@@ -249,6 +249,16 @@
       + pager
       + editLink);
 
+    content.querySelectorAll('a[href^="#/"]').forEach(function (link) {
+      link.addEventListener('click', function (event) {
+        if (event.button > 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        var nextRoute = parseHash(link.getAttribute('href'));
+        if (!nextRoute) return;
+        event.preventDefault();
+        navigate(nextRoute, false);
+      });
+    });
+
     // Re-translate any chrome that data-i18n updated nodes inside the content.
     if (window.ForgeLMi18n && window.ForgeLMi18n.setLanguage) {
       window.ForgeLMi18n.setLanguage(state.lang);
@@ -268,6 +278,14 @@
     // After DOM updates, trigger scrollspy refresh.
     setTimeout(observeHeadings, 50);
     updateProgressBar();
+    scrollToRouteAnchor();
+  }
+
+  function scrollToRouteAnchor() {
+    var anchor = window.location.hash.split('#')[2];
+    if (!anchor) return;
+    var target = document.getElementById(anchor);
+    if (target) target.scrollIntoView({ block: 'start' });
   }
 
   function renderNotFound(route) {

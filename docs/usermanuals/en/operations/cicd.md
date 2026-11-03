@@ -143,14 +143,67 @@ pipeline {
 
 ## JSON output mode
 
-For programmatic parsing of run outputs, use `--output-format json`:
+For a single-stage training run (a config without `pipeline:`), the result envelope has a boolean `success` field:
 
 ```shell
-$ forgelm --config configs/run.yaml --output-format json | jq '.verdict'
-"success"
+$ forgelm --config configs/run.yaml --output-format json | jq '.success'
+true
 ```
 
-Every event ForgeLM logs to stderr is also emitted as a JSON object on stdout, ready to pipe into your log aggregator or dashboard.
+The JSON envelope goes to stdout; human-readable logs remain plain text on stderr.
+JSON mode suppresses logs below WARNING and does not mirror log events to stdout.
+See [JSON output schemas](#/reference/json-output) for every field.
+
+Printing `.success` is not a CI gate: `jq` normally exits 0 even for `false`.
+Use `PIPESTATUS` to capture ForgeLM and `jq` results separately before another command overwrites them.
+Only ForgeLM exit 4 means awaiting approval; `jq` can also exit 4 on empty input.
+Preserve non-zero ForgeLM exits. If ForgeLM exits 0 but JSON validation fails, this wrapper exits 1.
+See [Exit Codes](#/reference/exit-codes) for the ForgeLM contract.
+
+```bash
+set -o pipefail
+command_status=(0 0)
+forgelm --config configs/run.yaml --output-format json \
+  | jq -e '.success == true' || command_status=("${PIPESTATUS[@]}")
+forgelm_status=${command_status[0]}
+json_status=${command_status[1]}
+if [ "$forgelm_status" -eq 4 ]; then
+  printf 'Awaiting human approval\n' >&2
+  exit 4
+elif [ "$forgelm_status" -ne 0 ]; then
+  exit "$forgelm_status"
+elif [ "$json_status" -ne 0 ]; then
+  printf 'JSON validation failed (jq exit %s)\n' "$json_status" >&2
+  exit 1
+fi
+exit 0
+```
+
+A config with `pipeline:` emits a pipeline state with `final_status`, not a top-level `success`.
+For a multi-stage run, require `completed`; `stopped_at_stage` and `gated_pending_approval` must not pass:
+
+```bash
+set -o pipefail
+command_status=(0 0)
+forgelm --config configs/pipeline.yaml --output-format json \
+  | jq -e '.final_status == "completed"' || command_status=("${PIPESTATUS[@]}")
+forgelm_status=${command_status[0]}
+json_status=${command_status[1]}
+if [ "$forgelm_status" -eq 4 ]; then
+  printf 'Awaiting human approval\n' >&2
+  exit 4
+elif [ "$forgelm_status" -ne 0 ]; then
+  exit "$forgelm_status"
+elif [ "$json_status" -ne 0 ]; then
+  printf 'JSON validation failed (jq exit %s)\n' "$json_status" >&2
+  exit 1
+fi
+exit 0
+```
+
+Known limitation: training and pipeline runs can print non-JSON library output before the envelope
+([#412](https://github.com/HodeTech/ForgeLM/issues/412)). The examples require clean JSON stdout;
+a JSON parse error must fail the CI step.
 
 ## Caching models
 

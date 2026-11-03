@@ -11,11 +11,39 @@ This page is the canonical reference. CI/CD pipelines that parse `forgelm` outpu
 
 ## Common conventions
 
-- **stdout vs stderr.** The JSON envelope goes to **stdout**. Human-friendly logs (info / warning / error) go to **stderr**. Pipe `forgelm ... --output-format json | jq .` and read your operator-facing messages from `2>` separately.
-- **Top-level wrapper.** Every envelope starts with `"success": true | false`. Consumers can branch on this single key before parsing the rest.
+- **stdout vs stderr.** The JSON envelope goes to **stdout**; human-friendly logs go to **stderr**.
+  Training and pipeline runs can also print non-JSON library output before the envelope
+  ([#412](https://github.com/HodeTech/ForgeLM/issues/412)); a parse error must fail the CI step.
+  See [CI/CD Pipelines](#/operations/cicd) for Bash gate examples.
+- **Top-level wrapper.** Most envelopes start with `"success": true | false`.
+  Summaries for configs containing `pipeline:` are the exception: they use `final_status` instead.
+  See [Multi-stage pipeline state](#/reference/json-output#multi-stage-pipeline-state).
 - **Error envelope.** When `success: false`, the envelope carries `"error": "<message>"` (string). Optional richer fields (`exit_code`, `error_type`, `details`) MAY be present per the [error-handling standard on GitHub](https://github.com/HodeTech/ForgeLM/blob/main/docs/standards/error-handling.md). Consumers that need certainty on these fields should also check the process exit code via `$?`.
 - **Exit codes.** See [Exit Codes](#/reference/exit-codes). `success: false` always pairs with a non-zero exit. `success: true` pairs with exit `0` in the normal case, with **one exception**: a training run halted at the Article 14 human-approval gate emits `success: true` **and** `awaiting_approval: true` while exiting `4` (the model is staged, not yet promoted). Consumers that must distinguish "done" from "awaiting human approval" should read the `awaiting_approval` discriminator (or check `$?`), not `success` alone.
 - **Argument-parsing errors are the exception.** The JSON-envelope guarantee begins **after** arguments parse successfully. A usage error detected at parse time (unknown flag, bad `--choice`, out-of-range validator value such as `--workers 0`) is reported by `argparse` itself: a human-readable `usage: ... error: ...` line on **stderr** and exit code `2`, with **no** JSON envelope on stdout. A consumer that reads stdout-JSON on every non-zero exit must treat empty stdout (paired with non-zero `$?`) as a parse/usage error and fall back to stderr for the message. The envelope contract applies only to errors raised once the dispatcher is running.
+
+## Multi-stage pipeline state
+
+`forgelm --config <pipeline.yaml> --output-format json` with a `pipeline:` block emits a pipeline-state summary.
+The same state is saved in `pipeline_state.json`. This summary has no top-level `success` or `error` wrapper;
+an error caught before a state summary is produced may instead use the common `success: false` error envelope.
+
+| Key | Type | Notes |
+|---|---|---|
+| `pipeline_run_id` | str | Identifier of the pipeline run. |
+| `pipeline_config_hash` | str | Hash of the pipeline configuration bytes. |
+| `forgelm_version` | str | ForgeLM version that produced the state. |
+| `started_at` | str | UTC start timestamp. |
+| `finished_at` | str or null | UTC finish timestamp, or null while the run is in progress. |
+| `final_status` | str | Pipeline status; see the values below. |
+| `stopped_at` | str or null | Stage where the chain stopped, or null. |
+| `stages` | list[object] | Per-stage snapshots: status, exit code, error, metrics, model paths and timestamps. |
+
+`final_status` is one of `in_progress`, `completed`, `stopped_at_stage`, or `gated_pending_approval`.
+Check this field together with the process exit code, rather than testing `.success` on a state summary.
+See [Multi-stage pipelines](#/training/pipelines) for stage behavior and
+the [PipelineStageState source](https://github.com/HodeTech/ForgeLM/blob/main/forgelm/cli/_pipeline.py)
+for the nested stage fields.
 
 ## `forgelm doctor`
 

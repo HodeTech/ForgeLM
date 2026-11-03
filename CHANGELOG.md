@@ -6,6 +6,15 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- CI/CD examples capture ForgeLM and `jq` statuses separately: a JSON parser's exit 4 cannot be mistaken for an
+  approval hold, and a multi-stage approval hold retains ForgeLM's exit 4. The guide's JSON-reference section links
+  use the compiled heading IDs and preserve the page route and heading on reload
+  (F-PR1073-A1-01, F-PR1073-A2-01).
+- CI/CD user-manual examples in English and Turkish read the training envelope's boolean `success` field,
+  keep plain-text stderr logs separate from the JSON result, and distinguish the multi-stage `final_status`
+  summary. The canonical JSON reference documents the pipeline-state exception and its actual fields in both languages.
+  Bash gate examples use `pipefail` and `jq -e` so failed or awaiting-approval runs do not pass
+  (#433, #216; CR-A04-008, DOC-D3B02-016). Non-JSON library output before the envelope remains tracked in #412.
 - **`forgelm purge --row-id` warns about the weights a run actually leaves behind.** This restores the documented
   contract that `data.erasure_warning_memorisation` fires when a trained model exists for the erased row. The check
   used to look only for a literal `<--output-dir>/final_model/`, so a default invocation (`--output-dir` omitted,

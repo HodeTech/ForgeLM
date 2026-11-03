@@ -518,3 +518,54 @@ class TestUnslothUnsupportedOverridesRejectedAtLoad:
         path = tmp_path / "c.yaml"
         path.write_text(yaml.dump(minimal_config(training={"rope_scaling": {"type": "linear", "factor": 2.0}})))
         assert _load_config_or_exit(str(path), json_output=False).training.rope_scaling is not None
+
+
+class TestCicdJsonOutputMode:
+    """Check training-result types and JSON-mode logging streams."""
+
+    @pytest.mark.parametrize(("success", "awaiting_approval"), [(True, False), (False, False), (True, True)])
+    def test_training_envelope_success_is_boolean_and_has_no_verdict(self, capsys, success, awaiting_approval):
+        from forgelm.cli._result import _output_result
+        from forgelm.results import TrainResult
+
+        _output_result(TrainResult(success=success, awaiting_approval=awaiting_approval), "json")
+        raw = capsys.readouterr().out
+        envelope = json.loads(raw)
+        assert "verdict" not in envelope
+        assert envelope["success"] is success
+        assert envelope["awaiting_approval"] is awaiting_approval
+
+    def test_json_mode_logs_stay_plain_text_on_stderr(self, capsys):
+        import logging
+
+        from forgelm.cli._logging import logger as cli_logger
+
+        root = logging.getLogger()
+        saved_handlers = root.handlers[:]
+        saved_level = root.level
+        saved_cli_level = cli_logger.level
+        for handler in saved_handlers:
+            root.removeHandler(handler)
+        cli_logger.setLevel(logging.NOTSET)
+        try:
+            # A fresh process is what CI runs. ``basicConfig`` is a no-op once
+            # any handler exists, so drop pytest's capture handler first.
+            _setup_logging("DEBUG", json_format=True)
+            cli_logger.info("pipeline-started")
+            cli_logger.warning("gate-tripped")
+            captured = capsys.readouterr()
+        finally:
+            for handler in root.handlers[:]:
+                root.removeHandler(handler)
+                handler.close()
+            for handler in saved_handlers:
+                root.addHandler(handler)
+            root.setLevel(saved_level)
+            cli_logger.setLevel(saved_cli_level)
+
+        assert captured.out == ""
+        assert "pipeline-started" not in captured.err
+        assert "gate-tripped" in captured.err
+        assert "[WARNING]" in captured.err
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(captured.err.strip())
