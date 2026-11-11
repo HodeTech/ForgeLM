@@ -1142,22 +1142,40 @@ class TestRealRepository:
         assert guard.main(["--root", given]) == 0, capsys.readouterr().out
 
 
-def _bash5() -> Optional[str]:
-    """A bash of version 5 or newer on Linux or macOS, as on GitHub's Linux runners; None otherwise.
+def _bash5() -> Optional[tuple[str, tuple[int, int]]]:
+    """A bash of version 5 or newer on Linux or macOS, as on GitHub's Linux runners: (path, (major, minor)).
 
-    Windows' bash (Git Bash) runs in another environment, so the comparison stays on POSIX systems.
+    None otherwise. Windows' bash (Git Bash) runs in another environment, so the comparison stays on POSIX systems.
     """
     path = shutil.which("bash") if sys.platform != "win32" else None
     if path is None:
         return None
     try:
-        version = subprocess.run([path, "-c", "echo ${BASH_VERSINFO[0]}"], capture_output=True, text=True, timeout=30)
+        probe = subprocess.run(
+            [path, "-c", 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"'], capture_output=True, text=True, timeout=30
+        )
     except (OSError, subprocess.SubprocessError):
         return None
-    return path if version.stdout.strip().isdigit() and int(version.stdout) >= 5 else None
+    parts = probe.stdout.split()
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        return None
+    version = (int(parts[0]), int(parts[1]))
+    return (path, version) if version[0] >= 5 else None
 
 
-_BASH = _bash5()
+_BASH_FOUND = _bash5()
+_BASH = _BASH_FOUND[0] if _BASH_FOUND else None
+_BASH_VERSION = _BASH_FOUND[1] if _BASH_FOUND else (0, 0)
+
+# Shapes whose status under `bash -e` depends on the bash version: the first (major, minor) from which the step
+# fails instead of going on. The guard's verdict does not move with the version, because a workflow that says
+# `ubuntu-latest` runs whichever bash the image ships (5.2 on ubuntu-24.04, 5.3 on ubuntu-26.04), so it reports
+# what an older bash would let through.
+_STEP_FAILS_FROM_BASH = {
+    # bash 5.2 takes a bare `exit` in an ERR trap from the trap's last command (`echo`, status 0); 5.3 keeps the
+    # status the trap was entered with.
+    "trap 'echo x; exit' ERR\npytest\necho done": (5, 3),
+}
 
 # Shapes where the guard's verdict must equal bash's. Each required program is a
 # stub that exits 1, ci/t.sh masks `pytest` and ci/env.sh turns errexit off. A
@@ -1272,12 +1290,26 @@ def test_verdicts_match_bash(guard, tmp_path, script, expected):
         [_BASH, "--noprofile", "--norc", "-e", str(step)], cwd=tmp_path, env=env, capture_output=True, timeout=30
     )
     findings = guard.scan_script(script, "run", guard.GITHUB_DEFAULT, tmp_path)[0]
+    fixed_from = _STEP_FAILS_FROM_BASH.get(script)
+    masked = expected is not None and not (fixed_from is not None and _BASH_VERSION >= fixed_from)
+    assert result.returncode == (0 if masked else 1), (script, _BASH_VERSION, result.returncode, result.stderr)
     if expected is None:
-        assert result.returncode == 1, (script, result.returncode, result.stderr)
         assert findings == [], findings
     else:
-        assert result.returncode == 0, (script, result.returncode, result.stderr)
         assert any(expected in finding for finding in findings), findings
+
+
+def test_version_dependent_shapes_are_shapes_the_guard_reports():
+    """A shape listed as bash-version dependent must still be one the guard flags, or the table rots."""
+    expected_by_script = dict(_AGAINST_BASH)
+    for script in _STEP_FAILS_FROM_BASH:
+        assert expected_by_script.get(script) is not None, script
+
+
+def test_err_trap_message_names_the_bash_versions(guard, tmp_path):
+    """The report cannot say a bare `exit` in an ERR trap always masks the step: bash 5.3 keeps the step's status."""
+    findings = guard.scan_script("trap 'echo x; exit' ERR\npytest\necho done", "run", guard.GITHUB_DEFAULT, tmp_path)[0]
+    assert any("bash 5.2" in finding and "5.3 keeps the step's" in finding for finding in findings), findings
 
 
 @pytest.mark.skipif(

@@ -6,6 +6,14 @@ All notable changes to ForgeLM are documented here.
 
 ### Fixed
 
+- **The nightly compatibility run and every pull-request `test` job no longer fail on bash 5.3.** GitHub's
+  `ubuntu-latest` label moved from `ubuntu-24.04` (bash 5.2) to `ubuntu-26.04` (bash 5.3) between the 2026-11-04 and
+  2026-11-05 nightly runs, and
+  `tests/test_check_ci_failure_masking.py::test_verdicts_match_bash` expected a bare `exit` in an ERR trap after
+  another command to leave the step with status 0. Bash 5.3 keeps the status the trap was entered with, so the step
+  fails, as it should. The comparison now takes the bash version into account for that one shape, and the guard's
+  report names both behaviours instead of describing bash 5.2 only; the guard still flags the shape on every version,
+  because the runner image decides which bash a workflow gets. Test-only: no runtime code changes (#1075).
 - CI/CD examples capture ForgeLM and `jq` statuses separately: a JSON parser's exit 4 cannot be mistaken for an
   approval hold, and a multi-stage approval hold retains ForgeLM's exit 4. The guide's JSON-reference section links
   use the compiled heading IDs and preserve the page route and heading on reload

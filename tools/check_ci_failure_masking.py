@@ -1662,11 +1662,15 @@ class _Analysis:
             if id(exit_command) in reraises or (code is None and kind == "EXIT") or (number or 0) % 256:
                 continue
             if code is None:
-                where = "on ERR it exits" if kind == "ERR" else "it exits"
-                return (
-                    f"sets {specific} that runs a bare `exit` after another command; {where} with that command's "
-                    "status instead of the step's"
+                # bash 5.2 takes a bare `exit` in an ERR trap from the last command the trap ran; 5.3 keeps the
+                # status the trap was entered with. The guard still reports it: the runner image, and with it the
+                # bash version, moves under a workflow that says `ubuntu-latest`.
+                where = (
+                    "on ERR, bash 5.2 exits with that command's status instead of the step's (5.3 keeps the step's)"
+                    if kind == "ERR"
+                    else "it exits with that command's status instead of the step's"
                 )
+                return f"sets {specific} that runs a bare `exit` after another command; {where}"
             if code in ("$?", "${?}"):
                 return (
                     f"sets {label} that runs `exit {code}` after another command, so it exits with that "
