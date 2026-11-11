@@ -1632,9 +1632,11 @@ class _Analysis:
         *entry_status* says whether ``$?`` still holds the status the trap was
         entered with when *handler* starts: true for an EXIT/ERR action itself and
         for a function it calls first. Except on EXIT, where it keeps the entry
-        status, bash reads a bare ``exit`` as ``exit $?``, and turning errexit off
-        keeps a failing command from stopping the step. DEBUG and RETURN run between
-        the script's commands, so ``set -n`` there stops it.
+        status, bash reads a bare ``exit`` as ``exit $?`` (on ERR that is bash 5.2;
+        5.3 keeps the entry status there too, and the guard keeps the stricter
+        reading), and turning errexit off keeps a failing command from stopping the
+        step. DEBUG and RETURN run between the script's commands, so ``set -n``
+        there stops it.
         """
         label = _trap_label(kind)
         if self.has_required(handler):
