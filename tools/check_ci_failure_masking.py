@@ -666,7 +666,8 @@ def _reraising_exits(
     *entry_status*); after ``||`` it holds the failed command's non-zero status;
     and ``rc=$?`` as the first command keeps it for a later ``exit "$rc"``, unless
     something assigns ``rc`` again. *bare_is_status* reads a bare ``exit`` as
-    ``exit $?``, as bash does in an ERR trap.
+    ``exit $?``, as bash 5.2 does in an ERR trap; bash 5.3 keeps the status the
+    trap was entered with, so this is the stricter of the two readings.
     """
     found: set = set()
     if not action.items:

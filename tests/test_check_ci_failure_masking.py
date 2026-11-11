@@ -18,7 +18,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import pytest
 
@@ -282,7 +282,8 @@ class TestReviewedShapes:
             # `|| true` is refused inside substitutions and trap actions too.
             ("v=$(git describe || true)\npytest", "discards its failure"),
             ("trap 'rm -f x || true' EXIT\npytest", "discards its failure"),
-            # On ERR a bare `exit` uses the status of the command before it, and `set +e` lets the step go on.
+            # On ERR a bare `exit` uses the status of the command before it (bash 5.2; 5.3 keeps the step's),
+            # and `set +e` lets the step go on.
             ("trap 'echo x; exit' ERR\npytest\necho done", "bare `exit` after another command"),
             ("f() { echo x; exit; }\ntrap f ERR\npytest\necho done", "bare `exit` after another command"),
             ("trap 'set +e' ERR\npytest\necho done", "turns errexit off"),
@@ -1142,7 +1143,7 @@ class TestRealRepository:
         assert guard.main(["--root", given]) == 0, capsys.readouterr().out
 
 
-def _bash5() -> Optional[tuple[str, tuple[int, int]]]:
+def _bash5() -> Optional[Tuple[str, Tuple[int, int]]]:
     """A bash of version 5 or newer on Linux or macOS, as on GitHub's Linux runners: (path, (major, minor)).
 
     None otherwise. Windows' bash (Git Bash) runs in another environment, so the comparison stays on POSIX systems.
@@ -1212,7 +1213,8 @@ _AGAINST_BASH = [
     ("pytest &\nwait", "background"),
     ("set +e\npytest\necho done", "errexit is off"),
     ("if pytest; then echo ok; fi", "condition"),
-    # ERR traps: a bare `exit` there uses the last command's status, and `set +e` lets the step go on.
+    # ERR traps: a bare `exit` there uses the last command's status on bash 5.2 (5.3 keeps the step's; see
+    # `_STEP_FAILS_FROM_BASH`), and `set +e` lets the step go on.
     ("trap 'echo x; exit' ERR\npytest\necho done", "bare `exit` after another command"),
     ("trap 'set +e' ERR\npytest\necho done", "turns errexit off"),
     ("trap 'exit' ERR\npytest\necho done", None),
