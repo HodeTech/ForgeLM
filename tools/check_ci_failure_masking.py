@@ -666,7 +666,8 @@ def _reraising_exits(
     *entry_status*); after ``||`` it holds the failed command's non-zero status;
     and ``rc=$?`` as the first command keeps it for a later ``exit "$rc"``, unless
     something assigns ``rc`` again. *bare_is_status* reads a bare ``exit`` as
-    ``exit $?``, as bash does in an ERR trap.
+    ``exit $?``, as bash 5.2 does in an ERR trap; bash 5.3 keeps the status the
+    trap was entered with, so this is the stricter of the two readings.
     """
     found: set = set()
     if not action.items:
@@ -1631,9 +1632,11 @@ class _Analysis:
         *entry_status* says whether ``$?`` still holds the status the trap was
         entered with when *handler* starts: true for an EXIT/ERR action itself and
         for a function it calls first. Except on EXIT, where it keeps the entry
-        status, bash reads a bare ``exit`` as ``exit $?``, and turning errexit off
-        keeps a failing command from stopping the step. DEBUG and RETURN run between
-        the script's commands, so ``set -n`` there stops it.
+        status, bash reads a bare ``exit`` as ``exit $?`` (on ERR that is bash 5.2;
+        5.3 keeps the entry status there too, and the guard keeps the stricter
+        reading), and turning errexit off keeps a failing command from stopping the
+        step. DEBUG and RETURN run between the script's commands, so ``set -n``
+        there stops it.
         """
         label = _trap_label(kind)
         if self.has_required(handler):
@@ -1662,11 +1665,15 @@ class _Analysis:
             if id(exit_command) in reraises or (code is None and kind == "EXIT") or (number or 0) % 256:
                 continue
             if code is None:
-                where = "on ERR it exits" if kind == "ERR" else "it exits"
-                return (
-                    f"sets {specific} that runs a bare `exit` after another command; {where} with that command's "
-                    "status instead of the step's"
+                # bash 5.2 takes a bare `exit` in an ERR trap from the last command the trap ran; 5.3 keeps the
+                # status the trap was entered with. The guard still reports it: the runner image, and with it the
+                # bash version, moves under a workflow that says `ubuntu-latest`.
+                where = (
+                    "on ERR, bash 5.2 exits with that command's status instead of the step's (5.3 keeps the step's)"
+                    if kind == "ERR"
+                    else "it exits with that command's status instead of the step's"
                 )
+                return f"sets {specific} that runs a bare `exit` after another command; {where}"
             if code in ("$?", "${?}"):
                 return (
                     f"sets {label} that runs `exit {code}` after another command, so it exits with that "
